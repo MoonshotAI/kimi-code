@@ -1,9 +1,23 @@
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 
-import { visibleWidth, type TuiMouseEvent } from '@moonshot-ai/pi-tui';
+import {
+  renderLayoutFrame,
+  TuiAltScreen,
+  visibleWidth,
+  VStack,
+  type Component,
+  type TuiMouseEvent,
+} from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import chalk from 'chalk';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
+import type { SlashCommandHost } from '#/tui/commands/dispatch';
+import { promptFeedbackAttachment } from '#/tui/commands/prompts';
+import type { GutterContainer } from '#/tui/components/chrome/gutter-container';
+import type { OverflowScrollView } from '#/tui/components/chrome/overflow-scroll-view';
 import {
   ChoicePickerComponent,
   PreviewChoicePickerComponent,
@@ -489,5 +503,143 @@ describe('ChoicePickerComponent', () => {
     picker.handleMouse(mouse('press', alphaRow));
     picker.handleMouse(mouse('click', betaRow));
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('scrolls an overflowing preview ScrollView before falling back to onPreviewScroll on wheel', () => {
+    const onPreviewScroll = vi.fn();
+    let previewLines = ['line 1', 'line 2', 'line 3', 'line 4', 'line 5'];
+    const picker = new PreviewChoicePickerComponent({
+      title: 'Pick one',
+      options: [{ value: 'a', label: 'Alpha' }],
+      layout: { maxBodyRows: 3 },
+      onPreviewScroll,
+      preview: { render: () => previewLines, invalidate: vi.fn(), dispose: vi.fn() },
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    picker.focused = true;
+    renderLayoutFrame(picker, 60, 20, () => {});
+    const scrollView = picker.children[1] as OverflowScrollView;
+    const bodyPart = (scrollView.children[0] as GutterContainer).children[0]!;
+
+    expect(bodyPart.handleMouse?.(mouse('wheel', 0, 0))).toEqual({ handled: true, render: false });
+    expect(onPreviewScroll).not.toHaveBeenCalled();
+
+    expect(bodyPart.handleMouse?.(mouse('wheel', 0, 2))).toEqual({ handled: true, render: true });
+    expect(scrollView.scrollTop).toBe(2);
+    expect(onPreviewScroll).not.toHaveBeenCalled();
+
+    expect(bodyPart.handleMouse?.(mouse('wheel', 0, 10))).toEqual({ handled: true, render: true });
+    expect(scrollView.scrollTop).toBe(3);
+    expect(onPreviewScroll).not.toHaveBeenCalled();
+
+    expect(bodyPart.handleMouse?.(mouse('wheel', 0, 1))).toEqual({ handled: true, render: true });
+    expect(onPreviewScroll).toHaveBeenCalledTimes(1);
+    expect(onPreviewScroll).toHaveBeenLastCalledWith(1);
+
+    expect(bodyPart.handleMouse?.(mouse('wheel', 0, -10))).toEqual({ handled: true, render: true });
+    expect(scrollView.scrollTop).toBe(0);
+    expect(onPreviewScroll).toHaveBeenCalledTimes(1);
+
+    expect(bodyPart.handleMouse?.(mouse('wheel', 0, -1))).toEqual({ handled: true, render: true });
+    expect(onPreviewScroll).toHaveBeenCalledTimes(2);
+    expect(onPreviewScroll).toHaveBeenLastCalledWith(-1);
+
+    previewLines = ['only line'];
+    renderLayoutFrame(picker, 60, 20, () => {});
+    expect(bodyPart.handleMouse?.(mouse('wheel', 0, 1))).toEqual({ handled: true, render: true });
+    expect(onPreviewScroll).toHaveBeenCalledTimes(3);
+    expect(onPreviewScroll).toHaveBeenLastCalledWith(1);
+  });
+
+  it('pages /feedback session files via wheel and clickable hints while keeping OSC 8 links clickable', async () => {
+    useMouseClock();
+    const sessionDir = '/tmp/example-session';
+    const files = Array.from({ length: 12 }, (_, i) => `file-${String(i + 1)}.log`);
+    let mounted: PreviewChoicePickerComponent | undefined;
+    const host = {
+      state: { dockContainer: {} },
+      mountEditorReplacement: (component: Component) => {
+        mounted = component as PreviewChoicePickerComponent;
+      },
+      restoreEditor: vi.fn(),
+    } as unknown as SlashCommandHost;
+
+    const pending = promptFeedbackAttachment(host, false, {
+      sessionId: 'ses-1',
+      sessionDir,
+      files,
+    });
+    expect(mounted).toBeInstanceOf(PreviewChoicePickerComponent);
+    const picker = mounted!;
+
+    const openedUrls: string[] = [];
+    const vt = new VirtualTerminal(100, 32);
+    const ui = new TuiAltScreen(vt, false, undefined, {
+      openUrl: (url) => {
+        openedUrls.push(url);
+      },
+    });
+    const root = new VStack();
+    root.addChild(picker, { grow: 1, shrink: 1 });
+    ui.setLayoutRoot(root);
+    ui.setFocus(picker);
+    ui.start();
+    onTestFinished(() => {
+      ui.stop();
+    });
+    await vt.waitForRender();
+    vi.advanceTimersByTime(500);
+
+    const screenRows = (): string[] =>
+      ui.getScreenLines().map((line) => stripVTControlCharacters(line).trimEnd());
+    const clickCell = async (x: number, y: number): Promise<void> => {
+      vt.sendInput(`\u001B[<0;${String(x + 1)};${String(y + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(x + 1)};${String(y + 1)}m`);
+      await vt.waitForRender();
+    };
+    const wheelCell = async (x: number, y: number, direction: -1 | 1): Promise<void> => {
+      const code = direction < 0 ? 64 : 65;
+      vt.sendInput(`\u001B[<${String(code)};${String(x + 1)};${String(y + 1)}M`);
+      await vt.waitForRender();
+    };
+
+    let rows = screenRows();
+    expect(rows.join('\n')).toContain('12 session files · showing 1–5');
+
+    const firstFile = join(sessionDir, 'file-1.log');
+    const fileRow = rows.findIndex((row) => row.includes(firstFile));
+    const fileCol = rows[fileRow]!.indexOf(firstFile);
+    await clickCell(fileCol + 2, fileRow);
+    expect(openedUrls).toEqual([pathToFileURL(firstFile).href]);
+
+    const nextRow = rows.findIndex((row) => row.includes('→ next page'));
+    const nextCol = rows[nextRow]!.indexOf('→ next page');
+    await clickCell(nextCol + 2, nextRow);
+    rows = screenRows();
+    expect(rows.join('\n')).toContain('12 session files · showing 6–10');
+    expect(rows.join('\n')).toContain('← previous page');
+
+    const prevRow = rows.findIndex((row) => row.includes('← previous page'));
+    const prevCol = rows[prevRow]!.indexOf('← previous page');
+    await clickCell(prevCol + 2, prevRow);
+    rows = screenRows();
+    expect(rows.join('\n')).toContain('12 session files · showing 1–5');
+
+    await wheelCell(fileCol + 2, fileRow, 1);
+    rows = screenRows();
+    expect(rows.join('\n')).toContain('12 session files · showing 6–10');
+
+    await wheelCell(fileCol + 2, fileRow, -1);
+    rows = screenRows();
+    expect(rows.join('\n')).toContain('12 session files · showing 1–5');
+
+    const scrollView = picker.children[1] as OverflowScrollView;
+    const bodyPart = (scrollView.children[0] as GutterContainer).children[0]!;
+    expect(bodyPart.handleMouse?.(mouse('press', 1))).toBeUndefined();
+    expect(bodyPart.handleMouse?.(mouse('click', 1))).toBeUndefined();
+
+    picker.handleInput('\u001B');
+    await expect(pending).resolves.toBeUndefined();
   });
 });

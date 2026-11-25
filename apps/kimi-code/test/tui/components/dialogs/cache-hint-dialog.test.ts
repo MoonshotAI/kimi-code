@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import type { TuiMouseEvent } from '@moonshot-ai/pi-tui';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { CacheHintDialogComponent } from '#/tui/components/dialogs/cache-hint-dialog';
 
@@ -83,5 +84,77 @@ describe('CacheHintDialogComponent', () => {
     dialog.handleInput('\u001B');
     expect(onCancel).toHaveBeenCalled();
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  function pointerEvent(
+    type: TuiMouseEvent['type'],
+    y: number,
+    wheelDelta?: number,
+  ): TuiMouseEvent {
+    return {
+      type,
+      button: type === 'move' || type === 'wheel' ? 'none' : 'left',
+      x: 5,
+      y,
+      screenX: 5,
+      screenY: y,
+      width: 120,
+      height: 20,
+      shift: false,
+      alt: false,
+      ctrl: false,
+      ...(wheelDelta !== undefined ? { wheelDelta } : {}),
+    };
+  }
+
+  function enableFakeDate(): void {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+  }
+
+  it('supports hover, click confirm, wheel consumption, and focus/settling guards', () => {
+    enableFakeDate();
+    const { dialog, onSelect, lines } = renderDialog();
+    const newRow = lines.findIndex((line) => line.includes('Start a new session'));
+    const neverRow = lines.findIndex((line) => line.includes("Don't ask me again"));
+
+    vi.advanceTimersByTime(300);
+    expect(dialog.handleMouse(pointerEvent('move', newRow))).toBeUndefined();
+    expect(dialog.handleMouse(pointerEvent('wheel', newRow, 1))).toBeUndefined();
+    expect(dialog.handleMouse(pointerEvent('press', newRow))).toEqual({ handled: true });
+    expect(dialog.handleMouse(pointerEvent('click', newRow))).toEqual({
+      handled: true,
+      focus: true,
+    });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    dialog.focused = true;
+    expect(dialog.handleMouse(pointerEvent('wheel', newRow, 1))).toEqual({ handled: true });
+    expect(dialog.handleMouse(pointerEvent('move', newRow))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(dialog.render(120).map(strip)[newRow]).toContain('❯ Start a new session');
+
+    dialog.handleMouse(pointerEvent('press', newRow));
+    expect(dialog.handleMouse(pointerEvent('click', neverRow))).toEqual({ handled: true });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    dialog.handleMouse(pointerEvent('press', neverRow));
+    expect(dialog.handleMouse(pointerEvent('click', neverRow))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(onSelect).toHaveBeenCalledWith('never');
+
+    const fresh = renderDialog();
+    fresh.dialog.focused = true;
+    const freshNewRow = fresh.lines.findIndex((line) => line.includes('Start a new session'));
+    expect(fresh.dialog.handleMouse(pointerEvent('click', freshNewRow))).toEqual({
+      handled: true,
+    });
+    expect(fresh.onSelect).not.toHaveBeenCalled();
   });
 });

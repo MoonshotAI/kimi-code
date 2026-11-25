@@ -1,11 +1,13 @@
 import {
-  Container,
   Input,
   Key,
   matchesKey,
   truncateToWidth,
   visibleWidth,
+  type Component,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 import {
   marketplaceEntryVisibleOnHost,
@@ -24,9 +26,17 @@ import {
   dedupeCapabilityMarketplaceEntries,
   installedPluginForMarketplaceEntry,
 } from '#/tui/utils/capability-marketplace';
+import {
+  focusOnUnfocusedClick,
+  forwardEmbeddedMouse,
+  isPointInRect,
+  ListMouseTracker,
+  SpanHitMap,
+  type EmbeddedRect,
+} from '#/tui/utils/mouse-regions';
 import { formatPluginSourceLabel, pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 import { printableChar } from '#/tui/utils/printable-key';
-import { renderTabStrip } from '#/tui/utils/tab-strip';
+import { layoutTabStrip, resolveTabStripHit, type TabStripHit } from '#/tui/utils/tab-strip';
 import { computeUpdateStatus, pluginMarketplaceCliDescription, type PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
 
 import { ChoicePickerComponent } from './choice-picker';
@@ -62,15 +72,15 @@ export interface PluginMcpSelectorOptions {
   readonly onCancel: () => void;
 }
 
-export class PluginMcpSelectorComponent extends Container implements Focusable {
+export class PluginMcpSelectorComponent implements Component, Focusable {
   focused = false;
 
   private readonly opts: PluginMcpSelectorOptions;
   private readonly items: readonly PluginsOverviewItem[];
+  private readonly mouse = new ListMouseTracker<number>();
   private selectedIndex = 0;
 
   constructor(opts: PluginMcpSelectorOptions) {
-    super();
     this.opts = opts;
     this.items = buildMcpItems(opts.info);
     const selectedIndex = this.items.findIndex(
@@ -78,6 +88,8 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
     );
     this.selectedIndex = Math.max(0, selectedIndex);
   }
+
+  invalidate(): void {}
 
   handleInput(data: string): void {
     if (matchesKey(data, Key.escape)) {
@@ -93,26 +105,54 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.enter) || matchesKey(data, Key.space) || printableChar(data) === ' ') {
-      const chosen = this.items[this.selectedIndex];
-      if (chosen === undefined) return;
-      if (chosen.value === 'back') {
-        this.opts.onSelect({ kind: 'back', pluginId: this.opts.info.id });
-        return;
-      }
-      const serverName = mcpItemServerName(chosen);
-      if (serverName === undefined) return;
-      const server = this.opts.info.mcpServers.find((item) => item.name === serverName);
-      if (server === undefined) return;
-      this.opts.onSelect({
-        kind: 'toggle',
-        pluginId: this.opts.info.id,
-        server: server.name,
-        enabled: !server.enabled,
-      });
+      this.activateSelected();
     }
   }
 
-  override render(width: number): string[] {
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    return this.mouse.handle(event, {
+      focused: this.focused,
+      onHover: (index) => this.selectIndex(index),
+      onWheel: (delta) =>
+        Number.isFinite(delta) && delta !== 0
+          ? this.selectIndex(this.selectedIndex + (delta > 0 ? 1 : -1))
+          : false,
+      onActivate: (index) => {
+        this.selectIndex(index);
+        this.activateSelected();
+      },
+    });
+  }
+
+  private selectIndex(index: number): boolean {
+    if (this.items.length === 0) return false;
+    const next = Math.min(Math.max(0, Math.floor(index)), this.items.length - 1);
+    if (next === this.selectedIndex) return false;
+    this.selectedIndex = next;
+    return true;
+  }
+
+  private activateSelected(): void {
+    const chosen = this.items[this.selectedIndex];
+    if (chosen === undefined) return;
+    if (chosen.value === 'back') {
+      this.opts.onSelect({ kind: 'back', pluginId: this.opts.info.id });
+      return;
+    }
+    const serverName = mcpItemServerName(chosen);
+    if (serverName === undefined) return;
+    const server = this.opts.info.mcpServers.find((item) => item.name === serverName);
+    if (server === undefined) return;
+    this.opts.onSelect({
+      kind: 'toggle',
+      pluginId: this.opts.info.id,
+      server: server.name,
+      enabled: !server.enabled,
+    });
+  }
+
+  render(width: number): string[] {
+    this.mouse.reset();
     const { info } = this.opts;
     const colors = currentTheme.palette;
     const serverItems = this.items.filter((item) => item.kind === 'plugin');
@@ -129,14 +169,19 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
       lines.push(chalk.hex(colors.textMuted)('  No MCP servers declared.'));
     } else {
       for (let i = 0; i < serverItems.length; i++) {
-        lines.push(...this.renderItem(serverItems[i]!, i, width));
+        this.mouse.track(lines, i, () => {
+          lines.push(...this.renderItem(serverItems[i]!, i, width));
+        });
       }
     }
 
     lines.push('');
     lines.push(sectionLabel('Actions', colors));
     for (let i = 0; i < actionItems.length; i++) {
-      lines.push(...this.renderItem(actionItems[i]!, serverItems.length + i, width));
+      const index = serverItems.length + i;
+      this.mouse.track(lines, index, () => {
+        lines.push(...this.renderItem(actionItems[i]!, index, width));
+      });
     }
 
     lines.push('');
@@ -304,18 +349,21 @@ function renderUrlInputBox(
   focused: boolean,
   width: number,
   colors: ColorPalette,
-): string[] {
+): { readonly lines: readonly string[]; readonly inputWidth: number } {
   input.focused = focused;
   const border = (s: string): string => chalk.hex(colors.primary)(s);
   const boxWidth = Math.max(24, width - 2);
   const innerWidth = Math.max(10, boxWidth - 4);
   const inputLine = input.render(innerWidth)[0] ?? '';
   const rightPad = Math.max(0, innerWidth - visibleWidth(inputLine));
-  return [
-    ' ' + border('╭' + '─'.repeat(boxWidth - 2) + '╮'),
-    ' ' + border('│') + '  ' + inputLine + ' '.repeat(rightPad) + border('│'),
-    ' ' + border('╰' + '─'.repeat(boxWidth - 2) + '╯'),
-  ];
+  return {
+    inputWidth: Math.min(innerWidth, Math.max(0, width - 4)),
+    lines: [
+      ' ' + border('╭' + '─'.repeat(boxWidth - 2) + '╮'),
+      ' ' + border('│') + '  ' + inputLine + ' '.repeat(rightPad) + border('│'),
+      ' ' + border('╰' + '─'.repeat(boxWidth - 2) + '╯'),
+    ],
+  };
 }
 
 export type PluginsPanelTabId = 'installed' | 'official' | 'third-party' | 'custom';
@@ -359,20 +407,25 @@ const PLUGINS_PANEL_MAX_PANEL_LINES = 28;
 const PLUGINS_PANEL_EXTERNAL_LINES = 2;
 const PLUGINS_PANEL_DEFAULT_TERMINAL_ROWS = 30;
 
-export class PluginsPanelComponent extends Container implements Focusable {
+export class PluginsPanelComponent implements Component, Focusable {
   focused = false;
 
   private readonly opts: PluginsPanelOptions;
   private readonly customInput = new Input();
+  private readonly tabHits = new SpanHitMap<TabStripHit>();
+  private readonly listMouse = new ListMouseTracker<number>();
   private activeTabIndex: number;
   private selectedIndex = 0;
   private listStart = 0;
+  private renderedListRange: { readonly start: number; readonly end: number } = { start: 0, end: 0 };
+  private renderedRowLines: readonly number[] = [];
+  private renderedMaxLines = 0;
+  private customInputRect: EmbeddedRect | undefined;
   private market: MarketState = { status: 'idle' };
   private installing: string | undefined;
   private catalogVersions = new Map<string, string | undefined>();
 
   constructor(opts: PluginsPanelOptions) {
-    super();
     this.opts = opts;
     this.activeTabIndex = Math.max(
       0,
@@ -407,10 +460,14 @@ export class PluginsPanelComponent extends Container implements Focusable {
     this.opts.installed = plugins;
     this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, plugins.length - 1));
     this.listStart = Math.min(this.listStart, Math.max(0, plugins.length - 1));
+    this.listMouse.reset();
+    this.listMouse.resetSettling();
   }
 
   setMarketplace(entries: readonly PluginMarketplaceEntry[], source: string): void {
     this.market = { status: 'loaded', entries, source };
+    this.listMouse.reset();
+    this.listMouse.resetSettling();
   }
 
   setMarketplaceCatalogVersions(entries: readonly PluginMarketplaceEntry[]): void {
@@ -428,11 +485,16 @@ export class PluginsPanelComponent extends Container implements Focusable {
 
   setInstalling(label: string): void {
     this.installing = label;
+    this.tabHits.reset();
+    this.listMouse.reset();
+    this.customInputRect = undefined;
     this.invalidate();
   }
 
   clearInstalling(): void {
     this.installing = undefined;
+    this.tabHits.resetSettling();
+    this.listMouse.resetSettling();
     this.invalidate();
   }
 
@@ -500,24 +562,31 @@ export class PluginsPanelComponent extends Container implements Focusable {
     }
   }
 
+  private switchTab(nextIndex: number): void {
+    if (nextIndex === this.activeTabIndex) return;
+    this.activeTabIndex = nextIndex;
+    this.selectedIndex = 0;
+    this.listStart = 0;
+    this.renderedListRange = { start: 0, end: 0 };
+    this.renderedRowLines = [];
+    this.renderedMaxLines = 0;
+    this.listMouse.reset();
+    this.listMouse.resetSettling();
+    this.customInputRect = undefined;
+    this.requestMarketplaceIfNeeded();
+  }
+
   handleInput(data: string): void {
     if (matchesKey(data, Key.escape)) {
       this.opts.onCancel();
       return;
     }
     if (matchesKey(data, Key.tab)) {
-      this.activeTabIndex = (this.activeTabIndex + 1) % PLUGINS_PANEL_TABS.length;
-      this.selectedIndex = 0;
-      this.listStart = 0;
-      this.requestMarketplaceIfNeeded();
+      this.switchTab((this.activeTabIndex + 1) % PLUGINS_PANEL_TABS.length);
       return;
     }
     if (matchesKey(data, Key.shift('tab'))) {
-      this.activeTabIndex =
-        (this.activeTabIndex - 1 + PLUGINS_PANEL_TABS.length) % PLUGINS_PANEL_TABS.length;
-      this.selectedIndex = 0;
-      this.listStart = 0;
-      this.requestMarketplaceIfNeeded();
+      this.switchTab((this.activeTabIndex - 1 + PLUGINS_PANEL_TABS.length) % PLUGINS_PANEL_TABS.length);
       return;
     }
     switch (this.activeTab.id) {
@@ -532,6 +601,56 @@ export class PluginsPanelComponent extends Container implements Focusable {
         this.customInput.handleInput(data);
         return;
     }
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (!this.focused) return focusOnUnfocusedClick(false, event);
+    if (this.installing !== undefined) {
+      if (event.type === 'wheel') return { handled: true };
+      if (event.button === 'left' && (event.type === 'press' || event.type === 'click')) {
+        return { handled: true };
+      }
+      return undefined;
+    }
+
+    const tabResult = this.tabHits.handle(event, {
+      focused: this.focused,
+      onActivate: (hit) => {
+        this.switchTab(resolveTabStripHit(hit, this.activeTabIndex, PLUGINS_PANEL_TABS.length));
+      },
+    });
+    if (tabResult !== undefined) return tabResult;
+
+    if (this.activeTab.id === 'custom') {
+      if (event.type === 'wheel') return { handled: true };
+      if (
+        this.customInputRect !== undefined &&
+        isPointInRect(this.customInputRect, event.x, event.y)
+      ) {
+        if (event.type === 'press' && event.button === 'left') {
+          const forwarded = forwardEmbeddedMouse(this.customInput, this.customInputRect, event);
+          return forwarded === undefined ? undefined : { ...forwarded, render: true };
+        }
+        if ((event.type === 'release' || event.type === 'click') && event.button === 'left') {
+          return { handled: true };
+        }
+      }
+      return undefined;
+    }
+
+    return this.listMouse.handle(event, {
+      focused: this.focused,
+      onHover: (index) => this.selectListIndex(index),
+      onWheel: (delta) => this.wheelList(delta),
+      onActivate: (index) => {
+        this.selectListIndex(index);
+        if (this.activeTab.id === 'installed') {
+          this.activateInstalledSelected();
+        } else {
+          this.activateMarketplaceSelected();
+        }
+      },
+    });
   }
 
   private handleInstalledInput(data: string): void {
@@ -565,13 +684,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.enter)) {
-      if (plugin === undefined) return;
-      const update = this.installedUpdateStatus(plugin);
-      if (update !== undefined) {
-        this.opts.onSelect({ kind: 'install', entry: update.entry });
-      } else {
-        this.opts.onSelect({ kind: 'details', id: plugin.id });
-      }
+      this.activateInstalledSelected();
       return;
     }
     if (ch === 'i' || ch === 'I') {
@@ -590,10 +703,48 @@ export class PluginsPanelComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.enter)) {
-      const entry = entries[this.selectedIndex];
-      if (entry === undefined || marketplaceEntryIsCloudOnly(entry)) return;
-      this.opts.onSelect({ kind: 'install', entry });
+      this.activateMarketplaceSelected();
     }
+  }
+
+  private activateInstalledSelected(): void {
+    const plugin = this.opts.installed[this.selectedIndex];
+    if (plugin === undefined) return;
+    const update = this.installedUpdateStatus(plugin);
+    if (update !== undefined) {
+      this.opts.onSelect({ kind: 'install', entry: update.entry });
+    } else {
+      this.opts.onSelect({ kind: 'details', id: plugin.id });
+    }
+  }
+
+  private activateMarketplaceSelected(): void {
+    const entries = this.activeTab.id === 'official' ? this.officialEntries : this.thirdPartyEntries;
+    const entry = entries[this.selectedIndex];
+    if (entry === undefined || marketplaceEntryIsCloudOnly(entry)) return;
+    this.opts.onSelect({ kind: 'install', entry });
+  }
+
+  private currentListLength(): number {
+    switch (this.activeTab.id) {
+      case 'installed':
+        return this.opts.installed.length;
+      case 'official':
+        return this.officialEntries.length;
+      case 'third-party':
+        return this.thirdPartyEntries.length;
+      case 'custom':
+        return 0;
+    }
+  }
+
+  private selectListIndex(index: number): boolean {
+    const total = this.currentListLength();
+    if (total === 0) return false;
+    const next = Math.min(Math.max(0, Math.floor(index)), total - 1);
+    if (next === this.selectedIndex) return false;
+    this.selectedIndex = next;
+    return true;
   }
 
   private moveListSelection(total: number, delta: number): void {
@@ -602,10 +753,57 @@ export class PluginsPanelComponent extends Container implements Focusable {
       : Math.min(Math.max(0, this.selectedIndex + delta), total - 1);
   }
 
-  private visibleListRange(rowLines: readonly number[], reservedLines: number): { start: number; end: number } {
+  private rangeFrom(
+    start: number,
+    rowLines: readonly number[],
+    maxLines: number,
+  ): { readonly start: number; readonly end: number } {
+    const total = rowLines.length;
+    let end = start;
+    let lines = 0;
+    while (end < total) {
+      const nextLines = rowLines[end]!;
+      if (end > start && lines + nextLines > maxLines) break;
+      lines += nextLines;
+      end++;
+      if (lines >= maxLines) break;
+    }
+    return { start, end };
+  }
+
+  private wheelList(delta: number): boolean {
+    if (!Number.isFinite(delta) || delta === 0) return false;
+    const total = this.renderedRowLines.length;
+    if (total === 0) return false;
+    const nextStart =
+      delta > 0
+        ? this.renderedListRange.end < total
+          ? Math.min(this.listStart + 1, total - 1)
+          : this.listStart
+        : Math.max(0, this.listStart - 1);
+    if (nextStart === this.listStart) return false;
+    const nextView = this.rangeFrom(nextStart, this.renderedRowLines, this.renderedMaxLines);
+    this.listStart = nextView.start;
+    this.renderedListRange = nextView;
+    if (nextView.end > nextView.start) {
+      this.selectedIndex = Math.min(
+        Math.max(this.selectedIndex, nextView.start),
+        nextView.end - 1,
+      );
+    }
+    return true;
+  }
+
+  private visibleListRange(
+    rowLines: readonly number[],
+    reservedLines: number,
+  ): { readonly start: number; readonly end: number } {
     const total = rowLines.length;
     if (total === 0) {
       this.listStart = 0;
+      this.renderedListRange = { start: 0, end: 0 };
+      this.renderedRowLines = [];
+      this.renderedMaxLines = 0;
       return { start: 0, end: 0 };
     }
     const terminalRows = this.opts.terminalRows?.() ?? PLUGINS_PANEL_DEFAULT_TERMINAL_ROWS;
@@ -613,38 +811,35 @@ export class PluginsPanelComponent extends Container implements Focusable {
       2,
       Math.min(PLUGINS_PANEL_VISIBLE_CONTENT_LINES, terminalRows - reservedLines),
     );
-    const rangeFrom = (start: number): { start: number; end: number } => {
-      let end = start;
-      let lines = 0;
-      while (end < total) {
-        const nextLines = rowLines[end]!;
-        if (end > start && lines + nextLines > maxLines) break;
-        lines += nextLines;
-        end++;
-        if (lines >= maxLines) break;
-      }
-      return { start, end };
-    };
-    const fullRange = rangeFrom(0);
+    this.renderedRowLines = rowLines;
+    this.renderedMaxLines = maxLines;
+    const fullRange = this.rangeFrom(0, rowLines, maxLines);
     if (fullRange.end === total) {
       this.listStart = 0;
+      this.renderedListRange = fullRange;
       return fullRange;
     }
     const start = Math.max(0, Math.min(this.listStart, this.selectedIndex, total - 1));
-    let view = rangeFrom(start);
+    let view = this.rangeFrom(start, rowLines, maxLines);
     while (this.selectedIndex >= view.end && view.start < total - 1) {
-      view = rangeFrom(view.start + 1);
+      view = this.rangeFrom(view.start + 1, rowLines, maxLines);
     }
     this.listStart = view.start;
+    this.renderedListRange = view;
     return view;
   }
 
-  override invalidate(): void {
-    super.invalidate();
+  invalidate(): void {
     this.customInput.invalidate();
   }
 
-  override render(width: number): string[] {
+  render(width: number): string[] {
+    this.tabHits.reset();
+    this.listMouse.reset();
+    this.customInputRect = undefined;
+    this.renderedListRange = { start: 0, end: 0 };
+    this.renderedRowLines = [];
+    this.renderedMaxLines = 0;
     if (this.installing !== undefined) {
       return this.renderInstalling(width);
     }
@@ -656,19 +851,22 @@ export class PluginsPanelComponent extends Container implements Focusable {
         : tab === 'custom'
           ? ' Tab switch · Enter install · Esc cancel'
           : this.marketplaceHint();
+    const tabStrip = layoutTabStrip({
+      labels: PLUGINS_PANEL_TABS.map((t) => t.label),
+      activeIndex: this.activeTabIndex,
+      width,
+      colors,
+    });
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Plugins'),
       mutedHintLine(hint, colors),
       '',
-      renderTabStrip({
-        labels: PLUGINS_PANEL_TABS.map((t) => t.label),
-        activeIndex: this.activeTabIndex,
-        width,
-        colors,
-      }),
-      '',
     ];
+    const tabRow = lines.length;
+    lines.push(tabStrip.line);
+    this.tabHits.addRow(tabRow, tabStrip.targets);
+    lines.push('');
 
     if (tab === 'installed') this.renderInstalled(lines, width);
     else if (tab === 'official') this.renderOfficial(lines, width);
@@ -695,7 +893,9 @@ export class PluginsPanelComponent extends Container implements Focusable {
       lines.push(chalk.hex(colors.textMuted)('  No plugins installed.'));
     } else {
       for (let i = view.start; i < view.end; i++) {
-        lines.push(...rows[i]!);
+        this.listMouse.track(lines, i, () => {
+          lines.push(...rows[i]!);
+        });
       }
     }
     lines.push('');
@@ -781,7 +981,9 @@ export class PluginsPanelComponent extends Container implements Focusable {
       lines.push(chalk.hex(colors.textMuted)('  No plugins found.'));
     } else {
       for (let i = view.start; i < view.end; i++) {
-        lines.push(...rows[i]!);
+        this.listMouse.track(lines, i, () => {
+          lines.push(...rows[i]!);
+        });
       }
     }
     const installedCount = entries.filter((entry) =>
@@ -843,7 +1045,18 @@ export class PluginsPanelComponent extends Container implements Focusable {
     const colors = currentTheme.palette;
     lines.push(mutedHintLine(' Install from a GitHub URL (or zip URL / local path):', colors));
     lines.push('');
-    lines.push(...renderUrlInputBox(this.customInput, this.focused, width, colors));
+    const boxStartRow = lines.length;
+    const box = renderUrlInputBox(this.customInput, this.focused, width, colors);
+    lines.push(...box.lines);
+    this.customInputRect =
+      box.inputWidth > 0
+        ? {
+            x: 4,
+            y: boxStartRow + 1,
+            width: box.inputWidth,
+            height: 1,
+          }
+        : undefined;
   }
 
   private renderInstalling(width: number): string[] {

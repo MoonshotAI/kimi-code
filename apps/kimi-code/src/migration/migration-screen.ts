@@ -1,8 +1,17 @@
-import { Container, matchesKey, Key, truncateToWidth, type Focusable } from '@moonshot-ai/pi-tui';
+import {
+  matchesKey,
+  Key,
+  truncateToWidth,
+  type Component,
+  type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
+} from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
 import type { ColorPalette } from '#/tui/theme/colors';
 import { currentTheme } from '#/tui/theme';
+import { ListMouseTracker } from '#/tui/utils/mouse-regions';
 import {
   resolveMigrationScope,
   runMigration as realRunMigration,
@@ -51,9 +60,10 @@ interface StepDef {
   readonly options: ReadonlyArray<{ readonly label: string; readonly value: AnyChoice }>;
 }
 
-export class MigrationScreenComponent extends Container implements Focusable {
+export class MigrationScreenComponent implements Component, Focusable {
   focused = false;
   private readonly opts: MigrationScreenOptions;
+  private readonly mouse = new ListMouseTracker<number>();
   private phase: Phase = 'ask1';
   private selectedIndex = 0;
   private readonly choices: AnyChoice[] = [];
@@ -70,9 +80,9 @@ export class MigrationScreenComponent extends Container implements Focusable {
   private report: MigrationReport | undefined;
   private migrationFailed = false;
   private migrationFailureReason: string | undefined;
+  private completed = false;
 
   constructor(opts: MigrationScreenOptions) {
-    super();
     this.opts = opts;
     if (opts.skipDecisionStep === true) {
       this.phase = 'ask2';
@@ -80,21 +90,23 @@ export class MigrationScreenComponent extends Container implements Focusable {
     }
   }
 
+  invalidate(): void {}
+
   showResult(report: MigrationReport): void {
     this.report = report;
-    this.phase = 'result';
+    this.transitionPhase('result');
     this.stopSpinner();
   }
 
   showFailure(error?: unknown): void {
     this.migrationFailed = true;
     this.migrationFailureReason = formatMigrationFailureReason(error);
-    this.phase = 'result';
+    this.transitionPhase('result');
     this.stopSpinner();
   }
 
   enterProgress(): void {
-    this.phase = 'progress';
+    this.transitionPhase('progress');
   }
 
   reportStep(msg: string): void {
@@ -105,6 +117,22 @@ export class MigrationScreenComponent extends Container implements Focusable {
   reportSessionProgress(done: number, total: number): void {
     this.progressDone = done;
     this.progressTotal = total;
+  }
+
+  private transitionPhase(phase: Phase): void {
+    this.phase = phase;
+    this.mouse.reset();
+    this.mouse.resetSettling();
+    if (phase === 'result') {
+      this.mouse.add(0, Number.MAX_SAFE_INTEGER, 0);
+    }
+  }
+
+  private complete(result: MigrationScreenResult): void {
+    if (this.completed) return;
+    this.completed = true;
+    this.stopSpinner();
+    this.opts.onComplete(result);
   }
 
   private startSpinner(): void {
@@ -137,20 +165,57 @@ export class MigrationScreenComponent extends Container implements Focusable {
   }
 
   handleInput(data: string): void {
+    if (this.completed) return;
     if (this.phase === 'ask1' || this.phase === 'ask2') {
       this.handleAskInput(data);
       return;
     }
     if (this.phase === 'result') {
       if (matchesKey(data, Key.enter)) {
-        this.opts.onComplete({ decision: 'now', migrated: !this.migrationFailed });
+        this.complete({ decision: 'now', migrated: !this.migrationFailed });
       }
       return;
     }
   }
 
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (this.completed) return undefined;
+    if (this.phase === 'ask1' || this.phase === 'ask2') {
+      return this.mouse.handle(event, {
+        focused: this.focused,
+        onHover: (index) => this.selectOption(index),
+        onActivate: (index) => {
+          this.activateOption(index);
+        },
+      });
+    }
+    if (this.phase === 'result') {
+      return this.mouse.handle(event, {
+        focused: this.focused,
+        onActivate: () => {
+          this.complete({ decision: 'now', migrated: !this.migrationFailed });
+        },
+      });
+    }
+    return this.mouse.handle(event, { focused: this.focused });
+  }
+
   private currentStep(): StepDef {
     return stepFor(this.phase, this.opts.plan);
+  }
+
+  private selectOption(index: number): boolean {
+    const count = this.currentStep().options.length;
+    if (index < 0 || index >= count || this.selectedIndex === index) return false;
+    this.selectedIndex = index;
+    return true;
+  }
+
+  private activateOption(index: number): void {
+    const chosen = this.currentStep().options[index];
+    if (chosen === undefined) return;
+    this.selectedIndex = index;
+    this.advance(chosen.value);
   }
 
   private handleAskInput(data: string): void {
@@ -164,13 +229,11 @@ export class MigrationScreenComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.escape)) {
-      this.opts.onComplete({ decision: 'later' });
+      this.complete({ decision: 'later' });
       return;
     }
     if (matchesKey(data, Key.enter)) {
-      const chosen = step.options[this.selectedIndex];
-      if (chosen === undefined) return;
-      this.advance(chosen.value);
+      this.activateOption(this.selectedIndex);
       return;
     }
   }
@@ -182,10 +245,10 @@ export class MigrationScreenComponent extends Container implements Focusable {
     const result: MigrationPromptResult = resolveMigrationScope(this.choices);
     if (this.phase === 'ask1') {
       if (value === 'now') {
-        this.phase = 'ask2';
+        this.transitionPhase('ask2');
         return;
       }
-      this.opts.onComplete({ decision: value as 'later' | 'never' });
+      this.complete({ decision: value as 'later' | 'never' });
       return;
     }
     this.beginMigration(result);
@@ -193,7 +256,7 @@ export class MigrationScreenComponent extends Container implements Focusable {
 
   private beginMigration(result: MigrationPromptResult): void {
     if (result.decision !== 'now' || result.scope === undefined) {
-      this.opts.onComplete({ decision: 'later' });
+      this.complete({ decision: 'later' });
       return;
     }
     this.enterProgress();
@@ -225,7 +288,7 @@ export class MigrationScreenComponent extends Container implements Focusable {
     );
   }
 
-  override render(width: number): string[] {
+  render(width: number): string[] {
     if (this.phase === 'ask1' || this.phase === 'ask2') {
       return this.renderAsk(width);
     }
@@ -234,6 +297,7 @@ export class MigrationScreenComponent extends Container implements Focusable {
   }
 
   private renderResult(width: number): string[] {
+    this.mouse.reset();
     const colors = this.opts.colors ?? currentTheme.palette;
     const lines: string[] = [chalk.hex(colors.primary)('─'.repeat(width))];
     if (this.migrationFailed) {
@@ -244,139 +308,138 @@ export class MigrationScreenComponent extends Container implements Focusable {
       }
       lines.push('');
       lines.push(chalk.hex(colors.text)(' You can retry later by running "kimi migrate".'));
+    } else {
+      const r = this.report;
+      lines.push(chalk.hex(colors.primary).bold(' Migration complete'));
       lines.push('');
-      lines.push(chalk.hex(colors.textMuted)(' ⏎ continue to kimi-code'));
-      lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
-      return lines.map((l) => truncateToWidth(l, width));
-    }
-    const r = this.report;
-    lines.push(chalk.hex(colors.primary).bold(' Migration complete'));
-    lines.push('');
-    if (r !== undefined) {
-      const sum = r.summary;
-      if (sum.sessions.sessionsMigrated > 0) {
-        lines.push(
-          chalk.hex(colors.success)(`  ✓ ${sum.sessions.sessionsMigrated} sessions migrated`),
-        );
-      }
-      if (sum.plans.copied > 0) {
-        lines.push(chalk.hex(colors.success)(`  ✓ ${sum.plans.copied} plan files copied`));
-      }
-      const migratedKinds: string[] = [];
-      if (sum.config.migrated) migratedKinds.push('config');
-      if (sum.config.migratedHooks > 0) migratedKinds.push('hooks');
-      if (sum.mcp.mergedServers.length > 0) migratedKinds.push('MCP');
-      if (sum.userHistory.copied > 0) migratedKinds.push('REPL history');
-      if (sum.skills.copied > 0) migratedKinds.push('skills');
-      if (migratedKinds.length > 0) {
-        lines.push(chalk.hex(colors.success)(`  ✓ ${migratedKinds.join(' · ')}`));
-      }
-      if (
-        sum.sessions.sessionsMigrated === 0 &&
-        sum.plans.copied === 0 &&
-        migratedKinds.length === 0
-      ) {
-        lines.push(chalk.hex(colors.textMuted)('  Nothing needed migrating.'));
-      }
-      if (r.notices.detectedPlugins.length > 0) {
-        lines.push(
-          chalk.hex(colors.warning)(
-            `  ⚠ ${r.notices.detectedPlugins.length} kimi-cli plugins — not yet supported for migration`,
-          ),
-        );
-      }
-      if (r.notices.plansCopiedNotice !== null) {
-        lines.push(chalk.hex(colors.textMuted)(`  ⓘ ${r.notices.plansCopiedNotice}`));
-      }
-      if (sum.config.droppedHooks > 0) {
-        lines.push(
-          chalk.hex(colors.warning)(
-            `  ⚠ ${sum.config.droppedHooks} hooks dropped (incompatible)`,
-          ),
-        );
-      }
-      if (sum.config.configConflicts.length > 0) {
-        lines.push(
-          chalk.hex(colors.warning)(
-            `  ⚠ ${sum.config.configConflicts.length} config conflicts kept yours: ${sum.config.configConflicts.join(' · ')}`,
-          ),
-        );
-      }
-      if (sum.config.wroteSiblingDueToConflict) {
-        lines.push(
-          chalk.hex(colors.warning)(
-            '  ⚠ config.toml could not be parsed — review config.migrated-from-kimi-cli.toml',
-          ),
-        );
-        const sc = sum.config.siblingContents;
-        const items: string[] = [];
-        if (sc.providers.length > 0) {
-          items.push(`${sc.providers.length} provider${sc.providers.length === 1 ? '' : 's'}`);
+      if (r !== undefined) {
+        const sum = r.summary;
+        if (sum.sessions.sessionsMigrated > 0) {
+          lines.push(
+            chalk.hex(colors.success)(`  ✓ ${sum.sessions.sessionsMigrated} sessions migrated`),
+          );
         }
-        if (sc.models.length > 0) {
-          items.push(`${sc.models.length} model${sc.models.length === 1 ? '' : 's'}`);
+        if (sum.plans.copied > 0) {
+          lines.push(chalk.hex(colors.success)(`  ✓ ${sum.plans.copied} plan files copied`));
         }
-        if (sc.hooks > 0) {
-          items.push(`${sc.hooks} hook${sc.hooks === 1 ? '' : 's'}`);
+        const migratedKinds: string[] = [];
+        if (sum.config.migrated) migratedKinds.push('config');
+        if (sum.config.migratedHooks > 0) migratedKinds.push('hooks');
+        if (sum.mcp.mergedServers.length > 0) migratedKinds.push('MCP');
+        if (sum.userHistory.copied > 0) migratedKinds.push('REPL history');
+        if (sum.skills.copied > 0) migratedKinds.push('skills');
+        if (migratedKinds.length > 0) {
+          lines.push(chalk.hex(colors.success)(`  ✓ ${migratedKinds.join(' · ')}`));
         }
-        if (items.length > 0) {
-          lines.push(chalk.hex(colors.warning)(`     contains: ${items.join(', ')}`));
+        if (
+          sum.sessions.sessionsMigrated === 0 &&
+          sum.plans.copied === 0 &&
+          migratedKinds.length === 0
+        ) {
+          lines.push(chalk.hex(colors.textMuted)('  Nothing needed migrating.'));
         }
-      }
-      if (sum.config.wroteTuiSibling) {
+        if (r.notices.detectedPlugins.length > 0) {
+          lines.push(
+            chalk.hex(colors.warning)(
+              `  ⚠ ${r.notices.detectedPlugins.length} kimi-cli plugins — not yet supported for migration`,
+            ),
+          );
+        }
+        if (r.notices.plansCopiedNotice !== null) {
+          lines.push(chalk.hex(colors.textMuted)(`  ⓘ ${r.notices.plansCopiedNotice}`));
+        }
+        if (sum.config.droppedHooks > 0) {
+          lines.push(
+            chalk.hex(colors.warning)(
+              `  ⚠ ${sum.config.droppedHooks} hooks dropped (incompatible)`,
+            ),
+          );
+        }
+        if (sum.config.configConflicts.length > 0) {
+          lines.push(
+            chalk.hex(colors.warning)(
+              `  ⚠ ${sum.config.configConflicts.length} config conflicts kept yours: ${sum.config.configConflicts.join(' · ')}`,
+            ),
+          );
+        }
+        if (sum.config.wroteSiblingDueToConflict) {
+          lines.push(
+            chalk.hex(colors.warning)(
+              '  ⚠ config.toml could not be parsed — review config.migrated-from-kimi-cli.toml',
+            ),
+          );
+          const sc = sum.config.siblingContents;
+          const items: string[] = [];
+          if (sc.providers.length > 0) {
+            items.push(`${sc.providers.length} provider${sc.providers.length === 1 ? '' : 's'}`);
+          }
+          if (sc.models.length > 0) {
+            items.push(`${sc.models.length} model${sc.models.length === 1 ? '' : 's'}`);
+          }
+          if (sc.hooks > 0) {
+            items.push(`${sc.hooks} hook${sc.hooks === 1 ? '' : 's'}`);
+          }
+          if (items.length > 0) {
+            lines.push(chalk.hex(colors.warning)(`     contains: ${items.join(', ')}`));
+          }
+        }
+        if (sum.config.wroteTuiSibling) {
+          lines.push(
+            chalk.hex(colors.warning)(
+              '  ⚠ tui.toml conflicted — review tui.migrated-from-kimi-cli.toml',
+            ),
+          );
+        }
+        if (sum.mcp.wroteSiblingDueToConflict) {
+          lines.push(
+            chalk.hex(colors.warning)(
+              '  ⚠ mcp.json unreadable — review mcp.migrated-from-kimi-cli.json',
+            ),
+          );
+        }
+        if (r.notices.mcpOauthServersRequiringReauth.length > 0) {
+          lines.push(
+            chalk.hex(colors.warning)(
+              `  ⚠ ${r.notices.mcpOauthServersRequiringReauth.length} MCP servers need re-authentication`,
+            ),
+          );
+        }
+        if (sum.sessions.sessionsFailed.length > 0) {
+          lines.push(
+            chalk.hex(colors.warning)(
+              `  ⚠ ${sum.sessions.sessionsFailed.length} sessions failed to migrate`,
+            ),
+          );
+        }
+        if (sum.sessions.sessionsConflicts.length > 0) {
+          lines.push(
+            chalk.hex(colors.warning)(
+              `  ⚠ ${sum.sessions.sessionsConflicts.length} sessions skipped (target already occupied)`,
+            ),
+          );
+        }
+        if (sum.sessions.sessionsSkippedEmpty > 0) {
+          lines.push(
+            chalk.hex(colors.textMuted)(
+              `  ${sum.sessions.sessionsSkippedEmpty} empty sessions skipped`,
+            ),
+          );
+        }
+        lines.push('');
         lines.push(
-          chalk.hex(colors.warning)(
-            '  ⚠ tui.toml conflicted — review tui.migrated-from-kimi-cli.toml',
-          ),
+          chalk.hex(colors.textMuted)(` Old data kept at ${this.opts.sourceHome} — kimi-cli still works.`),
         );
       }
-      if (sum.mcp.wroteSiblingDueToConflict) {
-        lines.push(
-          chalk.hex(colors.warning)(
-            '  ⚠ mcp.json unreadable — review mcp.migrated-from-kimi-cli.json',
-          ),
-        );
-      }
-      if (r.notices.mcpOauthServersRequiringReauth.length > 0) {
-        lines.push(
-          chalk.hex(colors.warning)(
-            `  ⚠ ${r.notices.mcpOauthServersRequiringReauth.length} MCP servers need re-authentication`,
-          ),
-        );
-      }
-      if (sum.sessions.sessionsFailed.length > 0) {
-        lines.push(
-          chalk.hex(colors.warning)(
-            `  ⚠ ${sum.sessions.sessionsFailed.length} sessions failed to migrate`,
-          ),
-        );
-      }
-      if (sum.sessions.sessionsConflicts.length > 0) {
-        lines.push(
-          chalk.hex(colors.warning)(
-            `  ⚠ ${sum.sessions.sessionsConflicts.length} sessions skipped (target already occupied)`,
-          ),
-        );
-      }
-      if (sum.sessions.sessionsSkippedEmpty > 0) {
-        lines.push(
-          chalk.hex(colors.textMuted)(
-            `  ${sum.sessions.sessionsSkippedEmpty} empty sessions skipped`,
-          ),
-        );
-      }
-      lines.push('');
-      lines.push(
-        chalk.hex(colors.textMuted)(` Old data kept at ${this.opts.sourceHome} — kimi-cli still works.`),
-      );
     }
     lines.push('');
     lines.push(chalk.hex(colors.textMuted)(' ⏎ continue to kimi-code'));
     lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
+    this.mouse.add(0, lines.length, 0);
     return lines.map((l) => truncateToWidth(l, width));
   }
 
   private renderProgress(width: number): string[] {
+    this.mouse.reset();
     const colors = this.opts.colors ?? currentTheme.palette;
     const spinner = SPINNER_FRAMES[this.spinnerFrame] ?? SPINNER_FRAMES[0];
     const lines: string[] = [
@@ -407,6 +470,7 @@ export class MigrationScreenComponent extends Container implements Focusable {
   }
 
   private renderAsk(width: number): string[] {
+    this.mouse.reset();
     const colors = this.opts.colors ?? currentTheme.palette;
     const step = this.currentStep();
     const lines: string[] = [
@@ -426,10 +490,12 @@ export class MigrationScreenComponent extends Container implements Focusable {
       const isSel = i === this.selectedIndex;
       const pointer = isSel ? '❯' : ' ';
       const labelStyle = isSel ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
-      lines.push(
-        chalk.hex(isSel ? colors.primary : colors.textDim)(`  ${pointer} `) +
-          labelStyle(opt.label),
-      );
+      this.mouse.track(lines, i, () => {
+        lines.push(
+          chalk.hex(isSel ? colors.primary : colors.textDim)(`  ${pointer} `) +
+            labelStyle(opt.label),
+        );
+      });
     }
     lines.push('');
     lines.push(

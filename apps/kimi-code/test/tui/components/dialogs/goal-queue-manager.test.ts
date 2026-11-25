@@ -1,5 +1,5 @@
-import { visibleWidth } from '@moonshot-ai/pi-tui';
-import { describe, expect, it, vi } from 'vitest';
+import { CURSOR_MARKER, visibleWidth, type TuiMouseEvent } from '@moonshot-ai/pi-tui';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
   GoalQueueEditDialogComponent,
@@ -9,7 +9,7 @@ import {
 import type { GoalQueueSnapshot, UpcomingGoal } from '#/tui/goal-queue-store';
 
 const ANSI = /\u001B\[[0-9;]*m/g;
-const strip = (s: string): string => s.replaceAll(ANSI, '');
+const strip = (s: string): string => s.replaceAll(ANSI, '').replaceAll(CURSOR_MARKER, '');
 const ESC = String.fromCodePoint(27);
 const CTRL_J = '\u001B[106;5u';
 const BRACKET_PASTE_START = '\u001B[200~';
@@ -173,6 +173,122 @@ describe('GoalQueueManagerComponent', () => {
     expect(lines.some((line) => line.includes('❯ 1. First line Second line'))).toBe(true);
     expect(lines.some((line) => line.trim() === 'Second line')).toBe(false);
   });
+
+  function pointerEvent(
+    type: TuiMouseEvent['type'],
+    x: number,
+    y: number,
+    extra: Partial<Pick<TuiMouseEvent, 'wheelDelta' | 'clickCount' | 'width' | 'height'>> = {},
+  ): TuiMouseEvent {
+    return {
+      type,
+      button: type === 'move' || type === 'wheel' ? 'none' : 'left',
+      x,
+      y,
+      screenX: x,
+      screenY: y,
+      width: extra.width ?? 100,
+      height: extra.height ?? 30,
+      shift: false,
+      alt: false,
+      ctrl: false,
+      ...(extra.wheelDelta !== undefined ? { wheelDelta: extra.wheelDelta } : {}),
+      ...(extra.clickCount !== undefined ? { clickCount: extra.clickCount } : {}),
+    };
+  }
+
+  function enableFakeDate(): void {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+  }
+
+  it('supports hover, single click select, double click edit, wheel paging, and reorder lock', async () => {
+    enableFakeDate();
+    const goals = Array.from({ length: 5 }, (_, i) => goal(`g${String(i + 1)}`, `Goal ${String(i + 1)}`));
+    const onAction = vi.fn(async (action: GoalQueueManagerAction) => {
+      if (action.kind === 'move' && action.direction === 'up') {
+        return snapshot([goals[1]!, goals[0]!, ...goals.slice(2)]);
+      }
+      return undefined;
+    });
+    const onCancel = vi.fn();
+    const manager = new GoalQueueManagerComponent({
+      goals,
+      pageSize: 3,
+      onAction,
+      onCancel,
+    });
+    const lines = manager.render(100).map(strip);
+    const goal2Row = lines.findIndex((line) => line.includes('2. Goal 2'));
+    const goal3Row = lines.findIndex((line) => line.includes('3. Goal 3'));
+
+    vi.advanceTimersByTime(300);
+    expect(manager.handleMouse(pointerEvent('click', 6, goal2Row))).toEqual({
+      handled: true,
+      focus: true,
+    });
+    expect(onAction).not.toHaveBeenCalled();
+
+    manager.focused = true;
+    expect(manager.handleMouse(pointerEvent('move', 6, goal2Row))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(manager.render(100).map(strip)[goal2Row]).toContain('❯ 2. Goal 2');
+
+    manager.handleMouse(pointerEvent('press', 6, goal2Row));
+    manager.handleMouse(pointerEvent('click', 6, goal2Row, { clickCount: 1 }));
+    expect(onAction).not.toHaveBeenCalled();
+
+    manager.handleMouse(pointerEvent('press', 6, goal2Row));
+    manager.handleMouse(pointerEvent('click', 6, goal2Row, { clickCount: 2 }));
+    expect(onAction).toHaveBeenCalledWith({ kind: 'edit', goalId: 'g2' });
+
+    manager.handleInput(' ');
+    const reorderLines = manager.render(100).map(strip);
+    expect(manager.handleMouse(pointerEvent('move', 6, goal3Row))).toBeUndefined();
+    expect(manager.handleMouse(pointerEvent('wheel', 6, goal3Row, { wheelDelta: 1 }))).toEqual({
+      handled: true,
+    });
+    expect(manager.render(100).map(strip)[goal2Row]).toContain('❯ 2. Goal 2');
+
+    const hintRow = reorderLines.findIndex((line) => line.includes('↑↓ reorder'));
+    const upCol = reorderLines[hintRow]!.indexOf('↑');
+    manager.handleMouse(pointerEvent('press', upCol, hintRow));
+    manager.handleMouse(pointerEvent('click', upCol, hintRow));
+    await vi.waitFor(() => {
+      expect(onAction).toHaveBeenCalledWith({ kind: 'move', goalId: 'g2', direction: 'up' });
+    });
+
+    const afterMoveLines = manager.render(100).map(strip);
+    const movedRow = afterMoveLines.findIndex((line) => line.includes('1. Goal 2'));
+    manager.handleMouse(pointerEvent('press', 6, movedRow));
+    manager.handleMouse(pointerEvent('click', 6, movedRow));
+    expect(text(manager)).toContain('Space select');
+
+    manager.handleInput(' ');
+    const againLines = manager.render(100).map(strip);
+    const otherRow = againLines.findIndex((line) => line.includes('2. Goal 1'));
+    manager.handleMouse(pointerEvent('press', 6, otherRow));
+    manager.handleMouse(pointerEvent('click', 6, otherRow));
+    expect(text(manager)).toContain('Space select');
+    expect(manager.render(100).map(strip)[otherRow]).toContain('❯ 2. Goal 1');
+
+    expect(manager.handleMouse(pointerEvent('wheel', 6, otherRow, { wheelDelta: 1 }))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(text(manager)).toContain('4. Goal 4');
+
+    const cancelLines = manager.render(100).map(strip);
+    const cancelHintRow = cancelLines.findIndex((line) => line.includes('Esc cancel'));
+    const cancelCol = cancelLines[cancelHintRow]!.indexOf('Esc cancel');
+    manager.handleMouse(pointerEvent('press', cancelCol, cancelHintRow));
+    manager.handleMouse(pointerEvent('click', cancelCol, cancelHintRow));
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
 });
 
 describe('GoalQueueEditDialogComponent', () => {
@@ -282,5 +398,148 @@ describe('GoalQueueEditDialogComponent', () => {
 
     expect(onDone).not.toHaveBeenCalled();
     expect(text(dialog)).toContain('Goal objective cannot be empty.');
+  });
+
+  function editMouseEvent(
+    type: TuiMouseEvent['type'],
+    x: number,
+    y: number,
+    extra: Partial<Pick<TuiMouseEvent, 'wheelDelta' | 'width' | 'height'>> = {},
+  ): TuiMouseEvent {
+    return {
+      type,
+      button: type === 'move' || type === 'wheel' ? 'none' : 'left',
+      x,
+      y,
+      screenX: x,
+      screenY: y,
+      width: extra.width ?? 40,
+      height: extra.height ?? 20,
+      shift: false,
+      alt: false,
+      ctrl: false,
+      ...(extra.wheelDelta !== undefined ? { wheelDelta: extra.wheelDelta } : {}),
+    };
+  }
+
+  it('focuses on unfocused click and positions cursor on exact row and column', () => {
+    const onDone = vi.fn();
+    const dialog = new GoalQueueEditDialogComponent({
+      goal: goal('g1', 'First line\n你好世界'),
+      onDone,
+    });
+    const lines = dialog.render(40).map(strip);
+    const row0 = lines.findIndex((line) => line.includes('> First line'));
+    const row1 = lines.findIndex((line) => line.includes('  你好世界'));
+    const rCol = lines[row0]!.indexOf('r');
+    const cjkPrefixCol = lines[row1]!.indexOf('你');
+
+    expect(dialog.handleMouse(editMouseEvent('press', rCol, row0))).toEqual({ handled: true });
+    expect(dialog.handleMouse(editMouseEvent('click', rCol, row0))).toEqual({
+      handled: true,
+      focus: true,
+    });
+
+    dialog.focused = true;
+    expect(dialog.handleMouse(editMouseEvent('press', rCol, row0))).toEqual({
+      handled: true,
+      focus: true,
+      render: true,
+    });
+    dialog.handleInput('X');
+
+    const afterLine0 = dialog.render(40).map(strip);
+    expect(afterLine0[row0]).toContain('> FiXrst line');
+
+    const secondCharCol = cjkPrefixCol + 2;
+    expect(dialog.handleMouse(editMouseEvent('press', secondCharCol, row1))).toEqual({
+      handled: true,
+      focus: true,
+      render: true,
+    });
+    dialog.handleInput('Y');
+    dialog.handleInput('\r');
+
+    expect(onDone).toHaveBeenCalledWith({
+      kind: 'save',
+      goalId: 'g1',
+      objective: 'FiXrst line\n你Y好世界',
+    });
+  });
+
+  it('scrolls multiline input with StableWindow on wheel and clicks into scrolled rows accurately', () => {
+    const onDone = vi.fn();
+    const initial = Array.from({ length: 12 }, (_, i) => `line-${String(i + 1).padStart(2, '0')}`).join('\n');
+    const dialog = new GoalQueueEditDialogComponent({
+      goal: goal('g1', initial),
+      onDone,
+    });
+    dialog.focused = true;
+
+    const initialLines = dialog.render(40).map(strip);
+    expect(initialLines.some((line) => line.includes('… 4 previous'))).toBe(true);
+    expect(initialLines.some((line) => line.includes('line-12'))).toBe(true);
+
+    expect(dialog.handleMouse(editMouseEvent('wheel', 8, 8, { wheelDelta: -3 }))).toEqual({
+      handled: true,
+      render: true,
+    });
+    const scrolled = dialog.render(40).map(strip);
+    expect(scrolled.some((line) => line.includes('… 1 previous'))).toBe(true);
+    expect(scrolled.some((line) => line.includes('… 3 more'))).toBe(true);
+
+    const prevIndicatorRow = scrolled.findIndex((line) => line.includes('… 1 previous'));
+    expect(dialog.handleMouse(editMouseEvent('press', 8, prevIndicatorRow))).toEqual({
+      handled: true,
+      render: false,
+    });
+
+    const line03Row = scrolled.findIndex((line) => line.includes('line-03'));
+    const dashCol = scrolled[line03Row]!.indexOf('-');
+    expect(dialog.handleMouse(editMouseEvent('press', dashCol, line03Row))).toEqual({
+      handled: true,
+      focus: true,
+      render: true,
+    });
+    dialog.handleInput('Z');
+    const afterClick = dialog.render(40).map(strip);
+    expect(afterClick.some((line) => line.includes('… 1 previous'))).toBe(true);
+    expect(afterClick[line03Row]).toContain('lineZ-03');
+
+    dialog.handleInput('\r');
+    expect(onDone).toHaveBeenCalledWith({
+      kind: 'save',
+      goalId: 'g1',
+      objective: initial.replace('line-03', 'lineZ-03'),
+    });
+  });
+
+  it('places cursor accurately on a horizontally scrolled long line', () => {
+    const onDone = vi.fn();
+    const longLine = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    const dialog = new GoalQueueEditDialogComponent({
+      goal: goal('g1', longLine),
+      onDone,
+    });
+    dialog.focused = true;
+    const width = 20;
+    const lines = dialog.render(width).map(strip);
+    const inputRow = lines.findIndex((line) => line.includes('> '));
+    const colOf5 = lines[inputRow]!.indexOf('5');
+    expect(colOf5).toBeGreaterThanOrEqual(5);
+
+    expect(dialog.handleMouse(editMouseEvent('press', colOf5, inputRow, { width }))).toEqual({
+      handled: true,
+      focus: true,
+      render: true,
+    });
+    dialog.handleInput('!');
+    dialog.handleInput('\r');
+
+    expect(onDone).toHaveBeenCalledWith({
+      kind: 'save',
+      goalId: 'g1',
+      objective: 'abcdefghijklmnopqrstuvwxyz01234!56789',
+    });
   });
 });

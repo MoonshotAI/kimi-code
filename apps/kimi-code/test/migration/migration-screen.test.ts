@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import type { TuiMouseEvent } from '@moonshot-ai/pi-tui';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
   MigrationScreenComponent,
   type MigrationScreenResult,
@@ -594,5 +595,148 @@ describe('MigrationScreenComponent — execution wiring', () => {
     const out = c.render(80).join('\n');
     expect(out).toContain('Migration failed');
     expect(out).toContain('Reason: boom');
+  });
+});
+
+describe('MigrationScreenComponent — mouse interactions', () => {
+  function mouse(type: TuiMouseEvent['type'], y: number, wheelDelta?: number): TuiMouseEvent {
+    return {
+      type,
+      button: type === 'move' || type === 'wheel' ? 'none' : 'left',
+      x: 4,
+      y,
+      screenX: 4,
+      screenY: y,
+      width: 80,
+      height: 16,
+      shift: false,
+      alt: false,
+      ctrl: false,
+      ...(wheelDelta !== undefined ? { wheelDelta } : {}),
+    };
+  }
+
+  function useFakeDate(): void {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+  }
+
+  it('guards unfocused clicks, moves selection on hover, and prevents double-click leakage across phases', async () => {
+    useFakeDate();
+    let resolveRun: ((report: MigrationReport) => void) | undefined;
+    let captured: RunMigrationInput | undefined;
+    let completed: MigrationScreenResult | undefined;
+    const c = new MigrationScreenComponent({
+      plan: makePlan(),
+      sourceHome: '/x/.kimi',
+      targetHome: '/y/.kimi-code',
+      runMigration: (input) => {
+        captured = input;
+        return new Promise<MigrationReport>((resolve) => {
+          resolveRun = resolve;
+        });
+      },
+      onComplete: (result) => {
+        completed = result;
+      },
+    });
+
+    const ask1Lines = c.render(80);
+    const migrateNowRow = ask1Lines.findIndex((line) => line.includes('Migrate now'));
+    const laterRow = ask1Lines.findIndex((line) => line.includes('Ask me later'));
+    expect(migrateNowRow).toBe(8);
+    expect(laterRow).toBe(9);
+
+    vi.advanceTimersByTime(300);
+    expect(c.handleMouse(mouse('move', laterRow))).toBeUndefined();
+    expect(c.handleMouse(mouse('wheel', laterRow, 1))).toBeUndefined();
+    expect(c.handleMouse(mouse('press', laterRow))).toEqual({ handled: true });
+    expect(c.handleMouse(mouse('click', laterRow))).toEqual({ handled: true, focus: true });
+    expect(completed).toBeUndefined();
+
+    c.focused = true;
+    expect(c.handleMouse(mouse('wheel', laterRow, 1))).toEqual({ handled: true });
+    expect(c.handleMouse(mouse('move', laterRow))).toEqual({ handled: true, render: true });
+    expect(c.render(80)[laterRow]).toContain('❯');
+
+    c.handleMouse(mouse('press', migrateNowRow));
+    expect(c.handleMouse(mouse('click', laterRow))).toEqual({ handled: true });
+    expect(completed).toBeUndefined();
+
+    c.handleMouse(mouse('press', migrateNowRow));
+    expect(c.handleMouse(mouse('click', migrateNowRow))).toEqual({ handled: true, render: true });
+
+    const ask2Lines = c.render(80);
+    const configOnlyRow = ask2Lines.findIndex((line) => line.includes('Config only'));
+    const allSessionsRow = ask2Lines.findIndex((line) => line.includes('Config + 1365 sessions'));
+    expect(configOnlyRow).toBe(5);
+    expect(allSessionsRow).toBe(6);
+
+    c.handleMouse(mouse('press', configOnlyRow));
+    expect(c.handleMouse(mouse('click', configOnlyRow))).toEqual({ handled: true });
+    expect(captured).toBeUndefined();
+
+    vi.advanceTimersByTime(300);
+    expect(c.handleMouse(mouse('move', allSessionsRow))).toEqual({ handled: true, render: true });
+    c.handleMouse(mouse('press', allSessionsRow));
+    expect(c.handleMouse(mouse('click', allSessionsRow))).toEqual({ handled: true, render: true });
+    expect(captured?.scope.sessions).toBe(true);
+    expect(c.render(80).join('\n')).toContain('Migrating from kimi-cli');
+
+    expect(c.handleMouse(mouse('wheel', 3, 1))).toEqual({ handled: true });
+    expect(c.handleMouse(mouse('click', 3))).toBeUndefined();
+
+    vi.advanceTimersByTime(500);
+    resolveRun!(makeReport());
+    await vi.waitFor(() => {
+      expect(c.render(80).join('\n')).toContain('Migration complete');
+    });
+
+    c.handleMouse(mouse('press', 3));
+    expect(c.handleMouse(mouse('click', 3))).toEqual({ handled: true });
+    expect(completed).toBeUndefined();
+
+    vi.advanceTimersByTime(300);
+    c.handleMouse(mouse('press', 3));
+    expect(c.handleMouse(mouse('click', 3))).toEqual({ handled: true, render: true });
+    expect(completed).toEqual({ decision: 'now', migrated: true });
+    expect(c.handleMouse(mouse('click', 3))).toBeUndefined();
+  });
+
+  it('closes a failed migration result on click only after settling', async () => {
+    useFakeDate();
+    let completed: MigrationScreenResult | undefined;
+    const c = new MigrationScreenComponent({
+      plan: makePlan(),
+      sourceHome: '/x/.kimi',
+      targetHome: '/y/.kimi-code',
+      skipDecisionStep: true,
+      runMigration: async () => {
+        throw new Error('disk full');
+      },
+      onComplete: (result) => {
+        completed = result;
+      },
+    });
+    c.focused = true;
+    const configOnlyRow = c.render(80).findIndex((line) => line.includes('Config only'));
+
+    vi.advanceTimersByTime(300);
+    c.handleMouse(mouse('press', configOnlyRow));
+    c.handleMouse(mouse('click', configOnlyRow));
+    await vi.waitFor(() => {
+      expect(c.render(80).join('\n')).toContain('Reason: disk full');
+    });
+
+    c.handleMouse(mouse('press', 4));
+    expect(c.handleMouse(mouse('click', 4))).toEqual({ handled: true });
+    expect(completed).toBeUndefined();
+
+    vi.advanceTimersByTime(300);
+    c.handleMouse(mouse('press', 4));
+    expect(c.handleMouse(mouse('click', 4))).toEqual({ handled: true, render: true });
+    expect(completed).toEqual({ decision: 'now', migrated: false });
   });
 });

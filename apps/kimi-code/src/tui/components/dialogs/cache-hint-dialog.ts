@@ -1,14 +1,17 @@
 import {
-  Container,
   matchesKey,
   Key,
   truncateToWidth,
   visibleWidth,
+  type Component,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { formatIdleDuration } from '#/tui/utils/cache-hint';
+import { ListMouseTracker } from '#/tui/utils/mouse-regions';
 import { SearchableList } from '#/tui/utils/searchable-list';
 import { formatTokenCount } from '#/utils/usage/usage-format';
 
@@ -46,13 +49,13 @@ export interface CacheHintDialogOptions {
   readonly onCancel: () => void;
 }
 
-export class CacheHintDialogComponent extends Container implements Focusable {
+export class CacheHintDialogComponent implements Component, Focusable {
   focused = false;
   private readonly opts: CacheHintDialogOptions;
   private readonly list: SearchableList<CacheHintOption>;
+  private readonly mouse = new ListMouseTracker<number>();
 
   constructor(opts: CacheHintDialogOptions) {
-    super();
     this.opts = opts;
     this.list = new SearchableList({
       items: OPTIONS,
@@ -62,20 +65,21 @@ export class CacheHintDialogComponent extends Container implements Focusable {
     });
   }
 
-  handleInput(data: string): void {
-    if (matchesKey(data, Key.escape)) {
-      this.opts.onCancel();
-      return;
-    }
-    if (matchesKey(data, Key.enter)) {
-      const chosen = this.list.selected();
-      if (chosen !== undefined) this.opts.onSelect(chosen.value);
-      return;
-    }
-    this.list.handleKey(data);
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    return this.mouse.handle(event, {
+      focused: this.focused,
+      onActivate: (index) => {
+        const option = OPTIONS[index];
+        if (option === undefined) return;
+        this.list.selectIndex(index);
+        this.opts.onSelect(option.value);
+      },
+      onHover: (index) => this.list.selectIndex(index),
+    });
   }
 
-  override render(width: number): string[] {
+  render(width: number): string[] {
+    this.mouse.reset();
     const view = this.list.view();
     const title = `This session has been idle for ${formatIdleDuration(this.opts.idleSeconds)} and is ~${formatTokenCount(this.opts.totalTokens)} tokens.`;
     const lines: string[] = [
@@ -93,20 +97,43 @@ export class CacheHintDialogComponent extends Container implements Focusable {
     for (let i = view.page.start; i < view.page.end; i++) {
       const opt = view.items[i]!;
       const isSelected = i === view.selectedIndex;
-      const pointer = isSelected ? SELECT_POINTER : ' ';
-      let line = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
-      line += isSelected
-        ? currentTheme.boldFg('primary', opt.label)
-        : currentTheme.fg('text', opt.label);
-      if (opt.description !== undefined) {
-        const gap = maxLabelWidth - visibleWidth(opt.label) + 4;
-        line += ' '.repeat(gap) + currentTheme.fg('textMuted', opt.description);
-      }
-      lines.push(line);
+      this.mouse.track(lines, i, () => {
+        lines.push(formatOptionRow(opt, isSelected, maxLabelWidth));
+      });
     }
 
     lines.push('');
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width));
   }
+
+  handleInput(data: string): void {
+    if (matchesKey(data, Key.enter)) {
+      const chosen = this.list.selected();
+      if (chosen !== undefined) this.opts.onSelect(chosen.value);
+      return;
+    }
+    if (matchesKey(data, Key.escape)) {
+      this.opts.onCancel();
+      return;
+    }
+    this.list.handleKey(data);
+  }
+
+  invalidate(): void {}
+}
+
+function formatOptionRow(
+  opt: CacheHintOption,
+  isSelected: boolean,
+  maxLabelWidth: number,
+): string {
+  const pointer = isSelected ? SELECT_POINTER : ' ';
+  const lead = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
+  const title = isSelected
+    ? currentTheme.boldFg('primary', opt.label)
+    : currentTheme.fg('text', opt.label);
+  if (opt.description === undefined) return `${lead}${title}`;
+  const gap = maxLabelWidth - visibleWidth(opt.label) + 4;
+  return `${lead}${title}${' '.repeat(gap)}${currentTheme.fg('textMuted', opt.description)}`;
 }

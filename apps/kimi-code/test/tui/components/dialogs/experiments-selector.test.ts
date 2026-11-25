@@ -1,5 +1,6 @@
 import type { ExperimentalFeatureState } from '@moonshot-ai/kimi-code-sdk';
-import { describe, expect, it, vi } from 'vitest';
+import type { TuiMouseEvent } from '@moonshot-ai/pi-tui';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
   ExperimentsSelectorComponent,
@@ -119,5 +120,125 @@ describe('ExperimentsSelectorComponent', () => {
     expect(onCancel).not.toHaveBeenCalled();
     selector.handleInput(ESC);
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  function pointerEvent(
+    type: TuiMouseEvent['type'],
+    y: number,
+    wheelDelta?: number,
+  ): TuiMouseEvent {
+    return {
+      type,
+      button: type === 'move' || type === 'wheel' ? 'none' : 'left',
+      x: 6,
+      y,
+      screenX: 6,
+      screenY: y,
+      width: 120,
+      height: 30,
+      shift: false,
+      alt: false,
+      ctrl: false,
+      ...(wheelDelta !== undefined ? { wheelDelta } : {}),
+    };
+  }
+
+  function enableFakeDate(): void {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+  }
+
+  it('supports hover, row toggle clicks, apply button click, and unfocused/settling guards', () => {
+    enableFakeDate();
+    const onApply = vi.fn<(changes: readonly ExperimentalFeatureDraftChange[]) => void>();
+    const selector = new ExperimentsSelectorComponent({
+      features: [
+        feature({ id: 'first', title: 'First Feature', enabled: true }),
+        feature({ id: 'second', title: 'Second Feature', enabled: false }),
+        feature({ id: 'locked', title: 'Locked Feature', enabled: true, source: 'env' }),
+      ],
+      onApply,
+      onCancel: vi.fn(),
+    });
+    const lines = selector.render(120).map(strip);
+    const secondRow = lines.findIndex((line) => line.includes('Second Feature'));
+    const lockedRow = lines.findIndex((line) => line.includes('Locked Feature'));
+    const applyRow = lines.findIndex((line) => line.includes('[ Apply changes and reload ]'));
+
+    expect(selector.handleMouse(pointerEvent('press', secondRow))).toEqual({ handled: true });
+    expect(selector.handleMouse(pointerEvent('click', secondRow))).toEqual({
+      handled: true,
+      focus: true,
+    });
+    expect(onApply).not.toHaveBeenCalled();
+
+    selector.focused = true;
+    expect(selector.handleMouse(pointerEvent('click', secondRow))).toEqual({ handled: true });
+    expect(text(selector)).toContain('Second Feature  disabled');
+
+    vi.advanceTimersByTime(300);
+    expect(selector.handleMouse(pointerEvent('move', secondRow + 1))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(selector.render(120).map(strip)[secondRow]).toContain('❯ Second Feature');
+
+    selector.handleMouse(pointerEvent('press', applyRow));
+    selector.handleMouse(pointerEvent('click', applyRow));
+    expect(onApply).not.toHaveBeenCalled();
+
+    selector.handleMouse(pointerEvent('press', secondRow));
+    expect(selector.handleMouse(pointerEvent('click', lockedRow))).toEqual({ handled: true });
+    expect(text(selector)).toContain('Second Feature  disabled');
+
+    selector.handleMouse(pointerEvent('press', lockedRow));
+    selector.handleMouse(pointerEvent('click', lockedRow));
+    expect(text(selector)).toContain('Locked Feature  enabled');
+
+    selector.handleMouse(pointerEvent('press', secondRow + 2));
+    selector.handleMouse(pointerEvent('click', secondRow + 2));
+    expect(text(selector)).toContain('Second Feature  enabled');
+    expect(text(selector)).toContain('[ Apply changes and reload ]  1 change');
+
+    selector.handleMouse(pointerEvent('press', applyRow));
+    selector.handleMouse(pointerEvent('click', applyRow));
+    expect(onApply).toHaveBeenCalledWith([{ id: 'second', enabled: true }]);
+  });
+
+  it('pages long lists on wheel and consumes wheel on short lists', () => {
+    const shortSelector = new ExperimentsSelectorComponent({
+      features: [feature()],
+      onApply: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    shortSelector.focused = true;
+    shortSelector.render(120);
+    expect(shortSelector.handleMouse(pointerEvent('wheel', 4, 1))).toEqual({
+      handled: true,
+      render: false,
+    });
+
+    const many = Array.from({ length: 10 }, (_, idx) =>
+      feature({ id: `feat_${String(idx + 1)}`, title: `Feature ${String(idx + 1)}` }),
+    );
+    const longSelector = new ExperimentsSelectorComponent({
+      features: many,
+      onApply: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    longSelector.focused = true;
+    longSelector.render(120);
+    expect(longSelector.handleMouse(pointerEvent('wheel', 4, 1))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(text(longSelector)).toContain('Feature 9');
+    expect(longSelector.handleMouse(pointerEvent('wheel', 4, -1))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(text(longSelector)).toContain('Feature 1');
   });
 });

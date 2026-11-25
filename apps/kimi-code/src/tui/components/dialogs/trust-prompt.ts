@@ -12,8 +12,8 @@ import type { WorkspaceTrustInfo } from '@moonshot-ai/kimi-code-sdk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme, type ColorToken } from '#/tui/theme';
+import { ListMouseTracker } from '#/tui/utils/mouse-regions';
 import { pageView } from '#/tui/utils/paging';
-import { isSettlingClick } from '#/tui/utils/terminal-focus';
 
 export type TrustPromptChoice = 'trust' | 'distrust';
 
@@ -33,9 +33,9 @@ export class TrustPromptComponent implements Component, Focusable {
   private selectedIndex = 0;
   private disclosureIndex = 0;
   private disclosurePageSize = 1;
+  private disclosureBodyLength = 0;
   private canConfirm = true;
-  private optionRows: readonly number[] = [];
-  private readonly shownAt = Date.now();
+  private readonly mouse = new ListMouseTracker<number>();
 
   constructor(private readonly opts: TrustPromptOptions) {}
 
@@ -69,34 +69,34 @@ export class TrustPromptComponent implements Component, Focusable {
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    if (!this.focused) {
-      if (event.type === 'press') return { handled: true };
-      if (event.type === 'click') return { handled: true, focus: true };
-      return undefined;
-    }
-    if (event.type === 'move') {
-      const index = this.optionRows.indexOf(event.y);
-      if (index === -1) return undefined;
-      const changed = this.selectedIndex !== index;
-      this.selectedIndex = index;
-      return { handled: true, render: changed };
-    }
-    if (event.button !== 'left') return undefined;
-    const index = this.optionRows.indexOf(event.y);
-    if (index === -1) return undefined;
-    if (event.type === 'press') {
-      this.selectedIndex = index;
-      return { handled: true, render: true };
-    }
-    if (event.type === 'click' && this.canConfirm && !isSettlingClick(this.shownAt)) {
-      this.selectedIndex = index;
-      this.opts.onSelect(OPTIONS[index]!.value);
-    }
-    return { handled: true };
+    return this.mouse.handle(event, {
+      focused: this.focused,
+      canActivate: this.canConfirm,
+      onWheel: (delta) => (delta === 0 ? false : this.pageDisclosure(delta < 0 ? -1 : 1)),
+      onHover: (index) => {
+        if (this.selectedIndex === index) return false;
+        this.selectedIndex = index;
+        return true;
+      },
+      onActivate: (index) => {
+        this.selectedIndex = index;
+        const option = OPTIONS[index];
+        if (option !== undefined) this.opts.onSelect(option.value);
+      },
+    });
+  }
+
+  private pageDisclosure(direction: -1 | 1): boolean {
+    if (this.disclosureBodyLength <= this.disclosurePageSize) return false;
+    const current = pageView(this.disclosureBodyLength, this.disclosureIndex, this.disclosurePageSize);
+    const nextPage = Math.max(0, Math.min(current.pageCount - 1, current.page + direction));
+    if (nextPage === current.page) return false;
+    this.disclosureIndex = nextPage * Math.max(1, Math.floor(this.disclosurePageSize));
+    return true;
   }
 
   render(width: number): string[] {
-    this.optionRows = [];
+    this.mouse.reset();
     const rule = currentTheme.fg('primary', '─'.repeat(width));
     const availableRows = Math.max(0, Math.floor(this.opts.getAvailableRows?.() ?? Infinity));
     const header = [
@@ -133,10 +133,12 @@ export class TrustPromptComponent implements Component, Focusable {
     footer.push(rule);
     this.canConfirm = header.length + footer.length + 2 <= availableRows;
     if (!this.canConfirm) {
+      this.disclosureBodyLength = 0;
       return [header[1]!, ' Enlarge terminal to review sources. Esc exit.']
         .slice(0, availableRows)
         .map((line) => truncateToWidth(line, width));
     }
+    this.disclosureBodyLength = body.length;
     const needsPaging = header.length + body.length + footer.length > availableRows;
     this.disclosurePageSize = needsPaging
       ? availableRows - header.length - footer.length - 1
@@ -147,7 +149,9 @@ export class TrustPromptComponent implements Component, Focusable {
     while (lines.length < header.length + this.disclosurePageSize) lines.push('');
     if (page.pageCount > 1)
       lines.push(currentTheme.fg('textMuted', ` ←→ page · ${page.page + 1} / ${page.pageCount}`));
-    this.optionRows = optionRows.map((row) => lines.length + row);
+    for (const [i, row] of optionRows.entries()) {
+      this.mouse.add(lines.length + row, lines.length + row + 1, i);
+    }
     lines.push(...footer);
     return lines.map((line) => truncateToWidth(line, width));
   }

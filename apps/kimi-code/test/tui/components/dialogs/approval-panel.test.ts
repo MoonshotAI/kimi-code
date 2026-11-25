@@ -646,13 +646,17 @@ describe('ApprovalPanelComponent', () => {
       return lines.slice(lines.findIndex((line) => line.includes('1. ')) - 1);
     }
 
-    function mouse(type: 'move' | 'press' | 'release' | 'click', y: number): TuiMouseEvent {
+    function mouse(
+      type: 'move' | 'press' | 'release' | 'click',
+      y: number,
+      x = 4,
+    ): TuiMouseEvent {
       return {
         type,
         button: type === 'move' ? 'none' : 'left',
-        x: 4,
+        x,
         y,
-        screenX: 4,
+        screenX: x,
         screenY: y,
         width: 58,
         height: 12,
@@ -711,9 +715,9 @@ describe('ApprovalPanelComponent', () => {
       expect(lines[9]).toBe('   ↑/↓ select · 1/2/3 choose · ↵ confirm');
     });
 
-    function click(dialog: ApprovalPanelComponent, row: number): unknown {
+    function click(dialog: ApprovalPanelComponent, row: number, x = 4): unknown {
       let result: unknown;
-      for (const type of ['press', 'release', 'click'] as const) result = footPart(dialog).handleMouse?.(mouse(type, row));
+      for (const type of ['press', 'release', 'click'] as const) result = footPart(dialog).handleMouse?.(mouse(type, row, x));
       return result;
     }
 
@@ -824,6 +828,65 @@ describe('ApprovalPanelComponent', () => {
       expect(responses).toEqual([]);
       dialog.handleInput('\r');
       expect(responses).toEqual([{ response: 'rejected', feedback: 'too risky', selected_label: undefined }]);
+    });
+
+    it('positions the cursor when clicking inside the inline feedback input while preserving other-choice exit', () => {
+      const advance = useClock();
+      const { dialog, responses } = dockedDialog(makePending());
+      advance(1_000);
+      dialog.handleInput('4');
+      for (const key of 'hello world') dialog.handleInput(key);
+
+      const footLines = foot(dialog);
+      const feedbackRow = footLines.findIndex((line) => line.includes('4. Reject with feedback'));
+      const textColInFoot = footLines[feedbackRow]!.indexOf('hello world') - 1;
+      expect(textColInFoot).toBeGreaterThan(0);
+
+      const pressResult = footPart(dialog).handleMouse?.(mouse('press', feedbackRow, textColInFoot + 2));
+      expect(pressResult).toMatchObject({ handled: true, focus: true, render: true, focusTarget: dialog });
+      expect(footPart(dialog).handleMouse?.(mouse('release', feedbackRow, textColInFoot + 2))).toEqual({
+        handled: true,
+      });
+      expect(footPart(dialog).handleMouse?.(mouse('click', feedbackRow, textColInFoot + 2))).toEqual({
+        handled: true,
+      });
+      dialog.handleInput('X');
+      expect(responses).toEqual([]);
+
+      const updatedFoot = foot(dialog);
+      const updatedLine = updatedFoot[feedbackRow]!.replaceAll(/\u001B_[^\u0007]*\u0007/g, '');
+      expect(updatedLine).toContain('heXllo world');
+      const updatedColInGutter = updatedLine.indexOf('heXllo world');
+
+      const gutter = dialog.children.at(-1) as GutterContainer;
+      const gutterEvent: TuiMouseEvent = {
+        type: 'press',
+        button: 'left',
+        x: updatedColInGutter + 8,
+        y: feedbackRow,
+        screenX: updatedColInGutter + 8,
+        screenY: feedbackRow,
+        width: 60,
+        height: updatedFoot.length,
+        shift: false,
+        alt: false,
+        ctrl: false,
+      };
+      expect(gutter.handleMouse(gutterEvent)).toMatchObject({ handled: true, render: true });
+      expect(gutter.handleMouse({ ...gutterEvent, type: 'release' })).toMatchObject({ handled: true });
+      expect(gutter.handleMouse({ ...gutterEvent, type: 'click' })).toMatchObject({ handled: true });
+      dialog.handleInput('Y');
+
+      click(dialog, footRow(dialog, '1. Approve once'));
+      expect(responses).toEqual([]);
+      expect(foot(dialog)).toContain('   ▶ 1. Approve once');
+
+      click(dialog, footRow(dialog, '4. Reject with feedback'));
+      expect(responses).toEqual([]);
+      dialog.handleInput('\r');
+      expect(responses).toEqual([
+        { response: 'rejected', feedback: 'heXllo wYorld', selected_label: undefined },
+      ]);
     });
   });
 });

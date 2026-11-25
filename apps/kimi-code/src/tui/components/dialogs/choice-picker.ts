@@ -259,6 +259,7 @@ export class ChoicePickerComponent implements Component, Focusable {
 
 export interface ChoicePreview {
   render(value: string, width: number): readonly string[];
+  handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
   invalidate(): void;
   dispose(): void;
 }
@@ -343,7 +344,20 @@ export class PreviewChoicePickerComponent extends DockSection implements Focusab
   }
 
   protected override handlePartMouse(part: DockPart, event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    if (event.type === 'wheel' && part === 'body') return undefined;
+    if (part === 'body') {
+      if (!this.focused) return focusOnUnfocusedClick(false, event);
+      if (event.type === 'wheel') {
+        const delta = event.wheelDelta ?? 0;
+        if (delta === 0) return { handled: true, render: false };
+        if (this.scrollBody(delta)) return { handled: true, render: true };
+        if (this.opts.onPreviewScroll !== undefined) {
+          this.opts.onPreviewScroll(delta < 0 ? -1 : 1);
+          return { handled: true, render: true };
+        }
+        return { handled: true, render: false };
+      }
+      return this.opts.preview.handleMouse?.(event);
+    }
     if (event.type === 'wheel' || part === 'head') {
       return this.showingNewChoiceFromTop(() => this.picker.handleMouse(event));
     }

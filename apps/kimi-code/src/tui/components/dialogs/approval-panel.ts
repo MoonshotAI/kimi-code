@@ -13,6 +13,7 @@ import {
 import { DockSection, type DockLayout, type DockPart } from '#/tui/components/chrome/dock-section';
 import { normalizeCapsLockedCtrl } from '#/tui/components/editor/custom-editor';
 import { currentTheme } from '#/tui/theme';
+import { forwardEmbeddedMouse, isPointInRect, type EmbeddedRect } from '#/tui/utils/mouse-regions';
 import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 import { isSettlingClick } from '#/tui/utils/terminal-focus';
 
@@ -229,6 +230,12 @@ export interface ApprovalPanelOptions {
   readonly onFocusUpdates?: () => boolean;
 }
 
+interface RenderedFeedbackLine {
+  readonly line: string;
+  readonly prefixWidth: number;
+  readonly inputWidth: number;
+}
+
 export class ApprovalPanelComponent extends DockSection implements Focusable {
   focused = false;
   private selectedIndex = 0;
@@ -245,6 +252,7 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
   private readonly shownAt = Date.now();
   private choiceRows: readonly number[] = [];
   private hoverIndex: number | undefined;
+  private feedbackInputRect: EmbeddedRect | undefined;
 
   constructor(
     request: PendingApproval,
@@ -381,6 +389,21 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
       return { handled: true, render: true };
     }
     if (event.button !== 'left') return undefined;
+    if (
+      part === 'foot' &&
+      this.focused &&
+      this.feedbackMode &&
+      this.feedbackInputRect !== undefined &&
+      isPointInRect(this.feedbackInputRect, event.x, event.y)
+    ) {
+      if (event.type === 'press') {
+        const forwarded = forwardEmbeddedMouse(this.feedbackInput, this.feedbackInputRect, event);
+        return forwarded === undefined ? undefined : { ...forwarded, render: true };
+      }
+      if (event.type === 'release' || event.type === 'click') {
+        return { handled: true };
+      }
+    }
     if (event.type === 'click' && !this.focused) return { handled: true, focus: true };
     if (index === -1) return undefined;
     if (event.type === 'click' && !isSettlingClick(this.shownAt)) {
@@ -434,11 +457,14 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
   private renderFoot(width: number): string[] {
     this.ensureValidSelection();
     this.feedbackInput.focused = this.focused && this.feedbackMode;
+    this.feedbackInputRect = undefined;
     const { data } = this.request;
     const dim = (text: string) => currentTheme.fg('textDim', text);
     const strong = (text: string) => currentTheme.fg('textStrong', text);
     const selectColorBold = (text: string) => currentTheme.boldFg('accent', text);
-    const indent = (text: string): string => `  ${text}`;
+    const indentPrefix = '  ';
+    const indentWidth = visibleWidth(indentPrefix);
+    const indent = (text: string): string => `${indentPrefix}${text}`;
     const docked = this.layout !== undefined;
     const hoverBackground = this.focused && !this.feedbackMode ? currentTheme.hoverBackground() : undefined;
     const hovered = hoverBackground === undefined ? undefined : this.hoverIndex;
@@ -453,12 +479,27 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
       const isSelected = idx === this.selectedIndex;
       const labelWithNum = `${String(idx + 1)}. ${option.label}`;
       const typingFeedback = this.feedbackMode && option.requires_feedback === true && isSelected;
-      choiceRows.push(lines.length);
-      const choiceLine = typingFeedback
-        ? this.renderInlineFeedbackLine(width - 2, labelWithNum)
-        : isSelected
+      const row = lines.length;
+      choiceRows.push(row);
+      let choiceLine: string;
+      if (typingFeedback) {
+        const rendered = this.renderInlineFeedbackLine(width - indentWidth, labelWithNum);
+        choiceLine = rendered.line;
+        this.feedbackInputRect =
+          rendered.inputWidth > 0
+            ? {
+                x: indentWidth + rendered.prefixWidth,
+                y: row,
+                width: rendered.inputWidth,
+                height: 1,
+                contentOffsetX: 2,
+              }
+            : undefined;
+      } else {
+        choiceLine = isSelected
           ? `${selectColorBold('▶')} ${selectColorBold(labelWithNum)}`
           : `  ${strong(labelWithNum)}`;
+      }
       const line = indent(choiceLine);
       lines.push(
         idx === hovered && hoverBackground !== undefined
@@ -548,12 +589,18 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
     }
   }
 
-  private renderInlineFeedbackLine(width: number, labelWithNum: string): string {
+  private renderInlineFeedbackLine(width: number, labelWithNum: string): RenderedFeedbackLine {
     const prefix = `${currentTheme.boldFg('accent', '▶')} ${currentTheme.boldFg('accent', labelWithNum)}  `;
-    const inputWidth = Math.max(4, width - visibleWidth(prefix) + 2);
+    const prefixWidth = visibleWidth(prefix);
+    const visibleInputWidth = Math.max(0, width - prefixWidth);
+    const inputWidth = Math.max(4, visibleInputWidth + 2);
     const inputLine = this.feedbackInput.render(inputWidth)[0] ?? '> ';
     const inlineInput = inputLine.startsWith('> ') ? inputLine.slice(2) : inputLine;
-    return prefix + inlineInput;
+    return {
+      line: prefix + inlineInput,
+      prefixWidth,
+      inputWidth: visibleInputWidth,
+    };
   }
 
   override invalidate(): void {

@@ -1,17 +1,24 @@
 import {
-  Container,
   Editor,
   isKeyRelease,
   Key,
   matchesKey,
   truncateToWidth,
   visibleWidth,
+  type Component,
   type Focusable,
   type TUI,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 import { normalizeCapsLockedCtrl } from '#/tui/components/editor/custom-editor';
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
+import {
+  focusOnUnfocusedClick,
+  forwardEmbeddedMouse,
+  type EmbeddedRect,
+} from '#/tui/utils/mouse-regions';
 
 export type FeedbackInputDialogResult =
   | { readonly kind: 'ok'; readonly value: string }
@@ -33,16 +40,16 @@ class FeedbackField extends Editor {
   }
 }
 
-export class FeedbackInputDialogComponent extends Container implements Focusable {
+export class FeedbackInputDialogComponent implements Component, Focusable {
   focused = false;
 
   private readonly input: FeedbackField;
   private readonly onDone: (result: FeedbackInputDialogResult) => void;
   private done = false;
   private emptyHinted = false;
+  private fieldRect: EmbeddedRect | undefined;
 
   constructor(tui: TUI, onDone: (result: FeedbackInputDialogResult) => void) {
-    super();
     this.onDone = onDone;
     this.input = new FeedbackField(tui, createEditorTheme(), { paddingX: 1 });
     this.input.onSubmit = (value) => {
@@ -67,13 +74,22 @@ export class FeedbackInputDialogComponent extends Container implements Focusable
     this.input.handleInput(key);
   }
 
-  override invalidate(): void {
-    super.invalidate();
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (this.done) return undefined;
+    if (!this.focused) return focusOnUnfocusedClick(false, event);
+    const forwarded = forwardEmbeddedMouse(this.input, this.fieldRect, event);
+    if (forwarded !== undefined) return forwarded;
+    if (event.type === 'wheel') return { handled: true };
+    return undefined;
+  }
+
+  invalidate(): void {
     this.input.invalidate();
   }
 
-  override render(width: number): string[] {
+  render(width: number): string[] {
     this.input.focused = this.focused && !this.done;
+    this.fieldRect = undefined;
 
     const safeWidth = Math.max(0, width);
     if (safeWidth <= 0) return [''];
@@ -83,18 +99,32 @@ export class FeedbackInputDialogComponent extends Container implements Focusable
     const hint = truncateToWidth(currentTheme.fg('textMuted', ` ${FOOTER}`), safeWidth);
     const subtitleText = this.emptyHinted ? SUBTITLE_EMPTY : SUBTITLE_DEFAULT;
     const subtitle = truncateToWidth(currentTheme.fg('textDim', ` ${subtitleText}`), safeWidth);
+    const header = [rule, title, hint, '', subtitle];
     const fieldWidth = Math.max(1, safeWidth - 2);
-    const field = this.renderField(fieldWidth).map((line) => truncateToWidth(` ${line}`, safeWidth));
-
-    return [rule, title, hint, '', subtitle, ...field, '', rule].map((line) =>
-      truncateToWidth(line, safeWidth),
+    const field = this.renderField(fieldWidth, header.length, safeWidth).map((line) =>
+      truncateToWidth(` ${line}`, safeWidth),
     );
+
+    return [...header, ...field, '', rule].map((line) => truncateToWidth(line, safeWidth));
   }
 
-  private renderField(width: number): string[] {
+  private renderField(width: number, startRow: number, safeWidth: number): string[] {
     if (width < 4) {
-      const lines = this.input.render(Math.max(1, width)).slice(1, -1);
+      const editorWidth = Math.max(1, width);
+      const lines = this.input.render(editorWidth).slice(1, -1);
       while (lines.length < MIN_FIELD_LINES) lines.push('');
+      const visibleEditorWidth = Math.min(editorWidth, Math.max(0, safeWidth - 1));
+      this.fieldRect =
+        visibleEditorWidth > 0
+          ? {
+              x: 1,
+              y: startRow,
+              width: visibleEditorWidth,
+              height: lines.length,
+              contentOffsetX: 0,
+              contentOffsetY: 1,
+            }
+          : undefined;
       return lines;
     }
 
@@ -105,6 +135,14 @@ export class FeedbackInputDialogComponent extends Container implements Focusable
     const bottom = hasBorders ? (rendered.at(-1) ?? '') : '';
     const body = hasBorders ? rendered.slice(1, -1) : [...rendered];
     while (body.length < MIN_FIELD_LINES) body.push('');
+    this.fieldRect = {
+      x: 2,
+      y: startRow,
+      width: editorWidth,
+      height: body.length + 2,
+      contentOffsetX: 0,
+      contentOffsetY: 0,
+    };
 
     const paint = (text: string): string => currentTheme.fg('primary', text);
     const row = (line: string): string => {

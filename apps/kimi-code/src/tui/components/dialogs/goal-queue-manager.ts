@@ -1,11 +1,13 @@
 import {
-  Container,
   Key,
   matchesKey,
   CURSOR_MARKER,
   truncateToWidth,
   visibleWidth,
+  type Component,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
@@ -16,6 +18,17 @@ import type {
   UpcomingGoal,
 } from '#/tui/goal-queue-store';
 import { currentTheme } from '#/tui/theme';
+import {
+  focusOnUnfocusedClick,
+  forwardEmbeddedMouse,
+  isPointInRect,
+  ListMouseTracker,
+  renderInlineSegments,
+  SpanHitMap,
+  type EmbeddedRect,
+  type InlineSegment,
+} from '#/tui/utils/mouse-regions';
+import { StableWindow } from '#/tui/utils/paging';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
@@ -57,21 +70,38 @@ export interface GoalQueueEditDialogOptions {
   readonly onDone: (result: GoalQueueEditResult) => void;
 }
 
-export class GoalQueueManagerComponent extends Container implements Focusable {
+type GoalQueueHintAction =
+  | 'toggle-reorder'
+  | 'move-up'
+  | 'move-down'
+  | 'edit'
+  | 'delete'
+  | 'cancel';
+
+interface RenderedGoalInputRow {
+  readonly lineIndex: number;
+  readonly prefixWidth: number;
+  readonly viewStartOffset: number;
+}
+
+export class GoalQueueManagerComponent implements Component, Focusable {
   focused = false;
 
   private readonly opts: GoalQueueManagerOptions;
   private goals: readonly UpcomingGoal[];
   private list: SearchableList<UpcomingGoal>;
+  private readonly listMouse = new ListMouseTracker<number>();
+  private readonly hintHits = new SpanHitMap<GoalQueueHintAction>();
   private movingGoalId: string | undefined;
   private busy = false;
 
   constructor(opts: GoalQueueManagerOptions) {
-    super();
     this.opts = opts;
     this.goals = opts.goals;
     this.list = this.createList(opts.selectedGoalId);
   }
+
+  invalidate(): void {}
 
   handleInput(data: string): void {
     if (this.busy) return;
@@ -83,7 +113,7 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
     const selected = this.selectedGoal();
     const decoded = printableChar(data);
     if (matchesKey(data, Key.space) || decoded === ' ') {
-      this.movingGoalId = this.movingGoalId === selected?.id ? undefined : selected?.id;
+      this.toggleReorder(selected);
       return;
     }
 
@@ -111,17 +141,62 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
     if (this.list.handleKey(data)) return;
   }
 
-  override render(width: number): string[] {
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (!this.focused) return focusOnUnfocusedClick(false, event);
+    if (this.busy) {
+      return event.type === 'wheel' ? { handled: true } : undefined;
+    }
+
+    const hintResult = this.hintHits.handle(event, {
+      focused: this.focused,
+      onActivate: (action) => {
+        this.activateHintAction(action);
+      },
+    });
+    if (hintResult !== undefined) return hintResult;
+
+    const reordering = this.movingGoalId !== undefined;
+    return this.listMouse.handle(event, {
+      focused: this.focused,
+      ...(reordering
+        ? {}
+        : {
+            onHover: (index: number) => this.list.selectIndex(index),
+            onWheel: (delta: number) => this.list.wheelPage(delta),
+          }),
+      onActivate: (index, mouseEvent) => {
+        const target = this.list.view().items[index];
+        if (target === undefined) return;
+        if (this.movingGoalId !== undefined) {
+          if (target.id === this.movingGoalId) {
+            this.movingGoalId = undefined;
+          } else {
+            this.movingGoalId = undefined;
+            this.list.selectIndex(index);
+          }
+          return;
+        }
+        this.list.selectIndex(index);
+        if ((mouseEvent.clickCount ?? 1) >= 2) {
+          void this.opts.onAction({ kind: 'edit', goalId: target.id });
+        }
+      },
+    });
+  }
+
+  render(width: number): string[] {
+    this.listMouse.reset();
+    this.hintHits.reset();
     const view = this.list.view();
-    const hint = this.movingGoalId === undefined
-      ? '↑↓ navigate · Space select · E edit · D delete · Esc cancel'
-      : '↑↓ reorder · Space done · E edit · D delete · Esc cancel';
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
       currentTheme.boldFg('primary', ' Upcoming goals'),
-      currentTheme.fg('textMuted', ` ${hint}`),
-      '',
     ];
+    const hintRow = lines.length;
+    const hint = this.renderHintLine(width);
+    lines.push(hint.line);
+    this.hintHits.addRow(hintRow, hint.targets);
+    lines.push('');
 
     if (this.goals.length === 0) {
       lines.push(currentTheme.fg('textMuted', '  No upcoming goals.'));
@@ -129,7 +204,9 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
       for (let i = view.page.start; i < view.page.end; i++) {
         const goal = view.items[i];
         if (goal === undefined) continue;
-        lines.push(this.renderGoal(goal, i, i === view.selectedIndex, width));
+        this.listMouse.track(lines, i, () => {
+          lines.push(this.renderGoal(goal, i, i === view.selectedIndex, width));
+        });
       }
 
       const below = view.items.length - view.page.end;
@@ -142,6 +219,67 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
     lines.push('');
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width, ELLIPSIS));
+  }
+
+  private renderHintLine(width: number) {
+    const muted = (text: string): string => currentTheme.fg('textMuted', text);
+    const reorderActive = this.movingGoalId !== undefined;
+    const segments: InlineSegment<GoalQueueHintAction>[] = reorderActive
+      ? [
+          { text: muted(' ') },
+          { text: muted('↑'), value: 'move-up' },
+          { text: muted('↓'), value: 'move-down' },
+          { text: muted(' reorder · ') },
+          { text: muted('Space done'), value: 'toggle-reorder' },
+        ]
+      : [
+          { text: muted(' ↑↓ navigate · ') },
+          { text: muted('Space select'), value: 'toggle-reorder' },
+        ];
+    segments.push(
+      { text: muted(' · ') },
+      { text: muted('E edit'), value: 'edit' },
+      { text: muted(' · ') },
+      { text: muted('D delete'), value: 'delete' },
+      { text: muted(' · ') },
+      { text: muted('Esc cancel'), value: 'cancel' },
+    );
+    return renderInlineSegments(segments, width);
+  }
+
+  private toggleReorder(selected: UpcomingGoal | undefined): void {
+    this.movingGoalId = this.movingGoalId === selected?.id ? undefined : selected?.id;
+  }
+
+  private activateHintAction(action: GoalQueueHintAction): void {
+    const selected = this.selectedGoal();
+    switch (action) {
+      case 'toggle-reorder':
+        this.toggleReorder(selected);
+        return;
+      case 'move-up':
+        if (this.movingGoalId !== undefined) {
+          void this.applyQueueAction({ kind: 'move', goalId: this.movingGoalId, direction: 'up' });
+        }
+        return;
+      case 'move-down':
+        if (this.movingGoalId !== undefined) {
+          void this.applyQueueAction({ kind: 'move', goalId: this.movingGoalId, direction: 'down' });
+        }
+        return;
+      case 'edit':
+        if (selected !== undefined) {
+          void this.opts.onAction({ kind: 'edit', goalId: selected.id });
+        }
+        return;
+      case 'delete':
+        if (selected !== undefined) {
+          void this.applyQueueAction({ kind: 'delete', goalId: selected.id });
+        }
+        return;
+      case 'cancel':
+        this.opts.onCancel();
+    }
   }
 
   private renderGoal(goal: UpcomingGoal, index: number, selected: boolean, width: number): string {
@@ -200,21 +338,44 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
   }
 }
 
-export class GoalQueueEditDialogComponent extends Container implements Focusable {
+export class GoalQueueEditDialogComponent implements Component, Focusable {
   focused = false;
 
   private readonly input = new MultilineGoalInput();
   private readonly opts: GoalQueueEditDialogOptions;
+  private inputRect: EmbeddedRect | undefined;
   private done = false;
   private error: string | undefined;
 
   constructor(opts: GoalQueueEditDialogOptions) {
-    super();
     this.opts = opts;
     this.input.setValue(opts.goal.objective);
     this.input.onSubmit = (value) => {
       this.submit(value);
     };
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (this.done) return undefined;
+    if (!this.focused) return focusOnUnfocusedClick(false, event);
+    if (event.type === 'wheel') {
+      const forwarded = forwardEmbeddedMouse(this.input, this.inputRect, event);
+      if (forwarded !== undefined) return forwarded;
+      return { handled: true, render: this.input.scrollByWheel(event.wheelDelta ?? 0) };
+    }
+    if (this.inputRect !== undefined && isPointInRect(this.inputRect, event.x, event.y)) {
+      if (event.type === 'press' && event.button === 'left') {
+        const hadError = this.error !== undefined;
+        this.error = undefined;
+        const forwarded = forwardEmbeddedMouse(this.input, this.inputRect, event);
+        if (forwarded === undefined) return hadError ? { handled: true, render: true } : undefined;
+        return hadError ? { ...forwarded, render: true } : forwarded;
+      }
+      if ((event.type === 'release' || event.type === 'click') && event.button === 'left') {
+        return { handled: true };
+      }
+    }
+    return undefined;
   }
 
   handleInput(data: string): void {
@@ -232,18 +393,12 @@ export class GoalQueueEditDialogComponent extends Container implements Focusable
     this.input.handleInput(data);
   }
 
-  override invalidate(): void {
-    super.invalidate();
-    this.input.invalidate();
-  }
-
-  override render(width: number): string[] {
-    this.input.focused = this.focused && !this.done;
-
+  render(width: number): string[] {
     const safeWidth = Math.max(0, width);
+    this.input.focused = this.focused && !this.done;
+    this.inputRect = undefined;
     if (safeWidth <= 0) return [''];
     const innerWidth = Math.max(1, safeWidth - 4);
-    const pad = '  ';
     const border = (s: string): string => currentTheme.fg('primary', s);
     const title = truncateToWidth(
       currentTheme.boldFg('textStrong', 'Edit upcoming goal'),
@@ -264,9 +419,18 @@ export class GoalQueueEditDialogComponent extends Container implements Focusable
       innerWidth,
       ELLIPSIS,
     );
-    const contentLines = [title, '', subtitle, '', ...inputLines, '', footer];
     if (safeWidth < 4) {
-      return ['', ...contentLines.map((line) => truncateToWidth(line, safeWidth, ELLIPSIS))];
+      const lines = ['', title, '', subtitle, ''];
+      const inputStartRow = lines.length;
+      lines.push(...inputLines);
+      this.inputRect = {
+        x: 0,
+        y: inputStartRow,
+        width: safeWidth,
+        height: inputLines.length,
+      };
+      lines.push('', footer);
+      return lines.map((line) => truncateToWidth(line, safeWidth, ELLIPSIS));
     }
 
     const lines = [
@@ -274,17 +438,37 @@ export class GoalQueueEditDialogComponent extends Container implements Focusable
       border('╭' + '─'.repeat(safeWidth - 2) + '╮'),
       border('│') + ' '.repeat(safeWidth - 2) + border('│'),
     ];
-
-    for (const content of contentLines) {
+    const pushFramed = (content: string): void => {
       const rightPad = Math.max(0, innerWidth - visibleWidth(content));
-      lines.push(border('│') + pad + content + ' '.repeat(rightPad) + border('│'));
+      lines.push(`${border('│')}  ${content}${' '.repeat(rightPad)}${border('│')}`);
+    };
+
+    pushFramed(title);
+    pushFramed('');
+    pushFramed(subtitle);
+    pushFramed('');
+    const inputStartRow = lines.length;
+    for (const inputLine of inputLines) {
+      pushFramed(inputLine);
     }
+    this.inputRect = {
+      x: 3,
+      y: inputStartRow,
+      width: innerWidth,
+      height: inputLines.length,
+    };
+    pushFramed('');
+    pushFramed(footer);
 
     lines.push(border('│') + ' '.repeat(safeWidth - 2) + border('│'));
     lines.push(border('╰' + '─'.repeat(safeWidth - 2) + '╯'));
     lines.push('');
 
     return lines.map((line) => truncateToWidth(line, safeWidth, ELLIPSIS));
+  }
+
+  invalidate(): void {
+    this.input.invalidate();
   }
 
   private submit(value: string): void {
@@ -301,13 +485,16 @@ export class GoalQueueEditDialogComponent extends Container implements Focusable
   }
 }
 
-class MultilineGoalInput {
+class MultilineGoalInput implements Component, Focusable {
   focused = false;
   onSubmit?: (value: string) => void;
 
   private value = '';
   private cursor = 0;
   private pasteBuffer: string | undefined;
+  private readonly window = new StableWindow();
+  private followCursor = true;
+  private renderedRows: (RenderedGoalInputRow | undefined)[] = [];
 
   getValue(): string {
     return this.value;
@@ -316,10 +503,15 @@ class MultilineGoalInput {
   setValue(value: string): void {
     this.value = normalizeNewlines(value);
     this.cursor = this.value.length;
+    this.followCursor = true;
+    this.window.reset(0);
   }
 
   handleInput(data: string): void {
-    if (this.handleBracketedPaste(data)) return;
+    if (this.handleBracketedPaste(data)) {
+      this.followCursor = true;
+      return;
+    }
 
     if (isNewlineInput(data)) {
       this.insert('\n');
@@ -343,11 +535,13 @@ class MultilineGoalInput {
 
     if (matchesKey(data, Key.left)) {
       this.cursor = previousGraphemeStart(this.value, this.cursor);
+      this.followCursor = true;
       return;
     }
 
     if (matchesKey(data, Key.right)) {
       this.cursor = nextGraphemeEnd(this.value, this.cursor);
+      this.followCursor = true;
       return;
     }
 
@@ -363,11 +557,13 @@ class MultilineGoalInput {
 
     if (matchesKey(data, Key.home) || matchesKey(data, Key.ctrl('a'))) {
       this.cursor = this.currentLineStart();
+      this.followCursor = true;
       return;
     }
 
     if (matchesKey(data, Key.end) || matchesKey(data, Key.ctrl('e'))) {
       this.cursor = this.currentLineEnd();
+      this.followCursor = true;
       return;
     }
 
@@ -377,32 +573,90 @@ class MultilineGoalInput {
     }
   }
 
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type === 'wheel') {
+      return { handled: true, render: this.scrollByWheel(event.wheelDelta ?? 0) };
+    }
+    if (event.type !== 'press' || event.button !== 'left') return undefined;
+    const row = this.renderedRows[event.y];
+    if (row === undefined) return { handled: true, render: false };
+    const starts = lineStarts(this.value);
+    if (row.lineIndex < 0 || row.lineIndex >= starts.length) {
+      return { handled: true, render: false };
+    }
+    const lineStart = starts[row.lineIndex] ?? 0;
+    const lineEnd = lineEndForStart(this.value, starts, row.lineIndex);
+    const lineText = this.value.slice(lineStart, lineEnd);
+    const startOffset = Math.min(row.viewStartOffset, lineText.length);
+    const visibleCol = Math.max(0, event.x - row.prefixWidth);
+    let currentCol = 0;
+    let colOffset = lineText.length;
+    for (const grapheme of SEGMENTER.segment(lineText.slice(startOffset))) {
+      const nextCol = currentCol + visibleWidth(grapheme.segment);
+      if (visibleCol < nextCol) {
+        colOffset = startOffset + grapheme.index;
+        break;
+      }
+      currentCol = nextCol;
+    }
+    this.cursor = lineStart + colOffset;
+    this.followCursor = true;
+    return { handled: true, focus: true, render: true };
+  }
+
+  scrollByWheel(delta: number): boolean {
+    if (!Number.isFinite(delta) || delta === 0) return false;
+    const step = Math.trunc(delta) || (delta > 0 ? 1 : -1);
+    const totalLines = this.value.split('\n').length;
+    const moved = this.window.scrollBy(step, totalLines, MAX_EDIT_INPUT_LINES);
+    if (moved) this.followCursor = false;
+    return moved;
+  }
+
   invalidate(): void {}
 
   render(width: number): string[] {
     const safeWidth = Math.max(4, width);
     const logicalLines = this.value.split('\n');
     const cursor = this.cursorLocation();
-    const range = visibleLineRange(logicalLines.length, cursor.line);
+    if (this.followCursor) {
+      this.window.ensureVisible(cursor.line, logicalLines.length, MAX_EDIT_INPUT_LINES);
+    }
+    const range = this.window.range(logicalLines.length, MAX_EDIT_INPUT_LINES);
     const rendered: string[] = [];
+    this.renderedRows = [];
 
     if (range.start > 0) {
       rendered.push(padInputLine(`  ${ELLIPSIS} ${String(range.start)} previous`, safeWidth));
+      this.renderedRows.push(undefined);
     }
 
     for (let lineIndex = range.start; lineIndex < range.end; lineIndex++) {
       const line = logicalLines[lineIndex] ?? '';
       const prefix = lineIndex === 0 ? '> ' : '  ';
-      rendered.push(
-        lineIndex === cursor.line
-          ? renderCursorLine(line, cursor.column, prefix, safeWidth, this.focused)
-          : renderTextLine(line, prefix, safeWidth),
-      );
+      const prefixWidth = visibleWidth(prefix);
+      if (lineIndex === cursor.line) {
+        const cursorLine = renderCursorLine(line, cursor.column, prefix, safeWidth, this.focused);
+        rendered.push(cursorLine.text);
+        this.renderedRows.push({
+          lineIndex,
+          prefixWidth,
+          viewStartOffset: cursorLine.viewStartOffset,
+        });
+      } else {
+        rendered.push(renderTextLine(line, prefix, safeWidth));
+        this.renderedRows.push({
+          lineIndex,
+          prefixWidth,
+          viewStartOffset: 0,
+        });
+      }
     }
 
     const remaining = logicalLines.length - range.end;
     if (remaining > 0) {
       rendered.push(padInputLine(`  ${ELLIPSIS} ${String(remaining)} more`, safeWidth));
+      this.renderedRows.push(undefined);
     }
 
     return rendered;
@@ -413,9 +667,11 @@ class MultilineGoalInput {
     this.value =
       this.value.slice(0, this.cursor) + normalized + this.value.slice(this.cursor);
     this.cursor += normalized.length;
+    this.followCursor = true;
   }
 
   private deleteBeforeCursor(): void {
+    this.followCursor = true;
     if (this.cursor === 0) return;
     const start = previousGraphemeStart(this.value, this.cursor);
     this.value = this.value.slice(0, start) + this.value.slice(this.cursor);
@@ -423,12 +679,14 @@ class MultilineGoalInput {
   }
 
   private deleteAfterCursor(): void {
+    this.followCursor = true;
     if (this.cursor >= this.value.length) return;
     const end = nextGraphemeEnd(this.value, this.cursor);
     this.value = this.value.slice(0, this.cursor) + this.value.slice(end);
   }
 
   private moveVertical(delta: -1 | 1): void {
+    this.followCursor = true;
     const starts = lineStarts(this.value);
     const location = this.cursorLocation(starts);
     const targetLine = location.line + delta;
@@ -565,17 +823,6 @@ function nextGraphemeEnd(text: string, offset: number): number {
   return segment === undefined ? text.length : offset + segment.segment.length;
 }
 
-function visibleLineRange(totalLines: number, cursorLine: number): { start: number; end: number } {
-  if (totalLines <= MAX_EDIT_INPUT_LINES) return { start: 0, end: totalLines };
-
-  const half = Math.floor(MAX_EDIT_INPUT_LINES / 2);
-  const start = Math.min(
-    Math.max(0, cursorLine - half),
-    Math.max(0, totalLines - MAX_EDIT_INPUT_LINES),
-  );
-  return { start, end: start + MAX_EDIT_INPUT_LINES };
-}
-
 function renderTextLine(line: string, prefix: string, width: number): string {
   const prefixWidth = visibleWidth(prefix);
   const textWidth = Math.max(1, width - prefixWidth);
@@ -589,7 +836,7 @@ function renderCursorLine(
   prefix: string,
   width: number,
   focused: boolean,
-): string {
+): { readonly text: string; readonly viewStartOffset: number } {
   const prefixWidth = visibleWidth(prefix);
   const textWidth = Math.max(1, width - prefixWidth);
   const cursorEnd = nextGraphemeEnd(line, column);
@@ -604,10 +851,13 @@ function renderCursorLine(
     Math.max(0, textWidth - visibleWidth(beforeView) - cursorWidth),
   );
   const marker = focused ? CURSOR_MARKER : '';
-  return padInputLine(
-    prefix + beforeView + marker + chalk.inverse(cursorText) + afterView,
-    width,
-  );
+  return {
+    text: padInputLine(
+      prefix + beforeView + marker + chalk.inverse(cursorText) + afterView,
+      width,
+    ),
+    viewStartOffset: before.length - beforeView.length,
+  };
 }
 
 function takeStartByWidth(text: string, width: number): string {

@@ -1,14 +1,23 @@
 import {
-  Container,
   Input,
   Key,
   matchesKey,
   truncateToWidth,
-  visibleWidth,
+  type Component,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
+import {
+  focusOnUnfocusedClick,
+  forwardEmbeddedMouse,
+  isPointInRect,
+  type EmbeddedRect,
+} from '#/tui/utils/mouse-regions';
+
+import { renderPaddedDialogBox } from './api-key-input-dialog';
 
 export interface CustomRegistryImportValue {
   readonly url: string;
@@ -49,21 +58,23 @@ function maskInputLine(raw: string): string {
   return prefix + maskedContent + padding;
 }
 
-export class CustomRegistryImportDialogComponent extends Container implements Focusable {
-  focused = false;
-
+export class CustomRegistryImportDialogComponent implements Component, Focusable {
+  private _focused = false;
   private readonly urlInput = new Input();
   private readonly tokenInput = new Input();
   private readonly onDone: (result: CustomRegistryImportResult) => void;
   private activeField: FieldId = 'url';
   private done = false;
   private hint: 'none' | 'url-empty' = 'none';
+  private urlRect: EmbeddedRect | undefined;
+  private tokenRect: EmbeddedRect | undefined;
+  private urlLabelRow: number | undefined;
+  private tokenLabelRow: number | undefined;
 
   constructor(
     onDone: (result: CustomRegistryImportResult) => void,
     defaultUrl: string = '',
   ) {
-    super();
     this.onDone = onDone;
     if (defaultUrl.length > 0) this.urlInput.setValue(defaultUrl);
     this.urlInput.onSubmit = () => {
@@ -109,23 +120,47 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
     }
   }
 
-  override invalidate(): void {
-    super.invalidate();
+  get focused(): boolean {
+    return this._focused;
+  }
+
+  set focused(value: boolean) {
+    this._focused = value;
+    this.syncInputFocus();
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (this.done) return undefined;
+    if (!this._focused) return focusOnUnfocusedClick(false, event);
+    if (event.type === 'wheel') return { handled: true };
+    if (event.type !== 'press' || event.button !== 'left') return undefined;
+
+    const hit = this.hitField(event);
+    if (hit === undefined) return undefined;
+    this.focusField(hit.field);
+    if (hit.rect === undefined) return { handled: true, render: true };
+    const input = hit.field === 'url' ? this.urlInput : this.tokenInput;
+    const forwarded = forwardEmbeddedMouse(input, hit.rect, event);
+    return forwarded === undefined ? { handled: true, render: true } : { ...forwarded, render: true };
+  }
+
+  invalidate(): void {
     this.urlInput.invalidate();
     this.tokenInput.invalidate();
   }
 
-  override render(width: number): string[] {
-    const dialogActive = this.focused && !this.done;
-    this.urlInput.focused = dialogActive && this.activeField === 'url';
-    this.tokenInput.focused = dialogActive && this.activeField === 'token';
+  render(width: number): string[] {
+    this.syncInputFocus();
 
     const safeWidth = Math.max(0, width);
-    if (safeWidth <= 0) return [''];
+    if (safeWidth <= 0) {
+      this.urlRect = undefined;
+      this.tokenRect = undefined;
+      this.urlLabelRow = undefined;
+      this.tokenLabelRow = undefined;
+      return [''];
+    }
     const innerWidth = Math.max(1, safeWidth - 4);
-    const pad = '  ';
-
-    const border = (s: string): string => currentTheme.fg('primary', s);
     const titleStyled = currentTheme.boldFg('textStrong', TITLE);
     const subtitleText = this.hint === 'url-empty' ? SUBTITLE_URL_EMPTY : SUBTITLE_DEFAULT;
     const subtitleStyled = currentTheme.fg('textDim', subtitleText);
@@ -154,6 +189,8 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
     const rawTokenInputLine = this.tokenInput.render(innerWidth)[0] ?? '> ';
     const tokenInputLine = maskInputLine(rawTokenInputLine);
 
+    this.recordFieldGeometry(safeWidth, innerWidth);
+
     const contentLines: string[] = [
       titleLine,
       '',
@@ -168,27 +205,58 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
       footerLine,
     ];
 
-    if (safeWidth < 4) {
-      return ['', ...contentLines.map((line) => truncateToWidth(line, safeWidth, '…'))];
+    return renderPaddedDialogBox(contentLines, safeWidth, innerWidth);
+  }
+
+  private recordFieldGeometry(safeWidth: number, innerWidth: number): void {
+    const narrow = safeWidth < 4;
+    const inputX = narrow ? 0 : 3;
+    const rowOffset = narrow ? 1 : 3;
+    const inputWidth = narrow ? safeWidth : Math.min(innerWidth, safeWidth - 3);
+    this.urlLabelRow = rowOffset + 4;
+    this.tokenLabelRow = rowOffset + 7;
+    this.urlRect =
+      inputWidth > 0
+        ? {
+            x: inputX,
+            y: rowOffset + 5,
+            width: inputWidth,
+            height: 1,
+            contentOffsetX: 0,
+            contentOffsetY: 0,
+          }
+        : undefined;
+    this.tokenRect =
+      inputWidth > 0
+        ? {
+            x: inputX,
+            y: rowOffset + 8,
+            width: inputWidth,
+            height: 1,
+            contentOffsetX: 0,
+            contentOffsetY: 0,
+          }
+        : undefined;
+  }
+
+  private hitField(
+    event: TuiMouseEvent,
+  ): { readonly field: FieldId; readonly rect?: EmbeddedRect } | undefined {
+    if (this.urlRect !== undefined && isPointInRect(this.urlRect, event.x, event.y)) {
+      return { field: 'url', rect: this.urlRect };
     }
-
-    const lines: string[] = [
-      '',
-      border('╭' + '─'.repeat(safeWidth - 2) + '╮'),
-      border('│') + ' '.repeat(safeWidth - 2) + border('│'),
-    ];
-
-    for (const content of contentLines) {
-      const vis = visibleWidth(content);
-      const rightPad = Math.max(0, innerWidth - vis);
-      lines.push(border('│') + pad + content + ' '.repeat(rightPad) + border('│'));
+    if (this.tokenRect !== undefined && isPointInRect(this.tokenRect, event.x, event.y)) {
+      return { field: 'token', rect: this.tokenRect };
     }
+    if (event.y === this.urlLabelRow) return { field: 'url' };
+    if (event.y === this.tokenLabelRow) return { field: 'token' };
+    return undefined;
+  }
 
-    lines.push(border('│') + ' '.repeat(safeWidth - 2) + border('│'));
-    lines.push(border('╰' + '─'.repeat(safeWidth - 2) + '╯'));
-    lines.push('');
-
-    return lines.map((line) => truncateToWidth(line, safeWidth, '…'));
+  private syncInputFocus(): void {
+    const dialogActive = this._focused && !this.done;
+    this.urlInput.focused = dialogActive && this.activeField === 'url';
+    this.tokenInput.focused = dialogActive && this.activeField === 'token';
   }
 
   private toggleField(): void {
@@ -198,6 +266,7 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
   private focusField(field: FieldId): void {
     this.hint = 'none';
     this.activeField = field;
+    this.syncInputFocus();
   }
 
   private handleSubmit(): void {
@@ -209,10 +278,12 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
     if (urlValue.length === 0) {
       this.hint = 'url-empty';
       this.activeField = 'url';
+      this.syncInputFocus();
       return;
     }
 
     this.done = true;
+    this.syncInputFocus();
     this.onDone({
       kind: 'ok',
       value: { url: urlValue, apiKey: tokenValue.length > 0 ? tokenValue : undefined },
@@ -222,6 +293,7 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
   private cancel(): void {
     if (this.done) return;
     this.done = true;
+    this.syncInputFocus();
     this.onDone({ kind: 'cancel' });
   }
 }

@@ -5,17 +5,26 @@ import {
   type CustomRegistrySource,
 } from '@moonshot-ai/kimi-code-oauth';
 import {
-  Container,
   Key,
   matchesKey,
   truncateToWidth,
   visibleWidth,
+  type Component,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import {
+  focusOnUnfocusedClick,
+  ListMouseTracker,
+  renderInlineSegments,
+  SpanHitMap,
+  type InlineSegment,
+} from '#/tui/utils/mouse-regions';
 import { printableChar } from '#/tui/utils/printable-key';
 import { pageView, type PageView } from '#/tui/utils/paging';
 
@@ -147,15 +156,16 @@ function buildRows(opts: ProviderManagerOptions): readonly Row[] {
   return [...sources, { kind: 'add', id: '__add__', label: ADD_ROW_LABEL }];
 }
 
-export class ProviderManagerComponent extends Container implements Focusable {
+export class ProviderManagerComponent implements Component, Focusable {
   focused = false;
   private opts: ProviderManagerOptions;
   private rows: readonly Row[];
   private selectedIndex: number;
   private confirm: ConfirmState | undefined;
+  private readonly listMouse = new ListMouseTracker<number>();
+  private readonly confirmHits = new SpanHitMap<'confirm' | 'cancel'>();
 
   constructor(opts: ProviderManagerOptions) {
-    super();
     this.opts = opts;
     this.rows = buildRows(opts);
     const activeIdx = opts.activeProviderId
@@ -167,6 +177,8 @@ export class ProviderManagerComponent extends Container implements Focusable {
     this.confirm = undefined;
   }
 
+  invalidate(): void {}
+
   setOptions(next: ProviderManagerOptions): void {
     const previousSelected = this.rows[this.selectedIndex];
     const previousSelectedId = previousSelected?.id;
@@ -176,6 +188,9 @@ export class ProviderManagerComponent extends Container implements Focusable {
     this.opts = next;
     this.rows = buildRows(next);
     this.confirm = undefined;
+    this.confirmHits.reset();
+    this.listMouse.reset();
+    this.listMouse.resetSettling();
 
     let newIdx = -1;
     if (previousSelectedId !== undefined) {
@@ -250,6 +265,61 @@ export class ProviderManagerComponent extends Container implements Focusable {
     }
   }
 
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (this.confirm !== undefined) {
+      if (!this.focused) return focusOnUnfocusedClick(false, event);
+      if (event.type === 'wheel') return { handled: true };
+      return this.confirmHits.handle(event, {
+        focused: this.focused,
+        onActivate: (action) => {
+          if (action === 'confirm') {
+            this.confirmDelete();
+          } else {
+            this.cancelDelete();
+          }
+        },
+      });
+    }
+
+    return this.listMouse.handle(event, {
+      focused: this.focused,
+      onHover: (index) => this.selectIndex(index),
+      onWheel: (delta) => this.wheelPage(delta),
+      onActivate: (index) => {
+        this.selectIndex(index);
+        const selected = this.rows[index];
+        if (selected?.kind === 'add') {
+          this.opts.onAdd();
+        }
+      },
+    });
+  }
+
+  private selectIndex(index: number): boolean {
+    if (this.rows.length === 0) return false;
+    const next = Math.min(Math.max(0, Math.floor(index)), this.rows.length - 1);
+    if (next === this.selectedIndex) return false;
+    this.selectedIndex = next;
+    this.invalidate();
+    return true;
+  }
+
+  private wheelPage(delta: number): boolean {
+    if (!Number.isFinite(delta) || delta === 0) return false;
+    const view = this.page();
+    if (view.pageCount <= 1) return false;
+    if (delta < 0) {
+      if (view.page === 0) return false;
+      this.selectedIndex = Math.max(0, this.selectedIndex - PAGE_SIZE);
+      this.invalidate();
+      return true;
+    }
+    if (view.page >= view.pageCount - 1) return false;
+    this.selectedIndex = Math.min(this.rows.length - 1, this.selectedIndex + PAGE_SIZE);
+    this.invalidate();
+    return true;
+  }
+
   private armDeleteConfirm(): void {
     const selected = this.rows[this.selectedIndex];
     if (selected === undefined || selected.kind === 'add') return;
@@ -262,27 +332,39 @@ export class ProviderManagerComponent extends Container implements Focusable {
       label: prompt,
       providerIds: ids,
     };
+    this.confirmHits.resetSettling();
     this.invalidate();
+  }
+
+  private cancelDelete(): void {
+    this.confirm = undefined;
+    this.confirmHits.reset();
+    this.invalidate();
+  }
+
+  private confirmDelete(): void {
+    const confirm = this.confirm;
+    this.confirm = undefined;
+    this.confirmHits.reset();
+    this.invalidate();
+    if (confirm === undefined) return;
+    this.opts.onDeleteSource(confirm.providerIds);
   }
 
   private handleConfirmInput(data: string): void {
     const k = printableChar(data);
     if (matchesKey(data, Key.escape) || k === 'n' || k === 'N') {
-      this.confirm = undefined;
-      this.invalidate();
+      this.cancelDelete();
       return;
     }
     if (k === 'y' || k === 'Y') {
-      const confirm = this.confirm;
-      this.confirm = undefined;
-      this.invalidate();
-      if (confirm === undefined) return;
-      this.opts.onDeleteSource(confirm.providerIds);
-      return;
+      this.confirmDelete();
     }
   }
 
-  override render(width: number): string[] {
+  render(width: number): string[] {
+    this.listMouse.reset();
+    this.confirmHits.reset();
     const lines: string[] = [];
 
     const border = currentTheme.fg('primary', '─'.repeat(width));
@@ -299,16 +381,19 @@ export class ProviderManagerComponent extends Container implements Focusable {
       for (let i = view.start; i < view.end; i++) {
         const row = rows[i];
         if (row === undefined) continue;
-        for (const line of renderRow(row, { isSelected: i === this.selectedIndex, width })) {
-          lines.push(line);
-        }
+        this.listMouse.track(lines, i, () => {
+          for (const line of renderRow(row, { isSelected: i === this.selectedIndex, width })) {
+            lines.push(line);
+          }
+        });
       }
     }
 
     lines.push('');
 
     if (this.confirm !== undefined) {
-      lines.push(this.renderConfirmLine(width));
+      const confirmRow = lines.length;
+      lines.push(this.renderConfirmLine(width, confirmRow));
     } else {
       const view = this.page();
       if (view.pageCount > 1) {
@@ -325,11 +410,20 @@ export class ProviderManagerComponent extends Container implements Focusable {
     return lines.map((line) => truncateToWidth(line, width));
   }
 
-  private renderConfirmLine(width: number): string {
+  private renderConfirmLine(width: number, row: number): string {
     const confirm = this.confirm;
     const prompt = confirm?.label ?? '';
-    const styled = currentTheme.boldFg('warning', `  ${prompt} [y/N]`);
-    return truncateToWidth(styled, width, '…');
+    const style = (text: string): string => currentTheme.boldFg('warning', text);
+    const segments: InlineSegment<'confirm' | 'cancel'>[] = [
+      { text: style(`  ${prompt} [`) },
+      { text: style('y'), value: 'confirm' },
+      { text: style('/') },
+      { text: style('N'), value: 'cancel' },
+      { text: style(']') },
+    ];
+    const rendered = renderInlineSegments(segments, width);
+    this.confirmHits.addRow(row, rendered.targets);
+    return rendered.line;
   }
 }
 

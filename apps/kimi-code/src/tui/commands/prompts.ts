@@ -25,6 +25,7 @@ import { FeedbackInputDialogComponent, type FeedbackInputDialogResult } from '..
 import { ModelSelectorComponent } from '../components/dialogs/model-selector';
 import { PlatformSelectorComponent } from '../components/dialogs/platform-selector';
 import { DOCK_PREVIEW_ROWS } from '../constant/rendering';
+import { renderInlineSegments, SpanHitMap } from '#/tui/utils/mouse-regions';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import type { SlashCommandHost } from './dispatch';
 
@@ -116,6 +117,10 @@ export function promptFeedbackAttachment(
     : FEEDBACK_ATTACHMENT_OPTIONS;
   let scroll = 0;
   const maxScroll = session === undefined ? 0 : Math.max(0, session.files.length - 5);
+  const pageHits = new SpanHitMap<'prev' | 'next'>();
+  const pageFiles = (direction: -1 | 1): void => {
+    scroll = Math.max(0, Math.min(maxScroll, scroll + direction * 5));
+  };
   return new Promise((resolve) => {
     const picker = new PreviewChoicePickerComponent({
       title: 'Choose what to include with your feedback',
@@ -125,14 +130,10 @@ export function promptFeedbackAttachment(
       layout:
         host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_PREVIEW_ROWS },
       previewLabel: session === undefined ? ' Session files' : ` Current session · ${session.sessionId}`,
-      onPreviewScroll:
-        session === undefined
-          ? undefined
-          : (direction) => {
-              scroll = Math.max(0, Math.min(maxScroll, scroll + direction * 5));
-            },
+      onPreviewScroll: session === undefined ? undefined : pageFiles,
       preview: {
-        render: () => {
+        render: (_value, width) => {
+          pageHits.reset();
           if (session === undefined) {
             return ['  Session file list unavailable. session.zip is still uploaded on submit.'];
           }
@@ -145,20 +146,46 @@ export function promptFeedbackAttachment(
           }
           const shown = session.files.slice(scroll, scroll + 5);
           const last = scroll + shown.length;
-          return [
+          const lines: string[] = [
             `  ${String(session.files.length)} session files · showing ${String(scroll + 1)}–${String(last)}`,
             ...shown.map((entry) => {
               const absolute = join(session.sessionDir, entry);
               return `  ${toTerminalHyperlink(absolute, pathToFileURL(absolute).href)}`;
             }),
-            ...(last < session.files.length
-              ? [`  ${String(session.files.length - last)} more files · → next page`]
-              : []),
-            ...(scroll > 0 ? ['  ← previous page'] : []),
+          ];
+          if (last < session.files.length) {
+            const row = lines.length;
+            const rendered = renderInlineSegments<'prev' | 'next'>(
+              [
+                { text: `  ${String(session.files.length - last)} more files · ` },
+                { text: '→ next page', value: 'next' },
+              ],
+              width,
+            );
+            lines.push(rendered.line);
+            pageHits.addRow(row, rendered.targets);
+          }
+          if (scroll > 0) {
+            const row = lines.length;
+            const rendered = renderInlineSegments<'prev' | 'next'>(
+              [{ text: '  ' }, { text: '← previous page', value: 'prev' }],
+              width,
+            );
+            lines.push(rendered.line);
+            pageHits.addRow(row, rendered.targets);
+          }
+          lines.push(
             '',
             '  session.zip also includes the application log, which may mention other sessions.',
-          ];
+          );
+          return lines;
         },
+        handleMouse: (event) =>
+          pageHits.handle(event, {
+            onActivate: (action) => {
+              pageFiles(action === 'next' ? 1 : -1);
+            },
+          }),
         invalidate: () => {},
         dispose: () => {},
       },

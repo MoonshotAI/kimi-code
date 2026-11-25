@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import type { TuiMouseEvent } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import type { CapabilityStatus, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
@@ -1397,5 +1398,331 @@ describe('plugins selector dialogs', () => {
     picker.handleInput('\r');
 
     expect(results).toEqual([{ kind: 'confirm' }]);
+  });
+
+  function pointerEvent(
+    type: TuiMouseEvent['type'],
+    x: number,
+    y: number,
+    extra: Partial<Pick<TuiMouseEvent, 'wheelDelta' | 'width' | 'height'>> = {},
+  ): TuiMouseEvent {
+    return {
+      type,
+      button: type === 'move' || type === 'wheel' ? 'none' : 'left',
+      x,
+      y,
+      screenX: x,
+      screenY: y,
+      width: extra.width ?? 120,
+      height: extra.height ?? 30,
+      shift: false,
+      alt: false,
+      ctrl: false,
+      ...(extra.wheelDelta !== undefined ? { wheelDelta: extra.wheelDelta } : {}),
+    };
+  }
+
+  function enableFakeDate(): void {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+  }
+
+  it('switches tabs via tab strip clicks, handles overflow arrows, and enforces focus/settling', () => {
+    enableFakeDate();
+    const { panel, onRequestMarketplace, onSelect } = makePanel({
+      installed: [superpowers],
+    });
+    const lines = panel.render(120).map(strip);
+    const tabRow = lines.findIndex((line) => line.includes('Installed') && line.includes('Official'));
+    const officialCol = lines[tabRow]!.indexOf('Official');
+
+    vi.advanceTimersByTime(300);
+    expect(panel.handleMouse(pointerEvent('move', officialCol, tabRow))).toBeUndefined();
+    expect(panel.handleMouse(pointerEvent('press', officialCol, tabRow))).toEqual({ handled: true });
+    expect(panel.handleMouse(pointerEvent('click', officialCol, tabRow))).toEqual({
+      handled: true,
+      focus: true,
+    });
+    expect(onRequestMarketplace).not.toHaveBeenCalled();
+
+    panel.focused = true;
+    panel.handleMouse(pointerEvent('press', officialCol, tabRow));
+    expect(panel.handleMouse(pointerEvent('click', officialCol, tabRow))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(onRequestMarketplace).toHaveBeenCalledTimes(1);
+
+    panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
+    const officialLines = panel.render(120).map(strip);
+    const itemRow = officialLines.findIndex((line) => line.includes('Kimi Datasource'));
+    expect(panel.handleMouse(pointerEvent('press', 4, itemRow))).toEqual({
+      handled: true,
+      render: false,
+    });
+    expect(panel.handleMouse(pointerEvent('click', 4, itemRow))).toEqual({ handled: true });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(300);
+    const narrowLines = panel.render(24).map(strip);
+    const narrowTabRow = narrowLines.findIndex((line) => line.includes('Official') && line.includes('>'));
+    const nextCol = narrowLines[narrowTabRow]!.lastIndexOf('>');
+    panel.handleMouse(pointerEvent('press', nextCol, narrowTabRow, { width: 24 }));
+    panel.handleMouse(pointerEvent('click', nextCol, narrowTabRow, { width: 24 }));
+    expect(strip(renderRaw(panel))).toContain('Third-party plugins from our partners.');
+  });
+
+  it('supports hover, multi-line card clicks, wheel scrolling, and cloud-only guards across tabs', () => {
+    enableFakeDate();
+    const entries = Array.from({ length: 8 }, (_, index) => ({
+      ...makeMarketplaceEntry(`plugin-${index + 1}`, desktopPlatforms, `Plugin ${index + 1}`),
+      cliDescription:
+        index === 0
+          ? Array.from({ length: 30 }, () => 'long description words').join(' ')
+          : `Short description ${index + 1}`,
+    }));
+    const cloudOnly = makeMarketplaceEntry('cloud-only', ['cloud'], 'Cloud Only');
+    const { panel, onSelect } = makePanel({
+      installed: [
+        superpowers,
+        { ...superpowers, id: 'second-plugin', displayName: 'Second Plugin', version: '1.0.0', origin: 'unknown' },
+      ],
+      initialTab: 'installed',
+      terminalRows: 30,
+    });
+    panel.focused = true;
+    panel.setMarketplace(
+      [
+        ...entries,
+        cloudOnly,
+        {
+          id: 'second-plugin',
+          tier: 'curated',
+          displayName: 'Second Plugin',
+          version: '2.0.0',
+          platforms: desktopPlatforms,
+          source: 'https://example.test/second.zip',
+        },
+      ],
+      '/tmp/marketplace.json',
+    );
+    const installedLines = panel.render(120).map(strip);
+    const secondTitleRow = installedLines.findIndex((line) => line.includes('Second Plugin'));
+    const secondDescRow = secondTitleRow + 1;
+    vi.advanceTimersByTime(300);
+
+    expect(panel.handleMouse(pointerEvent('move', 6, secondDescRow))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(panel.render(120).map(strip)[secondTitleRow]).toContain('? Second Plugin');
+    expect(panel.handleMouse(pointerEvent('wheel', 6, secondTitleRow, { wheelDelta: 1 }))).toEqual({
+      handled: true,
+      render: false,
+    });
+
+    panel.handleMouse(pointerEvent('press', 6, secondDescRow));
+    panel.handleMouse(pointerEvent('click', 6, secondDescRow));
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'second-plugin' }),
+    });
+
+    const firstRow = installedLines.findIndex((line) => line.includes('Superpowers'));
+    panel.handleMouse(pointerEvent('press', 6, firstRow));
+    panel.handleMouse(pointerEvent('click', 6, firstRow));
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'superpowers' });
+
+    const tabRow = installedLines.findIndex((line) => line.includes('Curated'));
+    const curatedCol = installedLines[tabRow]!.indexOf('Curated');
+    panel.handleMouse(pointerEvent('press', curatedCol, tabRow));
+    panel.handleMouse(pointerEvent('click', curatedCol, tabRow));
+    vi.advanceTimersByTime(300);
+    const curatedLines = panel.render(120).map(strip);
+    expect(curatedLines.some((line) => line.includes('Third-party plugins from our partners.'))).toBe(true);
+    const curatedPluginRow = curatedLines.findIndex((line) => line.includes('Second Plugin'));
+    onSelect.mockClear();
+    panel.handleMouse(pointerEvent('press', 6, curatedPluginRow));
+    panel.handleMouse(pointerEvent('click', 6, curatedPluginRow));
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'second-plugin' }),
+    });
+
+    const officialCol = curatedLines[tabRow]!.indexOf('Official');
+    panel.handleMouse(pointerEvent('press', officialCol, tabRow));
+    panel.handleMouse(pointerEvent('click', officialCol, tabRow));
+    vi.advanceTimersByTime(300);
+    panel.render(120);
+    expect(panel.handleMouse(pointerEvent('wheel', 6, 10, { wheelDelta: 1 }))).toEqual({
+      handled: true,
+      render: true,
+    });
+    const scrolledDown = strip(renderRaw(panel));
+    expect(scrolledDown).toContain('Plugin 8');
+    expect(scrolledDown).toContain('Cloud Only');
+    expect(scrolledDown).not.toContain('Plugin 1');
+    expect(panel.handleMouse(pointerEvent('wheel', 6, 10, { wheelDelta: 1 }))).toEqual({
+      handled: true,
+      render: false,
+    });
+    const scrolledToCloud = panel.render(120).map(strip);
+    const cloudRow = scrolledToCloud.findIndex((line) => line.includes('Cloud Only'));
+    onSelect.mockClear();
+    panel.handleMouse(pointerEvent('press', 6, cloudRow));
+    panel.handleMouse(pointerEvent('click', 6, cloudRow));
+    expect(onSelect).not.toHaveBeenCalled();
+
+    expect(panel.handleMouse(pointerEvent('wheel', 6, 10, { wheelDelta: -1 }))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(panel.handleMouse(pointerEvent('wheel', 6, 10, { wheelDelta: -1 }))).toEqual({
+      handled: true,
+      render: false,
+    });
+    expect(strip(renderRaw(panel))).toContain('Plugin 1');
+  });
+
+  it('forwards left press into the Custom tab input box with exact column offset', () => {
+    enableFakeDate();
+    const { panel, onSelect } = makePanel({ initialTab: 'custom' });
+    panel.focused = true;
+    for (const ch of 'abde') panel.handleInput(ch);
+
+    const lines = panel.render(80).map(strip);
+    const inputRow = lines.findIndex((line) => line.includes('> abde'));
+    expect(inputRow).toBeGreaterThanOrEqual(0);
+    const dCol = lines[inputRow]!.indexOf('d');
+    expect(dCol).toBe(8);
+
+    expect(panel.handleMouse(pointerEvent('move', dCol, inputRow, { width: 80 }))).toBeUndefined();
+    expect(panel.handleMouse(pointerEvent('wheel', dCol, inputRow, { width: 80, wheelDelta: 1 }))).toEqual({
+      handled: true,
+    });
+    expect(panel.handleMouse(pointerEvent('press', dCol, inputRow, { width: 80 }))).toEqual({
+      handled: true,
+      focus: true,
+      render: true,
+    });
+    panel.handleInput('c');
+    panel.handleInput('\r');
+
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'install-source', source: 'abcde' });
+  });
+
+  it('blocks all mouse clicks while installing and resets settling after clearInstalling', () => {
+    enableFakeDate();
+    const { panel, onSelect, onRequestMarketplace } = makePanel({ installed: [superpowers] });
+    panel.focused = true;
+    const lines = panel.render(120).map(strip);
+    const tabRow = lines.findIndex((line) => line.includes('Official'));
+    const officialCol = lines[tabRow]!.indexOf('Official');
+    const itemRow = lines.findIndex((line) => line.includes('Superpowers'));
+    vi.advanceTimersByTime(300);
+
+    panel.setInstalling('Superpowers');
+    expect(panel.handleMouse(pointerEvent('press', officialCol, tabRow))).toEqual({ handled: true });
+    expect(panel.handleMouse(pointerEvent('click', officialCol, tabRow))).toEqual({ handled: true });
+    expect(panel.handleMouse(pointerEvent('press', 6, itemRow))).toEqual({ handled: true });
+    expect(panel.handleMouse(pointerEvent('click', 6, itemRow))).toEqual({ handled: true });
+    expect(panel.handleMouse(pointerEvent('wheel', 6, itemRow, { wheelDelta: 1 }))).toEqual({
+      handled: true,
+    });
+    expect(onRequestMarketplace).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
+
+    panel.render(120);
+    expect(panel.handleMouse(pointerEvent('click', 6, 3))).toEqual({ handled: true });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    panel.clearInstalling();
+    panel.render(120);
+    panel.handleMouse(pointerEvent('press', 6, itemRow));
+    expect(panel.handleMouse(pointerEvent('click', 6, itemRow))).toEqual({ handled: true });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(300);
+    panel.handleMouse(pointerEvent('press', 6, itemRow));
+    panel.handleMouse(pointerEvent('click', 6, itemRow));
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'superpowers' });
+  });
+
+  it('supports hover, wheel, and click activation in PluginMcpSelectorComponent', () => {
+    enableFakeDate();
+    const selections: PluginMcpSelection[] = [];
+    const picker = new PluginMcpSelectorComponent({
+      info: {
+        id: 'kimi-datasource',
+        displayName: 'Kimi Datasource',
+        version: '1.0.0',
+        enabled: true,
+        state: 'ok',
+        skillCount: 1,
+        mcpServerCount: 1,
+        enabledMcpServerCount: 1,
+        hookCount: 0,
+        commandCount: 0,
+        hasErrors: false,
+        source: 'local-path',
+        origin: 'custom',
+        installedAt: '2026-05-29T00:00:00.000Z',
+        root: '/plugins/kimi-datasource',
+        manifest: undefined,
+        skills: [],
+        mcpServers: [
+          {
+            name: 'data',
+            runtimeName: 'plugin-kimi-datasource-data',
+            enabled: true,
+            transport: 'stdio',
+            command: 'node',
+            args: ['./bin/kimi-datasource.mjs'],
+            cwd: '/plugins/kimi-datasource',
+          },
+        ],
+        diagnostics: [],
+      },
+      onSelect: (selection) => {
+        selections.push(selection);
+      },
+      onCancel: vi.fn(),
+    });
+
+    const lines = picker.render(120).map(strip);
+    const serverRow = lines.findIndex((line) => line.includes('data  enabled'));
+    const backRow = lines.findIndex((line) => line.includes('Back to installed plugins'));
+    vi.advanceTimersByTime(300);
+
+    expect(picker.handleMouse(pointerEvent('click', 4, backRow))).toEqual({
+      handled: true,
+      focus: true,
+    });
+    expect(selections).toEqual([]);
+
+    picker.focused = true;
+    expect(picker.handleMouse(pointerEvent('move', 4, backRow))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(picker.render(120).map(strip)[backRow]).toContain('? Back to installed plugins');
+
+    expect(picker.handleMouse(pointerEvent('wheel', 4, backRow, { wheelDelta: -1 }))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(picker.render(120).map(strip)[serverRow]).toContain('? data  enabled');
+
+    picker.handleMouse(pointerEvent('press', 4, serverRow + 1));
+    picker.handleMouse(pointerEvent('click', 4, serverRow + 1));
+    picker.handleMouse(pointerEvent('press', 4, backRow));
+    picker.handleMouse(pointerEvent('click', 4, backRow));
+
+    expect(selections).toEqual([
+      { kind: 'toggle', pluginId: 'kimi-datasource', server: 'data', enabled: false },
+      { kind: 'back', pluginId: 'kimi-datasource' },
+    ]);
   });
 });

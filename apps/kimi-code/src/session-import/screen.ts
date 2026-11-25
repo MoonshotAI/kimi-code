@@ -1,10 +1,19 @@
 import { basename } from 'node:path';
 
-import { Container, matchesKey, Key, truncateToWidth, type Focusable } from '@moonshot-ai/pi-tui';
+import {
+  matchesKey,
+  Key,
+  truncateToWidth,
+  type Component,
+  type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
+} from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
+import { ListMouseTracker } from '#/tui/utils/mouse-regions';
 
 import {
   candidatesWithin,
@@ -49,9 +58,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export class ImportSessionsScreenComponent extends Container implements Focusable {
+export class ImportSessionsScreenComponent implements Component, Focusable {
   focused = false;
   private readonly options: ImportSessionsScreenOptions;
+  private readonly mouse = new ListMouseTracker<number>();
   private phase: Phase = 'scanning';
   private scan: ImportScan | undefined;
   private selectedIndex = 0;
@@ -64,23 +74,24 @@ export class ImportSessionsScreenComponent extends Container implements Focusabl
   private closed = false;
 
   constructor(options: ImportSessionsScreenOptions) {
-    super();
     this.options = options;
     this.startSpinner();
     void options.scan().then(
       (scan) => {
         this.scan = scan;
-        this.phase = 'choose';
         this.selectedIndex = this.count(IMPORT_WINDOW_DAYS[0]) === 0 && this.count(IMPORT_WINDOW_DAYS[1]) > 0 ? 1 : 0;
+        this.transitionPhase('choose');
         this.settle();
       },
       (error: unknown) => {
         this.failure = errorMessage(error);
-        this.phase = 'failed';
+        this.transitionPhase('failed');
         this.settle();
       },
     );
   }
+
+  invalidate(): void {}
 
   handleInput(data: string): void {
     const cancel = matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl('c'));
@@ -109,13 +120,34 @@ export class ImportSessionsScreenComponent extends Container implements Focusabl
       this.selectedIndex = (this.selectedIndex + 1) % choices.length;
       this.requestRender();
     } else if (matchesKey(data, Key.enter)) {
-      const days = choices[this.selectedIndex]?.days;
-      if (days === undefined) this.close();
-      else this.start(days);
+      this.activateChoice(this.selectedIndex);
     }
   }
 
-  override render(width: number): string[] {
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (this.closed) return undefined;
+    if (this.phase === 'choose') {
+      return this.mouse.handle(event, {
+        focused: this.focused,
+        onHover: (index) => this.selectChoice(index),
+        onActivate: (index) => {
+          this.activateChoice(index);
+        },
+      });
+    }
+    if (this.phase === 'done' || this.phase === 'failed') {
+      return this.mouse.handle(event, {
+        focused: this.focused,
+        onActivate: () => {
+          this.close();
+        },
+      });
+    }
+    return this.mouse.handle(event, { focused: this.focused });
+  }
+
+  render(width: number): string[] {
+    this.mouse.reset();
     const colors = this.options.colors ?? currentTheme.palette;
     const title =
       this.phase === 'importing'
@@ -127,41 +159,48 @@ export class ImportSessionsScreenComponent extends Container implements Focusabl
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(` ${title}`),
       '',
-      ...this.body(colors),
-      chalk.hex(colors.primary)('─'.repeat(width)),
     ];
+    this.appendBody(lines, colors);
+    lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
+    if (this.phase === 'done' || this.phase === 'failed') {
+      this.mouse.add(0, lines.length, 0);
+    }
     return lines.map((line) => truncateToWidth(line, width));
   }
 
-  private body(colors: ColorPalette): string[] {
+  private appendBody(lines: string[], colors: ColorPalette): void {
     const text = chalk.hex(colors.text);
     const muted = chalk.hex(colors.textMuted);
     const spinner = chalk.hex(colors.accent)(SPINNER_FRAMES[this.spinnerFrame] ?? SPINNER_FRAMES[0]);
     switch (this.phase) {
       case 'scanning':
-        return [`  ${spinner}  ${text('Scanning Claude Code and Codex sessions…')}`, '', muted(' esc cancel')];
+        lines.push(`  ${spinner}  ${text('Scanning Claude Code and Codex sessions…')}`, '', muted(' esc cancel'));
+        return;
       case 'choose':
-        return this.chooseBody(colors);
+        this.appendChooseBody(lines, colors);
+        return;
       case 'importing': {
         const progress = this.progress;
         const current =
           progress === undefined
             ? 'Preparing…'
             : `${String(progress.index + 1)}/${String(progress.total)} · ${basename(progress.candidate.cwd)} (${SOURCE_LABELS[progress.candidate.source]})`;
-        return [
+        lines.push(
           `  ${spinner}  ${text(current)}`,
           '',
           muted(this.stopRequested ? ' Stopping after the current session…' : ' esc stops after the current session; imported sessions are kept'),
-        ];
+        );
+        return;
       }
       case 'done':
-        return this.reportBody(colors);
+        lines.push(...this.reportBody(colors));
+        return;
       case 'failed':
-        return [chalk.hex(colors.error)(` Import failed: ${this.failure ?? 'unknown error'}`), '', muted(' enter close')];
+        lines.push(chalk.hex(colors.error)(` Import failed: ${this.failure ?? 'unknown error'}`), '', muted(' enter close'));
     }
   }
 
-  private chooseBody(colors: ColorPalette): string[] {
+  private appendChooseBody(lines: string[], colors: ColorPalette): void {
     const text = chalk.hex(colors.text);
     const muted = chalk.hex(colors.textMuted);
     const choices = this.choices();
@@ -171,18 +210,28 @@ export class ImportSessionsScreenComponent extends Container implements Focusabl
       ...(alreadyImported > 0 ? [`${String(alreadyImported)} already imported`] : []),
       ...(missingFolder > 0 ? [`${String(missingFolder)} with a missing project folder`] : []),
     ];
-    const lines = choices.map((choice, index) => {
-      const selected = index === this.selectedIndex;
-      const pointer = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${selected ? '❯' : ' '} `);
-      const label = (selected ? chalk.hex(colors.primary).bold : text)(choice.label.padEnd(14));
-      if (choice.days === undefined) return pointer + label;
-      const count = this.count(choice.days);
-      const limit = count > IMPORT_BATCH_LIMIT ? ` · newest ${String(IMPORT_BATCH_LIMIT)} this run` : '';
-      return pointer + label + muted(`${sessions(count)}${limit}`);
-    });
+    const pushChoices = (): void => {
+      for (const [index, choice] of choices.entries()) {
+        this.mouse.track(lines, index, () => {
+          const selected = index === this.selectedIndex;
+          const pointer = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${selected ? '❯' : ' '} `);
+          const label = (selected ? chalk.hex(colors.primary).bold : text)(choice.label.padEnd(14));
+          if (choice.days === undefined) {
+            lines.push(pointer + label);
+            return;
+          }
+          const count = this.count(choice.days);
+          const limit = count > IMPORT_BATCH_LIMIT ? ` · newest ${String(IMPORT_BATCH_LIMIT)} this run` : '';
+          lines.push(pointer + label + muted(`${sessions(count)}${limit}`));
+        });
+      }
+    };
     if (this.count(LONGEST_WINDOW_DAYS) === 0) {
       const reasons = notCounted.length > 0 ? ` ${notCounted.join(', ')}.` : '';
-      return [text(` No sessions from the last ${String(LONGEST_WINDOW_DAYS)} days to import.${reasons}`), '', ...lines, '', muted(' enter close')];
+      lines.push(text(` No sessions from the last ${String(LONGEST_WINDOW_DAYS)} days to import.${reasons}`), '');
+      pushChoices();
+      lines.push('', muted(' enter close'));
+      return;
     }
     const recent = candidatesWithin(this.scan!, LONGEST_WINDOW_DAYS, this.options.now);
     const bySource = (['claude-code', 'codex'] as const)
@@ -190,14 +239,9 @@ export class ImportSessionsScreenComponent extends Container implements Focusabl
       .filter(([, count]) => count > 0)
       .map(([label, count]) => `${label} ${String(count)}`);
     const summary = [...bySource, ...(notCounted.length > 0 ? [`not counted: ${notCounted.join(', ')}`] : [])];
-    return [
-      text(' Sessions are converted locally; source files are not changed.'),
-      '',
-      ...lines,
-      '',
-      muted(` ${summary.join(' · ')}`),
-      muted(' ↑/↓ move · enter select · esc cancel'),
-    ];
+    lines.push(text(' Sessions are converted locally; source files are not changed.'), '');
+    pushChoices();
+    lines.push('', muted(` ${summary.join(' · ')}`), muted(' ↑/↓ move · enter select · esc cancel'));
   }
 
   private reportBody(colors: ColorPalette): string[] {
@@ -248,9 +292,33 @@ export class ImportSessionsScreenComponent extends Container implements Focusabl
     return this.scan === undefined ? 0 : candidatesWithin(this.scan, days, this.options.now).length;
   }
 
+  private selectChoice(index: number): boolean {
+    const count = this.choices().length;
+    if (index < 0 || index >= count || this.selectedIndex === index) return false;
+    this.selectedIndex = index;
+    return true;
+  }
+
+  private activateChoice(index: number): void {
+    const choice = this.choices()[index];
+    if (choice === undefined) return;
+    this.selectedIndex = index;
+    if (choice.days === undefined) this.close();
+    else this.start(choice.days);
+  }
+
+  private transitionPhase(phase: Phase): void {
+    this.phase = phase;
+    this.mouse.reset();
+    this.mouse.resetSettling();
+    if (phase === 'done' || phase === 'failed') {
+      this.mouse.add(0, Number.MAX_SAFE_INTEGER, 0);
+    }
+  }
+
   private start(days: number): void {
     const candidates = candidatesWithin(this.scan!, days, this.options.now);
-    this.phase = 'importing';
+    this.transitionPhase('importing');
     this.startSpinner();
     this.requestRender();
     void this.options
@@ -264,11 +332,11 @@ export class ImportSessionsScreenComponent extends Container implements Focusabl
       .then(
         (report) => {
           this.report = report;
-          this.phase = 'done';
+          this.transitionPhase('done');
         },
         (error: unknown) => {
           this.failure = errorMessage(error);
-          this.phase = 'failed';
+          this.transitionPhase('failed');
         },
       )
       .finally(() => {

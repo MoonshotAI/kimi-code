@@ -1,14 +1,21 @@
 import {
-  Container,
   Input,
   Key,
   matchesKey,
   truncateToWidth,
   visibleWidth,
+  type Component,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
+import {
+  focusOnUnfocusedClick,
+  forwardEmbeddedMouse,
+  type EmbeddedRect,
+} from '#/tui/utils/mouse-regions';
 
 export type ApiKeyInputResult =
   | { readonly kind: 'ok'; readonly value: string }
@@ -41,7 +48,32 @@ function maskInputLine(raw: string, fakeCursorIndex: number): string {
   return prefix + maskedContent;
 }
 
-export class ApiKeyInputDialogComponent extends Container implements Focusable {
+export function renderPaddedDialogBox(
+  contentLines: readonly string[],
+  safeWidth: number,
+  innerWidth: number,
+): string[] {
+  if (safeWidth < 4) {
+    return ['', ...contentLines.map((line) => truncateToWidth(line, safeWidth, '…'))];
+  }
+  const edge = currentTheme.fg('primary', '│');
+  const innerSpan = safeWidth - 2;
+  const blankRow = `${edge}${' '.repeat(innerSpan)}${edge}`;
+  const framedRows = contentLines.map(
+    (content) => `${edge}  ${content}${' '.repeat(Math.max(0, innerWidth - visibleWidth(content)))}${edge}`,
+  );
+  return [
+    '',
+    currentTheme.fg('primary', `╭${'─'.repeat(innerSpan)}╮`),
+    blankRow,
+    ...framedRows,
+    blankRow,
+    currentTheme.fg('primary', `╰${'─'.repeat(innerSpan)}╯`),
+    '',
+  ].map((line) => truncateToWidth(line, safeWidth, '…'));
+}
+
+export class ApiKeyInputDialogComponent implements Component, Focusable {
   focused = false;
 
   private readonly input = new Input();
@@ -52,6 +84,7 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
   private readonly emptyHint: string;
   private done = false;
   private emptyHinted = false;
+  private inputRect: EmbeddedRect | undefined;
 
   constructor(
     platformName: string,
@@ -59,7 +92,6 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
     onDone: (result: ApiKeyInputResult) => void,
     private readonly options?: { title?: string; mask?: boolean; emptyHint?: string; trimValue?: boolean },
   ) {
-    super();
     this.onDone = onDone;
     this.title = options?.title ?? `Enter API key for ${platformName}`;
     this.subtitleLines = subtitleLines;
@@ -86,20 +118,30 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
     this.input.handleInput(data);
   }
 
-  override invalidate(): void {
-    super.invalidate();
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (this.done) return undefined;
+    if (!this.focused) return focusOnUnfocusedClick(false, event);
+    if (event.type === 'wheel') return { handled: true };
+    if (event.type === 'press' && event.button === 'left') {
+      const forwarded = forwardEmbeddedMouse(this.input, this.inputRect, event);
+      return forwarded === undefined ? undefined : { ...forwarded, render: true };
+    }
+    return undefined;
+  }
+
+  invalidate(): void {
     this.input.invalidate();
   }
 
-  override render(width: number): string[] {
+  render(width: number): string[] {
     this.input.focused = this.focused && !this.done;
 
     const safeWidth = Math.max(0, width);
-    if (safeWidth <= 0) return [''];
+    if (safeWidth <= 0) {
+      this.inputRect = undefined;
+      return [''];
+    }
     const innerWidth = Math.max(1, safeWidth - 4);
-    const pad = '  ';
-
-    const border = (s: string): string => currentTheme.fg('primary', s);
     const titleStyled = currentTheme.boldFg('textStrong', this.title);
     const subtitleSource = this.emptyHinted ? [this.emptyHint] : this.subtitleLines;
     const subtitleLines = subtitleSource.map((line) =>
@@ -113,6 +155,14 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
     const inputLine =
       this.mask && this.input.getValue() !== '' ? maskInputLine(rawInputLine, this.input.getValue().length) : rawInputLine;
 
+    const inputContentIndex = 3 + subtitleLines.length;
+    const narrow = safeWidth < 4;
+    this.setInputRect(
+      narrow ? 0 : 3,
+      (narrow ? 1 : 3) + inputContentIndex,
+      narrow ? safeWidth : Math.min(innerWidth, safeWidth - 3),
+    );
+
     const contentLines: string[] = [
       titleLine,
       '',
@@ -123,43 +173,30 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
       footerLine,
     ];
 
-    if (safeWidth < 4) {
-      return ['', ...contentLines.map((line) => truncateToWidth(line, safeWidth, '…'))];
-    }
+    return renderPaddedDialogBox(contentLines, safeWidth, innerWidth);
+  }
 
-    const lines: string[] = [
-      '',
-      border('╭' + '─'.repeat(safeWidth - 2) + '╮'),
-      border('│') + ' '.repeat(safeWidth - 2) + border('│'),
-    ];
-
-    for (const content of contentLines) {
-      const vis = visibleWidth(content);
-      const rightPad = Math.max(0, innerWidth - vis);
-      lines.push(border('│') + pad + content + ' '.repeat(rightPad) + border('│'));
-    }
-
-    lines.push(border('│') + ' '.repeat(safeWidth - 2) + border('│'));
-    lines.push(border('╰' + '─'.repeat(safeWidth - 2) + '╯'));
-    lines.push('');
-
-    return lines.map((line) => truncateToWidth(line, safeWidth, '…'));
+  private finish(result: ApiKeyInputResult): void {
+    if (this.done) return;
+    this.done = true;
+    this.onDone(result);
   }
 
   private submit(value: string): void {
-    if (this.done) return;
     const trimmed = value.trim();
     if (trimmed.length === 0) {
-      this.emptyHinted = true;
+      if (!this.done) this.emptyHinted = true;
       return;
     }
-    this.done = true;
-    this.onDone({ kind: 'ok', value: this.options?.trimValue === false ? value : trimmed });
+    this.finish({ kind: 'ok', value: this.options?.trimValue === false ? value : trimmed });
   }
 
   private cancel(): void {
-    if (this.done) return;
-    this.done = true;
-    this.onDone({ kind: 'cancel' });
+    this.finish({ kind: 'cancel' });
+  }
+
+  private setInputRect(x: number, y: number, width: number): void {
+    this.inputRect =
+      width > 0 ? { x, y, width, height: 1, contentOffsetX: 0, contentOffsetY: 0 } : undefined;
   }
 }

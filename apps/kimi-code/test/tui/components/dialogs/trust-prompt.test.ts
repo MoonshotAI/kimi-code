@@ -19,10 +19,14 @@ function info(overrides: Partial<WorkspaceTrustInfo> = {}): WorkspaceTrustInfo {
 function render(prompt: TrustPromptComponent, width = 80): string[] {
   return prompt.render(width).map((line) => line.replaceAll(/\u001B\[[0-9;]*m/g, ''));
 }
-function mouse(type: 'move' | 'press' | 'release' | 'click', y: number): TuiMouseEvent {
+function mouse(
+  type: 'move' | 'press' | 'release' | 'click' | 'wheel',
+  y: number,
+  wheelDelta?: number,
+): TuiMouseEvent {
   return {
     type,
-    button: type === 'move' ? 'none' : 'left',
+    button: type === 'move' || type === 'wheel' ? 'none' : 'left',
     x: 4,
     y,
     screenX: 4,
@@ -32,6 +36,7 @@ function mouse(type: 'move' | 'press' | 'release' | 'click', y: number): TuiMous
     shift: false,
     alt: false,
     ctrl: false,
+    wheelDelta,
   };
 }
 
@@ -234,6 +239,77 @@ describe('TrustPromptComponent', () => {
     vi.advanceTimersByTime(300);
     for (const type of ['press', 'release', 'click'] as const) prompt.handleMouse(mouse(type, row));
     expect(onSelect).toHaveBeenCalledWith('distrust');
+  });
+
+  it('pages multi-page disclosure with the mouse wheel and stops cleanly at boundaries', () => {
+    const origins = Array.from({ length: 12 }, (_, i) => `/outside/source-${i}/mcp.json`);
+    const prompt = new TrustPromptComponent({
+      info: info({
+        gatedMcpServers: origins.map((origin, i) => ({
+          name: `server-${i}`,
+          transport: 'stdio',
+          origin,
+        })),
+        gatedAdditionalDirs: Array.from({ length: 8 }, (_, i) => `/outside/directory-${i}`),
+        additionalDirSources: [`${projectRoot}/.kimi-code/local.toml`],
+      }),
+      getAvailableRows: () => 23,
+      onSelect: vi.fn(),
+    });
+    prompt.focused = true;
+
+    const pages: string[] = [render(prompt, 60).join('\n')];
+    expect(prompt.handleMouse(mouse('wheel', 6, -1))).toEqual({ handled: true, render: false });
+    expect(prompt.handleMouse(mouse('wheel', 6, 0))).toEqual({ handled: true, render: false });
+
+    const wheelResults: Array<ReturnType<TrustPromptComponent['handleMouse']>> = [];
+    for (let i = 0; i < 30; i += 1) {
+      const result = prompt.handleMouse(mouse('wheel', 6, 1));
+      wheelResults.push(result);
+      if (result?.render === false) break;
+      pages.push(render(prompt, 60).join('\n'));
+    }
+
+    expect(wheelResults.slice(0, -1)).toEqual(
+      Array.from({ length: wheelResults.length - 1 }, () => ({ handled: true, render: true })),
+    );
+    expect(wheelResults.at(-1)).toEqual({ handled: true, render: false });
+    expect(pages.length).toBeGreaterThan(1);
+    expect(prompt.handleMouse(mouse('wheel', 6, 1))).toEqual({ handled: true, render: false });
+    expect(prompt.handleMouse(mouse('wheel', 6, -1))).toEqual({ handled: true, render: true });
+    expect(render(prompt, 60).join('\n')).toBe(pages.at(-2));
+  });
+
+  it('consumes single-page wheel, ignores drag-off clicks, and blocks clicks when terminal is tiny', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    let rows = 23;
+    const onSelect = vi.fn();
+    const prompt = new TrustPromptComponent({
+      info: info(),
+      getAvailableRows: () => rows,
+      onSelect,
+    });
+    prompt.focused = true;
+    const lines = render(prompt);
+    const trustRow = lines.findIndex((line) => line.includes('Trust and continue'));
+    const exitRow = lines.findIndex((line) => line.includes('Exit'));
+
+    expect(prompt.handleMouse(mouse('wheel', 4, 1))).toEqual({ handled: true, render: false });
+    expect(prompt.handleMouse(mouse('wheel', 4, -1))).toEqual({ handled: true, render: false });
+
+    vi.advanceTimersByTime(300);
+    prompt.handleMouse(mouse('press', trustRow));
+    prompt.handleMouse(mouse('click', exitRow));
+    expect(onSelect).not.toHaveBeenCalled();
+
+    rows = 4;
+    render(prompt);
+    expect(prompt.handleMouse(mouse('wheel', 0, 1))).toEqual({ handled: true, render: false });
+    for (const type of ['press', 'release', 'click'] as const) prompt.handleMouse(mouse(type, 1));
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('preserves default trust, selection, and escape behavior', () => {

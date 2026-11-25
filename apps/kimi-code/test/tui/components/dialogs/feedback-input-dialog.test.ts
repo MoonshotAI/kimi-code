@@ -1,6 +1,12 @@
 import { stripVTControlCharacters } from 'node:util';
 
-import { visibleWidth, type Component, type Focusable, type TUI } from '@moonshot-ai/pi-tui';
+import {
+  visibleWidth,
+  type Component,
+  type Focusable,
+  type TUI,
+  type TuiMouseEvent,
+} from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -34,7 +40,7 @@ function submit(dialog: FeedbackInputDialogComponent): void {
   vi.useRealTimers();
 }
 
-function makeDialog(): {
+function makeDialog(rows = 40): {
   dialog: FeedbackInputDialogComponent;
   collected: FeedbackInputDialogResult[];
 } {
@@ -42,13 +48,35 @@ function makeDialog(): {
   const tui = {
     requestRender: vi.fn(),
     render: vi.fn(() => []),
-    terminal: { rows: 40, cols: 120 },
+    terminal: { rows, cols: 120 },
   } as unknown as TUI;
   const dialog = new FeedbackInputDialogComponent(tui, (result) => {
     collected.push(result);
   });
   dialog.focused = true;
   return { dialog, collected };
+}
+
+function mouse(
+  type: TuiMouseEvent['type'],
+  x: number,
+  y: number,
+  options: { button?: TuiMouseEvent['button']; wheelDelta?: number; width?: number; height?: number } = {},
+): TuiMouseEvent {
+  return {
+    type,
+    button: options.button ?? (type === 'move' || type === 'wheel' ? 'none' : 'left'),
+    x,
+    y,
+    screenX: x,
+    screenY: y,
+    width: options.width ?? 60,
+    height: options.height ?? 12,
+    shift: false,
+    alt: false,
+    ctrl: false,
+    ...(options.wheelDelta !== undefined ? { wheelDelta: options.wheelDelta } : {}),
+  };
 }
 
 describe('FeedbackInputDialogComponent', () => {
@@ -224,6 +252,142 @@ describe('FeedbackInputDialogComponent', () => {
     submit(dialog);
     dialog.handleInput(ESC);
     expect(collected).toEqual([{ kind: 'ok', value: 'hi' }]);
+  });
+
+  it('positions the cursor accurately on wide clicks and consumes wheel without overflow', () => {
+    const { dialog, collected } = makeDialog();
+    for (const ch of 'hello') dialog.handleInput(ch);
+    dialog.handleInput('\n');
+    for (const ch of 'world') dialog.handleInput(ch);
+
+    dialog.focused = false;
+    const unfocusedLines = dialog.render(60).map(strip);
+    const firstRow = unfocusedLines.findIndex((line) => line.includes('hello'));
+    const secondRow = unfocusedLines.findIndex((line) => line.includes('world'));
+    expect(firstRow).toBe(6);
+    expect(secondRow).toBe(7);
+    expect(unfocusedLines[firstRow]?.indexOf('hello')).toBe(3);
+
+    expect(dialog.handleMouse(mouse('wheel', 5, firstRow, { wheelDelta: 1 }))).toBeUndefined();
+    expect(dialog.handleMouse(mouse('press', 5, firstRow))).toEqual({ handled: true });
+    expect(dialog.handleMouse(mouse('click', 5, firstRow))).toEqual({ handled: true, focus: true });
+
+    dialog.focused = true;
+    dialog.render(60);
+    expect(dialog.handleMouse(mouse('wheel', 5, firstRow, { wheelDelta: 1 }))).toEqual({
+      handled: true,
+    });
+    expect(dialog.handleMouse(mouse('wheel', 0, 1, { wheelDelta: -1 }))).toEqual({
+      handled: true,
+    });
+
+    expect(dialog.handleMouse(mouse('click', 5, firstRow))).toEqual({ handled: true, focus: true });
+    dialog.handleInput('X');
+    dialog.render(60);
+
+    expect(dialog.handleMouse(mouse('click', 6, secondRow))).toEqual({
+      handled: true,
+      focus: true,
+    });
+    dialog.handleInput('Y');
+    dialog.render(60);
+
+    expect(dialog.handleMouse(mouse('click', 3, firstRow))).toEqual({ handled: true, focus: true });
+    dialog.handleInput('Z');
+
+    submit(dialog);
+    expect(collected).toEqual([{ kind: 'ok', value: 'ZheXllo\nworYld' }]);
+    expect(dialog.handleMouse(mouse('click', 3, firstRow))).toBeUndefined();
+    expect(dialog.handleMouse(mouse('wheel', 3, firstRow, { wheelDelta: 1 }))).toBeUndefined();
+  });
+
+  it('positions the cursor accurately on narrow borderless renders', () => {
+    for (const [width, textCol] of [
+      [5, 2],
+      [4, 1],
+    ] as const) {
+      const { dialog, collected } = makeDialog();
+      dialog.handleInput('a');
+      dialog.handleInput('\n');
+      dialog.handleInput('b');
+
+      const lines = dialog.render(width).map(strip);
+      const firstRow = lines.findIndex((line) => line.includes('a'));
+      const secondRow = lines.findIndex((line) => line.includes('b'));
+      expect(firstRow).toBe(5);
+      expect(secondRow).toBe(6);
+      expect(lines[firstRow]?.indexOf('a')).toBe(textCol);
+
+      expect(dialog.handleMouse(mouse('click', textCol, firstRow, { width }))).toEqual({
+        handled: true,
+        focus: true,
+      });
+      dialog.handleInput('1');
+      const wrappedLines = dialog.render(width).map(strip);
+      const shiftedSecondRow = wrappedLines.findIndex((line) => line.includes('b'));
+      expect(shiftedSecondRow).toBe(7);
+
+      expect(dialog.handleMouse(mouse('click', textCol + 1, shiftedSecondRow, { width }))).toEqual({
+        handled: true,
+        focus: true,
+      });
+      dialog.handleInput('2');
+
+      submit(dialog);
+      expect(collected).toEqual([{ kind: 'ok', value: '1a\nb2' }]);
+    }
+  });
+
+  it('scrolls overflowing multi-line feedback with the mouse wheel and clicks scrolled lines', () => {
+    const { dialog, collected } = makeDialog(15);
+    for (let i = 1; i <= 10; i++) {
+      for (const ch of `line ${String(i)}`) dialog.handleInput(ch);
+      if (i < 10) dialog.handleInput('\n');
+    }
+
+    const atBottom = dialog.render(60).map(strip).join('\n');
+    expect(atBottom).toContain('line 10');
+    expect(atBottom).not.toContain('line 1\n');
+
+    expect(dialog.handleMouse(mouse('wheel', 4, 7, { wheelDelta: -3 }))).toEqual({
+      handled: true,
+      render: true,
+    });
+    const scrolled = dialog.render(60).map(strip).join('\n');
+    expect(scrolled).toContain('line 3');
+    expect(scrolled).toContain('line 7');
+    expect(scrolled).not.toContain('line 10');
+
+    expect(dialog.handleMouse(mouse('wheel', 4, 7, { wheelDelta: -10 }))).toEqual({
+      handled: true,
+      render: true,
+    });
+    const atTopLines = dialog.render(60).map(strip);
+    const line2Row = atTopLines.findIndex((line) => line.includes('line 2'));
+    expect(line2Row).toBe(7);
+    expect(dialog.handleMouse(mouse('wheel', 4, 7, { wheelDelta: -1 }))).toEqual({
+      handled: true,
+      render: false,
+    });
+
+    expect(dialog.handleMouse(mouse('click', 3, line2Row))).toEqual({ handled: true, focus: true });
+    dialog.handleInput('!');
+    submit(dialog);
+    expect(collected[0]).toEqual({
+      kind: 'ok',
+      value: [
+        'line 1',
+        '!line 2',
+        'line 3',
+        'line 4',
+        'line 5',
+        'line 6',
+        'line 7',
+        'line 8',
+        'line 9',
+        'line 10',
+      ].join('\n'),
+    });
   });
 });
 

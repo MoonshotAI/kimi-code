@@ -1,19 +1,26 @@
 import {
-  Container,
   Key,
   matchesKey,
   truncateToWidth,
   visibleWidth,
+  type Component,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 import type { ExperimentalFeatureState } from '@moonshot-ai/kimi-code-sdk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import { ListMouseTracker } from '#/tui/utils/mouse-regions';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 const ELLIPSIS = '…';
+
+type ExperimentsTarget =
+  | { readonly kind: 'feature'; readonly index: number }
+  | { readonly kind: 'apply' };
 
 export interface ExperimentalFeatureDraftChange {
   readonly id: ExperimentalFeatureState['id'];
@@ -26,20 +33,37 @@ export interface ExperimentsSelectorOptions {
   readonly onCancel: () => void;
 }
 
-export class ExperimentsSelectorComponent extends Container implements Focusable {
+export class ExperimentsSelectorComponent implements Component, Focusable {
   focused = false;
 
   private readonly opts: ExperimentsSelectorOptions;
   private readonly list: SearchableList<ExperimentalFeatureState>;
   private readonly draft = new Map<ExperimentalFeatureState['id'], boolean>();
+  private readonly mouse = new ListMouseTracker<ExperimentsTarget>();
 
   constructor(opts: ExperimentsSelectorOptions) {
-    super();
     this.opts = opts;
     this.list = new SearchableList({
       items: opts.features,
       toSearchText: (feature) => `${feature.title} ${feature.id} ${feature.description}`,
       searchable: true,
+    });
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    return this.mouse.handle(event, {
+      focused: this.focused,
+      onHover: (target) => (target.kind === 'feature' ? this.list.selectIndex(target.index) : false),
+      onWheel: (delta) => this.list.wheelPage(delta),
+      onActivate: (target) => {
+        if (target.kind === 'apply') {
+          this.applyChanges();
+          return;
+        }
+        this.list.selectIndex(target.index);
+        const feature = this.list.view().items[target.index];
+        if (feature !== undefined) this.toggleDraft(feature);
+      },
     });
   }
 
@@ -50,8 +74,7 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
       return;
     }
     if (matchesKey(data, Key.enter)) {
-      const changes = this.draftChanges();
-      if (changes.length > 0) this.opts.onApply(changes);
+      this.applyChanges();
       return;
     }
     const decoded = printableChar(data);
@@ -63,7 +86,10 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
     this.list.handleKey(data);
   }
 
-  override render(width: number): string[] {
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    this.mouse.reset();
     const view = this.list.view();
     const titleSuffix =
       view.query.length === 0 ? currentTheme.fg('textMuted', '  (type to search)') : '';
@@ -90,7 +116,9 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
     for (let i = view.page.start; i < view.page.end; i++) {
       const feature = view.items[i]!;
       const selected = i === view.selectedIndex;
-      lines.push(...this.renderFeature(feature, selected, width));
+      this.mouse.track(lines, { kind: 'feature', index: i }, () => {
+        lines.push(...this.renderFeature(feature, selected, width));
+      });
     }
 
     lines.push('');
@@ -109,9 +137,16 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
         ),
       );
     }
-    lines.push(this.renderApplyButton());
+    this.mouse.track(lines, { kind: 'apply' }, () => {
+      lines.push(this.renderApplyButton());
+    });
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width, ELLIPSIS));
+  }
+
+  private applyChanges(): void {
+    const changes = this.draftChanges();
+    if (changes.length > 0) this.opts.onApply(changes);
   }
 
   private toggleDraft(feature: ExperimentalFeatureState): void {

@@ -6,8 +6,9 @@ import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir
 import { createKimiHarness, type KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 import { importedSessionDir } from '@moonshot-ai/migration-legacy';
 import { createGitWorktree } from '@moonshot-ai/testkit/fixtures';
+import type { TuiMouseEvent } from '@moonshot-ai/pi-tui';
 import { Command } from 'commander';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createKimiCodeHostIdentity } from '#/cli/host-identity';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
@@ -361,6 +362,124 @@ describe('ImportSessionsScreenComponent', () => {
 
     screen.handleInput('\r');
     expect(onClose).toHaveBeenCalledWith(undefined);
+  });
+
+  it('handles mouse hover, click, wheel consumption, and settling across phase transitions', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+
+    const mouse = (type: TuiMouseEvent['type'], y: number, wheelDelta?: number): TuiMouseEvent => ({
+      type,
+      button: type === 'move' || type === 'wheel' ? 'none' : 'left',
+      x: 4,
+      y,
+      screenX: 4,
+      screenY: y,
+      width: 120,
+      height: 16,
+      shift: false,
+      alt: false,
+      ctrl: false,
+      ...(wheelDelta !== undefined ? { wheelDelta } : {}),
+    });
+
+    let resolveScan: ((value: typeof scan) => void) | undefined;
+    let resolveRun: ((value: ImportReport) => void) | undefined;
+    const run = vi.fn(
+      () =>
+        new Promise<ImportReport>((resolve) => {
+          resolveRun = resolve;
+        }),
+    );
+    const onClose = vi.fn();
+    const screen = new ImportSessionsScreenComponent({
+      now: NOW,
+      scan: () =>
+        new Promise((resolve) => {
+          resolveScan = resolve;
+        }),
+      run,
+      onClose,
+    });
+
+    vi.advanceTimersByTime(500);
+    resolveScan!(scan);
+    await vi.waitFor(() => {
+      expect(render(screen)).toContain('Last 30 days');
+    });
+
+    const lines = screen.render(120).map(plain);
+    const last15Row = lines.findIndex((line) => line.includes('Last 15 days'));
+    const last30Row = lines.findIndex((line) => line.includes('Last 30 days'));
+    expect(last15Row).toBe(5);
+    expect(last30Row).toBe(6);
+
+    expect(screen.handleMouse(mouse('move', last30Row))).toBeUndefined();
+    expect(screen.handleMouse(mouse('wheel', last30Row, 1))).toBeUndefined();
+    expect(screen.handleMouse(mouse('press', last30Row))).toEqual({ handled: true });
+    expect(screen.handleMouse(mouse('click', last30Row))).toEqual({ handled: true, focus: true });
+
+    screen.focused = true;
+    expect(screen.handleMouse(mouse('wheel', last30Row, 1))).toEqual({ handled: true });
+
+    screen.handleMouse(mouse('press', last30Row));
+    expect(screen.handleMouse(mouse('click', last30Row))).toEqual({ handled: true });
+    expect(run).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(300);
+    expect(screen.handleMouse(mouse('move', last15Row))).toEqual({ handled: true, render: true });
+    expect(screen.handleMouse(mouse('move', last30Row))).toEqual({ handled: true, render: true });
+    expect(render(screen)).toMatch(/❯ Last 30 days/);
+
+    screen.handleMouse(mouse('press', last30Row));
+    expect(screen.handleMouse(mouse('click', last30Row))).toEqual({ handled: true, render: true });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(render(screen)).toContain('Importing sessions');
+
+    expect(screen.handleMouse(mouse('wheel', 3, 1))).toEqual({ handled: true });
+    expect(screen.handleMouse(mouse('click', 3))).toBeUndefined();
+
+    vi.advanceTimersByTime(500);
+    const finished = report({ imported: ['a', 'b', 'c'] });
+    resolveRun!(finished);
+    await vi.waitFor(() => {
+      expect(render(screen)).toContain('Imported 3 sessions.');
+    });
+
+    screen.handleMouse(mouse('press', 3));
+    expect(screen.handleMouse(mouse('click', 3))).toEqual({ handled: true });
+    expect(onClose).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(300);
+    screen.handleMouse(mouse('press', 3));
+    expect(screen.handleMouse(mouse('click', 3))).toEqual({ handled: true, render: true });
+    expect(onClose).toHaveBeenCalledWith(finished);
+    expect(screen.handleMouse(mouse('click', 3))).toBeUndefined();
+
+    const onFailedClose = vi.fn();
+    const failedScreen = new ImportSessionsScreenComponent({
+      now: NOW,
+      scan: async () => {
+        throw new Error('scan exploded');
+      },
+      run: vi.fn(),
+      onClose: onFailedClose,
+    });
+    failedScreen.focused = true;
+    await vi.waitFor(() => {
+      expect(render(failedScreen)).toContain('scan exploded');
+    });
+
+    failedScreen.handleMouse(mouse('press', 3));
+    expect(failedScreen.handleMouse(mouse('click', 3))).toEqual({ handled: true });
+    expect(onFailedClose).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(300);
+    failedScreen.handleMouse(mouse('press', 3));
+    expect(failedScreen.handleMouse(mouse('click', 3))).toEqual({ handled: true, render: true });
+    expect(onFailedClose).toHaveBeenCalledWith(undefined);
   });
 });
 
