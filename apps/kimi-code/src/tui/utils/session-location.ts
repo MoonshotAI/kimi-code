@@ -1,7 +1,9 @@
 import { sameDir, type KimiHarness, type SessionSummary, type WorkLocation } from '@moonshot-ai/kimi-code-sdk';
 
 import { abbreviateHome } from '#/utils/paths';
-import { isDirectory } from '#/utils/session-directory';
+import { isDirectoryAsync } from '#/utils/session-directory';
+
+const SESSION_LOCATION_PROBE_CONCURRENCY = 8;
 
 export type ResumePlan =
   | { readonly kind: 'here'; readonly missing: boolean }
@@ -36,7 +38,7 @@ export async function planResume(
   if (targetCwd === undefined || targetCwd.length === 0) {
     return { kind: 'here', missing: false };
   }
-  const missing = !isDirectory(targetCwd);
+  const missing = !(await isDirectoryAsync(targetCwd));
   if (sameDir(targetCwd, current.workDir)) {
     return { kind: 'here', missing };
   }
@@ -61,15 +63,29 @@ export async function planResume(
 export async function sessionLocationTags(
   harness: Pick<KimiHarness, 'resolveWorkLocation'>,
   sessions: readonly Pick<SessionSummary, 'workDir'>[],
+  options: { readonly isCancelled?: () => boolean } = {},
 ): Promise<ReadonlyMap<string, SessionLocationTag>> {
   const dirs = [...new Set(sessions.map((session) => session.workDir))];
-  return new Map(
-    await Promise.all(
-      dirs.map(async (dir): Promise<[string, SessionLocationTag]> => {
-        if (!isDirectory(dir)) return [dir, { missing: true }];
+  if (dirs.length === 0) return new Map();
+  const entries: Array<[string, SessionLocationTag]> = [];
+  let nextIndex = 0;
+  const workerCount = Math.min(SESSION_LOCATION_PROBE_CONCURRENCY, dirs.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < dirs.length) {
+        if (options.isCancelled?.() === true) return;
+        const dir = dirs[nextIndex];
+        nextIndex += 1;
+        if (dir === undefined) continue;
+        if (!(await isDirectoryAsync(dir))) {
+          entries.push([dir, { missing: true }]);
+          continue;
+        }
+        if (options.isCancelled?.() === true) return;
         const location = await harness.resolveWorkLocation(dir).catch(() => undefined);
-        return [dir, { worktree: location?.worktree?.name, missing: false }];
-      }),
-    ),
+        entries.push([dir, { worktree: location?.worktree?.name, missing: false }]);
+      }
+    }),
   );
+  return new Map(entries);
 }

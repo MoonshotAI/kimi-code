@@ -1567,9 +1567,10 @@ describe('KimiTUI startup', () => {
 
     const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
     picker.handleInput('\r');
-    await new Promise((resolve) => setImmediate(resolve));
 
-    expect(session.setPermission).toHaveBeenCalledWith('auto');
+    await vi.waitFor(() => {
+      expect(session.setPermission).toHaveBeenCalledWith('auto');
+    });
     expect(driver.state.appState.permissionMode).toBe('auto');
   });
 
@@ -1607,8 +1608,10 @@ describe('KimiTUI startup', () => {
 
     const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
     picker.handleInput('\r');
-    await new Promise((resolve) => setImmediate(resolve));
 
+    await vi.waitFor(() => {
+      expect(driver.state.appState.sessionId).toBe('ses-picked');
+    });
     expect(session.setPlanMode).not.toHaveBeenCalled();
     expect(driver.state.appState.planMode).toBe(true);
   });
@@ -1637,11 +1640,12 @@ describe('KimiTUI startup', () => {
     await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
     const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
     picker.handleInput('\u0001');
-    await new Promise((resolve) => setImmediate(resolve));
 
+    await vi.waitFor(() => {
+      expect(driver.state.sessionsScope).toBe('all');
+    });
     expect(listSessions).toHaveBeenNthCalledWith(1, { workDir: '/tmp/proj-a' });
     expect(listSessions).toHaveBeenNthCalledWith(2, {});
-    expect(driver.state.sessionsScope).toBe('all');
     expect(driver.state.sessions.map((session) => session.id)).toEqual([
       'ses-cwd',
       'ses-other-cwd',
@@ -1672,13 +1676,16 @@ describe('KimiTUI startup', () => {
     await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
     const firstPicker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
     firstPicker.handleInput('\u0001');
-    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => {
+      expect(driver.state.sessionsScope).toBe('all');
+    });
     const allPicker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
     allPicker.handleInput('\u0001');
-    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => {
+      expect(driver.state.sessionsScope).toBe('cwd');
+    });
 
     expect(listSessions).toHaveBeenNthCalledWith(3, { workDir: '/tmp/proj-a' });
-    expect(driver.state.sessionsScope).toBe('cwd');
     expect(driver.state.sessions.map((session) => session.id)).toEqual(['ses-cwd']);
   });
 
@@ -1872,7 +1879,9 @@ describe('KimiTUI startup', () => {
     expect(firstPicker.render(160).join('\n')).toContain('Search: cwd');
 
     firstPicker.handleInput('\u0001');
-    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => {
+      expect(driver.state.sessionsScope).toBe('all');
+    });
 
     const allPicker = driver.state.editorContainer.children[0] as {
       handleInput(data: string): void;
@@ -1880,7 +1889,6 @@ describe('KimiTUI startup', () => {
     };
     const output = allPicker.render(160).join('\n');
 
-    expect(driver.state.sessionsScope).toBe('all');
     expect(output).toContain('All sessions');
     expect(output).toContain('(type to search)');
     expect(output).not.toContain('Search: cwd');
@@ -2373,15 +2381,15 @@ describe('KimiTUI startup', () => {
     const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
     picker.handleInput('\u001B[B');
     picker.handleInput('\r');
-    await new Promise((resolve) => setImmediate(resolve));
 
+    const expectedResumeCmd = `cd ${quoteShellArg(otherDir)} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
+    await vi.waitFor(() => {
+      expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
+    });
     expect(resumeSession).not.toHaveBeenCalled();
     expect(driver.state.activeDialog).toBeNull();
-    const expectedResumeCmd = `cd ${quoteShellArg(otherDir)} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
-    expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
     const transcript = driver.state.transcriptContainer.render(160).join('\n');
     expect(transcript).toContain('Current session is in a different working directory.');
-    expect(transcript).toContain(`To resume, run: ${expectedResumeCmd}`);
     expect(transcript).toContain(`To resume, run: ${expectedResumeCmd}`);
     expect(transcript).toContain('Command copied to clipboard');
   });
@@ -2413,11 +2421,12 @@ describe('KimiTUI startup', () => {
     const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
     picker.handleInput('\u001B[B');
     picker.handleInput('\r');
-    await new Promise((resolve) => setImmediate(resolve));
 
-    expect(resumeSession).not.toHaveBeenCalled();
     const expectedResumeCmd = `cd ${quoteShellArg(otherDir)} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
-    expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
+    await vi.waitFor(() => {
+      expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
+    });
+    expect(resumeSession).not.toHaveBeenCalled();
     const transcript = driver.state.transcriptContainer.render(160).join('\n');
     expect(transcript).toContain(`To resume, run: ${expectedResumeCmd}`);
   });
@@ -2451,13 +2460,14 @@ describe('KimiTUI startup', () => {
     const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
     picker.handleInput('\u001B[B');
     picker.handleInput('\r');
-    await new Promise((resolve) => setImmediate(resolve));
 
+    await vi.waitFor(() => {
+      expect(stop).toHaveBeenCalledWith(0);
+    });
     expect(resumeSession).not.toHaveBeenCalled();
     const expectedResumeCmd = `cd ${quoteShellArg(otherDir)} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
     expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
     expect(stop).toHaveBeenCalledOnce();
-    expect(stop).toHaveBeenCalledWith(0);
   });
 
   it('says a picked session directory no longer exists, offers no cd command, and exits from the startup picker', async () => {
@@ -2489,8 +2499,10 @@ describe('KimiTUI startup', () => {
     const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
     picker.handleInput('\u001B[B');
     picker.handleInput('\r');
-    await new Promise((resolve) => setImmediate(resolve));
 
+    await vi.waitFor(() => {
+      expect(stop).toHaveBeenCalledWith(0);
+    });
     expect(resumeSession).not.toHaveBeenCalled();
     expect(copyTextToClipboardMock).not.toHaveBeenCalled();
     const transcript = driver.state.transcriptContainer.render(400).join('\n');
@@ -2498,7 +2510,6 @@ describe('KimiTUI startup', () => {
     expect(transcript).toContain(missing);
     expect(transcript).not.toContain('To resume, run:');
     expect(stop).toHaveBeenCalledOnce();
-    expect(stop).toHaveBeenCalledWith(0);
   });
 
   it('does not apply startup flags when switching sessions via the /sessions picker', async () => {
@@ -2527,9 +2538,10 @@ describe('KimiTUI startup', () => {
     await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
     const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
     picker.handleInput('\r');
-    await new Promise((resolve) => setImmediate(resolve));
 
-    expect(driver.state.appState.sessionId).toBe('ses-2');
+    await vi.waitFor(() => {
+      expect(driver.state.appState.sessionId).toBe('ses-2');
+    });
     expect(picked.setPermission).not.toHaveBeenCalled();
     expect(picked.setPlanMode).not.toHaveBeenCalled();
     expect(driver.state.appState.permissionMode).toBe('manual');
@@ -2557,7 +2569,9 @@ describe('KimiTUI startup', () => {
     const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
     picker.handleInput('\u0003');
     picker.handleInput('\r');
-    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => {
+      expect(driver.state.appState.sessionId).toBe('ses-picked');
+    });
 
     driver.state.editor.onCtrlC?.();
 
@@ -2958,15 +2972,19 @@ describe('KimiTUI startup', () => {
     }
     const sessionPicker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
     sessionPicker.handleInput('\r');
-    await flushMigrationCheck();
-    expect(harness.resumeSession).toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(harness.resumeSession).toHaveBeenCalled();
+    });
     if (!refreshFirst) {
-      expect(driver.state.editorReplacementMounted).toBe(false);
+      await vi.waitFor(() => {
+        expect(driver.state.editorReplacementMounted).toBe(false);
+      });
       completeRefresh();
-      await flushMigrationCheck();
     }
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ChoicePickerComponent);
+    });
     const migrationPicker = driver.state.editorContainer.children[0] as ChoicePickerComponent;
-    expect(migrationPicker).toBeInstanceOf(ChoicePickerComponent);
     expect(migrationPicker.render(100).join('\n')).toContain('Model migration available');
     migrationPicker.handleInput('\u001B');
   });
@@ -5962,8 +5980,203 @@ describe('KimiTUI work location', () => {
       expect(driver.state.appState.workDir).toBe(project);
       expect(driver.state.appState.sessionId).toBe('ses-replacement');
       expect(harness.createSession).toHaveBeenLastCalledWith(
-        expect.objectContaining({ workDir: project }),
+        expect.objectContaining({ workDir: project, environmentId: 'local' }),
       );
+    });
+
+    it('preserves remote environment binding when deleting a current remote session whose local workDir is missing', async () => {
+      const project = tempDir('kimi-remote-missing-project-');
+      const missingDir = join(project, 'deleted-wt');
+      const initial = makeSession({ id: 'ses-initial' });
+      const remoteResumed = makeSession({
+        id: 'ses-remote-missing',
+        getEnvironment: vi.fn(async () => ({
+          environmentId: 'ssh-dev',
+          cwd: '/srv/app',
+        })),
+      });
+      const replacement = makeSession({
+        id: 'ses-remote-replacement',
+        getEnvironment: vi.fn(async () => ({
+          environmentId: 'ssh-dev',
+          cwd: '/srv/app',
+        })),
+      });
+      const deleteSession = vi.fn(async () => {});
+      const harness = makeHarness(initial, {
+        resumeSession: vi.fn(async () => remoteResumed),
+        deleteSession,
+        createSession: vi.fn(async () => replacement),
+        resolveWorkLocation: vi.fn(async (cwd: string) => ({
+          cwd,
+          projectRoot: project,
+          isGitRepo: true,
+        })),
+      });
+      const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
+      await driver.ensureSession();
+
+      const internal = driver as unknown as {
+        resumeSession(
+          id: string,
+          plan: {
+            kind: 'switch';
+            location: { cwd: string; projectRoot: string; isGitRepo: boolean };
+            missing: boolean;
+          },
+        ): Promise<boolean>;
+        deleteSessionFromPicker(row: SessionRow): Promise<void>;
+      };
+      await expect(
+        internal.resumeSession('ses-remote-missing', {
+          kind: 'switch',
+          location: { cwd: missingDir, projectRoot: project, isGitRepo: true },
+          missing: true,
+        }),
+      ).resolves.toBe(true);
+      driver.state.appState.environment = {
+        environmentId: 'ssh-dev',
+        type: 'ssh',
+        status: 'ready',
+        cwd: '/srv/app',
+      };
+      expect(driver.state.appState.workDir).toBe(missingDir);
+
+      await internal.deleteSessionFromPicker({
+        id: 'ses-remote-missing',
+        title: 'Remote session with deleted local dir',
+        work_dir: missingDir,
+        updated_at: Date.now(),
+        missing: true,
+      });
+
+      expect(deleteSession).toHaveBeenCalledWith('ses-remote-missing');
+      expect(driver.state.appState.workDir).toBe(missingDir);
+      expect(driver.state.appState.sessionId).toBe('ses-remote-replacement');
+      expect(harness.createSession).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          environmentId: 'ssh-dev',
+          environmentCwd: '/srv/app',
+        }),
+      );
+    });
+
+    it('preserves remote environment binding when running /new on a remote session whose local workDir is missing', async () => {
+      const project = tempDir('kimi-remote-new-project-');
+      const missingDir = join(project, 'deleted-wt');
+      const remoteSession = makeSession({
+        id: 'ses-remote-current',
+        getEnvironment: vi.fn(async () => ({
+          environmentId: 'ssh-dev',
+          cwd: '/srv/app',
+        })),
+      });
+      const replacement = makeSession({
+        id: 'ses-remote-new',
+        getEnvironment: vi.fn(async () => ({
+          environmentId: 'ssh-dev',
+          cwd: '/srv/app',
+        })),
+      });
+      const harness = makeHarness(remoteSession, {
+        resumeSession: vi.fn(async () => remoteSession),
+        createSession: vi.fn(async () => replacement),
+      });
+      const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
+      await driver.ensureSession();
+      const internal = driver as unknown as {
+        resumeSession(
+          id: string,
+          plan: {
+            kind: 'switch';
+            location: { cwd: string; projectRoot: string; isGitRepo: boolean };
+            missing: boolean;
+          },
+        ): Promise<boolean>;
+        createNewSession(): Promise<void>;
+      };
+      await expect(
+        internal.resumeSession('ses-remote-current', {
+          kind: 'switch',
+          location: { cwd: missingDir, projectRoot: project, isGitRepo: true },
+          missing: true,
+        }),
+      ).resolves.toBe(true);
+      driver.state.appState.environment = {
+        environmentId: 'ssh-dev',
+        type: 'ssh',
+        status: 'ready',
+        cwd: '/srv/app',
+      };
+
+      await internal.createNewSession();
+
+      expect(driver.state.appState.workDir).toBe(missingDir);
+      expect(driver.state.appState.sessionId).toBe('ses-remote-new');
+      expect(harness.createSession).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          environmentId: 'ssh-dev',
+          environmentCwd: '/srv/app',
+        }),
+      );
+    });
+
+    it('reports an error instead of falling back to local when deleting a current remote session with no cwd', async () => {
+      const project = tempDir('kimi-remote-err-project-');
+      const missingDir = join(project, 'deleted-wt');
+      const initial = makeSession({ id: 'ses-initial' });
+      const brokenRemote = makeSession({
+        id: 'ses-remote-broken',
+        getEnvironment: vi.fn(async () => ({
+          environmentId: 'ssh-dev',
+          cwd: undefined,
+        })),
+      });
+      const createSession = vi.fn(async () => initial);
+      const harness = makeHarness(initial, {
+        resumeSession: vi.fn(async () => brokenRemote),
+        deleteSession: vi.fn(async () => {}),
+        createSession,
+      });
+      const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
+      await driver.ensureSession();
+      createSession.mockClear();
+
+      const internal = driver as unknown as {
+        resumeSession(
+          id: string,
+          plan: {
+            kind: 'switch';
+            location: { cwd: string; projectRoot: string; isGitRepo: boolean };
+            missing: boolean;
+          },
+        ): Promise<boolean>;
+        deleteSessionFromPicker(row: SessionRow): Promise<void>;
+      };
+      await expect(
+        internal.resumeSession('ses-remote-broken', {
+          kind: 'switch',
+          location: { cwd: missingDir, projectRoot: project, isGitRepo: true },
+          missing: true,
+        }),
+      ).resolves.toBe(true);
+      driver.state.appState.environment = {
+        environmentId: 'ssh-dev',
+        type: 'ssh',
+        status: 'ready',
+      };
+
+      await internal.deleteSessionFromPicker({
+        id: 'ses-remote-broken',
+        title: 'Broken remote session',
+        work_dir: missingDir,
+        updated_at: Date.now(),
+        missing: true,
+      });
+
+      expect(createSession).not.toHaveBeenCalled();
+      expect(driver.state.appState.workDir).toBe(missingDir);
+      expect(transcriptText(driver)).toContain('Failed to start a new session');
     });
   });
 

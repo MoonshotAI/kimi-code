@@ -52,7 +52,7 @@ import { applyRecommendedEffort } from '#/utils/recommended-effort';
 import { getRecommendedEffortConfig } from '#/utils/recommended-effort-config';
 import { migrateLegacySurveySetting } from '#/utils/survey-setting';
 import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
-import { isDirectory, resumeElsewhereHint } from '#/utils/session-directory';
+import { isDirectoryAsync, resumeElsewhereHint } from '#/utils/session-directory';
 import { quoteShellArg } from '#/utils/shell-quote';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 
@@ -3259,7 +3259,8 @@ export class KimiTUI {
       return true;
     } catch (error) {
       await this.applyWorkLocation(previous, {
-        resolveEnvironment: options?.resolveEnvironment === false ? false : isDirectory(previous.cwd),
+        resolveEnvironment:
+          options?.resolveEnvironment === false ? false : await isDirectoryAsync(previous.cwd),
         environmentId: options?.environmentId,
       }).catch(() => {});
       this.showError(formatErrorMessage(error));
@@ -3279,7 +3280,7 @@ export class KimiTUI {
     await this.createNewSession({ environmentId: 'local' });
     if (this.session !== replaced) return true;
     await this.applyWorkLocation(previous, {
-      resolveEnvironment: isDirectory(previous.cwd),
+      resolveEnvironment: await isDirectoryAsync(previous.cwd),
       environmentId: 'local',
     }).catch(() => {});
     return false;
@@ -3647,9 +3648,12 @@ export class KimiTUI {
     before?: string,
   ): Promise<{ readonly rows: SessionRow[]; readonly nextCursor?: string } | undefined> {
     const projectQueryDir =
-      isDirectory(this.state.appState.workDir) || this.state.appState.projectRoot === undefined
+      scope !== 'project' ||
+      this.state.appState.projectRoot === undefined ||
+      (await isDirectoryAsync(this.state.appState.workDir))
         ? this.state.appState.workDir
         : this.state.appState.projectRoot;
+    if (requestToken !== this.sessionPickerScopeRequestToken) return undefined;
     const query =
       scope === 'project'
         ? {
@@ -3667,7 +3671,9 @@ export class KimiTUI {
     if (requestToken !== this.sessionPickerScopeRequestToken) return undefined;
     const locations =
       scope !== 'cwd' || isExperimentalFlagEnabled('worktree')
-        ? await sessionLocationTags(this.harness, page.items)
+        ? await sessionLocationTags(this.harness, page.items, {
+            isCancelled: () => requestToken !== this.sessionPickerScopeRequestToken,
+          })
         : undefined;
     if (requestToken !== this.sessionPickerScopeRequestToken) return undefined;
     return {
@@ -3806,7 +3812,7 @@ export class KimiTUI {
 
   private async showResumeOtherWorkDirHint(session: SessionRow): Promise<void> {
     this.hideSessionPicker();
-    if (!isDirectory(session.work_dir)) {
+    if (!(await isDirectoryAsync(session.work_dir))) {
       this.showStatus(`Selected session's working directory no longer exists:\n  ${session.work_dir}`, 'warning');
       return;
     }
@@ -3966,14 +3972,16 @@ export class KimiTUI {
     return this.newSessionPromise;
   }
 
-  private async fallbackToExistingProjectRootIfMissing(): Promise<boolean> {
-    if (this.environmentIdOf(this.state.appState.environment) !== 'local') return false;
+  private async fallbackToExistingProjectRootIfMissing(environmentId?: string): Promise<boolean> {
+    const resolvedEnvironmentId =
+      environmentId ?? this.environmentIdOf(this.state.appState.environment);
+    if (resolvedEnvironmentId !== 'local') return false;
     const { workDir, projectRoot } = this.state.appState;
     if (
       projectRoot === undefined ||
       sameDir(workDir, projectRoot) ||
-      isDirectory(workDir) ||
-      !isDirectory(projectRoot)
+      (await isDirectoryAsync(workDir)) ||
+      !(await isDirectoryAsync(projectRoot))
     ) {
       return false;
     }
@@ -3996,9 +4004,14 @@ export class KimiTUI {
     try {
       let session: Session;
       try {
-        await this.fallbackToExistingProjectRootIfMissing();
         const environment = inherited ?? (await this.environmentForNewSession());
-        session = await this.createSessionFromCurrentState(false, environment);
+        const fellBack = await this.fallbackToExistingProjectRootIfMissing(
+          environment?.environmentId,
+        );
+        session = await this.createSessionFromCurrentState(
+          false,
+          fellBack ? { environmentId: 'local' } : environment,
+        );
       } catch (error) {
         const msg = formatErrorMessage(error);
         this.showError(`Failed to start a new session: ${msg}`);
@@ -5307,14 +5320,6 @@ export class KimiTUI {
     const startReplacement = async (): Promise<void> => {
       this.setAppState({ sessionId: '' });
       this.clearTranscriptAndRedraw();
-      try {
-        if (await this.fallbackToExistingProjectRootIfMissing()) {
-          inherited = await this.environmentForNewSession();
-          inheritError = undefined;
-        }
-      } catch (error) {
-        inheritError = error;
-      }
       if (inheritError !== undefined) {
         this.showError(`Failed to start a new session: ${formatErrorMessage(inheritError)}`);
         return;
