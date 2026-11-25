@@ -83,7 +83,7 @@ Failed KAP tests also print summaries of the most recent 32 WebSocket frames and
 | `paced(ms, step)`, `after(ms, step)` | delay between chunks, or before the reply |
 | `held(name, step, beforeUnit?)` | pauses before a chunk until the test releases it |
 | `httpError(status, options)` | an HTTP error with body, headers, `retry-after`, request and trace ids |
-| `streamError(step, options)`, `disconnect(step)` | fails or drops the stream after the step's chunks |
+| `streamError(step, options)`, `disconnect(step, { afterUsage })` | fails or drops the stream after the step's chunks; `afterUsage` sends the usage chunk before the drop |
 | `networkError()`, `rawResponse({ status, headers, chunks })` | a connection reset, or a custom response body built from UTF-8 string chunks |
 
 Tool calls get deterministic ids, `call_<requestIndex>_<callIndex>`; `model.callId(r, c)` returns them.
