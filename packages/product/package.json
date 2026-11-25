@@ -32,6 +32,7 @@
     }
   },
   "devDependencies": {
+    "@moonshot-ai/testkit": "workspace:^",
     "@types/semver": "^7.7.0"
   },
   "scripts": {

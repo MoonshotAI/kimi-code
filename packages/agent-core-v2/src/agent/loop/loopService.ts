@@ -975,14 +975,25 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private async submitClient(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
-    await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
+    const text = promptMetadataTextFromContentParts(payload.input);
+    const rejectIfBusy = payload.rejectIfBusy === true;
+    if (!rejectIfBusy) await this.updatePromptMetadata(text);
     const status = this.snapshot();
+    const wouldQueue = status.state === 'running' || status.paused || status.queue.length > 0;
+    if (rejectIfBusy && wouldQueue) {
+      throw new Error2(ErrorCodes.TURN_AGENT_BUSY, 'another turn is already in progress');
+    }
     const { id } = this.submit({
       role: 'user',
       content: [...payload.input],
       attributes: { promptId: payload.promptId, origin: { kind: 'user' } },
     });
-    if (status.state === 'running' || status.paused || status.queue.length > 0) return undefined;
+    if (rejectIfBusy) {
+      await this.updatePromptMetadata(text).catch((error: unknown) => {
+        this.logger.warn('failed to update metadata for an accepted prompt', { error });
+      });
+    }
+    if (wouldQueue) return undefined;
     return this.launchResult(id);
   }
 
@@ -1255,7 +1266,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       for (let index = this.pendingSubmissions.length - 1; index >= 0; index -= 1) {
         if (this.pendingSubmissions[index]!.attributes?.promptId === target.promptId) this.pendingSubmissions.splice(index, 1);
       }
-      this.loop?.cancel(target.promptId);
+      this.loop?.cancel(target.promptId, { includeStarting: true });
       this.prompts.cancel(target.promptId);
       return true;
     }

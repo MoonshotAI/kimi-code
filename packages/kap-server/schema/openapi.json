@@ -1650,7 +1650,8 @@
                       "source": {
                         "enum": [
                           "sidebar",
-                          "command"
+                          "command",
+                          "menu"
                         ],
                         "type": "string"
                       },
@@ -18138,6 +18139,14 @@
                               "items": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "continuation": {
+                                    "enum": [
+                                      "turn",
+                                      "background",
+                                      "none"
+                                    ],
+                                    "type": "string"
+                                  },
                                   "duration_ms": {
                                     "minimum": 0,
                                     "type": "number"

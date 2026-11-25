@@ -12,9 +12,21 @@ import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-c
 
 import { bashPathOf, createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 import type { KapHarness } from '@moonshot-ai/testkit/kap';
-import { agent, bash, fakeModelConfig, say } from '@moonshot-ai/testkit/model';
+import { startKimiServices } from '@moonshot-ai/testkit/services';
+import {
+  agent,
+  bash,
+  fakeModelConfig,
+  held,
+  reply,
+  say,
+  startFakeModel,
+  type FakeModel,
+  type Lane,
+  type RequestFacts,
+} from '@moonshot-ai/testkit/model';
 import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, test as base, vi } from 'vitest';
 
 import {
   Error2,
@@ -1375,6 +1387,9 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   it('generates and persists a title through the public REST path', async () => {
+    const kimi = await startKimiServices({ accessToken: 'test-token' });
+    onTestFinished(() => kimi.close());
+    kimi.title(...Array.from({ length: 4 }, () => 'generated from REST'));
     await server?.close();
     server = undefined;
     await writeFile(
@@ -1394,7 +1409,7 @@ describe('server-v2 /api/v1/sessions', () => {
         '',
         '[providers."managed:kimi-code"]',
         'type = "kimi"',
-        'base_url = "https://api.example.test/coding/v1"',
+        `base_url = "${kimi.baseUrl}"`,
         '',
         '[providers."managed:kimi-code".oauth]',
         'storage = "file"',
@@ -1435,23 +1450,8 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     base = `http://127.0.0.1:${server.port}`;
 
-    let toolsRequest: { method: string; params: { chat_content: string } } | undefined;
-    const actualFetch = globalThis.fetch.bind(globalThis);
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url === 'https://api.example.test/coding/v1/tools') {
-        const body = init?.body;
-        if (typeof body !== 'string') {
-          throw new TypeError('expected a string request body');
-        }
-        toolsRequest = JSON.parse(body) as typeof toolsRequest;
-        return new Response(JSON.stringify({ title: 'generated from REST' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      return actualFetch(input, init);
-    });
+    const titleInputs = (): string[] =>
+      kimi.requests('title').map((request) => (request.json as { params: { chat_content: string } }).params.chat_content);
 
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },
@@ -1469,13 +1469,7 @@ describe('server-v2 /api/v1/sessions', () => {
       `/api/v1/sessions/${id}/title/generate`,
     );
     expect(generated.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
-    expect(toolsRequest).toEqual({
-      method: 'chat_title',
-      params: {
-        chat_content:
-          'user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt',
-      },
-    });
+    expect(titleInputs()).toEqual(['user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt']);
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
@@ -1502,9 +1496,8 @@ describe('server-v2 /api/v1/sessions', () => {
       source: 'digest',
     });
     expect(digested.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
-    expect(toolsRequest?.params.chat_content).toBe(
-      'user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt',
-    );
+    expect(titleInputs().at(-1)).toBe('user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt');
+    kimi.verify();
   });
 
   it('returns session-not-found when generating a title for a missing session', async () => {
@@ -4338,28 +4331,22 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
 });
 
 describe('server-v2 /api/v1/sessions:btw', () => {
-  const modelBase = 'https://model.example.test/v1';
   const mainAnswer = 'The main agent answered with a much longer explanation than the side chat.';
   const sideAnswer = 'Short side answer.';
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
-  let releaseSideAnswer: () => void = () => {};
-  let sideAnswerGate: Promise<void> = Promise.resolve();
+  let model: FakeModel;
+  let sideLane: Lane;
+  let mainLane: Lane;
 
-  function sseBody(text: string): string {
-    const chunk = (delta: Record<string, unknown>, finishReason: string | null) =>
-      `data: ${JSON.stringify({
-        id: 'chatcmpl-test',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'fake-model',
-        choices: [{ index: 0, delta, finish_reason: finishReason }],
-      })}\n\n`;
-    return `${chunk({ role: 'assistant', content: text }, null)}${chunk({}, 'stop')}data: [DONE]\n\n`;
-  }
+  const asksSideQuestion = (request: RequestFacts): boolean =>
+    request.texts('user').some((text) => text.includes('side question'));
 
   beforeAll(async () => {
+    model = await startFakeModel();
+    sideLane = model.route('side-chat', asksSideQuestion);
+    mainLane = model.route('main-chat', () => true);
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-btw-'));
     await writeFile(
       join(home, 'config.toml'),
@@ -4369,7 +4356,7 @@ describe('server-v2 /api/v1/sessions:btw', () => {
         '[providers.fake]',
         'type = "openai"',
         'api_key = "sk-test"',
-        `base_url = "${modelBase}"`,
+        `base_url = "${model.baseUrl}"`,
         '',
         '[models.fake]',
         'provider = "fake"',
@@ -4379,18 +4366,6 @@ describe('server-v2 /api/v1/sessions:btw', () => {
       ].join('\n'),
       'utf-8',
     );
-    const realFetch = globalThis.fetch;
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (!url.startsWith(modelBase)) return realFetch(input, init);
-      const messages = JSON.stringify(JSON.parse(typeof init?.body === 'string' ? init.body : '{}').messages ?? []);
-      const side = messages.includes('side question');
-      if (side) await sideAnswerGate;
-      return new Response(sseBody(side ? sideAnswer : mainAnswer), {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-      });
-    });
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -4402,12 +4377,16 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
+  afterEach(() => {
+    model.verify();
+  });
+
   afterAll(async () => {
-    vi.restoreAllMocks();
     if (server !== undefined) {
       await server.close();
       server = undefined;
     }
+    await model.close();
     if (home !== undefined) {
       await new Promise((resolve) => setTimeout(resolve, 25));
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
@@ -4451,6 +4430,7 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const sessionId = created.data.id;
     await agentTurns(sessionId, 'main');
+    mainLane.script(say(mainAnswer));
     await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
       content: [{ type: 'text', text: 'main question' }],
       model: 'fake',
@@ -4462,9 +4442,7 @@ describe('server-v2 /api/v1/sessions:btw', () => {
       { timeout: 10_000 },
     );
 
-    sideAnswerGate = new Promise((resolve) => {
-      releaseSideAnswer = resolve;
-    });
+    sideLane.script(held('side-answer', say(sideAnswer)));
     const btw = await postJson<{ agent_id: string }>(`/api/v1/sessions/${sessionId}:btw`, {});
     const agentId = btw.data.agent_id;
     await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
@@ -4473,7 +4451,7 @@ describe('server-v2 /api/v1/sessions:btw', () => {
       model: 'fake',
     });
     await agentTurns(sessionId, agentId);
-    releaseSideAnswer();
+    model.hold('side-answer').release();
 
     await vi.waitFor(
       async () => {
@@ -4495,11 +4473,11 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
-  let releaseModel: () => void = () => {};
-  let modelGate: Promise<void> = Promise.resolve();
-  const modelBase = 'https://fake-wait-llm.example.test/v1';
+  let model: FakeModel;
+  const releaseModel = (): void => model.hold('model-gate').release();
 
   beforeAll(async () => {
+    model = await startFakeModel();
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-wait-'));
     await writeFile(
       join(home, 'config.toml'),
@@ -4509,7 +4487,7 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
         '[providers.fake]',
         'type = "openai"',
         'api_key = "sk-test"',
-        `base_url = "${modelBase}"`,
+        `base_url = "${model.baseUrl}"`,
         '',
         '[models.fake]',
         'provider = "fake"',
@@ -4519,40 +4497,6 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
       ].join('\n'),
       'utf-8',
     );
-    const realFetch = globalThis.fetch;
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (!url.startsWith(modelBase)) return realFetch(input, init);
-      const gate = modelGate;
-      const stream = new ReadableStream<Uint8Array>({
-        async start(controller) {
-          const enc = new TextEncoder();
-          const send = (delta: Record<string, unknown>, finishReason: string | null) => {
-            controller.enqueue(
-              enc.encode(
-                `data: ${JSON.stringify({
-                  id: 'chatcmpl-wait',
-                  object: 'chat.completion.chunk',
-                  created: 0,
-                  model: 'fake-model',
-                  choices: [{ index: 0, delta, finish_reason: finishReason }],
-                })}\n\n`,
-              ),
-            );
-          };
-          send({ role: 'assistant', content: 'halfway ' }, null);
-          await gate;
-          send({ content: 'done' }, null);
-          send({}, 'stop');
-          controller.enqueue(enc.encode('data: [DONE]\n\n'));
-          controller.close();
-        },
-      });
-      return new Response(stream, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-      });
-    });
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -4565,11 +4509,11 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
 
   afterAll(async () => {
     releaseModel();
-    vi.restoreAllMocks();
     if (server !== undefined) {
       await server.close();
       server = undefined;
     }
+    await model.close();
     if (home !== undefined) {
       await new Promise((resolve) => setTimeout(resolve, 25));
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
@@ -4600,9 +4544,7 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
     expect(idleWait.data.session.activity).toBe('idle');
     expect(idleWait.data.pending_interactions).toEqual([]);
 
-    modelGate = new Promise((resolve) => {
-      releaseModel = resolve;
-    });
+    model.script(held('model-gate', reply(say('halfway '), say('done')), 1));
 
     await fetch(`${base}/api/v1/sessions/${sid}/prompts`, {
       method: 'POST',
@@ -4698,6 +4640,7 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
     expect(finalWait.data.timed_out).toBe(false);
     expect(finalWait.data.session.activity).toBe('idle');
     expect(finalWait.data.pending_interactions).toEqual([]);
+    model.verify();
   });
 });
 

@@ -45,6 +45,29 @@ describe('useWorkspaceTrust', () => {
     scope.stop();
   });
 
+  it('reports pending trust only until the active workspace has a result', () => {
+    expect(trust.trustReadPending.value).toBe(true);
+    client.activeWorkspaceTrustLoading.value = true;
+    expect(trust.trustReadPending.value).toBe(true);
+
+    client.activeWorkspaceTrust.value = true;
+    expect(trust.trustReadPending.value).toBe(false);
+
+    client.activeWorkspaceId.value = 'ws/2';
+    client.activeWorkspaceTrust.value = undefined;
+    expect(trust.trustReadPending.value).toBe(true);
+
+    client.activeWorkspaceTrust.value = false;
+    expect(trust.trustReadPending.value).toBe(false);
+
+    client.activeWorkspaceTrust.value = undefined;
+    client.activeWorkspaceTrustError.value = failure('read', 'trust read failed');
+    expect(trust.trustReadPending.value).toBe(false);
+    client.activeWorkspaceId.value = null;
+    client.activeWorkspaceTrustError.value = undefined;
+    expect(trust.trustReadPending.value).toBe(false);
+  });
+
   it('does not open the dialog during the initial read and only allows explicit trust', async () => {
     let resolveRead!: (value: { status: 'success'; trusted: boolean }) => void;
     client.ensureWorkspaceTrust.mockReturnValue(new Promise((resolve) => {

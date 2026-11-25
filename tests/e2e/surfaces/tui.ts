@@ -208,6 +208,11 @@ interface Turn {
   readonly failed: number;
 }
 
+interface QueuedMessage {
+  readonly text: string;
+  readonly sentBefore: number;
+}
+
 type Settled<T> = { readonly found: T } | { readonly over: Screen };
 
 function quote(value: string): string {
@@ -576,6 +581,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private modifyOtherKeys = false;
   private keyboardProblem: string | undefined;
   private turn: Turn | undefined;
+  private queued: QueuedMessage[] = [];
 
   constructor(
     pty: IPty,
@@ -664,6 +670,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   async compact(): Promise<void> {
     const before = await this.read();
     if (!this.turnOver(before)) throw this.failure('compact() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.queued = [];
     const done = compactionNotices(before, COMPACTION_DONE);
     const cancelled = compactionNotices(before, COMPACTION_CANCELLED);
     this.write(paste(COMPACT_COMMAND));
@@ -678,6 +685,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   async newSession(): Promise<void> {
     const before = await this.read();
     if (!this.turnOver(before)) throw this.failure('newSession() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.queued = [];
     this.write(paste(NEW_SESSION_COMMAND));
     this.write(KEYS.enter);
     await this.wait('the CLI to report a new session', (screen) =>
@@ -743,6 +751,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     }
     const shown = userMessages(screen, text);
     this.turn = { stopped: statusLines(screen, TURN_STOPPED), failed: statusLines(screen, TURN_FAILED) };
+    this.queued = [];
     this.write(paste(text));
     this.write(KEYS.enter);
     await this.wait(`the user message ${JSON.stringify(text)} to appear in the transcript`, (current) =>
@@ -756,6 +765,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     if (queuedMessages(screen).includes(text)) {
       throw this.failure(`queue() found ${JSON.stringify(text)} already in the queue; queue each message once.`, screen);
     }
+    const sentBefore = userMessages(screen, text);
     this.write(paste(text));
     this.write(KEYS.queue);
     const settled = await this.settle(`the message ${JSON.stringify(text)} to wait in the queue`, (current) => {
@@ -765,6 +775,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     if ('over' in settled) {
       throw this.failure(`queue() did not see ${JSON.stringify(text)} in the queue before the turn ended.`, settled.over);
     }
+    this.queued.push({ text, sentBefore });
     if (settled.found === 'cut') {
       throw this.failure(`queue() put ${JSON.stringify(text)} in the queue, but the queue cuts it short to fit one line; queue a shorter message.`, await this.read());
     }
@@ -1132,12 +1143,17 @@ class TuiDriver implements SurfaceDriver<'tui'> {
 
   private turnOver(screen: Screen): boolean {
     if (screen.input !== 'editor' || showsActivity(screen) || queuedMessages(screen).length > 0) return false;
+    if (this.unsentQueued(screen).length > 0) return false;
     if (this.turn === undefined) return true;
     return (
       screen.status.some((line) => line.startsWith(TURN_COMPLETED)) ||
       statusLines(screen, TURN_STOPPED) > this.turn.stopped ||
       statusLines(screen, TURN_FAILED) > this.turn.failed
     );
+  }
+
+  private unsentQueued(screen: Screen): string[] {
+    return this.queued.filter((message) => userMessages(screen, message.text) <= message.sentBefore).map((message) => message.text);
   }
 
   private settle<T>(label: string, evidence: (screen: Screen) => T | undefined): Promise<Settled<T>> {
@@ -1272,10 +1288,12 @@ class TuiDriver implements SurfaceDriver<'tui'> {
 
   private async describe(): Promise<string> {
     const screen = await this.read();
+    const unsent = this.unsentQueued(screen);
     return [
       `Screen:\n${screen.viewport.join('\n').trimEnd()}`,
       `Recent input: ${JSON.stringify(this.inputs)}`,
       `Exit status: ${String(this.exitCode() ?? 'still running')}`,
+      ...(unsent.length === 0 ? [] : [`Queued but not yet in the transcript as a user message: ${JSON.stringify(unsent)}`]),
     ].join('\n');
   }
 }

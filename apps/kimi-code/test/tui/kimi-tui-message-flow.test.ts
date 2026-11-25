@@ -2,8 +2,6 @@ import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 
@@ -24,6 +22,7 @@ import {
   type GoalSnapshot,
   type Session,
 } from '@moonshot-ai/kimi-code-sdk';
+import { call, startFakeModel } from '@moonshot-ai/testkit/model';
 import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -178,6 +177,7 @@ interface MessageDriver {
   skillVariantPathForCommand(commandName: string, tokenStart: number): string | undefined;
   clearQueuedMessages(): void;
   closeSession(reason: string): Promise<void>;
+  deferUserMessages: boolean;
   setSession(session: unknown): Promise<void>;
   switchToSession(session: Session, statusMessage: string): Promise<void>;
   reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void>;
@@ -8608,68 +8608,12 @@ command = "vim"
       Buffer.from('00000020667479706d703432000000006d70343269736f6d', 'hex'),
     );
 
-    let notifyUploadStarted!: () => void;
-    const uploadStarted = new Promise<void>((resolve) => {
-      notifyUploadStarted = resolve;
-    });
-    let uploadAborted = false;
-    const server = createServer((req, res) => {
-      void (async () => {
-        for await (const _chunk of req) {
-        }
-        if (req.url === '/v1/files') {
-          notifyUploadStarted();
-          res.on('close', () => {
-            if (!res.writableEnded) uploadAborted = true;
-          });
-          return;
-        }
-        if (req.url === '/v1/chat/completions') {
-          const chunks = [
-            {
-              id: 'chatcmpl-mock',
-              object: 'chat.completion.chunk',
-              created: 1,
-              model: 'mock',
-              choices: [
-                {
-                  index: 0,
-                  delta: {
-                    role: 'assistant',
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: 'call_video_1',
-                        type: 'function',
-                        function: { name: 'ReadMediaFile', arguments: '{"path":"clip.mp4"}' },
-                      },
-                    ],
-                  },
-                  finish_reason: null,
-                },
-              ],
-            },
-            {
-              id: 'chatcmpl-mock',
-              object: 'chat.completion.chunk',
-              created: 1,
-              model: 'mock',
-              choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
-              usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
-            },
-          ];
-          res.writeHead(200, { 'content-type': 'text/event-stream' });
-          res.end(`${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('')}data: [DONE]\n\n`);
-          return;
-        }
-        res.writeHead(404);
-        res.end();
-      })().catch(() => {
-        res.destroy();
-      });
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+    const model = await startFakeModel();
+    model.holdUploads();
+    model
+      .route('video-upload', () => true)
+      .script(call('ReadMediaFile', { path: 'clip.mp4' }, { id: 'call_video_1' }));
+    const baseUrl = model.baseUrl;
     await writeFile(
       join(homeDir, 'config.toml'),
       `
@@ -8709,14 +8653,16 @@ capabilities = ["image_in", "video_in"]
       driver.sessionEventHandler.startSubscription();
 
       driver.handleUserInput('watch clip.mp4');
-      await uploadStarted;
+      await vi.waitFor(() => {
+        expect(model.uploads()).toHaveLength(1);
+      });
       driver.state.editor.onEscape?.();
 
       await vi.waitFor(() => {
         expect(driver!.state.appState.streamingPhase).toBe('idle');
       });
       await vi.waitFor(() => {
-        expect(uploadAborted).toBe(true);
+        expect(model.uploads()[0]?.state).toBe('aborted');
       });
       expect(driver.state.activitySpinner).toBeNull();
       const previousSessionId = driver.getCurrentSessionId();
@@ -8729,16 +8675,12 @@ capabilities = ["image_in", "video_in"]
       expect(driver.state.appState.streamingPhase).toBe('idle');
       expect(driver.state.livePane.mode).toBe('idle');
       expect(driver.state.activitySpinner).toBeNull();
+      model.verify();
     } finally {
       driver?.state.activitySpinner?.instance.stop();
       await driver?.closeSession('test').catch(() => {});
       await harness?.close();
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => {
-        server.close(() => {
-          resolve();
-        });
-      });
+      await model.close();
     }
   }, 20_000);
 
@@ -11346,6 +11288,90 @@ capabilities = ["image_in", "video_in"]
 
     expect(session.startBtw).not.toHaveBeenCalled();
     expect(stripSgr(renderTranscript(driver))).toContain('LLM not set');
+  });
+
+  it('blocks prompts, inline skills, and plugin commands when the session model is not configured', async () => {
+    const activatePluginCommand = vi.fn(async () => {});
+    const session = makeSession({ activatePluginCommand });
+    const { driver } = await makeDriver(session);
+    const skillDriver = driver as unknown as { skillCommandMap: Map<string, string> };
+    skillDriver.skillCommandMap.set('review', 'review');
+    driver.pluginCommandMap.set('demo:run', 'demo');
+    driver.state.appState.model = 'removed-model';
+
+    driver.handleUserInput('hello after removal');
+    driver.handleUserInput('/review');
+    driver.handleUserInput('/demo:run');
+    driver.handleUserInput('/btw side question');
+    driver.handleUserInput('/init');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Error: Model "removed-model" is not configured in config.toml. Use /model to select an available model.',
+      );
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    expect(activatePluginCommand).not.toHaveBeenCalled();
+    expect(session.startBtw).not.toHaveBeenCalled();
+    expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+    expect(session.init).not.toHaveBeenCalled();
+    expect(driver.deferUserMessages).toBe(false);
+
+    driver.state.appState.availableModels['removed-model'] = {
+      provider: 'test',
+      model: 'removed-wire',
+      maxContextSize: 100,
+    };
+    driver.handleUserInput('hello after re-adding');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('blocks input routed to an open /btw panel when the session model becomes unavailable', async () => {
+    const { driver, session } = await makeDriver();
+    await openBtwPanel(driver, session);
+    session.prompt.mockClear();
+    driver.state.appState.model = 'removed-model';
+
+    driver.handleUserInput('follow up in btw');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Error: Model "removed-model" is not configured in config.toml. Use /model to select an available model.',
+      );
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('does not close the active session when switching to the same session instance', async () => {
+    const { driver, session } = await makeDriver();
+
+    await driver.setSession(session);
+
+    expect(session.close).not.toHaveBeenCalled();
+  });
+
+  it('shows the resume warning when switching to a session whose model is unavailable', async () => {
+    const { driver } = await makeDriver();
+    const resumed = makeSession({
+      id: 'ses-removed',
+      getResumeState: vi.fn(() => ({
+        sessionMetadata: {},
+        agents: {},
+        warning:
+          'Session model "removed-model" is not configured in config.toml. Use /model to select an available model.',
+      })),
+    });
+
+    await driver.switchToSession(resumed as unknown as Session, 'Resumed session (ses-removed).');
+
+    expect(stripSgr(renderTranscript(driver))).toContain(
+      'Warning: Session model "removed-model" is not configured in config.toml. Use /model to select an available model.',
+    );
+    expect(stripSgr(renderTranscript(driver))).toContain('Resumed session (ses-removed).');
   });
 
   it('recomputes contextUsage when a status update carries contextTokens without it', async () => {

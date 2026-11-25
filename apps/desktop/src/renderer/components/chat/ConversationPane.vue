@@ -149,6 +149,7 @@ const recentSessions = computed(() => client.recentSessionsForWorkspace(client.a
 
 const {
   trustDenied,
+  trustReadPending,
   trustRejected,
   trustGateOpen,
   busy: trustBusy,
@@ -156,6 +157,10 @@ const {
   rejectTrust,
   gateSubmitForTrust,
 } = useWorkspaceTrust();
+
+const trustSubmitBlockedReason = computed(() =>
+  trustReadPending.value && !hostBlocked.value ? t('workspace.trust.checking') : undefined,
+);
 
 function gateSubmit(): boolean {
   return !hostBlocked.value && gateSubmitForTrust();
@@ -965,6 +970,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               :interrupt-armed="escInterruptArmed"
               class="empty-composer"
               hide-context
+              :session-submit-blocked-reason="trustSubmitBlockedReason"
               :before-submit="gateSubmit"
               :defer-submit-reset="true"
               :extra-builtin-commands="feedbackCommands"
@@ -1059,6 +1065,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :pending-approval="pendingApproval"
         :approval-busy="approvalBusy"
         :mobile="mobile"
+        :session-submit-blocked-reason="trustSubmitBlockedReason"
         :before-submit="gateSubmit"
         :defer-submit-reset="true"
         :extra-builtin-commands="feedbackCommands"

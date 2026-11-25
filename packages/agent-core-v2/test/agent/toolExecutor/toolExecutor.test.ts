@@ -78,6 +78,7 @@ import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import type { RgResolution } from '#/os/backends/node-local/tools/rgLocator';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
@@ -101,6 +102,14 @@ import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
+
+vi.mock('#/os/backends/node-local/tools/rgLocator', async (importOriginal) => {
+  const original = await importOriginal<typeof import('#/os/backends/node-local/tools/rgLocator')>();
+  return {
+    ...original,
+    ensureRgPath: vi.fn(async (): Promise<RgResolution> => ({ path: 'rg', source: 'system-path' })),
+  };
+});
 
 type ToolExecutorEvent =
   | { readonly type: 'tool.result'; readonly toolCallId: string; readonly result: ToolResult };
@@ -1213,6 +1222,20 @@ describe('truncation pipeline', () => {
     await rm(homeDir, { recursive: true, force: true });
   });
 
+  function stubGlobStdout(stdout: string): void {
+    vi.spyOn(globProcess, 'spawn').mockImplementation(async () => ({
+      _serviceBrand: undefined,
+      pid: 123,
+      exitCode: 0,
+      stdin: new PassThrough(),
+      stdout: Readable.from([stdout]),
+      stderr: Readable.from([]),
+      wait: async () => 0,
+      kill: async () => {},
+      dispose: () => {},
+    }));
+  }
+
   it('spills oversized output to disk and renders a pointer for the model', async () => {
     const line = `${'x'.repeat(100)}\n`;
     const fullOutput = `HEAD_MARKER\n${line.repeat(300)}MIDDLE_MARKER\n${line.repeat(
@@ -1253,7 +1276,7 @@ describe('truncation pipeline', () => {
     const expected = Array.from({ length: 500 }, (_, index) =>
       `file-${String(index).padStart(3, '0')}-${'x'.repeat(100)}.ts`,
     );
-    await Promise.all(expected.map((name) => writeFile(join(homeDir, name), '')));
+    stubGlobStdout(expected.map((name) => `./${name}`).join('\n') + '\n');
 
     const [result] = await execute([toolCall('glob_all', 'Glob', { pattern: '*.ts', head_limit: 0 })]);
 
@@ -1283,18 +1306,7 @@ describe('truncation pipeline', () => {
     const root = await mkdtemp(join(tmpdir(), 'r'.repeat(180)));
     try {
       const names = Array.from({ length: 60_000 }, (_, i) => `file-${String(i).padStart(6, '0')}.ts`);
-      const stdout = names.map((name) => `./${name}`).join('\n') + '\n';
-      vi.spyOn(globProcess, 'spawn').mockImplementation(async () => ({
-        _serviceBrand: undefined,
-        pid: 123,
-        exitCode: 0,
-        stdin: new PassThrough(),
-        stdout: Readable.from([stdout]),
-        stderr: Readable.from([]),
-        wait: async () => 0,
-        kill: async () => {},
-        dispose: () => {},
-      }));
+      stubGlobStdout(names.map((name) => `./${name}`).join('\n') + '\n');
       const recovered: string[] = [];
       let offset = 0;
       let globPages = 0;

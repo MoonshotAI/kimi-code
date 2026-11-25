@@ -31,6 +31,7 @@ import { UsageErrors } from '#/agent/usage/errors';
 import { WebErrors } from '#/app/web/errors';
 import { WireErrors } from '#/wire/errors';
 import { ProjectErrors } from '#/app/project/errors';
+import { WorktreeErrors } from '#/app/worktree/errors';
 
 export * from '#/_base/errors/codes';
 export * from '#/_base/errors/errorMessage';
@@ -66,6 +67,7 @@ export { UsageErrors } from '#/agent/usage/errors';
 export { WebErrors } from '#/app/web/errors';
 export { WireErrors } from '#/wire/errors';
 export { ProjectErrors } from '#/app/project/errors';
+export { WorktreeErrors } from '#/app/worktree/errors';
 export { EventErrors } from '#/app/event/errors';
 export { StateErrors } from '#/state/errors';
 
@@ -100,6 +102,7 @@ export const ErrorCodes = {
   ...WebErrors.codes,
   ...WireErrors.codes,
   ...ProjectErrors.codes,
+  ...WorktreeErrors.codes,
   ...EventErrors.codes,
   ...StateErrors.codes,
 } as const;
@@ -200,6 +203,19 @@ export type KimiErrorCode =
   | 'session.busy'
   | 'shell.git_bash_not_found'
   | 'workspace.not_found'
+  | 'worktree.disabled'
+  | 'worktree.not_git_repo'
+  | 'worktree.no_commits'
+  | 'worktree.base_not_found'
+  | 'worktree.invalid_name'
+  | 'worktree.already_exists'
+  | 'worktree.git_failed'
+  | 'worktree.include_failed'
+  | 'worktree.cancelled'
+  | 'worktree.not_found'
+  | 'worktree.has_uncommitted'
+  | 'worktree.has_unique_commits'
+  | 'worktree.in_use'
   | 'file.not_found'
   | 'file.too_large'
   | 'fs.path_not_found'

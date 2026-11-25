@@ -19,6 +19,7 @@ export interface IProjectSessions {
   listRecent(workspaceId: string): Promise<readonly SessionSummary[]>;
   count(workspaceId: string): Promise<number>;
   listForWorkdir(dir: string, query?: WorkdirSessionQuery): Promise<Page<SessionSummary>>;
+  listForProject(dir: string, query?: WorkdirSessionQuery): Promise<Page<SessionSummary>>;
 }
 
 export const IProjectSessions: ServiceIdentifier<IProjectSessions> =

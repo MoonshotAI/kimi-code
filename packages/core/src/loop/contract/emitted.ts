@@ -61,7 +61,7 @@ export type LoopEmitted =
   /** Messages moved from the normal inbox to the notify inbox (`Loop.steer`, `Loop.sendNowQueued`); `messages` lists the moved ones, absent when nothing moved. */
   | { type: 'prompt.steered'; promptIds: string[]; messages?: readonly UserMessage[] }
   /** A queued message was removed from the inboxes (`Loop.cancel`); `canceled` is false when nothing matched. */
-  | { type: 'prompt.canceled'; promptId: string; canceled: boolean }
+  | { type: 'prompt.canceled'; promptId: string; canceled: boolean; startingTurnId?: number }
   | { type: 'turn.started'; turnId: number; trigger: TurnTrigger; promptOnly?: true; message?: UserMessage }
   | { type: 'turn.resumed'; turnId: number; step: number }
   | {

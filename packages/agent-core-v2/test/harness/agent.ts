@@ -10,6 +10,7 @@ import { toDisposable } from '#/_base/di/lifecycle';
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { drainSessionMetadataWrites } from '#/session/sessionMetadata/sessionMetadataService';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
@@ -253,6 +254,7 @@ import {
   fetchBackedProvider,
   withMockProvider,
   type MockProvider,
+  type MockProviderOptions,
   type MockProviderResponse,
 } from './scripted-generate';
 import { project as projectContext } from '#/agent/loop/projection';
@@ -481,6 +483,7 @@ export interface TestModelEndpoint {
 
 export interface TestAgentOptions {
   readonly generate?: MockProvider | undefined;
+  readonly scriptedModelChecks?: MockProviderOptions;
   readonly model?: TestModelEndpoint;
   readonly telemetry?: ITelemetryService | undefined;
   readonly persistence?: WireRecordPersistence | undefined;
@@ -1128,7 +1131,7 @@ class ConfigBackedModelCatalog extends ModelCatalog {
 export class AgentTestContext {
   private readonly serviceOverrides: readonly TestAgentScopedServiceOverride[];
   private readonly options: TestAgentOptions;
-  private readonly scriptedGenerate = createScriptedGenerate();
+  private readonly scriptedGenerate: ReturnType<typeof createScriptedGenerate>;
   private readonly root: Scope;
   private readonly session: Scope;
   private readonly agent: Scope;
@@ -1169,6 +1172,7 @@ export class AgentTestContext {
 
   constructor(overrides: readonly TestAgentServiceOverride[] = [], options: TestAgentOptions = {}) {
     this.options = options;
+    this.scriptedGenerate = createScriptedGenerate(options.scriptedModelChecks);
     if (options.cwd !== undefined) this.cwd = options.cwd;
     this.serviceOverrides = flattenServiceOverrides(overrides);
     this.emitter.on('error', () => { });
@@ -2108,11 +2112,11 @@ export class AgentTestContext {
     }
   }
 
-  appendRichToolExchange(): void {
+  appendRichToolExchange(text = 'inspect this image'): void {
     this.appendMessage({
       role: 'user',
       content: [
-        { type: 'text', text: 'inspect this image' },
+        { type: 'text', text },
         {
           type: 'image_url',
           imageUrl: { url: 'ms://image-1', id: 'image-1' },
@@ -2260,6 +2264,13 @@ export class AgentTestContext {
     }
     await this.closeWire();
     this.root.dispose();
+    this.scriptedGenerate.retire();
+    await Promise.all([
+      this.agent.instantiation.disposeAsync(),
+      this.session.instantiation.disposeAsync(),
+      this.root.instantiation.disposeAsync(),
+    ]);
+    await drainSessionMetadataWrites();
   }
 
   async dispose(): Promise<void> {
