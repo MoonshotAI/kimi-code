@@ -130,6 +130,22 @@ export type {
   FlagSurface,
 } from '#/flag';
 
+export type {
+  CreatedWorktree,
+  CreateWorktreeInput,
+  CreateWorktreeOptions,
+  InspectWorktreeRemovalInput,
+  KimiWorktree,
+  RemoveWorktreeInput,
+  RunSetupScriptInput,
+  RunSetupScriptOptions,
+  WorkLocation,
+  WorktreeCreateEvent,
+  WorktreeCreateStep,
+  WorktreeListing,
+  WorktreeRemovalCheck,
+} from '#/worktree';
+
 export {
   buildDaemonFileUrl,
   buildMediaPathTag,

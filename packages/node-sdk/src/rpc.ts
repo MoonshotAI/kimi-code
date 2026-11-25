@@ -93,6 +93,18 @@ import type {
   WorkspaceTrustInfo,
   WorkspaceTrustInfoOptions,
 } from '#/types';
+import type {
+  CreatedWorktree,
+  CreateWorktreeInput,
+  CreateWorktreeOptions,
+  InspectWorktreeRemovalInput,
+  RemoveWorktreeInput,
+  RunSetupScriptInput,
+  RunSetupScriptOptions,
+  WorkLocation,
+  WorktreeListing,
+  WorktreeRemovalCheck,
+} from '#/worktree';
 
 const MAIN_AGENT_ID = 'main';
 
@@ -473,6 +485,54 @@ export abstract class SDKRpcClientBase {
   abstract getGitStatus(workDir: string, input: GitQueryInput): Promise<GitStatusSummary | null>;
 
   abstract getGitPullRequest(workDir: string, input: GitQueryInput): Promise<GitPullRequest | null>;
+
+  async resolveWorkLocation(_cwd: string): Promise<WorkLocation> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Worktree operations are not implemented for this engine',
+    );
+  }
+
+  async listWorktrees(_cwd: string): Promise<WorktreeListing> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Worktree operations are not implemented for this engine',
+    );
+  }
+
+  async createWorktree(
+    _input: CreateWorktreeInput,
+    _options?: CreateWorktreeOptions,
+  ): Promise<CreatedWorktree> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Worktree operations are not implemented for this engine',
+    );
+  }
+
+  async runWorktreeSetupScript(
+    _input: RunSetupScriptInput,
+    _options?: RunSetupScriptOptions,
+  ): Promise<{ readonly exitCode: number }> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Worktree operations are not implemented for this engine',
+    );
+  }
+
+  async inspectWorktreeRemoval(_input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Worktree operations are not implemented for this engine',
+    );
+  }
+
+  async removeWorktree(_input: RemoveWorktreeInput): Promise<void> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Worktree operations are not implemented for this engine',
+    );
+  }
 
   abstract listBackgroundTasks(
     input: SessionIdRpcInput & { activeOnly?: boolean; limit?: number },

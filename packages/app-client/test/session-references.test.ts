@@ -101,7 +101,29 @@ describe('session mentions lab switch', () => {
   it('offers no sessions and skips the server search until the switch is on', async () => {
     const listSessions = vi.fn(async () => ({ items: [session('found')], hasMore: false, nextPageToken: null, total: 1 }));
     const setConfig = vi.fn(async () => ({ providers: {} }));
-    const getMeta = vi.fn(async () => null);
+    const getMeta = vi.fn(async () => ({
+      serverVersion: '0.1.0',
+      openInApps: [],
+      dangerousBypassAuth: false,
+      experimentalFlags: { session_mentions: true },
+      experimentalFeatures: [
+        {
+          id: 'session_mentions',
+          title: 'Session mentions',
+          description: 'Reference another session with @.',
+          stage: 'experimental' as const,
+          effectTiming: 'immediate' as const,
+          env: 'KIMI_CODE_EXPERIMENTAL_SESSION_MENTIONS',
+          enabled: true,
+          active: true,
+          source: 'config' as const,
+          configValue: true,
+        },
+      ],
+      backend: 'v2' as const,
+      webTitle: 'Kimi',
+      homeDir: '/home/me/.kimi-code',
+    }));
     setKimiClientDeps({
       api: () => ({ listSessions, setConfig, getMeta }) as unknown as KimiWebApi,
       t: (key) => key,

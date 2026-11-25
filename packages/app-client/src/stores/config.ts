@@ -13,6 +13,7 @@ import {
   safeGetJson,
   safeGetString,
   safeRemove,
+  safeSetString,
 } from '@moonshot-ai/app-core/lib';
 import type { PermissionMode } from '@moonshot-ai/app-core/client/types';
 import { getKimiWebApi } from '../client/deps';
@@ -47,10 +48,17 @@ const LEGACY_LOCAL_EXPERIMENTAL_ENTRIES = [
   },
 ] as const;
 
-function clearLegacyLocalExperimentalKey(id: string): void {
+function syncLegacyLocalExperimentalKey(
+  id: string,
+  on: boolean,
+  serverOwnsFeature: boolean,
+): void {
   for (const entry of LEGACY_LOCAL_EXPERIMENTAL_ENTRIES) {
-    if (entry.id === id) {
+    if (entry.id !== id) continue;
+    if (serverOwnsFeature || !on) {
       safeRemove(entry.storageKey);
+    } else {
+      safeSetString(entry.storageKey, entry.trueLiteral);
     }
   }
 }
@@ -314,9 +322,9 @@ export const useConfigStore = defineStore('kimi.config', () => {
   async function setExperimentalFlag(id: string, on: boolean): Promise<boolean> {
     const saved = await updateConfig({ experimental: { [id]: on } });
     if (!saved) return false;
-    clearLegacyLocalExperimentalKey(id);
-    metaCommittedGeneration = ++metaRequestGeneration;
     const existing = experimentalFeatures.value.find((feature) => feature.id === id);
+    syncLegacyLocalExperimentalKey(id, on, existing !== undefined);
+    metaCommittedGeneration = ++metaRequestGeneration;
     if (existing?.effectTiming !== 'restart' || !on) {
       experimentalFlags.value = { ...experimentalFlags.value, [id]: on };
     }

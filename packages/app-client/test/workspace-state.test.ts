@@ -6249,6 +6249,36 @@ describe('setNotifyUserEnabled', () => {
     expect(configStore().experimentalFlags['notify_user']).toBe(false);
     expect(useContextInspector().contextInspectorEnabled.value).toBe(false);
   });
+
+  it('retains local toggle state when toggling against a server whose meta omits experimentalFeatures', async () => {
+    const { useContextInspector, useSessionMentions } = await import('@moonshot-ai/app-core');
+    apiMock.setConfig.mockResolvedValue({ providers: {} });
+    apiMock.getMeta.mockResolvedValue({
+      serverVersion: '0.9.0',
+      openInApps: [],
+      dangerousBypassAuth: false,
+      experimentalFlags: {},
+      backend: 'v2',
+      webTitle: '',
+      homeDir: '/tmp/home',
+    });
+
+    expect(await configStore().setExperimentalFlag('context_inspector', true)).toBe(true);
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
+    expect(globalThis.localStorage.getItem(STORAGE_KEYS.contextInspector)).toBe('true');
+
+    expect(await configStore().setExperimentalFlag('session_mentions', true)).toBe(true);
+    expect(useSessionMentions().sessionMentions.value).toBe(true);
+    expect(globalThis.localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBe('1');
+
+    expect(await configStore().setExperimentalFlag('context_inspector', false)).toBe(true);
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(false);
+    expect(globalThis.localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
+
+    expect(await configStore().setExperimentalFlag('session_mentions', false)).toBe(true);
+    expect(useSessionMentions().sessionMentions.value).toBe(false);
+    expect(globalThis.localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBeNull();
+  });
 });
 
 describe('setPromptPredictionEnabled', () => {
