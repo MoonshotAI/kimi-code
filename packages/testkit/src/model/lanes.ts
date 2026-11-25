@@ -5,6 +5,8 @@ import { waitForModelEvent } from '#/model/wait';
 
 export const BUILT_IN_LANES = ['main', 'subagent', 'compaction', 'side'] as const;
 
+export type BuiltInLaneName = (typeof BUILT_IN_LANES)[number];
+
 export type LaneMatcher = (request: RequestFacts) => boolean;
 
 export interface Lane {
@@ -96,7 +98,7 @@ export class LaneState implements Lane {
   }
 }
 
-export function builtInLaneOf(request: RequestFacts): (typeof BUILT_IN_LANES)[number] {
+export function builtInLaneOf(request: RequestFacts): BuiltInLaneName {
   const metadata = request.metadata;
   if (metadata !== undefined) {
     if (metadata.stepReason === 'compact') return 'compaction';

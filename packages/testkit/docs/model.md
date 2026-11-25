@@ -83,6 +83,39 @@ test('reads a reply from the side lane', async ({ model }) => {
 
 空用户消息如果插在两个工具结果之间，错误还会指出哪个工具调用仍在等待结果。[空消息与工具结果顺序回归](../test/protocols.test.ts#L57)
 
+## 检查 prompt 缓存前缀
+
+服务端只能复用请求开头那段与之前请求完全相同的内容。假模型按服务端缓存的顺序把每个请求切成段（模型与思考参数、system、tools、messages），记在 `model.promptCache()` 里：每个请求复用了多少估算 token、复用自哪个请求、主通道和压缩请求比上一个主请求在哪一段变了。创建模型时传 `checkPromptCache: true`，没有声明过的断点就会让 `verify()` 失败；传 `reportCachedTokens: true`，没写 usage 的步骤会把复用的 token 作为缓存读数报给客户端。
+
+```ts
+import { say } from '@moonshot-ai/testkit/model';
+import { modelFixtures, type ModelFixtures } from '@moonshot-ai/testkit/vitest';
+import OpenAI from 'openai';
+import { expect, test as base } from 'vitest';
+
+const test = base.extend<ModelFixtures>(modelFixtures({ checkPromptCache: true, reportCachedTokens: true }));
+
+test('reuses the first request as the cached prefix of the second', async ({ model }) => {
+  model.script(say('first'), say('second'));
+  const client = new OpenAI({ apiKey: 'test-key', baseURL: 'http://example.test/v1', fetch: model.fetch, maxRetries: 0 });
+  const tools = [{ type: 'function' as const, function: { name: 'Read', parameters: { type: 'object' } } }];
+  const history = [{ role: 'user' as const, content: 'Read notes.txt.' }];
+
+  await client.chat.completions.create({ model: 'testkit-model', messages: history, tools, prompt_cache_key: 'session-1' });
+  const second = await client.chat.completions.create({
+    model: 'testkit-model',
+    messages: [...history, { role: 'assistant', content: 'first' }, { role: 'user', content: 'And then?' }],
+    tools,
+    prompt_cache_key: 'session-1',
+  });
+
+  expect(model.promptCache()[1]).toMatchObject({ baseline: 0, reusedFrom: 0 });
+  expect(second.usage?.prompt_tokens_details?.cached_tokens).toBe(model.promptCache()[1]?.reusedTokens);
+});
+```
+
+第二个请求改了 tools、system 或者更早的消息时，夹具收尾的 `verify()` 会报出第一处不同，例如 `tools[1] Bash is missing`，并给出复用了多少 token。产品有意改写前缀时（换模型、撤销），在测试里用 `model.expectCacheBreak('撤销改写了上一轮回答', { at: 'history' })` 写明原因；声明了却没发生的断点同样会失败。压缩请求生效后的第一个主请求可以换一段新历史，但模型参数、system 和 tools 仍不能变，这条只在 `kimi` provider 类型下自动识别。完整规则见 [README](../README.md#prompt-cache)。[规则用例](../test/prompt-cache.test.ts) · [经过真实引擎](../../../tests/scenarios/providers.test.ts)
+
 ## 检查客户端是否依赖整齐的分块
 
 默认每个步骤按完整的 SSE 事件写出。真实 provider 和网络会把字节流切在任意位置，包括多字节字符和 JSON 的中间。创建模型时传 `chunking: { seed, maxBytes }`（例如 `createFakeModel({ chunking: { seed: 7, maxBytes: 3 } })`，KAP 场景用 `scenarioFixtures({ modelOptions: { chunking } })`），回复和 JSON 响应体会被切成 1 到 `maxBytes` 字节的小块逐块写出。挂起点仍落在原来的位置，流内错误仍整块写出。同一个种子每次切法相同，失败可以复现。

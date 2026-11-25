@@ -1,5 +1,6 @@
 import { emissionsOf, type Emission } from '#/model/emission';
 import { jsonResponse, objectArguments, SSE_HEADERS, type ProtocolCodec, type ResolvedUsage } from '#/model/protocols/codec';
+import { pickedFields, promptSegment, type PromptPrefix } from '#/model/prompt-cache';
 import { asArray, asRecord, optionalString, stringOf } from '#/model/protocols/json';
 import type { ReplyStep, RequestView, ViewCall, ViewMessage, ViewPart } from '#/model/types';
 import { textOfParts } from '#/model/view';
@@ -8,6 +9,7 @@ export const anthropicCodec: ProtocolCodec = {
   name: 'anthropic',
   matches: (path) => path.endsWith('/messages') && !path.endsWith('/chat/completions'),
   parseRequest,
+  promptPrefix,
   encodeStream(step, context) {
     const emissions = emissionsOf({ ...step, interleaveCalls: false }, (callIndex, call) => context.callId(callIndex, call));
     const start = event('message_start', {
@@ -160,6 +162,36 @@ function errorTypeOf(status: number): string {
     default:
       return 'api_error';
   }
+}
+
+function promptPrefix(body: unknown): PromptPrefix {
+  const record = asRecord(withoutCacheControl(body));
+  return {
+    cacheKey: optionalString(asRecord(record['metadata'])['user_id']),
+    segments: [
+      promptSegment('params', 'params', pickedFields(record, ['model', 'thinking'])),
+      ...asArray(record['tools']).map((tool, index) => promptSegment('tools', `tools[${index}] ${stringOf(asRecord(tool)['name'])}`, tool)),
+      ...contentBlocks(record['system']).map((block, index) => promptSegment('system', `system[${index}]`, block)),
+      ...asArray(record['messages']).map((raw, index) => {
+        const message = asRecord(raw);
+        return promptSegment('messages', `messages[${index}] ${stringOf(message['role'])}`, { ...message, content: contentBlocks(message['content']) });
+      }),
+    ],
+  };
+}
+
+function withoutCacheControl(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutCacheControl);
+  if (typeof value !== 'object' || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== 'cache_control')
+      .map(([key, inner]) => [key, withoutCacheControl(inner)]),
+  );
+}
+
+function contentBlocks(content: unknown): readonly unknown[] {
+  return typeof content === 'string' ? [{ type: 'text', text: content }] : asArray(content);
 }
 
 function parseRequest(body: unknown): RequestView {

@@ -4,7 +4,8 @@ export type { ChunkingOptions } from '#/model/chunking';
 export { createFakeModel, startFakeModel, type FakeModel, type FakeModelOptions, type RequestTarget } from '#/model/fake-model';
 export type { Hold } from '#/model/holds';
 export type { FileUpload, UploadState } from '#/model/uploads';
-export type { Lane, LaneMatcher } from '#/model/lanes';
+export type { BuiltInLaneName, Lane, LaneMatcher } from '#/model/lanes';
+export type { CacheBreakOptions, CacheBreakPart, PromptCacheBreak, PromptCacheEntry, PromptRegion } from '#/model/prompt-cache';
 export { FAKE_PROVIDER_DEFAULTS, fakeModelConfig, type FakeProviderOptions, type FakeProviderType } from '#/model/provider-config';
 export type { RequestFacts } from '#/model/record';
 export {
