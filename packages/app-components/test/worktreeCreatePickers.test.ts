@@ -139,19 +139,38 @@ describe('CreateEnvironmentPicker', () => {
   });
 
   it('dims Worktree for a project that is not a Git repository and falls back to Local', async () => {
-    setBranches('ws1', { isRepo: false, dirty: false, remotes: [], branches: [] });
+    const plain = { isRepo: false, dirty: false, remotes: [], branches: [] };
+    setBranches('ws1', plain);
+    api.getWorkspaceGitBranches.mockResolvedValue(plain);
     newSessionEnvironmentStore().selectEnvironment('worktree');
     mount(CreateEnvironmentPicker, { workspaceId: 'ws1' });
     await nextTick();
 
     expect(q('.wce-chip-name')?.textContent).toBe('Local');
     q('.wce-chip')!.click();
-    await nextTick();
+    await settle();
     const row = q('.wce-row[data-option="worktree"]')!;
     expect(row.classList.contains('disabled')).toBe(true);
     expect(row.querySelector('.ui-spinner')).toBeNull();
     expect(row.querySelector('.wce-row-desc')?.textContent).toBe('The current project is not a Git repository.');
     expect(q('.wce-row[data-option="local"]')?.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('rechecks on open and shows a repository that became available', async () => {
+    setBranches('ws1', { isRepo: false, dirty: false, remotes: [], branches: [] });
+    const branches = Promise.withResolvers<WorkspaceGitBranches>();
+    api.getWorkspaceGitBranches.mockReturnValueOnce(branches.promise);
+    mount(CreateEnvironmentPicker, { workspaceId: 'ws1' });
+    await nextTick();
+    q('.wce-chip')!.click();
+    await nextTick();
+    const row = () => q('.wce-row[data-option="worktree"]')!;
+    expect(row().querySelector('.ui-spinner')).not.toBeNull();
+
+    branches.resolve(repo);
+    await settle();
+    expect(row().getAttribute('aria-disabled')).toBe('false');
+    expect(row().querySelector('.ui-spinner')).toBeNull();
   });
 
   it('supports arrow keys, Enter and Esc', async () => {

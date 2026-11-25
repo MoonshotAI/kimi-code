@@ -64,7 +64,7 @@ const activeIndex = ref(0);
 
 watch(open, async (isOpen) => {
   if (!isOpen) return;
-  void store.ensureBranches(props.workspaceId);
+  void store.refreshBranches(props.workspaceId);
   activeIndex.value = Math.max(0, options.value.findIndex((option) => option.id === view.value.effective));
   await nextTick();
   picker.value?.focusPanel();

@@ -134,12 +134,12 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
     if (workspace === undefined) return 'loading';
     if (workspace.hostId !== undefined) return 'remoteHost';
     const state = branchesByWorkspace.value[workspaceId];
-    const info = state?.info;
-    if (info !== undefined) {
-      if (!info.isRepo) return 'notGitRepo';
-      return resolveWorktreeSource(info) === null ? 'failed' : 'available';
+    if (state === undefined || state.status === 'loading') {
+      return resolveWorktreeSource(state?.info) === null ? 'loading' : 'available';
     }
-    return state?.status === 'failed' ? 'failed' : 'loading';
+    if (state.info === undefined) return 'failed';
+    if (!state.info.isRepo) return 'notGitRepo';
+    return resolveWorktreeSource(state.info) === null ? 'failed' : 'available';
   }
 
   function effectiveEnvironment(workspaceId: string | null | undefined): NewSessionEnvironment {
