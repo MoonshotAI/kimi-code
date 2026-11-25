@@ -1,6 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import type { ClientCapabilities } from '@agentclientprotocol/sdk';
 import { writeKimiConfig } from '@moonshot-ai/testkit/fixtures';
 import { fakeModelConfig, finishWith, httpError, read, say } from '@moonshot-ai/testkit/model';
 import {
@@ -12,6 +13,7 @@ import {
 } from '@moonshot-ai/testkit/vitest';
 import { describe, expect, test as base, vi } from 'vitest';
 
+import { retryingToSessionUpdate } from '../src/events-map';
 import { AcpSession } from '../src/session';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 
@@ -23,12 +25,13 @@ async function inAcpSession(
   fixtures: Fixtures,
   loopControl: Readonly<Record<string, number>>,
   run: (client: TestClient, sessionId: string) => Promise<void>,
+  clientCapabilities: ClientCapabilities = {},
 ): Promise<void> {
   await fixtures.model.listen();
   await writeKimiConfig(fixtures.testHome.dataDir, { ...fakeModelConfig(fixtures.model), loopControl });
   const client = await createTestClient({ homeDir: fixtures.testHome.dataDir });
   try {
-    await client.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+    await client.send('initialize', { protocolVersion: 1, clientCapabilities });
     const { sessionId } = (await client.send('session/new', {
       cwd: fixtures.testHome.workspace,
       mcpServers: [],
@@ -62,6 +65,24 @@ function agentText(client: TestClient, sessionId: string): string {
     )
     .map((message) => message.update.content?.text ?? '')
     .join('');
+}
+
+function updatesOf(
+  client: TestClient,
+  sessionId: string,
+  kind: string,
+): Array<{ sessionUpdate: string; description?: string }> {
+  return client
+    .sessionUpdates()
+    .map(
+      (message) =>
+        message.params as {
+          sessionId: string;
+          update: { sessionUpdate: string; description?: string };
+        },
+    )
+    .filter((message) => message.sessionId === sessionId && message.update.sessionUpdate === kind)
+    .map((message) => message.update);
 }
 
 describe('how session/prompt answers a turn that ended', () => {
@@ -120,6 +141,86 @@ describe('how session/prompt answers a turn that ended', () => {
       expect(await promptAnswer(client, sessionId, 'Hello.')).toMatchObject({
         result: { stopReason: 'refusal' },
       });
+    });
+  });
+});
+
+describe('retry progress notifications', () => {
+  test('sends live notices for each retry without adding assistant text', { timeout: 30_000 }, async ({ model, testHome }) => {
+    const failure = httpError(429, {
+      message: 'The example service is not ready yet.',
+      retryAfterSeconds: 1,
+    });
+    model.script(failure, failure, say('Recovered.'));
+    await inAcpSession(
+      { model, testHome },
+      {},
+      async (client, sessionId) => {
+        expect(await promptAnswer(client, sessionId, 'Trigger retries.')).toMatchObject({
+          result: { stopReason: 'end_turn' },
+        });
+        const notices = updatesOf(client, sessionId, 'notice');
+        expect(notices).toHaveLength(2);
+        expect(notices[0]).toMatchObject({
+          severity: 'warning',
+          title: 'Model request failed; retrying (2/10)',
+          description: expect.stringContaining('in 1s'),
+        });
+        expect(notices[0]?.description).toContain('429');
+        expect(notices[0]?.description).toContain('The example service is not ready yet.');
+        expect(notices[1]).toMatchObject({ title: 'Model request failed; retrying (3/10)' });
+        expect(agentText(client, sessionId)).toBe('Recovered.');
+      },
+      { session: { notices: {} } },
+    );
+    expect(model.requests('main').map((request) => request.state)).toEqual([
+      'failed',
+      'failed',
+      'finished',
+    ]);
+  });
+
+  test('falls back to an assistant-visible message that stays out of model history', { timeout: 30_000 }, async ({ model, testHome }) => {
+    model.script(
+      httpError(429, { message: 'The example service is not ready yet.', retryAfterSeconds: 1 }),
+      say('Recovered.'),
+    );
+    await inAcpSession({ model, testHome }, {}, async (client, sessionId) => {
+      expect(await promptAnswer(client, sessionId, 'Trigger a retry.')).toMatchObject({
+        result: { stopReason: 'end_turn' },
+      });
+      expect(updatesOf(client, sessionId, 'notice')).toHaveLength(0);
+      const text = agentText(client, sessionId);
+      expect(text).toContain('Model request failed; retrying (2/10)');
+      expect(text).toContain('429');
+      expect(text).toContain('The example service is not ready yet.');
+      expect(text.endsWith('Recovered.')).toBe(true);
+      expect(JSON.stringify(model.requests('main')[1]?.view.messages)).not.toContain(
+        'Model request failed; retrying',
+      );
+    });
+  });
+
+  test('does not present an unbounded retry as exceeding a finite maximum', () => {
+    const notification = retryingToSessionUpdate(
+      'session-test',
+      {
+        failedAttempt: 10,
+        nextAttempt: 11,
+        maxAttempts: 10,
+        delayMs: 0,
+        errorName: 'rate_limit',
+        errorMessage: 'Try again.',
+        statusCode: 429,
+      },
+      true,
+    );
+    expect(notification).toMatchObject({
+      update: {
+        sessionUpdate: 'notice',
+        title: 'Model request failed; retrying (attempt 11)',
+        description: expect.stringContaining('immediately'),
+      },
     });
   });
 });

@@ -335,7 +335,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
       'the agent to answer initialize',
       this.connection.agent.request(methods.agent.initialize, {
         protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: this.bare ? {} : { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+        clientCapabilities: this.bare ? {} : { fs: { readTextFile: true, writeTextFile: true }, terminal: true, session: { notices: {} } },
       }),
     );
     if (initialized.protocolVersion !== PROTOCOL_VERSION) {
@@ -583,6 +583,21 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     const times = repliesOf(this.turnUpdates()).reduce((sum, reply) => sum + reply.split(text).length - 1, 0);
     if (times > 1) {
       throw new Error(`expectReply() found ${JSON.stringify(text)} ${times} times in the replies of this turn; it must appear exactly once.\n${this.describe()}`);
+    }
+  }
+
+  async expectNotice(text: string): Promise<void> {
+    const state = await this.wait(`a live notice with ${JSON.stringify(text)}`, () => {
+      const found = this.turnUpdates().some((update) => {
+        if (update.sessionUpdate !== 'notice') return false;
+        return update.title.includes(text) || (update.description ?? '').includes(text);
+      });
+      if (found) return 'shown' as const;
+      return this.turnOver() ? ('over' as const) : undefined;
+    });
+    if (state === 'over') {
+      this.assertPromptValid();
+      throw new Error(`expectNotice() did not find ${JSON.stringify(text)} in a live notice. The turn ended and it shows:\n${this.describe()}`);
     }
   }
 

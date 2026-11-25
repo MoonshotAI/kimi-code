@@ -50,6 +50,7 @@ import {
   planFromDisplayBlock,
   sessionInfoUpdateNotification,
   thinkingDeltaToSessionUpdate,
+  retryingToSessionUpdate,
   toolCallDeltaToSessionUpdate,
   toolCallLazyCreateToSessionUpdate,
   toolCallLocations,
@@ -161,6 +162,7 @@ export class AcpSession {
     private readonly hostCommands:
       | ReadonlyArray<AvailableCommand>
       | HostSlashCommandsSnapshot = [],
+    private readonly notices = false,
   ) {
     this.klient = klient;
     this.session = klient.session(sessionId);
@@ -187,6 +189,11 @@ export class AcpSession {
       events.on('thinking.delta', (event) => {
         this.dispatchTurnEvent(event.turnId, () => {
           this.onThinkingDelta(event);
+        });
+      }),
+      events.on('turn.step.retrying', (event) => {
+        this.dispatchTurnEvent(event.turnId, () => {
+          this.onTurnStepRetrying(event);
         });
       }),
       events.on('tool.call.started', (event) => {
@@ -542,6 +549,11 @@ export class AcpSession {
   private onThinkingDelta(event: AgentEventPayloads['thinking.delta']): void {
     if (this.driverFor(event.turnId) === undefined) return;
     this.emit(thinkingDeltaToSessionUpdate(this.sessionId, event));
+  }
+
+  private onTurnStepRetrying(event: AgentEventPayloads['turn.step.retrying']): void {
+    if (this.driverFor(event.turnId) === undefined) return;
+    this.emit(retryingToSessionUpdate(this.sessionId, event, this.notices));
   }
 
   private onToolCallStarted(event: AgentEventPayloads['tool.call.started']): void {

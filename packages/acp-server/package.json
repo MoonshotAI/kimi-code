@@ -23,7 +23,7 @@
     "@moonshot-ai/testkit": "workspace:^"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^1.3.0",
+    "@agentclientprotocol/sdk": "^1.5.0",
     "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/core": "workspace:^",
     "@moonshot-ai/klient": "workspace:^"

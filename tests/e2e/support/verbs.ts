@@ -52,6 +52,7 @@ export const VERBS = {
   waitIdle: { on: SURFACES, checksInterface: false },
   expectTool: { on: SURFACES, checksInterface: true },
   expectReply: { on: SURFACES, checksInterface: true },
+  expectNotice: { on: ['acp'], absentBecause: 'Only ACP exposes live session notices.', checksInterface: true },
   expectError: { on: SURFACES, checksInterface: true },
   expectAbsent: { on: SURFACES, checksInterface: false },
   continue: { on: ['desktop', 'web'], absentBecause: NO_CONTINUE, checksInterface: false },
@@ -200,6 +201,7 @@ interface VerbSignatures {
   waitIdle(): Promise<void>;
   expectTool(expectation: ToolExpectation): Promise<void>;
   expectReply(text: string): Promise<void>;
+  expectNotice(text: string): Promise<void>;
   expectError(text: string): Promise<void>;
   expectAbsent(text: string): Promise<void>;
   continue(): Promise<void>;
