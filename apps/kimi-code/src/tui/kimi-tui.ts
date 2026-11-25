@@ -1890,9 +1890,25 @@ export class KimiTUI {
       }
       this.inputHistoryEntries = entries.toReversed().filter((entry, index, all) =>
         index === 0 || !inputHistoryEntryEquals(entry, all[index - 1])
-      ).slice(0, 100);
+      );
+      this.trimInputHistoryEntries();
       this.lastHistoryEntry = entries.at(-1);
     } catch {}
+  }
+
+  private trimInputHistoryEntries(): void {
+    const seenContents = new Set<string>();
+    const kept: InputHistoryEntry[] = [];
+    for (const entry of this.inputHistoryEntries) {
+      const content = entry.content.trim();
+      if (content.length === 0) continue;
+      if (!seenContents.has(content)) {
+        if (seenContents.size >= 100) break;
+        seenContents.add(content);
+      }
+      kept.push(entry);
+    }
+    this.inputHistoryEntries = kept;
   }
 
   private async persistInputHistory(text: string): Promise<void> {
@@ -1915,7 +1931,7 @@ export class KimiTUI {
     if (inputHistoryEntryEquals(entry, this.lastHistoryEntry)) return;
     if (inputHistoryEntryEquals(entry, this.inputHistoryEntries[0])) this.inputHistoryEntries[0] = entry;
     else this.inputHistoryEntries.unshift(entry);
-    this.inputHistoryEntries.length = Math.min(this.inputHistoryEntries.length, 100);
+    this.trimInputHistoryEntries();
     this.state.editor.addToHistory(trimmed);
     try {
       const file = getInputHistoryFile(this.state.appState.workDir);
@@ -1931,13 +1947,31 @@ export class KimiTUI {
     this.inputHistoryDraftVariants = new Map(this.skillVariantPaths);
   }
 
-  restoreInputHistoryEntry(direction: 1 | -1): void {
+  restoreInputHistoryEntry(direction: 1 | -1, content?: string): void {
     this.skillVariantPaths.clear();
     if (this.inputHistoryEntries.length === 0) return;
-    this.inputHistoryRecallIndex = direction === -1
-      ? Math.min(this.inputHistoryRecallIndex + 1, this.inputHistoryEntries.length - 1)
-      : Math.max(this.inputHistoryRecallIndex - 1, 0);
-    const entry = this.inputHistoryEntries[this.inputHistoryRecallIndex];
+    let nextIndex: number;
+    if (content === undefined) {
+      nextIndex = direction === -1
+        ? Math.min(this.inputHistoryRecallIndex + 1, this.inputHistoryEntries.length - 1)
+        : Math.max(this.inputHistoryRecallIndex - 1, 0);
+    } else {
+      const target = content.trim();
+      const start = direction === -1 ? Math.max(this.inputHistoryRecallIndex + 1, 0) : 0;
+      const end = direction === -1
+        ? this.inputHistoryEntries.length
+        : Math.max(this.inputHistoryRecallIndex, 0);
+      nextIndex = -1;
+      for (let i = start; i < end; i++) {
+        if (this.inputHistoryEntries[i]!.content.trim() === target) {
+          nextIndex = i;
+          break;
+        }
+      }
+      if (nextIndex === -1) return;
+    }
+    this.inputHistoryRecallIndex = nextIndex;
+    const entry = this.inputHistoryEntries[nextIndex];
     if (entry === undefined) return;
     for (const { commandName, path, start } of skillVariantPathsForInput(
       entry.content,

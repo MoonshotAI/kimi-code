@@ -326,7 +326,7 @@ export class Editor implements Component, Focusable {
 
 	/** The open autocomplete menu receives fullscreen viewport keys, such as PageUp/PageDown. */
 	get capturesViewportInput(): boolean {
-		return this.autocompleteState !== null;
+		return this.autocompleteState !== null && this.autocompleteList !== undefined;
 	}
 
 	protected tui: TUI;

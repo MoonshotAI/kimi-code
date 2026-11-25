@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Deduplicate prompt history, prefer contiguous matches when searching pickers, keep Enter from submitting in path and argument completion menus, hide HTML comments in markdown, show raw LaTeX when display math exceeds narrow terminal widths, and let PageUp/PageDown page completion menus without scrolling the transcript.
+Update the terminal UI: deduplicate prompt history, prefer contiguous matches in searchable pickers, keep Enter from submitting inside path and argument completion menus, let PageUp/PageDown page completion menus, expand fullscreen double-click selection across paths and identifiers, hide HTML comments in markdown, show raw LaTeX when display math exceeds narrow widths, skip clickable links for URLs over 8,192 characters, and stop emitting OSC 133 prompt markers in regular mode so terminal program status stays active.

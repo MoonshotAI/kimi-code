@@ -2923,6 +2923,7 @@ describe("Editor component", () => {
 			assert.deepStrictEqual(requests, ["@", "@a"]);
 
 			editor.handleInput("l");
+			assert.strictEqual(editor.capturesViewportInput, true);
 			assert.ok(rendered().includes("alpha"));
 			assert.ok(!rendered().includes("atom"));
 			t.mock.timers.tick(80);
@@ -2938,6 +2939,7 @@ describe("Editor component", () => {
 
 			editor.handleInput("x");
 			assert.strictEqual(editor.isShowingAutocomplete(), true);
+			assert.strictEqual(editor.capturesViewportInput, false);
 			assert.ok(!rendered().includes("alpha"));
 			assert.ok(!rendered().includes("atom"));
 			t.mock.timers.tick(80);
@@ -2950,6 +2952,7 @@ describe("Editor component", () => {
 			await flushAutocomplete();
 			await flushAutocomplete();
 			assert.deepStrictEqual(requests, ["@", "@a", "@al", "@a", "@ax", "@ax/"]);
+			assert.strictEqual(editor.capturesViewportInput, true);
 			assert.ok(rendered().includes("axis"));
 			assert.ok(!rendered().includes("ax-old"));
 		});
