@@ -135,29 +135,16 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
   }
 
   async execute(input: SessionReviewInput): Promise<SessionReviewRun> {
-    this.assertConfigValid();
     const binding = this.bindingFor(input.mainModelAlias);
-    this.assertEffortSupported(binding.modelAlias);
+    this.assertReviewModelValid(binding.modelAlias);
     const outcome = await this.runWithDeadline(input, binding);
     return { modelAlias: binding.modelAlias, outcome };
   }
 
   assertConfigValid(): void {
-    const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
-    const model = config?.model;
-    if (model !== undefined) {
-      try {
-        this.models.get(model);
-      } catch (error) {
-        throw new Error2(
-          ErrorCodes.CONFIG_INVALID,
-          `[auto_review].model "${model}" could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
-          { cause: error, details: { section: AUTO_REVIEW_SECTION, field: 'model', model } },
-        );
-      }
-    }
-    const configuredAlias = model ?? resolveSubagentModelPool(this.configService)?.defaultModel;
-    if (configuredAlias !== undefined) this.assertEffortSupported(configuredAlias);
+    const configured = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION)?.model
+      ?? resolveSubagentModelPool(this.configService)?.defaultModel;
+    if (configured !== undefined) this.assertReviewModelValid(configured);
   }
 
   private bindingFor(mainModelAlias: string): ReviewBinding {
@@ -169,12 +156,23 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     return { modelAlias: pooled, effort: config?.effort ?? secondary?.defaultEffort };
   }
 
-  private assertEffortSupported(modelAlias: string): void {
-    const effort = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION)?.effort;
-    if (effort === undefined) return;
+  private assertReviewModelValid(modelAlias: string): void {
+    const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
+    if (modelAlias === config?.model) {
+      try {
+        this.models.get(modelAlias);
+      } catch (error) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          `[auto_review].model "${modelAlias}" could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error, details: { section: AUTO_REVIEW_SECTION, field: 'model', model: modelAlias } },
+        );
+      }
+    }
+    if (config?.effort === undefined) return;
     assertModelSupportsConfiguredEffort(
       { section: AUTO_REVIEW_SECTION, field: 'effort', key: '[auto_review].effort' },
-      effort,
+      config.effort,
       modelAlias,
       this.models.get(modelAlias),
     );

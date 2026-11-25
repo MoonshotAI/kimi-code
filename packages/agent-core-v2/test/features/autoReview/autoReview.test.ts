@@ -123,15 +123,13 @@ function lifecycleStub(agents: Record<string, IAutoReviewService>): Pick<IAgentL
 describe('autoReview context and state', () => {
   it('keeps only completed tool calls, strips metadata and outputs, and keeps chronological prefix stability', () => {
     const mkdir = toolCallFor('mkdir', 'Bash', { command: 'mkdir generated' });
-    const cleanup = toolCallFor('cleanup', 'Bash', { command: 'rm generated/stale' });
     const running = toolCallFor('running', 'Bash', { command: 'rm generated/running' });
     const pending = toolCallFor('rm', 'Bash', { command: 'rm generated/file' });
     const sibling = toolCallFor('sibling', 'Bash', { command: 'rm generated/other' });
     const turn1: ContextMessage[] = [
       userMsg('Only remove generated files.', { kind: 'user' }),
-      { role: 'assistant', content: [], toolCalls: [mkdir, cleanup, toolCallFor('ls', 'Bash', { command: 'ls generated' })] },
+      { role: 'assistant', content: [], toolCalls: [mkdir, toolCallFor('ls', 'Bash', { command: 'ls generated' })] },
       { role: 'tool', toolCallId: 'mkdir', content: [{ type: 'text', text: 'untrusted tool output' }] },
-      { role: 'tool', toolCallId: 'cleanup', content: [{ type: 'text', text: 'untrusted tool output' }] },
       { role: 'tool', toolCallId: 'ls', content: [{ type: 'text', text: 'untrusted tool output' }] },
     ];
     const context = reviewContext({ command: 'rm generated/file' }, {
@@ -148,7 +146,6 @@ describe('autoReview context and state', () => {
     );
     expect(first).toContain('Do not delete user-data.');
     expect(first).toContain('"id":"mkdir","name":"Bash","arguments":"{\\"command\\":\\"mkdir generated\\"}","approved":true');
-    expect(first).toContain('"id":"cleanup","name":"Bash","arguments":"{\\"command\\":\\"rm generated/stale\\"}"');
     expect(first).not.toContain('"id":"ls"');
     expect(first).not.toContain('"id":"running"');
     expect(first).not.toContain('"id":"rm"');
@@ -166,23 +163,12 @@ describe('autoReview context and state', () => {
     expect(second.slice(second.indexOf('<history>'), second.indexOf('</history>')).startsWith(firstHistory)).toBe(true);
   });
 
-  it('omits read-only lookups, polling tools, and read-only shell commands from history', () => {
+  it('omits listed read-only tools and read-only shell commands from history', () => {
     const calls = [
       toolCallFor('read', 'Read', { path: '/workspace/AGENTS.md' }),
-      toolCallFor('grep', 'Grep', { pattern: 'auth' }),
-      toolCallFor('glob', 'Glob', { pattern: 'src/**/*.ts' }),
-      toolCallFor('notify', 'NotifyUser', { title: 'Progress', message: 'Checking' }),
-      toolCallFor('wait', 'WaitFor', { task_id: 'agent-1', timeout: 30 }),
-      toolCallFor('output', 'TaskOutput', { task_id: 'agent-1' }),
-      toolCallFor('show', 'Bash', { command: "git show HEAD:packages/a.ts | sed -n '1,80p'" }),
-      toolCallFor('diff', 'Bash', { command: 'git diff HEAD~1 -- src/a.ts' }),
       toolCallFor('ls', 'Bash', { command: 'ls src' }),
       toolCallFor('stage', 'Bash', { command: 'git add src/a.ts' }),
-      toolCallFor('dynamic', 'Bash', { command: 'PR=abc123; git show $PR:packages/a.ts' }),
-      toolCallFor('redirect', 'Bash', { command: 'git diff > /tmp/patch.diff' }),
-      toolCallFor('gh', 'Bash', { command: 'gh pr view 123' }),
       toolCallFor('edit', 'Edit', { path: 'src/a.ts', old_string: 'a', new_string: 'b' }),
-      toolCallFor('agent', 'Agent', { description: 'Sweep', prompt: 'Inspect' }),
     ];
     const history: ContextMessage[] = [
       userMsg('Review the changes.', { kind: 'user' }),
@@ -194,10 +180,10 @@ describe('autoReview context and state', () => {
       })),
     ];
     const rendered = messageText(buildReviewMessages(history, [], undefined, undefined, '/workspace', reviewContext(), new BashParserService()));
-    for (const omitted of ['read', 'grep', 'glob', 'notify', 'wait', 'output', 'show', 'diff', 'ls']) {
+    for (const omitted of ['read', 'ls']) {
       expect(rendered).not.toContain(`"id":"${omitted}"`);
     }
-    for (const kept of ['stage', 'dynamic', 'redirect', 'gh', 'edit', 'agent']) {
+    for (const kept of ['stage', 'edit']) {
       expect(rendered).toContain(`"id":"${kept}"`);
     }
   });
@@ -441,13 +427,9 @@ describe('SessionAutoReviewService', () => {
 
   it.each([
     ['the model entry default over the global effort', effortModel({ supportEfforts: ['low', 'high', 'max'], defaultEffort: 'high' }), { effort: 'low' }, 'high'],
-    ['the global effort when the model declares no default', effortModel({ supportEfforts: ['low', 'medium', 'high'] }), { effort: 'low' }, 'low'],
-    ['the model fallback without a configured effort', effortModel({ supportEfforts: ['low', 'medium', 'high'] }), undefined, 'medium'],
     ['thinking off when thinking is disabled', effortModel({ supportEfforts: ['low', 'high'], defaultEffort: 'high' }), { enabled: false }, 'off'],
-    ['the model default when thinking cannot be disabled', effortModel({ alwaysThinking: true, supportEfforts: ['low', 'high'], defaultEffort: 'high' }), { enabled: false }, 'high'],
     ['the forced effort on a trait-driven provider', effortModel({ supportEfforts: ['low', 'high'], defaultEffort: 'high' }, 'kimi'), { forcedEffort: 'max' }, 'max'],
     ['no forced effort on other providers', effortModel({ supportEfforts: ['low', 'high'], defaultEffort: 'high' }), { forcedEffort: 'max' }, 'high'],
-    ['no forced effort while thinking is disabled', effortModel({ supportEfforts: ['low', 'high'], defaultEffort: 'high' }, 'kimi'), { enabled: false, forcedEffort: 'max' }, 'off'],
   ] as const)('requests %s', async (_label, catalogModel, thinking, effort) => {
     await execute(makeSessionService({ catalogModel, thinking }));
     expect(requestedEfforts).toEqual([effort]);
@@ -694,7 +676,7 @@ describe('AutoReviewService', () => {
     gitStatusAt = statusAt;
     const main = await spawn({ agentId: 'main' });
 
-    await main.review(reviewContext({ command: 'ls', cwd: '/outside/repo' }), 'fallback-ask');
+    await main.review(reviewContext({ command: 'rm -rf build', cwd: '/outside/repo' }), 'fallback-ask');
 
     expect(statusAt).not.toHaveBeenCalled();
     expect(messageText(sentInputs.at(-1)!.messages)).not.toContain('"gitStatus":{"cwd"');

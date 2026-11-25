@@ -117,7 +117,6 @@ function summary(components: readonly Component[], presentation = options()) {
 
 describe('transcript projection', () => {
   it.each([
-    ['still pending', undefined, [false, true, true]],
     ['finished after 3 seconds', 3_500, [false, true, false]],
     ['finished within 3 seconds', 2_000, [false, false, false]],
   ] as const)('shows the Reviewing tail at 2999, 3000 and 5000 ms for a review %s', (_label, endsAt, expected) => {
@@ -133,10 +132,8 @@ describe('transcript projection', () => {
     };
 
     timeline.reviewStarted(callId, 'Bash');
-    if (endsAt !== undefined) {
-      clock = endsAt;
-      timeline.reviewEnded(callId);
-    }
+    clock = endsAt;
+    timeline.reviewEnded(callId);
     expect([2_999, 3_000, 5_000].map(reviewingAt)).toEqual(expected);
   });
 

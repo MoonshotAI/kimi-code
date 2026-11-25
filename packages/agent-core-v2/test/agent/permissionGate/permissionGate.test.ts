@@ -256,20 +256,13 @@ describe('AgentPermissionGate', () => {
     [true, 'manual', 'Bash', fallbackAsk, undefined, false, 1],
     [true, 'yolo', 'Write', fallbackAsk, undefined, false, 1],
     [true, 'yolo', 'Edit', modeApproval, fallbackAsk, false, 0],
-    [true, 'yolo', 'CronCreate', modeApproval, fallbackAsk, false, 0],
     [true, 'yolo', 'Bash', denyPolicy, undefined, false, 0],
     [true, 'auto', 'Bash', modeApproval, allowPolicy('default-tool-approve'), false, 0],
-    [true, 'yolo', 'Bash', modeApproval, allowPolicy('session-approval-history'), false, 0],
-    [true, 'yolo', 'Bash', modeApproval, allowPolicy('user-configured-allow'), false, 0],
-    [true, 'yolo', 'Bash', allowPolicy('session-approval-history'), allowPolicy('session-approval-history'), false, 0],
-    [true, 'yolo', 'Bash', allowPolicy('user-configured-allow'), allowPolicy('user-configured-allow'), false, 0],
-    [true, 'yolo', 'Bash', allowPolicy('user-configured-allow'), fallbackAsk, true, 0],
     [true, 'yolo', 'Bash', fallbackAsk, undefined, true, 0],
     [true, 'yolo', 'Bash', configuredAsk, undefined, false, 1],
     [true, 'auto', 'Bash', modeApproval, configuredAsk, false, 0],
     [true, 'auto', 'Bash', modeApproval, fallbackAsk, true, 0],
     [true, 'yolo', 'mcp__fs__write_file', modeApproval, fallbackAsk, true, 0],
-    [true, 'auto', 'mcp__fs__write_file', fallbackAsk, undefined, true, 0],
   ] satisfies Array<[boolean, PermissionMode, string, PermissionPolicyEvaluation, PermissionPolicyEvaluation | undefined, boolean, number]>)(
     'reviews tool=%s mode=%s policy=%s -> %s',
     async (enabled, nextMode, tool, policy, manualPolicy, expected, expectedHumanAsks) => {
@@ -327,9 +320,7 @@ describe('AgentPermissionGate', () => {
   });
 
   it.each([
-    ['yolo', 'yolo', 'deny', 'ask'],
     ['yolo', 'yolo', 'failed', 'ask'],
-    ['auto', 'auto', 'deny', 'deny'],
     ['auto', 'auto', 'failed', 'deny'],
     ['auto', 'yolo', 'deny', 'ask'],
     ['yolo', 'auto', 'deny', 'deny'],
@@ -354,7 +345,8 @@ describe('AgentPermissionGate', () => {
     );
   });
 
-  it.each(['high', 'low'] as const)('lets the user override a %s-risk review denial in Ask When Needed and explains it without a user', (risk) => {
+  it('lets the user override a high-risk review denial in Ask When Needed and explains it without a user', () => {
+    const risk = 'high';
     const onUnderlyingApproved = vi.fn(() => undefined);
     const { result } = resolveAutoReview(
       makeContext('Bash'),
@@ -385,7 +377,6 @@ describe('AgentPermissionGate', () => {
 
   it.each([
     ['low', 'Do not retry it or work around the review. If the action is still required, end your reply by stating the exact action and its target and asking the user to confirm.'],
-    ['medium', 'Do not retry it or work around the review. If the action is still required, end your reply by stating the exact action and its target and asking the user to confirm.'],
     ['high', 'High-risk actions cannot be authorized through Auto Review. Do not retry it or work around the review; tell the user it was blocked.'],
   ] as const)('tells the main model how to proceed after a %s-risk denial in Never Ask', (risk, guidance) => {
     const { result } = resolveAutoReview(

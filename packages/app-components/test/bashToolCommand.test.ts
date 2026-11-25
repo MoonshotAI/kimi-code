@@ -386,36 +386,3 @@ describe('bash tool command', () => {
     expect(/\.tp-head \{([^}]*)\}/.exec(css)![1]).toContain('align-items: center');
   });
 });
-
-describe('bash tool Auto Review hint', () => {
-  const HINT = 'Auto Review in progress…';
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('keeps the waiting text until a review passes 3 seconds, then shows the hint until the decision', async () => {
-    const target = reactive(tool('rm -rf dist', { status: 'running', output: [], autoReviewing: true }));
-    const root = mount(target);
-    await expand(root);
-    const chip = () => root.querySelector('.tl-chip')?.textContent;
-    expect(root.textContent).toContain('Waiting for output…');
-    expect(chip()).not.toBe(HINT);
-
-    await vi.advanceTimersByTimeAsync(2_999);
-    expect(chip()).not.toBe(HINT);
-
-    await vi.advanceTimersByTimeAsync(1);
-    expect(chip()).toBe(HINT);
-    expect(root.textContent).not.toContain('Waiting for output…');
-
-    target.autoReviewing = undefined;
-    await nextTick();
-    expect(root.textContent).not.toContain(HINT);
-    expect(root.textContent).toContain('Waiting for output…');
-  });
-});

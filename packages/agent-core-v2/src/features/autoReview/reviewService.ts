@@ -135,10 +135,8 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   }
 
   humanAuthorization(): readonly ReviewText[] {
-    const own = extractAuthorization(this.loop.history())
-      .filter((entry) => entry.role === 'human-instruction');
-    const inherited = this.inheritedAuthorization();
-    return inherited.length === 0 ? own : [...inherited, ...own];
+    const own = extractAuthorization(this.loop.history()).filter((entry) => entry.role === 'human-instruction');
+    return [...this.inheritedAuthorization(), ...own];
   }
 
   approvedToolCallIds(): ReadonlySet<string> {
@@ -238,9 +236,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   }
 
   private authorizationOf(history: readonly ContextMessage[]): readonly ReviewText[] {
-    const own = extractAuthorization(history);
-    const inherited = this.inheritedAuthorization();
-    return inherited.length === 0 ? own : [...inherited, ...own];
+    return [...this.inheritedAuthorization(), ...extractAuthorization(history)];
   }
 
   private async takeSnapshot(

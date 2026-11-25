@@ -54,7 +54,7 @@ export function createAutoReviewReviewer(
 export function resolveAutoReview(
   context: ResolvedToolExecutionHookContext,
   evaluation: PermissionPolicyEvaluation,
-  baseAsk: AskPolicyResult | undefined,
+  baseAsk: AskPolicyResult,
   review: AutoReviewOutcome,
   mode: PermissionMode,
 ): PermissionPolicyEvaluation {
@@ -63,13 +63,13 @@ export function resolveAutoReview(
       policyName: AUTO_REVIEW_ORIGIN,
       result: {
         kind: 'approve',
-        reason: withReason(baseAsk?.reason, { review_risk: review.risk }),
+        reason: { ...baseAsk.reason, review_risk: review.risk },
         executionMetadata: evaluation.result.kind === 'approve' ? evaluation.result.executionMetadata : undefined,
       },
     };
   }
   if (mode === 'auto') {
-    return { policyName: AUTO_REVIEW_ORIGIN, result: denial(context, review, baseAsk?.reason) };
+    return { policyName: AUTO_REVIEW_ORIGIN, result: denial(context, review, baseAsk.reason) };
   }
   return { policyName: AUTO_REVIEW_ORIGIN, result: fallbackAsk(context, review, baseAsk) };
 }
@@ -83,7 +83,7 @@ function denial(
     return {
       kind: 'deny',
       message: `Auto Review could not complete; the tool was not executed: ${review.reason} Do not retry the same action or attempt to fix the review configuration yourself; inform the user in your response that Auto Review failed and include this reason.`,
-      reason: withReason(baseReason, { review_error: true }),
+      reason: { ...baseReason, review_error: true },
     };
   }
   const suffix = review.decision === 'deny' && review.reason !== undefined ? ` ${review.reason}` : '';
@@ -93,40 +93,40 @@ function denial(
   return {
     kind: 'deny',
     message: `Auto Review denied tool "${context.toolCall.name}"; it was not executed.${suffix} ${guidance}`,
-    reason: withReason(baseReason, { review_risk: review.risk }),
+    reason: { ...baseReason, review_risk: review.risk },
   };
 }
 
 function fallbackAsk(
   context: ResolvedToolExecutionHookContext,
   review: AutoReviewOutcome,
-  baseAsk?: AskPolicyResult,
+  baseAsk: AskPolicyResult,
 ): AskPolicyResult {
   if (review.decision === 'allow') {
     return {
       ...baseAsk,
       kind: 'ask',
-      reason: withReason(baseAsk?.reason, { review_risk: review.risk, review_mode_changed: true }),
+      reason: { ...baseAsk.reason, review_risk: review.risk, review_mode_changed: true },
     };
   }
   if (review.decision === 'failed') {
     return {
       ...baseAsk,
       kind: 'ask',
-      reason: withReason(baseAsk?.reason, { review_error: true }),
+      reason: { ...baseAsk.reason, review_error: true },
       approvalDetail: { outcome: 'failed', reason: review.reason },
-      resolveNonInteractive: () => denial(context, review, baseAsk?.reason),
+      resolveNonInteractive: () => denial(context, review, baseAsk.reason),
       resolveApproval: (response) => response.decision === 'approved'
-        ? baseAsk?.resolveApproval?.(response)
+        ? baseAsk.resolveApproval?.(response)
         : {
             kind: 'deny',
             message: `Tool "${context.toolCall.name}" was not run because ${response.decision === 'cancelled' ? 'the approval request was cancelled' : 'the user rejected the approval request'} (Auto Review failed: ${review.reason}).${feedbackSuffix(response.feedback)}`,
           },
       resolveError: (error) =>
-        baseAsk?.resolveError?.(error) ?? {
+        baseAsk.resolveError?.(error) ?? {
           kind: 'deny',
           message: 'Auto Review and the fallback approval both failed; the tool was not executed.',
-          reason: withReason(baseAsk?.reason, { review_error: true }),
+          reason: { ...baseAsk.reason, review_error: true },
         },
     };
   }
@@ -134,27 +134,20 @@ function fallbackAsk(
   return {
     ...baseAsk,
     kind: 'ask',
-    reason: withReason(baseAsk?.reason, { review_risk: review.risk }),
+    reason: { ...baseAsk.reason, review_risk: review.risk },
     approvalDetail: {
       outcome: 'denied',
       risk: review.risk,
       reason: review.reason ?? 'The reviewer did not provide a reason.',
     },
-    resolveNonInteractive: () => denial(context, review, baseAsk?.reason),
+    resolveNonInteractive: () => denial(context, review, baseAsk.reason),
     resolveApproval: (response) => response.decision === 'approved'
-      ? baseAsk?.resolveApproval?.(response)
+      ? baseAsk.resolveApproval?.(response)
       : {
           kind: 'deny',
           message: `Tool "${context.toolCall.name}" was not run after Auto Review denial.${suffix}${feedbackSuffix(response.feedback)}`,
         },
   };
-}
-
-function withReason(
-  base: PermissionDecisionReason | undefined,
-  extra: PermissionDecisionReason,
-): PermissionDecisionReason {
-  return base === undefined ? extra : { ...base, ...extra };
 }
 
 function feedbackSuffix(feedback: string | undefined): string {

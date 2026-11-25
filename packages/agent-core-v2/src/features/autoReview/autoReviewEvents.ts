@@ -44,18 +44,7 @@ export class AutoReviewCompleted extends AgentEvent2<z.infer<typeof autoReviewCo
   static override readonly observable = true;
   static override readonly schema = autoReviewCompletedSchema;
 }
-export interface AutoReviewCompleted {
-  readonly agentId: string;
-  readonly turnId: number;
-  readonly toolCallId: string;
-  readonly toolName: string;
-  readonly triggerPolicy: string;
-  readonly model: string;
-  readonly decision: 'allow' | 'deny' | 'failed';
-  readonly risk?: 'low' | 'medium' | 'high';
-  readonly reason?: string;
-  durationMs: number;
-}
+export interface AutoReviewCompleted extends Readonly<z.infer<typeof autoReviewCompletedSchema>> {}
 
 export interface AutoReviewCompletedEvent extends Omit<z.infer<typeof autoReviewCompletedSchema>, 'agentId'> {
   readonly type: 'auto_review.decision';
