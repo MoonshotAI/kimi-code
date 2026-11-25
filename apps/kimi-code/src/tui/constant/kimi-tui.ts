@@ -15,7 +15,8 @@ export const PROVIDER_FILTERED_TURN_STOPPED_NOTICE =
   'Turn stopped: provider safety policy blocked the response.';
 export const PROMPT_HOOK_BLOCKED_TURN_STOPPED_NOTICE =
   'Turn stopped: prompt hook blocked the request.';
-export const TUI_MODE_RESTART_NOTICE = 'TUI mode takes effect after restarting Kimi Code.';
+export const TUI_MODE_SWITCH_BLOCKED_NOTICE =
+  'Close the active view and run /reload-tui to switch TUI mode, or restart Kimi Code.';
 export const SESSIONLESS_STARTUP_NOTICE =
   'No session yet — one will be created on your first message.';
 export const TOWER_TEARDOWN_PROMPT =

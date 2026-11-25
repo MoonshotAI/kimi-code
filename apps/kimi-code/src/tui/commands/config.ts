@@ -46,6 +46,7 @@ import {
   type TranscriptConfig,
   type TuiConfig,
   type TuiMode,
+  type TuiModeResolution,
   type WheelScrollLines,
 } from '../config';
 import type { ThemeName } from '#/tui/theme';
@@ -68,8 +69,13 @@ import {
   type EffortSwitchRule,
 } from '#/utils/effort-switch-config';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
-import { MAIN_AGENT_ID, NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
+import {
+  MAIN_AGENT_ID,
+  NO_ACTIVE_SESSION_MESSAGE,
+  TUI_MODE_SWITCH_BLOCKED_NOTICE,
+} from '../constant/kimi-tui';
 import { DOCK_MODEL_SELECTOR_ROWS, DOCK_PREVIEW_ROWS } from '../constant/rendering';
+import type { TuiModeSwitchResult } from '../tui-renderer';
 import type { QueuedModelSwitch } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
@@ -1235,19 +1241,36 @@ export function showTuiModePicker(host: SlashCommandHost): void {
 type TuiModeHost = {
   readonly state: {
     readonly appState: Pick<SlashCommandHost['state']['appState'], 'tuiMode'>;
-    readonly ui: Pick<SlashCommandHost['state']['ui'], 'mode'>;
   };
   setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'tuiMode'>): void;
   showStatus(msg: string, color?: string): void;
   showNotice(msg: string): void;
+  switchTuiMode(mode: TuiMode): TuiModeSwitchResult;
   track?: SlashCommandHost['track'];
 };
 
+export function tuiModeOverrideNotice(
+  resolution: TuiModeResolution,
+  configuredMode?: TuiMode,
+  source: 'settings' | 'reload' = 'settings',
+): string | undefined {
+  if (configuredMode === undefined || resolution.mode === configuredMode) {
+    return undefined;
+  }
+  if (source === 'reload') {
+    return resolution.overriddenByEnv
+      ? 'Unset KIMI_CODE_TUI_FULL_SCREEN for tui_mode in tui.toml to take effect.'
+      : 'This terminal automatically falls back to regular mode unless KIMI_CODE_TUI_FULL_SCREEN=1 is set.';
+  }
+  return resolution.overriddenByEnv
+    ? 'Saved to tui.toml; unset KIMI_CODE_TUI_FULL_SCREEN for it to take effect.'
+    : 'Saved to tui.toml; this terminal automatically falls back to regular mode unless KIMI_CODE_TUI_FULL_SCREEN=1 is set.';
+}
+
 export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): Promise<void> {
   const resolved = resolveTuiMode(tuiMode);
-  if (tuiMode === host.state.appState.tuiMode) {
-    host.showStatus(`TUI mode already ${tuiMode}.`);
-  } else {
+  const configChanged = tuiMode !== host.state.appState.tuiMode;
+  if (configChanged) {
     try {
       await saveTuiConfig({
         ...currentTuiConfig(host as unknown as SlashCommandHost),
@@ -1260,18 +1283,38 @@ export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): P
 
     host.setAppState({ tuiMode });
     host.track?.('tui_mode_switch', { tui_mode: tuiMode });
-    host.showStatus(`TUI mode set to ${tuiMode}.`, 'success');
   }
-  if (resolved.mode !== tuiMode) {
-    host.showNotice(
-      resolved.overriddenByEnv
-        ? 'Saved to tui.toml; unset KIMI_CODE_TUI_FULL_SCREEN for it to take effect.'
-        : 'Saved to tui.toml; this terminal automatically falls back to regular mode unless KIMI_CODE_TUI_FULL_SCREEN=1 is set.',
-    );
+
+  const reportConfigStatus = (): void => {
+    if (configChanged) {
+      host.showStatus(`TUI mode set to ${tuiMode}.`, 'success');
+    } else {
+      host.showStatus(`TUI mode already ${tuiMode}.`);
+    }
+  };
+
+  const overrideNotice = tuiModeOverrideNotice(resolved, tuiMode);
+  if (overrideNotice !== undefined) {
+    reportConfigStatus();
+    host.showNotice(overrideNotice);
     return;
   }
-  if (resolved.mode !== host.state.ui.mode) {
-    host.showNotice(TUI_MODE_RESTART_NOTICE);
+
+  const switchResult = host.switchTuiMode(resolved.mode);
+  switch (switchResult.status) {
+    case 'switched':
+      host.showStatus(
+        configChanged ? `TUI mode set to ${tuiMode}.` : `Switched TUI mode to ${tuiMode}.`,
+        'success',
+      );
+      return;
+    case 'unchanged':
+      reportConfigStatus();
+      return;
+    case 'blocked':
+      reportConfigStatus();
+      host.showNotice(TUI_MODE_SWITCH_BLOCKED_NOTICE);
+      return;
   }
 }
 

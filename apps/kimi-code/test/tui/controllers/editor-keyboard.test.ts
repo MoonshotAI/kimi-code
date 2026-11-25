@@ -1,4 +1,4 @@
-import { Text, TuiAltScreen, TuiMainScreen } from '@moonshot-ai/pi-tui';
+import { Text, TuiAltScreen, TuiMainScreen, type TUI } from '@moonshot-ai/pi-tui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FollowUpBehavior, SubmitKey } from '#/tui/config';
@@ -7,6 +7,7 @@ import {
   EditorKeyboardController,
   type EditorKeyboardHost,
 } from '#/tui/controllers/editor-keyboard';
+import { TuiRendererSession } from '#/tui/tui-renderer';
 import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 import { VirtualTerminal } from '../../../../../packages/pi-tui/test/virtual-terminal';
@@ -34,7 +35,7 @@ interface Harness {
 }
 
 function createHarness(
-  options: { streamingPhase?: string; isCompacting?: boolean; ui?: TuiAltScreen | TuiMainScreen } = {},
+  options: { streamingPhase?: string; isCompacting?: boolean; ui?: TUI } = {},
 ): Harness {
   const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
     setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
@@ -73,7 +74,11 @@ function createHarness(
         editorCommand: null,
       },
       footer: { setTransientHint: footerHint },
-      ui: options.ui ?? { mode: 'regular' as const, requestRender: vi.fn() },
+      ui: options.ui ?? {
+        mode: 'regular' as const,
+        requestRender: vi.fn(),
+        addInputListener: vi.fn(() => () => {}),
+      },
     },
     session,
     btwPanelController: { cancelRunning: btwCancelRunning, closeOrCancel: btwCloseOrCancel },
@@ -506,7 +511,11 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
         activeDialog: null,
         appState: { streamingPhase: 'idle', isCompacting: false, planMode: false },
         footer: { setTransientHint: vi.fn() },
-        ui: { mode: 'regular' as const, requestRender: vi.fn() },
+        ui: {
+          mode: 'regular' as const,
+          requestRender: vi.fn(),
+          addInputListener: vi.fn(() => () => {}),
+        },
       },
       session: options.sessionless ? undefined : { cancel: vi.fn(async () => {}) },
       worktreeCreation:
@@ -600,7 +609,11 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
         queuedMessages: options.queued,
         appState: { streamingPhase: 'waiting', isCompacting: false, model: 'k2' },
         footer: { setTransientHint: vi.fn() },
-        ui: { mode: 'regular' as const, requestRender: vi.fn() },
+        ui: {
+          mode: 'regular' as const,
+          requestRender: vi.fn(),
+          addInputListener: vi.fn(() => () => {}),
+        },
       },
       session: { id: 's1' },
       skillCommandMap: options.skillCommandMap ?? new Map(),
@@ -1001,5 +1014,56 @@ describe('EditorKeyboardController fullscreen selection copy', () => {
 
     expect(copySelection).not.toHaveBeenCalled();
     ui.stop();
+  });
+
+  it('activates selection copy after switching from regular to fullscreen and resets held state on switch', async () => {
+    const copySelection = vi.fn<(text: string) => Promise<boolean | string>>(async () => true);
+    const vt = new VirtualTerminal(20, 6);
+    const session = new TuiRendererSession({
+      terminal: vt,
+      initialMode: 'regular',
+      copyOnSelect: false,
+      createRenderer: ({ mode, terminal }) =>
+        mode === 'fullscreen'
+          ? new TuiAltScreen(terminal, undefined, undefined, {
+              copyOnSelect: false,
+              copySelection,
+            })
+          : new TuiMainScreen(terminal),
+    });
+    const harness = createHarness({ ui: session.ui });
+    const passedThrough = vi.fn(() => undefined);
+    session.ui.addInputListener(passedThrough);
+    session.ui.addChild(new Text('hello world', 0, 0));
+    session.ui.start();
+    await vt.waitForRender();
+
+    vt.sendInput('\u0003');
+    expect(copySelection).not.toHaveBeenCalled();
+    expect(passedThrough).toHaveBeenCalledWith('\u0003');
+    passedThrough.mockClear();
+
+    session.switchMode('fullscreen', {
+      copyOnSelect: false,
+      onBeforeStart: () => {
+        session.ui.addChild(new Text('hello world', 0, 0));
+      },
+    });
+    await vt.waitForRender();
+
+    vt.sendInput('\u001B[<0;1;1M');
+    vt.sendInput('\u001B[<32;5;1M');
+    vt.sendInput('\u001B[<0;5;1m');
+    await vt.waitForRender();
+
+    vt.sendInput('\u001B[99;5u');
+    expect(copySelection).toHaveBeenCalledWith('hello');
+    expect(passedThrough).not.toHaveBeenCalled();
+
+    harness.controller.resetSelectionCopyState();
+    vt.sendInput('\u001B[99;5:2u');
+    expect(passedThrough).toHaveBeenCalledWith('\u001B[99;5:2u');
+
+    session.ui.stop();
   });
 });

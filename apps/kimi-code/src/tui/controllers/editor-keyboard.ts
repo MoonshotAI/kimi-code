@@ -379,10 +379,9 @@ export class EditorKeyboardController {
       return true;
     };
 
-    const { ui } = host.state;
-    if (ui instanceof TuiAltScreen) {
-      this.disposeSelectionCopy = ui.addInputListener((data) => this.handleSelectionCopyKey(ui, data));
-    }
+    this.disposeSelectionCopy = host.state.ui.addInputListener((data) =>
+      this.handleSelectionCopyKey(data),
+    );
 
     editor.onUndo = () => {
       host.track('undo');
@@ -425,11 +424,22 @@ export class EditorKeyboardController {
   dispose(): void {
     this.disposed = true;
     this.disposeSelectionCopy?.();
+    this.disposeSelectionCopy = undefined;
+    this.copyKeyHeld = false;
     this.clearPendingExit();
     this.clearPendingUndoEsc();
   }
 
-  private handleSelectionCopyKey(ui: TuiAltScreen, data: string): { consume: true } | undefined {
+  resetSelectionCopyState(): void {
+    this.copyKeyHeld = false;
+  }
+
+  private handleSelectionCopyKey(data: string): { consume: true } | undefined {
+    const { ui } = this.host.state;
+    if (!(ui instanceof TuiAltScreen)) {
+      this.copyKeyHeld = false;
+      return undefined;
+    }
     const key = normalizeCapsLockedCtrl(data);
     if (!SELECTION_COPY_KEYS.some((copyKey) => matchesKey(key, copyKey))) return undefined;
     if (isKeyRelease(key)) {
