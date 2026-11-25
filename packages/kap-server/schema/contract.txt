@@ -777,6 +777,7 @@ GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200: oneOf
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.code: enum 0
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.has_more: boolean
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns: array
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].continuation: enum "background"|"none"|"turn" optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].duration_ms: number minimum=0 optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].end_reason: enum "aborted"|"blocked"|"error"|"filtered"|"max_steps"|"user_cancelled" optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].ended_at: any optional
@@ -4173,6 +4174,7 @@ ws server message todo: object
 ws server message turn.agent_id: string minLength=1
 ws server message turn.event_created_at: string
 ws server message turn.session_id: string minLength=1
+ws server message turn.turn.continuation: enum "background"|"none"|"turn" optional
 ws server message turn.turn.duration_ms: number minimum=0 optional
 ws server message turn.turn.end_reason: enum "aborted"|"blocked"|"error"|"filtered"|"max_steps"|"user_cancelled" optional
 ws server message turn.turn.ended_at: string optional
@@ -4210,6 +4212,7 @@ ws server message turns.event_created_at: string
 ws server message turns.has_more: boolean
 ws server message turns.session_id: string minLength=1
 ws server message turns.turns: array
+ws server message turns.turns[].continuation: enum "background"|"none"|"turn" optional
 ws server message turns.turns[].duration_ms: number minimum=0 optional
 ws server message turns.turns[].end_reason: enum "aborted"|"blocked"|"error"|"filtered"|"max_steps"|"user_cancelled" optional
 ws server message turns.turns[].ended_at: string optional
