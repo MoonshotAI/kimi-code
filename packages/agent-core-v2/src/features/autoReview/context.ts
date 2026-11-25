@@ -1,12 +1,30 @@
-import { createUserMessage, type ContentPart, type TextPart } from '@moonshot-ai/core/llm/message';
+import { createUserMessage, type ContentPart, type TextPart, type ToolCall } from '@moonshot-ai/core/llm/message';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { analyzeBashReadOnly } from '#/agent/permissionPolicy/policies/bash-read-only';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import type { IBashParserService } from '#/app/bashParser/bashParser';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 
 import REVIEW_REQUEST from './auto-review-request.md?raw';
 
 const SECTION_TAG = /<(\/?(?:environment|project_instructions|history|pending_action)\b)/gi;
+const BASH_PARSE_OPTIONS = { timeoutMs: 500, maxNodes: 10_000 } as const;
+const OMITTED_HISTORY_TOOLS: ReadonlySet<string> = new Set([
+  'Read',
+  'ReadMediaFile',
+  'Grep',
+  'Glob',
+  'WebSearch',
+  'FetchURL',
+  'TaskList',
+  'TaskOutput',
+  'WaitFor',
+  'CronList',
+  'NotifyUser',
+  'TodoList',
+  'SetTodoList',
+]);
 export const REPLY_TO_MAX_CHARS = 2000;
 
 export interface ReviewText {
@@ -28,6 +46,7 @@ export function buildReviewMessages(
   instructionPaths: readonly string[] | undefined,
   cwd: string,
   context: ResolvedToolExecutionHookContext,
+  bashParser: IBashParserService,
   approvedToolCallIds?: ReadonlySet<string>,
   gitStatus?: ReviewGitStatus,
 ): ReturnType<typeof createUserMessage>[] {
@@ -45,7 +64,7 @@ export function buildReviewMessages(
       ...inherited.map((entry) => ({ kind: 'instruction', ...entry })),
       ...messages.flatMap((message, index) => [
         ...authorizationEntry(message, index, messages).map((entry) => ({ kind: 'instruction', ...entry })),
-        ...actionEntries(message, completedIds, approvedToolCallIds),
+        ...actionEntries(message, completedIds, bashParser, approvedToolCallIds),
       ]),
     ]),
     pending_action: sectionJson({
@@ -132,11 +151,12 @@ function authorizationRole(
 function actionEntries(
   message: ContextMessage,
   completedIds: ReadonlySet<string>,
+  bashParser: IBashParserService,
   approvedToolCallIds: ReadonlySet<string> | undefined,
 ): unknown[] {
   if (message.role !== 'assistant') return [];
   return message.toolCalls
-    .filter((call) => completedIds.has(call.id))
+    .filter((call) => completedIds.has(call.id) && !isReadOnlyHistoryCall(call, bashParser))
     .map((call) => ({
       kind: 'tool-call',
       role: 'fact',
@@ -145,6 +165,21 @@ function actionEntries(
       arguments: call.arguments ?? '',
       approved: approvedToolCallIds?.has(call.id) ? true : undefined,
     }));
+}
+
+function isReadOnlyHistoryCall(call: ToolCall, bashParser: IBashParserService): boolean {
+  if (OMITTED_HISTORY_TOOLS.has(call.name)) return true;
+  if (call.name !== 'Bash' || call.arguments === null) return false;
+  let args: unknown;
+  try {
+    args = JSON.parse(call.arguments);
+  } catch {
+    return false;
+  }
+  if (typeof args !== 'object' || args === null) return false;
+  const command = (args as { readonly command?: unknown }).command;
+  if (typeof command !== 'string') return false;
+  return analyzeBashReadOnly(bashParser.parse(command, BASH_PARSE_OPTIONS)).rejection === undefined;
 }
 
 function reviewPart(part: ContentPart): TextPart[] {

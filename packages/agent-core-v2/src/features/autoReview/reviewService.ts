@@ -10,6 +10,12 @@ import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissi
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import {
+  IBashParserService,
+  normalizeBashCommandName,
+  type BashParseResult,
+  type BashSyntaxNode,
+} from '#/app/bashParser/bashParser';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -45,6 +51,31 @@ import {
 } from './review';
 
 const MAX_GIT_STATUS_ENTRIES = 50;
+const BASH_PARSE_OPTIONS = { timeoutMs: 500, maxNodes: 10_000 } as const;
+const GIT_STATUS_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  'add',
+  'stage',
+  'commit',
+  'push',
+  'reset',
+  'clean',
+  'checkout',
+  'restore',
+  'switch',
+  'rm',
+  'mv',
+  'stash',
+  'merge',
+  'rebase',
+  'cherry-pick',
+  'revert',
+  'am',
+  'apply',
+  'update-index',
+  'read-tree',
+  'checkout-index',
+]);
+const FILE_REMOVING_COMMANDS: ReadonlySet<string> = new Set(['rm', 'rmdir']);
 const AUTHORIZATION_CHANGED_REASON = 'Authorization changed during review.';
 const EMPTY_ANCESTRY: AutoReviewAncestry = { authorization: [], approvedToolCallIds: [] };
 
@@ -74,6 +105,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ILogService private readonly log: ILogService,
+    @IBashParserService private readonly bashParser: IBashParserService,
   ) {
     super();
     this._register(this.states.contributeState(autoReviewApprovedCallsKey));
@@ -227,6 +259,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       projectInstructions.agentsMdPaths,
       cwd,
       context,
+      this.bashParser,
       this.approvedToolCallIds(),
       gitStatus,
     );
@@ -239,7 +272,12 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   ): Promise<ReviewGitStatus | undefined> {
     const git = this.workdir?.current?.git;
     if (git === undefined) return undefined;
-    const argCwd = isRecord(context.args) && typeof context.args['cwd'] === 'string' && context.args['cwd'].length > 0
+    if (context.toolCall.name !== 'Bash') return undefined;
+    if (!isRecord(context.args) || typeof context.args['command'] !== 'string') return undefined;
+    if (!commandNeedsGitStatus(this.bashParser.parse(context.args['command'], BASH_PARSE_OPTIONS))) {
+      return undefined;
+    }
+    const argCwd = typeof context.args['cwd'] === 'string' && context.args['cwd'].length > 0
       ? context.args['cwd']
       : undefined;
     const targetCwd = argCwd === undefined ? cwd : this.workspace.resolve(argCwd);
@@ -272,6 +310,29 @@ export function ancestrySnapshotOf(
   const parentId = subagentParentAgentId(scope.meta) ?? scope.meta?.parentAgentId ?? MAIN_AGENT_ID;
   const parent = agentLifecycle.handleOf(parentId)?.accessor.get(IAutoReviewService);
   return parent === undefined ? EMPTY_ANCESTRY : { authorization: parent.humanAuthorization(), approvedToolCallIds: [] };
+}
+
+function commandNeedsGitStatus(result: BashParseResult): boolean {
+  if (!result.ok || result.hasError) return true;
+  const stack: BashSyntaxNode[] = [result.root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node.type === 'command' && invocationNeedsGitStatus(node)) return true;
+    for (const child of node.children) stack.push(child);
+  }
+  return false;
+}
+
+function invocationNeedsGitStatus(node: BashSyntaxNode): boolean {
+  const nameIndex = node.children.findIndex((child) => child.type === 'command_name');
+  const nameNode = nameIndex < 0 ? undefined : node.children[nameIndex]!;
+  if (nameNode?.children.length !== 1) return true;
+  const name = normalizeBashCommandName(nameNode.children[0]!.text);
+  if (FILE_REMOVING_COMMANDS.has(name)) return true;
+  if (name !== 'git') return false;
+  return node.children
+    .slice(nameIndex + 1)
+    .some((child) => child.type === 'word' && GIT_STATUS_SUBCOMMANDS.has(child.text));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
