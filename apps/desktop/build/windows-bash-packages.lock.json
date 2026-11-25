@@ -1,0 +1,603 @@
+{
+  "schemaVersion": 1,
+  "architecture": "x86_64",
+  "repository": "https://mirror.msys2.org/msys/x86_64",
+  "directPackages": [
+    "bash",
+    "msys2-runtime",
+    "coreutils",
+    "findutils",
+    "grep",
+    "sed",
+    "gawk",
+    "diffutils",
+    "tar",
+    "gzip",
+    "bzip2",
+    "xz",
+    "which",
+    "unzip",
+    "patch"
+  ],
+  "packages": [
+    {
+      "name": "bash",
+      "version": "5.3.20-2",
+      "base": "bash",
+      "description": "The GNU Bourne Again shell",
+      "projectUrl": "https://www.gnu.org/software/bash/bash.html",
+      "licenses": [
+        "spdx:GPL-3.0-or-later"
+      ],
+      "filename": "bash-5.3.20-2-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/bash-5.3.20-2-x86_64.pkg.tar.zst",
+      "size": 2579823,
+      "installedSize": 12830716,
+      "sha256": "0951e809c552dd7dd2835df1b2d590822187f14e717d809e942e4eb677d0adfd",
+      "depends": [],
+      "provides": [
+        "sh"
+      ],
+      "packagePage": "https://packages.msys2.org/package/bash?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/bash-5.3.20-2.src.tar.zst"
+    },
+    {
+      "name": "bzip2",
+      "version": "1.0.8-4",
+      "base": "bzip2",
+      "description": "A high-quality data compression program",
+      "projectUrl": "http://www.bzip.org",
+      "licenses": [
+        "custom"
+      ],
+      "filename": "bzip2-1.0.8-4-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/bzip2-1.0.8-4-x86_64.pkg.tar.zst",
+      "size": 58549,
+      "installedSize": 313991,
+      "sha256": "635c483775de60663bd38859bb4624e6aaa1086354acf8e36513b75c24f64b3c",
+      "depends": [
+        "libbz2"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/bzip2?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/bzip2-1.0.8-4.src.tar.zst"
+    },
+    {
+      "name": "coreutils",
+      "version": "8.32-5",
+      "base": "coreutils",
+      "description": "The basic file, shell and text manipulation utilities of the GNU operating system",
+      "projectUrl": "https://www.gnu.org/software/coreutils",
+      "licenses": [
+        "GPL3"
+      ],
+      "filename": "coreutils-8.32-5-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/coreutils-8.32-5-x86_64.pkg.tar.zst",
+      "size": 2755209,
+      "installedSize": 27032364,
+      "sha256": "62dfee1c39fd15f99c39802b35e82643bc14fffc16d6c76d4001caa385ec77e3",
+      "depends": [
+        "gmp",
+        "libiconv",
+        "libintl"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/coreutils?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/coreutils-8.32-5.src.tar.zst"
+    },
+    {
+      "name": "diffutils",
+      "version": "3.12-1",
+      "base": "diffutils",
+      "description": "Utility programs used for creating patch files",
+      "projectUrl": "https://www.gnu.org/software/diffutils",
+      "licenses": [
+        "spdx:GPL-3.0-or-later"
+      ],
+      "filename": "diffutils-3.12-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/diffutils-3.12-1-x86_64.pkg.tar.zst",
+      "size": 394515,
+      "installedSize": 1746735,
+      "sha256": "7902c8ce3d4dd69a0f5e98dc9d5c83c17b23314ba486169db57ef6e2835ce3b6",
+      "depends": [
+        "sh",
+        "libiconv",
+        "libintl"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/diffutils?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/diffutils-3.12-1.src.tar.zst"
+    },
+    {
+      "name": "findutils",
+      "version": "4.11.0-2",
+      "base": "findutils",
+      "description": "GNU utilities to locate files",
+      "projectUrl": "https://www.gnu.org/software/findutils",
+      "licenses": [
+        "spdx:GPL-3.0-or-later"
+      ],
+      "filename": "findutils-4.11.0-2-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/findutils-4.11.0-2-x86_64.pkg.tar.zst",
+      "size": 582781,
+      "installedSize": 2395986,
+      "sha256": "f19d3c6b1b073d4c5759ae83f5639d11a5f0227b772f7d86d600db573d9d5d32",
+      "depends": [
+        "libiconv",
+        "libintl"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/findutils?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/findutils-4.11.0-2.src.tar.zst"
+    },
+    {
+      "name": "gawk",
+      "version": "5.4.1-1",
+      "base": "gawk",
+      "description": "GNU version of awk",
+      "projectUrl": "https://www.gnu.org/software/gawk/",
+      "licenses": [
+        "spdx:GPL-3.0-or-later"
+      ],
+      "filename": "gawk-5.4.1-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/gawk-5.4.1-1-x86_64.pkg.tar.zst",
+      "size": 1519178,
+      "installedSize": 5364978,
+      "sha256": "4b1322cb6c83d61fde5100e229e3cabc5b7d01fc0d0d8bc311edc08df91916be",
+      "depends": [
+        "sh",
+        "mpfr",
+        "libintl",
+        "libreadline"
+      ],
+      "provides": [
+        "awk"
+      ],
+      "packagePage": "https://packages.msys2.org/package/gawk?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/gawk-5.4.1-1.src.tar.zst"
+    },
+    {
+      "name": "gcc-libs",
+      "version": "16.2.0-1",
+      "base": "gcc",
+      "description": "Runtime libraries shipped by GCC",
+      "projectUrl": "https://gcc.gnu.org/",
+      "licenses": [
+        "spdx:LGPL-2.1-or-later AND GPL-3.0-or-later WITH GCC-exception-3.1 AND GFDL-1.3-or-later"
+      ],
+      "filename": "gcc-libs-16.2.0-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/gcc-libs-16.2.0-1-x86_64.pkg.tar.zst",
+      "size": 1080310,
+      "installedSize": 3480729,
+      "sha256": "50e1bbbb1b4186ba1ed8c08cdbb5c0a8c2343e4b5747bace24273e26fb148471",
+      "depends": [],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/gcc-libs?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/gcc-16.2.0-1.src.tar.zst"
+    },
+    {
+      "name": "gmp",
+      "version": "6.3.0-2",
+      "base": "gmp",
+      "description": "A free library for arbitrary precision arithmetic",
+      "projectUrl": "https://gmplib.org/",
+      "licenses": [
+        "LGPL3"
+      ],
+      "filename": "gmp-6.3.0-2-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/gmp-6.3.0-2-x86_64.pkg.tar.zst",
+      "size": 396914,
+      "installedSize": 766237,
+      "sha256": "f84536138e618d47a1df2da83916cfebbd449f159ffad52f994a71060a41cf34",
+      "depends": [],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/gmp?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/gmp-6.3.0-2.src.tar.zst"
+    },
+    {
+      "name": "grep",
+      "version": "1~3.0-7",
+      "base": "grep",
+      "description": "A string search utility",
+      "projectUrl": "https://www.gnu.org/software/grep/",
+      "licenses": [
+        "GPL3"
+      ],
+      "filename": "grep-1~3.0-7-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/grep-1~3.0-7-x86_64.pkg.tar.zst",
+      "size": 249241,
+      "installedSize": 869921,
+      "sha256": "2909b3bbef8d33d66980339fb7bd2d3d9145bae0f04191e6671df39868aea427",
+      "depends": [
+        "libiconv",
+        "libintl",
+        "libpcre",
+        "sh"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/grep?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/grep-1~3.0-7.src.tar.zst"
+    },
+    {
+      "name": "gzip",
+      "version": "1.15-1",
+      "base": "gzip",
+      "description": "GNU compression utility",
+      "projectUrl": "https://www.gnu.org/software/gzip/",
+      "licenses": [
+        "spdx:GPL-3.0-or-later"
+      ],
+      "filename": "gzip-1.15-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/gzip-1.15-1-x86_64.pkg.tar.zst",
+      "size": 95115,
+      "installedSize": 172699,
+      "sha256": "3f967c87cf041391d0d43819c91174742917ccc2d1bb9419050df29ef22f4bfd",
+      "depends": [
+        "bash",
+        "less"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/gzip?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/gzip-1.15-1.src.tar.zst"
+    },
+    {
+      "name": "less",
+      "version": "710-1",
+      "base": "less",
+      "description": "A terminal based program for viewing text files",
+      "projectUrl": "http://www.greenwoodsoftware.com/less",
+      "licenses": [
+        "spdx:GPL-3.0-or-later"
+      ],
+      "filename": "less-710-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/less-710-1-x86_64.pkg.tar.zst",
+      "size": 156690,
+      "installedSize": 319418,
+      "sha256": "894a643ecd01861490e5767873d67b55cd5a2faf2c77b0b24a62dbba7bd038fd",
+      "depends": [
+        "ncurses",
+        "libpcre2_8"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/less?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/less-710-1.src.tar.zst"
+    },
+    {
+      "name": "libbz2",
+      "version": "1.0.8-4",
+      "base": "bzip2",
+      "description": "A high-quality data compression program",
+      "projectUrl": "http://www.bzip.org",
+      "licenses": [
+        "custom"
+      ],
+      "filename": "libbz2-1.0.8-4-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/libbz2-1.0.8-4-x86_64.pkg.tar.zst",
+      "size": 30786,
+      "installedSize": 67277,
+      "sha256": "89fb0e1478b22b80effda55ab4ae7549388d01245d3841a096d8a2d63236c2a1",
+      "depends": [
+        "gcc-libs"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/libbz2?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/bzip2-1.0.8-4.src.tar.zst"
+    },
+    {
+      "name": "libiconv",
+      "version": "1.19-1",
+      "base": "libiconv",
+      "description": "Libiconv is a conversion library",
+      "projectUrl": "https://www.gnu.org/software/libiconv/",
+      "licenses": [
+        "LGPL"
+      ],
+      "filename": "libiconv-1.19-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/libiconv-1.19-1-x86_64.pkg.tar.zst",
+      "size": 718353,
+      "installedSize": 1412015,
+      "sha256": "0fa55ea2a6ccf97cf8c58b24b2615815e15e16e6e4e888091c263c2c83c5313d",
+      "depends": [
+        "gcc-libs"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/libiconv?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/libiconv-1.19-1.src.tar.zst"
+    },
+    {
+      "name": "libintl",
+      "version": "0.22.5-1",
+      "base": "gettext",
+      "description": "GNU Internationalization runtime library",
+      "projectUrl": "https://www.gnu.org/software/gettext/",
+      "licenses": [
+        "GPL"
+      ],
+      "filename": "libintl-0.22.5-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/libintl-0.22.5-1-x86_64.pkg.tar.zst",
+      "size": 50537,
+      "installedSize": 111181,
+      "sha256": "336d66b9d95cf9c1804958f8e260762a3e83bf158ed5981f783bc772a31073cf",
+      "depends": [
+        "gcc-libs",
+        "libiconv"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/libintl?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/gettext-0.22.5-1.src.tar.zst"
+    },
+    {
+      "name": "liblzma",
+      "version": "5.8.4-1",
+      "base": "xz",
+      "description": "Library for XZ and LZMA compressed files",
+      "projectUrl": "https://tukaani.org/xz/",
+      "licenses": [
+        "spdx:LGPL-2.1-or-later"
+      ],
+      "filename": "liblzma-5.8.4-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/liblzma-5.8.4-1-x86_64.pkg.tar.zst",
+      "size": 90529,
+      "installedSize": 182357,
+      "sha256": "4b7d61656e72a5651a797680b66186338dce4f8fbc62a637ab3b59922dd01074",
+      "depends": [],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/liblzma?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/xz-5.8.4-1.src.tar.zst"
+    },
+    {
+      "name": "libpcre",
+      "version": "8.45-5",
+      "base": "pcre",
+      "description": "A library that implements Perl 5-style regular expressions",
+      "projectUrl": "https://www.pcre.org/",
+      "licenses": [
+        "BSD"
+      ],
+      "filename": "libpcre-8.45-5-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/libpcre-8.45-5-x86_64.pkg.tar.zst",
+      "size": 96135,
+      "installedSize": 289270,
+      "sha256": "b4dc2eb7795cbacaa683101d720fa67f536262497a1d89934a58f5dab8d17d17",
+      "depends": [
+        "gcc-libs"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/libpcre?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/pcre-8.45-5.src.tar.zst"
+    },
+    {
+      "name": "libpcre2_8",
+      "version": "10.49-1",
+      "base": "pcre2",
+      "description": "A library that implements Perl 5-style regular expressions",
+      "projectUrl": "https://www.pcre.org/",
+      "licenses": [
+        "spdx:BSD-3-Clause WITH PCRE2-exception"
+      ],
+      "filename": "libpcre2_8-10.49-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/libpcre2_8-10.49-1-x86_64.pkg.tar.zst",
+      "size": 151223,
+      "installedSize": 443825,
+      "sha256": "2de42bf4656e3952a72809663e85899be76c7020e016687055ac0acd05145a3b",
+      "depends": [
+        "gcc-libs"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/libpcre2_8?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/pcre2-10.49-1.src.tar.zst"
+    },
+    {
+      "name": "libreadline",
+      "version": "8.3.006-1",
+      "base": "readline",
+      "description": "GNU readline library",
+      "projectUrl": "https://tiswww.case.edu/php/chet/readline/rltop.html",
+      "licenses": [
+        "spdx:GPL-3.0-or-later"
+      ],
+      "filename": "libreadline-8.3.006-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/libreadline-8.3.006-1-x86_64.pkg.tar.zst",
+      "size": 388090,
+      "installedSize": 1409043,
+      "sha256": "29e25c50bf6cd7a5e6f2253af76f54fe3c1a915313c7c18e98bedaa665c6adea",
+      "depends": [
+        "ncurses"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/libreadline?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/readline-8.3.006-1.src.tar.zst"
+    },
+    {
+      "name": "mpfr",
+      "version": "4.2.2-1",
+      "base": "mpfr",
+      "description": "Multiple-precision floating-point library",
+      "projectUrl": "https://www.mpfr.org/",
+      "licenses": [
+        "spdx:LGPL-3.0-or-later"
+      ],
+      "filename": "mpfr-4.2.2-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/mpfr-4.2.2-1-x86_64.pkg.tar.zst",
+      "size": 395839,
+      "installedSize": 872502,
+      "sha256": "8f1b6c17c53e00494a488e03dfdf8fc742027ed03a5bd7b1b3a6a33f595a7498",
+      "depends": [
+        "gmp>=5.0"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/mpfr?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/mpfr-4.2.2-1.src.tar.zst"
+    },
+    {
+      "name": "msys2-runtime",
+      "version": "3.6.11-4",
+      "base": "msys2-runtime",
+      "description": "Posix emulation engine for Windows",
+      "projectUrl": "https://www.cygwin.com/",
+      "licenses": [
+        "spdx:GPL-3.0-or-later"
+      ],
+      "filename": "msys2-runtime-3.6.11-4-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/msys2-runtime-3.6.11-4-x86_64.pkg.tar.zst",
+      "size": 2068768,
+      "installedSize": 6628476,
+      "sha256": "7b1c4b625483ceff9a87f2dfcf3659704dc3da655a0ad414ecb7d9175e7d3ba0",
+      "depends": [],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/msys2-runtime?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/msys2-runtime-3.6.11-4.src.tar.zst"
+    },
+    {
+      "name": "ncurses",
+      "version": "6.6-2",
+      "base": "ncurses",
+      "description": "System V Release 4.0 curses emulation library",
+      "projectUrl": "https://www.gnu.org/software/ncurses/",
+      "licenses": [
+        "spdx:MIT"
+      ],
+      "filename": "ncurses-6.6-2-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/ncurses-6.6-2-x86_64.pkg.tar.zst",
+      "size": 1286284,
+      "installedSize": 11273114,
+      "sha256": "828c92f09b17f00d3b49362fcfa4affa58e5e50e238f290ea36eb7a690da3acb",
+      "depends": [
+        "gcc-libs"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/ncurses?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/ncurses-6.6-2.src.tar.zst"
+    },
+    {
+      "name": "patch",
+      "version": "2.8-2",
+      "base": "patch",
+      "description": "A utility to apply patch files to original sources",
+      "projectUrl": "https://www.gnu.org/software/patch/patch.html",
+      "licenses": [
+        "spdx:GPL-3.0-or-later"
+      ],
+      "filename": "patch-2.8-2-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/patch-2.8-2-x86_64.pkg.tar.zst",
+      "size": 90882,
+      "installedSize": 180358,
+      "sha256": "df34ebf345d607cabf0b2cbad60f562f775f07985647b84035b40702f62ee9b1",
+      "depends": [],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/patch?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/patch-2.8-2.src.tar.zst"
+    },
+    {
+      "name": "sed",
+      "version": "4.9-1",
+      "base": "sed",
+      "description": "GNU stream editor",
+      "projectUrl": "https://www.gnu.org/software/sed",
+      "licenses": [
+        "GPL3"
+      ],
+      "filename": "sed-4.9-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/sed-4.9-1-x86_64.pkg.tar.zst",
+      "size": 249918,
+      "installedSize": 804272,
+      "sha256": "3748af28f69e946ec5a42e6670c9bbf6da7352dc93baaa537f69e99c5483b9fc",
+      "depends": [
+        "libintl",
+        "sh"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/sed?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/sed-4.9-1.src.tar.zst"
+    },
+    {
+      "name": "tar",
+      "version": "1.35-3",
+      "base": "tar",
+      "description": "Utility used to store, backup, and transport files",
+      "projectUrl": "https://www.gnu.org/software/tar/tar.html",
+      "licenses": [
+        "GPL3"
+      ],
+      "filename": "tar-1.35-3-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/tar-1.35-3-x86_64.pkg.tar.zst",
+      "size": 815230,
+      "installedSize": 3020278,
+      "sha256": "71983bed200c4026cdec157837d989728d3de65e8cf644e03876df41a0f1b7c4",
+      "depends": [
+        "libiconv",
+        "libintl",
+        "sh"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/tar?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/tar-1.35-3.src.tar.zst"
+    },
+    {
+      "name": "unzip",
+      "version": "6.0-3",
+      "base": "unzip",
+      "description": "Unpacks .zip archives such as those made by PKZIP",
+      "projectUrl": "http://www.info-zip.org/",
+      "licenses": [
+        "custom"
+      ],
+      "filename": "unzip-6.0-3-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/unzip-6.0-3-x86_64.pkg.tar.zst",
+      "size": 98517,
+      "installedSize": 440745,
+      "sha256": "c98ebac31ea92a63cf61c6190ed3e8284ccc0c29c43973f1b2c0de2874e5acfe",
+      "depends": [
+        "libbz2",
+        "bash"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/unzip?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/unzip-6.0-3.src.tar.zst"
+    },
+    {
+      "name": "which",
+      "version": "2.25-1",
+      "base": "which",
+      "description": "A utility to show the full path of commands",
+      "projectUrl": "https://savannah.gnu.org/projects/which/",
+      "licenses": [
+        "GPL3"
+      ],
+      "filename": "which-2.25-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/which-2.25-1-x86_64.pkg.tar.zst",
+      "size": 19913,
+      "installedSize": 35009,
+      "sha256": "a299e7b9076e5d9381e59fd67538aa39346eb36bb16a93834fb99cccc3f2055b",
+      "depends": [
+        "sh"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/which?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/which-2.25-1.src.tar.zst"
+    },
+    {
+      "name": "xz",
+      "version": "5.8.4-1",
+      "base": "xz",
+      "description": "Library and command line tools for XZ and LZMA compressed files",
+      "projectUrl": "https://tukaani.org/xz/",
+      "licenses": [
+        "spdx:GPL-2.0-or-later"
+      ],
+      "filename": "xz-5.8.4-1-x86_64.pkg.tar.zst",
+      "downloadUrl": "https://mirror.msys2.org/msys/x86_64/xz-5.8.4-1-x86_64.pkg.tar.zst",
+      "size": 733040,
+      "installedSize": 4759678,
+      "sha256": "cad72459be8f5b99920bed2f122dfe81e05fc599c33f5b871bd35d72b726ef9e",
+      "depends": [
+        "liblzma",
+        "libiconv",
+        "libintl"
+      ],
+      "provides": [],
+      "packagePage": "https://packages.msys2.org/package/xz?repo=msys",
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/xz-5.8.4-1.src.tar.zst"
+    }
+  ]
+}

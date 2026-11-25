@@ -34,7 +34,9 @@ irm https://code.kimi.com/kimi-code/install.ps1 | iex
 
 :::
 
-> Windows 用户首次启动前还需要安装 [Git for Windows](https://gitforwindows.org/)，Kimi Code CLI 会使用其中的 Git Bash 作为 Shell 环境。如果 Git Bash 安装在非标准路径，请把 `KIMI_SHELL_PATH` 设为 `bash.exe` 的绝对路径。
+> 在 Windows 上首次启动 Kimi Code CLI 前，请先安装 [Git for Windows](https://gitforwindows.org/)。CLI 使用其中的 Git Bash 作为 Shell。如果 Git Bash 安装在非标准路径，请把 `KIMI_SHELL_PATH` 设为 `bash.exe` 的绝对路径。
+>
+> Windows 桌面端为内嵌服务提供 Bash 和常用 Unix 工具，但不包含 Git。外部服务仍需自行提供 Shell。
 
 脚本会自动下载最新版本、校验 checksum，并把 `kimi` 可执行文件放到你的 `PATH` 中。
 

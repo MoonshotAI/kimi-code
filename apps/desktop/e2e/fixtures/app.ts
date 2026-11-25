@@ -60,7 +60,7 @@ export interface DesktopApp {
 export interface Options {
   seedWorkspace: boolean;
   permissionMode: PermissionMode | undefined;
-  appEnv: Record<string, string>;
+  appEnv: Record<string, string | undefined>;
   extraConfig: string;
   onboarded: boolean;
 }

@@ -1,0 +1,58 @@
+name: Windows Desktop Bash runtime
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/desktop-windows-bash.yml'
+      - 'apps/desktop/package.json'
+      - 'apps/desktop/build/windows-bash-*'
+      - 'apps/desktop/build/windows-bash-licenses/**'
+      - 'apps/desktop/scripts/prepare-windows-bash.mjs'
+      - 'apps/desktop/scripts/verify-windows-bash.sh'
+      - 'apps/desktop/src/main/server/windows-bash-runtime.ts'
+      - 'apps/desktop/src/main/server/embedded-server.ts'
+      - 'apps/desktop/e2e/bash-tool-card.spec.ts'
+      - 'packages/agent-core-v2/src/_base/execEnv/shellPathBridge.ts'
+      - 'packages/agent-core-v2/src/os/backends/node-local/hostServices.ts'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-windows-bash-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clean-build:
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build without a previously staged shell
+        run: |
+          if (Test-Path -LiteralPath 'apps/desktop/resources-stage/windows-bash') { throw 'Expected a clean Desktop build' }
+          pnpm --filter kimi-code-app run build
+      - name: Verify the runtime produced by the build
+        run: node apps/desktop/scripts/prepare-windows-bash.mjs --verify apps/desktop/resources-stage/windows-bash
+      - name: Reject a runtime missing awk
+        run: |
+          $broken = Join-Path $env:RUNNER_TEMP 'incomplete Bash runtime'
+          Copy-Item -LiteralPath 'apps/desktop/resources-stage/windows-bash' -Destination $broken -Recurse
+          Remove-Item -LiteralPath (Join-Path $broken 'usr/bin/awk.exe')
+          $PSNativeCommandUseErrorActionPreference = $false
+          $output = node apps/desktop/scripts/prepare-windows-bash.mjs --verify "$broken" 2>&1
+          if ($LASTEXITCODE -eq 0 -or ($output -join "`n") -notmatch 'Missing required Windows Bash command: awk') {
+            throw "Incomplete runtime did not fail with the missing command: $output"
+          }
+          exit 0
+      - name: Start the built Desktop and complete a local session
+        run: pnpm --filter kimi-code-app run e2e:headless --no-build --project=smoke --grep=desktop.first-turn
+      - name: Read workspace and user profile files through the Desktop Bash tool
+        run: pnpm --filter kimi-code-app run e2e:headless --no-build --project=turns-transcript --no-deps --grep=Bash.reads.files.in.the.workspace

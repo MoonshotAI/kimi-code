@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   probeHostEnvironment,
+  probeHostEnvironmentFromNode,
   ProbeShellNotFoundError,
   type HostEnvironmentProbeDeps,
 } from '#/_base/execEnv/environmentProbe';
@@ -32,6 +33,27 @@ function execFileKey(file: string, args: readonly string[]): string {
 }
 
 describe('probeHostEnvironment', () => {
+  it('can select Bash for a single Windows host without changing user shell discovery', async () => {
+    const system = 'C:\\Program Files\\Git\\bin\\bash.exe';
+    const bundled = 'D:\\Desktop\\usr\\bin\\bash.exe';
+    const host = stubDeps({ platform: 'win32', env: { PATH: 'C:\\Windows\\System32' }, existingPaths: [system, bundled] });
+    await expect(probeHostEnvironment({ ...host, windowsShellPath: bundled })).resolves.toMatchObject({ shellPath: bundled });
+    await expect(probeHostEnvironment(host)).resolves.toMatchObject({ shellPath: system });
+    expect(host.env).toEqual({ PATH: 'C:\\Windows\\System32' });
+  });
+
+  it('does not reuse or replace the default Node probe for a scoped Windows shell', async () => {
+    const parent = probeHostEnvironmentFromNode();
+    const explicit = probeHostEnvironmentFromNode(process.execPath);
+    expect(explicit).not.toBe(parent);
+    const [defaultHost, scoped] = await Promise.all([parent.catch((error: unknown) => {
+      if (process.platform === 'win32' && error instanceof ProbeShellNotFoundError) return undefined;
+      throw error;
+    }), explicit]);
+    expect(scoped.shellPath).toBe(process.platform === 'win32' ? process.execPath : defaultHost?.shellPath);
+    expect(probeHostEnvironmentFromNode()).toBe(parent);
+  });
+
   it('resolves MSYS2 ucrt64 native git through git --exec-path', async () => {
     const gitExe = 'C:\\msys64\\ucrt64\\bin\\git.exe';
     const env = await probeHostEnvironment(

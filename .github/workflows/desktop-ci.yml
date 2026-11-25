@@ -32,9 +32,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter kimi-code-app run build:native:screenshot
       - run: pnpm --filter kimi-code-app exec electron tests/main/fixtures/screenshot-windows-native.cjs
-      # PR 上只跑截图相关用例；手动 dispatch 跑全量。Windows runner 更慢，
+      # PR 上只跑 Windows 专项用例；手动 dispatch 跑全量。Windows runner 更慢，
       # 默认 5s 的测试超时容易抖动，放宽到 30s。
       - if: github.event_name == 'pull_request'
-        run: pnpm test apps/desktop/tests/main/screenshot apps/desktop/tests/main/app/lifecycle.test.ts apps/desktop/tests/main/window/main-window.test.ts apps/desktop/tests/main/shell/shortcuts.test.ts apps/desktop/tests/main/release/preview-release.test.ts apps/desktop/tests/renderer/screenshot --testTimeout=30000
+        run: >-
+          pnpm test apps/desktop/tests/main/screenshot apps/desktop/tests/main/app/lifecycle.test.ts
+          apps/desktop/tests/main/window/main-window.test.ts apps/desktop/tests/main/shell/shortcuts.test.ts
+          apps/desktop/tests/main/release/preview-release.test.ts apps/desktop/tests/renderer/screenshot
+          apps/desktop/tests/main/server/embedded-server.test.ts apps/desktop/tests/main/server/windows-bash-runtime.test.ts
+          apps/desktop/tests/main/terminal/manager.test.ts --testTimeout=30000
       - if: github.event_name == 'workflow_dispatch'
         run: pnpm test --testTimeout=30000

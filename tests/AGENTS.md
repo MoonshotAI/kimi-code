@@ -2,6 +2,8 @@
 
 新的 [E2E 工作流](../.github/workflows/e2e.yml)在 PR 上运行 TUI、Web、Desktop 和 ACP 场景。旧的 Desktop E2E、E2E smoke 和 Layered QA 工作流仅手动触发。主 CI 暂停用 CLI 构建产物跑子进程旅程以及 L0 汇总，测试分片排除 `apps/kimi-code/test/e2e/tui/` 和 `packages/app-core/test/reconnect/`。`packages/kap-server/test/` 和 `tests/scenarios/` 仍在主 CI 自动运行。
 
+Windows 桌面 Bash 的[专项检查](../.github/workflows/desktop-windows-bash.yml) 从干净 checkout 构建 Desktop，验证运行时及缺工具的失败路径，并在真实桌面会话中验证首轮回答和 Bash 对工作区、用户主目录的文件访问。
+
 先写出用户或调用方依赖的行为，再选能复现故障、能直接观察结果的入口。「桌面用户看到了回答」要读真实窗口。「引擎重试后完成了原回合」可以从引擎会话验收。选定位置后，再读该目录最近的 AGENTS.md。
 
 ## 测试今天写在哪
