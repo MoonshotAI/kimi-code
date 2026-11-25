@@ -28,6 +28,7 @@ import {
   IWorkspaceService,
   followSessionLifecycles,
   getLiveSessionById,
+  missingConfiguredModelAlias,
   resumeSessionById,
   interactions,
   toDisposable,
@@ -61,7 +62,6 @@ import type { AgentFeedMessage } from '../../../protocol/ws-agent';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
 import { toConfigResponse } from '../../../routes/config';
 import { resolveSessionFacts, toWireSession, type SessionFacts, type SessionWireFields } from '../../../routes/sessions';
-import { missingConfiguredModelAlias } from '../../../services/legacyStatus/legacyStatus';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { ConversationEvent, ConversationFeed } from '../../../services/conversation/conversationFeed';
 import type {
