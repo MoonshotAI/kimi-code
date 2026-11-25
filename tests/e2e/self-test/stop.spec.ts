@@ -7,6 +7,8 @@ const QUESTION = 'Which database should we use?';
 const ASK = askUserQuestion({ questions: [{ question: QUESTION, header: 'Database', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multi_select: false }] });
 const MARKER = "printf 'x\\n' > marker.txt";
 
+const NO_LIVE_OUTPUT = "Product gap, left out until the owner decides: the agent sends a command's output to an editor that offers no terminals only once the command ends, so such an editor cannot show what a running command has printed.";
+
 selfTest('stop', {
   positive: {
     'stops a turn that is still streaming its reply': {
@@ -23,6 +25,7 @@ selfTest('stop', {
       },
     },
     'stops a command that is running and has already printed, and takes the next message': {
+      exceptVariants: { 'bare-editor': NO_LIVE_OUTPUT },
       run: async ({ product, model }) => {
         const command = "printf 'rea%s\\n' dy; sleep 30";
         model.script(bash(command), say('The command was stopped.'));

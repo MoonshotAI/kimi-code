@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -156,7 +157,7 @@ class DesktopDriver extends PageDriver {
     const pid = this.child.pid;
     if (pid === undefined) return false;
     try {
-      process.kill(-pid, 0);
+      process.kill(process.platform === 'win32' ? pid : -pid, 0);
       return true;
     } catch {
       return false;
@@ -202,6 +203,7 @@ export async function startDesktop({ home, reopen }: SurfaceLaunch): Promise<Sur
     if (!existsSync(built)) throw new Error(`${built} does not exist; build the Desktop app first with "pnpm --filter kimi-code-app run build".`);
   }
   const launch = reopen?.launch ?? 1;
+  await mkdir(join(home.home, 'Downloads'), { recursive: true });
   const networkLog = join(home.root, `desktop-network-${launch}.log`);
   const workspace = reopen === undefined ? [`--workspace=${home.workspace}`] : [];
   const app = await _electron.launch({
