@@ -10,6 +10,7 @@ import {
   until,
   type FetchStub,
 } from '@moonshot-ai/testkit/fixtures';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import type { IPty } from 'node-pty';
 
 const OUTPUT_TAIL = 64 * 1024;
@@ -60,16 +61,22 @@ export class TerminalProcess {
   readonly networkLog: string;
   readonly closed: Promise<TerminalExit>;
   private readonly pty: IPty;
+  private readonly screen: VirtualTerminal;
   private output = '';
   private exitState: TerminalExit | undefined;
 
-  private constructor(pty: IPty, label: string, networkLog: string) {
+  private constructor(pty: IPty, label: string, networkLog: string, screen: VirtualTerminal) {
     this.pty = pty;
+    this.screen = screen;
     this.label = label;
     this.networkLog = networkLog;
     this.pid = pty.pid;
     pty.onData((text) => {
       this.output = (this.output + text).slice(-OUTPUT_TAIL);
+      screen.write(text);
+    });
+    screen.onReply((reply) => {
+      if (this.exitState === undefined) pty.write(reply);
     });
     this.closed = new Promise((resolve) => {
       pty.onExit(({ exitCode, signal }) => {
@@ -90,7 +97,7 @@ export class TerminalProcess {
       cwd: options.cwd,
       env: { ...options.env, ...options.command.env, ...networkGuardEnv(networkLog, options.fetchStubs) },
     });
-    return new TerminalProcess(pty, options.label, networkLog);
+    return new TerminalProcess(pty, options.label, networkLog, new VirtualTerminal(options.columns, options.rows));
   }
 
   get exited(): boolean {
@@ -108,8 +115,9 @@ export class TerminalProcess {
   async waitForLine(predicate: (line: string) => boolean, description: string): Promise<string> {
     const line = await until(
       description,
-      () => {
-        const found = this.outputTail().split('\n').find(predicate);
+      async () => {
+        await this.screen.flush();
+        const found = this.screen.getScrollBuffer().find((row) => predicate(row.trimEnd()));
         if (found !== undefined) return found;
         if (this.exited) throw new Error(`${this.label} exited before printing ${description}.\n${this.describe()}`);
         return undefined;
