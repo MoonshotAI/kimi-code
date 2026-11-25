@@ -4,7 +4,7 @@ import { workspaceRootKey } from './rootKey';
 
 export interface MergeWorkspacesInput {
   workspaces: AppWorkspace[];
-  sessions: Pick<AppSession, 'id' | 'cwd' | 'workspaceId' | 'hostId'>[];
+  sessions: Pick<AppSession, 'id' | 'cwd' | 'workspaceId' | 'deviceId'>[];
   hiddenWorkspaceIds: string[];
   sessionsHasMoreByWorkspace: Record<string, boolean>;
 }
@@ -38,7 +38,7 @@ export function mergeWorkspaces(input: MergeWorkspacesInput): AppWorkspace[] {
     if (!byId.has(wid)) {
       byId.set(wid, {
         id: wid,
-        hostId: s.hostId,
+        deviceId: s.deviceId,
         root: s.cwd,
         name: basename(s.cwd),
         kind: 'implicit',

@@ -11,6 +11,7 @@ import {
 import { AgentIdentityService } from '#/app/agentIdentity/agentIdentityService';
 import { IDENTITY_SECTION } from '#/app/agentIdentity/configSection';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { HostClientIdentity, IClientIdentity } from '#/app/clientIdentity/clientIdentity';
 import { IConfigService } from '#/app/config/config';
 import { LifecycleScope } from '#/app/scopes';
 import { _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
@@ -22,6 +23,7 @@ const hosts: Array<{ dispose(): void }> = [];
 
 beforeEach(() => {
   _clearScopedRegistryForTests();
+  registerScopedService(LifecycleScope.App, IClientIdentity, HostClientIdentity);
   registerScopedService(LifecycleScope.App, IAgentIdentity, AgentIdentityService);
 });
 

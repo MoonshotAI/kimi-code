@@ -2,8 +2,8 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
-import { openHostSettings } from '@moonshot-ai/app-client/composables';
-import { hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { openDeviceSettings } from '@moonshot-ai/app-client/composables';
+import { devicesStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { Icon, Menu, MenuItem } from '@moonshot-ai/app-ui';
 import { useAnchoredMenu } from '../composables/useAnchoredMenu';
 
@@ -30,8 +30,8 @@ const target = ref<WorkspaceView | null>(null);
 const via = ref<'toggle' | 'context'>('toggle');
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
 const { open, menuStyle, showAnchored, openAt, close } = useAnchoredMenu(menuRef);
-const isRemoteTarget = computed(() => target.value?.hostId !== undefined);
-const targetBlocked = computed(() => hostsStore().blocked(target.value?.hostId));
+const isRemoteTarget = computed(() => target.value?.deviceId !== undefined);
+const targetBlocked = computed(() => devicesStore().blocked(target.value?.deviceId));
 const canRenameTarget = computed(() => !targetBlocked.value);
 const canEditTarget = computed(() => {
   const id = target.value?.id;
@@ -77,10 +77,10 @@ function act(action: 'pin' | 'copyPath' | 'rename' | 'edit' | 'remove'): void {
   else emit('remove', ws);
 }
 
-function openTargetHostSettings(): void {
-  const hostId = target.value?.hostId;
+function openTargetDeviceSettings(): void {
+  const deviceId = target.value?.deviceId;
   close();
-  if (hostId !== undefined) openHostSettings(hostId);
+  if (deviceId !== undefined) openDeviceSettings(deviceId);
 }
 
 defineExpose({ toggle, openContext, close });
@@ -105,9 +105,9 @@ defineExpose({ toggle, openContext, close });
         <Icon name="sliders" size="sm" />
         {{ t('workspace.dialog.editTitle') }}
       </MenuItem>
-      <MenuItem v-if="isRemoteTarget" class="ws-menu-host-settings" @click="openTargetHostSettings">
+      <MenuItem v-if="isRemoteTarget" class="ws-menu-device-settings" @click="openTargetDeviceSettings">
         <Icon name="server" size="sm" />
-        {{ t('workspace.hostNotice.settings') }}
+        {{ t('workspace.deviceNotice.settings') }}
       </MenuItem>
       <MenuItem danger @click="act('remove')">
         <Icon name="close" size="sm" />

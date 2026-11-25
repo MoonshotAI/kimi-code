@@ -15,8 +15,8 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/app-client/client')>();
   return {
     ...actual,
-    getDeviceApi: (hostId?: string) => ({
-      getClientConfig: (name: string) => getClientConfig(hostId, name),
+    getDeviceApi: (deviceId?: string) => ({
+      getClientConfig: (name: string) => getClientConfig(deviceId, name),
     }),
   };
 });
@@ -43,24 +43,24 @@ afterEach(() => {
 
 function setup(localId: string | null = 'user', initialSignedIn = true) {
   const signedIn = shallowRef(initialSignedIn);
-  const hosts = shallowRef<Record<string, { status: 'signedIn' | 'signedOut' }>>({});
+  const devices = shallowRef<Record<string, { status: 'signedIn' | 'signedOut' }>>({});
   const accountId = shallowRef(localId);
   const userIds: Record<string, string> = { first: 'user', second: 'user' };
-  const hostUserId = vi.fn(async (hostId: string) => userIds[hostId]);
+  const deviceUserId = vi.fn(async (deviceId: string) => userIds[deviceId]);
   const feedback = scope.run(() => useDesktopFeedback({
     signedIn: () => signedIn.value, accountId: () => accountId.value ?? undefined, openLogin: vi.fn(),
-    sessionHost: sessionId => sessionId === 'local' ? undefined : sessionId,
-    hostAccounts: () => hosts.value, hostUserId, openHostLogin: vi.fn(),
+    sessionDevice: sessionId => sessionId === 'local' ? undefined : sessionId,
+    deviceAccounts: () => devices.value, deviceUserId, openDeviceLogin: vi.fn(),
   }))!;
-  return { signedIn, hosts, userIds, hostUserId, feedback, accountId };
+  return { signedIn, devices, userIds, deviceUserId, feedback, accountId };
 }
 
 const target = (sessionId: string): TurnFeedbackTarget => ({ sessionId, turnId: 'turn', replyId: 'reply' });
 const details = { reasons: ['incorrect'], content: '', includeSession: true };
 
 describe('feedback account ownership', () => {
-  it('clears an SSH account on sign-out while other hosts keep their ratings and uploads', async () => {
-    const { feedback, hosts, hostUserId } = setup();
+  it('clears an SSH account on sign-out while other devices keep their ratings and uploads', async () => {
+    const { feedback, devices, deviceUserId } = setup();
     const local = target('local');
     const first = target('first');
     const second = target('second');
@@ -70,11 +70,11 @@ describe('feedback account ownership', () => {
       await feedback.submitDetails(reply, details);
     }
     const [firstUpload, secondUpload] = api.uploadFeedbackSession.mock.calls.map(call => call[2] as AbortSignal);
-    const profileCalls = hostUserId.mock.calls.length;
-    hosts.value = { first: { status: 'signedIn' }, second: { status: 'signedIn' } };
+    const profileCalls = deviceUserId.mock.calls.length;
+    devices.value = { first: { status: 'signedIn' }, second: { status: 'signedIn' } };
     expect(feedback.state(first)?.kind).toBe('recorded');
-    hosts.value = { ...hosts.value, first: { status: 'signedOut' } };
-    expect(hostUserId).toHaveBeenCalledTimes(profileCalls);
+    devices.value = { ...devices.value, first: { status: 'signedOut' } };
+    expect(deviceUserId).toHaveBeenCalledTimes(profileCalls);
     expect(firstUpload?.aborted).toBe(true);
     expect(secondUpload?.aborted).toBe(false);
     expect(feedback.state(first)).toBeUndefined();
@@ -95,8 +95,8 @@ describe('feedback account ownership', () => {
     expect(feedback.state(reply)).toMatchObject({ record: { feedbackId: 2 } });
   });
 
-  it('ignores a late rating response after its host has signed out', async () => {
-    const { feedback, hosts } = setup();
+  it('ignores a late rating response after its device has signed out', async () => {
+    const { feedback, devices } = setup();
     let finish = () => {};
     api.createFeedback.mockImplementationOnce(() => new Promise(resolve => {
       finish = () => resolve({ feedback_id: 12 });
@@ -104,7 +104,7 @@ describe('feedback account ownership', () => {
     const reply = target('first');
     const pending = feedback.chooseRating(reply, 'down');
     expect(feedback.isPopoverOpen(reply)).toBe(true);
-    hosts.value = { first: { status: 'signedOut' } };
+    devices.value = { first: { status: 'signedOut' } };
     expect(feedback.isPopoverOpen(reply)).toBe(false);
     finish();
     await pending;
@@ -128,9 +128,9 @@ describe('feedback account ownership', () => {
     ]);
     userIds['first'] = 'user';
     void shown()[1]?.options?.actions?.[0]?.onClick({ dismiss: vi.fn() });
-    await vi.waitFor(() => expect(api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'first', expect.any(AbortSignal), { hostId: 'first' }));
+    await vi.waitFor(() => expect(api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'first', expect.any(AbortSignal), { deviceId: 'first' }));
     expect(api.uploadFeedbackAttachment).toHaveBeenCalledOnce();
-    feedback.clearHostAccount('first');
+    feedback.clearDeviceAccount('first');
     expect(api.uploadFeedbackSession.mock.calls[0]?.[2]).toHaveProperty('aborted', true);
     expect(api.uploadFeedbackAttachment.mock.calls[0]?.[2]).toHaveProperty('aborted', false);
   });
@@ -150,7 +150,7 @@ describe('feedback account ownership', () => {
     });
     api.getUserInfo.mockResolvedValue({ kind: 'ok', userInfo: { userId: 'user' } });
     void shown()[1]?.options?.actions?.[0]?.onClick({ dismiss: vi.fn() });
-    await vi.waitFor(() => expect(api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'first', expect.any(AbortSignal), { hostId: 'first' }));
+    await vi.waitFor(() => expect(api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'first', expect.any(AbortSignal), { deviceId: 'first' }));
     expect(api.uploadFeedbackAttachment).toHaveBeenCalledTimes(2);
     expect(api.createFeedback).toHaveBeenCalledOnce();
   });
@@ -215,21 +215,21 @@ function formConfig(id: string): FeedbackForm {
   };
 }
 
-describe('feedback form caching by host', () => {
+describe('feedback form caching by device', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it('deduplicates in-flight prefetch and caches parsed forms per host within the stale window', async () => {
+  it('deduplicates in-flight prefetch and caches parsed forms per device within the stale window', async () => {
     vi.useFakeTimers();
     const { feedback } = setup();
     let resolveFirst!: (value: unknown) => void;
     const localForm = formConfig('local');
     const firstForm = formConfig('first');
     const secondForm = formConfig('second');
-    getClientConfig.mockImplementation((hostId?: string) => {
-      if (hostId === 'first') return new Promise(resolve => { resolveFirst = resolve; });
-      if (hostId === 'second') return Promise.resolve(secondForm);
+    getClientConfig.mockImplementation((deviceId?: string) => {
+      if (deviceId === 'first') return new Promise(resolve => { resolveFirst = resolve; });
+      if (deviceId === 'second') return Promise.resolve(secondForm);
       return Promise.resolve(localForm);
     });
 
@@ -316,8 +316,8 @@ describe('feedback form caching by host', () => {
     expect(getClientConfig).toHaveBeenCalledTimes(3);
   });
 
-  it('clears a host form cache on sign-out and ignores in-flight responses from before the clear', async () => {
-    const { feedback, hosts, accountId } = setup();
+  it('clears a device form cache on sign-out and ignores in-flight responses from before the clear', async () => {
+    const { feedback, devices, accountId } = setup();
     let resolveStale!: (value: unknown) => void;
     const stale = formConfig('stale');
     const fresh = formConfig('fresh');
@@ -329,7 +329,7 @@ describe('feedback form caching by host', () => {
 
     const pending = feedback.loadForm('first');
     await expect(feedback.loadForm('local')).resolves.toEqual(localForm);
-    hosts.value = { first: { status: 'signedOut' } };
+    devices.value = { first: { status: 'signedOut' } };
     resolveStale(stale);
     await pending;
 
@@ -348,7 +348,7 @@ describe('feedback form caching by host', () => {
     const { feedback } = setup();
     const recovered = formConfig('recovered');
     getClientConfig
-      .mockImplementationOnce(() => { throw new Error('SSH host is unavailable'); })
+      .mockImplementationOnce(() => { throw new Error('SSH device is unavailable'); })
       .mockResolvedValueOnce(recovered);
 
     await expect(feedback.loadForm('first')).resolves.toBeNull();
@@ -358,13 +358,13 @@ describe('feedback form caching by host', () => {
   });
 
   it('skips prefetch while signed out and clears any pre-login local form cache on sign-in', async () => {
-    const { feedback, signedIn, hosts } = setup(null, false);
+    const { feedback, signedIn, devices } = setup(null, false);
     const preLogin = formConfig('default-region');
     const postLogin = formConfig('signed-in-region');
     getClientConfig.mockResolvedValueOnce(preLogin).mockResolvedValueOnce(postLogin);
 
     feedback.prefetchForm('local');
-    hosts.value = { first: { status: 'signedOut' } };
+    devices.value = { first: { status: 'signedOut' } };
     feedback.prefetchForm('first');
     expect(getClientConfig).not.toHaveBeenCalled();
 

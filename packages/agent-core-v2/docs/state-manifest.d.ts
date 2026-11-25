@@ -887,6 +887,15 @@ export interface SessionStateSnapshot {
     }>>;
     readonly custom?: Record<string, unknown>;
     readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
+    readonly clientIdentity?: /* SessionClientIdentity — packages/agent-core-v2/src/session/clientIdentity/sessionClientIdentity.ts */ {
+      readonly productName: string;
+      readonly version: string;
+      readonly platform: string;
+      readonly userAgentSuffix?: string;
+      readonly displayName?: string;
+      readonly replyStyleGuide?: string;
+      readonly uiCapabilities?: readonly 'update_panel'[];
+    };
   } | undefined;
   // src/session/sessionToolPolicy/sessionToolPolicyService.ts
   'sessionToolPolicy.state': /* SessionToolPolicyState — packages/agent-core-v2/src/session/sessionToolPolicy/sessionToolPolicyService.ts */ {

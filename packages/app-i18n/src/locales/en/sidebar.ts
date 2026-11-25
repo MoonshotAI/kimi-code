@@ -1,6 +1,13 @@
 export default {
   sessionsHeader: 'sessions',
   workspaces: 'Projects',
+  deviceScope: 'Switch device',
+  deviceScopeAttention: 'Requests are waiting on other devices',
+  thisComputer: 'This computer',
+  deviceWaiting: '{n} waiting for you',
+  deviceRunning: '{n} running',
+  deviceUnavailable: 'Unavailable',
+  deviceScopePinHint: 'Pin projects to see them across devices',
   viewSwitcher: 'List options',
   viewGroup: 'View',
   viewFlat: 'Flat list',

@@ -12,7 +12,7 @@ import {
 } from '@moonshot-ai/app-core/api';
 import { basename, isWindowsPath, isWorkspacePathInput, parseWorkspacePathInput } from '@moonshot-ai/app-core/lib';
 import { Banner, Button, Checkbox, Dialog, Icon, IconButton, Input, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
-import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore } from '@moonshot-ai/app-client/stores';
 
 const { t } = useI18n();
 
@@ -22,7 +22,7 @@ const props = defineProps<{
   getFsHome: () => Promise<{ home: string; recentRoots: string[] }>;
   mkdirFs?: (path: string) => Promise<{ path: string }>;
   defaultPath?: string;
-  hostId?: string;
+  deviceId?: string;
   error?: string | null;
   multiple?: boolean;
 }>();
@@ -46,8 +46,8 @@ const searching = ref(false);
 const searchFailed = ref(false);
 interface SearchHit { path: string; name: string; rel: string }
 const searchResults = ref<SearchHit[]>([]);
-const isRemote = computed(() => props.hostId !== undefined);
-const hostName = computed(() => props.hostId === undefined ? '' : hostsStore().displayName(props.hostId) ?? '');
+const isRemote = computed(() => props.deviceId !== undefined);
+const deviceName = computed(() => props.deviceId === undefined ? '' : devicesStore().displayName(props.deviceId) ?? '');
 const showBrowser = computed(() => !browseFailed.value);
 let navigationToken = 0;
 let navigationController: AbortController | undefined;
@@ -471,7 +471,7 @@ onUnmounted(() => {
 <template>
   <Dialog
     v-model:open="open"
-    :title="isRemote ? (hostName ? t('workspace.remotePickerTitleWithHost', { device: hostName }) : t('workspace.remotePickerTitle')) : t('workspace.addTitle')"
+    :title="isRemote ? (deviceName ? t('workspace.remotePickerTitleWithDevice', { device: deviceName }) : t('workspace.remotePickerTitle')) : t('workspace.addTitle')"
     size="lg"
     :padded="false"
     :initial-focus="() => pathField?.el ?? null"
@@ -583,7 +583,7 @@ onUnmounted(() => {
       <template v-if="showBrowser">
         <div :id="pathListId" class="folder-list" :role="pathEditing ? 'listbox' : undefined">
           <div v-if="loading" class="fl-loading" role="status">
-            <Spinner size="sm" />{{ isRemote ? t('workspace.remoteBrowsing', { device: hostName }) : t('workspace.browsing') }}
+            <Spinner size="sm" />{{ isRemote ? t('workspace.remoteBrowsing', { device: deviceName }) : t('workspace.browsing') }}
           </div>
           <template v-else>
             <Banner v-if="searchFailed" class="search-error" variant="danger" role="alert">

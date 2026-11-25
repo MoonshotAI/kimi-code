@@ -165,4 +165,32 @@ describe('ManagedIdleExit', () => {
     await exit.sweep();
     expect(onIdle).toHaveBeenCalledTimes(1);
   });
+
+  it('exits through the drain callback as soon as no session is live, ignoring attached connections and the idle window', async () => {
+    const state = { sessions: 1, connections: 2 };
+    const { exit, onIdle } = setup(state);
+    const onDrained = vi.fn();
+    try {
+      exit.exitWhenIdle(onDrained);
+      await exit.sweep();
+      expect(onDrained).not.toHaveBeenCalled();
+      state.sessions = 0;
+      await exit.sweep();
+      await exit.sweep();
+      expect(onDrained).toHaveBeenCalledTimes(1);
+      expect(onIdle).not.toHaveBeenCalled();
+    } finally {
+      await exit.close();
+    }
+  });
+
+  it('ignores a request to exit when idle after it was closed', async () => {
+    const { exit, onIdle } = setup({ sessions: 0, connections: 0 });
+    const onDrained = vi.fn();
+    await exit.close();
+    exit.exitWhenIdle(onDrained);
+    await exit.sweep();
+    expect(onDrained).not.toHaveBeenCalled();
+    expect(onIdle).not.toHaveBeenCalled();
+  });
 });

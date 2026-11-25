@@ -9,13 +9,17 @@ import type {
   AppCatalogProvider,
   AppConfig,
   EditableTextFile,
-  AppHost,
-  AppHostConnectFailure,
-  AppHostDefinition,
-  AppHostTestResult,
+  AppDevice,
+  AppDeviceConnectFailure,
+  AppDeviceDefinition,
+  AppDeviceTestResult,
+  AppDeviceUpgradeResult,
+  AppSshDeviceDefinition,
   AppModel,
   AppProvider,
   AppProviderDetail,
+  AppServerMeta,
+  AppSystemStats,
   AuthResult,
   CreateFeedbackInput,
   FeedbackAttachmentInput,
@@ -122,7 +126,8 @@ import {
   toWireQuestionResponse,
   toWireSessionRatingReport,
   toAppWorkspace,
-  toAppHost,
+  toAppDevice,
+  toAppSystemStats,
   wireEventSessionId,
 } from './mappers';
 import type {
@@ -133,9 +138,11 @@ import type {
   WireCreateProviderModel,
   WireCreateProviderRequest,
   WireEvent,
-  WireHost,
-  WireHostDefinition,
-  WireHostTestResult,
+  WireDevice,
+  WireSystemStats,
+  WireDeviceDefinition,
+  WireDeviceTestResult,
+  WireSshDeviceDefinition,
   WireSshConfigHosts,
   WireFileMeta,
   WireFsBrowseResult,
@@ -243,6 +250,7 @@ interface WireMeta {
   dangerous_bypass_auth?: boolean;
   experimental_flags?: Record<string, boolean>;
   web_title?: string;
+  device_id: string;
 }
 
 interface WireAbortResult {
@@ -340,7 +348,7 @@ export interface DaemonKimiWebApiOptions {
   identity: ClientIdentity;
   tracer?: Tracer;
   credentialStore?: CredentialStore;
-  includeHosts?: boolean;
+  includeDevices?: boolean;
 }
 
 export class DaemonKimiWebApi implements KimiWebApi {
@@ -366,19 +374,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return { status: 'ok', uptimeSec: data.uptime_sec ?? 0 };
   }
 
-  async getMeta(): Promise<{
-    protocolVersion: string;
-    serverVersion: string;
-    serverId: string;
-    startedAt: string;
-    homeDir: string;
-    capabilities: Record<string, boolean>;
-    openInApps: string[];
-    dangerousBypassAuth: boolean;
-    experimentalFlags: Record<string, boolean>;
-    backend: 'v1' | 'v2';
-    webTitle: string;
-  }> {
+  async getMeta(): Promise<AppServerMeta> {
     const data = await this.http.get<WireMeta>('/meta');
     return {
       protocolVersion: data.kimi_agent_protocol_version ?? '',
@@ -392,6 +388,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       experimentalFlags: data.experimental_flags ?? {},
       backend: 'v2',
       webTitle: data.web_title ?? '',
+      deviceId: data.device_id,
     };
   }
 
@@ -451,7 +448,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       query: input?.query,
       sort: input?.sort,
       include: input?.include,
-      hosts: input?.localOnly === true || hasWorkspaceCursor ? undefined : this.hostsQuery(),
+      devices: input?.localOnly === true || hasWorkspaceCursor ? undefined : this.devicesQuery(),
     };
     const data = await this.http.get<WireSessionsPage>('/sessions', query, options);
     return {
@@ -459,7 +456,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       hasMore: data.has_more,
       nextPageToken: data.next_page_token ?? null,
       total: data.total ?? data.items.length,
-      unavailableHosts: data.unavailable_hosts,
+      unavailableDevices: data.unavailable_devices,
     };
   }
 
@@ -477,7 +474,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       workspace_id: input?.workspaceIds,
       busy: input?.busy,
       activity: input?.activities,
-      hosts: this.hostsQuery(),
+      devices: this.devicesQuery(),
     };
     const data = await this.http.get<WireSessionIdsPage>('/sessions', query);
     return {
@@ -485,7 +482,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       hasMore: data.has_more,
       nextPageToken: data.next_page_token ?? null,
       total: data.total,
-      unavailableHosts: data.unavailable_hosts,
+      unavailableDevices: data.unavailable_devices,
     };
   }
 
@@ -506,7 +503,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       workspace_id: input?.workspaceIds,
       busy: input?.busy,
       activity: input?.activities,
-      hosts: this.hostsQuery(),
+      devices: this.devicesQuery(),
     };
     const data = await this.http.get<WireSessionGroupsPage>('/sessions', query, options);
     return {
@@ -514,12 +511,12 @@ export class DaemonKimiWebApi implements KimiWebApi {
         workspaceId: group.workspace_id,
         sessions: group.sessions.map(toAppSession),
         total: group.total,
-        hostId: group.host_id,
+        deviceId: group.device_id,
       })),
       hasMore: data.has_more,
       nextPageToken: data.next_page_token ?? null,
       total: data.total,
-      unavailableHosts: data.unavailable_hosts,
+      unavailableDevices: data.unavailable_devices,
     };
   }
 
@@ -553,7 +550,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   async findSession(sessionId: string): Promise<AppSession> {
-    const data = await this.http.get<WireSession>(`/sessions/${encodeURIComponent(sessionId)}`, { hosts: 'include' });
+    const data = await this.http.get<WireSession>(`/sessions/${encodeURIComponent(sessionId)}`, { devices: 'include' });
     return toAppSession(data);
   }
 
@@ -713,8 +710,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
     });
   }
 
-  async uploadFeedbackSession(feedbackId: number, sessionId: string, signal?: AbortSignal, globalFeedback?: { hostId?: string }): Promise<{ upload_id: number }> {
-    return this.http.post(`/feedback/${feedbackId}/attachments/session`, { session_id: sessionId, host_id: globalFeedback?.hostId }, {
+  async uploadFeedbackSession(feedbackId: number, sessionId: string, signal?: AbortSignal, globalFeedback?: { deviceId?: string }): Promise<{ upload_id: number }> {
+    return this.http.post(`/feedback/${feedbackId}/attachments/session`, { session_id: sessionId, device_id: globalFeedback?.deviceId }, {
       timeoutMs: FEEDBACK_UPLOAD_TIMEOUT_MS,
       signal,
       sensitive: true,
@@ -1600,13 +1597,13 @@ export class DaemonKimiWebApi implements KimiWebApi {
     );
   }
 
-  private hostsQuery(): 'include' | undefined {
-    return this.opts.includeHosts === true ? 'include' : undefined;
+  private devicesQuery(): 'include' | undefined {
+    return this.opts.includeDevices === true ? 'include' : undefined;
   }
 
   async listWorkspaces(): Promise<AppWorkspace[]> {
     try {
-      const data = await this.http.get<WirePage<WireWorkspace>>('/workspaces', { hosts: this.hostsQuery() });
+      const data = await this.http.get<WirePage<WireWorkspace>>('/workspaces', { devices: this.devicesQuery() });
       return (data.items ?? []).map(toAppWorkspace);
     } catch {
       return [];
@@ -1688,25 +1685,33 @@ export class DaemonKimiWebApi implements KimiWebApi {
     };
   }
 
-  async listHosts(): Promise<AppHost[]> {
-    const data = await this.http.get<{ hosts: WireHost[] }>('/hosts');
-    return data.hosts.map(toAppHost);
+  async getSystemStats(path?: string, options?: ReadRequestOptions): Promise<AppSystemStats> {
+    return toAppSystemStats(await this.http.get<WireSystemStats>('/system/stats', { path }, options));
   }
 
-  async putHost(id: string, definition: AppHostDefinition): Promise<void> {
-    await this.http.put(`/hosts/${encodeURIComponent(id)}`, toWireHostDefinition(definition));
+  async listDevices(): Promise<AppDevice[]> {
+    const data = await this.http.get<{ devices: WireDevice[] }>('/devices');
+    return data.devices.map(toAppDevice);
   }
 
-  async deleteHost(id: string): Promise<void> {
-    await this.http.delete(`/hosts/${encodeURIComponent(id)}`);
+  async putDevice(id: string, definition: AppDeviceDefinition): Promise<void> {
+    await this.http.put(`/devices/${encodeURIComponent(id)}`, toWireDeviceDefinition(definition));
   }
 
-  async connectHost(id: string): Promise<AppHost> {
-    return toAppHost(await this.http.post<WireHost>('/hosts:connect', { id }, { timeoutMs: 120_000 }));
+  async deleteDevice(id: string): Promise<void> {
+    await this.http.delete(`/devices/${encodeURIComponent(id)}`);
   }
 
-  async testHost(definition: AppHostDefinition, opts?: { signal?: AbortSignal }): Promise<AppHostTestResult> {
-    const data = await this.http.post<WireHostTestResult>('/hosts:test', toWireHostDefinition(definition), {
+  async connectDevice(id: string): Promise<AppDevice> {
+    return toAppDevice(await this.http.post<WireDevice>('/devices:connect', { id }, { timeoutMs: 120_000 }));
+  }
+
+  async upgradeDevice(id: string): Promise<AppDeviceUpgradeResult> {
+    return this.http.post<AppDeviceUpgradeResult>('/devices:upgrade', { id }, { timeoutMs: 120_000 });
+  }
+
+  async testDevice(definition: AppSshDeviceDefinition, opts?: { signal?: AbortSignal }): Promise<AppDeviceTestResult> {
+    const data = await this.http.post<WireDeviceTestResult>('/devices:test', toWireSshDeviceDefinition(definition), {
       signal: opts?.signal,
       timeoutMs: 60_000,
     });
@@ -1714,12 +1719,12 @@ export class DaemonKimiWebApi implements KimiWebApi {
       connected: data.connected,
       remoteVersion: data.remote_version,
       connectError: data.connect_error,
-      connectFailure: data.connect_failure as AppHostConnectFailure | undefined,
+      connectFailure: data.connect_failure as AppDeviceConnectFailure | undefined,
     };
   }
 
-  async listHostSshConfig(): Promise<AppSshConfigHosts> {
-    const data = await this.http.get<WireSshConfigHosts>('/hosts:ssh-hosts');
+  async listDeviceSshConfig(): Promise<AppSshConfigHosts> {
+    const data = await this.http.get<WireSshConfigHosts>('/devices:ssh-hosts');
     return {
       configPath: data.config_path,
       exists: data.exists,
@@ -1727,8 +1732,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
     };
   }
 
-  async copyProvidersToHost(id: string): Promise<AppProviderCopyResult> {
-    return this.http.post<AppProviderCopyResult>('/hosts:copy-providers', { id }, { timeoutMs: 180_000 });
+  async copyProvidersToDevice(id: string): Promise<AppProviderCopyResult> {
+    return this.http.post<AppProviderCopyResult>('/devices:copy-providers', { id }, { timeoutMs: 180_000 });
   }
 
   async getFsHome(): Promise<{ home: string; recentRoots: string[] }> {
@@ -2254,12 +2259,18 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
-function toWireHostDefinition(definition: AppHostDefinition): WireHostDefinition {
+function toWireSshDeviceDefinition(definition: AppSshDeviceDefinition): WireSshDeviceDefinition {
   return {
+    connection: 'ssh',
     host: definition.host,
     identity_file: definition.identityFile,
     remote_bin: definition.remoteBin,
     name: definition.name,
     enabled: definition.enabled,
   };
+}
+
+function toWireDeviceDefinition(definition: AppDeviceDefinition): WireDeviceDefinition {
+  if (definition.connection === 'ssh') return toWireSshDeviceDefinition(definition);
+  return { connection: 'account', name: definition.name, enabled: definition.enabled };
 }

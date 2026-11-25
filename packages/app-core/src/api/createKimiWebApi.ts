@@ -1,6 +1,6 @@
 import type { ClientIdentity, CredentialStore, Tracer } from '../contracts';
 import { DaemonKimiWebApi } from './daemon/client';
-import { HostRouter } from './hostRouting';
+import { DeviceRouter } from './deviceRouting';
 import type { KimiWebApi } from './types';
 
 export interface CreateKimiWebApiDeps {
@@ -11,15 +11,15 @@ export interface CreateKimiWebApiDeps {
 }
 
 export function createKimiWebApi(deps: CreateKimiWebApiDeps): KimiWebApi {
-  const clientFor = (origin: string, includeHosts = false): DaemonKimiWebApi =>
+  const clientFor = (origin: string, includeDevices = false): DaemonKimiWebApi =>
     new DaemonKimiWebApi({
       origin,
       identity: deps.identity,
       tracer: deps.tracer,
       credentialStore: deps.credentialStore,
-      includeHosts,
+      includeDevices,
     });
-  return new HostRouter(clientFor(deps.origin, true), (hostId) =>
-    clientFor(`${deps.origin}/api/v1/hosts/${encodeURIComponent(hostId)}/proxy`),
+  return new DeviceRouter(clientFor(deps.origin, true), (deviceId) =>
+    clientFor(`${deps.origin}/api/v1/devices/${encodeURIComponent(deviceId)}/proxy`),
   ).createApi();
 }

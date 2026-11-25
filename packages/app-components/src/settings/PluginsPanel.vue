@@ -16,7 +16,7 @@ import {
   type PluginViewModel,
 } from '@moonshot-ai/app-client/composables';
 import { connectEventsIfNeeded } from '@moonshot-ai/app-client/client';
-import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore } from '@moonshot-ai/app-client/stores';
 import PluginDetails from './PluginDetails.vue';
 import PluginRow from './PluginRow.vue';
 import { pluginErrorMessage } from './pluginErrorMessage';
@@ -138,7 +138,7 @@ async function closeDetails(): Promise<void> {
 <template>
   <section ref="panelRef" class="sec plugins-panel">
     <h3 class="pp-panel-title">{{ t('settings.tabs.plugins') }}</h3>
-    <p v-if="hostsStore().hosts.length > 0" class="pp-scope-hint">{{ t('settings.plugins.localOnlyHint') }}</p>
+    <p v-if="devicesStore().devices.length > 0" class="pp-scope-hint">{{ t('settings.plugins.localOnlyHint') }}</p>
 
     <template v-if="selectedRow === undefined">
       <div class="pp-toolbar">

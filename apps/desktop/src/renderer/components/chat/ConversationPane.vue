@@ -6,8 +6,8 @@ import type { ChatTurn, ConversationStatus, OpenMediaRequest, QueuedPromptView, 
 import type { QuestionResponse } from '../../api/types';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { ChatPane, JumpToBottomPill } from '@moonshot-ai/app-components';
-import { HostNotice, resolveCompactPhase, WorkspaceIcon } from '@moonshot-ai/app-components/support';
-import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { DeviceNotice, resolveCompactPhase, WorkspaceIcon } from '@moonshot-ai/app-components/support';
+import { devicesStore } from '@moonshot-ai/app-client/stores';
 import { isWideTableLayoutActive, useWideTableToc } from '@moonshot-ai/app-components';
 import { ErrorBoundary } from '@moonshot-ai/app-components';
 import ChatHeader from './ChatHeader.vue';
@@ -139,8 +139,8 @@ const workspaces = client.workspacesView;
 const activeWorkspaceId = client.activeWorkspaceId;
 const draftEntry = client.draftEntry;
 const workspaceName = computed(() => client.visibleWorkspace.value?.name);
-const activeHostId = computed(() => client.visibleWorkspace.value?.hostId);
-const hostBlocked = computed(() => hostsStore().blocked(activeHostId.value));
+const activeDeviceId = computed(() => client.visibleWorkspace.value?.deviceId);
+const deviceBlocked = computed(() => devicesStore().blocked(activeDeviceId.value));
 const workspaceRoot = computed(() => client.visibleWorkspace.value?.root ?? client.status.value.cwd);
 const workspaceDirs = computed(() => {
   const root = workspaceRoot.value;
@@ -164,7 +164,7 @@ const {
 } = useWorkspaceTrust();
 
 function gateSubmit(): boolean {
-  return !hostBlocked.value && gateSubmitForTrust();
+  return !deviceBlocked.value && gateSubmitForTrust();
 }
 
 
@@ -216,7 +216,7 @@ const hasWorkspaces = computed(() => workspaces.value.length > 0);
 const workspaceQuery = ref('');
 const wsSearchRef = ref<InstanceType<typeof MenuSearch> | null>(null);
 const filteredWorkspaces = computed(() =>
-  filterWorkspaces(workspaces.value, workspaceQuery.value, hostsStore().searchTerms),
+  filterWorkspaces(workspaces.value, workspaceQuery.value, devicesStore().searchTerms),
 );
 
 watch(wsPickOpen, async (open) => {
@@ -283,7 +283,7 @@ function toggleWsPick(event: MouseEvent): void {
 }
 
 function pickWorkspace(id: string): void {
-  if (hostsStore().blocked(workspaces.value.find((workspace) => workspace.id === id)?.hostId)) return;
+  if (devicesStore().blocked(workspaces.value.find((workspace) => workspace.id === id)?.deviceId)) return;
   wsPickOpen.value = false;
   if (id !== activeWorkspaceId.value) emit('selectWorkspace', id);
 }
@@ -887,7 +887,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               :workspace-name="activeWorkspaceLabel"
               :workspace-root="workspaceRoot"
               :workspace-dirs="workspaceDirs"
-              :workspace-host-id="activeHostId"
+              :workspace-device-id="activeDeviceId"
             />
             <div v-else class="empty-hint">
               <KimiCodeWordmark v-if="!starting" class="empty-logo" />
@@ -908,7 +908,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
                     :aria-expanded="wsPickOpen"
                     @click.stop="toggleWsPick"
                   >
-                    <WorkspaceIcon :host-id="activeHostId" status="all" />
+                    <WorkspaceIcon :device-id="activeDeviceId" status="all" />
                     <span class="ws-chip-name">{{ activeWorkspaceLabel }}</span>
                     <Icon class="ws-chip-chev" name="chevron-down" size="sm" />
                   </button>
@@ -941,11 +941,11 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
                       class="ws-row"
                       role="option"
                       :selected="w.id === activeWorkspaceId"
-                      :description="hostsStore().workspacePathLabel(w, t)"
-                      :disabled="hostsStore().blocked(w.hostId)"
+                      :description="devicesStore().workspacePathLabel(w, t)"
+                      :disabled="devicesStore().blocked(w.deviceId)"
                       @click.stop="pickWorkspace(w.id)"
                     >
-                      <template #icon><WorkspaceIcon :host-id="w.hostId" status="all" /></template>
+                      <template #icon><WorkspaceIcon :device-id="w.deviceId" status="all" /></template>
                       <span class="ws-name">{{ w.name }}</span>
                     </MenuItem>
                     <div v-if="filteredWorkspaces.length === 0" class="ws-empty">
@@ -963,7 +963,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
                 <Icon name="folder-plus" />
                 <span>{{ t('conversation.addWorkspace') }}</span>
               </button>
-              <HostNotice class="empty-host-notice" :host-id="activeHostId" />
+              <DeviceNotice class="empty-device-notice" :device-id="activeDeviceId" @login="emit('login')" />
               <KimiMascotPeek ref="mascotRef" class="ws-mascot" />
             </div>
             <Composer
@@ -1084,7 +1084,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         @configure-model="emit('configureModel')"
       >
         <template #notice>
-          <HostNotice class="dock-host-notice" :host-id="activeHostId" />
+          <DeviceNotice class="dock-device-notice" :device-id="activeDeviceId" @login="emit('login')" />
         </template>
       </ChatDock>
       <JumpToBottomPill
@@ -1292,12 +1292,12 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   width: min(304px, 62vw);
 }
 .empty-composer { padding-top: 0; }
-.empty-host-notice {
+.empty-device-notice {
   flex: 0 1 auto;
   min-width: 0;
   margin: 0 var(--space-3) 4px var(--space-2);
 }
-.dock-host-notice {
+.dock-device-notice {
   margin: 0 calc(var(--dock-inline-right, 16px) + var(--space-2)) var(--space-1) calc(var(--dock-inline-left, 16px) + var(--space-4));
 }
 .empty-composer :deep(.composer-card) { position: relative; z-index: var(--z-sticky); }

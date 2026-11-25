@@ -4,8 +4,8 @@ import { z } from 'zod';
 import { envelopeSchema } from '../../protocol/envelope';
 import { ErrorCode } from '../../protocol/error-codes';
 import { feedbackSessionArchiveResponseSchema } from '../../protocol/rest-feedback';
-import { HOST_RPC_MAX_BODY_BYTES } from '../../transport/jsonlRpcStream';
-import type { HostHttpResponse, HostSession } from '../hosts/hostSession';
+import { DEVICE_RPC_MAX_BODY_BYTES } from '../../transport/jsonlRpcStream';
+import type { DeviceHttpResponse, DeviceSession } from '../devices/deviceSession';
 import { FeedbackError } from './feedbackService';
 
 export const FEEDBACK_ARCHIVE_LIMIT = 500 * 1024 * 1024;
@@ -16,25 +16,25 @@ const archiveErrors = [
   ErrorCode.VALIDATION_FAILED, ErrorCode.SESSION_NOT_FOUND, ErrorCode.FILE_TOO_LARGE,
 ];
 
-function readArchiveReference(response: HostHttpResponse) {
+function readArchiveReference(response: DeviceHttpResponse) {
   let envelope: z.infer<typeof archiveEnvelope>;
   try {
     envelope = archiveEnvelope.parse(JSON.parse(response.body.toString('utf8')));
   } catch {
-    throw new FeedbackError(ErrorCode.INTERNAL_ERROR, 'The SSH host returned an invalid archive response.');
+    throw new FeedbackError(ErrorCode.INTERNAL_ERROR, 'The device returned an invalid archive response.');
   }
   const { code, data } = envelope;
   if (response.status !== 200 || code !== 0 || data === null) {
     const errorCode = archiveErrors.find(known => known === code) ?? ErrorCode.INTERNAL_ERROR;
-    throw new FeedbackError(errorCode, 'The SSH host could not prepare the session archive.');
+    throw new FeedbackError(errorCode, 'The device could not prepare the session archive.');
   }
   return data;
 }
 
-async function* readArchiveRanges(session: HostSession, path: string, size: number, signal: AbortSignal): AsyncGenerator<Buffer> {
-  for (let start = 0; start < size; start += HOST_RPC_MAX_BODY_BYTES) {
+async function* readArchiveRanges(session: DeviceSession, path: string, size: number, signal: AbortSignal): AsyncGenerator<Buffer> {
+  for (let start = 0; start < size; start += DEVICE_RPC_MAX_BODY_BYTES) {
     signal.throwIfAborted();
-    const end = Math.min(start + HOST_RPC_MAX_BODY_BYTES, size) - 1;
+    const end = Math.min(start + DEVICE_RPC_MAX_BODY_BYTES, size) - 1;
     const response = await session.request({
       method: 'GET', path, headers: { range: `bytes=${start}-${end}` }, signal, timeoutMs: Infinity,
     });
@@ -45,13 +45,13 @@ async function* readArchiveRanges(session: HostSession, path: string, size: numb
       response.status !== 206 || response.headers['content-range'] !== `bytes ${start}-${end}/${size}` ||
       response.body.length !== length || (declaredLength !== undefined && Number(declaredLength) !== length)
     ) {
-      throw new FeedbackError(ErrorCode.INTERNAL_ERROR, 'The SSH host returned an incomplete session archive.');
+      throw new FeedbackError(ErrorCode.INTERNAL_ERROR, 'The device returned an incomplete session archive.');
     }
     yield response.body;
   }
 }
 
-export async function fetchRemoteFeedbackArchive(session: HostSession, sessionId: string, outputPath: string, signal: AbortSignal): Promise<void> {
+export async function fetchRemoteFeedbackArchive(session: DeviceSession, sessionId: string, outputPath: string, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();
   const response = await session.request({
     method: 'POST', path: '/api/v1/feedback/session-archives', headers: { 'content-type': 'application/json' },
@@ -64,7 +64,7 @@ export async function fetchRemoteFeedbackArchive(session: HostSession, sessionId
       throw new FeedbackError(ErrorCode.FILE_TOO_LARGE, 'The feedback attachment is too large.');
     }
     const size = feedbackSessionArchiveResponseSchema.shape.size.safeParse(archive.size);
-    if (!size.success) throw new FeedbackError(ErrorCode.INTERNAL_ERROR, 'The SSH host returned an invalid archive size.');
+    if (!size.success) throw new FeedbackError(ErrorCode.INTERNAL_ERROR, 'The device returned an invalid archive size.');
     await writeFile(outputPath, readArchiveRanges(session, path, size.data, signal), { flag: 'wx', mode: 0o600, signal });
   } finally {
     await session.request({ method: 'DELETE', path, headers: {} }).catch(() => undefined);

@@ -205,14 +205,14 @@ describe('FileTree row actions', () => {
   });
 
   it.each([
-    { hostId: undefined, visible: true },
-    { hostId: 'devbox', visible: false },
-  ])('offers reveal in folder only for local files ($hostId)', async ({ hostId, visible }) => {
+    { deviceId: undefined, visible: true },
+    { deviceId: 'devbox', visible: false },
+  ])('offers reveal in folder only for local files ($deviceId)', async ({ deviceId, visible }) => {
     const store = workspacesStore();
     store.workspaces = [{
       id: 'project',
       root: '/repo/B',
-      hostId,
+      deviceId,
       name: 'B',
       kind: 'managed',
       sessionCount: 0,

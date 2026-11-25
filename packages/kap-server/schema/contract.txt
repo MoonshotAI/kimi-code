@@ -1,19 +1,19 @@
 # Field-level summary of the published KAP contract, one line per field, generated from openapi.json and asyncapi.json.
 # Review contract changes here first; the JSON files keep details this summary leaves out, such as descriptions.
 # "shape <hash>" names a schema used in many places; its fields are listed once at the end.
+DELETE /api/v1/devices/{id} param path:id: string
+DELETE /api/v1/devices/{id} response 200: shape 9526339b
+DELETE /api/v1/devices/{id}/proxy param path:id: string
+DELETE /api/v1/devices/{id}/proxy response 200: any
+DELETE /api/v1/devices/{id}/proxy/{*} param path:*: string
+DELETE /api/v1/devices/{id}/proxy/{*} param path:id: string
+DELETE /api/v1/devices/{id}/proxy/{*} response 200: any
+DELETE /api/v1/devices/{id}/proxy/{*}: operation
+DELETE /api/v1/devices/{id}/proxy: operation
+DELETE /api/v1/devices/{id}: operation
 DELETE /api/v1/files/{file_id} param path:file_id: string minLength=1
 DELETE /api/v1/files/{file_id} response 200: shape 66b4a738
 DELETE /api/v1/files/{file_id}: operation
-DELETE /api/v1/hosts/{id} param path:id: string
-DELETE /api/v1/hosts/{id} response 200: shape 9526339b
-DELETE /api/v1/hosts/{id}/proxy param path:id: string
-DELETE /api/v1/hosts/{id}/proxy response 200: any
-DELETE /api/v1/hosts/{id}/proxy/{*} param path:*: string
-DELETE /api/v1/hosts/{id}/proxy/{*} param path:id: string
-DELETE /api/v1/hosts/{id}/proxy/{*} response 200: any
-DELETE /api/v1/hosts/{id}/proxy/{*}: operation
-DELETE /api/v1/hosts/{id}/proxy: operation
-DELETE /api/v1/hosts/{id}: operation
 DELETE /api/v1/mcp/servers/{name} param path:name: string minLength=1
 DELETE /api/v1/mcp/servers/{name} param query:cwd: string minLength=1 optional
 DELETE /api/v1/mcp/servers/{name} response 200: oneOf
@@ -195,6 +195,57 @@ GET /api/v1/config response 200.msg: string
 GET /api/v1/config response 200.request_id: string
 GET /api/v1/config response 200: object closed
 GET /api/v1/config: operation
+GET /api/v1/devices response 200.code: enum 0
+GET /api/v1/devices response 200.data.devices: array
+GET /api/v1/devices response 200.data.devices[].alias: string optional
+GET /api/v1/devices response 200.data.devices[].connect_error: string optional
+GET /api/v1/devices response 200.data.devices[].connect_failure: string optional
+GET /api/v1/devices response 200.data.devices[].connection: enum "account"|"ssh"
+GET /api/v1/devices response 200.data.devices[].device_id: string optional
+GET /api/v1/devices response 200.data.devices[].duplicate_of: string optional
+GET /api/v1/devices response 200.data.devices[].enabled: boolean optional
+GET /api/v1/devices response 200.data.devices[].host: string optional
+GET /api/v1/devices response 200.data.devices[].id: string
+GET /api/v1/devices response 200.data.devices[].identity_file: string optional
+GET /api/v1/devices response 200.data.devices[].install: enum "cli"|"desktop" optional
+GET /api/v1/devices response 200.data.devices[].name: string optional
+GET /api/v1/devices response 200.data.devices[].platform: string optional
+GET /api/v1/devices response 200.data.devices[].product_name: string optional
+GET /api/v1/devices response 200.data.devices[].remote_bin: string optional
+GET /api/v1/devices response 200.data.devices[].remote_upgrade: boolean optional
+GET /api/v1/devices response 200.data.devices[].remote_version: string optional
+GET /api/v1/devices response 200.data.devices[].status: enum "connecting"|"disconnected"|"pending"|"ready"
+GET /api/v1/devices response 200.data.devices[].upgrade_error: string optional
+GET /api/v1/devices response 200.data.devices[].upgrade_status: enum "failed"|"installing"|"restarting" optional
+GET /api/v1/devices response 200.data.devices[]: object closed
+GET /api/v1/devices response 200.data: object closed
+GET /api/v1/devices response 200.details: any optional
+GET /api/v1/devices response 200.msg: string
+GET /api/v1/devices response 200.request_id: string
+GET /api/v1/devices response 200: object closed
+GET /api/v1/devices/{id}/proxy param path:id: string
+GET /api/v1/devices/{id}/proxy response 200: any
+GET /api/v1/devices/{id}/proxy/{*} param path:*: string
+GET /api/v1/devices/{id}/proxy/{*} param path:id: string
+GET /api/v1/devices/{id}/proxy/{*} response 200: any
+GET /api/v1/devices/{id}/proxy/{*}: operation
+GET /api/v1/devices/{id}/proxy: operation
+GET /api/v1/devices: operation
+GET /api/v1/devices:ssh-hosts response 200.code: enum 0
+GET /api/v1/devices:ssh-hosts response 200.data.config_path: string
+GET /api/v1/devices:ssh-hosts response 200.data.exists: boolean
+GET /api/v1/devices:ssh-hosts response 200.data.hosts: array
+GET /api/v1/devices:ssh-hosts response 200.data.hosts[].alias: string
+GET /api/v1/devices:ssh-hosts response 200.data.hosts[].host_name: string optional
+GET /api/v1/devices:ssh-hosts response 200.data.hosts[].port: number optional
+GET /api/v1/devices:ssh-hosts response 200.data.hosts[].user: string optional
+GET /api/v1/devices:ssh-hosts response 200.data.hosts[]: object closed
+GET /api/v1/devices:ssh-hosts response 200.data: object closed
+GET /api/v1/devices:ssh-hosts response 200.details: any optional
+GET /api/v1/devices:ssh-hosts response 200.msg: string
+GET /api/v1/devices:ssh-hosts response 200.request_id: string
+GET /api/v1/devices:ssh-hosts response 200: object closed
+GET /api/v1/devices:ssh-hosts: operation
 GET /api/v1/files/{file_id} param path:file_id: string minLength=1
 GET /api/v1/files/{file_id} response 200: string format binary
 GET /api/v1/files/{file_id} response 404: shape 4c937256
@@ -242,47 +293,6 @@ GET /api/v1/healthz response 200.msg: string optional
 GET /api/v1/healthz response 200.request_id: string optional
 GET /api/v1/healthz response 200: object
 GET /api/v1/healthz: operation
-GET /api/v1/hosts response 200.code: enum 0
-GET /api/v1/hosts response 200.data.hosts: array
-GET /api/v1/hosts response 200.data.hosts[].connect_error: string optional
-GET /api/v1/hosts response 200.data.hosts[].connect_failure: string optional
-GET /api/v1/hosts response 200.data.hosts[].enabled: boolean optional
-GET /api/v1/hosts response 200.data.hosts[].host: string
-GET /api/v1/hosts response 200.data.hosts[].id: string
-GET /api/v1/hosts response 200.data.hosts[].identity_file: string optional
-GET /api/v1/hosts response 200.data.hosts[].name: string optional
-GET /api/v1/hosts response 200.data.hosts[].remote_bin: string optional
-GET /api/v1/hosts response 200.data.hosts[].remote_version: string optional
-GET /api/v1/hosts response 200.data.hosts[].status: enum "connecting"|"disconnected"|"pending"|"ready"
-GET /api/v1/hosts response 200.data.hosts[]: object closed
-GET /api/v1/hosts response 200.data: object closed
-GET /api/v1/hosts response 200.details: any optional
-GET /api/v1/hosts response 200.msg: string
-GET /api/v1/hosts response 200.request_id: string
-GET /api/v1/hosts response 200: object closed
-GET /api/v1/hosts/{id}/proxy param path:id: string
-GET /api/v1/hosts/{id}/proxy response 200: any
-GET /api/v1/hosts/{id}/proxy/{*} param path:*: string
-GET /api/v1/hosts/{id}/proxy/{*} param path:id: string
-GET /api/v1/hosts/{id}/proxy/{*} response 200: any
-GET /api/v1/hosts/{id}/proxy/{*}: operation
-GET /api/v1/hosts/{id}/proxy: operation
-GET /api/v1/hosts: operation
-GET /api/v1/hosts:ssh-hosts response 200.code: enum 0
-GET /api/v1/hosts:ssh-hosts response 200.data.config_path: string
-GET /api/v1/hosts:ssh-hosts response 200.data.exists: boolean
-GET /api/v1/hosts:ssh-hosts response 200.data.hosts: array
-GET /api/v1/hosts:ssh-hosts response 200.data.hosts[].alias: string
-GET /api/v1/hosts:ssh-hosts response 200.data.hosts[].host_name: string optional
-GET /api/v1/hosts:ssh-hosts response 200.data.hosts[].port: number optional
-GET /api/v1/hosts:ssh-hosts response 200.data.hosts[].user: string optional
-GET /api/v1/hosts:ssh-hosts response 200.data.hosts[]: object closed
-GET /api/v1/hosts:ssh-hosts response 200.data: object closed
-GET /api/v1/hosts:ssh-hosts response 200.details: any optional
-GET /api/v1/hosts:ssh-hosts response 200.msg: string
-GET /api/v1/hosts:ssh-hosts response 200.request_id: string
-GET /api/v1/hosts:ssh-hosts response 200: object closed
-GET /api/v1/hosts:ssh-hosts: operation
 GET /api/v1/kap.md response 200: string
 GET /api/v1/kap.md: operation
 GET /api/v1/mcp/auth-statuses param query:cwd: string minLength=1 optional
@@ -325,10 +335,14 @@ GET /api/v1/meta response 200.data.capabilities.interactions_list: enum true
 GET /api/v1/meta response 200.data.capabilities.mcp: enum true
 GET /api/v1/meta response 200.data.capabilities.session_continue: enum true
 GET /api/v1/meta response 200.data.capabilities.session_wait: enum true
+GET /api/v1/meta response 200.data.capabilities.system_stats: enum true
+GET /api/v1/meta response 200.data.capabilities.system_upgrade: enum true optional
 GET /api/v1/meta response 200.data.capabilities.tasks: enum true
 GET /api/v1/meta response 200.data.capabilities.websocket: enum true
 GET /api/v1/meta response 200.data.capabilities: object closed
 GET /api/v1/meta response 200.data.dangerous_bypass_auth: boolean
+GET /api/v1/meta response 200.data.device_api_level: integer minimum=-9007199254740991 maximum=9007199254740991
+GET /api/v1/meta response 200.data.device_id: string minLength=1
 GET /api/v1/meta response 200.data.experimental_flags: object optional
 GET /api/v1/meta response 200.data.experimental_flags{*}: boolean optional
 GET /api/v1/meta response 200.data.features: array optional
@@ -691,11 +705,11 @@ GET /api/v1/sessions param query:archived: enum "all"|"false"|"true" optional
 GET /api/v1/sessions param query:archived_only: boolean
 GET /api/v1/sessions param query:before_id: string minLength=1 optional
 GET /api/v1/sessions param query:busy: boolean
+GET /api/v1/sessions param query:devices: enum "include" optional
 GET /api/v1/sessions param query:exclude_empty: boolean
 GET /api/v1/sessions param query:fields: string optional
 GET /api/v1/sessions param query:group_page_size: integer minimum=1 maximum=10000 optional
 GET /api/v1/sessions param query:has_prompt: boolean
-GET /api/v1/sessions param query:hosts: enum "include" optional
 GET /api/v1/sessions param query:include: string optional
 GET /api/v1/sessions param query:include_archive: boolean
 GET /api/v1/sessions param query:page: integer minimum=1 maximum=9007199254740991 optional
@@ -716,23 +730,23 @@ GET /api/v1/sessions response 200<code=0>.data: anyOf
 GET /api/v1/sessions response 200<code=0>.data<#0>.has_more: boolean
 GET /api/v1/sessions response 200<code=0>.data<#0>.items: array
 GET /api/v1/sessions response 200<code=0>.data<#0>.items[]: anyOf
-GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#0>: shape 9bf1012b
+GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#0>: shape 9fc42062
 GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#1>.archived: boolean
-GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#1>.host_id: string optional
+GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#1>.device_id: string optional
 GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#1>.id: string minLength=1
 GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#1>: object closed
 GET /api/v1/sessions response 200<code=0>.data<#0>.next_page_token: string minLength=1 optional
 GET /api/v1/sessions response 200<code=0>.data<#0>.total: integer minimum=0 maximum=9007199254740991
-GET /api/v1/sessions response 200<code=0>.data<#0>.unavailable_hosts: array optional
-GET /api/v1/sessions response 200<code=0>.data<#0>.unavailable_hosts[]: string
+GET /api/v1/sessions response 200<code=0>.data<#0>.unavailable_devices: array optional
+GET /api/v1/sessions response 200<code=0>.data<#0>.unavailable_devices[]: string
 GET /api/v1/sessions response 200<code=0>.data<#0>: object closed
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups: array
-GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].host_id: string optional
+GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].device_id: string optional
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions: array
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]: anyOf
-GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#0>: shape 9bf1012b
+GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#0>: shape 9fc42062
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#1>.archived: boolean
-GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#1>.host_id: string optional
+GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#1>.device_id: string optional
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#1>.id: string minLength=1
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#1>: object closed
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].total: integer minimum=0 maximum=9007199254740991
@@ -741,8 +755,8 @@ GET /api/v1/sessions response 200<code=0>.data<#1>.groups[]: object closed
 GET /api/v1/sessions response 200<code=0>.data<#1>.has_more: boolean
 GET /api/v1/sessions response 200<code=0>.data<#1>.next_page_token: string minLength=1 optional
 GET /api/v1/sessions response 200<code=0>.data<#1>.total: integer minimum=0 maximum=9007199254740991
-GET /api/v1/sessions response 200<code=0>.data<#1>.unavailable_hosts: array optional
-GET /api/v1/sessions response 200<code=0>.data<#1>.unavailable_hosts[]: string
+GET /api/v1/sessions response 200<code=0>.data<#1>.unavailable_devices: array optional
+GET /api/v1/sessions response 200<code=0>.data<#1>.unavailable_devices[]: string
 GET /api/v1/sessions response 200<code=0>.data<#1>: object closed
 GET /api/v1/sessions response 200<code=0>.details: any optional
 GET /api/v1/sessions response 200<code=0>.msg: string
@@ -762,9 +776,9 @@ GET /api/v1/sessions response 200<code=50005>.msg: string
 GET /api/v1/sessions response 200<code=50005>.request_id: string
 GET /api/v1/sessions response 200<code=50005>: object closed
 GET /api/v1/sessions/{session_id} param path:session_id: string minLength=1
-GET /api/v1/sessions/{session_id} param query:hosts: enum "include" optional
+GET /api/v1/sessions/{session_id} param query:devices: enum "include" optional
 GET /api/v1/sessions/{session_id} response 200: oneOf
-GET /api/v1/sessions/{session_id} response 200<code=0>: shape 333d10e0
+GET /api/v1/sessions/{session_id} response 200<code=0>: shape d8c94993
 GET /api/v1/sessions/{session_id} response 200<code=40001>: shape d4845858
 GET /api/v1/sessions/{session_id} response 200<code=40401>: shape 2bda561c
 GET /api/v1/sessions/{session_id} response 200<code=50005>.code: enum 50005
@@ -1326,6 +1340,34 @@ GET /api/v1/sessions/{session_id}/warnings response 200<code=40930>: shape 9d703
 GET /api/v1/sessions/{session_id}/warnings: operation
 GET /api/v1/sessions/{session_id}: operation
 GET /api/v1/sessions: operation
+GET /api/v1/system/stats param query:path: string minLength=1 optional
+GET /api/v1/system/stats response 200.code: enum 0
+GET /api/v1/system/stats response 200.data.cpu.cores: number minimum=0 exclusiveMinimum=true
+GET /api/v1/system/stats response 200.data.cpu.limited: boolean
+GET /api/v1/system/stats response 200.data.cpu.usage: number minimum=0 maximum=1 optional
+GET /api/v1/system/stats response 200.data.cpu: object closed
+GET /api/v1/system/stats response 200.data.disk.available: number minimum=0
+GET /api/v1/system/stats response 200.data.disk.path: string
+GET /api/v1/system/stats response 200.data.disk.total: number minimum=0
+GET /api/v1/system/stats response 200.data.disk.used: number minimum=0
+GET /api/v1/system/stats response 200.data.disk: object closed optional
+GET /api/v1/system/stats response 200.data.gpus: array
+GET /api/v1/system/stats response 200.data.gpus[].index: integer minimum=0 maximum=9007199254740991
+GET /api/v1/system/stats response 200.data.gpus[].memory_total: number minimum=0 optional
+GET /api/v1/system/stats response 200.data.gpus[].memory_used: number minimum=0 optional
+GET /api/v1/system/stats response 200.data.gpus[].name: string
+GET /api/v1/system/stats response 200.data.gpus[].utilization: number minimum=0 maximum=1 optional
+GET /api/v1/system/stats response 200.data.gpus[]: object closed
+GET /api/v1/system/stats response 200.data.memory.limited: boolean
+GET /api/v1/system/stats response 200.data.memory.total: number minimum=0
+GET /api/v1/system/stats response 200.data.memory.used: number minimum=0
+GET /api/v1/system/stats response 200.data.memory: object closed
+GET /api/v1/system/stats response 200.data: object closed
+GET /api/v1/system/stats response 200.details: any optional
+GET /api/v1/system/stats response 200.msg: string
+GET /api/v1/system/stats response 200.request_id: string
+GET /api/v1/system/stats response 200: object closed
+GET /api/v1/system/stats: operation
 GET /api/v1/tools param query:session_id: string minLength=1 optional
 GET /api/v1/tools response 200.code: enum 0
 GET /api/v1/tools response 200.data.tools: array
@@ -1353,13 +1395,13 @@ GET /api/v1/tools/catalog response 200.request_id: string
 GET /api/v1/tools/catalog response 200: object closed
 GET /api/v1/tools/catalog: operation
 GET /api/v1/tools: operation
-GET /api/v1/workspaces param query:hosts: enum "include" optional
+GET /api/v1/workspaces param query:devices: enum "include" optional
 GET /api/v1/workspaces response 200.code: enum 0
 GET /api/v1/workspaces response 200.data.items: array
 GET /api/v1/workspaces response 200.data.items[].additional_dirs: array
 GET /api/v1/workspaces response 200.data.items[].additional_dirs[]: string
 GET /api/v1/workspaces response 200.data.items[].created_at: any
-GET /api/v1/workspaces response 200.data.items[].host_id: string optional
+GET /api/v1/workspaces response 200.data.items[].device_id: string optional
 GET /api/v1/workspaces response 200.data.items[].id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 GET /api/v1/workspaces response 200.data.items[].kind: enum "implicit"|"managed"
 GET /api/v1/workspaces response 200.data.items[].last_opened_at: any
@@ -1413,13 +1455,20 @@ GET /asyncapi.json response 200: any
 GET /asyncapi.json: operation
 GET /openapi.json response 200: any
 GET /openapi.json: operation
-HEAD /api/v1/hosts/{id}/proxy param path:id: string
-HEAD /api/v1/hosts/{id}/proxy response 200: any
-HEAD /api/v1/hosts/{id}/proxy/{*} param path:*: string
-HEAD /api/v1/hosts/{id}/proxy/{*} param path:id: string
-HEAD /api/v1/hosts/{id}/proxy/{*} response 200: any
-HEAD /api/v1/hosts/{id}/proxy/{*}: operation
-HEAD /api/v1/hosts/{id}/proxy: operation
+HEAD /api/v1/devices/{id}/proxy param path:id: string
+HEAD /api/v1/devices/{id}/proxy response 200: any
+HEAD /api/v1/devices/{id}/proxy/{*} param path:*: string
+HEAD /api/v1/devices/{id}/proxy/{*} param path:id: string
+HEAD /api/v1/devices/{id}/proxy/{*} response 200: any
+HEAD /api/v1/devices/{id}/proxy/{*}: operation
+HEAD /api/v1/devices/{id}/proxy: operation
+PATCH /api/v1/devices/{id}/proxy param path:id: string
+PATCH /api/v1/devices/{id}/proxy response 200: any
+PATCH /api/v1/devices/{id}/proxy/{*} param path:*: string
+PATCH /api/v1/devices/{id}/proxy/{*} param path:id: string
+PATCH /api/v1/devices/{id}/proxy/{*} response 200: any
+PATCH /api/v1/devices/{id}/proxy/{*}: operation
+PATCH /api/v1/devices/{id}/proxy: operation
 PATCH /api/v1/feedback/{feedback_id} param path:feedback_id: integer maximum=9007199254740991 exclusiveMinimum=0
 PATCH /api/v1/feedback/{feedback_id} request: oneOf
 PATCH /api/v1/feedback/{feedback_id} request<#0>.content: string minLength=1 maxLength=2000 optional
@@ -1444,13 +1493,6 @@ PATCH /api/v1/feedback/{feedback_id} response 200<code=40112>: shape fa735462
 PATCH /api/v1/feedback/{feedback_id} response 200<code=40936>: shape 9bd41b04
 PATCH /api/v1/feedback/{feedback_id} response 200<code=50001>: shape c8fef53e
 PATCH /api/v1/feedback/{feedback_id}: operation
-PATCH /api/v1/hosts/{id}/proxy param path:id: string
-PATCH /api/v1/hosts/{id}/proxy response 200: any
-PATCH /api/v1/hosts/{id}/proxy/{*} param path:*: string
-PATCH /api/v1/hosts/{id}/proxy/{*} param path:id: string
-PATCH /api/v1/hosts/{id}/proxy/{*} response 200: any
-PATCH /api/v1/hosts/{id}/proxy/{*}: operation
-PATCH /api/v1/hosts/{id}/proxy: operation
 PATCH /api/v1/remote-control/devices/{id} param path:id: string minLength=1
 PATCH /api/v1/remote-control/devices/{id} request.alias: string minLength=1 maxLength=50
 PATCH /api/v1/remote-control/devices/{id} request: object
@@ -1591,6 +1633,98 @@ POST /api/v1/config response 200<code=0>.request_id: string
 POST /api/v1/config response 200<code=0>: object closed
 POST /api/v1/config response 200<code=40001>: shape a642160a
 POST /api/v1/config: operation
+POST /api/v1/devices/{id}/proxy param path:id: string
+POST /api/v1/devices/{id}/proxy response 200: any
+POST /api/v1/devices/{id}/proxy/{*} param path:*: string
+POST /api/v1/devices/{id}/proxy/{*} param path:id: string
+POST /api/v1/devices/{id}/proxy/{*} response 200: any
+POST /api/v1/devices/{id}/proxy/{*}: operation
+POST /api/v1/devices/{id}/proxy: operation
+POST /api/v1/devices:connect request.id: string
+POST /api/v1/devices:connect request: object
+POST /api/v1/devices:connect response 200: oneOf
+POST /api/v1/devices:connect response 200<code=0>.code: enum 0
+POST /api/v1/devices:connect response 200<code=0>.data.alias: string optional
+POST /api/v1/devices:connect response 200<code=0>.data.connect_error: string optional
+POST /api/v1/devices:connect response 200<code=0>.data.connect_failure: string optional
+POST /api/v1/devices:connect response 200<code=0>.data.connection: enum "account"|"ssh"
+POST /api/v1/devices:connect response 200<code=0>.data.device_id: string optional
+POST /api/v1/devices:connect response 200<code=0>.data.duplicate_of: string optional
+POST /api/v1/devices:connect response 200<code=0>.data.enabled: boolean optional
+POST /api/v1/devices:connect response 200<code=0>.data.host: string optional
+POST /api/v1/devices:connect response 200<code=0>.data.id: string
+POST /api/v1/devices:connect response 200<code=0>.data.identity_file: string optional
+POST /api/v1/devices:connect response 200<code=0>.data.install: enum "cli"|"desktop" optional
+POST /api/v1/devices:connect response 200<code=0>.data.name: string optional
+POST /api/v1/devices:connect response 200<code=0>.data.platform: string optional
+POST /api/v1/devices:connect response 200<code=0>.data.product_name: string optional
+POST /api/v1/devices:connect response 200<code=0>.data.remote_bin: string optional
+POST /api/v1/devices:connect response 200<code=0>.data.remote_upgrade: boolean optional
+POST /api/v1/devices:connect response 200<code=0>.data.remote_version: string optional
+POST /api/v1/devices:connect response 200<code=0>.data.status: enum "connecting"|"disconnected"|"pending"|"ready"
+POST /api/v1/devices:connect response 200<code=0>.data.upgrade_error: string optional
+POST /api/v1/devices:connect response 200<code=0>.data.upgrade_status: enum "failed"|"installing"|"restarting" optional
+POST /api/v1/devices:connect response 200<code=0>.data: object closed
+POST /api/v1/devices:connect response 200<code=0>.details: any optional
+POST /api/v1/devices:connect response 200<code=0>.msg: string
+POST /api/v1/devices:connect response 200<code=0>.request_id: string
+POST /api/v1/devices:connect response 200<code=0>: object closed
+POST /api/v1/devices:connect response 200<code=40420>: shape b64f394d
+POST /api/v1/devices:connect: operation
+POST /api/v1/devices:copy-providers request.id: string
+POST /api/v1/devices:copy-providers request: object
+POST /api/v1/devices:copy-providers response 200: oneOf
+POST /api/v1/devices:copy-providers response 200<code=0>.code: enum 0
+POST /api/v1/devices:copy-providers response 200<code=0>.data.providers: array
+POST /api/v1/devices:copy-providers response 200<code=0>.data.providers[]: string
+POST /api/v1/devices:copy-providers response 200<code=0>.data: object closed
+POST /api/v1/devices:copy-providers response 200<code=0>.details: any optional
+POST /api/v1/devices:copy-providers response 200<code=0>.msg: string
+POST /api/v1/devices:copy-providers response 200<code=0>.request_id: string
+POST /api/v1/devices:copy-providers response 200<code=0>: object closed
+POST /api/v1/devices:copy-providers response 200<code=40420>: shape b64f394d
+POST /api/v1/devices:copy-providers response 200<code=40926>: shape 6367494b
+POST /api/v1/devices:copy-providers: operation
+POST /api/v1/devices:test request.connection: enum "ssh" optional
+POST /api/v1/devices:test request.enabled: boolean optional
+POST /api/v1/devices:test request.host: string minLength=1
+POST /api/v1/devices:test request.identity_file: string minLength=1 optional
+POST /api/v1/devices:test request.name: string minLength=1 maxLength=64 optional
+POST /api/v1/devices:test request.remote_bin: string minLength=1 optional
+POST /api/v1/devices:test request: object closed
+POST /api/v1/devices:test response 200: oneOf
+POST /api/v1/devices:test response 200<code=0>.code: enum 0
+POST /api/v1/devices:test response 200<code=0>.data.connect_error: string optional
+POST /api/v1/devices:test response 200<code=0>.data.connect_failure: string optional
+POST /api/v1/devices:test response 200<code=0>.data.connected: boolean
+POST /api/v1/devices:test response 200<code=0>.data.remote_version: string optional
+POST /api/v1/devices:test response 200<code=0>.data: object closed
+POST /api/v1/devices:test response 200<code=0>.details: any optional
+POST /api/v1/devices:test response 200<code=0>.msg: string
+POST /api/v1/devices:test response 200<code=0>.request_id: string
+POST /api/v1/devices:test response 200<code=0>: object closed
+POST /api/v1/devices:test response 200<code=40001>: shape a642160a
+POST /api/v1/devices:test: operation
+POST /api/v1/devices:upgrade request.id: string
+POST /api/v1/devices:upgrade request: object
+POST /api/v1/devices:upgrade response 200: oneOf
+POST /api/v1/devices:upgrade response 200<code=0>.code: enum 0
+POST /api/v1/devices:upgrade response 200<code=0>.data.message: string optional
+POST /api/v1/devices:upgrade response 200<code=0>.data.status: enum "started"|"unsupported"|"update_on_device"
+POST /api/v1/devices:upgrade response 200<code=0>.data: object closed
+POST /api/v1/devices:upgrade response 200<code=0>.details: any optional
+POST /api/v1/devices:upgrade response 200<code=0>.msg: string
+POST /api/v1/devices:upgrade response 200<code=0>.request_id: string
+POST /api/v1/devices:upgrade response 200<code=0>: object closed
+POST /api/v1/devices:upgrade response 200<code=40420>: shape b64f394d
+POST /api/v1/devices:upgrade response 200<code=40926>: shape 6367494b
+POST /api/v1/devices:upgrade response 200<code=40960>.code: enum 40960
+POST /api/v1/devices:upgrade response 200<code=40960>.data: enum null nullable
+POST /api/v1/devices:upgrade response 200<code=40960>.details: any optional
+POST /api/v1/devices:upgrade response 200<code=40960>.msg: string
+POST /api/v1/devices:upgrade response 200<code=40960>.request_id: string
+POST /api/v1/devices:upgrade response 200<code=40960>: object closed
+POST /api/v1/devices:upgrade: operation
 POST /api/v1/feedback request: oneOf
 POST /api/v1/feedback request<#0>.category: enum "bug"|"other"|"suggestion"
 POST /api/v1/feedback request<#0>.client: enum "desktop"|"web" optional
@@ -1661,7 +1795,7 @@ POST /api/v1/feedback/{feedback_id}/attachments response 200<code=40936>: shape 
 POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>: shape b2ce4116
 POST /api/v1/feedback/{feedback_id}/attachments response 200<code=50001>: shape c8fef53e
 POST /api/v1/feedback/{feedback_id}/attachments/session param path:feedback_id: integer maximum=9007199254740991 exclusiveMinimum=0
-POST /api/v1/feedback/{feedback_id}/attachments/session request.host_id: string pattern="^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" optional
+POST /api/v1/feedback/{feedback_id}/attachments/session request.device_id: string pattern="^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" optional
 POST /api/v1/feedback/{feedback_id}/attachments/session request.session_id: string minLength=1 maxLength=200
 POST /api/v1/feedback/{feedback_id}/attachments/session request: object
 POST /api/v1/feedback/{feedback_id}/attachments/session response 200: oneOf
@@ -1746,67 +1880,6 @@ POST /api/v1/fs:suggest response 200<code=40409>: shape 197643f0
 POST /api/v1/fs:suggest response 200<code=40420>: shape b64f394d
 POST /api/v1/fs:suggest response 200<code=40926>: shape 6367494b
 POST /api/v1/fs:suggest: operation
-POST /api/v1/hosts/{id}/proxy param path:id: string
-POST /api/v1/hosts/{id}/proxy response 200: any
-POST /api/v1/hosts/{id}/proxy/{*} param path:*: string
-POST /api/v1/hosts/{id}/proxy/{*} param path:id: string
-POST /api/v1/hosts/{id}/proxy/{*} response 200: any
-POST /api/v1/hosts/{id}/proxy/{*}: operation
-POST /api/v1/hosts/{id}/proxy: operation
-POST /api/v1/hosts:connect request.id: string
-POST /api/v1/hosts:connect request: object
-POST /api/v1/hosts:connect response 200: oneOf
-POST /api/v1/hosts:connect response 200<code=0>.code: enum 0
-POST /api/v1/hosts:connect response 200<code=0>.data.connect_error: string optional
-POST /api/v1/hosts:connect response 200<code=0>.data.connect_failure: string optional
-POST /api/v1/hosts:connect response 200<code=0>.data.enabled: boolean optional
-POST /api/v1/hosts:connect response 200<code=0>.data.host: string
-POST /api/v1/hosts:connect response 200<code=0>.data.id: string
-POST /api/v1/hosts:connect response 200<code=0>.data.identity_file: string optional
-POST /api/v1/hosts:connect response 200<code=0>.data.name: string optional
-POST /api/v1/hosts:connect response 200<code=0>.data.remote_bin: string optional
-POST /api/v1/hosts:connect response 200<code=0>.data.remote_version: string optional
-POST /api/v1/hosts:connect response 200<code=0>.data.status: enum "connecting"|"disconnected"|"pending"|"ready"
-POST /api/v1/hosts:connect response 200<code=0>.data: object closed
-POST /api/v1/hosts:connect response 200<code=0>.details: any optional
-POST /api/v1/hosts:connect response 200<code=0>.msg: string
-POST /api/v1/hosts:connect response 200<code=0>.request_id: string
-POST /api/v1/hosts:connect response 200<code=0>: object closed
-POST /api/v1/hosts:connect response 200<code=40420>: shape b64f394d
-POST /api/v1/hosts:connect: operation
-POST /api/v1/hosts:copy-providers request.id: string
-POST /api/v1/hosts:copy-providers request: object
-POST /api/v1/hosts:copy-providers response 200: oneOf
-POST /api/v1/hosts:copy-providers response 200<code=0>.code: enum 0
-POST /api/v1/hosts:copy-providers response 200<code=0>.data.providers: array
-POST /api/v1/hosts:copy-providers response 200<code=0>.data.providers[]: string
-POST /api/v1/hosts:copy-providers response 200<code=0>.data: object closed
-POST /api/v1/hosts:copy-providers response 200<code=0>.details: any optional
-POST /api/v1/hosts:copy-providers response 200<code=0>.msg: string
-POST /api/v1/hosts:copy-providers response 200<code=0>.request_id: string
-POST /api/v1/hosts:copy-providers response 200<code=0>: object closed
-POST /api/v1/hosts:copy-providers response 200<code=40420>: shape b64f394d
-POST /api/v1/hosts:copy-providers response 200<code=40926>: shape 6367494b
-POST /api/v1/hosts:copy-providers: operation
-POST /api/v1/hosts:test request.enabled: boolean optional
-POST /api/v1/hosts:test request.host: string minLength=1
-POST /api/v1/hosts:test request.identity_file: string minLength=1 optional
-POST /api/v1/hosts:test request.name: string minLength=1 maxLength=64 optional
-POST /api/v1/hosts:test request.remote_bin: string minLength=1 optional
-POST /api/v1/hosts:test request: object closed
-POST /api/v1/hosts:test response 200: oneOf
-POST /api/v1/hosts:test response 200<code=0>.code: enum 0
-POST /api/v1/hosts:test response 200<code=0>.data.connect_error: string optional
-POST /api/v1/hosts:test response 200<code=0>.data.connect_failure: string optional
-POST /api/v1/hosts:test response 200<code=0>.data.connected: boolean
-POST /api/v1/hosts:test response 200<code=0>.data.remote_version: string optional
-POST /api/v1/hosts:test response 200<code=0>.data: object closed
-POST /api/v1/hosts:test response 200<code=0>.details: any optional
-POST /api/v1/hosts:test response 200<code=0>.msg: string
-POST /api/v1/hosts:test response 200<code=0>.request_id: string
-POST /api/v1/hosts:test response 200<code=0>: object closed
-POST /api/v1/hosts:test response 200<code=40001>: shape a642160a
-POST /api/v1/hosts:test: operation
 POST /api/v1/mcp/auth:begin param query:cwd: string minLength=1 optional
 POST /api/v1/mcp/auth:begin request: oneOf
 POST /api/v1/mcp/auth:begin request<#0>.name: string minLength=1
@@ -2391,6 +2464,7 @@ POST /api/v1/search response 200<code=0>.request_id: string
 POST /api/v1/search response 200<code=0>: object closed
 POST /api/v1/search response 200<code=40001>: shape d4845858
 POST /api/v1/search: operation
+POST /api/v1/sessions param header:x-kimi-client-identity: string maxLength=8192 pattern="^[\\w-]+$" optional
 POST /api/v1/sessions request.agent_config.goal_control: enum "cancel"|"edit"|"pause"|"resume" optional
 POST /api/v1/sessions request.agent_config.goal_objective: string optional
 POST /api/v1/sessions request.agent_config.model: string optional
@@ -2413,7 +2487,7 @@ POST /api/v1/sessions request.workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-
 POST /api/v1/sessions request.workspace_root: string minLength=1 optional
 POST /api/v1/sessions request: object
 POST /api/v1/sessions response 200: oneOf
-POST /api/v1/sessions response 200<code=0>: shape 333d10e0
+POST /api/v1/sessions response 200<code=0>: shape d8c94993
 POST /api/v1/sessions response 200<code=40001>: shape d4845858
 POST /api/v1/sessions response 200<code=40113>: shape ffc7e294
 POST /api/v1/sessions response 200<code=40409>: shape 197643f0
@@ -2579,7 +2653,7 @@ POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.think
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.tower_mode: boolean
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.tower_mode_available: boolean
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent: object closed
-POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.session: shape 9bf1012b
+POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.session: shape 9fc42062
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data: object closed
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.details: any optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.msg: string
@@ -3262,7 +3336,7 @@ POST /api/v1/sessions/{session_id}:fork request.title: string minLength=1 option
 POST /api/v1/sessions/{session_id}:fork request.turn_index: integer minimum=0 maximum=9007199254740991 optional
 POST /api/v1/sessions/{session_id}:fork request: object optional
 POST /api/v1/sessions/{session_id}:fork response 200: oneOf
-POST /api/v1/sessions/{session_id}:fork response 200<code=0>: shape 333d10e0
+POST /api/v1/sessions/{session_id}:fork response 200<code=0>: shape d8c94993
 POST /api/v1/sessions/{session_id}:fork response 200<code=40001>: shape d4845858
 POST /api/v1/sessions/{session_id}:fork response 200<code=40110>: shape bf00a2c5
 POST /api/v1/sessions/{session_id}:fork response 200<code=40111>: shape 00776ba9
@@ -3279,7 +3353,7 @@ POST /api/v1/sessions/{session_id}:fork response 200<code=40940>: shape b0ef3a47
 POST /api/v1/sessions/{session_id}:fork: operation
 POST /api/v1/sessions/{session_id}:reload param path:session_id: string minLength=1
 POST /api/v1/sessions/{session_id}:reload response 200: oneOf
-POST /api/v1/sessions/{session_id}:reload response 200<code=0>: shape 333d10e0
+POST /api/v1/sessions/{session_id}:reload response 200<code=0>: shape d8c94993
 POST /api/v1/sessions/{session_id}:reload response 200<code=40001>: shape d4845858
 POST /api/v1/sessions/{session_id}:reload response 200<code=40110>: shape bf00a2c5
 POST /api/v1/sessions/{session_id}:reload response 200<code=40111>: shape 00776ba9
@@ -3296,7 +3370,7 @@ POST /api/v1/sessions/{session_id}:reload response 200<code=40940>: shape b0ef3a
 POST /api/v1/sessions/{session_id}:reload: operation
 POST /api/v1/sessions/{session_id}:restore param path:session_id: string minLength=1
 POST /api/v1/sessions/{session_id}:restore response 200: oneOf
-POST /api/v1/sessions/{session_id}:restore response 200<code=0>: shape 333d10e0
+POST /api/v1/sessions/{session_id}:restore response 200<code=0>: shape d8c94993
 POST /api/v1/sessions/{session_id}:restore response 200<code=40001>: shape d4845858
 POST /api/v1/sessions/{session_id}:restore response 200<code=40110>: shape bf00a2c5
 POST /api/v1/sessions/{session_id}:restore response 200<code=40111>: shape 00776ba9
@@ -3413,7 +3487,7 @@ POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_intera
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#1>.session_id: string minLength=1
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#1>.tool_call_id: string minLength=1 optional
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#1>: object closed
-POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.session: shape 9bf1012b
+POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.session: shape 9fc42062
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.timed_out: boolean
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data: object closed
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.details: any optional
@@ -3609,6 +3683,30 @@ POST /api/v1/workspaces/{workspace_id}/untrust response 200<code=0>: shape 45693
 POST /api/v1/workspaces/{workspace_id}/untrust response 200<code=40410>: shape 3fb7704d
 POST /api/v1/workspaces/{workspace_id}/untrust: operation
 POST /api/v1/workspaces: operation
+PUT /api/v1/devices/{id} param path:id: string pattern="^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+PUT /api/v1/devices/{id} request: oneOf
+PUT /api/v1/devices/{id} request<#0>.connection: enum "ssh" optional
+PUT /api/v1/devices/{id} request<#0>.enabled: boolean optional
+PUT /api/v1/devices/{id} request<#0>.host: string minLength=1
+PUT /api/v1/devices/{id} request<#0>.identity_file: string minLength=1 optional
+PUT /api/v1/devices/{id} request<#0>.name: string minLength=1 maxLength=64 optional
+PUT /api/v1/devices/{id} request<#0>.remote_bin: string minLength=1 optional
+PUT /api/v1/devices/{id} request<#0>: object closed
+PUT /api/v1/devices/{id} request<#1>.connection: enum "account"
+PUT /api/v1/devices/{id} request<#1>.enabled: boolean optional
+PUT /api/v1/devices/{id} request<#1>.name: string minLength=1 maxLength=64 optional
+PUT /api/v1/devices/{id} request<#1>: object closed
+PUT /api/v1/devices/{id} response 200: oneOf
+PUT /api/v1/devices/{id} response 200<code=0>: shape 9526339b
+PUT /api/v1/devices/{id} response 200<code=40001>: shape a642160a
+PUT /api/v1/devices/{id}/proxy param path:id: string
+PUT /api/v1/devices/{id}/proxy response 200: any
+PUT /api/v1/devices/{id}/proxy/{*} param path:*: string
+PUT /api/v1/devices/{id}/proxy/{*} param path:id: string
+PUT /api/v1/devices/{id}/proxy/{*} response 200: any
+PUT /api/v1/devices/{id}/proxy/{*}: operation
+PUT /api/v1/devices/{id}/proxy: operation
+PUT /api/v1/devices/{id}: operation
 PUT /api/v1/fs:content param query:environment_id: string minLength=1 optional
 PUT /api/v1/fs:content param query:path: string minLength=1
 PUT /api/v1/fs:content param query:revision: anyOf
@@ -3652,24 +3750,6 @@ PUT /api/v1/fs:content response 413.msg: string
 PUT /api/v1/fs:content response 413.request_id: string
 PUT /api/v1/fs:content response 413: object closed
 PUT /api/v1/fs:content: operation
-PUT /api/v1/hosts/{id} param path:id: string pattern="^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
-PUT /api/v1/hosts/{id} request.enabled: boolean optional
-PUT /api/v1/hosts/{id} request.host: string minLength=1
-PUT /api/v1/hosts/{id} request.identity_file: string minLength=1 optional
-PUT /api/v1/hosts/{id} request.name: string minLength=1 maxLength=64 optional
-PUT /api/v1/hosts/{id} request.remote_bin: string minLength=1 optional
-PUT /api/v1/hosts/{id} request: object closed
-PUT /api/v1/hosts/{id} response 200: oneOf
-PUT /api/v1/hosts/{id} response 200<code=0>: shape 9526339b
-PUT /api/v1/hosts/{id} response 200<code=40001>: shape a642160a
-PUT /api/v1/hosts/{id}/proxy param path:id: string
-PUT /api/v1/hosts/{id}/proxy response 200: any
-PUT /api/v1/hosts/{id}/proxy/{*} param path:*: string
-PUT /api/v1/hosts/{id}/proxy/{*} param path:id: string
-PUT /api/v1/hosts/{id}/proxy/{*} response 200: any
-PUT /api/v1/hosts/{id}/proxy/{*}: operation
-PUT /api/v1/hosts/{id}/proxy: operation
-PUT /api/v1/hosts/{id}: operation
 PUT /api/v1/mcp/servers/{name} param path:name: string minLength=1
 PUT /api/v1/mcp/servers/{name} param query:cwd: string minLength=1 optional
 PUT /api/v1/mcp/servers/{name} request: oneOf
@@ -4203,21 +4283,31 @@ ws server message session_event<event.capability.changed>.install.step: string o
 ws server message session_event<event.capability.changed>.install: object
 ws server message session_event<event.capability.changed>.type: const "event.capability.changed"
 ws server message session_event<event.capability.changed>: object
-ws server message session_event<event.host.changed>.event_created_at: string
-ws server message session_event<event.host.changed>.hosts: array
-ws server message session_event<event.host.changed>.hosts[].connect_error: string optional
-ws server message session_event<event.host.changed>.hosts[].connect_failure: string optional
-ws server message session_event<event.host.changed>.hosts[].enabled: boolean optional
-ws server message session_event<event.host.changed>.hosts[].host: string
-ws server message session_event<event.host.changed>.hosts[].id: string
-ws server message session_event<event.host.changed>.hosts[].identity_file: string optional
-ws server message session_event<event.host.changed>.hosts[].name: string optional
-ws server message session_event<event.host.changed>.hosts[].remote_bin: string optional
-ws server message session_event<event.host.changed>.hosts[].remote_version: string optional
-ws server message session_event<event.host.changed>.hosts[].status: enum "connecting"|"disconnected"|"pending"|"ready"
-ws server message session_event<event.host.changed>.hosts[]: object
-ws server message session_event<event.host.changed>.type: const "event.host.changed"
-ws server message session_event<event.host.changed>: object
+ws server message session_event<event.device.changed>.devices: array
+ws server message session_event<event.device.changed>.devices[].alias: string optional
+ws server message session_event<event.device.changed>.devices[].connect_error: string optional
+ws server message session_event<event.device.changed>.devices[].connect_failure: string optional
+ws server message session_event<event.device.changed>.devices[].connection: enum "account"|"ssh"
+ws server message session_event<event.device.changed>.devices[].device_id: string optional
+ws server message session_event<event.device.changed>.devices[].duplicate_of: string optional
+ws server message session_event<event.device.changed>.devices[].enabled: boolean optional
+ws server message session_event<event.device.changed>.devices[].host: string optional
+ws server message session_event<event.device.changed>.devices[].id: string
+ws server message session_event<event.device.changed>.devices[].identity_file: string optional
+ws server message session_event<event.device.changed>.devices[].install: enum "cli"|"desktop" optional
+ws server message session_event<event.device.changed>.devices[].name: string optional
+ws server message session_event<event.device.changed>.devices[].platform: string optional
+ws server message session_event<event.device.changed>.devices[].product_name: string optional
+ws server message session_event<event.device.changed>.devices[].remote_bin: string optional
+ws server message session_event<event.device.changed>.devices[].remote_upgrade: boolean optional
+ws server message session_event<event.device.changed>.devices[].remote_version: string optional
+ws server message session_event<event.device.changed>.devices[].status: enum "connecting"|"disconnected"|"pending"|"ready"
+ws server message session_event<event.device.changed>.devices[].upgrade_error: string optional
+ws server message session_event<event.device.changed>.devices[].upgrade_status: enum "failed"|"installing"|"restarting" optional
+ws server message session_event<event.device.changed>.devices[]: object
+ws server message session_event<event.device.changed>.event_created_at: string
+ws server message session_event<event.device.changed>.type: const "event.device.changed"
+ws server message session_event<event.device.changed>: object
 ws server message session_event<invalidated>.event_created_at: string
 ws server message session_event<invalidated>.kind: enum "models"|"plugins"
 ws server message session_event<invalidated>.type: const "invalidated"
@@ -4229,6 +4319,7 @@ ws server message session_event<session>.session.archived: boolean optional
 ws server message session_event<session>.session.archived_at: string optional
 ws server message session_event<session>.session.created_at: string
 ws server message session_event<session>.session.cwd: string
+ws server message session_event<session>.session.device_id: string optional
 ws server message session_event<session>.session.environment_cwd: string optional
 ws server message session_event<session>.session.environment_id: string optional
 ws server message session_event<session>.session.git.branch: string optional
@@ -4237,7 +4328,6 @@ ws server message session_event<session>.session.git.pull_request.state: enum "c
 ws server message session_event<session>.session.git.pull_request.url: string
 ws server message session_event<session>.session.git.pull_request: object optional
 ws server message session_event<session>.session.git: object optional
-ws server message session_event<session>.session.host_id: string optional
 ws server message session_event<session>.session.id: string minLength=1
 ws server message session_event<session>.session.last_prompt: string optional
 ws server message session_event<session>.session.last_turn_outcome: enum "completed"|"failed"|"interrupted" optional
@@ -4652,11 +4742,6 @@ shape 2bda561c.data: enum null nullable
 shape 2bda561c.details: any optional
 shape 2bda561c.msg: string
 shape 2bda561c.request_id: string
-shape 333d10e0.code: enum 0
-shape 333d10e0.data: shape 9bf1012b
-shape 333d10e0.details: any optional
-shape 333d10e0.msg: string
-shape 333d10e0.request_id: string
 shape 334778dd.content: array
 shape 334778dd.content[]: oneOf
 shape 334778dd.content[]<file>: shape 89bafe20
@@ -4839,32 +4924,32 @@ shape 9bd41b04.data: enum null nullable
 shape 9bd41b04.details: any optional
 shape 9bd41b04.msg: string
 shape 9bd41b04.request_id: string
-shape 9bf1012b.activity: enum "background"|"idle"|"turn"
-shape 9bf1012b.archived: boolean optional
-shape 9bf1012b.archived_at: any optional
-shape 9bf1012b.created_at: any
-shape 9bf1012b.cwd: string
-shape 9bf1012b.environment_cwd: string optional
-shape 9bf1012b.environment_id: string optional
-shape 9bf1012b.git.branch: string optional
-shape 9bf1012b.git.pull_request: shape 1b0e86ef optional
-shape 9bf1012b.git: object closed optional
-shape 9bf1012b.host_id: string optional
-shape 9bf1012b.id: string minLength=1
-shape 9bf1012b.last_prompt: string optional
-shape 9bf1012b.last_turn_outcome: enum "completed"|"failed"|"interrupted" optional
-shape 9bf1012b.metadata: object optional
-shape 9bf1012b.metadata{*}: any optional
-shape 9bf1012b.pending_interaction: enum "approval"|"none"|"question" optional
-shape 9bf1012b.title: string
-shape 9bf1012b.updated_at: any
-shape 9bf1012b.workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-shape 9bf1012b.workspace_root: string optional
 shape 9d70335c.code: enum 40930
 shape 9d70335c.data: enum null nullable
 shape 9d70335c.details: any optional
 shape 9d70335c.msg: string
 shape 9d70335c.request_id: string
+shape 9fc42062.activity: enum "background"|"idle"|"turn"
+shape 9fc42062.archived: boolean optional
+shape 9fc42062.archived_at: any optional
+shape 9fc42062.created_at: any
+shape 9fc42062.cwd: string
+shape 9fc42062.device_id: string optional
+shape 9fc42062.environment_cwd: string optional
+shape 9fc42062.environment_id: string optional
+shape 9fc42062.git.branch: string optional
+shape 9fc42062.git.pull_request: shape 1b0e86ef optional
+shape 9fc42062.git: object closed optional
+shape 9fc42062.id: string minLength=1
+shape 9fc42062.last_prompt: string optional
+shape 9fc42062.last_turn_outcome: enum "completed"|"failed"|"interrupted" optional
+shape 9fc42062.metadata: object optional
+shape 9fc42062.metadata{*}: any optional
+shape 9fc42062.pending_interaction: enum "approval"|"none"|"question" optional
+shape 9fc42062.title: string
+shape 9fc42062.updated_at: any
+shape 9fc42062.workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+shape 9fc42062.workspace_root: string optional
 shape a0b6c77b.auth: enum "oauth" optional
 shape a0b6c77b.bearer_token_env_var: string minLength=1 optional
 shape a0b6c77b.deferred: boolean optional
@@ -5039,6 +5124,11 @@ shape d86bb85a.match_positions[]: integer minimum=0 maximum=9007199254740991
 shape d86bb85a.name: string
 shape d86bb85a.path: string
 shape d86bb85a.score: number minimum=0 maximum=1
+shape d8c94993.code: enum 0
+shape d8c94993.data: shape 9fc42062
+shape d8c94993.details: any optional
+shape d8c94993.msg: string
+shape d8c94993.request_id: string
 shape e56d743c.finish_reason: string optional
 shape e56d743c.timing: shape 8b962d1c optional
 shape e56d743c.usage: shape d08e456a optional

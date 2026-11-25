@@ -1,16 +1,17 @@
 import type { ISessionManager } from '@moonshot-ai/agent-core-v2';
 
 import type { IConnectionRegistry } from '../transport/ws/connectionRegistry';
+import { PeriodicSweep } from './periodicSweep';
 import { closeIdleSessions } from './sessionIdleReaper';
 
 export const DEFAULT_MANAGED_IDLE_EXIT_MS = 10 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 30_000;
+const DRAIN_SWEEP_INTERVAL_MS = 2_000;
 
-export class ManagedIdleExit {
-  private timer: ReturnType<typeof setInterval> | undefined;
+export class ManagedIdleExit extends PeriodicSweep {
   private idleSince: number;
   private fired = false;
-  private inFlight: Promise<void> | undefined;
+  private onDrained: (() => void) | undefined;
 
   constructor(
     private readonly sessions: Pick<ISessionManager, 'list' | 'closeIfIdle'>,
@@ -20,48 +21,37 @@ export class ManagedIdleExit {
     private readonly now: () => number = Date.now,
     private readonly sweepIntervalMs: number = SWEEP_INTERVAL_MS,
   ) {
+    super();
     this.idleSince = now();
   }
 
   start(): void {
-    if (this.timer !== undefined) return;
-    this.timer = setInterval(() => {
-      void this.sweep();
-    }, this.sweepIntervalMs);
-    this.timer.unref?.();
+    if (this.timer !== undefined || this.closed) return;
+    this.schedule(this.sweepIntervalMs);
   }
 
-  sweep(): Promise<void> {
-    if (this.inFlight !== undefined) return this.inFlight;
-    const run = this.sweepOnce();
-    this.inFlight = run;
-    void run.finally(() => {
-      if (this.inFlight === run) this.inFlight = undefined;
-    });
-    return run;
+  exitWhenIdle(onExit: () => void): void {
+    if (this.onDrained !== undefined || this.closed) return;
+    this.onDrained = onExit;
+    clearInterval(this.timer);
+    this.schedule(DRAIN_SWEEP_INTERVAL_MS);
+    void this.sweep();
   }
 
-  async close(): Promise<void> {
-    if (this.timer !== undefined) {
-      clearInterval(this.timer);
-      this.timer = undefined;
-    }
-    await this.inFlight;
-  }
-
-  private async sweepOnce(): Promise<void> {
-    if (this.fired) return;
-    if (this.connections.size() > 0) {
+  protected async sweepOnce(): Promise<void> {
+    if (this.fired || this.closed) return;
+    const draining = this.onDrained !== undefined;
+    if (!draining && this.connections.size() > 0) {
       this.idleSince = this.now();
       return;
     }
     await closeIdleSessions(this.sessions, 0);
-    if (this.connections.size() > 0 || this.sessions.list().length > 0) {
+    if (this.sessions.list().length > 0 || (!draining && this.connections.size() > 0)) {
       this.idleSince = this.now();
       return;
     }
-    if (this.now() - this.idleSince < this.idleExitMs) return;
+    if (!draining && this.now() - this.idleSince < this.idleExitMs) return;
     this.fired = true;
-    this.onIdle();
+    (this.onDrained ?? this.onIdle)();
   }
 }

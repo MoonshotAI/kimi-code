@@ -45,6 +45,7 @@ export const STORAGE_KEYS = {
   sidebarCollapsed: 'kimi-web.sidebar-collapsed',
   sidebarWidth: 'kimi-web.sidebar-width',
   sidebarViewMode: 'kimi-web.sidebar-view-mode',
+  sidebarDeviceScope: 'kimi-web.sidebar-device-scope',
   mobileSwitcherViewMode: 'kimi-web.mobile-switcher-view-mode',
   diffViewMode: 'kimi-web.diff-view-mode',
   sidebarPinnedHeight: 'kimi-web.sidebar-pinned-height',
@@ -196,6 +197,15 @@ export function loadSidebarViewMode(): SidebarViewMode {
 
 export function saveSidebarViewMode(mode: SidebarViewMode): void {
   safeSetString(STORAGE_KEYS.sidebarViewMode, mode);
+}
+
+export function loadSidebarDeviceScope(): string | undefined {
+  return safeGetString(STORAGE_KEYS.sidebarDeviceScope) || undefined;
+}
+
+export function saveSidebarDeviceScope(deviceId: string | undefined): void {
+  if (deviceId === undefined) safeRemove(STORAGE_KEYS.sidebarDeviceScope);
+  else safeSetString(STORAGE_KEYS.sidebarDeviceScope, deviceId);
 }
 
 export function loadMobileSwitcherViewMode(): SidebarViewMode {

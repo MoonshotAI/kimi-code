@@ -21,7 +21,7 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { useSidebarTabs, useAppearance } from '@moonshot-ai/app-core';
 import { SESSIONS_EXPAND_BATCH, useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { hostsStore, sessionViewsStore, sessionsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore, sessionViewsStore, sessionsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import WorkspaceIcon from '../WorkspaceIcon.vue';
 import { useOverlayScrollbar } from '@moonshot-ai/app-client/composables';
 import { track } from '@moonshot-ai/app-client/contracts';
@@ -31,6 +31,7 @@ import SessionRow from '../SessionRow.vue';
 import WorkspaceGroup from '../WorkspaceGroup.vue';
 import WorkspaceMenu from './WorkspaceMenu.vue';
 import WorkspaceDirectory from './WorkspaceDirectory.vue';
+import DeviceScopeSwitcher from './DeviceScopeSwitcher.vue';
 import WorkspaceHoverCard from './WorkspaceHoverCard.vue';
 import SidebarSectionHeader from './SidebarSectionHeader.vue';
 import { useWorkspaceHoverCard } from './useWorkspaceHoverCard';
@@ -72,8 +73,16 @@ const sessionViews = sessionViewsStore();
 const workspaces = workspacesStore();
 const sessionStore = sessionsStore();
 
+const deviceScope = computed(() => workspaces.deviceScope);
+
+function inDeviceScope(workspaceId: string | undefined, fallbackDeviceId?: string): boolean {
+  const workspace = workspaceId === undefined ? undefined : workspaces.workspaceById.get(workspaceId);
+  return (workspace === undefined ? fallbackDeviceId : workspace.deviceId) === deviceScope.value;
+}
+
 const allGroups = computed(() => sessionViews.workspaceGroups);
-const groups = computed(() => sessionViews.unpinnedWorkspaceGroups);
+const scopedGroups = computed(() => allGroups.value.filter((group) => group.workspace.deviceId === deviceScope.value));
+const groups = computed(() => sessionViews.unpinnedWorkspaceGroups.filter((group) => group.workspace.deviceId === deviceScope.value));
 const pinnedWorkspaceGroups = computed(() => sessionViews.pinnedWorkspaceGroups);
 const pinnedSessions = computed(() => sessionViews.pinnedSessions);
 const pinnedWorkspaceIds = computed(() => workspaces.pinnedWorkspaceIds);
@@ -99,9 +108,11 @@ const activeWorkspaceId = computed(() => workspaces.activeWorkspaceId);
 const workspaceSortMode = computed(() => workspaces.workspaceSortMode);
 const activeId = computed(() => sessionStore.activeSessionId ?? '');
 const flatSessions = computed(() => {
-  if (client.sidebarFlatSessions) return client.sidebarFlatSessions.value;
   const pinned = new Set(workspaces.pinnedWorkspaceIds);
-  return client.flatSessions.value.filter((session) => !pinned.has(session.workspaceId ?? ''));
+  const rows = client.sidebarFlatSessions
+    ? client.sidebarFlatSessions.value
+    : client.flatSessions.value.filter((session) => !pinned.has(session.workspaceId ?? ''));
+  return rows.filter((session) => inDeviceScope(session.workspaceId, session.deviceId));
 });
 const flatHasMore = computed(() =>
   client.sidebarFlatSessionsHasMore
@@ -113,9 +124,21 @@ function loadMoreSidebarFlat(): void {
   if (client.loadMoreSidebarFlatSessions) client.loadMoreSidebarFlatSessions();
   else void client.loadMoreFlatSessions();
 }
-const doneSessions = client.doneSessions;
+const doneSessions = computed(() => client.doneSessions.value.filter((session) => inDeviceScope(session.workspaceId, session.deviceId)));
 const doneHasMore = client.doneSessionsHasMore;
 const doneLoadingMore = client.doneSessionsLoadingMore;
+
+watch(activeId, (id) => {
+  if (id === '') return;
+  const session = sessionStore.sessions.find((candidate) => candidate.id === id);
+  if (session === undefined) return;
+  const workspaceId = workspaces.workspaceIdForSession(session);
+  const deviceId = workspaces.workspaceById.get(workspaceId)?.deviceId;
+  if (deviceId === deviceScope.value) return;
+  if (sessionStore.pinnedSessionIds.includes(id) || workspaces.pinnedWorkspaceIds.includes(workspaceId)) return;
+  workspaces.setDeviceScope(deviceId);
+  if (workspaces.workspaceById.has(workspaceId)) workspaces.selectWorkspace(workspaceId);
+});
 const initialized = client.initialized;
 
 const {
@@ -241,22 +264,23 @@ function toggleCollapse(id: string): void {
 
 function collapseAllWorkspaces(): void {
   setSessionsCollapsed(false);
-  const next = new Set(allGroups.value.map((g) => g.workspace.id));
+  const next = new Set([...collapsedIds.value, ...scopedGroups.value.map((g) => g.workspace.id)]);
   collapsedIds.value = next;
   saveCollapsedWorkspaces(next);
 }
 
 function expandAllWorkspaces(): void {
   setSessionsCollapsed(false);
-  const next = new Set<string>();
+  const scoped = new Set(scopedGroups.value.map((g) => g.workspace.id));
+  const next = new Set([...collapsedIds.value].filter((id) => !scoped.has(id)));
   collapsedIds.value = next;
   saveCollapsedWorkspaces(next);
 }
 
 const allCollapsed = computed(
   () =>
-    allGroups.value.length > 0 &&
-    allGroups.value.every((g) => collapsedIds.value.has(g.workspace.id)),
+    scopedGroups.value.length > 0 &&
+    scopedGroups.value.every((g) => collapsedIds.value.has(g.workspace.id)),
 );
 
 const visibleLimits = ref<Map<string, number>>(new Map());
@@ -372,7 +396,7 @@ const siblingOrder = computed<string[]>(() => {
     if (listMode.value === 'flat') return doneSessions.value.map((s) => s.id);
     return doneGroups.value.flatMap((g) => g.sessions.map((s) => s.id));
   }
-  return allGroups.value.map((g) => g.workspace.id);
+  return scopedGroups.value.map((g) => g.workspace.id);
 });
 
 function groupOfSession(id: string): string | null {
@@ -427,7 +451,7 @@ const pendingByOpenGroup = computed(() => scopePendingByGroup(displayedOpenGroup
 const unreadByOpenGroup = computed(() => scopeUnreadByGroup(displayedOpenGroups.value, unreadBySession.value));
 
 const doneGroups = computed(() =>
-  allGroups.value
+  scopedGroups.value
     .map((g) => ({
       workspace: g.workspace,
       sessions: doneSessions.value
@@ -782,6 +806,9 @@ defineExpose({
         actions-class="side-section-actions"
         @toggle="toggleSessionsCollapsed"
       >
+        <template #title-suffix>
+          <DeviceScopeSwitcher />
+        </template>
         <template #actions>
           <Tooltip v-if="statusTab === 'workspaces'" :text="t('sidebar.newWorkspace')">
             <IconButton
@@ -958,13 +985,13 @@ defineExpose({
           <div v-for="g in doneGroups" :key="g.workspace.id" class="done-group">
             <div
               class="done-gh"
-              :class="{ 'host-unavailable': hostsStore().unavailable(g.workspace.hostId) }"
+              :class="{ 'device-unavailable': devicesStore().unavailable(g.workspace.deviceId) }"
               @click="toggleCollapse(g.workspace.id)"
               @mouseenter="onWorkspaceHoverMouseEnter(g.workspace, $event)"
               @mouseleave="scheduleWorkspaceHoverClose"
               @contextmenu="openGhMenu(g.workspace, $event)"
             >
-              <WorkspaceIcon v-if="g.workspace.hostId !== undefined" class="done-gh-folder" :host-id="g.workspace.hostId" status="all" />
+              <WorkspaceIcon v-if="g.workspace.deviceId !== undefined" class="done-gh-folder" :device-id="g.workspace.deviceId" status="all" />
               <Icon v-else-if="isCollapsed(g.workspace.id)" class="done-gh-folder" name="folder-closed" />
               <Icon v-else class="done-gh-folder" name="folder" />
               <span class="done-gh-name">{{ g.workspace.name }}</span>
@@ -1165,7 +1192,6 @@ defineExpose({
   width: 13px;
   height: 13px;
 }
-
 .sessions {
   flex: 1;
   overflow-y: auto;
@@ -1253,7 +1279,7 @@ defineExpose({
   flex: none;
   color: var(--color-text-muted);
 }
-.done-gh.host-unavailable .done-gh-name { color: var(--color-text-faint); }
+.done-gh.device-unavailable .done-gh-name { color: var(--color-text-faint); }
 .done-gh-name {
   flex: 1;
   min-width: 0;

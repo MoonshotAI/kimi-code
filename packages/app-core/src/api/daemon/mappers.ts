@@ -5,13 +5,14 @@ import type {
   AppCatalogProvider,
   AppConfig,
   AppEvent,
-  AppHost,
+  AppDevice,
   AppAgentState,
   AppGoal,
   AppMcpAuthBeginResult,
   AppMcpAuthStatus,
   AppMcpServerLocator,
   AppModel,
+  AppSystemStats,
   AppPluginCapabilities,
   AppPluginMarketplaceEntry,
   AppPluginMcpServerInfo,
@@ -64,7 +65,8 @@ import type {
   WireSessionRatingResult,
   WireWorkspace,
   WireEvent,
-  WireHost,
+  WireDevice,
+  WireSystemStats,
   WireConfig,
   WireInteraction,
 } from './wire';
@@ -111,7 +113,7 @@ export function toAppSession(wire: WireSession): AppSession {
         ? wire.metadata['parent_session_id']
         : undefined,
     pullRequest: wire.git === undefined ? undefined : (wire.git.pull_request ?? null),
-    hostId: wire.host_id,
+    deviceId: wire.device_id,
   };
 }
 
@@ -124,7 +126,7 @@ export function toAppWorkspace(wire: WireWorkspace): AppWorkspace {
     additionalDirs: wire.additional_dirs,
     lastOpenedAt: wire.last_opened_at,
     sessionCount: wire.session_count,
-    ...(wire.host_id === undefined ? {} : { hostId: wire.host_id }),
+    ...(wire.device_id === undefined ? {} : { deviceId: wire.device_id }),
   };
 }
 
@@ -634,10 +636,10 @@ export function toAppEvent(wire: WireEvent): AppEvent {
         install: toAppCapabilityInstallProgress(w.install),
       };
 
-    case 'event.host.changed':
+    case 'event.device.changed':
       return {
-        type: 'hostsChanged',
-        hosts: Array.isArray(w.hosts) ? w.hosts.map((host: WireHost) => toAppHost(host)) : [],
+        type: 'devicesChanged',
+        devices: Array.isArray(w.devices) ? w.devices.map((device: WireDevice) => toAppDevice(device)) : [],
       };
 
     default:
@@ -645,9 +647,10 @@ export function toAppEvent(wire: WireEvent): AppEvent {
   }
 }
 
-export function toAppHost(wire: WireHost): AppHost {
+export function toAppDevice(wire: WireDevice): AppDevice {
   return {
     id: wire.id,
+    connection: wire.connection,
     host: wire.host,
     identityFile: wire.identity_file,
     remoteBin: wire.remote_bin,
@@ -656,7 +659,31 @@ export function toAppHost(wire: WireHost): AppHost {
     status: wire.status,
     remoteVersion: wire.remote_version,
     connectError: wire.connect_error,
-    connectFailure: wire.connect_failure as AppHost['connectFailure'],
+    connectFailure: wire.connect_failure as AppDevice['connectFailure'],
+    deviceId: wire.device_id,
+    productName: wire.product_name,
+    platform: wire.platform,
+    alias: wire.alias,
+    duplicateOf: wire.duplicate_of,
+    install: wire.install,
+    remoteUpgrade: wire.remote_upgrade,
+    upgradeStatus: wire.upgrade_status,
+    upgradeError: wire.upgrade_error,
+  };
+}
+
+export function toAppSystemStats(wire: WireSystemStats): AppSystemStats {
+  return {
+    cpu: wire.cpu,
+    memory: wire.memory,
+    disk: wire.disk,
+    gpus: wire.gpus.map((gpu) => ({
+      index: gpu.index,
+      name: gpu.name,
+      memoryTotal: gpu.memory_total,
+      memoryUsed: gpu.memory_used,
+      utilization: gpu.utilization,
+    })),
   };
 }
 

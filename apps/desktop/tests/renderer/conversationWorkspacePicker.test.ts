@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, h, nextTick, ref, type App } from 'vue';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import type { AppHost } from '@moonshot-ai/app-core/api';
+import type { AppDevice } from '@moonshot-ai/app-core/api';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import { ModelDisplayKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
-import { hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 
 const mockWorkspacesView = ref<WorkspaceView[]>([]);
 const mockActiveWorkspaceId = ref<string | null>(null);
@@ -100,9 +100,9 @@ beforeEach(() => {
   mockActiveWorkspaceId.value = null;
   mockVisibleWorkspace.value = null;
   workspacesStore().workspaces = [];
-  hostsStore().byId = {};
-  hostsStore().loaded = true;
-  hostsStore().connecting = {};
+  devicesStore().byId = {};
+  devicesStore().loaded = true;
+  devicesStore().connecting = {};
 });
 
 afterEach(() => {
@@ -113,8 +113,8 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function sshHost(id: string, extra: Partial<AppHost> = {}): AppHost {
-  return { id, host: `${id}.example.test`, status: 'ready', ...extra };
+function sshDevice(id: string, extra: Partial<AppDevice> = {}): AppDevice {
+  return { id, connection: 'ssh', host: `${id}.example.test`, status: 'ready', ...extra };
 }
 
 function mountPane(component: unknown) {
@@ -139,7 +139,7 @@ function mountPane(component: unknown) {
 }
 
 const localWs: WorkspaceView = { id: 'ws-local', name: 'local-app', root: '/Users/me/local-app', shortPath: '~/local-app', additionalDirs: [], sessionCount: 1 };
-const remoteWs: WorkspaceView = { id: 'ws-remote', name: 'trainer', root: '/home/ubuntu/trainer', shortPath: '/home/ubuntu/trainer', hostId: 'host-gpu', additionalDirs: [], sessionCount: 1 };
+const remoteWs: WorkspaceView = { id: 'ws-remote', name: 'trainer', root: '/home/ubuntu/trainer', shortPath: '/home/ubuntu/trainer', deviceId: 'device-gpu', additionalDirs: [], sessionCount: 1 };
 
 function showProjects(): void {
   mockWorkspacesView.value = [localWs, remoteWs];
@@ -147,11 +147,11 @@ function showProjects(): void {
   mockVisibleWorkspace.value = localWs;
 }
 
-describe.each([['desktop', DesktopConversationPane]])('%s ConversationPane project picker with SSH hosts', (_platform, Pane) => {
-  it('lists projects with their host and leaves SSH hosts out of the picker', async () => {
-    hostsStore().byId = {
-      'host-gpu': sshHost('host-gpu', { name: 'GPU 开发机', host: 'ubuntu@10.0.0.8', status: 'ready' }),
-      'host-idle': sshHost('host-idle', { name: '空闲机' }),
+describe.each([['desktop', DesktopConversationPane]])('%s ConversationPane project picker with SSH devices', (_platform, Pane) => {
+  it('lists projects with their device and leaves SSH devices out of the picker', async () => {
+    devicesStore().byId = {
+      'device-gpu': sshDevice('device-gpu', { name: 'GPU 开发机', host: 'ubuntu@10.0.0.8', status: 'ready' }),
+      'device-idle': sshDevice('device-idle', { name: '空闲机' }),
     };
     showProjects();
 
@@ -177,9 +177,9 @@ describe.each([['desktop', DesktopConversationPane]])('%s ConversationPane proje
     expect(onSelectWorkspace).toHaveBeenCalledExactlyOnceWith('ws-remote');
   });
 
-  it('disables projects whose host failed to connect', async () => {
-    hostsStore().byId = {
-      'host-gpu': sshHost('host-gpu', { name: 'GPU 开发机', status: 'disconnected', connectError: 'Connection refused' }),
+  it('disables projects whose device failed to connect', async () => {
+    devicesStore().byId = {
+      'device-gpu': sshDevice('device-gpu', { name: 'GPU 开发机', status: 'disconnected', connectError: 'Connection refused' }),
     };
     showProjects();
 
@@ -198,9 +198,9 @@ describe.each([['desktop', DesktopConversationPane]])('%s ConversationPane proje
     expect(el.querySelector('.ws-panel')).not.toBeNull();
   });
 
-  it('offers only add project when no project exists, even with an SSH host configured', async () => {
-    hostsStore().byId = {
-      'host-dev': sshHost('host-dev', { name: 'devbox', host: 'devbox', status: 'ready' }),
+  it('offers only add project when no project exists, even with an SSH device configured', async () => {
+    devicesStore().byId = {
+      'device-dev': sshDevice('device-dev', { name: 'devbox', host: 'devbox', status: 'ready' }),
     };
 
     const { el, onAddWorkspace } = mountPane(Pane);

@@ -72,7 +72,7 @@ const subLabel = computed(() =>
     : (props.session.workspaceName ?? props.session.cwdLabel),
 );
 const showSubRow = computed(() => isFlat.value || showPinnedSubRow.value);
-const showSubIcon = computed(() => !props.compactPinned || props.session.hostId !== undefined);
+const showSubIcon = computed(() => !props.compactPinned || props.session.deviceId !== undefined);
 const showCompactPr = computed(
   () => props.compactPinned && !showSubRow.value && !renaming.value && Boolean(props.session.pullRequest),
 );
@@ -604,7 +604,7 @@ function openPullRequest(): void {
     </div>
 
     <div v-if="showSubRow" class="sub" :class="{ 'sub--pinned': compactPinned }">
-      <WorkspaceIcon v-if="showSubIcon" class="sub-icon" :host-id="session.hostId" size="sm" status="none" />
+      <WorkspaceIcon v-if="showSubIcon" class="sub-icon" :device-id="session.deviceId" size="sm" status="none" />
       <Tooltip v-if="showPinnedSubRow && !renaming" :text="subLabel">
         <span class="sub-text">{{ subLabel }}</span>
       </Tooltip>

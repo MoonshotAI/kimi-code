@@ -9,7 +9,7 @@ import {
   IAgentIdentity,
   type AgentIdentitySnapshot,
 } from '#/app/agentIdentity/agentIdentity';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IClientIdentity } from '#/app/clientIdentity/clientIdentity';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
@@ -59,9 +59,7 @@ describe('WebFetchService', () => {
           resolved: () => Promise.resolve(snapshot()),
           current: snapshot,
         });
-        reg.definePartialInstance(IBootstrapService, {
-          args: { requestHeaders: HOST_HEADERS },
-        });
+        reg.definePartialInstance(IClientIdentity, { requestHeaders: HOST_HEADERS });
         reg.definePartialInstance(IConfigService, {
           get: ((domain: string) =>
             domain === SERVICES_SECTION ? servicesConfig : undefined) as IConfigService['get'],

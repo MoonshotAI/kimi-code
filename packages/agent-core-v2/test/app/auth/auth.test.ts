@@ -34,6 +34,7 @@ import { IRegionService } from '#/app/region/region';
 import { RegionService } from '#/app/region/regionService';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IClientIdentity } from '#/app/clientIdentity/clientIdentity';
 import { IModelService, type ModelRecord } from '#/llm-adapter/model/model';
 import { MODELS_SECTION } from '#/app/kosongConfig/configSection';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -1254,9 +1255,7 @@ describe('WebSearchProviderService', () => {
           IAgentIdentity,
           stubAgentIdentity({ hostRequestHeaders: hostHeaders }),
         );
-        reg.definePartialInstance(IBootstrapService, {
-          args: { requestHeaders: hostHeaders },
-        });
+        reg.definePartialInstance(IClientIdentity, { requestHeaders: hostHeaders });
         reg.definePartialInstance(IConfigService, {
           get: ((domain: string) =>
             domain === SERVICES_SECTION ? servicesConfig : undefined) as IConfigService['get'],
@@ -1460,7 +1459,7 @@ describe('WebSearchProviderService', () => {
         resolveTokenProvider:
           resolveTokenProvider as unknown as IOAuthService['resolveTokenProvider'],
       } as IOAuthService,
-      { args: { requestHeaders: {} } } as unknown as IBootstrapService,
+      { requestHeaders: {} } as unknown as IClientIdentity,
       {
         get: ((domain: string) =>
           domain === SERVICES_SECTION ? servicesConfig : undefined) as IConfigService['get'],

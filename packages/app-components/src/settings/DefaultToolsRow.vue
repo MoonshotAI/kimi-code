@@ -3,7 +3,7 @@ import './settings-row-label.css';
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getKimiWebApi } from '@moonshot-ai/app-client/client';
-import { configStore, hostsStore } from '@moonshot-ai/app-client/stores';
+import { configStore, devicesStore } from '@moonshot-ai/app-client/stores';
 import type { AppToolCatalogEntry } from '@moonshot-ai/app-core/api';
 import { isDefaultToolEnabled } from '@moonshot-ai/app-core/lib';
 import { Icon } from '@moonshot-ai/app-ui';
@@ -15,7 +15,7 @@ const tools = ref<AppToolCatalogEntry[]>([]);
 const enabledCount = computed(() =>
   tools.value.filter((tool) => isDefaultToolEnabled(configStore().config?.tools, tool.name)).length,
 );
-const hasRemoteHosts = computed(() => hostsStore().hosts.length > 0);
+const hasRemoteDevices = computed(() => devicesStore().devices.length > 0);
 
 onMounted(async () => {
   try {
@@ -35,7 +35,7 @@ function open(): void {
     <button ref="rowRef" type="button" class="row dt-entry" data-settings-subpage-origin="tools" @click="open">
       <span class="settings-row-label dt-entry-label">
         {{ t('settings.defaultTools') }}
-        <span class="dt-entry-hint">{{ t(hasRemoteHosts ? 'settings.defaultToolsEntryHintLocalOnly' : 'settings.defaultToolsEntryHint') }}</span>
+        <span class="dt-entry-hint">{{ t(hasRemoteDevices ? 'settings.defaultToolsEntryHintLocalOnly' : 'settings.defaultToolsEntryHint') }}</span>
       </span>
       <span class="dt-entry-meta">
         <span v-if="tools.length > 0 && configStore().config !== null && configStore().config !== undefined" class="dt-entry-count">{{ enabledCount }} / {{ tools.length }} {{ t('settings.defaultToolsEnabled') }}</span>

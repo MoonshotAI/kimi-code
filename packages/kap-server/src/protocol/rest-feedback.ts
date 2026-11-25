@@ -1,5 +1,5 @@
 import { FILE_ID_REGEX } from '@moonshot-ai/agent-core-v2/app/file/fileService';
-import { hostIdSchema } from '@moonshot-ai/agent-core-v2/app/hostsConfig/configSection';
+import { deviceIdSchema } from '@moonshot-ai/agent-core-v2/app/devicesConfig/configSection';
 import { z } from 'zod';
 import { feedbackReasonIdSchema } from './feedback-reasons';
 
@@ -42,7 +42,7 @@ export const feedbackParamsSchema = z.object({ feedback_id: z.coerce.number().in
 export const feedbackResponseSchema = z.object({ feedback_id: z.number().int().positive() });
 export const feedbackAttachmentQuerySchema = z.object({ kind: z.enum(['media', 'diagnostics']) });
 export const feedbackSessionArchiveSchema = z.object({ session_id: identifier });
-export const feedbackSessionAttachmentSchema = feedbackSessionArchiveSchema.extend({ host_id: hostIdSchema.optional() });
+export const feedbackSessionAttachmentSchema = feedbackSessionArchiveSchema.extend({ device_id: deviceIdSchema.optional() });
 export const feedbackSessionArchiveResponseSchema = z.object({
   file_id: z.string().regex(FILE_ID_REGEX),
   size: z.number().int().positive(),

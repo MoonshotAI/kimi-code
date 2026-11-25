@@ -8,19 +8,20 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (32 sections · 2 overlay(s))
+# Index (33 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
 #   database                 src/persistence/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/features/plan/configSection.ts
+#   devices                  src/app/devicesConfig/configSection.ts
 #   environments             src/remote/declaration/configSection.ts
 #   experimental             src/app/flag/flag.ts
 #   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   extraSkillDirs           src/features/skill/catalog/configSection.ts
 #   hooks                    src/features/externalHooks/configSection.ts
-#   hosts                    src/app/hostsConfig/configSection.ts
+#   hosts                    src/app/devicesConfig/configSection.ts
 #   identity                 src/app/agentIdentity/configSection.ts
 #   image                    src/agent/media/configSection.ts
 #   loopControl              src/agent/loop/configSection.ts
@@ -137,6 +138,28 @@ manual_tick = false
 default_plan_mode = false
 
 # ##########################################################################
+# devices
+#   owner: src/app/devicesConfig/configSection.ts
+#   scope: core
+#   hooks: custom fromToml · custom toToml
+# ##########################################################################
+
+[devices]
+
+# one [devices."<name>"] table per entry, in one of these shapes:
+# [devices."<name>"]
+  # connection: "ssh"
+  # host: string
+  # name: string
+  # enabled: boolean
+  # identity_file: string
+  # remote_bin: string
+# [devices."<name>"]
+  # connection: "account"
+  # name: string
+  # enabled: boolean
+
+# ##########################################################################
 # environments
 #   owner: src/remote/declaration/configSection.ts
 #   scope: core
@@ -187,7 +210,7 @@ extra_skill_dirs = []
 
 # ##########################################################################
 # hosts
-#   owner: src/app/hostsConfig/configSection.ts
+#   owner: src/app/devicesConfig/configSection.ts
 #   scope: core
 #   hooks: custom fromToml · custom toToml
 # ##########################################################################
@@ -196,6 +219,7 @@ extra_skill_dirs = []
 
 # one [hosts."<name>"] table per entry:
 # [hosts."<name>"]
+  # connection: "ssh"
   # host: string
   # name: string
   # enabled: boolean

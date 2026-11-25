@@ -13,7 +13,7 @@ import { afterAll, afterEach, assert, beforeAll, describe, expect, it, type Test
 
 import { ErrorCode } from '../src/protocol/error-codes';
 import { FeedbackGateway, readFeedbackFile } from '../src/services/feedback/feedbackService';
-import type { HostSession } from '../src/services/hosts/hostSession';
+import type { DeviceSession } from '../src/services/devices/deviceSession';
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -346,7 +346,7 @@ default_model = "alternate"
     }));
   });
 
-  async function connectRemoteFeedbackHost({ onTestFinished }: TestContext) {
+  async function connectRemoteFeedbackDevice({ onTestFinished }: TestContext) {
     const remoteFeedbackRequests: string[] = [];
     const remoteGateway = createServer((req, res) => {
       remoteFeedbackRequests.push(req.url ?? '');
@@ -371,7 +371,7 @@ default_model = "alternate"
     });
     onTestFinished(() => remote.close());
     const remoteOrigin = `http://127.0.0.1:${remote.port}`;
-    const forward = vi.fn<HostSession['request']>(async ({ method, path, headers, body, signal }) => {
+    const forward = vi.fn<DeviceSession['request']>(async ({ method, path, headers, body, signal }) => {
       const forwardedHeaders = new Headers(authHeaders(remote));
       for (const [key, value] of Object.entries(headers)) {
         if (value !== undefined) forwardedHeaders.set(key, Array.isArray(value) ? value.join(', ') : value);
@@ -379,7 +379,7 @@ default_model = "alternate"
       const response = await fetch(remoteOrigin + path, { method, headers: forwardedHeaders, body: body && new Uint8Array(body), signal });
       return { status: response.status, headers: Object.fromEntries(response.headers), body: Buffer.from(await response.arrayBuffer()) };
     });
-    const connect = vi.spyOn(server.hostBridges, 'connect').mockResolvedValue({
+    const connect = vi.spyOn(server.deviceManager, 'connect').mockResolvedValue({
       request: forward,
       openWebSocket: () => { throw new Error('Unexpected WebSocket.'); },
     });
@@ -388,7 +388,7 @@ default_model = "alternate"
   }
 
   it('attaches a remote-only session to the global feedback created on this host', async context => {
-    const { remote, remoteHome, connect, forward, remoteFeedbackRequests } = await connectRemoteFeedbackHost(context);
+    const { remote, remoteHome, connect, forward, remoteFeedbackRequests } = await connectRemoteFeedbackDevice(context);
     const createdSession = await remote.app.inject({
       method: 'POST', url: '/api/v1/sessions', headers: authHeaders(remote), payload: { metadata: { cwd: remoteHome } },
     });
@@ -401,10 +401,10 @@ default_model = "alternate"
     await writeFile(join(logs, 'kimi-code-desktop.log'), 'remote desktop log');
 
     const { data: feedback } = await request<{ feedback_id: number }>('POST', '/feedback', {
-      kind: 'global', source: 'sidebar', category: 'bug', content: 'Issue on a remote host', upload_session: true,
+      kind: 'global', source: 'sidebar', category: 'bug', content: 'Issue on a remote device', upload_session: true,
     });
     const path = `/feedback/${feedback.feedback_id}/attachments/session`;
-    const attached = await request<{ upload_id: number }>('POST', path, { session_id: session.id, host_id: 'example' });
+    const attached = await request<{ upload_id: number }>('POST', path, { session_id: session.id, device_id: 'example' });
     expect(attached.code, JSON.stringify(attached)).toBe(0);
     expect(connect).toHaveBeenCalledWith('example');
     const [prepare, download, remove] = forward.mock.calls.map(([req]) => req);
@@ -429,7 +429,7 @@ default_model = "alternate"
     expect(completed.at(-1)).toMatchObject({ upload_id: attached.data.upload_id });
 
     const previousUploads = uploads.size;
-    const missing = await request('POST', path, { session_id: 'missing-session', host_id: 'example' });
+    const missing = await request('POST', path, { session_id: 'missing-session', device_id: 'example' });
     expect(missing.code).toBe(ErrorCode.SESSION_NOT_FOUND);
     expect(forward).toHaveBeenCalledTimes(4);
     expect(uploads.size).toBe(previousUploads);
@@ -437,7 +437,7 @@ default_model = "alternate"
   });
 
   it('cancels the remote archive export when the feedback client disconnects', async context => {
-    const { remote, remoteFeedbackRequests } = await connectRemoteFeedbackHost(context);
+    const { remote, remoteFeedbackRequests } = await connectRemoteFeedbackDevice(context);
     const started = new Promise<AbortSignal>(resolve => {
       vi.spyOn(remote.core.accessor.get(ISessionExportService), 'export').mockImplementationOnce(async (_input, options) => {
         const signal = options?.signal;
@@ -455,7 +455,7 @@ default_model = "alternate"
     context.onTestFinished(() => client.abort());
     const response = fetch(`http://127.0.0.1:${server.port}/api/v1/feedback/${data.feedback_id}/attachments/session`, {
       method: 'POST', headers: authHeaders(server, { 'content-type': 'application/json' }), signal: client.signal,
-      body: JSON.stringify({ host_id: 'example', session_id: 'example-session' }),
+      body: JSON.stringify({ device_id: 'example', session_id: 'example-session' }),
     });
     const remoteSignal = await Promise.race([
       started,

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DaemonKimiWebApi } from '../src/api/daemon/client';
 import { DaemonApiError, DaemonNetworkError, isDaemonTimeoutError } from '../src/api/errors';
-import { HostRouter } from '../src/api/hostRouting';
+import { DeviceRouter } from '../src/api/deviceRouting';
 import type { RestRequestInfo } from '../src/contracts';
 import type { AppEvent, AppSessionRatingReport, KimiEventConnection, ReadRequestOptions } from '../src/api/types';
 
@@ -89,7 +89,7 @@ it('submits feedback and attachments without tracing text or local filenames', a
   }
 });
 
-it('keeps feedback content out of tracing when the host returns an invalid response', async () => {
+it('keeps feedback content out of tracing when the server returns an invalid response', async () => {
   const restFailure = vi.fn();
   const restResponse = vi.fn();
   const api = new DaemonKimiWebApi({ origin: 'http://daemon.test', tracer: { restFailure, restResponse } });
@@ -125,7 +125,30 @@ it('opens daemon authentication only for server credentials and not Kimi login e
   }
 });
 
-describe('DaemonKimiWebApi lists across hosts', () => {
+it('reads system stats as a background request and maps GPU fields', async () => {
+  const request = vi.fn().mockResolvedValue(envelope({
+    cpu: { usage: 0.5, cores: 4, limited: true },
+    memory: { total: 8, used: 2, limited: true },
+    disk: { path: '/srv/app', total: 10, used: 4, available: 5 },
+    gpus: [{ index: 0, name: 'NVIDIA L4', memory_total: 24, memory_used: 12, utilization: 0.5 }],
+  }));
+  vi.stubGlobal('fetch', request);
+  try {
+    const stats = await createApi().getSystemStats('/srv/app', { background: true });
+
+    expect(request.mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/system/stats?path=%2Fsrv%2Fapp');
+    expect(stats).toEqual({
+      cpu: { usage: 0.5, cores: 4, limited: true },
+      memory: { total: 8, used: 2, limited: true },
+      disk: { path: '/srv/app', total: 10, used: 4, available: 5 },
+      gpus: [{ index: 0, name: 'NVIDIA L4', memoryTotal: 24, memoryUsed: 12, utilization: 0.5 }],
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+describe('DaemonKimiWebApi lists across devices', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
   });
@@ -134,38 +157,38 @@ describe('DaemonKimiWebApi lists across hosts', () => {
     vi.unstubAllGlobals();
   });
 
-  function hostAwareApi(includeHosts: boolean): DaemonKimiWebApi {
+  function deviceAwareApi(includeDevices: boolean): DaemonKimiWebApi {
     return new DaemonKimiWebApi({
       origin: 'http://daemon.test',
       identity: { clientId: 'web_test', clientName: 'test', clientVersion: '0.0.0', clientUiMode: 'test' },
-      includeHosts,
+      includeDevices,
     });
   }
 
-  it('asks this machine for every host and keeps the host the server named', async () => {
+  it('asks this machine for every device and keeps the device the server named', async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(envelope({
-        items: [{ id: 'wm_1', root: '/srv/app', name: 'app', kind: 'managed', additional_dirs: [], session_count: 0, host_id: 'dev' }],
+        items: [{ id: 'wm_1', root: '/srv/app', name: 'app', kind: 'managed', additional_dirs: [], session_count: 0, device_id: 'dev' }],
       }))
       .mockResolvedValueOnce(envelope({
-        items: [{ id: 's1', host_id: 'dev' }],
+        items: [{ id: 's1', device_id: 'dev' }],
         has_more: false,
         next_page_token: null,
         total: 1,
       }));
-    const api = hostAwareApi(true);
+    const api = deviceAwareApi(true);
 
     const workspaces = await api.listWorkspaces();
     const page = await api.listSessionIds({ pageSize: 10 });
 
-    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/workspaces?hosts=include');
-    expect(vi.mocked(fetch).mock.calls[1]?.[0]).toBe('http://daemon.test/api/v1/sessions?page_size=10&fields=id%2Carchived&hosts=include');
-    expect(workspaces[0]?.hostId).toBe('dev');
-    expect(page).toMatchObject({ items: [{ id: 's1', host_id: 'dev' }] });
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/workspaces?devices=include');
+    expect(vi.mocked(fetch).mock.calls[1]?.[0]).toBe('http://daemon.test/api/v1/sessions?page_size=10&fields=id%2Carchived&devices=include');
+    expect(workspaces[0]?.deviceId).toBe('dev');
+    expect(page).toMatchObject({ items: [{ id: 's1', device_id: 'dev' }] });
   });
 
-  it('lists every session of every host at once and finds a session on its host', async () => {
-    const wire = (id: string, hostId?: string) => ({
+  it('lists every session of every device at once and finds a session on its device', async () => {
+    const wire = (id: string, deviceId?: string) => ({
       id,
       title: id,
       created_at: '2026-01-01T00:00:00.000Z',
@@ -173,30 +196,30 @@ describe('DaemonKimiWebApi lists across hosts', () => {
       activity: 'idle',
       archived: false,
       cwd: '/srv/app',
-      ...(hostId === undefined ? {} : { host_id: hostId }),
+      ...(deviceId === undefined ? {} : { device_id: deviceId }),
     });
     vi.mocked(fetch)
-      .mockResolvedValueOnce(envelope({ items: [wire('s1', 'dev'), wire('s2')], has_more: false, unavailable_hosts: ['off'] }))
+      .mockResolvedValueOnce(envelope({ items: [wire('s1', 'dev'), wire('s2')], has_more: false, unavailable_devices: ['off'] }))
       .mockResolvedValueOnce(envelope({ items: [], has_more: false }))
       .mockResolvedValueOnce(envelope(wire('s1', 'dev')));
-    const api = hostAwareApi(true);
+    const api = deviceAwareApi(true);
 
     const page = await api.listSessions({ hasPrompt: true });
     await api.listSessions({ workspaceId: 'wm_1', pageSize: 20 });
     const found = await api.findSession('s1');
 
-    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/sessions?has_prompt=true&hosts=include');
-    expect(vi.mocked(fetch).mock.calls[1]?.[0]).toBe('http://daemon.test/api/v1/sessions?page_size=20&workspace_id=wm_1&hosts=include');
-    expect(vi.mocked(fetch).mock.calls[2]?.[0]).toBe('http://daemon.test/api/v1/sessions/s1?hosts=include');
-    expect(page.items.map((session) => [session.id, session.hostId])).toEqual([['s1', 'dev'], ['s2', undefined]]);
-    expect(page.unavailableHosts).toEqual(['off']);
-    expect(found.hostId).toBe('dev');
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/sessions?has_prompt=true&devices=include');
+    expect(vi.mocked(fetch).mock.calls[1]?.[0]).toBe('http://daemon.test/api/v1/sessions?page_size=20&workspace_id=wm_1&devices=include');
+    expect(vi.mocked(fetch).mock.calls[2]?.[0]).toBe('http://daemon.test/api/v1/sessions/s1?devices=include');
+    expect(page.items.map((session) => [session.id, session.deviceId])).toEqual([['s1', 'dev'], ['s2', undefined]]);
+    expect(page.unavailableDevices).toEqual(['off']);
+    expect(found.deviceId).toBe('dev');
   });
 
   it('searches only this machine when a session listing is local-only', async () => {
     vi.mocked(fetch).mockResolvedValue(envelope({ items: [], has_more: false }));
 
-    await hostAwareApi(true).listSessions({ query: 'login fix', pageSize: 50, localOnly: true });
+    await deviceAwareApi(true).listSessions({ query: 'login fix', pageSize: 50, localOnly: true });
 
     expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/sessions?page_size=50&query=login+fix');
   });
@@ -214,10 +237,10 @@ describe('DaemonKimiWebApi lists across hosts', () => {
       cwd: '/srv/app',
     }));
     vi.mocked(fetch)
-      .mockResolvedValueOnce(envelope({ hosts: [] }))
+      .mockResolvedValueOnce(envelope({ devices: [] }))
       .mockResolvedValueOnce(envelope({ items: sessions.slice(0, 5), has_more: true }))
       .mockResolvedValueOnce(envelope({ items: sessions.slice(5), has_more: false }));
-    const api = new HostRouter(hostAwareApi(true), () => hostAwareApi(false)).createApi();
+    const api = new DeviceRouter(deviceAwareApi(true), () => deviceAwareApi(false)).createApi();
 
     const request = { workspaceId: 'wm_1', pageSize: 5, hasPrompt: true };
     const first = await api.listSessions({ ...request, [cursor]: 's5' });
@@ -225,16 +248,16 @@ describe('DaemonKimiWebApi lists across hosts', () => {
     const next = await api.listSessions({ ...request, [cursor]: first.items.at(-1)?.id });
     expect(next).toMatchObject({ items: [{ id: 's11' }], hasMore: false });
     expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
-      'http://daemon.test/api/v1/hosts',
+      'http://daemon.test/api/v1/devices',
       `http://daemon.test/api/v1/sessions?${queryKey}=s5&page_size=5&workspace_id=wm_1&has_prompt=true`,
       `http://daemon.test/api/v1/sessions?${queryKey}=s10&page_size=5&workspace_id=wm_1&has_prompt=true`,
     ]);
   });
 
-  it('never asks a host to list other hosts', async () => {
+  it('never asks a device to list other devices', async () => {
     vi.mocked(fetch).mockResolvedValue(envelope({ items: [] }));
 
-    await hostAwareApi(false).listWorkspaces();
+    await deviceAwareApi(false).listWorkspaces();
 
     expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/workspaces');
   });
@@ -377,7 +400,7 @@ describe('DaemonKimiWebApi.workspaceTrust', () => {
   });
 });
 
-describe('DaemonKimiWebApi host management', () => {
+describe('DaemonKimiWebApi device management', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
   });
@@ -386,56 +409,100 @@ describe('DaemonKimiWebApi host management', () => {
     vi.unstubAllGlobals();
   });
 
-  it('lists hosts with their connection status', async () => {
+  it('lists devices with their connection status', async () => {
     vi.mocked(fetch).mockResolvedValue(envelope({
-      hosts: [{ id: 'devbox', host: 'dev@example.test', identity_file: '~/.ssh/id', name: 'Dev', status: 'disconnected', connect_error: 'refused', connect_failure: 'connection_refused' }],
+      devices: [
+        { id: 'devbox', connection: 'ssh', host: 'dev@example.test', identity_file: '~/.ssh/id', name: 'Dev', status: 'disconnected', connect_error: 'refused', connect_failure: 'connection_refused' },
+        { id: 'rc-laptop', connection: 'account', status: 'disconnected', connect_error: '"Laptop" is offline', connect_failure: 'offline', device_id: 'rc-laptop', platform: 'linux', alias: 'Laptop' },
+      ],
     }));
 
-    await expect(createApi().listHosts()).resolves.toEqual([{
-      id: 'devbox',
-      host: 'dev@example.test',
-      identityFile: '~/.ssh/id',
-      remoteBin: undefined,
-      name: 'Dev',
-      enabled: undefined,
-      status: 'disconnected',
-      remoteVersion: undefined,
-      connectError: 'refused',
-      connectFailure: 'connection_refused',
-    }]);
-    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/hosts');
+    await expect(createApi().listDevices()).resolves.toEqual([
+      {
+        id: 'devbox',
+        connection: 'ssh',
+        host: 'dev@example.test',
+        identityFile: '~/.ssh/id',
+        name: 'Dev',
+        status: 'disconnected',
+        connectError: 'refused',
+        connectFailure: 'connection_refused',
+      },
+      {
+        id: 'rc-laptop',
+        connection: 'account',
+        status: 'disconnected',
+        connectError: '"Laptop" is offline',
+        connectFailure: 'offline',
+        deviceId: 'rc-laptop',
+        platform: 'linux',
+        alias: 'Laptop',
+      },
+    ]);
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/devices');
   });
-  it('writes, deletes and connects one host by id', async () => {
-    vi.mocked(fetch).mockImplementation(async () => envelope({ ok: true, id: 'dev box', host: 'dev@example.test', status: 'ready' }));
+  it('writes, deletes and connects one device by id', async () => {
+    vi.mocked(fetch).mockImplementation(async () => envelope({ ok: true, id: 'dev box', connection: 'ssh', host: 'dev@example.test', status: 'ready' }));
     const api = createApi();
 
-    await api.putHost('dev box', { host: 'dev@example.test', remoteBin: '/opt/kimi', enabled: false });
-    await api.deleteHost('dev box');
-    await expect(api.connectHost('dev box')).resolves.toMatchObject({ id: 'dev box', status: 'ready' });
+    await api.putDevice('dev box', { connection: 'ssh', host: 'dev@example.test', remoteBin: '/opt/kimi', enabled: false });
+    await api.putDevice('rc-laptop', { connection: 'account' });
+    await api.deleteDevice('dev box');
+    await expect(api.connectDevice('dev box')).resolves.toMatchObject({ id: 'dev box', connection: 'ssh', status: 'ready' });
 
     const calls = vi.mocked(fetch).mock.calls;
     expect(calls.map(([url, init]) => [url, init?.method])).toEqual([
-      ['http://daemon.test/api/v1/hosts/dev%20box', 'PUT'],
-      ['http://daemon.test/api/v1/hosts/dev%20box', 'DELETE'],
-      ['http://daemon.test/api/v1/hosts:connect', 'POST'],
+      ['http://daemon.test/api/v1/devices/dev%20box', 'PUT'],
+      ['http://daemon.test/api/v1/devices/rc-laptop', 'PUT'],
+      ['http://daemon.test/api/v1/devices/dev%20box', 'DELETE'],
+      ['http://daemon.test/api/v1/devices:connect', 'POST'],
     ]);
-    expect(JSON.parse(calls[0]![1]?.body as string)).toEqual({ host: 'dev@example.test', remote_bin: '/opt/kimi', enabled: false });
-    expect(JSON.parse(calls[2]![1]?.body as string)).toEqual({ id: 'dev box' });
+    expect(JSON.parse(calls[0]![1]?.body as string)).toEqual({ connection: 'ssh', host: 'dev@example.test', remote_bin: '/opt/kimi', enabled: false });
+    expect(JSON.parse(calls[1]![1]?.body as string)).toEqual({ connection: 'account' });
+    expect(JSON.parse(calls[3]![1]?.body as string)).toEqual({ id: 'dev box' });
+  });
+
+  it('starts a remote upgrade by id and maps how far an upgrade got', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(envelope({ status: 'update_on_device', message: 'Desktop installs update themselves' }))
+      .mockResolvedValueOnce(envelope({
+        devices: [{
+          id: 'devbox',
+          connection: 'ssh',
+          host: 'dev@example.test',
+          status: 'disconnected',
+          connect_failure: 'outdated',
+          install: 'cli',
+          remote_upgrade: true,
+          upgrade_status: 'failed',
+          upgrade_error: 'download failed',
+        }],
+      }));
+    const api = createApi();
+
+    await expect(api.upgradeDevice('dev box')).resolves.toEqual({ status: 'update_on_device', message: 'Desktop installs update themselves' });
+    await expect(api.listDevices()).resolves.toEqual([
+      expect.objectContaining({ install: 'cli', remoteUpgrade: true, upgradeStatus: 'failed', upgradeError: 'download failed' }),
+    ]);
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(url).toBe('http://daemon.test/api/v1/devices:upgrade');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(init?.body as string)).toEqual({ id: 'dev box' });
   });
 
   it('reports a failed connection test as a result and forwards its abort signal', async () => {
     vi.mocked(fetch).mockResolvedValue(envelope({ connected: false, connect_error: 'Permission denied', connect_failure: 'authentication_failed' }));
     const controller = new AbortController();
 
-    await expect(createApi().testHost({ host: 'dev@example.test', identityFile: '~/.ssh/id' }, { signal: controller.signal })).resolves.toEqual({
+    await expect(createApi().testDevice({ connection: 'ssh', host: 'dev@example.test', identityFile: '~/.ssh/id' }, { signal: controller.signal })).resolves.toEqual({
       connected: false,
       remoteVersion: undefined,
       connectError: 'Permission denied',
       connectFailure: 'authentication_failed',
     });
     const [url, init] = vi.mocked(fetch).mock.calls[0]!;
-    expect(url).toBe('http://daemon.test/api/v1/hosts:test');
-    expect(JSON.parse(init?.body as string)).toEqual({ host: 'dev@example.test', identity_file: '~/.ssh/id' });
+    expect(url).toBe('http://daemon.test/api/v1/devices:test');
+    expect(JSON.parse(init?.body as string)).toEqual({ connection: 'ssh', host: 'dev@example.test', identity_file: '~/.ssh/id' });
     expect(init?.signal?.aborted).toBe(false);
     controller.abort();
     expect(init?.signal?.aborted).toBe(true);
@@ -448,24 +515,24 @@ describe('DaemonKimiWebApi host management', () => {
       hosts: [{ alias: 'devbox', host_name: 'dev.example.test', user: 'me', port: 2222 }],
     }));
 
-    await expect(createApi().listHostSshConfig()).resolves.toEqual({
+    await expect(createApi().listDeviceSshConfig()).resolves.toEqual({
       configPath: '/home/me/.ssh/config',
       exists: true,
       hosts: [{ alias: 'devbox', hostName: 'dev.example.test', user: 'me', port: 2222 }],
     });
-    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/hosts:ssh-hosts');
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/devices:ssh-hosts');
   });
 
-  it('copies custom providers to a host by id', async () => {
+  it('copies custom providers to a device by id', async () => {
     vi.mocked(fetch).mockResolvedValue(envelope({
       providers: ['gateway', 'backup'],
     }));
 
-    await expect(createApi().copyProvidersToHost('devbox')).resolves.toEqual({
+    await expect(createApi().copyProvidersToDevice('devbox')).resolves.toEqual({
       providers: ['gateway', 'backup'],
     });
     const [url, init] = vi.mocked(fetch).mock.calls[0]!;
-    expect(url).toBe('http://daemon.test/api/v1/hosts:copy-providers');
+    expect(url).toBe('http://daemon.test/api/v1/devices:copy-providers');
     expect(init?.method).toBe('POST');
     expect(JSON.parse(init?.body as string)).toEqual({ id: 'devbox' });
   });

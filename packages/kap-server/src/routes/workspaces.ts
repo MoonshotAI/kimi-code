@@ -33,7 +33,7 @@ import {
   workspaceTrustResponseSchema,
 } from '../protocol/rest-workspace';
 import type { Workspace as WorkspaceWire } from '../protocol/workspace';
-import { collectFromHosts, hostProjects, type HostSources } from '../services/hosts/hostFanout';
+import { collectFromDevices, deviceProjects, type DeviceSources } from '../services/devices/deviceFanout';
 
 interface WorkspaceRouteHost {
   get(
@@ -73,7 +73,7 @@ interface WorkspaceRouteHost {
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 const duplicateDirDetailsSchema = z.array(z.object({ path: z.string(), directory: z.string() }));
 
-export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, hosts?: HostSources): void {
+export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, devices?: DeviceSources): void {
   const listRoute = defineRoute(
     {
       method: 'GET',
@@ -81,17 +81,17 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
       querystring: listWorkspacesQuerySchema,
       success: { data: listWorkspacesResponseSchema },
       description:
-        'List registered workspaces. hosts=include adds the projects created on each SSH host, tagged with host_id',
+        'List registered workspaces. devices=include adds the projects created on each device, tagged with device_id',
       tags: ['workspaces'],
     },
     async (req, reply) => {
       const items = await core.accessor.get(IWorkspaceService).list();
       const projected = await Promise.all(items.map((ws) => toWireWorkspace(core, ws)));
-      if (req.query.hosts !== 'include' || hosts === undefined) {
+      if (req.query.devices !== 'include' || devices === undefined) {
         reply.send(okEnvelope({ items: projected }, req.id));
         return;
       }
-      const remote = await collectFromHosts(hosts, (session) => hostProjects<WorkspaceWire>(session));
+      const remote = await collectFromDevices(devices, (session) => deviceProjects<WorkspaceWire>(session));
       reply.send(
         okEnvelope({ items: [...projected, ...remote.items] }, req.id),
       );

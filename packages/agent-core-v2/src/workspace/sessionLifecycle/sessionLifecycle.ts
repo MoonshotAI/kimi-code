@@ -3,6 +3,7 @@ import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { type Event, type IWaitUntil } from '#/_base/event';
 import type { BindAgentInput } from '#/agent/profile/profile';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
+import type { SessionClientIdentity } from '#/session/clientIdentity/sessionClientIdentity';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 export type SessionCreateSource = 'startup' | 'resume' | 'reclaimed' | 'fork';
@@ -18,6 +19,7 @@ export interface CreateSessionOptions {
   readonly environmentId?: string;
   readonly environmentCwd?: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  readonly clientIdentity?: SessionClientIdentity;
   readonly prepare?: (session: ISessionScopeHandle) => Promise<void>;
 }
 

@@ -15,6 +15,8 @@ export const metaCapabilitiesSchema = z.object({
   session_wait: z.literal(true),
   agent_close: z.literal(true),
   session_continue: z.literal(true),
+  system_upgrade: z.literal(true).optional(),
+  system_stats: z.literal(true),
 });
 
 export type MetaCapabilities = z.infer<typeof metaCapabilitiesSchema>;
@@ -39,6 +41,8 @@ export const metaResponseSchema = z.object({
   kimi_agent_protocol_version: z.string().min(1),
   server_version: z.string().min(1),
   product: z.string().min(1).optional(),
+  device_id: z.string().min(1),
+  device_api_level: z.number().int(),
   capabilities: metaCapabilitiesSchema,
   server_id: z.string().min(1),
   started_at: isoDateTimeSchema,

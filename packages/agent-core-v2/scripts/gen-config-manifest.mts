@@ -131,6 +131,16 @@ function renderFieldComments(
   return lines;
 }
 
+function objectShapes(schema: unknown, root: JsonSchema): Record<string, unknown>[] {
+  const resolved = asJsonSchema(schema);
+  const members = resolved?.oneOf ?? resolved?.anyOf;
+  const candidates = Array.isArray(members) ? members : [schema];
+  const shapes = candidates.map((member) => asJsonSchema(resolveRef(member, root))?.properties);
+  return shapes.every((shape) => isRecord(shape) && Object.keys(shape).length > 0)
+    ? (shapes as Record<string, unknown>[])
+    : [];
+}
+
 function renderBody(section: ConfigSectionContribution): string[] {
   const { domain, schema, options } = section;
   const key = camelToSnake(domain);
@@ -184,13 +194,15 @@ function renderBody(section: ConfigSectionContribution): string[] {
 
   if (jsonSchema.additionalProperties !== undefined) {
     const valueSchema = resolveRef(jsonSchema.additionalProperties, jsonSchema);
-    const valueProps = asJsonSchema(valueSchema)?.properties;
+    const shapes = objectShapes(valueSchema, jsonSchema);
     const lines = [`[${key}]`];
-    if (isRecord(valueProps) && Object.keys(valueProps).length > 0) {
+    if (shapes.length > 0) {
       lines.push('');
-      lines.push(`# one [${key}."<name>"] table per entry:`);
-      lines.push(`# [${key}."<name>"]`);
-      lines.push(...renderFieldComments(valueProps, jsonSchema, '  '));
+      lines.push(`# one [${key}."<name>"] table per entry${shapes.length > 1 ? ', in one of these shapes' : ''}:`);
+      for (const shape of shapes) {
+        lines.push(`# [${key}."<name>"]`);
+        lines.push(...renderFieldComments(shape, jsonSchema, '  '));
+      }
     } else {
       lines.push(`# <name>: ${describeType(valueSchema)}`);
     }

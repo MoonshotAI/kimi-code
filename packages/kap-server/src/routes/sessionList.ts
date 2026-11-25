@@ -36,9 +36,9 @@ import {
 import type { Session, SessionActivity, SessionGit } from '../protocol/session';
 import { loadWorkspaceVisibility } from '../services/workspaceVisibility';
 import { withTimeout } from '../transport/errors';
-import type { HostSources } from '../services/hosts/hostFanout';
+import type { DeviceSources } from '../services/devices/deviceFanout';
 import { resolveSessionFacts, toWireSession, type SessionFacts } from './sessions';
-import { listAllSessionsAcrossHosts, listSessionsAcrossHosts, type SessionsListOutcome } from './sessionsAcrossHosts';
+import { listAllSessionsAcrossDevices, listSessionsAcrossDevices, type SessionsListOutcome } from './sessionsAcrossDevices';
 
 type SessionListRouteHost = GetRouteHost & PostRouteHost;
 
@@ -298,7 +298,7 @@ async function runBatchArchive(
 async function listSessionsHere(
   core: Scope,
   gitResolver: GitDomainResolver,
-  raw: Omit<ListSessionsQuery, 'hosts'>,
+  raw: Omit<ListSessionsQuery, 'devices'>,
 ): Promise<SessionsListOutcome> {
       const text = raw.query?.trim().toLowerCase();
       const query: NormalizedQuery = {
@@ -572,7 +572,7 @@ async function listSessionsHere(
 export function registerSessionListAndBatchRoutes(
   app: SessionListRouteHost,
   core: Scope,
-  hosts?: HostSources,
+  devices?: DeviceSources,
 ): void {
   const gitResolver = new GitDomainResolver(core);
   const listRoute = defineRoute(
@@ -584,20 +584,20 @@ export function registerSessionListAndBatchRoutes(
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.PAGE_TOKEN_MISMATCH]: {},
-        [ErrorCode.HOST_UNAVAILABLE]: {},
+        [ErrorCode.DEVICE_UNAVAILABLE]: {},
       },
       description:
-        "List sessions with filtering (query matches title or last prompt as a case-insensitive substring, or an exact session id), sorting, optional workspace grouping (view=by_workspace), optional git branch/PR metadata (include=git), or lightweight id projection (fields=id,archived; page_size ceiling relaxed to 10000). Paginate with page_token, 1-based page, or flat before_id/after_id cursors. hosts=include merges sessions from the app-created projects on every SSH host.",
+        "List sessions with filtering (query matches title or last prompt as a case-insensitive substring, or an exact session id), sorting, optional workspace grouping (view=by_workspace), optional git branch/PR metadata (include=git), or lightweight id projection (fields=id,archived; page_size ceiling relaxed to 10000). Paginate with page_token, 1-based page, or flat before_id/after_id cursors. devices=include merges sessions from the app-created projects on every device.",
       tags: ['sessions'],
     },
     async (req, reply) => {
       const raw = req.query;
-      const { hosts: includeHosts, ...query } = raw;
-      const local = (next: Omit<ListSessionsQuery, 'hosts'>) => listSessionsHere(core, gitResolver, next);
-      const outcome = includeHosts === 'include' && hosts !== undefined
+      const { devices: includeDevices, ...query } = raw;
+      const local = (next: Omit<ListSessionsQuery, 'devices'>) => listSessionsHere(core, gitResolver, next);
+      const outcome = includeDevices === 'include' && devices !== undefined
         ? raw.view !== 'by_workspace' && raw.page_size === undefined && raw.page_token === undefined && raw.page === undefined && raw.before_id === undefined && raw.after_id === undefined
-          ? await listAllSessionsAcrossHosts(query, hosts, local)
-          : await listSessionsAcrossHosts(raw, hosts, local)
+          ? await listAllSessionsAcrossDevices(query, devices, local)
+          : await listSessionsAcrossDevices(raw, devices, local)
         : await local(query);
       reply.send(outcome.ok ? okEnvelope(outcome.data, req.id) : errEnvelope(outcome.code, outcome.message, req.id));
     },

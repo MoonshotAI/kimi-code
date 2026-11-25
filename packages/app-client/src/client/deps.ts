@@ -1,7 +1,7 @@
 import { destroyPanelContext, destroyPanelWorkspace } from '../panel/panelPersistence';
 import { resetObservationScopes, sessionReadScope, workspaceReadScope } from './observationScope';
 
-import type { AppEvent, HostRoutingControls, KimiWebApi } from '@moonshot-ai/app-core/api';
+import type { AppEvent, DeviceRoutingControls, KimiWebApi } from '@moonshot-ai/app-core/api';
 import type { Translator } from '@moonshot-ai/app-core/contracts';
 
 export type SessionCreatedSource =
@@ -61,16 +61,16 @@ export function getKimiWebApi(): KimiWebApi {
   return lazyApi;
 }
 
-function hostRouting(): Partial<HostRoutingControls> {
+function deviceRouting(): Partial<DeviceRoutingControls> {
   if (cell.current === defaultDeps || cell.current.api === defaultDeps.api) return {};
-  return (cell.current.api() as Partial<HostRoutingControls> | undefined) ?? {};
+  return (cell.current.api() as Partial<DeviceRoutingControls> | undefined) ?? {};
 }
 
-export function getDeviceApi(hostId: string | undefined): KimiWebApi {
-  const deviceApi = hostRouting().deviceApi;
-  if (deviceApi !== undefined) return deviceApi(hostId);
-  if (hostId === undefined) return getKimiWebApi();
-  throw new Error(`SSH host "${hostId}" is unavailable without host routing`);
+export function getDeviceApi(deviceId: string | undefined): KimiWebApi {
+  const deviceApi = deviceRouting().deviceApi;
+  if (deviceApi !== undefined) return deviceApi(deviceId);
+  if (deviceId === undefined) return getKimiWebApi();
+  throw new Error(`Device "${deviceId}" is unavailable without device routing`);
 }
 
 export function t(key: string, params?: Record<string, unknown>): string {

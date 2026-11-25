@@ -2,7 +2,7 @@
 export { DaemonKimiWebApi } from './daemon/client';
 export type { DaemonKimiWebApiOptions } from './daemon/client';
 export { createKimiWebApi } from './createKimiWebApi';
-export type { HostRoutingControls } from './hostRouting';
+export type { DeviceRoutingControls } from './deviceRouting';
 export type { CreateKimiWebApiDeps } from './createKimiWebApi';
 export { DaemonHttpClient, KIMI_AUTH_REQUIRED_CODE, KIMI_AUTH_REJECTED_CODE, SERVER_AUTH_UNAUTHORIZED_CODE } from './daemon/http';
 export type { DaemonHttpClientOptions } from './daemon/http';

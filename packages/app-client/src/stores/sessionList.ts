@@ -16,7 +16,7 @@ import { logWarn, workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { getKimiWebApi, t } from '../client/deps';
 import { clientPinia } from './pinia';
 import { configStore } from './config';
-import { hostsStore } from './hosts';
+import { devicesStore } from './devices';
 import { sessionsStore } from './sessions';
 import { sessionRatingStore } from './sessionRating';
 import { connectionStore } from './connection';
@@ -407,7 +407,7 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
     const page = await getKimiWebApi().listSessions({ hasPrompt: true });
     return {
       sessions: page.items.map(withFallbackSessionTitle),
-      complete: (page.unavailableHosts?.length ?? 0) === 0,
+      complete: (page.unavailableDevices?.length ?? 0) === 0,
     };
   }
 
@@ -990,7 +990,7 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
 
   async function loadFirstWorkspacePage(workspaceId: string): Promise<boolean> {
     const wsStore = workspacesStore();
-    const initialHostId = wsStore.workspaces.find((w) => w.id === workspaceId)?.hostId;
+    const initialDeviceId = wsStore.workspaces.find((w) => w.id === workspaceId)?.deviceId;
     try {
       const page = await getKimiWebApi().listSessions({
         workspaceId,
@@ -998,9 +998,9 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
         hasPrompt: true,
       });
       if (
-        initialHostId !== undefined &&
-        (hostsStore().unavailable(initialHostId) ||
-          wsStore.workspaces.find((w) => w.id === workspaceId)?.hostId !== initialHostId)
+        initialDeviceId !== undefined &&
+        (devicesStore().unavailable(initialDeviceId) ||
+          wsStore.workspaces.find((w) => w.id === workspaceId)?.deviceId !== initialDeviceId)
       ) {
         return false;
       }
@@ -1022,7 +1022,7 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
           [
             ...sessionsStore().sessions.map((s) => {
               const next = updatedById.get(s.id);
-              return next === undefined ? s : { ...s, hostId: next.hostId ?? s.hostId };
+              return next === undefined ? s : { ...s, deviceId: next.deviceId ?? s.deviceId };
             }),
             ...fresh,
           ].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
@@ -1040,12 +1040,12 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
     }
   }
 
-  function removeHostSessions(hostIds: readonly string[], workspaceIds: readonly string[] = []): string[] {
-    if (hostIds.length === 0 && workspaceIds.length === 0) return [];
-    const hostSet = new Set(hostIds);
+  function removeDeviceSessions(deviceIds: readonly string[], workspaceIds: readonly string[] = []): string[] {
+    if (deviceIds.length === 0 && workspaceIds.length === 0) return [];
+    const deviceSet = new Set(deviceIds);
     const workspaceSet = new Set(workspaceIds);
     const matches = (s: AppSession): boolean =>
-      (s.hostId !== undefined && hostSet.has(s.hostId)) ||
+      (s.deviceId !== undefined && deviceSet.has(s.deviceId)) ||
       (s.workspaceId !== undefined && workspaceSet.has(s.workspaceId));
     const removedIds = new Set<string>();
     const keptSessions: AppSession[] = [];
@@ -1218,7 +1218,7 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
     loadAllSessions,
     backfillWorkspaceSessions,
     loadFirstWorkspacePage,
-    removeHostSessions,
+    removeDeviceSessions,
     fetchFlatSessionsFirstPage,
     notePoolInsert,
     clearPoolInserts,

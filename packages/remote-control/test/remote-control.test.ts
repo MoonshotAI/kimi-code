@@ -13,6 +13,7 @@ import {
   KIMI_CODE_PROVIDER_NAME,
   resolveKimiCodeOAuthRef,
   resolveKimiTokenStorageName,
+  type KimiOAuthTokenRef,
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -26,10 +27,11 @@ import {
   resolveRemoteControlRelayOrigin,
   rewriteRemoteControlResponse,
   startRemoteControl,
+  unixSocketOrigin,
   type HttpTunnelLimits,
   type RemoteControlHandle,
 } from '../src/remote-control';
-import { RemoteControlDeviceClient } from '../src/device-client';
+import { RemoteControlDeviceClient, RemoteControlLoginRequiredError } from '../src/device-client';
 import { remoteControlLockPath } from '../src/lock';
 import { createRemoteControlManager } from '../src/manager';
 
@@ -703,6 +705,85 @@ describe('Remote Control tunnel', () => {
     expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
   });
 
+  it('requires a local server token for TCP origins before acquiring the instance lock', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    for (const localServerToken of [undefined, '', () => '']) {
+      await expect(
+        startRemoteControl({
+          homeDir,
+          localOrigin: 'http://127.0.0.1:1',
+          localServerToken,
+          clientVersion: CLIENT_VERSION,
+          urlSource: 'kimi_code_cli',
+          relayOrigin: 'http://127.0.0.1:1/coding-relay',
+          stderr: { write: () => true },
+        }),
+      ).rejects.toThrow('Remote Control requires local server authentication.');
+    }
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+  });
+
+  it('forwards HTTP and WebSocket streams to a Unix socket server without local credentials', async () => {
+    const scenario = await startTunnelScenario({ localSocket: true });
+
+    expect(
+      (scenario.registrations[0] as { payload?: Record<string, unknown> }).payload?.['local_base_url'],
+    ).toBe('http://localhost');
+    const lock = JSON.parse(await readFile(remoteControlLockPath(scenario.homeDir), 'utf8')) as {
+      local_origin?: string;
+    };
+    expect(lock.local_origin).toBe(scenario.localOrigin);
+    expect(scenario.localOrigin).toMatch(/^unix:\/.+\.sock$/);
+
+    const responsePromise = nextJsonMessage(scenario.httpConnections[0]!);
+    scenario.httpConnections[0]!.send(tunnelRequestFrame('request-unix', probeRawRequest(), true));
+    const response = frameBody(await responsePromise).toString();
+    expect(response).toContain('HTTP/1.1 200 OK');
+    expect(response).toContain(`/coding-relay/devices/${scenario.handle.deviceId}/boot.js`);
+    expect(scenario.state.localHttpRequest?.headers.host).toBe('localhost');
+    expect(scenario.state.localHttpRequest?.headers.authorization).toBeUndefined();
+    expect(scenario.state.localHttpRequest?.headers.cookie).toBeUndefined();
+    expect(scenario.state.localHttpRequest?.headers['x-keep']).toBe('yes');
+
+    const uploadBody = Buffer.alloc(96 * 1024, 0x75);
+    const uploadResponsePromise = nextJsonMessage(scenario.httpConnections[0]!);
+    scenario.httpConnections[0]!.send(
+      tunnelRequestFrame(
+        'request-unix-upload',
+        Buffer.concat([
+          Buffer.from(
+            `POST /upload-unix HTTP/1.1\r\nHost: relay.test\r\nContent-Length: ${uploadBody.length}\r\n\r\n`,
+          ),
+          uploadBody,
+        ]),
+        true,
+      ),
+    );
+    expect(frameBody(await uploadResponsePromise).toString()).toContain('HTTP/1.1 200 OK');
+    expect(scenario.uploadBodyBytes.get('/upload-unix')).toBe(uploadBody.length);
+
+    const wsPath = '/api/v1/ws?since=2026-01-01T00:00:00Z';
+    scenario.managementConnections[0]!.send(
+      JSON.stringify({
+        type: 'open_ws',
+        payload: { stream_id: 'stream-unix', path: wsPath, headers: { 'X-Keep': 'yes' } },
+      }),
+    );
+    await waitFor(() => scenario.streamConnections.length === 1 && scenario.state.localWs !== undefined);
+    expect(scenario.state.localWsRequest?.url).toBe(wsPath);
+    expect(scenario.state.localWsRequest?.headers.host).toBe('localhost');
+    expect(scenario.state.localWsRequest?.headers['sec-websocket-protocol']).toBeUndefined();
+    expect(scenario.state.localWsRequest?.headers.authorization).toBeUndefined();
+    expect(scenario.state.localWsRequest?.headers['x-keep']).toBe('yes');
+    await waitFor(() => scenario.streamMessages.includes('server-hello-frame'));
+    const localMessage = nextTextMessage(scenario.state.localWs!);
+    scenario.streamConnections[0]!.send('from-relay');
+    await expect(localMessage).resolves.toBe('from-relay');
+    const relayMessage = nextTextMessage(scenario.streamConnections[0]!);
+    scenario.state.localWs!.send('from-local');
+    await expect(relayMessage).resolves.toBe('from-local');
+  });
+
   it('aborts in-flight requests without breaking the tunnel', async () => {
     const scenario = await startTunnelScenario();
 
@@ -1295,6 +1376,128 @@ describe('Remote Control device client', () => {
     expect(deviceCookies).toEqual(['rc_session=1', 'rc_session=2']);
   });
 
+  it('shares the cached relay session with device operations and re-exchanges on refresh', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    let exchanges = 0;
+    const deviceCookies: Array<string | undefined> = [];
+    const server = createServer((request, response) => {
+      const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+      if (pathname === '/coding-relay/auth/exchange') {
+        exchanges += 1;
+        response.writeHead(204, { 'Set-Cookie': `rc_session=${exchanges}; Path=/; HttpOnly` });
+        response.end();
+        return;
+      }
+      deviceCookies.push(
+        Array.isArray(request.headers.cookie) ? request.headers.cookie[0] : request.headers.cookie,
+      );
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ devices: [] }));
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}/coding-relay/`,
+    });
+    const relayOrigin = `http://127.0.0.1:${port}/coding-relay`;
+
+    await expect(client.relayAccess()).resolves.toEqual({ relayOrigin, cookie: 'rc_session=1' });
+    await client.listDevices();
+    await expect(client.relayAccess()).resolves.toEqual({ relayOrigin, cookie: 'rc_session=1' });
+    await expect(client.relayAccess(true)).resolves.toEqual({ relayOrigin, cookie: 'rc_session=2' });
+    await client.listDevices();
+
+    expect(exchanges).toBe(2);
+    expect(deviceCookies).toEqual(['rc_session=1', 'rc_session=2']);
+  });
+
+  it('reports a missing Kimi login as a login-required error', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-device-signed-out-'));
+    cleanups.push(() => {
+      rmSync(homeDir, { recursive: true, force: true });
+    });
+    const client = new RemoteControlDeviceClient({ homeDir, relayOrigin: 'http://127.0.0.1:1' });
+
+    await expect(client.relayAccess()).rejects.toBeInstanceOf(RemoteControlLoginRequiredError);
+    await expect(client.listDevices()).rejects.toThrow('Remote Control requires a Kimi login.');
+  });
+
+  it('refreshes the Kimi token before exchanging it for a relay session', async () => {
+    const homeDir = await createRemoteControlHome('stale-refresh');
+    const exchanged: unknown[] = [];
+    const server = createServer((request, response) => {
+      const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+      if (pathname === '/auth/exchange') {
+        let body = '';
+        request.on('data', (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        request.on('end', () => {
+          exchanged.push(JSON.parse(body));
+          response.writeHead(204, { 'Set-Cookie': 'rc_session=1; Path=/; HttpOnly' });
+          response.end();
+        });
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ devices: [] }));
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const refreshes: KimiOAuthTokenRef[] = [];
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}`,
+      refreshToken: async (oauthRef) => {
+        refreshes.push(oauthRef);
+        await new FileTokenStorage(join(homeDir, 'credentials')).save(
+          resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
+          { ...TOKEN, accessToken: 'fresh-access', refreshToken: 'fresh-refresh' },
+        );
+      },
+    });
+
+    await client.listDevices();
+
+    expect(refreshes).toHaveLength(1);
+    expect(exchanged).toEqual([
+      expect.objectContaining({ access_token: 'fresh-access', refresh_token: 'fresh-refresh' }),
+    ]);
+  });
+
+  it('exchanges the stored token when refreshing it fails', async () => {
+    const homeDir = await createRemoteControlHome('stored-refresh');
+    const exchanged: unknown[] = [];
+    const server = createServer((request, response) => {
+      let body = '';
+      request.on('data', (chunk: Buffer) => {
+        body += chunk.toString();
+      });
+      request.on('end', () => {
+        if (new URL(request.url ?? '', 'http://relay.test').pathname === '/auth/exchange') {
+          exchanged.push(JSON.parse(body));
+          response.writeHead(204, { 'Set-Cookie': 'rc_session=1; Path=/; HttpOnly' });
+          response.end();
+          return;
+        }
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ devices: [] }));
+      });
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}`,
+      refreshToken: () => Promise.reject(new Error('token endpoint unreachable')),
+    });
+
+    await client.listDevices();
+
+    expect(exchanged).toEqual([expect.objectContaining({ refresh_token: 'stored-refresh' })]);
+  });
+
   it('does not retry more than once after re-exchange', async () => {
     const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
     let exchanges = 0;
@@ -1872,6 +2075,8 @@ interface TunnelScenarioState {
 
 interface TunnelScenario {
   handle: RemoteControlHandle;
+  homeDir: string;
+  localOrigin: string;
   registrations: unknown[];
   httpCapabilities: Array<string | null>;
   managementConnections: WebSocket[];
@@ -1899,6 +2104,7 @@ async function startTunnelScenario(
   options: {
     limits?: Partial<HttpTunnelLimits>;
     localServerToken?: string | (() => string);
+    localSocket?: boolean;
     bigBytes?: number;
     alignedResponseBytes?: number;
     earlyHttpProbe?: string;
@@ -2011,7 +2217,16 @@ async function startTunnelScenario(
       localWsServer.emit('connection', ws, request),
     );
   });
-  const localPort = await listen(localServer);
+  let localOrigin: string;
+  if (options.localSocket === true) {
+    const socketDir = mkdtempSync(join(tmpdir(), 'kimi-rc-sock-'));
+    cleanups.push(() => rmSync(socketDir, { recursive: true, force: true }));
+    const socketPath = join(socketDir, 'daemon.sock');
+    await new Promise<void>((resolve) => localServer.listen(socketPath, resolve));
+    localOrigin = unixSocketOrigin(socketPath);
+  } else {
+    localOrigin = `http://127.0.0.1:${await listen(localServer)}`;
+  }
   cleanups.push(() => closeServer(localServer));
 
   const managementServer = new WebSocketServer({ noServer: true });
@@ -2076,8 +2291,11 @@ async function startTunnelScenario(
   let logs = '';
   handle = await startRemoteControl({
     homeDir,
-    localOrigin: `http://127.0.0.1:${localPort}`,
-    localServerToken: options.localServerToken ?? 'local-server-token',
+    localOrigin,
+    localServerToken:
+      options.localSocket === true
+        ? options.localServerToken
+        : (options.localServerToken ?? 'local-server-token'),
     clientVersion: CLIENT_VERSION,
     urlSource: 'kimi_code_cli',
     relayOrigin: `http://127.0.0.1:${relayPort}/coding-relay`,
@@ -2087,6 +2305,8 @@ async function startTunnelScenario(
 
   return {
     handle,
+    homeDir,
+    localOrigin,
     get logs() {
       return logs;
     },

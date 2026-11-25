@@ -47,7 +47,7 @@ export function showFeedbackReceipt(
   attachments: readonly FeedbackAttachment[],
   signal: AbortSignal,
   handleLoginError: (error: unknown, sessionId?: string) => boolean,
-  globalFeedback?: { hostId?: string; authorizeSession?: () => Promise<AbortSignal | undefined> },
+  globalFeedback?: { deviceId?: string; authorizeSession?: () => Promise<AbortSignal | undefined> },
 ): void {
   showFeedbackToast({
     variant: 'success',
@@ -66,15 +66,15 @@ export function showFeedbackReceipt(
         if (item.kind === 'session') {
           let uploadSignal = signal;
           if (globalFeedback?.authorizeSession !== undefined) {
-            const host = await globalFeedback.authorizeSession();
-            if (host === undefined) {
+            const deviceSignal = await globalFeedback.authorizeSession();
+            if (deviceSignal === undefined) {
               failed.push(item);
               continue;
             }
-            uploadSignal = AbortSignal.any([signal, host]);
+            uploadSignal = AbortSignal.any([signal, deviceSignal]);
           }
           uploadSignal.throwIfAborted();
-          await api.uploadFeedbackSession(feedbackId, item.sessionId, uploadSignal, globalFeedback && { hostId: globalFeedback.hostId });
+          await api.uploadFeedbackSession(feedbackId, item.sessionId, uploadSignal, globalFeedback && { deviceId: globalFeedback.deviceId });
         } else {
           const file = item.kind === 'media' ? item.file : (diagnostics ??= await collectFeedbackDiagnostics());
           signal.throwIfAborted();

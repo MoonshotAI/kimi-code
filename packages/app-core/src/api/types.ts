@@ -94,7 +94,7 @@ export interface AppSession {
   workspaceId?: string;
   parentSessionId?: string;
   pullRequest?: { number: number; state: 'open' | 'closed' | 'merged'; url: string } | null;
-  hostId?: string;
+  deviceId?: string;
 }
 
 export type SessionActivity = 'idle' | 'turn' | 'background';
@@ -152,7 +152,7 @@ export interface ListSessionsInput extends PageRequest {
 export interface SessionsPage extends Page<AppSession> {
   nextPageToken: string | null;
   total: number;
-  unavailableHosts?: string[];
+  unavailableDevices?: string[];
 }
 
 export interface SessionGroup {
@@ -166,7 +166,7 @@ export interface SessionGroupsPage {
   hasMore: boolean;
   nextPageToken: string | null;
   total: number;
-  unavailableHosts?: string[];
+  unavailableDevices?: string[];
 }
 
 export interface ListSessionGroupsInput {
@@ -186,7 +186,7 @@ export interface ListSessionGroupsInput {
 export interface SessionIdProjection {
   id: string;
   archived: boolean;
-  host_id?: string;
+  device_id?: string;
 }
 
 export interface ListSessionIdsInput {
@@ -208,7 +208,7 @@ export interface SessionIdsPage {
   hasMore: boolean;
   nextPageToken: string | null;
   total: number;
-  unavailableHosts?: string[];
+  unavailableDevices?: string[];
 }
 
 export interface BatchSessionResult {
@@ -226,7 +226,7 @@ export interface BatchSessionResponse {
 export interface AppWorkspace {
   id: string;
   root: string;
-  hostId?: string;
+  deviceId?: string;
   name: string;
   kind: 'managed' | 'implicit';
   additionalDirs: string[];
@@ -584,7 +584,7 @@ export type AppEvent =
   | { type: 'configChanged'; changedFields: string[]; config: AppConfig; warnings?: readonly { domain?: string; message: string }[] }
   | { type: 'pluginsChanged' }
   | { type: 'capabilityChanged'; capabilityId: string; install: AppCapabilityInstallProgress }
-  | { type: 'hostsChanged'; hosts: AppHost[] }
+  | { type: 'devicesChanged'; devices: AppDevice[] }
   | {
       type: 'modelCatalogChanged';
       changed: { providerId: string; providerName: string; added: number; removed: number }[];
@@ -616,7 +616,7 @@ export interface KimiEventHandlers {
 
 export interface KimiEventMeta {
   sessionId: string;
-  hostId?: string;
+  deviceId?: string;
 }
 
 export interface TaskCommandResult {
@@ -763,7 +763,10 @@ export interface AppToolsConfig {
   disabled?: string[];
 }
 
-export interface AppHostDefinition {
+export type AppDeviceConnection = 'ssh' | 'account';
+
+export interface AppSshDeviceDefinition {
+  connection: 'ssh';
   host: string;
   identityFile?: string;
   remoteBin?: string;
@@ -771,7 +774,15 @@ export interface AppHostDefinition {
   enabled?: boolean;
 }
 
-export type AppHostConnectFailure =
+export interface AppAccountDeviceDefinition {
+  connection: 'account';
+  name?: string;
+  enabled?: boolean;
+}
+
+export type AppDeviceDefinition = AppSshDeviceDefinition | AppAccountDeviceDefinition;
+
+export type AppDeviceConnectFailure =
   | 'host_not_found'
   | 'connection_refused'
   | 'host_unreachable'
@@ -779,24 +790,53 @@ export type AppHostConnectFailure =
   | 'authentication_failed'
   | 'host_key_changed'
   | 'executor_not_found'
-  | 'executor_outdated'
+  | 'outdated'
   | 'remote_busy'
   | 'remote_start_failed'
+  | 'offline'
+  | 'signed_out'
+  | 'relay_unavailable'
+  | 'duplicate'
+  | 'self'
   | 'unknown';
 
-export interface AppHost extends AppHostDefinition {
+export type AppDeviceInstall = 'desktop' | 'cli';
+
+export type AppDeviceUpgradeStatus = 'installing' | 'restarting' | 'failed';
+
+export interface AppDevice {
   id: string;
+  connection: AppDeviceConnection;
+  host?: string;
+  identityFile?: string;
+  remoteBin?: string;
+  name?: string;
+  enabled?: boolean;
   status: 'pending' | 'connecting' | 'ready' | 'disconnected';
   remoteVersion?: string;
   connectError?: string;
-  connectFailure?: AppHostConnectFailure;
+  connectFailure?: AppDeviceConnectFailure;
+  deviceId?: string;
+  productName?: string;
+  platform?: string;
+  alias?: string;
+  duplicateOf?: string;
+  install?: AppDeviceInstall;
+  remoteUpgrade?: boolean;
+  upgradeStatus?: AppDeviceUpgradeStatus;
+  upgradeError?: string;
 }
 
-export interface AppHostTestResult {
+export interface AppDeviceUpgradeResult {
+  status: 'started' | 'update_on_device' | 'unsupported';
+  message?: string;
+}
+
+export interface AppDeviceTestResult {
   connected: boolean;
   remoteVersion?: string;
   connectError?: string;
-  connectFailure?: AppHostConnectFailure;
+  connectFailure?: AppDeviceConnectFailure;
 }
 
 export interface AppSshConfigHost {
@@ -1065,6 +1105,36 @@ export interface RemoteControlStatus {
   };
 }
 
+export interface AppGpuStats {
+  index: number;
+  name: string;
+  memoryTotal?: number;
+  memoryUsed?: number;
+  utilization?: number;
+}
+
+export interface AppSystemStats {
+  cpu: { usage?: number; cores: number; limited: boolean };
+  memory: { total: number; used: number; limited: boolean };
+  disk?: { path: string; total: number; used: number; available: number };
+  gpus: AppGpuStats[];
+}
+
+export interface AppServerMeta {
+  protocolVersion: string;
+  serverVersion: string;
+  serverId: string;
+  startedAt: string;
+  homeDir: string;
+  capabilities: Record<string, boolean>;
+  openInApps: string[];
+  dangerousBypassAuth: boolean;
+  experimentalFlags: Record<string, boolean>;
+  backend: 'v1' | 'v2';
+  webTitle: string;
+  deviceId: string;
+}
+
 export type PromptPredictionCancelReason =
   | 'input'
   | 'escape'
@@ -1079,7 +1149,8 @@ export type PromptPredictionCancelReason =
 export interface KimiWebApi {
   dispose(): void;
   getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
-  getMeta(): Promise<{ protocolVersion: string; serverVersion: string; serverId: string; startedAt: string; homeDir: string; capabilities: Record<string, boolean>; openInApps: string[]; dangerousBypassAuth: boolean; experimentalFlags: Record<string, boolean>; backend: 'v1' | 'v2'; webTitle: string }>;
+  getMeta(): Promise<AppServerMeta>;
+  getSystemStats(path?: string, options?: ReadRequestOptions): Promise<AppSystemStats>;
   getRemoteControlStatus(): Promise<RemoteControlStatus>;
   setRemoteControlEnabled(enabled: boolean): Promise<RemoteControlStatus>;
   listRemoteControlDevices(): Promise<RcDeviceList>;
@@ -1097,7 +1168,7 @@ export interface KimiWebApi {
   createFeedback(input: CreateFeedbackInput): Promise<{ feedback_id: number }>;
   updateFeedback(feedbackId: number, input: UpdateFeedbackInput, sessionId?: string): Promise<{ feedback_id: number }>;
   uploadFeedbackAttachment(feedbackId: number, input: FeedbackAttachmentInput, signal?: AbortSignal): Promise<{ upload_id: number }>;
-  uploadFeedbackSession(feedbackId: number, sessionId: string, signal?: AbortSignal, globalFeedback?: { hostId?: string }): Promise<{ upload_id: number }>;
+  uploadFeedbackSession(feedbackId: number, sessionId: string, signal?: AbortSignal, globalFeedback?: { deviceId?: string }): Promise<{ upload_id: number }>;
   getTurnFileChanges(
     sessionId: string,
     turnNumber: number,
@@ -1188,7 +1259,7 @@ export interface KimiWebApi {
   connectEvents(handlers: KimiEventHandlers): KimiEventConnection;
 
   listWorkspaces(): Promise<AppWorkspace[]>;
-  addWorkspace(input: { root: string; name?: string; additionalDirs?: string[]; idempotencyKey: string; hostId?: string }): Promise<AppWorkspace>;
+  addWorkspace(input: { root: string; name?: string; additionalDirs?: string[]; idempotencyKey: string; deviceId?: string }): Promise<AppWorkspace>;
   updateWorkspace(id: string, input: { name?: string; additionalDirs?: string[] }): Promise<AppWorkspace>;
   setWorkspacePrimary(id: string, path: string): Promise<AppWorkspace>;
   getWorkspaceProjectConfigDirs(root: string): Promise<string[]>;
@@ -1196,13 +1267,14 @@ export interface KimiWebApi {
   getWorkspaceTrust(workspaceId: string, options?: ReadRequestOptions): Promise<{ trusted: boolean }>;
   trustWorkspace(workspaceId: string): Promise<{ trusted: boolean }>;
   browseFs(path: string | undefined, signal?: AbortSignal): Promise<FsBrowseResult>;
-  listHosts(): Promise<AppHost[]>;
-  putHost(id: string, definition: AppHostDefinition): Promise<void>;
-  deleteHost(id: string): Promise<void>;
-  connectHost(id: string): Promise<AppHost>;
-  testHost(definition: AppHostDefinition, opts?: { signal?: AbortSignal }): Promise<AppHostTestResult>;
-  listHostSshConfig(): Promise<AppSshConfigHosts>;
-  copyProvidersToHost(id: string): Promise<AppProviderCopyResult>;
+  listDevices(): Promise<AppDevice[]>;
+  putDevice(id: string, definition: AppDeviceDefinition): Promise<void>;
+  deleteDevice(id: string): Promise<void>;
+  connectDevice(id: string): Promise<AppDevice>;
+  upgradeDevice(id: string): Promise<AppDeviceUpgradeResult>;
+  testDevice(definition: AppSshDeviceDefinition, opts?: { signal?: AbortSignal }): Promise<AppDeviceTestResult>;
+  listDeviceSshConfig(): Promise<AppSshConfigHosts>;
+  copyProvidersToDevice(id: string): Promise<AppProviderCopyResult>;
   getFsHome(): Promise<{ home: string; recentRoots: string[] }>;
   mkdirFs(path: string): Promise<{ path: string }>;
 
@@ -1220,7 +1292,7 @@ export interface KimiWebApi {
   importCatalogProvider(input: ImportCatalogProviderInput): Promise<ImportCatalogProviderResult>;
   importCustomRegistry(input: ImportCustomRegistryInput): Promise<ImportCustomRegistryResult>;
 
-  uploadFile(input: { file: Blob; name?: string; hostId?: string; onProgress?: (loaded: number, total: number) => void; signal?: AbortSignal }): Promise<{ id: string; name: string; mediaType: string; size: number }>;
+  uploadFile(input: { file: Blob; name?: string; deviceId?: string; onProgress?: (loaded: number, total: number) => void; signal?: AbortSignal }): Promise<{ id: string; name: string; mediaType: string; size: number }>;
   getFileUrl(fileId: string): string;
   getFileBlob(fileId: string, options?: MediaBlobOptions): Promise<Blob>;
   getSessionMediaUrl(sessionId: string, fileId: string): string;

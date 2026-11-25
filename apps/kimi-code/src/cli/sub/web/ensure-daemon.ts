@@ -1,14 +1,20 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { closeSync, fstatSync, mkdirSync, openSync } from 'node:fs';
 import { mkdir, open, readFile, rename, rm, symlink } from 'node:fs/promises';
-import { createConnection } from 'node:net';
+import { createConnection, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { createInterface } from 'node:readline';
 import type { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
+import {
+  DEVICE_API_LEVEL,
+  DEVICE_PROTOCOL_VERSION,
+  SERVER_UPGRADED_CLOSE_CODE,
+  type HostCommandResult,
+} from '@moonshot-ai/kap-server';
 import type { Command } from 'commander';
 
 import { getDataDir } from '#/utils/paths';
@@ -21,25 +27,40 @@ const ENSURE_DAEMON_MANAGED_BY = 'ensure-daemon';
 
 const LOCK_FILE = 'ensure-daemon.lock';
 const LOG_FILE = 'ensure-daemon.log';
+const UPGRADE_LOG_FILE = 'upgrade.log';
+const COMMAND_OUTPUT_TAIL_BYTES = 16 * 1024;
 const SOCKET_FILE = 'daemon.sock';
 const AGENT_SOCKET_FILE = 'forwarded-ssh-agent.sock';
 const POLL_INTERVAL_MS = 200;
 const LOCK_MAX_ATTEMPTS = 225;
 const START_MAX_ATTEMPTS = 150;
 const SOCKET_TIMEOUT_MS = 2_000;
+const LEASE_STREAM_ID = 'lease';
+const LEASE_READY_REQUEST_ID = 'lease-ready';
+const LEASE_PONG = JSON.stringify({ type: 'pong' });
 
 type EnsureDaemonErrorCode =
   | 'lock_timeout'
   | 'start_timeout'
   | 'version_mismatch_busy';
 
-class EnsureDaemonError extends Error {
+export class EnsureDaemonError extends Error {
   constructor(
     readonly code: EnsureDaemonErrorCode,
     message: string,
   ) {
     super(message);
     this.name = 'EnsureDaemonError';
+  }
+}
+
+export class DaemonBusyError extends EnsureDaemonError {
+  constructor(readonly runningVersion: string) {
+    super(
+      'version_mismatch_busy',
+      `a kimi server of version ${runningVersion} is still running work on this device; retry after it finishes`,
+    );
+    this.name = 'DaemonBusyError';
   }
 }
 
@@ -50,9 +71,27 @@ export interface DaemonConnection {
   close(): void;
 }
 
+export type DaemonExit = 'stopped' | 'upgraded';
+
+export interface DaemonLease {
+  readonly closed: Promise<DaemonExit>;
+  close(): void;
+}
+
+export interface AttachedDaemon {
+  readonly socketPath: string;
+  readonly logPath: string;
+  readonly lease: DaemonLease;
+}
+
 interface EnsureDaemonResult {
   readonly version: string;
   readonly stream: Duplex;
+}
+
+interface FoundDaemon {
+  readonly socketPath: string;
+  readonly connection: DaemonConnection;
 }
 
 export interface EnsureDaemonDeps {
@@ -60,6 +99,7 @@ export interface EnsureDaemonDeps {
   readonly version: string;
   readonly sshAuthSock?: string;
   connectSocket(socketPath: string): Promise<DaemonConnection | undefined>;
+  leaseSocket(socketPath: string): Promise<DaemonLease | undefined>;
   spawnServer(socketPath: string, logPath: string, agentSocket: string): void;
   wait(ms: number): Promise<void>;
 }
@@ -69,6 +109,18 @@ export function daemonSocketPath(homeDir: string): string {
   if (Buffer.byteLength(direct) <= 100) return direct;
   const hash = createHash('sha256').update(homeDir).digest('hex').slice(0, 16);
   return join(tmpdir(), `kimi-daemon-${hash}.sock`);
+}
+
+export function daemonLogPath(homeDir: string): string {
+  return join(homeDir, 'server', LOG_FILE);
+}
+
+export function daemonUpgradeLogPath(homeDir: string): string {
+  return join(homeDir, 'server', UPGRADE_LOG_FILE);
+}
+
+export function supportsBackgroundServer(platform: NodeJS.Platform = process.platform): boolean {
+  return platform !== 'win32';
 }
 
 function pidAlive(pid: number): boolean {
@@ -125,20 +177,15 @@ async function syncAgentSocket(deps: EnsureDaemonDeps): Promise<void> {
   await rename(temp, linkPath);
 }
 
-async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> {
+async function findOrStart(deps: EnsureDaemonDeps): Promise<FoundDaemon> {
   const socketPath = daemonSocketPath(deps.homeDir);
   const existing = await deps.connectSocket(socketPath);
   if (existing !== undefined) {
     if (existing.version === deps.version) {
-      return { version: deps.version, stream: existing.stream };
+      return { socketPath, connection: existing };
     }
     const stopped = await existing.stopIfIdle().finally(() => existing.close());
-    if (!stopped) {
-      throw new EnsureDaemonError(
-        'version_mismatch_busy',
-        `a kimi server of version ${existing.version} is still running work on this host; retry after it finishes`,
-      );
-    }
+    if (!stopped) throw new DaemonBusyError(existing.version);
     let closed = false;
     for (let attempt = 0; attempt < START_MAX_ATTEMPTS; attempt += 1) {
       const probe = await deps.connectSocket(socketPath);
@@ -156,32 +203,95 @@ async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> 
       );
     }
   }
-  const logPath = join(deps.homeDir, 'server', LOG_FILE);
+  const logPath = daemonLogPath(deps.homeDir);
   deps.spawnServer(socketPath, logPath, agentSocketPath(deps));
   for (let attempt = 0; attempt < START_MAX_ATTEMPTS; attempt += 1) {
     const started = await deps.connectSocket(socketPath);
     if (started !== undefined) {
-      return { version: deps.version, stream: started.stream };
+      return { socketPath, connection: started };
     }
     await deps.wait(POLL_INTERVAL_MS);
   }
   throw new EnsureDaemonError('start_timeout', `the kimi server did not start; see ${logPath}`);
 }
 
-export async function ensureDaemon(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> {
+async function withDaemon<T>(
+  deps: EnsureDaemonDeps,
+  use: (daemon: FoundDaemon) => Promise<T>,
+): Promise<T> {
   const release = await acquireLock(join(deps.homeDir, 'server', LOCK_FILE), (ms) => deps.wait(ms));
   try {
     await syncAgentSocket(deps);
-    return await findOrStart(deps);
+    return await use(await findOrStart(deps));
   } finally {
     await release();
   }
 }
 
-function spawnDetachedServer(socketPath: string, logPath: string, agentSocket: string): void {
-  const argv = detectNativeInstall()
+export function ensureDaemon(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> {
+  return withDaemon(deps, async ({ connection }) => ({ version: deps.version, stream: connection.stream }));
+}
+
+export function attachDaemon(deps: EnsureDaemonDeps): Promise<AttachedDaemon> {
+  return withDaemon(deps, async ({ socketPath, connection }) => {
+    connection.close();
+    const logPath = daemonLogPath(deps.homeDir);
+    const lease = await deps.leaseSocket(socketPath);
+    if (lease === undefined) {
+      throw new Error(`the kimi server stopped before Remote Control could attach to it; see ${logPath}`);
+    }
+    return { socketPath, logPath, lease };
+  });
+}
+
+export function kimiArgv(): string[] {
+  return detectNativeInstall()
     ? [process.execPath]
     : [process.execPath, ...process.execArgv, process.argv[1]!];
+}
+
+export function runKimiCommand(args: readonly string[]): Promise<HostCommandResult> {
+  return runLoggedCommand([...kimiArgv(), ...args], daemonUpgradeLogPath(getDataDir()));
+}
+
+export async function runLoggedCommand(argv: readonly string[], logPath: string): Promise<HostCommandResult> {
+  const { child, offset } = spawnLogged(argv, logPath);
+  const exit = await new Promise<{ code: number | null; error?: Error }>((resolve) => {
+    child.once('error', (error) => resolve({ code: null, error }));
+    child.once('close', (code) => resolve({ code }));
+  });
+  const output = await readLogTail(logPath, offset);
+  return { code: exit.code, output: exit.error === undefined ? output : `${output}${exit.error.message}\n` };
+}
+
+function spawnLogged(argv: readonly string[], logPath: string): { readonly child: ChildProcess; readonly offset: number } {
+  mkdirSync(dirname(logPath), { recursive: true });
+  const log = openSync(logPath, 'a', 0o600);
+  try {
+    const offset = fstatSync(log).size;
+    const child = spawn(argv[0]!, argv.slice(1), { detached: true, stdio: ['ignore', log, log] });
+    child.unref();
+    return { child, offset };
+  } finally {
+    closeSync(log);
+  }
+}
+
+async function readLogTail(logPath: string, offset: number): Promise<string> {
+  const handle = await open(logPath, 'r');
+  try {
+    const { size } = await handle.stat();
+    const start = Math.max(offset, size - COMMAND_OUTPUT_TAIL_BYTES);
+    const buffer = Buffer.alloc(Math.max(0, size - start));
+    await handle.read(buffer, 0, buffer.length, start);
+    return buffer.toString('utf8');
+  } finally {
+    await handle.close();
+  }
+}
+
+function spawnDetachedServer(socketPath: string, logPath: string, agentSocket: string): void {
+  const argv = kimiArgv();
   mkdirSync(dirname(logPath), { recursive: true });
   const log = openSync(logPath, 'w', 0o600);
   try {
@@ -213,9 +323,34 @@ function spawnDetachedServer(socketPath: string, logPath: string, agentSocket: s
   }
 }
 
-interface RpcResponseEnvelope {
+interface RpcFrameEnvelope {
+  readonly type?: string;
+  readonly id?: string;
   readonly status?: number;
+  readonly code?: number;
   readonly body?: string;
+  readonly data?: string;
+}
+
+function writeRpcFrame(socket: Duplex, frame: Record<string, unknown>): void {
+  socket.write(`${JSON.stringify(frame)}\n`);
+}
+
+function parseRpcFrame(line: string): RpcFrameEnvelope | undefined {
+  try {
+    return JSON.parse(line) as RpcFrameEnvelope;
+  } catch {
+    return undefined;
+  }
+}
+
+function isPingMessage(data: string | undefined): boolean {
+  if (data === undefined) return false;
+  try {
+    return (JSON.parse(data) as { type?: unknown }).type === 'ping';
+  } catch {
+    return false;
+  }
 }
 
 function rpcCall<T>(
@@ -251,7 +386,7 @@ function rpcCall<T>(
       const line = buffer.slice(0, newline).trim();
       cleanup();
       try {
-        const frame = JSON.parse(line) as RpcResponseEnvelope;
+        const frame = JSON.parse(line) as RpcFrameEnvelope;
         if (frame.status !== 200 || typeof frame.body !== 'string') {
           resolve(undefined);
           return;
@@ -264,14 +399,12 @@ function rpcCall<T>(
     socket.on('data', onData);
     socket.on('error', onError);
     socket.on('close', onClose);
-    socket.write(
-      `${JSON.stringify({ type: 'http.req', id, method, path, headers: { host: '127.0.0.1' } })}\n`,
-    );
+    writeRpcFrame(socket, { type: 'http.req', id, method, path, headers: { host: '127.0.0.1' } });
   });
 }
 
-async function connectUnixSocket(socketPath: string): Promise<DaemonConnection | undefined> {
-  const socket = await new Promise<Duplex | undefined>((resolve) => {
+function openUnixSocket(socketPath: string): Promise<Socket | undefined> {
+  return new Promise((resolve) => {
     const client = createConnection(socketPath);
     const timer = setTimeout(() => {
       client.destroy();
@@ -287,6 +420,10 @@ async function connectUnixSocket(socketPath: string): Promise<DaemonConnection |
       resolve(undefined);
     });
   });
+}
+
+async function connectUnixSocket(socketPath: string): Promise<DaemonConnection | undefined> {
+  const socket = await openUnixSocket(socketPath);
   if (socket === undefined) return undefined;
   const meta = await rpcCall<{ server_version?: string }>(socket, 'meta', 'GET', '/api/v1/meta');
   if (meta?.data?.server_version === undefined) {
@@ -305,6 +442,52 @@ async function connectUnixSocket(socketPath: string): Promise<DaemonConnection |
       );
       return res?.data?.ok === true;
     },
+    close: () => {
+      socket.destroy();
+    },
+  };
+}
+
+async function leaseUnixSocket(socketPath: string): Promise<DaemonLease | undefined> {
+  const socket = await openUnixSocket(socketPath);
+  if (socket === undefined) return undefined;
+  let exit: DaemonExit = 'stopped';
+  const closed = new Promise<DaemonExit>((resolve) => {
+    socket.once('close', () => resolve(exit));
+  });
+  const ready = new Promise<boolean>((resolve) => {
+    const settle = (attached: boolean): void => {
+      clearTimeout(timer);
+      resolve(attached);
+    };
+    const timer = setTimeout(() => settle(false), SOCKET_TIMEOUT_MS);
+    void closed.then(() => settle(false));
+    createInterface({ input: socket, crlfDelay: Infinity }).on('line', (line) => {
+      const frame = parseRpcFrame(line);
+      if (frame?.type === 'http.res' && frame.id === LEASE_READY_REQUEST_ID) {
+        settle(frame.status === 200);
+      } else if (frame?.type === 'ws.msg' && frame.id === LEASE_STREAM_ID && isPingMessage(frame.data)) {
+        writeRpcFrame(socket, { type: 'ws.msg', id: LEASE_STREAM_ID, data: LEASE_PONG });
+      } else if (frame?.type === 'ws.close' && frame.id === LEASE_STREAM_ID) {
+        if (frame.code === SERVER_UPGRADED_CLOSE_CODE) exit = 'upgraded';
+        socket.destroy();
+      }
+    });
+  });
+  writeRpcFrame(socket, { type: 'ws.open', id: LEASE_STREAM_ID, path: '/api/v1/ws' });
+  writeRpcFrame(socket, {
+    type: 'http.req',
+    id: LEASE_READY_REQUEST_ID,
+    method: 'GET',
+    path: '/api/v1/healthz',
+    headers: { host: '127.0.0.1' },
+  });
+  if (!(await ready)) {
+    socket.destroy();
+    return undefined;
+  }
+  return {
+    closed,
     close: () => {
       socket.destroy();
     },
@@ -337,13 +520,14 @@ function relayStdio(
   });
 }
 
-function defaultDeps(): EnsureDaemonDeps {
+export function defaultEnsureDaemonDeps(): EnsureDaemonDeps {
   const homeDir = getDataDir();
   return {
     homeDir,
     version: getVersion(),
     sshAuthSock: process.env['SSH_AUTH_SOCK'],
     connectSocket: connectUnixSocket,
+    leaseSocket: leaseUnixSocket,
     spawnServer: spawnDetachedServer,
     wait: (ms) => sleep(ms),
   };
@@ -353,11 +537,11 @@ export function registerEnsureDaemonCommand(web: Command): void {
   web
     .command('ensure-daemon', { hidden: true })
     .description('Internal: reuse or start a background server and bridge stdio to its socket.')
-    .option('--probe', 'Only report the host protocol and version.')
+    .option('--probe', 'Only report the device protocol and version.')
     .action(async (options: { probe?: boolean }) => {
       const report = (payload: Record<string, unknown>): void => {
         process.stdout.write(
-          `${ENSURE_DAEMON_MARKER}${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: getVersion(), ...payload })}\n`,
+          `${ENSURE_DAEMON_MARKER}${JSON.stringify({ protocol: DEVICE_PROTOCOL_VERSION, api_level: DEVICE_API_LEVEL, version: getVersion(), ...payload })}\n`,
         );
       };
       if (options.probe === true) {
@@ -365,7 +549,7 @@ export function registerEnsureDaemonCommand(web: Command): void {
         return;
       }
       try {
-        const daemon = await ensureDaemon(defaultDeps());
+        const daemon = await ensureDaemon(defaultEnsureDaemonDeps());
         report({});
         await relayStdio(process.stdin, process.stdout, daemon.stream);
       } catch (error) {

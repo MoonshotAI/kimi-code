@@ -715,8 +715,8 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   async function uploadImage(file: Blob, name?: string, onProgress?: (loaded: number, total: number) => void, signal?: AbortSignal): Promise<{ fileId: string; name: string; mediaType: string } | null> {
     try {
       const api = getKimiWebApi();
-      const hostId = workspacesStore().visibleWorkspace?.hostId;
-      const result = await api.uploadFile({ file, name, hostId, onProgress, signal });
+      const deviceId = workspacesStore().visibleWorkspace?.deviceId;
+      const result = await api.uploadFile({ file, name, deviceId, onProgress, signal });
       return { fileId: result.id, name: result.name, mediaType: result.mediaType };
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return null;

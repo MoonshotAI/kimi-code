@@ -112,6 +112,7 @@ const WHITELIST = [
   'getRuntimeEnvironmentOverrides',
   'getRemoteControlRestoreState',
   'setRemoteControlRestoreState',
+  'getHostName',
   'onRemoteControlRestoreFinished',
   'saveRuntimeEnvironmentOverrides',
   'resetRuntimeEnvironmentOverrides',
@@ -779,6 +780,18 @@ describe('kimiDesktop preload bridge', () => {
 
     invoke.mockResolvedValueOnce(undefined);
     await expect(exposed.getUpdateAutoDownload()).resolves.toBe(false);
+  });
+
+  it('reads the host name of this computer and drops anything that is not a string', async () => {
+    await import('../../../src/main/ipc/preload');
+    const [, exposed] = expose.mock.calls[0]!;
+
+    invoke.mockResolvedValueOnce('studio-mac.local');
+    await expect(exposed.getHostName()).resolves.toBe('studio-mac.local');
+    expect(invoke).toHaveBeenCalledWith('kimi:host-name');
+
+    invoke.mockResolvedValueOnce({ name: 'studio-mac.local' });
+    await expect(exposed.getHostName()).resolves.toBe('');
   });
 
   it('validates before-action receipt requests in both directions', async () => {

@@ -16,7 +16,7 @@ import { createSessionRowMemo, createWorkspaceGroupMemo } from '@moonshot-ai/app
 import { t } from '../client/deps';
 import { clientPinia } from './pinia';
 import { approvalsStore } from './approvals';
-import { hostsStore } from './hosts';
+import { devicesStore } from './devices';
 import { pinnedOrderStore } from './pinnedOrder';
 import { promptStore } from './prompt';
 import { sessionsStore } from './sessions';
@@ -234,7 +234,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
             lastPrompt: s.lastPrompt,
             workspaceId,
             workspaceName: ws?.name,
-            hostId: ws?.hostId,
+            deviceId: ws?.deviceId,
           };
         }),
     );
@@ -285,7 +285,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
           updatedAt: s.updatedAt,
           workspaceId,
           workspaceName: ws?.name,
-          hostId: ws?.hostId,
+          deviceId: ws?.deviceId,
           cwdLabel: s.cwd ? basename(s.cwd) : '-',
           pullRequest: s.pullRequest,
         };
@@ -328,7 +328,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
       byId.set(wid, list);
     }
     return workspacesStore().workspacesView.map((w) => {
-      const unavailable = hostsStore().unavailable(w.hostId);
+      const unavailable = devicesStore().unavailable(w.deviceId);
       return {
         workspace: w,
         sessions: unavailable ? [] : byId.get(w.id) ?? [],
@@ -379,7 +379,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
           updatedAt: s.updatedAt,
           workspaceId,
           workspaceName: ws?.name,
-          hostId: ws?.hostId,
+          deviceId: ws?.deviceId,
           pinned: true,
           cwdLabel: s.cwd ? basename(s.cwd) : '-',
           pullRequest: s.pullRequest,
@@ -455,7 +455,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
   ): Session[] {
     if (!workspaceId) return [];
     const ws = workspacesStore().workspaceById.get(workspaceId);
-    if (hostsStore().unavailable(ws?.hostId)) return [];
+    if (devicesStore().unavailable(ws?.deviceId)) return [];
     const toRow = (s: AppSession, doneAt?: string): Session => ({
       id: s.id,
       title: s.title,
@@ -467,7 +467,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
       updatedAt: doneAt ?? s.updatedAt,
       workspaceId,
       workspaceName: ws?.name,
-      hostId: ws?.hostId,
+      deviceId: ws?.deviceId,
       archived: doneAt !== undefined,
       cwdLabel: s.cwd ? basename(s.cwd) : '-',
       pullRequest: s.pullRequest,

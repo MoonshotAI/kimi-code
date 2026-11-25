@@ -5,7 +5,7 @@ import type { WorkspaceGroup, WorkspaceView } from '@moonshot-ai/app-core/client
 import SessionRow from './SessionRow.vue';
 import { useSessionDrag, usePinnedReturnTarget } from './composables/useSessionDrag';
 import { Icon, IconButton, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
-import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore } from '@moonshot-ai/app-client/stores';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 
 const { t } = useI18n();
@@ -162,7 +162,7 @@ function onHeaderDragStart(event: DragEvent): void {
         on: group.workspace.id === activeWorkspaceId && activeId === '',
         collapsed: isCollapsed(group.workspace.id),
         'menu-open': wsMenuOpenId === group.workspace.id,
-        'host-unavailable': hostsStore().unavailable(group.workspace.hostId),
+        'device-unavailable': devicesStore().unavailable(group.workspace.deviceId),
       }"
       :draggable="sortable !== false && renamingId !== group.workspace.id"
       @click.stop="emit('groupClick', group.workspace.id, $event)"
@@ -173,7 +173,7 @@ function onHeaderDragStart(event: DragEvent): void {
       @dragend="endWorkspaceDrag()"
     >
       <div class="gh-top">
-        <WorkspaceIcon v-if="group.workspace.hostId !== undefined" class="gh-folder" :host-id="group.workspace.hostId" status="all" />
+        <WorkspaceIcon v-if="group.workspace.deviceId !== undefined" class="gh-folder" :device-id="group.workspace.deviceId" status="all" />
         <Icon v-else-if="isCollapsed(group.workspace.id)" class="gh-folder" name="folder-closed" />
         <Icon v-else class="gh-folder" name="folder" />
 
@@ -218,7 +218,7 @@ function onHeaderDragStart(event: DragEvent): void {
             size="sm"
             :label="t('workspace.newInGroup')"
             :tooltip="t('workspace.newInGroup')"
-            :disabled="hostsStore().blocked(group.workspace.hostId)"
+            :disabled="devicesStore().blocked(group.workspace.deviceId)"
             @click.stop="emit('createInWorkspace', group.workspace.id)"
           >
             <Icon name="chat-new" />
@@ -227,7 +227,7 @@ function onHeaderDragStart(event: DragEvent): void {
       </div>
     </div>
     <div
-      v-if="!hostsStore().unavailable(group.workspace.hostId)"
+      v-if="!devicesStore().unavailable(group.workspace.deviceId)"
       class="group-sessions"
       :class="{ collapsed: isCollapsed(group.workspace.id) }"
       :inert="isCollapsed(group.workspace.id)"
@@ -327,7 +327,7 @@ function onHeaderDragStart(event: DragEvent): void {
 .gh:active { cursor: grabbing; }
 .gh:hover { background: var(--sb-hover, var(--color-hover)); }
 .gh.on { background: var(--sb-selected, var(--color-selected)); }
-.gh.host-unavailable .gh-name { color: var(--color-text-faint); }
+.gh.device-unavailable .gh-name { color: var(--color-text-faint); }
 .gh-top {
   position: relative;
   display: flex;

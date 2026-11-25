@@ -46,7 +46,7 @@ import MobileSettingsSheet from './components/mobile/MobileSettingsSheet.vue';
 import OnboardingWizard from './components/onboarding/OnboardingWizard.vue';
 import { GlobalLoading } from '@moonshot-ai/app-components';
 import { getDeviceApi, useKimiWebClient, promptAttachmentToTurnAttachment, turnFileContentFetcher } from '@moonshot-ai/app-client/client';
-import { sessionViewsStore, workspacesStore, modelsStore, notificationsStore, authStore, sessionsStore, warningsStore, filesStore, permissionsStore, enableSessionRating, modelSwitchConfirmStore, effortSwitchStore, hostsStore } from '@moonshot-ai/app-client/stores';
+import { sessionViewsStore, workspacesStore, modelsStore, notificationsStore, authStore, sessionsStore, warningsStore, filesStore, permissionsStore, enableSessionRating, modelSwitchConfirmStore, effortSwitchStore, devicesStore } from '@moonshot-ai/app-client/stores';
 import { FetchTurnFileContentKey, InsertPathMentionKey, ModelDisplayKey, OpenWithDefaultAppKey, ResolveSwarmMembersKey, RevealInFolderKey, SelectionContextMenuKey, SessionRatingKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { OpenFileLinkKey, OpenHtmlFileInPanelKey, OpenLocalHtmlFileKey, OpenMarkdownImageKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
 import { getKimiWebApi } from './api';
@@ -602,7 +602,7 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
       void openTermTab();
       break;
     case 'toggleTerminal':
-      if (!isMobile.value && terminalStore.available) {
+      if (!isMobile.value && terminalStore.canOpen.value) {
         terminalStore.toggle(terminalCwd.value ?? undefined);
       }
       break;
@@ -1033,7 +1033,7 @@ function reapPanelTabs(ids: readonly string[]): void {
 watch(deadBtwTabIds, reapPanelTabs);
 
 
-const canOpenTermTab = computed(() => terminalStore.available && !isMobile.value);
+const canOpenTermTab = computed(() => terminalStore.canOpen.value && !isMobile.value);
 const canOpenBrowserTab = computed(() => canUseNativeBrowser() && !isMobile.value);
 const sessionInfoAvailableTabs = computed(() => panelLauncherItems({
   diff: Boolean(client.activeSessionId.value),
@@ -1109,7 +1109,7 @@ const restoringTermTab = ref<string | null>(null);
 watch(
   [panel.panelTabs, terminalStore.bucketsWithTabs, () => client.sessionLoading.value, restoringTermTab],
   () => {
-    if (!terminalStore.available || client.sessionLoading.value || restoringTermTab.value !== null) return;
+    if (!terminalStore.canOpen.value || client.sessionLoading.value || restoringTermTab.value !== null) return;
     for (const tab of panel.panelTabs.value) {
       if (tab.type !== 'term') continue;
       const payload = (tab.payload ?? {}) as TermTabPayload;
@@ -1389,7 +1389,7 @@ const {
   openModelPicker,
   openLogin,
   openProviderSettings,
-  openHostSettings,
+  openDeviceSettings,
   dropPendingWorkspaceSubmit,
   completeWorkspaceCreation,
   addWorkspace,
@@ -1451,15 +1451,15 @@ type SubmitPayload = {
 };
 const forcedUpgradeVisible = ref(false);
 const globalFeedbackTarget = ref<GlobalFeedbackTarget | null>(null);
-function feedbackSessionHost(sessionId: string): string | undefined {
+function feedbackSessionDevice(sessionId: string): string | undefined {
   const session = sessionsStore().sessions.find(entry => entry.id === sessionId);
-  if (session !== undefined) return session.hostId;
-  return sessionId === activeSessionId.value ? client.visibleWorkspace.value?.hostId : undefined;
+  if (session !== undefined) return session.deviceId;
+  return sessionId === activeSessionId.value ? client.visibleWorkspace.value?.deviceId : undefined;
 }
 
 function supportsSessionFeedback(sessionId: string | null | undefined): boolean {
   if (!sessionId) return false;
-  return hostsStore().supportsFeedback(feedbackSessionHost(sessionId));
+  return devicesStore().supportsFeedback(feedbackSessionDevice(sessionId));
 }
 
 const supportsReplyFeedback = computed(() => supportsSessionFeedback(activeSessionId.value));
@@ -1469,13 +1469,13 @@ const desktopFeedback = useDesktopFeedback({
   signedIn: () => signedIn.value,
   accountId: () => managedUserInfo.value?.userId,
   openLogin,
-  sessionHost: feedbackSessionHost,
-  hostAccounts: () => hostsStore().accounts,
-  hostUserId: async (hostId) => {
-    const account = await getDeviceApi(hostId).getUserInfo();
+  sessionDevice: feedbackSessionDevice,
+  deviceAccounts: () => devicesStore().accounts,
+  deviceUserId: async (deviceId) => {
+    const account = await getDeviceApi(deviceId).getUserInfo();
     return account.kind === 'ok' ? account.userInfo.userId : undefined;
   },
-  openHostLogin: (hostId) => hostsStore().openLogin(hostId),
+  openDeviceLogin: (deviceId) => devicesStore().openLogin(deviceId),
 });
 provide(DesktopFeedbackKey, desktopFeedback);
 watch(desktopFeedback.accountEpoch, () => { globalFeedbackTarget.value = null; }, { flush: 'sync' });
@@ -1657,14 +1657,14 @@ async function handleGetOAuthRegion() {
   return client.getOAuthRegion();
 }
 
-const hostLoginId = computed(() => hostsStore().loginHostId);
-function finishHostLogin(hostId: string): void {
-  desktopFeedback.clearHostAccount(hostId);
-  hostsStore().finishLogin();
+const deviceLoginId = computed(() => devicesStore().loginDeviceId);
+function finishDeviceLogin(deviceId: string): void {
+  desktopFeedback.clearDeviceAccount(deviceId);
+  devicesStore().finishLogin();
 }
-const hostLoginTitle = computed(() => {
-  const hostId = hostLoginId.value;
-  return hostId === null ? undefined : t('login.hostTitle', { name: hostsStore().hostLabel(hostId, t) });
+const deviceLoginTitle = computed(() => {
+  const deviceId = deviceLoginId.value;
+  return deviceId === null ? undefined : t('login.deviceTitle', { name: devicesStore().deviceLabel(deviceId, t) });
 });
 
 async function handleWizardLoginSuccess(): Promise<void> {
@@ -2279,12 +2279,12 @@ async function handleSubmitDispatch(payload: SubmitPayload, owner: number): Prom
 }
 
 type WorkspaceDialogState =
-  | { mode: 'create'; dirs: string[]; hostId?: string }
-  | { mode: 'edit'; id: string; name: string; dirs: string[]; hostId?: string };
+  | { mode: 'create'; dirs: string[]; deviceId?: string }
+  | { mode: 'edit'; id: string; name: string; dirs: string[]; deviceId?: string };
 
 const workspaceDialog = ref<WorkspaceDialogState | null>(null);
 const workspaceDialogBusy = ref(false);
-const remoteHosts = computed(() => hostsStore().hosts);
+const remoteDevices = computed(() => devicesStore().devices);
 const {
   folderPickerRequest,
   pickWorkspaceFolders,
@@ -2293,8 +2293,8 @@ const {
   cancelWorkspaceFolderPicker,
 } = useWorkspaceFolderPicker();
 
-function requestWorkspaceDialog(hostId?: string): void {
-  workspaceDialog.value = { mode: 'create', dirs: [], hostId: hostId ?? workspaces.defaultCreateHostId() };
+function requestWorkspaceDialog(deviceId?: string): void {
+  workspaceDialog.value = { mode: 'create', dirs: [], deviceId: deviceId ?? workspaces.defaultCreateDeviceId() };
 }
 
 function openWorkspaceEditor(ws: WorkspaceView): void {
@@ -2304,12 +2304,12 @@ function openWorkspaceEditor(ws: WorkspaceView): void {
     id: ws.id,
     name: full?.name ?? ws.name,
     dirs: [ws.root, ...(full?.additionalDirs ?? [])],
-    hostId: ws.hostId,
+    deviceId: ws.deviceId,
   };
 }
 
-async function importProjectConfigDirs(primary: string, hostId?: string): Promise<string[] | undefined> {
-  return workspaces.fetchWorkspaceProjectConfigDirs(primary, hostId);
+async function importProjectConfigDirs(primary: string, deviceId?: string): Promise<string[] | undefined> {
+  return workspaces.fetchWorkspaceProjectConfigDirs(primary, deviceId);
 }
 
 async function pickMoreWorkspaceDirs(): Promise<string[]> {
@@ -2328,13 +2328,13 @@ function closeWorkspaceDialog(): void {
   }
 }
 
-async function onWorkspaceDialogSubmit(payload: { name: string; dirs: string[]; hostId?: string; projectConfigDirs: string[] }): Promise<void> {
+async function onWorkspaceDialogSubmit(payload: { name: string; dirs: string[]; deviceId?: string; projectConfigDirs: string[] }): Promise<void> {
   const dialog = workspaceDialog.value;
   if (dialog === null) return;
   workspaceDialogBusy.value = true;
   try {
     if (dialog.mode === 'create') {
-      const created = await workspaces.createWorkspace({ paths: payload.dirs, name: payload.name, hostId: payload.hostId });
+      const created = await workspaces.createWorkspace({ paths: payload.dirs, name: payload.name, deviceId: payload.deviceId });
       if (created === undefined) return;
       await completeWorkspaceCreation();
       track('native_feature_used', { feature: 'workspace_picker' });
@@ -2671,7 +2671,7 @@ function openPr(url: string): void {
       <TerminalPanel :cwd="terminalCwd" @quote-action="handleQuoteAction" @move-to-panel="moveTerminalToPanel" />
     </section>
 
-    <TerminalDropZone v-if="terminalStore.available && !isMobile" />
+    <TerminalDropZone v-if="terminalStore.canOpen.value && !isMobile" />
 
     <!-- Model Picker overlay -->
     <ModelPicker
@@ -2707,9 +2707,8 @@ function openPr(url: string): void {
     />
 
     <!-- Settings page (modal) -->
-    <ErrorBoundary closable @close="showSettings = false">
+    <ErrorBoundary v-if="showSettings" closable fullscreen @close="showSettings = false">
     <SettingsDialog
-      v-if="showSettings"
       ref="settingsDialogRef"
       :color-scheme="colorScheme"
       :font-scale="fontScale"
@@ -2761,11 +2760,11 @@ function openPr(url: string): void {
       :mode="workspaceDialog.mode"
       :initial-name="workspaceDialog.mode === 'edit' ? workspaceDialog.name : ''"
       :initial-dirs="workspaceDialog.dirs"
-      :initial-host-id="workspaceDialog.hostId"
+      :initial-device-id="workspaceDialog.deviceId"
       :pick="pickMoreWorkspaceDirs"
       :pick-remote="pickRemoteWorkspaceDirs"
-      :hosts="remoteHosts"
-      :manage-hosts="() => openHostSettings(undefined, { addIfEmpty: true })"
+      :devices="remoteDevices"
+      :manage-devices="() => openDeviceSettings(undefined, { addIfEmpty: true })"
       :import-project-config="importProjectConfigDirs"
       :busy="workspaceDialogBusy"
       @submit="onWorkspaceDialogSubmit"
@@ -2775,12 +2774,12 @@ function openPr(url: string): void {
     <AddWorkspaceDialog
       v-if="folderPickerRequest !== null"
       :multiple="folderPickerRequest.multiple"
-      :browse-fs="(path, signal) => browseFs(path, signal, folderPickerRequest?.hostId)"
-      :search-fs="(root, query, signal) => workspaces.searchFs(root, query, signal, folderPickerRequest?.hostId)"
-      :get-fs-home="() => getFsHome(folderPickerRequest?.hostId)"
+      :browse-fs="(path, signal) => browseFs(path, signal, folderPickerRequest?.deviceId)"
+      :search-fs="(root, query, signal) => workspaces.searchFs(root, query, signal, folderPickerRequest?.deviceId)"
+      :get-fs-home="() => getFsHome(folderPickerRequest?.deviceId)"
       :default-path="folderPickerRequest.defaultPath"
-      :host-id="folderPickerRequest.hostId"
-      :mkdir-fs="(path) => workspaces.mkdirFs(path, folderPickerRequest?.hostId)"
+      :device-id="folderPickerRequest.deviceId"
+      :mkdir-fs="(path) => workspaces.mkdirFs(path, folderPickerRequest?.deviceId)"
       @add="completeWorkspaceFolderPicker([$event])"
       @add-many="completeWorkspaceFolderPicker"
       @close="cancelWorkspaceFolderPicker"
@@ -2901,16 +2900,16 @@ function openPr(url: string): void {
       @close="globalFeedbackTarget = null"
     />
     <LoginDialog
-      v-if="showLogin || hostLoginId !== null"
-      :key="hostLoginId ?? 'local'"
-      :title="hostLoginTitle"
-      :remote-host="hostLoginId !== null"
-      :on-start-o-auth-login="hostLoginId !== null ? (region) => hostsStore().startLogin(region) : handleStartOAuthLogin"
-      :on-poll-o-auth-login="hostLoginId !== null ? () => hostsStore().pollLogin() : handlePollOAuthLogin"
-      :on-cancel-o-auth-login="hostLoginId !== null ? () => hostsStore().cancelLogin() : handleCancelOAuthLogin"
-      :on-get-o-auth-region="hostLoginId !== null ? () => hostsStore().loginRegion() : handleGetOAuthRegion"
-      @success="hostLoginId !== null ? finishHostLogin(hostLoginId) : handleLoginSuccess()"
-      @close="hostLoginId !== null ? hostsStore().closeLogin() : (showLogin = false)"
+      v-if="showLogin || deviceLoginId !== null"
+      :key="deviceLoginId ?? 'local'"
+      :title="deviceLoginTitle"
+      :remote-host="deviceLoginId !== null"
+      :on-start-o-auth-login="deviceLoginId !== null ? (region) => devicesStore().startLogin(region) : handleStartOAuthLogin"
+      :on-poll-o-auth-login="deviceLoginId !== null ? () => devicesStore().pollLogin() : handlePollOAuthLogin"
+      :on-cancel-o-auth-login="deviceLoginId !== null ? () => devicesStore().cancelLogin() : handleCancelOAuthLogin"
+      :on-get-o-auth-region="deviceLoginId !== null ? () => devicesStore().loginRegion() : handleGetOAuthRegion"
+      @success="deviceLoginId !== null ? finishDeviceLogin(deviceLoginId) : handleLoginSuccess()"
+      @close="deviceLoginId !== null ? devicesStore().closeLogin() : (showLogin = false)"
     />
     <!-- Floating preview for tool-card media (image/video). The component
          teleports its own overlays, so mounting inside `.app` is safe. -->

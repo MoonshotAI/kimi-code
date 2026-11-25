@@ -1,5 +1,6 @@
 import type { Event } from '#/_base/event';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { SessionClientIdentity } from '#/session/clientIdentity/sessionClientIdentity';
 
 export interface AgentMeta {
   readonly homedir?: string;
@@ -31,9 +32,10 @@ export interface SessionMeta {
   readonly agents?: Readonly<Record<string, AgentMeta>>;
   readonly custom?: Record<string, unknown>;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
+  readonly clientIdentity?: SessionClientIdentity;
 }
 
-export type SessionMetaPatch = Partial<Omit<SessionMeta, 'id' | 'createdAt'>>;
+export type SessionMetaPatch = Partial<Omit<SessionMeta, 'id' | 'createdAt' | 'clientIdentity'>>;
 
 export interface SessionMetadataChangedEvent {
   readonly changed: readonly (keyof SessionMeta)[];

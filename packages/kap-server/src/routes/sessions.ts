@@ -41,6 +41,7 @@ import {
   type IDisposable,
   type ISessionScopeHandle,
   type Scope,
+  type SessionClientIdentity,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import type { ServerResponse } from 'node:http';
@@ -55,11 +56,16 @@ import {
   workspacePersistenceScope,
 } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/internal/addressing';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
+import {
+  CLIENT_IDENTITY_HEADER,
+  clientIdentityRequestHeadersSchema,
+  parseClientIdentityHeader,
+} from '../protocol/clientIdentity';
 import { ErrorCode } from '../protocol/error-codes';
 import { listPendingInteractions } from '../protocol/interaction-wire';
 import type { PendingInteraction } from '../protocol/interaction';
 import type { ConversationService } from '../services/conversation/conversationService';
-import { findOnHosts, hostGet, HostSourceError, type HostSources } from '../services/hosts/hostFanout';
+import { findOnDevices, deviceGet, DeviceSourceError, type DeviceSources } from '../services/devices/deviceFanout';
 import { workspaceRootOf } from '../services/workspaceVisibility';
 import {
   archiveSessionResponseSchema,
@@ -122,20 +128,20 @@ const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
-const sessionGetQuerySchema = z.object({ hosts: z.literal('include').optional() });
-
-const hostSessionSchema = sessionSchema;
-
-async function sessionOnHosts(hosts: HostSources, id: string) {
-  return findOnHosts(hosts, async (session) => {
+async function sessionOnDevices(devices: DeviceSources, id: string) {
+  return findOnDevices(devices, async (session) => {
     try {
-      return await hostGet<Session>(session, `/api/v1/sessions/${encodeURIComponent(id)}`);
+      return await deviceGet<Session>(session, `/api/v1/sessions/${encodeURIComponent(id)}`);
     } catch (error) {
-      if (error instanceof HostSourceError && error.code === ErrorCode.SESSION_NOT_FOUND) return undefined;
+      if (error instanceof DeviceSourceError && error.code === ErrorCode.SESSION_NOT_FOUND) return undefined;
       throw error;
     }
   });
 }
+
+const sessionGetQuerySchema = z.object({ devices: z.literal('include').optional() });
+
+const deviceSessionSchema = sessionSchema;
 
 const sessionActionTailParamSchema = z.object({
   tail: z.string().min(1),
@@ -166,13 +172,14 @@ export function registerSessionsRoutes(
   app: SessionRouteHost,
   core: Scope,
   conversations: ConversationService,
-  hosts?: HostSources,
+  devices?: DeviceSources,
 ): void {
   const createRoute = defineRoute(
     {
       method: 'POST',
       path: '/sessions',
       body: createSessionRequestSchema,
+      documentedHeaders: clientIdentityRequestHeadersSchema,
       success: { data: sessionSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
@@ -267,6 +274,7 @@ export function registerSessionsRoutes(
           environmentCwd: body.environment_cwd,
           mainAgentBinding,
           ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
+          clientIdentity: requestClientIdentity(req),
           prepare: async (session) => {
             if (Object.keys(custom).length > 0) {
               await session.accessor.get(ISessionMetadata).update({ custom });
@@ -299,28 +307,28 @@ export function registerSessionsRoutes(
       path: '/sessions/{session_id}',
       params: sessionIdParamSchema,
       querystring: sessionGetQuerySchema,
-      success: { data: hostSessionSchema },
+      success: { data: deviceSessionSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.HOST_UNAVAILABLE]: {},
+        [ErrorCode.DEVICE_UNAVAILABLE]: {},
       },
       description:
-        'Get a session by ID. hosts=include also looks the session up on each SSH host and tags it with host_id; when it is not found and a host cannot answer, the result is HOST_UNAVAILABLE',
+        'Get a session by ID. devices=include also looks the session up on each device and tags it with device_id; when it is not found and a device cannot answer, the result is DEVICE_UNAVAILABLE',
       tags: ['sessions'],
     },
     async (req, reply) => {
       const { session_id } = req.params;
       const summary = await core.accessor.get(ISessionIndex).get(session_id);
-      if (summary === undefined && req.query.hosts === 'include' && hosts !== undefined) {
-        const lookup = await sessionOnHosts(hosts, session_id);
+      if (summary === undefined && req.query.devices === 'include' && devices !== undefined) {
+        const lookup = await sessionOnDevices(devices, session_id);
         if (lookup.found !== undefined) {
           reply.send(okEnvelope(lookup.found, req.id));
         } else if (lookup.unavailable.length > 0) {
           reply.send(
             errEnvelope(
-              ErrorCode.HOST_UNAVAILABLE,
-              `session ${session_id} may be on an unavailable host: ${lookup.unavailable.join(', ')}`,
+              ErrorCode.DEVICE_UNAVAILABLE,
+              `session ${session_id} may be on an unavailable device: ${lookup.unavailable.join(', ')}`,
               req.id,
             ),
           );
@@ -1345,6 +1353,21 @@ function normalizeOptional(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;
+}
+
+function requestClientIdentity(req: {
+  readonly id: string;
+  readonly headers: Record<string, unknown>;
+}): SessionClientIdentity | undefined {
+  const header = req.headers[CLIENT_IDENTITY_HEADER];
+  if (header === undefined) return undefined;
+  const parsed = parseClientIdentityHeader(header);
+  if (parsed.success) return parsed.identity;
+  requestLog(req)?.warn(
+    { reason: parsed.reason },
+    'ignoring an invalid client identity header; the session uses the server identity',
+  );
+  return undefined;
 }
 
 interface RequestedWorkspaceRoot {

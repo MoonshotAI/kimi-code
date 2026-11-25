@@ -14,7 +14,7 @@ const fakes = vi.hoisted(() => ({
   back: vi.fn(),
   open: vi.fn(),
   config: null as null | { value: { tools?: AppToolsConfig } | null },
-  hosts: null as null | { value: readonly { id: string }[] },
+  devices: null as null | { value: readonly { id: string }[] },
 }));
 
 vi.mock('@moonshot-ai/app-client/client', () => ({
@@ -26,14 +26,14 @@ vi.mock('@moonshot-ai/app-client/client', () => ({
 vi.mock('@moonshot-ai/app-client/stores', async () => {
   const vue = await import('vue');
   fakes.config = vue.ref<{ tools?: AppToolsConfig } | null>(null);
-  fakes.hosts = vue.ref<readonly { id: string }[]>([]);
+  fakes.devices = vue.ref<readonly { id: string }[]>([]);
   return {
     configStore: () => ({
       config: fakes.config!.value,
       updateConfig: fakes.updateConfig,
       loadConfig: fakes.loadConfig,
     }),
-    hostsStore: () => ({ hosts: fakes.hosts!.value }),
+    devicesStore: () => ({ devices: fakes.devices!.value }),
   };
 });
 
@@ -53,7 +53,7 @@ beforeEach(() => {
   fakes.config!.value = {
     tools: { enabled: ['Read'], disabled: ['Bash', 'mcp__example__*'] },
   };
-  fakes.hosts!.value = [];
+  fakes.devices!.value = [];
   fakes.listToolCatalog.mockReset().mockResolvedValue([
     { name: 'Bash', source: 'builtin' },
     { name: 'Read', source: 'builtin' },
@@ -394,8 +394,8 @@ describe('DefaultToolsRow', () => {
     expect(fakes.open).toHaveBeenCalledWith(entry);
   });
 
-  it('makes the local-only scope explicit when SSH hosts are configured', async () => {
-    fakes.hosts!.value = [{ id: 'ssh-1' }];
+  it('makes the local-only scope explicit when other devices are configured', async () => {
+    fakes.devices!.value = [{ id: 'ssh-1' }];
     host = document.createElement('div');
     document.body.append(host);
     app = createApp({ setup: () => () => h('div', [h(DefaultToolsRow), h(DefaultToolsPanel)]) });

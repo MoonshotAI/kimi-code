@@ -12,6 +12,7 @@ import {
   loadActiveWorkspace,
   loadHiddenWorkspaceIds,
   loadPinnedWorkspaces,
+  loadSidebarDeviceScope,
   loadWorkspaceNameOverridesById,
   loadWorkspaceOrder,
   loadWorkspaceRecencyFloor,
@@ -28,6 +29,7 @@ import {
   saveActiveWorkspace,
   saveHiddenWorkspaceIds,
   savePinnedWorkspaces,
+  saveSidebarDeviceScope,
   saveWorkspaceNameOverridesById,
   saveWorkspaceOrder,
   saveWorkspaceRecencyFloor,
@@ -46,7 +48,7 @@ import { track } from '../contracts';
 import { sessionsStore } from './sessions';
 import { pinnedOrderStore } from './pinnedOrder';
 import { filesStore } from './files';
-import { hostsStore } from './hosts';
+import { devicesStore } from './devices';
 import { promptStore } from './prompt';
 import { warningsStore } from './warnings';
 import { clientPinia } from './pinia';
@@ -119,7 +121,7 @@ function workspaceRootsChanged(previous: AppWorkspace | undefined, next: AppWork
   const nextDirs = next.additionalDirs ?? [];
   return (
     previous.root !== next.root ||
-    previous.hostId !== next.hostId ||
+    previous.deviceId !== next.deviceId ||
     previousDirs.length !== nextDirs.length ||
     previousDirs.some((dir, index) => dir !== nextDirs[index])
   );
@@ -251,10 +253,16 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     );
   }
 
+  const sessionsOfConfiguredDevices = computed(() => {
+    const devices = devicesStore();
+    if (!devices.loaded) return sessionsStore().sessions;
+    return sessionsStore().sessions.filter((session) => session.deviceId === undefined || devices.deviceFor(session.deviceId) !== undefined);
+  });
+
   const mergedWorkspaces = computed<AppWorkspace[]>(() =>
     mergeWorkspaces({
       workspaces: workspaces.value,
-      sessions: sessionsStore().sessions,
+      sessions: sessionsOfConfiguredDevices.value,
       hiddenWorkspaceIds: hiddenWorkspaceIds.value,
       sessionsHasMoreByWorkspace: sessionsHasMoreByWorkspace.value,
     }),
@@ -271,8 +279,8 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
       id: w.id,
       name: w.name,
       root: w.root,
-      hostId: w.hostId,
-      shortPath: w.hostId === undefined ? shortenHome(w.root, fsHome.value) : w.root,
+      deviceId: w.deviceId,
+      shortPath: w.deviceId === undefined ? shortenHome(w.root, fsHome.value) : w.root,
       additionalDirs: w.additionalDirs,
       sessionCount: w.sessionCount,
     }));
@@ -287,13 +295,13 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   );
 
   const visibleWorkspaceIds = computed<ReadonlySet<string>>(
-    () => new Set(workspacesView.value.filter((w) => !hostsStore().unavailable(w.hostId)).map((w) => w.id)),
+    () => new Set(workspacesView.value.filter((w) => !devicesStore().unavailable(w.deviceId)).map((w) => w.id)),
   );
 
   const activeWorkspaceId = computed<string | null>(() => {
     const id = storedActiveWorkspaceId.value;
     if (id && visibleWorkspaceIds.value.has(id)) return id;
-    return workspacesView.value.find((w) => !hostsStore().unavailable(w.hostId))?.id ?? null;
+    return workspacesView.value.find((w) => !devicesStore().unavailable(w.deviceId))?.id ?? null;
   });
 
   const visibleWorkspace = computed<WorkspaceView | null>(() => {
@@ -301,7 +309,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     return id ? workspaceById.value.get(id) ?? null : null;
   });
 
-  const isLocalWorkspace = computed<boolean>(() => visibleWorkspace.value?.hostId === undefined);
+  const isLocalWorkspace = computed<boolean>(() => visibleWorkspace.value?.deviceId === undefined);
 
   function clearWorkspaceTrustState(workspaceIds: readonly string[], clearCached = false): void {
     let trustChanged = false;
@@ -340,8 +348,8 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     if (nextCounts !== undefined) sessionsInitialCountByWorkspace.value = nextCounts;
   }
 
-  function inspectHostSelection(
-    hostSet: ReadonlySet<string>,
+  function inspectDeviceSelection(
+    deviceSet: ReadonlySet<string>,
     affectedWorkspaceIds: ReadonlySet<string>,
   ): { sessionAffected: boolean; workspaceAffected: boolean } {
     const activeSid = sessionsStore().activeSessionId;
@@ -349,22 +357,22 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     const sessionWsId =
       activeSession?.workspaceId ??
       (activeSession?.cwd !== undefined ? workspaceIdForSession(activeSession) : undefined);
-    const sessionHostId =
-      activeSession?.hostId ??
-      (sessionWsId ? mergedWorkspaces.value.find((w) => w.id === sessionWsId)?.hostId : undefined);
+    const sessionDeviceId =
+      activeSession?.deviceId ??
+      (sessionWsId ? mergedWorkspaces.value.find((w) => w.id === sessionWsId)?.deviceId : undefined);
     const storedId = storedActiveWorkspaceId.value;
-    const storedHostId = storedId ? workspaceById.value.get(storedId)?.hostId : undefined;
+    const storedDeviceId = storedId ? workspaceById.value.get(storedId)?.deviceId : undefined;
     return {
       sessionAffected:
-        (sessionHostId !== undefined && hostSet.has(sessionHostId)) ||
+        (sessionDeviceId !== undefined && deviceSet.has(sessionDeviceId)) ||
         (sessionWsId !== undefined && affectedWorkspaceIds.has(sessionWsId)),
       workspaceAffected:
-        (storedHostId !== undefined && hostSet.has(storedHostId)) ||
+        (storedDeviceId !== undefined && deviceSet.has(storedDeviceId)) ||
         (storedId !== null && affectedWorkspaceIds.has(storedId)),
     };
   }
 
-  function applyHostSelectionExit(
+  function applyDeviceSelectionExit(
     selection: { sessionAffected: boolean; workspaceAffected: boolean },
     excludedWorkspaceIds?: ReadonlySet<string>,
   ): void {
@@ -377,30 +385,29 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     }
   }
 
-  function handleUnavailableHosts(hostIds: readonly string[]): void {
-    if (hostIds.length === 0) return;
-    const hostSet = new Set(hostIds);
+  function devicesAffecting(deviceIds: readonly string[]) {
+    const deviceSet = new Set(deviceIds);
     const affected = mergedWorkspaces.value
-      .filter((w) => w.hostId !== undefined && hostSet.has(w.hostId))
+      .filter((w) => w.deviceId !== undefined && deviceSet.has(w.deviceId))
       .map((w) => w.id);
     const affectedSet = new Set(affected);
-    const selection = inspectHostSelection(hostSet, affectedSet);
-    clearWorkspaceTrustState(affected);
-    applyHostSelectionExit(selection, affectedSet);
+    return { deviceSet, affected, affectedSet, selection: inspectDeviceSelection(deviceSet, affectedSet) };
   }
 
-  function removeHostWorkspaces(hostIds: readonly string[]): string[] {
-    if (hostIds.length === 0) return [];
-    const hostSet = new Set(hostIds);
-    const affected = mergedWorkspaces.value
-      .filter((w) => w.hostId !== undefined && hostSet.has(w.hostId))
-      .map((w) => w.id);
-    const affectedSet = new Set(affected);
-    const selection = inspectHostSelection(hostSet, affectedSet);
-    workspaces.value = workspaces.value.filter((w) => w.hostId === undefined || !hostSet.has(w.hostId));
+  function handleUnavailableDevices(deviceIds: readonly string[]): void {
+    if (deviceIds.length === 0) return;
+    const { affected, affectedSet, selection } = devicesAffecting(deviceIds);
+    clearWorkspaceTrustState(affected);
+    applyDeviceSelectionExit(selection, affectedSet);
+  }
+
+  function removeDeviceWorkspaces(deviceIds: readonly string[]): string[] {
+    if (deviceIds.length === 0) return [];
+    const { deviceSet, affected, affectedSet, selection } = devicesAffecting(deviceIds);
+    workspaces.value = workspaces.value.filter((w) => w.deviceId === undefined || !deviceSet.has(w.deviceId));
     clearWorkspaceTrustState(affected, true);
     clearWorkspacePaginationState(affected);
-    applyHostSelectionExit(selection, affectedSet);
+    applyDeviceSelectionExit(selection, affectedSet);
     return affected;
   }
 
@@ -418,6 +425,23 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   function selectWorkspace(id: string): void {
     storedActiveWorkspaceId.value = id;
     saveActiveWorkspace(id);
+  }
+
+  const storedDeviceScope = ref<string | undefined>(loadSidebarDeviceScope());
+
+  const deviceScope = computed<string | undefined>(() => {
+    const id = storedDeviceScope.value;
+    if (id === undefined) return undefined;
+    const device = devicesStore().byId[id];
+    return device !== undefined && device.enabled !== false ? id : undefined;
+  });
+
+  function setDeviceScope(deviceId: string | undefined): void {
+    storedDeviceScope.value = deviceId;
+    saveSidebarDeviceScope(deviceId);
+    if (visibleWorkspace.value?.deviceId === deviceId) return;
+    const next = workspacesView.value.find((workspace) => workspace.deviceId === deviceId);
+    if (next !== undefined) selectWorkspace(next.id);
   }
 
   function setWorkspaceSortMode(mode: WorkspaceSortMode): void {
@@ -530,7 +554,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   function migrateActiveWorkspaceAfterRemoval(excludedIds?: ReadonlySet<string>): void {
     const nextWorkspace =
       workspacesView.value.find(
-        (w) => !excludedIds?.has(w.id) && !hostsStore().unavailable(w.hostId),
+        (w) => !excludedIds?.has(w.id) && !devicesStore().unavailable(w.deviceId),
       )?.id ?? null;
     storedActiveWorkspaceId.value = nextWorkspace;
     if (nextWorkspace) saveActiveWorkspace(nextWorkspace);
@@ -639,7 +663,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     workspaceId: string,
     opts?: { entry?: 'newChat' | 'workspace' },
   ): boolean {
-    if (hostsStore().blocked(mergedWorkspaces.value.find((workspace) => workspace.id === workspaceId)?.hostId)) return false;
+    if (devicesStore().blocked(mergedWorkspaces.value.find((workspace) => workspace.id === workspaceId)?.deviceId)) return false;
     if (opts?.entry !== undefined) promptStore().setDraftEntry(opts.entry);
     selectWorkspace(workspaceId);
     clearActiveSession();
@@ -650,17 +674,17 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   function openNewSessionDraft(): boolean {
     const wsId = activeWorkspaceId.value;
     if (wsId && openWorkspaceDraft(wsId, { entry: 'newChat' })) return true;
-    const fallback = workspacesView.value.find((workspace) => !hostsStore().blocked(workspace.hostId));
+    const fallback = workspacesView.value.find((workspace) => !devicesStore().blocked(workspace.deviceId));
     if (fallback) return openWorkspaceDraft(fallback.id, { entry: 'newChat' });
     if (wsId) return false;
     clearActiveSession();
     return true;
   }
 
-  function defaultCreateHostId(): string | undefined {
-    const currentHostId = visibleWorkspace.value?.hostId;
-    const usable = hostsStore().hosts.filter((host) => !hostsStore().blocked(host.id));
-    if (currentHostId !== undefined && usable.some((host) => host.id === currentHostId)) return currentHostId;
+  function defaultCreateDeviceId(): string | undefined {
+    const currentDeviceId = deviceScope.value;
+    const usable = devicesStore().devices.filter((device) => !devicesStore().blocked(device.id));
+    if (currentDeviceId !== undefined && usable.some((device) => device.id === currentDeviceId)) return currentDeviceId;
     if (workspacesView.value.length === 0 && usable.length === 1 && usable[0]?.status === 'ready') {
       return usable[0].id;
     }
@@ -670,13 +694,13 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   function removeWorkspaceMessage(id: string, tr: (key: string, params?: Record<string, unknown>) => string): string {
     const workspace = mergedWorkspaces.value.find((w) => w.id === id);
     const name = workspaceById.value.get(id)?.name ?? id;
-    const hostId = workspace?.hostId;
-    if (hostId !== undefined) {
-      const device = hostsStore().hostLabel(hostId, tr);
+    const deviceId = workspace?.deviceId;
+    if (deviceId !== undefined) {
+      const device = devicesStore().deviceLabel(deviceId, tr);
       return tr(
-        hostsStore().unavailable(hostId)
-          ? 'workspace.removeWorkspaceConfirmHostOffline'
-          : 'workspace.removeWorkspaceConfirmHost',
+        devicesStore().unavailable(deviceId)
+          ? 'workspace.removeWorkspaceConfirmDeviceOffline'
+          : 'workspace.removeWorkspaceConfirmDevice',
         { name, device },
       );
     }
@@ -686,7 +710,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   function openMostRecentWorkspaceByRoot(root: string, newChat = false): AppWorkspace | undefined {
     const rootKey = workspaceRootKey(root);
     const candidates = mergedWorkspaces.value.filter(
-      (workspace) => workspace.hostId === undefined && workspaceRootKey(workspace.root) === rootKey,
+      (workspace) => workspace.deviceId === undefined && workspaceRootKey(workspace.root) === rootKey,
     );
     const existing = sortWorkspacesByRecent(candidates, workspaceRecencyKeys.value)[0];
     if (existing === undefined) return undefined;
@@ -717,28 +741,28 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     }
   }
 
-  async function browseFs(path: string | undefined, signal?: AbortSignal, hostId?: string): Promise<FsBrowseResult> {
-    if (hostId !== undefined) return getDeviceApi(hostId).browseFs(path, signal);
+  async function browseFs(path: string | undefined, signal?: AbortSignal, deviceId?: string): Promise<FsBrowseResult> {
+    if (deviceId !== undefined) return getDeviceApi(deviceId).browseFs(path, signal);
     return getDeviceApi(undefined).browseFs(path, signal).catch(() => ({ path: '', parent: null, entries: [] }));
   }
 
-  async function searchFs(root: string, query: string, signal: AbortSignal, hostId?: string): Promise<{ path: string; label: string }[]> {
-    const result = await getDeviceApi(hostId).suggestFilesAtRoots([root], { query, limit: 150, showHidden: true }, { signal });
+  async function searchFs(root: string, query: string, signal: AbortSignal, deviceId?: string): Promise<{ path: string; label: string }[]> {
+    const result = await getDeviceApi(deviceId).suggestFilesAtRoots([root], { query, limit: 150, showHidden: true }, { signal });
     return result.items
       .filter((item) => item.kind === 'directory')
       .map((item) => ({ path: resolveLocalPath(root, item.path), label: item.path }));
   }
 
-  async function getFsHome(hostId?: string): Promise<{ home: string; recentRoots: string[] }> {
+  async function getFsHome(deviceId?: string): Promise<{ home: string; recentRoots: string[] }> {
     try {
-      return await getDeviceApi(hostId).getFsHome();
+      return await getDeviceApi(deviceId).getFsHome();
     } catch {
       return { home: '', recentRoots: [] };
     }
   }
 
-  async function mkdirFs(path: string, hostId?: string): Promise<{ path: string }> {
-    return getDeviceApi(hostId).mkdirFs(path);
+  async function mkdirFs(path: string, deviceId?: string): Promise<{ path: string }> {
+    return getDeviceApi(deviceId).mkdirFs(path);
   }
 
   function resetCreateWorkspaceAttempt(): void {
@@ -748,11 +772,11 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   async function createWorkspace(input: {
     paths: string[];
     name?: string;
-    hostId?: string;
+    deviceId?: string;
   }): Promise<AppWorkspace | undefined> {
     const [root, ...additionalDirs] = input.paths;
     if (root === undefined) return undefined;
-    const fingerprint = JSON.stringify({ paths: input.paths, name: input.name ?? null, hostId: input.hostId ?? null });
+    const fingerprint = JSON.stringify({ paths: input.paths, name: input.name ?? null, deviceId: input.deviceId ?? null });
     const attempt =
       createAttempt?.fingerprint === fingerprint
         ? createAttempt
@@ -764,7 +788,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
         name: input.name,
         additionalDirs: additionalDirs.length > 0 ? additionalDirs : undefined,
         idempotencyKey: attempt.idempotencyKey,
-        hostId: input.hostId,
+        deviceId: input.deviceId,
       });
       upsertWorkspacePreserveOrder(ws);
       track('workspace_created', { roots_count: 1 + ws.additionalDirs.length });
@@ -865,9 +889,9 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     }
   }
 
-  async function fetchWorkspaceProjectConfigDirs(root: string, hostId?: string): Promise<string[] | undefined> {
+  async function fetchWorkspaceProjectConfigDirs(root: string, deviceId?: string): Promise<string[] | undefined> {
     try {
-      return await getDeviceApi(hostId).getWorkspaceProjectConfigDirs(root);
+      return await getDeviceApi(deviceId).getWorkspaceProjectConfigDirs(root);
     } catch (err) {
       logWarn('[kimi-code] getWorkspaceProjectConfigDirs failed for', root, err);
       return undefined;
@@ -921,7 +945,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   function ensureWorkspaceTrust(workspaceId: string, options?: ReadRequestOptions): Promise<WorkspaceTrustResult> {
     if (
       options?.signal?.aborted ||
-      hostsStore().blocked(mergedWorkspaces.value.find((w) => w.id === workspaceId)?.hostId)
+      devicesStore().blocked(mergedWorkspaces.value.find((w) => w.id === workspaceId)?.deviceId)
     ) {
       return Promise.resolve({ status: 'aborted' });
     }
@@ -1007,6 +1031,8 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     visibleWorkspace,
     isLocalWorkspace,
     selectWorkspace,
+    deviceScope,
+    setDeviceScope,
     setWorkspaceSortMode,
     reorderWorkspaces,
     pinWorkspace,
@@ -1017,8 +1043,8 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     upsertWorkspacePreserveOrder,
     hideWorkspace,
     removeWorkspaceEntries,
-    handleUnavailableHosts,
-    removeHostWorkspaces,
+    handleUnavailableDevices,
+    removeDeviceWorkspaces,
     migrateActiveWorkspaceAfterRemoval,
     applyWorkspaceRename,
     commitSessionGroupPagination,
@@ -1032,7 +1058,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     clearActiveSession,
     openWorkspaceDraft,
     openNewSessionDraft,
-    defaultCreateHostId,
+    defaultCreateDeviceId,
     removeWorkspaceMessage,
     openMostRecentWorkspaceByRoot,
     addWorkspaceByPath,

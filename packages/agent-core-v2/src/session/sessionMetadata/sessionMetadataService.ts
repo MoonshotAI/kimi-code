@@ -294,6 +294,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       archived: false,
       agents: {},
       custom: {},
+      clientIdentity: this.ctx.clientIdentity,
     };
     if (this.sessionLocks.tryHold(this.ctx.sessionId)) {
       await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));

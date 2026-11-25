@@ -89,6 +89,23 @@ describe('server-v2 OpenAPI', () => {
     expect(cancelProps['include_background']).toMatchObject({ type: 'boolean' });
   });
 
+  it('documents the optional client identity header on session creation only', async () => {
+    const doc = await fetchOpenApi();
+    const headerParams = (path: string, method: string) =>
+      ((operation(doc, path, method)['parameters'] ?? []) as Array<Record<string, unknown>>).filter(
+        (param) => param['in'] === 'header',
+      );
+
+    expect(headerParams('/api/v1/sessions', 'post')).toEqual([
+      expect.objectContaining({
+        name: 'x-kimi-client-identity',
+        required: false,
+        schema: expect.objectContaining({ type: 'string', maxLength: 8192 }),
+      }),
+    ]);
+    expect(headerParams('/api/v1/sessions', 'get')).toEqual([]);
+  });
+
   it('documents the data :undo returns when the requested turns cannot be undone', async () => {
     const doc = await fetchOpenApi();
     const errorData = (action: string, code: number) => {

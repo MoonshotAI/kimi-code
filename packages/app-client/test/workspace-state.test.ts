@@ -1785,7 +1785,7 @@ describe('useWorkspaceState — session list loading', () => {
     expect(pushFailureSpy).toHaveBeenCalledWith('load', error);
   });
 
-  it('keeps the cached sessions of a host that could not answer the global session list', async () => {
+  it('keeps the cached sessions of a device that could not answer the global session list', async () => {
     const cached = { ...createSession(), title: 'Cached first page' };
     const fresh = {
       ...cached,
@@ -1799,7 +1799,7 @@ describe('useWorkspaceState — session list loading', () => {
     };
     const cachedOlder = { ...older, title: 'Cached older page' };
     apiMock.listSessions
-      .mockResolvedValueOnce({ items: [fresh], hasMore: false, unavailableHosts: ['off'] })
+      .mockResolvedValueOnce({ items: [fresh], hasMore: false, unavailableDevices: ['off'] })
       .mockResolvedValue({ items: [fresh, older], hasMore: false });
     const { state, workspaceState } = createSessionLoadRig([cached, cachedOlder]);
 
@@ -1816,7 +1816,7 @@ describe('useWorkspaceState — session list loading', () => {
     expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
   });
 
-  it('lists every session of every host in one request', async () => {
+  it('lists every session of every device in one request', async () => {
     const only = { ...createSession(), id: 'sess_only' };
     apiMock.listSessions.mockResolvedValue({ items: [only], hasMore: false });
     const { workspaceState } = createSessionLoadRig([]);

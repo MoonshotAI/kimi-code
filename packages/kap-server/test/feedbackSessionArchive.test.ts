@@ -8,17 +8,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { errEnvelope, okEnvelope } from '../src/protocol/envelope';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { fetchRemoteFeedbackArchive } from '../src/services/feedback/sessionArchive';
-import type { HostHttpRequest, HostHttpResponse, HostSession } from '../src/services/hosts/hostSession';
-import { HOST_RPC_MAX_BODY_BYTES } from '../src/transport/jsonlRpcStream';
+import type { DeviceHttpRequest, DeviceHttpResponse, DeviceSession } from '../src/services/devices/deviceSession';
+import { DEVICE_RPC_MAX_BODY_BYTES } from '../src/transport/jsonlRpcStream';
 
 const fileId = 'f_example';
 const filePath = `/api/v1/files/${fileId}`;
 
-function jsonResponse(value: unknown): HostHttpResponse {
+function jsonResponse(value: unknown): DeviceHttpResponse {
   return { status: 200, headers: {}, body: Buffer.from(JSON.stringify(value)) };
 }
 
-function host(request: HostSession['request']): HostSession {
+function device(request: DeviceSession['request']): DeviceSession {
   return { request, openWebSocket: () => { throw new Error('Unexpected WebSocket'); } };
 }
 
@@ -32,10 +32,10 @@ describe('SSH feedback session archives', () => {
   afterEach(() => rm(scratch, { recursive: true, force: true }));
 
   it('reads archives larger than one SSH response in bounded ranges and removes the remote file', async () => {
-    const source = randomBytes(HOST_RPC_MAX_BODY_BYTES + 19);
-    const requests: HostHttpRequest[] = [];
+    const source = randomBytes(DEVICE_RPC_MAX_BODY_BYTES + 19);
+    const requests: DeviceHttpRequest[] = [];
     const signal = new AbortController().signal;
-    const session = host(async req => {
+    const session = device(async req => {
       requests.push(req);
       if (req.method === 'POST') {
         return jsonResponse(okEnvelope({ file_id: fileId, size: source.length }, 'example-request'));
@@ -46,7 +46,7 @@ describe('SSH feedback session archives', () => {
       const start = Number(match[1]);
       const end = Number(match[2]);
       const body = source.subarray(start, end + 1);
-      if (body.length > HOST_RPC_MAX_BODY_BYTES) throw new Error('SSH response too large');
+      if (body.length > DEVICE_RPC_MAX_BODY_BYTES) throw new Error('SSH response too large');
       return { status: 206, headers: { 'content-range': `bytes ${start}-${end}/${source.length}`, 'content-length': body.length }, body };
     });
 
@@ -67,38 +67,38 @@ describe('SSH feedback session archives', () => {
     { status: 206, headers: { 'content-range': 'bytes 0-2/3' }, body: Buffer.from('ab') },
     { status: 206, headers: { 'content-range': 'bytes 0-2/3', 'content-length': '9' }, body: Buffer.from('abc') },
   ])('rejects an inconsistent range and removes the remote file', async response => {
-    const request = vi.fn<HostSession['request']>()
+    const request = vi.fn<DeviceSession['request']>()
       .mockResolvedValueOnce(jsonResponse(okEnvelope({ file_id: fileId, size: 3 }, 'example-request')))
       .mockResolvedValueOnce(response)
       .mockResolvedValueOnce(jsonResponse(okEnvelope({ deleted: true }, 'example-request')));
 
-    await expect(fetchRemoteFeedbackArchive(host(request), 'example-session', outputPath, new AbortController().signal))
+    await expect(fetchRemoteFeedbackArchive(device(request), 'example-session', outputPath, new AbortController().signal))
       .rejects.toMatchObject({ code: ErrorCode.INTERNAL_ERROR });
     expect(request).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'DELETE', path: filePath }));
   });
 
   it('deletes an oversized remote archive before downloading any part', async () => {
-    const request = vi.fn<HostSession['request']>()
+    const request = vi.fn<DeviceSession['request']>()
       .mockResolvedValueOnce(jsonResponse(okEnvelope({ file_id: fileId, size: 500 * 1024 * 1024 + 1 }, 'example-request')))
       .mockResolvedValueOnce(jsonResponse(okEnvelope({ deleted: true }, 'example-request')));
 
-    await expect(fetchRemoteFeedbackArchive(host(request), 'example-session', outputPath, new AbortController().signal))
+    await expect(fetchRemoteFeedbackArchive(device(request), 'example-session', outputPath, new AbortController().signal))
       .rejects.toMatchObject({ code: ErrorCode.FILE_TOO_LARGE });
     expect(request.mock.calls.map(([req]) => req.method)).toEqual(['POST', 'DELETE']);
   });
 
   it('rejects an invalid file ID before contacting the file service', async () => {
-    const request = vi.fn<HostSession['request']>().mockResolvedValue(
+    const request = vi.fn<DeviceSession['request']>().mockResolvedValue(
       jsonResponse(okEnvelope({ file_id: 'example', size: 3 }, 'example-request')),
     );
-    await expect(fetchRemoteFeedbackArchive(host(request), 'example-session', outputPath, new AbortController().signal))
+    await expect(fetchRemoteFeedbackArchive(device(request), 'example-session', outputPath, new AbortController().signal))
       .rejects.toMatchObject({ code: ErrorCode.INTERNAL_ERROR });
     expect(request).toHaveBeenCalledTimes(1);
   });
 
   it('honors cancellation and still releases the remote archive', async () => {
     const cancel = new AbortController();
-    const request = vi.fn<HostSession['request']>()
+    const request = vi.fn<DeviceSession['request']>()
       .mockResolvedValueOnce(jsonResponse(okEnvelope({ file_id: fileId, size: 3 }, 'example-request')))
       .mockImplementationOnce(async req => {
         expect(req.signal).toBe(cancel.signal);
@@ -107,7 +107,7 @@ describe('SSH feedback session archives', () => {
       })
       .mockResolvedValueOnce(jsonResponse(okEnvelope({ deleted: true }, 'example-request')));
 
-    await expect(fetchRemoteFeedbackArchive(host(request), 'example-session', outputPath, cancel.signal))
+    await expect(fetchRemoteFeedbackArchive(device(request), 'example-session', outputPath, cancel.signal))
       .rejects.toMatchObject({ name: 'AbortError' });
     expect(request.mock.lastCall?.[0]).toMatchObject({ method: 'DELETE', path: filePath });
     expect(request.mock.lastCall?.[0].signal?.aborted).not.toBe(true);
@@ -116,8 +116,8 @@ describe('SSH feedback session archives', () => {
   it.each([ErrorCode.AUTH_TOKEN_MISSING, ErrorCode.FEEDBACK_REJECTED, ErrorCode.SESSION_NOT_FOUND])(
     'preserves the remote archive error code %d and omits upstream details', async code => {
       const detail = 'Example upstream detail';
-      const request = vi.fn<HostSession['request']>().mockResolvedValue(jsonResponse(errEnvelope(code, detail, 'example-request')));
-      await expect(fetchRemoteFeedbackArchive(host(request), 'example-session', outputPath, new AbortController().signal))
+      const request = vi.fn<DeviceSession['request']>().mockResolvedValue(jsonResponse(errEnvelope(code, detail, 'example-request')));
+      await expect(fetchRemoteFeedbackArchive(device(request), 'example-session', outputPath, new AbortController().signal))
         .rejects.toMatchObject({ code, message: expect.not.stringContaining(detail) });
       expect(request).toHaveBeenCalledTimes(1);
     },

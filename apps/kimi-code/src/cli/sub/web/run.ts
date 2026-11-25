@@ -13,13 +13,11 @@ import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command, Option } from 'commander';
 
-import { CLI_MSH_PLATFORM, CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
+import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
-import { persistedKimiOAuthRef } from '#/utils/region';
-import { generateRemoteControlQr } from '#/utils/remote-control-qr';
 
 import { initializeServerTelemetry } from '../../telemetry';
 import { createKimiCodeHostIdentity } from '../../host-identity';
@@ -31,14 +29,18 @@ import {
   isLoopbackHost,
   splitTokenFragment,
 } from './access-urls';
+import { runKimiCommand, supportsBackgroundServer, type AttachedDaemon } from './ensure-daemon';
 import { type NetworkAddress } from './networks';
 import {
-  formatRemoteControlOutput,
-  formatRemoteControlStatus,
-  startRemoteControl,
-  type RemoteControlHandle,
-  type RemoteControlOptions,
-  type RemoteControlStatus,
+  attachBackgroundServer,
+  DEFAULT_REMOTE_CONTROL_RUN_DEPS,
+  formatIgnoredServerOptions,
+  formatRemoteControlUpgraded,
+  relaunchKimi,
+  runRemoteControl,
+  takeRemoteControlUpgradedFrom,
+  type RemoteControlRunDeps,
+  type RemoteControlServer,
 } from './remote-control';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
@@ -64,15 +66,11 @@ export interface WebCliOptions extends ServerCliOptions {
   open?: boolean;
   json?: boolean;
   remoteControl?: boolean;
-}
-
-export interface ForegroundControls {
-  requestShutdown(reason: string): void;
+  background?: boolean;
 }
 
 export interface StartForegroundHooks {
-  onReady?: (origin: string, controls?: ForegroundControls) => void | Promise<void>;
-  onShutdown?: (reason: string) => void | Promise<void>;
+  onReady?: (origin: string) => void | Promise<void>;
 }
 
 export interface WebCommandDeps {
@@ -80,7 +78,13 @@ export interface WebCommandDeps {
     options: ParsedServerOptions,
     hooks?: StartForegroundHooks,
   ) => Promise<never>;
-  startRemoteControl?: (options: RemoteControlOptions) => Promise<RemoteControlHandle>;
+  attachDaemon?: () => Promise<AttachedDaemon>;
+  startRemoteControlServer?: (options: ParsedServerOptions) => Promise<RemoteControlServer>;
+  platform?: NodeJS.Platform;
+  startRemoteControl?: RemoteControlRunDeps['startRemoteControl'];
+  onTerminate?: RemoteControlRunDeps['onTerminate'];
+  wait?: RemoteControlRunDeps['wait'];
+  relaunch?: RemoteControlRunDeps['relaunch'];
   openUrl(url: string): void;
   resolveToken?: () => string | undefined;
   networkAddresses?: NetworkAddress[];
@@ -99,11 +103,7 @@ export function buildWebCommand(
   const forceRemoteControl = opts.forceRemoteControl === true;
   const defaultOpen = opts.defaultOpen ?? true;
   const withServerOptions = cmd
-    .option(
-      '--port <port>',
-      `Bind port (default ${DEFAULT_SERVER_PORT})`,
-      String(DEFAULT_SERVER_PORT),
-    )
+    .option('--port <port>', `Bind port (default ${DEFAULT_SERVER_PORT})`)
     .option(
       '--host [host]',
       `Bind host. Omit to bind ${DEFAULT_SERVER_HOST} (this machine only); pass --host to bind ${DEFAULT_LAN_HOST} (all interfaces), or --host <host> for a specific host. The bearer token is printed at startup.`,
@@ -150,6 +150,11 @@ export function buildWebCommand(
       ).default(false),
     );
   }
+  withServerOptions.option(
+    '--background',
+    'Run Remote Control on the background Kimi server, so Ctrl+C only turns remote access off and sessions keep running (macOS and Linux).',
+    false,
+  );
   if (defaultOpen) {
     withServerOptions.option('--no-open', 'Do not open the web UI in the default browser.', true);
   } else {
@@ -172,6 +177,7 @@ export function buildWebCommand(
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
         process.exit(1);
       }
+      process.exit(0);
     });
 }
 
@@ -236,11 +242,47 @@ export async function handleWebCommand(
   if (jsonMode && parsed.allowRemoteShutdown) {
     throw new Error('--json cannot be combined with --allow-remote-shutdown.');
   }
-  if (opts.remoteControl === true && parsed.dangerousBypassAuth) {
-    throw new Error('--remote-control cannot be combined with --dangerous-bypass-auth.');
+  if (opts.background === true && opts.remoteControl !== true) {
+    throw new Error('--background requires --remote-control.');
   }
-  if (opts.remoteControl === true && !isLoopbackHost(parsed.host)) {
-    throw new Error('--remote-control requires a loopback host.');
+  if (opts.remoteControl === true) {
+    if (parsed.dangerousBypassAuth) {
+      throw new Error('--remote-control cannot be combined with --dangerous-bypass-auth.');
+    }
+    if (parsed.socketPath !== undefined) {
+      throw new Error('--remote-control cannot be combined with --socket.');
+    }
+    const upgradedFrom = takeRemoteControlUpgradedFrom();
+    if (upgradedFrom === getVersion()) {
+      throw new Error(
+        `Remote Control restarted after an upgrade but still runs Kimi Code ${upgradedFrom}; start it again with the upgraded kimi.`,
+      );
+    }
+    const background = opts.background === true;
+    if (background && !supportsBackgroundServer(deps.platform)) {
+      throw new Error('--background is only available on macOS and Linux.');
+    }
+    if (!background && !isLoopbackHost(parsed.host)) {
+      throw new Error('--remote-control requires a loopback host.');
+    }
+    const ignored = background ? foregroundOnlyOptions(opts) : [];
+    if (ignored.length > 0) deps.stdout.write(formatIgnoredServerOptions(ignored));
+    if (upgradedFrom !== undefined) deps.stdout.write(formatRemoteControlUpgraded(upgradedFrom));
+    await runRemoteControl(
+      { open: opts.open === true && upgradedFrom === undefined },
+      {
+        attachServer: () => attachRemoteControlServer(parsed, { ...deps, background }),
+        startRemoteControl:
+          deps.startRemoteControl ?? DEFAULT_REMOTE_CONTROL_RUN_DEPS.startRemoteControl,
+        onTerminate: deps.onTerminate ?? DEFAULT_REMOTE_CONTROL_RUN_DEPS.onTerminate,
+        wait: deps.wait ?? DEFAULT_REMOTE_CONTROL_RUN_DEPS.wait,
+        relaunch: deps.relaunch ?? (() => relaunchKimi(process.argv.slice(2))),
+        openUrl: (url) => deps.openUrl(url),
+        stdout: deps.stdout,
+        stderr: deps.stderr,
+      },
+    );
+    return;
   }
   const ephemeralToken = jsonMode ? randomBytes(32).toString('base64url') : undefined;
   const runOptions: ParsedServerOptions = jsonMode
@@ -252,66 +294,14 @@ export async function handleWebCommand(
       }
     : parsed;
   const run = deps.startServerForeground ?? startServerForeground;
-  let remoteControl: RemoteControlHandle | undefined;
   await run(runOptions, {
-    onReady: async (origin, controls) => {
+    onReady: (origin) => {
       if (parsed.socketPath !== undefined) return;
       if (jsonMode) {
         deps.stdout.write(formatJsonBootLine(origin, ephemeralToken!));
         return;
       }
       const token = parsed.dangerousBypassAuth ? undefined : deps.resolveToken?.();
-      if (opts.remoteControl === true) {
-        if (token === undefined) throw new Error('Unable to read the local server token.');
-        const dataDir = getDataDir();
-        const persisted = persistedKimiOAuthRef();
-        let outputReady = false;
-        const pendingStatuses: string[] = [];
-        const onStatus = (status: RemoteControlStatus): void => {
-          const line = formatRemoteControlStatus(status);
-          if (outputReady) deps.stdout.write(line);
-          else pendingStatuses.push(line);
-        };
-        remoteControl = await (deps.startRemoteControl ?? startRemoteControl)({
-          homeDir: dataDir,
-          localOrigin: origin,
-          localServerToken: token,
-          clientVersion: `${CLI_USER_AGENT_PRODUCT}/${getVersion()}`,
-          urlSource: CLI_MSH_PLATFORM,
-          configuredOAuthKey: persisted?.key,
-          configuredOAuthHost: persisted?.oauthHost,
-          stderr: deps.stderr,
-          onStatus,
-        });
-        void remoteControl.closed.then(
-          (reason) => {
-            if (reason === 'user_requested') {
-              controls?.requestShutdown('remote_control_user_requested');
-            }
-          },
-          (error) => {
-            deps.stderr.write(
-              `Remote Control lock release failed: ${error instanceof Error ? error.message : String(error)}\n`,
-            );
-            controls?.requestShutdown('remote_control_closed');
-          },
-        );
-        const qrCode = await generateRemoteControlQr(remoteControl.url, dataDir);
-        deps.stdout.write(
-          formatRemoteControlOutput({
-            url: remoteControl.url,
-            localOrigin: origin,
-            localServerToken: token,
-            deviceName: remoteControl.deviceName,
-            qrCode: qrCode.terminal,
-            pngPath: qrCode.pngPath,
-          }),
-        );
-        outputReady = true;
-        for (const line of pendingStatuses) deps.stdout.write(line);
-        if (opts.open === true) deps.openUrl(remoteControl.url);
-        return;
-      }
       deps.stdout.write(
         parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
           ? formatReadyBanner(origin, parsed.host, {
@@ -326,10 +316,20 @@ export async function handleWebCommand(
         deps.openUrl(token !== undefined ? buildWebUrl(openOrigin, token) : openOrigin);
       }
     },
-    onShutdown: async () => {
-      await remoteControl?.close();
-    },
   });
+}
+
+function foregroundOnlyOptions(opts: WebCliOptions): string[] {
+  const passed: [flag: string, set: boolean][] = [
+    ['--port', opts.port !== undefined],
+    ['--host', opts.host !== undefined],
+    ['--allowed-host', opts.allowedHost !== undefined],
+    ['--log-level', opts.logLevel !== undefined],
+    ['--web-title', opts.webTitle !== undefined],
+    ['--debug-endpoints', opts.debugEndpoints === true],
+    ['--allow-remote-shutdown', opts.allowRemoteShutdown === true],
+  ];
+  return passed.filter(([, set]) => set).map(([flag]) => flag);
 }
 
 function formatReadyLine(
@@ -364,9 +364,6 @@ async function runServerInProcess(
   options: ParsedServerOptions,
   hooks: StartForegroundHooks,
 ): Promise<never> {
-  const version = getVersion();
-  initializeServerTelemetry({ version });
-
   let running: RoutedServer | undefined;
   let stopping = false;
 
@@ -374,14 +371,6 @@ async function runServerInProcess(
     if (stopping) return;
     stopping = true;
     running?.logger.info({ reason }, 'server shutting down');
-    try {
-      await hooks.onShutdown?.(reason);
-    } catch (error) {
-      running?.logger.error(
-        { err: error instanceof Error ? error : new Error(String(error)) },
-        'foreground shutdown hook error',
-      );
-    }
     try {
       await running?.close();
       await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
@@ -394,6 +383,31 @@ async function runServerInProcess(
     process.exit(0);
   }
 
+  running = await startServerInProcess(options);
+
+  process.once('SIGINT', () => {
+    void shutdown('SIGINT');
+  });
+  process.once('SIGTERM', () => {
+    void shutdown('SIGTERM');
+  });
+
+  running.logger.info({ address: running.address }, 'server ready');
+
+  try {
+    await hooks.onReady?.(running.address);
+  } catch (error) {
+    await running.close();
+    await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
+    throw error;
+  }
+
+  return new Promise<never>(() => {});
+}
+
+async function startServerInProcess(options: ParsedServerOptions): Promise<RoutedServer> {
+  const version = getVersion();
+  initializeServerTelemetry({ version });
   const logger = createServerLogger({
     level: options.logLevel,
     stream: options.logToStderr === true ? process.stderr : undefined,
@@ -424,43 +438,44 @@ async function runServerInProcess(
     webTitle: options.webTitle,
     socketPath: options.socketPath,
     managedBy: options.managedBy,
+    runHostCommand: runKimiCommand,
     telemetry: true,
     webAssetsDir,
   });
   logger.info('serving the REST/WS API and the bundled web UI');
-  running = {
+  track('server_started', { daemon: false });
+  return {
     address:
       options.socketPath === undefined ? `http://${v2.host}:${v2.port}` : `unix:${options.socketPath}`,
     logger,
     close: () => v2.close(),
   };
+}
 
-  track('server_started', { daemon: false });
+export function attachRemoteControlServer(
+  options: ParsedServerOptions,
+  deps: Pick<WebCommandDeps, 'attachDaemon' | 'startRemoteControlServer'> & { readonly background?: boolean } = {},
+): Promise<RemoteControlServer> {
+  return deps.background === true
+    ? attachBackgroundServer(deps.attachDaemon)
+    : (deps.startRemoteControlServer ?? startRemoteControlServerInProcess)(options);
+}
 
-  process.once('SIGINT', () => {
-    void shutdown('SIGINT');
-  });
-  process.once('SIGTERM', () => {
-    void shutdown('SIGTERM');
-  });
-
-  running.logger.info({ address: running.address }, 'server ready');
-
-  try {
-    await hooks.onReady?.(running.address, {
-      requestShutdown: (reason) => void shutdown(reason),
-    });
-  } catch (error) {
-    try {
-      await hooks.onShutdown?.('startup_failed');
-    } finally {
+async function startRemoteControlServerInProcess(
+  options: ParsedServerOptions,
+): Promise<RemoteControlServer> {
+  const running = await startServerInProcess(options);
+  return {
+    localOrigin: running.address,
+    localServerToken: () => tryResolveServerToken(getDataDir()) ?? '',
+    localUrl: buildOpenableUrl(running.address, tryResolveServerToken(getDataDir())),
+    background: false,
+    closed: new Promise<never>(() => {}),
+    close: async () => {
       await running.close();
       await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
-    }
-    throw error;
-  }
-
-  return new Promise<never>(() => {});
+    },
+  };
 }
 
 export function serverWebAssetsDir(

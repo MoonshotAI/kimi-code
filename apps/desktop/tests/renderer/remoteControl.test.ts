@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RemoteControlStatus } from '@moonshot-ai/app-core/api';
-import type { RcDevice, RcDeviceList } from '@moonshot-ai/app-core/lib';
 
 import {
   alreadyRunningHolder,
@@ -11,18 +10,6 @@ import {
 } from '../../src/renderer/composables/useRemoteControl';
 import { createRemoteControlQrDataUrl } from '../../src/renderer/lib/remoteControlQr';
 import { rendererTrackEventSchema } from '../../src/shared/track-events';
-
-const DEVICE: RcDevice = {
-  device_id: 'device-1',
-  alias: 'Workstation',
-  status: 'online',
-  platform: 'darwin',
-  client_version: 'Kimi Code/1.0.0',
-  local_base_url: 'http://127.0.0.1:58627',
-  created_at: '2026-01-01T00:00:00.000Z',
-  updated_at: '2026-01-01T00:00:00.000Z',
-  last_remote_access_at: '2026-01-01T00:00:00.000Z',
-};
 
 function status(enabled: boolean, overrides: Partial<RemoteControlStatus> = {}): RemoteControlStatus {
   return {
@@ -46,13 +33,7 @@ function apiStub(overrides: Partial<RemoteControlApi> = {}): RemoteControlApi {
   return {
     getRemoteControlStatus: vi.fn(async () => status(false)),
     setRemoteControlEnabled: vi.fn(async (enabled: boolean) => status(enabled)),
-    listRemoteControlDevices: vi.fn(async (): Promise<RcDeviceList> => ({
-      devices: [DEVICE],
-      max_devices: 3,
-    })),
-    renameRemoteControlDevice: vi.fn(async () => {}),
     deactivateRemoteControlDevice: vi.fn(async () => {}),
-    deleteRemoteControlDevice: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -62,20 +43,20 @@ afterEach(() => {
 });
 
 describe('useRemoteControl', () => {
-  it('loads status and devices on open regardless of the tunnel state', async () => {
+  it('loads the tunnel status on open without touching the device registry', async () => {
+    const onRegistrationChange = vi.fn();
     const offApi = apiStub();
-    const off = useRemoteControl(offApi);
+    const off = useRemoteControl(offApi, { onRegistrationChange });
     await off.open();
     expect(off.status.value?.enabled).toBe(false);
-    expect(offApi.listRemoteControlDevices).toHaveBeenCalledTimes(1);
-    expect(off.devices.value).toEqual([DEVICE]);
 
     const onApi = apiStub({
       getRemoteControlStatus: vi.fn(async () => status(true)),
     });
-    const on = useRemoteControl(onApi);
+    const on = useRemoteControl(onApi, { onRegistrationChange });
     await on.open();
-    expect(on.devices.value).toEqual([DEVICE]);
+    expect(on.status.value?.enabled).toBe(true);
+    expect(onRegistrationChange).not.toHaveBeenCalled();
   });
 
   it('loads the restore preference independently of the current switch state', async () => {
@@ -283,12 +264,13 @@ describe('useRemoteControl', () => {
     }
   });
 
-  it('dedupes enable submissions and refreshes devices after turning on', async () => {
+  it('dedupes enable submissions and reports the registration change after turning on', async () => {
     const pending = deferred<RemoteControlStatus>();
+    const onRegistrationChange = vi.fn();
     const api = apiStub({
       setRemoteControlEnabled: vi.fn(() => pending.promise),
     });
-    const control = useRemoteControl(api);
+    const control = useRemoteControl(api, { onRegistrationChange });
 
     const first = control.setEnabled(true);
     const second = control.setEnabled(true);
@@ -297,8 +279,13 @@ describe('useRemoteControl', () => {
 
     pending.resolve(status(true));
     await Promise.all([first, second]);
-    expect(api.listRemoteControlDevices).toHaveBeenCalledTimes(1);
-    expect(control.devices.value).toEqual([DEVICE]);
+    expect(onRegistrationChange).toHaveBeenCalledOnce();
+
+    api.setRemoteControlEnabled = vi.fn(async () => {
+      throw new Error('failed');
+    });
+    await control.setEnabled(false);
+    expect(onRegistrationChange).toHaveBeenCalledOnce();
   });
 
   it('clears the pending toggle state when a status refresh lands mid-toggle', async () => {
@@ -317,85 +304,6 @@ describe('useRemoteControl', () => {
 
     expect(control.enabling.value).toBe(false);
     expect(control.disabling.value).toBe(false);
-  });
-
-  it('trims rename input and reloads status and devices', async () => {
-    const api = apiStub({
-      getRemoteControlStatus: vi.fn(async () => status(true)),
-    });
-    const control = useRemoteControl(api);
-    await control.open();
-
-    await control.renameDevice('device-1', '  Renamed  ');
-
-    expect(api.renameRemoteControlDevice).toHaveBeenCalledWith('device-1', 'Renamed');
-    expect(api.getRemoteControlStatus).toHaveBeenCalledTimes(2);
-    expect(api.listRemoteControlDevices).toHaveBeenCalledTimes(2);
-  });
-
-  it('returns to the off state and refreshes devices after the current device is deactivated', async () => {
-    const setRemoteControlRestoreState = vi.fn(async () => {});
-    (globalThis as { kimiDesktop?: unknown }).kimiDesktop = {
-      setRemoteControlRestoreState,
-    };
-    const api = apiStub({
-      getRemoteControlStatus: vi
-        .fn(async () => status(true))
-        .mockResolvedValueOnce(status(true))
-        .mockResolvedValue(status(false)),
-    });
-    const control = useRemoteControl(api);
-    await control.open();
-
-    await control.deactivateDevice('device-1');
-
-    expect(api.deactivateRemoteControlDevice).toHaveBeenCalledWith('device-1');
-    expect(setRemoteControlRestoreState).toHaveBeenCalledWith({ previousEnabled: false });
-    expect(control.status.value?.enabled).toBe(false);
-    expect(control.devices.value).toEqual([DEVICE]);
-    expect(api.listRemoteControlDevices).toHaveBeenCalledTimes(2);
-  });
-
-  it('deletes a device through the cloud registry and refreshes devices', async () => {
-    const api = apiStub({
-      listRemoteControlDevices: vi
-        .fn(async (): Promise<RcDeviceList> => ({ devices: [DEVICE], max_devices: 3 }))
-        .mockResolvedValueOnce({ devices: [DEVICE], max_devices: 3 })
-        .mockResolvedValue({ devices: [], max_devices: 3 }),
-    });
-    const control = useRemoteControl(api);
-    await control.open();
-
-    await control.deleteDevice('device-1');
-
-    expect(api.deleteRemoteControlDevice).toHaveBeenCalledWith('device-1');
-    expect(api.deactivateRemoteControlDevice).not.toHaveBeenCalled();
-    expect(control.devices.value).toEqual([]);
-    expect(api.listRemoteControlDevices).toHaveBeenCalledTimes(2);
-  });
-
-  it('ignores stale device list responses', async () => {
-    const first = deferred<RcDeviceList>();
-    const second = deferred<RcDeviceList>();
-    const list = vi
-      .fn()
-      .mockImplementationOnce(() => first.promise)
-      .mockImplementationOnce(() => second.promise);
-    const control = useRemoteControl(apiStub({
-      getRemoteControlStatus: vi.fn(async () => status(true)),
-      listRemoteControlDevices: list,
-    }));
-    control.status.value = status(true);
-
-    const firstRequest = control.refreshDevices();
-    const secondRequest = control.refreshDevices();
-    second.resolve({ devices: [{ ...DEVICE, alias: 'Newest' }] });
-    await secondRequest;
-    first.resolve({ devices: [{ ...DEVICE, alias: 'Stale' }] });
-    await firstRequest;
-
-    expect(control.devices.value?.[0]?.alias).toBe('Newest');
-    expect(control.devicesRefreshing.value).toBe(false);
   });
 
   it('adopts the conflict reported by the status response', async () => {

@@ -1,7 +1,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IClientIdentity } from '#/app/clientIdentity/clientIdentity';
 import { IFlagService } from '#/app/flag/flag';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -27,9 +27,9 @@ export class SessionNotify implements ISessionNotify {
     @IAtomicDocumentStore private readonly store: IAtomicDocumentStore,
     @IAppendLogStore private readonly journal: IAppendLogStore,
     @IFlagService flags: IFlagService,
-    @IBootstrapService bootstrap: IBootstrapService,
+    @IClientIdentity client: IClientIdentity,
   ) {
-    this.ready = this.load(notifyUserAvailable(flags, bootstrap));
+    this.ready = this.load(notifyUserAvailable(flags, client));
   }
 
   private async load(initial: boolean): Promise<void> {

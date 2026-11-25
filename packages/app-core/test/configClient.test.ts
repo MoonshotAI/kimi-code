@@ -168,6 +168,14 @@ describe('DaemonKimiWebApi.getMeta experimental_flags', () => {
 
     expect(meta.webTitle).toBe('');
   });
+
+  it('maps the device id of the machine the server runs on', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(envelope({ ...wireMeta, device_id: 'rc-this-mac', device_api_level: 1 })));
+
+    const meta = await makeApi().getMeta();
+
+    expect(meta.deviceId).toBe('rc-this-mac');
+  });
 });
 
 describe('host text editing', () => {

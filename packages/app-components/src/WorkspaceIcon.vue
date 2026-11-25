@@ -2,39 +2,43 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, StatusDot, type IconSize } from '@moonshot-ai/app-ui';
-import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore, type DeviceDisplayState } from '@moonshot-ai/app-client/stores';
 
 const props = withDefaults(defineProps<{
-  hostId?: string;
+  deviceId?: string;
   size?: IconSize;
   status?: 'all' | 'none';
 }>(), {
-  hostId: undefined,
+  deviceId: undefined,
   size: undefined,
   status: 'all',
 });
 
+const DOTS: Partial<Record<DeviceDisplayState, string>> = {
+  ready: 'ok',
+  connecting: 'running',
+  idle: 'idle',
+  offline: 'idle',
+  failed: 'error',
+  outdated: 'error',
+  signedOut: 'error',
+};
+
 const { t } = useI18n();
-const state = computed(() => hostsStore().displayState(props.hostId));
-const dot = computed(() => {
-  if (props.status === 'none') return undefined;
-  if (state.value === 'failed') return 'error';
-  if (state.value === 'ready') return 'ok';
-  if (state.value === 'connecting') return 'running';
-  if (state.value === 'idle') return 'idle';
-  return undefined;
-});
+const state = computed(() => devicesStore().displayState(props.deviceId));
+const icon = computed(() => (devicesStore().deviceFor(props.deviceId)?.connection === 'account' ? 'device-desktop' : 'server'));
+const dot = computed(() => (props.status === 'none' ? undefined : DOTS[state.value]));
 const label = computed(() => {
-  if (props.hostId === undefined) return undefined;
-  const description = t(`workspace.hostState.${state.value}`);
-  return state.value === 'missing' ? description : `${hostsStore().displayName(props.hostId)} · ${description}`;
+  if (props.deviceId === undefined) return undefined;
+  const description = t(`workspace.deviceState.${state.value}`);
+  return state.value === 'missing' ? description : `${devicesStore().displayName(props.deviceId)} · ${description}`;
 });
 </script>
 
 <template>
   <Icon v-if="state === 'local'" name="folder-closed" :size="size" />
   <span v-else class="ws-icon" :class="`ws-icon--${state}`" :title="label" :aria-label="label" role="img">
-    <Icon name="server" :size="size" />
+    <Icon :name="icon" :size="size" />
     <StatusDot v-if="dot" class="ws-icon-dot" :status="dot" size="sm" ring="surface" />
   </span>
 </template>
@@ -48,7 +52,9 @@ const label = computed(() => {
   justify-content: center;
 }
 .ws-icon--disabled,
-.ws-icon--missing {
+.ws-icon--missing,
+.ws-icon--duplicate,
+.ws-icon--self {
   opacity: 0.55;
 }
 .ws-icon-dot {

@@ -139,6 +139,44 @@ describe('SessionMetadata', () => {
     expect(meta.effectiveCwd).toBe(makeContext().cwd);
   });
 
+  it('persists the creating client identity in a new document and keeps it through later writes', async () => {
+    const clientIdentity = {
+      productName: 'desk-product',
+      version: '7.6.5',
+      platform: 'desk_platform',
+      displayName: 'Desk Host',
+      uiCapabilities: ['update_panel' as const],
+    };
+    ix.stub(ISessionContext, makeSessionContext({
+      sessionId: 's1',
+      workspaceId: 'wd_test',
+      sessionDir: '/tmp/sessions/wd_test/s1',
+      sessionScope: 'sessions/wd_test/s1',
+      metaScope: META_SCOPE,
+      cwd: '/tmp/sessions/wd_test/s1',
+      clientIdentity,
+    }));
+    const meta = ix.get(ISessionMetadata);
+    await meta.setTitle('renamed');
+    await meta.update({ lastPrompt: 'hello' });
+
+    expect((await meta.read()).clientIdentity).toEqual(clientIdentity);
+    const stored = await ix.get(IAtomicDocumentStore).get<SessionMeta>(META_SCOPE, 'state.json');
+    expect(stored).toMatchObject({ title: 'renamed', lastPrompt: 'hello', clientIdentity });
+
+    ix.stub(ISessionContext, makeContext());
+    const reloaded = createFreshMetadata(ix);
+    expect((await reloaded.read()).clientIdentity).toEqual(clientIdentity);
+  });
+
+  it('creates a document without a client identity for a session the server stamped none on', async () => {
+    const meta = ix.get(ISessionMetadata);
+    await meta.ready;
+    const stored = await ix.get(IAtomicDocumentStore).get<Record<string, unknown>>(META_SCOPE, 'state.json');
+    expect(stored).toBeDefined();
+    expect(stored).not.toHaveProperty('clientIdentity');
+  });
+
   it('update merges fields and bumps updatedAt', async () => {
     const meta = ix.get(ISessionMetadata);
     const before = (await meta.read()).updatedAt;

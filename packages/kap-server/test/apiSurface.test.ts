@@ -6,11 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { contractDigest, expectContractGolden } from '@moonshot-ai/testkit/contract';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { HOST_API_LEVEL, startServer, type RunningServer } from '../src';
+import { DEVICE_API_LEVEL, startServer, type RunningServer } from '../src';
 import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
-const HOST_CONTRACT = { apiLevel: 1, digest: 'bbf1b3fa5b6909930e6d3eb9fe1584f436b6aa95693b5d04bdad8ca1cb12dc7f' };
+const DEVICE_CONTRACT = { apiLevel: 1, digest: '577d843890788cfbbf3053c16eb676baef9bbb78f06b783a486cf73480fb1506' };
 
 const DEBUG_ROUTES = [
   'GET /api/v1/debug/channels',
@@ -86,12 +86,12 @@ describe('KAP API surface', () => {
     );
   });
 
-  it('pins the host API level to the reviewed contract', () => {
+  it('pins the device API level to the reviewed contract', () => {
     const { openapi, asyncapi } = started();
     expect(
-      { apiLevel: HOST_API_LEVEL, digest: contractDigest(withoutDebugRoutes(openapi), asyncapi) },
-      'The client-visible API contract changed; review packages/kap-server/schema/contract.txt. If the current client would break against a remote running the previous release, bump HOST_API_LEVEL; then update HOST_CONTRACT to the new level and digest.',
-    ).toEqual(HOST_CONTRACT);
+      { apiLevel: DEVICE_API_LEVEL, digest: contractDigest(withoutDebugRoutes(openapi), asyncapi) },
+      'The client-visible API contract changed; review packages/kap-server/schema/contract.txt. If the current client would break against a remote running the previous release, bump DEVICE_API_LEVEL; then update DEVICE_CONTRACT to the new level and digest.',
+    ).toEqual(DEVICE_CONTRACT);
   });
 
   it('lists the internal debug routes outside the reviewed contract', () => {

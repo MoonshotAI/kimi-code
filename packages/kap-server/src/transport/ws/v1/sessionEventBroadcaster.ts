@@ -35,7 +35,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type {
   ConfigWarningItem,
-  HostChangedEvent,
+  DeviceChangedEvent,
   ModelCatalogRefreshChange,
   ModelCatalogRefreshFailure,
   ModelCatalogRetiredDefault,
@@ -195,10 +195,10 @@ export class SessionEventBroadcaster {
     });
   }
 
-  publishHostChanged(hosts: HostChangedEvent['hosts']): void {
-    this.enqueueGlobal('event.host.changed', () => ({
-      type: 'event.host.changed',
-      hosts,
+  publishDeviceChanged(devices: DeviceChangedEvent['devices']): void {
+    this.enqueueGlobal('event.device.changed', () => ({
+      type: 'event.device.changed',
+      devices,
     }));
   }
 

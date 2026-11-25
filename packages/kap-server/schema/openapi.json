@@ -1606,6 +1606,1377 @@
         ]
       }
     },
+    "/api/v1/devices": {
+      "get": {
+        "description": "List configured devices and their connection status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        0
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "devices": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "alias": {
+                                "type": "string"
+                              },
+                              "connect_error": {
+                                "type": "string"
+                              },
+                              "connect_failure": {
+                                "type": "string"
+                              },
+                              "connection": {
+                                "enum": [
+                                  "ssh",
+                                  "account"
+                                ],
+                                "type": "string"
+                              },
+                              "device_id": {
+                                "type": "string"
+                              },
+                              "duplicate_of": {
+                                "type": "string"
+                              },
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "host": {
+                                "type": "string"
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "identity_file": {
+                                "type": "string"
+                              },
+                              "install": {
+                                "enum": [
+                                  "desktop",
+                                  "cli"
+                                ],
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "platform": {
+                                "type": "string"
+                              },
+                              "product_name": {
+                                "type": "string"
+                              },
+                              "remote_bin": {
+                                "type": "string"
+                              },
+                              "remote_upgrade": {
+                                "type": "boolean"
+                              },
+                              "remote_version": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "enum": [
+                                  "pending",
+                                  "connecting",
+                                  "ready",
+                                  "disconnected"
+                                ],
+                                "type": "string"
+                              },
+                              "upgrade_error": {
+                                "type": "string"
+                              },
+                              "upgrade_status": {
+                                "enum": [
+                                  "installing",
+                                  "restarting",
+                                  "failed"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "connection",
+                              "status"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "devices"
+                      ],
+                      "type": "object"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "devices"
+        ]
+      }
+    },
+    "/api/v1/devices/{id}": {
+      "delete": {
+        "description": "Remove a device",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        0
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "ok": {
+                          "enum": [
+                            true
+                          ],
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "ok"
+                      ],
+                      "type": "object"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "devices"
+        ]
+      },
+      "put": {
+        "description": "Create or replace a device; an account device is keyed by its Remote Control device id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "connection": {
+                        "enum": [
+                          "ssh"
+                        ],
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "host": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "identity_file": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "name": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "remote_bin": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "host"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "connection": {
+                        "enum": [
+                          "account"
+                        ],
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "name": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "connection"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "ok": {
+                              "enum": [
+                                true
+                              ],
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "ok"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "devices"
+        ]
+      }
+    },
+    "/api/v1/devices/{id}/proxy": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "head": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/proxy/{*}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "*",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "*",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "head": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "*",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "*",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "*",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "*",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/devices:connect": {
+      "post": {
+        "description": "Connect a configured device now; failures are reported in the returned status",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "alias": {
+                              "type": "string"
+                            },
+                            "connect_error": {
+                              "type": "string"
+                            },
+                            "connect_failure": {
+                              "type": "string"
+                            },
+                            "connection": {
+                              "enum": [
+                                "ssh",
+                                "account"
+                              ],
+                              "type": "string"
+                            },
+                            "device_id": {
+                              "type": "string"
+                            },
+                            "duplicate_of": {
+                              "type": "string"
+                            },
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "host": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "identity_file": {
+                              "type": "string"
+                            },
+                            "install": {
+                              "enum": [
+                                "desktop",
+                                "cli"
+                              ],
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "platform": {
+                              "type": "string"
+                            },
+                            "product_name": {
+                              "type": "string"
+                            },
+                            "remote_bin": {
+                              "type": "string"
+                            },
+                            "remote_upgrade": {
+                              "type": "boolean"
+                            },
+                            "remote_version": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "enum": [
+                                "pending",
+                                "connecting",
+                                "ready",
+                                "disconnected"
+                              ],
+                              "type": "string"
+                            },
+                            "upgrade_error": {
+                              "type": "string"
+                            },
+                            "upgrade_status": {
+                              "enum": [
+                                "installing",
+                                "restarting",
+                                "failed"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "connection",
+                            "status"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40420
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "devices"
+        ]
+      }
+    },
+    "/api/v1/devices:copy-providers": {
+      "post": {
+        "description": "Copy shareable custom model providers on this computer to a device, replacing providers with the same name there",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "providers": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "providers"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40420
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40926
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "devices"
+        ]
+      }
+    },
+    "/api/v1/devices:ssh-hosts": {
+      "get": {
+        "description": "List concrete Host aliases declared in the local ~/.ssh/config",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        0
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "config_path": {
+                          "type": "string"
+                        },
+                        "exists": {
+                          "type": "boolean"
+                        },
+                        "hosts": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "alias": {
+                                "type": "string"
+                              },
+                              "host_name": {
+                                "type": "string"
+                              },
+                              "port": {
+                                "type": "number"
+                              },
+                              "user": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "alias"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "config_path",
+                        "exists",
+                        "hosts"
+                      ],
+                      "type": "object"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "devices"
+        ]
+      }
+    },
+    "/api/v1/devices:test": {
+      "post": {
+        "description": "Check SSH connectivity and the remote kimi version of an SSH device without starting a server",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "connection": {
+                    "enum": [
+                      "ssh"
+                    ],
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "host": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "identity_file": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "remote_bin": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "host"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "connect_error": {
+                              "type": "string"
+                            },
+                            "connect_failure": {
+                              "type": "string"
+                            },
+                            "connected": {
+                              "type": "boolean"
+                            },
+                            "remote_version": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "connected"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "devices"
+        ]
+      }
+    },
+    "/api/v1/devices:upgrade": {
+      "post": {
+        "description": "Upgrade Kimi Code on a device. SSH devices, and account devices running a Kimi Code CLI that supports it, upgrade in the background and report progress in the device upgrade_status; the desktop app and older CLIs answer with how to update on that computer",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "message": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "enum": [
+                                "started",
+                                "update_on_device",
+                                "unsupported"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "status"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40420
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40926
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40960
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "devices"
+        ]
+      }
+    },
     "/api/v1/feedback": {
       "post": {
         "description": "Create global feedback or rate a completed assistant reply",
@@ -2004,7 +3375,7 @@
     },
     "/api/v1/feedback/session-archives": {
       "post": {
-        "description": "Prepare an expiring session-only archive for a feedback attachment on another host",
+        "description": "Prepare an expiring session-only archive for a feedback attachment on another device",
         "requestBody": {
           "content": {
             "application/json": {
@@ -2914,7 +4285,7 @@
             "application/json": {
               "schema": {
                 "properties": {
-                  "host_id": {
+                  "device_id": {
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
                     "type": "string"
                   },
@@ -4892,1072 +6263,6 @@
             "description": "Default Response"
           }
         }
-      }
-    },
-    "/api/v1/hosts": {
-      "get": {
-        "description": "List configured SSH hosts and their connection status",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "code": {
-                      "enum": [
-                        0
-                      ],
-                      "type": "number"
-                    },
-                    "data": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "hosts": {
-                          "items": {
-                            "additionalProperties": false,
-                            "properties": {
-                              "connect_error": {
-                                "type": "string"
-                              },
-                              "connect_failure": {
-                                "type": "string"
-                              },
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "host": {
-                                "type": "string"
-                              },
-                              "id": {
-                                "type": "string"
-                              },
-                              "identity_file": {
-                                "type": "string"
-                              },
-                              "name": {
-                                "type": "string"
-                              },
-                              "remote_bin": {
-                                "type": "string"
-                              },
-                              "remote_version": {
-                                "type": "string"
-                              },
-                              "status": {
-                                "enum": [
-                                  "pending",
-                                  "connecting",
-                                  "ready",
-                                  "disconnected"
-                                ],
-                                "type": "string"
-                              }
-                            },
-                            "required": [
-                              "id",
-                              "host",
-                              "status"
-                            ],
-                            "type": "object"
-                          },
-                          "type": "array"
-                        }
-                      },
-                      "required": [
-                        "hosts"
-                      ],
-                      "type": "object"
-                    },
-                    "details": {},
-                    "msg": {
-                      "type": "string"
-                    },
-                    "request_id": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "code",
-                    "msg",
-                    "data",
-                    "request_id"
-                  ],
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Default Response"
-          }
-        },
-        "tags": [
-          "hosts"
-        ]
-      }
-    },
-    "/api/v1/hosts/{id}": {
-      "delete": {
-        "description": "Remove a host",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "code": {
-                      "enum": [
-                        0
-                      ],
-                      "type": "number"
-                    },
-                    "data": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "ok": {
-                          "enum": [
-                            true
-                          ],
-                          "type": "boolean"
-                        }
-                      },
-                      "required": [
-                        "ok"
-                      ],
-                      "type": "object"
-                    },
-                    "details": {},
-                    "msg": {
-                      "type": "string"
-                    },
-                    "request_id": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "code",
-                    "msg",
-                    "data",
-                    "request_id"
-                  ],
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Default Response"
-          }
-        },
-        "tags": [
-          "hosts"
-        ]
-      },
-      "put": {
-        "description": "Create or replace a host",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": false,
-                "properties": {
-                  "enabled": {
-                    "type": "boolean"
-                  },
-                  "host": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "identity_file": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "name": {
-                    "maxLength": 64,
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "remote_bin": {
-                    "minLength": 1,
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "host"
-                ],
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            0
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "ok": {
-                              "enum": [
-                                true
-                              ],
-                              "type": "boolean"
-                            }
-                          },
-                          "required": [
-                            "ok"
-                          ],
-                          "type": "object"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40001
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "Default Response"
-          }
-        },
-        "tags": [
-          "hosts"
-        ]
-      }
-    },
-    "/api/v1/hosts/{id}/proxy": {
-      "delete": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "get": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "head": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "patch": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "post": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "put": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      }
-    },
-    "/api/v1/hosts/{id}/proxy/{*}": {
-      "delete": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "*",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "get": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "*",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "head": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "*",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "patch": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "*",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "post": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "*",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "put": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "*",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      }
-    },
-    "/api/v1/hosts:connect": {
-      "post": {
-        "description": "Connect a configured host now; failures are reported in the returned status",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "id": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "id"
-                ],
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            0
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "connect_error": {
-                              "type": "string"
-                            },
-                            "connect_failure": {
-                              "type": "string"
-                            },
-                            "enabled": {
-                              "type": "boolean"
-                            },
-                            "host": {
-                              "type": "string"
-                            },
-                            "id": {
-                              "type": "string"
-                            },
-                            "identity_file": {
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": "string"
-                            },
-                            "remote_bin": {
-                              "type": "string"
-                            },
-                            "remote_version": {
-                              "type": "string"
-                            },
-                            "status": {
-                              "enum": [
-                                "pending",
-                                "connecting",
-                                "ready",
-                                "disconnected"
-                              ],
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "host",
-                            "status"
-                          ],
-                          "type": "object"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40420
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "Default Response"
-          }
-        },
-        "tags": [
-          "hosts"
-        ]
-      }
-    },
-    "/api/v1/hosts:copy-providers": {
-      "post": {
-        "description": "Copy shareable custom model providers on this computer to a host, replacing providers with the same name there",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "id": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "id"
-                ],
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            0
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "providers": {
-                              "items": {
-                                "type": "string"
-                              },
-                              "type": "array"
-                            }
-                          },
-                          "required": [
-                            "providers"
-                          ],
-                          "type": "object"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40420
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40926
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "Default Response"
-          }
-        },
-        "tags": [
-          "hosts"
-        ]
-      }
-    },
-    "/api/v1/hosts:ssh-hosts": {
-      "get": {
-        "description": "List concrete Host aliases declared in the local ~/.ssh/config",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "code": {
-                      "enum": [
-                        0
-                      ],
-                      "type": "number"
-                    },
-                    "data": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "config_path": {
-                          "type": "string"
-                        },
-                        "exists": {
-                          "type": "boolean"
-                        },
-                        "hosts": {
-                          "items": {
-                            "additionalProperties": false,
-                            "properties": {
-                              "alias": {
-                                "type": "string"
-                              },
-                              "host_name": {
-                                "type": "string"
-                              },
-                              "port": {
-                                "type": "number"
-                              },
-                              "user": {
-                                "type": "string"
-                              }
-                            },
-                            "required": [
-                              "alias"
-                            ],
-                            "type": "object"
-                          },
-                          "type": "array"
-                        }
-                      },
-                      "required": [
-                        "config_path",
-                        "exists",
-                        "hosts"
-                      ],
-                      "type": "object"
-                    },
-                    "details": {},
-                    "msg": {
-                      "type": "string"
-                    },
-                    "request_id": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "code",
-                    "msg",
-                    "data",
-                    "request_id"
-                  ],
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Default Response"
-          }
-        },
-        "tags": [
-          "hosts"
-        ]
-      }
-    },
-    "/api/v1/hosts:test": {
-      "post": {
-        "description": "Check SSH connectivity and the remote kimi version without starting a server",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": false,
-                "properties": {
-                  "enabled": {
-                    "type": "boolean"
-                  },
-                  "host": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "identity_file": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "name": {
-                    "maxLength": 64,
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "remote_bin": {
-                    "minLength": 1,
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "host"
-                ],
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            0
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "connect_error": {
-                              "type": "string"
-                            },
-                            "connect_failure": {
-                              "type": "string"
-                            },
-                            "connected": {
-                              "type": "boolean"
-                            },
-                            "remote_version": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "connected"
-                          ],
-                          "type": "object"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40001
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "Default Response"
-          }
-        },
-        "tags": [
-          "hosts"
-        ]
       }
     },
     "/api/v1/kap.md": {
@@ -10405,6 +10710,18 @@
                               ],
                               "type": "boolean"
                             },
+                            "system_stats": {
+                              "enum": [
+                                true
+                              ],
+                              "type": "boolean"
+                            },
+                            "system_upgrade": {
+                              "enum": [
+                                true
+                              ],
+                              "type": "boolean"
+                            },
                             "tasks": {
                               "enum": [
                                 true
@@ -10427,12 +10744,22 @@
                             "interactions_list",
                             "session_wait",
                             "agent_close",
-                            "session_continue"
+                            "session_continue",
+                            "system_stats"
                           ],
                           "type": "object"
                         },
                         "dangerous_bypass_auth": {
                           "type": "boolean"
+                        },
+                        "device_api_level": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "device_id": {
+                          "minLength": 1,
+                          "type": "string"
                         },
                         "experimental_flags": {
                           "additionalProperties": {
@@ -10513,6 +10840,8 @@
                       "required": [
                         "kimi_agent_protocol_version",
                         "server_version",
+                        "device_id",
+                        "device_api_level",
                         "capabilities",
                         "server_id",
                         "started_at",
@@ -16311,7 +16640,7 @@
     },
     "/api/v1/sessions": {
       "get": {
-        "description": "List sessions with filtering (query matches title or last prompt as a case-insensitive substring, or an exact session id), sorting, optional workspace grouping (view=by_workspace), optional git branch/PR metadata (include=git), or lightweight id projection (fields=id,archived; page_size ceiling relaxed to 10000). Paginate with page_token, 1-based page, or flat before_id/after_id cursors. hosts=include merges sessions from the app-created projects on every SSH host.",
+        "description": "List sessions with filtering (query matches title or last prompt as a case-insensitive substring, or an exact session id), sorting, optional workspace grouping (view=by_workspace), optional git branch/PR metadata (include=git), or lightweight id projection (fields=id,archived; page_size ceiling relaxed to 10000). Paginate with page_token, 1-based page, or flat before_id/after_id cursors. devices=include merges sessions from the app-created projects on every device.",
         "parameters": [
           {
             "in": "query",
@@ -16540,7 +16869,7 @@
           },
           {
             "in": "query",
-            "name": "hosts",
+            "name": "devices",
             "required": false,
             "schema": {
               "enum": [
@@ -16596,6 +16925,9 @@
                                             "deprecated": true,
                                             "type": "string"
                                           },
+                                          "device_id": {
+                                            "type": "string"
+                                          },
                                           "environment_cwd": {
                                             "type": "string"
                                           },
@@ -16637,9 +16969,6 @@
                                               }
                                             },
                                             "type": "object"
-                                          },
-                                          "host_id": {
-                                            "type": "string"
                                           },
                                           "id": {
                                             "minLength": 1,
@@ -16697,7 +17026,7 @@
                                           "archived": {
                                             "type": "boolean"
                                           },
-                                          "host_id": {
+                                          "device_id": {
                                             "type": "string"
                                           },
                                           "id": {
@@ -16724,7 +17053,7 @@
                                   "minimum": 0,
                                   "type": "integer"
                                 },
-                                "unavailable_hosts": {
+                                "unavailable_devices": {
                                   "items": {
                                     "type": "string"
                                   },
@@ -16745,7 +17074,7 @@
                                   "items": {
                                     "additionalProperties": false,
                                     "properties": {
-                                      "host_id": {
+                                      "device_id": {
                                         "type": "string"
                                       },
                                       "sessions": {
@@ -16769,6 +17098,9 @@
                                                 "created_at": {},
                                                 "cwd": {
                                                   "deprecated": true,
+                                                  "type": "string"
+                                                },
+                                                "device_id": {
                                                   "type": "string"
                                                 },
                                                 "environment_cwd": {
@@ -16812,9 +17144,6 @@
                                                     }
                                                   },
                                                   "type": "object"
-                                                },
-                                                "host_id": {
-                                                  "type": "string"
                                                 },
                                                 "id": {
                                                   "minLength": 1,
@@ -16872,7 +17201,7 @@
                                                 "archived": {
                                                   "type": "boolean"
                                                 },
-                                                "host_id": {
+                                                "device_id": {
                                                   "type": "string"
                                                 },
                                                 "id": {
@@ -16921,7 +17250,7 @@
                                   "minimum": 0,
                                   "type": "integer"
                                 },
-                                "unavailable_hosts": {
+                                "unavailable_devices": {
                                   "items": {
                                     "type": "string"
                                   },
@@ -17081,6 +17410,19 @@
       },
       "post": {
         "description": "Create a new session",
+        "parameters": [
+          {
+            "description": "Base64url-encoded JSON identity of the client creating the session: { product_name, version, platform, user_agent_suffix?, display_name?, reply_style_guide?, ui_capabilities? }. The session keeps it for its whole lifetime and its forks inherit it. An invalid value is ignored and the session uses the server identity.",
+            "in": "header",
+            "name": "x-kimi-client-identity",
+            "required": false,
+            "schema": {
+              "maxLength": 8192,
+              "pattern": "^[\\w-]+$",
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -17213,6 +17555,9 @@
                               "deprecated": true,
                               "type": "string"
                             },
+                            "device_id": {
+                              "type": "string"
+                            },
                             "environment_cwd": {
                               "type": "string"
                             },
@@ -17254,9 +17599,6 @@
                                 }
                               },
                               "type": "object"
-                            },
-                            "host_id": {
-                              "type": "string"
                             },
                             "id": {
                               "minLength": 1,
@@ -17773,11 +18115,11 @@
     },
     "/api/v1/sessions/{session_id}": {
       "get": {
-        "description": "Get a session by ID. hosts=include also looks the session up on each SSH host and tags it with host_id; when it is not found and a host cannot answer, the result is HOST_UNAVAILABLE",
+        "description": "Get a session by ID. devices=include also looks the session up on each device and tags it with device_id; when it is not found and a device cannot answer, the result is DEVICE_UNAVAILABLE",
         "parameters": [
           {
             "in": "query",
-            "name": "hosts",
+            "name": "devices",
             "required": false,
             "schema": {
               "enum": [
@@ -17831,6 +18173,9 @@
                               "deprecated": true,
                               "type": "string"
                             },
+                            "device_id": {
+                              "type": "string"
+                            },
                             "environment_cwd": {
                               "type": "string"
                             },
@@ -17872,9 +18217,6 @@
                                 }
                               },
                               "type": "object"
-                            },
-                            "host_id": {
-                              "type": "string"
                             },
                             "id": {
                               "minLength": 1,
@@ -23518,6 +23860,9 @@
                                   "deprecated": true,
                                   "type": "string"
                                 },
+                                "device_id": {
+                                  "type": "string"
+                                },
                                 "environment_cwd": {
                                   "type": "string"
                                 },
@@ -23559,9 +23904,6 @@
                                     }
                                   },
                                   "type": "object"
-                                },
-                                "host_id": {
-                                  "type": "string"
                                 },
                                 "id": {
                                   "minLength": 1,
@@ -34734,6 +35076,9 @@
                               "deprecated": true,
                               "type": "string"
                             },
+                            "device_id": {
+                              "type": "string"
+                            },
                             "environment_cwd": {
                               "type": "string"
                             },
@@ -34775,9 +35120,6 @@
                                 }
                               },
                               "type": "object"
-                            },
-                            "host_id": {
-                              "type": "string"
                             },
                             "id": {
                               "minLength": 1,
@@ -35342,6 +35684,9 @@
                               "deprecated": true,
                               "type": "string"
                             },
+                            "device_id": {
+                              "type": "string"
+                            },
                             "environment_cwd": {
                               "type": "string"
                             },
@@ -35383,9 +35728,6 @@
                                 }
                               },
                               "type": "object"
-                            },
-                            "host_id": {
-                              "type": "string"
                             },
                             "id": {
                               "minLength": 1,
@@ -35950,6 +36292,9 @@
                               "deprecated": true,
                               "type": "string"
                             },
+                            "device_id": {
+                              "type": "string"
+                            },
                             "environment_cwd": {
                               "type": "string"
                             },
@@ -35991,9 +36336,6 @@
                                 }
                               },
                               "type": "object"
-                            },
-                            "host_id": {
-                              "type": "string"
                             },
                             "id": {
                               "minLength": 1,
@@ -37833,6 +38175,9 @@
                                   "deprecated": true,
                                   "type": "string"
                                 },
+                                "device_id": {
+                                  "type": "string"
+                                },
                                 "environment_cwd": {
                                   "type": "string"
                                 },
@@ -37874,9 +38219,6 @@
                                     }
                                   },
                                   "type": "object"
-                                },
-                                "host_id": {
-                                  "type": "string"
                                 },
                                 "id": {
                                   "minLength": 1,
@@ -38797,6 +39139,183 @@
                       },
                       "required": [
                         "ok"
+                      ],
+                      "type": "object"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/api/v1/system/stats": {
+      "get": {
+        "description": "Report CPU, memory, disk and NVIDIA GPU usage of the computer running this server, within the limits of its container or job. CPU usage covers the time since the previous request; after a pause the request measures for a quarter second first",
+        "parameters": [
+          {
+            "description": "Report the file system that holds this absolute path; defaults to the home directory",
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        0
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "cpu": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "cores": {
+                              "description": "CPU cores this server may use, after container and job limits",
+                              "exclusiveMinimum": true,
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "limited": {
+                              "description": "True when a container or job limit sets the cores below the machine",
+                              "type": "boolean"
+                            },
+                            "usage": {
+                              "description": "Share of the available CPU time used since the previous request",
+                              "maximum": 1,
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "cores",
+                            "limited"
+                          ],
+                          "type": "object"
+                        },
+                        "disk": {
+                          "additionalProperties": false,
+                          "description": "Omitted when the file system does not answer in time",
+                          "properties": {
+                            "available": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "path": {
+                              "type": "string"
+                            },
+                            "total": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "used": {
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "total",
+                            "used",
+                            "available"
+                          ],
+                          "type": "object"
+                        },
+                        "gpus": {
+                          "description": "NVIDIA GPUs visible to this server; empty without nvidia-smi",
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "index": {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "memory_total": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "memory_used": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "utilization": {
+                                "maximum": 1,
+                                "minimum": 0,
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "index",
+                              "name"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "memory": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "limited": {
+                              "description": "True when a container or job memory limit replaces the machine total",
+                              "type": "boolean"
+                            },
+                            "total": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "used": {
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "total",
+                            "used",
+                            "limited"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "cpu",
+                        "memory",
+                        "gpus"
                       ],
                       "type": "object"
                     },
@@ -40152,11 +40671,11 @@
     },
     "/api/v1/workspaces": {
       "get": {
-        "description": "List registered workspaces. hosts=include adds the projects created on each SSH host, tagged with host_id",
+        "description": "List registered workspaces. devices=include adds the projects created on each device, tagged with device_id",
         "parameters": [
           {
             "in": "query",
-            "name": "hosts",
+            "name": "devices",
             "required": false,
             "schema": {
               "enum": [
@@ -40193,7 +40712,7 @@
                                 "type": "array"
                               },
                               "created_at": {},
-                              "host_id": {
+                              "device_id": {
                                 "type": "string"
                               },
                               "id": {

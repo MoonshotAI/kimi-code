@@ -4,7 +4,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getKimiWebApi, toast } from '@moonshot-ai/app-client/client';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
-import { configStore, hostsStore } from '@moonshot-ai/app-client/stores';
+import { configStore, devicesStore } from '@moonshot-ai/app-client/stores';
 import type { AppToolCatalogEntry, AppToolsConfig } from '@moonshot-ai/app-core/api';
 import { isDefaultToolEnabled, rebaseDefaultToolsConfig, setDefaultToolEnabled } from '@moonshot-ai/app-core/lib';
 import { Button, Icon, Spinner, Switch } from '@moonshot-ai/app-ui';
@@ -40,7 +40,7 @@ function configKey(config: AppToolsConfig): string {
 
 const dirty = computed(() => configKey(savedConfig.value) !== configKey(draftConfig.value));
 const hasConfig = computed(() => configStore().config !== null && configStore().config !== undefined);
-const hasRemoteHosts = computed(() => hostsStore().hosts.length > 0);
+const hasRemoteDevices = computed(() => devicesStore().devices.length > 0);
 
 function resetDraft(config: AppToolsConfig | undefined): void {
   savedConfig.value = cloneConfig(config);
@@ -153,7 +153,7 @@ defineExpose({ confirmDiscard });
     class="dt-subpage"
     :parent-title="t('settings.tabs.agent')"
     :title="t('settings.defaultTools')"
-    :description="t(hasRemoteHosts ? 'settings.defaultToolsHintLocalOnly' : 'settings.defaultToolsHint')"
+    :description="t(hasRemoteDevices ? 'settings.defaultToolsHintLocalOnly' : 'settings.defaultToolsHint')"
     @back="requestBack"
   >
     <div v-if="loading" class="dt-status" role="status">

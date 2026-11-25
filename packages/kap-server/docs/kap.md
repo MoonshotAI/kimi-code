@@ -129,7 +129,7 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 
 | Method & Path | Gate | Summary |
 | --- | --- | --- |
-| `GET /api/v1/healthz` / `GET /api/v1/meta` | `baseline` | Liveness probe (`{ ok: true }`) and server metadata / `product` / `capabilities` / `home_dir` (the Kimi Code data directory) |
+| `GET /api/v1/healthz` / `GET /api/v1/meta` | `baseline` | Liveness probe (`{ ok: true }`) and server metadata / `product` / `device_id` (this machine's Kimi device id) / `device_api_level` / `capabilities` (`system_upgrade` appears only on the CLI-managed background server) / `home_dir` (the Kimi Code data directory) |
 | `POST /api/v1/feedback` and its update and attachment endpoints | `feedback` | Submit global feedback or rate a reply. Older hosts omit this capability. |
 | `GET /api/v1/kap.md` / `GET /openapi.json` / `GET /asyncapi.json` | `baseline` | Built-in runtime guide (`text/markdown`), REST OpenAPI 3.0 schema, and WS AsyncAPI 3.1 schema |
 | `GET /api/v1/workspaces` | `baseline` | List workspaces (`{ items: [{ id, root, name, kind: "managed" \| "implicit" }] }`) |
@@ -154,3 +154,6 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 | `POST /api/v1/files` & `GET` / `DELETE /api/v1/files/{file_id}` | `file_upload` | Upload, download, or delete prompt attachments |
 | `POST /api/v1/search` | `baseline` | Full-text search across persisted session messages (`query`, `page_token?`) |
 | `POST /api/v1/shutdown` | `baseline` | Gracefully stop a loopback server |
+| `POST /api/v1/devices:upgrade` | `baseline` | Upgrade Kimi Code on a configured device (`{ id }` -> `{ status: "started" \| "update_on_device" \| "unsupported", message? }`); progress is reported as the device's `upgrade_status` / `upgrade_error` on `GET /api/v1/devices` and `event.device.changed` |
+| `GET /api/v1/system/stats?path=` | `system_stats` | CPU, memory, disk and NVIDIA GPU usage of this computer (`{ cpu: { usage?, cores, limited }, memory: { total, used, limited }, disk?: { path, total, used, available }, gpus: [...] }`); container and job limits replace machine totals, CPU usage covers the time since the previous request, and `disk` reports the file system holding `path` (default: the home directory) |
+| `POST` / `GET /api/v1/system:upgrade` | `system_upgrade` | CLI-managed background server only: start `kimi upgrade --yes` (`{ started: true }`) or read its progress (`state: "idle" \| "installing" \| "restarting" \| "failed"`); after installing a newer version the server exits once no work is running, first closing WebSockets with code `4001` so clients can reconnect to the new version |

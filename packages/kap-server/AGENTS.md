@@ -8,7 +8,7 @@
   - REST 接口包括 `/api/v1/meta`、`/api/v1/kap.md`、`/api/v1/sessions`（含 `:wait`、`:cancel`、`:fork`、`:undo`、`:archive`、`:restore` 及 `/profile`）、`/agents/{agent_id}/turns`、`/prompts`、`/steer`、`/interactions` 和 `/files`。
   - WebSocket 核心对话帧和状态帧包括 `subscribe`、`turns`、`turn.*`、`item.*`、`interaction`、`agent` 和 `task.*`。
   - 需要调用方主动启用的新行为，通过可选参数或新的 `:action` 后缀提供。如果 agent 或客户端需要在运行时探测新的对外能力，就在 `GET /api/v1/meta` 的 `data.capabilities` 里声明。
-- **第一方宿主管理接口可以随产品演进。** `/config`、`/providers`、`/models`、`/oauth/*`、`/mcp/*`、`/plugins/*`、`/capabilities/*`、`/hosts*`、`/remote-control*`、`/workspaces*`、`/fs:*` 供第一方桌面端和 Web 端使用。修改时同步更新本仓桌面端与 Web 端受影响的调用方（协议适配在 `packages/app-core/src/api/daemon`），并用 `pnpm qa:refresh schema` 刷新 `packages/kap-server/schema/` 下的契约文档，不要为外部调用方加兼容层。
+- **第一方宿主管理接口可以随产品演进。** `/config`、`/providers`、`/models`、`/oauth/*`、`/mcp/*`、`/plugins/*`、`/capabilities/*`、`/devices*`、`/remote-control*`、`/workspaces*`、`/fs:*` 供第一方桌面端和 Web 端使用。修改时同步更新本仓桌面端与 Web 端受影响的调用方（协议适配在 `packages/app-core/src/api/daemon`），并用 `pnpm qa:refresh schema` 刷新 `packages/kap-server/schema/` 下的契约文档，不要为外部调用方加兼容层。
 
 ## 协议字段与内置文档
 

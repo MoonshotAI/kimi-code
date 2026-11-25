@@ -45,7 +45,7 @@ async function browse(path?: string): Promise<FsBrowseResult> {
 function mountDialog(opts: {
   multiple?: boolean;
   defaultPath?: string;
-  hostId?: string;
+  deviceId?: string;
   locale?: 'en' | 'zh';
   browseFs?: (path: string | undefined, signal: AbortSignal) => Promise<FsBrowseResult>;
   searchFs?: (root: string, query: string, signal: AbortSignal) => Promise<{ path: string; label: string }[]>;
@@ -63,7 +63,7 @@ function mountDialog(opts: {
         getFsHome: opts.getFsHome ?? (async () => ({ home: '/home', recentRoots: [] })),
         mkdirFs: opts.mkdirFs,
         defaultPath: opts.defaultPath,
-        hostId: opts.hostId,
+        deviceId: opts.deviceId,
         multiple: opts.multiple,
         onAdd: add,
         onAddMany: addMany,
@@ -262,7 +262,7 @@ describe('AddWorkspaceDialog remote browsing', () => {
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValue({ path: '/srv', parent: '/', entries: [] });
     const getFsHome = vi.fn(async () => ({ home: '/home', recentRoots: [] }));
-    mountDialog({ hostId: 'devbox', defaultPath: '/srv', browseFs, getFsHome });
+    mountDialog({ deviceId: 'devbox', defaultPath: '/srv', browseFs, getFsHome });
     await settled();
 
     expect(getFsHome).not.toHaveBeenCalled();
@@ -280,7 +280,7 @@ describe('AddWorkspaceDialog remote browsing', () => {
   it('opens the remote home directory when no default path is configured', async () => {
     const browseFs = vi.fn(browse);
     const getFsHome = vi.fn(async () => ({ home: '/home', recentRoots: [] }));
-    mountDialog({ hostId: 'devbox', defaultPath: '', browseFs, getFsHome });
+    mountDialog({ deviceId: 'devbox', defaultPath: '', browseFs, getFsHome });
     await settled();
 
     expect(browseFs).toHaveBeenCalledExactlyOnceWith(undefined, expect.any(AbortSignal));
@@ -324,7 +324,7 @@ describe('AddWorkspaceDialog remote browsing', () => {
         parent: 'C:\\',
         entries: [{ name: 'project', path: project, isDir: true }],
       }));
-      const { add } = mountDialog({ hostId: 'devbox', browseFs, searchFs });
+      const { add } = mountDialog({ deviceId: 'devbox', browseFs, searchFs });
       await settled();
       const field = document.querySelector<HTMLInputElement>('.pathbar input')!;
       field.value = input;

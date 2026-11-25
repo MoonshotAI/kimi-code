@@ -1,6 +1,13 @@
 export default {
   sessionsHeader: '会话',
   workspaces: '项目',
+  deviceScope: '切换设备',
+  deviceScopeAttention: '其他设备上有请求在等你',
+  thisComputer: '这台电脑',
+  deviceWaiting: '{n} 个等你',
+  deviceRunning: '{n} 个在跑',
+  deviceUnavailable: '连不上',
+  deviceScopePinHint: '置顶后可以同时看多台设备上的项目',
   viewSwitcher: '列表管理',
   viewGroup: '视图',
   viewFlat: '平铺列表',

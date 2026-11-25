@@ -55,6 +55,8 @@ Run any of the following foreground commands on your machine (one Remote Control
 - **`kimi web --remote-control`**: equivalent to `kimi rc`;
 - **`/remote-control`** (alias `/rc`): hand your active CLI session directly to the remote web UI.
 
+On macOS and Linux, add `--background` to `kimi rc` or `kimi web --remote-control` to run Remote Control on the background Kimi server instead. Pressing `Ctrl+C` then only turns remote access off, and running tasks keep going. This suits machines that stay on, such as a dev server.
+
 The terminal prints the access link (`https://code-rc.kimi.com/devices/<device ID>/` or `https://code-rc.kimi.ai/devices/<device ID>/` on global), a QR code (also saved as a PNG file), and your device hostname:
 
 ![Terminal output after starting kimi rc: QR code and connection status](../../media/kimi-rc-banner.jpg)

@@ -152,13 +152,13 @@ describe('SessionRow workspace label', () => {
     expect(row.querySelector('.compact-pr')).toBeNull();
   });
 
-  it('keeps the remote host icon in the subtitle for compact-pinned remote sessions when enabled', () => {
+  it('keeps the remote device icon in the subtitle for compact-pinned remote sessions when enabled', () => {
     mountRows(
       [
         session({
           id: 'pinned-remote',
           pinned: true,
-          hostId: 'devbox',
+          deviceId: 'devbox',
           workspaceName: 'remote-repo',
           cwdLabel: 'remote-repo',
         }),

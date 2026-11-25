@@ -22,6 +22,7 @@ const emit = defineEmits<{
   <div class="sb-sec-label" :class="labelClass">
     <div class="sb-sec-heading" :class="headingClass" @click.stop="emit('toggle')">
       <span class="sb-sec-title" :class="titleClass">{{ title }}</span>
+      <slot name="title-suffix" />
       <button
         type="button"
         class="sb-sec-fold"

@@ -65,7 +65,7 @@ export default {
   thinkingSuffix: ' · Thinking',
   thinkingSuffixEffort: ' · {level}',
   noArgCommand: '{cmd} takes no arguments',
-  localFolderOnRemote: 'Local folders cannot be sent to a remote project; use @ to reference a path in the project',
+  localFolderOnRemote: 'Folders on this computer cannot be sent to a remote project; use @ to reference a path in the project',
   pastedTextLines: '{n} line | {n} lines',
   pastedTextChars: '{n} character | {n} characters',
   viewPastedText: 'View text',

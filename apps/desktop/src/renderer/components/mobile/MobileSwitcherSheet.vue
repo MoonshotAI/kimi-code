@@ -245,7 +245,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
           :class="{ on: g.workspace.id === activeWorkspaceId }"
           @click="toggleCollapse(g.workspace.id)"
         >
-          <WorkspaceIcon v-if="g.workspace.hostId !== undefined" class="mgh-folder" :host-id="g.workspace.hostId" size="sm" status="all" />
+          <WorkspaceIcon v-if="g.workspace.deviceId !== undefined" class="mgh-folder" :device-id="g.workspace.deviceId" size="sm" status="all" />
           <Icon v-else-if="isCollapsed(g.workspace.id)" class="mgh-folder" name="folder-closed" size="sm" />
           <Icon v-else class="mgh-folder" name="folder" size="sm" />
 

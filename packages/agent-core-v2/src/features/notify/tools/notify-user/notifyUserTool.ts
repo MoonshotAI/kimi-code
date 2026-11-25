@@ -1,5 +1,5 @@
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IClientIdentity } from '#/app/clientIdentity/clientIdentity';
 import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { toInputJsonSchema } from '#/tool/input-schema';
@@ -30,7 +30,7 @@ export class NotifyUserTool implements INotifyUserTool {
 
   constructor(
     @IFlagService private readonly flags: IFlagService,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IClientIdentity private readonly client: IClientIdentity,
     @IAgentLoopService private readonly context: IAgentLoopService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
@@ -55,7 +55,7 @@ export class NotifyUserTool implements INotifyUserTool {
       accesses: ToolAccesses.none(),
       approvalRule: this.name,
       execute: async ({ turnId, toolCallId }) => {
-        const displayed = notifyUserAvailable(this.flags, this.bootstrap);
+        const displayed = notifyUserAvailable(this.flags, this.client);
         const streak = notifyStreakBefore(this.context.history(), toolCallId);
         this.telemetry.track2('notify_user_sent', {
           turn_id: turnId,

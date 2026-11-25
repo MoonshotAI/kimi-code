@@ -1,10 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
-import type { RcDevice } from '@moonshot-ai/app-core/lib';
-import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
-import { Button, Dialog, Icon, Switch } from '@moonshot-ai/app-ui';
+import { Button, Dialog, Switch } from '@moonshot-ai/app-ui';
 
 import {
   remoteControlErrorText,
@@ -12,7 +10,7 @@ import {
   type RemoteControlController,
 } from '../../composables/useRemoteControl';
 import { track } from '../../lib/track';
-import RemoteControlDeviceList from './RemoteControlDeviceList.vue';
+import RemoteControlDeviceName from './RemoteControlDeviceName.vue';
 import RemoteControlShare from './RemoteControlShare.vue';
 
 const props = defineProps<{
@@ -40,10 +38,6 @@ const toggleError = computed(
     props.controller.toggleError.value ??
     (conflict.value === null ? (status.value?.error ?? null) : null),
 );
-const devices = computed(() => props.controller.devices.value);
-const devicesLoading = computed(() => props.controller.devicesLoading.value);
-const devicesRefreshing = computed(() => props.controller.devicesRefreshing.value);
-const devicesError = computed(() => props.controller.devicesError.value);
 const restoreEnabled = computed(() => props.controller.restoreEnabled.value);
 const restoreStateLoading = computed(() => props.controller.restoreStateLoading.value);
 const restoreStateSaving = computed(() => props.controller.restoreStateSaving.value);
@@ -52,13 +46,6 @@ const restoreStateError = computed(() => props.controller.restoreStateError.valu
 onMounted(() => {
   void props.controller.open();
 });
-
-watch(
-  () => props.signedIn,
-  (signedIn) => {
-    if (signedIn) void props.controller.refreshDevices();
-  },
-);
 
 const takingOver = computed(() => props.controller.takingOver.value);
 const takeoverError = ref<string | null>(null);
@@ -137,124 +124,46 @@ async function disable(): Promise<void> {
     outcome: props.controller.toggleError.value === null ? 'ok' : 'error',
   });
 }
-
-const { confirm } = useConfirmDialog();
-const deactivateError = ref<string | null>(null);
-
-function trackDeviceAction(
-  action: 'deactivate' | 'delete',
-  outcome: 'ok' | 'error' | 'cancelled',
-  target: 'current_device' | 'other_device',
-): void {
-  if (action === 'delete') track('remote_control_action', { action: 'delete', outcome, target });
-  else track('remote_control_action', { action: 'deactivate', outcome, target });
-}
-
-async function requestConfirm(device: RcDevice): Promise<void> {
-  deactivateError.value = null;
-  const offline = device.status === 'offline';
-  const action = offline ? 'delete' : 'deactivate';
-  const target =
-    status.value?.device_id !== undefined && device.device_id === status.value.device_id
-      ? 'current_device'
-      : 'other_device';
-  try {
-    const confirmed = await confirm({
-      title: t(offline ? 'remoteControl.deleteTitle' : 'remoteControl.deactivateTitle', {
-        name: device.alias,
-      }),
-      message: t(offline ? 'remoteControl.deleteHint' : 'remoteControl.deactivateHint', {
-        name: device.alias,
-      }),
-      confirmLabel: t(offline ? 'remoteControl.delete' : 'remoteControl.deactivate'),
-      cancelLabel: t('remoteControl.cancel'),
-      variant: 'danger',
-      initialFocus: 'cancel',
-      action: () =>
-        offline
-          ? props.controller.deleteDevice(device.device_id)
-          : props.controller.deactivateDevice(device.device_id),
-    });
-    trackDeviceAction(action, confirmed ? 'ok' : 'cancelled', target);
-  } catch (error) {
-    trackDeviceAction(action, 'error', target);
-    deactivateError.value = remoteControlErrorText(error, t('remoteControl.actionFailed'));
-  }
-}
 </script>
 
 <template>
   <div class="rcp">
-    <section class="rcp-sec">
-      <h3 class="rcp-title">{{ t('remoteControl.title') }}</h3>
-      <div class="rcp-group">
-        <div class="rcp-row">
-          <div class="rcp-row__label">
-            <span class="rcp-row__title">
-              {{ enabled ? t('remoteControl.statusOn') : t('remoteControl.title') }}
-            </span>
-            <span class="rcp-row__desc">
-              {{ t('remoteControl.enableHint') }}
-            </span>
-          </div>
-          <Switch
-            :model-value="enabled"
-            :disabled="initialLoading || opening || closing"
-            :label="enabled ? t('remoteControl.turnOff') : t('remoteControl.enable')"
-            @update:model-value="onSwitch"
-          />
-        </div>
-        <div v-if="enabled && status?.url" class="rcp-expand">
-          <RemoteControlShare :url="status.url" source="panel" />
-          <div class="rcp-note">
-            <Icon name="info" size="sm" />
-            <span>{{ t('remoteControl.securityNote') }}</span>
-          </div>
-        </div>
+    <div class="rcp-group">
+      <RemoteControlDeviceName :status="status" />
+      <div class="rcp-row">
+        <span class="rcp-row__title">{{ t('settings.devices.allowControl') }}</span>
+        <Switch
+          :model-value="enabled"
+          :disabled="initialLoading || opening || closing"
+          :label="enabled ? t('remoteControl.turnOff') : t('remoteControl.enable')"
+          @update:model-value="onSwitch"
+        />
       </div>
-      <div class="rcp-group rcp-restore">
-        <div class="rcp-row">
-          <div class="rcp-row__label">
-            <span class="rcp-row__title">{{ t('remoteControl.restoreState') }}</span>
-            <span class="rcp-row__desc">{{ t('remoteControl.restoreStateHint') }}</span>
-          </div>
-          <Switch
-            :model-value="restoreEnabled"
-            :disabled="initialLoading || opening || closing || restoreStateLoading || restoreStateSaving"
-            :label="t('remoteControl.restoreState')"
-            @update:model-value="void controller.setRestoreEnabled($event)"
-          />
-        </div>
+      <RemoteControlShare v-if="enabled && status?.url" class="rcp-share" :url="status.url" source="panel" compact />
+      <div class="rcp-row rcp-row--restore">
+        <span class="rcp-row__title">{{ t('settings.devices.keepOnAfterRestart') }}</span>
+        <Switch
+          :model-value="restoreEnabled"
+          :disabled="initialLoading || opening || closing || restoreStateLoading || restoreStateSaving"
+          :label="t('settings.devices.keepOnAfterRestart')"
+          @update:model-value="void controller.setRestoreEnabled($event)"
+        />
       </div>
-      <p v-if="restoreStateError" class="rcp-error">{{ restoreStateError }}</p>
-      <p v-if="toggleError" class="rcp-error">{{ toggleError }}</p>
-      <p v-if="initialError" class="rcp-error">
-        {{ t('remoteControl.statusLoadFailed') }}：{{ statusError }}
-        <Button variant="secondary" size="sm" @click="void controller.loadStatus()">
-          {{ t('remoteControl.retry') }}
-        </Button>
-      </p>
-      <p v-if="refreshError" class="rcp-error">
-        {{ t('remoteControl.statusLoadFailed') }}：{{ refreshError }}
-        <Button variant="secondary" size="sm" @click="void controller.loadStatus()">
-          {{ t('remoteControl.retry') }}
-        </Button>
-      </p>
-    </section>
-
-    <section v-if="signedIn" class="rcp-sec">
-      <RemoteControlDeviceList
-        :devices="devices"
-        :loading="devicesLoading"
-        :refreshing="devicesRefreshing"
-        :error="devicesError"
-        :current-device-id="status?.device_id"
-        :refresh="controller.refreshDevices"
-        :rename="controller.renameDevice"
-        @confirm="requestConfirm"
-      />
-      <p v-if="deactivateError" class="rcp-error">{{ deactivateError }}</p>
-    </section>
+    </div>
+    <p v-if="restoreStateError" class="rcp-error">{{ restoreStateError }}</p>
+    <p v-if="toggleError" class="rcp-error">{{ toggleError }}</p>
+    <p v-if="initialError" class="rcp-error">
+      {{ t('remoteControl.statusLoadFailed') }}：{{ statusError }}
+      <Button variant="secondary" size="sm" @click="void controller.loadStatus()">
+        {{ t('remoteControl.retry') }}
+      </Button>
+    </p>
+    <p v-if="refreshError" class="rcp-error">
+      {{ t('remoteControl.statusLoadFailed') }}：{{ refreshError }}
+      <Button variant="secondary" size="sm" @click="void controller.loadStatus()">
+        {{ t('remoteControl.retry') }}
+      </Button>
+    </p>
   </div>
 
   <Dialog
@@ -284,30 +193,10 @@ async function requestConfirm(device: RcDevice): Promise<void> {
 </template>
 
 <style scoped>
-.rcp-sec {
-  padding: var(--space-4) 0;
-}
-.rcp-sec:first-child {
-  padding-top: 0;
-}
-.rcp-title {
-  margin: 0 0 var(--space-3);
-  color: var(--color-text);
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-}
 .rcp-group {
   overflow: hidden;
   border-radius: var(--radius-xl);
   background: var(--color-surface);
-}
-.rcp-restore {
-  margin-top: var(--space-3);
-}
-@media (max-width: 900px) {
-  .rcp-restore .rcp-row__desc {
-    max-width: 48ch;
-  }
 }
 .rcp-row {
   display: flex;
@@ -315,35 +204,18 @@ async function requestConfirm(device: RcDevice): Promise<void> {
   justify-content: space-between;
   gap: var(--space-3);
   min-height: 52px;
-  padding: var(--space-4);
+  padding: 0 var(--space-3) 0 var(--space-4);
 }
-.rcp-row__label {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
+.rcp-row--restore {
+  border-top: var(--p-hairline) solid var(--color-line);
 }
 .rcp-row__title {
   color: var(--color-text);
   font-size: var(--text-sm);
   font-weight: var(--weight-option-label);
 }
-.rcp-row__desc {
-  color: var(--color-text-faint);
-  font-size: var(--text-xs);
-}
-.rcp-expand {
-  padding: var(--space-4) var(--space-4) var(--space-3);
+.rcp-share {
   border-top: var(--p-hairline) solid var(--color-line);
-}
-.rcp-note {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  margin-top: var(--space-3);
-  color: var(--color-text-faint);
-  font-size: var(--text-xs);
 }
 .rcp-error {
   display: flex;

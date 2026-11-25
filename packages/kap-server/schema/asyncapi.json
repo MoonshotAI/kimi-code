@@ -2453,6 +2453,9 @@
                       "deprecated": true,
                       "type": "string"
                     },
+                    "device_id": {
+                      "type": "string"
+                    },
                     "environment_cwd": {
                       "type": "string"
                     },
@@ -2492,9 +2495,6 @@
                         }
                       },
                       "type": "object"
-                    },
-                    "host_id": {
-                      "type": "string"
                     },
                     "id": {
                       "minLength": 1,
@@ -2876,16 +2876,29 @@
             },
             {
               "properties": {
-                "event_created_at": {
-                  "type": "string"
-                },
-                "hosts": {
+                "devices": {
                   "items": {
                     "properties": {
+                      "alias": {
+                        "type": "string"
+                      },
                       "connect_error": {
                         "type": "string"
                       },
                       "connect_failure": {
+                        "type": "string"
+                      },
+                      "connection": {
+                        "enum": [
+                          "ssh",
+                          "account"
+                        ],
+                        "type": "string"
+                      },
+                      "device_id": {
+                        "type": "string"
+                      },
+                      "duplicate_of": {
                         "type": "string"
                       },
                       "enabled": {
@@ -2900,11 +2913,27 @@
                       "identity_file": {
                         "type": "string"
                       },
+                      "install": {
+                        "enum": [
+                          "desktop",
+                          "cli"
+                        ],
+                        "type": "string"
+                      },
                       "name": {
+                        "type": "string"
+                      },
+                      "platform": {
+                        "type": "string"
+                      },
+                      "product_name": {
                         "type": "string"
                       },
                       "remote_bin": {
                         "type": "string"
+                      },
+                      "remote_upgrade": {
+                        "type": "boolean"
                       },
                       "remote_version": {
                         "type": "string"
@@ -2917,25 +2946,39 @@
                           "disconnected"
                         ],
                         "type": "string"
+                      },
+                      "upgrade_error": {
+                        "type": "string"
+                      },
+                      "upgrade_status": {
+                        "enum": [
+                          "installing",
+                          "restarting",
+                          "failed"
+                        ],
+                        "type": "string"
                       }
                     },
                     "required": [
                       "id",
-                      "host",
+                      "connection",
                       "status"
                     ],
                     "type": "object"
                   },
                   "type": "array"
                 },
+                "event_created_at": {
+                  "type": "string"
+                },
                 "type": {
-                  "const": "event.host.changed",
+                  "const": "event.device.changed",
                   "type": "string"
                 }
               },
               "required": [
                 "type",
-                "hosts",
+                "devices",
                 "event_created_at"
               ],
               "type": "object"

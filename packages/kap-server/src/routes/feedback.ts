@@ -27,7 +27,7 @@ import {
 import type { ConversationService } from '../services/conversation/conversationService';
 import { FeedbackError, openFeedbackGateway, readFeedbackFile, requireFeedbackToken } from '../services/feedback/feedbackService';
 import { FEEDBACK_ARCHIVE_LIMIT, fetchRemoteFeedbackArchive } from '../services/feedback/sessionArchive';
-import type { HostBridgeManager } from '../services/hosts/hostBridgeManager';
+import type { DeviceManager } from '../services/devices/deviceManager';
 
 const MIB = 1024 * 1024;
 const VIDEO_LIMIT = 100 * MIB;
@@ -47,7 +47,7 @@ type FeedbackRouteRegistration = (path: string, options: ReturnType<typeof defin
 export function registerFeedbackRoutes(
   app: { post: FeedbackRouteRegistration; patch: FeedbackRouteRegistration },
   core: Scope,
-  options: { readonly hostIdentity: KimiHostIdentity; readonly conversations: ConversationService; readonly hostBridges: HostBridgeManager },
+  options: { readonly hostIdentity: KimiHostIdentity; readonly conversations: ConversationService; readonly deviceManager: Pick<DeviceManager, 'connect'> },
 ): void {
   const create = defineRoute({
     method: 'POST',
@@ -131,7 +131,7 @@ export function registerFeedbackRoutes(
     body: feedbackSessionArchiveSchema,
     success: { data: feedbackSessionArchiveResponseSchema },
     errors: sessionErrors,
-    description: 'Prepare an expiring session-only archive for a feedback attachment on another host',
+    description: 'Prepare an expiring session-only archive for a feedback attachment on another device',
     tags: ['feedback'],
   }, async (req, reply) => {
     await withFeedback(req, reply, async () => {
@@ -168,11 +168,11 @@ export function registerFeedbackRoutes(
       return withAttachment(reply as FastifyReply, async (scratch, signal) => {
         const filename = 'session.zip';
         const path = join(scratch, filename);
-        if (req.body.host_id === undefined) {
+        if (req.body.device_id === undefined) {
           await exportSession(req.body.session_id, path, signal);
         } else {
-          const host = await options.hostBridges.connect(req.body.host_id);
-          await fetchRemoteFeedbackArchive(host, req.body.session_id, path, signal);
+          const device = await options.deviceManager.connect(req.body.device_id);
+          await fetchRemoteFeedbackArchive(device, req.body.session_id, path, signal);
         }
         const file = await readFeedbackFile(filename, path, signal);
         return { upload_id: await gateway.upload(req.params.feedback_id, file, signal) };

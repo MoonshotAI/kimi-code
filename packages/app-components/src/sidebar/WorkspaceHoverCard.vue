@@ -4,9 +4,9 @@ import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import { workspaceFolders } from '@moonshot-ai/app-core/client';
 import { Icon, Menu } from '@moonshot-ai/app-ui';
-import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore } from '@moonshot-ai/app-client/stores';
 import WorkspaceIcon from '../WorkspaceIcon.vue';
-import { useHostFailureText } from '../composables/useHostFailureText';
+import { useDeviceFailureText } from '../composables/useDeviceFailureText';
 
 const props = withDefaults(defineProps<{
   workspace: WorkspaceView;
@@ -19,13 +19,13 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const directories = computed(() => workspaceFolders(props.workspace));
-const remote = computed(() => props.workspace.hostId !== undefined);
-const hostState = computed(() => hostsStore().displayState(props.workspace.hostId));
-const hostName = computed(() => props.workspace.hostId === undefined || hostState.value === 'missing' ? '' : hostsStore().displayName(props.workspace.hostId));
-const failureText = useHostFailureText();
-const hostFailure = computed(() => {
-  const host = hostsStore().hostFor(props.workspace.hostId);
-  return hostState.value === 'failed' ? failureText.label(host?.connectFailure, host?.remoteVersion) : '';
+const remote = computed(() => props.workspace.deviceId !== undefined);
+const deviceState = computed(() => devicesStore().displayState(props.workspace.deviceId));
+const deviceName = computed(() => props.workspace.deviceId === undefined || deviceState.value === 'missing' ? '' : devicesStore().displayName(props.workspace.deviceId));
+const failureText = useDeviceFailureText();
+const deviceFailure = computed(() => {
+  const device = devicesStore().deviceFor(props.workspace.deviceId);
+  return deviceState.value === 'failed' ? failureText.label(device?.connectFailure, device?.remoteVersion) : '';
 });
 </script>
 
@@ -36,12 +36,12 @@ const hostFailure = computed(() => {
     </div>
     <div class="whc-directories">
       <template v-if="remote">
-        <div class="whc-directory whc-host">
-          <WorkspaceIcon :host-id="workspace.hostId" status="all" size="sm" />
-          <span class="whc-host-copy">
-            <span v-if="hostName" class="whc-host-name" :title="hostName">{{ hostName }}</span>
-            <span class="whc-host-state" :class="{ failed: hostState === 'failed' }">{{ t(`workspace.hostState.${hostState}`) }}</span>
-            <span v-if="hostFailure" class="whc-host-state">{{ hostFailure }}</span>
+        <div class="whc-directory whc-device">
+          <WorkspaceIcon :device-id="workspace.deviceId" status="all" size="sm" />
+          <span class="whc-device-copy">
+            <span v-if="deviceName" class="whc-device-name" :title="deviceName">{{ deviceName }}</span>
+            <span class="whc-device-state" :class="{ failed: deviceState === 'failed' }">{{ t(`workspace.deviceState.${deviceState}`) }}</span>
+            <span v-if="deviceFailure" class="whc-device-state">{{ deviceFailure }}</span>
           </span>
         </div>
         <div v-for="directory in directories" :key="directory.path" class="whc-directory whc-directory--static">
@@ -115,13 +115,13 @@ button.whc-directory:hover:not(:disabled) { background: transparent; color: var(
 .whc-directory:disabled { cursor: default; opacity: 1; }
 .whc-directory > .kw-icon { flex: none; color: var(--color-text-faint); }
 .whc-directory--static { cursor: text; user-select: text; }
-.whc-host { cursor: default; font-size: var(--text-xs); }
-.whc-host > .ws-icon { color: var(--color-text-faint); }
-.whc-host-copy { display: flex; align-items: center; gap: var(--space-1-5); min-width: 0; }
-.whc-host-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.whc-host-state { flex: none; color: var(--color-text-faint); }
-.whc-host-state:not(:first-child)::before { content: '·'; margin-right: var(--space-1-5); color: var(--color-text-faint); }
-.whc-host-state.failed { color: var(--color-danger); }
+.whc-device { cursor: default; font-size: var(--text-xs); }
+.whc-device > .ws-icon { color: var(--color-text-faint); }
+.whc-device-copy { display: flex; align-items: center; gap: var(--space-1-5); min-width: 0; }
+.whc-device-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.whc-device-state { flex: none; color: var(--color-text-faint); }
+.whc-device-state:not(:first-child)::before { content: '·'; margin-right: var(--space-1-5); color: var(--color-text-faint); }
+.whc-device-state.failed { color: var(--color-danger); }
 .whc-path {
   min-width: 0;
   overflow: hidden;

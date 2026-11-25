@@ -30,6 +30,7 @@ import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
 import type { ContextMessage, AgentContextData } from '#/agent/contextMemory/types';
 import { IAgentCronService } from '#/features/cron/cronService';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import { IClientIdentity } from '#/app/clientIdentity/clientIdentity';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedulerService';
@@ -1328,7 +1329,10 @@ export class AgentTestContext {
             reg.defineInstance(ISessionNotify, {
               _serviceBrand: undefined,
               ready: Promise.resolve(),
-              enabled: notifyUserAvailable(this.root.accessor.get(IFlagService), bootstrap),
+              enabled: notifyUserAvailable(
+                this.root.accessor.get(IFlagService),
+                this.root.accessor.get(IClientIdentity),
+              ),
             });
             reg.defineInstance(ISessionSkillCatalogData, {
               _serviceBrand: undefined,

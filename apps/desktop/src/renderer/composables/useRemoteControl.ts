@@ -1,18 +1,16 @@
 import { getCurrentScope, onScopeDispose, ref } from 'vue';
 
 import { isDaemonApiError, type KimiWebApi, type RemoteControlStatus } from '@moonshot-ai/app-core/api';
-import type { RcDevice } from '@moonshot-ai/app-core/lib';
 import { getKimiWebApi } from '@moonshot-ai/app-client/client';
 
 export type RemoteControlApi = Pick<
   KimiWebApi,
-  | 'getRemoteControlStatus'
-  | 'setRemoteControlEnabled'
-  | 'listRemoteControlDevices'
-  | 'renameRemoteControlDevice'
-  | 'deactivateRemoteControlDevice'
-  | 'deleteRemoteControlDevice'
+  'getRemoteControlStatus' | 'setRemoteControlEnabled' | 'deactivateRemoteControlDevice'
 >;
+
+export interface RemoteControlHooks {
+  onRegistrationChange?: () => void;
+}
 
 const REMOTE_CONTROL_ALREADY_RUNNING_CODE = 40928;
 
@@ -67,7 +65,7 @@ export function remoteControlErrorText(error: unknown, fallback: string): string
   return message.length > 0 ? message : fallback;
 }
 
-export function useRemoteControl(api: RemoteControlApi = getKimiWebApi()) {
+export function useRemoteControl(api: RemoteControlApi = getKimiWebApi(), hooks: RemoteControlHooks = {}) {
   const status = ref<RemoteControlStatus | null>(null);
   const statusLoading = ref(false);
   const statusError = ref<string | null>(null);
@@ -75,10 +73,6 @@ export function useRemoteControl(api: RemoteControlApi = getKimiWebApi()) {
   const conflict = ref<RemoteControlConflictHolder | null>(null);
   const enabling = ref(false);
   const disabling = ref(false);
-  const devices = ref<RcDevice[] | null>(null);
-  const devicesLoading = ref(false);
-  const devicesRefreshing = ref(false);
-  const devicesError = ref<string | null>(null);
   const takingOver = ref(false);
   const conflictDialogOpen = ref(false);
   const restoreEnabled = ref(false);
@@ -87,8 +81,6 @@ export function useRemoteControl(api: RemoteControlApi = getKimiWebApi()) {
   const restoreStateError = ref<string | null>(null);
 
   let statusGeneration = 0;
-  let devicesGeneration = 0;
-  let devicesPending = 0;
   let settleTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
   let recordPreviousOnTerminal = false;
@@ -182,7 +174,6 @@ export function useRemoteControl(api: RemoteControlApi = getKimiWebApi()) {
     });
     await loadRestoreState();
     await loadStatus();
-    await refreshDevices();
   }
 
   async function setEnabled(enabled: boolean): Promise<void> {
@@ -199,7 +190,7 @@ export function useRemoteControl(api: RemoteControlApi = getKimiWebApi()) {
       await recordTerminalPreviousState(next);
       statusError.value = null;
       scheduleSettlePoll();
-      await refreshDevices();
+      hooks.onRegistrationChange?.();
     } catch (error) {
       recordPreviousOnTerminal = false;
       if (enabled) {
@@ -214,46 +205,6 @@ export function useRemoteControl(api: RemoteControlApi = getKimiWebApi()) {
       enabling.value = false;
       disabling.value = false;
     }
-  }
-
-  async function refreshDevices(): Promise<void> {
-    const generation = ++devicesGeneration;
-    devicesPending += 1;
-    devicesRefreshing.value = true;
-    if (devices.value === null) devicesLoading.value = true;
-    try {
-      const list = await api.listRemoteControlDevices();
-      if (generation !== devicesGeneration) return;
-      devices.value = list.devices;
-      devicesError.value = null;
-    } catch (error) {
-      if (generation !== devicesGeneration) return;
-      devicesError.value = error instanceof Error ? error.message : String(error);
-    } finally {
-      devicesPending = Math.max(0, devicesPending - 1);
-      devicesRefreshing.value = devicesPending > 0;
-      if (generation === devicesGeneration) devicesLoading.value = false;
-    }
-  }
-
-  async function renameDevice(deviceId: string, alias: string): Promise<void> {
-    await api.renameRemoteControlDevice(deviceId, alias.trim());
-    await loadStatus();
-    await refreshDevices();
-  }
-
-  async function deactivateDevice(deviceId: string): Promise<void> {
-    const currentDevice = status.value?.device_id === deviceId;
-    await api.deactivateRemoteControlDevice(deviceId);
-    if (currentDevice) await persistPreviousEnabled(false);
-    await loadStatus();
-    await refreshDevices();
-  }
-
-  async function deleteDevice(deviceId: string): Promise<void> {
-    await api.deleteRemoteControlDevice(deviceId);
-    await loadStatus();
-    await refreshDevices();
   }
 
   async function takeover(): Promise<void> {
@@ -282,10 +233,6 @@ export function useRemoteControl(api: RemoteControlApi = getKimiWebApi()) {
     conflict,
     enabling,
     disabling,
-    devices,
-    devicesLoading,
-    devicesRefreshing,
-    devicesError,
     takingOver,
     conflictDialogOpen,
     restoreEnabled,
@@ -297,10 +244,6 @@ export function useRemoteControl(api: RemoteControlApi = getKimiWebApi()) {
     open,
     setEnabled,
     setRestoreEnabled,
-    refreshDevices,
-    renameDevice,
-    deactivateDevice,
-    deleteDevice,
     takeover,
     dispose,
   };

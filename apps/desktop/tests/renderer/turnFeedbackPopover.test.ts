@@ -56,7 +56,7 @@ afterEach(() => {
 function createFeedbackStub(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     accountEpoch: ref(0),
-    clearHostAccount: vi.fn(),
+    clearDeviceAccount: vi.fn(),
     state: vi.fn(() => undefined),
     isPopoverOpen: vi.fn(() => false),
     closePopover: vi.fn(),
