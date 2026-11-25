@@ -22,7 +22,7 @@ import {
   type ToolCallUpdate,
   type WriteTextFileRequest,
 } from '@agentclientprotocol/sdk';
-import { kimiCliCommand, kimiCliEnv, TestProcess, TIMEOUTS, until, type TestHome } from '@moonshot-ai/testkit/fixtures';
+import { killProcessTree, kimiCliCommand, kimiCliEnv, TestProcess, TIMEOUTS, until, type TestHome } from '@moonshot-ai/testkit/fixtures';
 
 import { quote, TOOL_STATUS_WORDS } from '../support/steps';
 import {
@@ -44,6 +44,7 @@ import {
   type ToolExpectation,
   type ToolStatus,
 } from '../support/verbs';
+import { productEnv } from './environment';
 import { offlineStubs } from './offline';
 
 const EDITOR_NAME = 'e2e-editor';
@@ -69,9 +70,13 @@ const REJECTION_NOTICE = 'was not run because the user rejected the approval req
 const INVALID_REQUEST = -32600;
 const INVALID_PARAMS = -32602;
 
-const HANDLED_METHODS: ReadonlySet<string> = new Set([
-  methods.client.session.update,
-  methods.client.session.requestPermission,
+const COMPACT_COMMAND = '/compact';
+const COMPACTION_DONE = 'Compaction completed.';
+const COMPACTION_FAILURES = ['Compaction cancelled.', 'Compaction is blocked'];
+
+const SESSION_METHODS = [methods.client.session.update, methods.client.session.requestPermission];
+
+const EDITOR_CAPABILITY_METHODS = [
   methods.client.fs.readTextFile,
   methods.client.fs.writeTextFile,
   methods.client.terminal.create,
@@ -79,7 +84,7 @@ const HANDLED_METHODS: ReadonlySet<string> = new Set([
   methods.client.terminal.waitForExit,
   methods.client.terminal.kill,
   methods.client.terminal.release,
-]);
+];
 
 interface Turn {
   readonly prompt: string;
@@ -113,6 +118,7 @@ interface ToolView {
   path: string | undefined;
   command: string | undefined;
   questions: readonly string[];
+  shownText: string;
 }
 
 type Entry = { readonly kind: 'reply'; text: string } | { readonly kind: 'tool'; readonly id: string };
@@ -147,6 +153,7 @@ function toolsOf(updates: readonly SessionUpdate[]): ToolView[] {
       path: undefined,
       command: undefined,
       questions: [],
+      shownText: '',
     };
     tools.set(update.toolCallId, tool);
     const location = update.locations?.[0]?.path;
@@ -162,6 +169,7 @@ function toolsOf(updates: readonly SessionUpdate[]): ToolView[] {
     }
     if (update.content !== undefined && update.content !== null) tool.embedded = terminals;
     const text = parts.map((part) => (part.type === 'content' && part.content.type === 'text' ? part.content.text : '')).join('\n');
+    if (update.content !== undefined && update.content !== null) tool.shownText = text;
     if (update.status === 'completed') tool.status = 'done';
     if (update.status === 'failed') tool.status = text.includes(REJECTION_NOTICE) ? 'rejected' : 'failed';
   }
@@ -256,6 +264,8 @@ function tailOf(bytes: Buffer, limit: number | undefined): { text: string; trunc
 class AcpDriver implements SurfaceDriver<'acp'> {
   private readonly proc: TestProcess;
   private readonly home: TestHome;
+  private readonly bare: boolean;
+  private readonly handled: ReadonlySet<string>;
   private readonly connection: ClientConnection;
   private readonly wire: string[] = [];
   private readonly timeline: WireEvent[] = [];
@@ -273,17 +283,24 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private framedWireLines = 0;
   private receivedUpdates = 0;
   private sentPrompts = 0;
-  private readonly prompts: string[] = [];
+  private prompts: string[] = [];
+  private sessionStart = 0;
   private sessionId = '';
   private openedMode: string | undefined;
+  private restored = false;
+  private readonly leftSessions = new Set<string>();
+  private leftSessionUpdates = 0;
   private turn: Turn | undefined;
 
-  constructor(proc: TestProcess, home: TestHome) {
+  constructor(proc: TestProcess, home: TestHome, bare: boolean) {
     this.proc = proc;
     this.home = home;
-    this.connection = client({ name: EDITOR_NAME })
+    this.bare = bare;
+    this.handled = new Set(bare ? SESSION_METHODS : [...SESSION_METHODS, ...EDITOR_CAPABILITY_METHODS]);
+    const session = client({ name: EDITOR_NAME })
       .onNotification(methods.client.session.update, ({ params }) => {
-        this.updates.push(params.update);
+        if (this.leftSessions.has(params.sessionId)) this.leftSessionUpdates += 1;
+        else this.updates.push(params.update);
       })
       .onRequest(
         methods.client.session.requestPermission,
@@ -291,7 +308,12 @@ class AcpDriver implements SurfaceDriver<'acp'> {
           new Promise<RequestPermissionResponse>((answer) => {
             this.permissions.push({ params, requestId, answer });
           }),
-      )
+      );
+    this.connection = (bare ? session : this.withEditorCapabilities(session)).connect(this.stream());
+  }
+
+  private withEditorCapabilities(session: ReturnType<typeof client>): ReturnType<typeof client> {
+    return session
       .onRequest(methods.client.fs.readTextFile, ({ params }) => this.readTextFile(params))
       .onRequest(methods.client.fs.writeTextFile, ({ params }) => this.writeTextFile(params))
       .onRequest(methods.client.terminal.create, ({ params }) => this.createTerminal(params))
@@ -305,8 +327,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
         this.killCommand(this.terminal(params.terminalId));
         this.terminals.delete(params.terminalId);
         return {};
-      })
-      .connect(this.stream());
+      });
   }
 
   async open(resume: string | undefined): Promise<void> {
@@ -314,7 +335,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
       'the agent to answer initialize',
       this.connection.agent.request(methods.agent.initialize, {
         protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+        clientCapabilities: this.bare ? {} : { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
       }),
     );
     if (initialized.protocolVersion !== PROTOCOL_VERSION) {
@@ -337,6 +358,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
       this.connection.agent.request(methods.agent.session.load, { sessionId: resume, cwd: this.home.workspace, mcpServers: [] }),
     );
     this.sessionId = resume;
+    this.restored = true;
     this.openedMode = loaded.modes?.currentModeId;
   }
 
@@ -364,7 +386,8 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private conversation(): string[] {
-    return [...userTextsOf(this.updates).map((text) => `user: ${text}`), ...this.prompts.map((text) => `user: ${text}`), ...repliesOf(this.updates).map((text) => `assistant: ${text}`)];
+    const updates = this.sessionUpdates();
+    return [...userTextsOf(updates).map((text) => `user: ${text}`), ...this.prompts.map((text) => `user: ${text}`), ...repliesOf(updates).map((text) => `assistant: ${text}`)];
   }
 
   async send(text: string): Promise<void> {
@@ -373,6 +396,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     }
     const turn: Turn = { prompt: text, updates: this.updates.length, stopReason: undefined, rejection: undefined, done: false };
     this.turn = turn;
+    this.restored = false;
     this.prompts.push(text);
     const sent = this.sentPrompts;
     void this.connection.agent.request(methods.agent.session.prompt, { sessionId: this.sessionId, prompt: [{ type: 'text', text }] }).then(
@@ -439,11 +463,49 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     }
     const mark = this.updates.length;
     await this.response(`the agent to switch the session to mode ${modeId}`, this.connection.agent.request(methods.agent.session.setMode, { sessionId: this.sessionId, modeId }));
-    await this.wait('the agent to send every session/update it announced', () => (this.updates.length >= this.receivedUpdates ? true : undefined));
+    await this.wait('the agent to send every session/update it announced', () => (this.handledUpdates() >= this.receivedUpdates ? true : undefined));
     const reported = this.updates.slice(mark).some((update) => update.sessionUpdate === 'current_mode_update' && update.currentModeId === modeId);
     if (!reported) {
       throw new Error(`setPermissionMode() switched the session to mode ${modeId}, but the agent never reported it with current_mode_update.\n${this.describe()}`);
     }
+  }
+
+  async compact(): Promise<void> {
+    if (!this.turnOver() || this.permissions.length > 0) {
+      throw new Error(`compact() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
+    }
+    await this.send(COMPACT_COMMAND);
+    const turn = this.turn;
+    if (turn === undefined) throw new Error(`compact() lost the /compact prompt.\n${this.describe()}`);
+    const outcome = await this.wait('the agent to report that the compaction finished', () => {
+      if (!this.turnOver()) return undefined;
+      const said = repliesOf(this.updates.slice(turn.updates)).join('\n');
+      if (said.includes(COMPACTION_DONE)) return 'done' as const;
+      return COMPACTION_FAILURES.some((failure) => said.includes(failure)) ? ('failed' as const) : undefined;
+    });
+    this.assertPromptValid();
+    if (outcome === 'failed') throw new Error(`compact() saw the compaction cancelled or blocked.\n${this.describe()}`);
+  }
+
+  async newSession(): Promise<void> {
+    if (!this.turnOver() || this.permissions.length > 0) {
+      throw new Error(`newSession() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
+    }
+    await this.wait('the agent to send every session/update it announced', () => (this.handledUpdates() >= this.receivedUpdates ? true : undefined));
+    const session = await this.response(
+      'the agent to create a new session',
+      this.connection.agent.request(methods.agent.session.new, { cwd: this.home.workspace, mcpServers: [] }),
+    );
+    if (session.sessionId === this.sessionId) {
+      throw new Error(`newSession() asked for a new session, but the agent answered with the current one, ${session.sessionId}.\n${this.describe()}`);
+    }
+    this.leftSessions.add(this.sessionId);
+    this.sessionId = session.sessionId;
+    this.openedMode = session.modes?.currentModeId;
+    this.sessionStart = this.updates.length;
+    this.restored = false;
+    this.prompts = [];
+    this.turn = undefined;
   }
 
   async stop(): Promise<void> {
@@ -529,7 +591,12 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     this.assertPromptValid();
     const turn = this.turn;
     if (turn?.rejection === undefined) {
-      const ended = turn === undefined ? 'no turn has started' : `the latest turn ended with stop reason ${String(turn.stopReason)}`;
+      const ended =
+        turn === undefined
+          ? this.restored
+            ? "the restored last turn shows none (ACP's session/load replays messages and tool calls, not failures)"
+            : 'no turn has started'
+          : `the latest turn ended with stop reason ${String(turn.stopReason)}`;
       throw new Error(`expectError() found no failure: ${ended}, and session/prompt did not fail.\n${this.describe()}`);
     }
     const message = property(turn.rejection, 'message');
@@ -659,7 +726,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     const method = property(message, 'method');
     if (typeof method === 'string') {
       if (method === methods.client.session.update) this.receivedUpdates += 1;
-      if (!HANDLED_METHODS.has(method)) this.unhandled.push(method);
+      if (!this.handled.has(method)) this.unhandled.push(method);
       this.trace(method, property(message, 'params'), property(message, 'id'));
     }
     return message as AnyMessage;
@@ -726,7 +793,8 @@ class AcpDriver implements SurfaceDriver<'acp'> {
         cwd: params.cwd ?? this.home.workspace,
         env: { ...kimiCliEnv(this.home), ...requested },
         stdio: ['ignore', output.fd, output.fd],
-        detached: true,
+        detached: process.platform !== 'win32',
+        windowsHide: true,
       });
       exited = new Promise((resolve) => {
         child.once('exit', (exitCode, signal) => {
@@ -771,6 +839,11 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private killCommand(terminal: Terminal): void {
+    if (terminal.exit === undefined) {
+      killProcessTree(terminal.pid);
+      return;
+    }
+    if (process.platform === 'win32') return;
     try {
       process.kill(-terminal.pid, 'SIGKILL');
     } catch {
@@ -827,7 +900,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private missingEditorEvidence(tool: ToolView, expectation: ToolExpectation): string | undefined {
-    if (expectation.status === 'rejected') return undefined;
+    if (expectation.status === 'rejected' || this.replayedTurn() || this.bare) return undefined;
     if (expectation.name === 'AskUserQuestion') {
       const reply = this.questionReplies.get(tool.id);
       return reply !== undefined && this.served.has(reply) ? undefined : 'the editor never answered a question for it';
@@ -860,7 +933,8 @@ class AcpDriver implements SurfaceDriver<'acp'> {
       if (tool.name !== expectation.name || tool.status !== expectation.status) return false;
       if (expectation.name === 'AskUserQuestion') return tool.questions.includes(expectation.target);
       if (expectation.name !== 'Bash') return tool.path !== undefined && this.workspacePath(tool.path) === expectation.target;
-      return tool.command === expectation.target && (output === undefined || this.embedsOutput(tool, output));
+      if (tool.command !== expectation.target || output === undefined) return tool.command === expectation.target;
+      return this.replayedTurn() || this.bare ? tool.shownText.split('\n').some((line) => line.trim() === output) : this.embedsOutput(tool, output);
     });
   }
 
@@ -879,16 +953,31 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private sessionMode(): string | undefined {
-    const reported = this.updates.findLast((update) => update.sessionUpdate === 'current_mode_update');
+    const reported = this.sessionUpdates().findLast((update) => update.sessionUpdate === 'current_mode_update');
     return reported?.sessionUpdate === 'current_mode_update' ? reported.currentModeId : this.openedMode;
   }
 
   private turnUpdates(): readonly SessionUpdate[] {
-    return this.turn === undefined ? [] : this.updates.slice(this.turn.updates);
+    if (this.turn !== undefined) return this.updates.slice(this.turn.updates);
+    const updates = this.sessionUpdates();
+    const lastUserMessage = updates.findLastIndex((update) => update.sessionUpdate === 'user_message_chunk');
+    return lastUserMessage < 0 ? [] : updates.slice(lastUserMessage + 1);
+  }
+
+  private handledUpdates(): number {
+    return this.updates.length + this.leftSessionUpdates;
+  }
+
+  private sessionUpdates(): readonly SessionUpdate[] {
+    return this.updates.slice(this.sessionStart);
+  }
+
+  private replayedTurn(): boolean {
+    return this.restored && this.turn === undefined;
   }
 
   private turnOver(): boolean {
-    return this.turn === undefined || (this.turn.done && this.updates.length >= this.receivedUpdates);
+    return this.turn === undefined || (this.turn.done && this.handledUpdates() >= this.receivedUpdates);
   }
 
   private assertPromptValid(): void {
@@ -929,7 +1018,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
         { timeoutMs: TIMEOUTS.server },
       );
     } catch (cause) {
-      const unparsed = this.receivedUpdates - this.updates.length;
+      const unparsed = this.receivedUpdates - this.handledUpdates();
       const schema =
         this.turn?.done === true && unparsed > 0
           ? `\n${unparsed} session/update notification(s) did not pass the SDK's schema, so the editor never saw the turn as finished.`
@@ -982,19 +1071,18 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 }
 
-export async function startAcp({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'acp'>> {
-  if (process.platform === 'win32') throw new Error('The ACP surface runs terminal commands in process groups; Windows is not supported yet.');
+export async function startAcp({ home, reopen, variant }: SurfaceLaunch): Promise<SurfaceDriver<'acp'>> {
   const proc = TestProcess.start({
     label: 'kimi acp',
     command: kimiCliCommand(),
     args: ['acp'],
     cwd: home.workspace,
-    env: kimiCliEnv(home),
+    env: productEnv(home),
     logDir: home.root,
     stdin: true,
     fetchStubs: offlineStubs(),
   });
-  const driver = new AcpDriver(proc, home);
+  const driver = new AcpDriver(proc, home, variant === 'bare-editor');
   try {
     await driver.open(reopen?.state.sessionId);
   } catch (error) {

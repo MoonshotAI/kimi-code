@@ -1,19 +1,64 @@
 name: E2E
 
+# Every push to main runs the suite. A pull request runs it only when it is
+# ready for review and either carries the e2e label or changes the suite
+# itself, so the shared runner pool is not spent on every push of every PR.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
 
 permissions:
   contents: read
 
+# Each main commit gets its own group so every merge is tested. Adding an
+# unrelated label gets a throwaway group so it cannot cancel a running suite.
 concurrency:
-  group: e2e-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: e2e-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'push' && github.sha || (github.event.action == 'labeled' && github.event.label.name != 'e2e') && github.run_id || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  gate:
+    name: Decide whether E2E runs
+    if: >-
+      github.event_name != 'pull_request' ||
+      (!github.event.pull_request.draft &&
+       (github.event.action != 'labeled' || github.event.label.name == 'e2e'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e') }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" != pull_request || "$HAS_LABEL" == true ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[].filename')
+          if grep -qE '^(tests/e2e/|packages/testkit/|\.github/workflows/e2e\.yml$)' <<<"$files"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "E2E skipped: this pull request does not change the E2E suite. Add the \`e2e\` label to run it." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   build:
     name: Build (optional)
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -61,7 +106,7 @@ jobs:
           name: e2e-cli
           path: apps/kimi-code
       - name: Run the scenarios and driver self-tests on the TUI
-        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=tui
+        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=tui --project=tui-kitty
         env:
           TESTKIT_CLI_BUILD: dist
       - uses: actions/upload-artifact@v7
@@ -95,7 +140,7 @@ jobs:
           name: e2e-cli
           path: apps/kimi-code
       - name: Run the scenarios and driver self-tests over ACP
-        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=acp
+        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=acp --project=acp-bare
         env:
           TESTKIT_CLI_BUILD: dist
       - uses: actions/upload-artifact@v7
@@ -112,10 +157,14 @@ jobs:
           retention-days: 7
 
   desktop:
-    name: Desktop (optional)
+    name: Desktop (optional, ${{ matrix.shard }}/2)
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -132,26 +181,32 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libgtk-3-0 libgbm1 libasound2t64
+      - name: Download the Electron binary before parallel cases start it
+        run: pnpm --filter kimi-code-app exec node -e "require('electron')"
       - name: Run the scenarios and driver self-tests on Desktop
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" pnpm --filter @moonshot-ai/e2e exec playwright test --project=desktop --workers=1
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" pnpm --filter @moonshot-ai/e2e exec playwright test --project=desktop --shard=${{ matrix.shard }}/2
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
-          name: e2e-desktop-report
+          name: e2e-desktop-report-${{ matrix.shard }}
           path: tests/e2e/playwright-report/
           retention-days: 7
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: e2e-desktop-failure
+          name: e2e-desktop-failure-${{ matrix.shard }}
           path: tests/e2e/test-results/
           retention-days: 7
 
   web:
-    name: Web (optional)
+    name: Web (optional, ${{ matrix.shard }}/2)
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -167,18 +222,68 @@ jobs:
       - name: Install the browser the Web scenarios run in
         run: pnpm --filter @moonshot-ai/e2e exec playwright install --with-deps chromium
       - name: Run the scenarios and driver self-tests on the Web interface
-        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=web
+        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=web --shard=${{ matrix.shard }}/2
         env:
           TESTKIT_CLI_BUILD: dist
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
-          name: e2e-web-report
+          name: e2e-web-report-${{ matrix.shard }}
           path: tests/e2e/playwright-report/
           retention-days: 7
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: e2e-web-failure
+          name: e2e-web-failure-${{ matrix.shard }}
+          path: tests/e2e/test-results/
+          retention-days: 7
+
+  windows:
+    name: Windows ${{ matrix.surface }} (manual)
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        surface: [tui, acp, desktop, web]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: e2e-cli
+          path: apps/kimi-code
+      - uses: actions/download-artifact@v8
+        if: ${{ matrix.surface == 'desktop' }}
+        with:
+          name: e2e-desktop
+          path: apps/desktop
+      - name: Download the Electron binary before parallel cases start it
+        if: ${{ matrix.surface == 'desktop' }}
+        run: pnpm --filter kimi-code-app exec node -e "require('electron')"
+      - name: Install the browser the Web scenarios run in
+        if: ${{ matrix.surface == 'web' }}
+        run: pnpm --filter @moonshot-ai/e2e exec playwright install chromium
+      - name: Run the scenarios and driver self-tests on Windows
+        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=${{ matrix.surface }}
+        env:
+          TESTKIT_CLI_BUILD: dist
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-windows-${{ matrix.surface }}-report
+          path: tests/e2e/playwright-report/
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-windows-${{ matrix.surface }}-failure
           path: tests/e2e/test-results/
           retention-days: 7

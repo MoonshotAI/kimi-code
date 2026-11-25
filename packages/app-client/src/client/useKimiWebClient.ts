@@ -3524,6 +3524,7 @@ export function useKimiWebClient() {
 
     load: workspaceBoot.load,
     selectSession: sessionSelection.selectSession,
+    openSessionLink: sessionSelection.openSessionLink,
     clearActiveSession: workspacesStore().clearActiveSession,
     openSessionAdmin: (workspaceId?: string) => {
       if (workspaceId !== undefined) {

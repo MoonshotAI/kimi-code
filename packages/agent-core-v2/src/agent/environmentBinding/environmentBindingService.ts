@@ -14,7 +14,7 @@ import { EnvironmentError } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
@@ -58,7 +58,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     @IAgentEnvironmentBindingSeed private readonly seed: IAgentEnvironmentBindingSeed,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionWorkspaceContext private readonly workspaceContext: ISessionWorkspaceContext,
-    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
+    @ISessionProjectInfo private readonly projectInfo: ISessionProjectInfo,
     @IEnvironmentService private readonly resolver: EnvironmentResolver,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
@@ -104,7 +104,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
         resolvedHost = undefined;
       }
     }
-    return resolveEffectiveWorkspaceRoots(this.session, binding, this.workspaceInfo, resolvedHost);
+    return resolveEffectiveWorkspaceRoots(this.session, binding, this.projectInfo, resolvedHost);
   }
 
   get current(): EnvironmentBinding {

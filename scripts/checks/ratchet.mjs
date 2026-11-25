@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
@@ -77,6 +77,38 @@ export function ratchetBaseline(path, counts, args) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(sortCounts(counts), null, 2)}\n`);
   return { status: 'written', changes };
+}
+
+export function reportChanges(changes, describe) {
+  const added = changes.filter((change) => change.kind === 'added');
+  const removed = changes.filter((change) => change.kind === 'removed');
+  return [...(added.length > 0 ? describe.added(added) : []), ...(removed.length > 0 ? describe.removed(removed) : [])];
+}
+
+export function trackedFiles(root, keep, pathspecs = []) {
+  const output = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', ...pathspecs], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return output.split('\0').filter((file) => file !== '' && keep(file) && existsSync(join(root, file)));
+}
+
+export function runCountCheck({ name, root, checkFile, baselineFile, args, measure, formatReport, summary }) {
+  const known = new Set(['--update', '--allow-increase']);
+  if (args.some((arg) => !known.has(arg)) || (args.includes('--allow-increase') && !args.includes('--update'))) {
+    process.stderr.write(`✗ ${name}: unsupported arguments ${args.join(' ')}. Run \`pnpm lint\`; \`node ${checkFile} --update\` lowers ${baselineFile}.\n`);
+    return 2;
+  }
+  const counts = measure();
+  const outcome = ratchetBaseline(join(root, baselineFile), counts, args);
+  if (outcome.status === 'written') {
+    process.stdout.write(`✓ ${name}: wrote ${baselineFile}\n`);
+    return 0;
+  }
+  const report = formatReport(outcome.changes);
+  if (report.length > 0) {
+    process.stderr.write(`${report.join('\n')}\n`);
+    return 1;
+  }
+  process.stdout.write(`✓ ${name}: ${summary(counts)}\n`);
+  return 0;
 }
 
 function sortCounts(counts) {

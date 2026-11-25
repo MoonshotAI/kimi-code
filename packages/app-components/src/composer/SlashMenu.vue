@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { matchRanges, type SlashCommand, type SlashMatchRanges } from '@moonshot-ai/app-core/lib';
+import { matchRanges, stripSkillPrefix, type SlashCommand, type SlashMatchRanges } from '@moonshot-ai/app-core/lib';
 import { mentionIconSvg } from '@moonshot-ai/app-composer/features/mention';
 import ComposerMenuHints from './ComposerMenuHints.vue';
 import ComposerMenuSectionLabel from './ComposerMenuSectionLabel.vue';
@@ -54,7 +54,7 @@ const segmented = computed(() =>
   props.items.map((item, i) => {
     const desc = descText(item);
     const ranges = props.ranges?.[i] ?? matchRanges(props.query, item.name, desc);
-    const label = item.name.replace(/^\//, '');
+    const label = item.isSkill === true ? stripSkillPrefix(item.name) : item.name.replace(/^\//, '');
     return {
       item,
       namePieces: pieces(label, shiftRanges(ranges.name, item.name.length - label.length)),

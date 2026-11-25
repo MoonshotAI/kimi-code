@@ -1,6 +1,6 @@
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
 import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { IWorkspaceService } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
+import { IProjectService } from '@moonshot-ai/agent-core-v2/app/project/project';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
@@ -18,7 +18,7 @@ import { IBootstrapService } from '@moonshot-ai/agent-core-v2/app/bootstrap/boot
 import { IEventService } from '@moonshot-ai/agent-core-v2/app/event/event';
 import { IFileService } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 import { IHostFolderBrowser } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager } from '@moonshot-ai/agent-core-v2/project/projectInstance/projectInstanceManager';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '@moonshot-ai/agent-core-v2/features/skill/session/skillCatalog';
@@ -40,7 +40,7 @@ import { IMcpManagementService } from '@moonshot-ai/agent-core-v2/app/mcpManagem
 
 export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>> = {
   sessionIndex: ISessionIndex,
-  workspaceService: IWorkspaceService,
+  workspaceService: IProjectService,
   configService: IConfigService,
   modelService: IModelService,
   modelResolver: IModelCatalog,
@@ -55,7 +55,7 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   hostFolderBrowser: IHostFolderBrowser,
   bootstrapService: IBootstrapService,
   fileService: IFileService,
-  workspaceInstanceManager: IWorkspaceInstanceManager,
+  workspaceInstanceManager: IProjectInstanceManager,
   sessionManager: ISessionManager,
   sessionMetadata: ISessionMetadata,
   sessionSkillCatalog: ISessionSkillCatalog,

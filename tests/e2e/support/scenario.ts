@@ -23,11 +23,15 @@ import { DISK_TITLES, STEP_TITLES } from './steps';
 import {
   absenceReason,
   SURFACES,
+  unavailableReason,
+  VARIANTS,
   VERB_NAMES,
   verbOn,
   verbSpec,
   wantedOutput,
   type Actions,
+  type Platform,
+  type Variant,
   type ApprovalExpectation,
   type Diagnostic,
   type Frame,
@@ -44,13 +48,17 @@ export { expect };
 
 export interface SurfaceOptions {
   surface: Surface | undefined;
+  variant: Variant | undefined;
 }
 
 export interface ScenarioOptions {
   readonly workspace?: Readonly<Record<string, string>>;
+  readonly workspaceTrust?: SurfaceLaunch['workspaceTrust'];
   readonly except?: Readonly<Partial<Record<Surface, string>>>;
   readonly onlyOn?: readonly Surface[];
   readonly reason?: string;
+  readonly exceptPlatforms?: Readonly<Partial<Record<Platform, string>>>;
+  readonly exceptVariants?: Readonly<Partial<Record<Variant, string>>>;
 }
 
 export interface Workspace {
@@ -151,8 +159,8 @@ async function readIfPresent(path: string): Promise<string | undefined> {
 
 function promptCheck(verb: 'send' | 'queue' | 'steer'): (text: string) => void {
   return (text) => {
-    if (!/^[ -~]+$/.test(text) || text !== text.trim()) {
-      throw new Error(`${verb}() takes one line of printable ASCII without surrounding spaces, got ${JSON.stringify(text)}`);
+    if (!/^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u.test(text) || text !== text.trim()) {
+      throw new Error(`${verb}() takes one line of printable text without surrounding spaces, got ${JSON.stringify(text)}`);
     }
     if (text.endsWith('\\')) {
       throw new Error(`${verb}() cannot end with a backslash: the product reads a backslash before Enter as a line break and never submits. Got ${JSON.stringify(text)}`);
@@ -220,7 +228,6 @@ const PRECHECKS: { readonly [V in Verb]?: (...args: Parameters<Actions[V]>) => v
   expectAbsent: lineCheck('expectAbsent'),
 };
 
-const READS_THE_LATEST_TURN: ReadonlySet<Verb> = new Set(['expectReply', 'expectTool', 'expectError', 'expectAbsent']);
 
 function problemOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -228,6 +235,7 @@ function problemOf(error: unknown): string {
 
 class ScenarioSession {
   private readonly surface: Surface;
+  private readonly variant: Variant | undefined;
   private readonly declared = new Map<string, string | undefined>();
   private home: TestHome | undefined;
   private model: FakeModel | undefined;
@@ -240,16 +248,21 @@ class ScenarioSession {
   private failedStep: string | undefined;
   private launches = 1;
   private lastPrompt: string | undefined;
-  private turnSinceLaunch = true;
+  private workspaceTrust: SurfaceLaunch['workspaceTrust'];
   private readonly earlierDiagnostics: Diagnostic[] = [];
+  private readonly performed = new Set<Verb>();
+  private exceptPlatforms: readonly string[] = [];
 
-  constructor(surface: Surface) {
+  constructor(surface: Surface, variant: Variant | undefined) {
     this.surface = surface;
+    this.variant = variant;
   }
 
   async start(options: ScenarioOptions, frames: FramePolicy, testInfo: TestInfo): Promise<RunningContext> {
     this.frames = frames;
+    this.exceptPlatforms = Object.keys(options.exceptPlatforms ?? {});
     this.testInfo = testInfo;
+    this.workspaceTrust = options.workspaceTrust;
     const home = await createTestHome(`e2e-${this.surface}`);
     this.home = home;
     assertOutsideGitWorkTree(home.workspace);
@@ -257,8 +270,9 @@ class ScenarioSession {
     const model = await startFakeModel();
     this.model = model;
     await writeKimiConfig(home.dataDir, fakeModelConfig(model));
-    await base.step('启动产品，等到可以输入', async () => {
-      this.driver = await startSurface(this.surface, { home, model });
+    const startupStep = this.workspaceTrust === undefined ? '启动产品，等到可以输入' : '启动产品，处理工作区信任提示';
+    await base.step(startupStep, async () => {
+      this.driver = await startSurface(this.surface, { home, model, workspaceTrust: this.workspaceTrust, ...this.variantLaunch() });
       this.baseline = await snapshotDirectory(home.workspace);
       if (frames === 'every-step') await this.show('00 启动完成');
     });
@@ -289,6 +303,7 @@ class ScenarioSession {
   }
 
   private async perform(verb: Verb, args: readonly unknown[]): Promise<void> {
+    this.performed.add(verb);
     const number = this.nextStep();
     const title = (STEP_TITLES[verb] as (...values: readonly unknown[]) => string)(...args);
     this.failedStep = undefined;
@@ -310,8 +325,9 @@ class ScenarioSession {
       await this.restart();
       return;
     }
-    if (READS_THE_LATEST_TURN.has(verb) && !this.turnSinceLaunch) {
-      throw new Error(`${verb}() reads the latest turn, and no turn has started since restart(); check the restored conversation with expectTranscript().`);
+    const unavailable = unavailableReason(verb, process.platform);
+    if (unavailable !== undefined) {
+      throw new Error(`${verb}() cannot be checked on ${process.platform}: ${unavailable} Leave the platform out of the scenario with exceptPlatforms.`);
     }
     if (!verbOn(verb, this.surface)) {
       throw new Error(
@@ -323,11 +339,12 @@ class ScenarioSession {
     const method: unknown = Reflect.get(driver, verb);
     if (typeof method !== 'function') throw new Error(`The ${this.surface} driver does not implement ${verb}().`);
     await Reflect.apply(method, driver, args);
-    if (verb === 'continue') this.turnSinceLaunch = true;
-    if (verb === 'send' || verb === 'queue' || verb === 'steer') {
-      this.lastPrompt = String(args[0]);
-      this.turnSinceLaunch = true;
-    }
+    if (verb === 'send' || verb === 'queue' || verb === 'steer') this.lastPrompt = String(args[0]);
+    if (verb === 'newSession') this.lastPrompt = undefined;
+  }
+
+  private variantLaunch(): { readonly variant?: Variant } {
+    return this.variant === undefined ? {} : { variant: this.variant };
   }
 
   private async restart(): Promise<void> {
@@ -343,8 +360,13 @@ class ScenarioSession {
     this.driver = undefined;
     if (problems.length > 0) throw new Error(`The product did not shut down cleanly before restart():\n\n${problems.join('\n\n')}`);
     this.launches += 1;
-    this.driver = await startSurface(this.surface, { home, model, reopen: { launch: this.launches, lastPrompt: this.lastPrompt, state } });
-    this.turnSinceLaunch = false;
+    this.driver = await startSurface(this.surface, {
+      home,
+      model,
+      workspaceTrust: this.workspaceTrust,
+      reopen: { launch: this.launches, lastPrompt: this.lastPrompt, state },
+      ...this.variantLaunch(),
+    });
   }
 
   private async shutdownProblems(driver: SurfaceDriver<Surface>): Promise<string[]> {
@@ -416,6 +438,13 @@ class ScenarioSession {
     if (this.interfaceChecks === 0) {
       problems.push('The scenario never checked the interface. Add at least one product.expectTool(), product.expectReply() or another product.expect…() check.');
     }
+    for (const platform of this.exceptPlatforms) {
+      if (![...this.performed].some((verb) => unavailableReason(verb, platform) !== undefined)) {
+        problems.push(
+          `The scenario leaves out ${platform} with exceptPlatforms, but none of the actions it used is unavailable there. exceptPlatforms only covers checks the driver cannot make on a platform; a failure the product causes there is a bug to record, not to leave out.`,
+        );
+      }
+    }
     try {
       model.verify();
     } catch (error) {
@@ -471,17 +500,28 @@ class ScenarioSession {
 
 const test = base.extend<SurfaceOptions & { session: ScenarioSession }>({
   surface: [undefined, { option: true }],
-  session: async ({ surface }, use, testInfo) => {
+  variant: [undefined, { option: true }],
+  session: async ({ surface, variant }, use, testInfo) => {
     if (surface === undefined) throw new Error(`The Playwright project must set use.surface to one of: ${SURFACES.join(', ')}`);
-    const session = new ScenarioSession(surface);
+    if (variant !== undefined && VARIANTS[variant] !== surface) throw new Error(`The Playwright project runs ${surface}, but the variant ${variant} belongs to ${VARIANTS[variant]}.`);
+    const session = new ScenarioSession(surface, variant);
     await use(session);
     await session.finish(testInfo);
   },
 });
 
-function assertReasons(title: string, options: ScenarioOptions): void {
+function assertScenarioOptions(title: string, options: ScenarioOptions): void {
+  if (options.workspaceTrust !== undefined && (options.onlyOn?.length !== 1 || options.onlyOn[0] !== 'tui')) {
+    throw new Error(`Scenario "${title}" sets workspaceTrust without limiting the scenario to TUI.`);
+  }
   for (const [surface, reason] of Object.entries(options.except ?? {})) {
     if (reason.trim() === '') throw new Error(`Scenario "${title}" excludes ${surface} without a reason.`);
+  }
+  for (const [platform, reason] of Object.entries(options.exceptPlatforms ?? {})) {
+    if (reason.trim() === '') throw new Error(`Scenario "${title}" excludes the ${platform} platform without a reason.`);
+  }
+  for (const [variant, reason] of Object.entries(options.exceptVariants ?? {})) {
+    if (reason.trim() === '') throw new Error(`Scenario "${title}" excludes the ${variant} variant without a reason.`);
   }
   if (options.onlyOn !== undefined && (options.onlyOn.length === 0 || (options.reason ?? '').trim() === '')) {
     throw new Error(`Scenario "${title}" uses onlyOn; it must name at least one surface and give a reason.`);
@@ -497,11 +537,20 @@ function notApplicableReason(options: ScenarioOptions, surface: Surface): string
   return options.onlyOn === undefined || options.onlyOn.includes(surface) ? undefined : options.reason;
 }
 
+function platformExclusion(options: ScenarioOptions): string | undefined {
+  const reasons: Readonly<Partial<Record<string, string>>> = options.exceptPlatforms ?? {};
+  return reasons[process.platform];
+}
+
 function register(title: string, options: ScenarioOptions, body: RunningBody, frames: FramePolicy): void {
-  assertReasons(title, options);
-  test(title, async ({ surface, session }, testInfo) => {
+  assertScenarioOptions(title, options);
+  test(title, async ({ surface, variant, session }, testInfo) => {
     const reason = surface === undefined ? undefined : notApplicableReason(options, surface);
     testInfo.skip(reason !== undefined, `not applicable on ${String(surface)}: ${String(reason)}`);
+    const platformReason = platformExclusion(options);
+    testInfo.skip(platformReason !== undefined, `not applicable on ${process.platform}: ${String(platformReason)}`);
+    const variantReason = variant === undefined ? undefined : options.exceptVariants?.[variant];
+    testInfo.skip(variantReason !== undefined, `not applicable on ${String(variant)}: ${String(variantReason)}`);
     await body(await session.start(options, frames, testInfo));
   });
 }
@@ -514,8 +563,9 @@ function selfTestFile(verb: Verb): string {
   return `${verb.replaceAll(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}.spec.ts`;
 }
 
-function withinVerb(verb: Verb, title: string, options: ScenarioOptions): ScenarioOptions {
+function withinVerb(verb: Verb, title: string, given: ScenarioOptions): ScenarioOptions {
   const spec = verbSpec(verb);
+  const options = spec.unavailableOn === undefined ? given : { ...given, exceptPlatforms: { ...spec.unavailableOn, ...given.exceptPlatforms } };
   const absent = SURFACES.filter((surface) => !spec.on.includes(surface));
   if (absent.length === 0) return options;
   if (options.onlyOn !== undefined) {
@@ -538,7 +588,7 @@ export function selfTest<V extends Verb>(verb: V, suite: SelfTestSuite<SurfacesO
       const name = `${verb} ${kind}: ${title}`;
       return { name, run, options: withinVerb(verb, name, options) };
     });
-    for (const { name, options } of cases) assertReasons(name, options);
+    for (const { name, options } of cases) assertScenarioOptions(name, options);
     const uncovered = surfaces.filter((surface) => cases.every(({ options }) => notApplicableReason(options, surface) !== undefined));
     if (uncovered.length > 0) {
       throw new Error(`The ${verb} self-test has no ${kind} case on: ${uncovered.join(', ')}. Every user action needs both kinds on every surface where it exists.`);

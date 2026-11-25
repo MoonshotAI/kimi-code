@@ -1,3 +1,6 @@
+import { realpathSync } from 'node:fs';
+import { join } from 'node:path';
+
 import type { TestHome } from '@moonshot-ai/testkit/fixtures';
 import type { FakeModel } from '@moonshot-ai/testkit/model';
 
@@ -5,9 +8,16 @@ export const SURFACES = ['tui', 'acp', 'desktop', 'web'] as const;
 
 export type Surface = (typeof SURFACES)[number];
 
+export type Platform = 'darwin' | 'linux' | 'win32';
+
+export const VARIANTS = { 'kitty-keyboard': 'tui', 'bare-editor': 'acp' } as const satisfies Readonly<Record<string, Surface>>;
+
+export type Variant = keyof typeof VARIANTS;
+
 interface VerbSpec {
   readonly on: readonly Surface[];
   readonly absentBecause?: string | Readonly<Partial<Record<Surface, string>>>;
+  readonly unavailableOn?: Readonly<Partial<Record<Platform, string>>>;
   readonly checksInterface: boolean;
   readonly bySession?: true;
 }
@@ -17,6 +27,10 @@ const NO_REASON_OVER_ACP = 'ACP permission options carry only an option id, so a
 const ONE_PROMPT_AT_A_TIME_OVER_ACP =
   'ACP has no way to send a message while a turn runs: a second session/prompt is refused (-32600, another turn is already in progress).';
 const NO_FREE_TEXT_OVER_ACP = "ACP's permission request carries only option ids, so an editor cannot send a free-text answer.";
+const NO_WINDOW_TO_RESIZE = {
+  acp: 'An editor shows the conversation in its own window; the agent behind ACP has no window to resize.',
+  desktop: "The Desktop window cannot be made narrower than 900 pixels, so a user cannot give it a phone width, and Playwright can only resize it by running code in Electron's main process.",
+};
 const NO_CONTINUE = {
   tui: 'The terminal UI has no way to continue a failed turn; a user sends another message instead.',
   acp: 'ACP has no request to continue a failed turn.',
@@ -42,9 +56,19 @@ export const VERBS = {
   expectAbsent: { on: SURFACES, checksInterface: false },
   continue: { on: ['desktop', 'web'], absentBecause: NO_CONTINUE, checksInterface: false },
   restart: { on: SURFACES, checksInterface: false, bySession: true },
+  newSession: { on: SURFACES, checksInterface: false },
+  compact: { on: SURFACES, checksInterface: false },
+  resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
   expectTranscript: { on: SURFACES, checksInterface: true },
   exit: { on: ['tui'], absentBecause: ONLY_IN_A_SHELL, checksInterface: false },
-  expectTerminalRestored: { on: ['tui'], absentBecause: ONLY_IN_A_SHELL, checksInterface: true },
+  expectTerminalRestored: {
+    on: ['tui'],
+    absentBecause: ONLY_IN_A_SHELL,
+    unavailableOn: {
+      win32: 'Windows keeps the input modes in the console rather than in a POSIX terminal, and the driver cannot read them back after the CLI exits yet.',
+    },
+    checksInterface: true,
+  },
 } as const satisfies Readonly<Record<string, VerbSpec>>;
 
 export type Verb = keyof typeof VERBS;
@@ -59,6 +83,11 @@ export function verbSpec(verb: Verb): VerbSpec {
 
 export function verbOn(verb: Verb, surface: Surface): boolean {
   return verbSpec(verb).on.includes(surface);
+}
+
+export function unavailableReason(verb: Verb, platform: string): string | undefined {
+  const reasons: Readonly<Partial<Record<string, string>>> = verbSpec(verb).unavailableOn ?? {};
+  return reasons[platform];
 }
 
 export function absenceReason(verb: Verb, surface: Surface): string {
@@ -131,8 +160,14 @@ export function describeApproval({ name, target }: ApprovalExpectation): string 
   return `${name} on ${JSON.stringify(target)}`;
 }
 
+function slashed(path: string): string {
+  return path.replaceAll('\\', '/');
+}
+
 export function namesFile(shown: string, target: string, workspace: string): boolean {
-  return shown === target || shown.endsWith(` ${target}`) || shown.endsWith(`${workspace}/${target}`);
+  if (shown === target || shown.endsWith(` ${target}`)) return true;
+  const roots = [workspace, realpathSync.native(workspace)];
+  return roots.some((root) => slashed(shown).endsWith(slashed(join(root, target))));
 }
 
 export interface ApproveOptions {
@@ -140,6 +175,8 @@ export interface ApproveOptions {
 }
 
 export type PermissionMode = 'manual' | 'yolo' | 'auto';
+
+export type WindowSize = 'normal' | 'narrow';
 
 export const PERMISSION_MODE_NAMES: Readonly<Record<PermissionMode, string>> = {
   manual: 'Always Ask',
@@ -167,6 +204,9 @@ interface VerbSignatures {
   expectAbsent(text: string): Promise<void>;
   continue(): Promise<void>;
   restart(): Promise<void>;
+  newSession(): Promise<void>;
+  compact(): Promise<void>;
+  resize(size: WindowSize): Promise<void>;
   expectTranscript(text: string): Promise<void>;
   exit(): Promise<void>;
   expectTerminalRestored(): Promise<void>;
@@ -187,6 +227,7 @@ type SessionVerb = { [Name in Verb]: (typeof VERBS)[Name] extends { readonly byS
 export interface ReopenState {
   readonly sessionId?: string;
   readonly port?: string;
+  readonly size?: WindowSize;
 }
 
 export interface Reopen {
@@ -212,5 +253,7 @@ export type SurfaceDriver<S extends Surface> = DriverActionsOn<S> & SurfaceContr
 export interface SurfaceLaunch {
   readonly home: TestHome;
   readonly model: FakeModel;
+  readonly workspaceTrust?: 'trust' | 'exit';
   readonly reopen?: Reopen;
+  readonly variant?: Variant;
 }

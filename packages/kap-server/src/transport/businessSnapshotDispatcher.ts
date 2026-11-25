@@ -5,28 +5,28 @@ import {
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
   ISessionContext,
-  IWorkspaceInstanceManager,
+  IProjectInstanceManager,
   getLiveSessionById,
   snapshotAgentEnvironmentBinding,
-  snapshotSessionWorkspaceAssociation,
+  snapshotSessionProjectAssociation,
   type AgentEnvironmentBindingSnapshot,
   type Scope,
-  type SessionWorkspaceAssociationSnapshot,
-  type WorkspaceInstanceSnapshot,
-  type WorkspaceInstancesSnapshot,
+  type SessionProjectAssociationSnapshot,
+  type ProjectInstanceSnapshot,
+  type ProjectInstancesSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 
 import { MAIN_AGENT_ID, ensureMainAgent } from './mainAgent';
 
-export function workspaceSnapshots(core: Scope): WorkspaceInstancesSnapshot {
-  return core.accessor.get(IWorkspaceInstanceManager).snapshot();
+export function workspaceSnapshots(core: Scope): ProjectInstancesSnapshot {
+  return core.accessor.get(IProjectInstanceManager).snapshot();
 }
 
 export async function workspaceSnapshot(
   core: Scope,
   workspaceId: string,
-): Promise<WorkspaceInstanceSnapshot> {
-  const lease = await core.accessor.get(IWorkspaceInstanceManager).acquire({ workspaceId });
+): Promise<ProjectInstanceSnapshot> {
+  const lease = await core.accessor.get(IProjectInstanceManager).acquire({ workspaceId });
   try {
     return lease.instance.snapshot();
   } finally {
@@ -37,12 +37,12 @@ export async function workspaceSnapshot(
 export function sessionWorkspaceAssociation(
   core: Scope,
   sessionId: string,
-): SessionWorkspaceAssociationSnapshot {
+): SessionProjectAssociationSnapshot {
   const session = getLiveSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} not found`);
   }
-  return snapshotSessionWorkspaceAssociation(session.accessor.get(ISessionContext));
+  return snapshotSessionProjectAssociation(session.accessor.get(ISessionContext));
 }
 
 export async function agentEnvironmentBindingSnapshot(

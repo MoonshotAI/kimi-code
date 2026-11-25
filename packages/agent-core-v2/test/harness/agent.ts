@@ -22,7 +22,7 @@ import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
-import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
+import { ProjectStateService } from '#/project/state/projectStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import '#/features/reminder/reminderFeature';
@@ -34,7 +34,7 @@ import { IAgentGoalService } from '#/features/goal/goalService';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedulerService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
@@ -180,8 +180,8 @@ import {
   IAgentUserToolService,
   ISessionUsageService,
   ISessionWorkspaceContext,
-  IWorkspaceStateService,
-  IWorkspaceTrust,
+  IProjectStateService,
+  IProjectTrust,
   LifecycleScope,
   AgentMcpService,
   AgentPermissionGate,
@@ -202,7 +202,7 @@ import {
 import {
   type SessionCreatedEvent,
   type SessionWillCloseEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
+} from '#/project/sessionLifecycle/sessionLifecycle';
 import { stubSessionRunGate } from '../stubs';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
@@ -1347,25 +1347,25 @@ export class AgentTestContext {
               connectionManager: new McpConnectionManager(),
               isBaselineServer: () => true,
             } satisfies ISessionMcpHandle);
-            reg.defineInstance(ISessionWorkspaceInfo, {
+            reg.defineInstance(ISessionProjectInfo, {
               _serviceBrand: undefined,
               ready: Promise.resolve(),
               additionalDirs: [],
               primaryByWorkspace: {},
               onDidChange: Event.None as Event<void>,
-            } satisfies ISessionWorkspaceInfo);
+            } satisfies ISessionProjectInfo);
             reg.defineInstance(ISessionWorkdir, {
               _serviceBrand: undefined,
               environmentId: 'local',
               cwd: this.cwd,
               fs: undefined as never,
             });
-            reg.definePartialInstance(IWorkspaceTrust, {
+            reg.definePartialInstance(IProjectTrust, {
               get: async () => false,
             });
             reg.defineInstance(
-              IWorkspaceStateService,
-              new WorkspaceStateService(this.root.accessor.get(IAppStateService)),
+              IProjectStateService,
+              new ProjectStateService(this.root.accessor.get(IAppStateService)),
             );
             reg.defineDescriptor(
               ISessionWorkspaceContext,

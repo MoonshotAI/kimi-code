@@ -1,7 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as slowDisk } from 'node:timers/promises';
 import { inflateRawSync } from 'node:zlib';
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
@@ -9,7 +10,9 @@ import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mc
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
-import { agent, fakeModelConfig, say } from '@moonshot-ai/testkit/model';
+import { bashPathOf, createGitWorktree } from '@moonshot-ai/testkit/fixtures';
+import type { KapHarness } from '@moonshot-ai/testkit/kap';
+import { agent, bash, fakeModelConfig, say } from '@moonshot-ai/testkit/model';
 import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
 
@@ -28,6 +31,7 @@ import {
   IAgentCronService,
   IAgentLifecycleService,
   IAgentEnvironmentBindingService,
+  IAgentEnvironmentService,
   IEventBus,
   IEventDispatcher,
   IEventService,
@@ -43,9 +47,10 @@ import {
   ISessionMetadata,
   ISessionPromptPredictionService,
   ISessionTitleService,
+  ISessionWorkdir,
   IWireService,
-  IWorkspaceInstanceManager,
-  IWorkspaceService,
+  IProjectInstanceManager,
+  IProjectService,
   MAIN_AGENT_ID,
   closeSessionById,
   getLiveSessionById,
@@ -122,6 +127,10 @@ function goalContinuationStarts(events: readonly Event2<any>[]): readonly Event2
     const { origin } = event as TurnStarted;
     return origin.kind === 'system_trigger' && origin.name === 'goal_continuation';
   });
+}
+
+function git(cwd: string, ...args: string[]): void {
+  execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 describe('server-v2 /api/v1/sessions', () => {
@@ -608,6 +617,17 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(40409);
   });
 
+  it('rejects create when an explicit local environment_cwd does not exist (40001)', async () => {
+    const missing = join(home as string, 'missing-environment-cwd');
+    const { body } = await postJson<null>('/api/v1/sessions', {
+      cwd: home as string,
+      environment_id: 'local',
+      environment_cwd: missing,
+    });
+    expect(body.code).toBe(40001);
+    expect(body.msg).toContain(`cwd ${missing} is not readable on environment local`);
+  });
+
   it.each(['missing', 'not-a-directory'] as const)(
     'rejects create via workspace_id when the registered root is %s (40409)',
     async (state) => {
@@ -668,7 +688,7 @@ describe('server-v2 /api/v1/sessions', () => {
       secondId = second.body.data.id;
       expect(second.body.data.workspace_id).toBe(first.body.data.workspace_id);
       expect(second.body.data.id).not.toBe(first.body.data.id);
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const workspace = manager.get(first.body.data.workspace_id);
       expect(workspace).toBeDefined();
       await closeSessionById((server as RunningServer).core.accessor, firstId);
@@ -691,6 +711,514 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     expect(body.code).toBe(40001);
     expect(body.details?.[0]?.path).toBe('metadata.cwd');
+  });
+
+  async function repositoryWithWorktree(): Promise<{ readonly lab: string; readonly main: string; readonly worktree: string }> {
+    const lab = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-repo-')));
+    const { main, worktree } = await createGitWorktree(
+      { main: join(lab, 'app'), worktree: join(lab, 'app-fix') },
+      { files: { 'src/tracked.txt': 'one\n' } },
+    );
+    return { lab, main, worktree };
+  }
+
+  async function stateOf(session: SessionWire): Promise<Record<string, unknown>> {
+    return JSON.parse(
+      await readFile(join(home as string, 'sessions', session.workspace_id, session.id, 'state.json'), 'utf8'),
+    ) as Record<string, unknown>;
+  }
+
+  async function indexWorkDirOf(sessionId: string): Promise<string | undefined> {
+    const lines = (await readFile(join(home as string, 'session_index.jsonl'), 'utf8')).trim().split('\n');
+    const entry = lines.map((line) => JSON.parse(line) as { sessionId: string; workDir?: string }).find((line) => line.sessionId === sessionId);
+    return entry?.workDir;
+  }
+
+  async function environmentCwdOf(sessionId: string): Promise<string | undefined> {
+    const binding = await getJson<{ environment_id: string; cwd?: string }>(`/api/v1/sessions/${sessionId}/environment`);
+    expect(binding.body.data.environment_id).toBe('local');
+    return binding.body.data.cwd;
+  }
+
+  it('groups a worktree cwd into the repository project and answers with the worktree as the session cwd', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const atMain = await postJson<SessionWire>('/api/v1/sessions', { cwd: main });
+      const inWorktree = await postJson<SessionWire>('/api/v1/sessions', { cwd: worktree });
+
+      expect(inWorktree.body.code).toBe(0);
+      expect(inWorktree.body.data.workspace_id).toBe(atMain.body.data.workspace_id);
+      expect(inWorktree.body.data.workspace_id).toBe(encodeWorkDirKey(main));
+      expect(inWorktree.body.data.cwd).toBe(worktree);
+      expect((await getJson<SessionWire>(`/api/v1/sessions/${inWorktree.body.data.id}`)).body.data.cwd).toBe(worktree);
+      expect(await stateOf(inWorktree.body.data)).toMatchObject({ cwd: worktree, environmentCwd: worktree });
+      expect(await indexWorkDirOf(inWorktree.body.data.id)).toBe(worktree);
+      expect(await environmentCwdOf(inWorktree.body.data.id)).toBe(worktree);
+      expect(await stateOf(atMain.body.data)).toMatchObject({ cwd: main });
+      expect(await stateOf(atMain.body.data)).not.toHaveProperty('environmentCwd');
+      expect(await indexWorkDirOf(atMain.body.data.id)).toBe(main);
+      expect(await environmentCwdOf(atMain.body.data.id)).toBeUndefined();
+      const listed = await getJson<PageWire>(`/api/v1/sessions?workspace_id=${encodeURIComponent(encodeWorkDirKey(main))}`);
+      expect(
+        Object.fromEntries(listed.body.data.items.map((item) => [item.id, item.cwd])),
+      ).toEqual({ [atMain.body.data.id]: main, [inWorktree.body.data.id]: worktree });
+      const workspaces = await getJson<{ items: { id: string; root: string }[] }>('/api/v1/workspaces');
+      expect(workspaces.body.data.items.filter((item) => [main, worktree].includes(item.root))).toEqual([
+        expect.objectContaining({ id: encodeWorkDirKey(main), root: main }),
+      ]);
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('pins a session created with workspace_id at any cwd of the root repository and lets one at the root follow it', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const atMain = await postJson<SessionWire>('/api/v1/sessions', { cwd: main });
+      const workspaceId = atMain.body.data.workspace_id;
+      const subdir = join(main, 'src');
+
+      const rootOnly = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: workspaceId });
+      const atRoot = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: workspaceId, metadata: { cwd: main } });
+      const inSubdir = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: workspaceId, cwd: subdir });
+      const inWorktree = await postJson<SessionWire>('/api/v1/sessions', {
+        workspace_id: workspaceId,
+        metadata: { cwd: worktree },
+      });
+      const outside = await postJson<null>('/api/v1/sessions', { workspace_id: workspaceId, cwd: lab });
+
+      for (const created of [rootOnly, atRoot]) {
+        expect(created.body.data).toMatchObject({ workspace_id: workspaceId, cwd: main });
+        expect(await stateOf(created.body.data)).not.toHaveProperty('environmentCwd');
+      }
+      expect(inSubdir.body.data).toMatchObject({ workspace_id: workspaceId, cwd: subdir });
+      expect(await stateOf(inSubdir.body.data)).toMatchObject({ environmentCwd: subdir });
+      expect(inWorktree.body.data).toMatchObject({ workspace_id: workspaceId, cwd: worktree });
+      expect(outside.body.code).toBe(40001);
+      expect(outside.body.details?.[0]?.path).toBe('cwd');
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('places a session by workspace_root the same way as by cwd and reports the project root beside the directory it runs in', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const inWorktree = await postJson<SessionWire>('/api/v1/sessions', { workspace_root: worktree });
+      const workspaceId = inWorktree.body.data.workspace_id;
+      const subdir = join(main, 'src');
+      const inSubdir = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: workspaceId, workspace_root: subdir });
+      const outside = await postJson<null>('/api/v1/sessions', { workspace_id: workspaceId, workspace_root: lab });
+
+      expect(workspaceId).toBe(encodeWorkDirKey(main));
+      expect(inWorktree.body.data).toMatchObject({ workspace_root: main, cwd: worktree, environment_id: 'local', environment_cwd: worktree });
+      expect(inSubdir.body.data).toMatchObject({ workspace_id: workspaceId, workspace_root: main, cwd: subdir, environment_cwd: subdir });
+      expect(outside.body.code).toBe(40001);
+      expect(outside.body.details?.[0]?.path).toBe('workspace_root');
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('starts a session in the directory of another session from its workspace_id, environment_id and environment_cwd', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const atRoot = await postJson<SessionWire>('/api/v1/sessions', { cwd: main });
+      const inWorktree = await postJson<SessionWire>('/api/v1/sessions', { cwd: worktree });
+      const placementOf = async (id: string) => {
+        const { workspace_id, environment_id, environment_cwd } = (await getJson<SessionWire>(`/api/v1/sessions/${id}`)).body.data;
+        return { workspace_id, environment_id, environment_cwd };
+      };
+
+      const nextToRoot = await postJson<SessionWire>('/api/v1/sessions', await placementOf(atRoot.body.data.id));
+      const nextToWorktree = await postJson<SessionWire>('/api/v1/sessions', await placementOf(inWorktree.body.data.id));
+
+      expect(nextToRoot.body.data).toMatchObject({ workspace_root: main, cwd: main });
+      expect(nextToRoot.body.data).not.toHaveProperty('environment_cwd');
+      expect(nextToWorktree.body.data).toMatchObject({ workspace_root: main, cwd: worktree, environment_cwd: worktree });
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a workspace cwd that is a symlink inside the repository to an outside checkout (40001)', async () => {
+    const lab = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-escape-'));
+    try {
+      const root = join(lab, 'trusted');
+      const outside = join(lab, 'outside');
+      const plain = join(lab, 'plain');
+      for (const dir of [root, outside, plain]) await mkdir(dir);
+      git(root, 'init', '-q');
+      git(outside, 'init', '-q');
+      await writeFile(join(outside, '.mcp.json'), JSON.stringify({ mcpServers: { outside: { command: 'never-runs' } } }));
+      await symlink(outside, join(root, 'link'));
+      await symlink(plain, join(root, 'plain-link'));
+      const atRoot = await postJson<SessionWire>('/api/v1/sessions', { cwd: root });
+
+      for (const link of ['link', 'plain-link']) {
+        const escaped = await postJson<null>('/api/v1/sessions', {
+          workspace_id: atRoot.body.data.workspace_id,
+          cwd: join(root, link),
+        });
+
+        expect(escaped.body.code).toBe(40001);
+        expect(escaped.body.details?.[0]?.path).toBe('cwd');
+      }
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts a workspace cwd that reaches the project root through a symlinked spelling', async () => {
+    const lab = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-alias-'));
+    try {
+      const root = join(lab, 'real');
+      const alias = join(lab, 'alias');
+      await mkdir(join(root, 'src'), { recursive: true });
+      await symlink(root, alias);
+      const atRoot = await postJson<SessionWire>('/api/v1/sessions', { cwd: root });
+      const workspaceId = atRoot.body.data.workspace_id;
+
+      const viaAlias = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: workspaceId, cwd: alias });
+      const viaAliasSubdir = await postJson<null>('/api/v1/sessions', { workspace_id: workspaceId, cwd: join(alias, 'src') });
+      git(root, 'init', '-q');
+      const viaRepositorySubdir = await postJson<SessionWire>('/api/v1/sessions', {
+        workspace_id: workspaceId,
+        cwd: join(alias, 'src'),
+      });
+
+      expect(viaAlias.body.data).toMatchObject({ workspace_id: workspaceId, cwd: alias });
+      expect(viaAliasSubdir.body.code).toBe(40001);
+      expect(viaRepositorySubdir.body.data).toMatchObject({ workspace_id: workspaceId, cwd: join(alias, 'src') });
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('judges a workspace cwd the same way for managed and implicit workspaces and never by additional directories', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const lib = join(lab, 'lib');
+      const nested = join(main, 'vendor', 'lib');
+      for (const dir of [lib, nested]) {
+        await mkdir(dir, { recursive: true });
+        git(dir, 'init', '-q');
+      }
+      const implicit = (await postJson<SessionWire>('/api/v1/sessions', { cwd: main })).body.data.workspace_id;
+      expect((await patchJson<unknown>(`/api/v1/workspaces/${implicit}`, { additional_dirs: [lib] })).body.code).toBe(0);
+      const managed = (await postJson<{ id: string }>('/api/v1/workspaces', { root: main, additional_dirs: [lib] })).body.data.id;
+      const subdirectory = (await postJson<{ id: string }>('/api/v1/workspaces', { root: join(main, 'src') })).body.data.id;
+      const onWorktree = (await postJson<{ id: string }>('/api/v1/workspaces', { root: worktree })).body.data.id;
+      const codeOf = async (workspaceId: string, cwd: string) =>
+        (await postJson<SessionWire | null>('/api/v1/sessions', { workspace_id: workspaceId, cwd })).body.code;
+
+      for (const workspaceId of [implicit, managed]) {
+        expect(await codeOf(workspaceId, worktree)).toBe(0);
+        expect(await codeOf(workspaceId, join(worktree, 'src'))).toBe(0);
+        expect(await codeOf(workspaceId, lib)).toBe(40001);
+        expect(await codeOf(workspaceId, nested)).toBe(40001);
+      }
+      expect(await codeOf(onWorktree, main)).toBe(0);
+      expect(await codeOf(subdirectory, join(worktree, 'src'))).toBe(0);
+      expect(await codeOf(subdirectory, worktree)).toBe(40001);
+      expect(await codeOf(subdirectory, main)).toBe(40001);
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts a worktree that keeps an implicit project of its own under the id of the repository project', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const ownId = encodeWorkDirKey(worktree);
+      const oldSession = join(home as string, 'sessions', ownId, 'session_old');
+      await mkdir(oldSession, { recursive: true });
+      await writeFile(join(oldSession, 'state.json'), JSON.stringify({ version: 2, createdAt: 1, updatedAt: 1, cwd: worktree }));
+      const atMain = await postJson<SessionWire>('/api/v1/sessions', { cwd: main });
+      const projectsPath = join(home as string, 'projects.json');
+      const projects = JSON.parse(await readFile(projectsPath, 'utf8')) as { projects: Record<string, { root: string; name: string }> };
+      projects.projects[ownId] = { ...projects.projects[encodeWorkDirKey(main)]!, root: worktree, name: 'app-fix' };
+      await writeFile(projectsPath, JSON.stringify(projects));
+      await vi.waitFor(async () => {
+        const listed = await getJson<{ items: { id: string }[] }>('/api/v1/workspaces');
+        expect(listed.body.data.items.map((item) => item.id)).toContain(ownId);
+      });
+
+      const byCwd = await postJson<SessionWire>('/api/v1/sessions', { cwd: worktree });
+      const byId = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: atMain.body.data.workspace_id, cwd: worktree });
+
+      expect(byCwd.body.data).toMatchObject({ workspace_id: ownId, cwd: worktree });
+      expect(byId.body.data).toMatchObject({ workspace_id: atMain.body.data.workspace_id, cwd: worktree });
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects the former root of a managed workspace outside a repository (40001)', async () => {
+    const one = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-former-one-'));
+    const two = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-former-two-'));
+    try {
+      const { id } = (await postJson<{ id: string }>('/api/v1/workspaces', { root: one, additional_dirs: [two] })).body.data;
+      expect((await postJson<unknown>(`/api/v1/workspaces/${id}/primary`, { path: two })).body.code).toBe(0);
+
+      const atFormerRoot = await postJson<null>('/api/v1/sessions', { workspace_id: id, metadata: { cwd: one } });
+      const atRoot = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: id, metadata: { cwd: two } });
+
+      expect(atFormerRoot.body.code).toBe(40001);
+      expect(atFormerRoot.body.details?.[0]?.path).toBe('metadata.cwd');
+      expect(atRoot.body.data).toMatchObject({ workspace_id: id, cwd: two });
+    } finally {
+      await rm(one, { recursive: true, force: true });
+      await rm(two, { recursive: true, force: true });
+    }
+  });
+
+  it('answers a missing or relative workspace cwd without creating a session', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const workspaceId = (await postJson<SessionWire>('/api/v1/sessions', { cwd: main })).body.data.workspace_id;
+      const codeOf = async (cwd: string) =>
+        (await postJson<null>('/api/v1/sessions', { workspace_id: workspaceId, cwd })).body.code;
+
+      expect(await codeOf(join(main, 'missing'))).toBe(40001);
+      expect(await codeOf(join(worktree, 'missing'))).toBe(40001);
+      expect(await codeOf(join(lab, 'missing'))).toBe(40001);
+      expect(await codeOf('src')).toBe(40001);
+      expect(await codeOf('.')).toBe(40001);
+      expect(await codeOf('~')).toBe(40001);
+      await rm(main, { recursive: true, force: true });
+      expect(await codeOf(main)).toBe(40409);
+      const listed = await getJson<PageWire>(`/api/v1/sessions?workspace_id=${encodeURIComponent(workspaceId)}`);
+      expect(listed.body.data.items).toHaveLength(1);
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('reads the project MCP of a session started in a worktree subdirectory from the root of that worktree', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const subdir = join(worktree, 'src');
+      for (const [dir, name] of [[main, 'main'], [worktree, 'worktree'], [subdir, 'subdir']] as const) {
+        await mkdir(join(dir, '.kimi-code'), { recursive: true });
+        for (const [file, layer] of [['.mcp.json', 'shared'], ['.kimi-code/mcp.json', 'local']] as const) {
+          await writeFile(
+            join(dir, file),
+            JSON.stringify({ mcpServers: { [`${name}-${layer}`]: { command: 'never-runs', enabled: false } } }),
+          );
+        }
+      }
+      vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
+      const atMain = await postJson<SessionWire>('/api/v1/sessions', { cwd: main });
+      const created = await postJson<SessionWire>('/api/v1/sessions', { cwd: subdir });
+      const mcp = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!.accessor.get(ISessionMcpHandle);
+      await mcp.ready;
+
+      expect(created.body.data).toMatchObject({ workspace_id: atMain.body.data.workspace_id, cwd: subdir });
+      expect(mcp.connectionManager.list().map((entry) => entry.name).toSorted()).toEqual(['worktree-local', 'worktree-shared']);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps one directory in both a managed and an implicit workspace with a session in each', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-shared-dir-'));
+    try {
+      const managed = await postJson<{ id: string }>('/api/v1/workspaces', { root: dir });
+      const inManaged = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: managed.body.data.id, cwd: dir });
+      const inImplicit = await postJson<SessionWire>('/api/v1/sessions', { cwd: dir });
+
+      expect(inManaged.body.data).toMatchObject({ workspace_id: managed.body.data.id, cwd: dir });
+      expect(inImplicit.body.data).toMatchObject({ workspace_id: encodeWorkDirKey(dir), cwd: dir });
+      expect(await stateOf(inManaged.body.data)).not.toHaveProperty('environmentCwd');
+      expect(await stateOf(inImplicit.body.data)).not.toHaveProperty('environmentCwd');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('starts a session in the directory it was asked for even when its old implicit project moved its primary', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-moved-primary-'));
+    try {
+      const moved = join(dir, 'moved');
+      await mkdir(moved);
+      const first = await postJson<SessionWire>('/api/v1/sessions', { cwd: dir });
+      expect(first.body.data.workspace_id).toBe(encodeWorkDirKey(dir));
+      const projectsPath = join(home as string, 'projects.json');
+      const projects = JSON.parse(await readFile(projectsPath, 'utf8')) as { projects: Record<string, { root: string }> };
+      projects.projects[encodeWorkDirKey(dir)]!.root = moved;
+      await writeFile(projectsPath, JSON.stringify(projects));
+      await vi.waitFor(async () => {
+        const listed = await getJson<{ items: { id: string; root: string }[] }>('/api/v1/workspaces');
+        expect(listed.body.data.items.find((item) => item.id === encodeWorkDirKey(dir))?.root).toBe(moved);
+      });
+
+      const second = await postJson<SessionWire>('/api/v1/sessions', { cwd: dir });
+
+      expect(second.body.data).toMatchObject({ workspace_id: encodeWorkDirKey(dir), cwd: dir });
+      expect(await stateOf(second.body.data)).toMatchObject({ environmentCwd: dir });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('forks a worktree session into a session of the same worktree', async () => {
+    const { lab, worktree } = await repositoryWithWorktree();
+    try {
+      const source = await postJson<SessionWire>('/api/v1/sessions', { cwd: worktree });
+      const forked = await postJson<SessionWire>(`/api/v1/sessions/${source.body.data.id}:fork`, {});
+
+      expect(forked.body.code).toBe(0);
+      expect(forked.body.data).toMatchObject({ workspace_id: source.body.data.workspace_id, cwd: worktree });
+      expect(await stateOf(forked.body.data)).toMatchObject({ environmentCwd: worktree });
+      expect(await indexWorkDirOf(forked.body.data.id)).toBe(worktree);
+      expect((await getJson<SessionWire>(`/api/v1/sessions/${forked.body.data.id}`)).body.data.cwd).toBe(worktree);
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a live pinned session in its directory while another client renames the project or changes its dirs', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const shared = join(lab, 'shared');
+      await mkdir(shared);
+      const created = await postJson<SessionWire>('/api/v1/sessions', { cwd: worktree });
+      const id = created.body.data.id;
+      const live = getLiveSessionById((server as RunningServer).core.accessor, id)!;
+      const agent = await ensureMainAgent(live);
+
+      const patched = await patchJson<unknown>(`/api/v1/workspaces/${created.body.data.workspace_id}`, {
+        name: 'renamed',
+        additional_dirs: [shared],
+      });
+
+      expect(patched.body.code).toBe(0);
+      await vi.waitFor(() => {
+        expect(agent.accessor.get(IAgentEnvironmentService).workspaceRoots().additionalDirs).toContain(shared);
+      });
+      expect(agent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(worktree);
+      expect((await getJson<SessionWire>(`/api/v1/sessions/${id}`)).body.data.cwd).toBe(worktree);
+      expect((await postJson<{ session: SessionWire }>(`/api/v1/sessions/${id}:wait`, { timeout_ms: 0 })).body.data.session.cwd).toBe(worktree);
+      expect(main).not.toBe(worktree);
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('gives the project additional dirs to sessions in the root repository and not to sessions pinned elsewhere', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const shared = join(lab, 'shared');
+      const other = join(lab, 'other');
+      for (const dir of [shared, other]) await mkdir(dir);
+      const { id } = (await postJson<{ id: string }>('/api/v1/workspaces', { root: main, additional_dirs: [shared] })).body.data;
+      const additionalDirsAt = async (cwd: string) => {
+        const created = await postJson<SessionWire>('/api/v1/sessions', {
+          workspace_id: id,
+          environment_id: 'local',
+          environment_cwd: cwd,
+        });
+        const agent = await ensureMainAgent(getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!);
+        return agent.accessor.get(IAgentEnvironmentService).workspaceRoots().additionalDirs;
+      };
+
+      expect(await additionalDirsAt(worktree)).toEqual([shared]);
+      expect(await additionalDirsAt(join(main, 'src'))).toEqual([shared]);
+      expect(await additionalDirsAt(other)).toEqual([]);
+      expect(await additionalDirsAt(shared)).toEqual([main]);
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a session at the project root at the current primary on get, wait and fork', async () => {
+    const first = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-primary-a-'));
+    const second = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-primary-b-'));
+    try {
+      const workspace = await postJson<{ id: string }>('/api/v1/workspaces', { root: first, additional_dirs: [second] });
+      const created = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: workspace.body.data.id });
+      const id = created.body.data.id;
+
+      const promoted = await postJson<unknown>(`/api/v1/workspaces/${workspace.body.data.id}/primary`, { path: second });
+      expect(promoted.body.code).toBe(0);
+
+      expect(await stateOf(created.body.data)).not.toHaveProperty('environmentCwd');
+      expect((await getJson<SessionWire>(`/api/v1/sessions/${id}`)).body.data.cwd).toBe(second);
+      expect((await postJson<{ session: SessionWire }>(`/api/v1/sessions/${id}:wait`, { timeout_ms: 0 })).body.data.session.cwd).toBe(second);
+      const forked = await postJson<SessionWire>(`/api/v1/sessions/${id}:fork`, {});
+      expect(forked.body.data.cwd).toBe(second);
+      expect(await stateOf(forked.body.data)).not.toHaveProperty('environmentCwd');
+    } finally {
+      await rm(first, { recursive: true, force: true });
+      await rm(second, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a session started through a symlink to the main checkout at the spelling it was started from', async () => {
+    const { lab, main } = await repositoryWithWorktree();
+    try {
+      const link = join(lab, 'link-app');
+      await symlink(main, link);
+      const workspaceId = (await postJson<SessionWire>('/api/v1/sessions', { cwd: main })).body.data.workspace_id;
+
+      for (const body of [{ cwd: link }, { workspace_id: workspaceId, cwd: link }]) {
+        const created = await postJson<SessionWire>('/api/v1/sessions', body);
+
+        expect(created.body.data).toMatchObject({ workspace_id: workspaceId, cwd: link });
+        expect(await stateOf(created.body.data)).toMatchObject({ environmentCwd: link });
+        expect(await indexWorkDirOf(created.body.data.id)).toBe(link);
+      }
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('moves only the sessions at the root of a managed project when its primary changes', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const moved = join(lab, 'moved');
+      await mkdir(moved);
+      const workspace = await postJson<{ id: string }>('/api/v1/workspaces', { root: main, additional_dirs: [moved] });
+      const workspaceId = workspace.body.data.id;
+      const create = async (cwd: string) =>
+        (await postJson<SessionWire>('/api/v1/sessions', { workspace_id: workspaceId, metadata: { cwd } })).body.data;
+      const atRoot = await create(main);
+      const inWorktree = await create(worktree);
+      const inSubdir = await create(join(main, 'src'));
+      const listedCwds = async () =>
+        Object.fromEntries(
+          (await getJson<PageWire>(`/api/v1/sessions?workspace_id=${encodeURIComponent(workspaceId)}`)).body.data.items.map(
+            (item) => [item.id, item.cwd],
+          ),
+        );
+      expect(await listedCwds()).toEqual({
+        [atRoot.id]: main,
+        [inWorktree.id]: worktree,
+        [inSubdir.id]: join(main, 'src'),
+      });
+
+      expect((await postJson<unknown>(`/api/v1/workspaces/${workspaceId}/primary`, { path: moved })).body.code).toBe(0);
+
+      const expected = { [atRoot.id]: moved, [inWorktree.id]: worktree, [inSubdir.id]: join(main, 'src') };
+      await vi.waitFor(async () => {
+        expect(await listedCwds()).toEqual(expected);
+      });
+      const core = (server as RunningServer).core.accessor;
+      for (const [id, cwd] of Object.entries(expected)) {
+        expect((await getJson<SessionWire>(`/api/v1/sessions/${id}`)).body.data.cwd).toBe(cwd);
+        const agent = await ensureMainAgent(getLiveSessionById(core, id)!);
+        await vi.waitFor(() => {
+          expect(agent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(cwd);
+        });
+        await closeSessionById(core, id);
+        const resumed = await ensureMainAgent((await resumeSessionById(core, id))!);
+        expect(resumed.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(cwd);
+      }
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
   });
 
   it('lists created sessions', async () => {
@@ -1522,7 +2050,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
       const id = created.body.data.id;
       const workspaceId = created.body.data.workspace_id;
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const workspace = manager.get(workspaceId);
       expect(workspace).toBeDefined();
       const mcp = getLiveSessionById((server as RunningServer).core.accessor, id)!.accessor.get(ISessionMcpHandle);
@@ -1614,9 +2142,9 @@ describe('server-v2 /api/v1/sessions', () => {
       );
     }
 
-    async function openSession(pinned?: string): Promise<{ id: string; statuses: () => Record<string, string> }> {
+    async function openSession(pinned?: string, cwd = root): Promise<{ id: string; statuses: () => Record<string, string> }> {
       const created = await postJson<SessionWire>('/api/v1/sessions', {
-        metadata: { cwd: root },
+        metadata: { cwd },
         ...(pinned === undefined ? {} : { environment_id: 'local', environment_cwd: pinned }),
       });
       expect(created.body.code).toBe(0);
@@ -1653,7 +2181,7 @@ describe('server-v2 /api/v1/sessions', () => {
     it('start with its first session, serve every session, and stop with the last while the workspace stays open', async () => {
       const src = join(root, 'src');
       const elsewhere = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-mcp-other-')));
-      const lease = await (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager).acquire({ root });
+      const lease = await (server as RunningServer).core.accessor.get(IProjectInstanceManager).acquire({ cwd: root });
       try {
         await writeServer(src, 'own');
         await writeServer(elsewhere, 'elsewhere');
@@ -1685,6 +2213,36 @@ describe('server-v2 /api/v1/sessions', () => {
       }
     }, 30_000);
 
+    it('run once per checkout, as its root configures them, and stop with the last session there', async () => {
+      const { lab, main, worktree } = await repositoryWithWorktree();
+      const src = join(main, 'src');
+      const worktreeSrc = join(worktree, 'src');
+      try {
+        await writeServer(main, 'home');
+        await writeServer(worktree, 'own');
+        for (const dir of [src, worktreeSrc]) await writeServer(dir, 'planted');
+
+        const inWorktree = [await openSession(undefined, worktree), await openSession(worktreeSrc, main)];
+        expect(spawned).toHaveLength(1);
+        const inMain = [await openSession(undefined, main), await openSession(undefined, src)];
+        expect(inWorktree.map((session) => session.statuses())).toEqual([{ own: 'connected' }, { own: 'connected' }]);
+        expect(inMain.map((session) => session.statuses())).toEqual([{ home: 'connected' }, { home: 'connected' }]);
+        expect(spawned).toHaveLength(2);
+
+        expect((await postJson(`/api/v1/sessions/${inWorktree[0]!.id}:archive`)).body.code).toBe(0);
+        expect(inWorktree[1]!.statuses()).toEqual({ own: 'connected' });
+
+        expect((await postJson(`/api/v1/sessions/${inWorktree[1]!.id}:archive`)).body.code).toBe(0);
+        await vi.waitFor(() => {
+          expect(spawned[0]!.exitCode).not.toBeNull();
+        }, 20_000);
+        expect(inMain[0]!.statuses()).toEqual({ home: 'connected' });
+        expect(spawned[1]!.exitCode).toBeNull();
+      } finally {
+        await rm(lab, { recursive: true, force: true });
+      }
+    }, 30_000);
+
     it('do not start to fork or archive a session that is not open', async () => {
       const closed = await openSession();
       await closeSessionById((server as RunningServer).core.accessor, closed.id);
@@ -1698,14 +2256,22 @@ describe('server-v2 /api/v1/sessions', () => {
     }, 30_000);
   });
 
-  it('resumes a session whose workspace root is gone (root validity deferred to binding) and still archives it', async () => {
+  it.each([
+    ['pinned at its directory', true],
+    ['following its project', false],
+  ] as const)('resumes a session %s whose workspace root is gone (root validity deferred to binding) and still archives it', async (_placement, pinned) => {
     const cwd = join(home as string, 'gone-ws');
     await mkdir(cwd);
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
+    if (pinned) {
+      await getLiveSessionById((server as RunningServer).core.accessor, id)!
+        .accessor.get(ISessionMetadata)
+        .update({ environmentCwd: cwd }, { touchUpdatedAt: false });
+    }
     await closeSessionById((server as RunningServer).core.accessor, id);
     await (server as RunningServer).core.accessor
-      .get(IWorkspaceService)
+      .get(IProjectService)
       .delete(encodeWorkDirKey(cwd));
     await rm(cwd, { recursive: true, force: true });
 
@@ -1719,6 +2285,48 @@ describe('server-v2 /api/v1/sessions', () => {
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body.code).toBe(0);
     expect(got.body.data.archived).toBe(true);
+  });
+
+  it('resumes a session of a repository subdirectory after its project was removed and the whole repository deleted', async () => {
+    const { lab, main } = await repositoryWithWorktree();
+    try {
+      const subdir = join(main, 'src');
+      const { id, workspace_id: workspaceId } = (await postJson<SessionWire>('/api/v1/sessions', { cwd: subdir })).body.data;
+      expect(workspaceId).toBe(encodeWorkDirKey(main));
+      await closeSessionById((server as RunningServer).core.accessor, id);
+      expect((await deleteJson<{ deleted: boolean }>(`/api/v1/workspaces/${workspaceId}`)).body.code).toBe(0);
+      await rm(main, { recursive: true });
+
+      const resumed = await postJson<ProfileWire>(`/api/v1/sessions/${id}/profile`, {});
+
+      expect(resumed.body.code).toBe(0);
+      expect(resumed.body.data.session).toMatchObject({ id, workspace_id: workspaceId, cwd: subdir });
+      const workspaces = await getJson<{ items: { id: string; root: string }[] }>('/api/v1/workspaces');
+      expect(workspaces.body.data.items).toContainEqual(expect.objectContaining({ id: workspaceId, root: main }));
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps listing a session pinned in a removed directory, resumes it there, and archives and restores it', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const created = await postJson<SessionWire>('/api/v1/sessions', { cwd: worktree });
+      const id = created.body.data.id;
+      await closeSessionById((server as RunningServer).core.accessor, id);
+      git(main, 'worktree', 'remove', '--force', worktree);
+
+      const listed = await getJson<PageWire>(`/api/v1/sessions?workspace_id=${encodeURIComponent(created.body.data.workspace_id)}`);
+      expect(listed.body.data.items.find((item) => item.id === id)?.cwd).toBe(worktree);
+      const resumed = await resumeSessionById((server as RunningServer).core.accessor, id);
+      expect(resumed?.accessor.get(ISessionWorkdir).cwd).toBe(worktree);
+      const archived = await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
+      expect(archived.body.code).toBe(0);
+      const restored = await postJson<SessionWire>(`/api/v1/sessions/${id}:restore`);
+      expect(restored.body.data).toMatchObject({ id, cwd: worktree, archived: false });
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
   });
 
   it('restores an archived session via :restore and returns it to the default list', async () => {
@@ -1960,6 +2568,37 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
+  it('reloads the sessions of one checkout while the local.toml of another checkout of the project is broken', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const sessions: { readonly id: string; readonly dir: string; readonly live: boolean }[] = [];
+      for (const dir of [main, worktree]) {
+        for (const live of [true, false]) {
+          const { id } = (await postJson<SessionWire>('/api/v1/sessions', { cwd: dir })).body.data;
+          sessions.push({ id, dir, live });
+        }
+      }
+
+      for (const broken of [worktree, main]) {
+        const localToml = join(broken, '.kimi-code', 'local.toml');
+        await mkdir(dirname(localToml));
+        await writeFile(localToml, '[workspace\n');
+        for (const { id, dir, live } of sessions) {
+          if (!live) await closeSessionById((server as RunningServer).core.accessor, id);
+
+          const reloaded = await postJson<SessionWire | null>(`/api/v1/sessions/${id}:reload`);
+
+          expect(reloaded.body).toMatchObject(
+            dir === broken ? { code: 50001, msg: `Invalid TOML in ${localToml}` } : { code: 0, data: { id, cwd: dir } },
+          );
+        }
+        await rm(localToml);
+      }
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
   it.each(['closing', 'cleanup'] as const)('waits for %s before recreating an explicit session id', async (phase) => {
     const manager = server!.core.accessor.get(ISessionManager);
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
@@ -2105,6 +2744,39 @@ describe('server-v2 /api/v1/sessions', () => {
       );
 
       expect(response.body.code).toBe(40901);
+    } finally {
+      undo.mockRestore();
+    }
+  });
+
+  it('returns snake_case data beside the deprecated camelCase fields when :undo cannot remove the requested turns', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id);
+    if (session === undefined) throw new Error('expected live session');
+    await session.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const undo = vi
+      .spyOn(ConversationFeed.prototype, 'undo')
+      .mockRejectedValueOnce(new Error2(ErrorCodes.SESSION_UNDO_UNAVAILABLE, 'only 1 turn can be undone', {
+        details: { reason: 'insufficient', requestedCount: 2, undoableCount: 1 },
+      }))
+      .mockRejectedValueOnce(new Error2(ErrorCodes.SESSION_UNDO_UNAVAILABLE, 'turn t_1 does not open with user input'));
+
+    try {
+      const limited = await postJson<unknown>(`/api/v1/sessions/${created.body.data.id}:undo`, { turn_id: 't_1' });
+      const unexplained = await postJson<unknown>(`/api/v1/sessions/${created.body.data.id}:undo`, { turn_id: 't_1' });
+
+      expect(limited.body.code).toBe(40911);
+      expect(limited.body.data).toEqual({
+        reason: 'insufficient',
+        requested_count: 2,
+        undoable_count: 1,
+        requestedCount: 2,
+        undoableCount: 1,
+      });
+      expect(unexplained.body.code).toBe(40911);
+      expect(unexplained.body.data).toBeNull();
     } finally {
       undo.mockRestore();
     }
@@ -2278,6 +2950,22 @@ describe('server-v2 /api/v1/sessions', () => {
       'This session requires a newer version of Kimi Code. Upgrade Kimi Code to the latest version to read this session.',
     );
     expect(incompatible.body.details).toEqual({ minReaderVersion: '9.9', readerVersion: '1.5' });
+  });
+
+  it('forks a session from a request without a body', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    await main.accessor.get(IWireService).flush();
+
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`);
+
+    expect(forked.body.code).toBe(0);
+    expect(forked.body.data.id).not.toBe(parentId);
   });
 
   it('fork clears inherited cron tasks while the source keeps them', async () => {
@@ -4181,4 +4869,125 @@ kapTest('a session with no default model opens with no displayed model and a mod
     modelFrames.findIndex((frame) => frame['type'] === 'notice'),
   );
   await channel.close();
+});
+
+kapTest('reports the outcome of the last turn in the session frame that archives a session', { timeout: 30_000 }, async ({ kap, model }) => {
+  const { id } = await kap.createSession();
+  model.script(say('Done.'));
+  await kap.prompt(id, 'Hello.');
+  await kap.waitIdle(id);
+  const socket = await kap.connect();
+
+  await kap.rest.post(`/api/v1/sessions/${id}:archive`, {});
+
+  const archived = await socket.waitFor((frame) => frame.type === 'session' && frame['change'] === 'archived');
+  expect(archived['session']).toMatchObject({ id, archived: true, activity: 'idle', last_prompt: 'Hello.', last_turn_outcome: 'completed' });
+});
+
+interface VanishingDirectory {
+  readonly dir: string;
+  readonly sessionId: string;
+  readonly remove: () => unknown;
+  readonly bringBack: () => unknown;
+}
+
+async function sessionInWorktree(kap: KapHarness): Promise<VanishingDirectory> {
+  const { main, worktree } = await createGitWorktree({
+    main: join(kap.home.workspace, 'app'),
+    worktree: join(kap.home.workspace, 'app-fix'),
+  });
+  return {
+    dir: worktree,
+    sessionId: (await kap.createSession({ cwd: worktree })).id,
+    remove: () => git(main, 'worktree', 'remove', '--force', worktree),
+    bringBack: () => git(main, 'worktree', 'add', '-q', worktree, 'fix'),
+  };
+}
+
+async function sessionInManagedFolder(kap: KapHarness): Promise<VanishingDirectory> {
+  const dir = join(kap.home.workspace, 'notes');
+  await mkdir(dir);
+  const project = await kap.rest.post<{ readonly id: string }>('/api/v1/workspaces', { root: dir });
+  return {
+    dir,
+    sessionId: (await kap.rest.post<{ readonly id: string }>('/api/v1/sessions', { workspace_id: project.id })).id,
+    remove: () => rm(dir, { recursive: true }),
+    bringBack: () => mkdir(dir),
+  };
+}
+
+const vanishingDirectories = [
+  ['a removed worktree', sessionInWorktree],
+  ['a deleted folder of a managed project', sessionInManagedFolder],
+] as const;
+
+kapTest.for(vanishingDirectories)('opens, renames, restores and forks a session of %s', { timeout: 30_000 }, async ([, start], { kap, model }) => {
+  const { dir, sessionId, remove } = await start(kap);
+  model.script(say('Written before.'));
+  await kap.prompt(sessionId, 'Hello.');
+  await kap.waitIdle(sessionId);
+  await remove();
+  await kap.restart();
+
+  const socket = await kap.connect();
+  await socket.subscribe(sessionId);
+  expect(socket.turns(sessionId)).toHaveLength(1);
+  expect(await kap.turns(sessionId)).toHaveLength(1);
+  const path = `/api/v1/sessions/${sessionId}`;
+  expect((await kap.rest.get<{ skills: unknown[] }>(`${path}/skills`)).skills).not.toEqual([]);
+  expect(await kap.rest.get(`${path}/environment`)).toMatchObject({ environment_id: 'local' });
+  await expect(kap.rest.post(`${path}/fs:list`, { path: '.' })).rejects.toMatchObject({ code: 40409 });
+  await kap.rest.post(`${path}/profile`, { title: 'Renamed' });
+  expect(await kap.session(sessionId)).toMatchObject({ title: 'Renamed', cwd: dir });
+  const fork = await kap.fork(sessionId);
+  expect(fork.cwd).toBe(dir);
+  expect(await kap.turns(fork.id)).toHaveLength(1);
+  await kap.rest.post(`${path}:archive`, {});
+  expect(await kap.rest.post(`${path}:restore`, {})).toMatchObject({ id: sessionId, archived: false });
+  await kap.rest.post(`${path}:delete`, {});
+  await expect(kap.session(sessionId)).rejects.toMatchObject({ code: 40401 });
+});
+
+kapTest.for(vanishingDirectories)('answers a prompt in a session of %s and works there again once the directory is back', { timeout: 30_000 }, async ([, start], { kap, model }) => {
+  const { dir, sessionId, remove, bringBack } = await start(kap);
+  await closeSessionById(kap.server.core.accessor, sessionId);
+  await remove();
+  const run = async (command: string) => {
+    const request = model.requests('main').length;
+    model.script(bash(command), say('Done.'));
+    await kap.prompt(sessionId, 'Where are you?', { permissionMode: 'yolo' });
+    await kap.waitIdle(sessionId);
+    return model.request(request + 1).view.messages.findLast((message) => message.role === 'tool')?.text.replace(/^Wall time: \d+\.\d{3} seconds\n/, '');
+  };
+
+  expect(await run('pwd')).toContain(`cwd ${dir} does not exist`);
+  await bringBack();
+  expect(await run('pwd -P')).toBe(`${bashPathOf(await realpath(dir))}\n`);
+});
+
+kapTest('answers 40401 for a session whose managed project was deleted and creates no project in its place', { timeout: 30_000 }, async ({ kap, model }) => {
+  const dir = join(kap.home.workspace, 'notes');
+  await mkdir(dir);
+  const project = await kap.rest.post<{ readonly id: string }>('/api/v1/workspaces', { root: dir });
+  const { id } = await kap.rest.post<{ readonly id: string }>('/api/v1/sessions', { workspace_id: project.id });
+  model.script(say('Written before.'));
+  await kap.prompt(id, 'Hello.');
+  await kap.waitIdle(id);
+  await kap.rest.delete(`/api/v1/workspaces/${project.id}`);
+  await kap.restart();
+
+  const socket = await kap.connect();
+  const path = `/api/v1/sessions/${id}`;
+  const gone = { code: 40401 };
+  await expect(socket.subscribe(id)).rejects.toMatchObject({ response: gone });
+  await expect(kap.turns(id)).rejects.toMatchObject(gone);
+  await expect(kap.prompt(id, 'Again.')).rejects.toMatchObject(gone);
+  await expect(kap.rest.post(`${path}/profile`, { title: 'Renamed' })).rejects.toMatchObject(gone);
+  await expect(kap.rest.get(`${path}/environment`)).rejects.toMatchObject(gone);
+  await expect(kap.rest.get(`${path}/skills`)).rejects.toMatchObject(gone);
+  await expect(kap.rest.post(`${path}/fs:list`, { path: '.' })).rejects.toMatchObject(gone);
+  for (const action of ['fork', 'reload', 'restore', 'delete']) {
+    await expect(kap.rest.post(`${path}:${action}`, {}), action).rejects.toMatchObject(gone);
+  }
+  expect(await kap.rest.get('/api/v1/workspaces')).toMatchObject({ items: [] });
 });

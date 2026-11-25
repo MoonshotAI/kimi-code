@@ -1331,6 +1331,9 @@ importers:
       '@moonshot-ai/klient':
         specifier: workspace:^
         version: link:../klient
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../testkit
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6
@@ -1478,6 +1481,9 @@ importers:
       '@playwright/test':
         specifier: 1.63.0
         version: 1.63.0
+      node-pty:
+        specifier: ^1.1.0
+        version: 1.1.0
 
   tests/scenarios:
     devDependencies:

@@ -1,12 +1,12 @@
 # 测试指南
 
-新的 [E2E 工作流](../.github/workflows/e2e.yml)在 PR 上运行 TUI、Web、Desktop 和 ACP 场景。旧的 Desktop E2E、E2E smoke 和 Layered QA 工作流仅手动触发。主 CI 暂停用 CLI 构建产物跑子进程旅程以及 L0 汇总，测试分片排除 `apps/kimi-code/test/e2e/tui/` 和 `packages/app-core/test/reconnect/`。`packages/kap-server/test/` 和 `tests/scenarios/` 仍在主 CI 自动运行。
+新的 [E2E 工作流](../.github/workflows/e2e.yml)运行 TUI、Web、Desktop 和 ACP 场景：每次合并到 main 都跑，PR 上按需跑（规则见 `tests/e2e/AGENTS.md`）。旧的 Desktop E2E、E2E smoke 和 Layered QA 工作流仅手动触发。主 CI 暂停用 CLI 构建产物跑子进程旅程以及 L0 汇总，测试分片排除 `apps/kimi-code/test/e2e/tui/` 和 `packages/app-core/test/reconnect/`。`packages/kap-server/test/` 和 `tests/scenarios/` 仍在主 CI 自动运行。
 
 先写出用户或调用方依赖的行为，再选能复现故障、能直接观察结果的入口。「桌面用户看到了回答」要读真实窗口。「引擎重试后完成了原回合」可以从引擎会话验收。选定位置后，再读该目录最近的 AGENTS.md。
 
 ## 测试今天写在哪
 
-回归用例优先补到已有的同层测试文件。用户通过窗口、终端或 ACP 编辑器操作的端到端场景写在 [`tests/e2e`](e2e/AGENTS.md)，也在这里补旧旅程缺失的断言。`apps/desktop/e2e/`、`apps/desktop/test/e2e/` 和 `apps/kimi-code/test/e2e/tui/` 是待迁移的旧目录，只为迁移或移除已有用例而改。迁移时保留原用例覆盖的行为，并使用新 E2E 的驱动。
+回归用例优先补到已有的同层测试文件。用户通过窗口、终端或 ACP 编辑器操作的端到端场景写在 [`tests/e2e`](e2e/AGENTS.md)，也在这里补旧旅程缺失的断言。`apps/desktop/e2e/`、`apps/desktop/test/e2e/` 和 `apps/kimi-code/test/e2e/tui/` 是待迁移的旧目录，只为迁移或移除已有用例而改。迁移时保留原用例覆盖的行为，并使用新 E2E 的驱动。`pnpm lint` 里的 `scripts/checks/legacy-e2e.mjs` 按文件冻结这三个目录的用例数，新增会失败。
 
 | 要观察的行为 | 现有入口 |
 |---|---|
@@ -38,6 +38,8 @@ packages/app-client/test/replay/                  渲染端状态回放
 ## 什么时候用 testkit
 
 需要可编排的模型、真实 KAP 会话或隔离工作区时，复用私有包 `@moonshot-ai/testkit`。新使用方在自己的 `devDependencies` 加入 `"@moonshot-ai/testkit": "workspace:^"`。[接入说明](../packages/testkit/README.md)
+
+需要假模型时只用 testkit。`mockNextResponse`、`createMockProvider` 一类的引擎 harness 函数、手写的模型流、各包自己的假 provider 只留给存量用例；只测 loop core、只需要一个 requester 的单元测试可以继续用 `createMockProviderRequester`。测试也不 import 别的包的测试代码，例如 `packages/agent-core-v2/test/harness`。`pnpm lint` 里的 `scripts/checks/test-doubles.mjs` 按文件冻结其中能识别的写法：引擎 harness 的这些函数、手写的 OpenAI 流、VS Code 的假 provider 和跨包 import 测试代码，新增会失败；其余的靠评审。
 
 - **在引擎进程内测试**用 agent-core-v2 harness 的 `testkitAgentFixtures()`。它把 testkit 模型的 `model.fetch` 接到引擎真实的 provider 请求链上，不开端口；收尾时先 `verify()` 再释放引擎。和其他层一样，每个请求都会检查消息序列和工具参数。[引擎用例](../packages/agent-core-v2/test/integration/conversation/testkit-model.test.ts)
 - **控制模型回复**用 `@moonshot-ai/testkit/model`。例如 `model.script(say('hello'))` 安排主通道的下一次回答。测试中途取消时，用命名挂起点等到请求到达。如果要验证已显示的文字，还要等窗口或屏幕实际出现该文字，再触发取消。[假模型指南](../packages/testkit/docs/model.md) · [桌面端接入示例](../packages/testkit/docs/model.md#在桌面端接入假模型)

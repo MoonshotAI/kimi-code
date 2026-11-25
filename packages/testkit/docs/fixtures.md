@@ -30,9 +30,11 @@ test('writes manual permissions to the test config', async ({ testHome }) => {
 
 只需要检查序列化结果时，可以对 `kimiConfigToml(config)` 返回的字符串做断言。需要测试损坏的配置时，用 `raw` 附加故意写坏的 TOML。覆盖已有配置用 `mergeKimiConfig(base, override)`。同名 provider 或 model 的配置项会整体替换，hooks 数组会依次拼接。[配置写入与合并](../src/fixtures/config.ts)
 
+需要真实的 git 仓库时，用 `await createGitRepository(dir, { files })`：它在 `dir` 初始化仓库，写入 `files`（相对路径到内容）并提交一次。要验证 worktree 相关的行为，用 `await createGitWorktree({ main, worktree }, { files })`：它在 `main` 建同样的仓库，再用 `git worktree add` 在 `worktree` 检出新分支。两者都调用系统的 `git`，提交身份和关闭签名用命令行参数指定，不改动全局 git 配置。断言 Bash 工具打印的工作目录时，用 `bashPathOf(path)` 把本机路径换成 Git Bash 的写法：Windows 上 `C:\Users\me\app` 写成 `/c/Users/me/app`，其他平台原样返回。[git 夹具](../src/fixtures/git.ts)
+
 ## 控制环境和网络
 
-- **被测代码接收环境参数时**，传入 `testEnv({ set: { HOME: testHome.home } })`。它返回新的对象，过滤继承来的 `KIMI_*`、已列出的厂商凭据和代理变量，再设置测试默认值。要保留某个原值用 `keep`，要模拟变量缺失用 `set: { MY_OPTION: undefined }`。[环境夹具](../src/fixtures/env.ts)
+- **被测代码接收环境参数时**，传入 `testEnv({ set: { HOME: testHome.home } })`。它返回新的对象，过滤继承来的 `KIMI_*`、已列出的厂商凭据和代理变量，再设置测试默认值。要保留某个原值用 `keep`，要模拟变量缺失用 `set: { MY_OPTION: undefined }`。测试默认值里有两类：关掉遥测、模型目录刷新这类和外界隔离的设置；以及为了让单元测试更快而关掉的产品功能，单独导出为 `UNIT_TEST_SWITCHES`（目前是会话索引的读模型和搜索 worker）。端到端测试要让产品按用户的默认配置跑时，把 `UNIT_TEST_SWITCHES` 的每个名字设成 `undefined` 传进 `set`。新增只为提速的默认值放进 `UNIT_TEST_SWITCHES`。[环境夹具](../src/fixtures/env.ts)
 - **被测代码直接读取 `process.env` 时**，用 `const restore = isolateProcessEnv(...)` 设置临时环境，并在 `finally` 调用 `restore()`。它修改整个进程，同一 worker 内使用这项夹具的测试应顺序运行。[环境恢复用例](../test/fixtures.test.ts)
 - **要发现意外的联网请求**，可以在 Vitest 的 `setupFiles` 中注册 `useNetworkGuard()`。testkit 和 KAP 场景项目已经启用它。其他包若需要相同行为，在自己的 setup 文件中从 `@moonshot-ai/testkit/vitest` 导入并调用它。守卫检查当前 Node 进程的 TCP 连接目标，默认允许本机回环连接。端口可以是数字或 Node 接受的端口字符串，Unix socket 路径和 Windows 命名管道交给 Node 处理。IPv4 目标须是 `127.0.0.0/8` 内的合法地址字面量。即使用例捕获了连接错误，结束时仍会报告违规的主机和端口。它的作用域不包括独立子进程。[场景 setup](../../../tests/scenarios/support/setup.ts) · [守卫验收](../test-fixtures/test/network-guard.test.ts)
 - **临时放行指定主机**时，从 `@moonshot-ai/testkit/fixtures` 调用 `installNetworkGuard({ allowHosts })`，并在 `finally` 里调用返回对象的 `uninstall()`。多个守卫允许同一主机时，卸载最后一个允许该主机的守卫才会撤销这项许可。
