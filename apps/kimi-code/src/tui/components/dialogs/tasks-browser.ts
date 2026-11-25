@@ -163,6 +163,7 @@ export class TasksBrowserApp extends ScreenTakeoverView {
   private sortedVisible: BackgroundTaskInfo[];
   private selectedIndex = 0;
   private pendingRevealSelection = true;
+  private lastFrameRows = 0;
   private lastSelectedRange:
     | { readonly taskId: string; readonly start: number; readonly end: number }
     | undefined = undefined;
@@ -585,6 +586,10 @@ export class TasksBrowserApp extends ScreenTakeoverView {
     const innerWidth = Math.max(1, width);
     this.listTracker.reset();
 
+    const frameRows = this.frameRows();
+    const heightChanged = this.lastFrameRows !== 0 && frameRows !== this.lastFrameRows;
+    this.lastFrameRows = frameRows;
+
     if (this.sortedVisible.length === 0) {
       this.pendingRevealSelection = false;
       this.lastSelectedRange = undefined;
@@ -619,7 +624,7 @@ export class TasksBrowserApp extends ScreenTakeoverView {
       selected !== undefined && range !== undefined
         ? { taskId: selected.taskId, start: range.start, end: range.end }
         : undefined;
-    if (this.pendingRevealSelection || rangeChanged) {
+    if (this.pendingRevealSelection || rangeChanged || heightChanged) {
       this.pendingRevealSelection = false;
       if (range !== undefined) {
         this.listPane.scrollView.scrollIntoView(range.start, range.end, { silent: true });

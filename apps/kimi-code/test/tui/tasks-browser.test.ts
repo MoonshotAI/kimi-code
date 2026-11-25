@@ -1368,4 +1368,42 @@ describe('TasksBrowserApp — fullscreen mouse, panes, and layout parity', () =>
     await vt.waitForRender();
     expect(listColumnText()).toContain('bash-00000001');
   });
+
+  it('keeps the selected task visible when the terminal shrinks in height', async () => {
+    const tasks = Array.from({ length: 18 }, (_, i) =>
+      task({
+        taskId: `bash-${String(i + 1).padStart(8, '0')}`,
+        status: 'running',
+        startedAt: 100 - i,
+      }),
+    );
+
+    const vt = new VirtualTerminal(100, 22);
+    const ui = new TuiAltScreen(vt);
+    const app = new TasksBrowserApp(
+      makeProps({ tasks, selectedTaskId: 'bash-00000015' }),
+      vt,
+    );
+    const takeover = beginScreenTakeover(ui, app);
+    ui.setFocus(app);
+    ui.start();
+    onTestFinished(() => {
+      endScreenTakeover(ui, takeover);
+      ui.stop();
+    });
+    await vt.waitForRender();
+
+    const listColumnText = (rows: number): string =>
+      vt
+        .getViewport()
+        .slice(2, rows - 2)
+        .map((line) => strip(line).slice(0, 28))
+        .join('\n');
+
+    expect(listColumnText(22)).toContain('bash-00000015');
+
+    vt.resize(100, 12);
+    await vt.waitForRender();
+    expect(listColumnText(12)).toContain('bash-00000015');
+  });
 });
