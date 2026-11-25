@@ -261,7 +261,7 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 ### editor-multiline-wheel-scroll — keep
 
-**Decision:** When multi-line content overflows `Editor`'s visible rows, `Editor.handleMouse` scrolls `scrollOffset` on `wheel` events without taking focus and pauses cursor-following until non-release keyboard editing/navigation, text-area click positioning, or programmatic text updates re-engage it. Non-overflowing editors return `undefined` so wheel events pass through.
+**Decision:** Adds an opt-in `wheelScroll?: boolean` option (default `false`, preserving upstream behavior). When enabled and multi-line content overflows `Editor`'s visible rows, `Editor.handleMouse` scrolls `scrollOffset` on `wheel` events without taking focus and pauses cursor-following until non-release keyboard editing/navigation, text-area click positioning, or programmatic text updates re-engage it. Non-overflowing editors and editors with `wheelScroll` disabled return `undefined` so wheel events pass through.
 
 **Why not in the app:** `scrollOffset` and cursor-follow clamping live inside `Editor.render` and `Editor.handleMouse`.
 

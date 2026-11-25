@@ -173,6 +173,7 @@ export class CustomEditor extends Editor {
       paddingX: 4,
       disablePasteBurst: options.disablePasteBurst,
       inlineSlashTrigger: true,
+      wheelScroll: true,
     });
 
     (this as unknown as AutocompleteListFactoryInternals).createAutocompleteList = (

@@ -997,3 +997,32 @@ describe('CustomEditor alternate submit keys', () => {
     expect(submits).toEqual([['[image #1 (1×1)] hello', 'ctrl-q']]);
   });
 });
+
+describe('CustomEditor wheel scrolling', () => {
+  it('enables multiline wheel scrolling on overflowing drafts', () => {
+    const editor = makeEditor();
+    editor.setText(Array.from({ length: 20 }, (_, i) => `row-${String(i + 1).padStart(2, '0')}`).join('\n'));
+    const before = editor.render(40);
+    expect(before.some((line) => line.includes('row-20'))).toBe(true);
+    expect(before.some((line) => line.includes('row-01'))).toBe(false);
+
+    const result = editor.handleMouse({
+      type: 'wheel',
+      button: 'none',
+      x: 4,
+      y: 2,
+      screenX: 4,
+      screenY: 2,
+      width: 40,
+      height: before.length,
+      shift: false,
+      alt: false,
+      ctrl: false,
+      wheelDelta: -20,
+    });
+    expect(result).toEqual({ handled: true, render: true });
+    const after = editor.render(40);
+    expect(after.some((line) => line.includes('row-01'))).toBe(true);
+    expect(after.some((line) => line.includes('row-20'))).toBe(false);
+  });
+});

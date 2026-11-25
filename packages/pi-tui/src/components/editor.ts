@@ -263,6 +263,12 @@ export interface EditorOptions {
 	 * so the default is false to avoid surprising other consumers.
 	 */
 	inlineSlashTrigger?: boolean;
+	/**
+	 * When true, wheel events scroll multi-line content when it overflows the
+	 * visible editor rows instead of passing through to a parent scroll view.
+	 * Defaults to false to preserve upstream behavior.
+	 */
+	wheelScroll?: boolean;
 }
 
 const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -342,6 +348,7 @@ export class Editor implements Component, Focusable {
 	// Vertical scrolling support
 	private scrollOffset: number = 0;
 	private followCursor = true;
+	private readonly wheelScroll: boolean;
 
 	// Border color (can be changed dynamically)
 	public borderColor: (str: string) => string;
@@ -432,6 +439,7 @@ export class Editor implements Component, Focusable {
 		this.autocompleteMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
 		this.disablePasteBurst = options.disablePasteBurst ?? false;
 		this.inlineSlashTrigger = options.inlineSlashTrigger ?? false;
+		this.wheelScroll = options.wheelScroll ?? false;
 	}
 
 	/** Set of currently valid paste IDs, for marker-aware segmentation. */
@@ -775,7 +783,7 @@ export class Editor implements Component, Focusable {
 			return result ? { ...result, focus: true } : undefined;
 		}
 
-		if (event.type === "wheel") {
+		if (this.wheelScroll && event.type === "wheel") {
 			if (this.renderedMaxScrollOffset <= 0) return undefined;
 			const rawDelta = event.wheelDelta ?? 0;
 			const delta = Number.isFinite(rawDelta) ? Math.trunc(rawDelta) : 0;

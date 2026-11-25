@@ -430,7 +430,33 @@ describe("mouse-aware components", () => {
 		tui.stop();
 	});
 
-	it("scrolls an overflowing multiline editor on wheel without stealing focus and stays scrolled until interaction", async () => {
+	it("preserves upstream wheel passthrough by default when wheelScroll is not opted in", async () => {
+		const terminal = new VirtualTerminal(30, 12);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { wheelScrollLines: 2 });
+		const transcript = new ScrollView(
+			new Text(Array.from({ length: 20 }, (_, index) => `t${index + 1}`).join("\n"), 0, 0),
+			{ primary: true, follow: "end" },
+		);
+		const editor = new Editor(tui, editorTheme);
+		editor.setText(Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n"));
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1 },
+				{ component: editor, basis: "auto", shrink: 0 },
+			]),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.strictEqual(editor.handleMouse({ ...mouse("wheel", 2, 2, 30, 7), wheelDelta: -2 }), undefined);
+		const transcriptBefore = transcript.scrollTop;
+		terminal.sendInput("\x1b[<64;3;9M");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollTop, transcriptBefore - 2);
+		tui.stop();
+	});
+
+	it("scrolls an overflowing multiline editor on wheel when wheelScroll is opted in", async () => {
 		const terminal = new VirtualTerminal(30, 12);
 		const tui = new TuiAltScreen(terminal, undefined, undefined, { wheelScrollLines: 2 });
 		const transcript = new ScrollView(
@@ -438,7 +464,7 @@ describe("mouse-aware components", () => {
 			{ primary: true, follow: "end" },
 		);
 		const otherFocus = new Input();
-		const editor = new Editor(tui, editorTheme);
+		const editor = new Editor(tui, editorTheme, { wheelScroll: true });
 		editor.setText("short1\nshort2");
 		tui.setLayoutRoot(
 			new VStack([
