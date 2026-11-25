@@ -65,11 +65,11 @@ describe('facade routing', () => {
     const klient = createKlientFromChannel(channel);
 
     channel.result = { id: 'w1', root: '/x', name: 'n', kind: 'implicit', additionalDirs: [], createdAt: 1, lastOpenedAt: 2 };
-    await klient.global.workspaces.createOrTouch({ root: '/x', name: 'n' });
+    await klient.global.workspaces.resolveImplicit('/x');
     expect(channel.calls[0]).toMatchObject({
       service: 'workspaceService',
-      method: 'createOrTouch',
-      args: ['/x', 'n'],
+      method: 'resolveImplicit',
+      args: ['/x'],
     });
 
     channel.result = undefined;

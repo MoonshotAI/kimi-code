@@ -8,11 +8,10 @@ import { IWireService } from '#/wire/wire';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IWorkspaceService } from '#/app/workspace/workspace';
 import {
   sessionDirOf,
-  workspacePersistenceScope,
-} from '#/workspace/sessionLifecycle/internal/addressing';
+  projectPersistenceScope,
+} from '#/project/sessionLifecycle/internal/addressing';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
@@ -48,7 +47,6 @@ export class SessionExportService implements ISessionExportService {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionIndex private readonly index: ISessionIndex,
     @ISessionManager private readonly sessions: ISessionManager,
-    @IWorkspaceService private readonly workspaces: IWorkspaceService,
     @ILogService private readonly log: ILogService,
   ) {}
 
@@ -118,16 +116,15 @@ export class SessionExportService implements ISessionExportService {
   }
 
   private async flushLiveSession(summary: SessionSummary): Promise<ExportSessionDirectorySummary> {
-    const workspace = await this.workspaces.get(summary.workspaceId);
     const sessionDir = sessionDirOf(
       this.bootstrap.homeDir,
-      workspacePersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
+      projectPersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
       summary.id,
     );
     let exportSummary: ExportSessionDirectorySummary = {
       id: summary.id,
       title: summary.title,
-      workspaceDir: workspace?.root,
+      workspaceDir: summary.cwd,
       sessionDir,
     };
     const handle = this.liveSession(summary.id);
@@ -142,7 +139,7 @@ export class SessionExportService implements ISessionExportService {
       exportSummary = {
         id: meta.id,
         title: meta.title,
-        workspaceDir: workspace?.root,
+        workspaceDir: summary.cwd,
         sessionDir,
       };
     } catch (error) {

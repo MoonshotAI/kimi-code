@@ -5,7 +5,7 @@ import {
   IEnvironmentService,
   ISessionIndex,
   ISessionIndexMirror,
-  IWorkspaceAliases,
+  IProjectAliases,
   environmentBindingId,
   LOCAL_ENVIRONMENT_ID,
   setSessionArchivedBatch,
@@ -14,6 +14,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { IGitService, type FsPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
 import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
+import { sessionWorkDir } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -333,7 +334,7 @@ async function listSessionsHere(
 
       let workspaceIds: string[] | undefined;
       if (query.workspaceFilter !== undefined) {
-        const aliases = core.accessor.get(IWorkspaceAliases);
+        const aliases = core.accessor.get(IProjectAliases);
         const sets = await Promise.all(
           query.workspaceFilter.map((id) => aliases.resolveAliasIds(id)),
         );
@@ -359,7 +360,7 @@ async function listSessionsHere(
       };
 
       const cwdOf = (summary: SessionSummary): string | undefined => {
-        const candidate = summary.cwd ?? roots.get(summary.workspaceId);
+        const candidate = sessionWorkDir(summary, roots.get(summary.workspaceId));
         return candidate !== undefined && candidate.length > 0 ? candidate : undefined;
       };
 
@@ -424,7 +425,7 @@ async function listSessionsHere(
           readonly rep: SessionSummary;
           readonly items: SessionSummary[];
         }
-        const aliasService = core.accessor.get(IWorkspaceAliases);
+        const aliasService = core.accessor.get(IProjectAliases);
         const canonicalById = new Map<string, string>();
         const canonicalIdOf = async (workspaceId: string): Promise<string> => {
           let canonical = canonicalById.get(workspaceId);

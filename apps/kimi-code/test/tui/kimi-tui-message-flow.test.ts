@@ -3053,14 +3053,21 @@ describe('KimiTUI message flow', () => {
     expect(harness.createSession).toHaveBeenCalledTimes(1);
   });
 
-  it('lists MCP servers before the lazy session via the workspace view (v2 engine)', async () => {
+  it.each([
+    ['the project directory', {}, undefined],
+    [
+      'the directory of --environment-cwd',
+      { environment: 'local', environmentCwd: '/tmp/proj-a/src' },
+      { environmentId: 'local', environmentCwd: '/tmp/proj-a/src' },
+    ],
+  ])('lists MCP servers of %s before the lazy session via the workspace view (v2 engine)', async (_label, startupOptions, environment) => {
     const session = makeSession({ id: 'ses-lazy' });
     const listWorkspaceMcpServers = vi.fn(async () => [
       { name: 'my-mcp', status: 'connected', transport: 'stdio', tools: [] },
     ]);
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
-      cliOptions: { ...makeStartupInput().cliOptions },
+      cliOptions: { ...makeStartupInput().cliOptions, ...startupOptions },
     };
     const { driver, harness } = await makeDriver(
       session,
@@ -3071,7 +3078,7 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('/mcp');
 
     await vi.waitFor(() => {
-      expect(listWorkspaceMcpServers).toHaveBeenCalledWith('/tmp/proj-a');
+      expect(listWorkspaceMcpServers).toHaveBeenCalledWith('/tmp/proj-a', environment);
     });
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(session.listMcpServers).not.toHaveBeenCalled();

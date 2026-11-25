@@ -23,7 +23,7 @@ Kimi Code CLI 支持三种 MCP server 接入方式：
 MCP server 配置写在 `mcp.json` 中，分两层：
 
 - **用户级**：`~/.kimi-code/mcp.json`（或 `$KIMI_CODE_HOME/mcp.json`），跨项目共享
-- **项目级**：工作目录下的 `.kimi-code/mcp.json`，只对当前仓库生效
+- **项目级**：项目根目录下的 `.kimi-code/mcp.json`，只对当前仓库生效。在 Git 仓库的子目录里启动时，读的也是仓库根目录下的这个文件，每个 worktree 读它自己的
 
 同名条目以项目级为准，覆盖用户级。
 
@@ -31,7 +31,7 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 
 从配置中删除某个 server 不会打断进行中的会话：该 server 在 `/mcp` 中仍显示为 `removed`，其工具在这些会话中保持可见，但调用会失败并返回移除提示；新会话则完全不会注册这些工具。反过来，编辑 `mcp.json` 或安装 plugin 新增的 server 也不会注册到已打开的会话，只会加入之后创建的会话。
 
-当 Kimi Code 在不受信任的文件夹中发现项目级 MCP server 时，工作区信任提示会显示每个 server 的传输方式和启动目标。提示默认选中 `Trust this folder`；核对列出的命令与参数或远程 URL 后确认即可，选择 `Don't trust` 则该工作区的项目级 MCP server 不会启用。
+当 Kimi Code 在不受信任的项目中发现项目级 MCP server 时，信任提示会显示每个 server 的传输方式和启动目标。核对列出的命令与参数或远程 URL 后选择 `Trust and continue` 即可启用；选择 `Exit` 则直接退出，不会启用这些 server。
 
 无头运行（例如在 CI 中执行 `kimi -p`）无法显示信任提示，因此在工作区尚未受信任时，项目级 MCP server 会保持禁用。将 [`KIMI_CODE_TRUST_WORKSPACE`](../configuration/env-vars.md#运行时开关) 设为 `1` 即可在该进程中信任当前工作区。如需全局关闭工作区信任机制并不经确认加载项目级 MCP server，可在 `config.toml` 中设置 [`[workspace] require_trust = false`](../configuration/config-files.md#workspace-trust)；仅应在所有工作区均已可信时使用该配置。
 

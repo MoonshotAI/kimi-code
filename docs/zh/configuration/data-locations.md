@@ -72,7 +72,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 
 ## 会话数据
 
-每个会话的数据存在 `sessions/<workspaceId>/<sessionId>/` 下，同时在顶层 `session_index.jsonl` 里维护一份索引（每行一条记录，含 `sessionId`、`sessionDir`、`workDir` 三个字段）。隐式工作区的 `workspaceId` 是从工作目录路径生成的桶名，格式为 `wd_<slug>_<sha256前12位>`；显式创建的项目工作区使用生成的 `wm_<uuid>`。
+每个会话的数据存在 `sessions/<workspaceId>/<sessionId>/` 下，同时在顶层 `session_index.jsonl` 里维护一份索引（每行一条记录，含 `sessionId`、`sessionDir`、`workDir` 字段；会话不在项目根目录运行时，还有记录项目根目录的 `projectRoot`）。隐式工作区的 `workspaceId` 是从项目根目录路径生成的桶名，格式为 `wd_<slug>_<sha256前12位>`，Git 仓库的 worktree 和子目录与主检出共用一个桶；显式创建的项目工作区使用生成的 `wm_<uuid>`。
 
 会话目录内部包含：
 

@@ -1,7 +1,7 @@
 import { TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 import { flattenChain } from '@moonshot-ai/agent-core-v2/wire/tree/index';
-import { sliceMainRecordsAtTurn } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/internal/forkTurnSlice';
+import { sliceMainRecordsAtTurn } from '@moonshot-ai/agent-core-v2/project/sessionLifecycle/internal/forkTurnSlice';
 import { createFakeModel, say, type FakeModel } from '@moonshot-ai/testkit/model';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 

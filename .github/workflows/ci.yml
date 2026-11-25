@@ -17,15 +17,6 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/heads/release/') }}
 
 jobs:
-  release-workflow-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-      - run: node --test scripts/release.test.mjs scripts/release-trigger.test.mjs scripts/canary-release.test.mjs scripts/desktop-nightly-guard.test.mjs
-
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -157,9 +148,9 @@ jobs:
       - name: Check every L0 test in the shard results
         run: node scripts/vitest-l0-gate.mjs .vitest-reports
 
-  # pi-tui's suite runs on node:test (not vitest), so the root `pnpm run test`
-  # does not execute it; it needs its own job.
-  test-pi-tui:
+  # Suites the sharded root run above does not cover. They take seconds each,
+  # so they share one runner instead of holding one each.
+  test-standalone-suites:
     runs-on: ubuntu-latest
 
     steps:
@@ -173,26 +164,16 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @moonshot-ai/pi-tui test
-
-  # The VS Code extension suite runs on the default (v2) engine as part of the
-  # sharded root run above; this job reruns it on the legacy v1 engine, which
-  # the extension selects through the rollback env var.
-  test-vscode-legacy:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter kimi-code test
+      # pi-tui's suite runs on node:test (not vitest), so the root
+      # `pnpm run test` does not execute it.
+      - name: pi-tui (node:test)
+        run: pnpm --filter @moonshot-ai/pi-tui test
+      # The VS Code extension suite runs on the default (v2) engine in the
+      # sharded root run; this reruns it on the legacy v1 engine, which the
+      # extension selects through the rollback env var.
+      - name: VS Code extension on the legacy engine
+        if: ${{ !cancelled() }}
+        run: pnpm --filter kimi-code test
         env:
           KIMI_CODE_LEGACY_FLAG: "1"
 
@@ -236,6 +217,9 @@ jobs:
       - run: pnpm run lint
       - run: node --test 'scripts/checks/*.test.mjs'
       - run: node --test scripts/check-comments.test.mjs
+      - name: Release workflow tests
+        if: ${{ !cancelled() }}
+        run: node --test scripts/release.test.mjs scripts/release-trigger.test.mjs scripts/canary-release.test.mjs scripts/desktop-nightly-guard.test.mjs
       - run: node --test scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs scripts/mutation-diff.test.mjs apps/desktop/scripts/ci/select-e2e-specs.test.mjs apps/desktop/scripts/ci/report-main-journeys.test.mjs
       - run: pnpm run sherif
       - name: Check new code duplication

@@ -89,7 +89,7 @@ async function handleAddDirChoice(
     host.setAppState({ additionalDirs: result.additionalDirs });
     host.refreshSlashCommandAutocomplete();
     host.showStatus(
-      choice === 'remember'
+      result.persisted
         ? `Added workspace directory:\n  ${path}\n  Remembered in the workspace registry`
         : `Added workspace directory:\n  ${path}\n  For this session only`,
       'success',

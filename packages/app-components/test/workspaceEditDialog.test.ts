@@ -43,6 +43,7 @@ interface MountOptions {
   manageHosts?: () => void;
   importProjectConfig?: (primary: string, hostId?: string) => Promise<string[] | undefined>;
   busy?: boolean;
+  primaryImmutable?: boolean;
 }
 
 function mountDialog(opts: MountOptions = {}) {
@@ -61,6 +62,7 @@ function mountDialog(opts: MountOptions = {}) {
         manageHosts: opts.manageHosts,
         importProjectConfig: opts.importProjectConfig,
         busy: opts.busy,
+        primaryImmutable: opts.primaryImmutable,
         onSubmit: submit,
         onCancel: cancel,
       }),
@@ -350,6 +352,35 @@ describe('WorkspaceEditDialog edit mode', () => {
     expect(submit).toHaveBeenCalledWith({
       name: 'my workspace',
       dirs: ['/a/root'],
+      projectConfigDirs: [],
+    });
+  });
+
+  it('offers no way to replace an immutable primary while the name and other directories stay editable', async () => {
+    const { submit } = mountDialog({
+      mode: 'edit',
+      initialName: 'repo',
+      initialDirs: ['/a/repo', '/a/extra'],
+      pick: async () => ['/a/more'],
+      primaryImmutable: true,
+    });
+    await nextTick();
+
+    expect(primaryRow()?.textContent).toContain('repo');
+    expect(document.querySelector('.we-dir-primary')).toBeNull();
+    expect(dirRows()[0]!.querySelector('button.we-dir-rm')).toBeNull();
+
+    await setName('renamed');
+    document.querySelector<HTMLButtonElement>('.we-add-directory')!.click();
+    await vi.waitFor(() => expect(dirRows()).toHaveLength(3));
+    expect(document.querySelector('.we-dir-primary')).toBeNull();
+    dirRows()[1]!.querySelector<HTMLButtonElement>('.we-dir-rm')!.click();
+    await nextTick();
+    submitButton().click();
+    await nextTick();
+    expect(submit).toHaveBeenCalledWith({
+      name: 'renamed',
+      dirs: ['/a/repo', '/a/more'],
       projectConfigDirs: [],
     });
   });

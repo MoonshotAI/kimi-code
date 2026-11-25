@@ -11,7 +11,7 @@ import {
   type SessionAdminFilters,
 } from '@moonshot-ai/app-client/client';
 import { pageItems } from '@moonshot-ai/app-components/support';
-import { sessionListStore } from '@moonshot-ai/app-client/stores';
+import { sessionListStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import type { AppSession, SessionsPage } from '@moonshot-ai/app-core/api';
 
 const getKimiWebApiMock = vi.fn();
@@ -20,6 +20,7 @@ beforeEach(() => {
   getKimiWebApiMock.mockReset();
   setKimiClientDeps({ api: () => getKimiWebApiMock(), t: (key) => key });
   sessionListStore().resetSessionList();
+  workspacesStore().workspaces = [];
 });
 afterEach(() => {
   resetKimiClientDeps();
@@ -176,6 +177,23 @@ describe('session admin data layer (fetch orchestration)', () => {
 
     admin.ensureSeeded();
     expect(listSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it('lists the projects again when a row belongs to a project the app has not seen', async () => {
+    const { admin, listSessions } = createAdmin();
+    const listWorkspaces = vi.fn().mockResolvedValue([
+      { id: 'wd_admin_seen', root: '/app', name: 'app', kind: 'implicit', additionalDirs: [], sessionCount: 1 },
+    ]);
+    getKimiWebApiMock.mockReturnValue({ listSessions, listWorkspaces });
+    listSessions.mockResolvedValue(page([{ ...row('s1'), workspaceId: 'wd_admin_seen', cwd: '/app-fix' }]));
+
+    admin.ensureSeeded();
+    await flush();
+    await admin.refresh();
+    await flush();
+
+    expect(workspacesStore().workspaces.map((w) => [w.id, w.name, w.root])).toEqual([['wd_admin_seen', 'app', '/app']]);
+    expect(listWorkspaces).toHaveBeenCalledOnce();
   });
 
   it('applyFilters on an unseeded admin doubles as the seed — one fetch, ensureSeeded no-ops', async () => {

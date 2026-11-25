@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { ErrorCodes, log, type GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
+import { ErrorCodes, KimiError, log, type GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
 import { fetchOpenPlatformModels } from '@moonshot-ai/kimi-code-oauth';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import type { Component, Focusable, ProgramStatus } from '@moonshot-ai/pi-tui';
@@ -248,7 +248,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     getWorkspaceAdditionalDirs: vi.fn(async () => []),
     getGitStatus: vi.fn(async () => null),
     getGitPullRequest: vi.fn(async () => null),
-    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [], gatedAdditionalDirs: [], additionalDirSources: [], warnings: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] } })),
+    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, projectRoot: '/tmp/proj-a', gatedMcpServers: [], gatedAdditionalDirs: [], additionalDirSources: [], warnings: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] } })),
     refreshProviderModels: vi.fn(async () => ({ changed: [], unchanged: [], failed: [] })),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
@@ -274,6 +274,14 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     });
   }
   return harness;
+}
+
+function existingDir(name: string): string {
+  const base = mkdtempSync(join(tmpdir(), 'kimi-tui-resume-'));
+  onTestFinished(() => rmSync(base, { recursive: true, force: true }));
+  const dir = join(base, name);
+  mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 function makeDriver(harness: ReturnType<typeof makeHarness>, input: KimiTUIStartupInput) {
@@ -1049,8 +1057,50 @@ describe('KimiTUI startup', () => {
 
     await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
 
+    expect(harness.createSession).toHaveBeenCalledWith(expect.objectContaining({ environmentId: 'local' }));
+  });
+
+  it('leaves pinning a /new session at the startup directory to the engine so its main agent stays lazy', async () => {
+    const session = makeSession({
+      getEnvironment: vi.fn(async () => ({ environmentId: 'local', cwd: '/tmp/proj-a' })),
+    });
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      })),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ model: 'k2' }));
+    await expect(driver.init()).resolves.toBe(false);
+    (driver as unknown as { session: typeof session }).session = session;
+
+    await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
+
+    expect(harness.createSession.mock.calls[0]?.[0]).toMatchObject({ workDir: '/tmp/proj-a', environmentId: 'local' });
+    expect(harness.createSession.mock.calls[0]?.[0]?.environmentCwd).toBeUndefined();
+  });
+
+  it('keeps an explicitly pinned local cwd of the current session for /new', async () => {
+    const session = makeSession({
+      getEnvironment: vi.fn(async () => ({ environmentId: 'local', cwd: '/tmp/elsewhere' })),
+    });
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      })),
+    });
+    const driver = makeDriver(
+      harness,
+      makeStartupInput({ model: 'k2', environment: 'local', environmentCwd: '/tmp/elsewhere' }),
+    );
+    await expect(driver.init()).resolves.toBe(false);
+    (driver as unknown as { session: typeof session }).session = session;
+
+    await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
+
     expect(harness.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ environmentId: 'local', environmentCwd: '/tmp/proj-a' }),
+      expect.objectContaining({ environmentId: 'local', environmentCwd: '/tmp/elsewhere' }),
     );
   });
 
@@ -1063,6 +1113,10 @@ describe('KimiTUI startup', () => {
 
     await expect(driver.init()).resolves.toBe(true);
 
+    expect((harness as unknown as { listSessionsPage: ReturnType<typeof vi.fn> }).listSessionsPage).toHaveBeenCalledWith({
+      workDir: '/tmp/proj-a',
+      limit: 1,
+    });
     expect(harness.resumeSession).toHaveBeenCalledWith({
       id: 'ses-latest',
       replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
@@ -2211,6 +2265,7 @@ describe('KimiTUI startup', () => {
   });
 
   it('does not resume a session from a different cwd and shows a cd hint', async () => {
+    const otherDir = existingDir('proj-b');
     const currentWorkDirSession = {
       id: 'ses-cwd',
       title: 'Current cwd session',
@@ -2220,7 +2275,7 @@ describe('KimiTUI startup', () => {
     const otherWorkDirSession = {
       id: 'ses-other-cwd',
       title: 'Other cwd session',
-      workDir: '/tmp/proj-b',
+      workDir: otherDir,
       updatedAt: Date.now() - 1000,
     };
     const resumeSession = vi.fn(async () => makeSession({ id: 'ses-other-cwd' }));
@@ -2240,7 +2295,7 @@ describe('KimiTUI startup', () => {
 
     expect(resumeSession).not.toHaveBeenCalled();
     expect(driver.state.activeDialog).toBeNull();
-    const expectedResumeCmd = `cd ${quoteShellArg('/tmp/proj-b')} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
+    const expectedResumeCmd = `cd ${quoteShellArg(otherDir)} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
     expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
     const transcript = driver.state.transcriptContainer.render(160).join('\n');
     expect(transcript).toContain('Current session is in a different working directory.');
@@ -2256,10 +2311,11 @@ describe('KimiTUI startup', () => {
       workDir: '/tmp/proj-a',
       updatedAt: Date.now(),
     };
+    const otherDir = existingDir('proj$(touch /tmp/pwned)');
     const otherWorkDirSession = {
       id: 'ses-other-cwd',
       title: 'Other cwd session',
-      workDir: '/tmp/proj$(touch /tmp/pwned)',
+      workDir: otherDir,
       updatedAt: Date.now() - 1000,
     };
     const resumeSession = vi.fn(async () => makeSession({ id: 'ses-other-cwd' }));
@@ -2278,13 +2334,14 @@ describe('KimiTUI startup', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(resumeSession).not.toHaveBeenCalled();
-    const expectedResumeCmd = `cd ${quoteShellArg('/tmp/proj$(touch /tmp/pwned)')} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
+    const expectedResumeCmd = `cd ${quoteShellArg(otherDir)} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
     expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
     const transcript = driver.state.transcriptContainer.render(160).join('\n');
     expect(transcript).toContain(`To resume, run: ${expectedResumeCmd}`);
   });
 
   it('exits after picking another cwd from the startup picker', async () => {
+    const otherDir = existingDir('proj-b');
     const currentWorkDirSession = {
       id: 'ses-cwd',
       title: 'Current cwd session',
@@ -2294,7 +2351,7 @@ describe('KimiTUI startup', () => {
     const otherWorkDirSession = {
       id: 'ses-other-cwd',
       title: 'Other cwd session',
-      workDir: '/tmp/proj-b',
+      workDir: otherDir,
       updatedAt: Date.now() - 1000,
     };
     const resumeSession = vi.fn(async () => makeSession({ id: 'ses-other-cwd' }));
@@ -2315,8 +2372,49 @@ describe('KimiTUI startup', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(resumeSession).not.toHaveBeenCalled();
-    const expectedResumeCmd = `cd ${quoteShellArg('/tmp/proj-b')} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
+    const expectedResumeCmd = `cd ${quoteShellArg(otherDir)} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
     expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledWith(0);
+  });
+
+  it('says a picked session directory no longer exists, offers no cd command, and exits from the startup picker', async () => {
+    const missing = join(existingDir('removed'), 'app-fix');
+    const currentWorkDirSession = {
+      id: 'ses-cwd',
+      title: 'Current cwd session',
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now(),
+    };
+    const goneWorkDirSession = {
+      id: 'ses-gone-cwd',
+      title: 'Removed worktree session',
+      workDir: missing,
+      updatedAt: Date.now() - 1000,
+    };
+    const resumeSession = vi.fn(async () => makeSession({ id: 'ses-gone-cwd' }));
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), {
+      resumeSession,
+      listSessions: vi.fn(async () => [currentWorkDirSession, goneWorkDirSession]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: '' }));
+    const stop = vi.spyOn(driver, 'stop').mockResolvedValue(undefined);
+    copyTextToClipboardMock.mockClear();
+
+    await expect((driver as unknown as MigrateExitDriver).initMainTui()).resolves.toBe(false);
+    await (driver as unknown as { bootstrapFromPicker(): Promise<void> }).bootstrapFromPicker();
+
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\u001B[B');
+    picker.handleInput('\r');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(resumeSession).not.toHaveBeenCalled();
+    expect(copyTextToClipboardMock).not.toHaveBeenCalled();
+    const transcript = driver.state.transcriptContainer.render(400).join('\n');
+    expect(transcript).toContain("Selected session's working directory no longer exists:");
+    expect(transcript).toContain(missing);
+    expect(transcript).not.toContain('To resume, run:');
     expect(stop).toHaveBeenCalledOnce();
     expect(stop).toHaveBeenCalledWith(0);
   });
@@ -3595,6 +3693,7 @@ describe('KimiTUI startup', () => {
   it('checks workspace trust before entering the migration screen', async () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: true,
+      projectRoot: '/tmp/proj-a',
       gatedMcpServers: [],
       gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
       instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
@@ -3630,6 +3729,7 @@ describe('KimiTUI startup', () => {
   it('prompts for workspace trust before migrating an untrusted workspace', async () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
+      projectRoot: '/tmp/proj-a',
       gatedMcpServers: [],
       gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
       instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
@@ -3669,9 +3769,13 @@ describe('KimiTUI startup', () => {
   });
 
   it('prompts for workspace trust when trust info cannot be read', async () => {
-    const getWorkspaceTrustInfo = vi.fn(async () => {
-      throw new Error('unavailable');
-    });
+    const getWorkspaceTrustInfo = vi.fn(async () => ({
+      trusted: false,
+      projectRoot: '/tmp/app',
+      gatedMcpServers: [],
+      gatedAdditionalDirs: [], additionalDirSources: [], warnings: ['Could not inspect project settings.'],
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
+    }));
     const trustWorkspace = vi.fn(async () => {});
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo, trustWorkspace });
     const driver = makeDriver(harness, {
@@ -3679,7 +3783,7 @@ describe('KimiTUI startup', () => {
       migrationPlan: MIGRATION_PLAN,
       migrateOnly: true,
     }) as unknown as MigrateExitDriver & {
-      mountEditorReplacement(panel: { handleInput(data: string): void }): void;
+      mountEditorReplacement(panel: { handleInput(data: string): void; render(width: number): string[] }): void;
     };
     vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
     vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
@@ -3693,17 +3797,167 @@ describe('KimiTUI startup', () => {
     await vi.waitFor(() => {
       expect(mountSpy).toHaveBeenCalled();
     });
+    const text = mountSpy.mock.calls[0]![0].render(80).join('\n').replaceAll(/\u001B\[[0-9;]*m/g, '');
     mountSpy.mock.calls[0]![0].handleInput('\u001B[A');
     mountSpy.mock.calls[0]![0].handleInput('\r');
     await startPromise;
 
+    expect(text).toContain('Trust this project?');
+    expect(text).toContain('/tmp/app');
+    expect(text).not.toContain('/tmp/proj-a');
+    expect(text).toContain('Could not inspect project settings.');
     expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a');
     expect(onExit).toHaveBeenCalledWith(0);
+  });
+
+  describe('workspace trust of a session resumed at startup', () => {
+    const untrusted = (projectRoot: string) => ({
+      trusted: false,
+      projectRoot,
+      gatedMcpServers: [],
+      gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
+    });
+
+    function trustHarness(sessions: readonly { readonly id: string; readonly workDir: string }[]) {
+      const getWorkspaceTrustInfo = vi.fn(async (_workDir: string, options: { sessionId?: string } = {}) =>
+        untrusted(options.sessionId === undefined ? '/tmp/app' : '/tmp/managed'),
+      );
+      const trustWorkspace = vi.fn(async () => {});
+      const listSessions = vi.fn(async (input: { sessionId?: string } = {}) =>
+        sessions.filter((session) => session.id === input.sessionId),
+      );
+      const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo, trustWorkspace, listSessions });
+      return { harness, getWorkspaceTrustInfo, trustWorkspace };
+    }
+
+    function startupDriver(harness: ReturnType<typeof makeHarness>, session: string) {
+      const driver = makeDriver(harness, {
+        ...makeStartupInput({ session }),
+        migrationPlan: MIGRATION_PLAN,
+        migrateOnly: true,
+      }) as unknown as MigrateExitDriver & {
+        mountEditorReplacement(panel: { handleInput(data: string): void; render(width: number): string[] }): void;
+      };
+      vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
+      vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
+      vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
+      vi.spyOn(driver, 'runMigrationScreen').mockResolvedValue({ decision: 'later' });
+      driver.onExit = vi.fn(async () => {});
+      return { driver, mountSpy: vi.spyOn(driver, 'mountEditorReplacement') };
+    }
+
+    async function answerTrustPrompt({ driver, mountSpy }: ReturnType<typeof startupDriver>) {
+      const started = driver.start();
+      await vi.waitFor(() => {
+        expect(mountSpy).toHaveBeenCalled();
+      });
+      const prompt = mountSpy.mock.calls[0]![0];
+      const text = prompt.render(80).join('\n').replaceAll(/\u001B\[[0-9;]*m/g, '');
+      prompt.handleInput('\r');
+      await started;
+      return text;
+    }
+
+    it('asks about and trusts the project the session belongs to', async () => {
+      const { harness, trustWorkspace } = trustHarness([{ id: 'ses-managed', workDir: '/tmp/proj-a' }]);
+
+      const text = await answerTrustPrompt(startupDriver(harness, 'ses-managed'));
+
+      expect(text).toContain('/tmp/managed');
+      expect(text).not.toContain('/tmp/app');
+      expect(trustWorkspace.mock.calls).toEqual([['/tmp/proj-a', { sessionId: 'ses-managed' }]]);
+    });
+
+    it.each([
+      ['a session that does not exist', 'ses-missing', []],
+      ['a session of another directory', 'ses-other', [{ id: 'ses-other', workDir: '/tmp/proj-b' }]],
+      ['a session still to be picked', '', [{ id: 'ses-other', workDir: '/tmp/proj-a' }]],
+    ] as const)('asks about the project of the startup directory for %s', async (_label, session, sessions) => {
+      const { harness, trustWorkspace } = trustHarness(sessions);
+
+      const text = await answerTrustPrompt(startupDriver(harness, session));
+
+      expect(text).toContain('/tmp/app');
+      expect(text).not.toContain('/tmp/managed');
+      expect(trustWorkspace.mock.calls).toEqual([['/tmp/proj-a']]);
+    });
+
+    it('asks nothing when the project of the session is gone and lets resuming report it', async () => {
+      const { harness, getWorkspaceTrustInfo, trustWorkspace } = trustHarness([{ id: 'ses-orphan', workDir: '/tmp/proj-a' }]);
+      getWorkspaceTrustInfo.mockRejectedValue(new KimiError(ErrorCodes.SESSION_NOT_FOUND, 'Session "ses-orphan" was not found.'));
+      const { driver, mountSpy } = startupDriver(harness, 'ses-orphan');
+
+      await driver.start();
+
+      expect(mountSpy).not.toHaveBeenCalled();
+      expect(trustWorkspace).not.toHaveBeenCalled();
+    });
+
+    it('stops startup when the trust info of the session cannot be read', async () => {
+      const { harness, getWorkspaceTrustInfo, trustWorkspace } = trustHarness([{ id: 'ses-managed', workDir: '/tmp/proj-a' }]);
+      getWorkspaceTrustInfo.mockRejectedValue(new Error('unavailable'));
+      const { driver, mountSpy } = startupDriver(harness, 'ses-managed');
+
+      await expect(driver.start()).rejects.toThrow('Could not check whether this project is trusted: unavailable');
+
+      expect(mountSpy).not.toHaveBeenCalled();
+      expect(trustWorkspace).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when the project or its trust record cannot be read', () => {
+    function unreadableTrust(error: Error) {
+      const trustWorkspace = vi.fn(async () => {});
+      const harness = makeHarness(makeSession(), {
+        homeDir: '/home/example/.kimi-code',
+        getWorkspaceTrustInfo: vi.fn(async () => {
+          throw error;
+        }),
+        trustWorkspace,
+      });
+      const driver = makeDriver(harness, {
+        ...makeStartupInput(),
+        migrationPlan: MIGRATION_PLAN,
+        migrateOnly: true,
+      }) as unknown as MigrateExitDriver & { mountEditorReplacement(panel: unknown): void };
+      vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
+      vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
+      vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
+      const migrationSpy = vi.spyOn(driver, 'runMigrationScreen').mockResolvedValue({ decision: 'later' });
+      driver.onExit = vi.fn(async () => {});
+      return { driver, trustWorkspace, migrationSpy, mountSpy: vi.spyOn(driver, 'mountEditorReplacement') };
+    }
+
+    it('stops startup with the reason and the next step instead of offering to trust', async () => {
+      const { driver, trustWorkspace, migrationSpy, mountSpy } = unreadableTrust(new Error('failed to decode workspace-trust/wd_proj-a as json'));
+
+      const failure = await driver.start().then(() => undefined, (error: unknown) => error as Error);
+
+      expect(failure?.message).toContain('Could not check whether this project is trusted: failed to decode workspace-trust/wd_proj-a as json');
+      expect(failure?.message).toContain('The project was not opened. Fix the problem and run kimi again; trust settings are kept in /home/example/.kimi-code.');
+      expect(mountSpy).not.toHaveBeenCalled();
+      expect(migrationSpy).not.toHaveBeenCalled();
+      expect(trustWorkspace).not.toHaveBeenCalled();
+    });
+
+    it('starts without offering to trust when the reason is a missing Git Bash, which startup reports on its own', async () => {
+      const { driver, trustWorkspace, migrationSpy, mountSpy } = unreadableTrust(
+        new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, 'Git Bash missing'),
+      );
+
+      await driver.start();
+
+      expect(mountSpy).not.toHaveBeenCalled();
+      expect(trustWorkspace).not.toHaveBeenCalled();
+      expect(migrationSpy).toHaveBeenCalled();
+    });
   });
 
   it('continues startup when persisting trust fails', async () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
+      projectRoot: '/tmp/proj-a',
       gatedMcpServers: [],
       gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
       instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
@@ -3944,6 +4198,83 @@ describe('KimiTUI startup', () => {
     loadSpy.mockRestore();
   });
 
+  it('resumes a startup session whose Windows workdir differs in drive and letter case', async () => {
+    const session = makeSession({ id: 'ses-target' });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-target', workDir: 'c:/users/KIMI/Project' }]),
+    });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput({ session: 'ses-target' }),
+      workDir: String.raw`C:\Users\kimi\project`,
+    });
+
+    await expect(driver.init()).resolves.toBe(true);
+
+    expect(harness.resumeSession).toHaveBeenCalledWith({
+      id: 'ses-target',
+      replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
+    });
+  });
+
+  it('looks up a resumed session by id in every project and resumes it from its own directory', async () => {
+    const session = makeSession({ id: 'ses-managed' });
+    const listSessions = vi.fn(async (input: { workDir?: string; sessionId?: string } = {}) =>
+      input.workDir === undefined && input.sessionId === 'ses-managed'
+        ? [{ id: 'ses-managed', workDir: '/tmp/proj-a' }]
+        : [],
+    );
+    const harness = makeHarness(session, { listSessions });
+    const driver = makeDriver(harness, makeStartupInput({ session: 'ses-managed' }));
+
+    await expect(driver.init()).resolves.toBe(true);
+
+    expect(listSessions).toHaveBeenCalledWith({ sessionId: 'ses-managed' });
+    expect(harness.resumeSession).toHaveBeenCalledWith({
+      id: 'ses-managed',
+      replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
+    });
+  });
+
+  it('refuses to resume a session of another directory and tells the user where to cd', async () => {
+    const otherDir = existingDir('app-fix');
+    const harness = makeHarness(makeSession({ id: 'ses-other' }), {
+      listSessions: vi.fn(async () => [{ id: 'ses-other', workDir: otherDir }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: 'ses-other' }));
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    try {
+      await expect(driver.init()).rejects.toThrow('Session "ses-other" was created under a different directory.');
+      expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join('')).toContain(
+        `  cd "${otherDir}" && kimi -r ses-other`,
+      );
+    } finally {
+      stderr.mockRestore();
+    }
+    expect(harness.resumeSession).not.toHaveBeenCalled();
+  });
+
+  it('refuses to resume a session whose directory no longer exists and gives no cd hint', async () => {
+    const missing = join(existingDir('removed'), 'app-fix');
+    const harness = makeHarness(makeSession({ id: 'ses-gone' }), {
+      listSessions: vi.fn(async () => [{ id: 'ses-gone', workDir: missing }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: 'ses-gone' }));
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    try {
+      await expect(driver.init()).rejects.toThrow(
+        'Session "ses-gone" was created in a directory that no longer exists.',
+      );
+      const written = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
+      expect(written).toContain(`  ${missing}`);
+      expect(written).not.toContain('kimi -r');
+    } finally {
+      stderr.mockRestore();
+    }
+    expect(harness.resumeSession).not.toHaveBeenCalled();
+  });
+
   it('resumes a startup session when Windows workdir uses backslashes', async () => {
     const session = makeSession({ id: 'ses-target' });
     const harness = makeHarness(session, {
@@ -3956,10 +4287,7 @@ describe('KimiTUI startup', () => {
 
     await expect(driver.init()).resolves.toBe(true);
 
-    expect(harness.listSessions).toHaveBeenCalledWith({
-      sessionId: 'ses-target',
-      workDir: String.raw`C:\Users\kimi\project`,
-    });
+    expect(harness.listSessions).toHaveBeenCalledWith({ sessionId: 'ses-target' });
     expect(harness.resumeSession).toHaveBeenCalledWith({
       id: 'ses-target',
       replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,

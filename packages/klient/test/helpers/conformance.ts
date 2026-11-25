@@ -65,15 +65,16 @@ export function defineKlientConformance(
       expect(env.clientVersion.length).toBeGreaterThan(0);
     });
 
-    it('workspaces round-trip through create/get/update/list/delete', async () => {
+    it('workspaces round-trip through resolve/get/update/list/delete', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'klient-workspace-root-'));
       const additionalDir = await mkdtemp(join(tmpdir(), 'klient-workspace-extra-'));
       try {
         const workspaces = target.klient.global.workspaces;
-        const created = await workspaces.createOrTouch({ root: process.cwd(), name: 'conformance' });
-        expect(created.id.length).toBeGreaterThan(0);
+        const created = await workspaces.resolveImplicit(root);
+        expect(created).toMatchObject({ root, kind: 'implicit' });
 
         const fetched = await workspaces.get(created.id);
-        expect(fetched?.name).toBe('conformance');
+        expect(fetched).toEqual(created);
 
         const updated = await workspaces.update({ id: created.id, patch: { name: 'conformance-2' } });
         expect(updated?.name).toBe('conformance-2');
@@ -96,6 +97,7 @@ export function defineKlientConformance(
         await workspaces.delete(created.id);
         expect(await workspaces.get(created.id)).toBeUndefined();
       } finally {
+        await rm(root, { recursive: true, force: true });
         await rm(additionalDir, { recursive: true, force: true });
       }
     });
@@ -731,8 +733,9 @@ export function defineKlientConformance(
     });
 
     it('agent environment binding and media events are available through every transport', async () => {
+      const workDir = await mkdtemp(join(tmpdir(), 'klient-conf-environment-'));
       const created = await target.klient.global.sessions.create({
-        workDir: process.cwd(),
+        workDir,
         title: 'conformance environment',
       });
       try {
@@ -779,6 +782,7 @@ export function defineKlientConformance(
         }
       } finally {
         await target.klient.session(created.id).close();
+        await rm(workDir, { recursive: true, force: true });
       }
     });
 

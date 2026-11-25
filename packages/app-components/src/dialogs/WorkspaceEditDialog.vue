@@ -23,12 +23,14 @@ const props = withDefaults(
     manageHosts?: () => void;
     importProjectConfig?: (primary: string, hostId?: string) => Promise<string[] | undefined>;
     busy?: boolean;
+    primaryImmutable?: boolean;
   }>(),
   {
     initialName: '',
     initialDirs: () => [],
     hosts: () => [],
     busy: false,
+    primaryImmutable: false,
   },
 );
 
@@ -337,6 +339,7 @@ function onNameKeydown(e: KeyboardEvent): void {
             <Badge v-if="i === 0" class="we-dir-badge" size="sm" variant="outline">
               {{ t('workspace.dialog.primaryBadge') }}
             </Badge>
+            <span v-else-if="primaryImmutable" aria-hidden="true" />
             <Button
               v-else
               variant="ghost"
