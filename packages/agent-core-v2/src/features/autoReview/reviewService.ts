@@ -39,8 +39,8 @@ import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
 import { AUTO_REVIEW_FLAG_ID } from './flag';
 import {
   buildReviewMessages,
-  detectAuthorizationDrift,
   extractAuthorization,
+  sameAuthorization,
   type ReviewGitStatus,
   type ReviewText,
 } from './context';
@@ -77,6 +77,7 @@ const GIT_STATUS_SUBCOMMANDS: ReadonlySet<string> = new Set([
 ]);
 const FILE_REMOVING_COMMANDS: ReadonlySet<string> = new Set(['rm', 'rmdir']);
 const AUTHORIZATION_CHANGED_REASON = 'Authorization changed during review.';
+const MAX_REVIEW_RUNS = 2;
 const EMPTY_ANCESTRY: AutoReviewAncestry = { authorization: [], approvedToolCallIds: [] };
 
 interface ReviewSnapshot {
@@ -161,10 +162,9 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     let outcome: AutoReviewOutcome;
     try {
       modelAlias = this.loop.resolveModelContext().modelAlias;
-      let appended = false;
-      while (true) {
+      for (let run = 1; ; run += 1) {
         const snapshot = await this.takeSnapshot(context, deadline.signal);
-        const run = await this.sessionReview.execute({
+        const result = await this.sessionReview.execute({
           agentContext: this.scopeContext.agentContext,
           turnId: context.turnId,
           mainModelAlias: modelAlias,
@@ -172,25 +172,17 @@ export class AutoReviewService extends Service implements IAutoReviewService {
           messages: snapshot.messages,
         });
         context.signal.throwIfAborted();
-        modelAlias = run.modelAlias;
-        outcome = run.outcome;
+        modelAlias = result.modelAlias;
+        outcome = result.outcome;
         if (outcome.decision === 'failed') break;
-        if (this.workspace.workDir !== snapshot.cwd) {
+        const history = this.loop.history();
+        const changed = this.workspace.workDir !== snapshot.cwd
+          || (history !== snapshot.history && !sameAuthorization(snapshot.authorization, this.authorizationOf(history)));
+        if (!changed) break;
+        if (run === MAX_REVIEW_RUNS) {
           outcome = { decision: 'failed', reason: AUTHORIZATION_CHANGED_REASON };
           break;
         }
-        const latestHistory = this.loop.history();
-        if (latestHistory !== snapshot.history) {
-          const drift = detectAuthorizationDrift(snapshot.authorization, this.authorizationOf(latestHistory));
-          if (drift === 'appended' && !appended) {
-            appended = true;
-            continue;
-          }
-          if (drift !== 'unchanged') {
-            outcome = { decision: 'failed', reason: AUTHORIZATION_CHANGED_REASON };
-          }
-        }
-        break;
       }
     } catch (error) {
       context.signal.throwIfAborted();

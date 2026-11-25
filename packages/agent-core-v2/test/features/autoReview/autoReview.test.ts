@@ -27,9 +27,9 @@ import {
 import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
 import {
   buildReviewMessages,
-  detectAuthorizationDrift,
   extractAuthorization,
   REPLY_TO_MAX_CHARS,
+  sameAuthorization,
   type ReviewText,
 } from '#/features/autoReview/context';
 import {
@@ -163,9 +163,9 @@ describe('autoReview context and state', () => {
     expect(second.slice(second.indexOf('<history>'), second.indexOf('</history>')).startsWith(firstHistory)).toBe(true);
   });
 
-  it('omits listed read-only tools and read-only shell commands from history', () => {
+  it('omits approval-free tools and read-only shell commands from history', () => {
     const calls = [
-      toolCallFor('read', 'Read', { path: '/workspace/AGENTS.md' }),
+      toolCallFor('agent', 'Agent', { description: 'Sweep', prompt: 'Inspect' }),
       toolCallFor('ls', 'Bash', { command: 'ls src' }),
       toolCallFor('stage', 'Bash', { command: 'git add src/a.ts' }),
       toolCallFor('edit', 'Edit', { path: 'src/a.ts', old_string: 'a', new_string: 'b' }),
@@ -180,7 +180,7 @@ describe('autoReview context and state', () => {
       })),
     ];
     const rendered = messageText(buildReviewMessages(history, [], undefined, undefined, '/workspace', reviewContext(), new BashParserService()));
-    for (const omitted of ['read', 'ls']) {
+    for (const omitted of ['agent', 'ls']) {
       expect(rendered).not.toContain(`"id":"${omitted}"`);
     }
     for (const kept of ['stage', 'edit']) {
@@ -253,10 +253,11 @@ describe('autoReview context and state', () => {
     expect(rendered).not.toContain('hidden reasoning');
   });
 
-  it('treats a changed reply target as authorization drift', () => {
+  it('compares authorization by text and reply target', () => {
     const reply = (replyTo: string): ReviewText => ({ ...human('Yes.'), replyTo });
-    expect(detectAuthorizationDrift([reply('Push tag v1.2?')], [reply('Push tag v1.2?')])).toBe('unchanged');
-    expect(detectAuthorizationDrift([reply('Push tag v1.2?')], [reply('Delete the release branch?')])).toBe('changed');
+    expect(sameAuthorization([reply('Push tag v1.2?')], [reply('Push tag v1.2?')])).toBe(true);
+    expect(sameAuthorization([reply('Push tag v1.2?')], [reply('Delete the release branch?')])).toBe(false);
+    expect(sameAuthorization([human('a')], [human('rewritten')])).toBe(false);
   });
 
   it('folds approved tool call ids and clears them on ContextClear', () => {
@@ -271,15 +272,6 @@ describe('autoReview context and state', () => {
     onApproval(state, record('rm', 'rejected'), foldCtx);
     expect(state).toEqual(['mkdir']);
     expect(onClear(state, new ContextClear({ agentId: 'main' }), foldCtx)).toEqual([]);
-  });
-
-  it.each([
-    [['a'], 'unchanged'],
-    [['a', 'b'], 'appended'],
-    [['rewritten'], 'changed'],
-    [[], 'changed'],
-  ] as const)('detects %s -> %s authorization drift', (current, expected) => {
-    expect(detectAuthorizationDrift([human('a')], current.map(human))).toBe(expected);
   });
 
   it('snapshots ancestor authorization for subagents and approved calls for forks without duplication', () => {
@@ -767,7 +759,7 @@ describe('AutoReviewService', () => {
     expect(sentInputs).toHaveLength(0);
   });
 
-  it('re-reviews once on appended instructions and fails on repeated drift or cwd change', async () => {
+  it('re-reviews once when authorization or cwd changes during review and fails when it changes again', async () => {
     const main = await spawn({ agentId: 'main' });
     const run = () => main.review(reviewContext({ command: 'rm generated/file' }), 'fallback-ask');
 
@@ -781,16 +773,22 @@ describe('AutoReviewService', () => {
     expect(messageText(sentInputs[0]!.messages)).not.toContain('Also clean generated/cache.');
     expect(messageText(sentInputs[1]!.messages)).toContain('Also clean generated/cache.');
 
+    sentInputs.length = 0;
+    let cwdChanges = 1;
+    runSessionReview = async () => {
+      if (cwdChanges-- > 0) workspaceDir = '/elsewhere';
+      return { decision: 'allow', risk: 'low' };
+    };
+    await expect(run()).resolves.toEqual({ decision: 'allow', risk: 'low' });
+    expect(sentInputs).toHaveLength(2);
+    expect(messageText(sentInputs[1]!.messages)).toContain('{"cwd":"/elsewhere"}');
+
+    sentInputs.length = 0;
     runSessionReview = async () => {
       history = [...history, userMsg(`Extra ${++calls}`, { kind: 'user' })];
       return { decision: 'allow', risk: 'low' };
     };
     await expect(run()).resolves.toEqual({ decision: 'failed', reason: 'Authorization changed during review.' });
-
-    runSessionReview = async () => {
-      workspaceDir = '/elsewhere';
-      return { decision: 'allow', risk: 'low' };
-    };
-    await expect(run()).resolves.toEqual({ decision: 'failed', reason: 'Authorization changed during review.' });
+    expect(sentInputs).toHaveLength(2);
   });
 });

@@ -2,6 +2,7 @@ import { createUserMessage, type ContentPart, type TextPart, type ToolCall } fro
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { analyzeBashReadOnly } from '#/agent/permissionPolicy/policies/bash-read-only';
+import { DEFAULT_APPROVE_TOOLS } from '#/agent/permissionPolicy/policies/default-tool-approve';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type { IBashParserService } from '#/app/bashParser/bashParser';
 import { renderPrompt } from '#/_base/utils/render-prompt';
@@ -10,21 +11,6 @@ import REVIEW_REQUEST from './auto-review-request.md?raw';
 
 const SECTION_TAG = /<(\/?(?:environment|project_instructions|history|pending_action)\b)/gi;
 const BASH_PARSE_OPTIONS = { timeoutMs: 500, maxNodes: 10_000 } as const;
-const OMITTED_HISTORY_TOOLS: ReadonlySet<string> = new Set([
-  'Read',
-  'ReadMediaFile',
-  'Grep',
-  'Glob',
-  'WebSearch',
-  'FetchURL',
-  'TaskList',
-  'TaskOutput',
-  'WaitFor',
-  'CronList',
-  'NotifyUser',
-  'TodoList',
-  'SetTodoList',
-]);
 export const REPLY_TO_MAX_CHARS = 2000;
 
 export interface ReviewText {
@@ -97,16 +83,6 @@ export function sameAuthorization(
   });
 }
 
-export type AuthorizationDrift = 'unchanged' | 'appended' | 'changed';
-
-export function detectAuthorizationDrift(
-  previous: readonly ReviewText[],
-  current: readonly ReviewText[],
-): AuthorizationDrift {
-  if (sameAuthorization(previous, current)) return 'unchanged';
-  return sameAuthorization(previous, current.slice(0, previous.length)) ? 'appended' : 'changed';
-}
-
 function authorizationEntry(
   message: ContextMessage,
   index: number,
@@ -157,7 +133,7 @@ function actionEntries(
 ): unknown[] {
   if (message.role !== 'assistant') return [];
   return message.toolCalls
-    .filter((call) => completedIds.has(call.id) && !isReadOnlyHistoryCall(call, bashParser))
+    .filter((call) => completedIds.has(call.id) && !needsNoApproval(call, bashParser))
     .map((call) => ({
       kind: 'tool-call',
       role: 'fact',
@@ -168,8 +144,8 @@ function actionEntries(
     }));
 }
 
-function isReadOnlyHistoryCall(call: ToolCall, bashParser: IBashParserService): boolean {
-  if (OMITTED_HISTORY_TOOLS.has(call.name)) return true;
+function needsNoApproval(call: ToolCall, bashParser: IBashParserService): boolean {
+  if (DEFAULT_APPROVE_TOOLS.has(call.name)) return true;
   if (call.name !== 'Bash' || call.arguments === null) return false;
   let args: unknown;
   try {
