@@ -112,14 +112,12 @@ afterEach(() => {
 });
 
 describe('desktop ChatDock worktree cards', () => {
-  it('keeps the composer below a decision card and maps its buttons to worktree actions', async () => {
+  it('replaces the composer with a decision card and maps its buttons to worktree actions', async () => {
     worktree.value = { setup: worktreeSetup({ status: 'failed', failure: { kind: 'fetch_failed' } }) };
     await mountDock();
 
-    const card = host.querySelector<HTMLElement>('[data-worktree-card="fetchFailed"]')!;
-    expect(card).not.toBeNull();
-    expect(composer().style.display).toBe('');
-    expect(card.compareDocumentPosition(composer()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(host.querySelector('[data-worktree-card="fetchFailed"]')).not.toBeNull();
+    expect(composer().style.display).toBe('none');
 
     await press('retry');
     expect(actions.retrySessionWorktree).toHaveBeenLastCalledWith('s1');
@@ -141,6 +139,11 @@ describe('desktop ChatDock worktree cards', () => {
     expect(openSettings).toHaveBeenCalledTimes(1);
     await press('useLocal');
     expect(actions.useLocalForSessionWorktree).toHaveBeenCalledWith('s1');
+
+    worktree.value = { setup: worktreeSetup({ status: 'local' }) };
+    await nextTick();
+    expect(host.querySelector('[data-worktree-card]')).toBeNull();
+    expect(composer().style.display).toBe('');
   });
 
   it('replaces the composer with the invalid card and recreates inside it', async () => {

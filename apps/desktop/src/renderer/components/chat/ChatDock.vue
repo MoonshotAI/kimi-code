@@ -92,7 +92,9 @@ const {
   busyAction: worktreeBusyAction,
   run: runWorktreeAction,
 } = useCreateCardActions();
-const composerHidden = computed(() => hasPendingCard.value || worktreeInvalidCard.value !== null);
+const composerHidden = computed(
+  () => hasPendingCard.value || worktreeInvalidCard.value !== null || worktreeDecisionCard.value !== null,
+);
 
 const goalStatusLabel = computed(() => {
   switch (goal.value?.status) {
