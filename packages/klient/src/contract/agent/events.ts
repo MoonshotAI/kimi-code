@@ -1,4 +1,3 @@
-import { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { z } from 'zod';
 
 import type { EventRegistration } from '../types.js';
@@ -35,9 +34,23 @@ export const turnEndedEventSchema = z.object({
   continuation: z.enum(['turn', 'background', 'none']).optional(),
 });
 
-export const turnStepRetryingEventSchema = TurnStepRetrying.schema
-  .omit({ agentId: true })
-  .extend({ type: z.literal('turn.step.retrying'), time: z.number().optional() });
+const turnStepRetryingAttemptSchema = z.object({
+  failedAttempt: z.number(),
+  nextAttempt: z.number(),
+  maxAttempts: z.number(),
+  delayMs: z.number(),
+});
+
+export const turnStepRetryingEventSchema = turnStepRetryingAttemptSchema.extend({
+  type: z.literal('turn.step.retrying'),
+  time: z.number().optional(),
+  turnId: z.number(),
+  step: z.number(),
+  stepId: z.string().optional(),
+  errorName: z.string(),
+  errorMessage: z.string(),
+  statusCode: z.number().optional(),
+});
 
 export const assistantDeltaEventSchema = z.object({
   type: z.literal('assistant.delta'),
