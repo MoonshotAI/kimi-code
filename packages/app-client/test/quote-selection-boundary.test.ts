@@ -70,6 +70,32 @@ describe('paragraph selection boundaries', () => {
     expect(selectionOwnedByRoot(selection, root)).toBe(false);
   });
 
+  describe('triple click before an unselectable header', () => {
+    function appendActivityRun(headerStyle: string): { label: Node; command: Node } {
+      const run = document.createElement('div');
+      run.innerHTML = `<button style="${headerStyle}"><span>Done</span><span>Ran 1 command</span></button><div><span style="user-select: none">Run</span> <code>rg -ln foo</code></div>`;
+      root.querySelector('.a-msg')!.append(run);
+      return { label: run.querySelector('div > span')!.firstChild!, command: run.querySelector('code')!.firstChild! };
+    }
+
+    it('keeps a paragraph whose range extends over unselectable text into the next block', () => {
+      const { label } = appendActivityRun('user-select: none');
+      const selection = select(label, 3);
+      expect(selectionQuoteAnchor(selection)).not.toBeNull();
+      expect(selectionOwnedByRoot(selection, root)).toBe(true);
+    });
+
+    it('still rejects when the range covers selectable text after the paragraph', () => {
+      const { command } = appendActivityRun('user-select: none');
+      expect(selectionQuoteAnchor(select(command, 2))).toBeNull();
+    });
+
+    it('still rejects when the skipped header is selectable', () => {
+      const { label } = appendActivityRun('');
+      expect(selectionQuoteAnchor(select(label, 3))).toBeNull();
+    });
+  });
+
   it('does not claim a paragraph selected in another root', () => {
     const selection = select(next, 0);
     expect(selectionOwnedByRoot(selection, next)).toBe(false);
