@@ -103,7 +103,7 @@ function toggle(): void {
   padding: var(--space-3) var(--space-4);
   border: var(--p-hairline) solid var(--color-line);
   border-radius: var(--radius-xl);
-  background: var(--color-surface-raised);
+  background: var(--color-bg);
   font-family: var(--font-ui);
   text-align: left;
   animation: kimi-card-in var(--duration-base) var(--ease-out);
