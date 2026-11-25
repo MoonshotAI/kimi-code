@@ -50,6 +50,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | 场景里不出现面名，也拿不到 `page`、终端、`process.env`、`test.info()`。面和面的差异在驱动里处理 | `scenario()` 不提供这些东西；`scripts/checks/e2e-boundary.mjs` |
 | `restart()` 关掉产品再打开，回到原来的会话：产品必须空闲；先走产品自己的退出，查这个进程的网络记录，把它的诊断留到失败时一起附上，再用同一个 home、工作区和假模型起新进程。重启之后、下一次 `send()` 之前，`expectReply`、`expectTool`、`expectError`、`expectAbsent` 都会报错，因为还没有新的一回合；恢复出来的对话用 `expectTranscript` 查。重启前一次消息都没发过时，驱动只能证明产品重新可用，证明不了回到的是原来的会话。`expectTranscript` 在整段对话的用户消息和回复里找（工具卡不算），要求恰好出现一次 | 场景会话；`restart`、`expect-transcript` 的自测 |
 | 某个面不适用，写 `except: { 面: '理由' }`；只在某些面跑，写 `onlyOn` 加 `reason`。理由不能为空，不适用的面在报告里显示为跳过并带着理由 | `scenario()` 登记用例时检查，理由为空时列用例那一步就失败 |
+| 常规场景预先信任工作区。首次打开工作区的 TUI 场景可设 `workspaceTrust: 'trust'` 或 `workspaceTrust: 'exit'`。驱动通过终端选择信任并继续，或按 Esc 返回 shell。重启沿用同一个 home，由产品读取已记录的信任状态 | 信任场景检查模型收到的项目指令和重启后的会话。退出场景检查终端模式和模型请求 |
 | 场景结束时产品必须空闲，产品要能正常退出，除了假模型和本机不能连别的地址 | 收尾检查 |
 | 改场景断言就是改产品行为，PR 里要写明为什么改 | CODEOWNERS 评审 |
 | 提示词用英文 ASCII 单行，不以 `/`、`!`、`@` 开头，不以反斜杠结尾 | `send()`、`queue()`、`steer()` 的运行时检查 |
