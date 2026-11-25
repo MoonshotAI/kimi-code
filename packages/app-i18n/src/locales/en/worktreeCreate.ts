@@ -109,8 +109,6 @@ export default {
     createFailedBody: 'An error occurred while creating the Worktree. No directory or branch was retained.',
     stoppedTitle: 'Worktree creation stopped',
     stoppedBody: 'No directory or branch was retained, and this message has not been processed.',
-    minimize: 'Minimize',
-    expand: 'Expand',
   },
   action: {
     retry: 'Retry',

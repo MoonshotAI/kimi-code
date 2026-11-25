@@ -259,7 +259,7 @@ describe('desktop ConversationPane worktree create flow', () => {
     store.selectEnvironment('worktree');
     await nextTick();
     expect([...row.children].map((child) => child.className.split(' ')[0])).toEqual(['ws-anchor', 'wce', 'wsb']);
-    expect(row.querySelector('.wce-chip-name')?.textContent).toBe('Worktree');
+    expect(row.querySelector('.wce-chip-name')?.textContent).toBe('工作树');
     expect(row.querySelector('.wsb-chip-name')?.textContent).toBe('main');
   });
 

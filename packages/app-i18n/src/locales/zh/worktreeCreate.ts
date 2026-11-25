@@ -107,8 +107,6 @@ export default {
     createFailedBody: '创建工作树时出错，未保留目录或分支。',
     stoppedTitle: '工作树创建已终止',
     stoppedBody: '未保留目录或分支，这条消息还没有处理。',
-    minimize: '最小化',
-    expand: '展开',
   },
   action: {
     retry: '重试',

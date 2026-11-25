@@ -152,9 +152,9 @@ describe('CreateDecisionCard', () => {
     mount(CreateDecisionCard, { view, onAction });
     await nextTick();
 
-    expect(text('.wcc-title')).toBe('Worktree creation failed');
+    expect(text('.akind')).toBe('Worktree creation failed');
     expect(text('.wcc-text')).toContain('Insufficient disk space');
-    const buttons = [...host.querySelectorAll<HTMLButtonElement>('.wcc-actions button')];
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('.abtns button')];
     expect(buttons.map((item) => item.dataset.action)).toEqual(['manage', 'useLocal', 'retry']);
     expect(buttons.at(-1)?.classList.contains('ui-button--primary')).toBe(true);
     expect(buttons[0]?.classList.contains('ui-button--secondary')).toBe(true);
@@ -194,7 +194,7 @@ describe('CreateDecisionCard', () => {
     state.busy = 'retry';
     await nextTick();
     onAction.mockClear();
-    expect([...host.querySelectorAll<HTMLButtonElement>('.wcc-actions button')].every((item) => item.disabled)).toBe(true);
+    expect([...host.querySelectorAll<HTMLButtonElement>('.abtns button')].every((item) => item.disabled)).toBe(true);
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
     expect(onAction).not.toHaveBeenCalled();
   });
