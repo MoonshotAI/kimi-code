@@ -1,10 +1,12 @@
 import {
   chmodSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -724,5 +726,54 @@ describe('migrateLegacyMasterEnvTower', () => {
         env: { [MASTER_ENV]: '1' },
       })?.['KIMI_CODE_EXPERIMENTAL_TOWER'],
     ).toBeUndefined();
+  });
+
+  it('falls back to env override without breaking hard-linked config.toml', () => {
+    const configPath = join(tempDir, 'config.toml');
+    const dotfileLinkPath = join(tempDir, 'dotfiles-config.toml');
+    writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
+    linkSync(configPath, dotfileLinkPath);
+    const originalIno = statSync(configPath).ino;
+
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      }),
+    ).toBe('fallback-env');
+    expect(
+      resolveBootstrapEnvWithLegacyTowerMigration({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      })?.['KIMI_CODE_EXPERIMENTAL_TOWER'],
+    ).toBe('1');
+    expect(statSync(configPath).ino).toBe(originalIno);
+    expect(statSync(dotfileLinkPath).ino).toBe(originalIno);
+    expect(readFileSync(dotfileLinkPath, 'utf8')).toBe('default_model = "kimi-k2"\n');
+  });
+
+  it('re-reads config.toml and preserves concurrent edits made before committing the tower migration', () => {
+    const configPath = join(tempDir, 'config.toml');
+    writeFileSync(configPath, 'default_model = "kimi-old"\n', 'utf8');
+
+    const outcome = migrateLegacyMasterEnvTower({
+      homeDir: tempDir,
+      env: { [MASTER_ENV]: '1' },
+      onBeforeWrite: (attempt) => {
+        if (attempt === 0) {
+          writeFileSync(
+            configPath,
+            'default_model = "kimi-new"\ntelemetry = false\n',
+            'utf8',
+          );
+        }
+      },
+    });
+
+    expect(outcome).toBe('migrated-tower');
+    const finalText = readFileSync(configPath, 'utf8');
+    expect(finalText).toContain('default_model = "kimi-new"');
+    expect(finalText).toContain('telemetry = false');
+    expect(finalText).toContain('tower = true');
   });
 });

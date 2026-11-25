@@ -14,6 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'pathe';
+import lockfile from 'proper-lockfile';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 
 import { parseBooleanEnv } from '#/_base/utils/env';
@@ -36,6 +37,7 @@ export interface MigrateLegacyMasterEnvTowerInput {
   readonly homeDir: string;
   readonly configPath?: string;
   readonly env?: NodeJS.ProcessEnv;
+  readonly onBeforeWrite?: (attempt: number) => void;
 }
 
 export type MigrateLegacyMasterEnvTowerOutcome =
@@ -48,6 +50,7 @@ export type MigrateLegacyMasterEnvTowerOutcome =
   | 'skipped-error';
 
 const EXISTING_INSTALL_MARKERS = ['sessions', 'credentials', 'user-history'] as const;
+const MAX_MIGRATION_WRITE_ATTEMPTS = 3;
 
 function safeLstat(filePath: string): Stats | undefined {
   try {
@@ -57,17 +60,26 @@ function safeLstat(filePath: string): Stats | undefined {
   }
 }
 
+function assertWritableSingleLink(targetPath: string, targetStat: Stats): void {
+  if (targetStat.nlink > 1) {
+    const error = new Error(`Refusing to replace hard-linked file: ${targetPath}`) as NodeJS.ErrnoException;
+    error.code = 'EPERM';
+    throw error;
+  }
+  if (process.platform !== 'win32' && (targetStat.mode & 0o222) === 0) {
+    const error = new Error(`Target file is read-only: ${targetPath}`) as NodeJS.ErrnoException;
+    error.code = 'EACCES';
+    throw error;
+  }
+  accessSync(targetPath, constants.W_OK);
+}
+
 function writeFileAtomically(filePath: string, content: string): void {
   const linkStat = safeLstat(filePath);
   const targetPath = linkStat !== undefined ? realpathSync(filePath) : filePath;
   const targetStat = linkStat !== undefined ? statSync(targetPath) : undefined;
   if (targetStat !== undefined) {
-    if (process.platform !== 'win32' && (targetStat.mode & 0o222) === 0) {
-      const error = new Error(`Target file is read-only: ${targetPath}`) as NodeJS.ErrnoException;
-      error.code = 'EACCES';
-      throw error;
-    }
-    accessSync(targetPath, constants.W_OK);
+    assertWritableSingleLink(targetPath, targetStat);
   }
   const fileMode = targetStat !== undefined ? targetStat.mode & 0o777 || 0o600 : 0o600;
   const dir = dirname(targetPath);
@@ -137,11 +149,21 @@ function stampMigrationMarker(
   isDefaultConfig: boolean,
 ): boolean {
   try {
-    const next: ExperimentalMigrationsRecord = {
+    const latest = readMigrationsRecord(markerPath);
+    if (latest === undefined) return false;
+    const mergedBase: ExperimentalMigrationsRecord = {
       ...existing,
-      ...(isDefaultConfig ? { legacyMasterEnvTowerMigrated: true } : {}),
+      ...latest,
       legacyMasterEnvTowerMigratedConfigs: {
         ...existing.legacyMasterEnvTowerMigratedConfigs,
+        ...latest.legacyMasterEnvTowerMigratedConfigs,
+      },
+    };
+    const next: ExperimentalMigrationsRecord = {
+      ...mergedBase,
+      ...(isDefaultConfig ? { legacyMasterEnvTowerMigrated: true } : {}),
+      legacyMasterEnvTowerMigratedConfigs: {
+        ...mergedBase.legacyMasterEnvTowerMigratedConfigs,
         [configKey]: true,
       },
     };
@@ -160,6 +182,113 @@ function isExistingInstallation(
   if (safeLstat(configPath) !== undefined) return true;
   if (safeLstat(defaultConfigPath) !== undefined) return true;
   return EXISTING_INSTALL_MARKERS.some((entry) => existsSync(join(homeDir, entry)));
+}
+
+type ConfigInspectionResult =
+  | {
+      readonly kind: 'terminal';
+      readonly outcome: 'fallback-env' | 'skipped-error';
+    }
+  | {
+      readonly kind: 'already-configured';
+    }
+  | {
+      readonly kind: 'needs-migration';
+      readonly targetPath: string;
+      readonly targetStat: Stats | undefined;
+      readonly onDiskText: string | undefined;
+      readonly parsedDoc: Record<string, unknown>;
+      readonly rawExperimental: unknown;
+      readonly validatedExperimental: Record<string, boolean> | undefined;
+    };
+
+function inspectConfigForTowerMigration(
+  configPath: string,
+  masterEnv: boolean | undefined,
+): ConfigInspectionResult {
+  const failOutcome = masterEnv === true ? 'fallback-env' : 'skipped-error';
+  let configLinkStat: Stats | undefined;
+  try {
+    configLinkStat = lstatSync(configPath, { throwIfNoEntry: false });
+  } catch {
+    return { kind: 'terminal', outcome: failOutcome };
+  }
+
+  let targetPath = normalizeConfigKey(configPath);
+  let targetStat: Stats | undefined;
+  let onDiskText: string | undefined;
+  let parsedDoc: Record<string, unknown> = {};
+
+  if (configLinkStat !== undefined) {
+    try {
+      targetPath = realpathSync(configPath);
+      targetStat = statSync(targetPath);
+      onDiskText = readFileSync(targetPath, 'utf8');
+      const parsed = parseToml(onDiskText);
+      if (!isPlainObject(parsed)) {
+        return { kind: 'terminal', outcome: failOutcome };
+      }
+      parsedDoc = parsed;
+    } catch {
+      return { kind: 'terminal', outcome: failOutcome };
+    }
+  }
+
+  const rawExperimental = parsedDoc[EXPERIMENTAL_SECTION];
+  let validatedExperimental: Record<string, boolean> | undefined;
+  if (rawExperimental !== undefined) {
+    if (!isPlainObject(rawExperimental)) {
+      return { kind: 'terminal', outcome: failOutcome };
+    }
+    const parsedExperimental = ExperimentalConfigSchema.safeParse(rawExperimental);
+    if (!parsedExperimental.success) {
+      return { kind: 'terminal', outcome: failOutcome };
+    }
+    validatedExperimental = parsedExperimental.data;
+  }
+
+  if (validatedExperimental !== undefined && Object.hasOwn(validatedExperimental, TOWER_FLAG_ID)) {
+    return { kind: 'already-configured' };
+  }
+
+  return {
+    kind: 'needs-migration',
+    targetPath,
+    targetStat,
+    onDiskText,
+    parsedDoc,
+    rawExperimental,
+    validatedExperimental,
+  };
+}
+
+function buildTowerMigratedConfigText(
+  snapshot: Extract<ConfigInspectionResult, { readonly kind: 'needs-migration' }>,
+): string {
+  const nextExperimental: Record<string, unknown> = {
+    ...snapshot.validatedExperimental,
+    [TOWER_FLAG_ID]: true,
+  };
+  const nextDoc: Record<string, unknown> = {
+    ...snapshot.parsedDoc,
+    [EXPERIMENTAL_SECTION]: nextExperimental,
+  };
+  if (snapshot.onDiskText === undefined) {
+    return `${stringifyToml(nextDoc).trimEnd()}\n`;
+  }
+  return (
+    planConfigWriteback(
+      snapshot.onDiskText,
+      [
+        {
+          snakeKey: EXPERIMENTAL_SECTION,
+          previousValue: snapshot.rawExperimental,
+          nextValue: nextExperimental,
+        },
+      ],
+      nextDoc,
+    ) ?? `${stringifyToml(nextDoc).trimEnd()}\n`
+  );
 }
 
 export function migrateLegacyMasterEnvTower(
@@ -195,40 +324,11 @@ export function migrateLegacyMasterEnvTower(
       : 'skipped-error';
   }
 
-  let onDiskText: string | undefined;
-  let parsedDoc: Record<string, unknown> = {};
-  let configLinkStat: Stats | undefined;
-  try {
-    configLinkStat = lstatSync(configPath, { throwIfNoEntry: false });
-  } catch {
-    return masterEnv === true ? 'fallback-env' : 'skipped-error';
+  const initial = inspectConfigForTowerMigration(configPath, masterEnv);
+  if (initial.kind === 'terminal') {
+    return initial.outcome;
   }
-  if (configLinkStat !== undefined) {
-    try {
-      onDiskText = readFileSync(configPath, 'utf8');
-      const parsed = parseToml(onDiskText);
-      if (!isPlainObject(parsed)) {
-        return masterEnv === true ? 'fallback-env' : 'skipped-error';
-      }
-      parsedDoc = parsed;
-    } catch {
-      return masterEnv === true ? 'fallback-env' : 'skipped-error';
-    }
-  }
-
-  const rawExperimental = parsedDoc[EXPERIMENTAL_SECTION];
-  let validatedExperimental: Record<string, boolean> | undefined;
-  if (rawExperimental !== undefined) {
-    if (!isPlainObject(rawExperimental)) {
-      return masterEnv === true ? 'fallback-env' : 'skipped-error';
-    }
-    const parsedExperimental = ExperimentalConfigSchema.safeParse(rawExperimental);
-    if (!parsedExperimental.success) {
-      return masterEnv === true ? 'fallback-env' : 'skipped-error';
-    }
-    validatedExperimental = parsedExperimental.data;
-  }
-  if (validatedExperimental !== undefined && Object.hasOwn(validatedExperimental, TOWER_FLAG_ID)) {
+  if (initial.kind === 'already-configured') {
     return record !== undefined &&
       stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
       ? 'stamped-noop'
@@ -243,33 +343,105 @@ export function migrateLegacyMasterEnvTower(
     return 'fallback-env';
   }
 
-  const nextExperimental: Record<string, unknown> = {
-    ...validatedExperimental,
-    [TOWER_FLAG_ID]: true,
-  };
-  const nextDoc: Record<string, unknown> = {
-    ...parsedDoc,
-    [EXPERIMENTAL_SECTION]: nextExperimental,
-  };
-
   try {
-    const nextText =
-      onDiskText === undefined
-        ? `${stringifyToml(nextDoc).trimEnd()}\n`
-        : (planConfigWriteback(
-            onDiskText,
-            [
-              {
-                snakeKey: EXPERIMENTAL_SECTION,
-                previousValue: rawExperimental,
-                nextValue: nextExperimental,
-              },
-            ],
-            nextDoc,
-          ) ?? `${stringifyToml(nextDoc).trimEnd()}\n`);
-    writeFileAtomically(configPath, nextText);
+    if (initial.targetStat !== undefined) {
+      assertWritableSingleLink(initial.targetPath, initial.targetStat);
+    }
+    mkdirSync(dirname(initial.targetPath), { recursive: true, mode: 0o700 });
   } catch {
     return 'fallback-env';
+  }
+
+  let releaseLock: (() => void) | undefined;
+  try {
+    releaseLock = lockfile.lockSync(initial.targetPath, {
+      realpath: false,
+      lockfilePath: `${initial.targetPath}.lock`,
+    });
+  } catch {
+    return 'fallback-env';
+  }
+
+  try {
+    let committed = false;
+    for (let attempt = 0; attempt < MAX_MIGRATION_WRITE_ATTEMPTS; attempt += 1) {
+      const current = inspectConfigForTowerMigration(configPath, true);
+      if (current.kind === 'terminal') {
+        return current.outcome;
+      }
+      if (current.kind === 'already-configured') {
+        return stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
+          ? 'stamped-noop'
+          : 'skipped-error';
+      }
+      if (current.targetStat !== undefined) {
+        assertWritableSingleLink(current.targetPath, current.targetStat);
+      }
+      const nextText = buildTowerMigratedConfigText(current);
+      input.onBeforeWrite?.(attempt);
+
+      if (current.onDiskText === undefined || current.targetStat === undefined) {
+        if (safeLstat(configPath) !== undefined) {
+          continue;
+        }
+        try {
+          writeFileSync(current.targetPath, nextText, {
+            encoding: 'utf8',
+            mode: 0o600,
+            flag: 'wx',
+          });
+          committed = true;
+          break;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') {
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      const fileMode = current.targetStat.mode & 0o777 || 0o600;
+      const tempPath = `${current.targetPath}.${process.pid}.${randomUUID()}.tmp`;
+      try {
+        writeFileSync(tempPath, nextText, { encoding: 'utf8', mode: fileMode });
+        const verifyLink = safeLstat(configPath);
+        if (verifyLink === undefined) {
+          unlinkSync(tempPath);
+          continue;
+        }
+        const verifyTarget = realpathSync(configPath);
+        const verifyStat = statSync(verifyTarget);
+        assertWritableSingleLink(verifyTarget, verifyStat);
+        const verifyText = readFileSync(verifyTarget, 'utf8');
+        if (
+          verifyTarget !== current.targetPath ||
+          verifyStat.ino !== current.targetStat.ino ||
+          verifyStat.mtimeMs !== current.targetStat.mtimeMs ||
+          verifyStat.size !== current.targetStat.size ||
+          verifyText !== current.onDiskText
+        ) {
+          unlinkSync(tempPath);
+          continue;
+        }
+        renameSync(tempPath, current.targetPath);
+        committed = true;
+        break;
+      } catch (error) {
+        try {
+          unlinkSync(tempPath);
+        } catch {}
+        throw error;
+      }
+    }
+    if (!committed) {
+      return 'fallback-env';
+    }
+  } catch {
+    return 'fallback-env';
+  } finally {
+    try {
+      releaseLock?.();
+    } catch {}
   }
 
   return stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)

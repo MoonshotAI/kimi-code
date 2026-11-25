@@ -121,6 +121,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
   let metaRequestGeneration = 0;
   let metaCommittedGeneration = 0;
   let storeEpoch = 0;
+  let pendingLegacyMigrationPatch: Record<string, boolean> = {};
   let legacyLocalMigrationInFlight: Promise<void> | null = null;
 
   function syncClientExperimentalSignals(): void {
@@ -225,9 +226,13 @@ export const useConfigStore = defineStore('kimi.config', () => {
     }
   }
 
-  function runLegacyLocalExperimentalMigration(
-    plannedPatch: Record<string, boolean>,
-  ): Promise<void> {
+  function enqueueLegacyLocalExperimentalMigration(patch: Record<string, boolean>): void {
+    for (const [id, enabled] of Object.entries(patch)) {
+      if (enabled) pendingLegacyMigrationPatch[id] = true;
+    }
+  }
+
+  function drainLegacyLocalExperimentalMigration(): Promise<void> {
     if (legacyLocalMigrationInFlight !== null) {
       return legacyLocalMigrationInFlight;
     }
@@ -235,24 +240,28 @@ export const useConfigStore = defineStore('kimi.config', () => {
     let task: Promise<void> | null = null;
     task = (async () => {
       try {
-        const activePatch: Record<string, boolean> = {};
-        const keysToRemove: string[] = [];
-        for (const entry of LEGACY_LOCAL_EXPERIMENTAL_ENTRIES) {
-          if (
-            plannedPatch[entry.id] === true &&
-            safeGetString(entry.storageKey) === entry.trueLiteral
-          ) {
-            activePatch[entry.id] = true;
-            keysToRemove.push(entry.storageKey);
+        while (epochAtStart === storeEpoch) {
+          const batch = pendingLegacyMigrationPatch;
+          pendingLegacyMigrationPatch = {};
+          const activePatch: Record<string, boolean> = {};
+          const keysToRemove: string[] = [];
+          for (const entry of LEGACY_LOCAL_EXPERIMENTAL_ENTRIES) {
+            if (
+              batch[entry.id] === true &&
+              safeGetString(entry.storageKey) === entry.trueLiteral
+            ) {
+              activePatch[entry.id] = true;
+              keysToRemove.push(entry.storageKey);
+            }
           }
+          if (Object.keys(activePatch).length === 0) break;
+          const saved = await updateConfig({ experimental: activePatch });
+          if (!saved || epochAtStart !== storeEpoch) break;
+          for (const key of keysToRemove) {
+            safeRemove(key);
+          }
+          await refreshServerMeta(undefined, { fromMigration: true });
         }
-        if (Object.keys(activePatch).length === 0) return;
-        const saved = await updateConfig({ experimental: activePatch });
-        if (!saved || epochAtStart !== storeEpoch) return;
-        for (const key of keysToRemove) {
-          safeRemove(key);
-        }
-        await refreshServerMeta();
       } finally {
         if (legacyLocalMigrationInFlight === task) {
           legacyLocalMigrationInFlight = null;
@@ -263,7 +272,10 @@ export const useConfigStore = defineStore('kimi.config', () => {
     return task;
   }
 
-  async function refreshServerMeta(onError?: (error: unknown) => void): Promise<void> {
+  async function refreshServerMeta(
+    onError?: (error: unknown) => void,
+    options?: { fromMigration?: boolean },
+  ): Promise<void> {
     const api = getKimiWebApi();
     if (typeof api.getMeta !== 'function') return;
     const generation = ++metaRequestGeneration;
@@ -315,7 +327,10 @@ export const useConfigStore = defineStore('kimi.config', () => {
     homeDir.value = m.homeDir;
 
     if (Object.keys(migrationPlan.patch).length > 0) {
-      await runLegacyLocalExperimentalMigration(migrationPlan.patch);
+      enqueueLegacyLocalExperimentalMigration(migrationPlan.patch);
+      if (!options?.fromMigration) {
+        await drainLegacyLocalExperimentalMigration();
+      }
     }
   }
 
@@ -386,6 +401,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
 
   function resetConfig(): void {
     storeEpoch += 1;
+    pendingLegacyMigrationPatch = {};
     legacyLocalMigrationInFlight = null;
     config.value = null;
     serverVersion.value = '';

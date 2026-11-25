@@ -6186,9 +6186,7 @@ describe('setNotifyUserEnabled', () => {
     await Promise.resolve();
     const secondToggle = configStore().setBetaFeaturesEnabled(false);
 
-    for (let i = 0; i < 6 && resolveSecondMeta === undefined; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
+    await vi.waitFor(() => expect(resolveSecondMeta).toBeDefined());
 
     resolveSecondMeta({
       serverVersion: '1.0.0',
@@ -6287,6 +6285,83 @@ describe('setNotifyUserEnabled', () => {
     apiMock.setConfig.mockClear();
     expect(await configStore().setBetaFeaturesEnabled(true)).toBe(false);
     expect(apiMock.setConfig).not.toHaveBeenCalled();
+  });
+
+  it('drains a second legacy localStorage key added while the first migration write is in flight without deadlocking', async () => {
+    const { useContextInspector, useSessionMentions } = await import('@moonshot-ai/app-core');
+    localStorage.setItem(STORAGE_KEYS.contextInspector, 'true');
+    configStore().resetConfig();
+
+    let serverContextConfigured = false;
+    let serverMentionsConfigured = false;
+
+    apiMock.setConfig.mockImplementation(async (patch: { experimental?: Record<string, boolean> }) => {
+      if (patch.experimental?.['context_inspector'] === true) {
+        serverContextConfigured = true;
+        localStorage.setItem(STORAGE_KEYS.sessionMentions, '1');
+      }
+      if (patch.experimental?.['session_mentions'] === true) {
+        serverMentionsConfigured = true;
+      }
+      return { providers: {} };
+    });
+
+    apiMock.getMeta.mockImplementation(async () => ({
+      serverVersion: '1.0.0',
+      openInApps: [],
+      dangerousBypassAuth: false,
+      experimentalFlags: {
+        context_inspector: serverContextConfigured,
+        session_mentions: serverMentionsConfigured,
+      },
+      experimentalBeta: {
+        enabled: false,
+        source: 'default',
+        env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+      },
+      experimentalFeatures: [
+        {
+          id: 'context_inspector',
+          title: 'Context usage',
+          description: 'Context inspector',
+          env: 'KIMI_CODE_EXPERIMENTAL_CONTEXT_INSPECTOR',
+          stage: 'beta',
+          effectTiming: 'immediate',
+          enabled: serverContextConfigured,
+          active: serverContextConfigured,
+          source: serverContextConfigured ? 'config' : 'default',
+          ...(serverContextConfigured ? { configValue: true } : {}),
+        },
+        {
+          id: 'session_mentions',
+          title: 'Session mentions',
+          description: 'Session mentions',
+          env: 'KIMI_CODE_EXPERIMENTAL_SESSION_MENTIONS',
+          stage: 'experimental',
+          effectTiming: 'immediate',
+          enabled: serverMentionsConfigured,
+          active: serverMentionsConfigured,
+          source: serverMentionsConfigured ? 'config' : 'default',
+          ...(serverMentionsConfigured ? { configValue: true } : {}),
+        },
+      ],
+      backend: 'v2',
+      webTitle: '',
+      homeDir: '/tmp/home',
+    }));
+
+    await configStore().refreshServerMeta();
+
+    expect(apiMock.setConfig).toHaveBeenNthCalledWith(1, {
+      experimental: { context_inspector: true },
+    });
+    expect(apiMock.setConfig).toHaveBeenNthCalledWith(2, {
+      experimental: { session_mentions: true },
+    });
+    expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
+    expect(localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBeNull();
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
+    expect(useSessionMentions().sessionMentions.value).toBe(true);
   });
 });
 
