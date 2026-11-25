@@ -4,7 +4,7 @@ import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
-import { workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { isAncestorOrSelf, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IWorkspaceService } from '#/app/workspace/workspace';
@@ -186,45 +186,40 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     this.projectRoot = onDisk.projectRoot;
     this.configPath = onDisk.configPath;
 
-    if (persist) {
-      const resolved = await this.localConfig.resolveAdditionalDirs(this.primary, [
-        input.path,
-      ]);
-      const dir = resolved[0];
-      if (dir === undefined) {
-        throw new Error(`additional dir ${input.path} did not resolve`);
-      }
-      const existing = await this.workspaces.get(this.workspace.workspaceId);
-      const target = existing ?? (await this.workspaces.createOrTouch(this.workspace.cwd));
-      const dirKey = workspaceRootKey(dir);
-      const inSet =
-        workspaceRootKey(target.root) === dirKey ||
-        target.additionalDirs.some((kept) => workspaceRootKey(kept) === dirKey);
-      if (!inSet) {
-        await this.workspaces.update(target.id, {
-          additionalDirs: [...target.additionalDirs, dir],
-        });
-        await this.reloadWorkspace(true);
-      }
-      return {
-        projectRoot: onDisk.projectRoot,
-        configPath: onDisk.configPath,
-        additionalDirs: this.additionalDirs,
-        persisted: true,
-      };
-    }
-
     const resolved = await this.localConfig.resolveAdditionalDirs(this.primary, [
       input.path,
     ]);
-    const changed = this.unionEphemeral(resolved);
-    if (changed) this.fireChange();
+    const persisted = persist && (await this.registerDir(input.path, resolved[0]));
+    const unshared = persist ? resolved.filter((dir) => !this.sharesDir(dir)) : resolved;
+    if (this.unionEphemeral(unshared)) this.fireChange();
     return {
       projectRoot: onDisk.projectRoot,
       configPath: onDisk.configPath,
       additionalDirs: this.additionalDirs,
-      persisted: false,
+      persisted,
     };
+  }
+
+  private async registerDir(path: string, dir: string | undefined): Promise<boolean> {
+    if (dir === undefined) {
+      throw new Error(`additional dir ${path} did not resolve`);
+    }
+    const { workspaceId, cwd } = this.workspace;
+    const target = (await this.workspaces.get(workspaceId)) ?? (await this.workspaces.reviveImplicit(workspaceId, cwd));
+    const dirKey = workspaceRootKey(dir);
+    if (workspaceRootKey(target.root) === dirKey || workspaceRootKey(this.workspace.cwd) === dirKey) return this.sharesDir(dir);
+    if (!target.additionalDirs.some((kept) => workspaceRootKey(kept) === dirKey)) {
+      await this.workspaces.update(target.id, {
+        additionalDirs: [...target.additionalDirs, dir],
+      });
+      await this.reloadWorkspace(true);
+    }
+    return true;
+  }
+
+  private sharesDir(dir: string): boolean {
+    const dirKey = workspaceRootKey(dir);
+    return [this.primary, ...this.sharedAdditionalDirs].some((shared) => workspaceRootKey(shared) === dirKey);
   }
 
   private async reloadFromDisk(): Promise<void> {
@@ -252,15 +247,23 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
           ? registered
           : [current, ...registered.filter((entry) => entry.id !== current.id)];
     const cwdKey = workspaceRootKey(this.workspace.cwd);
+    const local = this.environmentId === LOCAL_ENVIRONMENT_ID;
     const dirs: string[] = [];
     const primary: Record<string, string> = {};
     for (const entry of entries) {
+      const ownEntry = entry.id === this.workspace.workspaceId;
+      if (!ownEntry && entry.kind === 'managed') continue;
       const set = [entry.root, ...entry.additionalDirs];
-      const currentEntry =
-        this.followsPrimary &&
-        this.environmentId === LOCAL_ENVIRONMENT_ID &&
-        entry.id === this.workspace.workspaceId;
-      if (!currentEntry && !set.some((dir) => workspaceRootKey(dir) === cwdKey)) continue;
+      const currentEntry = this.followsPrimary && local && ownEntry;
+      const cwdRegistered = set.some((dir) => workspaceRootKey(dir) === cwdKey);
+      if (!currentEntry && (!cwdRegistered || !isAncestorOrSelf(entry.root, this.workspace.cwd))) {
+        const inRepository = ownEntry && local && (await this.workspaces.acceptsWorkDir(entry, this.workspace.cwd));
+        if (inRepository) {
+          dirs.push(...entry.additionalDirs.filter((dir) => workspaceRootKey(dir) !== cwdKey));
+          continue;
+        }
+        if (!cwdRegistered) continue;
+      }
       primary[entry.id] = entry.root;
       const primaryKey = workspaceRootKey(entry.root);
       for (const dir of set) {

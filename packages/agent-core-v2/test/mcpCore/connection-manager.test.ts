@@ -26,7 +26,12 @@ import { z } from 'zod';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Error2 } from '#/errors';
-import { KIMI_MCP_CLIENT_NAME } from '#/mcpCore/client-shared';
+import { HttpMcpClient } from '#/mcpCore/client-http';
+import {
+  KIMI_MCP_CLIENT_NAME,
+  McpToolListChangeSource,
+  type SessionEvidenceListener,
+} from '#/mcpCore/client-shared';
 import { McpConnectionManager, type McpConnectionManagerOptions, type McpServerEntry } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { StoredMcpOAuthTokens } from '#/mcpCore/oauth/provider';
@@ -76,6 +81,7 @@ import {
   slowStdioFixture,
   slowToolStdioFixture,
   startAnonymousDiscoveryHttpMcpServer,
+  startInProcessHttpMcpServer,
   stderrThenExitFixture,
   stdioFixture,
 } from './stubs';
@@ -129,6 +135,238 @@ describe('McpConnectionManager', () => {
       await cm.shutdown();
     }
   }, 20000);
+
+  it('refreshes a connected server after tool additions, updates, and removals', async () => {
+    const server = await startInProcessHttpMcpServer();
+    const cm = createManager();
+    try {
+      await cm.connect('remote', { transport: 'http', url: server.url });
+      expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual(['echo']);
+
+      const statuses: McpServerEntry[] = [];
+      cm.onStatusChange((entry) => {
+        if (entry.name === 'remote') statuses.push(entry);
+      });
+      const added = server.mcpServer.registerTool(
+        'added',
+        { description: 'Initial description', inputSchema: {} },
+        () => ({ content: [{ type: 'text', text: 'added' }] }),
+      );
+      await vi.waitFor(() => {
+        expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual(['echo', 'added']);
+        expect(cm.get('remote')?.toolCount).toBe(2);
+        expect(statuses).toHaveLength(1);
+      });
+
+      statuses.length = 0;
+      added.update({ description: 'Updated description' });
+      await vi.waitFor(() => {
+        expect(
+          cm.resolved('remote')?.tools.find((tool) => tool.name === 'added')?.description,
+        ).toBe('Updated description');
+        expect(statuses).toHaveLength(1);
+      });
+
+      statuses.length = 0;
+      added.remove();
+      await vi.waitFor(() => {
+        expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual(['echo']);
+        expect(cm.get('remote')?.toolCount).toBe(1);
+        expect(statuses).toHaveLength(1);
+      });
+    } finally {
+      await cm.shutdown();
+      await server.close();
+    }
+  }, 15000);
+
+  it('refreshes tools when a notification arrives during initial discovery', async () => {
+    let notify: (() => void) | undefined;
+    const subscribe = vi
+      .spyOn(McpToolListChangeSource.prototype, 'onToolsChanged')
+      .mockImplementation((listener) => {
+        notify = listener;
+      });
+    const connect = vi.spyOn(HttpMcpClient.prototype, 'connect').mockResolvedValue();
+    const echo = { name: 'echo', description: 'Echo', inputSchema: { type: 'object' as const } };
+    const added = { name: 'added', description: 'Added', inputSchema: { type: 'object' as const } };
+    let currentTools = [echo];
+    const listTools = vi.spyOn(HttpMcpClient.prototype, 'listTools').mockImplementation(async () => {
+      const discovered = currentTools;
+      if (discovered.length > 1) return discovered;
+      currentTools = [...discovered, added];
+      notify?.();
+      return discovered;
+    });
+    const cm = createManager();
+    try {
+      await cm.connect('remote', { transport: 'http', url: 'https://example.test/mcp' });
+      await vi.waitFor(() => {
+        expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual(['echo', 'added']);
+      });
+      expect(subscribe).toHaveBeenCalledTimes(1);
+      expect(listTools).toHaveBeenCalledTimes(2);
+    } finally {
+      await cm.shutdown();
+      connect.mockRestore();
+      listTools.mockRestore();
+      subscribe.mockRestore();
+    }
+  });
+
+  it('retains refreshed tools when weak session evidence arrives during tool discovery', async () => {
+    let notify: (() => void) | undefined;
+    let emitEvidence: SessionEvidenceListener | undefined;
+    const subscribe = vi
+      .spyOn(McpToolListChangeSource.prototype, 'onToolsChanged')
+      .mockImplementation((listener) => {
+        notify = listener;
+      });
+    const sessionEvidence = vi
+      .spyOn(HttpMcpClient.prototype, 'onSessionEvidence')
+      .mockImplementation((listener) => {
+        emitEvidence = listener;
+      });
+    const connect = vi.spyOn(HttpMcpClient.prototype, 'connect').mockResolvedValue();
+    let releaseProbe = (): void => {};
+    const probeGate = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    const ping = vi.spyOn(HttpMcpClient.prototype, 'ping').mockImplementation(() => probeGate);
+    const echo = { name: 'echo', description: 'Echo', inputSchema: { type: 'object' as const } };
+    const added = { name: 'added', description: 'Added', inputSchema: { type: 'object' as const } };
+    let currentTools = [echo];
+    let releaseRefresh = (): void => {};
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    let markRefreshStarted = (): void => {};
+    const refreshStarted = new Promise<void>((resolve) => {
+      markRefreshStarted = resolve;
+    });
+    let listCalls = 0;
+    const listTools = vi.spyOn(HttpMcpClient.prototype, 'listTools').mockImplementation(async () => {
+      listCalls += 1;
+      if (listCalls === 1) return currentTools;
+      markRefreshStarted();
+      await refreshGate;
+      return currentTools;
+    });
+    const cm = createManager();
+    const tails = (cm as unknown as { operationTails: Map<string, Promise<void>> }).operationTails;
+    try {
+      await cm.connect('remote', { transport: 'http', url: 'https://example.test/mcp' });
+      expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual(['echo']);
+
+      currentTools = [echo, added];
+      notify?.();
+      await refreshStarted;
+      emitEvidence?.({ kind: 'weak', reason: { error: new Error('stream reconnect exhausted') } });
+      releaseRefresh();
+      await vi.waitFor(() => {
+        expect(ping).toHaveBeenCalledTimes(1);
+      });
+      const drain = tails.get('remote');
+      releaseProbe();
+      await drain;
+
+      expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual(['echo', 'added']);
+      expect(cm.get('remote')?.toolCount).toBe(2);
+      expect(ping).toHaveBeenCalledTimes(1);
+      expect(listTools).toHaveBeenCalledTimes(2);
+    } finally {
+      releaseRefresh();
+      releaseProbe();
+      await cm.shutdown();
+      connect.mockRestore();
+      ping.mockRestore();
+      listTools.mockRestore();
+      sessionEvidence.mockRestore();
+      subscribe.mockRestore();
+    }
+  });
+
+  it('coalesces burst tool change notifications into at most one trailing refresh', async () => {
+    let notify: (() => void) | undefined;
+    const subscribe = vi
+      .spyOn(McpToolListChangeSource.prototype, 'onToolsChanged')
+      .mockImplementation((listener) => {
+        notify = listener;
+      });
+    const connect = vi.spyOn(HttpMcpClient.prototype, 'connect').mockResolvedValue();
+    const echo = { name: 'echo', description: 'Echo', inputSchema: { type: 'object' as const } };
+    const added = { name: 'added', description: 'Added', inputSchema: { type: 'object' as const } };
+    const third = { name: 'third', description: 'Third', inputSchema: { type: 'object' as const } };
+    let currentTools = [echo];
+    let releaseRefresh = (): void => {};
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    let markRefreshStarted = (): void => {};
+    const refreshStarted = new Promise<void>((resolve) => {
+      markRefreshStarted = resolve;
+    });
+    let releaseTrailing = (): void => {};
+    const trailingGate = new Promise<void>((resolve) => {
+      releaseTrailing = resolve;
+    });
+    let markTrailingStarted = (): void => {};
+    const trailingStarted = new Promise<void>((resolve) => {
+      markTrailingStarted = resolve;
+    });
+    let listCalls = 0;
+    const listTools = vi.spyOn(HttpMcpClient.prototype, 'listTools').mockImplementation(async () => {
+      listCalls += 1;
+      if (listCalls === 1) return currentTools;
+      if (listCalls === 2) {
+        markRefreshStarted();
+        await refreshGate;
+        return currentTools;
+      }
+      markTrailingStarted();
+      await trailingGate;
+      return currentTools;
+    });
+    const cm = createManager();
+    const tails = (cm as unknown as { operationTails: Map<string, Promise<void>> }).operationTails;
+    const statuses: McpServerEntry[] = [];
+    cm.onStatusChange((entry) => {
+      if (entry.name === 'remote') statuses.push(entry);
+    });
+    try {
+      await cm.connect('remote', { transport: 'http', url: 'https://example.test/mcp' });
+      expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual(['echo']);
+      statuses.length = 0;
+
+      currentTools = [echo, added];
+      notify?.();
+      await refreshStarted;
+      currentTools = [echo, added, third];
+      notify?.();
+      notify?.();
+      notify?.();
+      releaseRefresh();
+      await trailingStarted;
+      const drain = tails.get('remote');
+      releaseTrailing();
+      await drain;
+
+      expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual([
+        'echo',
+        'added',
+        'third',
+      ]);
+      expect(listTools).toHaveBeenCalledTimes(3);
+      expect(statuses).toHaveLength(2);
+    } finally {
+      releaseRefresh();
+      releaseTrailing();
+      await cm.shutdown();
+      connect.mockRestore();
+      listTools.mockRestore();
+      subscribe.mockRestore();
+    }
+  });
 
   it('isolates permanent startup and discovery failures without retry or blocking the rest', async () => {
     const statuses: string[] = [];

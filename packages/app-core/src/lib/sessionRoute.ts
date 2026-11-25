@@ -3,6 +3,8 @@ export type SessionUrlMode = 'push' | 'replace' | 'none';
 
 const SESSION_PATH_PREFIX = '/sessions/';
 
+const SESSION_LINK_PREFIX = 'kimi-code://sessions/';
+
 export const SESSION_ADMIN_PATH = '/admin/sessions';
 
 export function isSessionAdminLocation(loc: Pick<Location, 'pathname'>): boolean {
@@ -26,4 +28,8 @@ export function sessionUrl(sessionId: string | undefined): string {
   return sessionId === undefined || sessionId.length === 0
     ? '/'
     : `${SESSION_PATH_PREFIX}${encodeURIComponent(sessionId)}`;
+}
+
+export function sessionLink(sessionId: string): string {
+  return `${SESSION_LINK_PREFIX}${encodeURIComponent(sessionId)}`;
 }

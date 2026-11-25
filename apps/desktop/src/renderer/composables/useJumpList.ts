@@ -8,7 +8,10 @@ export interface JumpListWorkspaceEntry {
 
 const MAX_ENTRIES = 9;
 
-export type LaunchActionPayload = { action: 'new-chat' } | { action: 'open-workspace'; root: string; newChat?: boolean };
+export type LaunchActionPayload =
+  | { action: 'new-chat' }
+  | { action: 'open-workspace'; root: string; newChat?: boolean }
+  | { action: 'open-session'; sessionId: string };
 
 interface JumpListBridge {
   setJumpList?: (workspaces: JumpListWorkspaceEntry[]) => void;

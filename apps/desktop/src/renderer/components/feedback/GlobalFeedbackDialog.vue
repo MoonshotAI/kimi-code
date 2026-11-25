@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, ref, shallowRef, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useFontPrefs } from '@moonshot-ai/app-core';
 import { Button, Checkbox, Dialog, IconButton, Pill, Textarea } from '@moonshot-ai/app-ui';
 import { canCollectFeedbackDiagnostics } from '../../lib/feedbackDiagnostics';
 import {
@@ -19,7 +18,6 @@ import { addFeedbackMedia, FEEDBACK_MEDIA_LIMIT, type FeedbackMedia } from './fe
 const props = defineProps<{ target: GlobalFeedbackTarget | null; supportsSessionUpload: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 const { t, locale } = useI18n();
-const { fontPrefs } = useFontPrefs();
 const feedback = inject(DesktopFeedbackKey);
 const descriptionId = useId();
 const categories = ['bug', 'suggestion', 'other'] as const;
@@ -174,7 +172,6 @@ async function submit(): Promise<void> {
   >
     <form
       class="global-feedback-form"
-      :class="{ 'global-feedback-default-font': fontPrefs.ui.mode === 'kimi' }"
       :lang="locale"
       tabindex="-1"
       @paste="pasteMedia"

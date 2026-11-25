@@ -711,4 +711,123 @@ describe('filesStore searchFiles', () => {
     );
     expect(apiMock.suggestFiles).not.toHaveBeenCalled();
   });
+
+  describe('for a selected session', () => {
+    const request = [{ query: 'notes', limit: 20 }, { signal: undefined }];
+    const inProject = { items: [{ path: 'src/in-project.txt', name: 'in-project.txt', kind: 'file' }], truncated: false };
+    const atRoots = {
+      items: [
+        { path: 'in-session.txt', name: 'in-session.txt', kind: 'file' },
+        { path: '/shared/extra.txt', name: 'extra.txt', kind: 'file' },
+      ],
+      truncated: false,
+    };
+
+    function selectSession(cwd: string, session: Record<string, unknown> = {}): void {
+      sessionsStore().setSessions([{ id: 's1', workspaceId: 'wd_repo', cwd, ...session } as never]);
+      sessionsStore().setActiveSessionId('s1');
+    }
+
+    async function suggestedPaths(): Promise<string[]> {
+      return (await filesStore().searchFiles('notes')).map((item) => item.path);
+    }
+
+    beforeEach(() => {
+      filesStore().resetFilesSearch();
+      workspacesStore().hiddenWorkspaceIds = [];
+      workspacesStore().workspaces = [
+        { id: 'wd_repo', root: '/repo', name: 'repo', kind: 'implicit', additionalDirs: ['/shared'], sessionCount: 2 },
+      ];
+      apiMock.suggestFiles.mockResolvedValue(inProject);
+      apiMock.suggestFilesAtRoots.mockResolvedValue(atRoots);
+    });
+
+    it.each([
+      ['a worktree', '/repo-fix', ['/repo-fix', '/shared']],
+      ['a subdirectory of the project', '/repo/src', ['/repo/src', '/shared']],
+      ['a directory that used to be the project root and is still registered', '/shared', ['/shared', '/repo']],
+    ])('completes from the working directory of a session in %s', async (_label, cwd, roots) => {
+      selectSession(cwd);
+
+      expect(await suggestedPaths()).toEqual(['in-session.txt', '/shared/extra.txt']);
+      expect(apiMock.suggestFilesAtRoots).toHaveBeenCalledExactlyOnceWith(roots, ...request);
+      expect(apiMock.suggestFiles).not.toHaveBeenCalled();
+    });
+
+    it.each(['/repo', '/repo/'])('asks for the project when the session runs in its root, spelled %s', async (cwd) => {
+      selectSession(cwd);
+
+      expect(await suggestedPaths()).toEqual(['src/in-project.txt']);
+      expect(apiMock.suggestFiles).toHaveBeenCalledExactlyOnceWith('wd_repo', ...request);
+      expect(apiMock.suggestFilesAtRoots).not.toHaveBeenCalled();
+    });
+
+    it('asks for the project on the draft page even though its sessions run elsewhere', async () => {
+      selectSession('/repo-fix');
+      sessionsStore().setActiveSessionId(undefined);
+      workspacesStore().selectWorkspace('wd_repo');
+
+      expect(await suggestedPaths()).toEqual(['src/in-project.txt']);
+      expect(apiMock.suggestFilesAtRoots).not.toHaveBeenCalled();
+    });
+
+    it('completes from the working directory alone while the project of the session is not listed', async () => {
+      workspacesStore().workspaces = [];
+      selectSession('/repo-fix');
+
+      expect(await suggestedPaths()).toEqual(['in-session.txt', '/shared/extra.txt']);
+      expect(apiMock.suggestFilesAtRoots).toHaveBeenCalledExactlyOnceWith(['/repo-fix'], ...request);
+    });
+
+    it('completes from the working directory when its only additional directory is rejected', async () => {
+      apiMock.suggestFilesAtRoots.mockImplementation(async (roots: readonly string[]) => {
+        if (roots.includes('/shared')) throw new DaemonApiError({ code: 40409, msg: 'root not found: /shared', requestId: 'r1' });
+        return atRoots;
+      });
+      selectSession('/repo-fix');
+
+      expect(await suggestedPaths()).toEqual(['in-session.txt', '/shared/extra.txt']);
+      expect(apiMock.suggestFilesAtRoots.mock.calls.map(([roots]) => roots)).toEqual([['/repo-fix', '/shared'], ['/shared'], ['/repo-fix']]);
+    });
+
+    it('keeps the other additional directories when one of them is gone', async () => {
+      workspacesStore().workspaces = [
+        { id: 'wd_repo', root: '/repo', name: 'repo', kind: 'implicit', additionalDirs: ['/gone', '/shared'], sessionCount: 2 },
+      ];
+      apiMock.suggestFilesAtRoots.mockImplementation(async (roots: readonly string[]) => {
+        if (roots.includes('/gone')) throw new DaemonApiError({ code: 40409, msg: 'root not found: /gone', requestId: 'r1' });
+        return atRoots;
+      });
+      selectSession('/repo-fix');
+
+      expect(await suggestedPaths()).toEqual(['in-session.txt', '/shared/extra.txt']);
+      expect(apiMock.suggestFilesAtRoots.mock.calls.at(-1)).toEqual([['/repo-fix', '/shared'], ...request]);
+    });
+
+    it('suggests nothing when the working directory is gone', async () => {
+      apiMock.suggestFilesAtRoots.mockRejectedValue(
+        new DaemonApiError({ code: 40409, msg: 'root not found: /repo-fix', requestId: 'r1' }),
+      );
+      selectSession('/repo-fix');
+
+      expect(await suggestedPaths()).toEqual([]);
+      expect(apiMock.suggestFiles).not.toHaveBeenCalled();
+    });
+
+    it('asks the SSH host that runs the session', async () => {
+      const remote = { suggestFilesAtRoots: vi.fn().mockResolvedValue(atRoots) };
+      setKimiClientDeps({
+        api: () => ({ ...apiMock, deviceApi: (hostId?: string) => (hostId === 'devbox' ? remote : apiMock) }) as unknown as KimiWebApi,
+        t: (key) => key,
+      });
+      workspacesStore().workspaces = [
+        { id: 'wm_remote', root: '/home/me/repo', name: 'repo', kind: 'managed', additionalDirs: [], sessionCount: 1, hostId: 'devbox' },
+      ];
+      selectSession('/home/me/repo-fix', { workspaceId: 'wm_remote', hostId: 'devbox' });
+
+      expect(await suggestedPaths()).toEqual(['in-session.txt', '/shared/extra.txt']);
+      expect(remote.suggestFilesAtRoots).toHaveBeenCalledExactlyOnceWith(['/home/me/repo-fix'], ...request);
+      expect(apiMock.suggestFilesAtRoots).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -16,6 +16,7 @@ import { CLI_BUILD_ENV, KIMI_SERVICE_URL, kimiCliBuild, kimiCliCommand, kimiCliE
 import { kimiConfigToml, mergeKimiConfig } from '#/fixtures/config';
 import { expectGolden, jsonDifferences, REFRESH_ENV, stableJson } from '#/fixtures/golden';
 import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, UNIT_TEST_SWITCHES } from '#/fixtures/env';
+import { bashPathOf, createGitWorktree } from '#/fixtures/git';
 import { createTestHome, osHomeEnv, type TestHome } from '#/fixtures/home';
 import { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
 import { installNetworkGuard, isLoopback, tcpTargetOf } from '#/fixtures/network';
@@ -34,6 +35,38 @@ async function startScript(home: TestHome, source: string, options: Partial<Star
   await writeFile(entry, `import { connect } from 'node:net';\n${source}\n`);
   return TestProcess.start({ label: 'probe', command: { entry }, cwd: home.workspace, env: testEnv(), logDir: home.root, ...options });
 }
+
+describe('bashPathOf', () => {
+  it('spells a Windows path the way Git Bash prints the working directory', () => {
+    expect(bashPathOf('C:\\Users\\me\\app', 'win32')).toBe('/c/Users/me/app');
+    expect(bashPathOf('D:/work/app', 'win32')).toBe('/d/work/app');
+  });
+
+  it('keeps a POSIX path as it is', () => {
+    expect(bashPathOf('/tmp/app', 'linux')).toBe('/tmp/app');
+    expect(bashPathOf('/private/var/app', 'darwin')).toBe('/private/var/app');
+  });
+});
+
+describe('createGitWorktree', () => {
+  it('commits the given files in the main checkout and checks them out in a linked worktree', async () => {
+    const home = await createTestHome('git-worktree');
+    try {
+      const layout = {
+        main: join(home.workspace, 'app'),
+        worktree: join(home.workspace, 'app-fix'),
+      };
+
+      expect(await createGitWorktree(layout, { files: { 'src/tracked.txt': 'one\n' } })).toEqual(layout);
+
+      expect(await readFile(join(layout.worktree, 'src', 'tracked.txt'), 'utf8')).toBe('one\n');
+      expect(await readFile(join(layout.worktree, '.git'), 'utf8')).toMatch(/^gitdir: .*worktrees[\\/]app-fix\s*$/);
+      expect(existsSync(join(layout.main, '.git', 'HEAD'))).toBe(true);
+    } finally {
+      await home.remove();
+    }
+  });
+});
 
 describe('TestProcess', () => {
   it('refuses to start an entry that does not exist', async () => {

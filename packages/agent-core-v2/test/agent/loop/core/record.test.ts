@@ -135,7 +135,7 @@ describe('loop record', () => {
     settleBackground?.({ content: [{ type: 'text', text: 'background stopped' }] });
     await first;
     await closingIdle;
-    expect(turnEndEvents.every((ended) => ended.loopEnd === undefined)).toBe(true);
+    expect(turnEndEvents.every((ended) => ended.continuation === undefined)).toBe(true);
     const closed = fold([...records, ...live]);
     expect(closed.unfinished).toBeUndefined();
     expect(closed.turns.at(-1)).toMatchObject({ turnId: 2, outcome: { type: 'aborted', reason: { reason: 'closed' } } });
@@ -178,9 +178,9 @@ describe('loop record', () => {
     expect(after[4]).toMatchObject({ turnId: 2, outcome: { type: 'aborted', reason: { reason: 'crashed' } } });
     expect(after[6]).toMatchObject({ type: 'turn.started' });
     await recovered.waitForIdle();
-    expect(recoveredEnds.map((ended) => [ended.turnId, ended.loopEnd?.outcome])).toEqual([
-      [2, undefined],
-      [3, 'idle'],
+    expect(recoveredEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([
+      [2, 'turn'],
+      [3, 'none'],
     ]);
     const resumed = fold([...prefix, ...after]);
     expect(resumed.unfinished).toBeUndefined();

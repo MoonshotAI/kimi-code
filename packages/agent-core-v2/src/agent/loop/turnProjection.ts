@@ -136,7 +136,7 @@ type MutableTurn = {
   -readonly [K in keyof Turn]: Turn[K];
 };
 
-type TurnLoopEnd = Extract<LoopEmitted, { type: 'turn.ended' }>['loopEnd'];
+type TurnContinuation = Extract<LoopEmitted, { type: 'turn.ended' }>['continuation'];
 
 export interface TurnProjectionOptions {
   readonly attribution: ISessionRequestAttributionService;
@@ -715,7 +715,7 @@ export class AgentTurnProjection {
         }
         const turn = this.active;
         if (turn === undefined) return;
-        return this.finishTurn(turn, outcome, event.loopEnd);
+        return this.finishTurn(turn, outcome, event.continuation);
       }
       case 'prompt.notified':
       case 'prompt.steered': {
@@ -847,12 +847,12 @@ export class AgentTurnProjection {
     }));
   }
 
-  private async finishTurn(turn: ActiveTurn, outcome: Extract<LoopEmitted, { type: 'turn.ended' }>['outcome'], loopEnd?: TurnLoopEnd): Promise<void> {
+  private async finishTurn(turn: ActiveTurn, outcome: Extract<LoopEmitted, { type: 'turn.ended' }>['outcome'], continuation?: TurnContinuation): Promise<void> {
     if (this.active !== turn) return;
     if (turn.abortReason !== undefined || turn.controller.signal.aborted || outcome.type === 'aborted') {
       const reason = turn.abortReason ?? (turn.controller.signal.aborted ? turn.controller.signal.reason : undefined) ?? abortError('Turn aborted');
       this.interruptRunForCancel(turn, reason);
-      await this.endTurn(turn, { type: 'cancelled', steps: turn.steps, reason }, undefined, loopEnd);
+      await this.endTurn(turn, { type: 'cancelled', steps: turn.steps, reason }, undefined, continuation);
       return;
     }
     if (turn.filtered) {
@@ -863,25 +863,25 @@ export class AgentTurnProjection {
           name: 'ProviderFilteredError',
           details: { finishReason: 'filtered' },
         }),
-      }, undefined, loopEnd);
+      }, undefined, continuation);
       return;
     }
     if (turn.maxStepsError !== undefined || (outcome.type !== 'failed' && outcome.cause?.reason === MAX_STEPS_REASON)) {
       const error = turn.maxStepsError ?? createMaxStepsExceededError(this.options.maxSteps() ?? 0);
       this.failStep(turn.id, turn.interruptStep, error);
-      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, loopEnd);
+      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, continuation);
       return;
     }
     if (outcome.type === 'failed' || turn.failedStep !== undefined) {
       const error = turn.failedStep?.error ?? (outcome.type === 'failed' ? outcome.error : undefined) ?? new Error('Turn failed');
       this.failStep(turn.id, turn.interruptStep, error);
-      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, loopEnd);
+      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, continuation);
       return;
     }
     if (outcome.type === 'blocked') {
       const error = new Error2(ErrorCodes.INTERNAL, outcome.cause.message ?? outcome.cause.reason);
       this.failStep(turn.id, turn.interruptStep, error);
-      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, loopEnd);
+      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, continuation);
       return;
     }
     const result: LoopRunResult = {
@@ -890,7 +890,7 @@ export class AgentTurnProjection {
       truncated: turn.lastStopReason === 'truncated',
       stopReason: this.promptOnlyTurnIds.has(turn.id) ? 'prompt_only' : turn.forcedStopReason,
     };
-    await this.endTurn(turn, result, this.promptOnlyTurnIds.has(turn.id), loopEnd);
+    await this.endTurn(turn, result, this.promptOnlyTurnIds.has(turn.id), continuation);
   }
 
   private failStep(turnId: number, step: number | undefined, error: unknown): void {
@@ -908,7 +908,7 @@ export class AgentTurnProjection {
     }
   }
 
-  private async endTurn(turn: ActiveTurn, result: TurnResult, promptOnly = false, loopEnd?: TurnLoopEnd): Promise<void> {
+  private async endTurn(turn: ActiveTurn, result: TurnResult, promptOnly = false, continuation?: TurnContinuation): Promise<void> {
     if (this.active !== turn) return;
     this.lastResultValue = result;
     this.active = undefined;
@@ -936,7 +936,7 @@ export class AgentTurnProjection {
       requestId,
       replyModel: modelSteps !== undefined && turn.replyModel?.requestId === requestId ? turn.replyModel?.model : undefined,
       modelSteps,
-      loopEnd,
+      continuation,
     }));
     if (error !== undefined) void this.options.dispatcher.dispatch(new AgentErrorEvent({ ...error, agentId: this.options.scopeContext.agentId }));
     this.options.prompts.complete(turn.id, result);

@@ -126,9 +126,11 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     const api = getKimiWebApi();
     const request = { cwd: ws.root, model };
     const workspaceId = ws.id === ws.root ? undefined : ws.id;
+    const rootIsListed = workspacesStore().workspaces.some((w) => w.id === ws.id);
+    const cwd = workspaceId === undefined || rootIsListed ? ws.root : undefined;
     let session: AppSession;
     try {
-      session = await api.createSession({ ...request, workspaceId });
+      session = await api.createSession({ ...request, cwd, workspaceId });
     } catch (err) {
       if (!isDaemonApiError(err) || err.code !== WORKSPACE_NOT_FOUND_CODE) throw err;
       session = await api.createSession({ ...request, workspaceId: undefined });

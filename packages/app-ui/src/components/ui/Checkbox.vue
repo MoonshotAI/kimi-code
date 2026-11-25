@@ -48,6 +48,8 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
     border-color var(--duration-base) var(--ease-out);
 }
 .ui-check.is-on .ui-check__box { background: var(--ui-check-background, var(--color-accent)); border-color: var(--color-accent); }
+.ui-check__input:focus,
+.ui-check__input:focus-visible { outline: none; }
 .ui-check__input:focus-visible + .ui-check__box { box-shadow: var(--p-focus-ring); }
 .ui-check__box svg { width: 12px; height: 12px; visibility: hidden; }
 .ui-check.is-on .ui-check__box svg { visibility: visible; }

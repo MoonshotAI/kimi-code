@@ -37,6 +37,7 @@ describe('SessionLifecycleService', () => {
       fs: {},
       instructions: { sessionProvider: () => ({}) },
       agentProfiles: { ready },
+      configuredSources: { contextKey: 'local:/workspace:configured', explicitAgentProfiles: { ready }, extraAgentProfiles: { ready } },
       mcp: { sessionHandle: () => ({}) },
       dispose: vi.fn(),
     };
@@ -66,8 +67,6 @@ describe('SessionLifecycleService', () => {
         undefined,
         noopTelemetryService,
         undefined,
-        { ready },
-        { ready },
         { ready },
         { ready },
         undefined,

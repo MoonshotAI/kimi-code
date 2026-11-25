@@ -14,6 +14,7 @@ export default {
   openPr: 'Open pull request',
   options: 'Options',
   copySessionId: 'Copy session ID',
+  copySessionLink: 'Copy session link',
   pinSession: 'Pin',
   unpinSession: 'Unpin',
   renameSession: 'Rename',

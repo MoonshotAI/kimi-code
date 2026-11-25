@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
-import { existsSync, statSync } from 'node:fs';
 import { mkdir, rm, rmdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { effectiveModelAlias, type KimiConfig } from '@moonshot-ai/kimi-code-sdk';
-import { importedSessionDir, writeImportedSession } from '@moonshot-ai/migration-legacy';
+import { effectiveModelAlias, type KimiConfig, type KimiHarness } from '@moonshot-ai/kimi-code-sdk';
+import { importedSessionDir, isSessionImported, writeImportedSession } from '@moonshot-ai/migration-legacy';
 import { convertSession, DEFAULT_IMPORT_RATIO, findSessions, type SessionCandidate } from '@moonshot-ai/session-import';
+
+import { isDirectory } from '#/utils/session-directory';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FALLBACK_CONTEXT_WINDOW = 131_072;
@@ -57,7 +58,7 @@ export interface ImportReport {
 }
 
 export interface ImportOptions extends ImportBudget {
-  readonly kimiHome: string;
+  readonly harness: Pick<KimiHarness, 'homeDir' | 'resolveSessionPlacement'>;
   readonly now: number;
   readonly onProgress?: (progress: ImportProgress) => void;
   readonly shouldStop?: () => boolean;
@@ -97,18 +98,6 @@ export function importBudget(config: Pick<KimiConfig, 'defaultModel' | 'models' 
   return { contextWindow, tokenBudget: Math.floor(Math.min(contextWindow * DEFAULT_IMPORT_RATIO, allowance)) };
 }
 
-function isImported(kimiHome: string, workDir: string, sessionId: string): boolean {
-  return existsSync(join(importedSessionDir(kimiHome, workDir, sessionId), 'state.json'));
-}
-
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 export async function scanImportableSessions(input: {
   readonly kimiHome: string;
   readonly claudeHome: string;
@@ -121,7 +110,7 @@ export async function scanImportableSessions(input: {
   let missingFolder = 0;
   for (const session of await findSessions({ claudeHome: input.claudeHome, codexHome: input.codexHome, since })) {
     const sessionId = importedSessionId(session);
-    if (isImported(input.kimiHome, session.cwd, sessionId)) alreadyImported++;
+    if (isSessionImported(input.kimiHome, sessionId)) alreadyImported++;
     else if (!isDirectory(session.cwd)) missingFolder++;
     else candidates.push({ ...session, sessionId });
   }
@@ -140,11 +129,14 @@ async function discard(sessionDir: string): Promise<void> {
 type Outcome = 'imported' | 'alreadyImported' | 'missingFolder' | 'inUse' | 'empty' | 'unsupported' | ImportFailure;
 
 async function importOne(candidate: ImportCandidate, options: ImportOptions): Promise<Outcome> {
+  const { harness } = options;
   if (!isDirectory(candidate.cwd)) return 'missingFolder';
-  if (isImported(options.kimiHome, candidate.cwd, candidate.sessionId)) return 'alreadyImported';
-  const sessionDir = importedSessionDir(options.kimiHome, candidate.cwd, candidate.sessionId);
-  await rm(sessionDir, { recursive: true, force: true });
+  if (isSessionImported(harness.homeDir, candidate.sessionId)) return 'alreadyImported';
+  let sessionDir: string | undefined;
   try {
+    const { projectId, projectRoot, workDir, environmentCwd } = await harness.resolveSessionPlacement(candidate.cwd);
+    sessionDir = importedSessionDir(harness.homeDir, projectId, candidate.sessionId);
+    await rm(sessionDir, { recursive: true, force: true });
     const attachmentDirectory = join(sessionDir, 'attachments');
     await mkdir(attachmentDirectory, { recursive: true, mode: 0o700 });
     const result = await convertSession({
@@ -164,9 +156,12 @@ async function importOne(candidate: ImportCandidate, options: ImportOptions): Pr
       return { path: candidate.path, message: result.error.message };
     }
     await writeImportedSession({
-      targetHome: options.kimiHome,
+      targetHome: harness.homeDir,
+      projectId,
+      projectRoot,
       sessionId: candidate.sessionId,
-      workDir: candidate.cwd,
+      workDir,
+      environmentCwd,
       title: result.title ?? 'Imported session',
       lastPrompt: result.lastPrompt ?? '',
       updatedAtMs: Math.round(candidate.modifiedAt),
@@ -180,7 +175,7 @@ async function importOne(candidate: ImportCandidate, options: ImportOptions): Pr
     });
     return 'imported';
   } catch (error) {
-    await discard(sessionDir);
+    if (sessionDir !== undefined) await discard(sessionDir);
     return { path: candidate.path, message: error instanceof Error ? error.message : String(error) };
   }
 }

@@ -153,10 +153,14 @@ describe('imported external session is discoverable by agent-core-v2', () => {
     { role: 'assistant', content: [{ type: 'text', text: 'Added.' }] },
     { role: 'user', content: [{ type: 'text', text: '<EXTERNAL SESSION IMPORTED>\nThe conversation above was imported.' }] },
   ] as const;
+  const PROJECT_ID = encodeWorkDirKey('/Users/example/main');
   const write = () => writeImportedSession({
     targetHome,
+    projectId: PROJECT_ID,
+    projectRoot: '/Users/example/main',
     sessionId: 'ses_example-source',
     workDir: WORK_DIR,
+    environmentCwd: WORK_DIR,
     title: 'Fix the login flow',
     lastPrompt: 'Add a regression test',
     updatedAtMs: 1_700_000_000_000,
@@ -167,10 +171,12 @@ describe('imported external session is discoverable by agent-core-v2', () => {
   it('lists the session with its title, original time and import metadata', async () => {
     const sessionDir = await write();
 
-    expect(sessionDir).toBe(importedSessionDir(targetHome, WORK_DIR, 'ses_example-source'));
+    expect(sessionDir).toBe(importedSessionDir(targetHome, PROJECT_ID, 'ses_example-source'));
     expect(await readSessionSummaryV2(targetHome, 'ses_example-source')).toMatchObject({
+      workspaceId: PROJECT_ID,
       title: 'Fix the login flow',
       cwd: WORK_DIR,
+      environmentCwd: WORK_DIR,
       lastPrompt: 'Add a regression test',
       createdAt: 1_700_000_000_000,
       updatedAt: 1_700_000_000_000,

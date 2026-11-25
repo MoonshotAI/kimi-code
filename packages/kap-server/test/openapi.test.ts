@@ -32,36 +32,85 @@ describe('server-v2 OpenAPI', () => {
     expect(paths['/api/v1/sessions/{session_id}/fs/{*}']).toBeDefined();
   });
 
-  it('projects the session-action dispatcher into archive and delete only', async () => {
+  it('projects every session action onto its own path', async () => {
     const doc = await fetchOpenApi();
     const paths = asRecord(doc['paths']);
 
     expect(paths['/api/v1/sessions/{tail}']).toBeUndefined();
-    expect(paths['/api/v1/sessions/{session_id}:archive']).toBeDefined();
-    expect(paths['/api/v1/sessions/{session_id}:delete']).toBeDefined();
-    expect(paths['/api/v1/sessions/{session_id}:fork']).toBeUndefined();
-    expect(paths['/api/v1/sessions/{session_id}:undo']).toBeUndefined();
+    const operationIds = {
+      fork: 'runSessionForkAction',
+      compact: 'runSessionCompactAction',
+      undo: 'runSessionUndoAction',
+      cancel: 'runSessionCancelAction',
+      wait: 'runSessionWaitAction',
+      continue: 'runSessionContinueAction',
+      btw: 'runSessionBtwAction',
+      restore: 'runSessionRestoreAction',
+      archive: 'runSessionArchiveAction',
+      delete: 'runSessionDeleteAction',
+      reload: 'runSessionReloadAction',
+      takeover: 'runSessionTakeoverAction',
+    };
+    for (const [action, operationId] of Object.entries(operationIds)) {
+      const op = operation(doc, `/api/v1/sessions/{session_id}:${action}`, 'post');
+      expect(op['operationId']).toBe(operationId);
+      const params = op['parameters'] as Array<Record<string, unknown>>;
+      expect(params.some((p) => p['in'] === 'path' && p['name'] === 'session_id')).toBe(true);
+      expect(params.some((p) => p['name'] === 'tail')).toBe(false);
+    }
+  });
 
-    const archiveOp = operation(doc, '/api/v1/sessions/{session_id}:archive', 'post');
-    expect(archiveOp['operationId']).toBe('runSessionArchiveAction');
-    const params = archiveOp['parameters'] as Array<Record<string, unknown>>;
-    expect(params.some((p) => p['in'] === 'path' && p['name'] === 'session_id')).toBe(true);
-    expect(params.some((p) => p['name'] === 'tail')).toBe(false);
+  it('keeps the experimental session actions out of the document', async () => {
+    const paths = asRecord((await fetchOpenApi())['paths']);
 
-    const deleteOp = operation(doc, '/api/v1/sessions/{session_id}:delete', 'post');
-    expect(deleteOp['operationId']).toBe('runSessionDeleteAction');
-    const deleteParams = deleteOp['parameters'] as Array<Record<string, unknown>>;
-    expect(deleteParams.some((p) => p['in'] === 'path' && p['name'] === 'session_id')).toBe(true);
-    expect(deleteParams.some((p) => p['name'] === 'tail')).toBe(false);
+    expect(paths['/api/v1/sessions/{session_id}:predict-prompt']).toBeUndefined();
+    expect(paths['/api/v1/sessions/{session_id}:cancel-prompt-prediction']).toBeUndefined();
+  });
 
-    const cancelOp = operation(doc, '/api/v1/sessions/{session_id}:cancel', 'post');
-    expect(cancelOp['operationId']).toBe('runSessionCancelAction');
-    const cancelBodySchema = asRecord(
-      asRecord(asRecord(cancelOp['requestBody'])['content'])['application/json'],
-    )['schema'] as Record<string, unknown>;
-    const cancelProps = asRecord(cancelBodySchema['properties']);
+  it('documents the request body each session action accepts', async () => {
+    const doc = await fetchOpenApi();
+    const requestBody = (action: string) =>
+      operation(doc, `/api/v1/sessions/{session_id}:${action}`, 'post')['requestBody'];
+    const bodySchema = (action: string) =>
+      asRecord(asRecord(asRecord(asRecord(requestBody(action))['content'])['application/json'])['schema']);
+
+    expect(requestBody('undo')).toMatchObject({ required: true });
+    for (const action of ['fork', 'compact', 'cancel', 'wait']) {
+      expect(requestBody(action)).toMatchObject({ required: false });
+    }
+    for (const action of ['continue', 'btw', 'restore', 'archive', 'delete', 'reload', 'takeover']) {
+      expect(requestBody(action)).toBeUndefined();
+    }
+
+    expect(bodySchema('undo')['required']).toEqual(['turn_id']);
+    expect(asRecord(bodySchema('compact')['properties'])['instruction']).toMatchObject({ type: 'string' });
+    const cancelProps = asRecord(bodySchema('cancel')['properties']);
     expect(cancelProps['agent_id']).toMatchObject({ type: 'string' });
     expect(cancelProps['include_background']).toMatchObject({ type: 'boolean' });
+  });
+
+  it('documents the data :undo returns when the requested turns cannot be undone', async () => {
+    const doc = await fetchOpenApi();
+    const errorData = (action: string, code: number) => {
+      const op = operation(doc, `/api/v1/sessions/{session_id}:${action}`, 'post');
+      const content = asRecord(asRecord(asRecord(op['responses'])['200'])['content']);
+      const variants = asRecord(asRecord(content['application/json'])['schema'])['oneOf'] as Array<{
+        properties: { code: { enum: number[] }; data: unknown };
+      }>;
+      return variants.find((variant) => variant.properties.code.enum.includes(code))?.properties.data;
+    };
+
+    expect(errorData('undo', 40911)).toMatchObject({
+      type: 'object',
+      nullable: true,
+      required: ['reason', 'requested_count', 'undoable_count', 'requestedCount', 'undoableCount'],
+      properties: {
+        reason: { enum: ['empty', 'compaction_boundary', 'insufficient'] },
+        requestedCount: { deprecated: true },
+        undoableCount: { deprecated: true },
+      },
+    });
+    expect(errorData('fork', 40911)).toMatchObject({ enum: [null] });
   });
 
   it('describes the file upload as multipart/form-data', async () => {

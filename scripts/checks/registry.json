@@ -36,6 +36,11 @@
       "why": "New tests must script models through the shared testkit; this check freezes the legacy model doubles at their current use per file so new cases cannot add to them."
     },
     {
+      "run": "node scripts/checks/legacy-e2e.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "The old Desktop and TUI E2E directories no longer run on pull requests or main; this check freezes their test cases per file so a new case lands in tests/e2e, where it runs, instead of looking like coverage that nothing executes."
+    },
+    {
       "run": "node scripts/checks/quarantine.mjs",
       "in": "package.json#scripts.lint",
       "why": "A quarantined Desktop journey must name an owner, a reason and an expiry date, and a protected or smoke journey can never be quarantined; without it a quarantine quietly becomes permanent."

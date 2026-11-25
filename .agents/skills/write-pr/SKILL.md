@@ -196,21 +196,24 @@ interface SessionEvents {
 - GIF 只录能说明问题的几秒，体积控制在几 MB 内。
 - 素材先放在 `.tmp/pr-media/`，不提交进 PR 分支。
 
-上传：`gh` 不能把图片传成 GitHub 附件，所以把素材推到 origin 上专门放图的孤立分支 `pr-assets/<number>`。在仓库根目录执行：
+上传：`gh` 不能把图片传成 GitHub 附件，所以把素材统一推到 origin 上专门放图的孤立分支 `pr-assets`，按 `<number>/<file>` 分目录存放。在仓库根目录执行：
 
 ```bash
 url=$(git remote get-url origin)
-dir=$(mktemp -d) && cp .tmp/pr-media/<files> "$dir"/ && cd "$dir" && git init -q
-git fetch -q "$url" pr-assets/<number> 2>/dev/null && git reset -q --soft FETCH_HEAD  # 分支已存在就接在后面
-git add -A && git commit -qm "chore: add screenshots for #<number>"
-git push -q "$url" HEAD:refs/heads/pr-assets/<number>
-git rev-parse HEAD  # 链接里的 <sha>
+dir=$(mktemp -d) && cd "$dir" && git init -q
+git fetch -q "$url" pr-assets && git checkout -q FETCH_HEAD  # 基于统一分支最新提交，保留全部已有素材
+mkdir -p <number> && cp "$OLDPWD"/.tmp/pr-media/<files> <number>/
+git add <number> && git commit -qm "chore: add screenshots for #<number>"
+git push -q "$url" HEAD:refs/heads/pr-assets || {
+  git fetch -q "$url" pr-assets && git rebase -q FETCH_HEAD && git push -q "$url" HEAD:refs/heads/pr-assets
+} && git rev-parse HEAD  # 仅在推送成功后输出链接里的 <sha>
 ```
 
-引用写成 `![说明](https://github.com/MoonshotAI/kimi-code/blob/<sha>/<file>?raw=true)`。
+引用写成 `![说明](https://github.com/MoonshotAI/kimi-code/blob/<sha>/<number>/<file>?raw=true)`。
 
-- 链接用 `<sha>`，不要用分支名：追加的提交只含新文件，按分支名引用会让旧图失效。
-- 只推 `pr-assets/` 分支，不建 release。CI 只在 `main` 和 `release/*` 的 push 上触发，这类分支不会跑 CI。
+- 链接用 `<sha>`，不要用分支名：后续更新同名 `<number>/<file>` 时，按分支名引用会让旧图变化。
+- 多人同时上传时推送可能被拒；上述命令会自动 fetch 并 rebase 后重试一次，只有推送成功才会输出 `<sha>`。若 rebase 出现冲突，先 `git rebase --abort`，不要 force push。
+- 只推统一的 `pr-assets` 分支，不再按 PR 新建 `pr-assets/<number>` 分支，也不建 release。CI 只在 `main` 和 `release/*` 的 push 上触发，`pr-assets` 不会跑 CI。
 - 不要 force push，合入后也不要删这个分支，否则引用的提交不可达，图会失效。
 - 本仓库公开，上传等于公开发布。上传前逐张看一遍：用中性的工作区和示例数据截图，画面里不能出现本机用户名路径、API key、真实会话内容，以及内部域名、未发布的模型名这类内部标识。
 - 会话里有人类协作时，推送前列出要上传的文件，等对方确认。
