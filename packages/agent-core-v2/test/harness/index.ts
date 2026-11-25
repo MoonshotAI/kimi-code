@@ -43,6 +43,7 @@ export {
   fetchBackedProvider,
   providerHttpError,
   type MockProviderHandler,
+  type MockProviderOptions,
   type MockProviderResponse,
 } from './scripted-generate';
 export {

@@ -622,7 +622,6 @@ describe('Plan service', () => {
         arguments: '{}',
       };
       ctx.mockNextResponse({ type: 'text', text: 'I will present the plan.' }, exitPlanModeCall);
-      ctx.mockNextResponse({ type: 'text', text: 'This response must not be requested.' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Show the plan' }] });
 
       const approval = await ctx.takeApprovalRequest();

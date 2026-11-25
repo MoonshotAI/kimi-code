@@ -158,7 +158,6 @@ describe('prompt queue', () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
-    ctx.mockNextResponse({ type: 'text', text: 'waiting' });
     const queued: Array<{ promptId: string; queueLength: number }> = [];
     ctx.get(IEventBus).subscribe(PromptQueued, (event) => {
       queued.push({ promptId: event.promptId, queueLength: event.queueLength });
@@ -200,7 +199,6 @@ describe('prompt queue', () => {
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
     ctx.mockNextResponse({ type: 'text', text: 'waiting' });
-    ctx.mockNextResponse({ type: 'text', text: 'task done' });
     const submitted: Array<{
       promptId: string;
       userMessageId: string;
@@ -337,6 +335,8 @@ describe('prompt queue', () => {
   it('keeps each steered prompt client metadata in FIFO order without adding it to model content', async () => {
     setup();
     const hold = holdNextStep();
+    ctx.mockNextResponse({ type: 'text', text: 'active' });
+    ctx.mockNextResponse({ type: 'text', text: 'merged' });
     const eventBus = ctx.get(IEventBus);
     const events: TurnPrompt[] = [];
     const submitted: PromptSubmitted[] = [];
@@ -387,6 +387,8 @@ describe('prompt queue', () => {
   it('keeps plain inputs beside composer metadata in a mixed steer', async () => {
     setup();
     const hold = holdNextStep();
+    ctx.mockNextResponse({ type: 'text', text: 'active' });
+    ctx.mockNextResponse({ type: 'text', text: 'merged' });
     const eventBus = ctx.get(IEventBus);
     const events: TurnPrompt[] = [];
     eventBus.subscribe(TurnPrompt, (event) => events.push(event));
@@ -424,7 +426,7 @@ describe('prompt queue', () => {
   });
 
   it('publishes prompt identities before each steered user message', async () => {
-    setup();
+    setup({ scriptedModelChecks: { checkMessages: false } });
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
     ctx.mockNextResponse({ type: 'text', text: 'merged' });
@@ -626,6 +628,7 @@ describe('prompt queue', () => {
       await next();
     });
     ctx.mockNextResponse({ type: 'text', text: 'active' });
+    ctx.mockNextResponse({ type: 'text', text: 'stopped' });
     const steerEvents: TurnPrompt[] = [];
     ctx.get(IEventBus).subscribe(TurnPrompt, (event) => {
       if (event.trigger === 'notify') steerEvents.push(event);
@@ -920,7 +923,6 @@ describe('prompt queue', () => {
     );
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
-    ctx.mockNextResponse({ type: 'text', text: 'merged' });
 
     await enqueue(loop, { message: message('active') });
     await hold.started;
@@ -972,6 +974,7 @@ describe('prompt queue', () => {
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
     ctx.mockNextResponse({ type: 'text', text: 'bundled' });
+    ctx.mockNextResponse({ type: 'text', text: 'marked bundled' });
     const queued: Array<{ promptId: string; content: ContentPart[] }> = [];
     ctx.get(IEventBus).subscribe(PromptQueued, (event) => {
       queued.push({ promptId: event.promptId, content: event.content });
@@ -1214,6 +1217,7 @@ describe('prompt queue', () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
+    ctx.mockNextResponse({ type: 'text', text: 'meta' });
 
     await enqueue(loop, { message: message('active') });
     await hold.started;

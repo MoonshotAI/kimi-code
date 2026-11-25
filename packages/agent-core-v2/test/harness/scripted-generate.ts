@@ -47,6 +47,8 @@ import {
   type ReplyStep,
   type ScriptedStep,
 } from '@moonshot-ai/testkit/model';
+import { afterEach } from 'vitest';
+
 import { isError2 } from '#/_base/errors/errors';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import { ChatProviderError, errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
@@ -119,11 +121,28 @@ type ScriptedHandler = (
   signal: AbortSignal,
 ) => MockProviderResponse | typeof UNSCRIPTED | Promise<MockProviderResponse | typeof UNSCRIPTED>;
 
-const scriptedChecks = new Set<() => readonly string[]>();
+type ScriptedCheck = () => readonly string[];
+
+const scriptedChecks = new Set<ScriptedCheck>();
+const retiredProblems: string[] = [];
 
 export function takeScriptedModelProblems(): string[] {
-  return [...scriptedChecks].flatMap((check) => check());
+  return [...retiredProblems.splice(0), ...[...scriptedChecks].flatMap((check) => check())];
 }
+
+function retireChecks(checks: readonly ScriptedCheck[]): void {
+  for (const check of checks) {
+    retiredProblems.push(...check());
+    scriptedChecks.delete(check);
+  }
+}
+
+afterEach(() => {
+  const problems = takeScriptedModelProblems();
+  if (problems.length > 0) {
+    throw new Error(`The scripted model found ${String(problems.length)} problem(s):\n- ${problems.join('\n- ')}`);
+  }
+});
 
 export function generateCallOf(request: LlmRequest): GenerateCall {
   return normalizeGenerateInput({
@@ -143,20 +162,26 @@ export function createMockProvider(handler: MockProviderHandler, options: MockPr
   return createModelProvider(handler, options);
 }
 
-function createModelProvider(handler: ScriptedHandler, options: MockProviderOptions): MockProvider {
-  const model = createFakeModel({ checkMessages: options.checkMessages ?? true, checkCalls: options.checkCalls ?? true });
+interface CheckedProvider extends MockProvider {
+  readonly check: ScriptedCheck;
+}
+
+function createModelProvider(handler: ScriptedHandler, options: MockProviderOptions): CheckedProvider {
+  const model = createFakeModel({ checkMessages: options.checkMessages ?? true, checkCalls: options.checkCalls ?? false });
   const lane = model.route('scripted', () => true);
   const handlerProblems: string[] = [];
   const pending: Promise<PreparedAttempt>[] = [];
   let index = 0;
   let reported = 0;
-  scriptedChecks.add(() => {
+  const check = (): readonly string[] => {
     const all = [...handlerProblems, ...model.problems()];
     const fresh = all.slice(reported);
     reported = all.length;
     return fresh;
-  });
+  };
+  scriptedChecks.add(check);
   return {
+    check,
     respond: (request, signal) => {
       const attempt = (async (): Promise<PreparedAttempt> => {
         const current = index++;
@@ -204,7 +229,7 @@ export function createMockProviderRequester(
       if (responses === undefined) return (input as MockProviderHandler)(request, signal);
       return responses.shift() ?? UNSCRIPTED;
     },
-    { checkCalls: false },
+    {},
   );
   return withMockProvider(
     createRequester().with({
@@ -224,7 +249,8 @@ export function createScriptedGenerate(options: MockProviderOptions = {}) {
   const calls: GenerateCall[] = [];
   const responses: MockProviderResponse[] = [];
   let assertedCallCount = 0;
-  scriptedChecks.add(() => leftoverProblems(responses));
+  const leftovers = (): readonly string[] => leftoverProblems(responses);
+  scriptedChecks.add(leftovers);
 
   function mockNextResponse(...response: StreamedMessagePart[]) {
     responses.push({ parts: structuredClone(response) });
@@ -274,6 +300,7 @@ export function createScriptedGenerate(options: MockProviderOptions = {}) {
     },
     mockNextResponse,
     mockNextProviderResponse,
+    retire: () => retireChecks([leftovers, provider.check]),
   };
 }
 
@@ -447,9 +474,14 @@ function failingAfterBody(response: Response, fault: Error): Response {
 
 function leftoverProblems(responses: MockProviderResponse[]): string[] {
   if (responses.length === 0) return [];
-  const count = responses.length;
-  responses.length = 0;
-  return [`${String(count)} scripted repl${count === 1 ? 'y was' : 'ies were'} never requested`];
+  const leftovers = responses.splice(0).map(responseSummary);
+  const count = leftovers.length;
+  return [`${String(count)} scripted repl${count === 1 ? 'y was' : 'ies were'} never requested: ${leftovers.join(', ')}`];
+}
+
+function responseSummary(response: MockProviderResponse): string {
+  const shown = response.step?.label ?? JSON.stringify(response.httpError ?? response.parts ?? response.message?.content ?? null);
+  return shown.length > 80 ? `${shown.slice(0, 77)}...` : shown;
 }
 
 function attemptOf(request: LlmRequest, response: MockProviderResponse, index: number): PreparedAttempt {

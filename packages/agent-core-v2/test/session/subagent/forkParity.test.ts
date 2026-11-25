@@ -230,12 +230,12 @@ describe('subagent task reminders and btw request parity', () => {
     return child;
   }
 
-  async function runPrompt(agent: IAgentScopeHandle): Promise<void> {
+  async function runPrompt(agent: IAgentScopeHandle, text = 'continue the task'): Promise<void> {
     ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
     const loop = agent.accessor.get(IAgentLoopService);
     const { id } = loop.submit({
       role: 'user',
-      content: [{ type: 'text', text: 'continue the task' }],
+      content: [{ type: 'text', text }],
       attributes: { origin: { kind: 'user' } },
     });
     expect((await loop.promptHandle(id)!.completion).state).toBe('completed');
@@ -342,7 +342,7 @@ describe('subagent task reminders and btw request parity', () => {
         compact();
       }
 
-      await runPrompt(child);
+      await runPrompt(child, 'finish the task');
 
       expect(ctx.llmCalls).toHaveLength(2);
       expect(taskReminders(ctx.llmCalls[1]!.history)).toHaveLength(1);

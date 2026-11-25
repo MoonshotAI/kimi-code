@@ -51,6 +51,14 @@ function mockSubagentRuns(
   });
 }
 
+function pendingResult(result: string): { readonly done: Promise<{ readonly result: string }>; finish(): void } {
+  let finish = (): void => {};
+  const done = new Promise<{ readonly result: string }>((resolve) => {
+    finish = () => resolve({ result });
+  });
+  return { done, finish: () => finish() };
+}
+
 function startControlledAgent(ctx: TestAgentContext, description: string) {
   return startAgentTaskInLoop(ctx, {
     description,
@@ -83,9 +91,8 @@ describe('task notification → main agent (real Agent instance)', () => {
     it('IDLE: completed bg agent notification auto-launches a turn that consumes it', async () => {
       expect(loop.snapshot().activeTurnId).toBeUndefined();
       expect(ctx.llmCalls.length).toBe(0);
-      mockSubagentRuns(ctx, new Map([
-        ['idle-state repro', Promise.resolve({ result: 'background agent finished its job' })],
-      ]));
+      const run = pendingResult('background agent finished its job');
+      mockSubagentRuns(ctx, new Map([['idle-state repro', run.done]]));
 
       const turnStarted: TurnStarted[] = [];
       const turnPrompts: TurnPrompt[] = [];
@@ -98,6 +105,7 @@ describe('task notification → main agent (real Agent instance)', () => {
       const turnEnd = ctx.untilTurnEnd();
       const { handler } = await startControlledAgent(ctx, 'idle-state repro');
       ctx.mockNextResponse({ type: 'text', text: 'ack from main agent' });
+      run.finish();
       const taskId = handler.taskId;
       await handler;
       await background.wait(taskId);
@@ -106,7 +114,7 @@ describe('task notification → main agent (real Agent instance)', () => {
       await turnEnd;
       await loop.settled();
 
-      expect(ctx.llmCalls.length).toBe(2);
+      expect(ctx.llmCalls.length).toBe(3);
       const flatHistoryText = JSON.stringify(ctx.llmCalls.at(-1)!.history);
       expect(flatHistoryText).toContain('<notification');
       expect(flatHistoryText).toContain('task.completed');
@@ -164,20 +172,17 @@ describe('task notification → main agent (real Agent instance)', () => {
     });
 
     it('IDLE × N: a GROUP of bg agents completes — the first notification launches one turn, the rest fold in', async () => {
-      mockSubagentRuns(ctx, new Map([
-        ['group-1', Promise.resolve({ result: 'bg #1 result' })],
-        ['group-2', Promise.resolve({ result: 'bg #2 result' })],
-        ['group-3', Promise.resolve({ result: 'bg #3 result' })],
-      ]));
-      const handlers = await Promise.all([
-        startControlledAgent(ctx, 'group-1'),
-        startControlledAgent(ctx, 'group-2'),
-        startControlledAgent(ctx, 'group-3'),
+      const runs = new Map([
+        ['group-1', pendingResult('bg #1 result')],
+        ['group-2', pendingResult('bg #2 result')],
+        ['group-3', pendingResult('bg #3 result')],
       ]);
+      mockSubagentRuns(ctx, new Map([...runs].map(([prompt, run]) => [prompt, run.done])));
+      const handlers = [];
+      for (const prompt of runs.keys()) handlers.push(await startControlledAgent(ctx, prompt));
       const turnEnd = ctx.untilTurnEnd();
-      ctx.mockNextResponse({ type: 'text', text: 'ack group 1' });
-      ctx.mockNextResponse({ type: 'text', text: 'ack group 2' });
-      ctx.mockNextResponse({ type: 'text', text: 'ack group 3' });
+      ctx.mockNextResponse({ type: 'text', text: 'ack group' });
+      for (const run of runs.values()) run.finish();
       const taskIds = handlers.map(({ handler }) => handler.taskId);
 
       for (const id of taskIds) await background.wait(id);
@@ -199,9 +204,8 @@ describe('task notification → main agent (real Agent instance)', () => {
     });
 
     it('RACE: bg completion right after turn end launches its own turn', async () => {
-      mockSubagentRuns(ctx, new Map([
-        ['race-after-turn', Promise.resolve({ result: 'post-turn bg result' })],
-      ]));
+      const run = pendingResult('post-turn bg result');
+      mockSubagentRuns(ctx, new Map([['race-after-turn', run.done]]));
       ctx.mockNextResponse({ type: 'text', text: 'first user-prompted ack' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello main agent' }] });
       await ctx.untilTurnEnd();
@@ -210,6 +214,7 @@ describe('task notification → main agent (real Agent instance)', () => {
       const turnEnd = ctx.untilTurnEnd();
       const { handler } = await startControlledAgent(ctx, 'race-after-turn');
       ctx.mockNextResponse({ type: 'text', text: 'ack from bg notification' });
+      run.finish();
       const taskId = handler.taskId;
       await handler;
       await background.wait(taskId);
@@ -217,7 +222,7 @@ describe('task notification → main agent (real Agent instance)', () => {
       await turnEnd;
       await loop.settled();
 
-      expect(ctx.llmCalls.length).toBe(3);
+      expect(ctx.llmCalls.length).toBe(4);
       const flatHistoryText = JSON.stringify(ctx.llmCalls.at(-1)!.history);
       expect(flatHistoryText).toContain('<notification');
       expect(flatHistoryText).toContain(taskId);

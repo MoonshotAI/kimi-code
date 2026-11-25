@@ -1012,7 +1012,7 @@
     "packages/agent-core-v2/src/llm-adapter/contract/errors.ts": 1,
     "packages/agent-core-v2/src/persistence/interface/storage.ts": 1,
     "packages/agent-core-v2/src/workspace/workspaceFs/fsService.ts": 1,
-    "packages/agent-core-v2/test/harness/scripted-generate.ts": 6,
+    "packages/agent-core-v2/test/harness/scripted-generate.ts": 2,
     "packages/app-client/src/client/useKimiWebClient.ts": 1,
     "packages/app-client/src/lib/chatGate.ts": 1,
     "packages/app-core/src/api/hostRouting.ts": 1,

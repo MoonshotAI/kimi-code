@@ -535,6 +535,7 @@ describe('Agent loop', () => {
       },
       handle: async () => undefined,
     });
+    ctx.mockNextProviderResponse({ step: held('cancelled', reply(say('unreached'))) });
     const { turn } = submitTurn(loop, 'go');
     turn.cancel(new Error('stop'));
 
@@ -1129,7 +1130,6 @@ describe('Agent loop', () => {
     });
 
     ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
-    ctx.mockNextResponse({ type: 'text', text: 'This step should not run.' });
 
     const { turn } = submitTurn(loop, 'Look up moon');
     await ctx.untilApproval(true);
@@ -1246,7 +1246,6 @@ describe('Agent loop', () => {
     ctx.get(IAgentToolRegistryService).register(stopperTool);
 
     ctx.mockNextResponse({ type: 'text', text: 'Stopping.' }, stopCall);
-    ctx.mockNextResponse({ type: 'text', text: 'This step should not run.' });
 
     const { turn } = submitTurn(loop, 'stop');
     await ctx.untilApproval(true);
@@ -1276,7 +1275,6 @@ describe('Agent loop', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'one' });
     ctx.mockNextResponse({ type: 'text', text: 'two' });
-    ctx.mockNextResponse({ type: 'text', text: 'three' });
 
     const first = submitTurn(loop, 'first').turn;
     const second = submitTurn(loop, 'second').turn;
@@ -2439,7 +2437,6 @@ describe('interruption reminder', () => {
       }
       await next();
     });
-    ctx.mockNextResponse({ type: 'text', text: 'unreached' });
 
     const active = submitTurn(loop, 'active').turn;
     const queued = submitTurn(loop, 'queued').turn;

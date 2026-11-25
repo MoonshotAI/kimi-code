@@ -201,6 +201,7 @@ function modelCatalogResolving(...aliases: readonly string[]): IModelCatalog {
       }
       return {
         id: alias,
+        protocol: 'openai',
         spec: { provider: 'test', name: alias },
         endpoint: {},
       } as Model;
