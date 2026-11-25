@@ -21,7 +21,7 @@ import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus'
 import { ISessionMetadata, type AgentMeta } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import type { BrowserSubagentRun } from '../../shared/browser-run';
 import type { DesktopBrowserAccess, DesktopBrowserAgentControl, DesktopBrowserMcpHandle } from './browser-mcp';
-import { DESKTOP_BROWSER_CONTROL_OFF_REASON, DESKTOP_BROWSER_UNAVAILABLE_NOTICE, describeBlockedDesktopBrowser, describeRejectedDesktopBrowserApproval, describeToolPolicyDesktopBrowser, isComputerUseSupported } from './browser-mcp';
+import { DESKTOP_BROWSER_CONTROL_OFF_REASON, DESKTOP_BROWSER_UNAVAILABLE_NOTICE, describeBlockedDesktopBrowser, describeRejectedDesktopBrowserApproval, describeToolPolicyDesktopBrowser } from './browser-mcp';
 import { BrowserSubagentRunRegistry, DESKTOP_BROWSER_SUBAGENT_RUN, type DesktopBrowserSubagentRun } from './browser-subagent-control';
 import { restoreBrowserSubagentRuns, revokeBrowserSubagentRun } from './browser-control';
 import type { BrowserControlTrigger, BrowserMcpReconnectEvent } from '../diagnostics/telemetry-events';
@@ -32,21 +32,13 @@ export const DESKTOP_BROWSER_REMINDER_VARIANT = 'desktop_browser';
 const DESKTOP_BROWSER_TOOL_PREFIX = `mcp__${DESKTOP_BROWSER_MCP_SERVER}__`;
 const DESKTOP_BROWSER_RUN_TOOL = `${DESKTOP_BROWSER_TOOL_PREFIX}run`;
 
-export function desktopBrowserRoutingGuidance(platform: NodeJS.Platform = process.platform, arch: string = process.arch): string {
-  const cuSupported = isComputerUseSupported(platform, arch);
-  const cuFallback = cuSupported
-    ? `When both the built-in browser and Kimi Web Extension are unavailable, verify that CU's browser path is available, then tell the user and use CU for lightweight, low-risk tasks. For batch or high-frequency work, test-account activity, or operations that could affect real accounts or stored data, get user consent before using CU. If none of the three paths is available, explain why and offer the options of re-enabling the built-in browser or configuring Kimi Web Extension.`
-    : `If neither the built-in browser nor Kimi Web Extension is available, explain why and offer the options of re-enabling the built-in browser or configuring Kimi Web Extension.`;
-  return `- Follow the user's requested browser, profile, or tool. If it is unavailable, explain why and wait for the user to choose. If the user rejects an approval or explicitly says not to operate a browser, stop and ask; do not switch to Kimi Web Extension (formerly known as Kimi WebBridge)${cuSupported ? ', CU' : ''}, shell, or another path.
-- For a one-off lookup of public information, prefer WebSearch or FetchURL. Use a browser when the task requires opening a page, inspecting the current tab, taking a screenshot, or verifying rendering.${cuSupported ? ' Use Computer Use (CU) for native macOS apps, system UI, and cross-app tasks.' : ''}
+const DESKTOP_BROWSER_ROUTING_GUIDANCE = `- Follow the user's requested browser, profile, or tool. If it is unavailable, explain why and wait for the user to choose. If the user rejects an approval or explicitly says not to operate a browser, stop and ask; do not switch to Kimi Web Extension (formerly known as Kimi WebBridge), CU, shell, or another path.
+- For a one-off lookup of public information, prefer WebSearch or FetchURL. Use a browser when the task requires opening a page, inspecting the current tab, taking a screenshot, or verifying rendering. Use Computer Use (if available) for native desktop apps, system UI, and cross-app tasks.
 - For web tasks, keep using the browser already in use for the current task when it remains suitable. Default to the built-in browser when neither option has a clear advantage.
 - Use Kimi Web Extension when the task needs the user's real Chrome or Edge tabs, profile, extensions, password manager, or enterprise authentication, or when the built-in browser cannot perform the required network request and response inspection, PDF export, popup OAuth flow, or external protocol handling. Kimi Web Extension is ready only when its skill is available and both its daemon and browser extension are connected. If it is not ready, use the built-in browser for ordinary tasks; if a real browser is required or was requested by the user, explain the required configuration and wait.
 - If the built-in browser is already logged in, keep using it. Switch to Kimi Web Extension solely to reuse an existing login only when all of these are true: the built-in browser is not logged in, the target profile is known to be logged in, Kimi Web Extension is ready, and the task is lightweight and low-risk. Prefer the built-in browser for long-running, multi-step, high-frequency, or background tasks, and for guest or test accounts, sign-out, account switching, or storage clearing.
 - If locating an element fails, the page does not change, or a submission result is unclear, inspect the page and relevant tabs first; do not repeat the submission. Consider switching tools only when the current tool is unavailable or does not support the required operation.
-- ${cuFallback}`;
-}
-
-const DESKTOP_BROWSER_ROUTING_GUIDANCE = desktopBrowserRoutingGuidance();
+- When both the built-in browser and Kimi Web Extension are unavailable, verify that Computer Use (if available) has a working browser path, then tell the user and use it for lightweight, low-risk tasks. For batch or high-frequency work, test-account activity, or operations that could affect real accounts or stored data, get user consent before using Computer Use. If none of the three paths is available, explain why and offer the options of re-enabling the built-in browser or configuring Kimi Web Extension.`;
 
 export const DESKTOP_BROWSER_ENABLED_REMINDER = `The Kimi Code Desktop built-in browser is available. With on-demand tool loading, call select_tools with \`mcp__desktop_browser__run\` to load it before use.\n\n${DESKTOP_BROWSER_ROUTING_GUIDANCE}`;
 export const DESKTOP_BROWSER_DIRECT_REMINDER = `The Kimi Code Desktop built-in browser is available. Call \`mcp__desktop_browser__run\` directly to use it.\n\n${DESKTOP_BROWSER_ROUTING_GUIDANCE}`;

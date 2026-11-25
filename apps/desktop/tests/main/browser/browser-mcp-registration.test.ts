@@ -27,11 +27,10 @@ import {
   DESKTOP_BROWSER_ENABLED_REMINDER,
   DESKTOP_BROWSER_REMINDER_VARIANT,
   createDesktopBrowserAccess,
-  desktopBrowserRoutingGuidance,
   registerDesktopBrowserMcp,
 } from '../../../src/main/browser/browser-mcp-registration';
 import { runBrowserAutomation } from '../../../src/main/browser/browser-automation';
-import { DESKTOP_BROWSER_APPROVAL_FEEDBACK_GUIDANCE, DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE, DESKTOP_BROWSER_BLOCKED_GUIDANCE, DESKTOP_BROWSER_RESTRICTED_GUIDANCE, DESKTOP_BROWSER_TOOL_POLICY_GUIDANCE, DESKTOP_BROWSER_UNAVAILABLE_NOTICE, desktopBrowserBlockedGuidance, desktopBrowserToolPolicyGuidance, isComputerUseSupported, startDesktopBrowserMcp, type DesktopBrowserAgentControl } from '../../../src/main/browser/browser-mcp';
+import { DESKTOP_BROWSER_APPROVAL_FEEDBACK_GUIDANCE, DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE, DESKTOP_BROWSER_BLOCKED_GUIDANCE, DESKTOP_BROWSER_RESTRICTED_GUIDANCE, DESKTOP_BROWSER_TOOL_POLICY_GUIDANCE, startDesktopBrowserMcp, type DesktopBrowserAgentControl } from '../../../src/main/browser/browser-mcp';
 import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { browserControlOwnership } from '../../../src/main/browser/browser-control-ownership';
@@ -851,24 +850,3 @@ it('attaches trusted identity to an eligible subagent scope that already exists'
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 }, 30000);
-
-it.each([
-  ['darwin', 'arm64', true],
-  ['darwin', 'x64', true],
-  ['win32', 'x64', true],
-  ['win32', 'arm64', false],
-  ['linux', 'x64', false],
-  ['linux', 'arm64', false],
-] as const)('gates Computer Use guidance by platform support on %s/%s', (platform, arch, supported) => {
-  const cuMention = /\b(?:CU|Computer Use)\b/;
-  expect(isComputerUseSupported(platform, arch)).toBe(supported);
-  const routing = desktopBrowserRoutingGuidance(platform, arch);
-  const blocked = desktopBrowserBlockedGuidance(platform, arch);
-  const toolPolicy = desktopBrowserToolPolicyGuidance(platform, arch);
-  expect(cuMention.test(routing)).toBe(supported);
-  expect(cuMention.test(blocked)).toBe(supported);
-  expect(cuMention.test(toolPolicy)).toBe(supported);
-  expect(routing.split('\n- ')).toHaveLength(7);
-  expect(blocked.split('\n- ')).toHaveLength(4);
-  expect(blocked).toContain(DESKTOP_BROWSER_UNAVAILABLE_NOTICE);
-});
