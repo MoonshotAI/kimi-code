@@ -750,7 +750,7 @@ async function selectAllRegion(target: EventTarget | null): Promise<void> {
   const attended = target instanceof Element && target !== document.body ? target : lastPointerTarget;
   const panel = closestRegion(attended, '.global-preview');
   if (panel) {
-    selectContentsOf(panel);
+    selectContentsOf(panel.querySelector('[data-panel-content]') ?? panel);
     return;
   }
   historySelection.value = true;
