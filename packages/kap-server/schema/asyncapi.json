@@ -1232,6 +1232,9 @@
                       },
                       "type": "array"
                     },
+                    "auto_review": {
+                      "type": "boolean"
+                    },
                     "created_at": {
                       "type": "string"
                     },
@@ -1369,7 +1372,6 @@
                     "stage": {
                       "enum": [
                         "input",
-                        "auto_review",
                         "awaiting_approval",
                         "executing"
                       ],
@@ -2050,6 +2052,9 @@
                   },
                   "type": "array"
                 },
+                "auto_review": {
+                  "type": "boolean"
+                },
                 "created_at": {
                   "type": "string"
                 },
@@ -2183,7 +2188,6 @@
                 "stage": {
                   "enum": [
                     "input",
-                    "auto_review",
                     "awaiting_approval",
                     "executing"
                   ],
@@ -4597,6 +4601,9 @@
                               },
                               "type": "array"
                             },
+                            "auto_review": {
+                              "type": "boolean"
+                            },
                             "created_at": {
                               "type": "string"
                             },
@@ -4734,7 +4741,6 @@
                             "stage": {
                               "enum": [
                                 "input",
-                                "auto_review",
                                 "awaiting_approval",
                                 "executing"
                               ],

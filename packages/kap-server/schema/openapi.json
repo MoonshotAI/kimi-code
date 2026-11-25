@@ -18821,6 +18821,9 @@
                                               },
                                               "type": "array"
                                             },
+                                            "auto_review": {
+                                              "type": "boolean"
+                                            },
                                             "created_at": {},
                                             "debug": {
                                               "additionalProperties": false,
@@ -18955,7 +18958,6 @@
                                             "stage": {
                                               "enum": [
                                                 "input",
-                                                "auto_review",
                                                 "awaiting_approval",
                                                 "executing"
                                               ],
@@ -22567,6 +22569,34 @@
                                         "properties": {
                                           "action": {
                                             "type": "string"
+                                          },
+                                          "approval_detail": {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "outcome": {
+                                                "enum": [
+                                                  "denied",
+                                                  "failed"
+                                                ],
+                                                "type": "string"
+                                              },
+                                              "reason": {
+                                                "type": "string"
+                                              },
+                                              "risk": {
+                                                "enum": [
+                                                  "low",
+                                                  "medium",
+                                                  "high"
+                                                ],
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "outcome",
+                                              "reason"
+                                            ],
+                                            "type": "object"
                                           },
                                           "expires_at": {},
                                           "tool_input_display": {},
@@ -37662,6 +37692,34 @@
                                         "properties": {
                                           "action": {
                                             "type": "string"
+                                          },
+                                          "approval_detail": {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "outcome": {
+                                                "enum": [
+                                                  "denied",
+                                                  "failed"
+                                                ],
+                                                "type": "string"
+                                              },
+                                              "reason": {
+                                                "type": "string"
+                                              },
+                                              "risk": {
+                                                "enum": [
+                                                  "low",
+                                                  "medium",
+                                                  "high"
+                                                ],
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "outcome",
+                                              "reason"
+                                            ],
+                                            "type": "object"
                                           },
                                           "expires_at": {},
                                           "tool_input_display": {},

@@ -1,6 +1,5 @@
 import { IInstantiationService } from "#/_base/di/instantiation";
 import { Service } from "#/_base/di/service";
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { AutoModeApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-approve';
@@ -36,16 +35,13 @@ export class AgentPermissionPolicyService
 
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
-    @IBootstrapService bootstrap: IBootstrapService,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
   ) {
     super();
     this.policies = [
       this.instantiation.createInstance(AutoModeAskUserQuestionDenyPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredDenyPermissionPolicyService),
-      ...(bootstrap.args.nonInteractive
-        ? []
-        : [this.instantiation.createInstance(DangerousCommandAskPermissionPolicyService)]),
+      this.instantiation.createInstance(DangerousCommandAskPermissionPolicyService),
       this.instantiation.createInstance(AutoModeApprovePermissionPolicyService),
       this.instantiation.createInstance(SessionApprovalHistoryPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredAskPermissionPolicyService),
@@ -64,9 +60,8 @@ export class AgentPermissionPolicyService
     context: ResolvedToolExecutionHookContext,
     options?: PermissionPolicyEvaluateOptions,
   ): Promise<PermissionPolicyEvaluation | undefined> {
-    const mode = options?.mode ?? this.modeService.mode;
     for (const policy of this.policies) {
-      const result = await policy.evaluate(context, mode);
+      const result = await policy.evaluate(context, options?.mode ?? this.modeService.mode);
       if (result !== undefined) return { policyName: policy.name, result };
     }
     return undefined;

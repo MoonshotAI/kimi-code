@@ -119,12 +119,13 @@ function replyTarget(messages: readonly ContextMessage[], index: number): string
 
 function authorizationRole(
   message: ContextMessage,
-): 'human-instruction' | 'direct-parent-instruction' | undefined {
+): 'human-instruction' | 'direct-parent-instruction' | 'constraint' | undefined {
   const { origin } = message;
   if (origin === undefined) return undefined;
   if (origin.kind === 'user' || origin.kind === 'plugin_command') return 'human-instruction';
   if (origin.kind === 'skill_activation' && origin.trigger === 'user-slash') return 'human-instruction';
   if (origin.kind === 'system_trigger' && origin.name === 'subagent') return 'direct-parent-instruction';
+  if (origin.kind === 'compaction_summary') return 'constraint';
   return undefined;
 }
 

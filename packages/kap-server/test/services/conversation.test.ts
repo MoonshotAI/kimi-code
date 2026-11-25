@@ -1339,8 +1339,8 @@ describe('conversation feed', () => {
     expect(h.events).toMatchObject([
       { type: 'item.started', item: { item_id: 'call-1', type: 'tool_call', status: 'running', stage: 'input', name: 'Bash', input_text: '{"command":' } },
       { type: 'item.delta', ...tool, field: 'input_text', delta: '"ls"}' },
-      { type: 'item.updated', ...tool, set: { stage: 'auto_review' } },
-      { type: 'item.updated', ...tool, set: { stage: 'input' } },
+      { type: 'item.updated', ...tool, set: { auto_review: true } },
+      { type: 'item.updated', ...tool, set: { auto_review: false } },
       { type: 'item.updated', ...tool, set: { stage: 'awaiting_approval', interaction_id: 'i1', display } },
       { type: 'item.updated', ...tool, set: { stage: 'executing' } },
       { type: 'item.updated', ...tool, set: { input: { command: 'ls' } } },

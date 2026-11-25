@@ -478,7 +478,7 @@ export class ConversationFeed implements IDisposable {
       return;
     }
     if (name === undefined || entry !== undefined) return;
-    this.startLiveToolCall(turnNumber, toolCallId, name, 'input', argumentsPart ?? '');
+    this.startLiveToolCall(turnNumber, toolCallId, name, false, argumentsPart ?? '');
   }
 
   private onAutoReviewStarted(turnNumber: number, toolCallId: string, name: string): void {
@@ -486,29 +486,29 @@ export class ConversationFeed implements IDisposable {
     this.flushPending();
     const entry = this.live.get(toolCallId);
     if (entry?.item.type === 'tool_call') {
-      if (entry.item.stage === 'auto_review') return;
-      entry.item = { ...entry.item, stage: 'auto_review' };
-      this.emit({ type: 'item.updated', turn_id: entry.turnId, item_id: toolCallId, set: { stage: 'auto_review' } });
+      if (entry.item.auto_review === true) return;
+      entry.item = { ...entry.item, auto_review: true };
+      this.emit({ type: 'item.updated', turn_id: entry.turnId, item_id: toolCallId, set: { auto_review: true } });
       return;
     }
     if (entry !== undefined) return;
-    this.startLiveToolCall(turnNumber, toolCallId, name, 'auto_review', '');
+    this.startLiveToolCall(turnNumber, toolCallId, name, true, '');
   }
 
   private onAutoReviewCompleted(toolCallId: string): void {
     if (this.beforeReplay !== undefined) return;
     this.flushPending();
     const entry = this.live.get(toolCallId);
-    if (entry?.item.type !== 'tool_call' || entry.item.stage !== 'auto_review') return;
-    entry.item = { ...entry.item, stage: 'input' };
-    this.emit({ type: 'item.updated', turn_id: entry.turnId, item_id: toolCallId, set: { stage: 'input' } });
+    if (entry?.item.type !== 'tool_call' || entry.item.auto_review !== true) return;
+    entry.item = { ...entry.item, auto_review: false };
+    this.emit({ type: 'item.updated', turn_id: entry.turnId, item_id: toolCallId, set: { auto_review: false } });
   }
 
   private startLiveToolCall(
     turnNumber: number,
     toolCallId: string,
     name: string,
-    stage: 'input' | 'auto_review',
+    autoReview: boolean,
     inputText: string,
   ): void {
     const target = this.liveTarget(turnNumber);
@@ -521,7 +521,8 @@ export class ConversationFeed implements IDisposable {
       status: 'running',
       created_at: isoTime(now),
       name,
-      stage,
+      stage: 'input',
+      ...(autoReview ? { auto_review: true } : {}),
       input_text: inputText,
       started_at: isoTime(now),
     };

@@ -149,6 +149,20 @@ describe('ApprovalPanelComponent', () => {
     expect(titleLine).toContain(currentTheme.fg('warning', title));
   });
 
+  it('strips terminal escape sequences from Auto Review denial reasons', () => {
+    const data = adaptApprovalRequest({
+      toolCallId: 'tool_osc',
+      toolName: 'Bash',
+      action: 'run',
+      display: { kind: 'command', command: 'echo hi' },
+      approvalDetail: { outcome: 'denied', risk: 'low', reason: 'Blocked \u001B]52;c;Ymxh\u0007 clipboard \u001B[31mwrite' },
+    });
+    const rendered = mount(new ApprovalPanelComponent({ data }, () => {})).render(100).join('\n');
+    expect(rendered).not.toContain('52;c;');
+    expect(rendered).not.toContain('\u0007');
+    expect(strip(rendered)).toContain('Blocked  clipboard write');
+  });
+
   it('keeps generic MCP description visible below an Auto Review failure banner', () => {
     const data = adaptApprovalRequest({
       toolCallId: 'tool_mcp_review',

@@ -5,7 +5,7 @@ import * as win32Path from 'node:path/win32';
 
 import type { ToolCall } from '#human/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import {
@@ -30,6 +30,7 @@ import {
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { AgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicyService';
 import { analyzeBashReadOnly } from '#/agent/permissionPolicy/policies/bash-read-only';
+import { SensitiveFileAccessAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/sensitive-file-access-ask';
 import {
   IAgentPermissionRulesService,
   type IAgentPermissionRulesService as PermissionRulesServiceContract,
@@ -648,17 +649,36 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it('does not load the dangerous command policy for non-interactive hosts', async () => {
+  it('keeps dangerous command detection for manual re-evaluation on non-interactive hosts', async () => {
     hostArgs = { ...hostArgs, nonInteractive: true };
     mode = 'auto';
+    rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm *)' });
+    const input = { toolName: 'Bash', args: { command: 'rm -rf build', timeout: 60 } };
 
-    await expect(evaluate({
-      toolName: 'Bash',
-      args: { command: 'rm -rf /tmp/build', timeout: 60 },
-    })).resolves.toMatchObject({
+    await expect(evaluate(input)).resolves.toMatchObject({
       policyName: 'auto-mode-approve',
       result: { kind: 'approve' },
     });
+    await expect(evaluate(input, { mode: 'manual' })).resolves.toMatchObject({
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('reads the current permission mode at each policy step unless overridden', async () => {
+    mode = 'yolo';
+    const spy = vi.spyOn(SensitiveFileAccessAskPermissionPolicyService.prototype, 'evaluate').mockImplementationOnce(() => {
+      mode = 'manual';
+      return undefined;
+    });
+    try {
+      const input = { toolName: 'Write', args: { path: 'notes.txt', content: 'x' } };
+      await expect(evaluate(input)).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+      mode = 'yolo';
+      await expect(evaluate(input, { mode: 'yolo' })).resolves.toMatchObject({ policyName: 'yolo-mode-approve', result: { kind: 'approve' } });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('does not load the built-in guard policies when disabled by config', async () => {

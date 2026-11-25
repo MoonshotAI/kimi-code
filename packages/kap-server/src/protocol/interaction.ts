@@ -31,15 +31,17 @@ const interactionEventBaseSchema = z.object({
   tool_call_id: z.string().min(1).optional(),
 });
 
+const approvalInteractionRequestSchema = z.object({
+  tool_name: z.string().min(1),
+  action: z.string(),
+  tool_input_display: z.unknown().optional(),
+  approval_detail: approvalDetailSchema.optional(),
+  expires_at: isoDateTimeSchema,
+});
+
 export const approvalInteractionEventSchema = interactionEventBaseSchema.extend({
   kind: z.literal('approval'),
-  request: z.object({
-    tool_name: z.string().min(1),
-    action: z.string(),
-    tool_input_display: z.unknown().optional(),
-    approval_detail: approvalDetailSchema.optional(),
-    expires_at: isoDateTimeSchema,
-  }),
+  request: approvalInteractionRequestSchema,
   response: approvalResponseSchema.optional(),
 });
 
@@ -108,12 +110,7 @@ const pendingInteractionBaseSchema = z.object({
 
 export const pendingApprovalInteractionSchema = pendingInteractionBaseSchema.extend({
   kind: z.literal('approval'),
-  request: z.object({
-    tool_name: z.string().min(1),
-    action: z.string(),
-    tool_input_display: z.unknown().optional(),
-    expires_at: isoDateTimeSchema,
-  }),
+  request: approvalInteractionRequestSchema,
 });
 
 export const pendingQuestionInteractionSchema = pendingInteractionBaseSchema.extend({

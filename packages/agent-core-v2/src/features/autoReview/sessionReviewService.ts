@@ -103,6 +103,9 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
   ) {
     super();
+    this._register(this.instructions.onDidChange(() => {
+      this.cachedInstructions = undefined;
+    }));
     if (this.flags.enabled(AUTO_REVIEW_FLAG_ID)) {
       this.assertConfiguredModelValid();
     }

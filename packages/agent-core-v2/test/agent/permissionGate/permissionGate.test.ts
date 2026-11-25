@@ -240,6 +240,7 @@ describe('AgentPermissionGate', () => {
   });
 
   const fallbackAsk: PermissionPolicyEvaluation = { policyName: 'fallback-ask', result: { kind: 'ask' } };
+  const configuredAsk: PermissionPolicyEvaluation = { policyName: 'user-configured-ask', result: { kind: 'ask' } };
   const modeApproval: PermissionPolicyEvaluation = { policyName: 'auto-mode-approve', result: { kind: 'approve' } };
   const allowPolicy = (policyName: string): PermissionPolicyEvaluation => ({ policyName, result: { kind: 'approve' } });
   const denyPolicy: PermissionPolicyEvaluation = { policyName: 'user-configured-deny', result: { kind: 'deny', message: 'no' } };
@@ -264,6 +265,8 @@ describe('AgentPermissionGate', () => {
     [true, 'yolo', 'Bash', allowPolicy('user-configured-allow'), allowPolicy('user-configured-allow'), false, 0],
     [true, 'yolo', 'Bash', allowPolicy('user-configured-allow'), fallbackAsk, true, 0],
     [true, 'yolo', 'Bash', fallbackAsk, undefined, true, 0],
+    [true, 'yolo', 'Bash', configuredAsk, undefined, false, 1],
+    [true, 'auto', 'Bash', modeApproval, configuredAsk, false, 0],
     [true, 'auto', 'Bash', modeApproval, fallbackAsk, true, 0],
     [true, 'yolo', 'mcp__fs__write_file', modeApproval, fallbackAsk, true, 0],
     [true, 'auto', 'mcp__fs__write_file', fallbackAsk, undefined, true, 0],

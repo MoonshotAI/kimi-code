@@ -39,7 +39,7 @@ export function createAutoReviewReviewer(
       : evaluation.result.kind === 'approve'
         ? await policies.evaluate(context, { mode: 'manual' })
         : undefined;
-    if (askEval?.result.kind !== 'ask') return undefined;
+    if (askEval?.result.kind !== 'ask' || askEval.policyName === 'user-configured-ask') return undefined;
     const baseAsk = askEval.result;
     return async () => resolveAutoReview(
       context,

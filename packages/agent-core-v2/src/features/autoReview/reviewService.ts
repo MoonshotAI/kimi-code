@@ -218,7 +218,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     const history = this.loop.history();
     const authorization = this.authorizationOf(history);
     const cwd = this.workspace.workDir;
-    const projectInstructions = await this.sessionReview.projectInstructions();
+    const projectInstructions = await abortable(this.sessionReview.projectInstructions(), signal);
     const gitStatus = await abortable(this.readGitStatus(cwd, context), signal);
     const messages = buildReviewMessages(
       history,
@@ -243,6 +243,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       ? context.args['cwd']
       : undefined;
     const targetCwd = argCwd === undefined ? cwd : this.workspace.resolve(argCwd);
+    if (!this.workspace.isWithin(targetCwd)) return undefined;
     try {
       const status = await git.statusAt(targetCwd, { includePullRequest: false, includeStats: false });
       const keys = Object.keys(status.entries);

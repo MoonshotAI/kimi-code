@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LiveRef, ServiceIdentifier } from '#/_base/di/instantiation';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
+import { Emitter } from '#/_base/event';
 import { createDeadlineAbortSignal } from '#/_base/utils/abort';
 import { ContextClear } from '#/agent/contextMemory/contextEvents';
 import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
@@ -186,6 +187,7 @@ describe('autoReview context and state', () => {
       },
     ]);
     expect(entries).toEqual([
+      { role: 'constraint', content: [{ type: 'text', text: 'Compacted.' }] },
       human('Clean generated files.'),
       { role: 'direct-parent-instruction', content: [{ type: 'text', text: 'Delete dist and rebuild.' }] },
       { role: 'human-instruction', content: [{ type: 'text', text: 'keep-text' }, { type: 'text', text: '[image_url attachment omitted]' }] },
@@ -300,6 +302,7 @@ describe('SessionAutoReviewService', () => {
   let selectedModels: string[];
   let requestedEfforts: Array<ThinkingEffort | undefined>;
   let agentsMd: string;
+  let instructionsChange: Emitter<readonly unknown[]>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -307,6 +310,7 @@ describe('SessionAutoReviewService', () => {
     selectedModels = [];
     requestedEfforts = [];
     agentsMd = 'Do not delete user-data.';
+    instructionsChange = disposables.add(new Emitter());
   });
 
   afterEach(async () => {
@@ -353,7 +357,12 @@ describe('SessionAutoReviewService', () => {
       } as IProtocolAdapterRegistry,
       { record: async () => {} } as unknown as ISessionUsageService,
       { sessionId: 'session-1' } as ISessionContext,
-      { ready: Promise.resolve(), get agentsMd() { return agentsMd; }, agentsMdPaths: ['/workspace/AGENTS.md'] } as unknown as ISessionInstructionsProvider,
+      {
+        ready: Promise.resolve(),
+        get agentsMd() { return agentsMd; },
+        agentsMdPaths: ['/workspace/AGENTS.md'],
+        onDidChange: instructionsChange.event,
+      } as unknown as ISessionInstructionsProvider,
     ));
   }
 
@@ -366,7 +375,7 @@ describe('SessionAutoReviewService', () => {
     }
   }
 
-  it('validates explicit model only when enabled or executed, resolves fallback chain, and freezes instructions', async () => {
+  it('validates explicit model only when enabled or executed, resolves fallback chain, and refreshes instructions on change', async () => {
     await expect(execute(makeSessionService({ model: 'missing-model', flagEnabled: false }))).rejects.toThrow(/\[auto_review\]\.model/);
     expect(() => makeSessionService({ model: 'missing-model', flagEnabled: true })).toThrow(/\[auto_review\]\.model/);
 
@@ -379,6 +388,8 @@ describe('SessionAutoReviewService', () => {
     expect(await fallback.projectInstructions()).toMatchObject({ agentsMd: 'Do not delete user-data.' });
     agentsMd = 'Changed later.';
     expect(await fallback.projectInstructions()).toMatchObject({ agentsMd: 'Do not delete user-data.' });
+    instructionsChange.fire([]);
+    expect(await fallback.projectInstructions()).toMatchObject({ agentsMd: 'Changed later.' });
   });
 
   const effortModel = (thinking: Model['spec']['thinking'], providerType?: string): Model => ({
@@ -518,6 +529,7 @@ describe('AutoReviewService', () => {
     readonly agentId: string;
     readonly replayedAncestry?: AutoReviewAncestry;
     readonly flagEnabled?: boolean;
+    readonly projectInstructions?: ISessionAutoReviewService['projectInstructions'];
   }): Promise<AutoReviewService> {
     let ancestry = options.replayedAncestry;
     let onDidRestore: ((ctx: unknown, next: () => Promise<void>) => Promise<void>) | undefined;
@@ -545,7 +557,7 @@ describe('AutoReviewService', () => {
     const sessionReview: ISessionAutoReviewService = {
       _serviceBrand: undefined,
       assertConfiguredModelValid: () => {},
-      projectInstructions: async () => ({ agentsMd: 'Do not delete user-data.', agentsMdPaths: ['/workspace/AGENTS.md'] }),
+      projectInstructions: options.projectInstructions ?? (async () => ({ agentsMd: 'Do not delete user-data.', agentsMdPaths: ['/workspace/AGENTS.md'] })),
       execute: async (input) => {
         sentInputs.push(input);
         return { modelAlias: input.mainModelAlias, outcome: await runSessionReview(input) };
@@ -565,7 +577,12 @@ describe('AutoReviewService', () => {
       { history: () => history, resolveModelContext: () => resolveLoopModel() } as unknown as IAgentLoopService,
       sessionReview,
       new StubConfigService(),
-      { ...stubWorkspaceContext('/workspace'), get workDir() { return workspaceDir; } },
+      {
+        ...stubWorkspaceContext('/workspace'),
+        get workDir() { return workspaceDir; },
+        resolve: (rel: string) => rel.startsWith('/') ? rel : `${workspaceDir}/${rel}`,
+        isWithin: (absPath: string) => absPath === workspaceDir || absPath.startsWith(`${workspaceDir}/`),
+      },
       lifecycleStub({ main: reviewerStub([], mainAuth, ['mkdir']) }) as IAgentLifecycleService,
       {
         current: gitStatusAt === undefined ? undefined : { git: { statusAt: gitStatusAt } as unknown as IWorkspaceGitService },
@@ -601,6 +618,32 @@ describe('AutoReviewService', () => {
     expect(sent).not.toContain('Also delete production data.');
     expect(sent).toContain('"branch":"feat/sub"');
     expect(sent).toContain('"id":"mkdir","name":"Bash","arguments":"{\\"command\\":\\"mkdir generated\\"}","approved":true');
+  });
+
+  it('skips git status probing for a target cwd outside the workspace', async () => {
+    const statusAt = vi.fn(async (): Promise<FsGitStatusResponse> => ({
+      branch: 'main', ahead: 0, behind: 0, additions: 0, deletions: 0, pullRequest: null, entries: {},
+    }));
+    gitStatusAt = statusAt;
+    const main = await spawn({ agentId: 'main' });
+
+    await main.review(reviewContext({ command: 'ls', cwd: '/outside/repo' }), 'fallback-ask');
+
+    expect(statusAt).not.toHaveBeenCalled();
+    expect(messageText(sentInputs.at(-1)!.messages)).not.toContain('"gitStatus":{"branch"');
+  });
+
+  it('propagates cancellation while waiting for project instructions', async () => {
+    const controller = new AbortController();
+    const main = await spawn({
+      agentId: 'main',
+      projectInstructions: () => new Promise(() => {}),
+    });
+    const pending = main.review(reviewContext({ command: 'ls' }, { signal: controller.signal }), 'fallback-ask');
+    controller.abort(new Error('cancelled by user'));
+
+    await expect(pending).rejects.toThrow('cancelled by user');
+    expect(sentInputs).toHaveLength(0);
   });
 
   it('skips ancestry snapshot writes when the flag is disabled while still reading replayed snapshots', async () => {

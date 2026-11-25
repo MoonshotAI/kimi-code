@@ -86,12 +86,16 @@ export class ReverseRpcController {
 }
 
 function approvalPayload(id: string, request: ApprovalRequest) {
+  const review = request.approvalDetail;
+  const detail = describeToolDisplay(request.display);
   return {
     id,
     tool_call_id: request.toolCallId,
     sender: request.toolName,
     action: request.action,
-    description: describeToolDisplay(request.display),
+    description: review === undefined
+      ? detail
+      : `${review.outcome === "failed" ? "Auto Review couldn't finish" : `Auto Review recommends rejecting · ${review.risk ?? "medium"} risk`}: ${review.reason} — ${detail}`,
     display: toLegacyDisplay(request.display),
   };
 }

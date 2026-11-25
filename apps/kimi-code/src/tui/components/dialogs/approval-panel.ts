@@ -13,6 +13,7 @@ import {
 import { DockSection, type DockLayout, type DockPart } from '#/tui/components/chrome/dock-section';
 import { normalizeCapsLockedCtrl } from '#/tui/components/editor/custom-editor';
 import { currentTheme } from '#/tui/theme';
+import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 import { isSettlingClick } from '#/tui/utils/terminal-focus';
 
 import { paintHoverRow } from './hover-row';
@@ -181,7 +182,7 @@ function renderDisplayBlock(
 
 function reviewDetail(detail: string, contentWidth: number, dim: (text: string) => string): string[] {
   const width = Math.max(1, contentWidth);
-  const wrapped = wrapTextWithAnsi(detail, width);
+  const wrapped = wrapTextWithAnsi(sanitizeShellOutput(detail), width);
   const shown = wrapped.slice(0, REVIEW_DETAIL_MAX_LINES);
   if (wrapped.length > REVIEW_DETAIL_MAX_LINES && shown.length > 0) {
     const last = shown.length - 1;
