@@ -457,16 +457,16 @@ const isDev = import.meta.env.DEV;
   transition: padding-left 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 :global(.app.sidebar-collapsed .chat-header) {
-  padding-left: 78px;
+  padding-left: var(--header-collapsed-clearance);
 }
 :global(.app.sidebar-collapsed.custom-titlebar .chat-header) {
   padding-left: var(--space-4);
 }
 :global(.app.sidebar-collapsed.macos-desktop .chat-header) {
-  padding-left: 146px;
+  padding-left: var(--header-collapsed-clearance-macos);
 }
 :global(.app.fullscreen.sidebar-collapsed.macos-desktop .chat-header) {
-  padding-left: 78px;
+  padding-left: var(--header-collapsed-clearance);
 }
 .ch-id { display: flex; align-items: center; gap: 6px; min-width: 0; flex: none; max-width: 46%; }
 .ch-ws { color: var(--color-text-muted); font-size: var(--text-base); font-weight: var(--weight-medium); flex: none; }

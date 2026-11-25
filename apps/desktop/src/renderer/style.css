@@ -197,6 +197,11 @@ summary {
   --header-collapsed-clearance-macos: 146px;
 }
 
+.app.history-nav {
+  --header-collapsed-clearance: 130px;
+  --header-collapsed-clearance-macos: 198px;
+}
+
 /* -- icon primitive ------------------------------------------------------------
    Applied to every product icon: the <Icon> component output
    (components/ui/Icon.vue) and the iconSvg() v-html strings (lib/icons.ts).

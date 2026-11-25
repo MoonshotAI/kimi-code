@@ -3,18 +3,21 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, IconButton } from '@moonshot-ai/app-ui';
 import { useCanaryChannel } from '@moonshot-ai/app-client/composables';
+import { useSessionMentions } from '@moonshot-ai/app-core';
 import { shortcutTooltip } from '../../composables/useShortcuts';
 import { focusLeavesMenu, StandaloneAltTracker } from '../../lib/menuAccess';
 import BrandLogo from '../onboarding/BrandLogo.vue';
 import UpdateIndicator from '../UpdateIndicator.vue';
+import HistoryNavButtons from './HistoryNavButtons.vue';
 
 type MenuId = 'file' | 'edit' | 'view' | 'help';
 
 const props = defineProps<{ sidebarCollapsed: boolean; fullscreen: boolean }>();
-const emit = defineEmits<{ toggleSidebar: [] }>();
+const emit = defineEmits<{ toggleSidebar: []; navigate: [direction: 'back' | 'forward'] }>();
 
 const { t } = useI18n();
 const canary = useCanaryChannel();
+const { sessionMentions } = useSessionMentions();
 const sidebarToggleTooltip = computed(() =>
   shortcutTooltip(
     props.sidebarCollapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar'),
@@ -171,6 +174,7 @@ onBeforeUnmount(() => {
       >
         <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" />
       </IconButton>
+      <HistoryNavButtons v-if="sessionMentions" class="custom-history-nav" @navigate="emit('navigate', $event)" />
       <nav class="custom-menubar" :aria-label="t('app.applicationMenu')" @focusout="onMenuFocusout">
         <button
           v-for="id in menus"
@@ -236,6 +240,9 @@ onBeforeUnmount(() => {
   flex: none;
   margin-left: var(--space-2);
   -webkit-app-region: no-drag;
+}
+.custom-history-nav {
+  flex: none;
 }
 .custom-menubar {
   display: flex;

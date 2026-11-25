@@ -444,6 +444,23 @@ describe('registry defaults sanity', () => {
   });
 });
 
+describe('history navigation registration', () => {
+  it('defaults to Cmd+[ / Cmd+] on Apple platforms and Alt+Left / Alt+Right elsewhere', () => {
+    stubPlatform('MacIntel');
+    expect(shortcutActionById('navigateBack')).toMatchObject({ scope: 'global', defaultBinding: 'mod+[' });
+    expect(shortcutActionById('navigateForward')?.defaultBinding).toBe('mod+]');
+    expect(matchBinding(keyEvent({ key: '[', code: 'BracketLeft', metaKey: true }), 'mod+[')).toBe(true);
+    expect(matchBinding(keyEvent({ key: '{', code: 'BracketLeft', metaKey: true, shiftKey: true }), 'mod+[')).toBe(false);
+
+    stubPlatform('Win32');
+    expect(shortcutActionById('navigateBack')?.defaultBinding).toBe('alt+arrowleft');
+    expect(shortcutActionById('navigateForward')?.defaultBinding).toBe('alt+arrowright');
+    expect(matchBinding(keyEvent({ key: 'ArrowLeft', code: 'ArrowLeft', altKey: true }), 'alt+arrowleft')).toBe(true);
+    expect(MENU_SYNCED_ACTIONS).not.toContain('navigateBack');
+    expect(MENU_SYNCED_ACTIONS).not.toContain('navigateForward');
+  });
+});
+
 describe('openDiffTab registration', () => {
   it('defaults to ctrl+shift+g, global and session-scoped, renderer-dispatched', () => {
     const action = shortcutActionById('openDiffTab');

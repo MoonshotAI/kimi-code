@@ -22,6 +22,8 @@ export default {
     sidebarTabWorkspaces: { label: 'Projects Tab', desc: 'Switch to the project directory in the sidebar' },
     selectPrevSibling: { label: 'Previous Item', desc: 'Select the previous chat / project in the current tab' },
     selectNextSibling: { label: 'Next Item', desc: 'Select the next chat / project in the current tab' },
+    navigateBack: { label: 'Back', desc: 'Go back to the previously viewed chat' },
+    navigateForward: { label: 'Forward', desc: 'Go forward to the next chat in your history' },
     send: { label: 'Send Message', desc: 'Send the composer input' },
     newline: { label: 'Newline', desc: 'Insert a newline in the composer' },
   },

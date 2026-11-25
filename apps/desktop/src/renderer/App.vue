@@ -81,6 +81,7 @@ import { sessionDisplayStatus, type SessionDisplayStatus } from '@moonshot-ai/ap
 import { Icon, IconButton, StatusDot } from '@moonshot-ai/app-ui';
 import { hasCustomTitleBar, hasDesktopBridge, isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
 import CustomTitleBar from './components/window/CustomTitleBar.vue';
+import HistoryNavButtons from './components/window/HistoryNavButtons.vue';
 import TerminalDropZone from './components/terminal/TerminalDropZone.vue';
 import TerminalPanel from './components/terminal/TerminalPanel.vue';
 import TerminalResizeHandle from './components/terminal/TerminalResizeHandle.vue';
@@ -377,6 +378,7 @@ onMounted(() => {
   window.addEventListener('resize', onTerminalWindowResize);
   installImeCompositionLatch();
   window.addEventListener('keydown', onShortcutKeydown);
+  window.addEventListener('mouseup', onHistoryMouseButton);
   offMenuAction =
     (window as { kimiDesktop?: { onMenuAction?: (cb: (id: string) => void) => () => void } })
       .kimiDesktop?.onMenuAction?.((menuId) => {
@@ -451,6 +453,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onShortcutKeydown);
+  window.removeEventListener('mouseup', onHistoryMouseButton);
   if (offMenuAction !== null) {
     offMenuAction();
     offMenuAction = null;
@@ -640,6 +643,12 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
     case 'selectNextSibling':
       sidebarRef.value?.selectSibling(1);
       break;
+    case 'navigateBack':
+      window.history.back();
+      break;
+    case 'navigateForward':
+      window.history.forward();
+      break;
     case 'captureScreenshot':
       void handleScreenshot();
       break;
@@ -709,6 +718,16 @@ function onShortcutKeydown(e: KeyboardEvent): void {
   }
   e.preventDefault();
   runShortcutAction(id, 'shortcut');
+}
+
+function navigateHistory(direction: 'back' | 'forward'): void {
+  runShortcutAction(direction === 'back' ? 'navigateBack' : 'navigateForward', 'button');
+}
+
+function onHistoryMouseButton(e: MouseEvent): void {
+  if (!desktopBridge || (e.button !== 3 && e.button !== 4) || anyOverlayOpen.value) return;
+  e.preventDefault();
+  navigateHistory(e.button === 3 ? 'back' : 'forward');
 }
 
 const filePreview = useFilePreview({
@@ -2465,6 +2484,7 @@ function openPr(url: string): void {
       :class="{
         mobile: isMobile,
         'sidebar-collapsed': sidebarCollapsed && !isMobile,
+        'history-nav': desktopBridge && sessionMentions && !isMobile,
         'macos-desktop': isMacosDesktop,
         'windows-desktop': isWindowsDesktop,
         'custom-titlebar': hasCustomTitleBar,
@@ -2480,6 +2500,7 @@ function openPr(url: string): void {
       :fullscreen="isFullscreen"
       :sidebar-collapsed="sidebarCollapsed"
       @toggle-sidebar="runShortcutAction('toggleSidebar', 'button')"
+      @navigate="navigateHistory"
     />
     <template v-if="!isMobile">
       <Sidebar
@@ -2499,6 +2520,7 @@ function openPr(url: string): void {
         @open-feedback="openGlobalFeedback('sidebar')"
         @login="openLogin"
         @collapse="runShortcutAction('toggleSidebar', 'button')"
+        @navigate="navigateHistory"
       />
       <ResizeHandle
         v-show="!sidebarCollapsed"
@@ -2615,6 +2637,12 @@ function openPr(url: string): void {
     >
       <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" />
     </IconButton>
+
+    <HistoryNavButtons
+      v-if="desktopBridge && sessionMentions && !isMobile && (isMacosDesktop || (sidebarCollapsed && !hasCustomTitleBar))"
+      class="history-nav-btns"
+      @navigate="navigateHistory"
+    />
 
     <!-- New-chat shortcut — web-only while the sidebar is COLLAPSED (the
          expanded sidebar already owns the primary "New chat" button).
@@ -3042,6 +3070,20 @@ function openPr(url: string): void {
 .app.macos-desktop.fullscreen .sidebar-toggle-btn {
   left: 16px;
 }
+.history-nav-btns {
+  position: absolute;
+  top: 11px;
+  left: 42px;
+  z-index: var(--z-sticky);
+  animation: sidebar-toggle-btn-in 0.18s var(--ease-out) 0.12s backwards;
+}
+.app.macos-desktop .history-nav-btns {
+  left: 110px;
+  animation: none;
+}
+.app.macos-desktop.fullscreen .history-nav-btns {
+  left: 42px;
+}
 .new-chat-btn {
   position: absolute;
   top: 11px;
@@ -3055,6 +3097,15 @@ function openPr(url: string): void {
 }
 .app.macos-desktop.fullscreen .new-chat-btn {
   left: 42px;
+}
+.app.history-nav .new-chat-btn {
+  left: 94px;
+}
+.app.history-nav.macos-desktop .new-chat-btn {
+  left: 162px;
+}
+.app.history-nav.macos-desktop.fullscreen .new-chat-btn {
+  left: 94px;
 }
 @keyframes sidebar-toggle-btn-in {
   from { opacity: 0; }
