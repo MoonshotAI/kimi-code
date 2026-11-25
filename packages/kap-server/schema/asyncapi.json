@@ -3496,6 +3496,14 @@
             },
             "turn": {
               "properties": {
+                "continuation": {
+                  "enum": [
+                    "turn",
+                    "background",
+                    "none"
+                  ],
+                  "type": "string"
+                },
                 "duration_ms": {
                   "minimum": 0,
                   "type": "number"
@@ -3922,6 +3930,14 @@
             "turns": {
               "items": {
                 "properties": {
+                  "continuation": {
+                    "enum": [
+                      "turn",
+                      "background",
+                      "none"
+                    ],
+                    "type": "string"
+                  },
                   "duration_ms": {
                     "minimum": 0,
                     "type": "number"
