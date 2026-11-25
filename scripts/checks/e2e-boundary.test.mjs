@@ -139,16 +139,17 @@ await test('imports: anything outside the allowlist is rejected, including produ
   assert.match(first.instead, /@moonshot-ai\/testkit\/model/);
 });
 
-await test('imports: the editor SDK, the virtual terminal and child_process are limited to the drivers that need them', () => {
+await test('imports: the editor SDK, the virtual terminal, node-pty and child_process are limited to the drivers that need them', () => {
   const sdk = "import * as acp from '@agentclientprotocol/sdk';";
   const terminal = "import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';";
+  const pty = "import type { IPty } from 'node-pty';";
   const spawn = "import { spawn } from 'node:child_process';";
   assert.deepEqual(importFindings(ACP, [sdk, spawn].join('\n')), []);
-  assert.deepEqual(importFindings(TUI, [terminal, spawn].join('\n')), []);
-  assert.deepEqual(importPatterns(TUI, sdk), ['@agentclientprotocol/sdk']);
-  assert.deepEqual(importPatterns(ACP, terminal), ['@moonshot-ai/pi-tui/testing']);
-  assert.deepEqual(importPatterns(DESKTOP, [sdk, terminal, spawn].join('\n')), ['@agentclientprotocol/sdk', '@moonshot-ai/pi-tui/testing', 'node:child_process']);
-  assert.match(importFindings(DESKTOP, spawn)[0].instead, /allowed only in tests\/e2e\/surfaces\/tui\.ts and tests\/e2e\/surfaces\/acp\.ts/);
+  assert.deepEqual(importFindings(TUI, [terminal, pty].join('\n')), []);
+  assert.deepEqual(importPatterns(TUI, [sdk, spawn].join('\n')), ['@agentclientprotocol/sdk', 'node:child_process']);
+  assert.deepEqual(importPatterns(ACP, [terminal, pty].join('\n')), ['@moonshot-ai/pi-tui/testing', 'node-pty']);
+  assert.deepEqual(importPatterns(DESKTOP, [sdk, terminal, pty, spawn].join('\n')), ['@agentclientprotocol/sdk', '@moonshot-ai/pi-tui/testing', 'node-pty', 'node:child_process']);
+  assert.match(importFindings(DESKTOP, spawn)[0].instead, /allowed only in tests\/e2e\/surfaces\/acp\.ts/);
 });
 
 await test('imports: scenarios and self-tests see only support/scenario and the testkit script steps', () => {

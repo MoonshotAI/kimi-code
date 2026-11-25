@@ -136,6 +136,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libgtk-3-0 libgbm1 libasound2t64
+      - name: Download the Electron binary before parallel cases start it
+        run: pnpm --filter kimi-code-app exec node -e "require('electron')"
       - name: Run the scenarios and driver self-tests on Desktop
         run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" pnpm --filter @moonshot-ai/e2e exec playwright test --project=desktop --shard=${{ matrix.shard }}/2
       - uses: actions/upload-artifact@v7
