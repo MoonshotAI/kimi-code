@@ -6159,6 +6159,11 @@ describe('setNotifyUserEnabled', () => {
   it('ignores stale out-of-order refreshServerMeta responses across rapid Lab toggles', async () => {
     const { useContextInspector } = await import('@moonshot-ai/app-core');
     useContextInspector().setContextInspectorEnabled(false);
+    configStore().experimentalBeta = {
+      enabled: false,
+      source: 'default',
+      env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+    };
 
     let resolveFirstMeta!: (value: unknown) => void;
     let resolveSecondMeta!: (value: unknown) => void;
@@ -6278,6 +6283,10 @@ describe('setNotifyUserEnabled', () => {
     expect(await configStore().setExperimentalFlag('session_mentions', false)).toBe(true);
     expect(useSessionMentions().sessionMentions.value).toBe(false);
     expect(globalThis.localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBeNull();
+
+    apiMock.setConfig.mockClear();
+    expect(await configStore().setBetaFeaturesEnabled(true)).toBe(false);
+    expect(apiMock.setConfig).not.toHaveBeenCalled();
   });
 });
 

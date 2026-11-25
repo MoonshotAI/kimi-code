@@ -238,5 +238,11 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
 
     expect(promptPredictionSwitch.disabled).toBe(true);
     expect(document.body.textContent).toContain('KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION');
+
+    configStore().experimentalBeta = null;
+    await flush();
+    expect(
+      document.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="开启全部 Beta 功能"]'),
+    ).toBeNull();
   }, 60_000);
 });

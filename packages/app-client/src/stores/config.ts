@@ -347,6 +347,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
   }
 
   async function setBetaFeaturesEnabled(on: boolean): Promise<boolean> {
+    if (experimentalBeta.value === null) return false;
     const saved = await updateConfig({ experimental: { beta: on } });
     if (!saved) return false;
     metaCommittedGeneration = ++metaRequestGeneration;

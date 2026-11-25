@@ -1535,11 +1535,11 @@ defineExpose({ confirmDiscard });
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.lab.betaGroup') }}</h3>
             <div class="settings-group">
-            <div class="row">
+            <div v-if="betaMasterState !== null" class="row">
               <span class="rlabel">
                 {{ t('settings.lab.enableAllBeta') }}
                 <span class="hint">{{ t('settings.lab.enableAllBetaHint') }}</span>
-                <span v-if="betaMasterLockedByEnv && betaMasterState" class="hint">
+                <span v-if="betaMasterLockedByEnv" class="hint">
                   {{ t('settings.lab.lockedByEnv', { env: betaMasterState.env }) }}
                 </span>
               </span>

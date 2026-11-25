@@ -401,6 +401,7 @@ export class KimiTUI {
   private readonly questionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
   private surveySettingSubscription: Unsubscribe | undefined;
+  private experimentalRefreshGeneration = 0;
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
   private readonly skillCommandDefaultPaths = new Map<string, string>();
@@ -573,8 +574,13 @@ export class KimiTUI {
       }),
     );
     this.surveySettingSubscription = this.harness.onConfigSectionChanged((change) => {
-      if (change.domain !== 'disableFeedbackSurvey') return;
-      this.setAppState({ disableFeedbackSurvey: change.value === true ? true : undefined });
+      if (change.domain === 'disableFeedbackSurvey') {
+        this.setAppState({ disableFeedbackSurvey: change.value === true ? true : undefined });
+        return;
+      }
+      if (change.domain === 'experimental') {
+        void this.refreshExperimentalFeaturesFromConfig();
+      }
     });
     this.streamingUI = new StreamingUIController(this);
     this.state.transcriptContainer.setTimeline(this.streamingUI.timeline);
@@ -1131,7 +1137,25 @@ export class KimiTUI {
     this.showStatus(warning, 'warning');
   }
 
+  private async refreshExperimentalFeaturesFromConfig(): Promise<void> {
+    if (typeof this.harness.getExperimentalFeatures !== 'function') return;
+    const generation = ++this.experimentalRefreshGeneration;
+    try {
+      const features = await this.harness.getExperimentalFeatures();
+      if (this.aborted || generation < this.experimentalRefreshGeneration) return;
+      setExperimentalFeatures(features);
+      this.refreshSlashCommandAutocomplete();
+      if (isExperimentalFlagEnabled('prompt_prediction')) {
+        this.promptPredictionController?.handleLoopIdle();
+      } else {
+        this.promptPredictionController?.reset();
+      }
+      this.state.ui.requestRender();
+    } catch {}
+  }
+
   private async init(): Promise<boolean> {
+    ++this.experimentalRefreshGeneration;
     setExperimentalFeatures(await this.harness.getExperimentalFeatures());
     applyTranscriptPresentation(this);
     this.sessionEventHandler.notifications.setEnabled(isExperimentalFlagEnabled('notify_user'));
