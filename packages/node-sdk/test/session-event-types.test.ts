@@ -74,6 +74,12 @@ describe('Event public types', () => {
     expectTypeOf<QuestionRequest['questions'][number]['question']>().toEqualTypeOf<string>();
   });
 
+  it('exposes optional continuation info on turn.ended', () => {
+    expectTypeOf<EventByType<'turn.ended'>['continuation']>().toEqualTypeOf<
+      'turn' | 'background' | 'none' | undefined
+    >();
+  });
+
   it('exposes optional session scope on approval responses', () => {
     expectTypeOf<ApprovalResponse['scope']>().toEqualTypeOf<'session' | undefined>();
   });
@@ -102,8 +108,6 @@ describe('Event public types', () => {
         case 'warning':
         case 'turn.started':
         case 'turn.ended':
-        case 'loop.drained':
-        case 'loop.idle':
         case 'turn.step.started':
         case 'turn.step.completed':
         case 'turn.step.retrying':

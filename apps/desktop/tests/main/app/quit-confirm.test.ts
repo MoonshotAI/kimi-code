@@ -68,6 +68,7 @@ vi.mock('../../../src/main/window/main-window', () => ({
 
 import {
   busySessionsUrl,
+  confirmUpdateRestart,
   hasBusySession,
   quitConfirmStrings,
   remoteControlEnabled,
@@ -77,6 +78,8 @@ import {
   shouldBlockQuit,
 } from '../../../src/main/app/quit-confirm';
 import { IPC } from '../../../src/main/ipc/ipc-channels';
+
+const QUIT_DETAILS = { purpose: 'quit', sessionTitles: [] };
 
 function fakeWindow(visible: boolean): BrowserWindow {
   return {
@@ -277,6 +280,22 @@ describe('shouldBlockQuit', () => {
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('quit_confirmation', { action: 'quit' });
   });
 
+  it('asks a plain quit from the busy probe alone and offers no continue option', async () => {
+    stubQuitFetch([{ id: 's1', title: 'Fix login bug', activity: 'turn' }]);
+    mocks.showMessageBox.mockResolvedValue({ response: 1, checkboxChecked: true });
+
+    expect(await shouldBlockQuit(fakeWindow(true))).toBe(false);
+
+    const options = mocks.showMessageBox.mock.calls[0]![1] as Record<string, unknown>;
+    expect(options['detail']).toBe('Sessions are still in progress on this machine and will be interrupted if you quit.');
+    expect(options['checkboxLabel']).toBeUndefined();
+    expect(options['checkboxChecked']).toBe(false);
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+      'http://127.0.0.1:54321/api/v1/sessions?busy=true&page_size=1&archived=all',
+      'http://127.0.0.1:54321/api/v1/remote-control',
+    ]);
+  });
+
   it('still resolves when telemetry tracking throws', async () => {
     stubQuitFetch([{ id: 's1', busy: true }]);
     mocks.showMessageBox.mockResolvedValue({ response: 0 });
@@ -357,9 +376,12 @@ describe('shouldBlockQuit', () => {
       busyFetch();
       const pending = shouldBlockQuit(fakeWindow(true));
       await vi.waitFor(() =>
-        expect(mocks.sendToRenderer).toHaveBeenCalledWith(IPC.quitConfirm, expect.any(Number), [
-          'busy',
-        ]),
+        expect(mocks.sendToRenderer).toHaveBeenCalledWith(
+          IPC.quitConfirm,
+          expect.any(Number),
+          ['busy'],
+          QUIT_DETAILS,
+        ),
       );
       expect(mocks.showMainWindow).toHaveBeenCalledOnce();
       expect(mocks.showMessageBox).not.toHaveBeenCalled();
@@ -374,10 +396,12 @@ describe('shouldBlockQuit', () => {
       stubQuitFetch([{ id: 's1', busy: true }], true);
       const pending = shouldBlockQuit(fakeWindow(true));
       await vi.waitFor(() =>
-        expect(mocks.sendToRenderer).toHaveBeenCalledWith(IPC.quitConfirm, expect.any(Number), [
-          'busy',
-          'remote-control',
-        ]),
+        expect(mocks.sendToRenderer).toHaveBeenCalledWith(
+          IPC.quitConfirm,
+          expect.any(Number),
+          ['busy', 'remote-control'],
+          QUIT_DETAILS,
+        ),
       );
       resolveQuitConfirmResponse('cancel');
       expect(await pending).toBe(true);
@@ -478,9 +502,12 @@ describe('shouldBlockQuit', () => {
       expect(mocks.sendToRenderer).not.toHaveBeenCalled();
       resolvers[0]!(envelope([{ id: 's1', busy: true }]));
       await vi.waitFor(() =>
-        expect(mocks.sendToRenderer).toHaveBeenCalledWith(IPC.quitConfirm, expect.any(Number), [
-          'busy',
-        ]),
+        expect(mocks.sendToRenderer).toHaveBeenCalledWith(
+          IPC.quitConfirm,
+          expect.any(Number),
+          ['busy'],
+          QUIT_DETAILS,
+        ),
       );
       resolveQuitConfirmResponse('cancel');
       expect(await pending).toBe(true);
@@ -530,9 +557,12 @@ describe('shouldBlockQuit', () => {
       const quitCheck = shouldBlockQuit(fakeWindow(true));
       resolvers[1]!(envelope([{ id: 's1', busy: true }]));
       await vi.waitFor(() =>
-        expect(mocks.sendToRenderer).toHaveBeenCalledWith(IPC.quitConfirm, expect.any(Number), [
-          'busy',
-        ]),
+        expect(mocks.sendToRenderer).toHaveBeenCalledWith(
+          IPC.quitConfirm,
+          expect.any(Number),
+          ['busy'],
+          QUIT_DETAILS,
+        ),
       );
       resolveQuitConfirmResponse('quit');
       expect(await quitCheck).toBe(false);
@@ -601,6 +631,178 @@ describe('shouldBlockQuit', () => {
       resolveQuitConfirmResponse('quit', requestId + 999);
       resolveQuitConfirmResponse('cancel', requestId);
       expect(await pending).toBe(true);
+    });
+  });
+});
+
+describe('confirmUpdateRestart', () => {
+  const running = (id: string, title: string): unknown => ({ id, title, activity: 'turn' });
+
+  it('restarts without a prompt when nothing is running', async () => {
+    stubQuitFetch([]);
+    expect(await confirmUpdateRestart(fakeWindow(true))).toEqual({ proceed: true, continueSessionIds: [] });
+    expect(mocks.showMessageBox).not.toHaveBeenCalled();
+  });
+
+  it('restarts without a prompt when no embedded server is running', async () => {
+    mocks.embeddedServerOrigin.mockReturnValue(null);
+    expect(await confirmUpdateRestart(fakeWindow(true))).toEqual({ proceed: true, continueSessionIds: [] });
+    expect(mocks.showMessageBox).not.toHaveBeenCalled();
+  });
+
+  it('lists the running sessions and offers to continue them, checked by default', async () => {
+    stubQuitFetch([running('s1', 'Fix login bug'), { id: 's2', title: '', last_prompt: 'Write\n  tests', activity: 'turn' }]);
+    mocks.showMessageBox.mockResolvedValue({ response: 1, checkboxChecked: true });
+
+    expect(await confirmUpdateRestart(fakeWindow(true))).toEqual({ proceed: true, continueSessionIds: ['s1', 's2'] });
+
+    const options = mocks.showMessageBox.mock.calls[0]![1] as Record<string, unknown>;
+    expect(options).toMatchObject({
+      message: 'Restart and update Kimi Code?',
+      detail: 'These sessions are still in progress and will be interrupted by the restart:\n• Fix login bug\n• Write tests',
+      buttons: ['Cancel', 'Restart & Update'],
+      checkboxLabel: 'Continue these sessions after restart',
+      checkboxChecked: true,
+      defaultId: 0,
+      cancelId: 0,
+    });
+  });
+
+  it('restarts without continuing when the user clears the option', async () => {
+    stubQuitFetch([running('s1', 'Fix login bug')]);
+    mocks.showMessageBox.mockResolvedValue({ response: 1, checkboxChecked: false });
+    expect(await confirmUpdateRestart(fakeWindow(true))).toEqual({ proceed: true, continueSessionIds: [] });
+  });
+
+  it('keeps the app running when the user cancels', async () => {
+    stubQuitFetch([running('s1', 'Fix login bug')]);
+    mocks.showMessageBox.mockResolvedValue({ response: 0, checkboxChecked: true });
+    expect(await confirmUpdateRestart(fakeWindow(true))).toEqual({ proceed: false, continueSessionIds: [] });
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('quit_confirmation', { action: 'cancel' });
+  });
+
+  it('shows the first three titles and counts the rest', async () => {
+    stubQuitFetch(['a', 'b', 'c', 'd', 'e'].map((id) => running(id, `Task ${id}`)));
+    mocks.showMessageBox.mockResolvedValue({ response: 0 });
+    await confirmUpdateRestart(null);
+    const { detail } = mocks.showMessageBox.mock.calls[0]![0] as { detail: string };
+    expect(detail.split('\n').slice(1)).toEqual(['• Task a', '• Task b', '• Task c', 'and 2 more']);
+  });
+
+  it('uses the zh copy for the update prompt', async () => {
+    setQuitConfirmLocale('zh');
+    stubQuitFetch(['a', 'b', 'c', 'd'].map((id) => running(id, `任务 ${id}`)));
+    mocks.showMessageBox.mockResolvedValue({ response: 0 });
+    await confirmUpdateRestart(null);
+    const options = mocks.showMessageBox.mock.calls[0]![0] as Record<string, unknown>;
+    expect(options).toMatchObject({
+      message: '重启并更新 Kimi Code？',
+      buttons: ['取消', '重启并更新'],
+      checkboxLabel: '重启后继续这些会话',
+    });
+    expect(options['detail']).toContain('以及其他 1 个会话');
+  });
+
+  it('offers no checkbox when only background work is running', async () => {
+    stubQuitFetch([{ id: 's1', title: 'Indexing', activity: 'background' }]);
+    mocks.showMessageBox.mockResolvedValue({ response: 1, checkboxChecked: true });
+
+    expect(await confirmUpdateRestart(fakeWindow(true))).toEqual({ proceed: true, continueSessionIds: [] });
+
+    const options = mocks.showMessageBox.mock.calls[0]![1] as Record<string, unknown>;
+    expect(options['detail']).toBe('Sessions are still in progress on this machine and will be interrupted by the restart.');
+    expect(options['checkboxLabel']).toBeUndefined();
+    expect(options['checkboxChecked']).toBe(false);
+  });
+
+  it('lists and continues only the running turns when other sessions run background work', async () => {
+    stubQuitFetch([running('s1', 'Fix login bug'), { id: 's2', title: 'Indexing', activity: 'background' }]);
+    mocks.showMessageBox.mockResolvedValue({ response: 1, checkboxChecked: true });
+
+    expect(await confirmUpdateRestart(fakeWindow(true))).toEqual({ proceed: true, continueSessionIds: ['s1'] });
+
+    const { detail } = mocks.showMessageBox.mock.calls[0]![1] as { detail: string };
+    expect(detail).toBe('These sessions are still in progress and will be interrupted by the restart:\n• Fix login bug');
+  });
+
+  it('warns about Remote Control in the restart wording', async () => {
+    stubQuitFetch([running('s1', 'Fix login bug')], true);
+    mocks.showMessageBox.mockResolvedValue({ response: 0 });
+    await confirmUpdateRestart(fakeWindow(true));
+    const { detail } = mocks.showMessageBox.mock.calls[0]![1] as { detail: string };
+    expect(detail.endsWith('\n\nRemote Control is running and will be interrupted by the restart')).toBe(true);
+    expect(mocks.setRemoteControlPreviousEnabled).toHaveBeenLastCalledWith(true);
+  });
+
+  it('keeps the generic warning without the option when the session list fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/api/v1/remote-control')) return Promise.resolve(jsonResponse(rcEnvelope(false)));
+        if (url.includes('page_size=100')) return Promise.resolve({ ok: false, status: 500 });
+        return Promise.resolve(jsonResponse(envelope([running('s1', 'Fix login bug')])));
+      }),
+    );
+    mocks.showMessageBox.mockResolvedValue({ response: 1, checkboxChecked: true });
+
+    expect(await confirmUpdateRestart(fakeWindow(true))).toEqual({ proceed: true, continueSessionIds: [] });
+
+    const options = mocks.showMessageBox.mock.calls[0]![1] as Record<string, unknown>;
+    expect(options['detail']).toBe('Sessions are still in progress on this machine and will be interrupted by the restart.');
+    expect(options['checkboxLabel']).toBeUndefined();
+    expect(mocks.logWarn).toHaveBeenCalledWith(expect.stringContaining('HTTP 500'));
+  });
+
+  it('restarts without a prompt when every busy query fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        url.includes('/api/v1/remote-control')
+          ? Promise.resolve(jsonResponse(rcEnvelope(false)))
+          : Promise.resolve({ ok: false, status: 500 }),
+      ),
+    );
+    expect(await confirmUpdateRestart(fakeWindow(true))).toEqual({ proceed: true, continueSessionIds: [] });
+    expect(mocks.showMessageBox).not.toHaveBeenCalled();
+  });
+
+  describe('in-app confirmation dialog', () => {
+    it('sends the running session titles and continues exactly the sessions it showed', async () => {
+      mocks.isRendererReady.mockReturnValue(true);
+      stubQuitFetch([running('s1', 'Fix login bug'), { id: 's2', title: 'Indexing', activity: 'background' }]);
+      const pending = confirmUpdateRestart(fakeWindow(true));
+      await vi.waitFor(() =>
+        expect(mocks.sendToRenderer).toHaveBeenCalledWith(IPC.quitConfirm, expect.any(Number), ['busy'], {
+          purpose: 'update',
+          sessionTitles: ['Fix login bug'],
+        }),
+      );
+      const requestId = mocks.sendToRenderer.mock.calls[0]![1] as number;
+      resolveQuitConfirmResponse('quit', requestId, true);
+      expect(await pending).toEqual({ proceed: true, continueSessionIds: ['s1'] });
+      expect(fetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('ignores a continue answer when no session was offered', async () => {
+      mocks.isRendererReady.mockReturnValue(true);
+      stubQuitFetch([{ id: 's1', title: 'Indexing', activity: 'background' }]);
+      const pending = confirmUpdateRestart(fakeWindow(true));
+      await vi.waitFor(() => expect(mocks.sendToRenderer).toHaveBeenCalledOnce());
+      const requestId = mocks.sendToRenderer.mock.calls[0]![1] as number;
+      resolveQuitConfirmResponse('quit', requestId, true);
+      expect(await pending).toEqual({ proceed: true, continueSessionIds: [] });
+    });
+
+    it('carries the checkbox answer through the native fallback', async () => {
+      mocks.isRendererReady.mockReturnValue(true);
+      stubQuitFetch([running('s1', 'Fix login bug')]);
+      mocks.showMessageBox.mockResolvedValue({ response: 1, checkboxChecked: true });
+      const pending = confirmUpdateRestart(fakeWindow(true));
+      await vi.waitFor(() => expect(mocks.sendToRenderer).toHaveBeenCalledOnce());
+      const requestId = mocks.sendToRenderer.mock.calls[0]![1] as number;
+      resolveQuitConfirmResponse('unavailable', requestId);
+      expect(await pending).toEqual({ proceed: true, continueSessionIds: ['s1'] });
+      expect(mocks.showMessageBox).toHaveBeenCalledOnce();
     });
   });
 });

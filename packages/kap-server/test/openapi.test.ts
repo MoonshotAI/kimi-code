@@ -109,6 +109,22 @@ describe('server-v2 OpenAPI', () => {
     }
   });
 
+  it('documents file-write errors under the HTTP statuses sent by the route', async () => {
+    const doc = await fetchOpenApi();
+    const responses = asRecord(operation(doc, '/api/v1/fs:content', 'put')['responses']);
+    const schemaAt = (status: string) => asRecord(asRecord(asRecord(asRecord(responses[status])['content'])['application/json'])['schema']);
+    expect(schemaAt('403')).toMatchObject({ oneOf: [
+      { properties: { code: { enum: [40301] } } },
+      { properties: { code: { enum: [40302] } } },
+    ] });
+    for (const [status, code] of [['400', 40001], ['412', 41201], ['413', 41302]] as const) {
+      expect(responses[status], `HTTP ${status}`).toBeDefined();
+      expect(schemaAt(status)).toMatchObject({ properties: { code: { enum: [code] }, data: { nullable: true } } });
+    }
+    const okVariants = schemaAt('200')['oneOf'] as Array<{ properties: { code: { enum: number[] } } }>;
+    expect(okVariants.flatMap(variant => variant.properties.code.enum)).toEqual([0, 40001, 50001]);
+  });
+
   it('represents the fs-action dispatcher as a oneOf union', async () => {
     const doc = await fetchOpenApi();
     const fsActionOp = operation(doc, '/api/v1/sessions/{session_id}/{tail}', 'post');

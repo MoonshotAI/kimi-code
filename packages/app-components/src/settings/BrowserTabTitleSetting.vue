@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import './settings-row-label.css';
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
@@ -109,7 +110,7 @@ function tokenLabel(id: BrowserTabTitleToken): string {
 <template>
   <div class="bt-setting">
     <div class="bt-row">
-      <span class="bt-rlabel">
+      <span class="settings-row-label bt-rlabel">
         {{ t('settings.browserTabTitle') }}
         <span class="bt-hint">{{ t('settings.browserTabTitleHint') }}</span>
       </span>
@@ -285,15 +286,7 @@ function tokenLabel(id: BrowserTabTitleToken): string {
   padding: var(--space-3) var(--space-4);
 }
 
-.bt-rlabel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-05);
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-option-label);
-  color: var(--color-text);
-}
+.bt-rlabel { color: var(--color-text); }
 
 .bt-hint {
   font-size: var(--text-xs);

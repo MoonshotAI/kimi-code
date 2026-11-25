@@ -30,3 +30,8 @@ export async function loadWorkspaceVisibility(core: Scope): Promise<{
     visibleWorkspaceIds,
   };
 }
+
+export async function workspaceRootOf(core: Scope, workspaceId: string): Promise<string | undefined> {
+  const registered = await core.accessor.get(IWorkspaceService).get(workspaceId);
+  return registered?.root ?? (await loadWorkspaceVisibility(core)).roots.get(workspaceId);
+}

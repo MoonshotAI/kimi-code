@@ -1,5 +1,16 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.6.1
+
+### Patch Changes
+
+- [#5246](https://github.com/MoonshotAI/kimi-code/pull/5246) [`f81c924`](https://github.com/MoonshotAI/kimi-code/commit/f81c924b1d70f963b0dc094bcb6859e446c37a49) Thanks [@liruifengv](https://github.com/liruifengv)! - Identify built-in MCP authorization calls and report reconnection and timeout states without appending authorization URLs to failed results.
+
+- [#5300](https://github.com/MoonshotAI/kimi-code/pull/5300) [`fce3af9`](https://github.com/MoonshotAI/kimi-code/commit/fce3af9e694a5a572699546ebe8e28ccf004ed88) Thanks [@Grapedge](https://github.com/Grapedge)! - Record model attribution for reply feedback and support cancellable multipart feedback uploads.
+
+- Updated dependencies [[`fce3af9`](https://github.com/MoonshotAI/kimi-code/commit/fce3af9e694a5a572699546ebe8e28ccf004ed88)]:
+  - @moonshot-ai/kimi-code-oauth@0.5.1
+
 ## 0.6.0
 
 ### Minor Changes

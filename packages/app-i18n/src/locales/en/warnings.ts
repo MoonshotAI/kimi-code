@@ -49,6 +49,11 @@ export default {
   providerRefreshFailedTitle: 'Model refresh failed',
   sendFailedTitle: 'Send failed',
   sendFailedNoDefaultModelMessage: 'No default model is configured. Choose a model again in Settings',
+  modelUnavailable: {
+    title: 'Session model unavailable',
+    message: '{model} is no longer configured. Choose another model to continue this session',
+    change: 'Change model',
+  },
   sessionOccupied: {
     title: 'Session in use',
     message:

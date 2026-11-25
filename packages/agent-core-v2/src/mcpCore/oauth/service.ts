@@ -58,6 +58,12 @@ export interface BeginAuthorizationResult {
   cancel(): Promise<void>;
 }
 
+export class McpOAuthCallbackTimeout extends Error {
+  constructor() {
+    super('OAuth callback timed out');
+  }
+}
+
 interface SharedAuthorizationFlow {
   readonly attach: () => BeginAuthorizationResult;
   readonly cancelUnderlying: () => Promise<void>;
@@ -617,7 +623,7 @@ export class McpOAuthService {
             } catch (error) {
               throw wrapAuthError(
                 `OAuth flow for "${serverName}" failed`,
-                deadline?.timedOut() ? new Error('OAuth callback timed out') : error,
+                deadline?.timedOut() ? new McpOAuthCallbackTimeout() : error,
               );
             } finally {
               deadline?.clear();

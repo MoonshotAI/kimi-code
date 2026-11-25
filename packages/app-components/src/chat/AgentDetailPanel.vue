@@ -42,6 +42,7 @@ provide(
     openTurnDiff: ({ change }) =>
       panelApi.openTurnDiff({ turnId: `agent:${props.member.id}`, change }),
     openCompaction: undefined,
+    isCompactionOpen: undefined,
   },
 );
 
@@ -365,30 +366,8 @@ const metaLabel = computed(() => {
 }
 
 .agent-prompt-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  align-self: center;
   margin-top: var(--space-1);
   padding: var(--space-1) var(--space-3);
-  border: none;
-  border-radius: var(--radius-full);
-  background: var(--color-surface-raised);
-  box-shadow: var(--shadow-sm);
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
-  line-height: 1;
-  cursor: pointer;
-  user-select: none;
-  transition: box-shadow var(--duration-base) var(--ease-out);
-}
-.agent-prompt-toggle:hover {
-  box-shadow: var(--shadow-md);
-}
-.agent-prompt-toggle:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
 }
 .agent-prompt-wrap.is-clamped .agent-prompt-toggle {
   position: absolute;
@@ -448,3 +427,5 @@ const metaLabel = computed(() => {
   font-family: var(--font-ui);
 }
 </style>
+
+<style scoped src="./clamp-toggle.css"></style>

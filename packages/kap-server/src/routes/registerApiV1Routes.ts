@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { IBootstrapService, IConfigService, ITelemetryService, type Scope } from '@moonshot-ai/agent-core-v2';
 import { FiberState } from '@moonshot-ai/agent-core-v2/_base/di/fiber';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
@@ -14,6 +15,7 @@ import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
 import { registerConfigRoutes } from './config';
 import { registerContextRoutes } from './context';
+import { registerFeedbackRoutes } from './feedback';
 import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
@@ -94,7 +96,7 @@ export async function registerApiV1Routes(
         product: opts.hostIdentity.productName,
         serverId: opts.serverId ?? ulid(),
         startedAt: new Date().toISOString(),
-        homeDir: core.accessor.get(IBootstrapService).homeDir,
+        homeDir: resolve(core.accessor.get(IBootstrapService).homeDir),
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
         webTitle: opts.webTitle,
         getExperimentalFlags: async () => {
@@ -188,6 +190,11 @@ export async function registerApiV1Routes(
         core,
       );
       registerFilesRoutes(apiV1 as unknown as Parameters<typeof registerFilesRoutes>[0], core);
+      registerFeedbackRoutes(apiV1 as unknown as Parameters<typeof registerFeedbackRoutes>[0], core, {
+        hostIdentity: opts.hostIdentity,
+        conversations: opts.conversations,
+        hostBridges: opts.hostBridges,
+      });
       registerSessionMediaRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionMediaRoutes>[0],
         core,

@@ -17,17 +17,8 @@ let hoverOwner: HTMLElement | null = null;
 
 const STYLE_TEXT = `
 .${BUBBLE_CLASS} {
-  position: fixed;
-  z-index: var(--z-tooltip);
   max-width: var(--p-tip-max-w);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--color-text);
-  color: var(--color-bg);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
   line-height: round(calc(var(--text-xs) * 1.5), 1px);
-  overflow-wrap: anywhere;
   pointer-events: none;
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-out);
@@ -163,7 +154,7 @@ export function ensureCodeTooltip(): void {
     document.head.appendChild(style);
   }
   bubble = document.createElement('div');
-  bubble.className = BUBBLE_CLASS;
+  bubble.classList.add('ui-tip-surface', BUBBLE_CLASS);
   bubble.setAttribute('role', 'tooltip');
   bubble.setAttribute('aria-hidden', 'true');
   document.body.appendChild(bubble);

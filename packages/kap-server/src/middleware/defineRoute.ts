@@ -76,6 +76,10 @@ function buildUnifiedResponseSchema(
   return { oneOf: variants };
 }
 
+export function httpErrorSchema(code: number): Record<string, unknown> {
+  return openApiDocumentJsonSchema(buildErrorEnvelopeSchema(code), 'output');
+}
+
 type InferZod<T extends z.ZodTypeAny | undefined> = T extends z.ZodTypeAny
   ? z.infer<T>
   : unknown;

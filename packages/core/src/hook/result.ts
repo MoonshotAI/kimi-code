@@ -13,14 +13,12 @@ export interface HookChainResult<D> {
   readonly decision?: D;
   readonly blocked?: unknown;
   readonly failures: readonly HookFailure[];
-  readonly rewrittenBy?: string;
 }
 
 export function wrapHookChainResult<D>(result: {
   readonly decision?: D;
   readonly blocked?: unknown;
   readonly failures: readonly HookFailure[];
-  readonly rewrittenBy?: string;
 }): D {
   return { [hookChainResultMarker]: true, ...result } as D;
 }

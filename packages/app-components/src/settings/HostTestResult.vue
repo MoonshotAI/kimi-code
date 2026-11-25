@@ -3,7 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppHostConnectFailure } from '@moonshot-ai/app-core/api';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
-import { Icon, Spinner } from '@moonshot-ai/app-ui';
+import { Icon, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 
 const UPDATE_COMMAND = 'kimi upgrade';
 const INSTALL_COMMAND = 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash';
@@ -74,14 +74,12 @@ onUnmounted(() => {
     <div v-else class="etr-failure" role="alert">
       <span v-if="reason" class="etr-reason">{{ reason }}</span>
       <p v-if="hint || command" class="etr-solution">
-        <span v-if="hint" class="etr-hint">{{ hint }}</span><button
-          v-if="command"
+        <span v-if="hint" class="etr-hint">{{ hint }}</span><Tooltip v-if="command" :text="command"><button
           type="button"
           class="etr-action etr-command"
           :class="failure === 'executor_not_found' ? 'etr-install-command' : 'etr-update-command'"
-          :title="command"
           @click.stop="copyCommand"
-        >{{ t(commandCopied ? 'settings.copied' : commandLabel) }}</button>
+        >{{ t(commandCopied ? 'settings.copied' : commandLabel) }}</button></Tooltip>
       </p>
       <div v-if="detail" class="etr-detail-block">
         <pre class="etr-detail">{{ detail }}</pre>

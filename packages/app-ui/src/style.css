@@ -1,59 +1,14 @@
 @import './markdown-tokens.css';
+@import './menu-layer.css';
 
 :root {
-  --dim: var(--color-text-muted);
-  --muted: var(--color-text-faint);
-  --faint: var(--color-text-quaternary);
-  /* Legacy hairline aliases — kept for one version cycle; new work references
-     --color-line / --color-subtle directly. Declared only here so they follow
-     the dark overrides of their targets automatically. */
-  --line: var(--color-line);
-  --line2: var(--color-subtle);
-  --canvas: #f9fbfc;
-  --sh: 0 1px 3px rgba(28, 40, 66, 0.05), 0 6px 18px rgba(28, 40, 66, 0.06);
-  --shc: 0 1px 2px rgba(28, 40, 66, 0.05);
-  --panel: #f5f5f5;
   --panel2: rgba(0, 0, 0, 0.05);
-  --bg: #ffffff;
-  /* Brand blue = Kimi KMBlue (#1783ff), matched to kimi.com's palette.
-     --blue2 is a darker press/hover shade; --soft/--bd/--bluebg/--blueln are
-     the light-blue fills + borders derived from the same hue. */
-  --blue: #1783ff;
-  --blue2: #167ff7;
-  --soft: #e8f3ff;
-  --bd: rgba(23, 131, 255, 0.25);
-  --logo: #1783ff;
-  /* Soft-blue bubble fill + border (mobile user message bubble). */
-  --bluebg: #e8f3ff;
-  --blueln: rgba(23, 131, 255, 0.25);
-  /* Status hues deliberately stay on the app's own WCAG-tuned ramp (≥4.5:1 on
-     the neutral surfaces) — the production palette's status colours
-     (positiveGreen / orange / danger red) are too bright against it. Keep in
-     sync with --color-success / --color-warning / --color-danger in the v2
-     token layer below (dark overrides live in the data-color-scheme blocks). */
-  --ok: #0e7a38;
-  --warn: #a9610a;
   --star: #eab308;
-  --err: #c0392b;
-  /* Subtle hover wash for icon buttons (toast close, etc.). */
-  --hover: var(--color-hover);
-  /* Legacy aliases over the font-scale tokens (see the type-scale block
-     below): chrome sizes stay relative to --ui-b2 so everything keeps shifting
-     together, and chat prose rides --md-b1 (2px up from UI body by design). */
-  --ui-font-size: var(--ui-b2);
-  --ui-font-size-sm: calc(var(--ui-font-size) - 1px);
-  --ui-font-size-xs: calc(var(--ui-font-size) - 2px);
-  --ui-font-size-lg: calc(var(--ui-font-size) + 1px);
-  --ui-font-size-xl: calc(var(--ui-font-size) + 2px);
   --content-font-size: var(--md-b1);
   /* Standalone code surfaces (diff view, file preview, tool cards): one step
      below body text, 12px at Medium. Prose-embedded code (markdown blocks)
      stays on the --md-* ramp. */
   --code-font-size: calc(var(--content-font-size) - 2px);
-  --mono: var(--font-mono);
-  /* Body/UI font follows the canonical UI font token. Mirrors --font-ui
-     so the legacy alias can never drift from the current text face. */
-  --sans: var(--font-ui);
   color-scheme: light dark;
 }
 
@@ -70,46 +25,14 @@ html[data-color-scheme="system"] {
 /* Dark mode variables — applied when explicitly chosen or via system preference. */
 html[data-color-scheme="dark"] {
   color-scheme: dark;
-  --panel: #1f1f1f;
   --panel2: #121212;
-  --bg: #121212;
-  --blue: #1a88ff;
-  --blue2: #258eff;
-  --soft: rgba(26, 136, 255, 0.1);
-  --bd: rgba(26, 136, 255, 0.28);
-  --logo: #1a88ff;
-  --bluebg: #292929;
-  --blueln: rgba(255, 255, 255, 0.05);
-  --ok: #3fb950;
-  --warn: #d29922;
   --star: #facc15;
-  --err: #f85149;
-  --hover: var(--color-hover);
-  --canvas: #161717;
-  --sh: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
-  --shc: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 @media (prefers-color-scheme: dark) {
   html[data-color-scheme="system"] {
-    --panel: #1f1f1f;
     --panel2: #121212;
-    --bg: #121212;
-    --blue: #1a88ff;
-    --blue2: #258eff;
-    --soft: rgba(26, 136, 255, 0.1);
-    --bd: rgba(26, 136, 255, 0.28);
-    --logo: #1a88ff;
-    --bluebg: #292929;
-    --blueln: rgba(255, 255, 255, 0.05);
-    --ok: #3fb950;
-    --warn: #d29922;
     --star: #facc15;
-    --err: #f85149;
-    --hover: var(--color-hover);
-    --canvas: #161717;
-    --sh: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
-    --shc: 0 1px 2px rgba(0, 0, 0, 0.35);
   }
 }
 
@@ -140,10 +63,6 @@ html[data-color-scheme="dark"] {
      dark the content must read lighter than the canvas, never deeper
      (elevation = lighter). */
   --color-well: #f5f5f5;
-  /* Deep chrome plane one step BELOW --color-bg (panel headers, diff gutters).
-     Light stays on the flat-surface rung; dark drops under the page so the
-     chrome framing a pane is darker than the content inside it. */
-  --color-surface-deep: #f5f5f5;
   /* Checkerboard canvas behind <img> so transparent PNGs keep white/black
      content visible and read as transparent. Squares are mixed from the
      theme's bg/text (≈#858585/#6b6b6b light, ≈#76797e/#8c8f93 dark), each
@@ -208,7 +127,6 @@ html[data-color-scheme="dark"] {
   --color-warning-soft: #fbf1e0;
   --color-warning-bd: #f0d9b8;
   --color-orange: #bc4c00;
-  --color-orange-soft: #fff1e5;
   --color-danger: #c0392b;
   --color-danger-soft: #fbeaea;
   --color-danger-bd: #f0cccc;
@@ -253,10 +171,11 @@ html[data-color-scheme="dark"] {
   --space-5: 20px;
   --space-6: 24px;
   --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
   --radius-context-segment: 2px;
   --browser-annotation-label-max-width: 360px;
   --browser-annotation-popover-width: 26rem;
-  --browser-annotation-popover-preview-height: 180px;
   --browser-annotation-preview-max-height: 30vh;
 
   /* -- radius -------------------------------------------------------------- */
@@ -332,9 +251,6 @@ html[data-color-scheme="dark"] {
   --corner-shape-composer: superellipse(1.5);
   /* Menu rows: concentric with the menu frame (--radius-lg minus the 6px hug). */
   --radius-menu-row: var(--radius-sm);
-  /* Menu frame and its rows share one curve — single-sourced from the
-     composer's superellipse so they never drift apart. */
-  --corner-shape-menu: var(--corner-shape-composer);
   --dialog-pad-x: 22px;
   /* dropdown menu (Menu/MenuItem) geometry — the trigger-dropdown family,
      distinct from the composer autocomplete rows above: the panel insets its
@@ -459,7 +375,6 @@ html[data-color-scheme="dark"] {
   --wm-x-ring: var(--space-1-5);
 
   /* -- elevation / z-index ------------------------------------------------- */
-  --z-base: 0;
   /* In-component local stacking: an element pinned just above its own
      siblings (menu scroll thumbs, strip badges, floating pills) — never a
      global layer, so it starts at 1 and stays off the 100s scale. */
@@ -505,7 +420,6 @@ html[data-color-scheme="dark"] {
   --duration-base: 160ms;
   --duration-slow: 260ms;
   --side-width-anim: width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-  --duration-hover-intent: 250ms;
   /* Tooltip show delay (mention-tip; mirrors TooltipBubble's hover gate). */
   --duration-tooltip: 300ms;
   /* Spinner rotation period (the mention-tip probe spinner). */
@@ -551,7 +465,6 @@ html[data-color-scheme="dark"] {
     "WenQuanYi Micro Hei", sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
     "Segoe UI Symbol", "Noto Color Emoji";
   --font-ui: var(--user-font-ui, -apple-system), var(--font-ui-system);
-  --font-display: var(--font-ui);
   --font-kbd: var(--font-ui);
   /* Kbd keycap geometry — single source for the Kbd
      primitive and every hand-rolled keycap (e.g. the composer's rich sibling
@@ -630,10 +543,6 @@ html[data-color-scheme="dark"] {
 
   --color-code-selection: rgba(23, 131, 255, 0.346);
   --color-code-selection-text: currentColor;
-  /* Code block vertical padding = half the inter-line gap ((leading − 1) / 2
-     × font size ≈ 3.25px at 13px/1.5), so the space above the first line
-     reads exactly like half the spacing between two lines. */
-  --code-pad-block: calc(var(--text-sm) * (var(--leading-normal) - 1) / 2);
   /* Diff sign-column width (rendered ```diff blocks): the sign cell, the
      wrap hanging indent, and the line-number counter gutter all derive from
      here, so a rescale can never strand a hardcoded value. */
@@ -695,16 +604,11 @@ html[data-color-scheme="dark"] {
   /* -- decision-card number chip --------------------------------------------- */
   --p-chip-num: 20px;
 
-  /* -- layout & breakpoints -------------------------------------------------- */
-  --p-sidebar-w: 264px;
+  /* -- layout ---------------------------------------------------------------- */
   --p-content-max: 760px;
-  --p-content-wide: 920px;
   --p-table-cell-max: 700px;
   --p-table-wide-max: 1440px;
   --p-findbar-w: 340px;
-  /* Right-aligned chat column cap — the user bubble, the cron notice and the
-     task-notification notice all snap to this width. */
-  --p-bubble-max: 78%;
   /* Subagent grid's minimum card column width. */
   --p-subagent-card-min: 180px;
   /* Slash / mention menu scrollport caps. */
@@ -718,7 +622,6 @@ html[data-color-scheme="dark"] {
      sizes. */
   --p-mention-tip-media-w: 300px;
   --p-mention-tip-media-h: 220px;
-  --p-mention-tip-media-min-w: 190px;
   --p-mention-tip-media-preview-min-h: 64px;
   --p-mention-tip-media-check: 12px;
   --p-mention-tip-media-ring: 12px;
@@ -744,15 +647,38 @@ html[data-color-scheme="dark"] {
   /* The probe spinner's optical baseline lift inside the path text — em-based
      so it tracks the tooltip's font size instead of a frozen pixel. */
   --p-mention-tip-spinner-lift: -0.1em;
-  /* Dim level for stale candidates (mention menu rows kept from the previous
-     query while its re-search is pending). */
-  --opacity-stale: 0.55;
   --opacity-hint: 0.55;
   /* Add menu's scrollport cap — shared with the slash menu's (above this
      its rows scroll with the overlay thumb, same as the slash/mention menus). */
   --p-add-menu-h: var(--p-slash-menu-h);
-  --p-bp-sm: 640px;
-  --p-bp-md: 980px;
+}
+
+@keyframes ui-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes ui-row-highlight {
+  0% {
+    background-color: color-mix(in srgb, var(--color-accent) 18%, var(--color-surface));
+    box-shadow: inset 0 0 0 1.5px var(--color-accent);
+  }
+  100% {
+    background-color: var(--color-accent-soft);
+    box-shadow: inset 0 0 0 1.5px var(--color-accent-bd);
+  }
+}
+@keyframes ui-row-flash {
+  0% { background: var(--color-accent-soft); }
+  100% { background: transparent; }
+}
+@keyframes ui-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 
 @media (max-resolution: 1.1dppx) {
@@ -797,7 +723,6 @@ html[data-color-scheme="dark"] {
   --color-surface-sunken: #121212;
   --color-inline-code-bg: rgba(255, 255, 255, 0.1);   /* fills.f2 */
   --color-well: #1f1f1f;
-  --color-surface-deep: #0d0d0d;
   --color-text: rgba(255, 255, 255, 0.84);  /* labels.primary */
   --color-text-strong: #ffffff;
   --color-text-muted: rgba(255, 255, 255, 0.56);  /* labels.secondary */
@@ -830,7 +755,6 @@ html[data-color-scheme="dark"] {
   --color-warning-soft: rgba(210, 153, 34, 0.14);
   --color-warning-bd: rgba(210, 153, 34, 0.28);
   --color-orange: #f0883e;
-  --color-orange-soft: rgba(240, 136, 62, 0.14);
   --color-danger: #f85149;
   --color-danger-soft: rgba(248, 81, 73, 0.14);
   --color-danger-bd: rgba(248, 81, 73, 0.28);
@@ -901,7 +825,6 @@ html[data-color-scheme="dark"] {
     --color-surface-sunken: #121212;
     --color-inline-code-bg: rgba(255, 255, 255, 0.1);
     --color-well: #1f1f1f;
-    --color-surface-deep: #0d0d0d;
     --color-text: rgba(255, 255, 255, 0.84);
     --color-text-strong: #ffffff;
     --color-text-muted: rgba(255, 255, 255, 0.56);
@@ -932,7 +855,6 @@ html[data-color-scheme="dark"] {
     --color-warning-soft: rgba(210, 153, 34, 0.14);
     --color-warning-bd: rgba(210, 153, 34, 0.28);
     --color-orange: #f0883e;
-    --color-orange-soft: rgba(240, 136, 62, 0.14);
     --color-danger: #f85149;
     --color-danger-soft: rgba(248, 81, 73, 0.14);
     --color-danger-bd: rgba(248, 81, 73, 0.28);
@@ -1065,6 +987,45 @@ html[data-color-scheme="dark"] {
   color: HighlightText;
 }
 
+[data-menu-frame] > .scroll-thumb {
+  position: absolute;
+  right: var(--menu-scrollbar-edge);
+  width: var(--menu-scrollbar-width);
+  border-radius: var(--radius-full);
+  background: var(--color-menu-scrollbar);
+  transition: background var(--duration-base) var(--ease-out);
+  cursor: default;
+  touch-action: none;
+  z-index: var(--z-raised);
+}
+[data-menu-frame]:hover > .scroll-thumb {
+  background: var(--color-menu-scrollbar-hover);
+}
+[data-menu-frame] > .scroll-thumb::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--space-2));
+  right: 0;
+}
+
+.ui-kbd__key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--kbd-min-width);
+  height: var(--kbd-height);
+  padding: 0 var(--kbd-padding-x);
+  border: var(--p-hairline) solid var(--color-line);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-kbd);
+  font-size: var(--kbd-font-size);
+  line-height: var(--leading-solid);
+}
+
 .mention-pill,
 .attachment-pill,
 .quote-pill {
@@ -1173,7 +1134,7 @@ a.mention-folder {
   justify-content: center;
   width: var(--p-ic-sm);
   height: var(--p-ic-sm);
-  color: var(--muted);
+  color: var(--color-text-faint);
   align-self: center;
   flex-shrink: 0;
 }
@@ -1245,30 +1206,31 @@ a.mention-folder {
   white-space: normal;
 }
 
-.mention-tip {
+.ui-tip-surface {
   position: fixed;
   z-index: var(--z-tooltip);
-  /* Width cap with the narrow-viewport clamp folded in — position() only
-     reads the resulting box. */
-  max-width: min(var(--p-mention-tip-w), calc(100vw - 2 * var(--p-mention-tip-vmargin)));
-  /* Same inset as TooltipBubble (4px × 8px). */
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--color-text);
   color: var(--color-bg);
-  /* Ink levels ON THE INVERTED SKIN (currentColor = --color-bg here): the
-     quote tooltip's hairline divider, its muted comment block, and the
-     fainter provenance header — one semantic home so a theme tune reaches
-     every quote row at once. */
-  --p-tip-line: color-mix(in srgb, currentColor 18%, transparent);
-  --p-tip-ink: color-mix(in srgb, currentColor 80%, transparent);
-  --p-tip-ink-weak: color-mix(in srgb, currentColor 55%, transparent);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.mention-tip {
+  /* Width cap with the narrow-viewport clamp folded in — position() only
+     reads the resulting box. */
+  max-width: min(var(--p-mention-tip-w), calc(100vw - 2 * var(--p-mention-tip-vmargin)));
+  /* Ink levels ON THE INVERTED SKIN (currentColor = --color-bg here): the
+     quote tooltip's muted comment block and the
+     fainter provenance header — one semantic home so a theme tune reaches
+     every quote row at once. */
+  --p-tip-ink: color-mix(in srgb, currentColor 80%, transparent);
+  --p-tip-ink-weak: color-mix(in srgb, currentColor 55%, transparent);
   /* Mirror the .text-ui-c1 utility's integer-px line height (token, never a
      unitless ratio). */
   line-height: round(calc(var(--text-xs) * 1.5), 1px);
-  overflow-wrap: anywhere;
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-out);
 }

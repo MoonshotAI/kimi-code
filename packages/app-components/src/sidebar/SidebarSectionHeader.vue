@@ -48,7 +48,7 @@ const emit = defineEmits<{
   padding-block-end: var(--space-1);
   font: var(--weight-section-label) var(--text-xs) var(--font-ui);
   text-transform: uppercase;
-  color: var(--faint);
+  color: var(--color-text-quaternary);
   user-select: none;
 }
 
@@ -62,7 +62,7 @@ const emit = defineEmits<{
 }
 
 .sb-sec-heading:hover {
-  color: var(--dim);
+  color: var(--color-text-muted);
 }
 
 .sb-sec-title {

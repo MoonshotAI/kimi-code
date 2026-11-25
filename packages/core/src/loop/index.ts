@@ -23,3 +23,4 @@ export {
 export { type LoopState, type LoopToolCall, type LoopTurn } from './state';
 export { createLoop, type Loop, type CreateLoopOptions } from './create-loop';
 export { createActorLoop } from './loop-actor';
+export * from './turn';

@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import type { Locator } from '@playwright/test';
 
 import { expect, test } from './fixtures/app';
 import { providerApiKey, writeModelConfig } from './fixtures/composer';
@@ -25,6 +26,10 @@ test('per-session drafts survive switching and a relaunch, and model, favourite 
     const menu = overlay.getByRole('menu');
     await expect(menu).toBeVisible();
     return menu;
+  };
+  const applyModelMenu = async (menu: Locator) => {
+    await menu.page().keyboard.press('ControlOrMeta+Enter');
+    await expect(menu).toBeHidden();
   };
   const sendDraft = async (expected: string) => {
     const next = model.requests().length;
@@ -95,6 +100,9 @@ test('per-session drafts survive switching and a relaunch, and model, favourite 
     await expect(menu.getByRole('menuitemradio', { name: 'Remote Stub' })).toBeHidden();
     await app.snapshot('model-quick-menu');
     await menu.getByRole('menuitemradio', { name: 'Swift Stub' }).click();
+    await expect(menu.getByRole('menuitemradio', { name: 'Swift Stub' })).toHaveAttribute('aria-checked', 'true');
+    await input().click();
+    await expect(menu).toBeHidden();
     await expect(app.window.getByRole('button', { name: 'Swift Stub' })).toBeVisible();
     model.script(say('Sent with swift.'));
     const request = await sendDraft(ALPHA_DRAFT);
@@ -129,15 +137,15 @@ test('per-session drafts survive switching and a relaunch, and model, favourite 
   await test.step('the thinking effort chosen in the quick menu reaches the request', async () => {
     const menu = await openModelMenu('Swift Stub');
     await menu.getByRole('menuitemradio', { name: 'Thinking Stub' }).click();
+    await applyModelMenu(menu);
     await expect(app.window.getByRole('button', { name: 'Thinking Stub · Low' })).toBeVisible();
     const thinking = await openModelMenu('Thinking Stub · Low');
     await expect(thinking.getByRole('tab', { name: 'Low' })).toHaveAttribute('aria-selected', 'true');
     await thinking.getByRole('tab', { name: 'High' }).click();
-    await expect(app.window.getByRole('button', { name: 'Thinking Stub · High' })).toBeVisible();
     await expect(thinking.getByRole('tab', { name: 'High' })).toHaveAttribute('aria-selected', 'true');
     await app.snapshot('thinking-high');
-    await thinking.page().keyboard.press('Escape');
-    await expect(thinking).toBeHidden();
+    await applyModelMenu(thinking);
+    await expect(app.window.getByRole('button', { name: 'Thinking Stub · High' })).toBeVisible();
     model.script(say('Thought hard.'), say('Thought not at all.'));
     await input().click();
     await app.window.keyboard.type('Think hard about the parser');
@@ -147,9 +155,8 @@ test('per-session drafts survive switching and a relaunch, and model, favourite 
     await expect(app.window.getByText('Thought hard.', { exact: true })).toBeVisible();
     const off = await openModelMenu('Thinking Stub · High');
     await off.getByRole('tab', { name: 'Off' }).click();
+    await applyModelMenu(off);
     await expect(app.window.getByRole('button', { name: 'Thinking Stub', exact: true })).toBeVisible();
-    await off.page().keyboard.press('Escape');
-    await expect(off).toBeHidden();
     await input().click();
     await app.window.keyboard.type('Answer without thinking');
     const none = await sendDraft('Answer without thinking');
@@ -161,6 +168,7 @@ test('per-session drafts survive switching and a relaunch, and model, favourite 
   await test.step('the starred model from the other provider is picked from the quick menu', async () => {
     const menu = await openModelMenu(/^Thinking Stub/);
     await menu.getByRole('menuitemradio', { name: /Remote Stub/ }).click();
+    await applyModelMenu(menu);
     await expect(app.window.getByRole('button', { name: 'Remote Stub' })).toBeVisible();
     model.script(say('Remote answered.'));
     await input().click();

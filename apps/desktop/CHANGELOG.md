@@ -1,5 +1,17 @@
 # kimi-code-app
 
+## 1.4.3
+
+### Patch Changes
+
+- [#5246](https://github.com/MoonshotAI/kimi-code/pull/5246) [`f81c924`](https://github.com/MoonshotAI/kimi-code/commit/f81c924b1d70f963b0dc094bcb6859e446c37a49) Thanks [@liruifengv](https://github.com/liruifengv)! - Show an authorization button in chat when an MCP connection needs browser sign-in.
+
+- [#5300](https://github.com/MoonshotAI/kimi-code/pull/5300) [`fce3af9`](https://github.com/MoonshotAI/kimi-code/commit/fce3af9e694a5a572699546ebe8e28ccf004ed88) Thanks [@Grapedge](https://github.com/Grapedge)! - Rate individual replies or send feedback from the account menu or with `/feedback`.
+
+- [#5212](https://github.com/MoonshotAI/kimi-code/pull/5212) [`2348f53`](https://github.com/MoonshotAI/kimi-code/commit/2348f531923616e250639bf66dcbf67c169ee4ab) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Fix sessions that could not open after their model became unavailable.
+
+- [#5197](https://github.com/MoonshotAI/kimi-code/pull/5197) [`0438be4`](https://github.com/MoonshotAI/kimi-code/commit/0438be4cc0f1b9509f18747472041b2210162e98) Thanks [@liruifengv](https://github.com/liruifengv)! - Detect plugin MCP OAuth requirements automatically and show the correct authorization state in plugin details.
+
 ## 1.4.2
 
 ### Patch Changes
@@ -20,6 +32,10 @@
 
 ## 1.4.0
 
+### Minor Changes
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Connect external agents such as Claude Code, Codex, and Cursor to this desktop app to hand off sessions, review history, and collaborate across turns.
+
 ### Patch Changes
 
 - [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Show background task notifications as collapsible rows styled like tool calls, with correct task duration and status.
@@ -37,6 +53,8 @@
 - [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Move the browser tab title preview below the setting and show a single tab.
 
 - [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Shrink the screenshot magnifier and color picker so they cover less of the screen.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Add Qwen Coding Plan (global and China sites) as selectable providers.
 
 - [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix image load failures potentially triggering auth rate limits.
 

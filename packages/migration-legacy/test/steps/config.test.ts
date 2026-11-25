@@ -468,6 +468,8 @@ base_url = "https://target.example/v1"
         'yolo = true\n' +
         '[experimental]\n' +
         'micro_compaction = false\n' +
+        'tower = true\n' +
+        'wait_for = false\n' +
         'unknown_flag = true\n' +
         '[loop_control]\n' +
         'max_steps_per_turn = 1000\n' +
@@ -487,9 +489,12 @@ base_url = "https://target.example/v1"
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
 
     expect(r.migrated).toBe(true);
+    expect(r.droppedKeys).toEqual([]);
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
     expect(cfg).not.toContain('[experimental]');
     expect(cfg).not.toContain('micro_compaction');
+    expect(cfg).not.toContain('tower');
+    expect(cfg).not.toContain('wait_for');
     expect(cfg).not.toContain('unknown_flag');
     expect(cfg).toContain('[loop_control]');
     expect(cfg).not.toContain('max_retries_per_step');
@@ -506,6 +511,46 @@ base_url = "https://target.example/v1"
     expect(cfg).not.toContain('read_max_bytes');
     expect(cfg).not.toContain('plan_mode = true');
     expect(cfg).not.toContain('yolo = true');
+  });
+
+  it('preserves existing target [experimental] settings when merging legacy config', async () => {
+    await writeFile(
+      join(src, 'config.toml'),
+      'merge_all_available_skills = true\n' +
+        '[experimental]\n' +
+        'micro_compaction = false\n' +
+        'tower = false\n',
+    );
+    await writeFile(
+      join(tgt, 'config.toml'),
+      '[experimental]\n' +
+        'tower = true\n',
+    );
+
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+
+    expect(r.migrated).toBe(true);
+    expect(r.configConflicts).toEqual([]);
+    const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
+    expect(cfg).toContain('merge_all_available_skills = true');
+    expect(cfg).toContain('[experimental]');
+    expect(cfg).toContain('tower = true');
+    expect(cfg).not.toContain('micro_compaction');
+  });
+
+  it('records malformed non-table experimental values in droppedKeys', async () => {
+    await writeFile(
+      join(src, 'config.toml'),
+      'merge_all_available_skills = true\n' +
+        'experimental = true\n',
+    );
+
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+
+    expect(r.migrated).toBe(true);
+    expect(r.droppedKeys).toEqual(['experimental']);
+    const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
+    expect(cfg).not.toContain('experimental');
   });
 
   it('maps default_yolo to default_permission_mode = "yolo"', async () => {

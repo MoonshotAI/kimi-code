@@ -1,6 +1,11 @@
 {
   "invocations": [
     {
+      "run": "node scripts/checks/cli-dependencies.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "The npm CLI bundles its required packages; declaring dependencies would make users install them separately."
+    },
+    {
       "run": "node scripts/check-comments.mjs",
       "in": "package.json#scripts.lint",
       "why": "AGENTS.md forbids comments in JS/TS code, and this check is what enforces it."
@@ -41,6 +46,11 @@
       "why": "Agents follow the paths and links in AGENTS.md files, and every session loads the root one; this check fails on a dead reference and keeps the root file within its byte budget."
     },
     {
+      "run": "node scripts/checks/e2e-boundary.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "The scenarios in tests/e2e are only worth trusting while their drivers reach the product the way a user does; this check keeps product internals, page and network backdoors, skips, retries, fixed waits and undocumented KIMI_* switches out of that directory."
+    },
+    {
       "run": "node scripts/vitest-l0-gate.mjs .vitest-reports",
       "in": ".github/workflows/ci.yml#jobs.l0-gate",
       "why": "This is where every L0 test in tests/protected.yaml must pass on its first attempt across the test shards; without it regression and contract IDs are listed but never enforced."
@@ -76,7 +86,7 @@
       "why": "The pre-commit hook rejects comments in staged files before CI does."
     },
     {
-      "run": "oxlint --type-aware --deny-warnings",
+      "run": "oxlint --type-aware --deny-warnings --no-error-on-unmatched-pattern",
       "in": "package.json#lint-staged",
       "why": "The pre-commit hook lints staged files with the same rules CI enforces."
     },

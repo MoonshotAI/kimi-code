@@ -54,9 +54,8 @@ export class StreamingUIController {
 
   private _currentTurnId: string | undefined = undefined;
   private lastCompletedTurnKey: string | undefined;
-  private drainedGeneration: number | null | undefined;
-  private dispatchedGeneration: number | null | undefined;
-  private idleGeneration: number | null | undefined;
+  private endedTurnId: number | undefined;
+  private heldContinuation: 'background' | 'none' | undefined;
   private _currentStep = 0;
   private _assistantDraft = '';
   private _thinkingDraft = '';
@@ -511,9 +510,6 @@ export class StreamingUIController {
     this._currentTurnId = undefined;
 
     if (state.appState.loopLifecycleEvents === true) {
-      this.drainedGeneration = undefined;
-      this.dispatchedGeneration = undefined;
-      this.idleGeneration = undefined;
       this.host.setAppState({ streamingPhase: 'waiting' });
       return;
     }
@@ -538,71 +534,86 @@ export class StreamingUIController {
     });
   }
 
-  finalizeDrained(
+  resetContinuation(): void {
+    this.endedTurnId = undefined;
+    this.heldContinuation = undefined;
+  }
+
+  finalizeContinuation(
     sendQueued: (item: QueuedMessage) => void,
-    generation: number | null = this.drainedGeneration ?? null,
+    continuation: 'background' | 'none',
+    turnId: number,
   ): void {
     const { state } = this.host;
     if (state.appState.loopLifecycleEvents !== true) return;
-    this.drainedGeneration = generation;
-    this.dispatchedGeneration = undefined;
-    this.idleGeneration = undefined;
-    if (state.appState.isCompacting) return;
-    const next = this.host.shiftQueuedMessage();
-    if (next !== undefined) {
-      this.dispatchedGeneration = generation;
-      state.queuedMessageDispatchPending = true;
-      this.host.setAppState({ streamingPhase: 'idle' });
-      this.host.resetLivePane();
-      setTimeout(() => {
-        state.queuedMessageDispatchPending = false;
-        if (state.appState.isCompacting) {
-          state.queuedMessages.unshift(next);
-          this.dispatchedGeneration = undefined;
-          this.host.setAppState({ streamingPhase: 'waiting' });
-          this.host.updateQueueDisplay();
-          return;
-        }
-        sendQueued(next);
-      }, 0);
+    if (this.endedTurnId !== undefined && turnId <= this.endedTurnId) return;
+    this.endedTurnId = turnId;
+    if (state.appState.isCompacting) {
+      this.heldContinuation = continuation;
       return;
     }
-    this.host.setAppState({ streamingPhase: 'idle' });
-    this.host.resetLivePane();
+    this.settleContinuation(sendQueued, continuation);
   }
 
-  finalizeIdle(generation?: number | null, fromEvent = true): void {
+  resumeContinuation(sendQueued: (item: QueuedMessage) => void): void {
     const { state } = this.host;
     if (state.appState.loopLifecycleEvents !== true) return;
-    if (fromEvent) {
-      const eventGeneration = generation ?? null;
-      if (eventGeneration !== this.drainedGeneration || eventGeneration === this.dispatchedGeneration) return;
-      this.idleGeneration = eventGeneration;
-    }
-    this.flushIdle();
-  }
-
-  private flushIdle(): void {
-    const { state } = this.host;
-    if (state.appState.loopLifecycleEvents !== true || this.idleGeneration === undefined) return;
-    if (this.idleGeneration !== this.drainedGeneration || this.idleGeneration === this.dispatchedGeneration) {
-      this.idleGeneration = undefined;
+    const held = this.heldContinuation;
+    this.heldContinuation = undefined;
+    if (state.queuedMessageDispatchPending) return;
+    if (held !== undefined) {
+      this.settleContinuation(sendQueued, held);
       return;
     }
-    if (
-      state.appState.isCompacting ||
-      state.queuedMessageDispatchPending ||
-      state.queuedMessages.length > 0
-    ) return;
-    this.idleGeneration = undefined;
+    const next = this.host.shiftQueuedMessage();
+    if (next === undefined) return;
+    this.dispatchQueuedAfterContinuation(sendQueued, next);
+  }
+
+  private settleContinuation(
+    sendQueued: (item: QueuedMessage) => void,
+    continuation: 'background' | 'none',
+  ): void {
+    const { state } = this.host;
+    const next = this.host.shiftQueuedMessage();
+    if (next !== undefined) {
+      this.dispatchQueuedAfterContinuation(sendQueued, next);
+      return;
+    }
     this.host.setAppState({ streamingPhase: 'idle' });
     this.host.resetLivePane();
     const completedTurnKey =
       this.lastCompletedTurnKey ?? `local:${String(state.appState.streamingStartTime)}`;
-    notifyTerminalOnce(state, `turn-complete:${completedTurnKey}`, {
-      title: 'Kimi Code task complete',
-      body: state.appState.sessionTitle ?? undefined,
-    });
+    notifyTerminalOnce(
+      state,
+      `turn-complete:${completedTurnKey}`,
+      continuation === 'background'
+        ? {
+            title: 'Kimi Code background tasks still running',
+            body: state.appState.sessionTitle ?? undefined,
+          }
+        : {
+            title: 'Kimi Code task complete',
+            body: state.appState.sessionTitle ?? undefined,
+          },
+    );
+  }
+
+  private dispatchQueuedAfterContinuation(sendQueued: (item: QueuedMessage) => void, next: QueuedMessage): void {
+    const { state } = this.host;
+    state.queuedMessageDispatchPending = true;
+    this.host.setAppState({ streamingPhase: 'idle' });
+    this.host.resetLivePane();
+    setTimeout(() => {
+      state.queuedMessageDispatchPending = false;
+      if (state.appState.isCompacting) {
+        state.queuedMessages.unshift(next);
+        this.host.setAppState({ streamingPhase: 'waiting' });
+        this.host.updateQueueDisplay();
+        return;
+      }
+      sendQueued(next);
+    }, 0);
   }
 
   onStreamingTextStart(): void {

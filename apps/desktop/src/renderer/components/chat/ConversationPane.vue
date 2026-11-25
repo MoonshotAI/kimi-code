@@ -5,8 +5,8 @@ import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ConversationStatus, OpenMediaRequest, QueuedPromptView, TaskItem, TurnAttachment, UIQuestion } from '../../types';
 import type { QuestionResponse } from '../../api/types';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
-import { ChatPane } from '@moonshot-ai/app-components';
-import { HostNotice, WorkspaceIcon } from '@moonshot-ai/app-components/support';
+import { ChatPane, JumpToBottomPill } from '@moonshot-ai/app-components';
+import { HostNotice, resolveCompactPhase, WorkspaceIcon } from '@moonshot-ai/app-components/support';
 import { hostsStore } from '@moonshot-ai/app-client/stores';
 import { isWideTableLayoutActive, useWideTableToc } from '@moonshot-ai/app-components';
 import { ErrorBoundary } from '@moonshot-ai/app-components';
@@ -24,7 +24,7 @@ import { WorkspaceRecentSessions } from '@moonshot-ai/app-components';
 import { ConversationToc, type ConversationTocItem } from '@moonshot-ai/app-components';
 import TranscriptSearch from './TranscriptSearch.vue';
 import { KimiCodeWordmark, KimiMascotPeek } from '@moonshot-ai/app-components';
-import { Icon, Spinner, Tooltip, trackMenuSurface, useImeComposition } from '@moonshot-ai/app-ui';
+import { Icon, Menu, MenuItem, MenuSearch, menuNavigationIndex, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { filterWorkspaces } from '@moonshot-ai/app-core/lib';
 import { safeRemove, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
@@ -52,11 +52,16 @@ import type {
   ComposerSubmitPayload,
   TurnFileChange,
 } from '@moonshot-ai/app-components';
+import type { SlashCommand } from '@moonshot-ai/app-core/lib';
+import { feedbackTurnTarget } from '../../composables/useDesktopFeedback';
+import TurnFeedbackActions from '../feedback/TurnFeedbackActions.vue';
+import TurnFeedbackStatus from '../feedback/TurnFeedbackStatus.vue';
 
 const { t } = useI18n();
 
 const props = defineProps<{
   sessionId?: string;
+  supportsReplyFeedback: boolean;
   status: ConversationStatus;
   planMode?: boolean;
   pendingQuestionActions?: Record<string, 'answer' | 'dismiss'>;
@@ -70,6 +75,8 @@ const props = defineProps<{
   panelTabs?: PanelTab[];
   availableTabs?: PanelLauncherItem[];
 }>();
+
+const feedbackCommands: readonly SlashCommand[] = [{ name: '/feedback', desc: 'feedback.send', noArgs: true }];
 
 const emit = defineEmits<{
   submit: [payload: ComposerSubmitPayload];
@@ -103,9 +110,13 @@ const openShortcutSettings = inject(OpenShortcutSettingsKey, undefined);
 const configureScreenshotShortcut = screenshotSupported && openShortcutSettings
   ? () => openShortcutSettings('captureScreenshot')
   : undefined;
-const screenshotShortcutKeys = computed(() =>
-  screenshotSupported ? resolvedBindingKeys('captureScreenshot') : [],
-);
+const screenshotProps = computed(() => ({
+  onCaptureScreenshot: captureScreenshotAction,
+  screenshotShortcutKeys: screenshotSupported ? resolvedBindingKeys('captureScreenshot') : [],
+  screenshotShortcutUnavailable: !!osGlobalFailures.captureScreenshot,
+  screenshotShortcutFailureReason: osGlobalFailures.captureScreenshot,
+  onConfigureScreenshotShortcut: configureScreenshotShortcut,
+}));
 
 const client = useKimiWebClient();
 const { anyOverlayOpen } = useAppDialogs();
@@ -121,6 +132,7 @@ const turnActive = client.turnActive;
 const starting = client.isStartingFirstPrompt;
 const sessionLoading = client.sessionLoading;
 const compaction = client.compaction;
+const compactPhase = computed(() => resolveCompactPhase(compaction.value, props.queued));
 const hasMoreMessages = client.hasMoreMessages;
 const loadingMore = client.loadingMoreMessages;
 const workspaces = client.workspacesView;
@@ -184,8 +196,8 @@ function onRejectTrust(): void {
 }
 
 const wsPickOpen = ref(false);
-const wsPanelRef = ref<HTMLElement | null>(null);
-trackMenuSurface(wsPickOpen, wsPanelRef);
+const wsPanelRef = ref<InstanceType<typeof Menu> | null>(null);
+const wsChipRef = ref<HTMLButtonElement | null>(null);
 const wsPickUp = ref(false);
 const wsPickMaxHeight = ref<string | null>(null);
 
@@ -202,7 +214,7 @@ const showWorkspaceHome = computed(
 const hasWorkspaces = computed(() => workspaces.value.length > 0);
 
 const workspaceQuery = ref('');
-const wsSearchInputRef = ref<HTMLInputElement | null>(null);
+const wsSearchRef = ref<InstanceType<typeof MenuSearch> | null>(null);
 const filteredWorkspaces = computed(() =>
   filterWorkspaces(workspaces.value, workspaceQuery.value, hostsStore().searchTerms),
 );
@@ -213,12 +225,44 @@ watch(wsPickOpen, async (open) => {
     return;
   }
   await nextTick();
-  wsSearchInputRef.value?.focus();
+  wsSearchRef.value?.focus();
 });
+
+function closeWsPick(restoreFocus = false): void {
+  wsPickOpen.value = false;
+  if (restoreFocus) wsChipRef.value?.focus();
+}
+
+function wsPanelItems(): HTMLElement[] {
+  return [...(wsPanelRef.value?.el?.querySelectorAll<HTMLElement>('.ui-menu-item:not(:disabled)') ?? [])];
+}
+
+function focusWsItem(key: string, shiftKey = false): boolean {
+  const items = wsPanelItems();
+  const current = items.indexOf(document.activeElement as HTMLElement);
+  const next = menuNavigationIndex(key, shiftKey, current, items.length);
+  if (next === null || next < 0) return false;
+  items[next]?.focus();
+  return true;
+}
+
+function onWsPanelKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeWsPick(true);
+    return;
+  }
+  if (event.key === 'Tab') return;
+  if (focusWsItem(event.key)) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}
 
 function toggleWsPick(event: MouseEvent): void {
   if (wsPickOpen.value) {
-    wsPickOpen.value = false;
+    closeWsPick();
     return;
   }
   const anchor = (event.currentTarget as HTMLElement | null)?.closest('.ws-anchor');
@@ -604,7 +648,9 @@ function handleComposerSteer(payload: ComposerSteerPayload): void {
 }
 
 function handleComposerCommand(payload: ComposerCommandPayload): void {
-  if (payload.delivery !== undefined) followAfterUserAction();
+  if (payload.delivery !== undefined || payload.cmd === '/compact' || payload.cmd.startsWith('/compact ')) {
+    followAfterUserAction();
+  }
   emit('command', payload);
 }
 
@@ -854,9 +900,11 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               <div v-if="hasWorkspaces" class="ws-anchor">
                 <Tooltip :text="t('conversation.switchWorkspace')">
                   <button
+                    ref="wsChipRef"
                     type="button"
                     class="ws-chip"
                     :class="{ open: wsPickOpen }"
+                    aria-haspopup="dialog"
                     :aria-expanded="wsPickOpen"
                     @click.stop="toggleWsPick"
                   >
@@ -865,61 +913,51 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
                     <Icon class="ws-chip-chev" name="chevron-down" size="sm" />
                   </button>
                 </Tooltip>
-                <div
+                <Menu
                   v-if="wsPickOpen"
                   ref="wsPanelRef"
                   class="ws-panel"
                   :class="{ up: wsPickUp }"
                   :style="wsPickMaxHeight ? { maxHeight: wsPickMaxHeight } : undefined"
-                  role="menu"
+                  role="dialog"
+                  :aria-label="t('conversation.switchWorkspace')"
+                  @keydown="onWsPanelKeydown"
                 >
-                  <div class="ws-search">
-                    <Icon name="search" size="sm" />
-                    <input
-                      ref="wsSearchInputRef"
-                      v-model="workspaceQuery"
-                      class="ws-search-input"
-                      type="text"
-                      :placeholder="t('workspace.projectSearchPlaceholder')"
-                      :aria-label="t('workspace.projectSearchPlaceholder')"
-                      autocomplete="off"
-                      @click.stop
-                      @keydown.stop
-                    />
-                  </div>
-                  <div class="ws-list">
-                    <button
+                  <MenuSearch
+                    ref="wsSearchRef"
+                    v-model="workspaceQuery"
+                    class="ws-search"
+                    divider
+                    :placeholder="t('workspace.projectSearchPlaceholder')"
+                    @navigate="focusWsItem"
+                    @escape="closeWsPick(true)"
+                    @click.stop
+                    @keydown.stop
+                  />
+                  <div class="ws-list" role="listbox" :aria-label="t('conversation.switchWorkspace')">
+                    <MenuItem
                       v-for="w in filteredWorkspaces"
                       :key="w.id"
-                      type="button"
                       class="ws-row"
-                      :class="{ on: w.id === activeWorkspaceId }"
+                      role="option"
+                      :selected="w.id === activeWorkspaceId"
+                      :description="hostsStore().workspacePathLabel(w, t)"
                       :disabled="hostsStore().blocked(w.hostId)"
-                      role="menuitem"
                       @click.stop="pickWorkspace(w.id)"
                     >
-                      <WorkspaceIcon :host-id="w.hostId" status="all" />
-                      <span class="ws-info">
-                        <span class="ws-name">{{ w.name }}</span>
-                        <span class="ws-path">{{ hostsStore().workspacePathLabel(w, t) }}</span>
-                      </span>
-                      <Icon v-if="w.id === activeWorkspaceId" class="ws-check" name="check" size="sm" />
-                    </button>
+                      <template #icon><WorkspaceIcon :host-id="w.hostId" status="all" /></template>
+                      <span class="ws-name">{{ w.name }}</span>
+                    </MenuItem>
                     <div v-if="filteredWorkspaces.length === 0" class="ws-empty">
                       {{ t('workspace.projectSearchNoResults') }}
                     </div>
                   </div>
-                  <div class="ws-divider" />
-                  <button
-                    type="button"
-                    class="ws-action"
-                    role="menuitem"
-                    @click.stop="wsPickOpen = false; emit('addWorkspace')"
-                  >
+                  <MenuItem separator />
+                  <MenuItem role="button" @click.stop="closeWsPick(); emit('addWorkspace')">
                     <Icon name="folder-plus" />
                     <span>{{ t('conversation.addWorkspace') }}</span>
-                  </button>
-                </div>
+                  </MenuItem>
+                </Menu>
               </div>
               <button v-else type="button" class="ws-chip ws-ghost" @click="emit('addWorkspace')">
                 <Icon name="folder-plus" />
@@ -935,17 +973,13 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               hide-context
               :before-submit="gateSubmit"
               :defer-submit-reset="true"
-              :on-capture-screenshot="captureScreenshotAction"
-              :screenshot-shortcut-keys="screenshotShortcutKeys"
-              :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"
-              :screenshot-shortcut-failure-reason="osGlobalFailures.captureScreenshot"
-              :on-configure-screenshot-shortcut="configureScreenshotShortcut"
+              :extra-builtin-commands="feedbackCommands"
+              v-bind="screenshotProps"
               @submit="handleComposerSubmit"
               @steer="handleComposerSteer"
               @steer-queued="emit('steerQueued', $event)"
               @command="handleComposerCommand"
               @interrupt="handleInterrupt"
-              @continue="handleResumeTurn"
               @focus-goal="focusGoal"
               @pick-model="emit('pickModel')"
               @login="emit('login')"
@@ -953,7 +987,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
             />
             <!-- Backdrop must live outside the composer card (container-type
                  captures position:fixed). -->
-            <div v-if="wsPickOpen" class="ws-backdrop" @click="wsPickOpen = false" />
+            <div v-if="wsPickOpen" class="ws-backdrop" @click="closeWsPick()" />
             <!-- The lower spacer hosts the recent sessions: the hero keeps its
                  fixed vertical middle whether or not the list exists. -->
             <div class="empty-spacer empty-tail">
@@ -1000,7 +1034,14 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               @edit-queued="handleEditQueued"
               @reorder-queue="handleReorderQueue"
               @steer-queued="emit('steerQueued', $event)"
-            />
+            >
+              <template v-if="supportsReplyFeedback" #assistant-reply-actions="{ turn }">
+                <TurnFeedbackActions :target="feedbackTurnTarget(sessionId, turn)" />
+              </template>
+              <template v-if="supportsReplyFeedback" #assistant-reply-status="{ turn }">
+                <TurnFeedbackStatus :target="feedbackTurnTarget(sessionId, turn)" />
+              </template>
+            </ChatPane>
             </ErrorBoundary>
           </template>
         </div>
@@ -1026,11 +1067,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :mobile="mobile"
         :before-submit="gateSubmit"
         :defer-submit-reset="true"
-        :on-capture-screenshot="captureScreenshotAction"
-        :screenshot-shortcut-keys="screenshotShortcutKeys"
-        :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"
-        :screenshot-shortcut-failure-reason="osGlobalFailures.captureScreenshot"
-        :on-configure-screenshot-shortcut="configureScreenshotShortcut"
+        :extra-builtin-commands="feedbackCommands"
+        v-bind="screenshotProps"
         @toggle-dock-panel="toggleDockPanel($event)"
         @close-dock-panel="closeDockPanel()"
         @answer="handleQuestionAnswer"
@@ -1040,7 +1078,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         @steer-queued="emit('steerQueued', $event)"
         @command="handleComposerCommand"
         @interrupt="handleInterrupt"
-        @continue="handleResumeTurn"
         @focus-goal="focusGoal"
         @pick-model="emit('pickModel')"
         @login="emit('login')"
@@ -1050,27 +1087,26 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
           <HostNotice class="dock-host-notice" :host-id="activeHostId" />
         </template>
       </ChatDock>
-      <Transition name="pill">
-        <button
-          v-if="showPill && turns.length > 0"
-          class="newmsg-pill"
-          :style="{ bottom: `${dockHeight + 12}px` }"
-          :aria-label="t('conversation.jumpToLatestAria')"
-          @click="scrollToBottom(true)"
-        >
-          <Icon class="pill-chevron" name="arrow-down" size="sm" />
-          {{ t('conversation.newMessages') }}
-        </button>
-      </Transition>
+      <JumpToBottomPill
+        :show="showPill && turns.length > 0"
+        :style="{ bottom: `${dockHeight + 12}px` }"
+        :label="t('conversation.newMessages')"
+        :aria-label="t('conversation.jumpToLatestAria')"
+        @click="scrollToBottom(true)"
+      />
       </div>
+      <Transition name="session-info-slide">
       <SessionInfoPanel
         v-if="sessionInfoPanelVisible"
+        :key="sessionInfoMode"
         :session-id="sessionInfoSessionId"
         :mode="sessionInfoMode"
         :ctx-used="status.ctxUsed"
         :ctx-max="status.ctxMax"
         :model-id="status.modelId"
         :running="client.activity.value !== 'idle'"
+        :has-messages="turns.length > 0 || Boolean(working)"
+        :compact-phase="compactPhase"
         :tabs="panelTabs ?? []"
         :available="availableTabs ?? []"
         @open-pr="(url) => emit('openPr', url)"
@@ -1078,8 +1114,9 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         @activate="(id) => emit('activateTab', id)"
         @open="(type) => emit('openTab', type)"
         @show-tabs="emit('showTabs')"
-        @compact="client.compact()"
+        @compact="handleComposerCommand({ cmd: '/compact', attachments: [], preserveDraft: true })"
       />
+      </Transition>
     </div>
 
     <WorkspaceTrustDialog
@@ -1175,6 +1212,15 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   flex-direction: column;
   position: relative;
 }
+.chat-layout > .session-info-slide-enter-active.is-sidebar,
+.chat-layout > .session-info-slide-leave-active.is-sidebar {
+  overflow: hidden;
+  transition: width var(--duration-slow) var(--ease-in-out);
+}
+.chat-layout > .session-info-slide-enter-from.is-sidebar,
+.chat-layout > .session-info-slide-leave-to.is-sidebar {
+  width: 0;
+}
 .chat-scroll {
   flex: 1;
   min-height: 0;
@@ -1231,7 +1277,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   user-select: none;
 }
 .empty-hint-title {
-  font-size: calc(var(--ui-font-size) + 16px);
+  font-size: calc(var(--text-base) + 16px);
   font-optical-sizing: auto;
   font-weight: 600;
 }
@@ -1239,7 +1285,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  color: var(--dim);
+  color: var(--color-text-muted);
   font-weight: 400;
 }
 .empty-logo {
@@ -1293,7 +1339,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   border-radius: 10px;
   color: var(--color-text);
   font-family: inherit;
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   cursor: pointer;
   transition: color var(--duration-base) var(--ease-out);
 }
@@ -1325,25 +1371,16 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
 .ws-panel {
   position: absolute;
   box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
   left: 0;
   top: calc(100% + var(--space-1));
   z-index: var(--z-dropdown);
   width: max-content;
-  min-width: max(calc(var(--space-8) * 8), 100%);
   max-width: min(calc(var(--space-8) * 12), calc(100vw - var(--space-8)));
   max-height: calc(var(--space-8) * 10);
   overflow: hidden;
-  background: var(--color-menu-bg);
-  -webkit-backdrop-filter: var(--p-menu-backdrop);
-  backdrop-filter: var(--p-menu-backdrop);
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  padding: var(--space-1);
   animation: ws-pop var(--duration-base) var(--ease-out);
 }
+.ws-panel.ui-menu { min-width: max(calc(var(--space-8) * 8), 100%); }
 .ws-panel.up {
   top: auto;
   bottom: calc(100% + var(--space-1));
@@ -1358,36 +1395,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-.ws-search {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: none;
-  margin: 0 var(--space-1);
-  padding: var(--space-2) var(--space-1);
-  border-bottom: var(--p-hairline) solid var(--color-line);
-  color: var(--color-text-faint);
-}
-
-.ws-search:focus-within {
-  border-bottom-color: var(--color-line-strong);
-}
-
-.ws-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-}
-
-.ws-search-input::placeholder {
-  color: var(--color-text-faint);
-}
-
 .ws-list {
   flex: 1;
   min-height: 0;
@@ -1397,131 +1404,11 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
 
 .ws-empty {
   padding: var(--space-3) var(--space-2);
-  color: var(--muted);
+  color: var(--color-text-faint);
   font-size: var(--text-sm);
   text-align: center;
   user-select: none;
 }
 
-.ws-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  border-radius: var(--radius-dropdown-row);
-  padding: var(--space-1) var(--space-2);
-  cursor: pointer;
-  font-family: var(--font-ui);
-}
-.ws-row > .kw-icon,
-.ws-row > .ws-icon { flex: none; color: var(--muted); }
-.ws-row:hover { background: var(--color-hover); }
-.ws-row.on { background: var(--color-selected); }
-.ws-row:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
-.ws-row:disabled { cursor: default; }
-.ws-row:disabled:hover { background: none; }
-.ws-row:disabled .ws-name { color: var(--color-text-faint); }
-.ws-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-.ws-name {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--text-base);
-  font-weight: var(--weight-option-label);
-  color: var(--color-text);
-  line-height: var(--leading-normal);
-}
-.ws-path {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-option-label);
-  color: var(--muted);
-  line-height: var(--leading-normal);
-}
-.ws-check {
-  flex: none;
-  margin-left: var(--space-3);
-  color: var(--color-text);
-}
-
-.ws-divider {
-  height: 1px;
-  margin: var(--space-1) var(--space-2);
-  background: var(--line);
-}
-
-.ws-action {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  border-radius: var(--radius-dropdown-row);
-  padding: var(--space-2);
-  cursor: pointer;
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  color: var(--dim);
-}
-.ws-action > .kw-icon { flex: none; color: var(--muted); }
-.ws-action span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ws-action:hover { background: var(--color-hover); color: var(--color-text); }
-.ws-action:hover > .kw-icon { color: var(--dim); }
-.ws-action:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
-
-.newmsg-pill {
-  position: absolute;
-  left: 50%;
-  bottom: 12px;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: var(--p-hairline) solid var(--line);
-  background: var(--panel);
-  color: var(--color-text);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-ui-strong);
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  z-index: var(--z-sticky);
-}
-.pill-chevron {
-  width: 12px;
-  height: 12px;
-}
-.pill-enter-active,
-.pill-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-.pill-enter-from,
-.pill-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(8px);
-}
-
-.con { background: var(--bg); }
-.newmsg-pill { font-family: var(--sans); }
+.con { background: var(--color-bg); }
 </style>

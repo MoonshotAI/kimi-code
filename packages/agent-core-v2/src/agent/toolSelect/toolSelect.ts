@@ -1,6 +1,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
+import type { ContentPart, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import type { ToolInfo } from '#/tool/toolContract';
 
 import type { ToolSelectTool } from './toolSelectOps';
@@ -31,7 +31,7 @@ export type ToolSelectAnnouncementDisclosure =
     };
 
 export interface ToolSelectAnnouncement {
-  readonly content: string;
+  readonly content: readonly ContentPart[];
   readonly disclosure: ToolSelectAnnouncementDisclosure;
 }
 
@@ -52,8 +52,6 @@ export interface LoadToolsResult {
 export interface IAgentToolSelectService {
   readonly _serviceBrand: undefined;
 
-  featureEnabled(): boolean;
-
   enabled(capabilities?: ToolSelectCapabilities): boolean;
 
   prepareForRequest(signal?: AbortSignal): Promise<void>;
@@ -67,8 +65,6 @@ export interface IAgentToolSelectService {
   requestTools(
     base: readonly Tool[] | undefined,
     disclosure?: boolean,
-    dynamic?: boolean,
-    messages?: readonly ContextMessage[],
   ): readonly Tool[];
 
   shapeTools(entries: readonly ToolInfo[], disclosure?: boolean): readonly ShapedToolEntry[];
@@ -77,12 +73,14 @@ export interface IAgentToolSelectService {
     messages: readonly ContextMessage[],
     disclosure?: boolean,
     tools?: readonly Tool[],
+    deferred?: readonly Tool[],
   ): readonly ContextMessage[];
 
   load(names: readonly string[]): LoadToolsResult;
 
   loadableToolsAnnouncement(
     lastDisclosure?: ToolSelectAnnouncementDisclosure,
+    includeSnapshot?: boolean,
   ): ToolSelectAnnouncement | undefined;
 
 }

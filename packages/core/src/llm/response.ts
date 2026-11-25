@@ -29,6 +29,7 @@ export type LlmErrorKind =
   | 'image_format'
   | 'empty_response'
   | 'provider'
+  | 'invalid_tool_arguments'
   | 'unknown';
 
 export type LlmRemoteErrorKind = Exclude<LlmErrorKind, 'syntax'>;
@@ -174,7 +175,7 @@ export type LlmDeltaEvent =
 export type LlmRetry =
   | {
       readonly type: 'llm.retry';
-      readonly reason: 'backoff';
+      readonly reason: 'backoff' | 'invalid_tool_arguments';
       readonly error: LlmErrorMessage;
       readonly message?: AssistantMessage | null;
       readonly usage?: TokenUsage;
@@ -238,6 +239,7 @@ export interface LlmRequestSummary {
   readonly messageCount: number;
 }
 
+// Emitted before resolvers; toolsHash describes the initial request profile, not the provider payload.
 export type LlmRunStarted = { readonly type: 'llm.started' } & LlmRequestSummary;
 
 export type LlmRequestProjection =
@@ -247,6 +249,7 @@ export type LlmRequestProjection =
   | 'strict-media-degraded'
   | 'strict-media-stripped';
 
+// Emitted after resolvers for each attempt, before legalization and provider encoding.
 export type LlmRunRequested = {
   readonly type: 'llm.requested';
   readonly kind?: 'loop' | 'compaction' | 'prediction';

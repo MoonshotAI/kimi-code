@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Button, Dialog } from '@moonshot-ai/app-ui';
+import { Button, Checkbox, Dialog } from '@moonshot-ai/app-ui';
 
 const props = withDefaults(defineProps<{
   open: boolean;
@@ -12,13 +12,17 @@ const props = withDefaults(defineProps<{
   variant?: 'primary' | 'danger';
   loading?: boolean;
   initialFocus?: 'confirm' | 'cancel';
+  checkboxLabel?: string;
+  checked?: boolean;
 }>(), {
   variant: 'danger',
   initialFocus: 'confirm',
+  checked: false,
 });
 
 const emit = defineEmits<{
   'update:open': [value: boolean];
+  'update:checked': [value: boolean];
   confirm: [];
   cancel: [];
 }>();
@@ -67,6 +71,15 @@ onBeforeUnmount(() => {
     @close="onCancel"
   >
     <p v-if="message" class="confirm-dialog__message">{{ message }}</p>
+    <Checkbox
+      v-if="checkboxLabel"
+      class="confirm-dialog__checkbox"
+      :model-value="checked"
+      :disabled="loading"
+      @update:model-value="emit('update:checked', $event)"
+    >
+      {{ checkboxLabel }}
+    </Checkbox>
     <template #foot>
       <Button class="confirm-dialog__cancel" variant="secondary" :disabled="loading" @click="onCancel">
         {{ cancelLabel ?? t('common.cancel') }}
@@ -91,5 +104,8 @@ onBeforeUnmount(() => {
   font-size: var(--text-base);
   line-height: var(--leading-normal);
   color: var(--color-text-muted);
+}
+.confirm-dialog__checkbox {
+  margin-top: var(--space-4);
 }
 </style>

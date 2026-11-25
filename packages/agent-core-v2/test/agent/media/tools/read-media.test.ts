@@ -7,13 +7,14 @@ import { mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { Emitter } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import { OrderedHookSlot } from '#/hooks';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import type { Environment } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID, type Environment } from '#/environment/environment';
+import type { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { stubAgentEnvironment } from '../../../environment/stubs';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import {
@@ -787,15 +788,23 @@ describe('ReadMediaFileTool', () => {
     };
     const resolver = new AgentMediaResolverService(
       {} as IFileService,
-      { get: async () => undefined, put: async () => {} } as unknown as IBlobStore,
+      { get: async () => undefined, put: async () => {}, has: async () => false } as unknown as IBlobStore,
       telemetry,
       new AgentStateService(),
       store,
       { dispatch: async () => {} } as unknown as IEventDispatcher,
       makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+      {
+        _serviceBrand: undefined,
+        current: { environmentId: LOCAL_ENVIRONMENT_ID },
+        onDidChange: Event.None,
+        bind: () => {
+          throw new Error('unused');
+        },
+      } as IAgentEnvironmentBindingService,
     );
     const resolved = await resolver.resolve(
-      [{ role: 'user', content: outputParts(result) }],
+      [{ role: 'tool', toolCallId: 'call_media', content: outputParts(result) }],
       model,
       new ProtocolAdapterRegistry().request(model).with({ endpoint: { files } }),
     );

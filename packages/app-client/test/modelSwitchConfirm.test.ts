@@ -4,10 +4,18 @@ import type { KimiWebApi } from '@moonshot-ai/app-core/api';
 
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { modelSwitchConfirmStore } from '../src/stores/modelSwitchConfirm';
+import { effortSwitchStore } from '../src/stores/effortSwitch';
 
 const CLOUD_CONFIG = {
   enable: true,
-  rules: [{ from: 'kimi-k2.5', to: 'kimi-k2-turbo-preview', hint: { en: 'Cache lost.', zh: '缓存失效。' } }],
+  rules: [
+    {
+      from: 'kimi-k2.5',
+      to: 'kimi-k2-turbo-preview',
+      session_type: 'old',
+      hint: { en: 'Cache lost.', zh: '缓存失效。' },
+    },
+  ],
 };
 
 function stubApi(impl: (name: string) => Promise<unknown>): ReturnType<typeof vi.fn> {
@@ -21,12 +29,14 @@ function stubApi(impl: (name: string) => Promise<unknown>): ReturnType<typeof vi
 
 beforeEach(() => {
   modelSwitchConfirmStore().resetForTest();
+  effortSwitchStore().resetForTest();
 });
 
 afterEach(() => {
   resetKimiClientDeps();
   vi.useRealTimers();
   modelSwitchConfirmStore().resetForTest();
+  effortSwitchStore().resetForTest();
 });
 
 describe('refresh', () => {
@@ -68,6 +78,67 @@ describe('refresh', () => {
     expect(getClientConfig).toHaveBeenCalledTimes(2);
   });
 
+  it('shares one request between concurrent refreshes', async () => {
+    let release!: () => void;
+    const getClientConfig = stubApi(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(CLOUD_CONFIG);
+        }),
+    );
+
+    const first = modelSwitchConfirmStore().refresh();
+    const second = modelSwitchConfirmStore().refresh();
+
+    expect(getClientConfig).toHaveBeenCalledTimes(1);
+    release();
+    await Promise.all([first, second]);
+    expect(modelSwitchConfirmStore().peek()).toEqual(CLOUD_CONFIG);
+  });
+
+  it('marks empty and failed loads as settled for automatic picker loads', async () => {
+    const store = modelSwitchConfirmStore();
+    const getClientConfig = stubApi(async () => null);
+    expect(store.needsLoad()).toBe(true);
+
+    await store.refresh();
+    expect(store.needsLoad()).toBe(false);
+
+    await store.refresh();
+    expect(getClientConfig).toHaveBeenCalledTimes(2);
+
+    stubApi(async () => {
+      throw new Error('server down');
+    });
+    await store.refresh();
+    expect(store.needsLoad()).toBe(false);
+  });
+
+  it('does not share requests across signals or let an aborted generation clear newer config', async () => {
+    const store = modelSwitchConfirmStore();
+    const pending: { resolve: (value: unknown) => void; reject: (reason: unknown) => void }[] = [];
+    const getClientConfig = stubApi(
+      () =>
+        new Promise((resolve, reject) => {
+          pending.push({ resolve, reject });
+        }),
+    );
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+
+    const first = store.refresh({ signal: firstController.signal });
+    firstController.abort();
+    const second = store.refresh({ signal: secondController.signal });
+    expect(getClientConfig).toHaveBeenCalledTimes(2);
+
+    pending[1]!.resolve(CLOUD_CONFIG);
+    await second;
+    pending[0]!.reject(new Error('aborted'));
+    await first;
+
+    expect(store.peek()).toEqual(CLOUD_CONFIG);
+  });
+
   it('forwards read options to the api', async () => {
     const getClientConfig = stubApi(async () => CLOUD_CONFIG);
     const controller = new AbortController();
@@ -81,8 +152,8 @@ describe('refresh', () => {
 describe('requestConfirm / settle', () => {
   it('resolves with the settled action and clears pending', async () => {
     const store = modelSwitchConfirmStore();
-    const promise = store.requestConfirm({ fromModel: 'A', toModel: 'B', hint: 'hint' });
-    expect(store.pending).toMatchObject({ fromModel: 'A', toModel: 'B', hint: 'hint' });
+    const promise = store.requestConfirm({ fromModel: 'A', toModel: 'B', sessionType: 'old', hint: 'hint' });
+    expect(store.pending).toMatchObject({ fromModel: 'A', toModel: 'B', sessionType: 'old', hint: 'hint' });
 
     store.settle('compact');
 
@@ -92,11 +163,11 @@ describe('requestConfirm / settle', () => {
 
   it('cancels a previous pending request when a new one arrives', async () => {
     const store = modelSwitchConfirmStore();
-    const first = store.requestConfirm({ fromModel: 'A', toModel: 'B' });
-    const second = store.requestConfirm({ fromModel: 'C', toModel: 'D' });
+    const first = store.requestConfirm({ fromModel: 'A', toModel: 'B', sessionType: 'old' });
+    const second = store.requestConfirm({ fromModel: 'C', toModel: 'D', sessionType: 'new' });
 
     await expect(first).resolves.toBe('cancel');
-    expect(store.pending).toMatchObject({ fromModel: 'C', toModel: 'D' });
+    expect(store.pending).toMatchObject({ fromModel: 'C', toModel: 'D', sessionType: 'new' });
 
     store.settle('continue');
     await expect(second).resolves.toBe('continue');
@@ -162,5 +233,34 @@ describe('waitCompactionSettled', () => {
 
     await expect(promise).resolves.toBe('request-failed');
     expect(store.hasCompactionWait('ses-1')).toBe(false);
+  });
+});
+
+
+describe('effort switch store', () => {
+  it('loads effort_switch_confirm and settles the load state', async () => {
+    const config = {
+      descriptions: { enable: true, items: { low: { en: 'Light reasoning.', zh: '轻量思考。' } } },
+      confirm: { enable: true, rules: [{ from: 'low', to: 'high', session_type: 'all' }] },
+    };
+    const getClientConfig = stubApi(async () => config);
+    const store = effortSwitchStore();
+
+    await store.refresh();
+
+    expect(getClientConfig).toHaveBeenCalledWith('effort_switch_confirm', undefined);
+    expect(store.peek()).toEqual(config);
+    expect(store.needsLoad()).toBe(false);
+  });
+
+  it('resolves confirm and cancel actions', async () => {
+    const store = effortSwitchStore();
+    const first = store.requestConfirm({ fromEffort: 'low', toEffort: 'high', sessionType: 'old' });
+    store.settle('continue');
+    await expect(first).resolves.toBe('continue');
+
+    const second = store.requestConfirm({ fromEffort: 'high', toEffort: 'max', sessionType: 'new' });
+    store.settle('cancel');
+    await expect(second).resolves.toBe('cancel');
   });
 });

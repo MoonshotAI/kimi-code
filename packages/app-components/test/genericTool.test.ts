@@ -59,6 +59,63 @@ afterEach(() => {
   resetKimiClientDeps();
 });
 
+describe('MCP authorization card', () => {
+  it.each(['failed', 'reconnectFailed'] as const)('keeps %s diagnostics behind a closed disclosure', (phase) => {
+    const output = ['Provider request failed', 'Reason: invalid_client'];
+    const tool: ToolCall = { id: 'call', name: 'mcp__example__authenticate', arg: '{}', status: 'error', output, mcpAuth: { phase, serverName: 'example' } };
+    mount(tool, 'zh', resolveToolRenderer(tool));
+    const details = host.querySelector('details')!;
+    expect(details).not.toBeNull();
+    expect(details.open).toBe(false);
+    const summary = details.querySelector('summary')!;
+    expect(summary.textContent).toContain('错误详情');
+    summary.click();
+    expect(details.open).toBe(true);
+    expect([...details.querySelectorAll('.op > div')].map(line => line.textContent)).toEqual(output);
+    expect(host.querySelector('a, button')).toBeNull();
+  });
+
+  it('omits the error disclosure when no diagnostic was returned', () => {
+    const tool: ToolCall = { id: 'call', name: 'mcp__example__authenticate', arg: '{}', status: 'error', output: [], mcpAuth: { phase: 'failed', serverName: 'example' } };
+    mount(tool, 'zh', resolveToolRenderer(tool));
+    expect(host.querySelector('details')).toBeNull();
+  });
+
+  it('links directly to the existing authorization URL without opening a blank popup and removes it at expiry', async () => {
+    vi.useFakeTimers();
+    const request = { serverName: 'example', waitId: 'wait-1', expiresAt: Date.now() + 1000, authorizationUrl: 'https://auth.example.test/authorize?state=test' };
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const copy = vi.fn<(text: string) => Promise<boolean>>().mockResolvedValue(true);
+    vi.stubGlobal('kimiDesktop', { writeClipboardText: copy });
+    try {
+      const tool: ToolCall = { id: 'call', name: 'mcp__example__authenticate', arg: '{}', status: 'running', mcpAuth: { serverName: 'example', phase: 'waiting', request } };
+      mount(tool, 'zh', resolveToolRenderer(tool));
+      expect(open).not.toHaveBeenCalled();
+      const link = host.querySelector('a')!;
+      expect(link.textContent).toBe(request.authorizationUrl);
+      expect(link.href).toBe(request.authorizationUrl);
+      expect(link.rel).toContain('noopener');
+      const [primary, secondary] = host.querySelectorAll('button');
+      expect(primary!.textContent?.trim()).toBe('打开授权页');
+      expect(secondary!.textContent?.trim()).toBe('复制链接');
+      primary!.click();
+      expect(open).toHaveBeenCalledWith(request.authorizationUrl, '_blank', 'noopener,noreferrer');
+      secondary!.click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(copy).toHaveBeenCalledExactlyOnceWith(request.authorizationUrl);
+      expect(secondary!.textContent).toContain('已复制');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(host.querySelector('a, button')).toBeNull();
+      expect(host.textContent).not.toContain(request.authorizationUrl);
+      expect(host.textContent).toContain('已过期');
+    } finally {
+      vi.unstubAllGlobals();
+      open.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('GenericTool computer use row', () => {
   const tool = { name: 'mcp__kimi-cu__get_app_state', arg: '{"mode":"image","app":"com.google.Chrome"}' };
 

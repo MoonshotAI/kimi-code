@@ -1,6 +1,6 @@
 import type { ContentPart, Message, ToolCall, ToolDescription, UserMessage } from '#/llm/message';
 import type { LlmRunEvent, LlmTiming } from '#/llm/response';
-import type { HookPoint, ToolHookPoint } from './hook';
+import type { HookPoint } from './hook';
 import type { MessageSource, RemindMessage, TurnTrigger } from './inbox';
 import type { AsyncToolOutcome, Cause, StepOutcome, ToolCallOutcome, TurnOutcome } from './outcome';
 
@@ -19,13 +19,7 @@ export interface LlmMessageTiming {
   readonly llmStreamDurationMs?: number;
 }
 
-export function llmMessageTiming(timing: LlmTiming | undefined): LlmMessageTiming | undefined {
-  if (timing === undefined) return undefined;
-  return {
-    llmFirstTokenLatencyMs: timing.firstTokenLatencyMs,
-    llmStreamDurationMs: timing.streamDurationMs,
-  };
-}
+export type TurnContinuation = 'turn' | 'background' | 'none';
 
 export type ToolEvent =
   | { type: 'tool.started'; taskId?: string; turnId: number; step: number; toolCall: ToolCall; args?: unknown; display?: ToolStartDisplay }
@@ -49,7 +43,7 @@ export type ToolEvent =
 
 export type HookFailedEvent = {
   type: 'hook.failed';
-  point: HookPoint | ToolHookPoint;
+  point: HookPoint;
   hookId?: string;
   turnId: number;
   step: number;
@@ -58,10 +52,15 @@ export type HookFailedEvent = {
 };
 
 export type LoopEmitted =
+  /** A user message was accepted into the normal inbox (`Loop.submit`). */
   | { type: 'prompt.submitted'; message: UserMessage }
+  /** A user message entered the notify inbox (`Loop.notify`, `Loop.recordNotification`, `Loop.sendNow`), or a notification was synthesized (hook failure, detached tool completion). */
   | { type: 'prompt.notified'; message: UserMessage }
+  /** A message was queued in the remind inbox (`Loop.remind`). */
   | { type: 'prompt.reminded'; message: RemindMessage }
+  /** Messages moved from the normal inbox to the notify inbox (`Loop.steer`, `Loop.sendNowQueued`); `messages` lists the moved ones, absent when nothing moved. */
   | { type: 'prompt.steered'; promptIds: string[]; messages?: readonly UserMessage[] }
+  /** A queued message was removed from the inboxes (`Loop.cancel`); `canceled` is false when nothing matched. */
   | { type: 'prompt.canceled'; promptId: string; canceled: boolean }
   | { type: 'turn.started'; turnId: number; trigger: TurnTrigger; promptOnly?: true; message?: UserMessage }
   | { type: 'turn.resumed'; turnId: number; step: number }
@@ -85,9 +84,7 @@ export type LoopEmitted =
       timing?: LlmTiming;
       llmTiming?: LlmMessageTiming;
     }
-  | { type: 'turn.ended'; turnId: number; outcome: TurnOutcome; durationMs?: number; stopReason?: string; requestId?: string }
-  | { type: 'loop.drained'; generation: number }
-  | { type: 'loop.idle'; generation: number }
+  | { type: 'turn.ended'; turnId: number; outcome: TurnOutcome; durationMs?: number; stopReason?: string; requestId?: string; continuation?: TurnContinuation }
   | { type: 'context.settled'; messages: Message[]; reason?: string }
   | { type: 'context.rejected'; messages: Message[]; reason?: string }
   | { type: 'system_prompt.settled'; systemPrompt: string }

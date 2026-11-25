@@ -447,7 +447,7 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .session-rating.picking .sr-face.picked .kimi-face {
-  color: var(--logo);
+  color: var(--color-accent);
 }
 
 .sr-face:focus-visible {
@@ -496,7 +496,7 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .armed .sr-face:hover .kimi-face {
-  color: var(--logo);
+  color: var(--color-accent);
   transform: translateY(-1px);
 }
 
@@ -505,7 +505,7 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .kimi-face.flying {
-  color: var(--logo);
+  color: var(--color-accent);
 }
 
 .kimi-face.flying .kf-head {
@@ -513,7 +513,7 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .kimi-face.solid {
-  color: var(--logo);
+  color: var(--color-accent);
 }
 
 .kimi-face.solid .kf-head {
@@ -562,7 +562,7 @@ function onKeydown(event: KeyboardEvent): void {
   height: 30px;
   box-sizing: border-box;
   border-radius: 50%;
-  border: 1.5px solid var(--logo);
+  border: 1.5px solid var(--color-accent);
   opacity: 0;
   animation: sr-ring 640ms var(--ease-out) forwards;
 }
@@ -579,7 +579,7 @@ function onKeydown(event: KeyboardEvent): void {
   width: 2px;
   height: 6px;
   border-radius: 1px;
-  background: var(--logo);
+  background: var(--color-accent);
   opacity: 0;
   animation: sr-spark 600ms var(--ease-out) forwards;
 }

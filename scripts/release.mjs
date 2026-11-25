@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, readFileSync, readdirSync } from 'node:fs';
+import { SUPPORTED_TARGETS } from '../apps/kimi-code/scripts/native/native-deps.mjs';
 
 const command = process.argv[2];
 const repo = process.env.GITHUB_REPOSITORY;
@@ -22,6 +23,33 @@ for (const pkg of plan.packages) {
   if (current.name !== pkg.name || current.version !== pkg.version || (current.private === true) !== pkg.private) {
     throw new Error(`Release plan no longer matches ${pkg.path}`);
   }
+}
+const cli = plan.packages.find((entry) => entry.name === '@moonshot-ai/kimi-code');
+if (command === 'check-cli-retry') {
+  const tag = process.env.RELEASE_TAG;
+  if (!(Number(process.env.GITHUB_RUN_ATTEMPT) > 1)) throw new Error('Native release recovery requires a rerun');
+  if (!cli || tag !== `${cli.name}@${cli.version}`) throw new Error('CLI tag does not match the release plan');
+  if (!verifyTag(tag)) throw new Error(`Missing tag for ${tag}`);
+  const registryVersion = JSON.parse(execFileSync('npm', ['view', tag, 'version', '--json', '--registry=https://registry.npmjs.org', '--prefer-online'], { encoding: 'utf8' }));
+  if (registryVersion !== cli.version) throw new Error(`npm did not confirm ${tag}`);
+  const release = api(`releases/tags/${encodeURIComponent(tag)}`);
+  const uploaded = new Set(release.assets.filter(asset => asset.state === 'uploaded' && asset.size > 0).map(asset => asset.name));
+  const files = readdirSync('dist-native-release').filter(name => name.startsWith('kimi-code-'));
+  if (files.length === 0) throw new Error('No native release files to upload');
+  const complete = uploaded.has('manifest.json') && files.every(name => uploaded.has(name));
+  appendFileSync(process.env.GITHUB_OUTPUT, `complete=${complete}\n`);
+  process.exit(0);
+}
+if (command === 'plan-cli') {
+  let tag = '';
+  if (cli) {
+    const name = `${cli.name}@${cli.version}`;
+    const ref = spawnSync('git', ['rev-parse', '--verify', '--quiet', `refs/tags/${name}^{commit}`], { encoding: 'utf8' });
+    if (ref.status === 1 || (ref.status === 0 && ref.stdout.trim() === sha)) tag = name;
+    else if (ref.status !== 0) throw new Error(`Could not resolve ${name}`);
+  }
+  appendFileSync(process.env.GITHUB_OUTPUT, `tag=${tag}\ntargets=${JSON.stringify(SUPPORTED_TARGETS)}\n`);
+  process.exit(0);
 }
 const packages = plan.packages.filter((pkg) => pkg.name === 'kimi-code-app');
 if (packages.length > 1) throw new Error('Release plan lists kimi-code-app more than once');
