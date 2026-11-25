@@ -214,6 +214,16 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     ).toBe(`failure at '${REDACTED}' couldn't be read`);
   });
 
+  it('keeps escaped apostrophes inside single-quoted Windows paths', () => {
+    expect(cleanTelemetryString(String.raw`file 'C:\Users\example''s\.config\prefs' failed`)).toBe(
+      `file '${REDACTED}' failed`,
+    );
+    expect(cleanTelemetryString(String.raw`'C:\proj\node_modules\pkg''s\index.js'`)).toBe(
+      "'node_modules/pkg''s/index.js'",
+    );
+    expect(cleanTelemetryString(String.raw`'C:\a' 'D:\b'`)).toBe(`'${REDACTED}' '${REDACTED}'`);
+  });
+
   it('keeps Windows paths whole across repeated separators and extension-like components', () => {
     expect(cleanTelemetryString(String.raw`C:\Users\alice\\project\secret.txt`)).toBe(REDACTED);
     expect(cleanTelemetryString(String.raw`C:\Users\alice\\cache\\`)).toBe(REDACTED);
