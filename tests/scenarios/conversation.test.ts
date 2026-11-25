@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { bashPathOf, deferred, solidPng } from '@moonshot-ai/testkit/fixtures';
 import type { KapFrame, KapItem, KapSocket, KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
-import { agent, bash, call, held, httpError, say, think, todoList, withUsage } from '@moonshot-ai/testkit/model';
+import { agent, bash, call, fakeModelConfig, held, httpError, say, think, todoList, withUsage } from '@moonshot-ai/testkit/model';
 import { test as base, describe, expect } from 'vitest';
 
 import { scenarioFixtures, type ScenarioFixtures } from './support/scenario';
@@ -803,6 +803,19 @@ describe('conversation over KAP', () => {
     });
     await expect(kap.rest.post(`${sideAgent}:close`, {})).rejects.toMatchObject({ code: 40401 });
     await expect(kap.rest.get(`${sideAgent}/turns`)).rejects.toMatchObject({ code: 40401 });
+  });
+
+  test('starts a side agent in the permission mode the main agent is using rather than the configured default', async ({ kap, model }) => {
+    await kap.writeConfig({ ...fakeModelConfig(model), defaultPermissionMode: 'manual' });
+    await kap.restart();
+    const session = await kap.createSession();
+    await kap.rest.post(`/api/v1/sessions/${session.id}/profile`, { agent_config: { permission_mode: 'yolo' } });
+    const side = await kap.rest.post<{ readonly agent_id: string }>(`/api/v1/sessions/${session.id}:btw`, {});
+    const socket = await kap.connect();
+    await socket.subscribe(session.id, { agentIds: [side.agent_id] });
+
+    const frame = await socket.waitFor((candidate) => candidate.type === 'agent' && candidate['session_id'] === session.id && candidate['agent_id'] === side.agent_id);
+    expect(frame['permission_mode']).toBe('yolo');
   });
 
   visionTest('exposes local session media paths to the model for pasted and steered images without persisting the labels in KAP user messages', async ({ kap, model }) => {
