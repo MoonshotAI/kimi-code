@@ -1,6 +1,6 @@
 import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
-import { unavailableSessionModelError } from '../utils/model-switch';
+import { hasUnavailableSessionModel } from '../utils/model-switch';
 import type { InlineSkillActivation } from '../types';
 import type { SlashCommandHost } from './dispatch';
 
@@ -15,11 +15,7 @@ export async function handleBtwCommand(
     host.showError(LLM_NOT_SET_MESSAGE);
     return;
   }
-  const unavailableModel = unavailableSessionModelError(host);
-  if (unavailableModel !== undefined) {
-    host.showError(unavailableModel);
-    return;
-  }
+  if (hasUnavailableSessionModel(host)) return;
   host.btwPanelController.closeOrCancel();
 
   try {

@@ -223,7 +223,7 @@ import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { isSessionOccupiedError } from './utils/session-lock-errors';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { formatBashOutputForDisplay } from './utils/shell-output';
-import { lazyModelSelection, unavailableSessionModelError } from './utils/model-switch';
+import { hasUnavailableSessionModel, lazyModelSelection } from './utils/model-switch';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
@@ -1584,11 +1584,7 @@ export class KimiTUI {
     preExtracted?: ExtractionResult,
     delivery: FollowUpDelivery = 'default',
   ): Promise<void> {
-    const unavailableModel = unavailableSessionModelError(this);
-    if (unavailableModel !== undefined) {
-      this.showError(unavailableModel);
-      return;
-    }
+    if (hasUnavailableSessionModel(this)) return;
     if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
@@ -1662,11 +1658,7 @@ export class KimiTUI {
     preExtracted?: ExtractionResult,
     delivery: FollowUpDelivery = 'default',
   ): Promise<void> {
-    const unavailableModel = unavailableSessionModelError(this);
-    if (unavailableModel !== undefined) {
-      this.showError(unavailableModel);
-      return;
-    }
+    if (hasUnavailableSessionModel(this)) return;
     if (this.btwPanelController.sendUserInput(text, activations)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);

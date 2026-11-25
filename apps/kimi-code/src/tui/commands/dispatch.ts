@@ -26,7 +26,7 @@ import type {
 } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { ExtractionResult } from '../utils/image-placeholder';
-import { unavailableSessionModelError } from '../utils/model-switch';
+import { hasUnavailableSessionModel } from '../utils/model-switch';
 import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { handleBtwCommand } from './btw';
 import { handleCopyCommand } from './copy';
@@ -259,11 +259,7 @@ async function executeSlashCommand(
         host.showError(LLM_NOT_SET_MESSAGE);
         return;
       }
-      const unavailableModel = unavailableSessionModelError(host);
-      if (unavailableModel !== undefined) {
-        host.showError(unavailableModel);
-        return;
-      }
+      if (hasUnavailableSessionModel(host)) return;
       let session = host.session;
       if (session === undefined) {
         session = await ensureSessionForCommand(host);

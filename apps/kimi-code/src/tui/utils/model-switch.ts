@@ -50,13 +50,16 @@ export function lazyModelSelection(
 
 export type { ModelSwitchPersistence } from '../types';
 
-export function unavailableSessionModelError(
-  host: Pick<SlashCommandHost, 'session' | 'state'>,
-): string | undefined {
-  if (host.session === undefined) return undefined;
+export function hasUnavailableSessionModel(
+  host: Pick<SlashCommandHost, 'session' | 'state' | 'showError'>,
+): boolean {
+  if (host.session === undefined) return false;
   const { model, availableModels } = host.state.appState;
-  if (model.trim().length === 0 || availableModels[model] !== undefined) return undefined;
-  return `Model "${model}" is not configured in config.toml. Use /model to select an available model.`;
+  if (model.trim().length === 0 || availableModels[model] !== undefined) return false;
+  host.showError(
+    `Model "${model}" is not configured in config.toml. Use /model to select an available model.`,
+  );
+  return true;
 }
 
 function currentTurnSentRequest(host: SlashCommandHost): boolean {
