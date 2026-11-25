@@ -75,7 +75,7 @@ Failed KAP tests also print summaries of the most recent 32 WebSocket frames and
 | `say(text \| chunks)` | text, one chunk per array entry |
 | `{ ...say('ok'), headers: { 'x-request-id': 'example-request' } }` | response headers on a streamed or JSON reply |
 | `think(text, then?)`, `thinkSigned(text, signature, then?)` | reasoning before the next step. For OpenAI chat completions, signed reasoning includes the signature in `reasoning_details` in both streaming and non-streaming replies |
-| `call(name, args, { text, id, rawArguments, argumentChunks, invalid })` | one tool call. OpenAI and streaming Anthropic can preserve raw argument text. Google and non-streaming Anthropic require a JSON object |
+| `call(name, args, { text, id, rawArguments, argumentChunks, invalid, extras })` | one tool call. OpenAI and streaming Anthropic can preserve raw argument text. Google and non-streaming Anthropic require a JSON object. `extras` rides on the OpenAI tool call as `extras`; its `thought_signature_b64` becomes a Google `thoughtSignature` |
 | `reply(...)`, `batch(...)` | several parts in one reply; `batch` reads as parallel calls |
 | `interleave(step)` | interleaves argument pieces of parallel calls in an OpenAI stream |
 | `finishWith(reason, step)`, `withUsage(usage, step)` | finish reason and token usage, including cache reads and writes |
@@ -87,6 +87,8 @@ Failed KAP tests also print summaries of the most recent 32 WebSocket frames and
 | `networkError()`, `rawResponse({ status, headers, chunks })` | a connection reset, or a custom response body built from UTF-8 string chunks |
 
 Tool calls get deterministic ids, `call_<requestIndex>_<callIndex>`; `model.callId(r, c)` returns them.
+
+The model also answers the Kimi files API: `POST …/files` stores the upload and returns a ready file object with ID `file-<uploadIndex>`, and `GET …/files/<id>` returns it again. `model.uploads()` lists each upload's filename, purpose, content types and raw body. After `model.holdUploads()`, uploads stay open until the client gives up, and are then recorded as `aborted`.
 
 When inspecting Google request history, use the IDs in `request.view.messages` to match results to calls. The view preserves explicit wire IDs. Each call with an omitted ID gets its own ID, and results with omitted IDs match pending calls of the same name in order.
 

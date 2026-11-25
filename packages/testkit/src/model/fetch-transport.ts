@@ -2,13 +2,15 @@ import type { PlaybackSink } from '#/model/playback';
 import { connectionReset, CRASH_STATUS, crashBody, type RequestHandler } from '#/model/transport';
 
 const encoder = new TextEncoder();
+const nativeFetch = globalThis.fetch;
 
 export function createFetchTransport(handler: RequestHandler): typeof fetch {
   return async (input, init) => {
     const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return nativeFetch(input, init);
     const body = await request.text();
     request.signal.throwIfAborted();
-    const url = new URL(request.url);
     return new Promise<Response>((resolve, reject) => {
       const sink = new FetchSink(resolve, reject, request.signal);
       void handler(

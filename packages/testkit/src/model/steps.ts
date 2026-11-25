@@ -46,6 +46,7 @@ export interface CallOptions {
   readonly rawArguments?: string;
   readonly argumentChunks?: number;
   readonly invalid?: boolean;
+  readonly extras?: Readonly<Record<string, unknown>>;
 }
 
 export function call(name: string, args: Readonly<Record<string, unknown>>, options: CallOptions = {}): ReplyStep {
@@ -59,6 +60,7 @@ export function call(name: string, args: Readonly<Record<string, unknown>>, opti
     rawArguments: options.rawArguments,
     argumentChunks: options.argumentChunks,
     invalid: options.invalid,
+    extras: options.extras,
   };
   const parts: ReplyPart[] = options.text === undefined ? [] : [{ type: 'text', text: options.text }];
   parts.push({ type: 'call', call: spec });

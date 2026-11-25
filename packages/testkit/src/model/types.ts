@@ -18,6 +18,7 @@ export interface ToolCallSpec {
   readonly rawArguments?: string;
   readonly argumentChunks?: number;
   readonly invalid?: boolean;
+  readonly extras?: Readonly<Record<string, unknown>>;
 }
 
 export type ReplyPart =

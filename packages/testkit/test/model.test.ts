@@ -149,6 +149,44 @@ describe('replies', () => {
   });
 });
 
+describe('file uploads', () => {
+  it('stores an uploaded file, answers with a ready file object and serves it back by ID', async () => {
+    const model = fakeModel();
+    const client = clientOf(model);
+    const uploaded = await client.files.create({
+      file: new File([new Uint8Array([1, 2, 3])], 'clip.mp4', { type: 'video/mp4' }),
+      purpose: 'video' as never,
+    });
+    expect(uploaded).toMatchObject({ id: 'file-0', object: 'file', filename: 'clip.mp4', purpose: 'video', status: 'ok' });
+    expect(model.uploads()).toEqual([
+      expect.objectContaining({ index: 0, id: 'file-0', filename: 'clip.mp4', purpose: 'video', fileContentType: 'video/mp4', state: 'stored' }),
+    ]);
+    expect(model.uploads()[0]?.contentType).toContain('multipart/form-data');
+    expect(await client.files.retrieve('file-0')).toMatchObject({ id: 'file-0', status: 'ok' });
+    model.verify();
+  });
+
+  it('keeps a held upload open until the client gives up, and records it as aborted', async () => {
+    const model = fakeModel();
+    model.holdUploads();
+    const controller = new AbortController();
+    const upload = clientOf(model).files.create(
+      { file: new File([new Uint8Array([1])], 'clip.mp4', { type: 'video/mp4' }), purpose: 'video' as never },
+      { signal: controller.signal },
+    );
+    await expect.poll(() => model.uploads()[0]?.state).toBe('held');
+    controller.abort();
+    await expect(upload).rejects.toThrow();
+    await expect.poll(() => model.uploads()[0]?.state).toBe('aborted');
+  });
+
+  it('reports a request for a file that was never uploaded', async () => {
+    const model = fakeModel();
+    await expect(clientOf(model).files.retrieve('file-7')).rejects.toThrow();
+    expect(() => model.verify()).toThrow(/asked for a file that was never uploaded/);
+  });
+});
+
 describe('strictness', () => {
   it('fails an unscripted main request with a non-retryable error and reports it', async () => {
     const model = fakeModel();
