@@ -1,23 +1,5 @@
 # @moonshot-ai/kimi-code-sdk
 
-## 0.24.0
-
-### Minor Changes
-
-- [#5352](https://github.com/MoonshotAI/kimi-code/pull/5352) [`2b1b095`](https://github.com/MoonshotAI/kimi-code/commit/2b1b095f3bbf48e83632b0aaaabce6773caf4469) Thanks [@sailist](https://github.com/sailist)! - Add `defaultSwarmMode` to the Kimi config schema, patch schema, TOML mapping, and v2 config domains.
-
-- [#5254](https://github.com/MoonshotAI/kimi-code/pull/5254) [`314a6bd`](https://github.com/MoonshotAI/kimi-code/commit/314a6bd96baa697b41bc4b26dbcc74419af7ebde) Thanks [@7Sageer](https://github.com/7Sageer)! - Remove the experimental `fork` parameter that let `Agent` and `AgentSwarm` start subagents with the caller's conversation history.
-
-### Patch Changes
-
-- [#5203](https://github.com/MoonshotAI/kimi-code/pull/5203) [`3d7f4c1`](https://github.com/MoonshotAI/kimi-code/commit/3d7f4c10e7967ebac6832b9cf17ebb3024d477f5) Thanks [@Grapedge](https://github.com/Grapedge)! - Start MCP servers only for sessions and MCP listings, not for other workspace queries.
-
-- [#5234](https://github.com/MoonshotAI/kimi-code/pull/5234) [`9492766`](https://github.com/MoonshotAI/kimi-code/commit/9492766742351482d2a7772fc957ef54ae9fa55a) Thanks [@sailist](https://github.com/sailist)! - Retry when a provider returns an invalid tool call.
-
-- [#5289](https://github.com/MoonshotAI/kimi-code/pull/5289) [`e42d4a5`](https://github.com/MoonshotAI/kimi-code/commit/e42d4a53b8b1fe73bbe5fde3ca142bfe4af3a5cf) Thanks [@7Sageer](https://github.com/7Sageer)! - Automatically reclaim session locks recorded under a different hostname. Shared state directories no longer protect live holders across machines or containers.
-
-- [#5190](https://github.com/MoonshotAI/kimi-code/pull/5190) [`1ef139e`](https://github.com/MoonshotAI/kimi-code/commit/1ef139e6c32a01c7ac51a89fea6ae279c91bc276) Thanks [@7Sageer](https://github.com/7Sageer)! - Keep the `model` parameter static in subagent tool schemas, deliver available subagent models via `<system-reminder>` messages instead of tool descriptions, and reject invalid or resume-time `model` arguments with explicit errors.
-
 ## 0.23.2
 
 ### Patch Changes
