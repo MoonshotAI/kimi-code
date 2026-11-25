@@ -13,6 +13,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { showSettingsSelector } from '#/tui/commands/config';
 import { handleGoalCommand } from '#/tui/commands/goal';
+import { handleSwarmCommand } from '#/tui/commands/swarm';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import { MoonLoader } from '#/tui/components/chrome/moon-loader';
@@ -28,6 +29,7 @@ import { createTUIState, KimiTUI, type KimiTUIOptions, type KimiTUIStartupInput 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { GoalStartPermissionPromptComponent } from '#/tui/components/dialogs/goal-start-permission-prompt';
+import { SwarmStartPermissionPromptComponent } from '#/tui/components/dialogs/swarm-start-permission-prompt';
 import { SettingsSelectorComponent } from '#/tui/components/dialogs/settings-selector';
 import { NotifyController } from '#/tui/controllers/notify';
 import {
@@ -1415,6 +1417,110 @@ describe('fullscreen layout', () => {
     expect(isBlockingPromptPending(state)).toBe(false);
     expect(rows).toContain('detailed update body');
     expect(rows).toContain('test-model');
+  });
+
+  it('supports fullscreen mouse hover, click, wheel, and blocking state for the swarm start prompt', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(10_000);
+    currentTheme.setTerminalBackground('#282C34');
+    const { state, vt } = await mountFullscreen(24);
+    onTestFinished(() => {
+      currentTheme.setTerminalBackground(undefined);
+      state.ui.stop();
+      vi.useRealTimers();
+    });
+    vt.resize(40, 24);
+    state.transcriptContainer.addChild(
+      new Text(Array.from({ length: 40 }, (_, i) => `transcript ${String(i + 1)}`).join('\n'), 0, 0),
+    );
+    const onSelect = vi.fn();
+    const panel = new SwarmStartPermissionPromptComponent({
+      onSelect,
+      onCancel: vi.fn(),
+      layout: { maxBodyRows: 3 },
+    });
+    setEditorSlot(state, panel);
+    state.ui.setFocus(panel);
+    state.ui.requestRender();
+    await vt.waitForRender();
+
+    const alt = state.ui as TuiAltScreen;
+    let rows = screenRows(vt);
+    const bodyRow = rows.findIndex((row) => row.includes('Always Ask mode asks you'));
+    expect(bodyRow).toBeGreaterThan(0);
+    const transcriptTop = alt.viewportTop;
+
+    vt.sendInput(`\u001B[<65;5;${String(bodyRow + 1)}M`);
+    await vt.waitForRender();
+    expect(alt.viewportTop).toBe(transcriptTop);
+    expect(screenRows(vt)[bodyRow]).not.toContain('Always Ask mode asks you');
+
+    const secondChoice = screenRows(vt).findIndex((row) =>
+      row.includes('Switch to Ask When Needed'),
+    );
+    expect(secondChoice).toBeGreaterThan(0);
+    vt.sendInput(`\u001B[<35;5;${String(secondChoice + 1)}M`);
+    await vt.waitForRender();
+    rows = screenRows(vt);
+    expect(rows.join('\n').replaceAll(/\s+/g, ' ')).toContain(
+      'Kimi Code may still ask you questions.',
+    );
+
+    vi.setSystemTime(10_400);
+    vt.sendInput(`\u001B[<0;5;${String(secondChoice + 1)}M`);
+    vt.sendInput(`\u001B[<0;5;${String(secondChoice + 1)}m`);
+    await vt.waitForRender();
+    expect(onSelect).toHaveBeenCalledWith('yolo');
+
+    const notifications = new NotifyController(state);
+    notifications.setEnabled(true);
+    state.notifyPanel.upsert({
+      id: 'n1',
+      agentId: 'main',
+      time: 0,
+      title: 'Swarm update',
+      text: 'swarm update body',
+    });
+    state.notifyPanelContainer.addChild(state.notifyPanel);
+    expect(notifications.focusPanel()).toBe(true);
+    state.notifyPanel.setEnded(true);
+    state.ui.setFocus(state.editor);
+    state.ui.requestRender();
+    await vt.waitForRender();
+
+    const host = {
+      state,
+      session: {},
+      surveyController: { notifyDisplaced: () => {} },
+      promptPredictionController: {},
+      disposeEditorReplacement() {},
+      modelMigration: { retry: () => {} },
+      showError: vi.fn(),
+      showStatus: vi.fn(),
+      showNotice: vi.fn(),
+      sendNormalUserInput: vi.fn(),
+      mountEditorReplacement(mounted: Component & Focusable, onDisplaced?: () => void) {
+        KimiTUI.prototype.mountEditorReplacement.call(host, mounted, onDisplaced);
+      },
+      restoreEditor() {
+        KimiTUI.prototype.restoreEditor.call(host);
+      },
+      restoreInputText() {
+        KimiTUI.prototype.restoreEditor.call(host);
+      },
+    } as unknown as SlashCommandHost;
+
+    await handleSwarmCommand(host, 'Ship feature X');
+    await vt.waitForRender();
+    expect(state.activeDialog).toBe('swarm-start');
+    expect(isBlockingPromptPending(state)).toBe(true);
+    expect(screenRows(vt).join('\n')).not.toContain('swarm update body');
+
+    editorSlotComponent(state)?.handleInput?.('\u001B');
+    await vt.waitForRender();
+    expect(state.activeDialog).toBeNull();
+    expect(isBlockingPromptPending(state)).toBe(false);
+    expect(screenRows(vt).join('\n')).toContain('swarm update body');
   });
 
   it('keeps Settings usable with pointer selection, wheel paging, and focus loss at 24 rows', async () => {

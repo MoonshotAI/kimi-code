@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { handleSwarmCommand } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { currentTheme } from '#/tui/theme';
+import { isBlockingPromptPending } from '#/tui/tui-state';
 import { PERMISSION_MODE_DESCRIPTIONS } from '#/tui/utils/permission-mode';
 
 const USAGE_NOTICE =
@@ -25,6 +26,7 @@ function makeHost(
     hasSession?: boolean;
     permissionMode?: 'manual' | 'auto' | 'yolo';
     swarmMode?: boolean;
+    fullscreen?: boolean;
   } = {},
 ) {
   const session = {
@@ -39,6 +41,10 @@ function makeHost(
         permissionMode: overrides.permissionMode ?? 'auto',
         swarmMode: overrides.swarmMode ?? false,
       },
+      dockContainer: overrides.fullscreen === true ? {} : undefined,
+      activeDialog: null,
+      livePane: { pendingApproval: null, pendingQuestion: null },
+      notifyPanel: { setPrompt: vi.fn() },
       theme: currentTheme,
       transcriptContainer: { addChild: vi.fn() },
       ui: { requestRender: vi.fn() },
@@ -230,6 +236,28 @@ describe('handleSwarmCommand', () => {
     );
     expect(text).toContain('Switch to Ask When Needed and start');
     expect(text).not.toContain('Do not start');
+  });
+
+  it('docks the local swarm start prompt in fullscreen and tracks blocking dialog state', async () => {
+    const { host } = makeHost({ permissionMode: 'manual', fullscreen: true });
+
+    await handleSwarmCommand(host, 'Ship feature X');
+
+    expect(host.state.activeDialog).toBe('swarm-start');
+    expect(isBlockingPromptPending(host.state)).toBe(true);
+    expect(host.state.notifyPanel.setPrompt).toHaveBeenCalledWith(true);
+
+    const text = stripAnsi(mountedPicker(host).render(80).join('\n'));
+    expect(text).toContain('Best for swarm tasks.');
+    expect(text).not.toContain('Keep approvals on. Kimi Code may stop and wait');
+
+    const mock = host.mountEditorReplacement as ReturnType<typeof vi.fn>;
+    const onDisplaced = mock.mock.calls[0]?.[1] as (() => void) | undefined;
+    expect(onDisplaced).toBeDefined();
+    onDisplaced?.();
+    expect(host.state.activeDialog).toBeNull();
+    expect(isBlockingPromptPending(host.state)).toBe(false);
+    expect(host.state.notifyPanel.setPrompt).toHaveBeenLastCalledWith(false);
   });
 
   it('defaults to Auto when confirming a Manual-mode swarm start', async () => {

@@ -65,6 +65,7 @@ export {
 	ScrollView,
 	type ScrollViewOptions,
 	type ScrollViewScrollbar,
+	type ScrollViewScrollIntoViewOptions,
 	type ScrollViewScrollToOptions,
 } from "./components/scroll-view.ts";
 export {
@@ -76,6 +77,7 @@ export {
 } from "./components/select-list.ts";
 export { type SettingItem, SettingsList, type SettingsListTheme } from "./components/settings-list.ts";
 export { Spacer } from "./components/spacer.ts";
+export type { LayoutViewport } from "./components/stack.ts";
 export { Text } from "./components/text.ts";
 export { TruncatedText } from "./components/truncated-text.ts";
 export {
@@ -118,6 +120,8 @@ export {
 } from "./keys.ts";
 // LaTeX rendering
 export { type RenderLatexOptions, renderLatex } from "./latex.ts";
+// Layout
+export { type LayoutFrame, renderLayoutFrame } from "./layout.ts";
 // Native platform integration
 export { getNativeClipboard, type NativeClipboard } from "./native-platform.ts";
 export { oklabToOkhslLightness } from "./oklab.ts";

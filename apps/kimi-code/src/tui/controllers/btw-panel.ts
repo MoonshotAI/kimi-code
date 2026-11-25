@@ -1,4 +1,4 @@
-import { Spacer } from '@moonshot-ai/pi-tui';
+import { Spacer, TuiAltScreen } from '@moonshot-ai/pi-tui';
 import type {
   Event,
   KimiHarness,
@@ -7,6 +7,7 @@ import type {
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { CHROME_GUTTER } from '../constant/rendering';
 import { BtwPanelComponent } from '../components/panes/btw-panel';
 import { formatErrorMessage } from '../utils/event-payload';
 import { formatHookResultPlain } from '../utils/hook-result-format';
@@ -62,6 +63,10 @@ export class BtwPanelController {
       markdownTheme: createMarkdownTheme(),
       canUseScrollKeys: () => this.host.state.editor.getText().length === 0,
       terminalRows: () => this.host.state.terminal.rows,
+      gutter: this.host.state.ui instanceof TuiAltScreen ? CHROME_GUTTER : 0,
+      onClose: () => {
+        this.closeOrCancel();
+      },
       onPrompt: (prompt, inlineSkillActivations) => {
         this.promptAgent(agentId, prompt, panel, inlineSkillActivations);
       },

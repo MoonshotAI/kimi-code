@@ -103,6 +103,7 @@ describe('createTUIState', () => {
     expect(state.ui).toBeInstanceOf(TuiMainScreen);
     expect(state.ui.mode).toBe('regular');
     expect(state.dockContainer).toBeUndefined();
+    expect(state.btwPanelContainer).toBeInstanceOf(GutterContainer);
   });
 
   it('uses resolvedTuiMode without mutating appState.tuiMode when tui.toml left tui_mode unset', () => {
@@ -220,6 +221,7 @@ describe('createTUIState', () => {
       state.editorSlot,
     ]);
     expect(state.editorSlot?.children).toEqual([state.editorContainer]);
+    expect(state.btwPanelContainer).toBeInstanceOf(VStack);
 
     expect((state.ui as TuiAltScreen).getLayoutRoot()).toBeDefined();
     expect(state.ui.children).toHaveLength(0);

@@ -1,11 +1,13 @@
 import {
   StartPermissionPromptComponent,
   type StartPermissionOption,
+  type StartPermissionPromptOptions,
 } from './start-permission-prompt';
 
 export type SwarmStartPermissionChoice = 'auto' | 'yolo' | 'manual';
 
-export interface SwarmStartPermissionPromptOptions {
+export interface SwarmStartPermissionPromptOptions
+  extends Pick<StartPermissionPromptOptions, 'layout'> {
   readonly onSelect: (choice: SwarmStartPermissionChoice) => void;
   readonly onCancel: () => void;
 }
@@ -44,6 +46,7 @@ export class SwarmStartPermissionPromptComponent extends StartPermissionPromptCo
       options: OPTIONS,
       onSelect: opts.onSelect,
       onCancel: opts.onCancel,
+      layout: opts.layout,
     });
   }
 }

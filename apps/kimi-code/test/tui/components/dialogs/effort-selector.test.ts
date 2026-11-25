@@ -1,12 +1,42 @@
-import { describe, expect, it, vi } from 'vitest';
+import type { TuiMouseEvent } from '@moonshot-ai/pi-tui';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
 
-const ANSI = /\[[0-9;]*m/g;
+const ANSI = /\u001B\[[0-9;]*m/g;
 const strip = (s: string): string => s.replaceAll(ANSI, '');
 const ESC = String.fromCodePoint(27);
 const LEFT = `${ESC}[D`;
 const RIGHT = `${ESC}[C`;
+
+function mouseEvent(
+  type: TuiMouseEvent['type'],
+  x: number,
+  y: number,
+  wheelDelta?: number,
+): TuiMouseEvent {
+  return {
+    type,
+    button: type === 'move' || type === 'wheel' ? 'none' : 'left',
+    x,
+    y,
+    screenX: x,
+    screenY: y,
+    width: 120,
+    height: 20,
+    shift: false,
+    alt: false,
+    ctrl: false,
+    ...(wheelDelta !== undefined ? { wheelDelta } : {}),
+  };
+}
+
+function useFakeDate(): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+}
 
 function text(component: EffortSelectorComponent, width = 120): string {
   return component.render(width).map(strip).join('\n');
@@ -167,5 +197,75 @@ describe('EffortSelectorComponent', () => {
     expect(lines[hintIdx + 2]).not.toBe('');
     const squashed = lines.join('').replaceAll(/\s+/g, '');
     expect(squashed).toContain(warning.replaceAll(/\s+/g, ''));
+  });
+
+  it('hovers segments, confirms on click, consumes wheel when focused, and guards unfocused/settling clicks', () => {
+    useFakeDate();
+    const onSelect = vi.fn();
+    const picker = new EffortSelectorComponent({
+      efforts: ['off', 'low', 'high', 'max'],
+      currentValue: 'high',
+      descriptions: {
+        low: 'Light reasoning.',
+        high: 'Deeper reasoning.',
+        max: 'Maximum reasoning.',
+      },
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    const lines = picker.render(120).map(strip);
+    const barRow = lines.findIndex((line) => line.includes('[ High ]'));
+    const lowCol = lines[barRow]!.indexOf('Low');
+    const maxCol = lines[barRow]!.indexOf('Max');
+
+    vi.advanceTimersByTime(300);
+    expect(picker.handleMouse(mouseEvent('move', lowCol, barRow))).toBeUndefined();
+    expect(picker.handleMouse(mouseEvent('wheel', lowCol, barRow, 1))).toBeUndefined();
+    expect(picker.handleMouse(mouseEvent('press', lowCol, barRow))).toEqual({ handled: true });
+    expect(picker.handleMouse(mouseEvent('click', lowCol, barRow))).toEqual({
+      handled: true,
+      focus: true,
+    });
+    expect(text(picker)).toContain('[ High ]');
+    expect(onSelect).not.toHaveBeenCalled();
+
+    picker.focused = true;
+    expect(picker.handleMouse(mouseEvent('wheel', lowCol, barRow, 1))).toEqual({ handled: true });
+    expect(picker.handleMouse(mouseEvent('move', lowCol, barRow))).toEqual({
+      handled: true,
+      render: true,
+    });
+    const afterHover = text(picker);
+    expect(afterHover).toContain('[ Low ]');
+    expect(afterHover).toContain('Light reasoning.');
+    expect(onSelect).not.toHaveBeenCalled();
+
+    picker.handleMouse(mouseEvent('press', lowCol, barRow));
+    expect(picker.handleMouse(mouseEvent('click', maxCol, barRow))).toEqual({ handled: true });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    picker.handleMouse(mouseEvent('press', maxCol, barRow));
+    expect(picker.handleMouse(mouseEvent('click', maxCol, barRow))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith('max');
+
+    const fresh = new EffortSelectorComponent({
+      efforts: ['off', 'low', 'high', 'max'],
+      currentValue: 'high',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+    fresh.focused = true;
+    const freshLines = fresh.render(120).map(strip);
+    const freshBarRow = freshLines.findIndex((line) => line.includes('[ High ]'));
+    const freshMaxCol = freshLines[freshBarRow]!.indexOf('Max');
+    expect(fresh.handleMouse(mouseEvent('click', freshMaxCol, freshBarRow))).toEqual({
+      handled: true,
+    });
+    expect(onSelect).toHaveBeenCalledTimes(1);
   });
 });

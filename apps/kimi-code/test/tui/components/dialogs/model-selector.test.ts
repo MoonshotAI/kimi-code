@@ -1,18 +1,46 @@
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
-import { visibleWidth } from '@moonshot-ai/pi-tui';
-import { describe, expect, it, vi } from 'vitest';
+import { visibleWidth, type TuiMouseEvent } from '@moonshot-ai/pi-tui';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { currentTheme } from '#/tui/theme';
-import { darkColors } from '#/tui/theme/colors';
 
-const ANSI = /\[[0-9;]*m/g;
+const ANSI = /\u001B\[[0-9;]*m/g;
 const strip = (s: string): string => s.replaceAll(ANSI, '');
 const ESC = String.fromCodePoint(27);
 const UP = `${ESC}[A`;
 const DOWN = `${ESC}[B`;
 const LEFT = `${ESC}[D`;
 const RIGHT = `${ESC}[C`;
+
+function mouseEvent(
+  type: TuiMouseEvent['type'],
+  x: number,
+  y: number,
+  wheelDelta?: number,
+): TuiMouseEvent {
+  return {
+    type,
+    button: type === 'move' || type === 'wheel' ? 'none' : 'left',
+    x,
+    y,
+    screenX: x,
+    screenY: y,
+    width: 120,
+    height: 30,
+    shift: false,
+    alt: false,
+    ctrl: false,
+    ...(wheelDelta !== undefined ? { wheelDelta } : {}),
+  };
+}
+
+function useFakeDate(): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+}
 
 function model(displayName: string, capabilities: string[] = ['thinking']): ModelAlias {
   return {
@@ -568,5 +596,190 @@ describe('ModelSelectorComponent overrides', () => {
     expect(out).toContain('Low');
     expect(out).toContain('High');
     expect(out).not.toContain('Max');
+  });
+});
+
+describe('ModelSelectorComponent mouse support', () => {
+  it('hovers options, switches thinking effort on click without closing, and confirms on option click', () => {
+    useFakeDate();
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        first: effortModel('Kimi First', ['low', 'high', 'max'], 'low'),
+        second: effortModel('Kimi Second', ['low', 'high', 'max'], 'low'),
+      },
+      currentValue: 'first',
+      currentThinkingEffort: 'low',
+      effortDescriptions: {
+        low: 'Light reasoning.',
+        high: 'Deeper reasoning.',
+        max: 'Maximum reasoning.',
+      },
+      onSelect,
+      onCancel: vi.fn(),
+    });
+    picker.focused = true;
+
+    const lines = picker.render(120).map(strip);
+    const secondRow = lines.findIndex((line) => line.includes('Kimi Second'));
+    expect(picker.handleMouse(mouseEvent('move', 6, secondRow))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    const afterHover = picker.render(120).map(strip);
+    expect(afterHover[secondRow]).toContain('❯ Kimi Second');
+
+    const thinkingRow = afterHover.findIndex((line) => line.includes('[ Low ]'));
+    const maxCol = afterHover[thinkingRow]!.indexOf('Max');
+    expect(picker.handleMouse(mouseEvent('move', maxCol, thinkingRow))).toBeUndefined();
+
+    vi.advanceTimersByTime(300);
+    expect(picker.handleMouse(mouseEvent('press', maxCol, thinkingRow))).toEqual({
+      handled: true,
+      render: false,
+    });
+    expect(picker.handleMouse(mouseEvent('click', maxCol, thinkingRow))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    const afterEffort = picker.render(120).map(strip);
+    expect(afterEffort[thinkingRow]).toContain('[ Max ]');
+    expect(afterEffort.join('\n')).toContain('Maximum reasoning.');
+
+    expect(picker.handleMouse(mouseEvent('press', 6, secondRow))).toEqual({
+      handled: true,
+      render: false,
+    });
+    expect(picker.handleMouse(mouseEvent('click', 6, secondRow))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'second', thinking: 'max' });
+  });
+
+  it('keeps unavailable thinking segments non-interactive', () => {
+    useFakeDate();
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        always: model('Kimi Always', ['always_thinking']),
+        plain: model('Kimi Plain', ['tool_use']),
+      },
+      currentValue: 'always',
+      currentThinkingEffort: 'on',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+    picker.focused = true;
+    const alwaysLines = picker.render(120).map(strip);
+    const alwaysThinkingRow = alwaysLines.findIndex((line) => line.includes('Off (Unsupported)'));
+    const offCol = alwaysLines[alwaysThinkingRow]!.indexOf('Off');
+    vi.advanceTimersByTime(300);
+
+    expect(picker.handleMouse(mouseEvent('press', offCol, alwaysThinkingRow))).toBeUndefined();
+    expect(picker.handleMouse(mouseEvent('click', offCol, alwaysThinkingRow))).toBeUndefined();
+
+    picker.handleInput(DOWN);
+    const plainLines = picker.render(120).map(strip);
+    const plainThinkingRow = plainLines.findIndex((line) => line.includes('On (Unsupported)'));
+    const onCol = plainLines[plainThinkingRow]!.indexOf('On');
+    expect(picker.handleMouse(mouseEvent('press', onCol, plainThinkingRow))).toBeUndefined();
+    expect(picker.handleMouse(mouseEvent('click', onCol, plainThinkingRow))).toBeUndefined();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('focuses without mutating thinking overrides or selecting when unfocused, and blocks settling clicks', () => {
+    useFakeDate();
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: { kimi: effortModel('Kimi K2', ['low', 'high', 'max'], 'low') },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'low',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+    const lines = picker.render(120).map(strip);
+    const modelRow = lines.findIndex((line) => line.includes('Kimi K2'));
+    const thinkingRow = lines.findIndex((line) => line.includes('[ Low ]'));
+    const maxCol = lines[thinkingRow]!.indexOf('Max');
+
+    vi.advanceTimersByTime(300);
+    expect(picker.handleMouse(mouseEvent('move', 6, modelRow))).toBeUndefined();
+    expect(picker.handleMouse(mouseEvent('wheel', 6, modelRow, 1))).toBeUndefined();
+    expect(picker.handleMouse(mouseEvent('press', maxCol, thinkingRow))).toEqual({ handled: true });
+    expect(picker.handleMouse(mouseEvent('click', maxCol, thinkingRow))).toEqual({
+      handled: true,
+      focus: true,
+    });
+    expect(text(picker)).toContain('[ Low ]');
+    expect(text(picker)).not.toContain('[ Max ]');
+    expect(onSelect).not.toHaveBeenCalled();
+
+    const fresh = new ModelSelectorComponent({
+      models: { kimi: effortModel('Kimi K2', ['low', 'high', 'max'], 'low') },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'low',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+    fresh.focused = true;
+    const freshLines = fresh.render(120).map(strip);
+    const freshModelRow = freshLines.findIndex((line) => line.includes('Kimi K2'));
+    const freshThinkingRow = freshLines.findIndex((line) => line.includes('[ Low ]'));
+    const freshMaxCol = freshLines[freshThinkingRow]!.indexOf('Max');
+
+    expect(fresh.handleMouse(mouseEvent('click', freshMaxCol, freshThinkingRow))).toEqual({
+      handled: true,
+    });
+    expect(text(fresh)).toContain('[ Low ]');
+    expect(fresh.handleMouse(mouseEvent('click', 6, freshModelRow))).toEqual({ handled: true });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(300);
+    fresh.handleMouse(mouseEvent('press', freshMaxCol, freshThinkingRow));
+    expect(fresh.handleMouse(mouseEvent('click', 6, freshModelRow))).toEqual({ handled: true });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('pages with wheel and handles empty filtered results safely', () => {
+    const models: Record<string, ModelAlias> = {};
+    for (let i = 0; i < 12; i++) models[`m${String(i)}`] = model(`Model ${String(i)}`);
+    const picker = new ModelSelectorComponent({
+      models,
+      currentValue: 'm0',
+      currentThinkingEffort: 'off',
+      searchable: true,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    picker.focused = true;
+    picker.render(120);
+
+    expect(picker.handleMouse(mouseEvent('wheel', 6, 5, 1))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(text(picker)).toContain('❯ Model 8');
+
+    expect(picker.handleMouse(mouseEvent('wheel', 6, 5, -1))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(text(picker)).toContain('❯ Model 0');
+
+    for (const ch of 'zzzzz') picker.handleInput(ch);
+    const emptyLines = picker.render(120).map(strip);
+    const emptyRow = emptyLines.findIndex((line) => line.includes('No matches'));
+    expect(picker.handleMouse(mouseEvent('move', 6, emptyRow))).toBeUndefined();
+    expect(picker.handleMouse(mouseEvent('click', 6, emptyRow))).toBeUndefined();
+    expect(picker.handleMouse(mouseEvent('wheel', 6, emptyRow, 1))).toEqual({
+      handled: true,
+      render: false,
+    });
   });
 });

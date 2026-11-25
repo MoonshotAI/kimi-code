@@ -1,17 +1,25 @@
 import { effectiveModelAlias, type ModelAlias, type ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
 import {
-  Container,
   Key,
   matchesKey,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
+  type Component,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '#/constant/app';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import {
+  ListMouseTracker,
+  renderInlineSegments,
+  SpanHitMap,
+  type InlineSegment,
+} from '#/tui/utils/mouse-regions';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 import type { ChoiceOption } from './choice-picker';
@@ -121,14 +129,15 @@ function commitEffort(choice: ModelChoice, draft: ThinkingEffort): ThinkingEffor
   return draft;
 }
 
-export class ModelSelectorComponent extends Container implements Focusable {
+export class ModelSelectorComponent implements Component, Focusable {
   focused = false;
   private readonly opts: ModelSelectorOptions;
   private readonly list: SearchableList<ModelChoice>;
   private readonly thinkingOverrides = new Map<string, string>();
+  private readonly listMouse = new ListMouseTracker<number>();
+  private readonly effortHits = new SpanHitMap<string>();
 
   constructor(opts: ModelSelectorOptions) {
-    super();
     this.opts = opts;
     const choices = createModelChoices(opts.models);
     const selectedValue = opts.selectedValue ?? opts.currentValue;
@@ -141,6 +150,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
       searchable: opts.searchable === true,
     });
   }
+
+  invalidate(): void {}
 
   private draftFor(choice: ModelChoice): string {
     const override = this.thinkingOverrides.get(choice.alias);
@@ -159,6 +170,13 @@ export class ModelSelectorComponent extends Container implements Focusable {
     const draft = this.draftFor(choice);
     const segments = segmentsFor(choice.model);
     return segments.includes(draft) ? draft : segments[0]!;
+  }
+
+  private confirmChoice(choice: ModelChoice): void {
+    this.opts.onSelect({
+      alias: choice.alias,
+      thinking: commitEffort(choice, this.effectiveEffort(choice)),
+    });
   }
 
   handleInput(data: string): void {
@@ -200,10 +218,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
     if (matchesKey(data, Key.enter)) {
       const selected = this.selectedChoice();
       if (selected === undefined) return;
-      this.opts.onSelect({
-        alias: selected.alias,
-        thinking: commitEffort(selected, this.effectiveEffort(selected)),
-      });
+      this.confirmChoice(selected);
       return;
     }
 
@@ -217,7 +232,34 @@ export class ModelSelectorComponent extends Container implements Focusable {
     }
   }
 
-  override render(width: number): string[] {
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    const effortResult = this.effortHits.handle(event, {
+      focused: this.focused,
+      onActivate: (effort) => {
+        const selected = this.selectedChoice();
+        if (selected === undefined) return;
+        const segments = segmentsFor(selected.model);
+        if (segments.length <= 1 || !segments.includes(effort)) return;
+        this.thinkingOverrides.set(selected.alias, effort);
+      },
+    });
+    if (effortResult !== undefined) return effortResult;
+
+    return this.listMouse.handle(event, {
+      focused: this.focused,
+      onHover: (index) => this.list.selectIndex(index),
+      onWheel: (delta) => this.list.wheelPage(delta),
+      onActivate: (index) => {
+        this.list.selectIndex(index);
+        const choice = this.list.view().items[index];
+        if (choice !== undefined) this.confirmChoice(choice);
+      },
+    });
+  }
+
+  render(width: number): string[] {
+    this.listMouse.reset();
+    this.effortHits.reset();
     const searchable = this.opts.searchable === true;
     const view = this.list.view();
     const totalCount = Object.keys(this.opts.models).length;
@@ -265,18 +307,20 @@ export class ModelSelectorComponent extends Container implements Focusable {
       for (let i = view.page.start; i < view.page.end; i++) {
         const choice = view.items[i];
         if (choice === undefined) continue;
-        const isSelected = i === view.selectedIndex;
-        const isCurrent = choice.alias === this.opts.currentValue;
-        const pointer = isSelected ? SELECT_POINTER : ' ';
-        const truncatedName = truncateToWidth(choice.name, nameWidth, '…');
-        const namePad = ' '.repeat(Math.max(0, nameWidth - visibleWidth(truncatedName)));
-        let line = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
-        line += (isSelected ? currentTheme.boldFg('primary', truncatedName) : currentTheme.fg('text', truncatedName)) + namePad;
-        line += '  ' + currentTheme.fg('textMuted', choice.provider);
-        if (isCurrent) {
-          line += ' ' + currentTheme.fg('success', CURRENT_MARK);
-        }
-        lines.push(line);
+        this.listMouse.track(lines, i, () => {
+          const isSelected = i === view.selectedIndex;
+          const isCurrent = choice.alias === this.opts.currentValue;
+          const pointer = isSelected ? SELECT_POINTER : ' ';
+          const truncatedName = truncateToWidth(choice.name, nameWidth, '…');
+          const namePad = ' '.repeat(Math.max(0, nameWidth - visibleWidth(truncatedName)));
+          let line = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
+          line += (isSelected ? currentTheme.boldFg('primary', truncatedName) : currentTheme.fg('text', truncatedName)) + namePad;
+          line += '  ' + currentTheme.fg('textMuted', choice.provider);
+          if (isCurrent) {
+            line += ' ' + currentTheme.fg('success', CURRENT_MARK);
+          }
+          lines.push(line);
+        });
       }
     }
 
@@ -299,7 +343,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
       const canSwitch = segmentsFor(selected.model).length > 1;
       const thinkingHeader = canSwitch ? ' Thinking  (←→ to switch)' : ' Thinking';
       lines.push(currentTheme.fg('textMuted', thinkingHeader));
-      lines.push(this.renderThinkingControl(selected));
+      const thinkingRow = lines.length;
+      lines.push(this.renderThinkingControl(selected, width, thinkingRow));
       const description =
         selected.model.provider === DEFAULT_OAUTH_PROVIDER_NAME
           ? this.opts.effortDescriptions?.[this.effectiveEffort(selected)]
@@ -315,7 +360,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
     return this.list.selected();
   }
 
-  private renderThinkingControl(choice: ModelChoice): string {
+  private renderThinkingControl(choice: ModelChoice, width: number, row: number): string {
     const segment = (label: string, active: boolean): string =>
       active
         ? currentTheme.boldFg('primary', `[ ${label} ]`)
@@ -334,7 +379,18 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
     const segments = segmentsFor(choice.model);
     const active = this.effectiveEffort(choice);
-    const rendered = segments.map((effort) => segment(effortLabel(effort), effort === active));
-    return `  ${rendered.join('  ')}`;
+    const canSwitch = segments.length > 1;
+    const inline: InlineSegment<string>[] = [{ text: '  ' }];
+    for (let i = 0; i < segments.length; i++) {
+      if (i > 0) inline.push({ text: '  ' });
+      const effort = segments[i]!;
+      inline.push({
+        text: segment(effortLabel(effort), effort === active),
+        ...(canSwitch ? { value: effort } : {}),
+      });
+    }
+    const rendered = renderInlineSegments(inline, width);
+    this.effortHits.addRow(row, rendered.targets);
+    return rendered.line;
   }
 }

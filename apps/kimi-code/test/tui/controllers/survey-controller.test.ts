@@ -1241,4 +1241,126 @@ describe('SurveyController interaction', () => {
     expect(harness.editor.getText()).toBe('2');
     expect(harness.container.children).not.toHaveLength(0);
   });
+
+  it('handles option clicks without stealing focus or mutating hoverIndex on move', async () => {
+    const harness = createHarness();
+    await harness.flush();
+    await harness.appear();
+    harness.track.mockClear();
+
+    const lines = harness
+      .container
+      .render(120)
+      .map((line) => line.replaceAll(/\u001B\[[0-9;]*m/g, ''));
+    const optionsRow = lines.findIndex((line) => line.includes('2: Fine'));
+    const fineCol = lines[optionsRow]!.indexOf('2: Fine');
+
+    const makeMouse = (type: 'move' | 'press' | 'click', x: number, y: number) => ({
+      type,
+      button: type === 'move' ? ('none' as const) : ('left' as const),
+      x,
+      y,
+      screenX: x,
+      screenY: y,
+      width: 120,
+      height: lines.length,
+      shift: false,
+      alt: false,
+      ctrl: false,
+    });
+
+    expect(harness.container.handleMouse(makeMouse('move', fineCol, optionsRow))).toBeUndefined();
+    expect(harness.controller.handleSubmit('')).toBe(false);
+
+    const press = harness.container.handleMouse(makeMouse('press', fineCol, optionsRow));
+    const click = harness.container.handleMouse(makeMouse('click', fineCol, optionsRow));
+    expect(press?.focus).toBeUndefined();
+    expect(press?.focusTarget).toBeUndefined();
+    expect(click?.handled).toBe(true);
+    expect(click?.focus).toBeUndefined();
+    expect(click?.focusTarget).toBeUndefined();
+    expect(harness.renderSurvey()).toContain('Feedback: Fine · [escape: undo]');
+
+    await harness.elapse(3000);
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'responded', response: 'fine' }),
+    );
+  });
+
+  it('handles dismiss and pending undo clicks (even when narrowed) while respecting mount protection and size guards', async () => {
+    let width = 120;
+    let height = 24;
+    const harness = createHarness({
+      terminalWidth: () => width,
+      terminalHeight: () => height,
+    });
+    await harness.flush();
+    harness.clock.mono += 600_000;
+    harness.runTurns(5);
+    await harness.elapse(2000);
+    harness.track.mockClear();
+
+    const renderPlain = (): string[] =>
+      harness.container
+        .render(120)
+        .map((line) => line.replaceAll(/\u001B\[[0-9;]*m/g, ''));
+    const clickAt = (x: number, y: number, h: number) => {
+      const base = {
+        button: 'left' as const,
+        x,
+        y,
+        screenX: x,
+        screenY: y,
+        width: 120,
+        height: h,
+        shift: false,
+        alt: false,
+        ctrl: false,
+      };
+      harness.container.handleMouse({ ...base, type: 'press' });
+      harness.container.handleMouse({ ...base, type: 'click' });
+    };
+
+    const initialLines = renderPlain();
+    const optRow = initialLines.findIndex((line) => line.includes('1: Bad'));
+    const badCol = initialLines[optRow]!.indexOf('1: Bad');
+    const dismissCol = initialLines[optRow]!.indexOf('0: Dismiss');
+
+    clickAt(badCol, optRow, initialLines.length);
+    expect(harness.renderSurvey()).toContain('How is Kimi doing this session? (optional)');
+
+    harness.clock.mono += 600;
+    width = 8;
+    clickAt(badCol, optRow, initialLines.length);
+    expect(harness.renderSurvey()).toContain('How is Kimi doing this session? (optional)');
+
+    width = 120;
+    height = 6;
+    clickAt(badCol, optRow, initialLines.length);
+    expect(harness.renderSurvey()).toContain('How is Kimi doing this session? (optional)');
+
+    height = 24;
+    clickAt(badCol, optRow, initialLines.length);
+    expect(harness.renderSurvey()).toContain('Feedback: Bad · [escape: undo]');
+
+    const pendingLines = renderPlain();
+    const pendingRow = pendingLines.findIndex((line) => line.includes('[escape: undo]'));
+    const undoCol = pendingLines[pendingRow]!.indexOf('[escape: undo]');
+    width = 8;
+    clickAt(undoCol, pendingRow, pendingLines.length);
+    expect(harness.renderSurvey()).toContain('How is Kimi doing this session? (optional)');
+    await harness.elapse(3000);
+    expect(harness.track).not.toHaveBeenCalled();
+
+    width = 120;
+    const reopenedLines = renderPlain();
+    const reopenedRow = reopenedLines.findIndex((line) => line.includes('0: Dismiss'));
+    clickAt(dismissCol, reopenedRow, reopenedLines.length);
+    expect(harness.container.children).toHaveLength(0);
+    expect(harness.track).toHaveBeenCalledWith(
+      'feedback_survey',
+      expect.objectContaining({ event_type: 'responded', response: 'dismissed' }),
+    );
+  });
 });

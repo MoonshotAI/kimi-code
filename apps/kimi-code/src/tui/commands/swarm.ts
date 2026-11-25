@@ -9,6 +9,8 @@ import {
   type SwarmModeMarkerState,
 } from '../components/messages/swarm-markers';
 import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { DOCK_APPROVAL_ROWS } from '../constant/rendering';
+import { setBlockingDialog } from '../tui-state';
 import { formatErrorMessage } from '../utils/event-payload';
 import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import type { SlashCommandHost } from './dispatch';
@@ -59,6 +61,7 @@ function showSwarmStartPermissionPrompt(
     host.restoreInputText(commandText);
     host.showStatus(cancelStatus);
   };
+  setBlockingDialog(host.state, 'swarm-start', true);
   host.mountEditorReplacement(
     new SwarmStartPermissionPromptComponent({
       onSelect: (choice) => {
@@ -66,7 +69,9 @@ function showSwarmStartPermissionPrompt(
         void onSelect(choice);
       },
       onCancel: cancelStart,
+      layout: host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_APPROVAL_ROWS },
     }),
+    () => setBlockingDialog(host.state, 'swarm-start', false),
   );
 }
 

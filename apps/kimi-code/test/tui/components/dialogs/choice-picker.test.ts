@@ -458,4 +458,36 @@ describe('ChoicePickerComponent', () => {
     expect(renderDescLine('logs+codebase')).toBe(warningLine);
     expect(renderDescLine('none')).toBe(mutedLine);
   });
+
+  it('blocks settling clicks and drag-off mismatches while consuming single-page wheel', () => {
+    useMouseClock();
+    const onSelect = vi.fn();
+    const picker = new ChoicePickerComponent({
+      title: 'Pick one',
+      options: [
+        { value: 'a', label: 'Alpha' },
+        { value: 'b', label: 'Beta' },
+      ],
+      onSelect,
+      onCancel: vi.fn(),
+    });
+    picker.focused = true;
+    const lines = picker.render(80).map(strip);
+    const alphaRow = lines.findIndex((line) => line.includes('Alpha'));
+    const betaRow = lines.findIndex((line) => line.includes('Beta'));
+
+    expect(picker.handleMouse(mouse('wheel', alphaRow, 1))).toEqual({
+      handled: true,
+      render: false,
+    });
+    expect(picker.selectedValue()).toBe('a');
+
+    for (const type of ['press', 'release', 'click'] as const) picker.handleMouse(mouse(type, betaRow));
+    expect(onSelect).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(300);
+    picker.handleMouse(mouse('press', alphaRow));
+    picker.handleMouse(mouse('click', betaRow));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });

@@ -107,12 +107,36 @@ export class SearchableList<T> {
     this.cursor = Math.max(0, Math.min(index, this.filtered().length - 1));
   }
 
+  selectIndex(index: number): boolean {
+    const count = this.filtered().length;
+    if (count === 0) return false;
+    const before = Math.min(this.cursor, count - 1);
+    const next = Math.max(0, Math.min(Math.floor(index), count - 1));
+    this.cursor = next;
+    return next !== before;
+  }
+
   pageUp(): void {
     this.cursor = Math.max(0, this.cursor - this.pageSize);
   }
 
   pageDown(): void {
     this.cursor = Math.min(Math.max(0, this.filtered().length - 1), this.cursor + this.pageSize);
+  }
+
+  wheelPage(delta: number): boolean {
+    if (!Number.isFinite(delta) || delta === 0) return false;
+    const view = this.view();
+    if (view.page.pageCount <= 1) return false;
+    const size = Math.max(1, Math.floor(this.pageSize));
+    if (delta < 0) {
+      if (view.page.page === 0) return false;
+      this.cursor = Math.max(0, view.selectedIndex - size);
+      return true;
+    }
+    if (view.page.page >= view.page.pageCount - 1) return false;
+    this.cursor = Math.min(view.items.length - 1, view.selectedIndex + size);
+    return true;
   }
 
   clearQuery(): boolean {

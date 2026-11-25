@@ -847,6 +847,53 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("does not leak wheel delta from an overscroll-contain scroll view to the primary scroll view", async () => {
+		const terminal = new VirtualTerminal(20, 6);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { wheelScrollLines: 3 });
+		const primary = new ScrollView(
+			new Text(Array.from({ length: 12 }, (_, index) => `p${index + 1}`).join("\n"), 0, 0),
+			{ primary: true, follow: "none" },
+		);
+		const contained = new ScrollView(new Text("c1\nc2\nc3\nc4\nc5", 0, 0), { overscroll: "contain" });
+		const chained = new ScrollView(new Text("h1\nh2\nh3", 0, 0), { overscroll: "chain" });
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: primary, basis: 2, shrink: 0 },
+				{ component: contained, basis: 2, shrink: 0 },
+				{ component: chained, basis: 2, shrink: 0 },
+			]),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		// Scroll contained to its bottom boundary (maxScrollTop = 3) and then past it.
+		terminal.sendInput("\x1b[<65;1;3M");
+		await terminal.waitForRender();
+		assert.strictEqual(contained.scrollTop, 3);
+		assert.strictEqual(primary.scrollTop, 0);
+
+		terminal.sendInput("\x1b[<65;1;3M");
+		await terminal.waitForRender();
+		assert.strictEqual(contained.scrollTop, 3);
+		assert.strictEqual(primary.scrollTop, 0);
+
+		// Scrolling past top boundary of contained also must not leak to primary.
+		primary.scrollTo(4);
+		contained.scrollToStart();
+		await terminal.waitForRender();
+		terminal.sendInput("\x1b[<64;1;3M");
+		await terminal.waitForRender();
+		assert.strictEqual(contained.scrollTop, 0);
+		assert.strictEqual(primary.scrollTop, 4);
+
+		// A sibling with overscroll: "chain" still chains unused wheel delta to primary.
+		terminal.sendInput("\x1b[<65;1;5M");
+		await terminal.waitForRender();
+		assert.strictEqual(chained.scrollTop, 1);
+		assert.strictEqual(primary.scrollTop, 6);
+		tui.stop();
+	});
+
 	it("supports configurable keyboard viewport navigation with four rows of page overlap", async () => {
 		const terminal = new VirtualTerminal(20, 8);
 		const tui = new TuiAltScreen(terminal);

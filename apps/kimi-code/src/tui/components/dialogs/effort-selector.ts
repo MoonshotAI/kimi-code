@@ -1,15 +1,23 @@
 import {
-  Container,
   Key,
   matchesKey,
   truncateToWidth,
   wrapTextWithAnsi,
+  type Component,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
 import type { ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
 
 import { currentTheme } from '#/tui/theme';
+import {
+  focusOnUnfocusedClick,
+  renderInlineSegments,
+  SpanHitMap,
+  type InlineSegment,
+} from '#/tui/utils/mouse-regions';
 
 import { effortLabel } from './model-selector';
 
@@ -24,17 +32,19 @@ export interface EffortSelectorOptions {
   readonly descriptions?: Readonly<Record<string, string>>;
 }
 
-export class EffortSelectorComponent extends Container implements Focusable {
+export class EffortSelectorComponent implements Component, Focusable {
   focused = false;
   private readonly opts: EffortSelectorOptions;
+  private readonly hits = new SpanHitMap<number>();
   private activeIndex: number;
 
   constructor(opts: EffortSelectorOptions) {
-    super();
     this.opts = opts;
     const idx = opts.efforts.indexOf(opts.currentValue);
     this.activeIndex = Math.max(idx, 0);
   }
+
+  invalidate(): void {}
 
   handleInput(data: string): void {
     if (matchesKey(data, Key.escape)) {
@@ -59,7 +69,27 @@ export class EffortSelectorComponent extends Container implements Focusable {
     }
   }
 
-  override render(width: number): string[] {
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (!this.focused) return focusOnUnfocusedClick(false, event);
+    if (event.type === 'wheel') return { handled: true };
+    return this.hits.handle(event, {
+      focused: this.focused,
+      onHover: (index) => {
+        const changed = this.activeIndex !== index;
+        this.activeIndex = index;
+        return changed;
+      },
+      onActivate: (index) => {
+        const effort = this.opts.efforts[index];
+        if (effort === undefined) return;
+        this.activeIndex = index;
+        this.opts.onSelect(effort);
+      },
+    });
+  }
+
+  render(width: number): string[] {
+    this.hits.reset();
     const hintParts = ['←→ switch', 'Enter select'];
     if (this.opts.onSessionOnlySelect !== undefined) hintParts.push('Alt+S session-only');
     hintParts.push('Esc cancel');
@@ -76,13 +106,21 @@ export class EffortSelectorComponent extends Container implements Focusable {
     }
     lines.push('');
 
-    const segments = this.opts.efforts.map((effort, index) => {
-      const label = effortLabel(effort);
-      return index === this.activeIndex
-        ? currentTheme.boldFg('primary', `[ ${label} ]`)
-        : currentTheme.fg('text', `  ${label}  `);
-    });
-    lines.push(`  ${segments.join('  ')}`);
+    const inline: InlineSegment<number>[] = [{ text: '  ' }];
+    for (let index = 0; index < this.opts.efforts.length; index++) {
+      if (index > 0) inline.push({ text: '  ' });
+      const label = effortLabel(this.opts.efforts[index]!);
+      inline.push({
+        text:
+          index === this.activeIndex
+            ? currentTheme.boldFg('primary', `[ ${label} ]`)
+            : currentTheme.fg('text', `  ${label}  `),
+        value: index,
+      });
+    }
+    const rendered = renderInlineSegments(inline, width);
+    this.hits.addRow(lines.length, rendered.targets);
+    lines.push(rendered.line);
     const description = this.opts.descriptions?.[this.opts.efforts[this.activeIndex]!];
     if (description !== undefined) lines.push(currentTheme.fg('textMuted', ` ${description}`));
 

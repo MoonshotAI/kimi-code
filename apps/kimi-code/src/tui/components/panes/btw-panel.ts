@@ -1,13 +1,27 @@
-import type { Component, MarkdownTheme } from '@moonshot-ai/pi-tui';
-import { Text, truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
+import {
+  HStack,
+  Text,
+  VStack,
+  renderLayoutFrame,
+  truncateToWidth,
+  visibleWidth,
+  type Component,
+  type MarkdownTheme,
+} from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
-import { Markdown } from '../markdown/markdown';
-import { THINKING_PREVIEW_LINES } from '../../constant/rendering';
-import { currentTheme } from '../../theme';
-import type { KimiMarkdownTheme } from '../../theme/pi-tui-theme';
-import type { InlineSkillActivation } from '../../types';
-import { createMarkdownOptions } from '../../utils/markdown-options';
+import { OverflowScrollView } from '#/tui/components/chrome/overflow-scroll-view';
+import { Markdown } from '#/tui/components/markdown/markdown';
+import { THINKING_PREVIEW_LINES } from '#/tui/constant/rendering';
+import { currentTheme, type ColorPalette } from '#/tui/theme';
+import type { KimiMarkdownTheme } from '#/tui/theme/pi-tui-theme';
+import type { InlineSkillActivation } from '#/tui/types';
+import { createMarkdownOptions } from '#/tui/utils/markdown-options';
+import {
+  SpanHitMap,
+  renderInlineSegments,
+  type InlineSegment,
+} from '#/tui/utils/mouse-regions';
 
 type BtwPanelPhase = 'running' | 'done' | 'failed';
 
@@ -17,13 +31,61 @@ interface BtwTurn {
   readonly prompt: string;
   answer: string;
   thinking: string;
-  error?: string | undefined;
+  error?: string;
   phase: BtwPanelPhase;
 }
 
-interface BtwBodyRender {
+interface BodyRenderCache {
+  readonly contentWidth: number;
+  readonly version: number;
+  readonly palette: ColorPalette;
   readonly lines: string[];
-  readonly truncated: boolean;
+}
+
+class BtwScrollView extends OverflowScrollView {
+  private directRender = false;
+  private managedByLayout = false;
+
+  constructor(
+    child: Component,
+    private readonly scrollbarInLayout: boolean,
+  ) {
+    super(child, {
+      follow: 'end',
+      overscroll: 'contain',
+      scrollbar: scrollbarInLayout ? 'always' : 'hidden',
+      scrollbarEnabled: scrollbarInLayout,
+    });
+  }
+
+  get isManagedByLayout(): boolean {
+    return this.managedByLayout;
+  }
+
+  runDirectRender<T>(fn: () => T): T {
+    this.directRender = true;
+    this.setScrollbarEnabled(false);
+    try {
+      return fn();
+    } finally {
+      this.directRender = false;
+      this.setScrollbarEnabled(this.scrollbarInLayout);
+    }
+  }
+
+  override updateLayout(
+    contentHeight: number,
+    viewportHeight: number,
+    requestRender: () => void,
+  ): void {
+    if (this.directRender) {
+      if (this.managedByLayout) return;
+      super.updateLayout(contentHeight, viewportHeight, requestRender);
+      return;
+    }
+    this.managedByLayout = true;
+    super.updateLayout(contentHeight, viewportHeight, requestRender);
+  }
 }
 
 export interface BtwPanelOptions {
@@ -34,23 +96,80 @@ export interface BtwPanelOptions {
     inlineSkillActivations?: readonly InlineSkillActivation[],
   ) => void;
   readonly terminalRows: () => number;
+  readonly gutter?: number;
+  readonly onClose?: () => void;
 }
 
-export class BtwPanelComponent implements Component {
+export class BtwPanelComponent extends VStack {
   private readonly turns: BtwTurn[] = [];
   private readonly transientNotices: string[] = [];
+  private readonly gutter: number;
+  private readonly leftRailWidth: number;
+  private readonly rightRailWidth: number;
+  private readonly scrollView: BtwScrollView;
+  private readonly topBorderHits = new SpanHitMap<'close'>();
   private minBodyLines = 0;
-  private followTail = true;
-  private scrollTop = 0;
-  private maxScrollTop = 0;
+  private currentBodyRows = 1;
+  private bodyTruncated = false;
+  private renderVersion = 0;
+  private bodyCache: BodyRenderCache | undefined;
 
-  constructor(private readonly options: BtwPanelOptions) {}
+  constructor(private readonly options: BtwPanelOptions) {
+    super();
+    this.gutter = Math.max(0, Math.floor(options.gutter ?? 0));
+    this.leftRailWidth = this.gutter > 0 ? this.gutter + 2 : 2;
+    this.rightRailWidth = this.gutter > 0 ? this.gutter + 1 : 2;
+
+    const topBorder: Component = {
+      render: (width) => [this.renderTopBorder(width)],
+      invalidate: () => {},
+      handleMouse: (event) => {
+        if (this.options.onClose === undefined) return undefined;
+        return this.topBorderHits.handle(event, {
+          onActivate: () => {
+            this.options.onClose?.();
+          },
+        });
+      },
+    };
+
+    const pad = ' '.repeat(this.gutter);
+    const leftRail: Component = {
+      render: () => {
+        const cell = `${pad}${chalk.hex(currentTheme.palette.border)('│')} `;
+        return Array.from({ length: this.currentBodyRows }, () => cell);
+      },
+      invalidate: () => {},
+    };
+
+    const bodyContent: Component = {
+      render: (width) => this.renderBodyLines(width),
+      invalidate: () => {},
+    };
+
+    this.scrollView = new BtwScrollView(bodyContent, this.gutter > 0);
+
+    const rightRail: Component = {
+      render: () => {
+        const border = chalk.hex(currentTheme.palette.border)('│');
+        const cell = this.gutter > 0 ? `${border}${pad}` : ` ${border}`;
+        return Array.from({ length: this.currentBodyRows }, () => cell);
+      },
+      invalidate: () => {},
+    };
+
+    const bodyHStack = new HStack([], { align: 'stretch' });
+    bodyHStack.addChild(leftRail, { basis: this.leftRailWidth, shrink: 0 });
+    bodyHStack.addChild(this.scrollView, { basis: 0, grow: 1, shrink: 1, minSize: 0 });
+    bodyHStack.addChild(rightRail, { basis: this.rightRailWidth, shrink: 0 });
+
+    this.addChild(topBorder, { basis: 1, shrink: 0 });
+    this.addChild(bodyHStack, { basis: 0, grow: 1, shrink: 1, minSize: 0 });
+  }
 
   submit(prompt: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void {
     const normalized = prompt.trim();
     if (normalized.length === 0 || this.isRunning()) return;
-    this.followTail = true;
-    this.scrollTop = 0;
     this.transientNotices.length = 0;
     this.turns.push({
       prompt: normalized,
@@ -58,24 +177,29 @@ export class BtwPanelComponent implements Component {
       thinking: '',
       phase: 'running',
     });
+    this.markDirty();
+    this.scrollView.scrollToEnd();
     this.options.onPrompt(normalized, inlineSkillActivations);
   }
 
   addTransientNotice(message: string): void {
     this.transientNotices.push(message);
-    this.followTail = true;
+    this.markDirty();
+    this.scrollView.scrollToEnd();
   }
 
   appendAnswer(delta: string): void {
     const turn = this.currentTurn();
     if (turn === undefined) return;
     turn.answer += delta;
+    this.markDirty();
   }
 
   appendThinking(delta: string): void {
     const turn = this.currentTurn();
     if (turn === undefined) return;
     turn.thinking += delta;
+    this.markDirty();
   }
 
   markDone(resultSummary?: string): void {
@@ -86,6 +210,7 @@ export class BtwPanelComponent implements Component {
     }
     this.transientNotices.length = 0;
     turn.phase = 'done';
+    this.markDirty();
   }
 
   markFailed(error: string): void {
@@ -99,53 +224,106 @@ export class BtwPanelComponent implements Component {
         phase: 'failed',
       });
       this.transientNotices.length = 0;
+      this.markDirty();
       return;
     }
     turn.error = error;
     this.transientNotices.length = 0;
     turn.phase = 'failed';
+    this.markDirty();
   }
 
-  invalidate(): void {}
+  override invalidate(): void {
+    this.bodyCache = undefined;
+    super.invalidate();
+  }
 
-  render(width: number): string[] {
+  override render(width: number): string[] {
     const safeWidth = Math.max(4, width);
-    const contentWidth = Math.max(1, safeWidth - 4);
-    const body = this.renderBody(contentWidth);
-    const lines = [this.renderTopBorder(safeWidth, body.truncated)];
-    for (const line of body.lines) {
-      lines.push(this.renderBodyLine(line, safeWidth));
-    }
-    return lines;
+    const targetBodyLines = this.prepareBody(safeWidth);
+    return this.scrollView.runDirectRender(
+      () => renderLayoutFrame(this, safeWidth, 1 + targetBodyLines, () => this.invalidate()).lines,
+    );
   }
 
-  private renderTopBorder(width: number, truncated: boolean): string {
+  private markDirty(): void {
+    this.renderVersion += 1;
+    this.bodyCache = undefined;
+  }
+
+  private contentWidthFor(panelWidth: number): number {
+    const scrollWidth = Math.max(1, panelWidth - this.leftRailWidth - this.rightRailWidth);
+    return this.scrollView.getContentWidth(scrollWidth);
+  }
+
+  private prepareBody(panelWidth: number): number {
+    const contentWidth = this.contentWidthFor(panelWidth);
+    const lines = this.renderBodyLines(contentWidth);
+    const bodyLimit = this.collapsedBodyLimit();
+    const targetUncapped = Math.max(this.minBodyLines, lines.length);
+    const target =
+      bodyLimit === undefined ? targetUncapped : Math.min(bodyLimit, targetUncapped);
+    this.minBodyLines = Math.max(this.minBodyLines, target);
+    this.currentBodyRows = target;
+    this.bodyTruncated = lines.length > target;
+    return target;
+  }
+
+  private renderTopBorder(width: number): string {
+    const safeWidth = Math.max(4, width);
+    this.prepareBody(safeWidth);
     const paint = (s: string): string => chalk.hex(currentTheme.palette.border)(s);
-    const hint = truncated && this.options.canUseScrollKeys()
-      ? 'Esc close · ↑↓ scroll '
-      : 'Esc close ';
-    const title =
-      chalk.hex(currentTheme.palette.accent).bold(' BTW ') +
-      paint('─ ') +
-      chalk.hex(currentTheme.palette.textMuted)(hint);
-    const innerWidth = Math.max(1, width - 2);
-    const clippedTitle =
-      visibleWidth(title) > innerWidth ? truncateToWidth(title, innerWidth, '') : title;
-    const dashCount = Math.max(0, innerWidth - visibleWidth(clippedTitle));
-    return paint('╭') + clippedTitle + paint('─'.repeat(dashCount)) + paint('╮');
+    const muted = (s: string): string => chalk.hex(currentTheme.palette.textMuted)(s);
+    const pad = ' '.repeat(this.gutter);
+    const truncated =
+      this.bodyTruncated || (this.scrollView.isManagedByLayout && this.scrollView.canScroll);
+    const showScrollHint = truncated && this.options.canUseScrollKeys();
+    const innerWidth = Math.max(0, safeWidth - this.gutter * 2 - 2);
+    const maxLeftWidth = Math.min(safeWidth, this.gutter + 1 + innerWidth);
+    const segments: InlineSegment<'close'>[] = [
+      ...(this.gutter > 0 ? [{ text: pad }] : []),
+      { text: paint('╭') },
+      { text: chalk.hex(currentTheme.palette.accent).bold(' BTW ') },
+      { text: paint('─ ') },
+      {
+        text: muted('Esc close'),
+        ...(this.options.onClose === undefined ? {} : { value: 'close' as const }),
+      },
+      { text: muted(showScrollHint ? ' · ↑↓ scroll ' : ' ') },
+    ];
+    const { line: leftLine, targets } = renderInlineSegments(segments, maxLeftWidth);
+    this.topBorderHits.reset();
+    this.topBorderHits.addRow(0, targets);
+    const dashCount = Math.max(0, maxLeftWidth - visibleWidth(leftLine));
+    return leftLine + paint('─'.repeat(dashCount)) + paint('╮') + pad;
   }
 
-  private renderBody(width: number): BtwBodyRender {
-    const lines: string[] = [];
+  private renderBodyLines(width: number): string[] {
+    const contentWidth = Math.max(1, width);
+    const palette = currentTheme.palette;
+    const cached = this.bodyCache;
+    if (
+      cached !== undefined &&
+      cached.contentWidth === contentWidth &&
+      cached.version === this.renderVersion &&
+      cached.palette === palette
+    ) {
+      return cached.lines;
+    }
+    const raw: string[] = [];
     for (const [index, turn] of this.turns.entries()) {
-      if (index > 0) lines.push('');
-      lines.push(...this.renderTurn(turn, width));
+      if (index > 0) raw.push('');
+      raw.push(...this.renderTurn(turn, contentWidth));
     }
     if (this.turns.length === 0) {
-      lines.push(chalk.hex(currentTheme.palette.textDim)('Ready for a side question…'));
+      raw.push(chalk.hex(palette.textDim)('Ready for a side question…'));
     }
-    lines.push(...this.renderTransientNotices(width));
-    return this.fitBodyLines(lines);
+    raw.push(...this.renderTransientNotices(contentWidth));
+    const lines = raw.map((line) =>
+      visibleWidth(line) > contentWidth ? truncateToWidth(line, contentWidth, '…') : line,
+    );
+    this.bodyCache = { contentWidth, version: this.renderVersion, palette, lines };
+    return lines;
   }
 
   private renderTransientNotices(width: number): string[] {
@@ -154,34 +332,6 @@ export class BtwPanelComponent implements Component {
       lines.push(...new Text(chalk.hex(currentTheme.palette.textDim)(notice), 0, 0).render(width));
     }
     return lines;
-  }
-
-  private fitBodyLines(lines: string[]): BtwBodyRender {
-    const bodyLimit = this.collapsedBodyLimit();
-    const targetUncapped = Math.max(this.minBodyLines, lines.length);
-    const target =
-      bodyLimit === undefined ? targetUncapped : Math.min(bodyLimit, targetUncapped);
-    this.minBodyLines = Math.max(this.minBodyLines, target);
-
-    if (lines.length > target) {
-      this.maxScrollTop = lines.length - target;
-      if (this.followTail) {
-        this.scrollTop = this.maxScrollTop;
-      } else {
-        this.scrollTop = Math.min(this.scrollTop, this.maxScrollTop);
-      }
-      const start = this.scrollTop;
-      return { lines: lines.slice(start, start + target), truncated: true };
-    }
-
-    this.followTail = true;
-    this.scrollTop = 0;
-    this.maxScrollTop = 0;
-    const padded = [...lines];
-    while (padded.length < target) {
-      padded.push('');
-    }
-    return { lines: padded, truncated: false };
   }
 
   private collapsedBodyLimit(): number | undefined {
@@ -223,15 +373,6 @@ export class BtwPanelComponent implements Component {
     return lines;
   }
 
-  private renderBodyLine(line: string, width: number): string {
-    const paint = (s: string): string => chalk.hex(currentTheme.palette.border)(s);
-    const contentWidth = Math.max(1, width - 4);
-    const clipped =
-      visibleWidth(line) > contentWidth ? truncateToWidth(line, contentWidth, '…') : line;
-    const padding = Math.max(0, contentWidth - visibleWidth(clipped));
-    return paint('│') + ' ' + clipped + ' '.repeat(padding) + ' ' + paint('│');
-  }
-
   private currentTurn(): BtwTurn | undefined {
     return this.turns.at(-1);
   }
@@ -245,14 +386,8 @@ export class BtwPanelComponent implements Component {
   }
 
   scroll(direction: 'up' | 'down'): boolean {
-    if (this.maxScrollTop <= 0) return false;
-    const current = this.followTail ? this.maxScrollTop : this.scrollTop;
-    const next =
-      direction === 'up'
-        ? Math.max(0, current - 1)
-        : Math.min(this.maxScrollTop, current + 1);
-    this.scrollTop = next;
-    this.followTail = next === this.maxScrollTop;
+    if (!this.scrollView.canScroll) return false;
+    this.scrollView.scrollBy(direction === 'up' ? -1 : 1);
     return true;
   }
 }

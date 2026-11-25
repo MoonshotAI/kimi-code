@@ -1,11 +1,39 @@
-import { visibleWidth } from '@moonshot-ai/pi-tui';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { visibleWidth, type TuiMouseEvent } from '@moonshot-ai/pi-tui';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { ModelSwitchConfirmDialogComponent } from '#/tui/components/dialogs/model-switch-confirm-dialog';
 import { currentTheme } from '#/tui/theme';
 
-const ANSI_SGR = /\[[0-9;]*m/g;
+const ANSI_SGR = /\u001B\[[0-9;]*m/g;
 const DEFAULT_HINT = 'Switching models in this session may affect output quality.';
+
+function mouseEvent(
+  type: TuiMouseEvent['type'],
+  y: number,
+  wheelDelta?: number,
+): TuiMouseEvent {
+  return {
+    type,
+    button: type === 'move' || type === 'wheel' ? 'none' : 'left',
+    x: 4,
+    y,
+    screenX: 4,
+    screenY: y,
+    width: 120,
+    height: 20,
+    shift: false,
+    alt: false,
+    ctrl: false,
+    ...(wheelDelta !== undefined ? { wheelDelta } : {}),
+  };
+}
+
+function useFakeDate(): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+}
 
 function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '');
@@ -176,5 +204,52 @@ describe('ModelSwitchConfirmDialogComponent', () => {
       32,
     );
     for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(32);
+  });
+
+  it('supports hover, click confirm, wheel consumption, and unfocused/settling guards', () => {
+    useFakeDate();
+    const { dialog, onSelect, lines } = renderDialog('old');
+    const compactRow = lines.findIndex((line) => line.includes('Compact and continue'));
+    const continueRow = lines.findIndex((line) => line.includes('Continue as-is'));
+    const cancelRow = lines.findIndex((line) => line.includes('Cancel'));
+
+    vi.advanceTimersByTime(300);
+    expect(dialog.handleMouse(mouseEvent('move', continueRow))).toBeUndefined();
+    expect(dialog.handleMouse(mouseEvent('wheel', continueRow, 1))).toBeUndefined();
+    expect(dialog.handleMouse(mouseEvent('press', continueRow))).toEqual({ handled: true });
+    expect(dialog.handleMouse(mouseEvent('click', continueRow))).toEqual({
+      handled: true,
+      focus: true,
+    });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    dialog.focused = true;
+    expect(dialog.handleMouse(mouseEvent('wheel', continueRow, 1))).toEqual({ handled: true });
+    expect(dialog.handleMouse(mouseEvent('move', continueRow))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(dialog.render(120).map(strip)[continueRow]).toContain('❯ Continue as-is');
+    expect(onSelect).not.toHaveBeenCalled();
+
+    dialog.handleMouse(mouseEvent('press', compactRow));
+    expect(dialog.handleMouse(mouseEvent('click', cancelRow))).toEqual({ handled: true });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    dialog.handleMouse(mouseEvent('press', cancelRow));
+    expect(dialog.handleMouse(mouseEvent('click', cancelRow))).toEqual({
+      handled: true,
+      render: true,
+    });
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith('cancel');
+
+    const fresh = renderDialog('old');
+    fresh.dialog.focused = true;
+    const freshContinueRow = fresh.lines.findIndex((line) => line.includes('Continue as-is'));
+    expect(fresh.dialog.handleMouse(mouseEvent('click', freshContinueRow))).toEqual({
+      handled: true,
+    });
+    expect(fresh.onSelect).not.toHaveBeenCalled();
   });
 });

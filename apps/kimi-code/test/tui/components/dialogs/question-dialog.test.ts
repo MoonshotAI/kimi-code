@@ -1,11 +1,21 @@
-import { CURSOR_MARKER } from '@moonshot-ai/pi-tui';
+import {
+  CURSOR_MARKER,
+  ScrollView,
+  Text,
+  TuiAltScreen,
+  VStack,
+  type Component,
+  type TuiMouseEvent,
+} from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import chalk from 'chalk';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
   QuestionDialogComponent,
   type QuestionDialogOptions,
 } from '#/tui/components/dialogs/question-dialog';
+import { DOCK_PREVIEW_ROWS } from '#/tui/constant/rendering';
 import type { PendingQuestion } from '#/tui/reverse-rpc/types';
 import { currentTheme } from '#/tui/theme';
 
@@ -589,6 +599,378 @@ describe('QuestionDialogComponent', () => {
       expect(joined).toContain('Review your answer before submit');
       expect(joined).not.toContain('…');
       expect(flat).toContain(longQuestion);
+    });
+  });
+
+  describe('regular mode StableWindow mouse behavior', () => {
+    function mouse(type: 'move' | 'wheel', y: number, wheelDelta?: number): TuiMouseEvent {
+      return {
+        type,
+        button: 'none',
+        x: 6,
+        y,
+        screenX: 6,
+        screenY: y,
+        width: 80,
+        height: 12,
+        shift: false,
+        alt: false,
+        ctrl: false,
+        ...(wheelDelta === undefined ? {} : { wheelDelta }),
+      };
+    }
+
+    it('updates selection on move without jittering the visible window and scrolls cleanly on wheel', () => {
+      const pending = makePending([
+        {
+          question: 'Pick one?',
+          multi_select: false,
+          options: Array.from({ length: 10 }, (_, i) => ({ label: `Choice ${String(i + 1)}` })),
+        },
+      ]);
+      const { dialog } = makeDialog(pending);
+      const bodyPart = dialog.children[1] as Component;
+
+      let bodyLines = bodyPart.render(80).map(strip);
+      expect(bodyLines.join('\n')).toContain('showing 1-6 of 11');
+      const choice6Row = bodyLines.findIndex((line) => line.includes('[6] Choice 6'));
+      expect(choice6Row).toBeGreaterThan(-1);
+
+      expect(bodyPart.handleMouse?.(mouse('move', choice6Row))).toEqual({
+        handled: true,
+        render: true,
+      });
+      bodyLines = bodyPart.render(80).map(strip);
+      expect(bodyLines.join('\n')).toContain('→ [6] Choice 6');
+      expect(bodyLines.join('\n')).toContain('showing 1-6 of 11');
+
+      expect(bodyPart.handleMouse?.(mouse('wheel', choice6Row, 2))).toEqual({
+        handled: true,
+        render: true,
+      });
+      bodyLines = bodyPart.render(80).map(strip);
+      expect(bodyLines.join('\n')).toContain('showing 3-8 of 11');
+      expect(bodyLines.join('\n')).toContain('Choice 8');
+
+      const choice3Row = bodyLines.findIndex((line) => line.includes('[3] Choice 3'));
+      expect(bodyPart.handleMouse?.(mouse('move', choice3Row))).toEqual({
+        handled: true,
+        render: true,
+      });
+      bodyLines = bodyPart.render(80).map(strip);
+      expect(bodyLines.join('\n')).toContain('→ [3] Choice 3');
+      expect(bodyLines.join('\n')).toContain('showing 3-8 of 11');
+    });
+  });
+
+  describe('fullscreen DockSection mouse support', () => {
+    function screenRows(vt: VirtualTerminal): string[] {
+      return vt.getViewport().map((row) => strip(row).trimEnd());
+    }
+
+    function useFakeClock(): (ms: number) => void {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(10_000);
+      onTestFinished(() => {
+        vi.useRealTimers();
+      });
+      return (ms: number) => {
+        vi.setSystemTime(Date.now() + ms);
+      };
+    }
+
+    async function mountDocked(
+      pending: PendingQuestion,
+      height = 18,
+      width = 80,
+    ): Promise<{
+      dialog: QuestionDialogComponent;
+      collected: string[][];
+      methods: Array<string | undefined>;
+      ui: TuiAltScreen;
+      vt: VirtualTerminal;
+      otherFocus: Component & { focused: boolean };
+    }> {
+      const { dialog, collected, methods } = makeDialog(pending, undefined, {
+        layout: { maxBodyRows: DOCK_PREVIEW_ROWS },
+      });
+      const vt = new VirtualTerminal(width, height);
+      const ui = new TuiAltScreen(vt);
+      const transcript = new ScrollView(
+        new Text(
+          Array.from({ length: 40 }, (_, i) => `transcript ${String(i + 1)}`).join('\n'),
+          0,
+          0,
+        ),
+        { follow: 'end', primary: true },
+      );
+      const otherFocus: Component & { focused: boolean } = {
+        focused: false,
+        render: () => [],
+        invalidate() {},
+      };
+      const root = new VStack();
+      root.addChild(transcript, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
+      root.addChild(dialog, { basis: 'auto', grow: 0, shrink: 1, minSize: 3 });
+      ui.setLayoutRoot(root);
+      ui.setFocus(dialog);
+      ui.start();
+      onTestFinished(() => ui.stop());
+      await vt.waitForRender();
+      return { dialog, collected, methods, ui, vt, otherFocus };
+    }
+
+    async function clickCell(vt: VirtualTerminal, col: number, row: number): Promise<void> {
+      vt.sendInput(`\u001B[<0;${String(col + 1)};${String(row + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(col + 1)};${String(row + 1)}m`);
+      await vt.waitForRender();
+    }
+
+    async function moveCell(vt: VirtualTerminal, col: number, row: number): Promise<void> {
+      vt.sendInput(`\u001B[<35;${String(col + 1)};${String(row + 1)}M`);
+      await vt.waitForRender();
+    }
+
+    it('renders all options inside OverflowScrollView, scrolls via wheel without leaking, and reveals keyboard selection', async () => {
+      const pending = makePending([
+        {
+          question: 'Choose a target?',
+          multi_select: false,
+          options: Array.from({ length: 12 }, (_, i) => ({ label: `Option ${String(i + 1)}` })),
+        },
+      ]);
+      const { dialog, ui, vt } = await mountDocked(pending, 16, 80);
+
+      let rows = screenRows(vt);
+      expect(rows.join('\n')).not.toContain('showing ');
+      expect(rows.some((row) => /[┃│]$/.test(row))).toBe(true);
+      const opt1Row = rows.findIndex((row) => row.includes('[1] Option 1'));
+      const opt4Row = rows.findIndex((row) => row.includes('[4] Option 4'));
+      expect(opt1Row).toBeGreaterThan(0);
+      expect(opt4Row).toBeGreaterThan(opt1Row);
+      expect(rows.join('\n')).not.toContain('[12] Option 12');
+
+      const transcriptTop = ui.viewportTop;
+      expect(transcriptTop).toBeGreaterThan(0);
+
+      await moveCell(vt, 8, opt4Row);
+      rows = screenRows(vt);
+      expect(rows[opt1Row]).toContain('[1] Option 1');
+      expect(rows[opt4Row]).toContain('→ [4] Option 4');
+
+      const headerRow = rows.findIndex((row) => row.includes('Choose a target?'));
+      vt.sendInput(`\u001B[<64;8;${String(headerRow + 1)}M`);
+      await vt.waitForRender();
+      expect(ui.viewportTop).toBe(transcriptTop);
+
+      vt.sendInput(`\u001B[<64;8;${String(rows.length)}M`);
+      await vt.waitForRender();
+      expect(ui.viewportTop).toBe(transcriptTop);
+
+      for (let i = 0; i < 10; i++) vt.sendInput(`\u001B[<65;8;${String(opt4Row + 1)}M`);
+      await vt.waitForRender();
+      rows = screenRows(vt);
+      expect(rows.join('\n')).toContain('Other');
+      expect(ui.viewportTop).toBe(transcriptTop);
+
+      for (let i = 0; i < 10; i++) vt.sendInput(`\u001B[<64;8;${String(opt4Row + 1)}M`);
+      await vt.waitForRender();
+      expect(screenRows(vt).join('\n')).toContain('[1] Option 1');
+      expect(ui.viewportTop).toBe(transcriptTop);
+
+      for (let i = 0; i < 8; i++) dialog.handleInput('\u001B[B');
+      ui.requestRender();
+      await vt.waitForRender();
+      expect(screenRows(vt).join('\n')).toContain('→ [12] Option 12');
+    });
+
+    it('supports clickable tabs, single/multi-select clicks, Review jumps, and Submit/Cancel with enter method', async () => {
+      const advance = useFakeClock();
+      const pending = makePending([
+        {
+          question: 'Pick one?',
+          header: 'First',
+          multi_select: false,
+          options: [{ label: 'Alpha' }, { label: 'Beta' }],
+        },
+        {
+          question: 'Pick many?',
+          header: 'Second',
+          multi_select: true,
+          options: [{ label: 'Red' }, { label: 'Blue' }],
+        },
+      ]);
+      const { collected, methods, vt } = await mountDocked(pending, 20, 80);
+      advance(500);
+
+      let rows = screenRows(vt);
+      const tabRow = rows.findIndex((row) => row.includes('First') && row.includes('Second'));
+      const secondCol = rows[tabRow]!.indexOf('Second');
+      await clickCell(vt, secondCol + 1, tabRow);
+
+      rows = screenRows(vt);
+      expect(rows.join('\n')).toContain('Pick many?');
+      const redRow = rows.findIndex((row) => row.includes('Red'));
+      const blueRow = rows.findIndex((row) => row.includes('Blue'));
+      await clickCell(vt, 8, redRow);
+      await clickCell(vt, 8, blueRow);
+
+      rows = screenRows(vt);
+      const firstCol = rows[tabRow]!.indexOf('First');
+      await clickCell(vt, firstCol + 1, tabRow);
+
+      rows = screenRows(vt);
+      expect(rows.join('\n')).toContain('Pick one?');
+      const betaRow = rows.findIndex((row) => row.includes('[2] Beta'));
+      await clickCell(vt, 8, betaRow);
+
+      rows = screenRows(vt);
+      expect(rows.join('\n')).toContain('Review your answer before submit');
+      expect(rows.join('\n')).toContain('Beta');
+      expect(rows.join('\n')).toContain('Red, Blue');
+
+      const q1ReviewRow = rows.findIndex((row) => row.includes('Pick one?'));
+      await clickCell(vt, 8, q1ReviewRow);
+      rows = screenRows(vt);
+      expect(rows.join('\n')).toContain('? Pick one?');
+
+      const submitTabCol = rows[tabRow]!.indexOf('Submit');
+      await clickCell(vt, submitTabCol + 1, tabRow);
+      rows = screenRows(vt);
+      const cancelRow = rows.findIndex((row) => row.includes('[2] Cancel'));
+      await moveCell(vt, 8, cancelRow);
+      expect(screenRows(vt)[cancelRow]).toContain('→ [2] Cancel');
+
+      const submitActionRow = rows.findIndex((row) => row.includes('[1] Submit'));
+      await clickCell(vt, 8, submitActionRow);
+      expect(collected).toEqual([['Beta', 'Red, Blue']]);
+      expect(methods).toEqual(['enter']);
+    });
+
+    it('cancels from Review tab when clicking Cancel', async () => {
+      const advance = useFakeClock();
+      const pending = makePending([
+        {
+          question: 'Pick one?',
+          multi_select: false,
+          options: [{ label: 'Alpha' }],
+        },
+      ]);
+      const { collected, vt } = await mountDocked(pending, 20, 80);
+      advance(500);
+
+      let rows = screenRows(vt);
+      const tabRow = rows.findIndex((row) => row.includes('Submit'));
+      const submitCol = rows[tabRow]!.indexOf('Submit');
+      await clickCell(vt, submitCol + 1, tabRow);
+
+      rows = screenRows(vt);
+      const cancelRow = rows.findIndex((row) => row.includes('[2] Cancel'));
+      await clickCell(vt, 8, cancelRow);
+      expect(collected).toEqual([[]]);
+    });
+
+    it('positions cursor in Other input on click, suppresses hover while typing, and exits Other on clicking another option', async () => {
+      const advance = useFakeClock();
+      const pending = makePending([
+        {
+          question: 'Pick one?',
+          multi_select: false,
+          other_label: 'Custom',
+          options: [{ label: 'Alpha' }, { label: 'Beta' }],
+        },
+      ]);
+      const { dialog, collected, ui, vt } = await mountDocked(pending, 20, 80);
+      advance(500);
+
+      let rows = screenRows(vt);
+      const otherRow = rows.findIndex((row) => row.includes('[3] Custom'));
+      await clickCell(vt, 8, otherRow);
+
+      for (const ch of 'hello') dialog.handleInput(ch);
+      ui.requestRender();
+      await vt.waitForRender();
+      rows = screenRows(vt);
+      const editingRow = rows.findIndex((row) => row.includes('[3] Custom: hello'));
+      const alphaRow = rows.findIndex((row) => row.includes('[1] Alpha'));
+      expect(editingRow).toBeGreaterThan(0);
+      expect(alphaRow).toBeGreaterThan(0);
+
+      await moveCell(vt, 8, alphaRow);
+      rows = screenRows(vt);
+      expect(rows[editingRow]).toContain('→ [3] Custom: hello');
+      expect(rows[alphaRow]).not.toContain('→ [1] Alpha');
+
+      const textStartCol = rows[editingRow]!.indexOf('hello');
+      await clickCell(vt, textStartCol + 2, editingRow);
+      dialog.handleInput('X');
+      ui.requestRender();
+      await vt.waitForRender();
+      expect(screenRows(vt)[editingRow]).toContain('heXllo');
+
+      await clickCell(vt, 5, editingRow);
+      dialog.handleInput('Y');
+      ui.requestRender();
+      await vt.waitForRender();
+      expect(screenRows(vt)[editingRow]).toContain('heXYllo');
+
+      await clickCell(vt, 8, alphaRow);
+      rows = screenRows(vt);
+      expect(rows.join('\n')).toContain('Review your answer before submit');
+      expect(rows.join('\n')).toContain('Alpha');
+      expect(collected).toEqual([]);
+
+      dialog.handleInput('\u001B[D');
+      ui.requestRender();
+      await vt.waitForRender();
+      expect(screenRows(vt).join('\n')).toContain('Custom: heXYllo');
+    });
+
+    it('focuses on unfocused click without selecting an option or switching tabs', async () => {
+      const advance = useFakeClock();
+      const pending = makePending([
+        {
+          question: 'Pick one?',
+          header: 'First',
+          multi_select: false,
+          options: [{ label: 'Alpha' }, { label: 'Beta' }],
+        },
+        {
+          question: 'Second?',
+          header: 'Second',
+          multi_select: false,
+          options: [{ label: 'Gamma' }],
+        },
+      ]);
+      const { dialog, collected, ui, vt, otherFocus } = await mountDocked(pending, 20, 80);
+      advance(500);
+
+      ui.setFocus(otherFocus);
+      ui.requestRender();
+      await vt.waitForRender();
+      expect(dialog.focused).toBe(false);
+
+      let rows = screenRows(vt);
+      const betaRow = rows.findIndex((row) => row.includes('[2] Beta'));
+      await clickCell(vt, 8, betaRow);
+      expect(dialog.focused).toBe(true);
+      expect(screenRows(vt).join('\n')).toContain('? Pick one?');
+      expect(collected).toEqual([]);
+
+      ui.setFocus(otherFocus);
+      ui.requestRender();
+      await vt.waitForRender();
+      expect(dialog.focused).toBe(false);
+
+      rows = screenRows(vt);
+      const tabRow = rows.findIndex((row) => row.includes('First') && row.includes('Second'));
+      const secondCol = rows[tabRow]!.indexOf('Second');
+      await clickCell(vt, secondCol + 1, tabRow);
+      expect(dialog.focused).toBe(true);
+      expect(screenRows(vt).join('\n')).toContain('? Pick one?');
+
+      await clickCell(vt, 8, betaRow);
+      expect(screenRows(vt).join('\n')).toContain('? Second?');
     });
   });
 

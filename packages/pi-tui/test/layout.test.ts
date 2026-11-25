@@ -4,6 +4,7 @@ import { HStack } from "../src/components/h-stack.ts";
 import { ScrollView } from "../src/components/scroll-view.ts";
 import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
+import * as piTui from "../src/index.ts";
 import { renderLayoutFrame } from "../src/layout.ts";
 import { encodeKitty, registerKittyImageMetadata } from "../src/terminal-image.ts";
 import { stripTerminalSequences } from "../src/utils.ts";
@@ -395,5 +396,187 @@ describe("viewport layout", () => {
 
 		assert.strictEqual(first.root.children[0]?.lines?.length, 1);
 		assert.strictEqual(second.root.children[0]?.lines?.length, 3);
+	});
+
+	it("renders stretched HStack children once when height is constrained", () => {
+		let leafRenders = 0;
+		let scrollChildRenders = 0;
+		const leaf = {
+			render: () => {
+				leafRenders += 1;
+				return ["a", "b", "c"];
+			},
+			invalidate: () => {},
+		};
+		const scrollView = new ScrollView({
+			render: () => {
+				scrollChildRenders += 1;
+				return ["1", "2", "3", "4", "5"];
+			},
+			invalidate: () => {},
+		});
+		const row = new HStack(
+			[
+				{ component: leaf, basis: 4, shrink: 0 },
+				{ component: scrollView, basis: 0, grow: 1 },
+			],
+			{ align: "stretch" },
+		);
+
+		const frame = renderLayoutFrame(row, 10, 3, () => {});
+		assert.strictEqual(leafRenders, 1);
+		assert.strictEqual(scrollChildRenders, 1);
+		assert.deepStrictEqual(visibleLines(frame.lines), ["a   1", "b   2", "c   3"]);
+
+		// Non-stretch alignment still measures intrinsic child height.
+		const centered = renderLayoutFrame(
+			new HStack([{ component: new Text("mid", 0, 0), basis: 5, shrink: 0 }], { align: "center" }),
+			5,
+			3,
+			() => {},
+		);
+		assert.deepStrictEqual(visibleLines(centered.lines), ["", "mid", ""]);
+	});
+
+	it("exposes contentHeight and supports initialPosition start with follow end", () => {
+		const content = new Text("1\n2\n3\n4\n5\n6", 0, 0);
+		let renders = 0;
+		const scrollView = new ScrollView(content, {
+			follow: "end",
+			initialPosition: "start",
+			scrollbar: "auto",
+		});
+
+		const first = renderLayoutFrame(scrollView, 10, 3, () => {
+			renders += 1;
+		});
+		assert.strictEqual(scrollView.contentHeight, 6);
+		assert.strictEqual(scrollView.scrollTop, 0);
+		assert.strictEqual(scrollView.isFollowingEnd, false);
+		assert.strictEqual(scrollView.isScrollbarVisible, false);
+		assert.strictEqual(renders, 0);
+		assert.deepStrictEqual(visibleLines(first.lines), ["1", "2", "3"]);
+
+		// Growing content while still at top does not yank scroll to end.
+		content.setText("1\n2\n3\n4\n5\n6\n7");
+		renderLayoutFrame(scrollView, 10, 3, () => {});
+		assert.strictEqual(scrollView.contentHeight, 7);
+		assert.strictEqual(scrollView.scrollTop, 0);
+		assert.strictEqual(scrollView.isFollowingEnd, false);
+
+		// Once scrolled to the end, follow-end latches and tracks subsequent growth.
+		assert.strictEqual(scrollView.scrollBy(4), 0);
+		assert.strictEqual(scrollView.scrollTop, 4);
+		assert.strictEqual(scrollView.isFollowingEnd, true);
+
+		content.setText("1\n2\n3\n4\n5\n6\n7\n8\n9");
+		const afterGrowth = renderLayoutFrame(scrollView, 10, 3, () => {});
+		assert.strictEqual(scrollView.contentHeight, 9);
+		assert.strictEqual(scrollView.scrollTop, 6);
+		assert.strictEqual(scrollView.isFollowingEnd, true);
+		assert.deepStrictEqual(visibleLines(afterGrowth.lines), ["7        │", "8        ┃", "9        ┃"]);
+	});
+
+	it("queues pre-layout scroll operations and drains them in FIFO order on first layout", () => {
+		const lines = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n");
+
+		const sv1 = new ScrollView(new Text(lines, 0, 0), { follow: "none" });
+		sv1.scrollToEnd();
+		sv1.scrollBy(-2);
+		assert.strictEqual(sv1.scrollPage(-1, 1), 0);
+		let renderRequests = 0;
+		const frame1 = renderLayoutFrame(sv1, 10, 4, () => {
+			renderRequests += 1;
+		});
+		// maxScrollTop = 8 -> end (8) -> by(-2) (6) -> page(-1, overlap=1, step=3) (3)
+		assert.strictEqual(sv1.scrollTop, 3);
+		assert.strictEqual(renderRequests, 0);
+		assert.deepStrictEqual(visibleLines(frame1.lines), ["line 4", "line 5", "line 6", "line 7"]);
+
+		// Post-layout scrollPage steps by viewportHeight - overlap and returns unused remainder.
+		assert.strictEqual(sv1.scrollPage(1, 1), 0);
+		assert.strictEqual(sv1.scrollTop, 6);
+		assert.strictEqual(sv1.scrollPage(1, 1), 1);
+		assert.strictEqual(sv1.scrollTop, 8);
+
+		// Queued scrollToStart overrides default initialPosition: "end" for follow: "end".
+		const sv2 = new ScrollView(new Text(lines, 0, 0), { follow: "end" });
+		sv2.scrollToStart();
+		renderLayoutFrame(sv2, 10, 4, () => {});
+		assert.strictEqual(sv2.scrollTop, 0);
+		assert.strictEqual(sv2.isFollowingEnd, false);
+
+		// Queued scrollIntoView resolves on first layout without flashing an auto scrollbar.
+		const sv3 = new ScrollView(new Text(lines, 0, 0), { scrollbar: "auto" });
+		sv3.scrollIntoView(8, 10);
+		const frame3 = renderLayoutFrame(sv3, 10, 4, () => {});
+		assert.strictEqual(sv3.scrollTop, 6);
+		assert.strictEqual(sv3.isScrollbarVisible, false);
+		assert.deepStrictEqual(visibleLines(frame3.lines), ["line 7", "line 8", "line 9", "line 10"]);
+
+		// Explicit post-layout scroll supersedes any pending silent scrollIntoView.
+		sv3.scrollIntoView(0, 1, { silent: true });
+		sv3.scrollToEnd();
+		renderLayoutFrame(sv3, 10, 4, () => {});
+		assert.strictEqual(sv3.scrollTop, 8);
+
+		// Relative post-layout scroll applies after flushing pending silent scrollIntoView.
+		sv3.scrollIntoView(2, 3, { silent: true });
+		sv3.scrollBy(1);
+		renderLayoutFrame(sv3, 10, 4, () => {});
+		assert.strictEqual(sv3.scrollTop, 3);
+	});
+
+	it("resolves silent scrollIntoView during child render on the same frame without scrollbar flash or rerender", () => {
+		let revealRange: [number, number] | undefined = [7, 9];
+		const scrollView = new ScrollView(
+			{
+				render: () => {
+					if (revealRange) {
+						scrollView.scrollIntoView(revealRange[0], revealRange[1], { silent: true });
+						revealRange = undefined;
+					}
+					return Array.from({ length: 12 }, (_, index) => `row ${index}`);
+				},
+				invalidate: () => {},
+			},
+			{ scrollbar: "auto" },
+		);
+
+		let renderCalls = 0;
+		const first = renderLayoutFrame(scrollView, 10, 4, () => {
+			renderCalls += 1;
+		});
+		assert.strictEqual(scrollView.scrollTop, 5);
+		assert.strictEqual(scrollView.isScrollbarVisible, false);
+		assert.strictEqual(renderCalls, 0);
+		assert.deepStrictEqual(visibleLines(first.lines), ["row 5", "row 6", "row 7", "row 8"]);
+
+		// Second frame: silent scrollIntoView called during child.render() when hasLayout is already true.
+		revealRange = [1, 2];
+		const second = renderLayoutFrame(scrollView, 10, 4, () => {
+			renderCalls += 1;
+		});
+		assert.strictEqual(scrollView.scrollTop, 1);
+		assert.strictEqual(scrollView.isScrollbarVisible, false);
+		assert.strictEqual(renderCalls, 0);
+		assert.deepStrictEqual(visibleLines(second.lines), ["row 1", "row 2", "row 3", "row 4"]);
+
+		// Non-silent post-layout scrollIntoView applies immediately, ignores already-visible ranges,
+		// and pins the top of items taller than the viewport.
+		scrollView.scrollIntoView(2, 4);
+		assert.strictEqual(scrollView.scrollTop, 1);
+		assert.strictEqual(renderCalls, 0);
+
+		scrollView.scrollIntoView(3, 10);
+		assert.strictEqual(scrollView.scrollTop, 3);
+		assert.strictEqual(renderCalls, 1);
+	});
+
+	it("exports renderLayoutFrame from the package entry without exposing LAYOUT_NODE", () => {
+		assert.strictEqual(typeof piTui.renderLayoutFrame, "function");
+		assert.strictEqual("LAYOUT_NODE" in piTui, false);
+		const frame = piTui.renderLayoutFrame(new Text("ok", 0, 0), 5, 1, () => {});
+		assert.deepStrictEqual(visibleLines(frame.lines), ["ok"]);
 	});
 });

@@ -143,4 +143,50 @@ describe('SearchableList', () => {
     expect(v.selectedIndex).toBe(0);
     expect(list.selected()).toBe('item00');
   });
+
+  it('selectIndex clamps against the filtered items and reports whether selection changed', () => {
+    const list = make({ initialIndex: 0 });
+    expect(list.selectIndex(0)).toBe(false);
+    expect(list.selectIndex(2)).toBe(true);
+    expect(list.view().selectedIndex).toBe(2);
+    expect(list.selectIndex(2)).toBe(false);
+    expect(list.selectIndex(99)).toBe(true);
+    expect(list.view().selectedIndex).toBe(9);
+    expect(list.selectIndex(-3)).toBe(true);
+    expect(list.view().selectedIndex).toBe(0);
+
+    const unclamped = make({ initialIndex: 99 });
+    expect(unclamped.selectIndex(9)).toBe(false);
+    expect(unclamped.selectIndex(8)).toBe(true);
+
+    const empty = make({ items: [] });
+    expect(empty.selectIndex(0)).toBe(false);
+  });
+
+  it('wheelPage turns multi-page lists and leaves single-page or boundary pages unchanged', () => {
+    const list = make({ initialIndex: 2 });
+    expect(list.wheelPage(0)).toBe(false);
+    expect(list.wheelPage(-1)).toBe(false);
+    expect(list.view().selectedIndex).toBe(2);
+
+    expect(list.wheelPage(1)).toBe(true);
+    expect(list.view().page.page).toBe(1);
+    expect(list.view().selectedIndex).toBe(6);
+
+    expect(list.wheelPage(1)).toBe(true);
+    expect(list.view().page.page).toBe(2);
+    expect(list.view().selectedIndex).toBe(9);
+
+    expect(list.wheelPage(1)).toBe(false);
+    expect(list.view().selectedIndex).toBe(9);
+
+    expect(list.wheelPage(-1)).toBe(true);
+    expect(list.view().page.page).toBe(1);
+    expect(list.view().selectedIndex).toBe(5);
+
+    const singlePage = make({ items: ['a', 'b', 'c'], pageSize: 4 });
+    expect(singlePage.wheelPage(1)).toBe(false);
+    expect(singlePage.wheelPage(-1)).toBe(false);
+    expect(singlePage.view().selectedIndex).toBe(0);
+  });
 });

@@ -1,6 +1,6 @@
 import type { AutocompleteContext, AutocompleteProvider, AutocompleteSuggestions } from "../autocomplete.ts";
 import { getKeybindings } from "../keybindings.ts";
-import { decodePrintableKey, matchesKey } from "../keys.ts";
+import { decodePrintableKey, isKeyRelease, matchesKey } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
 import { PasteBurst } from "../paste-burst.ts";
 import {
@@ -337,9 +337,11 @@ export class Editor implements Component, Focusable {
 	private lastWidth: number = 80;
 	private renderedVisibleLineCount = 1;
 	private renderedAutocompleteHeight = 0;
+	private renderedMaxScrollOffset = 0;
 
 	// Vertical scrolling support
 	private scrollOffset: number = 0;
+	private followCursor = true;
 
 	// Border color (can be changed dynamically)
 	public borderColor: (str: string) => string;
@@ -530,6 +532,7 @@ export class Editor implements Component, Focusable {
 
 	private navigateHistory(direction: 1 | -1): void {
 		this.lastAction = null;
+		this.followCursor = true;
 		if (this.history.length === 0) return;
 
 		// When entering browse, capture host state up front — before the filter
@@ -590,6 +593,7 @@ export class Editor implements Component, Focusable {
 			this.preferredVisualCol = null;
 			this.snappedFromCursorCol = null;
 			this.scrollOffset = 0;
+			this.followCursor = true;
 			if (hostDraft !== undefined) {
 				this.onHistoryDraftRestore?.(hostDraft);
 			}
@@ -613,6 +617,7 @@ export class Editor implements Component, Focusable {
 		this.setCursorCol(cursorPlacement === "start" ? 0 : this.state.lines[this.state.cursorLine]?.length || 0);
 		// Reset scroll - render() will adjust to show cursor
 		this.scrollOffset = 0;
+		this.followCursor = true;
 
 		if (this.onChange) {
 			this.onChange(this.getText());
@@ -656,15 +661,19 @@ export class Editor implements Component, Focusable {
 		let cursorLineIndex = layoutLines.findIndex((line) => line.hasCursor);
 		if (cursorLineIndex === -1) cursorLineIndex = 0;
 
-		// Adjust scroll offset to keep cursor visible
-		if (cursorLineIndex < this.scrollOffset) {
-			this.scrollOffset = cursorLineIndex;
-		} else if (cursorLineIndex >= this.scrollOffset + maxVisibleLines) {
-			this.scrollOffset = cursorLineIndex - maxVisibleLines + 1;
+		const maxScrollOffset = Math.max(0, layoutLines.length - maxVisibleLines);
+		this.renderedMaxScrollOffset = maxScrollOffset;
+
+		// Adjust scroll offset to keep cursor visible while following cursor
+		if (this.followCursor) {
+			if (cursorLineIndex < this.scrollOffset) {
+				this.scrollOffset = cursorLineIndex;
+			} else if (cursorLineIndex >= this.scrollOffset + maxVisibleLines) {
+				this.scrollOffset = cursorLineIndex - maxVisibleLines + 1;
+			}
 		}
 
 		// Clamp scroll offset to valid range
-		const maxScrollOffset = Math.max(0, layoutLines.length - maxVisibleLines);
 		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, maxScrollOffset));
 
 		// Get visible lines slice
@@ -766,6 +775,17 @@ export class Editor implements Component, Focusable {
 			return result ? { ...result, focus: true } : undefined;
 		}
 
+		if (event.type === "wheel") {
+			if (this.renderedMaxScrollOffset <= 0) return undefined;
+			const rawDelta = event.wheelDelta ?? 0;
+			const delta = Number.isFinite(rawDelta) ? Math.trunc(rawDelta) : 0;
+			const previous = this.scrollOffset;
+			const next = Math.max(0, Math.min(this.renderedMaxScrollOffset, previous + delta));
+			this.followCursor = false;
+			this.scrollOffset = next;
+			return { handled: true, render: next !== previous };
+		}
+
 		// Leave press/drag/release unhandled so the renderer's screen-level text
 		// selection can run over the editor rows (drag to select, release to copy).
 		// The renderer synthesizes a click when press and release land on the same
@@ -802,6 +822,7 @@ export class Editor implements Component, Focusable {
 
 		this.state.cursorLine = visualLine.logicalLine;
 		this.setCursorCol(visualLine.startCol + targetIndex);
+		this.followCursor = true;
 		this.lastAction = null;
 		this.exitHistoryBrowsing();
 		if (this.autocompleteState) this.updateAutocomplete();
@@ -809,6 +830,9 @@ export class Editor implements Component, Focusable {
 	}
 
 	handleInput(data: string): void {
+		if (!this.isInPaste && isKeyRelease(data)) {
+			return;
+		}
 		const kb = getKeybindings();
 
 		// Handle character jump mode (awaiting next character to jump to)
@@ -1532,6 +1556,7 @@ export class Editor implements Component, Focusable {
 		this.pasteCounter = 0;
 		this.exitHistoryBrowsing();
 		this.scrollOffset = 0;
+		this.followCursor = true;
 		this.undoStack.clear();
 		this.lastAction = null;
 
@@ -1541,6 +1566,7 @@ export class Editor implements Component, Focusable {
 
 	private handleBackspace(): void {
 		this.exitHistoryBrowsing();
+		this.followCursor = true;
 		this.lastAction = null;
 
 		if (this.state.cursorCol > 0) {
@@ -1632,6 +1658,7 @@ export class Editor implements Component, Focusable {
 		this.state.cursorCol = col;
 		this.preferredVisualCol = null;
 		this.snappedFromCursorCol = null;
+		this.followCursor = true;
 	}
 
 	/**
@@ -1643,6 +1670,7 @@ export class Editor implements Component, Focusable {
 		currentVisualLine: number,
 		targetVisualLine: number,
 	): void {
+		this.followCursor = true;
 		const currentVL = visualLines[currentVisualLine];
 		const targetVL = visualLines[targetVisualLine];
 		if (!(currentVL && targetVL)) return;
@@ -1786,6 +1814,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteToStartOfLine(): void {
 		this.exitHistoryBrowsing();
+		this.followCursor = true;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1821,6 +1850,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteToEndOfLine(): void {
 		this.exitHistoryBrowsing();
+		this.followCursor = true;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1853,6 +1883,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteWordBackwards(): void {
 		this.exitHistoryBrowsing();
+		this.followCursor = true;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1898,6 +1929,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteWordForward(): void {
 		this.exitHistoryBrowsing();
+		this.followCursor = true;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1941,6 +1973,7 @@ export class Editor implements Component, Focusable {
 	private handleForwardDelete(): void {
 		this.exitHistoryBrowsing();
 		this.lastAction = null;
+		this.followCursor = true;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -2055,6 +2088,7 @@ export class Editor implements Component, Focusable {
 
 	private moveCursor(deltaLine: number, deltaCol: number): void {
 		this.lastAction = null;
+		this.followCursor = true;
 		const visualLines = this.buildVisualLineMap(this.lastWidth);
 		const currentVisualLine = this.findCurrentVisualLine(visualLines);
 
@@ -2134,6 +2168,7 @@ export class Editor implements Component, Focusable {
 
 	private moveWordBackwards(): void {
 		this.lastAction = null;
+		this.followCursor = true;
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
 		// If at start of line, move to end of previous line
@@ -2281,6 +2316,7 @@ export class Editor implements Component, Focusable {
 
 	private undo(): void {
 		this.exitHistoryBrowsing();
+		this.followCursor = true;
 		const snapshot = this.undoStack.pop();
 		if (!snapshot) return;
 		Object.assign(this.state, snapshot.state);
@@ -2299,6 +2335,7 @@ export class Editor implements Component, Focusable {
 	 */
 	private jumpToChar(char: string, direction: "forward" | "backward"): void {
 		this.lastAction = null;
+		this.followCursor = true;
 		const isForward = direction === "forward";
 		const lines = this.state.lines;
 
@@ -2329,6 +2366,7 @@ export class Editor implements Component, Focusable {
 
 	private moveWordForwards(): void {
 		this.lastAction = null;
+		this.followCursor = true;
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
 		// If at end of line, move to start of next line

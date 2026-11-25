@@ -1,13 +1,16 @@
 import {
-  Container,
   matchesKey,
   Key,
   truncateToWidth,
   visibleWidth,
+  type Component,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import { ListMouseTracker } from '#/tui/utils/mouse-regions';
 import { SearchableList } from '#/tui/utils/searchable-list';
 import type { ModelSwitchAction } from '#/utils/model-switch-confirm-config';
 
@@ -54,13 +57,13 @@ export interface ModelSwitchConfirmDialogOptions {
   readonly onCancel: () => void;
 }
 
-export class ModelSwitchConfirmDialogComponent extends Container implements Focusable {
+export class ModelSwitchConfirmDialogComponent implements Component, Focusable {
   focused = false;
   private readonly opts: ModelSwitchConfirmDialogOptions;
   private readonly list: SearchableList<ModelSwitchOption>;
+  private readonly mouse = new ListMouseTracker<number>();
 
   constructor(opts: ModelSwitchConfirmDialogOptions) {
-    super();
     this.opts = opts;
     this.list = new SearchableList({
       items:
@@ -75,20 +78,38 @@ export class ModelSwitchConfirmDialogComponent extends Container implements Focu
     });
   }
 
+  invalidate(): void {}
+
   handleInput(data: string): void {
     if (matchesKey(data, Key.escape)) {
       this.opts.onCancel();
       return;
     }
     if (matchesKey(data, Key.enter)) {
-      const chosen = this.list.selected();
-      if (chosen !== undefined) this.opts.onSelect(chosen.value);
+      this.confirmSelected();
       return;
     }
     this.list.handleKey(data);
   }
 
-  override render(width: number): string[] {
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    return this.mouse.handle(event, {
+      focused: this.focused,
+      onHover: (index) => this.list.selectIndex(index),
+      onActivate: (index) => {
+        this.list.selectIndex(index);
+        this.confirmSelected();
+      },
+    });
+  }
+
+  private confirmSelected(): void {
+    const chosen = this.list.selected();
+    if (chosen !== undefined) this.opts.onSelect(chosen.value);
+  }
+
+  render(width: number): string[] {
+    this.mouse.reset();
     const view = this.list.view();
     const title =
       this.opts.kind === 'effort'
@@ -118,17 +139,22 @@ export class ModelSwitchConfirmDialogComponent extends Container implements Focu
     const maxLabelWidth = Math.max(...view.items.map((o) => visibleWidth(o.label)));
     for (let i = view.page.start; i < view.page.end; i++) {
       const opt = view.items[i]!;
-      const isSelected = i === view.selectedIndex;
-      const pointer = isSelected ? SELECT_POINTER : ' ';
-      let line = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
-      line += isSelected
-        ? currentTheme.boldFg('primary', opt.label)
-        : currentTheme.fg('text', opt.label);
-      if (opt.description !== undefined) {
-        const gap = maxLabelWidth - visibleWidth(opt.label) + 4;
-        line += ' '.repeat(gap) + currentTheme.fg('textMuted', opt.description);
-      }
-      lines.push(line);
+      const selected = i === view.selectedIndex;
+      this.mouse.track(lines, i, () => {
+        const prefix = currentTheme.fg(
+          selected ? 'primary' : 'textDim',
+          `  ${selected ? SELECT_POINTER : ' '} `,
+        );
+        const label = selected
+          ? currentTheme.boldFg('primary', opt.label)
+          : currentTheme.fg('text', opt.label);
+        const description =
+          opt.description === undefined
+            ? ''
+            : ' '.repeat(maxLabelWidth - visibleWidth(opt.label) + 4) +
+              currentTheme.fg('textMuted', opt.description);
+        lines.push(`${prefix}${label}${description}`);
+      });
     }
 
     lines.push('');

@@ -107,7 +107,6 @@
     "apps/kimi-code/test/tui/components/chrome/device-code-box.test.ts": 1,
     "apps/kimi-code/test/tui/components/chrome/welcome.test.ts": 1,
     "apps/kimi-code/test/tui/components/dialogs/custom-registry-import.test.ts": 1,
-    "apps/kimi-code/test/tui/components/dialogs/model-selector.test.ts": 1,
     "apps/kimi-code/test/tui/components/dialogs/provider-manager.test.ts": 1,
     "apps/kimi-code/test/tui/controllers/survey-controller.test.ts": 2,
     "apps/kimi-code/test/tui/fullscreen-layout.test.ts": 2,

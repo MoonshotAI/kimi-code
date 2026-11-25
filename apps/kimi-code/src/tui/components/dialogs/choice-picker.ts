@@ -14,13 +14,9 @@ import { currentTheme, type ColorToken } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
 import { Markdown } from '#/tui/components/markdown/markdown';
-import {
-  finishDialogLines,
-  focusOnUnfocusedMouse,
-  handleSelectableListMouse,
-  type MouseRowRegion,
-} from '#/tui/utils/dialog-mouse';
+import { finishDialogLines } from '#/tui/utils/dialog-mouse';
 import { printableChar } from '#/tui/utils/printable-key';
+import { focusOnUnfocusedClick, ListMouseTracker } from '#/tui/utils/mouse-regions';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 export interface ChoiceOption {
@@ -81,8 +77,7 @@ export class ChoicePickerComponent implements Component, Focusable {
   focused = false;
   private readonly opts: ChoicePickerOptions;
   private readonly list: SearchableList<ChoiceOption>;
-  private readonly shownAt = Date.now();
-  private choiceRegions: readonly MouseRowRegion[] = [];
+  private readonly mouse = new ListMouseTracker<number>();
 
   constructor(opts: ChoicePickerOptions) {
     this.opts = opts;
@@ -136,34 +131,16 @@ export class ChoicePickerComponent implements Component, Focusable {
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    if (!this.focused) return focusOnUnfocusedMouse(event);
-    if (event.type === 'wheel') {
-      const view = this.list.view();
-      if (view.page.pageCount > 1 && event.wheelDelta !== undefined) {
-        const before = view.selectedIndex;
-        if (event.wheelDelta < 0) this.list.pageUp();
-        else if (event.wheelDelta > 0) this.list.pageDown();
-        return { handled: true, render: this.list.view().selectedIndex !== before };
-      }
-      return { handled: true };
-    }
-    return handleSelectableListMouse({
-      event,
+    return this.mouse.handle(event, {
       focused: this.focused,
-      shownAt: this.shownAt,
-      regions: this.choiceRegions,
-      select: (index) => this.selectIndex(index),
-      activate: (index) => {
+      onWheel: (delta) => this.list.wheelPage(delta),
+      onHover: (index) => this.list.selectIndex(index),
+      onActivate: (index) => {
+        this.list.selectIndex(index);
         const chosen = this.list.view().items[index];
         if (chosen !== undefined) this.opts.onSelect(chosen.value);
       },
     });
-  }
-
-  private selectIndex(index: number): boolean {
-    const changed = this.list.view().selectedIndex !== index;
-    this.list.moveTo(index);
-    return changed;
   }
 
   selectedValue(): string | undefined {
@@ -236,31 +213,30 @@ export class ChoicePickerComponent implements Component, Focusable {
     if (options.length === 0) {
       lines.push(currentTheme.fg('textMuted', '   No matches'));
     }
-    const choiceRegions: MouseRowRegion[] = [];
+    this.mouse.reset();
     for (let i = view.page.start; i < view.page.end; i++) {
-      const start = lines.length;
-      const opt = options[i]!;
-      const isSelected = i === view.selectedIndex;
-      const isCurrent = opt.value === this.opts.currentValue;
-      const pointer = isSelected ? SELECT_POINTER : ' ';
-      const labelStyle = optionLabelStyle(opt, isSelected);
-      let line = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
-      line += labelStyle(opt.label);
-      if (isCurrent) {
-        line += ' ' + currentTheme.fg('success', CURRENT_MARK);
-      }
-      lines.push(line);
-      if (opt.description !== undefined && opt.description.length > 0) {
-        const descriptionWidth = Math.max(1, width - 4);
-        const descriptionColor =
-          isSelected && opt.descriptionTone !== undefined ? opt.descriptionTone : 'textMuted';
-        for (const descLine of wrapDescription(opt.description, descriptionWidth)) {
-          lines.push(currentTheme.fg(descriptionColor, `    ${descLine}`));
+      this.mouse.track(lines, i, () => {
+        const opt = options[i]!;
+        const isSelected = i === view.selectedIndex;
+        const isCurrent = opt.value === this.opts.currentValue;
+        const pointer = isSelected ? SELECT_POINTER : ' ';
+        const labelStyle = optionLabelStyle(opt, isSelected);
+        let line = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
+        line += labelStyle(opt.label);
+        if (isCurrent) {
+          line += ' ' + currentTheme.fg('success', CURRENT_MARK);
         }
-      }
-      choiceRegions.push({ start, end: lines.length, index: i });
+        lines.push(line);
+        if (opt.description !== undefined && opt.description.length > 0) {
+          const descriptionWidth = Math.max(1, width - 4);
+          const descriptionColor =
+            isSelected && opt.descriptionTone !== undefined ? opt.descriptionTone : 'textMuted';
+          for (const descLine of wrapDescription(opt.description, descriptionWidth)) {
+            lines.push(currentTheme.fg(descriptionColor, `    ${descLine}`));
+          }
+        }
+      });
     }
-    this.choiceRegions = choiceRegions;
 
     lines.push('');
     return this.finishLines(lines, width);
@@ -371,10 +347,7 @@ export class PreviewChoicePickerComponent extends DockSection implements Focusab
     if (event.type === 'wheel' || part === 'head') {
       return this.showingNewChoiceFromTop(() => this.picker.handleMouse(event));
     }
-    if (this.focused) return undefined;
-    if (event.type === 'press') return { handled: true };
-    if (event.type === 'click') return { handled: true, focus: true };
-    return undefined;
+    return focusOnUnfocusedClick(this.focused, event);
   }
 
   private showingNewChoiceFromTop<T>(action: () => T): T {

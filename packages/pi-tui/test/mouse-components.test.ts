@@ -3,10 +3,14 @@ import { describe, it } from "node:test";
 import { AltScreenSearchComponent } from "../src/alt-screen-search.ts";
 import { Editor, type EditorTheme } from "../src/components/editor.ts";
 import { Input } from "../src/components/input.ts";
+import { ScrollView } from "../src/components/scroll-view.ts";
 import { SelectList, type SelectListTheme } from "../src/components/select-list.ts";
 import { SettingsList, type SettingsListTheme } from "../src/components/settings-list.ts";
+import { Text } from "../src/components/text.ts";
+import { VStack } from "../src/components/v-stack.ts";
 import { Container, type TuiMouseEvent, type TuiMouseEventType } from "../src/tui.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
+import { stripTerminalSequences } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 function mouse(type: TuiMouseEventType, x: number, y: number, width = 80, height = 10): TuiMouseEvent {
@@ -423,6 +427,84 @@ describe("mouse-aware components", () => {
 
 		assert.deepStrictEqual(copied, ["hello"]);
 		assert.deepStrictEqual(editor.getCursor(), cursorBefore);
+		tui.stop();
+	});
+
+	it("scrolls an overflowing multiline editor on wheel without stealing focus and stays scrolled until interaction", async () => {
+		const terminal = new VirtualTerminal(30, 12);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { wheelScrollLines: 2 });
+		const transcript = new ScrollView(
+			new Text(Array.from({ length: 20 }, (_, index) => `t${index + 1}`).join("\n"), 0, 0),
+			{ primary: true, follow: "end" },
+		);
+		const otherFocus = new Input();
+		const editor = new Editor(tui, editorTheme);
+		editor.setText("short1\nshort2");
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1 },
+				{ component: editor, basis: "auto", shrink: 0 },
+			]),
+		);
+		tui.setFocus(otherFocus);
+		tui.start();
+		await terminal.waitForRender();
+
+		// Non-overflowing editor passes wheel through to the transcript.
+		assert.strictEqual(editor.handleMouse({ ...mouse("wheel", 2, 1, 30, 4), wheelDelta: -2 }), undefined);
+		const transcriptBefore = transcript.scrollTop;
+		terminal.sendInput("\x1b[<64;3;11M");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollTop, transcriptBefore - 2);
+		assert.strictEqual(tui.getFocusedComponent(), otherFocus);
+
+		// Overflowing editor (10 lines, maxVisibleLines = max(5, floor(12 * 0.3)) = 5 -> maxScrollOffset = 5).
+		editor.setText(Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n"));
+		await terminal.waitForRender();
+		const visibleEditorLines = () => editor.render(30).map((line) => stripTerminalSequences(line).trim());
+		assert.deepStrictEqual(visibleEditorLines().slice(1, 6), ["line 6", "line 7", "line 8", "line 9", "line 10"]);
+
+		// Wheel up via TuiAltScreen scrolls the editor, does not scroll transcript, and does not steal focus.
+		const transcriptLocked = transcript.scrollTop;
+		terminal.sendInput("\x1b[<64;3;9M");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollTop, transcriptLocked);
+		assert.strictEqual(tui.getFocusedComponent(), otherFocus);
+		assert.deepStrictEqual(visibleEditorLines().slice(1, 6), ["line 4", "line 5", "line 6", "line 7", "line 8"]);
+
+		// Stays scrolled across repeated renders, Kitty key-release events, and focus-in reports.
+		assert.deepStrictEqual(visibleEditorLines().slice(1, 6), ["line 4", "line 5", "line 6", "line 7", "line 8"]);
+		editor.handleInput("\x1b[1;1:3A");
+		editor.handleInput("\x1b[97;1:3u");
+		editor.handleInput("\x1b[I");
+		assert.deepStrictEqual(visibleEditorLines().slice(1, 6), ["line 4", "line 5", "line 6", "line 7", "line 8"]);
+
+		// Wheel to top boundary returns render: true, then render: false at boundary, never focus: true.
+		const toTop = editor.handleMouse({ ...mouse("wheel", 2, 2, 30, 7), wheelDelta: -10 });
+		assert.deepStrictEqual(toTop, { handled: true, render: true });
+		const atTop = editor.handleMouse({ ...mouse("wheel", 2, 2, 30, 7), wheelDelta: -2 });
+		assert.deepStrictEqual(atTop, { handled: true, render: false });
+		assert.deepStrictEqual(visibleEditorLines().slice(1, 6), ["line 1", "line 2", "line 3", "line 4", "line 5"]);
+
+		// Cursor key re-engages followCursor (cursor is on line 10, so viewport snaps back down).
+		editor.handleInput("\x1b[D");
+		assert.deepStrictEqual(visibleEditorLines().slice(1, 6), ["line 6", "line 7", "line 8", "line 9", "line 10"]);
+
+		// Wheel up again, then text-area click re-engages followCursor at the clicked row.
+		editor.handleMouse({ ...mouse("wheel", 2, 2, 30, 7), wheelDelta: -5 });
+		assert.deepStrictEqual(visibleEditorLines().slice(1, 6), ["line 1", "line 2", "line 3", "line 4", "line 5"]);
+		const clickResult = editor.handleMouse(mouse("click", 2, 1, 30, 7));
+		assert.strictEqual(clickResult?.focus, true);
+		assert.strictEqual(editor.getCursor().line, 0);
+
+		// Move to bottom, wheel back to top, then insertTextAtCursor re-engages followCursor.
+		editor.setText(Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n"));
+		editor.render(30);
+		editor.handleMouse({ ...mouse("wheel", 2, 2, 30, 7), wheelDelta: -5 });
+		assert.deepStrictEqual(visibleEditorLines().slice(1, 6), ["line 1", "line 2", "line 3", "line 4", "line 5"]);
+		editor.insertTextAtCursor("!");
+		assert.deepStrictEqual(visibleEditorLines().slice(1, 6), ["line 6", "line 7", "line 8", "line 9", "line 10!"]);
+
 		tui.stop();
 	});
 });

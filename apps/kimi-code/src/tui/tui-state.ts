@@ -45,6 +45,8 @@ import {
 } from './utils/markdown-options';
 import { createTerminalState, type TerminalState } from './utils/terminal-state';
 
+export type BlockingDialogKind = 'goal-start' | 'swarm-start';
+
 export interface TUIState {
   ui: TUI;
   terminal: ProcessTerminal;
@@ -80,7 +82,7 @@ export interface TUIState {
     | 'trust-prompt'
     | 'cache-hint'
     | 'model-switch-confirm'
-    | 'goal-start'
+    | BlockingDialogKind
     | null;
   editorReplacementMounted: boolean;
   tasksBrowser: TasksBrowserState | undefined;
@@ -143,7 +145,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const notifyPanel = new NotifyPanelComponent(
     fullscreen ? { maxBodyRows: DOCK_UPDATES_ROWS, screenRows: () => ui.terminal.rows } : undefined,
   );
-  const btwPanelContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+  const btwPanelContainer = fullscreen ? new VStack() : new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const surveyContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const editorContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const editor = new CustomEditor(ui, {
@@ -274,7 +276,8 @@ export function isBlockingPromptPending(state: Pick<TUIState, 'livePane' | 'acti
   return (
     state.livePane.pendingApproval !== null ||
     state.livePane.pendingQuestion !== null ||
-    state.activeDialog === 'goal-start'
+    state.activeDialog === 'goal-start' ||
+    state.activeDialog === 'swarm-start'
   );
 }
 
@@ -286,4 +289,16 @@ function consumeDockOverflowChange(
   const active = editorSlotComponent(state);
   if (active instanceof DockSection && active.consumeOverflowChange()) changed = true;
   return changed;
+}
+
+export function setBlockingDialog(
+  state: Pick<TUIState, 'dockContainer' | 'activeDialog' | 'livePane' | 'notifyPanel' | 'ui'>,
+  dialog: BlockingDialogKind,
+  pending: boolean,
+): void {
+  if (state.dockContainer === undefined) return;
+  if (pending) state.activeDialog = dialog;
+  else if (state.activeDialog === dialog) state.activeDialog = null;
+  state.notifyPanel.setPrompt(isBlockingPromptPending(state));
+  state.ui.requestRender();
 }

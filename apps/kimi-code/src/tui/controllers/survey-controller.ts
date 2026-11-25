@@ -464,7 +464,29 @@ export class SurveyController {
     const container = this.host.state.surveyContainer;
     container.clear();
     container.addChild(new Spacer(1));
-    container.addChild(new SurveyPanelComponent(this.view));
+    container.addChild(
+      new SurveyPanelComponent(this.view, {
+        onSelectOption: (index) => {
+          this.handleOptionClick(index);
+        },
+        onUndo: () => {
+          this.handleUndoClick();
+        },
+      }),
+    );
+  }
+
+  private handleOptionClick(index: number): void {
+    if (this.ratingView.phase !== 'open') return;
+    if (this.inMountProtection()) return;
+    if (this.tooNarrow() || this.tooShort()) return;
+    this.chooseOptionIndex(index);
+  }
+
+  private handleUndoClick(): void {
+    if (this.ratingView.phase !== 'pending') return;
+    if (this.inMountProtection()) return;
+    this.act('undo');
   }
 
   private chooseDigit(digit: string): void {
@@ -480,11 +502,15 @@ export class SurveyController {
   private chooseHovered(): void {
     const hoverIndex = this.view.hoverIndex;
     if (hoverIndex === undefined) return;
-    if (hoverIndex === SURVEY_DISMISS_OPTION_INDEX) {
+    this.chooseOptionIndex(hoverIndex);
+  }
+
+  private chooseOptionIndex(index: number): void {
+    if (index === SURVEY_DISMISS_OPTION_INDEX) {
       this.act('dismiss');
       return;
     }
-    const response = SURVEY_DIGIT_RESPONSES[String(hoverIndex + 1)];
+    const response = SURVEY_DIGIT_RESPONSES[String(index + 1)];
     if (response === undefined) return;
     this.select(response);
   }
