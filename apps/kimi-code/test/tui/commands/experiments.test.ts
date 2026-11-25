@@ -182,5 +182,22 @@ describe('experimental feature command handlers', () => {
     expect(host.showNotice).toHaveBeenCalledWith(
       'Tower mode takes effect after restarting Kimi Code.',
     );
+
+    host.showNotice.mockClear();
+    host.harness.getExperimentalFeatures.mockResolvedValue([
+      feature({
+        id: 'tower',
+        title: 'Tower mode',
+        stage: 'experimental',
+        effectTiming: 'restart',
+        enabled: false,
+        active: false,
+      }),
+    ]);
+
+    await applyExperimentalFeatureChanges(host, [{ id: 'tower', enabled: false }]);
+
+    expect(isExperimentalFlagEnabled('tower')).toBe(false);
+    expect(host.showNotice).not.toHaveBeenCalled();
   });
 });

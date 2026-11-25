@@ -91,6 +91,8 @@ describe('sessionMentionCandidates', () => {
 
 describe('session mentions lab switch', () => {
   afterEach(() => {
+    localStorage.clear();
+    configStore().resetConfig();
     useSessionMentions().setSessionMentions(false);
     sessionsStore().setSessions([]);
     resetKimiClientDeps();
@@ -98,7 +100,12 @@ describe('session mentions lab switch', () => {
 
   it('offers no sessions and skips the server search until the switch is on', async () => {
     const listSessions = vi.fn(async () => ({ items: [session('found')], hasMore: false, nextPageToken: null, total: 1 }));
-    setKimiClientDeps({ api: () => ({ listSessions }) as unknown as KimiWebApi, t: (key) => key });
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const getMeta = vi.fn(async () => null);
+    setKimiClientDeps({
+      api: () => ({ listSessions, setConfig, getMeta }) as unknown as KimiWebApi,
+      t: (key) => key,
+    });
     sessionsStore().setSessions([session('loaded')]);
     const client = useKimiWebClient();
     const signal = new AbortController().signal;
@@ -107,9 +114,10 @@ describe('session mentions lab switch', () => {
     expect(await client.searchSessionMentions('found', { signal })).toEqual([]);
     expect(listSessions).not.toHaveBeenCalled();
 
-    useSessionMentions().setSessionMentions(true);
+    expect(await configStore().setExperimentalFlag('session_mentions', true)).toBe(true);
 
-    expect(localStorage.getItem('kimi-web.session-mentions')).toBe('1');
+    expect(setConfig).toHaveBeenCalledWith({ experimental: { session_mentions: true } });
+    expect(localStorage.getItem('kimi-web.session-mentions')).toBeNull();
     expect(client.sessionMentionCandidates.value.map((candidate) => candidate.id)).toEqual(['loaded']);
     expect((await client.searchSessionMentions('found', { signal })).map((candidate) => candidate.id)).toEqual(['found']);
     expect(listSessions).toHaveBeenCalledWith(expect.objectContaining({ query: 'found', localOnly: true }), { signal });

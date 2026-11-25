@@ -10,6 +10,7 @@ import { isDaemonApiError } from '@moonshot-ai/app-core/api';
 import {
   STORAGE_KEYS,
   permissionModeFromConfig,
+  safeGetJson,
   safeGetString,
   safeRemove,
 } from '@moonshot-ai/app-core/lib';
@@ -122,7 +123,8 @@ export const useConfigStore = defineStore('kimi.config', () => {
       contextFeature !== undefined
         ? contextFeature.enabled
         : experimentalBeta.value?.enabled === true ||
-          experimentalFlags.value['context_inspector'] === true;
+          experimentalFlags.value['context_inspector'] === true ||
+          safeGetJson<boolean>(STORAGE_KEYS.contextInspector) === true;
     setContextInspectorEnabled(contextEnabled);
 
     const mentionsFeature = experimentalFeatures.value.find(
@@ -131,7 +133,8 @@ export const useConfigStore = defineStore('kimi.config', () => {
     const mentionsEnabled =
       mentionsFeature !== undefined
         ? mentionsFeature.enabled
-        : experimentalFlags.value['session_mentions'] === true;
+        : experimentalFlags.value['session_mentions'] === true ||
+          safeGetString(STORAGE_KEYS.sessionMentions) === '1';
     setSessionMentions(mentionsEnabled);
   }
 
@@ -309,12 +312,12 @@ export const useConfigStore = defineStore('kimi.config', () => {
   }
 
   async function setExperimentalFlag(id: string, on: boolean): Promise<boolean> {
-    clearLegacyLocalExperimentalKey(id);
     const saved = await updateConfig({ experimental: { [id]: on } });
     if (!saved) return false;
+    clearLegacyLocalExperimentalKey(id);
     metaCommittedGeneration = ++metaRequestGeneration;
     const existing = experimentalFeatures.value.find((feature) => feature.id === id);
-    if (existing?.effectTiming !== 'restart') {
+    if (existing?.effectTiming !== 'restart' || !on) {
       experimentalFlags.value = { ...experimentalFlags.value, [id]: on };
     }
     if (existing !== undefined) {
@@ -323,7 +326,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
           ? {
               ...feature,
               enabled: on,
-              active: feature.effectTiming === 'restart' ? feature.active : on,
+              active: feature.effectTiming === 'restart' ? feature.active && on : on,
               source: 'config',
               configValue: on,
             }

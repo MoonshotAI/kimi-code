@@ -5999,6 +5999,32 @@ describe('setNotifyUserEnabled', () => {
     const { useContextInspector, useSessionMentions } = await import('@moonshot-ai/app-core');
     localStorage.setItem(STORAGE_KEYS.contextInspector, 'true');
     localStorage.setItem(STORAGE_KEYS.sessionMentions, '1');
+    configStore().resetConfig();
+
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
+    expect(useSessionMentions().sessionMentions.value).toBe(true);
+
+    apiMock.getMeta.mockRejectedValueOnce(new Error('transient offline'));
+    await configStore().refreshServerMeta();
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
+    expect(useSessionMentions().sessionMentions.value).toBe(true);
+    expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBe('true');
+    expect(localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBe('1');
+
+    apiMock.getMeta.mockResolvedValueOnce({
+      serverVersion: '1.0.0',
+      openInApps: [],
+      dangerousBypassAuth: false,
+      experimentalFlags: {},
+      backend: 'v2',
+      webTitle: '',
+      homeDir: '/tmp/home',
+    });
+    await configStore().refreshServerMeta();
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
+    expect(useSessionMentions().sessionMentions.value).toBe(true);
+    expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBe('true');
+    expect(localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBe('1');
 
     apiMock.setConfig.mockResolvedValue({ providers: {} });
     apiMock.getMeta

@@ -875,7 +875,7 @@ export async function applyExperimentalFeatureChanges(
             );
       for (const feature of affected) {
         if (noticedIds.has(feature.id)) continue;
-        if (feature.effectTiming === 'restart') {
+        if (feature.effectTiming === 'restart' && feature.enabled && !feature.active) {
           noticedIds.add(feature.id);
           host.showNotice(`${feature.title} takes effect after restarting Kimi Code.`);
         } else if (

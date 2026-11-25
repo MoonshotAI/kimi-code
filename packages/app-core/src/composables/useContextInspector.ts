@@ -1,6 +1,9 @@
 import { readonly, ref } from 'vue';
+import { STORAGE_KEYS, safeGetJson } from '../lib/storage';
 
-const contextInspectorEnabledState = ref(false);
+const contextInspectorEnabledState = ref(
+  safeGetJson<boolean>(STORAGE_KEYS.contextInspector) === true,
+);
 
 export function setContextInspectorEnabled(enabled: boolean): void {
   contextInspectorEnabledState.value = enabled;

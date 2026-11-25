@@ -134,7 +134,7 @@ const towerToggleEnabled = computed(
 );
 const towerLockedByEnv = computed(() => towerFeature.value?.source === 'env');
 const towerPendingRestart = computed(
-  () => towerFeature.value !== undefined && towerFeature.value.enabled !== towerFeature.value.active,
+  () => towerFeature.value?.enabled === true && !towerFeature.value.active,
 );
 
 async function onBetaMasterChange(on: boolean): Promise<void> {
