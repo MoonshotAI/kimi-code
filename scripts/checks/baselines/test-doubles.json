@@ -60,12 +60,10 @@
     "apps/desktop/tests/main/e2e-stub-model.test.ts": 1
   },
   "engine-harness-import": {
-    "packages/acp-server/test/_helpers/scriptedProvider.ts": 1,
     "packages/klient/test/helpers/conformance.ts": 1,
     "packages/product/test/survey-turns.test.ts": 1
   },
   "engine-mock-provider": {
-    "packages/acp-server/test/_helpers/scriptedProvider.ts": 2,
     "packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts": 53,
     "packages/agent-core-v2/test/agent/llmRequester/llmRequester.test.ts": 10,
     "packages/agent-core-v2/test/agent/loop/loop.test.ts": 3,
@@ -80,8 +78,6 @@
     "packages/klient/test/helpers/conformance.ts": 2
   },
   "engine-mock-response": {
-    "packages/acp-server/test/_helpers/scriptedProvider.ts": 3,
-    "packages/acp-server/test/e2e-turn.test.ts": 9,
     "packages/agent-core-v2/test/agent/contextMemory/context.test.ts": 4,
     "packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts": 50,
     "packages/agent-core-v2/test/agent/llmRequester/llmRequester.test.ts": 10,
