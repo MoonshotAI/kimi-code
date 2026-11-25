@@ -1931,6 +1931,20 @@ describe('applyPrintModeConfigDefaults', () => {
     disposables.dispose();
   });
 
+  it('does not override a subagent env override equal to the default', async () => {
+    const env: Record<string, string> = {
+      [SUBAGENT_TIMEOUT_ENV]: String(DEFAULT_SUBAGENT_TIMEOUT_MS),
+    };
+    const { config, disposables } = await createConfig(env);
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveSubagentTimeoutMs(config)).toBe(DEFAULT_SUBAGENT_TIMEOUT_MS);
+    expect(config.inspect('subagent').memoryValue).toBeUndefined();
+
+    disposables.dispose();
+  });
+
   it('does not override the swarm timeout env override', async () => {
     const env: Record<string, string> = { [SWARM_TIMEOUT_ENV]: '3000' };
     const { config, disposables } = await createConfig(env);
@@ -1938,6 +1952,35 @@ describe('applyPrintModeConfigDefaults', () => {
     await applyPrintModeConfigDefaults(config);
 
     expect(resolveSwarmTimeoutMs(config)).toBe(3000);
+
+    disposables.dispose();
+  });
+
+  it('does not override a swarm env override equal to the default', async () => {
+    const env: Record<string, string> = { [SWARM_TIMEOUT_ENV]: String(DEFAULT_SWARM_TIMEOUT_MS) };
+    const { config, disposables } = await createConfig(env);
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveSwarmTimeoutMs(config)).toBe(DEFAULT_SWARM_TIMEOUT_MS);
+    expect(config.inspect('swarm').memoryValue).toBeUndefined();
+
+    disposables.dispose();
+  });
+
+  it('does not override a config value equal to the default', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      `[subagent]\ntimeout_ms = ${DEFAULT_SUBAGENT_TIMEOUT_MS}\n\n` +
+        `[swarm]\ntimeout_ms = ${DEFAULT_SWARM_TIMEOUT_MS}\n`,
+    );
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveSubagentTimeoutMs(config)).toBe(DEFAULT_SUBAGENT_TIMEOUT_MS);
+    expect(resolveSwarmTimeoutMs(config)).toBe(DEFAULT_SWARM_TIMEOUT_MS);
+    expect(config.inspect('subagent').memoryValue).toBeUndefined();
+    expect(config.inspect('swarm').memoryValue).toBeUndefined();
 
     disposables.dispose();
   });
