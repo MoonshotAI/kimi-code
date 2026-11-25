@@ -2,16 +2,16 @@
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 
-defineProps<{ show: boolean }>();
+defineProps<{ show: boolean; label?: string; ariaLabel?: string }>();
 const emit = defineEmits<{ click: [] }>();
 const { t } = useI18n();
 </script>
 
 <template>
   <Transition name="jump-pill">
-    <button v-if="show" class="jump-pill" type="button" @click="emit('click')">
+    <button v-if="show" class="jump-pill" type="button" :aria-label="ariaLabel" @click="emit('click')">
       <Icon class="jump-pill-car" name="arrow-down" size="sm" />
-      <span>{{ t('conversation.backToBottom') }}</span>
+      <span>{{ label ?? t('conversation.backToBottom') }}</span>
     </button>
   </Transition>
 </template>

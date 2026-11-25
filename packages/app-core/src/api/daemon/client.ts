@@ -1,4 +1,6 @@
 
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
 import { buildRestUrl, buildWsUrl } from '../config';
 import { noopTracer } from '../../contracts';
 import type { ClientIdentity, CredentialStore, Tracer } from '../../contracts';
@@ -6,6 +8,7 @@ import type {
   AddProviderInput,
   AppCatalogProvider,
   AppConfig,
+  EditableTextFile,
   AppHost,
   AppHostConnectFailure,
   AppHostDefinition,
@@ -62,6 +65,7 @@ import type {
   OAuthRegion,
   PromptSubmission,
   PromptSubmitResult,
+  PromptPredictionCancelReason,
   QuestionResponse,
   ReadRequestOptions,
   RemoteControlStatus,
@@ -961,6 +965,25 @@ export class DaemonKimiWebApi implements KimiWebApi {
       { allowCodes: [40401] },
     );
     return { closed: true };
+  }
+
+  async predictNextPrompt(
+    sessionId: string,
+    input: { predictionId: string; expectedTurnId: number },
+  ): Promise<string | null> {
+    const data = await this.http.post<{ prediction: string | null }>(
+      `/sessions/${encodeURIComponent(sessionId)}:predict-prompt`,
+      { prediction_id: input.predictionId, expected_turn_id: input.expectedTurnId },
+    );
+    return data.prediction;
+  }
+
+  async cancelPromptPrediction(sessionId: string, predictionId: string, reason?: PromptPredictionCancelReason): Promise<boolean> {
+    const data = await this.http.post<{ cancelled: boolean }>(
+      `/sessions/${encodeURIComponent(sessionId)}:cancel-prompt-prediction`,
+      { prediction_id: predictionId, reason },
+    );
+    return data.cancelled;
   }
 
   respondApproval(
@@ -1885,6 +1908,25 @@ export class DaemonKimiWebApi implements KimiWebApi {
     }
     const data = await this.http.post<WireConfig>('/config', wirePatch);
     return toAppConfig(data);
+  }
+
+  async readHostTextFile(path: string): Promise<EditableTextFile> {
+    let blob: Blob;
+    try {
+      blob = await this.http.getBlob('/fs:content', { path }, { cache: 'no-store', maxBytes: HOST_READ_MAX_BYTES });
+    } catch (error) {
+      if (isDaemonApiError(error) && error.code === 40409) return { path, content: '', revision: null };
+      throw error;
+    }
+    if (blob.size > HOST_READ_MAX_BYTES) throw new FileTooLargeError({ size: blob.size, limit: HOST_READ_MAX_BYTES });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+    if (content.includes('\0')) throw new Error('Cannot edit a binary file as text');
+    return { path, content, revision: bytesToHex(sha256(bytes)) };
+  }
+
+  writeHostTextFile(path: string, content: string, revision: string | null): Promise<{ revision: string }> {
+    return this.http.putText('/fs:content', { path, revision: revision ?? 'missing' }, content);
   }
 
   async getAuth(): Promise<AuthResult> {

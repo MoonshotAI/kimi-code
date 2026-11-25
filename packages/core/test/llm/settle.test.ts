@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createSystemMessage,
+  createUserMessage,
   type Message,
   type StreamedMessagePart,
   type ToolCall,
@@ -140,6 +142,225 @@ describe('tool argument settlement', () => {
     );
     expect(infiniteDelays).toHaveLength(1);
     expect(infiniteDelays[0]).toBeGreaterThan(0);
+  });
+
+  it('validates schemas disclosed through system messages and retries with a clean correction request', async () => {
+    const encoded: (readonly Message[])[] = [];
+    let attempts = 0;
+    const protocol = fakeProtocol({
+      encode: (module) => {
+        encoded.push(module.content.messages);
+        return module.content.messages;
+      },
+      sendStream: async () => {
+        attempts += 1;
+        const tool: ToolCall = {
+          type: 'function',
+          id: 'call-disclosed',
+          name: 'weather',
+          arguments: attempts === 1 ? '{"city":42}' : '{"city":"sf"}',
+        };
+        return {
+          body: asyncChunks([
+            { tool },
+            { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+          ]),
+        };
+      },
+    });
+    const module = testModule({
+      messages: [
+        createUserMessage('weather?'),
+        createSystemMessage('Loaded: weather', undefined, [{
+          name: 'weather',
+          description: 'Get weather',
+          parameters: {
+            type: 'object',
+            properties: { city: { type: 'string' } },
+            required: ['city'],
+            additionalProperties: false,
+          },
+        }]),
+      ],
+    });
+    const generated = await runGenerate(protocol, {
+      module,
+      maxAttemptsPerStep: 2,
+    });
+
+    expect(attempts).toBe(2);
+    expect(doneOutcome(generated.outcome).message.toolCalls).toMatchObject([
+      { name: 'weather', arguments: '{"city":"sf"}' },
+    ]);
+    expect(generated.events.find((event) => event.type === 'llm.retry')).toMatchObject({
+      reason: 'invalid_tool_arguments',
+      failedAttempt: 1,
+      nextAttempt: 2,
+    });
+    expect(encoded).toHaveLength(2);
+    expect(encoded[1]?.at(-1)).toMatchObject({ role: 'system' });
+    expect(JSON.stringify(encoded[1]?.at(-1))).toContain('not executed');
+  });
+
+  it('passes calls to tools missing from the visible declarations through to execution', async () => {
+    const generated = await runGenerate(fakeProtocol({
+      chunks: [
+        { tool: { type: 'function', id: 'call-ghost', name: 'ghost', arguments: '{"city":"sf"}' } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), {
+      module: testModule(),
+      maxAttemptsPerStep: 1,
+    });
+
+    expect(doneOutcome(generated.outcome).message.toolCalls).toMatchObject([
+      { name: 'ghost', arguments: '{"city":"sf"}' },
+    ]);
+
+    const empty = await runGenerate(fakeProtocol({
+      chunks: [
+        { tool: { type: 'function', id: 'call-ghost-empty', name: 'ghost', arguments: null } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), {
+      module: testModule(),
+      maxAttemptsPerStep: 1,
+    });
+    expect(failedOutcome(empty.outcome).error).toMatchObject({
+      kind: 'invalid_tool_arguments',
+      retryable: true,
+    });
+  });
+
+  it('validates against the newest disclosed schema across unload boundaries', async () => {
+    const weatherV1 = {
+      name: 'weather',
+      description: 'Get weather v1',
+      parameters: {
+        type: 'object',
+        properties: { city: { type: 'string' } },
+        required: ['city'],
+      },
+    };
+    const weatherV2 = {
+      name: 'weather',
+      description: 'Get weather v2',
+      parameters: {
+        type: 'object',
+        properties: { zip: { type: 'number' } },
+        required: ['zip'],
+      },
+    };
+    const unload = createSystemMessage([{
+      type: 'text',
+      text: 'The available tools changed during this session.',
+      meta: { kind: 'tool_lifecycle', added: [], removed: ['weather'] },
+    }]);
+    const run = (messages: readonly Message[], args: string) => runGenerate(fakeProtocol({
+      chunks: [
+        { tool: { type: 'function', id: 'call-boundary', name: 'weather', arguments: args } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), {
+      module: testModule({ messages }),
+      maxAttemptsPerStep: 1,
+    });
+
+    const unloaded = doneOutcome((await run([
+      createUserMessage('hi'),
+      createSystemMessage('Loaded: weather', undefined, [weatherV1]),
+      unload,
+    ], '{"city":42}')).outcome);
+    expect(unloaded.message.toolCalls).toMatchObject([
+      { name: 'weather', arguments: '{"city":42}' },
+    ]);
+
+    const reloaded = failedOutcome((await run([
+      createUserMessage('hi'),
+      createSystemMessage('Loaded: weather', undefined, [weatherV1]),
+      unload,
+      createSystemMessage('Loaded: weather', undefined, [weatherV2]),
+    ], '{"city":"sf"}')).outcome);
+    expect(reloaded.error).toMatchObject({ kind: 'invalid_tool_arguments', retryable: true });
+    expect(reloaded.error.message).toContain('zip');
+
+    const valid = doneOutcome((await run([
+      createUserMessage('hi'),
+      createSystemMessage('Loaded: weather', undefined, [weatherV1]),
+      unload,
+      createSystemMessage('Loaded: weather', undefined, [weatherV2]),
+    ], '{"zip":94107}')).outcome);
+    expect(valid.message.toolCalls).toMatchObject([
+      { name: 'weather', arguments: '{"zip":94107}' },
+    ]);
+  });
+
+  it('validates against the last declaration when one message discloses a tool twice', async () => {
+    const weatherV1 = {
+      name: 'weather',
+      description: 'Get weather v1',
+      parameters: {
+        type: 'object',
+        properties: { city: { type: 'string' } },
+        required: ['city'],
+      },
+    };
+    const weatherV2 = {
+      name: 'weather',
+      description: 'Get weather v2',
+      parameters: {
+        type: 'object',
+        properties: { zip: { type: 'number' } },
+        required: ['zip'],
+      },
+    };
+    const run = (args: string) => runGenerate(fakeProtocol({
+      chunks: [
+        { tool: { type: 'function', id: 'call-duplicate', name: 'weather', arguments: args } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), {
+      module: testModule({
+        messages: [
+          createUserMessage('hi'),
+          createSystemMessage('Loaded: weather', undefined, [weatherV1, weatherV2]),
+        ],
+      }),
+      maxAttemptsPerStep: 1,
+    });
+
+    const stale = failedOutcome((await run('{"city":"sf"}')).outcome);
+    expect(stale.error).toMatchObject({ kind: 'invalid_tool_arguments', retryable: true });
+    expect(stale.error.message).toContain('zip');
+
+    const current = doneOutcome((await run('{"zip":94107}')).outcome);
+    expect(current.message.toolCalls).toMatchObject([
+      { name: 'weather', arguments: '{"zip":94107}' },
+    ]);
+  });
+
+  it('accepts empty arguments for disclosed tools whose schema permits them', async () => {
+    const generated = await runGenerate(fakeProtocol({
+      chunks: [
+        { tool: { type: 'function', id: 'call-noop', name: 'noop', arguments: null } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), {
+      module: testModule({
+        messages: [
+          createUserMessage('hi'),
+          createSystemMessage('Loaded: noop', undefined, [{
+            name: 'noop',
+            description: 'No-op',
+            parameters: { type: 'object', properties: {} },
+          }]),
+        ],
+      }),
+    });
+
+    expect(doneOutcome(generated.outcome).message.toolCalls).toMatchObject([
+      { name: 'noop', arguments: null },
+    ]);
   });
 
   it('rejects non-object and unapproved empty arguments without executing or normalizing them', async () => {

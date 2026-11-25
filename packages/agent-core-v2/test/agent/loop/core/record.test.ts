@@ -116,9 +116,9 @@ describe('loop record', () => {
     expect(crashed.unfinished).toEqual({ turnId: 2, trigger: 'normal', step: 1, stepUnfinished: true, appended: true });
     expect(crashed.nextTurnId).toBe(3);
 
-    const lifecycleEvents: LoopEmitted['type'][] = [];
+    const turnEndEvents: Extract<LoopEmitted, { type: 'turn.ended' }>[] = [];
     working.subscribe((event) => {
-      if (event.type === 'loop.drained' || event.type === 'loop.idle') lifecycleEvents.push(event.type);
+      if (event.type === 'turn.ended') turnEndEvents.push(event);
     });
     let closingIdle: Promise<void> | undefined;
     let closes: { first: Promise<void>; second: Promise<void> } | undefined;
@@ -135,7 +135,7 @@ describe('loop record', () => {
     settleBackground?.({ content: [{ type: 'text', text: 'background stopped' }] });
     await first;
     await closingIdle;
-    expect(lifecycleEvents).toEqual([]);
+    expect(turnEndEvents.every((ended) => ended.continuation === undefined)).toBe(true);
     const closed = fold([...records, ...live]);
     expect(closed.unfinished).toBeUndefined();
     expect(closed.turns.at(-1)).toMatchObject({ turnId: 2, outcome: { type: 'aborted', reason: { reason: 'closed' } } });
@@ -153,9 +153,17 @@ describe('loop record', () => {
     const recovered = createLoop({
       requester: answering,
       executor,
-      input: { messages: crashed.messages, nextTurnId: crashed.nextTurnId, unfinished: crashed.unfinished },
+      input: {
+        messages: crashed.messages,
+        nextTurnId: crashed.nextTurnId,
+        unfinished: crashed.unfinished,
+      },
     });
     expect(recovered.state).toMatchObject({ status: 'interrupted', turn: { id: 2, step: 1 } });
+    const recoveredEnds: Extract<LoopEmitted, { type: 'turn.ended' }>[] = [];
+    recovered.subscribe((event) => {
+      if (event.type === 'turn.ended') recoveredEnds.push(event);
+    });
     const after = record(recovered);
     expect((await recovered.runTurn(prompt('next'))).type).toBe('done');
     expect(after.slice(0, 7).map((item) => item.type)).toEqual([
@@ -169,6 +177,11 @@ describe('loop record', () => {
     ]);
     expect(after[4]).toMatchObject({ turnId: 2, outcome: { type: 'aborted', reason: { reason: 'crashed' } } });
     expect(after[6]).toMatchObject({ type: 'turn.started' });
+    await recovered.waitForIdle();
+    expect(recoveredEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([
+      [2, 'turn'],
+      [3, 'none'],
+    ]);
     const resumed = fold([...prefix, ...after]);
     expect(resumed.unfinished).toBeUndefined();
     expect(resumed.nextTurnId).toBe(4);

@@ -196,6 +196,27 @@ describe('conversation fold', () => {
     expect(turn?.items[3]).toMatchObject({ name: 'Bash', input: { command: 'ls' }, output: 'a\nb', outcome: 'completed', step_index: 1 });
   });
 
+  it('appends the parts of a step without rescanning the items already in its turn', () => {
+    const state = fold([turnPrompt(0, 'p1'), userMessage('p1', 'hello'), stepBegin(0, 1, 's1')]);
+    const turn = state.turns[0]!;
+    let itemReads = 0;
+    turn.items = new Proxy(turn.items, {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && /^\d+$/.test(key)) itemReads++;
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+    const parts = 200;
+    for (let block = 0; block < parts; block++) {
+      applyConversationRecord(state, contentPart(0, 1, 's1', { type: 'think', think: `t${String(block)}` }, block));
+    }
+    applyConversationRecord(state, contentPart(0, 1, 's1', { type: 'think', think: 'rewritten' }, 0));
+
+    expect(itemReads).toBeLessThan(parts * 2);
+    expect(turn.items).toHaveLength(parts + 1);
+    expect(turn.items[1]).toMatchObject({ item_id: 's1:0', text: 'rewritten' });
+  });
+
   it('attaches the request debug to the last item of each step only when debugging', () => {
     const records = [
       turnPrompt(0, 'p1'),

@@ -96,6 +96,7 @@ function makePanel(opts: {
   initialTab?: 'installed' | 'official' | 'third-party' | 'custom';
   selectedId?: string;
   pluginHint?: { id: string; text: string };
+  terminalRows?: number;
 }) {
   const installed = opts.installed ?? [];
   const onSelect = vi.fn<(s: PluginsPanelSelection) => void>();
@@ -107,6 +108,7 @@ function makePanel(opts: {
     initialTab: opts.initialTab,
     selectedId: opts.selectedId,
     pluginHint: opts.pluginHint,
+    terminalRows: () => opts.terminalRows ?? 30,
     onSelect,
     onCancel: vi.fn(),
     onRequestMarketplace,
@@ -490,7 +492,7 @@ describe('plugins selector dialogs', () => {
     expect(out).not.toContain('id kimi-datasource');
     expect(out).not.toContain('Official plugin');
     expect(out).not.toContain('· data');
-    expect(out).toContain('0 installed · 1 available');
+    expect(out).toContain('1 / 1 · 0 installed');
   });
 
   it.each([
@@ -638,7 +640,7 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('Third  install v1.0.0');
     expect(out.indexOf('First')).toBeLessThan(out.indexOf('Second'));
     expect(out.indexOf('Second')).toBeLessThan(out.indexOf('Third'));
-    expect(out).toContain('1 installed · 2 available');
+    expect(out).toContain('1 / 3 · 1 installed');
   });
 
   it('keeps built-in capability rows while the Official catalog is unavailable', () => {
@@ -793,7 +795,7 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('Installing Superpowers…');
   });
 
-  it('separates cliDescription from third-party marketplace metadata', () => {
+  it('keeps cliDescription and removes third-party marketplace metadata', () => {
     const { panel } = makePanel({ initialTab: 'third-party' });
     panel.setMarketplace([{
       ...thirdPartyEntries[0]!,
@@ -803,14 +805,86 @@ describe('plugins selector dialogs', () => {
       keywords: ['workflow'],
     }], '/tmp/marketplace.json');
     const out = strip(renderRaw(panel));
-    const lines = out.split('\n');
-    const descriptionIndex = lines.findIndex((line) => line.includes('Curated CLI description'));
-    const metadataIndex = lines.findIndex((line) => line.includes('id superpowers'));
-    expect(descriptionIndex).toBeGreaterThanOrEqual(0);
-    expect(metadataIndex).toBe(descriptionIndex + 1);
-    expect(lines[descriptionIndex]).not.toContain('id superpowers');
-    expect(lines[metadataIndex]).toContain('id superpowers · v1.2.3 · Curated plugin · workflow');
+    expect(out).toContain('Curated CLI description');
     expect(out).not.toContain('Curated long description');
+    expect(out).not.toContain('id superpowers');
+    expect(out).not.toContain('Curated plugin');
+    expect(out).not.toContain('workflow');
+  });
+
+  it('uses the primary color only for the selected plugin name', () => {
+    const first = makeMarketplaceEntry('first', desktopPlatforms, 'First');
+    const second = makeMarketplaceEntry('second', desktopPlatforms, 'Second');
+    const { panel } = makePanel({ initialTab: 'official' });
+    panel.setMarketplace([first, second], '/tmp/marketplace.json');
+    const raw = renderRaw(panel);
+    const textSecond = withAnsiColors(() => chalk.hex(currentTheme.palette.text)('Second'));
+    const boldFirst = withAnsiColors(() => chalk.hex(currentTheme.palette.primary).bold('First'));
+    expect(raw).toContain(textSecond);
+    expect(raw).toContain(boldFirst);
+
+    const { panel: installedPanel } = makePanel({
+      installed: [superpowers, { ...superpowers, id: 'other', displayName: 'Other' }],
+    });
+    const installedRaw = renderRaw(installedPanel);
+    const textOther = withAnsiColors(() => chalk.hex(currentTheme.palette.text)('Other'));
+    expect(installedRaw).toContain(textOther);
+  });
+
+  it('limits marketplace descriptions to three lines', () => {
+    const entry = {
+      ...makeMarketplaceEntry('long', desktopPlatforms, 'Long description'),
+      cliDescription: Array.from({ length: 40 }, () => 'many words for wrapping').join(' '),
+    };
+    const { panel } = makePanel({ initialTab: 'official' });
+    panel.setMarketplace([entry], '/tmp/marketplace.json');
+    const lines = strip(renderRaw(panel, 50)).split('\n');
+    const rowIndex = lines.findIndex((line) => line.includes('Long description'));
+    expect(rowIndex).toBeGreaterThanOrEqual(0);
+    expect(lines[rowIndex + 1]).toContain('many words');
+    expect(lines[rowIndex + 2]).toContain('many words');
+    expect(lines[rowIndex + 3]).toContain('…');
+    expect(lines[rowIndex + 4]).not.toContain('many words');
+  });
+
+  it('fits marketplace rows by line budget instead of a fixed item count', () => {
+    const entries = Array.from({ length: 8 }, (_, index) => ({
+      ...makeMarketplaceEntry(`plugin-${index + 1}`, desktopPlatforms, `Plugin ${index + 1}`),
+      cliDescription: index === 0
+        ? Array.from({ length: 30 }, () => 'long description words').join(' ')
+        : `Short description ${index + 1}`,
+      keywords: [`keyword-${index + 1}`],
+    }));
+    const { panel } = makePanel({ initialTab: 'official', terminalRows: 30 });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+
+    const initial = strip(renderRaw(panel));
+    const initialHeight = panel.render(120).length;
+    expect(initialHeight).toBe(28);
+    expect(initial).toContain('Plugin 7');
+    expect(initial).not.toContain('Plugin 8');
+    expect(initial).toContain('1 / 8 · 0 installed');
+    expect(initial).not.toContain('keyword-');
+
+    for (let index = 0; index < 7; index++) panel.handleInput('\u001B[B');
+    const scrolled = strip(renderRaw(panel));
+    expect(panel.render(120)).toHaveLength(initialHeight);
+    expect(scrolled).not.toContain('Plugin 1');
+    expect(scrolled).toContain('Plugin 8');
+    expect(scrolled).toContain('8 / 8 · 0 installed');
+
+    for (let index = 0; index < 4; index++) {
+      panel.handleInput('\t');
+      expect(panel.render(120)).toHaveLength(initialHeight);
+    }
+    const reset = strip(renderRaw(panel));
+    expect(reset).toContain('Plugin 1');
+    expect(reset).not.toContain('Plugin 8');
+    expect(reset).toContain('1 / 8 · 0 installed');
+
+    const { panel: smallerPanel } = makePanel({ initialTab: 'official', terminalRows: 24 });
+    smallerPanel.setMarketplace(entries, '/tmp/marketplace.json');
+    expect(smallerPanel.render(120)).toHaveLength(22);
   });
 
   it('keeps a valid selection if ↓ is pressed while the catalog is loading', () => {
@@ -950,7 +1024,7 @@ describe('plugins selector dialogs', () => {
     panel.handleInput('\t');
     const officialOut = strip(renderRaw(panel));
     expect(officialOut).toContain('Kimi Computer Use  installed · v0.5.4');
-    expect(officialOut).toContain('1 installed · 0 available');
+    expect(officialOut).toContain('1 / 1 · 1 installed');
     expect(officialOut).not.toContain('needs permissions');
   });
 
@@ -979,7 +1053,7 @@ describe('plugins selector dialogs', () => {
 
     const out = strip(renderRaw(panel));
     expect(out).toContain('Kimi Computer Use  installed · v0.2.14');
-    expect(out).toContain('1 installed · 0 available');
+    expect(out).toContain('1 / 1 · 1 installed');
   });
 
   it('keeps Enter on the Installed tab consistent with other plugins', () => {

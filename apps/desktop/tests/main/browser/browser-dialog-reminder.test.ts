@@ -80,6 +80,7 @@ async function mainAgent(session: ISessionScopeHandle): Promise<IAgentScopeHandl
   if (lifecycle.handleOf('main') === undefined) await lifecycle.create({ agentId: 'main' });
   const agent = lifecycle.handleOf('main')!;
   vi.spyOn(agent.accessor.get(IAgentFullCompactionService) as unknown as { beforeStep(): Promise<void> }, 'beforeStep').mockResolvedValue();
+  await agent.accessor.get(IAgentLoopService).start();
   return agent;
 }
 

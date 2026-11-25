@@ -1,14 +1,15 @@
 import { isAbsolute } from 'node:path';
 
-import type {
-  AvailableCommand,
-  PlanEntry,
-  PlanEntryStatus,
-  SessionConfigOption,
-  SessionNotification,
-  ToolCallContent,
-  ToolCallLocation,
-  ToolKind,
+import {
+  type AvailableCommand,
+  type PlanEntry,
+  type PlanEntryStatus,
+  RequestError,
+  type SessionConfigOption,
+  type SessionNotification,
+  type ToolCallContent,
+  type ToolCallLocation,
+  type ToolKind,
 } from '@agentclientprotocol/sdk';
 import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
@@ -39,20 +40,36 @@ export function assistantDeltaToSessionUpdate(
   };
 }
 
-export function turnEndReasonToStopReason(
-  reason: TurnEndReason,
-  error?: { readonly code: string },
-): AcpStopReason {
+const PROVIDER_FILTERED_CODE = 'provider.filtered';
+const INTERNAL_ERROR = -32603;
+
+export interface TurnEndError {
+  readonly code: string;
+  readonly message?: string;
+}
+
+export type TurnEndAnswer =
+  | { readonly stopReason: AcpStopReason }
+  | { readonly error: RequestError };
+
+export function answerForTurnEnd(reason: TurnEndReason, error?: TurnEndError): TurnEndAnswer {
   switch (reason) {
     case 'completed':
-      return 'end_turn';
+      return { stopReason: 'end_turn' };
     case 'cancelled':
-      return 'cancelled';
-    case 'failed':
-      if (error?.code === 'provider.filtered') return 'refusal';
-      return 'end_turn';
+      return { stopReason: 'cancelled' };
     case 'blocked':
-      return 'refusal';
+      return { stopReason: 'refusal' };
+    case 'failed':
+      if (error?.code === PROVIDER_FILTERED_CODE) return { stopReason: 'refusal' };
+      if (isAuthError(error)) return { error: RequestError.authRequired(undefined, error?.message) };
+      return {
+        error: new RequestError(
+          INTERNAL_ERROR,
+          error?.message ?? 'The turn failed.',
+          error === undefined ? undefined : { code: error.code },
+        ),
+      };
   }
 }
 

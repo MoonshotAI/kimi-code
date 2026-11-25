@@ -119,6 +119,7 @@ export interface ConversationState {
   awaitingContinuationTurnNumber?: number;
   latestPromptId?: string;
   stepParts: Record<string, number>;
+  stepNextBlock: Record<string, number>;
   compaction?: CompactionDetails;
 }
 
@@ -142,6 +143,7 @@ export function createConversationState(agentId: string, fork?: ConversationFork
     recordsTurnEnds: false,
     trailingRejectedPrompt: false,
     stepParts: {},
+    stepNextBlock: {},
   };
 }
 
@@ -460,10 +462,17 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
         turn.items = turn.items.filter((item) => !item.item_id.startsWith(`${previous.id}:`));
       }
       steps.push({ id: event.uuid, index, startedAt: time, ended: false });
+      if (
+        state.stepNextBlock[event.uuid] === undefined &&
+        !turn.items.some((item) => item.item_id.startsWith(`${event.uuid}:`))
+      ) {
+        state.stepNextBlock[event.uuid] = 0;
+      }
       return;
     }
     case 'step.end': {
       delete state.stepParts[event.uuid];
+      delete state.stepNextBlock[event.uuid];
       const found = findStep(state, event.uuid);
       if (found === undefined) return;
       const { turn, step } = found;
@@ -486,14 +495,16 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
       const position = state.stepParts[event.stepUuid] ?? 0;
       state.stepParts[event.stepUuid] = position + 1;
       const startedAt = event.startedAt ?? findStep(state, event.stepUuid)?.step.startedAt ?? time;
-      const item = contentItem(
-        event.part,
-        `${event.stepUuid}:${event.block ?? position}`,
-        event.step,
-        startedAt,
-        event.durationMs,
-      );
-      if (item !== undefined) upsertItem(turn, item);
+      const block = event.block ?? position;
+      const item = contentItem(event.part, `${event.stepUuid}:${block}`, event.step, startedAt, event.durationMs);
+      if (item === undefined) return;
+      const nextBlock = state.stepNextBlock[event.stepUuid];
+      if (nextBlock !== undefined && block >= nextBlock) {
+        turn.items.push(item);
+        state.stepNextBlock[event.stepUuid] = block + 1;
+      } else {
+        upsertItem(turn, item);
+      }
       return;
     }
     case 'tool.call': {
@@ -777,6 +788,7 @@ function clearConversation(state: ConversationState): void {
   state.trailingRejectedPrompt = false;
   state.awaitingContinuationTurnNumber = undefined;
   state.stepParts = {};
+  state.stepNextBlock = {};
   state.compaction = undefined;
 }
 

@@ -5,11 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { killProcessTree, kimiCliEnv, NETWORK_GUARD_PRELOAD, networkGuardEnv, readNetworkViolations, repoPath, TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
 import { _electron, type ElectronApplication } from '@playwright/test';
 
-import type { Diagnostic, SurfaceDriver, SurfaceLaunch } from '../support/verbs';
+import type { Diagnostic, ReopenState, SurfaceDriver, SurfaceLaunch } from '../support/verbs';
 import { offlineStubs } from './offline';
-import { OFFLINE_NAMES, PageDriver, reasonOf } from './page-driver';
+import { OFFLINE_NAMES, PageDriver, reasonOf, WELCOME_DIALOG } from './page-driver';
 
 const MAIN_PAGE = 'app://renderer/';
+const MENU_OVERLAY = 'app://renderer/browser-overlay.html';
 const AUXILIARY_PAGES = /^app:\/\/renderer\/(?:browser-overlay|browser-control|screenshot|pin|capture-host)\b/;
 const OUTPUT_TAIL = 64 * 1024;
 
@@ -18,11 +19,15 @@ class DesktopDriver extends PageDriver {
   private readonly child: ReturnType<ElectronApplication['process']>;
   private readonly workspace: string;
   private readonly networkLog: string;
+  private readonly reopening: boolean;
+  private readonly lastPrompt: string | undefined;
   private output = '';
   private exit: { readonly code: number | null; readonly signal: string | null } | undefined;
 
-  constructor(app: ElectronApplication, root: string, workspace: string, networkLog: string) {
-    super(app.context(), root, 'desktop');
+  constructor(app: ElectronApplication, root: string, workspace: string, networkLog: string, launch: number, lastPrompt: string | undefined) {
+    super(app.context(), root, 'desktop', launch);
+    this.reopening = launch > 1;
+    this.lastPrompt = lastPrompt;
     this.app = app;
     this.child = app.process();
     this.workspace = workspace;
@@ -42,15 +47,22 @@ class DesktopDriver extends PageDriver {
     const page = await this.wait('the main window to open', () =>
       this.app.windows().find((candidate) => candidate.url().startsWith(MAIN_PAGE) && !AUXILIARY_PAGES.test(candidate.url())),
     );
-    this.show(page, this.workspace);
+    this.show(page, this.workspace, () => this.wait('the window that shows menus', () => this.app.windows().find((candidate) => candidate.url().startsWith(MENU_OVERLAY))));
     await page.waitForLoadState('domcontentloaded', { timeout: TIMEOUTS.server });
-    const welcome = page.getByRole('dialog', { name: 'Welcome to Kimi Code' });
-    await welcome.waitFor({ state: 'visible', timeout: TIMEOUTS.server });
-    await welcome.getByRole('button', { name: 'Skip', exact: true }).click({ timeout: TIMEOUTS.wait });
-    await welcome.waitFor({ state: 'hidden', timeout: TIMEOUTS.server });
-    await page.getByRole('button', { name: basename(this.workspace), exact: true }).waitFor({ state: 'visible', timeout: TIMEOUTS.server });
+    if (!this.reopening) {
+      const welcome = page.getByRole('dialog', { name: WELCOME_DIALOG });
+      await welcome.waitFor({ state: 'visible', timeout: TIMEOUTS.server });
+      await welcome.getByRole('button', { name: 'Skip', exact: true }).click({ timeout: TIMEOUTS.wait });
+      await welcome.waitFor({ state: 'hidden', timeout: TIMEOUTS.server });
+      await page.getByRole('button', { name: basename(this.workspace), exact: true }).waitFor({ state: 'visible', timeout: TIMEOUTS.server });
+    }
     await page.getByRole('status', { name: 'Connecting…' }).first().waitFor({ state: 'hidden', timeout: TIMEOUTS.server });
     await page.getByRole('combobox', { name: 'Message input' }).waitFor({ state: 'visible', timeout: TIMEOUTS.server });
+    if (this.reopening) await this.awaitResumed(this.lastPrompt);
+  }
+
+  reopenState(): ReopenState {
+    return {};
   }
 
   async startupFailure(error: unknown): Promise<Error> {
@@ -183,14 +195,16 @@ class DesktopDriver extends PageDriver {
   }
 }
 
-export async function startDesktop({ home }: SurfaceLaunch): Promise<SurfaceDriver> {
+export async function startDesktop({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'desktop'>> {
   const desktop = repoPath('apps', 'desktop');
   for (const built of [join(desktop, 'out', 'main.cjs'), join(desktop, 'desktop-dist', 'index.html')]) {
     if (!existsSync(built)) throw new Error(`${built} does not exist; build the Desktop app first with "pnpm --filter kimi-code-app run build".`);
   }
-  const networkLog = join(home.root, 'desktop-network.log');
+  const launch = reopen?.launch ?? 1;
+  const networkLog = join(home.root, `desktop-network-${launch}.log`);
+  const workspace = reopen === undefined ? [`--workspace=${home.workspace}`] : [];
   const app = await _electron.launch({
-    args: ['-r', fileURLToPath(NETWORK_GUARD_PRELOAD), desktop, `--user-data-dir=${join(home.root, 'user-data')}`, '--lang=en-US', `--workspace=${home.workspace}`, OFFLINE_NAMES],
+    args: ['-r', fileURLToPath(NETWORK_GUARD_PRELOAD), desktop, `--user-data-dir=${join(home.root, 'user-data')}`, '--lang=en-US', ...workspace, OFFLINE_NAMES],
     cwd: home.workspace,
     env: {
       ...kimiCliEnv(home, {
@@ -203,7 +217,7 @@ export async function startDesktop({ home }: SurfaceLaunch): Promise<SurfaceDriv
     },
     timeout: TIMEOUTS.server,
   });
-  const driver = new DesktopDriver(app, home.root, home.workspace, networkLog);
+  const driver = new DesktopDriver(app, home.root, home.workspace, networkLog, launch, reopen?.lastPrompt);
   try {
     await driver.ready();
   } catch (error) {

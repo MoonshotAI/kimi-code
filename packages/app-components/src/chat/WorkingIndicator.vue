@@ -63,7 +63,7 @@ defineProps<{
 }
 
 .wi-label {
-  animation: wi-breathe 1.6s var(--ease-in-out) infinite;
+  animation: ui-breathe 1.6s var(--ease-in-out) infinite;
 }
 
 .working-indicator.idle .wi-eyes,
@@ -81,15 +81,6 @@ defineProps<{
 @keyframes wi-blink {
   0%, 88%, 100% { transform: translate(-50%, -50%) scaleY(1); }
   92% { transform: translate(-50%, -50%) scaleY(0.15); }
-}
-@keyframes wi-breathe {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .wi-eyes,

@@ -406,9 +406,21 @@ export class ConfigService extends Disposable implements IConfigService {
 
   inspect<T = unknown>(domain: string): ConfigInspectValue<T> {
     const memoryValue = this.memory[domain] as T | undefined;
+    const section = this.registry.getSection(domain);
+    let envValue: T | undefined;
+    if (section?.env !== undefined) {
+      try {
+        envValue = applySectionEnv(undefined, section.env, (name) =>
+          this.bootstrap.getEnv(name),
+        ) as T;
+      } catch {
+        envValue = undefined;
+      }
+    }
     return {
       value: this.get<T>(domain),
       defaultValue: this.registry.defaultValue<T>(domain),
+      envValue,
       userValue: this.raw[domain] as T | undefined,
       memoryValue,
     };

@@ -140,6 +140,7 @@ export interface SessionEventHost {
   handleTurnStarted?(event: TurnStartedEvent): void;
   handleTurnEnded?(event: TurnEndedEvent): void;
   handlePromptPredictionTurnEnded?(event: TurnEndedEvent): void;
+  handlePromptPredictionIdle?(): void;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
   readonly surveyController: SurveyController;
@@ -317,8 +318,6 @@ export class SessionEventHandler {
       case 'prompt.queued': this.host.acknowledgePromptQueued?.(event.promptId); break;
       case 'turn.started': this.handleTurnBegin(event); break;
       case 'turn.ended': this.handleTurnEnd(event, sendQueued); break;
-      case 'loop.drained': this.host.streamingUI.finalizeDrained(sendQueued, event.generation ?? null); break;
-      case 'loop.idle': this.host.streamingUI.finalizeIdle(event.generation ?? null); break;
       case 'prompt.completed': this.handlePromptCompleted(event, sendQueued); break;
       case 'turn.step.started': this.handleStepBegin(event); break;
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
@@ -470,6 +469,10 @@ export class SessionEventHandler {
     }
     this.pluginMcpToolsUsedInTurn.clear();
     this.scheduleQueuedGoalPromotion();
+    if (event.continuation !== undefined && event.continuation !== 'turn') {
+      this.host.streamingUI.finalizeContinuation(sendQueued, event.continuation, event.turnId);
+      this.host.handlePromptPredictionIdle?.();
+    }
   }
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
@@ -1207,8 +1210,8 @@ export class SessionEventHandler {
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
     if (!hasActiveTurn && this.host.state.appState.loopLifecycleEvents === true) {
       this.host.setAppState({ isCompacting: false });
-      if (!this.host.state.queuedMessageDispatchPending) this.host.streamingUI.finalizeDrained(sendQueued);
-      this.host.streamingUI.finalizeIdle(undefined, false);
+      this.host.streamingUI.resumeContinuation(sendQueued);
+      this.host.handlePromptPredictionIdle?.();
       return;
     }
     if (!hasActiveTurn && !this.host.state.queuedMessageDispatchPending) {

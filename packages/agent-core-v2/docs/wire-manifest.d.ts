@@ -960,6 +960,7 @@ interface TurnEndedPayload {
     isKfc: boolean;
     requestId?: string;
   }[];
+  continuation?: 'turn' | 'background' | 'none';
 }
 
 /**

@@ -19,7 +19,26 @@ import { startAcp } from '../surfaces/acp';
 import { startDesktop } from '../surfaces/desktop';
 import { startTui } from '../surfaces/tui';
 import { startWeb } from '../surfaces/web';
-import { SURFACES, VERBS, type Product, type Surface, type SurfaceDriver, type SurfaceLaunch, type Verb } from './verbs';
+import { DISK_TITLES, STEP_TITLES } from './steps';
+import {
+  absenceReason,
+  SURFACES,
+  VERB_NAMES,
+  verbOn,
+  verbSpec,
+  wantedOutput,
+  type Actions,
+  type ApprovalExpectation,
+  type Diagnostic,
+  type Frame,
+  type ProductOn,
+  type Surface,
+  type SurfaceDriver,
+  type SurfaceLaunch,
+  type SurfacesOf,
+  type ToolExpectation,
+  type Verb,
+} from './verbs';
 
 export { expect };
 
@@ -36,33 +55,50 @@ export interface ScenarioOptions {
 
 export interface Workspace {
   read(path: string): Promise<string>;
+  write(path: string, content: string): Promise<void>;
   expectFile(path: string, content: string): Promise<void>;
   expectMissing(path: string): Promise<void>;
 }
 
-export interface ScenarioContext {
-  readonly product: Product;
+export interface ScenarioContext<S extends Surface> {
+  readonly product: ProductOn<S>;
   readonly model: FakeModel;
   readonly workspace: Workspace;
 }
 
-export type ScenarioBody = (context: ScenarioContext) => Promise<void>;
+export type ScenarioBody<S extends Surface> = (context: ScenarioContext<S>) => Promise<void>;
 
-export interface SelfTestCase extends ScenarioOptions {
-  readonly run: ScenarioBody;
+interface RunningContext {
+  readonly product: Actions;
+  readonly model: FakeModel;
+  readonly workspace: Workspace;
 }
 
-export type SelfTestCases = Readonly<Record<string, SelfTestCase>>;
+type RunningBody = (context: RunningContext) => Promise<void>;
 
-export interface SelfTestSuite {
-  readonly positive: SelfTestCases;
-  readonly negative: SelfTestCases;
+export type RunsOn<O extends ScenarioOptions> = O extends { readonly onlyOn: readonly (infer S)[] }
+  ? Extract<S, Surface>
+  : O extends { readonly except: infer E }
+    ? Exclude<Surface, keyof E>
+    : Surface;
+
+export interface SelfTestCase<S extends Surface> extends ScenarioOptions {
+  readonly run: ScenarioBody<S>;
 }
+
+export type SelfTestCases<S extends Surface> = Readonly<Record<string, SelfTestCase<S>>>;
+
+export interface SelfTestSuite<S extends Surface> {
+  readonly positive: SelfTestCases<S>;
+  readonly negative: SelfTestCases<S>;
+}
+
+type FramePolicy = 'every-step' | 'on-failure';
 
 const SELF_TEST_KINDS = ['positive', 'negative'] as const;
 const SELF_TEST_DIRECTORY = fileURLToPath(new URL('../self-test/', import.meta.url));
 
-function startSurface(surface: Surface, launch: SurfaceLaunch): Promise<SurfaceDriver> {
+function startSurface(surface: Surface, launch: SurfaceLaunch): Promise<SurfaceDriver<Surface>> {
   switch (surface) {
     case 'tui':
       return startTui(launch);
@@ -113,19 +149,78 @@ async function readIfPresent(path: string): Promise<string | undefined> {
   }
 }
 
-function assertPrompt(text: string): void {
-  if (!/^[ -~]+$/.test(text) || text !== text.trim()) {
-    throw new Error(`send() takes one line of printable ASCII without surrounding spaces, got ${JSON.stringify(text)}`);
+function promptCheck(verb: 'send' | 'queue' | 'steer'): (text: string) => void {
+  return (text) => {
+    if (!/^[ -~]+$/.test(text) || text !== text.trim()) {
+      throw new Error(`${verb}() takes one line of printable ASCII without surrounding spaces, got ${JSON.stringify(text)}`);
+    }
+    if (text.endsWith('\\')) {
+      throw new Error(`${verb}() cannot end with a backslash: the product reads a backslash before Enter as a line break and never submits. Got ${JSON.stringify(text)}`);
+    }
+    if (/^[/!@]/.test(text)) {
+      throw new Error(
+        `${verb}() cannot take a prompt that starts with "/", "!" or "@": the product reads those as a slash command, shell mode or a file mention. Got ${JSON.stringify(text)}`,
+      );
+    }
+  };
+}
+
+function assertToolExpectation(expectation: ToolExpectation): void {
+  const asked: { readonly name: string; readonly status: string; readonly output?: unknown } = expectation;
+  if (asked.name !== 'Bash' && (asked.status === 'running' || asked.output !== undefined)) {
+    throw new Error(`expectTool() can expect a running tool, or the output of a tool, only for Bash, not for ${asked.name}.`);
   }
-  if (text.endsWith('\\')) {
-    throw new Error(`send() cannot end with a backslash: the product reads a backslash before Enter as a line break and never submits. Got ${JSON.stringify(text)}`);
+  if (asked.status === 'rejected' && asked.output !== undefined) {
+    throw new Error('expectTool() cannot expect output of a rejected command: it never ran.');
   }
-  if (/^[/!@]/.test(text)) {
+  if (asked.status === 'running' && asked.output === undefined) {
     throw new Error(
-      `send() cannot take a prompt that starts with "/", "!" or "@": the product reads those as a slash command, shell mode or a file mention. Got ${JSON.stringify(text)}`,
+      'expectTool() can expect a running command only together with output it has printed: until a command prints, the surfaces do not agree on whether it is running or still waiting for approval.',
+    );
+  }
+  const output = wantedOutput(expectation);
+  if (output === undefined) return;
+  if (!/^[ -~]+$/.test(output) || output !== output.trim()) {
+    throw new Error(`expectTool() takes the output as one line of printable ASCII without surrounding spaces, got ${JSON.stringify(output)}`);
+  }
+  if (expectation.target.includes(output)) {
+    throw new Error(
+      `expectTool() cannot tell the output ${JSON.stringify(output)} from the command ${JSON.stringify(expectation.target)}: it is part of the command, and the interface shows the command next to its output. Make the command print text that it does not contain.`,
     );
   }
 }
+
+function lineCheck(verb: 'expectError' | 'expectAbsent' | 'rejectWithFeedback' | 'answer' | 'answerOther'): (text: string) => void {
+  return (text) => {
+    if (!/^[ -~]+$/.test(text) || text !== text.trim()) {
+      throw new Error(`${verb}() takes one line of printable ASCII without surrounding spaces, got ${JSON.stringify(text)}`);
+    }
+  };
+}
+
+function assertApprovalExpectation({ name, target }: ApprovalExpectation): void {
+  if (!/^[ -~]+$/.test(target) || target !== target.trim()) {
+    throw new Error(`expectApproval() takes the target as one line of printable ASCII without surrounding spaces, got ${JSON.stringify(target)}`);
+  }
+  if (name !== 'Bash' && workspaceKey(target) !== target) {
+    throw new Error(`expectApproval() takes the file as a normalized path relative to the workspace, like "notes/a.txt", got ${JSON.stringify(target)}`);
+  }
+}
+
+const PRECHECKS: { readonly [V in Verb]?: (...args: Parameters<Actions[V]>) => void } = {
+  send: promptCheck('send'),
+  queue: promptCheck('queue'),
+  steer: promptCheck('steer'),
+  expectTool: assertToolExpectation,
+  rejectWithFeedback: lineCheck('rejectWithFeedback'),
+  answer: lineCheck('answer'),
+  answerOther: lineCheck('answerOther'),
+  expectApproval: assertApprovalExpectation,
+  expectError: lineCheck('expectError'),
+  expectAbsent: lineCheck('expectAbsent'),
+};
+
+const READS_THE_LATEST_TURN: ReadonlySet<Verb> = new Set(['expectReply', 'expectTool', 'expectError', 'expectAbsent']);
 
 function problemOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -136,15 +231,25 @@ class ScenarioSession {
   private readonly declared = new Map<string, string | undefined>();
   private home: TestHome | undefined;
   private model: FakeModel | undefined;
-  private driver: SurfaceDriver | undefined;
+  private driver: SurfaceDriver<Surface> | undefined;
   private baseline: DirectorySnapshot | undefined;
   private interfaceChecks = 0;
+  private frames: FramePolicy = 'on-failure';
+  private testInfo: TestInfo | undefined;
+  private steps = 0;
+  private failedStep: string | undefined;
+  private launches = 1;
+  private lastPrompt: string | undefined;
+  private turnSinceLaunch = true;
+  private readonly earlierDiagnostics: Diagnostic[] = [];
 
   constructor(surface: Surface) {
     this.surface = surface;
   }
 
-  async start(options: ScenarioOptions): Promise<ScenarioContext> {
+  async start(options: ScenarioOptions, frames: FramePolicy, testInfo: TestInfo): Promise<RunningContext> {
+    this.frames = frames;
+    this.testInfo = testInfo;
     const home = await createTestHome(`e2e-${this.surface}`);
     this.home = home;
     assertOutsideGitWorkTree(home.workspace);
@@ -152,70 +257,97 @@ class ScenarioSession {
     const model = await startFakeModel();
     this.model = model;
     await writeKimiConfig(home.dataDir, fakeModelConfig(model));
-    const driver = await startSurface(this.surface, { home, model });
-    this.driver = driver;
-    this.baseline = await snapshotDirectory(home.workspace);
-    return { product: this.userActions(driver), model, workspace: this.workspace(home.workspace) };
+    await base.step('启动产品，等到可以输入', async () => {
+      this.driver = await startSurface(this.surface, { home, model });
+      this.baseline = await snapshotDirectory(home.workspace);
+      if (frames === 'every-step') await this.show('00 启动完成');
+    });
+    return { product: this.userActions(), model, workspace: this.workspace(home.workspace) };
   }
 
   async finish(testInfo: TestInfo): Promise<void> {
-    const { home, model, driver } = this;
+    const { home, model } = this;
     if (home === undefined) return;
     let clean = false;
     try {
       const passed = testInfo.status === testInfo.expectedStatus;
+      if (!passed) await this.show(this.failedStep === undefined ? `${this.nextStep()} 失败时的画面` : `${this.failedStep}：失败时的画面`);
       const problems = passed ? await this.closingProblems() : [];
       if (!passed || problems.length > 0) await this.attachDiagnostics(testInfo);
       if (problems.length > 0) throw new Error(`The scenario body passed, but the closing checks failed:\n\n${problems.join('\n\n')}`);
       clean = passed;
     } finally {
-      await driver?.kill();
+      await this.driver?.kill();
       await model?.close();
       if (clean) await home.remove();
       else testInfo.annotations.push({ type: 'test home', description: home.root });
     }
   }
 
-  private userActions(driver: SurfaceDriver): Product {
-    return {
-      send: async (text) => {
-        assertPrompt(text);
-        await driver.send(text);
-      },
-      approve: () => driver.approve(),
-      reject: () => driver.reject(),
-      stop: () => driver.stop(),
-      waitIdle: () => driver.waitIdle(),
-      expectTool: async (expectation) => {
-        await driver.expectTool(expectation);
-        this.interfaceChecks += 1;
-      },
-      expectReply: async (text) => {
-        await driver.expectReply(text);
-        this.interfaceChecks += 1;
-      },
-    };
+  private userActions(): Actions {
+    return Object.fromEntries(VERB_NAMES.map((verb) => [verb, (...args: readonly unknown[]) => this.perform(verb, args)])) as unknown as Actions;
   }
 
-  private workspace(root: string): Workspace {
-    return {
-      read: (path) => readFile(join(root, workspaceKey(path)), 'utf8'),
-      expectFile: async (path, content) => {
-        const key = workspaceKey(path);
-        this.declared.set(key, contentDigest(content));
-        expect(await readIfPresent(join(root, key)), `workspace file ${key}`).toBe(content);
-      },
-      expectMissing: async (path) => {
-        const key = workspaceKey(path);
-        this.declared.set(key, undefined);
-        expect(await readIfPresent(join(root, key)), `workspace file ${key} should not exist`).toBeUndefined();
-      },
-    };
+  private async perform(verb: Verb, args: readonly unknown[]): Promise<void> {
+    const number = this.nextStep();
+    const title = (STEP_TITLES[verb] as (...values: readonly unknown[]) => string)(...args);
+    this.failedStep = undefined;
+    await base.step(title, async () => {
+      try {
+        (PRECHECKS[verb] as ((...values: readonly unknown[]) => void) | undefined)?.(...args);
+        await this.dispatch(verb, args);
+      } catch (error) {
+        this.failedStep = `${number} ${title}`;
+        throw error;
+      }
+      if (verbSpec(verb).checksInterface) this.interfaceChecks += 1;
+      if (this.frames === 'every-step') await this.show(`${number} ${title}之后`);
+    });
   }
 
-  private async closingProblems(): Promise<string[]> {
-    const { home, model, driver, baseline } = this;
-    if (home === undefined || model === undefined || driver === undefined || baseline === undefined) return [];
+  private async dispatch(verb: Verb, args: readonly unknown[]): Promise<void> {
+    if (verb === 'restart') {
+      await this.restart();
+      return;
+    }
+    if (READS_THE_LATEST_TURN.has(verb) && !this.turnSinceLaunch) {
+      throw new Error(`${verb}() reads the latest turn, and no turn has started since restart(); check the restored conversation with expectTranscript().`);
+    }
+    if (!verbOn(verb, this.surface)) {
+      throw new Error(
+        `${verb}() does not exist on ${this.surface}: ${absenceReason(verb, this.surface)} Leave ${this.surface} out of the scenario with except or onlyOn.`,
+      );
+    }
+    const driver = this.driver;
+    if (driver === undefined) throw new Error(`${verb}() was called while the product is not running.`);
+    const method: unknown = Reflect.get(driver, verb);
+    if (typeof method !== 'function') throw new Error(`The ${this.surface} driver does not implement ${verb}().`);
+    await Reflect.apply(method, driver, args);
+    if (verb === 'continue') this.turnSinceLaunch = true;
+    if (verb === 'send' || verb === 'queue' || verb === 'steer') {
+      this.lastPrompt = String(args[0]);
+      this.turnSinceLaunch = true;
+    }
+  }
+
+  private async restart(): Promise<void> {
+    const { home, model, driver } = this;
+    if (home === undefined || model === undefined || driver === undefined) throw new Error('restart() was called while the product is not running.');
+    if (!(await driver.idle())) {
+      throw new Error('restart() needs an idle product: a user lets the turn end, or stops it, and answers any approval before closing the app.');
+    }
+    const state = driver.reopenState();
+    const problems = await this.shutdownProblems(driver);
+    for (const diagnostic of await driver.diagnostics()) this.earlierDiagnostics.push({ ...diagnostic, name: `launch-${this.launches}-${diagnostic.name}` });
+    await driver.kill();
+    this.driver = undefined;
+    if (problems.length > 0) throw new Error(`The product did not shut down cleanly before restart():\n\n${problems.join('\n\n')}`);
+    this.launches += 1;
+    this.driver = await startSurface(this.surface, { home, model, reopen: { launch: this.launches, lastPrompt: this.lastPrompt, state } });
+    this.turnSinceLaunch = false;
+  }
+
+  private async shutdownProblems(driver: SurfaceDriver<Surface>): Promise<string[]> {
     const problems: string[] = [];
     try {
       await driver.close();
@@ -232,8 +364,57 @@ class ScenarioSession {
     } catch (error) {
       problems.push(`The network guard record could not be read:\n${problemOf(error)}`);
     }
+    return problems;
+  }
+
+  private nextStep(): string {
+    this.steps += 1;
+    return String(this.steps).padStart(2, '0');
+  }
+
+  private async show(name: string): Promise<void> {
+    const { driver, testInfo } = this;
+    if (driver === undefined || testInfo === undefined) return;
+    let frame: Frame;
+    try {
+      frame = await driver.frame();
+    } catch (error) {
+      frame = { kind: 'text', text: `取不到这一刻的画面：${problemOf(error)}` };
+    }
+    if (frame.kind === 'image') await testInfo.attach(`${name}.png`, { body: frame.png, contentType: 'image/png' });
+    else await testInfo.attach(`${name}.txt`, { body: frame.text, contentType: 'text/plain' });
+  }
+
+  private workspace(root: string): Workspace {
+    return {
+      read: (path) => readFile(join(root, workspaceKey(path)), 'utf8'),
+      write: (path, content) =>
+        base.step(DISK_TITLES.write(path, content), async () => {
+          const key = workspaceKey(path);
+          await seedWorkspace(root, { [key]: content });
+          this.declared.set(key, contentDigest(content));
+        }),
+      expectFile: (path, content) =>
+        base.step(DISK_TITLES.file(path, content), async () => {
+          const key = workspaceKey(path);
+          this.declared.set(key, contentDigest(content));
+          expect(await readIfPresent(join(root, key)), `workspace file ${key}`).toBe(content);
+        }),
+      expectMissing: (path) =>
+        base.step(DISK_TITLES.missing(path), async () => {
+          const key = workspaceKey(path);
+          this.declared.set(key, undefined);
+          expect(await readIfPresent(join(root, key)), `workspace file ${key} should not exist`).toBeUndefined();
+        }),
+    };
+  }
+
+  private async closingProblems(): Promise<string[]> {
+    const { home, model, driver, baseline } = this;
+    if (home === undefined || model === undefined || driver === undefined || baseline === undefined) return [];
+    const problems = await this.shutdownProblems(driver);
     if (this.interfaceChecks === 0) {
-      problems.push('The scenario never checked the interface. Add at least one product.expectTool() or product.expectReply().');
+      problems.push('The scenario never checked the interface. Add at least one product.expectTool(), product.expectReply() or another product.expect…() check.');
     }
     try {
       model.verify();
@@ -267,6 +448,10 @@ class ScenarioSession {
     if (model !== undefined) {
       const requests = model.requests().map(({ index, lane, state }) => ({ index, lane, state }));
       await testInfo.attach('model-requests', { body: JSON.stringify({ requests, problems: model.problems() }, null, 2), contentType: 'application/json' });
+    }
+    for (const diagnostic of this.earlierDiagnostics) {
+      if ('path' in diagnostic) await testInfo.attach(diagnostic.name, { path: diagnostic.path });
+      else await testInfo.attach(diagnostic.name, { body: diagnostic.body, contentType: 'text/plain' });
     }
     if (driver !== undefined) {
       for (const diagnostic of await driver.diagnostics()) {
@@ -312,34 +497,59 @@ function notApplicableReason(options: ScenarioOptions, surface: Surface): string
   return options.onlyOn === undefined || options.onlyOn.includes(surface) ? undefined : options.reason;
 }
 
-export function scenario(title: string, options: ScenarioOptions, body: ScenarioBody): void {
+function register(title: string, options: ScenarioOptions, body: RunningBody, frames: FramePolicy): void {
   assertReasons(title, options);
   test(title, async ({ surface, session }, testInfo) => {
     const reason = surface === undefined ? undefined : notApplicableReason(options, surface);
     testInfo.skip(reason !== undefined, `not applicable on ${String(surface)}: ${String(reason)}`);
-    await body(await session.start(options));
+    await body(await session.start(options, frames, testInfo));
   });
+}
+
+export function scenario<const O extends ScenarioOptions>(title: string, options: O, body: ScenarioBody<RunsOn<O>>): void {
+  register(title, options, body as unknown as RunningBody, 'every-step');
 }
 
 function selfTestFile(verb: Verb): string {
   return `${verb.replaceAll(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}.spec.ts`;
 }
 
-export function selfTest(verb: Verb, suite: SelfTestSuite): void {
+function withinVerb(verb: Verb, title: string, options: ScenarioOptions): ScenarioOptions {
+  const spec = verbSpec(verb);
+  const absent = SURFACES.filter((surface) => !spec.on.includes(surface));
+  if (absent.length === 0) return options;
+  if (options.onlyOn !== undefined) {
+    const outside = options.onlyOn.filter((surface) => !spec.on.includes(surface));
+    if (outside.length > 0) throw new Error(`Self-test "${title}" runs on ${outside.join(', ')}, where ${verb}() does not exist.`);
+    return options;
+  }
+  const reasons = absent.map((surface) => [surface, `${verb}() does not exist here: ${absenceReason(verb, surface)}`]);
+  return { ...options, except: { ...Object.fromEntries(reasons), ...options.except } };
+}
+
+export function selfTestCase<const O extends ScenarioOptions>(options: O, run: ScenarioBody<RunsOn<O>>): SelfTestCase<Surface> {
+  return { ...options, run: run as unknown as ScenarioBody<Surface> };
+}
+
+export function selfTest<V extends Verb>(verb: V, suite: SelfTestSuite<SurfacesOf<V>>): void {
+  const surfaces = SURFACES.filter((surface) => verbOn(verb, surface));
   for (const kind of SELF_TEST_KINDS) {
-    const cases = Object.entries(suite[kind]);
-    for (const [title, options] of cases) assertReasons(`${verb} ${kind}: ${title}`, options);
-    const uncovered = SURFACES.filter((surface) => cases.every(([, options]) => notApplicableReason(options, surface) !== undefined));
+    const cases = Object.entries(suite[kind]).map(([title, { run, ...options }]) => {
+      const name = `${verb} ${kind}: ${title}`;
+      return { name, run, options: withinVerb(verb, name, options) };
+    });
+    for (const { name, options } of cases) assertReasons(name, options);
+    const uncovered = surfaces.filter((surface) => cases.every(({ options }) => notApplicableReason(options, surface) !== undefined));
     if (uncovered.length > 0) {
-      throw new Error(`The ${verb} self-test has no ${kind} case on: ${uncovered.join(', ')}. Every user action needs both kinds on every surface.`);
+      throw new Error(`The ${verb} self-test has no ${kind} case on: ${uncovered.join(', ')}. Every user action needs both kinds on every surface where it exists.`);
     }
-    for (const [title, { run, ...options }] of cases) scenario(`${verb} ${kind}: ${title}`, options, run);
+    for (const { name, run, options } of cases) register(name, options, run as unknown as RunningBody, 'on-failure');
   }
 }
 
 export function selfTestCoverage(): void {
   test('every user action has a self-test file that declares its positive and negative cases', () => {
-    const missing = VERBS.filter((verb) => {
+    const missing = VERB_NAMES.filter((verb) => {
       const file = join(SELF_TEST_DIRECTORY, selfTestFile(verb));
       return !existsSync(file) || !readFileSync(file, 'utf8').includes(`selfTest('${verb}',`);
     });

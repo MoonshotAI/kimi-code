@@ -142,6 +142,14 @@ export const useConfigStore = defineStore('kimi.config', () => {
     return saved;
   }
 
+  async function setPromptPredictionEnabled(on: boolean): Promise<boolean> {
+    const saved = await updateConfig({ experimental: { prompt_prediction: on } });
+    if (saved) {
+      experimentalFlags.value = { ...experimentalFlags.value, prompt_prediction: on };
+    }
+    return saved;
+  }
+
   function resetConfig(): void {
     config.value = null;
     serverVersion.value = '';
@@ -170,6 +178,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
     loadConfig,
     updateConfig,
     setNotifyUserEnabled,
+    setPromptPredictionEnabled,
   refreshServerMeta,
     resetConfig,
   };
