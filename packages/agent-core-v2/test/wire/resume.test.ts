@@ -639,6 +639,74 @@ describe('Agent resume', () => {
     });
   });
 
+  it('emits a media capability reminder when restoring prior media under a text-only model', async (context) => {
+    const legacyRecords: WireRecord[] = [
+      {
+        ...resumeProfileRecord(),
+        modelAlias: 'textOnly',
+        profileName: 'agent',
+      } as unknown as WireRecord,
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Look at this image' },
+            { type: 'image_url', imageUrl: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+          ],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      } as unknown as WireRecord,
+      contextAppendRecord(1, [{ role: 'assistant', text: 'I see the image.' }]),
+    ];
+    const fixtures = testkitAgentFixtures({
+      persistence: new RecordingAgentPersistence(legacyRecords),
+      autoConfigure: false,
+      initialConfig: {
+        defaultModel: 'textOnly',
+        providers: {
+          'test-provider': {
+            type: 'kimi',
+            baseUrl: 'https://api.example.com/v1',
+            apiKey: 'YOUR_API_KEY',
+          },
+        },
+        models: {
+          textOnly: {
+            provider: 'test-provider',
+            model: 'text-model',
+            maxContextSize: 128_000,
+            capabilities: [],
+          },
+        },
+      },
+    });
+    await fixtures.model(context, async (model) => {
+      await fixtures.agent({ model }, async (ctx) => {
+        await ctx.restorePersisted();
+        const capabilityReminders = () =>
+          ctx.context
+            .history()
+            .filter((m) => m.origin?.kind === 'injection' && m.origin.variant === 'media_capability');
+
+        model.script(say('Resumed text-only turn.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue' }] });
+        await ctx.untilTurnEnd();
+
+        expect(capabilityReminders()).toHaveLength(1);
+        expect(JSON.stringify(capabilityReminders()[0])).toContain(
+          'does not support image or video input',
+        );
+
+        model.script(say('Second text-only turn.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue again' }] });
+        await ctx.untilTurnEnd();
+        expect(capabilityReminders()).toHaveLength(1);
+      });
+    });
+  });
+
   it('restores a cancelled queued-turn gap before allocating the next turn', async () => {
     const persistence = new RecordingAgentPersistence([
       resumeProfileRecord(),

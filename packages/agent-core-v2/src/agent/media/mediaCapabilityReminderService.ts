@@ -33,7 +33,11 @@ export class AgentMediaCapabilityReminderService
     this.captureBaseline();
     this._register(
       dispatcher.hooks.onDidRestore.register('media', async (_ctx, next) => {
-        this.captureBaseline();
+        if (this.profile.history().length === 0) {
+          this.captureBaseline();
+        } else {
+          this.baseline = undefined;
+        }
         await next();
       }),
     );
