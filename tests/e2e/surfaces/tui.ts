@@ -51,6 +51,7 @@ const ROWS = TERMINAL_SIZES.normal.rows;
 const SCROLLBACK_LINES = 1000;
 const OUTPUT_TAIL = 64 * 1024;
 const RECENT_INPUTS = 12;
+const RAW_OUTPUT_TAIL = 8 * 1024;
 
 const FULL_REDRAW = '\x1b[2J\x1b[H\x1b[3J';
 const BEGIN_FRAME = '\x1b[?2026h';
@@ -542,6 +543,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private size: WindowSize;
   private fullRedraws = 0;
   private redrawTail = '';
+  private received = 0;
   private turn: Turn | undefined;
 
   constructor(pty: IPty, networkLog: string, exitMarker: string | undefined, { workspace, lastPrompt, size }: { readonly workspace: string; readonly lastPrompt: string | undefined; readonly size: WindowSize }) {
@@ -553,6 +555,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     this.lastPrompt = lastPrompt;
     this.exitStatus = exitMarker === undefined ? undefined : new RegExp(`${exitMarker}(\\d+)`);
     pty.onData((text) => {
+      this.received += text.length;
       this.output = (this.output + text).slice(-OUTPUT_TAIL);
       this.countFullRedraws(text);
       this.show(text);
@@ -608,12 +611,14 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const drawn = drawnWidth(screen);
     if (drawn === undefined) throw this.failure('resize() needs the input box or a panel on screen to tell when the CLI has redrawn.', screen);
     const redraws = this.fullRedraws;
+    const received = this.received;
+    const redrawn = (): boolean => (process.platform === 'win32' ? this.received > received : this.fullRedraws > redraws);
     this.terminal.resize(to.columns, to.rows);
     this.pty.resize(to.columns, to.rows);
     this.size = size;
     const wanted = drawn - from.columns + to.columns;
-    await this.wait(`the CLI to clear the screen and redraw its input box or panel ${wanted} columns wide`, (current) =>
-      this.fullRedraws > redraws && drawnWidth(current) === wanted ? true : undefined,
+    await this.wait(`the CLI to redraw its input box or panel ${wanted} columns wide after the resize`, (current) =>
+      redrawn() && drawnWidth(current) === wanted ? true : undefined,
     );
   }
 
@@ -945,6 +950,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const screen = await this.read();
     return [
       { name: 'tui-screen', body: screen.text },
+      { name: 'tui-output', body: JSON.stringify(this.output.slice(-RAW_OUTPUT_TAIL)).replaceAll('\\n', '\\n\n') },
       {
         name: 'tui-session',
         body: [

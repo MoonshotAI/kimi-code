@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { TestHome } from '@moonshot-ai/testkit/fixtures';
@@ -153,8 +154,14 @@ export function describeApproval({ name, target }: ApprovalExpectation): string 
   return `${name} on ${JSON.stringify(target)}`;
 }
 
+function slashed(path: string): string {
+  return path.replaceAll('\\', '/');
+}
+
 export function namesFile(shown: string, target: string, workspace: string): boolean {
-  return shown === target || shown.endsWith(` ${target}`) || shown.endsWith(`${workspace}/${target}`) || shown.endsWith(join(workspace, target));
+  if (shown === target || shown.endsWith(` ${target}`)) return true;
+  const roots = [workspace, realpathSync.native(workspace)];
+  return roots.some((root) => slashed(shown).endsWith(slashed(join(root, target))));
 }
 
 export interface ApproveOptions {
