@@ -594,4 +594,37 @@ describe('migrateLegacyMasterEnvTower', () => {
       rmSync(danglingHomeDir, { recursive: true, force: true });
     }
   });
+
+  it('tracks migration independently per configPath within the same homeDir', () => {
+    const defaultConfig = join(tempDir, 'config.toml');
+    const secondaryConfig = join(tempDir, 'secondary.toml');
+    writeFileSync(defaultConfig, 'default_model = "kimi-k2"\n', 'utf8');
+    writeFileSync(secondaryConfig, 'default_model = "kimi-k2.5"\n', 'utf8');
+
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      }),
+    ).toBe('migrated-tower');
+    expect(readFileSync(defaultConfig, 'utf8')).toContain('tower = true');
+    expect(readFileSync(secondaryConfig, 'utf8')).not.toContain('tower');
+
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        configPath: secondaryConfig,
+        env: { [MASTER_ENV]: '1' },
+      }),
+    ).toBe('migrated-tower');
+    expect(readFileSync(secondaryConfig, 'utf8')).toContain('tower = true');
+
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        configPath: secondaryConfig,
+        env: { [MASTER_ENV]: '1' },
+      }),
+    ).toBe('already-migrated');
+  });
 });

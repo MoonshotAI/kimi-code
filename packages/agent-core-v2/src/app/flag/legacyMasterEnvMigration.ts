@@ -13,7 +13,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'pathe';
+import { basename, dirname, join, resolve } from 'pathe';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 
 import { parseBooleanEnv } from '#/_base/utils/env';
@@ -29,6 +29,7 @@ export const EXPERIMENTAL_MIGRATIONS_FILENAME = 'experimental-migrations.json';
 
 interface ExperimentalMigrationsRecord {
   readonly legacyMasterEnvTowerMigrated?: boolean;
+  readonly legacyMasterEnvTowerMigratedConfigs?: Readonly<Record<string, boolean>>;
 }
 
 export interface MigrateLegacyMasterEnvTowerInput {
@@ -83,21 +84,55 @@ function writeFileAtomically(filePath: string, content: string): void {
   }
 }
 
+function normalizeConfigKey(configPath: string): string {
+  const resolved = resolve(configPath);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    try {
+      return join(realpathSync(dirname(resolved)), basename(resolved));
+    } catch {
+      return resolved;
+    }
+  }
+}
+
 function readMigrationsRecord(markerPath: string): ExperimentalMigrationsRecord | undefined {
   if (safeLstat(markerPath) === undefined) return {};
   try {
     const raw = JSON.parse(readFileSync(markerPath, 'utf8')) as unknown;
-    return isPlainObject(raw) ? (raw as ExperimentalMigrationsRecord) : undefined;
+    if (!isPlainObject(raw)) return undefined;
+    const configs = raw['legacyMasterEnvTowerMigratedConfigs'];
+    if (configs !== undefined && !isPlainObject(configs)) return undefined;
+    return raw as ExperimentalMigrationsRecord;
   } catch {
     return undefined;
   }
 }
 
-function stampMigrationMarker(markerPath: string, existing: ExperimentalMigrationsRecord): boolean {
+function isConfigMigrated(
+  record: ExperimentalMigrationsRecord,
+  configKey: string,
+  isDefaultConfig: boolean,
+): boolean {
+  if (record.legacyMasterEnvTowerMigratedConfigs?.[configKey] === true) return true;
+  return isDefaultConfig && record.legacyMasterEnvTowerMigrated === true;
+}
+
+function stampMigrationMarker(
+  markerPath: string,
+  existing: ExperimentalMigrationsRecord,
+  configKey: string,
+  isDefaultConfig: boolean,
+): boolean {
   try {
-    const next = {
+    const next: ExperimentalMigrationsRecord = {
       ...existing,
-      legacyMasterEnvTowerMigrated: true,
+      ...(isDefaultConfig ? { legacyMasterEnvTowerMigrated: true } : {}),
+      legacyMasterEnvTowerMigratedConfigs: {
+        ...existing.legacyMasterEnvTowerMigratedConfigs,
+        [configKey]: true,
+      },
     };
     writeFileAtomically(markerPath, `${JSON.stringify(next, null, 2)}\n`);
     return true;
@@ -106,8 +141,13 @@ function stampMigrationMarker(markerPath: string, existing: ExperimentalMigratio
   }
 }
 
-function isExistingInstallation(homeDir: string, configPath: string): boolean {
+function isExistingInstallation(
+  homeDir: string,
+  configPath: string,
+  defaultConfigPath: string,
+): boolean {
   if (safeLstat(configPath) !== undefined) return true;
+  if (safeLstat(defaultConfigPath) !== undefined) return true;
   return EXISTING_INSTALL_MARKERS.some((entry) => existsSync(join(homeDir, entry)));
 }
 
@@ -115,22 +155,30 @@ export function migrateLegacyMasterEnvTower(
   input: MigrateLegacyMasterEnvTowerInput,
 ): MigrateLegacyMasterEnvTowerOutcome {
   const { homeDir } = input;
+  const defaultConfigPath = resolveConfigPath({ homeDir });
   const configPath = resolveConfigPath({ homeDir, configPath: input.configPath });
+  const defaultConfigKey = normalizeConfigKey(defaultConfigPath);
+  const configKey = normalizeConfigKey(configPath);
+  const isDefaultConfig = configKey === defaultConfigKey;
   const env = input.env ?? process.env;
   const markerPath = join(homeDir, EXPERIMENTAL_MIGRATIONS_FILENAME);
 
   const record = readMigrationsRecord(markerPath);
   if (record === undefined) return 'skipped-error';
-  if (record.legacyMasterEnvTowerMigrated === true) return 'already-migrated';
+  if (isConfigMigrated(record, configKey, isDefaultConfig)) return 'already-migrated';
 
-  if (!isExistingInstallation(homeDir, configPath)) {
-    return stampMigrationMarker(markerPath, record) ? 'stamped-fresh-install' : 'skipped-error';
+  if (!isExistingInstallation(homeDir, configPath, defaultConfigPath)) {
+    return stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
+      ? 'stamped-fresh-install'
+      : 'skipped-error';
   }
 
   const masterEnv = parseBooleanEnv(env[MASTER_ENV]);
   const towerEnvOverride = parseBooleanEnv(env[TOWER_FLAG_ENV]);
   if (towerEnvOverride === false) {
-    return stampMigrationMarker(markerPath, record) ? 'stamped-noop' : 'skipped-error';
+    return stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
+      ? 'stamped-noop'
+      : 'skipped-error';
   }
 
   let onDiskText: string | undefined;
@@ -154,7 +202,9 @@ export function migrateLegacyMasterEnvTower(
     return masterEnv === true ? 'fallback-env' : 'skipped-error';
   }
   if (isPlainObject(rawExperimental) && Object.hasOwn(rawExperimental, TOWER_FLAG_ID)) {
-    return stampMigrationMarker(markerPath, record) ? 'stamped-noop' : 'skipped-error';
+    return stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
+      ? 'stamped-noop'
+      : 'skipped-error';
   }
 
   if (masterEnv !== true) {
@@ -190,7 +240,9 @@ export function migrateLegacyMasterEnvTower(
     return 'fallback-env';
   }
 
-  return stampMigrationMarker(markerPath, record) ? 'migrated-tower' : 'skipped-error';
+  return stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
+    ? 'migrated-tower'
+    : 'skipped-error';
 }
 
 export function resolveBootstrapEnvWithLegacyTowerMigration(
