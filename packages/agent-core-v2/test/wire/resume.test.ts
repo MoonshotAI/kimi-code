@@ -494,6 +494,86 @@ describe('Agent resume', () => {
     });
   });
 
+  it('re-injects the merge reminder after compaction drops it in a resumed legacy session', async (context) => {
+    const legacyRecords: WireRecord[] = [
+      resumeProfileRecord(),
+      {
+        type: 'tool_select.initialized',
+        agentId: 'main',
+        tools: [
+          {
+            name: 'Read',
+            description: 'Read a UTF-8 text file only. Use ReadMediaFile for images.',
+            parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+            source: 'builtin',
+            origin: 'initial',
+          },
+          {
+            name: 'ReadMediaFile',
+            description: 'Read media content from a file.',
+            parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+            source: 'builtin',
+            origin: 'initial',
+          },
+        ],
+      } as unknown as WireRecord,
+    ];
+    const fixtures = testkitAgentFixtures({
+      persistence: new RecordingAgentPersistence(legacyRecords),
+      autoConfigure: false,
+    });
+    await fixtures.model(context, async (model) => {
+      await fixtures.agent({ model }, async (ctx) => {
+        ctx.configure({
+          modelCapabilities: {
+            image_in: true,
+            video_in: true,
+            audio_in: false,
+            thinking: false,
+            tool_use: true,
+            maxContextSize: 0,
+          },
+        });
+        await ctx.restorePersisted();
+        const mergeReminderCount = () =>
+          ctx.context
+            .history()
+            .filter(
+              (message) =>
+                message.origin?.kind === 'injection' &&
+                message.origin.variant === 'legacy_read_media_merged',
+            ).length;
+
+        model.script(say('First turn.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'First question' }] });
+        await ctx.untilTurnEnd();
+        expect(mergeReminderCount()).toBe(1);
+
+        model.script(say('Second turn.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Second question' }] });
+        await ctx.untilTurnEnd();
+        expect(mergeReminderCount()).toBe(1);
+
+        model.lane('compaction').script(say('Compacted summary.'));
+        const compacted = ctx.once('full_compaction.complete');
+        const completed = ctx.once('compaction.completed');
+        await ctx.rpc.beginCompaction({});
+        await compacted;
+        await completed;
+        expect(mergeReminderCount()).toBe(0);
+
+        model.script(say('Third turn.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Third question' }] });
+        await ctx.untilTurnEnd();
+
+        expect(mergeReminderCount()).toBe(1);
+        expect(JSON.stringify(model.requests('main').at(-1)!.view.messages)).toContain(
+          'Tool \\"ReadMediaFile\\" has been merged into \\"Read\\"',
+        );
+      });
+    });
+  });
+
   it('emits a media capability reminder when switching between vision and text-only models', async (context) => {
     const fixtures = testkitAgentFixtures({
       autoConfigure: false,
