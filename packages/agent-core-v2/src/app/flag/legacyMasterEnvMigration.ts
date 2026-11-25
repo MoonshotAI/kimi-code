@@ -317,7 +317,7 @@ export function migrateLegacyMasterEnvTower(
 
   const masterEnv = parseBooleanEnv(env[MASTER_ENV]);
   const towerEnvOverride = parseBooleanEnv(env[TOWER_FLAG_ENV]);
-  if (towerEnvOverride === false) {
+  if (towerEnvOverride !== undefined) {
     return record !== undefined &&
       stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
       ? 'stamped-noop'

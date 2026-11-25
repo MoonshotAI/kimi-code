@@ -2760,7 +2760,7 @@ function configService(readConfig: () => KimiConfig): IConfigService {
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
-    onDidChangeConfiguration: () => ({ dispose: () => { } }),
+    onDidChangeConfiguration: sectionEmitter.event,
     onDidSectionChange: sectionEmitter.event,
     get: <T>(domain: string) => valueFor(domain) as T,
     assertValid: () => {},

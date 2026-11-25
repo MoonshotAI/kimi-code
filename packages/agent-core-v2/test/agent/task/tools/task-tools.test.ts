@@ -46,7 +46,8 @@ import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { recordingTelemetry, type TelemetryRecord } from '../../../app/telemetry/stubs';
 import { stubFlag } from '../../../app/flag/stubs';
 import { stubGoal } from '../../../features/goal/stubs';
-import { IFlagService } from '#/app/flag/flag';
+import { IConfigService } from '#/app/config/config';
+import { EXPERIMENTAL_SECTION, IFlagService } from '#/app/flag/flag';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { appService, createTestAgent, telemetryServices } from '../../../harness';
 
@@ -1654,6 +1655,27 @@ describe('WaitForTool (harness)', () => {
       expect(output).toContain('wait_status: timed_out');
       expect(output).toContain('[still_running]');
       expect(output).toContain(taskId);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('registers and unregisters WaitFor in the live session when experimental.wait_for changes', async () => {
+    const ctx = createTestAgent();
+    try {
+      const registry = ctx.get(IAgentToolRegistryService);
+      const config = ctx.get(IConfigService);
+      expect(registry.resolve('WaitFor')).toBeUndefined();
+
+      await config.set(EXPERIMENTAL_SECTION, { wait_for: true });
+      expect(registry.resolve('WaitFor')).toBeDefined();
+
+      await config.set(EXPERIMENTAL_SECTION, { wait_for: false });
+      expect(registry.resolve('WaitFor')).toBeUndefined();
+      expect(registry.list().map((tool) => tool.name)).not.toContain('WaitFor');
+
+      await config.set(EXPERIMENTAL_SECTION, { wait_for: true });
+      expect(registry.resolve('WaitFor')).toBeDefined();
     } finally {
       await ctx.dispose();
     }

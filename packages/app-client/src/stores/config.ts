@@ -123,6 +123,16 @@ export const useConfigStore = defineStore('kimi.config', () => {
   let storeEpoch = 0;
   let pendingLegacyMigrationPatch: Record<string, boolean> = {};
   let legacyLocalMigrationInFlight: Promise<void> | null = null;
+  let lastMetaInstanceKey = '';
+  const assembledRestartFeatures = new Set<string>();
+
+  function resolveOptimisticFeatureActive(
+    feature: ServerExperimentalFeature,
+    nextEnabled: boolean,
+  ): boolean {
+    if (feature.effectTiming !== 'restart') return nextEnabled;
+    return nextEnabled && (feature.active || assembledRestartFeatures.has(feature.id));
+  }
 
   function syncClientExperimentalSignals(): void {
     const contextFeature = experimentalFeatures.value.find(
@@ -298,6 +308,21 @@ export const useConfigStore = defineStore('kimi.config', () => {
     }
 
     const rawFeatures = m.experimentalFeatures ?? [];
+    const instanceKey = `${m.serverId ?? ''}\0${m.startedAt ?? ''}`;
+    if (lastMetaInstanceKey !== '' && instanceKey !== lastMetaInstanceKey) {
+      assembledRestartFeatures.clear();
+    }
+    lastMetaInstanceKey = instanceKey;
+    for (const feature of rawFeatures) {
+      if (feature.effectTiming === 'restart') {
+        if (feature.active) {
+          assembledRestartFeatures.add(feature.id);
+        } else if (feature.enabled) {
+          assembledRestartFeatures.delete(feature.id);
+        }
+      }
+    }
+
     experimentalFeatures.value =
       Object.keys(migrationPlan.patch).length > 0
         ? rawFeatures.map((feature) => {
@@ -308,7 +333,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
             return {
               ...feature,
               enabled: true,
-              active: feature.effectTiming === 'restart' ? feature.active : true,
+              active: resolveOptimisticFeatureActive(feature, true),
               source:
                 feature.stage === 'beta' && experimentalBeta.value?.enabled === true
                   ? feature.source
@@ -340,21 +365,25 @@ export const useConfigStore = defineStore('kimi.config', () => {
     const existing = experimentalFeatures.value.find((feature) => feature.id === id);
     syncLegacyLocalExperimentalKey(id, on, existing !== undefined);
     metaCommittedGeneration = ++metaRequestGeneration;
-    if (existing?.effectTiming !== 'restart' || !on) {
-      experimentalFlags.value = { ...experimentalFlags.value, [id]: on };
-    }
     if (existing !== undefined) {
+      const nextActive = resolveOptimisticFeatureActive(existing, on);
       experimentalFeatures.value = experimentalFeatures.value.map((feature) =>
         feature.id === id
           ? {
               ...feature,
               enabled: on,
-              active: feature.effectTiming === 'restart' ? feature.active && on : on,
+              active: nextActive,
               source: 'config',
               configValue: on,
             }
           : feature,
       );
+      experimentalFlags.value = buildActiveExperimentalFlags(
+        { ...experimentalFlags.value, [id]: nextActive },
+        experimentalFeatures.value,
+      );
+    } else {
+      experimentalFlags.value = { ...experimentalFlags.value, [id]: on };
     }
     syncClientExperimentalSignals();
     await refreshServerMeta();
@@ -378,7 +407,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
       return {
         ...feature,
         enabled: nextEnabled,
-        active: feature.effectTiming === 'restart' ? feature.active : nextEnabled,
+        active: resolveOptimisticFeatureActive(feature, nextEnabled),
         source: on ? 'beta-config' : feature.configValue !== undefined ? 'config' : 'default',
       };
     });
@@ -403,6 +432,8 @@ export const useConfigStore = defineStore('kimi.config', () => {
     storeEpoch += 1;
     pendingLegacyMigrationPatch = {};
     legacyLocalMigrationInFlight = null;
+    lastMetaInstanceKey = '';
+    assembledRestartFeatures.clear();
     config.value = null;
     serverVersion.value = '';
     availableOpenInApps.value = [];

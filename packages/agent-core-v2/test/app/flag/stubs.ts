@@ -1,3 +1,4 @@
+import { Event } from '#/_base/event';
 import { IFlagService } from '#/app/flag/flag';
 import type {
   BetaMasterSwitchState,
@@ -18,6 +19,7 @@ export function stubFlag(enabled: boolean | ((id: string) => boolean) = false): 
   return {
     _serviceBrand: undefined,
     registry,
+    onDidChangeFlags: Event.None as Event<void>,
     betaState: (): BetaMasterSwitchState => ({
       enabled: false,
       source: 'default',

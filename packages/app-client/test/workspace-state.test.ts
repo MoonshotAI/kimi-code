@@ -6363,6 +6363,71 @@ describe('setNotifyUserEnabled', () => {
     expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
     expect(useSessionMentions().sessionMentions.value).toBe(true);
   });
+
+  it('preserves assembled restart-feature active state across off/on toggles when refreshServerMeta fails', async () => {
+    configStore().resetConfig();
+
+    let towerEnabled = true;
+    let failMeta = false;
+
+    apiMock.setConfig.mockImplementation(async (patch: { experimental?: Record<string, boolean> }) => {
+      if (patch.experimental?.['tower'] !== undefined) {
+        towerEnabled = patch.experimental['tower'];
+      }
+      return { providers: {} };
+    });
+
+    apiMock.getMeta.mockImplementation(async () => {
+      if (failMeta) {
+        throw new Error('transient network failure');
+      }
+      return {
+        serverVersion: '1.0.0',
+        serverId: 'srv-1',
+        startedAt: '2026-11-25T00:00:00.000Z',
+        openInApps: [],
+        dangerousBypassAuth: false,
+        experimentalFlags: {
+          tower: towerEnabled,
+        },
+        experimentalBeta: {
+          enabled: false,
+          source: 'default',
+          env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+        },
+        experimentalFeatures: [
+          {
+            id: 'tower',
+            title: 'Tower mode',
+            description: 'Tower',
+            env: 'KIMI_CODE_EXPERIMENTAL_TOWER',
+            stage: 'experimental',
+            effectTiming: 'restart',
+            enabled: towerEnabled,
+            active: towerEnabled,
+            source: 'config',
+            configValue: towerEnabled,
+          },
+        ],
+        backend: 'v2',
+        webTitle: '',
+        homeDir: '/tmp/home',
+      };
+    });
+
+    await configStore().refreshServerMeta();
+    expect(configStore().experimentalFlags['tower']).toBe(true);
+
+    await configStore().setExperimentalFlag('tower', false);
+    expect(configStore().experimentalFlags['tower']).toBe(false);
+    expect(configStore().experimentalFeatures.find((f) => f.id === 'tower')?.active).toBe(false);
+
+    failMeta = true;
+    await configStore().setExperimentalFlag('tower', true);
+    expect(configStore().experimentalFeatures.find((f) => f.id === 'tower')?.enabled).toBe(true);
+    expect(configStore().experimentalFeatures.find((f) => f.id === 'tower')?.active).toBe(true);
+    expect(configStore().experimentalFlags['tower']).toBe(true);
+  });
 });
 
 describe('setPromptPredictionEnabled', () => {

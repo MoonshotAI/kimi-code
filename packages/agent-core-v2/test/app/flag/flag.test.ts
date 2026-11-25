@@ -776,4 +776,30 @@ describe('migrateLegacyMasterEnvTower', () => {
     expect(finalText).toContain('telemetry = false');
     expect(finalText).toContain('tower = true');
   });
+
+  it('does not persist tower = true into config.toml when KIMI_CODE_EXPERIMENTAL_TOWER=1 is explicitly set', () => {
+    const configPath = join(tempDir, 'config.toml');
+    writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
+
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_TOWER: '1' },
+      }),
+    ).toBe('stamped-noop');
+    expect(readFileSync(configPath, 'utf8')).toBe('default_model = "kimi-k2"\n');
+    expect(
+      resolveBootstrapEnvWithLegacyTowerMigration({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_TOWER: '1' },
+      })?.['KIMI_CODE_EXPERIMENTAL_TOWER'],
+    ).toBe('1');
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      }),
+    ).toBe('already-migrated');
+    expect(readFileSync(configPath, 'utf8')).toBe('default_model = "kimi-k2"\n');
+  });
 });
