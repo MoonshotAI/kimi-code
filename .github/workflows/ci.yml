@@ -42,6 +42,18 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      - name: Check for generated declarations in agent-core-v2 source and tests
+        shell: bash
+        run: |
+          declarations=$(git status --porcelain=v1 --untracked-files=all --ignored=matching -- \
+            ':(glob)packages/agent-core-v2/src/**/*.d.ts' \
+            ':(glob)packages/agent-core-v2/src/**/*.d.[cm]ts' \
+            ':(glob)packages/agent-core-v2/test/**/*.d.ts' \
+            ':(glob)packages/agent-core-v2/test/**/*.d.[cm]ts')
+          if [ -n "$declarations" ]; then
+            printf 'Unexpected declarations in agent-core-v2 source and tests:\n%s\n' "$declarations"
+            exit 1
+          fi
       - name: Smoke test CLI bundle
         run: pnpm -C apps/kimi-code run smoke
       # Temporarily disabled while the E2E suite is being replaced.
