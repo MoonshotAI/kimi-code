@@ -107,6 +107,7 @@ import {
 import {
   MCP_SECTION,
   MCP_STARTUP_TIMEOUT_ENV,
+  MCP_STARTUP_WAIT_ENV,
   MCP_TOOL_TIMEOUT_ENV,
   McpSectionSchema,
   type McpSection,
@@ -2457,6 +2458,39 @@ describe('mcp config section', () => {
     expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(7000);
 
     disposables.dispose();
+  });
+
+  it('reads startup_wait_ms from config.toml and lets the env var win, including 0', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env, '[mcp]\nstartup_wait_ms = 5000\n');
+    try {
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(5000);
+
+      env[MCP_STARTUP_WAIT_ENV] = 'abc';
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(5000);
+
+      env[MCP_STARTUP_WAIT_ENV] = '-1';
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(5000);
+
+      env[MCP_STARTUP_WAIT_ENV] = '';
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(5000);
+
+      env[MCP_STARTUP_WAIT_ENV] = '   ';
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(5000);
+
+      env[MCP_STARTUP_WAIT_ENV] = '0';
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(0);
+
+      env[MCP_STARTUP_WAIT_ENV] = '2500';
+      expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs).toBe(2500);
+    } finally {
+      disposables.dispose();
+    }
+
+    expect(McpSectionSchema.safeParse({ startupWaitMs: 0 }).success).toBe(true);
+    expect(McpSectionSchema.safeParse({ startupWaitMs: -1 }).success).toBe(false);
+    expect(McpSectionSchema.safeParse({ startupWaitMs: 2_147_483_647 }).success).toBe(true);
+    expect(McpSectionSchema.safeParse({ startupWaitMs: 2_147_483_648 }).success).toBe(false);
   });
 
   it('reads tool_timeout_ms from config.toml and lets the env var win', async () => {

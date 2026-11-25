@@ -379,14 +379,15 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `startup_timeout_ms` | `integer` | `30000`（30 秒） | 所有 MCP server 的全局默认连接（启动 + 工具发现）超时（毫秒）；`mcp.json` 的 `startupTimeoutMs` 优先于本节 |
+| `startup_wait_ms` | `integer` | `2000`（2 秒） | 会话初始化时等待首轮 MCP 工具发现的时间上限（毫秒），到点即带着已就绪的工具开始对话，未就绪的 server 继续在后台连接且不会被终止；`0` 表示不等待，取值范围为 `0` 到 `2147483647` |
 | `tool_timeout_ms` | `integer` | `60000`（60 秒） | 所有 MCP server 的全局默认单次工具调用超时（毫秒）；`mcp.json` 的 `toolTimeoutMs` 优先于本节 |
-| `default_deferred` | `boolean` | `false` | [按需加载工具](../customization/mcp.md#按需加载工具)的全局默认：设为 `true` 时所有 MCP server 的工具按需加载，除非 server 自行排除；`mcp.json` 中单个 server 的 `deferred` 字段优先于本节 |
-| `reconnect_initial_delay_ms` | `integer` | `5000`（5 秒） | workspace 级 MCP server 首次连接失败或意外断连后，首次自动重连前的等待时间（毫秒）；每次失败后再翻倍 |
-| `reconnect_max_delay_ms` | `integer` | `300000`（5 分钟） | workspace 级 MCP server 自动重连退避等待的上限（毫秒） |
+| `default_deferred` | `boolean` | `true` | [按需加载工具](../customization/mcp.md#按需加载工具)的全局默认：默认所有 MCP server 的工具按需加载，除非 server 在 `mcp.json` 中显式设置 `deferred: false`；server 字段始终优先于本节 |
+| `reconnect_initial_delay_ms` | `integer` | `5000`（5 秒） | MCP server 进入自动重连时，首次重试前的等待时间（毫秒）；每次失败后再翻倍 |
+| `reconnect_max_delay_ms` | `integer` | `300000`（5 分钟） | MCP server 自动重连退避等待的上限（毫秒） |
 
-`startup_timeout_ms` 和 `tool_timeout_ms` 可分别被环境变量 `KIMI_MCP_STARTUP_TIMEOUT_MS` 和 `KIMI_MCP_TOOL_TIMEOUT_MS` 覆盖，优先级高于配置文件。MCP server 的完整配置方式见 [MCP](../customization/mcp.md)。
+`startup_timeout_ms`、`startup_wait_ms` 和 `tool_timeout_ms` 可分别被环境变量 `KIMI_MCP_STARTUP_TIMEOUT_MS`、`KIMI_MCP_STARTUP_WAIT_MS` 和 `KIMI_MCP_TOOL_TIMEOUT_MS` 覆盖，优先级高于配置文件。MCP server 的完整配置方式见 [MCP](../customization/mcp.md)。
 
-`reconnect_initial_delay_ms` 和 `reconnect_max_delay_ms` 同样可分别被环境变量 `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` 和 `KIMI_MCP_RECONNECT_MAX_DELAY_MS` 覆盖。自动重连只作用于 workspace 级 MCP server，遇到无法自行恢复的失败（命令不存在、配置非法、server 拒绝静态凭据）会停止重试；详见 [MCP](../customization/mcp.md)。
+`reconnect_initial_delay_ms` 和 `reconnect_max_delay_ms` 同样可分别被环境变量 `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` 和 `KIMI_MCP_RECONNECT_MAX_DELAY_MS` 覆盖。自动重连作用于 HTTP/SSE server 启动失败以及已建立连接后的意外断连；stdio server 首次启动失败会保持 `failed`，需手动重连。详见 [MCP](../customization/mcp.md)。
 
 ## `identity`
 

@@ -324,12 +324,26 @@ describe('McpConnectionManager', () => {
     try {
       await cm.connectAll({
         plain: stdioConfig(),
-        pinned: { ...stdioConfig(), deferred: true },
+        optedOut: { ...stdioConfig(), deferred: false },
       });
-      expect(cm.resolved('plain')?.deferred).toBe(false);
-      expect(cm.resolved('pinned')?.deferred).toBe(true);
+      expect(cm.resolved('plain')?.deferred).toBe(true);
+      expect(cm.resolved('optedOut')?.deferred).toBe(false);
     } finally {
       await cm.shutdown();
+    }
+
+    const inlineDefault = createManager({
+      resolveDefaults: () => ({ defaultDeferred: false }),
+    });
+    try {
+      await inlineDefault.connectAll({
+        plain: stdioConfig(),
+        pinned: { ...stdioConfig(), deferred: true },
+      });
+      expect(inlineDefault.resolved('plain')?.deferred).toBe(false);
+      expect(inlineDefault.resolved('pinned')?.deferred).toBe(true);
+    } finally {
+      await inlineDefault.shutdown();
     }
 
     const defaulted = createManager({
@@ -776,6 +790,147 @@ describe('McpConnectionManager', () => {
     ['http', { transport: 'http' as const, url: 'https://example.test/mcp' }],
     ['sse', { transport: 'sse' as const, url: 'https://example.test/sse' }],
   ])(
+    'applies the built-in 30s startup timeout without narrowing tool calls or liveness pings over %s',
+    async (_transport, config) => {
+      const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+      const listTools = vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
+      const callTool = vi.spyOn(Client.prototype, 'callTool').mockResolvedValue({ content: [] });
+      const ping = vi.spyOn(Client.prototype, 'ping').mockResolvedValue({});
+      const cm = createManager();
+      try {
+        await cm.connectAll({ server: config });
+        expect(connect).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ timeout: 30_000 }),
+        );
+        expect(listTools).toHaveBeenCalledWith(
+          undefined,
+          expect.objectContaining({ timeout: 30_000 }),
+        );
+
+        const client = cm.resolved('server')?.client;
+        if (client === undefined) throw new Error('expected a connected client');
+        await client.callTool('echo', { text: 'hi' });
+        await client.ping();
+        expect(callTool).toHaveBeenCalledWith(
+          { name: 'echo', arguments: { text: 'hi' } },
+          undefined,
+          undefined,
+        );
+        expect(ping).toHaveBeenCalledWith(expect.objectContaining({ timeout: 5_000 }));
+      } finally {
+        await cm.shutdown();
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
+  it.each(['connect', 'listTools'] as const)(
+    'keeps an unconfigured server hanging in %s pending past 2s until the 30s startup deadline',
+    async (phase) => {
+      vi.useFakeTimers();
+      const connect = vi.spyOn(Client.prototype, 'connect');
+      const listTools = vi.spyOn(Client.prototype, 'listTools');
+      if (phase === 'connect') {
+        connect.mockReturnValue(new Promise<void>(() => {}));
+      } else {
+        connect.mockResolvedValue();
+        listTools.mockReturnValue(new Promise(() => {}));
+      }
+      const close = vi.spyOn(Client.prototype, 'close').mockResolvedValue();
+      const cm = createManager({ reconnectRetryEnabled: true });
+      try {
+        const connecting = cm.connect('slow', {
+          transport: 'http',
+          url: 'https://example.test/mcp',
+        });
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(cm.get('slow')?.status).toBe('pending');
+        expect(close).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(28_000);
+        await connecting;
+        const entry = cm.get('slow');
+        expect(entry?.status).toBe('failed');
+        expect(entry?.error).toContain('Timed out after 30000ms');
+        expect(entry?.nextRetryAt).toBeDefined();
+      } finally {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+        await cm.shutdown();
+      }
+    },
+  );
+
+  it('marks a stdio startup timeout as failed without background retries until manually reconnected', async () => {
+    vi.useFakeTimers();
+    let failNext = true;
+    const connect = vi.spyOn(Client.prototype, 'connect').mockImplementation(() =>
+      failNext ? new Promise<void>(() => {}) : Promise.resolve(),
+    );
+    vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
+    vi.spyOn(Client.prototype, 'close').mockResolvedValue();
+    const cm = createManager({
+      reconnectRetryEnabled: true,
+      resolveDefaults: () => ({ reconnectInitialDelayMs: 1_000, reconnectMaxDelayMs: 5_000 }),
+    });
+    try {
+      const connecting = cm.connect('slow', { ...stdioConfig(), startupTimeoutMs: 3_000 });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await connecting;
+      expect(cm.get('slow')?.status).toBe('failed');
+      expect(cm.get('slow')?.error).toContain('Timed out after 3000ms');
+      expect(cm.get('slow')?.nextRetryAt).toBeUndefined();
+      expect(connect).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(cm.get('slow')?.status).toBe('failed');
+      expect(connect).toHaveBeenCalledTimes(1);
+
+      failNext = false;
+      await cm.reconnect('slow');
+      expect(cm.get('slow')?.status).toBe('connected');
+      expect(connect).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      await cm.shutdown();
+    }
+  });
+
+  it('still auto-reconnects an established stdio server after it drops', async () => {
+    vi.useFakeTimers();
+    const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+    vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
+    vi.spyOn(Client.prototype, 'close').mockResolvedValue();
+    const cm = createManager({
+      reconnectRetryEnabled: true,
+      resolveDefaults: () => ({ reconnectInitialDelayMs: 1_000, reconnectMaxDelayMs: 2_000 }),
+    });
+    try {
+      await cm.connectAll({ live: stdioConfig() });
+      const sdkClient = connect.mock.instances[0] as Client | undefined;
+      sdkClient?.onclose?.();
+
+      const dropped = cm.get('live');
+      expect(dropped?.status).toBe('failed');
+      expect(dropped?.nextRetryAt).toBeDefined();
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(cm.get('live')?.status).toBe('connected');
+      expect(connect).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      await cm.shutdown();
+    }
+  });
+
+  it.each([
+    ['stdio', stdioConfig()],
+    ['http', { transport: 'http' as const, url: 'https://example.test/mcp' }],
+    ['sse', { transport: 'sse' as const, url: 'https://example.test/sse' }],
+  ])(
     'forwards the resolved default startup timeout above the SDK default over %s',
     async (_transport, config) => {
       const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
@@ -1025,11 +1180,9 @@ describe('McpConnectionManager', () => {
     try {
       await stdio.connectAll({ resource: stdioConfig() });
       expect(stdio.get('resource')?.status).toBe('failed');
-      expect(stdio.get('resource')?.nextRetryAt).toBeDefined();
-      for (let i = 0; i < 100; i++) {
-        if (stdio.get('resource')?.status === 'connected') break;
-        await sleep(25);
-      }
+      expect(stdio.get('resource')?.nextRetryAt).toBeUndefined();
+      expect(spawn).toHaveBeenCalledTimes(1);
+      await stdio.reconnect('resource');
       expect(stdio.get('resource')?.status).toBe('connected');
       expect(spawn).toHaveBeenCalledTimes(2);
     } finally {

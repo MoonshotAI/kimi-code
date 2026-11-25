@@ -67,7 +67,7 @@ Optional fields:
 | `headers` | `Record<string, string>` | HTTP, SSE | Static request headers appended to every request |
 | `bearerTokenEnvVar` | `string` | HTTP, SSE | Name of an environment variable that contains a bearer token |
 | `enabled` | `boolean` | All | Set to `false` to disable this server |
-| `deferred` | `boolean` | All | Experimental: set to `true` to let the model load this server's tools on demand. Defaults to the global `default_deferred` value (`false` when unset). Prerequisites and behavior: [Loading tools on demand](#loading-tools-on-demand) |
+| `deferred` | `boolean` | All | Set to `false` to put this server's tools directly into the model's top-level tool list. Defaults to the global `default_deferred` value (`true` when unset, i.e. load on demand). Prerequisites and behavior: [Loading tools on demand](#loading-tools-on-demand) |
 | `startupTimeoutMs` | `number` | All | Connection timeout from `1` to `2147483647` milliseconds; default `30000` |
 | `toolTimeoutMs` | `number` | All | Timeout from `1` to `2147483647` milliseconds for a single tool call |
 | `enabledTools` | `string[]` | All | Tool allowlist |
@@ -75,7 +75,9 @@ Optional fields:
 
 You do not have to set the connection timeout or the single tool-call timeout per server: `[mcp] startup_timeout_ms` / `[mcp] tool_timeout_ms` in `config.toml` or the `KIMI_MCP_STARTUP_TIMEOUT_MS` / `KIMI_MCP_TOOL_TIMEOUT_MS` environment variables change the global defaults. Precedence is: per-server field > environment variable > `config.toml` > built-in default. See [Configuration files](../configuration/config-files.md#mcp).
 
-When a workspace-level MCP server cannot be reached at startup or drops unexpectedly, it reconnects on its own with exponential backoff (the wait between attempts doubles each time): the first retry happens after `[mcp] reconnect_initial_delay_ms` (default `5000`) and the wait never exceeds `[mcp] reconnect_max_delay_ms` (default `300000`), adjustable via `config.toml` or the `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` / `KIMI_MCP_RECONNECT_MAX_DELAY_MS` environment variables. Its tools come back automatically once the server is reachable again. Servers that cannot recover on their own — an unknown command, an invalid configuration, or static credentials the server rejects — are not retried and stay `failed`, and session-scoped ephemeral servers are not retried either.
+Session initialization waits at most `[mcp] startup_wait_ms` (default `2000` milliseconds, adjustable via `config.toml` or `KIMI_MCP_STARTUP_WAIT_MS`; `0` skips waiting) for initial MCP discovery, then starts the conversation with the tools already available. Servers still starting keep connecting in the background up to their `startupTimeoutMs` (default 30 seconds) without being terminated at the 2-second mark, so a stdio server that takes more than 2 seconds to boot still connects and makes its tools available to subsequent model steps.
+
+HTTP and SSE servers that fail to connect at startup, as well as any server whose established connection drops unexpectedly, reconnect automatically with exponential backoff (the wait between attempts doubles each time): the first retry happens after `[mcp] reconnect_initial_delay_ms` (default `5000`) and the wait never exceeds `[mcp] reconnect_max_delay_ms` (default `300000`), adjustable via `config.toml` or the `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` / `KIMI_MCP_RECONNECT_MAX_DELAY_MS` environment variables. A stdio server that fails its initial startup (including timing out) stays `failed` without background retries because each attempt starts a fresh child process; reconnect it manually from `/mcp` once the underlying issue is resolved. Permanent failures — an unknown command, an invalid configuration, or rejected static credentials — are never retried automatically.
 
 HTTP and SSE servers support providing static credentials via `headers` or `bearerTokenEnvVar`. When OAuth is needed, run `/mcp-config login <server-name>` to complete browser-based authorization.
 
@@ -133,28 +135,28 @@ In this example the server receives `LOG_LEVEL=debug` from `env`; every other va
 
 ## Loading tools on demand
 
-By default, every tool of a server goes straight into the model's top-level tool list; with many connected servers — or a single server that exposes many tools — those definitions occupy context for the whole session. Marking a server as deferred controls how its schemas are disclosed. With dynamic loading, the ToolSelect resolver removes deferred entries from the resolved top-level tool list and turns the baseline deferred names into an initial reminder; later additions and removals are announced as deltas. The built-in `select_tools` tool loads selected schemas into system messages. Models without dynamic loading remove the metadata and send the initial deferred tools as ordinary declarations. The final encoder does not independently drop tools solely because of this flag; duplicate declarations prefer the top-level list.
+By default, every MCP server's tools are deferred: on models that support dynamic loading, their names are announced without occupying the top-level tool list until the model loads them. Marking a server as deferred controls how its schemas are disclosed. With dynamic loading, the ToolSelect resolver removes deferred entries from the resolved top-level tool list and turns the baseline deferred names into an initial reminder; later additions and removals — including tools from servers that finish connecting after session startup — are announced as deltas. The built-in `select_tools` tool loads selected schemas into system messages. Models without dynamic loading ignore the `deferred` distinction and receive all currently connected MCP tools as ordinary inline declarations, including tools discovered after startup on subsequent requests. The final encoder does not independently drop tools solely because of this flag; duplicate declarations prefer the top-level list.
 
 When a deferred tool is replaced by a newer schema with the same name, one announcement marks the old version as removed and the new version as added. The model must call `select_tools` again to load the current schema before calling that tool; calls made before this reload are rejected with guidance to reselect it. Kimi Chat Completions sends the old declaration, an unload message, and the new declaration in order so the backend does not receive an unresolved duplicate declaration. Same-name updates to inline tools remain pinned to the original schema for the current session and do not enter this reload flow.
 
 Loading tools on demand takes effect when the current model declares the `dynamically_loaded_tools` capability: official models declare it automatically; for other models, add it to `capabilities` in `config.toml` — see [Configuration files](../configuration/config-files.md#models).
 
-On a model that supports dynamic loading, set `deferred: true` on the server entry in `mcp.json`:
+To put a specific server's tools directly into the top-level tool list (including tools discovered during initial session startup), set `deferred: false` on the server entry in `mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "github": {
       "url": "https://mcp.example.com/mcp",
-      "deferred": true
+      "deferred": false
     }
   }
 }
 ```
 
-Servers without `deferred` take the global default (`false` unless changed); the field is ignored when the model does not support dynamic loading. The authentication tool exposed by an OAuth server before authorization completes follows the same field.
+Servers without `deferred` take the global default (`true` unless changed). The authentication tool exposed by an OAuth server before authorization completes follows the same field.
 
-To defer every server by default instead of marking them one by one, set `default_deferred = true` under `[mcp]` in `config.toml` — see [Configuration files](../configuration/config-files.md#mcp). A server can still opt out with `deferred: false`; the per-server field always wins over the global default. The value is captured when a server connects, so changing it later does not reshape tools in a running session — reconnect the server or restart the process to apply it.
+To disable deferred loading globally and restore top-level inline tools for every server, set `default_deferred = false` under `[mcp]` in `config.toml` — see [Configuration files](../configuration/config-files.md#mcp). The per-server field always wins over the global default. The value is captured when a server connects, so changing it later does not reshape tools in a running session — reconnect the server or restart the process to apply it.
 
 ## Tool Naming and Permissions
 
