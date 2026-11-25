@@ -1,4 +1,4 @@
-import { held, say } from '@moonshot-ai/testkit/model';
+import { held, httpError, say } from '@moonshot-ai/testkit/model';
 
 import { expect, selfTest } from '../support/scenario';
 
@@ -20,6 +20,20 @@ selfTest('compact', {
     },
   },
   negative: {
+    'fails at once when the model service refuses to summarize': {
+      onlyOn: ['tui', 'acp'],
+      reason:
+        'Product gap, left out until the owner decides: Desktop and Web show nothing when a manual compaction fails, so the driver can only wait out its time limit there.',
+      run: async ({ product, model }) => {
+        model.script(say('The first answer.'));
+        model.lane('compaction').script(httpError(400, { message: 'The example service refused to summarize.' }));
+        await product.send('Ask the first question.');
+        await product.waitIdle();
+        await product.expectReply('The first answer.');
+        await expect(product.compact()).rejects.toThrow('compact()');
+        expect(model.requests('compaction')).toHaveLength(1);
+      },
+    },
     'fails while a turn is running': {
       run: async ({ product, model }) => {
         model.script(held('busy', say('Finished before any compaction.'), 1));

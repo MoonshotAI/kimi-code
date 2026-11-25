@@ -358,7 +358,9 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     await this.page.keyboard.type(COMPACT_COMMAND);
     await this.page.keyboard.press('Enter');
     await this.page.keyboard.press('Enter');
-    await this.wait('the conversation to show that the context was compacted', async () => ((await compacted.count()) > before && (await this.idle()) ? true : undefined));
+    await this.wait('the conversation to show Context compacted (Desktop and Web show nothing when a compaction fails, so a failed one ends in this timeout)', async () =>
+      (await compacted.count()) > before && (await this.idle()) ? true : undefined,
+    );
   }
 
   async newSession(): Promise<void> {

@@ -2,7 +2,7 @@ import { say } from '@moonshot-ai/testkit/model';
 
 import { expect, scenario } from '../../support/scenario';
 
-scenario('builds the next turn from the summary after the user compacts the context by hand', {}, async ({ product, model }) => {
+scenario('builds the next turn from the summary after the user compacts the context by hand, also after a restart', {}, async ({ product, model }) => {
   const first = 'Summarize the parser module.';
   const firstReply = 'The parser module tokenizes the input and builds a syntax tree.';
   const summary = 'The user asked about the parser module, which tokenizes input and builds a syntax tree.';
@@ -15,6 +15,7 @@ scenario('builds the next turn from the summary after the user compacts the cont
   await product.waitIdle();
   await product.compact();
   expect(model.requests('compaction')).toHaveLength(1);
+  await product.restart();
 
   await product.send(next);
   await product.waitIdle();
