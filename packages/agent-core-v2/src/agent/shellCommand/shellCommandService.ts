@@ -142,8 +142,13 @@ export class AgentShellCommandService extends Service implements IAgentShellComm
         backgrounded = true;
         return { stdout: output, stderr: '', isError: false, backgrounded: true };
       }
+      const isBashResult =
+        response.outcome.type === 'success' ||
+        (response.outcome.type === 'failed' &&
+          response.outcome.error.type === 'error' &&
+          response.outcome.error.phase === 'execute');
       isError = response.outcome.type !== 'success';
-      if (isError && stdout.length === 0 && stderr.length === 0) {
+      if (isError && stderr.length === 0 && (stdout.length === 0 || !isBashResult)) {
         stderr = output.length > 0 ? output : 'Command failed.';
         if (input.commandId !== undefined && stderr.length > 0) {
           void this.dispatcher.dispatch(new ShellOutput({
@@ -162,7 +167,7 @@ export class AgentShellCommandService extends Service implements IAgentShellComm
           taskId: this.shellCommandTasks.get(input.commandId),
         }));
       }
-      this.appendShellOutput(stdout.length === 0 ? '' : output, stderr, isError);
+      this.appendShellOutput(stdout.length === 0 ? '' : isBashResult ? output : stdout, stderr, isError);
       return { stdout, stderr, isError };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -6,6 +6,7 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
   IAgentLoopService,
   IAgentShellCommandService,
+  IAgentToolExecutorService,
   IAgentToolRegistryService,
   IEventBus,
 } from '#/index';
@@ -89,6 +90,34 @@ describe('AgentShellCommandService', () => {
     const injected = textOf(context.history().at(-1)!);
     expect(injected).toContain('partial output');
     expect(injected).toContain('Command failed with exit code: 3.');
+  });
+
+  it('preserves streamed stdout and surfaces the error when the tool result is replaced after execution', async () => {
+    await setup('partial output\n', 0);
+    ctx.get(IAgentToolExecutorService).registerHook({
+      afterExecute: () => ({
+        toolCallId: 'shell-command',
+        content: [{ type: 'text', text: 'Tool "Bash" output failed: disk full' }],
+        outcome: {
+          type: 'failed',
+          error: {
+            outcome: 'failed',
+            type: 'output',
+            phase: 'execute',
+            reason: 'Tool "Bash" output failed: disk full',
+          },
+        },
+      }),
+    });
+
+    const result = await shell.run({ command: 'cat partial.txt' });
+
+    expect(result.stdout).toBe('partial output\n');
+    expect(result.isError).toBe(true);
+    expect(result.stderr).toContain('output failed: disk full');
+    const injected = textOf(context.history().at(-1)!);
+    expect(injected).toContain('<bash-stdout>partial output\n</bash-stdout>');
+    expect(injected).toContain('output failed: disk full');
   });
 
   it('escapes bash tag delimiters inside command output', async () => {
