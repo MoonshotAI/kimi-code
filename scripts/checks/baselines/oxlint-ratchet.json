@@ -1295,7 +1295,7 @@
     "apps/desktop/tests/main/browser/browser-sites.test.ts": 2,
     "apps/desktop/tests/main/browser/browser-view.test.ts": 6,
     "apps/desktop/tests/main/diagnostics/trace.test.ts": 2,
-    "apps/desktop/tests/main/ipc/register.test.ts": 5,
+    "apps/desktop/tests/main/ipc/register.test.ts": 4,
     "apps/desktop/tests/main/release/preview-release.test.ts": 4,
     "apps/desktop/tests/main/screenshot/screenshot-capture-stream.test.ts": 1,
     "apps/desktop/tests/main/screenshot/screenshot-lifecycle.test.ts": 13,
