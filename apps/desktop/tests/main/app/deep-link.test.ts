@@ -22,6 +22,7 @@ vi.mock('../../../src/main/diagnostics/log', async (importOriginal) => {
 
 import {
   DEEP_LINK_SCHEME,
+  deepLinkSchemeAvailable,
   extractDeepLink,
   handleDeepLink,
   isKnownDeepLink,
@@ -135,6 +136,26 @@ describe('registerDeepLinkScheme', () => {
     expect(mocks.app.setAsDefaultProtocolClient).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['packaged stable builds on macOS', 'darwin', true, '1.1.0', true],
+    ['unpackaged dev launches on Windows', 'win32', false, '1.1.0', true],
+    ['unpackaged dev launches on macOS', 'darwin', false, '1.1.0', false],
+    ['canary builds', 'win32', true, '1.1.1-canary.1', false],
+    ['preview builds', 'darwin', true, '1.1.1-preview.123.1.g12345678', false],
+  ])('reports whether %s open kimi-code:// links', (_case, platform, packaged, version, available) => {
+    Object.defineProperty(process, 'platform', { value: platform, enumerable: true, configurable: true });
+    mocks.app.isPackaged = packaged;
+    mocks.app.getVersion.mockReturnValue(version);
+    expect(deepLinkSchemeAvailable()).toBe(available);
+  });
+
+  it('reports kimi-code:// links as unavailable in e2e mode', () => {
+    asWindows();
+    mocks.app.isPackaged = false;
+    vi.stubEnv('KIMI_DESKTOP_E2E', '1');
+    expect(deepLinkSchemeAvailable()).toBe(false);
+  });
+
   it.each(['1.1.1-canary.1', '1.1.1-preview.123.1.g12345678'])('does not replace stable registration for %s', (version) => {
     asWindows();
     mocks.app.getVersion.mockReturnValue(version);
@@ -245,5 +266,45 @@ describe('workspace deep links', () => {
     handleDeepLink(url, show, vi.fn(), open);
     expect(show).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe('session deep links', () => {
+  it.each([
+    ['kimi-code://sessions/session_00000000-0000-4000-8000-000000000003', 'session_00000000-0000-4000-8000-000000000003'],
+    ['KIMI-CODE://SESSIONS/Session_1', 'Session_1'],
+  ])('opens the session in %s after showing the window', (url, sessionId) => {
+    const show = vi.fn();
+    const auth = vi.fn();
+    const openWorkspace = vi.fn();
+    const openSession = vi.fn();
+    handleDeepLink(url, show, auth, openWorkspace, openSession);
+    expect(show).toHaveBeenCalledOnce();
+    expect(openSession).toHaveBeenCalledExactlyOnceWith(sessionId);
+    expect(show.mock.invocationCallOrder[0]).toBeLessThan(openSession.mock.invocationCallOrder[0]!);
+    expect(auth).not.toHaveBeenCalled();
+    expect(openWorkspace).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'kimi-code://sessions',
+    'kimi-code://sessions/',
+    'kimi-code://sessions/session_1/',
+    'kimi-code://sessions/wd_app/session_1',
+    'kimi-code://sessions/session_1?prompt=hi',
+    'kimi-code://sessions/session_1#turn',
+    'kimi-code://sessions/session%2F1',
+    'kimi-code://sessions/..',
+    'kimi-code://user@sessions/session_1',
+    `kimi-code://sessions/${'a'.repeat(129)}`,
+    'kimi-code://session/session_1',
+    'https://sessions/session_1',
+  ])('ignores malformed session links: %s', (url) => {
+    const show = vi.fn();
+    const openSession = vi.fn();
+    expect(isKnownDeepLink(url)).toBe(false);
+    handleDeepLink(url, show, vi.fn(), vi.fn(), openSession);
+    expect(show).not.toHaveBeenCalled();
+    expect(openSession).not.toHaveBeenCalled();
   });
 });

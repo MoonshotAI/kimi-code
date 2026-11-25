@@ -1,11 +1,15 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import { createKimiHarness, type KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 import { importedSessionDir } from '@moonshot-ai/migration-legacy';
+import { createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 import { Command } from 'commander';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createKimiCodeHostIdentity } from '#/cli/host-identity';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { handleImportSessionsCommand } from '#/tui/commands/import-sessions';
 import { findBuiltInSlashCommand, resolveSlashCommandAvailability } from '#/tui/commands/registry';
@@ -26,8 +30,13 @@ import {
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.now();
 const BUDGET = { contextWindow: 32_768, tokenBudget: 16_384 };
+const PROJECT_ID = 'wd_project_0123456789ab';
+const ENGINE_WAIT_MS = 15_000;
+const ENGINE_TEST = { timeout: 60_000 };
 const roots: string[] = [];
+const harnesses: KimiHarness[] = [];
 afterEach(async () => {
+  await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -35,8 +44,10 @@ async function setup() {
   const root = await mkdtemp(join(tmpdir(), 'import-sessions-'));
   roots.push(root);
   const project = join(root, 'project');
+  const kimiHome = join(root, 'kimi');
   await mkdir(project);
-  return { root, project, kimiHome: join(root, 'kimi'), claudeHome: join(root, 'claude'), codexHome: join(root, 'codex') };
+  const harness = { homeDir: kimiHome, resolveSessionPlacement: async (workDir: string) => ({ projectId: PROJECT_ID, projectRoot: workDir, workDir }) };
+  return { root, project, kimiHome, harness, claudeHome: join(root, 'claude'), codexHome: join(root, 'codex') };
 }
 
 async function write(path: string, rows: unknown[], ageDays: number): Promise<number> {
@@ -67,7 +78,7 @@ const render = (screen: ImportSessionsScreenComponent): string => plain(screen.r
 
 describe('importing sessions', () => {
   it('imports recent sessions as ordinary sessions and skips them on the next run', async () => {
-    const { project, kimiHome, claudeHome, codexHome } = await setup();
+    const { project, kimiHome, harness, claudeHome, codexHome } = await setup();
     const claudeTime = await write(join(claudeHome, 'projects', '-project', 'claude-one.jsonl'), claudeSession(project, 'Fix the login flow'), 2);
     await write(join(codexHome, 'sessions', '2026', '10', '01', 'rollout-2026-10-01T10-00-00-thread-one.jsonl'), codexSession('thread-one', project), 20);
     await write(join(codexHome, 'sessions', '2026', '10', '01', 'rollout-2026-10-01T10-05-00-helper.jsonl'), codexSession('helper', project, { source: { subagent: { thread_spawn: { parent_thread_id: 'thread-one', depth: 1 } } } }), 20);
@@ -84,7 +95,7 @@ describe('importing sessions', () => {
     ]);
     expect(candidatesWithin(scan, 15, NOW).map((candidate) => candidate.sessionId)).toEqual(['ses_claude-one']);
 
-    const report = await importSessions(scan.candidates, { kimiHome, ...BUDGET, now: NOW });
+    const report = await importSessions(scan.candidates, { harness, ...BUDGET, now: NOW });
     expect(report).toEqual({
       imported: ['ses_claude-one', 'ses_thread-one'],
       alreadyImported: 0,
@@ -95,7 +106,7 @@ describe('importing sessions', () => {
       failed: [],
       stopped: false,
     });
-    const sessionDir = importedSessionDir(kimiHome, project, 'ses_claude-one');
+    const sessionDir = importedSessionDir(kimiHome, PROJECT_ID, 'ses_claude-one');
     expect(JSON.parse(await readFile(join(sessionDir, 'state.json'), 'utf8'))).toMatchObject({
       id: 'ses_claude-one',
       cwd: project,
@@ -109,14 +120,14 @@ describe('importing sessions', () => {
     expect(wire).toContain('<imported_conversation>');
     expect((await readdir(join(sessionDir, 'attachments'))).some((name) => name.startsWith('effective-history-'))).toBe(true);
     expect(await readdir(join(sessionDir, 'attachments', 'source'))).toEqual(['claude-one.jsonl']);
-    expect(await readdir(join(importedSessionDir(kimiHome, project, 'ses_thread-one'), 'attachments', 'source', 'subagents'))).toEqual(['rollout-2026-10-01T10-05-00-helper.jsonl']);
-    expect(JSON.parse(await readFile(join(importedSessionDir(kimiHome, project, 'ses_thread-one'), 'state.json'), 'utf8'))).toMatchObject({ title: 'Renamed in Codex', lastPrompt: 'Add tests' });
+    expect(await readdir(join(importedSessionDir(kimiHome, PROJECT_ID, 'ses_thread-one'), 'attachments', 'source', 'subagents'))).toEqual(['rollout-2026-10-01T10-05-00-helper.jsonl']);
+    expect(JSON.parse(await readFile(join(importedSessionDir(kimiHome, PROJECT_ID, 'ses_thread-one'), 'state.json'), 'utf8'))).toMatchObject({ title: 'Renamed in Codex', lastPrompt: 'Add tests' });
 
     expect(await scanImportableSessions({ kimiHome, claudeHome, codexHome, now: NOW })).toEqual({ candidates: [], alreadyImported: 2, missingFolder: 0 });
   });
 
   it('reports sessions it cannot import and leaves no partial session directories', async () => {
-    const { root, project, kimiHome, claudeHome, codexHome } = await setup();
+    const { root, project, kimiHome, harness, claudeHome, codexHome } = await setup();
     const projects = join(claudeHome, 'projects', '-project');
     await write(join(projects, 'moved.jsonl'), claudeSession(join(root, 'deleted-project'), 'Old task'), 1);
     await write(join(projects, 'commands-only.jsonl'), [
@@ -139,14 +150,14 @@ describe('importing sessions', () => {
       modifiedAt: NOW,
       sessionId: 'ses_commands-only',
     };
-    const report = await importSessions([...scan.candidates, commandsOnly], { kimiHome, ...BUDGET, now: NOW });
+    const report = await importSessions([...scan.candidates, commandsOnly], { harness, ...BUDGET, now: NOW });
 
     expect(report).toEqual({ imported: [], alreadyImported: 0, missingFolder: 0, inUse: 0, empty: 1, unsupported: 1, failed: [], stopped: false });
     expect(await readdir(join(kimiHome, 'sessions')).catch(() => [])).toEqual([]);
   });
 
   it('imports at most one batch and stops between sessions when asked', async () => {
-    const { kimiHome } = await setup();
+    const { harness } = await setup();
     const candidates: ImportCandidate[] = Array.from({ length: IMPORT_BATCH_LIMIT + 1 }, (_, index) => ({
       source: 'claude-code',
       path: `/example/source-${String(index)}.jsonl`,
@@ -156,10 +167,10 @@ describe('importing sessions', () => {
       sessionId: `ses_source-${String(index)}`,
     }));
 
-    expect((await importSessions(candidates, { kimiHome, ...BUDGET, now: NOW })).missingFolder).toBe(IMPORT_BATCH_LIMIT);
+    expect((await importSessions(candidates, { harness, ...BUDGET, now: NOW })).missingFolder).toBe(IMPORT_BATCH_LIMIT);
     let started = 0;
     const stopped = await importSessions(candidates, {
-      kimiHome,
+      harness,
       ...BUDGET,
       now: NOW,
       onProgress: () => {
@@ -171,7 +182,7 @@ describe('importing sessions', () => {
   });
 
   it('turns unreliable conversions into skip reasons and failures', async () => {
-    const { project, kimiHome } = await setup();
+    const { project, kimiHome, harness } = await setup();
     vi.resetModules();
     vi.doMock('@moonshot-ai/session-import', async (importOriginal) => ({
       ...(await importOriginal<typeof import('@moonshot-ai/session-import')>()),
@@ -190,7 +201,7 @@ describe('importing sessions', () => {
         modifiedAt: NOW,
         sessionId: `ses_${code}`,
       }));
-      expect(await importWithConversion(candidates, { kimiHome, ...BUDGET, now: NOW })).toEqual({
+      expect(await importWithConversion(candidates, { harness, ...BUDGET, now: NOW })).toEqual({
         imported: [],
         alreadyImported: 0,
         missingFolder: 0,
@@ -205,6 +216,30 @@ describe('importing sessions', () => {
       vi.doUnmock('@moonshot-ai/session-import');
       vi.resetModules();
     }
+  });
+
+  it('reports a session whose project cannot be resolved and imports the rest', async () => {
+    const { project, kimiHome, harness, claudeHome, codexHome } = await setup();
+    const other = join(project, 'nested');
+    await mkdir(other);
+    await write(join(claudeHome, 'projects', '-project', 'resolvable.jsonl'), claudeSession(project, 'Fix the login flow'), 1);
+    await write(join(claudeHome, 'projects', '-project-nested', 'unresolvable.jsonl'), claudeSession(other, 'Add tests'), 2);
+    const { candidates } = await scanImportableSessions({ kimiHome, claudeHome, codexHome, now: NOW });
+
+    const report = await importSessions(candidates, {
+      harness: {
+        ...harness,
+        resolveSessionPlacement: async (workDir) => {
+          if (workDir === other) throw new Error('The project catalog is locked');
+          return harness.resolveSessionPlacement(workDir);
+        },
+      },
+      ...BUDGET,
+      now: NOW,
+    });
+
+    expect(report.imported).toEqual(['ses_resolvable']);
+    expect(report.failed).toEqual([{ path: join(claudeHome, 'projects', '-project-nested', 'unresolvable.jsonl'), message: 'The project catalog is locked' }]);
   });
 
   it('sizes imports below the compaction threshold of the default model input limit', () => {
@@ -330,15 +365,11 @@ describe('ImportSessionsScreenComponent', () => {
 });
 
 describe('/import-sessions', () => {
-  async function openPage(root: string, kimiHome: string) {
+  function openPageWith<T>(root: string, harness: T) {
     vi.stubEnv('CLAUDE_CONFIG_DIR', join(root, 'claude'));
     vi.stubEnv('CODEX_HOME', join(root, 'codex'));
     const host = {
-      harness: {
-        homeDir: kimiHome,
-        listSessions: vi.fn(async () => []),
-        getConfig: vi.fn(async () => ({ defaultModel: 'example', models: { example: { provider: 'example', model: 'example-model', maxContextSize: 32_768 } } })),
-      },
+      harness,
       state: { ui: { requestRender: vi.fn() } },
       mountEditorReplacement: vi.fn(),
       restoreEditor: vi.fn(),
@@ -347,6 +378,52 @@ describe('/import-sessions', () => {
     const screen = host.mountEditorReplacement.mock.calls[0]![0] as ImportSessionsScreenComponent;
     expect(screen).toBeInstanceOf(ImportSessionsScreenComponent);
     return { host, screen };
+  }
+
+  async function openPage(root: string, kimiHome: string) {
+    return openPageWith(root, {
+      homeDir: kimiHome,
+      listSessions: vi.fn(async () => []),
+      getConfig: vi.fn(async () => ({ defaultModel: 'example', models: { example: { provider: 'example', model: 'example-model', maxContextSize: 32_768 } } })),
+      resolveSessionPlacement: vi.fn(async (workDir: string) => ({ projectId: PROJECT_ID, projectRoot: workDir, workDir })),
+    });
+  }
+
+  async function importAll(root: string, harness: KimiHarness, summary: string) {
+    const { screen } = openPageWith(root, harness);
+    const shows = (text: string) => vi.waitFor(() => {
+      expect(render(screen)).toContain(text);
+    }, { timeout: ENGINE_WAIT_MS });
+    await shows('Last 15 days');
+    screen.handleInput('\r');
+    await shows(summary);
+    screen.handleInput('\r');
+  }
+
+  async function repository() {
+    const layout = await setup();
+    const root = await realpath(layout.root);
+    const main = join(root, 'app');
+    const worktree = join(root, 'app-fix');
+    const subdir = join(main, 'src');
+    await createGitWorktree({ main, worktree });
+    await mkdir(subdir);
+    const start = () => {
+      const harness = createKimiHarness({ homeDir: layout.kimiHome, identity: createKimiCodeHostIdentity('0.0.0-test') });
+      harnesses.push(harness);
+      return harness;
+    };
+    const roots = async () => {
+      const catalog = JSON.parse(await readFile(join(layout.kimiHome, 'projects.json'), 'utf8')) as { projects: Record<string, { root: string }> };
+      return Object.values(catalog.projects).map((project) => project.root).toSorted();
+    };
+    const sessionsIn = async (harness: KimiHarness, workDir: string) =>
+      (await harness.listSessions({ workDir })).map((session) => [session.id, session.workDir]);
+    const pinnedDir = async (projectRoot: string, sessionId: string) => {
+      const state = JSON.parse(await readFile(join(importedSessionDir(layout.kimiHome, encodeWorkDirKey(projectRoot), sessionId), 'state.json'), 'utf8')) as { environmentCwd?: string };
+      return state.environmentCwd;
+    };
+    return { ...layout, main, worktree, subdir, start, roots, sessionsIn, pinnedDir };
   }
 
   afterEach(() => {
@@ -379,6 +456,82 @@ describe('/import-sessions', () => {
     });
     expect(host.harness.listSessions).toHaveBeenCalledWith({ sessionId: 'ses_claude-one' });
     expect(host.harness.getConfig).toHaveBeenCalledOnce();
+  });
+
+  it('keeps sessions of a worktree or subdirectory in the project of their repository, each in its own directory', ENGINE_TEST, async () => {
+    const { root, kimiHome, main, worktree, subdir, start, roots, sessionsIn, pinnedDir } = await repository();
+    const sources = join(root, 'claude', 'projects', '-app');
+    await write(join(sources, 'in-worktree.jsonl'), claudeSession(worktree, 'Fix the login flow'), 1);
+    await write(join(sources, 'in-subdir.jsonl'), claudeSession(subdir, 'Tidy the helpers'), 2);
+    await write(join(sources, 'in-main.jsonl'), claudeSession(main, 'Update the changelog'), 3);
+    const harness = start();
+    await harness.trustWorkspace(main);
+
+    await importAll(root, harness, 'Imported 3 sessions.');
+
+    expect(await sessionsIn(harness, worktree)).toEqual([['ses_in-worktree', worktree]]);
+    expect(await sessionsIn(harness, subdir)).toEqual([['ses_in-subdir', subdir]]);
+    expect(await sessionsIn(harness, main)).toEqual([['ses_in-main', main]]);
+    expect(await pinnedDir(main, 'ses_in-worktree')).toBe(worktree);
+    expect(await pinnedDir(main, 'ses_in-subdir')).toBe(subdir);
+    expect(await pinnedDir(main, 'ses_in-main')).toBeUndefined();
+    expect(await roots()).toEqual([main]);
+    const restarted = start();
+    expect(await sessionsIn(restarted, worktree)).toEqual([['ses_in-worktree', worktree]]);
+    expect(await sessionsIn(restarted, main)).toEqual([['ses_in-main', main]]);
+    expect((await restarted.getWorkspaceTrustInfo(worktree)).trusted).toBe(true);
+    expect(await roots()).toEqual([main]);
+    expect(await scanImportableSessions({ kimiHome, ...sourceHomes(), now: NOW })).toEqual({ candidates: [], alreadyImported: 3, missingFolder: 0 });
+  });
+
+  it('resumes sessions imported into a worktree or subdirectory after the project catalog is lost', ENGINE_TEST, async () => {
+    const { root, kimiHome, main, worktree, subdir, start } = await repository();
+    const sources = join(root, 'claude', 'projects', '-app');
+    await write(join(sources, 'in-worktree.jsonl'), claudeSession(worktree, 'Fix the login flow'), 1);
+    await write(join(sources, 'in-subdir.jsonl'), claudeSession(subdir, 'Tidy the helpers'), 2);
+    const harness = start();
+    await harness.trustWorkspace(main);
+    await importAll(root, harness, 'Imported 2 sessions.');
+    harnesses.splice(harnesses.indexOf(harness), 1);
+    await harness.close();
+    await rm(join(kimiHome, 'projects.json'));
+
+    const restarted = start();
+    expect((await restarted.resumeSession({ id: 'ses_in-worktree' })).workDir).toBe(worktree);
+    expect((await restarted.resumeSession({ id: 'ses_in-subdir' })).workDir).toBe(subdir);
+  });
+
+  it('keeps sessions of a folder outside git in the project of that folder', ENGINE_TEST, async () => {
+    const { root, project, start, roots, sessionsIn, pinnedDir } = await repository();
+    const folder = await realpath(project);
+    await write(join(root, 'claude', 'projects', '-project', 'outside-git.jsonl'), claudeSession(folder, 'Sort the notes'), 1);
+    const harness = start();
+
+    await importAll(root, harness, 'Imported 1 session.');
+
+    expect(await sessionsIn(harness, folder)).toEqual([['ses_outside-git', folder]]);
+    expect(await roots()).toEqual([folder]);
+    expect(await readdir(join(harness.homeDir, 'sessions', encodeWorkDirKey(folder)))).toEqual(['ses_outside-git']);
+    expect(await pinnedDir(folder, 'ses_outside-git')).toBeUndefined();
+  });
+
+  it('leaves a worktree whose own project already holds imported sessions in that project and does not import them again', ENGINE_TEST, async () => {
+    const { root, kimiHome, worktree, start, roots, sessionsIn } = await repository();
+    const sources = join(root, 'claude', 'projects', '-app-fix');
+    await write(join(sources, 'earlier.jsonl'), claudeSession(worktree, 'Fix the login flow'), 2);
+    await write(join(sources, 'newer.jsonl'), claudeSession(worktree, 'Add a regression test'), 1);
+    const own = encodeWorkDirKey(worktree);
+    const earlier = join(kimiHome, 'sessions', own, 'ses_earlier');
+    await mkdir(earlier, { recursive: true });
+    await writeFile(join(earlier, 'state.json'), JSON.stringify({ id: 'ses_earlier', version: 2, cwd: worktree, createdAt: NOW - 2 * DAY, updatedAt: NOW - 2 * DAY, archived: false, title: 'Fix the login flow', agents: {}, custom: {} }));
+    await writeFile(join(kimiHome, 'session_index.jsonl'), `${JSON.stringify({ sessionId: 'ses_earlier', sessionDir: earlier, workDir: worktree })}\n`);
+    const harness = start();
+
+    await importAll(root, harness, 'Imported 1 session.');
+
+    expect(await sessionsIn(harness, worktree)).toEqual([['ses_newer', worktree], ['ses_earlier', worktree]]);
+    expect(await roots()).toEqual([worktree]);
+    expect(await readdir(join(kimiHome, 'sessions', own))).toEqual(['ses_earlier', 'ses_newer']);
   });
 });
 

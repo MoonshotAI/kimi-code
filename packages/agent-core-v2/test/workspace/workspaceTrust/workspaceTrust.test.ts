@@ -147,7 +147,7 @@ describe('WorkspaceTrustService', () => {
     };
   }
 
-  it('keeps the existing trust decision across primary changes and a restart without migrating records', async () => {
+  it('decides project trust from the primary record alone and clears every directory record on untrust', async () => {
     const other = mkdtempSync(join(tmpdir(), 'kimi-workspace-trust-other-'));
     try {
       const first = createService(cwd);
@@ -157,21 +157,58 @@ describe('WorkspaceTrustService', () => {
       first.dirs.additionalDirs = [cwd];
       first.dirsChange.fire();
       await vi.waitFor(() => {
-        expect(first.service.isTrusted()).toBe(true);
+        expect(first.service.isTrusted()).toBe(false);
       });
-      expect(await first.service.get()).toBe(true);
+      expect(await first.service.get()).toBe(false);
+      expect(await first.trustStore.forRoot(cwd).get()).toBe(true);
 
       const restarted = createService(other, undefined, undefined, first.trustStore, [cwd]);
       await restarted.service.ready;
-      expect(restarted.service.isTrusted()).toBe(true);
-      expect(await restarted.service.get()).toBe(true);
-      expect(await first.trustStore.forRoot(other).get()).toBe(false);
+      expect(restarted.service.isTrusted()).toBe(false);
+      expect(await restarted.service.get()).toBe(false);
 
+      await restarted.service.trust();
+      expect(await first.trustStore.forRoot(other).get()).toBe(true);
       await restarted.service.untrust();
-      expect(await first.trustStore.forRoot(cwd).get()).toBe(false);
       expect(await first.trustStore.forRoot(other).get()).toBe(false);
+      expect(await first.trustStore.forRoot(cwd).get()).toBe(false);
     } finally {
       await rm(other, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a project untrusted when only one of its additional directories carries a record', async () => {
+    const trustedDir = mkdtempSync(join(tmpdir(), 'kimi-workspace-trust-additional-'));
+    try {
+      const store = createService(trustedDir).trustStore;
+      await store.forRoot(trustedDir).trust();
+
+      const { service } = createService(cwd, undefined, undefined, store, [trustedDir]);
+      await service.ready;
+
+      expect(service.isTrusted()).toBe(false);
+      expect(await service.get()).toBe(false);
+    } finally {
+      await rm(trustedDir, { recursive: true, force: true });
+    }
+  });
+
+  it('carries a persisted record to another root and leaves untrusted roots alone', async () => {
+    const other = mkdtempSync(join(tmpdir(), 'kimi-workspace-trust-carry-'));
+    const third = mkdtempSync(join(tmpdir(), 'kimi-workspace-trust-carry-untrusted-'));
+    try {
+      const { trustStore } = createService(cwd);
+      await trustStore.forRoot(cwd).trust();
+
+      await trustStore.carry(cwd, other);
+      await trustStore.carry(third, cwd);
+
+      expect(await trustStore.forProject({ root: other, additionalDirs: [] }).get()).toBe(true);
+      expect(await trustStore.forProject({ root: cwd, additionalDirs: [] }).get()).toBe(true);
+      expect(await trustStore.forProject({ root: third, additionalDirs: [] }).get()).toBe(false);
+    } finally {
+      await rm(other, { recursive: true, force: true });
+      await rm(third, { recursive: true, force: true });
     }
   });
 
@@ -592,7 +629,7 @@ describe('WorkspaceTrustService', () => {
     for (const skill of discovered.skills) catalog.register(skill);
     catalog.addRoots(discovered.scannedRoots);
     const service = new WorkspaceTrustDisclosureService(
-      { cwd, workspaceId: 'wm_test' } as never,
+      { workspaceKey: 'wm_test' },
       fs,
       stubBootstrap(homeDir),
       { get: () => true } as never,
@@ -647,7 +684,7 @@ describe('WorkspaceTrustService', () => {
     });
     const fs = new HostFileSystem();
     const service = new WorkspaceTrustDisclosureService(
-      { cwd, workspaceId: 'wm_test' } as never,
+      { workspaceKey: 'wm_test' },
       fs,
       stubBootstrap(homeDir),
       { get: () => true } as never,
@@ -692,7 +729,7 @@ describe('WorkspaceTrustService', () => {
     );
     const fs = new HostFileSystem();
     const service = new WorkspaceTrustDisclosureService(
-      { cwd, workspaceId: 'wm_test' } as never,
+      { workspaceKey: 'wm_test' },
       fs,
       stubBootstrap(homeDir),
       { get: () => true } as never,

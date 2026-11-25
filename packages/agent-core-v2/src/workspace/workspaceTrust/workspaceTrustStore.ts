@@ -1,12 +1,13 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { Emitter } from '#/_base/event';
+import { Emitter, type Event } from '#/_base/event';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { Workspace } from '#/app/workspace/workspace';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 import {
@@ -26,7 +27,8 @@ export interface IWorkspaceTrustStore {
   readonly _serviceBrand: undefined;
 
   forRoot(root: string): IWorkspaceTrustEntry;
-  forRoots(roots: readonly string[]): IWorkspaceTrustEntry;
+  forProject(project: Pick<Workspace, 'root' | 'additionalDirs'>): IWorkspaceTrustEntry;
+  carry(fromRoot: string, toRoot: string): Promise<void>;
 }
 
 export const IWorkspaceTrustStore: ServiceIdentifier<IWorkspaceTrustStore> =
@@ -142,63 +144,36 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
   }
 }
 
-class WorkspaceTrustGroup extends Disposable implements IWorkspaceTrustEntry {
+class ProjectTrust implements IWorkspaceTrustEntry {
   declare readonly _serviceBrand: undefined;
 
-  private readonly primary: IWorkspaceTrustEntry;
-  private readonly entries: readonly IWorkspaceTrustEntry[];
-  private readonly changeEmitter = this._register(new Emitter<WorkspaceTrustChange>());
-  readonly onDidChange = this.changeEmitter.event;
-  private initialization?: Promise<void>;
-
   constructor(
-    roots: readonly string[],
-    forRoot: (root: string) => IWorkspaceTrustEntry,
-  ) {
-    super();
-    const seen = new Set<string>();
-    const entries: IWorkspaceTrustEntry[] = [];
-    for (const root of roots) {
-      const key = canonicalWorkspaceRoot(root);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const entry = forRoot(root);
-      entries.push(entry);
-      this._register(entry.onDidChange(() => {
-        this.changeEmitter.fire({ trusted: this.isPersistedTrusted() });
-      }));
-    }
-    const primary = entries[0];
-    if (primary === undefined) throw new Error('workspace trust requires a primary root');
-    this.primary = primary;
-    this.entries = entries;
-  }
+    private readonly primary: IWorkspaceTrustEntry,
+    private readonly directories: readonly IWorkspaceTrustEntry[],
+  ) {}
 
   get ready(): Promise<void> {
-    if (this.initialization !== undefined) return this.initialization;
-    const initialization = Promise.all(this.entries.map((entry) => entry.ready)).then(() => {});
-    this.initialization = initialization;
-    void initialization.catch(() => {
-      if (this.initialization === initialization) this.initialization = undefined;
-    });
-    return initialization;
+    return this.primary.ready;
+  }
+
+  get onDidChange(): Event<WorkspaceTrustChange> {
+    return this.primary.onDidChange;
   }
 
   isPersistedTrusted(): boolean {
-    return this.entries.some((entry) => entry.isPersistedTrusted());
+    return this.primary.isPersistedTrusted();
   }
 
   isTrusted(): boolean {
-    return this.entries.some((entry) => entry.isTrusted());
+    return this.primary.isTrusted();
   }
 
-  async get(): Promise<boolean> {
-    return (await Promise.all(this.entries.map((entry) => entry.get()))).some(Boolean);
+  get(): Promise<boolean> {
+    return this.primary.get();
   }
 
-  async refresh(): Promise<boolean> {
-    await Promise.all(this.entries.map((entry) => entry.refresh()));
-    return this.isTrusted();
+  refresh(): Promise<boolean> {
+    return this.primary.refresh();
   }
 
   trust(): Promise<void> {
@@ -206,7 +181,7 @@ class WorkspaceTrustGroup extends Disposable implements IWorkspaceTrustEntry {
   }
 
   async untrust(): Promise<void> {
-    await Promise.all(this.entries.map((entry) => entry.untrust()));
+    await Promise.all(this.directories.map((entry) => entry.untrust()));
   }
 }
 
@@ -214,7 +189,6 @@ export class WorkspaceTrustStore extends Disposable implements IWorkspaceTrustSt
   declare readonly _serviceBrand: undefined;
 
   private readonly entries = new Map<string, WorkspaceTrustEntry>();
-  private readonly groups = new Map<string, WorkspaceTrustGroup>();
 
   constructor(
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
@@ -238,18 +212,14 @@ export class WorkspaceTrustStore extends Disposable implements IWorkspaceTrustSt
     return entry;
   }
 
-  forRoots(roots: readonly string[]): IWorkspaceTrustEntry {
-    const primary = roots[0];
-    if (primary === undefined) throw new Error('workspace trust requires a primary root');
-    const key = [
-      canonicalWorkspaceRoot(primary),
-      ...new Set(roots.map((root) => canonicalWorkspaceRoot(root)).toSorted()),
-    ].join('\0');
-    const existing = this.groups.get(key);
-    if (existing !== undefined) return existing;
-    const group = this._register(new WorkspaceTrustGroup(roots, (root) => this.forRoot(root)));
-    this.groups.set(key, group);
-    return group;
+  forProject(project: Pick<Workspace, 'root' | 'additionalDirs'>): IWorkspaceTrustEntry {
+    const directories = new Set([project.root, ...project.additionalDirs].map((dir) => this.forRoot(dir)));
+    return new ProjectTrust(this.forRoot(project.root), [...directories]);
+  }
+
+  async carry(fromRoot: string, toRoot: string): Promise<void> {
+    if (!(await readWorkspaceTrust(this.docs, fromRoot, this.telemetry))) return;
+    await this.forRoot(toRoot).trust();
   }
 }
 

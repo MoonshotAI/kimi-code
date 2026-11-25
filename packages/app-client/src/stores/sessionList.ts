@@ -1,4 +1,4 @@
-import { reactive, ref } from 'vue';
+import { reactive, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import {
   isPageTokenMismatchError,
@@ -465,26 +465,13 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
     complete: boolean,
   ): SessionGroupsMapping {
     const groupById = new Map(groups.map((group) => [group.workspaceId, group] as const));
-    const groupByRoot = new Map(
-      groups
-        .filter((group) => (group.sessions[0]?.cwd ?? '') !== '')
-        .map((group) => [workspaceRootKey(group.sessions[0]!.cwd), group] as const),
-    );
-    const workspaceCountByRoot = new Map<string, number>();
-    for (const workspace of workspacesStore().workspaces) {
-      const key = workspaceRootKey(workspace.root);
-      workspaceCountByRoot.set(key, (workspaceCountByRoot.get(key) ?? 0) + 1);
-    }
     const loaded: AppSession[] = [];
     const loadedIds = new Set<string>();
     const hasMore: Record<string, boolean> = {};
     const cursors: Record<string, string | undefined> = {};
     const counts: Record<string, number> = {};
     for (const workspace of workspacesStore().workspaces) {
-      const rootKey = workspaceRootKey(workspace.root);
-      const directGroup = groupById.get(workspace.id);
-      const group = directGroup ??
-        (workspaceCountByRoot.get(rootKey) === 1 ? groupByRoot.get(rootKey) : undefined);
+      const group = groupById.get(workspace.id);
       if (group === undefined) {
         hasMore[workspace.id] = !complete;
         cursors[workspace.id] = undefined;
@@ -498,12 +485,7 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
             !deletedTombstoneIds.has(s.id) &&
             (s.lastPrompt ?? '').length > 0,
         )
-        .map((s) => {
-          const session = withFallbackSessionTitle(
-            s.cwd === '' ? { ...s, cwd: workspace.root } : s,
-          );
-          return directGroup === undefined ? { ...session, workspaceId: workspace.id } : session;
-        });
+        .map((s) => withFallbackSessionTitle(s.cwd === '' ? { ...s, cwd: workspace.root } : s));
       for (const session of items) {
         if (loadedIds.has(session.id)) continue;
         loaded.push(session);
@@ -1039,6 +1021,24 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
       return false;
     }
   }
+
+  watch(
+    () => workspacesStore().workspaces,
+    (next, previous) => {
+      const previousRootById = new Map(previous.map((w) => [w.id, w.root] as const));
+      const moved = next.filter((w) => (previousRootById.get(w.id) ?? w.root) !== w.root);
+      if (moved.length === 0) return;
+      const rootById = new Map(moved.map((w) => [w.id, w.root] as const));
+      sessionsStore().setSessions(
+        sessionsStore().sessions.map((session) => {
+          const id = workspacesStore().workspaceIdForSession(session);
+          const root = rootById.get(id);
+          const followsRoot = root !== undefined && workspaceRootKey(session.cwd) === workspaceRootKey(previousRootById.get(id)!);
+          return followsRoot ? { ...session, cwd: root } : session;
+        }),
+      );
+    },
+  );
 
   function removeHostSessions(hostIds: readonly string[], workspaceIds: readonly string[] = []): string[] {
     if (hostIds.length === 0 && workspaceIds.length === 0) return [];

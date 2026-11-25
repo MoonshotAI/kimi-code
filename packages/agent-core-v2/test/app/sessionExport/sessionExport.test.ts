@@ -46,7 +46,6 @@ import { writeExportZip } from '#/app/sessionExport/zip';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceService } from '#/app/workspace/workspace';
 import { Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
@@ -961,42 +960,6 @@ function registerSessionExportServices(
     createChild: async () => {
       throw new Error('createChild should not be called by session export');
     },
-  });
-  reg.defineInstance(IWorkspaceService, {
-    _serviceBrand: undefined,
-    list: async () => [],
-    get: async (id) => ({
-      id,
-      root: `/workspaces/${id}`,
-      name: id,
-      kind: 'implicit',
-      additionalDirs: [],
-      createdAt: 1,
-      lastOpenedAt: 2,
-    }),
-    create: async (input) => ({
-      id: 'ws_created',
-      root: input.root,
-      name: 'created',
-      kind: 'implicit',
-      additionalDirs: [],
-      createdAt: 1,
-      lastOpenedAt: 2,
-    }),
-    createOrTouch: async (root) => ({
-      id: 'ws_created',
-      root,
-      name: 'created',
-      kind: 'implicit',
-      additionalDirs: [],
-      createdAt: 1,
-      lastOpenedAt: 2,
-    }),
-    touch: async () => undefined,
-    update: async () => undefined,
-    setPrimary: async () => undefined,
-    readProjectConfigDirs: async () => [],
-    delete: async () => {},
   });
   reg.define(ISessionExportService, SessionExportService);
 }

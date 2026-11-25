@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -164,6 +166,33 @@ describe('buildPermissionToolCallUpdate', () => {
   it('falls back to the raw id when turnId is absent', () => {
     const update = buildPermissionToolCallUpdate(makeRequest(commandDisplay));
     expect(update.toolCallId).toBe('call_1');
+  });
+
+  it('shows the full command and working directory in the approval content', () => {
+    const command = [
+      "printf '%s\\n' 'This first line is longer than the approval summary can fit'",
+      "  printf '%s\\n' 'The second line must be visible too'",
+    ].join('\n');
+    const cwd = resolve('project with spaces');
+    const update = buildPermissionToolCallUpdate({
+      ...makeRequest({ kind: 'command', command, cwd }, 1),
+      action: 'Running: shortened summary…',
+    });
+
+    expect(update.content?.slice(0, 2)).toEqual([
+      { type: 'content', content: { type: 'text', text: command } },
+      { type: 'content', content: { type: 'text', text: `Working directory\n${cwd}` } },
+    ]);
+  });
+
+  it('provides the absolute Write target as an approval location', () => {
+    const path = resolve('project', 'notes.md');
+    const update = buildPermissionToolCallUpdate({
+      ...makeRequest({ kind: 'file_io', operation: 'write', path }, 1),
+      toolName: 'Write',
+    });
+
+    expect(update.locations).toEqual([{ path }]);
   });
 
   it('always appends an action-summary content entry', () => {

@@ -344,7 +344,7 @@ class FakeModelImpl implements FakeModel {
 
   private playbackOf(step: ScriptedStep, record: RecordedRequest, codec: ProtocolCodec, sink: PlaybackSink): Playback {
     const context: EncodeContext = {
-      responseId: `testkit-${record.index}`,
+      responseId: (step.kind === 'reply' ? step.responseId : undefined) ?? `testkit-${record.index}`,
       model: record.view.model ?? DEFAULT_MODELS[0] ?? 'testkit-model',
       usage: step.kind === 'reply' ? resolveUsage(step, record.rawBody) : null,
       callId: (callIndex, call) => call.id ?? this.callId(record.index, callIndex),

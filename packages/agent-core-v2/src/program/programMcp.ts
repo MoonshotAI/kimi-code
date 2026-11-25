@@ -2,9 +2,9 @@ import type { IEnvironmentService } from '#/app/environment/environment';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
+import type { McpDirs } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
 import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 
@@ -31,7 +31,7 @@ export class ProgramMcp {
     private readonly context: IWorkspaceContext,
     private readonly dependencies: ProgramDependencies,
     private readonly hostFs: IHostFileSystem,
-    private readonly dirs: IWorkspaceDirs,
+    private readonly dirs: McpDirs,
     private readonly trust: IWorkspaceTrust,
   ) {}
 
@@ -65,7 +65,7 @@ export class ProgramMcp {
   private open(): McpSet {
     const { bootstrap, config, configStore, identity, log, oauth, plugins, sessionManager, telemetry } = this.dependencies;
     const mcpConfig = new WorkspaceMcpConfigService(this.dirs, bootstrap, plugins, log, config, this.hostFs, this.trust, configStore, oauth);
-    const service = new WorkspaceMcpService(this.context, this.dirs, this.environments, mcpConfig, oauth, log, telemetry, identity, sessionManager);
+    const service = new WorkspaceMcpService(this.dirs, this.environments, mcpConfig, oauth, log, telemetry, identity, sessionManager);
     return { config: mcpConfig, service, references: 0 };
   }
 

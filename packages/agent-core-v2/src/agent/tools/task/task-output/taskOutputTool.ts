@@ -133,4 +133,4 @@ export class TaskOutputTool implements ITaskOutputTool {
   }
 }
 
-registerAgentToolService(ITaskOutputTool, TaskOutputTool, { name: 'TaskOutput', domain: 'agentTask' });
+registerAgentToolService(ITaskOutputTool, TaskOutputTool, { name: 'TaskOutput', domain: 'agentTask', userConfigurable: true });
