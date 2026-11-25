@@ -141,8 +141,16 @@ export function streamError(step: ReplyStep, options: HttpErrorOptions & { reado
   };
 }
 
-export function disconnect(step: ReplyStep): ReplyStep {
-  return { ...step, ending: { type: 'disconnect' }, label: `disconnect(${step.label})` };
+export interface DisconnectOptions {
+  readonly afterUsage?: boolean;
+}
+
+export function disconnect(step: ReplyStep, options: DisconnectOptions = {}): ReplyStep {
+  return {
+    ...step,
+    ending: options.afterUsage === true ? { type: 'disconnect', afterUsage: true } : { type: 'disconnect' },
+    label: options.afterUsage === true ? `disconnect(${step.label}, after usage)` : `disconnect(${step.label})`,
+  };
 }
 
 export function networkError(): NetworkErrorStep {

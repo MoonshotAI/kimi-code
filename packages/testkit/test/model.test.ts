@@ -149,6 +149,20 @@ describe('replies', () => {
   });
 });
 
+describe('disconnects', () => {
+  it('can report usage before dropping the connection', async () => {
+    const model = fakeModel();
+    model.script(disconnect(withUsage({ input: 4, output: 2 }, say('partial')), { afterUsage: true }));
+    const chunks: ChatCompletionChunk[] = [];
+    await expect(async () => {
+      for await (const chunk of await clientOf(model).chat.completions.create({ model: 'testkit-model', messages: [{ role: 'user', content: 'hi' }], tools: TOOLS, stream: true })) chunks.push(chunk);
+    }).rejects.toThrow();
+    expect(contentOf(chunks)).toBe('partial');
+    expect(chunks.at(-1)).toMatchObject({ choices: [{ finish_reason: null }], usage: { prompt_tokens: 4, completion_tokens: 2 } });
+    expect(model.request(0).state).toBe('cut');
+  });
+});
+
 describe('file uploads', () => {
   it('stores an uploaded file, answers with a ready file object and serves it back by ID', async () => {
     const model = fakeModel();

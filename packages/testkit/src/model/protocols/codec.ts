@@ -24,6 +24,7 @@ export interface StreamEncoding {
   readonly headers: Readonly<Record<string, string>>;
   readonly segments: readonly StreamSegment[];
   readonly trailer: readonly string[];
+  readonly usageOnly?: string;
 }
 
 export interface EncodedResponse {

@@ -36,6 +36,7 @@ export const openaiCodec: ProtocolCodec = {
         chunk(emissions.length === 0 ? { role: 'assistant' } : {}, finishReasonOf(step), usageOf(context.usage)),
         'data: [DONE]\n\n',
       ],
+      usageOnly: context.usage === null ? undefined : chunk({}, null, usageOf(context.usage)),
     };
   },
   encodeStreamError(error) {

@@ -28,6 +28,7 @@ export {
   withResponseId,
   withUsage,
   type CallOptions,
+  type DisconnectOptions,
   type HttpErrorOptions,
   type RawResponseOptions,
   type SayOptions,
