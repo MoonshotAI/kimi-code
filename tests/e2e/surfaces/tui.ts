@@ -617,9 +617,16 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     this.pty.resize(to.columns, to.rows);
     this.size = size;
     const wanted = drawn - from.columns + to.columns;
-    await this.wait(`the CLI to redraw its input box or panel ${wanted} columns wide after the resize`, (current) =>
-      redrawn() && drawnWidth(current) === wanted ? true : undefined,
-    );
+    let previous: string | undefined;
+    await this.wait(`the CLI to redraw its input box or panel ${wanted} columns wide after the resize and stay put`, (current) => {
+      if (!redrawn() || drawnWidth(current) !== wanted) {
+        previous = undefined;
+        return undefined;
+      }
+      const settled = current.text === previous;
+      previous = current.text;
+      return settled ? true : undefined;
+    });
   }
 
   async exit(): Promise<void> {
