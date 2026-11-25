@@ -1,17 +1,24 @@
 import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
-import { kimiCliCommand, kimiCliEnv, repoPath, TestProcess, TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
+import { kimiCliCommand, repoPath, TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
 import { chromium, type BrowserContext, type Page } from '@playwright/test';
 
-import type { Diagnostic, ReopenState, SurfaceDriver, SurfaceLaunch } from '../support/verbs';
+import type { Diagnostic, ReopenState, SurfaceDriver, SurfaceLaunch, WindowSize } from '../support/verbs';
+import { productEnv } from './environment';
 import { offlineStubs } from './offline';
 import { OFFLINE_NAMES, PageDriver, reasonOf, WELCOME_DIALOG } from './page-driver';
+import { TerminalProcess } from './terminal-process';
 
 const ADDRESS = /^\s*Local:\s+(http:\/\/127\.0\.0\.1:(\d+)\/#token=\S+)\s*$/;
-const VIEWPORT = { width: 1440, height: 900 };
+const SERVER_TERMINAL = { columns: 400, rows: 50 };
+const VIEWPORTS: Readonly<Record<WindowSize, { readonly width: number; readonly height: number }>> = {
+  normal: { width: 1440, height: 900 },
+  narrow: { width: 390, height: 844 },
+};
 
 interface WebLaunch {
+  readonly size: WindowSize;
   readonly root: string;
   readonly workspace: string;
   readonly port: string;
@@ -20,15 +27,17 @@ interface WebLaunch {
 }
 
 class WebDriver extends PageDriver {
-  private readonly server: TestProcess;
+  private readonly server: TerminalProcess;
   private readonly workspace: string;
   private readonly port: string;
   private readonly reopening: boolean;
   private readonly lastPrompt: string | undefined;
   private open = true;
+  private size: WindowSize;
 
-  constructor(server: TestProcess, context: BrowserContext, { root, workspace, port, launch, lastPrompt }: WebLaunch) {
+  constructor(server: TerminalProcess, context: BrowserContext, { size, root, workspace, port, launch, lastPrompt }: WebLaunch) {
     super(context, root, 'web', launch);
+    this.size = size;
     this.server = server;
     this.workspace = workspace;
     this.port = port;
@@ -37,7 +46,14 @@ class WebDriver extends PageDriver {
   }
 
   reopenState(): ReopenState {
-    return { port: this.port };
+    return { port: this.port, size: this.size };
+  }
+
+  async resize(size: WindowSize): Promise<void> {
+    const { width, height } = VIEWPORTS[this.size];
+    if (size === this.size) throw new Error(`resize() found the window already ${size} (${width}×${height}); resize it to the other size.`);
+    await this.resizeWindow(VIEWPORTS[size]);
+    this.size = size;
   }
 
   async ready(address: string): Promise<void> {
@@ -73,15 +89,15 @@ class WebDriver extends PageDriver {
     this.open = false;
     await this.context.close();
     if (this.server.exited) throw new Error(`The web server exited while the browser was closing.\n${this.describe()}`);
-    process.kill(-this.server.pid, 'SIGINT');
+    this.server.interrupt();
     let exit;
     try {
       exit = await until('the web server to exit', () => this.server.exit(), { timeoutMs: TIMEOUTS.wait });
     } catch (cause) {
-      throw new Error(`The web server did not exit after Ctrl+C.\n${this.describe()}`, { cause });
+      throw new Error(`The web server did not exit after the user pressed Ctrl+C in its terminal.\n${this.describe()}`, { cause });
     }
     const problems = [
-      ...(exit.code === 0 ? [] : [`The web server exited with code ${String(exit.code)} and signal ${String(exit.signal)} after Ctrl+C.`]),
+      ...(exit.code === 0 ? [] : [`The web server exited with code ${String(exit.code)} and signal ${String(exit.signal)} after the user pressed Ctrl+C in its terminal.`]),
       ...this.pageProblems(),
     ];
     if (problems.length > 0) throw new Error(`${problems.join('\n')}\n${this.describe()}`);
@@ -142,27 +158,27 @@ class WebDriver extends PageDriver {
   }
 
   private describe(): string {
-    return [this.server.describe(), `stdout:\n${this.server.stdoutTail() === '' ? '(empty)' : this.server.stdoutTail()}`, this.describePage()].join('\n');
+    return [this.server.describe(), this.describePage()].join('\n');
   }
 }
 
 export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'web'>> {
-  if (process.platform === 'win32') throw new Error('The Web surface stops its server with Ctrl+C, which Windows cannot deliver to a child process; Windows is not supported yet.');
   const assets = repoPath('apps', 'kimi-code', 'dist-web', 'index.html');
   if (!existsSync(assets)) throw new Error(`${assets} does not exist; build the web assets first with "pnpm sync:web".`);
-  const server = TestProcess.start({
+  const server = await TerminalProcess.start({
     label: 'kimi web',
     command: kimiCliCommand(),
     args: ['web', '--port', reopen?.state.port ?? '0', '--no-open'],
     cwd: home.workspace,
-    env: kimiCliEnv(home, { FORCE_COLOR: '0' }),
+    env: productEnv(home, { FORCE_COLOR: '0' }),
     logDir: home.root,
     fetchStubs: offlineStubs(),
+    ...SERVER_TERMINAL,
   });
   let context: BrowserContext | undefined;
   let driver: WebDriver | undefined;
   try {
-    const line = await server.waitForLine((text) => ADDRESS.test(text), { timeoutMs: TIMEOUTS.server, description: 'the address of the web interface' });
+    const line = await server.waitForLine((text) => ADDRESS.test(text), 'the address of the web interface');
     const [, address, port] = ADDRESS.exec(line) ?? [];
     if (address === undefined || port === undefined) throw new Error(`The web server printed an address the driver could not read: ${line}`);
     const wanted = reopen?.state.port;
@@ -171,14 +187,15 @@ export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<Surface
         `The restarted web server listens on port ${port} instead of ${wanted}, so the page would open on a different origin and lose the browser state a returning user keeps. Another process probably took the port.`,
       );
     }
+    const size = reopen?.state.size ?? 'normal';
     context = await chromium.launchPersistentContext(join(home.root, 'web-profile'), {
       args: [OFFLINE_NAMES],
       headless: process.env['E2E_HEADED'] !== '1',
       timeout: TIMEOUTS.server,
       locale: 'en-US',
-      viewport: VIEWPORT,
+      viewport: VIEWPORTS[size],
     });
-    driver = new WebDriver(server, context, { root: home.root, workspace: home.workspace, port, launch: reopen?.launch ?? 1, lastPrompt: reopen?.lastPrompt });
+    driver = new WebDriver(server, context, { size, root: home.root, workspace: home.workspace, port, launch: reopen?.launch ?? 1, lastPrompt: reopen?.lastPrompt });
     await driver.ready(address);
     return driver;
   } catch (error) {
