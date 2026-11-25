@@ -277,6 +277,7 @@ void test('release workflow runs candidate tests directly and supports manual SH
   assert.match(workflow, /github\.run_attempt > 1/);
   const ci = readFileSync(fileURLToPath(new URL('../.github/workflows/ci.yml', import.meta.url)), 'utf8');
   assert.doesNotMatch(ci, /branches:\n\s+- 'release\/\*'/);
+  assert.match(ci, /pull_request:\n\s+branches-ignore:\n\s+- 'release\/\*'/);
 });
 
 test('version command records the consumed changesets and changed package versions', () => {

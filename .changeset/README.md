@@ -97,7 +97,7 @@ Commit messages must follow Conventional Commit style. Do not include any author
 
 ### 4. CI generates the release PR
 
-Changesets accumulate on `main`. Create `release/<cycle>` from the selected commit; pushes to that branch use `changesets/action@v1` to create or update its release PR. Manual **Release** runs on a release branch execute the release pipeline directly; use the optional `sha` input to pin the exact commit. The release workflow does not dispatch a separate CI workflow.
+Changesets accumulate on `main`. Create `release/<cycle>` from the selected commit; pushes to that branch use `changesets/action@v1` to create or update its release PR. Release branches and release PRs do not trigger the full CI workflow. Manual **Release** runs on a release branch execute the release pipeline directly; use the optional `sha` input to pin the exact commit. The release workflow does not dispatch a separate CI workflow.
 
 The release PR runs:
 
