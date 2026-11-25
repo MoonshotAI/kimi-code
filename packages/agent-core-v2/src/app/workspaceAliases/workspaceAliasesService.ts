@@ -2,12 +2,14 @@ import { LifecycleScope } from '#/app/scopes';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { encodeWorkDirKey, isWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { isWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import {
+  legacyBucketRoot,
   readSessionIndexEntries,
   SESSION_INDEX_KEY,
   SESSION_INDEX_SCOPE,
+  type LegacyBucketRoot,
 } from '#/app/workspace/workspaceAlias';
 import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -154,15 +156,15 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
   private async loadSessionIndex(): Promise<{ snapshot: SessionIndexSnapshot; generation: number }> {
     try {
       const generation = this.invalidationGeneration;
-      const entries = await readSessionIndexEntries(this.storage);
+      const roots = (await readSessionIndexEntries(this.storage))
+        .map(legacyBucketRoot)
+        .filter((root): root is LegacyBucketRoot => root !== undefined);
       const rootKeyById = new Map<string, string>();
-      for (const entry of entries) {
-        rootKeyById.set(encodeWorkDirKey(entry.workDir), workspaceRootKey(entry.workDir));
+      for (const root of roots) {
+        rootKeyById.set(root.id, workspaceRootKey(root.root));
       }
       const snapshot: SessionIndexSnapshot = {
-        idsByRootKey: rootKeyIndex(entries, (entry) => entry.workDir, (entry) =>
-          encodeWorkDirKey(entry.workDir),
-        ),
+        idsByRootKey: rootKeyIndex(roots, (root) => root.root, (root) => root.id),
         rootKeyById,
       };
       if (generation === this.invalidationGeneration) {

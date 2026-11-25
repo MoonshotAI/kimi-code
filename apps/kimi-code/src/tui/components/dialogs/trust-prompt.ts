@@ -18,7 +18,6 @@ import { isSettlingClick } from '#/tui/utils/terminal-focus';
 export type TrustPromptChoice = 'trust' | 'distrust';
 
 export interface TrustPromptOptions {
-  readonly workDir: string;
   readonly info: WorkspaceTrustInfo;
   readonly getAvailableRows?: () => number;
   readonly onSelect: (choice: TrustPromptChoice) => void;
@@ -102,18 +101,18 @@ export class TrustPromptComponent implements Component, Focusable {
     const availableRows = Math.max(0, Math.floor(this.opts.getAvailableRows?.() ?? Infinity));
     const header = [
       rule,
-      currentTheme.boldFg('primary', ' Trust this folder?'),
+      currentTheme.boldFg('primary', ' Trust this project?'),
       currentTheme.fg('textMuted', ' ↑↓ navigate · Enter select · Esc exit'),
       '',
     ];
     const body = [
-      ...wrap(this.opts.workDir, 1, width, 'textStrong'),
+      ...wrap(this.opts.info.projectRoot, 1, width, 'textStrong'),
       '',
       ...this.renderDisclosure(width),
     ];
     const footer = [
       ...wrap(
-        'Trust is remembered for this folder, including future project config changes.',
+        'Trust is remembered for this project, including future project config changes.',
         1,
         width,
         'textMuted',
@@ -176,7 +175,7 @@ export class TrustPromptComponent implements Component, Focusable {
       const origins = [...new Set(gatedMcpServers.map((server) => server.origin))];
       lines.push(
         ...wrap(
-          `Config: ${origins.map((path) => relativize(this.opts.workDir, path)).join(', ')}`,
+          `Config: ${origins.map((path) => relativize(this.opts.info.projectRoot, path)).join(', ')}`,
           3,
           width,
           'textMuted',
@@ -199,7 +198,7 @@ export class TrustPromptComponent implements Component, Focusable {
         lines.push(
           ...wrap(
             `Config: ${additionalDirSources
-              .map((path) => relativize(this.opts.workDir, path))
+              .map((path) => relativize(this.opts.info.projectRoot, path))
               .join(', ')}`,
             3,
             width,
@@ -220,7 +219,7 @@ export class TrustPromptComponent implements Component, Focusable {
       lines.push(...wrap(`Load project ${subject}`, 1, width, 'text'));
       lines.push(
         ...wrap(
-          `Check: ${instructionSources.paths.map((path) => relativize(this.opts.workDir, path)).join(' · ')}`,
+          `Check: ${instructionSources.paths.map((path) => relativize(this.opts.info.projectRoot, path)).join(' · ')}`,
           3,
           width,
           'textMuted',
@@ -244,8 +243,8 @@ function wrap(text: string, indent: number, width: number, color: ColorToken): s
   );
 }
 
-function relativize(workDir: string, path: string): string {
-  const normalizedDir = workDir.replaceAll('\\', '/');
+function relativize(projectRoot: string, path: string): string {
+  const normalizedDir = projectRoot.replaceAll('\\', '/');
   const normalizedPath = path.replaceAll('\\', '/');
   const prefix = normalizedDir.endsWith('/') ? normalizedDir : `${normalizedDir}/`;
   return normalizedPath.startsWith(prefix) ? normalizedPath.slice(prefix.length) : normalizedPath;

@@ -1,8 +1,8 @@
 import { once } from 'node:events';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { deferred, solidPng } from '@moonshot-ai/testkit/fixtures';
+import { bashPathOf, deferred, solidPng } from '@moonshot-ai/testkit/fixtures';
 import type { KapFrame, KapItem, KapSocket, KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
 import { agent, bash, call, held, httpError, say, think, todoList, withUsage } from '@moonshot-ai/testkit/model';
 import { test as base, describe, expect } from 'vitest';
@@ -198,6 +198,25 @@ describe('conversation over KAP', () => {
       { input_other: 4, output: 3 },
       { input_other: 6, output: 2 },
     ]);
+  });
+
+  test('runs the lazily created main agent of a session started in a repository subdirectory in that directory', async ({ kap, model }) => {
+    const repository = join(kap.home.workspace, 'app');
+    const subdirectory = join(repository, 'src');
+    await mkdir(join(repository, '.git'), { recursive: true });
+    await writeFile(join(repository, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    await mkdir(subdirectory);
+    model.script(bash('pwd -P'), say('done'));
+    const atRoot = await kap.createSession({ cwd: repository });
+    const pinned = await kap.createSession({ cwd: subdirectory });
+
+    await kap.prompt(pinned.id, 'where am I');
+    await kap.waitIdle(pinned.id);
+
+    expect(pinned.workspace_id).toBe(atRoot.workspace_id);
+    const tool = model.request(1).view.messages.find((message) => message.role === 'tool');
+    expect(tool?.callId).toBe(model.callId(0, 0));
+    expect(tool?.text.replace(/^Wall time: \d+\.\d{3} seconds\n/, '')).toBe(`${bashPathOf(await realpath(subdirectory))}\n`);
   });
 
   test('waits for approval in manual mode, shows it on the tool item and runs the tool once approved', async ({ kap, model }) => {
