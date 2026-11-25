@@ -40,7 +40,7 @@ function capabilityText(item: ReturnType<typeof modelCapabilityItems>[number]): 
     <div v-if="capabilities.length > 0" class="model-cap-info__divider" />
     <ul v-if="capabilities.length > 0" class="model-cap-info__list">
       <li v-for="item in capabilities" :key="item.kind" class="model-cap-info__item">
-        <Icon name="circle-check" size="sm" class="model-cap-info__icon" />
+        <Icon name="check-check" size="md" class="model-cap-info__icon" />
         <span>{{ capabilityText(item) }}</span>
       </li>
     </ul>
@@ -94,7 +94,7 @@ function capabilityText(item: ReturnType<typeof modelCapabilityItems>[number]): 
 .model-cap-info__item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   color: var(--color-text-muted);
   font-size: 13px;
   line-height: 18px;
