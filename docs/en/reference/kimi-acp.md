@@ -62,12 +62,14 @@ With `@agentclientprotocol/sdk@1.x`, the ACP method set is organized by namespac
 | `session/set_mode` | Yes | Validates `modeId`; the same underlying mode switch as `set_config_option({configId:'mode'})` |
 | `session/set_config_option` | Yes | Unified model / thinking / mode picker dispatcher |
 
+In the mode picker, Auto (`auto`) can approve sensitive operations automatically and honors explicit deny rules. YOLO (`yolo`) automatically approves routine operations and can still prompt for sensitive actions.
+
 ### Client-side reverse-RPC — agent → IDE (10 / 11)
 
 | Method | Implemented | Description |
 | --- | --- | --- |
 | `session/update` | Yes | Streams `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` |
-| `session/request_permission` | Yes | Shared channel for tool approval and question prompts |
+| `session/request_permission` | Yes | Shared channel for tool approvals and questions. Bash approvals include the complete command and working directory. Resolved absolute file targets appear in `toolCall.locations` |
 | `fs/read_text_file` | Yes | Engine file reads are routed to the client when it advertises `fsCapabilities` |
 | `fs/write_text_file` | Yes | Engine file writes are routed to the client |
 | `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | Yes | Shell executions reverse-RPC to the client when it advertises `clientCapabilities.terminal` |
