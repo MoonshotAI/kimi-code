@@ -65,6 +65,10 @@ export class WorktreeExitController {
 
   constructor(private readonly host: WorktreeExitHost) {}
 
+  get pendingDeleteName(): string | undefined {
+    return this.pendingDelete?.removal.name;
+  }
+
   async exit(): Promise<void> {
     const worktree = isExperimentalFlagEnabled('worktree')
       ? sessionWorktree(this.host.state.appState)
