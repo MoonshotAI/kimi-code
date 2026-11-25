@@ -162,7 +162,7 @@ export class AgentShellCommandService extends Service implements IAgentShellComm
           taskId: this.shellCommandTasks.get(input.commandId),
         }));
       }
-      this.appendShellOutput(stdout, stderr, isError);
+      this.appendShellOutput(stdout.length === 0 ? '' : output, stderr, isError);
       return { stdout, stderr, isError };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
