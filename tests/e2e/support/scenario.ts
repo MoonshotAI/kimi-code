@@ -48,6 +48,7 @@ export interface SurfaceOptions {
 
 export interface ScenarioOptions {
   readonly workspace?: Readonly<Record<string, string>>;
+  readonly workspaceTrust?: SurfaceLaunch['workspaceTrust'];
   readonly except?: Readonly<Partial<Record<Surface, string>>>;
   readonly onlyOn?: readonly Surface[];
   readonly reason?: string;
@@ -240,6 +241,7 @@ class ScenarioSession {
   private failedStep: string | undefined;
   private launches = 1;
   private lastPrompt: string | undefined;
+  private workspaceTrust: SurfaceLaunch['workspaceTrust'];
   private turnSinceLaunch = true;
   private readonly earlierDiagnostics: Diagnostic[] = [];
 
@@ -250,6 +252,7 @@ class ScenarioSession {
   async start(options: ScenarioOptions, frames: FramePolicy, testInfo: TestInfo): Promise<RunningContext> {
     this.frames = frames;
     this.testInfo = testInfo;
+    this.workspaceTrust = options.workspaceTrust;
     const home = await createTestHome(`e2e-${this.surface}`);
     this.home = home;
     assertOutsideGitWorkTree(home.workspace);
@@ -257,8 +260,9 @@ class ScenarioSession {
     const model = await startFakeModel();
     this.model = model;
     await writeKimiConfig(home.dataDir, fakeModelConfig(model));
-    await base.step('启动产品，等到可以输入', async () => {
-      this.driver = await startSurface(this.surface, { home, model });
+    const startupStep = this.workspaceTrust === undefined ? '启动产品，等到可以输入' : '启动产品，处理工作区信任提示';
+    await base.step(startupStep, async () => {
+      this.driver = await startSurface(this.surface, { home, model, workspaceTrust: this.workspaceTrust });
       this.baseline = await snapshotDirectory(home.workspace);
       if (frames === 'every-step') await this.show('00 启动完成');
     });
@@ -343,7 +347,12 @@ class ScenarioSession {
     this.driver = undefined;
     if (problems.length > 0) throw new Error(`The product did not shut down cleanly before restart():\n\n${problems.join('\n\n')}`);
     this.launches += 1;
-    this.driver = await startSurface(this.surface, { home, model, reopen: { launch: this.launches, lastPrompt: this.lastPrompt, state } });
+    this.driver = await startSurface(this.surface, {
+      home,
+      model,
+      workspaceTrust: this.workspaceTrust,
+      reopen: { launch: this.launches, lastPrompt: this.lastPrompt, state },
+    });
     this.turnSinceLaunch = false;
   }
 
@@ -479,7 +488,10 @@ const test = base.extend<SurfaceOptions & { session: ScenarioSession }>({
   },
 });
 
-function assertReasons(title: string, options: ScenarioOptions): void {
+function assertScenarioOptions(title: string, options: ScenarioOptions): void {
+  if (options.workspaceTrust !== undefined && (options.onlyOn?.length !== 1 || options.onlyOn[0] !== 'tui')) {
+    throw new Error(`Scenario "${title}" sets workspaceTrust without limiting the scenario to TUI.`);
+  }
   for (const [surface, reason] of Object.entries(options.except ?? {})) {
     if (reason.trim() === '') throw new Error(`Scenario "${title}" excludes ${surface} without a reason.`);
   }
@@ -498,7 +510,7 @@ function notApplicableReason(options: ScenarioOptions, surface: Surface): string
 }
 
 function register(title: string, options: ScenarioOptions, body: RunningBody, frames: FramePolicy): void {
-  assertReasons(title, options);
+  assertScenarioOptions(title, options);
   test(title, async ({ surface, session }, testInfo) => {
     const reason = surface === undefined ? undefined : notApplicableReason(options, surface);
     testInfo.skip(reason !== undefined, `not applicable on ${String(surface)}: ${String(reason)}`);
@@ -538,7 +550,7 @@ export function selfTest<V extends Verb>(verb: V, suite: SelfTestSuite<SurfacesO
       const name = `${verb} ${kind}: ${title}`;
       return { name, run, options: withinVerb(verb, name, options) };
     });
-    for (const { name, options } of cases) assertReasons(name, options);
+    for (const { name, options } of cases) assertScenarioOptions(name, options);
     const uncovered = surfaces.filter((surface) => cases.every(({ options }) => notApplicableReason(options, surface) !== undefined));
     if (uncovered.length > 0) {
       throw new Error(`The ${verb} self-test has no ${kind} case on: ${uncovered.join(', ')}. Every user action needs both kinds on every surface where it exists.`);

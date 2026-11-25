@@ -308,15 +308,21 @@ function asJumpListWorkspaces(value: unknown): value is JumpListWorkspace[] {
   );
 }
 
-export type LaunchActionPayload = { action: 'new-chat' } | { action: 'open-workspace'; root: string; newChat?: boolean };
+export type LaunchActionPayload =
+  | { action: 'new-chat' }
+  | { action: 'open-workspace'; root: string; newChat?: boolean }
+  | { action: 'open-session'; sessionId: string };
 
 function asLaunchActionPayload(value: unknown): LaunchActionPayload | null {
   if (typeof value !== 'object' || value === null) {
     return null;
   }
-  const candidate = value as { action?: unknown; root?: unknown; newChat?: unknown };
+  const candidate = value as { action?: unknown; root?: unknown; newChat?: unknown; sessionId?: unknown };
   if (candidate.action === 'new-chat') {
     return { action: 'new-chat' };
+  }
+  if (candidate.action === 'open-session' && typeof candidate.sessionId === 'string' && candidate.sessionId !== '') {
+    return { action: 'open-session', sessionId: candidate.sessionId };
   }
   if (candidate.action === 'open-workspace' && typeof candidate.root === 'string' && candidate.root !== '') {
     if (candidate.newChat !== undefined && typeof candidate.newChat !== 'boolean') return null;
@@ -383,6 +389,7 @@ function asNativeTerminalInfo(value: unknown): NativeTerminalInfo | null {
 
 export type KimiDesktopApi = {
   browserOverlaySupported: boolean;
+  sessionLinksSupported: boolean;
   inspectNativeTerminals: (ids: string[]) => Promise<TerminalActivity[]>;
   setTheme: (scheme: 'light' | 'dark' | 'system') => void;
   popupWindowsMenu: (request: {
@@ -564,6 +571,7 @@ export type KimiDesktopApi = {
 
 export const api: KimiDesktopApi = {
   browserOverlaySupported: process.argv.includes('--kimi-native-overlay-host'),
+  sessionLinksSupported: process.argv.includes('--kimi-session-links'),
   inspectNativeTerminals: async ids => {
     const result: unknown = await ipcRenderer.invoke('kimi:terminal-inspect', ids);
     if (!isTerminalActivityList(result)) throw new Error('Invalid terminal activity response');
