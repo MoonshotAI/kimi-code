@@ -273,6 +273,7 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
         'notification',
         'search',
         'slash_command',
+        'mention',
         'deep_link',
       ]),
     }),

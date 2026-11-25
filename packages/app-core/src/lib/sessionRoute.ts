@@ -3,7 +3,7 @@ export type SessionUrlMode = 'push' | 'replace' | 'none';
 
 const SESSION_PATH_PREFIX = '/sessions/';
 
-const SESSION_LINK_PREFIX = 'kimi-code://sessions/';
+export const SESSION_LINK_PREFIX = 'kimi-code://sessions/';
 
 export const SESSION_ADMIN_PATH = '/admin/sessions';
 

@@ -21,6 +21,11 @@ export interface ComposerEditorOptions {
   onCompositionStart?: () => void;
   onCompositionEnd?: () => void;
   pastedTextMeta?: PastedTextMeta;
+  sessionLinks?: {
+    enabled?: () => boolean;
+    title: (sessionId: string) => string | undefined;
+    loadTitle?: (sessionId: string) => Promise<string | undefined>;
+  };
   recognizeSlashCommands?: boolean;
   slashCommands?: ReadonlyArray<SlashCommand>;
   attachments?: {

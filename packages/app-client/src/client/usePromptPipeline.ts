@@ -6,6 +6,7 @@ import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
 import { offsetAttachmentLinkIndices } from '@moonshot-ai/app-composer/model';
 import { buildPromptContent, buildPromptMetadata } from '../lib/browserReferenceSubmission';
 import { prepareMergedPromptSnapshots } from '../lib/composerMessageSnapshot';
+import { hasUnresolvedSessionReferences, resolveSessionReferences } from '../lib/sessionReferences';
 import { consumeSessionIntent, getKimiWebApi, t, type SessionCreatedSource } from './deps';
 import { markDraftPromotion } from './draftPromotion';
 import { newPromptId } from './promptId';
@@ -382,6 +383,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     let outcome: 'ok' | 'rejected' | null = null;
     try {
       const api = getKimiWebApi();
+      if (hasUnresolvedSessionReferences(text)) await resolveSessionReferences(text);
       const content = buildPromptContent(prompt);
       if (content.length === 0) return 'rejected';
 
@@ -512,6 +514,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     const { skills } = prompt;
     promptStore().noteSteerStart(sid);
     try {
+      if (hasUnresolvedSessionReferences(prompt.text)) await resolveSessionReferences(prompt.text);
       if (!mainBusy(sid) && isMainWaitForWaiting?.(sid) !== true) {
         return await submitPromptInternal(sid, prompt);
       }

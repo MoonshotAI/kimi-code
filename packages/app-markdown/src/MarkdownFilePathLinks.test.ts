@@ -2,7 +2,7 @@
 import { createApp, h, nextTick, shallowRef, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import { ResolveImageKey } from '@moonshot-ai/app-core/contracts';
+import { OpenSessionLinkKey, ResolveImageKey, type ResolveOpenSessionLink } from '@moonshot-ai/app-core/contracts';
 import Markdown from './Markdown.vue';
 
 vi.mock('markstream-vue', async (importOriginal) => ({
@@ -306,21 +306,52 @@ describe('Markdown file path links with resolveFilePath', () => {
     expect(link.dataset.mentionPath).toBe('/work/B/review/SKILL.md');
   });
 
-  it('renders a session link as an inert session pill without a navigable href', async () => {
-    app = createApp({ render: () => h(Markdown, { text: 'see [Fix login](kimi-code://session/wd_app_0123456789ab/session_1)' }) });
+  async function renderSessionLink(resolveOpenSessionLink?: ResolveOpenSessionLink, text = 'see [Fix login](kimi-code://sessions/session_1)'): Promise<HTMLAnchorElement> {
+    app = createApp({ render: () => h(Markdown, { text }) });
     app.use(createKimiI18n({ locale: 'en' }));
+    if (resolveOpenSessionLink !== undefined) app.provide(OpenSessionLinkKey, resolveOpenSessionLink);
     app.mount(host);
     await vi.waitFor(async () => {
       await nextTick();
       expect(host.querySelector('a.mention-session')).not.toBeNull();
     });
+    return host.querySelector<HTMLAnchorElement>('a.mention-session')!;
+  }
 
-    const link = host.querySelector<HTMLAnchorElement>('a.mention-session')!;
+  it('renders a session link as an inert session pill when nothing can open sessions', async () => {
+    const link = await renderSessionLink();
     expect(link.hasAttribute('href')).toBe(false);
     expect(link.getAttribute('role')).toBeNull();
     expect(link.dataset.mentionName).toBe('Fix login');
-    expect(link.dataset.mentionPath).toBe('wd_app_0123456789ab/session_1');
+    expect(link.dataset.mentionPath).toBe('session_1');
     expect(link.dataset.mentionActionPath).toBeUndefined();
+  });
+
+  it('keeps the session pill inert while the host has session opening switched off', async () => {
+    const link = await renderSessionLink(() => undefined);
+    expect(link.getAttribute('role')).toBeNull();
+    expect(link.hasAttribute('tabindex')).toBe(false);
+  });
+
+  it('opens the referenced session from a session pill by click or keyboard', async () => {
+    const openSessionLink = vi.fn();
+    const link = await renderSessionLink(() => openSessionLink);
+    expect(link.hasAttribute('href')).toBe(false);
+    expect(link.getAttribute('role')).toBe('button');
+    expect(link.tabIndex).toBe(0);
+
+    click(link);
+    link.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    link.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', repeat: true, bubbles: true, cancelable: true }));
+    expect(openSessionLink.mock.calls).toEqual([['session_1'], ['session_1']]);
+  });
+
+  it('opens sessions from links written in the earlier <workspaceId>/<sessionId> form', async () => {
+    const openSessionLink = vi.fn();
+    const link = await renderSessionLink(() => openSessionLink, 'see [Fix login](kimi-code://session/wd_app_0123456789ab/session_1)');
+    expect(link.dataset.mentionPath).toBe('session_1');
+    click(link);
+    expect(openSessionLink).toHaveBeenCalledExactlyOnceWith('session_1');
   });
 
   it('resolves angle-bracketed image sources containing spaces', async () => {

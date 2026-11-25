@@ -46,7 +46,7 @@ mention 序列化为一个 Markdown 内联链接，四种 kind：
 | file | `[name](path)` | `[README.md](docs/README.md)` |
 | folder | `[name](path/)` — 以尾部 `/` 标识 | `[apps](apps/)` |
 | skill | `[name](kimi-code://skill/<name>)` — 伪 scheme，服务端从不解析，是写给模型的自描述标记 | `[deploy](kimi-code://skill/deploy)` |
-| session | `[title](kimi-code://session/<workspaceId>/<sessionId>)` — 同为伪 scheme；尾部两段即该会话在 Kimi Code home 下 `sessions/` 目录内的相对位置 | `[修复登录跳转](kimi-code://session/wd_app_0123456789ab/session_1)` |
+| session | `[title](kimi-code://sessions/<sessionId>)` — 与应用内路由 `/sessions/<sessionId>` 同形；桌面端同时把它注册为系统深链，点击即打开该会话 | `[修复登录跳转](kimi-code://sessions/session_1)` |
 
 `name` 的语义：file/folder 是 basename，skill 是技能名，session 是会话标题。
 
@@ -82,7 +82,7 @@ label 的编码是**两组规则按序叠加**（MUST，顺序不可换——`%`
 
 - folder：序列化前保证 path 以 `/` 结尾（没有则补上）。
 - skill：dest 为 `kimi-code://skill/` + 按 §4.2 规则编码为**单段**的 name（括号亦被编码——CommonMark bare destination 不允许不平衡括号，而 canonical 字符集根本不含括号）；label 仍是技能名本身（经 §4.1 转义）。解析侧经 `decodeURIComponent` 还原，两种历史形态均可读。
-- session：attrs 的 path 为 `<workspaceId>/<sessionId>`；dest 为 `kimi-code://session/` + 两段各自按 §4.2 编码后以 `/` 连接；label 是会话标题（经 §4.1 转义）。纯文本只携带会话身份：发送时 app-client 在提交副本末尾追加 `<referenced_sessions>` 块，每个被引用的会话一行，写明会话 id、标题与主 agent 事件日志的绝对路径 `<home_dir>/sessions/<workspaceId>/<sessionId>/agents/main/wire.jsonl`（`home_dir` 取自服务端 `GET /meta`，目录布局见 Kimi Code 文档「数据路径」），由模型自行读取；服务端未返回 `home_dir` 时不追加该块。composer doc、草稿与 transcript 中的用户消息展示不含该块。
+- session：attrs 的 path 为 `<sessionId>`；dest 为 `kimi-code://sessions/` + 按 §4.2 编码为**单段**的 sessionId；label 是会话标题（经 §4.1 转义）。纯文本只携带会话身份：发送时 app-client 在提交副本末尾追加 `<referenced_sessions>` 块，每个被引用的会话一行，写明会话 id、标题与主 agent 事件日志的绝对路径 `<home_dir>/sessions/<workspaceId>/<sessionId>/agents/main/wire.jsonl`（`home_dir` 取自服务端 `GET /meta`，`workspaceId` 取自该会话的 `workspace_id`——未加载的会话在提交前经 `GET /sessions/<sessionId>` 补查；目录布局见 Kimi Code 文档「数据路径」），由模型自行读取；服务端未返回 `home_dir`、会话已不存在或属于远端主机时，对应条目不出现在该块中。composer doc、草稿与 transcript 中的用户消息展示不含该块。
 
 ## 5. 解析规则（文本 → doc）
 
@@ -121,7 +121,7 @@ label / dest 的合法性判定遵循 CommonMark（由 micromark 负责）：lab
 对**未解码的 raw dest** 按序判定（分类必须在解码前：`%23notes.md` 在 raw 形态不以 `#` 开头，判为 file，解码后还原成 `#notes.md`；若先解码，锚点守卫会误拒自家文本形态）：
 
 1. 以 `kimi-code://skill/` 开头**且尾部非空**（必须带技能名；空尾部的 `[x](kimi-code://skill/)` 会解码出空名，是死 pill 且无法 round-trip）→ **skill**。
-2. 以 `kimi-code://session/` 开头**且尾部恰为两段非空段**（各段解码后不含 `/`）→ **session**。其它尾部（缺段、多段、空段）不判为 session，继续走下面的 scheme 排除，按字面文本处理。
+2. 以 `kimi-code://sessions/` 开头**且尾部恰为一段非空段**（不含 `/`、`?`、`#`，解码后仍不含 `/`）→ **session**。其它尾部（空段、多段、带 query 或 fragment）不判为 session，继续走下面的 scheme 排除，按字面文本处理。历史形态 `kimi-code://session/<workspaceId>/<sessionId>`（尾部恰为两段非空段，各段解码后不含 `/`）同样判为 session，只取第二段作为 sessionId（§10）。
 3. 以 `#` 开头（页内锚点）或以 `?` 开头（query-only 导航，如 `[下一页](?page=2)`）→ 非 mention。自家纯文本的 `#`/`?` 开头文件名已按 §4.2 编码为 `%23`/`%3F`，raw 形态不会命中这两条。
 4. 以 `//` 开头（protocol-relative URL，`//host/path` 是网络目标）→ 非 mention。自家纯文本的 `//` 开头路径已按 §4.2 把第二个 `/` 编码为 `%2F`。
 5. 匹配 URI scheme（`^[a-zA-Z][a-zA-Z0-9+.-]*:`）且**不是**单字母 Windows 盘符 → 非 mention。盘符形态：`C:\…` / `C:/…`，以及渲染器 URI 规范化后的 `C:%5C…`（真 Markdown 渲染器会把反斜杠 dest 编成 `%5C`，消息侧 href 以此形态到达，仍须判为 file）。
@@ -133,7 +133,7 @@ label / dest 的合法性判定遵循 CommonMark（由 micromark 负责）：lab
 
 - file/folder：`name` = unescape 后的 label，`path` = unescape 后的 dest。
 - skill：`name` = dest 尾部的 `decodeURIComponent`（malformed `%` 序列回退为原始尾部）；**label 被丢弃**——技能身份以链接目标为准，解析会把 pill 规范化为真实技能名。
-- session：`name` = unescape 后的 label（会话标题），`path` = 两段分别 `decodeURIComponent` 后以 `/` 连接的 `<workspaceId>/<sessionId>`。
+- session：`name` = unescape 后的 label（会话标题），`path` = 尾部 `decodeURIComponent` 后的 `<sessionId>`。
 
 ## 6. Attachment 链接（composer 私有）
 
@@ -265,7 +265,7 @@ editor 的 @token 替换、caret 放置等需要在「序列化文本偏移」�
 |---|---|---|
 | 发送消息 | doc → text | 整 doc 序列化；提交副本上的 attachment 链接按 §6.4 重写（1..N index / folder mention 化）后，进 daemon transcript 与模型 prompt |
 | 草稿恢复 / 历史召回 / 队列重载 / 编辑重发 | text → doc | 解析，文本全部来自 daemon 的纯文本存储 |
-| 粘贴 / 拖入文本 | text → slice | 同一解析器；复制的 pill 以链接形式粘回成 pill；composer 内部复制另走自定义 flavor（§6.5） |
+| 粘贴 / 拖入文本 | text → slice | 同一解析器；复制的 pill 以链接形式粘回成 pill；composer 内部复制另走自定义 flavor（§6.5）。解析前先把不在任何链接内的裸会话地址 `kimi-code://sessions/<sessionId>` 改写成 session 链接，label 取宿主提供的会话标题；宿主暂时查不到标题时先用 sessionId，异步取到后以不进 History 的事务改名 |
 | 用户/队列气泡渲染 | text → DOM（pillify） | 气泡是纯文本，原地解析出 pill（mention 与 attachment），不走 Markdown |
 | assistant 消息渲染 | Markdown 渲染 + href 分类 | 真渲染器产出 anchor，再按 §5.3 装饰成 pill |
 | TUI / 手敲 | 直接写文本 | 同一语法，app 端读取即生效 |
@@ -288,8 +288,9 @@ editor 的 @token 替换、caret 放置等需要在「序列化文本偏移」�
 | `[a%2Fb.md](a%252Fb.md)` | file pill（path=`a%2Fb.md`） | 字面 `%` → `%25`，解码还原，不会变成路径分隔符 |
 | `[apps](apps/)` | folder pill（path=`apps/`） | 尾 `/` 标识 folder |
 | `[发布](kimi-code://skill/deploy)` | skill pill（name=`deploy`） | label 被规范化掉，身份取 dest |
-| `[修复登录](kimi-code://session/wd_app_0123456789ab/session_1)` | session pill（name=`修复登录`，path=`wd_app_0123456789ab/session_1`） | 会话引用（§3），label 即标题 |
-| `[x](kimi-code://session/session_1)` | 纯文本 | session 尾部缺少工作区段（§5.3） |
+| `[修复登录](kimi-code://sessions/session_1)` | session pill（name=`修复登录`，path=`session_1`） | 会话引用（§3），label 即标题 |
+| `[x](kimi-code://sessions/wd_app_0123456789ab/session_1)` | 纯文本 | session 尾部多于一段（§5.3） |
+| `[修复登录](kimi-code://session/wd_app_0123456789ab/session_1)` | session pill（path=`session_1`） | 历史形态仍可读（§5.3），重新序列化为 `kimi-code://sessions/session_1` |
 | `[report.pdf](kimi-code-composer://attachments/9f3k2h1x)` | attachment pill（file，attId=`9f3k2h1x`） | attachment 基本形态（§6.1） |
 | `[assets/](kimi-code-composer://attachments/ab12cd34)` | attachment pill（folder） | name 尾 `/` 兼任 kind 标记（§6.1） |
 | `[a.pdf](kimi-code-composer://attachments/2)` | attachment pill（file，attId=`2`） | §6.4 提交重写后的 index 形态，解析规则相同 |

@@ -1,5 +1,6 @@
 import type { Node as PMNode } from 'prosemirror-model';
 import { composerSchema } from './schema';
+import { sessionIdFromMentionPath } from './wireCodec';
 import { parseDraftAttachmentEntry, serializableAttachmentEntry, type AttachmentEntry } from '../features/attachment/entry';
 import { browserCaptureBindingId, isBrowserReferenceId, parseBrowserCapture, parseBrowserReference, type BrowserCapture, type BrowserReference } from '@moonshot-ai/app-core/browser-reference';
 
@@ -51,6 +52,18 @@ function validInlineNode(node: Record<string, unknown>): boolean {
   return false;
 }
 
+function withCurrentSessionPaths(paragraph: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(paragraph.content)) return paragraph;
+  return {
+    ...paragraph,
+    content: paragraph.content.map((node: Record<string, unknown>) => {
+      const attrs = node.attrs;
+      if (node.type !== 'mention' || !record(attrs) || attrs.kind !== 'session' || typeof attrs.path !== 'string') return node;
+      return { ...node, attrs: { ...attrs, path: sessionIdFromMentionPath(attrs.path) } };
+    }),
+  };
+}
+
 function parseDocument(value: unknown): PMNode | null {
   if (!record(value) || value.type !== 'doc' || !Array.isArray(value.content) || value.content.length === 0) return null;
   if (value.content.length > MAX_DOCUMENT_NODES || value.text !== undefined || value.marks !== undefined) return null;
@@ -63,7 +76,7 @@ function parseDocument(value: unknown): PMNode | null {
     if (nodes > MAX_DOCUMENT_NODES || !paragraph.content.every((node: unknown) => record(node) && validInlineNode(node))) return null;
   }
   try {
-    const doc = composerSchema.nodeFromJSON(value);
+    const doc = composerSchema.nodeFromJSON({ ...value, content: value.content.map(withCurrentSessionPaths) });
     doc.check();
     return doc;
   } catch {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composerSchema, buildMentionInsertion, buildTextRangeReplacement, classifyMentionHref, collectSkillMentions, docToText, extendToTextblock, inlineRunStartOffset, mentionActionLine, mentionActionPath, mentionNode, parseClipboardText, parseMentionLinks, posToTextOffset, quoteNode, serializeClipboardSlice, serializeMention, splitMentionSegments, textOffsetToPos, textToDoc, unescapeRenderedLinkText } from '../../src/model';
+import { composerSchema, buildMentionInsertion, buildTextRangeReplacement, classifyMentionHref, collectSkillMentions, docToText, extendToTextblock, inlineRunStartOffset, linkBareSessionUrls, mentionActionLine, mentionActionPath, mentionNode, parseClipboardText, parseMentionLinks, posToTextOffset, quoteNode, serializeClipboardSlice, serializeMention, splitMentionSegments, textOffsetToPos, textToDoc, unescapeRenderedLinkText } from '../../src/model';
 import { mentionHrefToPath } from '../../src/features/mention/linkPath';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { history, undo, closeHistory } from 'prosemirror-history';
@@ -375,17 +375,18 @@ describe('composerTextDoc — classifyMentionHref (message-side pill routing)', 
   it('rejects a skill link with an empty name (no round-trip, dead pill)', () => {
     expect(classifyMentionHref('kimi-code://skill/')).toBeNull();
   });
-  it('classifies session links that carry a workspace and a session segment', () => {
-    expect(classifyMentionHref('kimi-code://session/wd_app_0123456789ab/session_1')).toBe('session');
+  it('classifies session links that carry a single session segment', () => {
+    expect(classifyMentionHref('kimi-code://sessions/session_1')).toBe('session');
   });
-  it('rejects session links without exactly two non-empty segments', () => {
+  it('rejects session links without exactly one non-empty segment', () => {
     for (const href of [
-      'kimi-code://session/',
+      'kimi-code://sessions/',
+      'kimi-code://sessions/session_1/',
+      'kimi-code://sessions/wd_app_0123456789ab/session_1',
+      'kimi-code://sessions/a%2Fb',
+      'kimi-code://sessions/session_1?x=1',
+      'kimi-code://sessions/session_1#top',
       'kimi-code://session/session_1',
-      'kimi-code://session/wd_app_0123456789ab/',
-      'kimi-code://session//session_1',
-      'kimi-code://session/wd/a/b',
-      'kimi-code://session/wd%2Fa/b',
     ]) {
       expect(classifyMentionHref(href), href).toBeNull();
     }
@@ -557,10 +558,10 @@ describe('composerTextDoc — mention revival (textToDoc reviveMentions)', () =>
     expect(collectSkillMentions(doc)[0]?.name).toBe('deploy');
   });
 
-  it('round-trips a session mention: the label is the title and the path is <workspaceId>/<sessionId>', () => {
-    const attrs = { kind: 'session', name: '修复 [登录] 跳转', path: 'wd_app_0123456789ab/session_1' } as const;
+  it('round-trips a session mention: the label is the title and the path is the session id', () => {
+    const attrs = { kind: 'session', name: '修复 [登录] 跳转', path: 'session_1' } as const;
     const wire = serializeMention(attrs);
-    expect(wire).toBe('[修复 \\[登录\\] 跳转](kimi-code://session/wd_app_0123456789ab/session_1)');
+    expect(wire).toBe('[修复 \\[登录\\] 跳转](kimi-code://sessions/session_1)');
     const doc = textToDoc(`see ${wire} now`, { reviveMentions: true });
     expect(doc.firstChild?.child(1).attrs).toEqual(attrs);
     expect(docToText(doc)).toBe(`see ${wire} now`);
@@ -568,10 +569,46 @@ describe('composerTextDoc — mention revival (textToDoc reviveMentions)', () =>
   });
 
   it('leaves session links with a malformed target as literal text', () => {
-    for (const bad of ['[x](kimi-code://session/session_1)', '[x](kimi-code://session/wd/a/b)']) {
+    for (const bad of ['[x](kimi-code://sessions/wd/session_1)', '[x](kimi-code://sessions/)', '[x](kimi-code://session/session_1)', '[x](kimi-code://session/wd/a/b)']) {
       const doc = textToDoc(bad, { reviveMentions: true });
       expect(doc.firstChild?.firstChild?.isText).toBe(true);
       expect(docToText(doc)).toBe(bad);
+    }
+  });
+
+  it('still reads the earlier <workspaceId>/<sessionId> session links and writes them in the current form', () => {
+    const legacy = '[修复登录](kimi-code://session/wd_app_0123456789ab/session_1)';
+    expect(classifyMentionHref('kimi-code://session/wd_app_0123456789ab/session_1')).toBe('session');
+    expect(parseMentionLinks(legacy)[0]?.attrs).toEqual({ kind: 'session', name: '修复登录', path: 'session_1' });
+    const doc = textToDoc(legacy, { reviveMentions: true });
+    expect(doc.firstChild?.firstChild?.attrs).toMatchObject({ kind: 'session', path: 'session_1' });
+    expect(docToText(doc)).toBe('[修复登录](kimi-code://sessions/session_1)');
+  });
+
+  it('turns bare session addresses into session links titled by the resolver', () => {
+    const title = (sessionId: string) => (sessionId === 's_1' ? 'Fix [login]' : `Title ${sessionId}`);
+    expect(linkBareSessionUrls('see kimi-code://sessions/s_1.', title)).toBe('see [Fix \\[login\\]](kimi-code://sessions/s_1).');
+    expect(linkBareSessionUrls('(kimi-code://sessions/s_2)\nkimi-code://sessions/s_3', title))
+      .toBe('([Title s_2](kimi-code://sessions/s_2))\n[Title s_3](kimi-code://sessions/s_3)');
+    const doc = textToDoc(linkBareSessionUrls('kimi-code://sessions/s_1', title), { reviveMentions: true });
+    expect(doc.firstChild?.firstChild?.attrs).toMatchObject({ kind: 'session', name: 'Fix [login]', path: 's_1' });
+  });
+
+  it('leaves session addresses inside links and malformed addresses untouched', () => {
+    const title = () => 'Title';
+    for (const text of [
+      '[Alpha](kimi-code://sessions/s_1)',
+      '[kimi-code://sessions/s_1](https://example.com)',
+      '![shot](kimi-code://sessions/s_1)',
+      'kimi-code://sessions/s_1/turns',
+      'kimi-code://sessions/s_1?x=1',
+      'kimi-code://sessions/s_1#top',
+      'kimi-code://sessions/s%2F1',
+      'xkimi-code://sessions/s_1',
+      'kimi-code://sessions/',
+      'kimi-code://session/s_1',
+    ]) {
+      expect(linkBareSessionUrls(text, title), text).toBe(text);
     }
   });
 

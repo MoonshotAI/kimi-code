@@ -13,6 +13,7 @@ export type SessionCreatedSource =
   | 'notification'
   | 'search'
   | 'slash_command'
+  | 'mention'
   | 'deep_link';
 
 export interface KimiClientDeps {

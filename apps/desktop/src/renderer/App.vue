@@ -48,7 +48,7 @@ import { GlobalLoading } from '@moonshot-ai/app-components';
 import { getDeviceApi, useKimiWebClient, promptAttachmentToTurnAttachment, turnFileContentFetcher } from '@moonshot-ai/app-client/client';
 import { sessionViewsStore, workspacesStore, modelsStore, notificationsStore, authStore, sessionsStore, warningsStore, filesStore, permissionsStore, enableSessionRating, modelSwitchConfirmStore, effortSwitchStore, hostsStore } from '@moonshot-ai/app-client/stores';
 import { FetchTurnFileContentKey, InsertPathMentionKey, ModelDisplayKey, OpenWithDefaultAppKey, ResolveSwarmMembersKey, RevealInFolderKey, SelectionContextMenuKey, SessionRatingKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
-import { OpenFileLinkKey, OpenHtmlFileInPanelKey, OpenLocalHtmlFileKey, OpenMarkdownImageKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
+import { OpenFileLinkKey, OpenHtmlFileInPanelKey, OpenLocalHtmlFileKey, OpenMarkdownImageKey, OpenSessionLinkKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
 import { getKimiWebApi } from './api';
 import { useConfirmDialog, useSelectionQuoteBubble } from '@moonshot-ai/app-client/composables';
 import { runComposerMenuEdit } from '@moonshot-ai/app-composer/runtime';
@@ -76,7 +76,7 @@ import { effectiveThinkingLevel } from '@moonshot-ai/app-core/lib';
 import { isPurePreviewFile, modelDisplayName, subagentEffortSuffix } from '@moonshot-ai/app-core/lib';
 import { stripSkillPrefix, skillCommandArgs } from '@moonshot-ai/app-core/lib';
 import { TOWER_STATUS_PROMPT, TOWER_TEARDOWN_PROMPT } from '@moonshot-ai/app-core/lib';
-import { useContextInspector } from '@moonshot-ai/app-core';
+import { useContextInspector, useSessionMentions } from '@moonshot-ai/app-core';
 import { sessionDisplayStatus, type SessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 import { Icon, IconButton, StatusDot } from '@moonshot-ai/app-ui';
 import { hasCustomTitleBar, hasDesktopBridge, isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
@@ -141,6 +141,7 @@ let offAuthRequired: (() => void) | null = null;
 useMenuDragRegions();
 const client = useKimiWebClient();
 const desktopBridge = hasDesktopBridge();
+const { sessionMentions } = useSessionMentions();
 const sessionViews = sessionViewsStore();
 provide(ComposerNativeMenuHostKey, { register: registerBrowserOverlayMenu });
 const browserAnnotationHost = createBrowserAnnotationHost({
@@ -1545,6 +1546,10 @@ async function openBrowserUrlFromSettings(url: string): Promise<void> {
 }
 
 provide(OpenFileLinkKey, (target, open) => openFileOrLocalHtml(target, localHtmlOpener, client.status.value.cwd, open));
+const openSessionFromMention = (sessionId: string): void => {
+  void client.openSessionLink(sessionId, 'mention');
+};
+provide(OpenSessionLinkKey, () => (sessionMentions.value ? openSessionFromMention : undefined));
 provide(OpenLocalHtmlFileKey, localHtmlLinkHandler(localHtmlOpener, (target) => panel.openFilePreview(target), closeDockWorkPanel));
 provide(OpenHtmlFileInPanelKey, () => {
   if (!canOpenBrowserTab.value) return undefined;
