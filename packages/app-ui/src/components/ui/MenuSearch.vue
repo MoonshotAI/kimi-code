@@ -72,7 +72,7 @@ function onKeydown(event: KeyboardEvent): void {
 .ui-menu-search--divider:focus-within { border-bottom-color: var(--color-line-strong); }
 .ui-menu-search--divider:first-child {
   margin-top: calc(-1 * var(--menu-pad));
-  padding-block: calc(var(--menu-item-padding-block) + var(--menu-pad));
+  padding-block: calc(var(--menu-item-padding-block) + var(--menu-pad) / 2);
 }
 .ui-menu-search > :deep(svg) { flex: none; }
 .ui-menu-search__input {
@@ -84,7 +84,7 @@ function onKeydown(event: KeyboardEvent): void {
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   line-height: var(--leading-tight);
 }
 .ui-menu-search__input::placeholder { color: var(--color-text-faint); }
