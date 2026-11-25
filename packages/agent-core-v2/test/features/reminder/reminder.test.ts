@@ -263,7 +263,8 @@ describe('AgentReminderService', () => {
     expect(seen).toEqual([null, null]);
     expect(context.history().map((message) => message.origin)).toEqual([
       { kind: 'compaction_summary' },
-      { kind: 'injection', variant: 'recording_test' },
+      { kind: 'injection', variant: 'todo_list_guidance', disclosure: undefined, ownerPromptId: undefined },
+      { kind: 'injection', variant: 'recording_test', disclosure: undefined, ownerPromptId: undefined },
     ]);
   });
 
@@ -292,8 +293,9 @@ describe('AgentReminderService', () => {
     expect(seenB).toEqual([null, 2]);
     expect(context.history().map((message) => message.origin)).toEqual([
       { kind: 'compaction_summary' },
-      { kind: 'injection', variant: 'recording_a' },
-      { kind: 'injection', variant: 'recording_b' },
+      { kind: 'injection', variant: 'recording_a', disclosure: undefined, ownerPromptId: undefined },
+      { kind: 'injection', variant: 'recording_b', disclosure: undefined, ownerPromptId: undefined },
+      { kind: 'injection', variant: 'todo_list_guidance', disclosure: undefined, ownerPromptId: undefined },
     ]);
   });
 
@@ -312,7 +314,9 @@ describe('AgentReminderService', () => {
     expect(seen).toEqual([true, false, true]);
     expect(context.history().map((message) => message.origin)).toEqual([
       { kind: 'compaction_summary' },
-      { kind: 'injection', variant: 'per_turn_test' },
+      { kind: 'injection', variant: 'per_turn_test', disclosure: undefined, ownerPromptId: undefined },
+      { kind: 'injection', variant: 'todo_list_guidance', disclosure: undefined, ownerPromptId: undefined },
+      { kind: 'injection', variant: 'per_turn_test', disclosure: undefined, ownerPromptId: undefined },
     ]);
   });
 
@@ -346,7 +350,8 @@ describe('AgentReminderService', () => {
     expect(seen).toEqual([true, true]);
     expect(context.history().map((message) => message.origin)).toEqual([
       { kind: 'compaction_summary' },
-      { kind: 'injection', variant: 'per_turn_test' },
+      { kind: 'injection', variant: 'todo_list_guidance', disclosure: undefined, ownerPromptId: undefined },
+      { kind: 'injection', variant: 'per_turn_test', disclosure: undefined, ownerPromptId: undefined },
     ]);
   });
 

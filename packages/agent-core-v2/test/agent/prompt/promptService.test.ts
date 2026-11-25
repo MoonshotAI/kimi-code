@@ -521,8 +521,9 @@ describe('prompt queue', () => {
       role: 'assistant',
       content: [{ type: 'text', text: 'partial answer' }],
     }));
-    expect(histories[1]?.slice(-3)).toMatchObject([
+    expect(histories[1]?.slice(-4)).toMatchObject([
       { role: 'user', content: [{ type: 'text', text: 'active' }] },
+      { role: 'user', content: [{ type: 'text', text: expect.stringContaining('When you track work in `TodoList`') }] },
       { role: 'assistant', content: [{ type: 'text', text: 'partial answer' }] },
       { role: 'user', content: [{ type: 'text', text: 'steer' }] },
     ]);
@@ -576,6 +577,7 @@ describe('prompt queue', () => {
       { content: [{ type: 'text', text: 'normal' }] },
       { content: [{ type: 'text', text: 'steered' }] },
       { content: [{ type: 'text', text: 'direct steer' }] },
+      { content: [{ type: 'text', text: expect.stringContaining('When you track work in `TodoList`') }] },
     ]);
     expect(ctx.llmCalls[0]?.history.some((entry) => entry.role === 'assistant')).toBe(false);
   });

@@ -616,7 +616,11 @@ describe('AgentConversationUndoService', () => {
       await undo.undo(1);
       expect(fromTurnId).toBe(userTurn.id);
       expect(ctx.agentState.get(turnKey).anchorTurnIds).toEqual([]);
-      expect(ctx.context.history()).toHaveLength(0);
+      expect(ctx.context.history()).toEqual([
+        expect.objectContaining({
+          origin: expect.objectContaining({ variant: 'todo_list_guidance' }),
+        }),
+      ]);
     } finally {
       subscription.dispose();
     }

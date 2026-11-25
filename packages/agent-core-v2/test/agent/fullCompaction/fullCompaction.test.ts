@@ -1628,8 +1628,8 @@ describe('FullCompaction', () => {
 
       const loop = ctx.get(IAgentLoopService);
       const raw = loop.rawHistory();
-      expect(raw.map((message) => message.role)).toEqual(['user', 'assistant']);
-      const rawAssistant = raw[1];
+      expect(raw.map((message) => message.role)).toEqual(['user', 'user', 'assistant']);
+      const rawAssistant = raw[2];
       expect(rawAssistant?.role === 'assistant' ? rawAssistant.toolCalls.map((toolCall) => toolCall.id) : []).toEqual([
         'call_dangling',
       ]);
@@ -2424,7 +2424,7 @@ describe('FullCompaction', () => {
     expect(eventIndex(events, 'compaction.started')).toBe(-1);
     expect(ctx.llmCalls).toHaveLength(1);
     expect(ctx.llmCalls[0]?.history.map(messageText)).toContain('old assistant one');
-    expect(messageText(ctx.llmCalls[0]?.history.at(-1))).toBe('small prompt');
+    expect(ctx.llmCalls[0]?.history.map(messageText)).toContain('small prompt');
     await ctx.expectResumeMatches();
   });
 
@@ -2543,6 +2543,7 @@ describe('FullCompaction', () => {
       'assistant',
       'user',
       'user',
+      'user',
     ]);
     expect(
       answerCall?.history.map(messageText).some((text) => text.includes('Oversized prompt summary.')),
@@ -2577,6 +2578,7 @@ describe('FullCompaction', () => {
     expect(compactionCall?.history.map((message) => message.role)).toEqual([
       'user',
       'assistant',
+      'user',
       'user',
       'user',
     ]);
@@ -2635,7 +2637,7 @@ describe('FullCompaction', () => {
         args: expect.objectContaining({
           result: expect.objectContaining({
             summary: 'Overflow compacted summary.',
-            compactedCount: 3,
+            compactedCount: 4,
           }),
         }),
       }),
@@ -2652,16 +2654,25 @@ describe('FullCompaction', () => {
           "user: old user one",
           "assistant: old assistant one",
           "user: Retry after provider overflow",
+          "user: <system-reminder>
+      When you track work in \`TodoList\`, keep it in step with what you have actually done: mark an item done as soon as it is finished, before you start the next one, and make sure the list matches what you did before you write your final message.
+      </system-reminder>",
         ],
         [
           "user: old user one",
           "assistant: old assistant one",
           "user: Retry after provider overflow",
+          "user: <system-reminder>
+      When you track work in \`TodoList\`, keep it in step with what you have actually done: mark an item done as soon as it is finished, before you start the next one, and make sure the list matches what you did before you write your final message.
+      </system-reminder>",
         ],
         [
           "user: old user one",
           "assistant: old assistant one",
           "user: Retry after provider overflow",
+          "user: <system-reminder>
+      When you track work in \`TodoList\`, keep it in step with what you have actually done: mark an item done as soon as it is finished, before you start the next one, and make sure the list matches what you did before you write your final message.
+      </system-reminder>",
           "user: You are about to run out of context. Create a handoff summary for the
       model that will resume this task after the earlier conversation is cleared.
 
@@ -2743,6 +2754,9 @@ describe('FullCompaction', () => {
           "user: <system-reminder>
       Context compaction is complete — continue the work that was in progress when it began.
       </system-reminder>",
+          "user: <system-reminder>
+      When you track work in \`TodoList\`, keep it in step with what you have actually done: mark an item done as soon as it is finished, before you start the next one, and make sure the list matches what you did before you write your final message.
+      </system-reminder>",
         ],
       ]
     `);
@@ -2782,6 +2796,7 @@ describe('FullCompaction', () => {
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: ['Read'],
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
@@ -3204,7 +3219,7 @@ describe('FullCompaction', () => {
         args: expect.objectContaining({
           result: expect.objectContaining({
             summary: 'Unknown window compacted summary.',
-            compactedCount: 3,
+            compactedCount: 4,
           }),
         }),
       }),
@@ -3412,6 +3427,7 @@ describe('FullCompaction', () => {
         ...CATALOGUED_MODEL_CAPABILITIES,
         maxContextSize: 14,
       },
+      tools: ['Read'],
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 1);
     const promptThatFitsWithoutPlaceholder = 'x'.repeat(40);
@@ -4840,6 +4856,7 @@ describe('FullCompaction pre-shrink', () => {
         ...CATALOGUED_MODEL_CAPABILITIES,
         maxContextSize: 1_000_000,
       },
+      tools: ['Read'],
     });
     const models = (ctx as unknown as MutableKimiConfig).kimiConfig.models;
     models![CATALOGUED_PROVIDER.model] = {

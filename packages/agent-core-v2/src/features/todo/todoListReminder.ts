@@ -1,8 +1,33 @@
+import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 
 import { TODO_LIST_TOOL_NAME, todoProgress, type TodoItem } from './todoItem';
 
+export const TODO_LIST_GUIDANCE_REMINDER_VARIANT = 'todo_list_guidance';
+export const TODO_LIST_GUIDANCE =
+  'When you track work in `TodoList`, keep it in step with what you have actually done: mark an item done as soon as it is finished, before you start the next one, and make sure the list matches what you did before you write your final message.';
+
 export const TODO_LIST_REMINDER_VARIANT = 'todo_list_reminder';
+
+interface TodoListGuidanceInput {
+  readonly active: boolean;
+  readonly isNewTurn: boolean;
+  readonly injectedPositions: readonly number[];
+  readonly lastInjectedAt: number | null;
+  readonly history: readonly ContextMessage[];
+}
+
+export function todoListGuidanceReminder(input: TodoListGuidanceInput): string | undefined {
+  if (!input.active) return undefined;
+  if (!input.isNewTurn) return undefined;
+  if (
+    input.injectedPositions.length > 0 &&
+    !input.history.slice(input.lastInjectedAt ?? 0).some(isCompactionSummaryMessage)
+  ) {
+    return undefined;
+  }
+  return TODO_LIST_GUIDANCE;
+}
 
 const TODO_LIST_REMINDER_STEPS_SINCE_WRITE = 10;
 const TODO_LIST_REMINDER_STEPS_BETWEEN_REMINDERS = 10;
