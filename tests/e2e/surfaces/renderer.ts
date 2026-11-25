@@ -102,6 +102,8 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     const before = await this.conversationSize();
     await this.press('send()', 'the message input', this.composer());
     await this.page.keyboard.type(text);
+    const send = this.page.getByRole('button', { name: 'Send ↵', exact: true, disabled: false });
+    await this.wait('the Send button to become enabled', async () => (await send.isVisible()) || undefined);
     await this.page.keyboard.press('Enter');
     await this.wait(`the user message ${JSON.stringify(text)} to appear in the conversation`, () => this.messageAfter(before, text));
   }

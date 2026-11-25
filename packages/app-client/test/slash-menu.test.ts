@@ -18,6 +18,7 @@ function setup(
     entry: { kind: 'skill'; name: string },
     range: { start: number; end: number },
   ) => void,
+  beforeExecute?: (cmd: string) => boolean,
 ) {
   const editor: MockEditor = {
     value: initialText,
@@ -38,6 +39,7 @@ function setup(
     emitCommand: (cmd) => emitted.push(cmd),
     historyPush: (entry) => pushed.push(entry),
     insertSkillMention,
+    beforeExecute,
   });
   return { text, editor, emitted, pushed, slash };
 }
@@ -122,6 +124,20 @@ describe('useSlashMenu — update', () => {
     slash.update();
     expect(slash.open.value).toBe(false);
   });
+});
+
+it('preserves the draft when an immediate slash command is blocked', () => {
+  const { slash, text, emitted, pushed } = setup('/new', [], undefined, (cmd) => cmd !== '/new');
+  slash.update();
+  slash.select(slash.items.value.find((item) => item.name === '/new')!);
+  expect(text.value).toBe('/new');
+  expect(pushed).toEqual([]);
+  expect(emitted).toEqual([]);
+
+  text.value = '/plan';
+  slash.update();
+  slash.select(slash.items.value.find((item) => item.name === '/plan')!);
+  expect(emitted).toEqual(['/plan']);
 });
 
 describe('useSlashMenu — dismiss (Esc)', () => {
