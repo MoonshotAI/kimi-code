@@ -2,7 +2,7 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '@moonshot-ai/app-core/client/types';
-import { copyTextToClipboard, isDesktop, sessionLink } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, sessionLink, sessionLinksSupported } from '@moonshot-ai/app-core/lib';
 import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, StatusDot, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { applySessionEmoji, splitSessionEmoji } from '@moonshot-ai/app-core/lib';
 import SessionEmojiPicker from './SessionEmojiPicker.vue';
@@ -382,6 +382,7 @@ function positionMenuAtCursor(e: MouseEvent): void {
   };
 }
 
+const sessionLinkCopyable = sessionLinksSupported();
 type CopyTarget = 'id' | 'link';
 const copied = ref<CopyTarget | null>(null);
 const copyFailed = ref<CopyTarget | null>(null);
@@ -666,7 +667,7 @@ function openPullRequest(): void {
           <Icon name="copy" size="sm" />
           {{ copyLabel('id', t('sidebar.copySessionId')) }}
         </MenuItem>
-        <MenuItem v-if="isDesktop" :danger="copyFailed === 'link'" @click="copyFromMenu('link')">
+        <MenuItem v-if="sessionLinkCopyable" :danger="copyFailed === 'link'" @click="copyFromMenu('link')">
           <Icon name="link" size="sm" />
           {{ copyLabel('link', t('sidebar.copySessionLink')) }}
         </MenuItem>

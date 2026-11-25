@@ -52,11 +52,14 @@ export function extractDeepLink(argv: readonly string[]): string | undefined {
   return argv.find((arg) => arg.toLowerCase().startsWith(prefix));
 }
 
-export function registerDeepLinkScheme(): void {
+export function deepLinkSchemeAvailable(): boolean {
   const version = app.getVersion();
-  if (isCanaryVersion(version) || isPreviewVersion(version)) return;
-  if (process.platform === 'darwin') return;
-  if (e2eWindowMode() !== null) return;
+  if (isCanaryVersion(version) || isPreviewVersion(version) || e2eWindowMode() !== null) return false;
+  return app.isPackaged || process.platform !== 'darwin';
+}
+
+export function registerDeepLinkScheme(): void {
+  if (!deepLinkSchemeAvailable() || process.platform === 'darwin') return;
   const isWindows = process.platform === 'win32';
   if (!isWindows && app.isPackaged) return;
   try {

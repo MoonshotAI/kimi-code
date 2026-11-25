@@ -6,7 +6,7 @@ import type { BrowserOverlayMenuItem } from '../../../shared/browser-overlay';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard, sessionLink } from '@moonshot-ai/app-core/lib';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
-import { hasDesktopBridge, isMacosDesktop } from '@moonshot-ai/app-core/lib';
+import { isMacosDesktop, sessionLinksSupported } from '@moonshot-ai/app-core/lib';
 import { OpenInMenu } from '@moonshot-ai/app-components';
 import { track } from '@moonshot-ai/app-client/contracts';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
@@ -17,7 +17,7 @@ import ViewToggles from './ViewToggles.vue';
 const { t } = useI18n();
 
 const { sidebarTabs } = useSidebarTabs();
-const sessionLinkCopyable = hasDesktopBridge();
+const sessionLinkCopyable = sessionLinksSupported();
 
 const client = useKimiWebClient();
 const sessionViews = sessionViewsStore();

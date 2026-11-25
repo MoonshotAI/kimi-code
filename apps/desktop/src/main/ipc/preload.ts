@@ -389,6 +389,7 @@ function asNativeTerminalInfo(value: unknown): NativeTerminalInfo | null {
 
 export type KimiDesktopApi = {
   browserOverlaySupported: boolean;
+  sessionLinksSupported: boolean;
   inspectNativeTerminals: (ids: string[]) => Promise<TerminalActivity[]>;
   setTheme: (scheme: 'light' | 'dark' | 'system') => void;
   popupWindowsMenu: (request: {
@@ -570,6 +571,7 @@ export type KimiDesktopApi = {
 
 export const api: KimiDesktopApi = {
   browserOverlaySupported: process.argv.includes('--kimi-native-overlay-host'),
+  sessionLinksSupported: process.argv.includes('--kimi-session-links'),
   inspectNativeTerminals: async ids => {
     const result: unknown = await ipcRenderer.invoke('kimi:terminal-inspect', ids);
     if (!isTerminalActivityList(result)) throw new Error('Invalid terminal activity response');

@@ -22,6 +22,7 @@ vi.mock('../../../src/main/diagnostics/log', async (importOriginal) => {
 
 import {
   DEEP_LINK_SCHEME,
+  deepLinkSchemeAvailable,
   extractDeepLink,
   handleDeepLink,
   isKnownDeepLink,
@@ -133,6 +134,26 @@ describe('registerDeepLinkScheme', () => {
     vi.stubEnv('KIMI_DESKTOP_E2E', mode);
     registerDeepLinkScheme();
     expect(mocks.app.setAsDefaultProtocolClient).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['packaged stable builds on macOS', 'darwin', true, '1.1.0', true],
+    ['unpackaged dev launches on Windows', 'win32', false, '1.1.0', true],
+    ['unpackaged dev launches on macOS', 'darwin', false, '1.1.0', false],
+    ['canary builds', 'win32', true, '1.1.1-canary.1', false],
+    ['preview builds', 'darwin', true, '1.1.1-preview.123.1.g12345678', false],
+  ])('reports whether %s open kimi-code:// links', (_case, platform, packaged, version, available) => {
+    Object.defineProperty(process, 'platform', { value: platform, enumerable: true, configurable: true });
+    mocks.app.isPackaged = packaged;
+    mocks.app.getVersion.mockReturnValue(version);
+    expect(deepLinkSchemeAvailable()).toBe(available);
+  });
+
+  it('reports kimi-code:// links as unavailable in e2e mode', () => {
+    asWindows();
+    mocks.app.isPackaged = false;
+    vi.stubEnv('KIMI_DESKTOP_E2E', '1');
+    expect(deepLinkSchemeAvailable()).toBe(false);
   });
 
   it.each(['1.1.1-canary.1', '1.1.1-preview.123.1.g12345678'])('does not replace stable registration for %s', (version) => {

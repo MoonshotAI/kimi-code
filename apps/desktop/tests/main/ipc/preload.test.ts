@@ -20,6 +20,7 @@ vi.mock('electron', () => ({
 
 const WHITELIST = [
   'browserOverlaySupported',
+  'sessionLinksSupported',
   'inspectNativeTerminals',
   'browserOverlayCloseMenu',
   'browserOverlayOpenMenu',
@@ -273,7 +274,7 @@ describe('kimiDesktop preload bridge', () => {
     expect(Object.keys(exposed)).not.toContain('node');
     expect(Object.keys(exposed)).not.toContain('require');
     for (const key of Object.keys(exposed)) {
-      expect(typeof exposed[key]).toBe(key === 'browserOverlaySupported' ? 'boolean' : 'function');
+      expect(typeof exposed[key]).toBe(key === 'browserOverlaySupported' || key === 'sessionLinksSupported' ? 'boolean' : 'function');
     }
   });
 
@@ -1266,5 +1267,19 @@ it('advertises native overlays only for a window explicitly created as an overla
     process.argv.push('--kimi-native-overlay-host');
     const host = await import('../../../src/main/ipc/preload');
     expect(host.api.browserOverlaySupported).toBe(true);
+  } finally { process.argv = previous; }
+});
+
+it('advertises session links only when the main process passes the session link flag', async () => {
+  const previous = [...process.argv];
+  try {
+    process.argv = previous.filter(value => value !== '--kimi-session-links');
+    vi.resetModules();
+    const unregistered = await import('../../../src/main/ipc/preload');
+    expect(unregistered.api.sessionLinksSupported).toBe(false);
+    vi.resetModules();
+    process.argv.push('--kimi-session-links');
+    const registered = await import('../../../src/main/ipc/preload');
+    expect(registered.api.sessionLinksSupported).toBe(true);
   } finally { process.argv = previous; }
 });

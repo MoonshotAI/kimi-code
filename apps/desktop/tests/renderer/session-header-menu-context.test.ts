@@ -3,10 +3,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import ChatHeader from '../../src/renderer/components/chat/ChatHeader.vue';
 import type { BrowserOverlayMenuRegistration } from '../../src/renderer/lib/browserOverlayMenu';
-const mocks = vi.hoisted(() => ({ client: null as unknown, archive: vi.fn(), reload: vi.fn(), registration: null as BrowserOverlayMenuRegistration | null, desktopBridge: true }));
+const mocks = vi.hoisted(() => ({ client: null as unknown, archive: vi.fn(), reload: vi.fn(), registration: null as BrowserOverlayMenuRegistration | null, sessionLinks: true }));
 vi.mock('vue-i18n',()=>({useI18n:()=>({t:(k:string)=>k})}));
 vi.mock('../../src/renderer/lib/browserOverlayMenu',()=>({registerBrowserOverlayMenu:(r: BrowserOverlayMenuRegistration)=>{mocks.registration=r;return {available:true,open:ref(false),close(){},refresh(){}}}}));
-vi.mock('@moonshot-ai/app-core/lib',async(importOriginal)=>({sessionLink:(await importOriginal<typeof import('@moonshot-ai/app-core/lib')>()).sessionLink,copyTextToClipboard:vi.fn(),hasDesktopBridge:()=>mocks.desktopBridge,isMacosDesktop:true,safeGetJson:vi.fn(()=>null),safeSetJson:vi.fn(),STORAGE_KEYS:{shortcutOverrides:'kimi.shortcutOverrides'}}));
+vi.mock('@moonshot-ai/app-core/lib',async(importOriginal)=>({sessionLink:(await importOriginal<typeof import('@moonshot-ai/app-core/lib')>()).sessionLink,copyTextToClipboard:vi.fn(),sessionLinksSupported:()=>mocks.sessionLinks,isMacosDesktop:true,safeGetJson:vi.fn(()=>null),safeSetJson:vi.fn(),STORAGE_KEYS:{shortcutOverrides:'kimi.shortcutOverrides'}}));
 vi.mock('@moonshot-ai/app-core',()=>({useSidebarTabs:()=>({sidebarTabs:ref(false)})}));
 vi.mock('@moonshot-ai/app-components',()=>({OpenInMenu:{}}));
 vi.mock('@moonshot-ai/app-client/contracts',()=>({track(){}}));
@@ -112,15 +112,15 @@ it('copies the session deep link from the menu', () => {
   app.unmount();
 });
 
-it('leaves the session link out of the menu outside the desktop app', () => {
-  mocks.desktopBridge = false;
+it('leaves the session link out of the menu when this build cannot open session links', () => {
+  mocks.sessionLinks = false;
   try {
     const { app, menu } = mountHeader();
     expect(menu.items().some(item => item.kind === 'item' && item.label === 'header.copySessionLink')).toBe(false);
     expect(menu.items().some(item => item.kind === 'item' && item.label === 'header.copySessionId')).toBe(true);
     app.unmount();
   } finally {
-    mocks.desktopBridge = true;
+    mocks.sessionLinks = true;
   }
 });
 
