@@ -333,7 +333,6 @@ export default {
   defaultToolsGroupOther: '其他工具',
   defaultToolsLabels: {
     read: '读取文件',
-    readMediaFile: '读取图片与音视频',
     write: '写入文件',
     edit: '编辑文件',
     glob: '按文件名查找',

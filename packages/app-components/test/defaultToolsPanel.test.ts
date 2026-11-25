@@ -460,7 +460,7 @@ describe('DefaultToolsSetting', () => {
 
 describe('defaultToolsCatalog', () => {
   const ALL_CONFIGURABLE_TOOLS = [
-    'Read', 'ReadMediaFile', 'Write', 'Edit', 'Glob', 'Grep',
+    'Read', 'Write', 'Edit', 'Glob', 'Grep',
     'Bash', 'TaskList', 'TaskOutput', 'TaskStop', 'WaitFor',
     'WebSearch', 'FetchURL',
     'TodoList', 'ExitPlanMode', 'Agent', 'AgentSwarm', 'AskUserQuestion', 'Skill', 'NotifyUser',
@@ -470,7 +470,7 @@ describe('defaultToolsCatalog', () => {
     'TowerComplete', 'TowerSend', 'TowerInbox', 'TowerFinding', 'TowerReview', 'TowerMission', 'TowerStatus',
   ];
 
-  it('groups all 40 configurable built-in tools into dedicated groups without an orphan catch-all', () => {
+  it('groups all 39 configurable built-in tools into dedicated groups without an orphan catch-all', () => {
     const entries = ALL_CONFIGURABLE_TOOLS.map((name) => ({ name, source: 'builtin' as const }));
     const groups = groupDefaultTools(entries);
 
@@ -478,6 +478,9 @@ describe('defaultToolsCatalog', () => {
     expect(groups.flatMap((group) => group.tools.map((tool) => tool.name)).toSorted()).toEqual(
       [...ALL_CONFIGURABLE_TOOLS].toSorted(),
     );
+    expect(groups.find((group) => group.id === 'file')?.tools.map((tool) => tool.name)).toEqual([
+      'Read', 'Write', 'Edit', 'Glob', 'Grep',
+    ]);
     expect(groups.find((group) => group.id === 'shell')?.tools.map((tool) => tool.name)).toEqual([
       'Bash', 'TaskList', 'TaskOutput', 'TaskStop', 'WaitFor',
     ]);

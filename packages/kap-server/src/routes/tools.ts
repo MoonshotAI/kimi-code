@@ -6,7 +6,6 @@ import {
   getLiveSessionById,
   isTowerFeatureAssembled,
   AgentToolContribution,
-  USER_CONFIGURABLE_MEDIA_TOOLS,
   USER_CONFIGURABLE_TOWER_MODE_TOOLS,
   resumeSessionById,
   type ISessionScopeHandle,
@@ -57,7 +56,7 @@ export function registerToolsRoutes(app: GetRouteHost, core: Scope): void {
           name: contribution.options.name,
           source: contribution.options.source ?? 'builtin',
         }))
-        .concat(...USER_CONFIGURABLE_MEDIA_TOOLS, ...towerModeTools);
+        .concat(...towerModeTools);
       const tools = [...new Map(entries.map((tool) => [tool.name, tool])).values()]
         .toSorted((left, right) => left.name.localeCompare(right.name));
       reply.send(okEnvelope({ tools }, req.id));

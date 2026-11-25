@@ -18,7 +18,6 @@ const DEFAULT_TOOL_GROUPS: readonly DefaultToolGroupDefinition[] = [
     labelKey: 'settings.defaultToolsGroupFile',
     tools: [
       { name: 'Read', labelKey: 'settings.defaultToolsLabels.read' },
-      { name: 'ReadMediaFile', labelKey: 'settings.defaultToolsLabels.readMediaFile' },
       { name: 'Write', labelKey: 'settings.defaultToolsLabels.write' },
       { name: 'Edit', labelKey: 'settings.defaultToolsLabels.edit' },
       { name: 'Glob', labelKey: 'settings.defaultToolsLabels.glob' },

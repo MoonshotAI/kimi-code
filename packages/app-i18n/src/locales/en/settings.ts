@@ -333,7 +333,6 @@ export default {
   defaultToolsGroupOther: 'Other tools',
   defaultToolsLabels: {
     read: 'Read files',
-    readMediaFile: 'Read images and media',
     write: 'Write files',
     edit: 'Edit files',
     glob: 'Find files by name',
