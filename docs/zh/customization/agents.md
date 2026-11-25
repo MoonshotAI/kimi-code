@@ -179,6 +179,7 @@ SYSTEM.md 是纯 Markdown 正文，不需要也不读取 Frontmatter。文件缺
 | `${agents_md}` | 工作区指令文件（如 `AGENTS.md`）的内容 |
 | `${cwd}` | 当前工作目录 |
 | `${cwd_listing}` | 工作目录的文件列表 |
+| `${repo_map}` | 工作目录下嵌套 Git 仓库的轻量地图；没有时为空 |
 | `${os}` | 操作系统类型 |
 | `${shell}` | Shell 名称与路径，例如 `bash (\`/bin/bash\`)` |
 | `${now}` | 当前时间（ISO 格式） |
@@ -186,7 +187,7 @@ SYSTEM.md 是纯 Markdown 正文，不需要也不读取 Frontmatter。文件缺
 | `${base_prompt}` | 默认系统提示词。在 `SYSTEM.md` 中指内置默认提示词；在 Agent 文件中指有效默认提示词（内置默认，或存在时的 `SYSTEM.md` 覆盖） |
 | `${plugin_sections}` | 已启用 plugin 提供的完整 Plugin Instructions 块；没有已启用 plugin 提供指令时为空 |
 
-未知变量原样保留，单独的 `$` 没有特殊含义；上下文中缺失的变量渲染为空字符串。另有四个预组合块 `${windows_notes}`、`${additional_dirs_section}`、`${skills_section}`、`${plugin_sections}`，渲染对应的内置提示词段落，不适用时为空字符串。
+未知变量原样保留，单独的 `$` 没有特殊含义；上下文中缺失的变量渲染为空字符串。另有五个预组合块 `${windows_notes}`、`${repo_map_section}`、`${additional_dirs_section}`、`${skills_section}`、`${plugin_sections}`，渲染对应的内置提示词段落，不适用时为空字符串。
 
 内置默认提示词已经包含 `${plugin_sections}`；当 `${base_prompt}` 已展开为该提示词时，不要再重复加入此变量。利用这些变量可以重建内置提示词的骨架，例如：
 
