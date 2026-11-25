@@ -183,11 +183,6 @@ function createModelProvider(handler: ScriptedHandler, options: MockProviderOpti
     respond: (request, signal) => {
       const attempt = (async (): Promise<PreparedAttempt> => {
         const current = index++;
-        if (protocolKind(request) === 'responses') {
-          const message = `request #${String(current)} uses the OpenAI Responses protocol, which the testkit model does not answer yet`;
-          handlerProblems.push(message);
-          return { request, fault: new Error(message) };
-        }
         try {
           const response = await handler(request, signal);
           if (response === UNSCRIPTED) return { request, signal };
@@ -691,6 +686,19 @@ function defaultRawFinishReason(
         return 'pause_turn';
       default:
         return 'other';
+    }
+  }
+  if (kind === 'responses') {
+    switch (finishReason) {
+      case 'completed':
+      case 'tool_calls':
+        return 'completed';
+      case 'truncated':
+        return 'max_output_tokens';
+      case 'filtered':
+        return 'content_filter';
+      default:
+        return 'incomplete';
     }
   }
   if (finishReason === 'filtered') return 'content_filter';

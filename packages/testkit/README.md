@@ -62,7 +62,7 @@ Failed KAP tests also print summaries of the most recent 32 WebSocket frames and
 `createFakeModel(options)` returns a model that answers like a provider:
 
 - `model.fetch` serves requests in process. `await model.listen()` also serves them on `127.0.0.1` with a random port; then `model.baseUrl` is `http://127.0.0.1:<port>/v1` and `model.origin` has no path.
-- The request path picks the protocol: OpenAI chat completions (`kimi` and `openai` providers), Anthropic messages, or Google GenAI. `GET …/models` lists `options.models`.
+- The request path picks the protocol: OpenAI chat completions (`kimi` and `openai` providers), OpenAI Responses (`…/responses`, the `openai_responses` provider and Kimi's Responses protocol), Anthropic messages, or Google GenAI. `GET …/models` lists `options.models`.
 - `fakeModelConfig(model, { type })` produces the provider and model entries for `config.toml`. `startKap` adds them for you. New tests should use the default `kimi` type, because only that type sends the request metadata that routes subagent and compaction requests (see Lanes).
 - `alias` names the configured model, `providerAlias` names its provider (defaults to `alias`), and `modelName` is sent to the provider. For example, the desktop fixture registers `e2e/stub` under provider `e2e` and sends `stub` on the wire.
 
@@ -79,7 +79,7 @@ Failed KAP tests also print summaries of the most recent 32 WebSocket frames and
 | `reply(...)`, `batch(...)` | several parts in one reply; `batch` reads as parallel calls |
 | `interleave(step)` | interleaves argument pieces of parallel calls in an OpenAI stream |
 | `finishWith(reason, step)`, `withUsage(usage, step)` | finish reason and token usage, including cache reads and writes |
-| `withResponseId(id, step)` | the reply's ID: OpenAI `id`, Anthropic message `id`, Google `responseId`. Unscripted replies get `testkit-<requestIndex>` |
+| `withResponseId(id, step)` | the reply's ID: OpenAI and OpenAI Responses `id`, Anthropic message `id`, Google `responseId`. Unscripted replies get `testkit-<requestIndex>` |
 | `paced(ms, step)`, `after(ms, step)` | delay between chunks, or before the reply |
 | `held(name, step, beforeUnit?)` | pauses before a chunk until the test releases it |
 | `httpError(status, options)` | an HTTP error with body, headers, `retry-after`, request and trace ids |
