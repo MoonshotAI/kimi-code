@@ -3704,18 +3704,28 @@ export class KimiTUI {
     }
   }
 
-  private async fetchMoreSessions(waitForInFlight = false): Promise<boolean> {
+  private async fetchMoreSessions(
+    waitForInFlight = false,
+    expectedScope: SessionsScope = this.state.sessionsScope,
+    expectedToken: number = this.sessionPickerScopeRequestToken,
+  ): Promise<boolean> {
     while (this.sessionsPageFetchInFlight !== undefined) {
       if (!waitForInFlight) return false;
       await this.sessionsPageFetchInFlight;
     }
+    if (
+      this.state.loadingSessions ||
+      expectedToken !== this.sessionPickerScopeRequestToken ||
+      expectedScope !== this.state.sessionsScope
+    ) {
+      return false;
+    }
     const cursor = this.state.sessionsNextCursor;
     if (cursor === undefined) return false;
-    const requestToken = this.sessionPickerScopeRequestToken;
     this.state.sessionsLoadingMore = true;
     this.sessionPickerComponent?.setPaging(true, true);
     this.state.ui.requestRender();
-    const run = this.appendNextSessionPage(cursor, requestToken);
+    const run = this.appendNextSessionPage(cursor, expectedScope, expectedToken);
     this.sessionsPageFetchInFlight = run;
     try {
       return await run;
@@ -3724,14 +3734,14 @@ export class KimiTUI {
     }
   }
 
-  private async appendNextSessionPage(cursor: string, requestToken: number): Promise<boolean> {
+  private async appendNextSessionPage(
+    cursor: string,
+    scope: SessionsScope,
+    requestToken: number,
+  ): Promise<boolean> {
     try {
-      const result = await this.loadSessionPickerPage(
-        this.state.sessionsScope,
-        requestToken,
-        cursor,
-      );
-      if (result === undefined) return false;
+      const result = await this.loadSessionPickerPage(scope, requestToken, cursor);
+      if (result === undefined || scope !== this.state.sessionsScope) return false;
       this.state.sessionsNextCursor = result.nextCursor;
       this.state.sessions = [...this.state.sessions, ...result.rows];
       this.sessionPickerComponent?.appendSessions(result.rows);
@@ -3741,7 +3751,7 @@ export class KimiTUI {
       log.warn('failed to fetch more sessions for picker', { error: String(error) });
       return false;
     } finally {
-      if (requestToken === this.sessionPickerScopeRequestToken) {
+      if (requestToken === this.sessionPickerScopeRequestToken && scope === this.state.sessionsScope) {
         this.state.sessionsLoadingMore = false;
         this.sessionPickerComponent?.setPaging(this.state.sessionsNextCursor !== undefined, false);
         this.state.ui.requestRender();
@@ -3749,13 +3759,17 @@ export class KimiTUI {
     }
   }
 
-  private async drainSessionsForSearch(): Promise<void> {
-    const requestToken = this.sessionPickerScopeRequestToken;
+  private async drainSessionsForSearch(
+    scope: SessionsScope = this.state.sessionsScope,
+    requestToken: number = this.sessionPickerScopeRequestToken,
+  ): Promise<void> {
     while (
       this.state.sessionsNextCursor !== undefined &&
-      requestToken === this.sessionPickerScopeRequestToken
+      !this.state.loadingSessions &&
+      requestToken === this.sessionPickerScopeRequestToken &&
+      scope === this.state.sessionsScope
     ) {
-      if (!(await this.fetchMoreSessions(true))) return;
+      if (!(await this.fetchMoreSessions(true, scope, requestToken))) return;
     }
   }
 
@@ -5341,11 +5355,13 @@ export class KimiTUI {
     readonly applyStartupModes?: boolean;
   }): void {
     this.state.activeDialog = 'session-picker';
+    const pickerScope = this.state.sessionsScope;
+    const pickerToken = this.sessionPickerScopeRequestToken;
     const picker = new SessionPickerComponent({
       sessions: this.state.sessions,
       loading: this.state.loadingSessions,
       currentSessionId: this.state.appState.sessionId,
-      scope: this.state.sessionsScope,
+      scope: pickerScope,
       showTabs: this.state.appState.isGitRepo === true,
       layout:
         this.state.dockContainer === undefined
@@ -5356,10 +5372,10 @@ export class KimiTUI {
       hasMore: this.state.sessionsNextCursor !== undefined,
       loadingMore: this.state.sessionsLoadingMore,
       onLoadMore: () => {
-        void this.fetchMoreSessions();
+        void this.fetchMoreSessions(false, pickerScope, pickerToken);
       },
       onSearchDrain: () => {
-        void this.drainSessionsForSearch();
+        void this.drainSessionsForSearch(pickerScope, pickerToken);
       },
       onSelect: (session: SessionRow) =>
         this.handleSessionPickerSelect(session, options.applyStartupModes === true).catch(

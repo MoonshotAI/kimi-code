@@ -5618,6 +5618,53 @@ describe('KimiTUI work location', () => {
       expect(driver.state.sessionsNextCursor).toBe('cursor-all-1');
     });
 
+    it('ignores pagination triggered from the previous tab while a scope switch is in flight', async () => {
+      const project = tempDir('kimi-scope-race-project-');
+      let resolveProject!: (page: { items: unknown[]; nextCursor?: string }) => void;
+      const listSessionsPage = vi.fn(
+        (input: { workDir?: string; scope?: string; before?: string }) => {
+          if (input.scope === 'project') {
+            return new Promise<{ items: unknown[]; nextCursor?: string }>((resolve) => {
+              resolveProject = resolve;
+            });
+          }
+          if (input.before === 'cursor-cwd-1') {
+            return Promise.resolve({
+              items: [{ id: 'ses-cwd-2', title: 'Cwd page 2', workDir: project, updatedAt: 1 }],
+              nextCursor: undefined,
+            });
+          }
+          return Promise.resolve({
+            items: [{ id: 'ses-cwd-1', title: 'Cwd page 1', workDir: project, updatedAt: 2 }],
+            nextCursor: 'cursor-cwd-1',
+          });
+        },
+      );
+      const harness = makeHarness(makeSession({ id: 'ses-current' }), { listSessionsPage });
+      const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
+      await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+
+      const oldPicker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+      oldPicker.handleInput('\t');
+      await vi.waitFor(() => {
+        expect(resolveProject).toBeDefined();
+      });
+
+      oldPicker.handleInput('\u001B[B');
+      resolveProject({
+        items: [{ id: 'ses-project-1', title: 'Project page 1', workDir: project, updatedAt: 3 }],
+        nextCursor: undefined,
+      });
+      await vi.waitFor(() => {
+        expect(driver.state.sessionsScope).toBe('project');
+      });
+
+      expect(driver.state.sessions.map((row) => row.id)).toEqual(['ses-project-1']);
+      expect(listSessionsPage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ before: 'cursor-cwd-1' }),
+      );
+    });
+
     it('rolls back appState and reports an error when switching to a vanished worktree fails', async () => {
       const project = tempDir('kimi-switch-rollback-project-');
       const vanished = join(project, 'vanished-wt');
