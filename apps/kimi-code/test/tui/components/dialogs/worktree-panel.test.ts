@@ -57,7 +57,13 @@ function worktree(name: string, overrides: Partial<KimiWorktree> = {}): KimiWork
 
 function rows(current: 'source' | string = 'source'): WorktreePanelRow[] {
   return [
-    { kind: 'source', path: '/home/me/code/repo', current: current === 'source' },
+    {
+      kind: 'source',
+      path: '/home/me/code/repo',
+      branch: 'main',
+      head: '11111112222222',
+      current: current === 'source',
+    },
     { kind: 'worktree', worktree: worktree('fix-login'), current: current === 'fix-login' },
     {
       kind: 'worktree',
@@ -136,13 +142,29 @@ describe('WorktreePanelComponent', () => {
     expect(lines[2]).toBe(' ↑↓ navigate · Enter open · Ctrl+N new · Ctrl+X delete · Esc cancel');
     const body = lines.filter((line) => line.startsWith('  ')).map((line) => line.trimEnd());
     expect(body).toEqual([
-      '  ❯ repo       source ← current',
+      '  ❯ repo       main ← current',
       '    fix-login  detached abc1234',
       '    feat-ui    feat/ui',
       '    gone       missing',
     ]);
     expect(lines.at(-2)?.trimEnd()).toBe(' ~/code/repo');
     expect(text()).not.toContain('+ New worktree');
+  });
+
+  it('renders detached main checkout head and omits the side tag when branch and head are absent', () => {
+    const detached = makePanel('source', {
+      rows: [{ kind: 'source', path: '/home/me/code/repo', head: '48cdb62abcdef', current: true }],
+    });
+    expect(detached.text().split('\n').filter((line) => line.startsWith('  ')).map((line) => line.trimEnd())).toEqual([
+      '  ❯ repo      detached 48cdb62 ← current',
+    ]);
+
+    const empty = makePanel('source', {
+      rows: [{ kind: 'source', path: '/home/me/code/repo', current: true }],
+    });
+    expect(empty.text().split('\n').filter((line) => line.startsWith('  ')).map((line) => line.trimEnd())).toEqual([
+      '  ❯ repo      ← current',
+    ]);
   });
 
   it('starts on the current worktree, shows its path in the footer, and closes on Enter', () => {
@@ -271,6 +293,11 @@ describe('WorktreePanelComponent', () => {
     expect(handlers.onCancel).not.toHaveBeenCalled();
     expect(text()).not.toContain(' Search:');
     expect(text()).toContain('fix-login');
+
+    for (const ch of 'main') panel.handleInput(ch);
+    expect(text()).toContain('1 / 4');
+    expect(text()).toContain('main ← current');
+    panel.handleInput(ESC);
 
     for (const ch of 'zzzz-none') panel.handleInput(ch);
     expect(text()).toContain('No matches');

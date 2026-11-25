@@ -371,6 +371,8 @@ function panelRows(listing: WorktreeListing, markCurrent = true): WorktreePanelR
     : {
         kind: 'source',
         path: listing.repoRoot,
+        ...(listing.repoBranch !== undefined ? { branch: listing.repoBranch } : {}),
+        ...(listing.repoHead !== undefined ? { head: listing.repoHead } : {}),
         current: markCurrent && sameDir(listing.currentCheckoutRoot, listing.repoRoot),
       };
   const worktreeRows: WorktreeRow[] = listing.worktrees.map((worktree) => ({

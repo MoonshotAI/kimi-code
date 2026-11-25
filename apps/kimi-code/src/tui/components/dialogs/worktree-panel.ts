@@ -25,7 +25,13 @@ import { abbreviateHome } from '#/utils/paths';
 import { truncatePathLeft } from './session-picker';
 
 export type WorktreePanelRow =
-  | { readonly kind: 'source'; readonly path: string; readonly current: boolean }
+  | {
+      readonly kind: 'source';
+      readonly path: string;
+      readonly branch?: string;
+      readonly head?: string;
+      readonly current: boolean;
+    }
   | { readonly kind: 'worktree'; readonly worktree: KimiWorktree; readonly current: boolean };
 
 export type WorktreeRow = Extract<WorktreePanelRow, { readonly kind: 'worktree' }>;
@@ -328,7 +334,12 @@ function rowPath(row: WorktreePanelRow): string {
 }
 
 function rowSearchText(row: WorktreePanelRow, repoName: string): string {
-  if (row.kind === 'source') return `${repoName} ${abbreviateHome(row.path)} ${row.path} source`;
+  if (row.kind === 'source') {
+    const ref = row.branch ?? (row.head !== undefined && row.head.length > 0 ? 'detached' : '');
+    return ref === ''
+      ? `${repoName} ${abbreviateHome(row.path)} ${row.path}`
+      : `${repoName} ${abbreviateHome(row.path)} ${row.path} ${ref}`;
+  }
   const branch = row.worktree.branch ?? 'detached';
   const status = row.worktree.missing ? `missing ${branch}` : branch;
   return `${row.worktree.name} ${abbreviateHome(row.worktree.path)} ${row.worktree.path} ${status}`;
@@ -346,11 +357,12 @@ function measureNameWidth(rows: readonly WorktreePanelRow[], repoName: string, w
 }
 
 function rowSideTag(row: WorktreePanelRow): { readonly text: string; readonly tone: ColorToken } | undefined {
-  if (row.kind === 'source') return { text: 'source', tone: 'textMuted' };
-  if (row.worktree.missing) return { text: 'missing', tone: 'warning' };
-  if (row.worktree.branch !== undefined) return { text: row.worktree.branch, tone: 'textMuted' };
-  if (row.worktree.head !== undefined && row.worktree.head.length > 0) {
-    return { text: `detached ${row.worktree.head.slice(0, WORKTREE_SHORT_SHA_LENGTH)}`, tone: 'textMuted' };
+  if (row.kind === 'worktree' && row.worktree.missing) return { text: 'missing', tone: 'warning' };
+  const branch = row.kind === 'source' ? row.branch : row.worktree.branch;
+  if (branch !== undefined) return { text: branch, tone: 'textMuted' };
+  const head = row.kind === 'source' ? row.head : row.worktree.head;
+  if (head !== undefined && head.length > 0) {
+    return { text: `detached ${head.slice(0, WORKTREE_SHORT_SHA_LENGTH)}`, tone: 'textMuted' };
   }
   return undefined;
 }

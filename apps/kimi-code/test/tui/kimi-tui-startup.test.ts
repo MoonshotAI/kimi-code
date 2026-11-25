@@ -4936,6 +4936,7 @@ describe('KimiTUI work location', () => {
                 ? worktree
                 : project,
             bare,
+            ...(bare ? {} : { repoBranch: 'main', repoHead: '11111112222222' }),
             worktrees: [
               {
                 path: worktree,
@@ -5031,6 +5032,7 @@ describe('KimiTUI work location', () => {
       });
 
       const panel = await openPanel(driver);
+      expect(panelText(driver)).toContain('main ← current');
       panel.handleInput(DOWN);
       panel.handleInput(ENTER);
 
@@ -5068,7 +5070,11 @@ describe('KimiTUI work location', () => {
         worktree: { root: worktree, name: 'fix-login', repoRoot: project },
       });
       await openPanel(bareDriver);
-      expect(panelText(bareDriver)).not.toContain('source');
+      const bareBody = panelText(bareDriver)
+        .split('\n')
+        .filter((line) => line.startsWith('  '))
+        .map((line) => line.trimEnd());
+      expect(bareBody).toEqual(['  ❯ fix-login  detached abc1234 ← current']);
     });
 
     it('lands in the matching subdirectory of the worktree, or its root when the commit lacks it', async () => {
@@ -5125,6 +5131,8 @@ describe('KimiTUI work location', () => {
               ? external
               : project,
         bare: false,
+        repoBranch: 'main',
+        repoHead: '11111112222222',
         worktrees: [
           {
             path: managed,
@@ -5151,8 +5159,9 @@ describe('KimiTUI work location', () => {
 
       const panel = await openPanel(driver);
       const rendered = panelText(driver);
-      expect(rendered).toMatch(/external-wt|feat\/external ← current/);
-      expect(rendered).not.toMatch(/source ← current/);
+      expect(rendered).toMatch(/external-wt\s+feat\/external ← current/);
+      expect(rendered).toContain('  main');
+      expect(rendered).not.toMatch(/main ← current/);
 
       panel.handleInput(DOWN);
       panel.handleInput(DOWN);
