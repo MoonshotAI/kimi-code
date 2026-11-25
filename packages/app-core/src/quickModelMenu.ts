@@ -14,6 +14,7 @@ export interface QuickModelMenuPayload {
   activeProviderLabel: string;
   currentModelId?: string;
   currentEffort?: string;
+  effortDescriptions?: Record<string, string>;
 }
 
 export type QuickModelMenuAction =

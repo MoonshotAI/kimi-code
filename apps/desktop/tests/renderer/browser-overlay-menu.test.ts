@@ -194,6 +194,7 @@ describe('browser overlay menu renderer adapter', () => {
       activeProviderLabel: 'Provider P',
       currentModelId: 'p/m',
       currentEffort: 'high',
+      effortDescriptions: { low: '轻量思考', high: '深入思考' },
     });
     const menu = scope.run(() =>
       registerBrowserOverlayMenu({
@@ -212,10 +213,11 @@ describe('browser overlay menu renderer adapter', () => {
       width: 240,
       maxHeight: 480,
       items: [],
-      modelMenu: expect.objectContaining({ activeProvider: 'p', currentModelId: 'p/m' }),
+      modelMenu: expect.objectContaining({ activeProvider: 'p', currentModelId: 'p/m', effortDescriptions: { low: '轻量思考', high: '深入思考' } }),
     }));
     const sent = openMenu.mock.lastCall![0].modelMenu;
     expect(isProxy(sent)).toBe(false);
+    expect(isProxy(sent.effortDescriptions)).toBe(false);
     expect(isProxy(sent.models)).toBe(false);
     expect(isProxy(sent.models[0])).toBe(false);
     expect(isProxy(sent.models[0].supportEfforts)).toBe(false);

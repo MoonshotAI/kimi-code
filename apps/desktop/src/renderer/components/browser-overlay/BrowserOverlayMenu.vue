@@ -402,6 +402,7 @@ onUnmounted(() => {
       :active-provider-label="config.modelMenu.activeProviderLabel"
       :current-model-id="config.modelMenu.currentModelId"
       :current-effort="config.modelMenu.currentEffort"
+      :effort-descriptions="config.modelMenu.effortDescriptions"
       :max-height="config.maxHeight ?? 480"
       :host-frame="modelMenuFrame ?? undefined"
       @select-model="(modelId, effort) => config?.kind === 'menu' && bridge?.activate({ requestId: config.requestId, itemId: 'model-menu', modelAction: { type: 'select-model', modelId, ...(effort === undefined ? {} : { effort }) } satisfies QuickModelMenuAction })"

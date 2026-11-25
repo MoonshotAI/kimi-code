@@ -42,6 +42,7 @@ const props = defineProps<{
   activeProviderLabel: string;
   currentModelId?: string;
   currentEffort?: string;
+  effortDescriptions?: Record<string, string>;
   maxHeight: number;
   hostFrame?: { x: number; y: number; viewportWidth: number; viewportHeight: number };
 }>();
@@ -141,6 +142,16 @@ const submenuOptionsCount = computed(() => {
   if (submenu.value?.kind === 'provider') return visibleProviders.value.length;
   return activeSubmenuSegments.value.length;
 });
+const thinkingDescription = computed(() => {
+  if (submenu.value?.kind === 'effort') {
+    const highlighted = activeSubmenuSegments.value[submenuIndex.value];
+    if (highlighted !== undefined) {
+      const cloud = props.effortDescriptions?.[highlighted];
+      if (cloud !== undefined) return cloud;
+    }
+  }
+  return t('status.thinkingDesc');
+});
 
 function setRowElement(key: string) {
   return (el: unknown): void => {
@@ -179,7 +190,12 @@ function openSubmenu(next: SubmenuState): void {
   hideHoverCard();
   const changed = submenu.value?.kind !== next.kind || submenu.value.triggerKey !== next.triggerKey;
   submenu.value = next;
-  if (changed) submenuIndex.value = 0;
+  if (changed && next.kind === 'effort') {
+    const currentIndex = currentSegments.value.indexOf(currentEffortValue.value);
+    submenuIndex.value = currentIndex >= 0 ? currentIndex : 0;
+  } else if (changed) {
+    submenuIndex.value = 0;
+  }
 }
 
 function closeSubmenu(): void {
@@ -592,7 +608,7 @@ defineExpose({
       </template>
 
       <template v-else-if="submenu.kind === 'effort'">
-        <div class="mqm-thinking-desc">{{ t('status.thinkingDesc') }}</div>
+        <div class="mqm-thinking-desc">{{ thinkingDescription }}</div>
         <div class="mqm-submenu-scroll">
           <div
             v-for="(segment, index) in activeSubmenuSegments"

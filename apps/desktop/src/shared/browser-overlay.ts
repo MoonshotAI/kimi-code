@@ -36,6 +36,7 @@ const QuickModelMenuPayloadSchema = Type.Object({
   activeProviderLabel: Type.String({ maxLength: 256 }),
   currentModelId: Type.Optional(Type.String({ maxLength: 512 })),
   currentEffort: Type.Optional(Type.String({ maxLength: 32 })),
+  effortDescriptions: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 32 }), Type.String({ maxLength: 1024 }))),
 }, { additionalProperties: false });
 const QuickModelMenuAction = Type.Union([
   Type.Object({ type: Type.Literal('select-model'), modelId: Type.String({ minLength: 1, maxLength: 512 }), effort: Type.Optional(Type.String({ maxLength: 32 })) }, { additionalProperties: false }),

@@ -105,6 +105,7 @@ export function toPlainModelMenuPayload(payload: QuickModelMenuPayload): QuickMo
     activeProviderLabel: payload.activeProviderLabel,
     ...(payload.currentModelId === undefined ? {} : { currentModelId: payload.currentModelId }),
     ...(payload.currentEffort === undefined ? {} : { currentEffort: payload.currentEffort }),
+    ...(payload.effortDescriptions === undefined ? {} : { effortDescriptions: { ...payload.effortDescriptions } }),
   };
 }
 

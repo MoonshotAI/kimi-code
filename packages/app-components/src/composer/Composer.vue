@@ -67,7 +67,7 @@ import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
 import { v4 as randomUUID } from 'uuid';
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, shallowRef, useId, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { type AppModel, type ReadRequestOptions, type SessionContextSummary, type ThinkingLevel } from '@moonshot-ai/app-core/api';
+import { MANAGED_KIMI_CODE_PROVIDER_ID, type AppModel, type ReadRequestOptions, type SessionContextSummary, type ThinkingLevel } from '@moonshot-ai/app-core/api';
 import type { QuickModelMenuAction, QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
 import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, providerDisplayName, type SlashCommand } from '@moonshot-ai/app-core/lib';
 import { placeholderText } from '@moonshot-ai/app-core/lib';
@@ -78,6 +78,7 @@ import {
   effectiveThinkingLevel,
   effortLabel,
   isThinkingOn,
+  resolveEffortDescription,
 } from '@moonshot-ai/app-core/lib';
 import { openAgentSettings, openHostSettings, useInputHistory, useIsMobile, useRunningSendMode } from '@moonshot-ai/app-client/composables';
 import { slashMenuQuery, useSlashMenu } from '@moonshot-ai/app-client/composables';
@@ -85,7 +86,7 @@ import { useMentionMenu, type MentionEntry } from '@moonshot-ai/app-client/compo
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, usePasteImageAutoMention } from '@moonshot-ai/app-client/composables';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { effortSwitchStore, hostsStore } from '@moonshot-ai/app-client/stores';
 import {
   createComposerEditor,
   discardStashedEditorState,
@@ -3037,6 +3038,19 @@ function prepareModelMenu(): void {
     : [];
 }
 
+const menuEffortDescriptions = computed<Record<string, string>>(() => {
+  if (currentModel.value?.provider !== MANAGED_KIMI_CODE_PROVIDER_ID) return {};
+  const config = effortSwitchStore().config;
+  if (config?.descriptions?.enable !== true) return {};
+  const lang = locale.value === 'zh' ? 'zh' : 'en';
+  const descriptions: Record<string, string> = {};
+  for (const effort of Object.keys(config.descriptions.items)) {
+    const text = resolveEffortDescription(config, effort, lang);
+    if (text !== undefined) descriptions[effort] = text;
+  }
+  return descriptions;
+});
+
 const quickModelMenuPayload = computed<QuickModelMenuPayload>(() => ({
   models: models.value ?? [],
   recentModels: recentModelsSnapshot.value,
@@ -3046,6 +3060,7 @@ const quickModelMenuPayload = computed<QuickModelMenuPayload>(() => ({
   activeProviderLabel: providerDisplayName(menuProvider.value, t),
   ...(status.value?.modelId === undefined ? {} : { currentModelId: status.value.modelId }),
   ...(thinking.value === undefined ? {} : { currentEffort: thinking.value }),
+  effortDescriptions: menuEffortDescriptions.value,
 }));
 
 function onQuickModelAction(action: QuickModelMenuAction): void {
@@ -3665,6 +3680,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             :active-provider-label="quickModelMenuPayload.activeProviderLabel"
             :current-model-id="quickModelMenuPayload.currentModelId"
             :current-effort="quickModelMenuPayload.currentEffort"
+            :effort-descriptions="quickModelMenuPayload.effortDescriptions"
             :max-height="webModelMenuMaxHeight"
             @click.stop
             @select-model="(modelId, effort) => onQuickModelAction({ type: 'select-model', modelId, ...(effort === undefined ? {} : { effort }) })"

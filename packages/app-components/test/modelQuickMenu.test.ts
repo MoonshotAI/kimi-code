@@ -55,6 +55,7 @@ function mountMenu(state: QuickModelMenuPayload): void {
         activeProviderLabel: props.state.activeProviderLabel,
         currentModelId: props.state.currentModelId,
         currentEffort: props.state.currentEffort,
+        effortDescriptions: props.state.effortDescriptions,
         maxHeight: props.maxHeight,
         onSelectModel: (modelId, effort) => actions.push({ type: 'select-model', modelId, ...(effort === undefined ? {} : { effort }) }),
         onSelectEffort: (effort) => actions.push({ type: 'select-effort', effort }),
@@ -155,6 +156,29 @@ describe('ModelQuickMenu states', () => {
     expect(options.map((el) => el.textContent?.trim())).toEqual(['Off', 'Low', 'High']);
     options[1]!.click();
     expect(actions).toEqual([{ type: 'select-effort', effort: 'low' }]);
+  });
+
+  it('highlights the active effort on open, previews cloud descriptions per highlighted effort, and falls back when unconfigured', async () => {
+    mountMenu(initialState({
+      effortDescriptions: { low: '轻量思考，响应更快', high: '深入思考，适合复杂任务' },
+    }));
+    const root = host.querySelector<HTMLElement>('.mqm')!;
+    host.querySelector<HTMLElement>('[data-row-key="action:effort"]')!.click();
+    await nextTick();
+
+    const desc = () => host.querySelector('.mqm-thinking-desc')?.textContent?.trim();
+    expect(host.querySelector('.mqm-flyout .mqm-row.is-active')?.textContent?.trim()).toBe('High');
+    expect(desc()).toBe('深入思考，适合复杂任务');
+
+    root.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+    await nextTick();
+    expect(host.querySelector('.mqm-flyout .mqm-row.is-active')?.textContent?.trim()).toBe('Low');
+    expect(desc()).toBe('轻量思考，响应更快');
+
+    root.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+    await nextTick();
+    expect(host.querySelector('.mqm-flyout .mqm-row.is-active')?.textContent?.trim()).toBe('Off');
+    expect(desc()).toBe('强度越高，思考越深入，但耗时更长、Token 消耗更多');
   });
 
   it('filters search results with highlights and shows the empty state when nothing matches', async () => {
