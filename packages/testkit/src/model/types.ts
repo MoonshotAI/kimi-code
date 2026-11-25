@@ -1,4 +1,4 @@
-export type ProtocolName = 'openai' | 'anthropic' | 'google';
+export type ProtocolName = 'openai' | 'openai-responses' | 'anthropic' | 'google';
 
 export type FinishReason = 'completed' | 'tool_calls' | 'truncated' | 'filtered' | 'paused';
 
