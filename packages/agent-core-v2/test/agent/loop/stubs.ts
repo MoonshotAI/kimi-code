@@ -1,7 +1,6 @@
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyMessage, PromptHandle, PromptPayload, Turn, TurnResult } from '#/agent/loop/loop';
 import type { LoopHooks } from '@moonshot-ai/core/loop/contract/hook';
-import type { FullLoopLlmRequester, Loop } from '@moonshot-ai/core/loop/index';
 import { ToolExecutor } from '#/tool/executor';
 import type { Message, UserMessage } from '@moonshot-ai/core/llm/message';
 import { contextFromHistoryEntry, historyFromContext } from '#/agent/loop/history';
@@ -67,7 +66,6 @@ export type StubLoop = IAgentLoopService & {
   readonly cancels: readonly { readonly turnId?: number; readonly reason?: unknown }[];
   readonly queue: { hasPendingRequests(): boolean };
   readonly batchStartingHooks: Array<LoopHooks['tool.batch-starting']>;
-  decorateTurnRequester(loop: Loop, requester: FullLoopLlmRequester): FullLoopLlmRequester;
   startTurn(): StubTurn;
   resetLoop(): Promise<void>;
   settleActive(result?: TurnResult): void;
@@ -137,8 +135,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const stub: StubLoop = {
     _serviceBrand: undefined, hooks, launches, cancels, startTurn, batchStartingHooks,
     requester: {} as IAgentLoopService['requester'],
-    operationRequester: () => { throw new Error('operationRequester is not implemented by this stub'); },
-    decorateTurnRequester: () => { throw new Error('decorateTurnRequester is not implemented by this stub'); },
+    resolveMaxOutputTokens: () => undefined,
     registerToolBatchStarting(hook) {
       batchStartingHooks.push(hook);
       return toDisposable(() => {

@@ -65,7 +65,15 @@ export function createRawLoopRequester(
         const resolved = resolve().with(rest);
         const observer = observe?.();
         if (observer?.start === undefined) return resolved.generate({}, control);
-        return generateObserved(resolved, observer.start(resolved.request({})), control);
+        let observation: LoopLlmRunObservation | undefined;
+        try {
+          observation = observer.start(resolved.request({}));
+        } catch (error) {
+          return (async () => {
+            throw error;
+          })();
+        }
+        return generateObserved(resolved, observation, control);
       },
     };
   };

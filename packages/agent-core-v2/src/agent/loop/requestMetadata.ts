@@ -3,6 +3,9 @@ import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { AgentLLMRequestSource } from '#/agent/usage/usage';
 import { TurnStepCompleted } from '#/agent/loop/turnEvents';
 import { TurnEnded, TurnPrompt } from '#/agent/loop/turnOps';
+import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
+import { requestSourceOf } from './requesterContract';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
@@ -113,6 +116,27 @@ export function requestMetadataHeaders(metadata: RequestMetadata): Record<string
   };
 }
 
+export function createRequestMetadataResolver(
+  tracker: RequestMetadataTracker,
+  enabled: (request: LlmRequest) => boolean,
+): LlmResolver {
+  return {
+    id: 'agent-request-metadata',
+    resolve: async (request) => {
+      if (!enabled(request)) return request;
+      await tracker.ready;
+      const headers = requestMetadataHeaders(tracker.resolve(requestSourceOf(request.attributes)));
+      return {
+        ...request,
+        endpoint: {
+          ...request.endpoint,
+          headers: { ...request.endpoint?.headers, ...headers },
+        },
+      };
+    },
+  };
+}
+
 interface AttributionState {
   readonly userInputId?: string;
   readonly parentRequestId?: string;
@@ -126,6 +150,7 @@ interface AttributionState {
 
 export class RequestMetadataTracker {
   private state: AttributionState = {};
+  readonly ready: Promise<unknown>;
 
   constructor(
     private readonly scopeContext: IAgentScopeContext,
@@ -200,8 +225,11 @@ export class RequestMetadataTracker {
     };
     if (dispatcher.restorePhase === 'new') {
       dispatcher.attach(participant);
+      this.ready = Promise.resolve();
     } else if (dispatcher.restorePhase !== 'failed') {
-      void dispatcher.attachLate(participant).catch(() => {});
+      this.ready = dispatcher.attachLate(participant).catch(() => {});
+    } else {
+      this.ready = Promise.resolve();
     }
   }
 

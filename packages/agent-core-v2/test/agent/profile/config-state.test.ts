@@ -4,7 +4,6 @@ import { contentsOf } from '@moonshot-ai/core/llm/requester';
 import type { Loop } from '@moonshot-ai/core/loop/index';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentRequesterBinder } from '#/agent/loop/requesterBinder';
 import { IConfigService } from '#/app/config/config';
 import { errorFromLlmMessage } from '#/provider-catalog/errors';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -251,10 +250,10 @@ describe('ConfigState model capabilities', () => {
     );
     try {
       const loopService = resumed.get(IAgentLoopService) as unknown as {
-        readonly requesterBinder: AgentRequesterBinder;
+        requestConfigSnapshot(): unknown;
         readonly loop?: Loop;
       };
-      const configSnapshots = vi.spyOn(loopService.requesterBinder, 'requestConfigSnapshot');
+      const configSnapshots = vi.spyOn(loopService, 'requestConfigSnapshot');
       expect(configSnapshots).not.toHaveBeenCalled();
 
       await resumed.restorePersisted();
@@ -340,7 +339,7 @@ describe('ConfigState model capabilities', () => {
     });
   });
 
-  it('freezes model max output size, system prompt and params across operation preparation', async () => {
+  it('resolves the latest model, system prompt and params on each side request', async () => {
     let requestMaxTokens: unknown;
     let requestSystemPrompt: unknown;
     let requestTemperature: unknown;
@@ -398,14 +397,12 @@ describe('ConfigState model capabilities', () => {
     });
     const signal = new AbortController().signal;
     await requester.start();
-    const operation = requester.operationRequester(requester.requester, {
-      source: () => ({ type: 'operation' }),
-    });
+    const operation = requester.requester;
     profile.update({
       modelAlias: 'deepseek/deepseek-v4-mini',
       systemPrompt: 'changed-system',
     });
-    kimiConfig = { ...kimiConfig, modelOverrides: { temperature: 0.9 } };
+    await ctx.get(IConfigService).set('modelOverrides', { temperature: 0.9 });
     const outcome = await operation.generate(
       { content: {}, profile: {} },
       { signal },
@@ -416,9 +413,9 @@ describe('ConfigState model capabilities', () => {
       throw new DOMException(message, 'AbortError');
     }
 
-    expect(requestMaxTokens).toBe(384000);
-    expect(requestSystemPrompt).toBe('system');
-    expect(requestTemperature).toBe(0.2);
+    expect(requestMaxTokens).toBe(128000);
+    expect(requestSystemPrompt).toBe('changed-system');
+    expect(requestTemperature).toBe(0.9);
   });
 });
 
@@ -782,10 +779,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
 
 async function generateOperation(requester: IAgentLoopService, signal: AbortSignal): Promise<void> {
   await requester.start();
-  const operation = requester.operationRequester(requester.requester, {
-    source: () => ({ type: 'operation' }),
-  });
-  const outcome = await operation.generate(
+  const outcome = await requester.requester.generate(
     { content: {}, profile: {}, policy: { retry: { maxAttemptsPerStep: 1 } } },
     { signal },
   );

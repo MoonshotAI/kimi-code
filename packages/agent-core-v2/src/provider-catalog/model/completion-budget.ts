@@ -19,8 +19,8 @@ export function resolveMaxOutputTokens(args: {
   readonly maxOutputSize?: number;
   readonly maxCompletionTokensCap?: number;
 }): LlmRequestModel['maxOutputTokens'] {
-  if (args.maxCompletionTokensCap !== undefined && args.maxCompletionTokensCap <= 0) return 'none';
+  const cap = args.maxCompletionTokensCap;
+  if (cap !== undefined && cap <= 0) return 'none';
   const budget = resolveCompletionBudget(args);
   return budget === undefined ? undefined : Math.max(1, budget);
 }
-

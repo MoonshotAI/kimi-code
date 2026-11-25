@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,7 +10,6 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IEventDispatcher,
-  IModelCatalog,
   ISessionTokenCountingService,
   IWireService,
   type ContextMessage,
@@ -18,7 +17,9 @@ import {
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
-import { estimateTokens } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/tokens';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
+import { fakeModelCatalog } from './helpers/fakeModelCatalog';
+import { estimateTokens } from '@moonshot-ai/agent-core-v2/session/tokenCounting/tokens';
 import type { ToolCall } from '@moonshot-ai/core/llm/message';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -110,35 +111,27 @@ describe('context routes on restored sessions and dynamic tools', () => {
 
   beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-context-'));
-    const modelCatalog: IModelCatalog = {
-      _serviceBrand: undefined,
-      get: (id: string) => ({
-        id,
-        providerName: 'kimi',
-        providerType: 'kimi',
-        protocol: 'openai',
-        maxOutputSize: 8192,
-        spec: {
-          name: id,
-          maxContextSize: 262144,
-          capability: {
-            tool_use: true,
-            thinking: true,
-            dynamically_loaded_tools: true,
-          },
-        },
-      } as never),
-      findByName: () => [],
-      listModels: async () => [],
-      listProviders: async () => [],
-      getProvider: async () => {
-        throw new Error('not implemented');
-      },
-      setDefaultModel: async () => {
-        throw new Error('not implemented');
-      },
-    };
-    const seeds: ScopeSeed = [[IModelCatalog, modelCatalog]];
+    await writeFile(
+      join(home, 'config.toml'),
+      [
+        'default_model = "kimi-code/k3"',
+        '',
+        '[providers.kimi-code]',
+        'type = "kimi"',
+        'api_key = "test-key"',
+        '',
+        '[models."kimi-code/k3"]',
+        'provider = "kimi-code"',
+        'model = "k3"',
+        'protocol = "openai"',
+        'max_context_size = 262144',
+        'max_output_size = 8192',
+        'capabilities = ["tool_use", "thinking", "dynamically_loaded_tools"]',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const seeds: ScopeSeed = [[IProviderCatalogService, fakeModelCatalog()]];
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',

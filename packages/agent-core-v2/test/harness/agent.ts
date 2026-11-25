@@ -1532,17 +1532,6 @@ export class AgentTestContext {
       await start();
       this.runtimeStarted = true;
     };
-    const operationRequester = loop.operationRequester.bind(loop);
-    loop.operationRequester = (requester, options) => {
-      const wrapped = operationRequester(requester, options);
-      return {
-        ...wrapped,
-        generate: async (rest, control) => {
-          await this.restorePersisted();
-          return wrapped.generate(rest, control);
-        },
-      };
-    };
     adoptAgent!();
     this.installInteractionBridge();
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);

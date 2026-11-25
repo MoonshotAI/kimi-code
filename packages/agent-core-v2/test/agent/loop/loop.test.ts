@@ -3,8 +3,8 @@ import { getMaxListeners } from 'node:events';
 import { createUserMessage, type ToolCall } from '@moonshot-ai/core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import type { LlmOutcome, LlmRunEvent } from '@moonshot-ai/core/llm/response';
-import { contentsOf, requesterContents } from '@moonshot-ai/core/llm/requester';
-import type { FullLoopLlmRequester, Loop } from '@moonshot-ai/core/loop/index';
+import { contentsOf } from '@moonshot-ai/core/llm/requester';
+import type { Loop } from '@moonshot-ai/core/loop/index';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import type { LlmPolicy } from '@moonshot-ai/core/llm/policy/policy';
 import type { LlmRecovery, LlmRecoveryRecord } from '@moonshot-ai/core/llm/policy/recovery';
@@ -14,12 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { Event } from '#/_base/event';
-import type {
-  BoundRequesterOptions,
-  OperationRequesterOptions,
-} from '#/agent/loop/requesterContract';
 import type { AgentLoopRequestObserver, AgentRequestObservation } from '#/agent/loop/requestObservation';
-import type { AgentRequesterBinder } from '#/agent/loop/requesterBinder';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
@@ -163,12 +158,13 @@ describe('Agent loop', () => {
     const requests: LlmRequest[] = [];
     const overrides = { temperature: 0.2, topP: 0.7 };
     let localLoop!: IAgentLoopService;
+    let localConfig!: IConfigService;
     const generate = createMockProvider(async (request) => {
       requests.push(request);
       if (requests.length === 1) {
         await localLoop.setModel('second-model');
         localLoop.setThinking('high');
-        Object.assign(overrides, { temperature: 0.9, topP: 0.4 });
+        await localConfig.set('modelOverrides', { temperature: 0.9, topP: 0.4 });
         return {
           parts: [
             { type: 'text', text: 'working' },
@@ -245,6 +241,7 @@ describe('Agent loop', () => {
     try {
       await local.restorePersisted();
       localLoop = local.get(IAgentLoopService);
+      localConfig = local.get(IConfigService);
       await localLoop.setModel('first-model');
       localLoop.update({
         activeToolNames: ['Work'],
@@ -262,13 +259,8 @@ describe('Agent loop', () => {
       });
       const internals = localLoop as unknown as {
         readonly loop?: Loop;
-        readonly requesterBinder: AgentRequesterBinder;
         readonly requesterExecution: { readonly recoveries: { clear(): void } };
         readonly observer: AgentLoopRequestObserver;
-        decorateRequester(
-          requester: FullLoopLlmRequester,
-          options: BoundRequesterOptions,
-        ): FullLoopLlmRequester;
       };
       const coreLoop = internals.loop;
       if (coreLoop === undefined) throw new Error('Loop is not started');
@@ -276,7 +268,7 @@ describe('Agent loop', () => {
 
       await local.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
       await local.untilTurnEnd();
-      expect(setRequester).toHaveBeenCalledTimes(2);
+      expect(setRequester).toHaveBeenCalledTimes(3);
       await local.rpc.prompt({ input: [{ type: 'text', text: 'second turn' }] });
       await local.untilTurnEnd();
 
@@ -339,11 +331,10 @@ describe('Agent loop', () => {
       localLoop.update({ activeToolNames: [], systemPrompt: 'loop-default-system' });
       const raw = coreLoop.baseRequester;
       if (raw === undefined || !('with' in raw)) throw new Error('Expected a full raw requester');
-      const { config, binding } = internals.requesterBinder.turnSnapshot(raw);
       const observations: AgentRequestObservation[] = [];
       const startObservation = internals.observer.start.bind(internals.observer);
-      vi.spyOn(internals.observer, 'start').mockImplementation((source, snapshot, onTrace) => {
-        const observation = startObservation(source, snapshot, onTrace);
+      vi.spyOn(internals.observer, 'start').mockImplementation((request) => {
+        const observation = startObservation(request);
         observations.push(observation);
         return observation;
       });
@@ -355,18 +346,8 @@ describe('Agent loop', () => {
         observedAttempts.push([request, appliedRecoveries]);
         recordAttempt(observation, request, appliedRecoveries);
       });
-      const outcomeSources: unknown[] = [];
-      const options: BoundRequesterOptions = {
-        config,
-        binding,
-        source: () => ({ type: 'turn', turnId: 90, step: 1 }),
-        runtime: { historyRevision: () => coreLoop.historyRevision },
-        dynamicTools: true,
-        onOutcome: (_outcome, source) => outcomeSources.push(source),
-      };
-      const decorated = internals.decorateRequester(raw, options);
-      expect(decorated[requesterContents]).toEqual(contentsOf(raw));
-      expect(decorated.request({
+      expect(contentsOf(coreLoop.requester)).toEqual({});
+      expect(coreLoop.requester.request({
         content: { messages: [createUserMessage('preview')] },
         profile: { systemPrompt: 'preview-system', tools: [] },
       }).profile?.systemPrompt).toBe('preview-system');
@@ -411,11 +392,13 @@ describe('Agent loop', () => {
         createUserMessage('derived-message'),
       ];
       const derivedTools = [...(requests[2]?.profile?.tools ?? [])];
-      const derived = decorated.with({
+      const turnAttributes = { kind: 'turn_comparison', turnId: 90, step: 1 } as const;
+      const derived = coreLoop.requester.with({
         model: { sampling: { temperature: 0.5 } },
         content: { messages: derivedMessages, usedTokens: 456 },
         profile: { systemPrompt: 'turn-system', tools: derivedTools },
         policy: derivedPolicy,
+        attributes: turnAttributes,
       });
       expect(contentsOf(derived).model?.sampling).toMatchObject({ temperature: 0.5 });
       const derivedRest = { policy: restPolicy };
@@ -428,6 +411,7 @@ describe('Agent loop', () => {
         model: { sampling: { temperature: 0.5 } },
         content: { messages: derivedMessages, usedTokens: 456 },
         profile: { systemPrompt: 'turn-system', tools: derivedTools },
+        attributes: turnAttributes,
         policy: {
           retry: { ...derivedPolicy.retry, ...restPolicy.retry },
           recoveries: [loopRecovery],
@@ -438,7 +422,7 @@ describe('Agent loop', () => {
       const callerAttempts: [LlmRequest, readonly LlmRecoveryRecord[]][][] = [[], []];
       const callerRecoverySnapshots: (readonly LlmRecoveryRecord[])[][] = [[], []];
       const runs = [
-        () => decorated.generate(directRest, {
+        () => coreLoop.requester.generate(directRest, {
           signal: new AbortController().signal,
           onAttempt: (request, { appliedRecoveries }) => {
             attemptOrder.push('caller');
@@ -474,7 +458,6 @@ describe('Agent loop', () => {
           : event;
       }));
       expect(eventValues[1]).toEqual(eventValues[0]);
-      expect(outcomeSources).toEqual([options.source(), options.source()]);
       expect(attemptOrder).toEqual([
         'observer', 'caller', 'observer', 'caller',
         'observer', 'caller', 'observer', 'caller',
@@ -519,7 +502,7 @@ describe('Agent loop', () => {
         return (typeof resolvers === 'function' ? resolvers() : resolvers)?.map((resolver) => resolver.id);
       });
       expect(resolverIds).toEqual(Array.from({ length: 4 }, () => [
-        'tool-select', 'agent-media-tools', 'structure', 'agent-media', 'loop-policy', 'rest-policy',
+        'tool-select', 'agent-media-tools', 'structure', 'agent-media', 'agent-request-metadata', 'loop-policy', 'rest-policy',
       ]));
       for (const request of requests.slice(3)) {
         const recoveries = request.policy?.recoveries;
@@ -535,44 +518,40 @@ describe('Agent loop', () => {
       }
       const observed = observations.map((observation) => ({
         source: observation.source,
-        config: observation.config,
         context: {
-          model: observation.context?.model,
-          modelAlias: observation.context?.modelAlias,
-          thinkingEffort: observation.context?.thinkingEffort,
-          systemPrompt: observation.context?.systemPrompt,
-          tools: observation.context?.tools,
-          messages: observation.context?.messages,
-          contextRevision: observation.context?.contextRevision,
-          source: observation.context?.source,
-          logFields: observation.context?.logFields,
-          dynamicTools: observation.context?.dynamicTools,
+          model: observation.context.model,
+          modelAlias: observation.context.modelAlias,
+          thinkingEffort: observation.context.thinkingEffort,
+          systemPrompt: observation.context.systemPrompt,
+          tools: observation.context.tools,
+          messages: observation.context.messages,
+          contextRevision: observation.context.contextRevision,
+          source: observation.context.source,
+          logFields: observation.context.logFields,
         },
         recorded: observation.recorded,
         media: observation.media,
       }));
       expect(observed).toHaveLength(2);
       expect(observed[1]).toEqual(observed[0]);
+      expect(observed[0]?.source).toEqual({ type: 'operation', turnId: 90, requestKind: 'turn_comparison' });
 
+      generate.expectCacheBreak('operation comparison replaces system prompt', { at: 'header' });
       const operationRequestStart = requests.length;
       const operationSource = {
         type: 'operation',
         turnId: 90,
         requestKind: 'operation_comparison',
       } as const;
-      const operationTraces: { requestId?: string }[] = [];
-      const operationOutcomeSources: unknown[] = [];
-      const operationOptions: OperationRequesterOptions = {
-        maxOutputSize: 512,
-        promptCacheProbe: 'compaction',
-        source: () => operationSource,
-        onTrace: (trace) => operationTraces.push(trace),
-        onOutcome: (_outcome, source) => operationOutcomeSources.push(source),
-      };
       const registryRequest = vi.spyOn(local.get(IProviderCatalogService), 'createRequester');
       expect(registryRequest).toHaveBeenCalledTimes(0);
       expect(localLoop.requester).toBe(coreLoop.requester);
-      const operation = localLoop.operationRequester(localLoop.requester, operationOptions);
+      const operationPart = {
+        model: { maxOutputTokens: localLoop.resolveMaxOutputTokens(512) },
+        attributes: { kind: 'operation_comparison', turnId: 90, promptCacheProbe: 'compaction' } as const,
+        policy: { retry: { maxAttemptsPerStep: 1 } },
+      };
+      const operation = coreLoop.requester.with(operationPart);
       expect(registryRequest).toHaveBeenCalledTimes(0);
       expect(contentsOf(operation).model?.maxOutputTokens).toBe(512);
       const operationMessages = [createUserMessage('operation-derived')];
@@ -608,6 +587,7 @@ describe('Agent loop', () => {
       const operationRecoverySnapshots: (readonly LlmRecoveryRecord[])[][] = [[], []];
       const operationUsage: unknown[][] = [[], []];
       const operationDirectRest = {
+        ...operationPart,
         content: { messages: operationMessages, usedTokens: 457 },
         profile: { systemPrompt: 'operation-system', tools: derivedTools },
         policy: {
@@ -620,7 +600,7 @@ describe('Agent loop', () => {
       const operationRuns = [
         async () => {
           const before = local.allEvents.length;
-          const outcome = await operation.generate(operationDirectRest, {
+          const outcome = await coreLoop.requester.generate(operationDirectRest, {
             signal: new AbortController().signal,
             onAttempt: (request, { appliedRecoveries }) => {
               attemptOrder.push('caller');
@@ -669,8 +649,7 @@ describe('Agent loop', () => {
           : event;
       }));
       expect(operationEventValues[1]).toEqual(operationEventValues[0]);
-      expect(operationOutcomeSources).toEqual([operationSource, operationSource]);
-      expect(operationTraces.map((trace) => trace.requestId)).toEqual(['comparison', 'comparison']);
+      expect(operationOutcomes.map((outcome) => outcome.requestId)).toEqual(['comparison', 'comparison']);
       expect(operationUsage[1]).toEqual(operationUsage[0]);
       expect(operationUsage[0]).toEqual([
         expect.objectContaining({ usageScope: 'session' }),
@@ -725,7 +704,7 @@ describe('Agent loop', () => {
         return (typeof resolvers === 'function' ? resolvers() : resolvers)?.map((resolver) => resolver.id);
       });
       expect(operationResolverIds).toEqual(Array.from({ length: 4 }, () => [
-        'tool-select', 'agent-media-tools', 'structure', 'agent-media',
+        'tool-select', 'agent-media-tools', 'structure', 'agent-media', 'agent-request-metadata',
         'live-loop-policy', 'loop-policy', 'rest-policy',
       ]));
       for (const request of requests.slice(operationRequestStart, operationRequestStart + 4)) {
@@ -742,19 +721,17 @@ describe('Agent loop', () => {
       }
       const operationObserved = observations.slice(operationObservationStart, operationObservationStart + 2).map((observation) => ({
         source: observation.source,
-        config: observation.config,
         context: {
-          model: observation.context?.model,
-          modelAlias: observation.context?.modelAlias,
-          thinkingEffort: observation.context?.thinkingEffort,
-          systemPrompt: observation.context?.systemPrompt,
-          tools: observation.context?.tools,
-          messages: observation.context?.messages,
-          contextRevision: observation.context?.contextRevision,
-          promptCacheProbe: observation.context?.promptCacheProbe,
-          source: observation.context?.source,
-          logFields: observation.context?.logFields,
-          dynamicTools: observation.context?.dynamicTools,
+          model: observation.context.model,
+          modelAlias: observation.context.modelAlias,
+          thinkingEffort: observation.context.thinkingEffort,
+          systemPrompt: observation.context.systemPrompt,
+          tools: observation.context.tools,
+          messages: observation.context.messages,
+          contextRevision: observation.context.contextRevision,
+          promptCacheProbe: observation.context.promptCacheProbe,
+          source: observation.context.source,
+          logFields: observation.context.logFields,
         },
         recorded: observation.recorded,
         media: observation.media,
@@ -762,24 +739,24 @@ describe('Agent loop', () => {
       expect(operationObserved[1]).toEqual(operationObserved[0]);
       expect(operationObserved[0]?.context).toMatchObject({
         promptCacheProbe: 'compaction',
-        dynamicTools: false,
         source: operationSource,
       });
       removeLiveResolver();
       removeLiveRecovery();
       removeLiveRetryable();
 
-      const defaultOptions: OperationRequesterOptions = {
-        source: () => ({ type: 'operation', requestKind: 'operation_default' }),
-      };
-      const currentDefault = localLoop.operationRequester(coreLoop.requester, defaultOptions);
+      const currentDefault = coreLoop.requester.with({
+        attributes: { kind: 'operation_default' },
+        policy: { retry: { maxAttemptsPerStep: 1 } },
+      });
       const defaultRest = {
         content: { messages: [createUserMessage('default-operation')] },
         profile: {},
       };
+      generate.expectCacheBreak('default operation restores loop system prompt', { at: 'header' });
       const defaultOutcomes = [
+        await coreLoop.requester.generate({ ...defaultRest, attributes: { kind: 'operation_default' }, policy: { retry: { maxAttemptsPerStep: 1 } } }, { signal: new AbortController().signal }),
         await currentDefault.generate(defaultRest, { signal: new AbortController().signal }),
-        await currentDefault.with(defaultRest).generate({}, { signal: new AbortController().signal }),
       ];
       expect(defaultOutcomes.map((outcome) => outcome.type)).toEqual(['done', 'done']);
       const defaultRequests = requests.slice(operationRequestStart + 4);
@@ -789,14 +766,14 @@ describe('Agent loop', () => {
       expect(defaultRequests[0]?.policy?.retry).toEqual({ maxAttemptsPerStep: 1, infiniteRetry: false });
       expect(defaultRequests[1]?.policy?.retry).toEqual({ maxAttemptsPerStep: 1, infiniteRetry: false });
 
-      const errorOptions: OperationRequesterOptions = {
-        source: () => ({ type: 'operation', requestKind: 'operation_error' }),
-      };
-      const currentError = localLoop.operationRequester(coreLoop.requester, errorOptions);
+      const currentError = coreLoop.requester.with({
+        attributes: { kind: 'operation_error' },
+        policy: { retry: { maxAttemptsPerStep: 1 } },
+      });
       const errorRest = { content: { messages: [createUserMessage('operation-error')] } };
       const errorOutcomes = [
+        await coreLoop.requester.generate({ ...errorRest, attributes: { kind: 'operation_error' }, policy: { retry: { maxAttemptsPerStep: 1 } } }, { signal: new AbortController().signal }),
         await currentError.generate(errorRest, { signal: new AbortController().signal }),
-        await currentError.with(errorRest).generate({}, { signal: new AbortController().signal }),
       ];
       const errorValue = (outcome: LlmOutcome) => outcome.type === 'failed'
         ? { type: outcome.type, error: outcome.error, requestId: outcome.requestId }
@@ -810,11 +787,14 @@ describe('Agent loop', () => {
 
       const cancelReason = new Error('cancel operation comparison');
       const cancelControllers = [new AbortController(), new AbortController()];
-      const currentCancelled = localLoop.operationRequester(coreLoop.requester, defaultOptions);
+      const currentCancelled = coreLoop.requester.with({
+        attributes: { kind: 'operation_default' },
+        policy: { retry: { maxAttemptsPerStep: 1 } },
+      });
       cancelControllers.forEach((controller) => controller.abort(cancelReason));
       const cancelledOutcomes = [
-        await currentCancelled.generate(defaultRest, { signal: cancelControllers[0]!.signal }),
-        await currentCancelled.with(defaultRest).generate({}, { signal: cancelControllers[1]!.signal }),
+        await coreLoop.requester.generate({ ...defaultRest, attributes: { kind: 'operation_default' }, policy: { retry: { maxAttemptsPerStep: 1 } } }, { signal: cancelControllers[0]!.signal }),
+        await currentCancelled.generate(defaultRest, { signal: cancelControllers[1]!.signal }),
       ];
       expect(cancelledOutcomes).toEqual([
         { type: 'aborted', message: null, usage: undefined },
@@ -3594,18 +3574,17 @@ describe('aborted step tool execution', () => {
     }
   });
 
-  it('settles a message-less notification without creating an LLM request', async () => {
-    const ctx = createTestAgent();
-    try {
-      const loopService = ctx.get(IAgentLoopService);
-      await loopService.initializeHistory([]);
-      const handle = loopService.notify();
-      await loopService.settled();
-      expect(handle.dropped).toBe(false);
-      expect(ctx.llmCalls).toHaveLength(0);
-    } finally {
-      await ctx.dispose();
-    }
+  testWithProvider('consumes a message-less notification and settles its wake-up turn', async ({ agent, model }) => {
+    let consumed = false;
+    const loopService = agent.get(IAgentLoopService);
+    await agent.restorePersisted();
+    await loopService.initializeHistory([]);
+    model.script(say('continued'));
+    const handle = loopService.notify({ onConsume: () => { consumed = true; } });
+    await loopService.settled();
+    expect(handle.dropped).toBe(false);
+    expect(consumed).toBe(true);
+    expect(model.requests()).toHaveLength(1);
   });
 });
 

@@ -6,17 +6,30 @@ import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
 import { abortedToolOutcome } from '@moonshot-ai/core/loop/tool/outcome';
 import {
   createTurn,
+  type FullLoopLlmRequester,
   type LoopEmitted,
-  type LoopLlmRequester,
   type TurnEmitted,
   type TurnRuntime,
 } from '@moonshot-ai/core/loop/index';
+import { requesterContents } from '@moonshot-ai/core/llm/requester';
 import { createMockProviderRequester } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
 import { successfulExecutor } from './executor';
 
 function echoRequester() {
   return createMockProviderRequester(() => ({ parts: [{ type: 'text', text: 'done' }] }));
+}
+
+function deferredRequester(generate: FullLoopLlmRequester['generate']): FullLoopLlmRequester {
+  const requester: FullLoopLlmRequester = {
+    [requesterContents]: {},
+    with: (() => requester) as FullLoopLlmRequester['with'],
+    request: () => {
+      throw new Error('not implemented');
+    },
+    generate,
+  };
+  return requester;
 }
 
 const prompt = (text: string) => createUserMessage(text);
@@ -245,15 +258,13 @@ describe('loop.wait', () => {
     const requestStarted = new Promise<void>((resolve) => {
       announceRequest = resolve;
     });
-    const requester: LoopLlmRequester = {
-      generate: () => {
-        requestCount += 1;
-        announceRequest();
-        return new Promise<LlmOutcome>((resolve) => {
-          resolveRequest = resolve;
-        });
-      },
-    };
+    const requester = deferredRequester(() => {
+      requestCount += 1;
+      announceRequest();
+      return new Promise<LlmOutcome>((resolve) => {
+        resolveRequest = resolve;
+      });
+    });
     const events: TurnEmitted[] = [];
     const runtime: TurnRuntime = {
       requester: () => requester,
@@ -319,12 +330,10 @@ describe('loop.wait', () => {
     let announceLateRequest!: () => void;
     const lateRequestStarted = new Promise<void>((resolve) => { announceLateRequest = resolve; });
     let resolveLateRequest!: (outcome: LlmOutcome) => void;
-    const lateRequester: LoopLlmRequester = {
-      generate: () => {
-        announceLateRequest();
-        return new Promise<LlmOutcome>((resolve) => { resolveLateRequest = resolve; });
-      },
-    };
+    const lateRequester = deferredRequester(() => {
+      announceLateRequest();
+      return new Promise<LlmOutcome>((resolve) => { resolveLateRequest = resolve; });
+    });
     let announceStopping!: () => void;
     const stoppingStarted = new Promise<void>((resolve) => { announceStopping = resolve; });
     let releaseStopping!: () => void;

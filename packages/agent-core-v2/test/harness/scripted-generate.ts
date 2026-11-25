@@ -371,8 +371,8 @@ export function withMockProvider(
           control.onEvent?.(event);
         },
         onAttempt: (request, context) => {
-          void Promise.resolve(provider.respond(request, control.signal));
           control.onAttempt?.(request, context);
+          void Promise.resolve(provider.respond(request, control.signal));
         },
       });
       if (directError !== undefined) throw directError;

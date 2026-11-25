@@ -12,7 +12,6 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { createHooks } from '#/hooks';
 import type { ToolCall } from '#human/message';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
-import type { FullLoopLlmRequester, Loop } from '@moonshot-ai/core/loop/index';
 import { type Model } from '#/provider-catalog/model/catalog';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -1068,7 +1067,6 @@ describe('Agent tool description', () => {
         ...loop,
         data: () => callerData,
         getModelCapabilities: () => ({}),
-        decorateTurnRequester: (_loop: Loop, requester: FullLoopLlmRequester) => requester,
         onDidChange: Event.None,
       } as unknown as IAgentLoopService),
       configServices(() => ({

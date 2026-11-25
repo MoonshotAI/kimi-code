@@ -708,24 +708,23 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         requestAttempts += 1;
 
         try {
-          const source = {
-            type: 'operation',
-            turnId: active.originTurnId,
-            requestKind: 'full_compaction',
-            logFields: { droppedCount },
-          } as const;
-          const requester = this.loopService.operationRequester(this.loopService.requester, {
-            maxOutputSize: compactionMaxOutputSize,
-            promptCacheProbe: cacheProbePending ? 'compaction' : undefined,
-            source: () => source,
-            onTrace: (trace) => {
-              active.trace = trace;
+          const outcome = await this.loopService.requester.with({
+            model: { maxOutputTokens: this.loopService.resolveMaxOutputTokens(compactionMaxOutputSize) },
+            content: { messages: historyFromContext(messages), usedTokens: usedContextTokens },
+            attributes: {
+              kind: 'compaction',
+              turnId: active.originTurnId,
+              logFields: { droppedCount },
+              promptCacheProbe: cacheProbePending ? 'compaction' : undefined,
+            },
+            policy: { retry: { maxAttemptsPerStep: 1 } },
+          }).generate({}, {
+            signal,
+            onEvent: (event) => {
+              if (event.type === 'llm.delta.request_id') active.trace = { requestId: event.requestId };
             },
           });
-          const outcome = await requester.with({
-            content: { messages: historyFromContext(messages), usedTokens: usedContextTokens },
-            profile: {},
-          }).generate({}, { signal });
+          active.trace = { requestId: outcome.requestId ?? active.trace?.requestId };
           if (outcome.type === 'failed') throw errorFromLlmMessage(outcome.error, outcome.diagnostics);
           if (outcome.type === 'aborted') {
             const message = outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';

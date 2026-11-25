@@ -871,6 +871,7 @@ describe('LLMRequester service migration coverage', () => {
             resetLoop(): Promise<void>;
           };
           await loop.resetLoop();
+          ctx.expectCacheBreak('resetLoop clears reusable media recovery entries', { at: 'history' });
           ctx.mockNextResponse({ type: 'text', text: 'After reset.' });
           await ctx.rpc.prompt({ input: [{ type: 'text', text: 'fresh recovery memory' }] });
           await ctx.untilTurnEnd();
@@ -934,16 +935,25 @@ async function requestCore(
 ) {
   const source: AgentLLMRequestSource = overrides.source ?? { type: 'operation' };
   await loop.start();
-  const operation = loop.operationRequester(loop.requester, {
-    source: () => source,
-    maxOutputSize: overrides.maxOutputSize,
-    tools: overrides.tools,
-  });
-  const outcome = await operation.generate(
+  const maxOutputTokens = overrides.maxOutputSize === undefined
+    ? undefined
+    : loop.resolveMaxOutputTokens(overrides.maxOutputSize);
+  const outcome = await loop.requester.generate(
     {
-      content: { messages: overrides.messages },
+      ...(maxOutputTokens === undefined ? {} : { model: { maxOutputTokens } }),
+      content: { ...(overrides.messages === undefined ? {} : { messages: overrides.messages }) },
       profile: { systemPrompt: overrides.systemPrompt, tools: overrides.tools },
       policy: { retry: { maxAttemptsPerStep: 1 } },
+      attributes: {
+        ...(source.type === 'turn'
+          ? { kind: 'loop' as const }
+          : source.requestKind === undefined
+            ? {}
+            : { kind: source.requestKind }),
+        ...(source.turnId === undefined ? {} : { turnId: source.turnId }),
+        ...(source.type === 'turn' && source.step !== undefined ? { step: source.step } : {}),
+        ...(source.logFields === undefined ? {} : { logFields: source.logFields }),
+      },
     },
     {
       signal,

@@ -817,7 +817,6 @@
     "packages/core/src/llm/generate.ts": 2,
     "packages/core/src/llm/requester.ts": 1,
     "packages/core/src/loop/loop-actor.ts": 1,
-    "packages/core/src/loop/request.ts": 1,
     "packages/core/src/tool/tool-executor.ts": 2,
     "packages/core/src/utils/wait.ts": 1,
     "packages/kap-server/src/transport/channelRegistry.ts": 1,

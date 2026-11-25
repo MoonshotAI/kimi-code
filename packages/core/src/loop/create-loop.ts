@@ -49,7 +49,7 @@ export interface Loop {
   readonly policy: PolicyRegistry;
   readonly baseRequester: FullLoopLlmRequester | undefined;
   readonly requester: FullLoopLlmRequester;
-  setRequester(requester: LoopRequester | undefined): void;
+  setRequester(requester: FullLoopLlmRequester | undefined): void;
   setContext(messages: Message[], reason?: string): LoopAck<'context.settled' | 'context.rejected'> | undefined;
   setSystemPrompt(systemPrompt: string): LoopAck<'system_prompt.settled'> | undefined;
   /**

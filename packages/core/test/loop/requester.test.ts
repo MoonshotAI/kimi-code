@@ -191,7 +191,7 @@ describe('loop side requester', () => {
       'rest system',
     ]);
     expect(attempts.map(({ request }) => request.content.messages.flatMap((message) => message.content)
-      .filter((part) => part.type === 'image_url').length)).toEqual([1, 0, 0]);
+      .filter((part) => part.type === 'image_url' && part.omitted === undefined).length)).toEqual([1, 0, 0]);
     expect(attempts.map(({ recoveries }) => recoveries.map((recovery) =>
       `${recovery.strategy}:${recovery.action}`))).toEqual([
         [],

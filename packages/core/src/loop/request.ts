@@ -79,6 +79,12 @@ export function runLoopRequest(
   const promise = new Promise<LlmOutcome>((reply) => {
     resolve = reply;
   });
+  let ended = false;
+  const end = (value: unknown): void => {
+    if (ended) return;
+    ended = true;
+    resolve(normalizeLlmOutcome(value));
+  };
   void (async () => {
     let observation: LoopLlmRunObservation | undefined;
     let outcome: LlmOutcome;
@@ -97,7 +103,8 @@ export function runLoopRequest(
           onAttempt: (attemptRequest, info) => observation?.attempt?.(attemptRequest, info),
           onEvent: (event) => {
             observation?.event?.(event);
-            if (event.type !== 'llm.ended') onProgress(event);
+            if (event.type === 'llm.ended') end(event.outcome);
+            else onProgress(event);
           },
         },
       ));
@@ -105,7 +112,7 @@ export function runLoopRequest(
       outcome = outcomeForError(input.signal, error);
     }
     observation?.settle?.(outcome, input.signal);
-    resolve(outcome);
+    end(outcome);
   })();
   return promise;
 }
