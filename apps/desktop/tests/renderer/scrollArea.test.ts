@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createApp, h, nextTick, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -79,5 +82,17 @@ describe('ScrollArea overscroll', () => {
   it('lets scrolling chain to the page when overscroll is auto', () => {
     const el = mount({ overscroll: 'auto' });
     expect(el.style.getPropertyValue('overscroll-behavior')).toBe('auto');
+  });
+});
+
+describe('ScrollArea focus styles', () => {
+  it('keeps the viewport keyboard-scrollable without painting a focus ring on Shift or focus-visible', () => {
+    const el = mount();
+    expect(el.getAttribute('tabindex')).toBe('0');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const sfc = readFileSync(resolve(here, '../../../../packages/app-ui/src/components/ui/ScrollArea.vue'), 'utf8');
+    const css = Array.from(sfc.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g), (match) => match[1]).join('\n');
+    expect(css).toMatch(/\.ui-scroll-area__viewport:focus,\s*\.ui-scroll-area__viewport:focus-visible\s*\{\s*outline:\s*none;\s*\}/);
+    expect(css).not.toContain('outline: 2px solid var(--color-accent)');
   });
 });

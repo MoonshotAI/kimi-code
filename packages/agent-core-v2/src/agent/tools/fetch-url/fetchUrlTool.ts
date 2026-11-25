@@ -76,4 +76,4 @@ export class FetchURLTool implements IFetchURLTool {
   }
 }
 
-registerAgentToolService(IFetchURLTool, FetchURLTool, { name: 'FetchURL', domain: 'web' });
+registerAgentToolService(IFetchURLTool, FetchURLTool, { name: 'FetchURL', domain: 'web', userConfigurable: true });

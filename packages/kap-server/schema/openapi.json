@@ -1261,6 +1261,24 @@
                           "type": "boolean"
                         },
                         "thinking": {},
+                        "tools": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "disabled": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "enabled": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "type": "object"
+                        },
                         "yolo": {
                           "type": "boolean"
                         }
@@ -1369,6 +1387,23 @@
                     "type": "boolean"
                   },
                   "thinking": {},
+                  "tools": {
+                    "properties": {
+                      "disabled": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "enabled": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  },
                   "yolo": {
                     "type": "boolean"
                   }
@@ -1484,6 +1519,24 @@
                               "type": "boolean"
                             },
                             "thinking": {},
+                            "tools": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "disabled": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "enabled": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "type": "object"
+                            },
                             "yolo": {
                               "type": "boolean"
                             }
@@ -23730,6 +23783,9 @@
                                 "compacting": {
                                   "type": "boolean"
                                 },
+                                "goal_mode_available": {
+                                  "type": "boolean"
+                                },
                                 "model": {
                                   "type": "string"
                                 },
@@ -23744,6 +23800,9 @@
                                 "plan_mode": {
                                   "type": "boolean"
                                 },
+                                "plan_mode_available": {
+                                  "type": "boolean"
+                                },
                                 "status": {
                                   "enum": [
                                     "idle",
@@ -23755,10 +23814,16 @@
                                 "swarm_mode": {
                                   "type": "boolean"
                                 },
+                                "swarm_mode_available": {
+                                  "type": "boolean"
+                                },
                                 "thinking": {
                                   "type": "string"
                                 },
                                 "tower_mode": {
+                                  "type": "boolean"
+                                },
+                                "tower_mode_available": {
                                   "type": "boolean"
                                 }
                               },
@@ -23767,7 +23832,11 @@
                                 "compacting",
                                 "plan_mode",
                                 "swarm_mode",
-                                "tower_mode"
+                                "tower_mode",
+                                "plan_mode_available",
+                                "swarm_mode_available",
+                                "tower_mode_available",
+                                "goal_mode_available"
                               ],
                               "type": "object"
                             },
@@ -36509,6 +36578,83 @@
                               "name",
                               "description",
                               "input_schema",
+                              "source"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "tools"
+                      ],
+                      "type": "object"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/api/v1/tools/catalog": {
+      "get": {
+        "description": "List user-configurable builtin tools",
+        "operationId": "listToolCatalog",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        0
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "tools": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "name": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "source": {
+                                "enum": [
+                                  "builtin",
+                                  "skill",
+                                  "mcp"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "name",
                               "source"
                             ],
                             "type": "object"

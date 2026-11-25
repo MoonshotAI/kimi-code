@@ -163,5 +163,6 @@ export class WriteTool implements IWriteTool {
 registerAgentToolService(IWriteTool, WriteTool, {
   name: 'Write',
   domain: 'os/backends',
+  userConfigurable: true,
   requiredEnvironmentCapabilities: ['fs'],
 });

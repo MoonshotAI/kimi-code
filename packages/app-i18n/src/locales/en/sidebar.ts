@@ -42,6 +42,7 @@ export default {
   emojiGroupSymbols: 'Symbols & Status',
   copyPath: 'Copy path',
   copySessionId: 'Copy session ID',
+  copySessionLink: 'Copy session link',
   copied: 'Copied',
   copyFailed: 'Copy failed',
   archive: 'Archive',

@@ -12,3 +12,9 @@ export const toolDescriptorSchema = z.object({
   active: z.boolean().optional(),
 });
 export type ToolDescriptor = z.infer<typeof toolDescriptorSchema>;
+
+export const toolCatalogEntrySchema = z.object({
+  name: z.string().min(1),
+  source: toolSourceSchema,
+});
+export type ToolCatalogEntry = z.infer<typeof toolCatalogEntrySchema>;

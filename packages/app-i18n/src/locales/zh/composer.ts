@@ -75,5 +75,6 @@ export default {
   pastedTextDiscardTitle: '放弃修改？',
   pastedTextDiscardMessage: '对这段粘贴文本的修改将会丢失。',
   pastedTextDiscard: '放弃',
+  disabledCommand: '{cmd} 已在工具设置中禁用',
 
 } as const;

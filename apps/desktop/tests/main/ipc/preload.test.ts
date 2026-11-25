@@ -20,6 +20,7 @@ vi.mock('electron', () => ({
 
 const WHITELIST = [
   'browserOverlaySupported',
+  'sessionLinksSupported',
   'inspectNativeTerminals',
   'browserOverlayCloseMenu',
   'browserOverlayOpenMenu',
@@ -274,7 +275,7 @@ describe('kimiDesktop preload bridge', () => {
     expect(Object.keys(exposed)).not.toContain('node');
     expect(Object.keys(exposed)).not.toContain('require');
     for (const key of Object.keys(exposed)) {
-      expect(typeof exposed[key]).toBe(key === 'browserOverlaySupported' ? 'boolean' : 'function');
+      expect(typeof exposed[key]).toBe(key === 'browserOverlaySupported' || key === 'sessionLinksSupported' ? 'boolean' : 'function');
     }
   });
 
@@ -986,6 +987,11 @@ describe('kimiDesktop preload bridge', () => {
     expect(launchCb).toHaveBeenLastCalledWith({ action: 'open-workspace', root: '/work/project', newChat: true });
     listeners.get('kimi:launch-action')?.({}, { action: 'open-workspace', root: '/work/project', newChat: 'yes' });
     expect(launchCb).toHaveBeenCalledTimes(3);
+    listeners.get('kimi:launch-action')?.({}, { action: 'open-session', sessionId: 'session_1', extra: true });
+    expect(launchCb).toHaveBeenLastCalledWith({ action: 'open-session', sessionId: 'session_1' });
+    listeners.get('kimi:launch-action')?.({}, { action: 'open-session', sessionId: '' });
+    listeners.get('kimi:launch-action')?.({}, { action: 'open-session', sessionId: 42 });
+    expect(launchCb).toHaveBeenCalledTimes(4);
 
     const deepLinkAuthCb = vi.fn();
     exposed.onDeepLinkAuth(deepLinkAuthCb);
@@ -1274,5 +1280,19 @@ it('advertises native overlays only for a window explicitly created as an overla
     process.argv.push('--kimi-native-overlay-host');
     const host = await import('../../../src/main/ipc/preload');
     expect(host.api.browserOverlaySupported).toBe(true);
+  } finally { process.argv = previous; }
+});
+
+it('advertises session links only when the main process passes the session link flag', async () => {
+  const previous = [...process.argv];
+  try {
+    process.argv = previous.filter(value => value !== '--kimi-session-links');
+    vi.resetModules();
+    const unregistered = await import('../../../src/main/ipc/preload');
+    expect(unregistered.api.sessionLinksSupported).toBe(false);
+    vi.resetModules();
+    process.argv.push('--kimi-session-links');
+    const registered = await import('../../../src/main/ipc/preload');
+    expect(registered.api.sessionLinksSupported).toBe(true);
   } finally { process.argv = previous; }
 });

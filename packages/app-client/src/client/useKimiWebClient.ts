@@ -33,6 +33,7 @@ import { permissionModeFromConfig } from '@moonshot-ai/app-core/lib';
 import { clearTurnFileHistorySession } from './turnFileHistory';
 import { ackSwarmPending, foldDaemonSwarmMode } from '@moonshot-ai/app-core/lib';
 import { ackTowerPending, foldDaemonTowerMode } from '@moonshot-ai/app-core/lib';
+import { isDefaultToolEnabled, TOWER_MODE_TOOL_NAMES } from '@moonshot-ai/app-core/lib';
 import {
   effectiveThinkingLevel,
   matchEffortSwitchRule,
@@ -2031,6 +2032,24 @@ const experimentalFlags = computed<Record<string, boolean>>(() => rawState.exper
 const backend = computed<'v1' | 'v2'>(() => rawState.backend);
 const dangerousBypassAuth = computed<boolean>(() => rawState.dangerousBypassAuth);
 
+function modeAvailability(
+  toolName: string,
+  field: 'planModeAvailable' | 'swarmModeAvailable' | 'towerModeAvailable' | 'goalModeAvailable',
+): boolean {
+  const sid = sessionsStore().activeSessionId;
+  const reported = sid === undefined ? undefined : agentStatesStore().stateOf(sid, MAIN_AGENT_ID)?.[field];
+  if (reported !== undefined) return reported;
+  if (field === 'towerModeAvailable') {
+    return TOWER_MODE_TOOL_NAMES.every((name) => isDefaultToolEnabled(configStore().config?.tools, name));
+  }
+  return isDefaultToolEnabled(configStore().config?.tools, toolName);
+}
+
+const planModeAvailable = computed(() => modeAvailability('ExitPlanMode', 'planModeAvailable'));
+const swarmModeAvailable = computed(() => modeAvailability('AgentSwarm', 'swarmModeAvailable'));
+const towerModeAvailable = computed(() => modeAvailability('TowerInit', 'towerModeAvailable'));
+const goalModeAvailable = computed(() => modeAvailability('UpdateGoal', 'goalModeAvailable'));
+
 function clearDangerousBypassAuth(): void {
   rawState.dangerousBypassAuth = false;
 }
@@ -3465,6 +3484,10 @@ export function useKimiWebClient() {
     planArmed,
     swarmMode,
     towerMode,
+    planModeAvailable,
+    swarmModeAvailable,
+    towerModeAvailable,
+    goalModeAvailable,
     goalMode,
     queued,
     promptPrediction: computed(() => {
@@ -3512,6 +3535,7 @@ export function useKimiWebClient() {
 
     load: workspaceBoot.load,
     selectSession: sessionSelection.selectSession,
+    openSessionLink: sessionSelection.openSessionLink,
     clearActiveSession: workspacesStore().clearActiveSession,
     openSessionAdmin: (workspaceId?: string) => {
       if (workspaceId !== undefined) {

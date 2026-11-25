@@ -117,7 +117,7 @@ export function createDecoder(sink: DecodeSink): Decoder {
       sink.onMessageId(responseId);
     }
     const usage = parseUsage(response);
-    if (usage !== undefined && rawFinish !== undefined && rawFinish !== null) {
+    if (usage !== undefined) {
       sink.onUsage(usage);
     }
     for (const part of extractChunkParts(response)) {

@@ -1,6 +1,11 @@
-import { bash, edit, held, say } from '@moonshot-ai/testkit/model';
+import { askUserQuestion, bash, edit, held, say } from '@moonshot-ai/testkit/model';
 
 import { expect, selfTest } from '../support/scenario';
+
+const ANSWER_FIRST_ON_TUI = 'The terminal UI has no way to stop a turn without answering its approval: Esc, Ctrl+C and Ctrl+D on the approval panel reject it.';
+const QUESTION = 'Which database should we use?';
+const ASK = askUserQuestion({ questions: [{ question: QUESTION, header: 'Database', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multi_select: false }] });
+const MARKER = "printf 'x\\n' > marker.txt";
 
 selfTest('stop', {
   positive: {
@@ -32,8 +37,36 @@ selfTest('stop', {
         await product.expectReply('The command was stopped.');
       },
     },
+    'stops a turn while a command waits for approval, so the command never runs': {
+      except: { tui: ANSWER_FIRST_ON_TUI },
+      run: async ({ product, model, workspace }) => {
+        model.script(bash(MARKER));
+        await product.send('Write the marker.');
+        await product.expectApproval({ name: 'Bash', target: MARKER });
+        await product.stop();
+        await product.waitIdle();
+        expect(model.requests('main')).toHaveLength(1);
+        await product.expectTool({ name: 'Bash', target: MARKER, status: 'failed' });
+        await workspace.expectMissing('marker.txt');
+        model.script(say('Ready again.'));
+        await product.send('Are you there?');
+        await product.waitIdle();
+        await product.expectReply('Ready again.');
+      },
+    },
   },
   negative: {
+    'fails while a question is pending, since no surface stops a turn without answering it': {
+      run: async ({ product, model }) => {
+        model.script(ASK, say('Noted the choice.'));
+        await product.send('Help me choose a database.');
+        await expect(product.waitIdle()).rejects.toThrow('a question is pending');
+        await expect(product.stop()).rejects.toThrow('a question is pending');
+        await product.answer('SQLite');
+        await product.waitIdle();
+        await product.expectReply('Noted the choice.');
+      },
+    },
     'fails when no turn is running': {
       run: async ({ product, model }) => {
         await expect(product.stop()).rejects.toThrow('needs a running turn');
@@ -42,6 +75,20 @@ selfTest('stop', {
         await product.waitIdle();
         await expect(product.stop()).rejects.toThrow('needs a running turn');
         await product.expectReply('Nothing was stopped.');
+      },
+    },
+    'fails on the terminal UI while an approval is pending': {
+      onlyOn: ['tui'],
+      reason: 'Only the terminal UI has no way to stop a turn without answering its approval; on the other surfaces stop() stops it.',
+      run: async ({ product, model, workspace }) => {
+        model.script(bash(MARKER), say('I did not write it.'));
+        await product.send('Write the marker.');
+        await product.expectApproval({ name: 'Bash', target: MARKER });
+        await expect(product.stop()).rejects.toThrow('without answering');
+        await product.reject();
+        await product.waitIdle();
+        await product.expectTool({ name: 'Bash', target: MARKER, status: 'rejected' });
+        await workspace.expectMissing('marker.txt');
       },
     },
   },

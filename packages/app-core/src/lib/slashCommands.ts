@@ -170,12 +170,21 @@ export function skillCommandArgs(cmd: string, skillName: string, restoreText?: s
 
 export function buildSlashItems(
   skills: ReadonlyArray<{ name: string; description: string; source?: string; path?: string; workspaceDir?: string }> = [],
-  opts?: { towerEnabled?: boolean; extraBuiltins?: readonly SlashCommand[] },
+  opts?: {
+    towerEnabled?: boolean;
+    planEnabled?: boolean;
+    swarmEnabled?: boolean;
+    goalEnabled?: boolean;
+    extraBuiltins?: readonly SlashCommand[];
+  },
 ): SlashCommand[] {
-  const builtins =
-    opts?.towerEnabled === true
-      ? SLASH_COMMANDS
-      : SLASH_COMMANDS.filter((item) => item.name !== '/tower');
+  const builtins = SLASH_COMMANDS.filter((item) => {
+    if (item.name === '/tower') return opts?.towerEnabled === true;
+    if (item.name === '/plan') return opts?.planEnabled !== false;
+    if (item.name === '/swarm') return opts?.swarmEnabled !== false;
+    if (item.name === '/goal') return opts?.goalEnabled !== false;
+    return true;
+  });
   const skillItems: SlashCommand[] = skills.map((s) => ({
     name: s.source === 'builtin' ? `/${s.name}` : `/${SKILL_COMMAND_PREFIX}${s.name}`,
     desc: s.description,
