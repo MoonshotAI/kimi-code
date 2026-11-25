@@ -1,6 +1,7 @@
 import { visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
+import { contrastingTextColor } from '#/tui/theme/color-mix';
 import type { ColorPalette } from '#/tui/theme/colors';
 
 export interface RenderTabStripOptions {
@@ -13,7 +14,7 @@ export interface RenderTabStripOptions {
 function styleTab(label: string, isActive: boolean, colors: ColorPalette): string {
   const cell = ` ${label} `;
   return isActive
-    ? chalk.bgHex(colors.primary).hex(colors.text).bold(cell)
+    ? chalk.bgHex(colors.primary).hex(contrastingTextColor(colors.primary)).bold(cell)
     : chalk.hex(colors.textMuted)(cell);
 }
 

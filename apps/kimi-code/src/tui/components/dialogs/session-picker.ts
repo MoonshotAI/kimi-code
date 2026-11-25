@@ -253,6 +253,14 @@ export class SessionPickerComponent extends DockSection implements Focusable {
       return;
     }
     if (this.selectInFlight) return;
+    if (this.list.isPasting()) {
+      const previousQuery = this.list.view().query;
+      if (this.list.handleKey(data)) {
+        this.syncVisibleCount(previousQuery);
+        this.ensureSelectedVisible();
+      }
+      return;
+    }
     if (matchesKey(data, Key.ctrl('c'))) {
       this.onCtrlC?.();
       return;

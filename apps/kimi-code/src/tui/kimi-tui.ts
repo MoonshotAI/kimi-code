@@ -1302,7 +1302,6 @@ export class KimiTUI {
             shouldReplayHistory = true;
           } else {
             session = await this.harness.createSession(createSessionOptions);
-            this.worktreeExit.noteNewSession(session.id);
             this.startupNotice = combineStartupNotice(
               this.startupNotice,
               `No sessions to continue under "${workDir}"; starting a fresh session.`,
@@ -3422,7 +3421,6 @@ export class KimiTUI {
       options.environmentCwd = inherited.environmentCwd;
     }
     const session = await this.harness.createSession(options);
-    this.worktreeExit.noteNewSession(session.id);
     return session;
   }
 

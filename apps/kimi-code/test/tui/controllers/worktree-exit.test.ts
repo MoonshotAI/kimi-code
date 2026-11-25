@@ -1,7 +1,3 @@
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 
 import { ErrorCodes, KimiError, type WorktreeRemovalCheck } from '@moonshot-ai/kimi-code-sdk';
@@ -9,11 +5,9 @@ import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
-import type { WorktreeRunRecord } from '#/tui/controllers/worktree-creation';
 import {
   formatWorktreeExit,
   WorktreeExitController,
-  worktreeHasIgnoredFiles,
   type WorktreeExitHost,
 } from '#/tui/controllers/worktree-exit';
 import { quoteShellArg } from '#/utils/shell-quote';
@@ -42,7 +36,6 @@ function check(overrides: Partial<WorktreeRemovalCheck> = {}): WorktreeRemovalCh
 function makeHost() {
   let mounted: (Component & Focusable) | undefined;
   let onDisplaced: (() => void) | undefined;
-  const createdThisRun = new Map<string, WorktreeRunRecord>();
   const backgroundTasks = new Map<string, { readonly status: 'running' | 'completed' }>();
   const events: string[] = [];
   const host = {
@@ -63,10 +56,7 @@ function makeHost() {
           | undefined,
       },
     },
-    worktreeCreation: { createdThisRun },
     backgroundTasks,
-    hasIgnoredFiles: vi.fn(async () => false),
-    hasSessionContent: vi.fn(() => true),
     mountEditorReplacement: vi.fn((panel: Component & Focusable, displaced?: () => void) => {
       mounted = panel;
       onDisplaced = displaced;
@@ -93,12 +83,7 @@ function makeHost() {
       },
     };
   };
-  const untouched = (): void => {
-    createdThisRun.set(WORKTREE, { name: 'fix-login', repoRoot: '/repo', setupScriptRan: false });
-    host.state.appState.sessionId = '';
-    host.hasSessionContent.mockReturnValue(false);
-  };
-  return { host, controller, dialog, untouched, events, displace: () => onDisplaced?.() };
+  return { host, controller, dialog, events, displace: () => onDisplaced?.() };
 }
 
 describe('WorktreeExitController', () => {
@@ -156,13 +141,20 @@ describe('WorktreeExitController', () => {
     ]);
   });
 
-  it('deletes an untouched worktree this run created, without asking', async () => {
-    const { host, controller, untouched, events } = makeHost();
-    untouched();
+  it('asks before leaving even when the worktree has no changes or conversation yet', async () => {
+    const { host, controller, dialog, events } = makeHost();
+    host.state.appState.sessionId = '';
 
-    await controller.exit();
+    const exiting = controller.exit();
+    const { text, press } = await dialog();
+    expect(text).toContain('Leaving worktree fix-login');
+    expect(text).toMatch(/❯ Keep it\n\s+Delete worktree/);
+    expect(host.harness.removeWorktree).not.toHaveBeenCalled();
+    expect(host.stop).not.toHaveBeenCalled();
 
-    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+    press(DOWN, ENTER);
+    await exiting;
+
     expect(host.harness.removeWorktree).toHaveBeenCalledWith({
       repoRoot: '/repo',
       path: WORKTREE,
@@ -173,137 +165,6 @@ describe('WorktreeExitController', () => {
     expect(host.stop).toHaveBeenCalledOnce();
     expect(events).toEqual(['closeSession', 'removeWorktree', 'harnessClose']);
     expect(formatWorktreeExit(controller.outcome!)).toEqual(['Deleted worktree fix-login.']);
-  });
-
-  it('also deletes silently when the current session started here and is still empty', async () => {
-    const { host, controller, untouched } = makeHost();
-    untouched();
-    host.state.appState.sessionId = 'ses-new';
-    controller.noteNewSession('ses-new');
-
-    await controller.exit();
-
-    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
-    expect(host.harness.removeWorktree).toHaveBeenCalledWith(
-      expect.objectContaining({ excludeSessionId: 'ses-new' }),
-    );
-    expect(controller.outcome).toEqual({ kind: 'deleted', name: 'fix-login', branch: undefined });
-  });
-
-  it.each([
-    [
-      'the setup script ran',
-      (h: ReturnType<typeof makeHost>) => {
-        h.host.worktreeCreation.createdThisRun.set(WORKTREE, {
-          name: 'fix-login',
-          repoRoot: '/repo',
-          setupScriptRan: true,
-        });
-      },
-    ],
-    [
-      'an earlier run created it',
-      (h: ReturnType<typeof makeHost>) => {
-        h.host.worktreeCreation.createdThisRun.clear();
-      },
-    ],
-    [
-      'the session was resumed or brought in',
-      (h: ReturnType<typeof makeHost>) => {
-        h.host.state.appState.sessionId = 'ses-resumed';
-      },
-    ],
-    [
-      'a message was sent',
-      (h: ReturnType<typeof makeHost>) => {
-        h.host.hasSessionContent.mockReturnValue(true);
-      },
-    ],
-    [
-      'a file changed',
-      (h: ReturnType<typeof makeHost>) => {
-        h.host.harness.inspectWorktreeRemoval.mockResolvedValue(check({ uncommittedFiles: 1 }));
-      },
-    ],
-    [
-      'a commit exists only here',
-      (h: ReturnType<typeof makeHost>) => {
-        h.host.harness.inspectWorktreeRemoval.mockResolvedValue(check({ uniqueCommits: 1 }));
-      },
-    ],
-    [
-      'a branch is checked out',
-      (h: ReturnType<typeof makeHost>) => {
-        h.host.harness.inspectWorktreeRemoval.mockResolvedValue(check({ branch: 'feat' }));
-      },
-    ],
-    [
-      'an earlier session worked here',
-      (h: ReturnType<typeof makeHost>) => {
-        h.host.harness.inspectWorktreeRemoval.mockResolvedValue(check({ closedSessionCount: 1 }));
-      },
-    ],
-    [
-      'an ignored file exists in the worktree',
-      (h: ReturnType<typeof makeHost>) => {
-        h.host.hasIgnoredFiles.mockResolvedValue(true);
-      },
-    ],
-    [
-      'an initialized submodule exists in the worktree',
-      (h: ReturnType<typeof makeHost>) => {
-        h.host.harness.inspectWorktreeRemoval.mockResolvedValue(check({ hasSubmodules: true }));
-      },
-    ],
-    [
-      'the worktree is locked',
-      (h: ReturnType<typeof makeHost>) => {
-        h.host.harness.inspectWorktreeRemoval.mockResolvedValue(check({ locked: true }));
-      },
-    ],
-    [
-      'a background task is still running',
-      (h: ReturnType<typeof makeHost>) => {
-        h.host.backgroundTasks.set('task-1', { status: 'running' });
-      },
-    ],
-    [
-      'a foreground turn is still running',
-      (h: ReturnType<typeof makeHost>) => {
-        h.host.state.appState.streamingPhase = 'thinking';
-      },
-    ],
-  ])('asks instead of deleting when %s', async (_case, vary) => {
-    const harness = makeHost();
-    harness.untouched();
-    vary(harness);
-
-    const exiting = harness.controller.exit();
-    const { text } = await harness.dialog();
-
-    expect(text).toContain('Leaving worktree fix-login');
-    expect(harness.host.harness.removeWorktree).not.toHaveBeenCalled();
-    expect(harness.host.stop).not.toHaveBeenCalled();
-    harness.displace();
-    await exiting;
-  });
-
-  it('reports the error and exits when the silent delete fails after shutdown', async () => {
-    const { host, controller, untouched, events } = makeHost();
-    untouched();
-    host.harness.removeWorktree.mockRejectedValueOnce(
-      new KimiError(ErrorCodes.WORKTREE_GIT_FAILED, 'Could not remove the worktree.'),
-    );
-
-    await controller.exit();
-
-    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
-    expect(host.stop).toHaveBeenCalledOnce();
-    expect(events).toEqual(['closeSession', 'harnessClose']);
-    expect(controller.outcome?.kind).toBe('delete-failed');
-    expect(formatWorktreeExit(controller.outcome!)).toEqual([
-      "Couldn't delete worktree fix-login (~/.kimi-code/worktrees/wd_repo/fix-login): Could not remove the worktree.",
-    ]);
   });
 
   it('keeps the worktree by default and says how to save its commits', async () => {
@@ -382,6 +243,19 @@ describe('WorktreeExitController', () => {
     expect(host.stop).toHaveBeenCalledOnce();
   });
 
+  it('stays when the exit dialog is displaced', async () => {
+    const { host, controller, dialog, displace } = makeHost();
+
+    const exiting = controller.exit();
+    await dialog();
+    displace();
+    await exiting;
+
+    expect(host.harness.removeWorktree).not.toHaveBeenCalled();
+    expect(host.stop).not.toHaveBeenCalled();
+    expect(controller.outcome).toBeUndefined();
+  });
+
   it('deletes the worktree and its branch with the discards the dialog showed', async () => {
     const { host, controller, dialog, events } = makeHost();
     host.harness.inspectWorktreeRemoval.mockImplementation(async ({ deleteBranch }) =>
@@ -446,10 +320,11 @@ describe('WorktreeExitController', () => {
   });
 
   it('only executes a pending shutdown delete once', async () => {
-    const { host, controller, untouched } = makeHost();
-    untouched();
+    const { host, controller, dialog } = makeHost();
 
-    await controller.exit();
+    const exiting = controller.exit();
+    (await dialog()).press(DOWN, ENTER);
+    await exiting;
     await controller.finishShutdown();
 
     expect(host.harness.removeWorktree).toHaveBeenCalledOnce();
@@ -469,31 +344,5 @@ describe('WorktreeExitController', () => {
     expect(formatWorktreeExit(controller.outcome!)).toEqual([
       `Couldn't check worktree fix-login, so it was left as it is: No Kimi worktree at ${WORKTREE}.`,
     ]);
-  });
-
-  describe('worktreeHasIgnoredFiles', () => {
-    it('detects ignored files and fails safe outside a git repository', async () => {
-      const repo = mkdtempSync(join(tmpdir(), 'kimi-exit-ignored-repo-'));
-      const nonGit = mkdtempSync(join(tmpdir(), 'kimi-exit-nongit-'));
-      try {
-        execFileSync('git', ['init', '-q'], { cwd: repo });
-        writeFileSync(join(repo, '.gitignore'), '.env\n');
-        execFileSync('git', ['add', '.gitignore'], { cwd: repo });
-        execFileSync(
-          'git',
-          ['-c', 'user.name=test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'init'],
-          { cwd: repo },
-        );
-
-        await expect(worktreeHasIgnoredFiles(repo)).resolves.toBe(false);
-
-        writeFileSync(join(repo, '.env'), 'SECRET=1\n');
-        await expect(worktreeHasIgnoredFiles(repo)).resolves.toBe(true);
-        await expect(worktreeHasIgnoredFiles(nonGit)).resolves.toBe(true);
-      } finally {
-        rmSync(repo, { recursive: true, force: true });
-        rmSync(nonGit, { recursive: true, force: true });
-      }
-    });
   });
 });

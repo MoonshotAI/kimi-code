@@ -107,6 +107,15 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
   }
 
   handleInput(data: string): void {
+    if (this.list.isPasting()) {
+      const previousQuery = this.list.view().query;
+      if (this.list.handleKey(data)) {
+        this.notice = undefined;
+        if (this.list.view().query !== previousQuery) this.scrollBodyToTop();
+        this.ensureSelectedVisible();
+      }
+      return;
+    }
     if (matchesKey(data, Key.ctrl('c')) || matchesKey(data, Key.ctrl('d'))) {
       this.opts.onCancel();
       return;

@@ -1,5 +1,3 @@
-import { execFile } from 'node:child_process';
-
 import type { BackgroundTaskInfo, KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 
@@ -15,36 +13,9 @@ import type { TUIState } from '#/tui/tui-state';
 import type { AppState } from '#/tui/types';
 import { sessionWorktree } from '#/tui/utils/session-work-dir';
 import { abbreviateHome } from '#/utils/paths';
-import { resolveCommandPath } from '#/utils/process/resolve-command';
 import { quoteShellArg } from '#/utils/shell-quote';
 
-import type { WorktreeCreationController } from './worktree-creation';
 import { inspectWorktreeRemoval, removeWorktree } from './worktree-removal';
-
-const IGNORED_CHECK_TIMEOUT_MS = 5_000;
-
-export function worktreeHasIgnoredFiles(worktreePath: string): Promise<boolean> {
-  const git = resolveCommandPath('git', worktreePath);
-  if (git === undefined) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    try {
-      execFile(
-        git,
-        ['-C', worktreePath, 'status', '--porcelain=v1', '-z', '--ignored=matching'],
-        { encoding: 'utf8', timeout: IGNORED_CHECK_TIMEOUT_MS, windowsHide: true },
-        (error, stdout) => {
-          if (error !== null) {
-            resolve(true);
-            return;
-          }
-          resolve(stdout.length > 0);
-        },
-      );
-    } catch {
-      resolve(true);
-    }
-  });
-}
 
 export type WorktreeExitOutcome =
   | {
@@ -79,10 +50,7 @@ type ExitPlan =
 export interface WorktreeExitHost {
   readonly harness: Pick<KimiHarness, 'inspectWorktreeRemoval' | 'removeWorktree'>;
   readonly state: Pick<TUIState, 'appState'>;
-  readonly worktreeCreation: Pick<WorktreeCreationController, 'createdThisRun'>;
   readonly backgroundTasks: ReadonlyMap<string, Pick<BackgroundTaskInfo, 'status'>>;
-  readonly hasIgnoredFiles?: (worktreePath: string) => Promise<boolean>;
-  hasSessionContent(): boolean;
   mountEditorReplacement(panel: Component & Focusable, onDisplaced?: () => void): void;
   restoreEditor(): void;
   stop(exitCode?: number): Promise<void>;
@@ -92,16 +60,10 @@ type Worktree = NonNullable<AppState['worktree']>;
 
 export class WorktreeExitController {
   outcome: WorktreeExitOutcome | undefined;
-  private readonly sessionStartedIn = new Map<string, string>();
   private pendingDelete: PendingExitDelete | undefined;
   private leaving = false;
 
   constructor(private readonly host: WorktreeExitHost) {}
-
-  noteNewSession(sessionId: string): void {
-    const worktree = sessionWorktree(this.host.state.appState);
-    if (worktree !== undefined) this.sessionStartedIn.set(sessionId, worktree.root);
-  }
 
   async exit(): Promise<void> {
     const worktree = isExperimentalFlagEnabled('worktree')
@@ -172,9 +134,6 @@ export class WorktreeExitController {
       return { kind: 'outcome', outcome: { kind: 'in-use', name: worktree.name } };
     }
     const excludeSessionId = this.currentSessionId();
-    if (this.untouched(worktree, removal) && !(await this.hasIgnoredFiles(worktree.root))) {
-      return { kind: 'delete', removal, choice: 'delete', excludeSessionId };
-    }
     const choice = await this.choose(removal);
     if (choice === 'cancel') return { kind: 'stay' };
     if (choice === 'keep') {
@@ -200,10 +159,6 @@ export class WorktreeExitController {
     });
   }
 
-  private hasIgnoredFiles(worktreePath: string): Promise<boolean> {
-    return (this.host.hasIgnoredFiles ?? worktreeHasIgnoredFiles)(worktreePath);
-  }
-
   private activeWork(): WorktreeExitActiveWork {
     const { streamingPhase, isCompacting } = this.host.state.appState;
     let backgroundTasks = 0;
@@ -214,26 +169,6 @@ export class WorktreeExitController {
       foreground: streamingPhase !== 'idle' || isCompacting,
       backgroundTasks,
     };
-  }
-
-  private untouched(worktree: Worktree, removal: WorktreeRemoval): boolean {
-    const created = this.host.worktreeCreation.createdThisRun.get(worktree.root);
-    const { sessionId } = this.host.state.appState;
-    const active = this.activeWork();
-    return (
-      created !== undefined &&
-      !created.setupScriptRan &&
-      (sessionId === '' || this.sessionStartedIn.get(sessionId) === worktree.root) &&
-      !this.host.hasSessionContent() &&
-      !active.foreground &&
-      active.backgroundTasks === 0 &&
-      removal.branch === undefined &&
-      removal.uncommittedFiles === 0 &&
-      removal.commitsLostWithWorktree === 0 &&
-      removal.closedSessionCount === 0 &&
-      removal.hasSubmodules !== true &&
-      removal.locked !== true
-    );
   }
 
   private currentSessionId(): string | undefined {

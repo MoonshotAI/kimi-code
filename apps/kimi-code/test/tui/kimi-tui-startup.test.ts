@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
@@ -5921,12 +5920,6 @@ describe('KimiTUI work location', () => {
     interface ExitDriver extends LocationDriver {
       handleUserInput(text: string): void;
       readonly worktreeExit: { readonly outcome?: { readonly kind: string } };
-      readonly worktreeCreation: {
-        readonly createdThisRun: Map<
-          string,
-          { name: string; repoRoot: string; setupScriptRan: boolean }
-        >;
-      };
       readonly sessionEventHandler: {
         readonly backgroundTasks: Map<string, { readonly status: 'running' | 'completed' }>;
       };
@@ -6002,7 +5995,7 @@ describe('KimiTUI work location', () => {
       expect(driver.worktreeExit.outcome?.kind).toBe('kept');
     });
 
-    it('deletes a worktree created this run on /exit after closing the untouched session', async () => {
+    it('asks on /exit even for an untouched worktree, and deletes after closing the session when chosen', async () => {
       const { harness, session, removeWorktree, driver, worktree, stop, mount } =
         await startInWorktree({ uncommittedFiles: 0 }, { mockStop: false });
       const order: string[] = [];
@@ -6015,20 +6008,22 @@ describe('KimiTUI work location', () => {
       harness.close.mockImplementation(async () => {
         order.push('harness.close');
       });
-      execFileSync('git', ['init', '-q'], { cwd: worktree });
-      driver.worktreeCreation.createdThisRun.set(worktree, {
-        name: 'wt',
-        repoRoot: 'unused',
-        setupScriptRan: false,
-      });
       await driver.createNewSession();
 
       driver.handleUserInput('/exit');
       await vi.waitFor(() => {
+        expect(mount).toHaveBeenCalled();
+      });
+      const dialog = mount.mock.calls[0]![0];
+      expect(stripVTControlCharacters(dialog.render(100).join('\n'))).toContain('Leaving worktree wt');
+      expect(stop).not.toHaveBeenCalled();
+
+      dialog.handleInput?.('\u001B[B');
+      dialog.handleInput?.('\r');
+      await vi.waitFor(() => {
         expect(harness.close).toHaveBeenCalledOnce();
       });
       expect(stop).toHaveBeenCalledOnce();
-      expect(mount).not.toHaveBeenCalled();
       expect(removeWorktree).toHaveBeenCalledWith(
         expect.objectContaining({ path: worktree, excludeSessionId: 'ses-new' }),
       );

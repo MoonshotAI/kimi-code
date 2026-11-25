@@ -98,6 +98,34 @@ describe('SearchableList', () => {
     expect(search.view().query).toBe('');
   });
 
+  it('appends bracketed pastes, chunked pastes, and multi-character text when searchable', () => {
+    const list = make({ searchable: true });
+    expect(list.handleKey(`${ESC}[200~item\r\n09${ESC}[201~`)).toBe(true);
+    expect(list.view().query).toBe('item09');
+    expect(list.selected()).toBe('item09');
+
+    list.clearQuery();
+    expect(list.handleKey(`${ESC}[200~it`)).toBe(true);
+    expect(list.isPasting()).toBe(true);
+    expect(list.handleKey('em\n')).toBe(true);
+    expect(list.handleKey(`03${ESC}[201~`)).toBe(true);
+    expect(list.isPasting()).toBe(false);
+    expect(list.view().query).toBe('item03');
+
+    list.clearQuery();
+    expect(list.handleKey('item05')).toBe(true);
+    expect(list.view().query).toBe('item05');
+    expect(list.handleKey(`${ESC}[1;5D`)).toBe(false);
+    expect(list.view().query).toBe('item05');
+  });
+
+  it('ignores bracketed pastes when not searchable', () => {
+    const list = make({ searchable: false });
+    expect(list.handleKey(`${ESC}[200~item09${ESC}[201~`)).toBe(false);
+    expect(list.isPasting()).toBe(false);
+    expect(list.view().query).toBe('');
+  });
+
   it('setItems replaces the items, keeps the query, and clamps the cursor', () => {
     const list = make({ searchable: true });
     for (const ch of 'zz') list.handleKey(ch);
