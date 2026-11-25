@@ -1857,6 +1857,90 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('resumes a session whose saved model was removed and lets the caller switch models', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-resume-removed-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      await client.setConfig({
+        providers: {
+          acme: { type: 'openai', baseUrl: 'https://acme.example.test/v1' },
+        },
+        models: {
+          'acme/old': { provider: 'acme', model: 'old-wire', maxContextSize: 100_000 },
+          'acme/new': { provider: 'acme', model: 'new-wire', maxContextSize: 200_000 },
+        },
+        defaultModel: 'acme/old',
+      });
+      await client.createSession({ id: 'ses_resume_removed_model', workDir, model: 'acme/old' });
+      await client.importContext({
+        sessionId: 'ses_resume_removed_model',
+        content: 'history from removed model',
+        source: "session 'source-a'",
+      });
+      await client.closeSession({ sessionId: 'ses_resume_removed_model' });
+      await writeFile(
+        join(homeDir, 'config.toml'),
+        `default_model = "acme/new"\n\n[providers.acme]\ntype = "openai"\nbase_url = "https://acme.example.test/v1"\n\n[models."acme/new"]\nprovider = "acme"\nmodel = "new-wire"\nmax_context_size = 200000\n`,
+      );
+      await client.getConfig({ reload: true });
+
+      const events: Event[] = [];
+      const unsubscribe = client.onEvent((event) => {
+        events.push(event);
+      });
+      const summary = await client.resumeSession({ id: 'ses_resume_removed_model' });
+
+      expect(summary.agents[MAIN_AGENT_ID]?.config.modelAlias).toBe('acme/old');
+      expect(summary.warning).toBe(
+        'Session model "acme/old" is not configured in config.toml. Use /model to select an available model.',
+      );
+      await expect(client.getStatus({ sessionId: 'ses_resume_removed_model' })).resolves.toMatchObject({
+        model: 'acme/old',
+        maxContextTokens: 200_000,
+      });
+      await expect(
+        client.setPermission({ sessionId: 'ses_resume_removed_model', mode: 'yolo' }),
+      ).resolves.toBeUndefined();
+      await expect(
+        client.setPlanMode({ sessionId: 'ses_resume_removed_model', enabled: true }),
+      ).resolves.toBeUndefined();
+      await vi.waitFor(() => {
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: 'agent.status.updated',
+            model: 'acme/old',
+            maxContextTokens: 200_000,
+          }),
+        );
+      });
+      unsubscribe();
+
+      const session = new Session({
+        id: summary.id,
+        workDir: summary.workDir,
+        summary,
+        rpc: client,
+      });
+      expect(session.getResumeState()?.warning).toBe(summary.warning);
+      await expect(session.setModel('acme/missing')).rejects.toMatchObject({
+        code: ErrorCodes.CONFIG_INVALID,
+      });
+      expect(session.getResumeState()?.warning).toBe(summary.warning);
+
+      await session.setModel('acme/new');
+      expect(session.getResumeState()?.warning).toBeUndefined();
+      await expect(client.getStatus({ sessionId: 'ses_resume_removed_model' })).resolves.toMatchObject({
+        model: 'acme/new',
+        maxContextTokens: 200_000,
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
   it('rejects a resume whose engine restore fails without an unhandled rejection from the overlapped fold', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-resume-fail-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));

@@ -177,6 +177,7 @@ interface MessageDriver {
   skillVariantPathForCommand(commandName: string, tokenStart: number): string | undefined;
   clearQueuedMessages(): void;
   closeSession(reason: string): Promise<void>;
+  deferUserMessages: boolean;
   setSession(session: unknown): Promise<void>;
   switchToSession(session: Session, statusMessage: string): Promise<void>;
   reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void>;
@@ -11287,6 +11288,90 @@ capabilities = ["image_in", "video_in"]
 
     expect(session.startBtw).not.toHaveBeenCalled();
     expect(stripSgr(renderTranscript(driver))).toContain('LLM not set');
+  });
+
+  it('blocks prompts, inline skills, and plugin commands when the session model is not configured', async () => {
+    const activatePluginCommand = vi.fn(async () => {});
+    const session = makeSession({ activatePluginCommand });
+    const { driver } = await makeDriver(session);
+    const skillDriver = driver as unknown as { skillCommandMap: Map<string, string> };
+    skillDriver.skillCommandMap.set('review', 'review');
+    driver.pluginCommandMap.set('demo:run', 'demo');
+    driver.state.appState.model = 'removed-model';
+
+    driver.handleUserInput('hello after removal');
+    driver.handleUserInput('/review');
+    driver.handleUserInput('/demo:run');
+    driver.handleUserInput('/btw side question');
+    driver.handleUserInput('/init');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Error: Model "removed-model" is not configured in config.toml. Use /model to select an available model.',
+      );
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    expect(activatePluginCommand).not.toHaveBeenCalled();
+    expect(session.startBtw).not.toHaveBeenCalled();
+    expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+    expect(session.init).not.toHaveBeenCalled();
+    expect(driver.deferUserMessages).toBe(false);
+
+    driver.state.appState.availableModels['removed-model'] = {
+      provider: 'test',
+      model: 'removed-wire',
+      maxContextSize: 100,
+    };
+    driver.handleUserInput('hello after re-adding');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('blocks input routed to an open /btw panel when the session model becomes unavailable', async () => {
+    const { driver, session } = await makeDriver();
+    await openBtwPanel(driver, session);
+    session.prompt.mockClear();
+    driver.state.appState.model = 'removed-model';
+
+    driver.handleUserInput('follow up in btw');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Error: Model "removed-model" is not configured in config.toml. Use /model to select an available model.',
+      );
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('does not close the active session when switching to the same session instance', async () => {
+    const { driver, session } = await makeDriver();
+
+    await driver.setSession(session);
+
+    expect(session.close).not.toHaveBeenCalled();
+  });
+
+  it('shows the resume warning when switching to a session whose model is unavailable', async () => {
+    const { driver } = await makeDriver();
+    const resumed = makeSession({
+      id: 'ses-removed',
+      getResumeState: vi.fn(() => ({
+        sessionMetadata: {},
+        agents: {},
+        warning:
+          'Session model "removed-model" is not configured in config.toml. Use /model to select an available model.',
+      })),
+    });
+
+    await driver.switchToSession(resumed as unknown as Session, 'Resumed session (ses-removed).');
+
+    expect(stripSgr(renderTranscript(driver))).toContain(
+      'Warning: Session model "removed-model" is not configured in config.toml. Use /model to select an available model.',
+    );
+    expect(stripSgr(renderTranscript(driver))).toContain('Resumed session (ses-removed).');
   });
 
   it('recomputes contextUsage when a status update carries contextTokens without it', async () => {
