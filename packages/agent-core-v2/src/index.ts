@@ -726,6 +726,7 @@ export * from '#/agent/permissionRules/projectPermissionRules';
 export * from '#/agent/permissionRules/projectPermissionRulesService';
 export * from '#/agent/pluginCommand/pluginCommand';
 export * from '#/agent/pluginCommand/pluginCommandService';
+export * from '#/agent/profile/errors';
 export * from '#/agent/profile/profile';
 export * from '#/agent/profile/profileService';
 export * from '#/agent/profile/context';

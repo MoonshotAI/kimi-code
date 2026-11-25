@@ -8,6 +8,7 @@ import {
   IAgentTodoService,
   IAgentTowerService,
   MAIN_AGENT_ID,
+  missingConfiguredModelAlias,
   planKey,
   type IAgentScopeHandle,
   type ServiceIdentifier,
@@ -19,7 +20,7 @@ import type {
   GoalState,
   TodoItemState,
 } from '../../../protocol/ws-agent';
-import { missingConfiguredModelAlias, readLegacyStatus } from '../../../services/legacyStatus/legacyStatus';
+import { readLegacyStatus } from '../../../services/legacyStatus/legacyStatus';
 
 export function readAgentState(handle: IAgentScopeHandle | undefined, running: boolean): AgentState {
   if (handle === undefined) {

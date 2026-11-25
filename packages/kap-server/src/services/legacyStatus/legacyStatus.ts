@@ -1,14 +1,12 @@
 import {
   agentContextOf,
-  ErrorCodes,
   IAgentLoopService,
   ISessionTokenCountingService,
   ISessionUsageService,
   IModelCatalog,
   IModelService,
+  isMissingConfiguredModelError,
   MAIN_AGENT_ID,
-  ProfileErrors,
-  isError2,
   type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
@@ -41,7 +39,7 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   try {
     modelSpec = model === '' ? undefined : profile.resolveModelContext().model;
   } catch (error) {
-    if (context.agentId !== MAIN_AGENT_ID || !isMissingConfiguredModel(error, model)) throw error;
+    if (context.agentId !== MAIN_AGENT_ID || !isMissingConfiguredModelError(error, model)) throw error;
   }
   let maxContextTokens = modelSpec?.maxInputSize ?? modelSpec?.maxContextSize ?? 0;
   if (maxContextTokens === 0) {
@@ -53,26 +51,6 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
     maxContextTokens: maxContextTokens > 0 ? maxContextTokens : undefined,
     model,
   };
-}
-
-export function isMissingConfiguredModel(error: unknown, model: string): boolean {
-  return isError2(error) &&
-    (error.code === ErrorCodes.CONFIG_INVALID || error.code === ProfileErrors.codes.MODEL_CONFIG_INVALID) &&
-    error.details?.['model'] === model &&
-    error.message === `Model "${model}" is not configured in config.toml.`;
-}
-
-export function missingConfiguredModelAlias(agent: IAgentScopeHandle): string | undefined {
-  const profile = agent.accessor.get(IAgentLoopService);
-  const previous = profile.getModel();
-  if (previous === '' || typeof profile.resolveModelContext !== 'function') return undefined;
-  try {
-    profile.resolveModelContext();
-    return undefined;
-  } catch (error) {
-    if (!isMissingConfiguredModel(error, previous)) throw error;
-    return previous;
-  }
 }
 
 function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined {

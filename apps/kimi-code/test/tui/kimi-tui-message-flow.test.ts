@@ -11311,6 +11311,68 @@ capabilities = ["image_in", "video_in"]
     expect(stripSgr(renderTranscript(driver))).toContain('LLM not set');
   });
 
+  it('blocks prompts, inline skills, and plugin commands when the session model is not configured', async () => {
+    const activatePluginCommand = vi.fn(async () => {});
+    const session = makeSession({ activatePluginCommand });
+    const { driver } = await makeDriver(session);
+    const skillDriver = driver as unknown as { skillCommandMap: Map<string, string> };
+    skillDriver.skillCommandMap.set('review', 'review');
+    driver.pluginCommandMap.set('demo:run', 'demo');
+    driver.state.appState.model = 'removed-model';
+
+    driver.handleUserInput('hello after removal');
+    driver.handleUserInput('/review');
+    driver.handleUserInput('/demo:run');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Error: Model "removed-model" is not configured in config.toml. Use /model to select an available model.',
+      );
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    expect(activatePluginCommand).not.toHaveBeenCalled();
+
+    driver.state.appState.availableModels['removed-model'] = {
+      provider: 'test',
+      model: 'removed-wire',
+      maxContextSize: 100,
+    };
+    driver.handleUserInput('hello after re-adding');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('does not close the active session when switching to the same session instance', async () => {
+    const { driver, session } = await makeDriver();
+
+    await driver.setSession(session);
+
+    expect(session.close).not.toHaveBeenCalled();
+  });
+
+  it('shows the resume warning when switching to a session whose model is unavailable', async () => {
+    const { driver } = await makeDriver();
+    const resumed = makeSession({
+      id: 'ses-removed',
+      getResumeState: vi.fn(() => ({
+        sessionMetadata: {},
+        agents: {},
+        warning:
+          'Session model "removed-model" is not configured in config.toml. Use /model to select an available model.',
+      })),
+    });
+
+    await driver.switchToSession(resumed as unknown as Session, 'Resumed session (ses-removed).');
+
+    expect(stripSgr(renderTranscript(driver))).toContain(
+      'Warning: Session model "removed-model" is not configured in config.toml. Use /model to select an available model.',
+    );
+    expect(stripSgr(renderTranscript(driver))).toContain('Resumed session (ses-removed).');
+  });
+
   it('recomputes contextUsage when a status update carries contextTokens without it', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.contextTokens = 0;
