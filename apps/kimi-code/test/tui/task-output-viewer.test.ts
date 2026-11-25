@@ -1,9 +1,11 @@
-import type { Terminal } from '@moonshot-ai/pi-tui';
+import { TuiAltScreen, stripTerminalSequences, visibleWidth, type Terminal } from '@moonshot-ai/pi-tui';
 import type { BackgroundTaskInfo } from '@moonshot-ai/kimi-code-sdk';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { TaskOutputViewer } from '@/tui/components/dialogs/task-output-viewer';
-import { darkColors } from '@/tui/theme/colors';
+import { beginScreenTakeover, endScreenTakeover } from '#/tui/utils/screen-takeover';
+
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
 function strip(text: string): string {
@@ -271,5 +273,121 @@ describe('TaskOutputViewer — live tail via setProps', () => {
     });
     const after = strip(viewer.render(120).join('\n'));
     expect(after).toBe(before);
+  });
+});
+
+describe('TaskOutputViewer — fullscreen mouse and scrollbar', () => {
+  function bigOutput(n: number): string {
+    return Array.from({ length: n }, (_, i) => `line-${String(i + 1).padStart(3, '0')}`).join('\n');
+  }
+
+  it('omits scrollbar glyphs in direct regular-mode render', () => {
+    const viewer = makeViewer({ output: bigOutput(60), rows: 14 });
+    const rawRows = viewer.render(80);
+    expect(rawRows).toHaveLength(14);
+    for (const rawRow of rawRows.slice(2, -2)) {
+      expect(visibleWidth(rawRow)).toBe(80);
+      const row = stripTerminalSequences(rawRow);
+      expect(row.startsWith('│ ')).toBe(true);
+      expect(row.endsWith(' │')).toBe(true);
+      expect(row[78]).toBe(' ');
+      expect(row).not.toMatch(/[┃█]/);
+    }
+  });
+
+  it('supports mouse wheel, scrollbar drag inside frame rails, resize, and clickable footer close in TuiAltScreen', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(10_000);
+
+    const onClose = vi.fn();
+    const width = 80;
+    const height = 14;
+    const vt = new VirtualTerminal(width, height);
+    const ui = new TuiAltScreen(vt);
+    const viewer = new TaskOutputViewer(
+      {
+        taskId: 'bash-aaaaaaaa',
+        info: info(),
+        output: bigOutput(60),
+        onClose,
+      },
+      vt,
+    );
+
+    const takeover = beginScreenTakeover(ui, viewer);
+    ui.setFocus(viewer);
+    ui.start();
+    onTestFinished(() => {
+      endScreenTakeover(ui, takeover);
+      ui.stop();
+      vi.useRealTimers();
+    });
+    await vt.waitForRender();
+
+    const readRows = (): string[] => vt.getViewport().map(strip);
+
+    const initial = readRows();
+    expect(initial.join('\n')).toContain('line-001');
+    expect(initial[1]![0]).toBe('╭');
+    expect(initial[1]![width - 1]).toBe('╮');
+    const bodyRows = initial.slice(2, height - 2);
+    for (const row of bodyRows) {
+      expect(row[0]).toBe('│');
+      expect(row[width - 1]).toBe('│');
+    }
+    expect(bodyRows.some((row) => row[width - 2] === '┃' || row[width - 2] === '│')).toBe(true);
+
+    for (let i = 0; i < 6; i++) {
+      vt.sendInput('\u001B[<65;20;5M');
+    }
+    await vt.waitForRender();
+    const afterWheelDown = readRows();
+    expect(afterWheelDown.join('\n')).not.toContain('line-001');
+    expect(afterWheelDown.join('\n')).toContain('line-007');
+
+    const scrollbarCol = width - 1;
+    vt.sendInput(`\u001B[<0;${String(scrollbarCol)};3M`);
+    vt.sendInput(`\u001B[<32;${String(scrollbarCol)};${String(height - 2)}M`);
+    vt.sendInput(`\u001B[<0;${String(scrollbarCol)};${String(height - 2)}m`);
+    await vt.waitForRender();
+    const afterDrag = readRows();
+    expect(afterDrag.join('\n')).toContain('line-060');
+    for (const row of afterDrag.slice(2, height - 2)) {
+      expect(row[width - 1]).toBe('│');
+    }
+
+    vt.resize(width, 20);
+    await vt.waitForRender();
+    const resized = readRows();
+    expect(resized).toHaveLength(20);
+    for (const row of resized.slice(2, 18)) {
+      expect(row[0]).toBe('│');
+      expect(row[width - 1]).toBe('│');
+    }
+
+    const footerRow = 20;
+    const cancelCol = resized[19]!.indexOf('Q/Esc');
+    expect(cancelCol).toBeGreaterThan(0);
+
+    vt.sendInput(`\u001B[<0;${String(cancelCol + 1)};${String(footerRow)}M`);
+    vt.sendInput(`\u001B[<0;${String(cancelCol + 1)};${String(footerRow)}m`);
+    await vt.waitForRender();
+    expect(onClose).not.toHaveBeenCalled();
+
+    ui.setFocus(null);
+    expect(viewer.focused).toBe(false);
+    vi.setSystemTime(10_400);
+    vt.sendInput(`\u001B[<0;${String(cancelCol + 1)};${String(footerRow)}M`);
+    vt.sendInput(`\u001B[<0;${String(cancelCol + 1)};${String(footerRow)}m`);
+    await vt.waitForRender();
+    expect(ui.getFocusedComponent()).toBe(viewer);
+    expect(viewer.focused).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+
+    vt.sendInput(`\u001B[<0;${String(cancelCol + 1)};${String(footerRow)}M`);
+    vt.sendInput(`\u001B[<0;${String(cancelCol + 1)};${String(footerRow)}m`);
+    await vt.waitForRender();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(ui.getFocusedComponent()).toBe(viewer);
   });
 });

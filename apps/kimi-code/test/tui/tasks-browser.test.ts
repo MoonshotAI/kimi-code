@@ -1,6 +1,11 @@
-import type { Terminal } from '@moonshot-ai/pi-tui';
+import {
+  TuiAltScreen,
+  stripTerminalSequences,
+  visibleWidth,
+  type Terminal,
+} from '@moonshot-ai/pi-tui';
 import type { BackgroundTaskInfo, BackgroundTaskStatus, Event } from '@moonshot-ai/kimi-code-sdk';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
   TasksBrowserApp,
@@ -12,6 +17,9 @@ import { TaskOutputViewer } from '@/tui/components/dialogs/task-output-viewer';
 import { SubagentActivityStore } from '@/tui/controllers/subagent-activity-store';
 import { TasksBrowserController, type TasksBrowserState } from '@/tui/controllers/tasks-browser';
 import { darkColors } from '@/tui/theme/colors';
+import { beginScreenTakeover, endScreenTakeover } from '#/tui/utils/screen-takeover';
+
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
 function strip(text: string): string {
@@ -877,5 +885,431 @@ describe('TasksBrowserController — opening an agent task', () => {
     expect(browser.tailOutput).toContain('── step 0 ──');
     expect(browser.tailOutput).toContain('✓ Used Grep (foo) · 2 matches across 2 files');
     controller.close();
+  });
+});
+
+describe('TasksBrowserApp — fullscreen mouse, panes, and layout parity', () => {
+  function click(vt: VirtualTerminal, col1: number, row1: number): void {
+    vt.sendInput(`\u001B[<0;${String(col1)};${String(row1)}M`);
+    vt.sendInput(`\u001B[<0;${String(col1)};${String(row1)}m`);
+  }
+
+  function makeRichTasks(count: number): BackgroundTaskInfo[] {
+    return Array.from({ length: count }, (_, i) =>
+      task({
+        taskId: `bash-${String(i + 1).padStart(8, '0')}`,
+        status: 'running',
+        description: `worker process ${String(i + 1)}`,
+        command: `node worker-${String(i + 1)}.js`,
+        pid: 2000 + i,
+        exitCode: 0,
+        stopReason: `reason-${String(i + 1)}`,
+        startedAt: i + 1,
+      }),
+    );
+  }
+
+  function makeBigTail(count: number): string {
+    return Array.from({ length: count }, (_, i) => `tail-line-${String(i + 1).padStart(3, '0')}`).join(
+      '\n',
+    );
+  }
+
+  function measureLeftPaneWidth(renderedRow: string): number {
+    const plain = stripTerminalSequences(renderedRow);
+    const leftEnd = plain.indexOf('╮');
+    expect(leftEnd).toBeGreaterThan(0);
+    return leftEnd + 1;
+  }
+
+  it('matches original clamp(floor(w * 0.32), 28, 44) column widths across widths 48, 80, 100, 120, 160', () => {
+    const tasks = [task({ taskId: 'bash-aaaaaaaa', status: 'running' })];
+    const cases: readonly [number, number][] = [
+      [48, 28],
+      [80, 28],
+      [100, 32],
+      [120, 38],
+      [160, 44],
+    ];
+    for (const [width, expectedLeft] of cases) {
+      const app = new TasksBrowserApp(
+        makeProps({ tasks, selectedTaskId: 'bash-aaaaaaaa', tailOutput: 'hello' }),
+        fakeTerminal(20, width),
+      );
+      const lines = app.render(width);
+      expect(lines).toHaveLength(20);
+      expect(visibleWidth(lines[1]!)).toBe(width);
+      const leftWidth = measureLeftPaneWidth(lines[1]!);
+      expect(leftWidth).toBe(expectedLeft);
+      const plainTop = stripTerminalSequences(lines[1]!);
+      expect(plainTop[expectedLeft]).toBe('╭');
+      expect(plainTop[width - 1]).toBe('╮');
+    }
+
+    const terminal = fakeTerminal(20, 120);
+    const resizable = new TasksBrowserApp(
+      makeProps({ tasks, selectedTaskId: 'bash-aaaaaaaa', tailOutput: 'hello' }),
+      terminal,
+    );
+    expect(measureLeftPaneWidth(resizable.render(120)[1]!)).toBe(38);
+    expect(stripTerminalSequences(resizable.render(40).join('\n'))).toContain('Terminal too small');
+    expect(measureLeftPaneWidth(resizable.render(80)[1]!)).toBe(28);
+  });
+
+  it('omits scrollbar glyphs and schedules zero timers in regular-mode direct render', () => {
+    vi.useFakeTimers();
+    try {
+      const tasks = makeRichTasks(25);
+      const app = new TasksBrowserApp(
+        makeProps({
+          tasks,
+          selectedTaskId: 'bash-00000001',
+          tailOutput: makeBigTail(80),
+        }),
+        fakeTerminal(16, 100),
+      );
+      const rows = app.render(100);
+      expect(rows).toHaveLength(16);
+      for (const rawRow of rows) {
+        expect(visibleWidth(rawRow)).toBe(100);
+        expect(stripTerminalSequences(rawRow)).not.toMatch(/[┃█]/);
+      }
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('contains wheel scrolling independently per pane without leaking to Preview Output', async () => {
+    const width = 100;
+    const height = 14;
+    const vt = new VirtualTerminal(width, height);
+    const ui = new TuiAltScreen(vt);
+    const tasks = makeRichTasks(20);
+    const app = new TasksBrowserApp(
+      makeProps({
+        tasks,
+        selectedTaskId: 'bash-00000001',
+        tailOutput: makeBigTail(60),
+      }),
+      vt,
+    );
+    const takeover = beginScreenTakeover(ui, app);
+    ui.setFocus(app);
+    ui.start();
+    onTestFinished(() => {
+      endScreenTakeover(ui, takeover);
+      ui.stop();
+    });
+    await vt.waitForRender();
+
+    const readRows = (): string[] => vt.getViewport().map(strip);
+    const initial = readRows();
+    const leftWidth = measureLeftPaneWidth(initial[1]!);
+    expect(leftWidth).toBe(32);
+    expect(initial.join('\n')).toContain('bash-00000001');
+    expect(initial.join('\n')).not.toContain('bash-00000020');
+    expect(initial.join('\n')).toContain('tail-line-060');
+    expect(initial.join('\n')).not.toContain('tail-line-001');
+
+    const detailTopRow = initial.findIndex((row) => row.includes('Detail'));
+    const previewTopRow = initial.findIndex((row) => row.includes('Preview Output'));
+    expect(detailTopRow).toBe(1);
+    expect(previewTopRow).toBeGreaterThan(detailTopRow + 1);
+
+    for (let i = 0; i < 20; i++) {
+      vt.sendInput('\u001B[<65;5;4M');
+    }
+    await vt.waitForRender();
+    const afterListWheel = readRows();
+    expect(afterListWheel.join('\n')).toContain('bash-00000020');
+    expect(afterListWheel.join('\n')).toContain('tail-line-060');
+    expect(afterListWheel.join('\n')).not.toContain('tail-line-001');
+
+    for (let i = 0; i < 10; i++) {
+      vt.sendInput(`\u001B[<64;5;4M`);
+    }
+    await vt.waitForRender();
+    expect(readRows().join('\n')).toContain('tail-line-060');
+
+    const rightCol1 = leftWidth + 4;
+    const detailBodyRow1 = detailTopRow + 2;
+    for (let i = 0; i < 10; i++) {
+      vt.sendInput(`\u001B[<65;${String(rightCol1)};${String(detailBodyRow1)}M`);
+    }
+    await vt.waitForRender();
+    const afterDetailWheel = readRows();
+    expect(afterDetailWheel.join('\n')).toContain('reason-1');
+    expect(afterDetailWheel.join('\n')).toContain('tail-line-060');
+
+    for (let i = 0; i < 10; i++) {
+      vt.sendInput(`\u001B[<64;${String(rightCol1)};${String(detailBodyRow1)}M`);
+    }
+    await vt.waitForRender();
+    const afterDetailWheelUp = readRows();
+    expect(afterDetailWheelUp.join('\n')).toContain('Task ID:');
+    expect(afterDetailWheelUp.join('\n')).toContain('tail-line-060');
+
+    const previewBodyRow1 = previewTopRow + 2;
+    for (let i = 0; i < 30; i++) {
+      vt.sendInput(`\u001B[<64;${String(rightCol1)};${String(previewBodyRow1)}M`);
+    }
+    await vt.waitForRender();
+    const afterPreviewWheel = readRows();
+    expect(afterPreviewWheel.join('\n')).not.toContain('tail-line-060');
+    expect(afterPreviewWheel.join('\n')).toContain('tail-line-030');
+
+    app.setProps(
+      makeProps({
+        tasks,
+        selectedTaskId: 'bash-00000001',
+        tailOutput: makeBigTail(65),
+      }),
+    );
+    ui.requestRender();
+    await vt.waitForRender();
+    expect(readRows().join('\n')).not.toContain('tail-line-065');
+
+    app.setProps(
+      makeProps({
+        tasks,
+        selectedTaskId: 'bash-00000002',
+        tailOutput: makeBigTail(65),
+      }),
+    );
+    ui.requestRender();
+    await vt.waitForRender();
+    const afterTaskChange = readRows();
+    expect(afterTaskChange.join('\n')).toContain('tail-line-065');
+    expect(afterTaskChange.join('\n')).toContain('Task ID:');
+
+    vt.sendInput('\u001B[5~');
+    await vt.waitForRender();
+    const afterPageUp = readRows();
+    expect(afterPageUp.join('\n')).not.toContain('tail-line-065');
+    expect(afterPageUp.join('\n')).toContain('bash-00000002');
+  });
+
+  it('never selects on pointer move, selects on click, opens output on list double-click, and preserves preview drag selection', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(10_000);
+
+    const onSelect = vi.fn();
+    const onOpenOutput = vi.fn();
+    const tasks = [
+      task({
+        taskId: 'agent-00000001',
+        kind: 'agent',
+        status: 'running',
+        agentId: 'a1',
+        model: 'k2-cheap',
+        startedAt: 1,
+      } as Partial<BackgroundTaskInfo>),
+      task({ taskId: 'bash-00000002', status: 'running', startedAt: 2 }),
+      task({ taskId: 'bash-00000003', status: 'running', startedAt: 3 }),
+    ];
+
+    const vt = new VirtualTerminal(100, 16);
+    const ui = new TuiAltScreen(vt);
+    const app = new TasksBrowserApp(
+      makeProps({
+        tasks,
+        selectedTaskId: 'agent-00000001',
+        tailOutput: 'line one\nline two',
+        availableModels: CATALOG,
+        onSelect,
+        onOpenOutput,
+      }),
+      vt,
+    );
+    const takeover = beginScreenTakeover(ui, app);
+    ui.setFocus(app);
+    ui.start();
+    onTestFinished(() => {
+      endScreenTakeover(ui, takeover);
+      ui.stop();
+      vi.useRealTimers();
+    });
+    await vt.waitForRender();
+
+    const readRows = (): string[] => vt.getViewport().map(strip);
+    const rows = readRows();
+    const row2 = rows.findIndex((row) => row.includes('bash-00000002'));
+    const row3 = rows.findIndex((row) => row.includes('bash-00000003'));
+    const modelRow = rows.findIndex((row) => row.includes('Kimi K2 Cheap'));
+    const previewTopRow = rows.findIndex((row) => row.includes('Preview Output'));
+    expect(row2).toBeGreaterThan(1);
+    expect(row3).toBeGreaterThan(row2);
+    expect(modelRow).toBeGreaterThan(1);
+    expect(previewTopRow).toBeGreaterThan(1);
+
+    vi.setSystemTime(10_400);
+    vt.sendInput(`\u001B[<35;6;${String(row2 + 1)}M`);
+    vt.sendInput(`\u001B[<35;6;${String(row3 + 1)}M`);
+    vt.sendInput(`\u001B[<35;6;${String(modelRow + 1)}M`);
+    await vt.waitForRender();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onOpenOutput).not.toHaveBeenCalled();
+
+    ui.setFocus(null);
+    expect(app.focused).toBe(false);
+    click(vt, 6, row2 + 1);
+    await vt.waitForRender();
+    expect(ui.getFocusedComponent()).toBe(app);
+    expect(app.focused).toBe(true);
+    expect(onSelect).not.toHaveBeenCalled();
+
+    vi.setSystemTime(11_000);
+    click(vt, 6, row2 + 1);
+    await vt.waitForRender();
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenLastCalledWith('bash-00000002');
+    expect(onOpenOutput).not.toHaveBeenCalled();
+
+    vi.setSystemTime(11_600);
+    click(vt, 6, modelRow + 1);
+    await vt.waitForRender();
+    expect(onSelect).toHaveBeenLastCalledWith('agent-00000001');
+
+    vi.setSystemTime(12_200);
+    click(vt, 6, row3 + 1);
+    vi.setSystemTime(12_350);
+    click(vt, 6, row3 + 1);
+    await vt.waitForRender();
+    expect(onSelect).toHaveBeenLastCalledWith('bash-00000003');
+    expect(onOpenOutput).toHaveBeenCalledTimes(1);
+    expect(onOpenOutput).toHaveBeenLastCalledWith('bash-00000003');
+
+    const leftWidth = measureLeftPaneWidth(rows[1]!);
+    const previewColStart = leftWidth + 2;
+    const previewTextRow = previewTopRow + 2;
+    vi.setSystemTime(13_000);
+    vt.sendInput(`\x1b[<0;${String(previewColStart)};${String(previewTextRow)}M`);
+    vt.sendInput(`\x1b[<32;${String(previewColStart + 4)};${String(previewTextRow)}M`);
+    vt.sendInput(`\x1b[<0;${String(previewColStart + 4)};${String(previewTextRow)}m`);
+    await vt.waitForRender();
+    expect(ui.hasActiveSelection()).toBe(true);
+    expect(onOpenOutput).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles header filter, footer actions, and locks list clicks during stop confirm', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(10_000);
+
+    const onSelect = vi.fn();
+    const onToggleFilter = vi.fn();
+    const onRefresh = vi.fn();
+    const onCancel = vi.fn();
+    const onStopConfirmed = vi.fn();
+    const onOpenOutput = vi.fn();
+    const tasks = [
+      task({ taskId: 'bash-00000001', status: 'running', startedAt: 1 }),
+      task({ taskId: 'bash-00000002', status: 'running', startedAt: 2 }),
+    ];
+
+    const vt = new VirtualTerminal(100, 16);
+    const ui = new TuiAltScreen(vt);
+    const app = new TasksBrowserApp(
+      makeProps({
+        tasks,
+        selectedTaskId: 'bash-00000001',
+        onSelect,
+        onToggleFilter,
+        onRefresh,
+        onCancel,
+        onStopConfirmed,
+        onOpenOutput,
+      }),
+      vt,
+    );
+    const takeover = beginScreenTakeover(ui, app);
+    ui.setFocus(app);
+    ui.start();
+    onTestFinished(() => {
+      endScreenTakeover(ui, takeover);
+      ui.stop();
+      vi.useRealTimers();
+    });
+    await vt.waitForRender();
+
+    const readRows = (): string[] => vt.getViewport().map(strip);
+    const initial = readRows();
+    const headerRow1 = 1;
+    const footerRow1 = 16;
+
+    const filterHeaderCol = initial[0]!.indexOf('filter=ALL');
+    const openCol = initial[15]!.indexOf('Enter/O');
+    const stopCol = initial[15]!.indexOf('S stop');
+    const refreshCol = initial[15]!.indexOf('R refresh');
+    const filterFooterCol = initial[15]!.indexOf('Tab filter');
+    const cancelCol = initial[15]!.indexOf('Q/Esc');
+    const task2Row = initial.findIndex((row) => row.includes('bash-00000002'));
+    expect(filterHeaderCol).toBeGreaterThan(0);
+    expect(openCol).toBeGreaterThan(0);
+    expect(stopCol).toBeGreaterThan(0);
+    expect(refreshCol).toBeGreaterThan(0);
+    expect(filterFooterCol).toBeGreaterThan(0);
+    expect(cancelCol).toBeGreaterThan(0);
+    expect(task2Row).toBeGreaterThan(1);
+
+    vi.setSystemTime(10_400);
+    click(vt, filterHeaderCol + 2, headerRow1);
+    await vt.waitForRender();
+    expect(onToggleFilter).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(11_000);
+    click(vt, filterFooterCol + 2, footerRow1);
+    await vt.waitForRender();
+    expect(onToggleFilter).toHaveBeenCalledTimes(2);
+
+    vi.setSystemTime(11_600);
+    click(vt, refreshCol + 2, footerRow1);
+    await vt.waitForRender();
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(12_200);
+    click(vt, openCol + 2, footerRow1);
+    await vt.waitForRender();
+    expect(onOpenOutput).toHaveBeenCalledWith('bash-00000001');
+
+    vi.setSystemTime(12_800);
+    click(vt, stopCol + 1, footerRow1);
+    await vt.waitForRender();
+    const confirmRows = readRows();
+    expect(confirmRows[15]).toContain('Stop bash-00000001?');
+
+    vi.setSystemTime(13_200);
+    click(vt, 6, task2Row + 1);
+    click(vt, filterHeaderCol + 2, headerRow1);
+    await vt.waitForRender();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onToggleFilter).toHaveBeenCalledTimes(2);
+    expect(readRows()[15]).toContain('Stop bash-00000001?');
+
+    const cancelConfirmCol = confirmRows[15]!.indexOf('N/esc');
+    expect(cancelConfirmCol).toBeGreaterThan(0);
+    click(vt, cancelConfirmCol + 1, footerRow1);
+    await vt.waitForRender();
+    expect(onStopConfirmed).not.toHaveBeenCalled();
+    expect(readRows()[15]).not.toContain('Stop bash-00000001?');
+
+    vi.setSystemTime(13_800);
+    click(vt, stopCol + 1, footerRow1);
+    await vt.waitForRender();
+    const confirmRows2 = readRows();
+    const confirmYesCol = confirmRows2[15]!.indexOf('Y confirm');
+    expect(confirmYesCol).toBeGreaterThan(0);
+
+    vi.setSystemTime(14_200);
+    click(vt, confirmYesCol + 1, footerRow1);
+    await vt.waitForRender();
+    expect(onStopConfirmed).toHaveBeenCalledTimes(1);
+    expect(onStopConfirmed).toHaveBeenCalledWith('bash-00000001');
+    expect(readRows()[15]).not.toContain('Stop bash-00000001?');
+
+    vi.setSystemTime(14_800);
+    click(vt, cancelCol + 1, footerRow1);
+    await vt.waitForRender();
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 });

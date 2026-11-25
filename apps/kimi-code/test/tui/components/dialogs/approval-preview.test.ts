@@ -1,10 +1,13 @@
-import type { Terminal } from '@moonshot-ai/pi-tui';
-import { describe, expect, it } from 'vitest';
+import { TuiAltScreen, stripTerminalSequences, visibleWidth, type Terminal } from '@moonshot-ai/pi-tui';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
   ApprovalPreviewViewer,
   type ApprovalPreviewBlock,
 } from '#/tui/components/dialogs/approval-preview';
+import { beginScreenTakeover, endScreenTakeover } from '#/tui/utils/screen-takeover';
+
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 const ANSI_SGR = /\[[0-9;]*m/g;
 function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '');
@@ -162,5 +165,99 @@ describe('ApprovalPreviewViewer', () => {
     const first = viewer.render(80).join('\n');
     const second = viewer.render(80).join('\n');
     expect(first).toBe(second);
+  });
+
+  it('omits scrollbar glyphs in direct regular-mode render and supports Ctrl+D / Ctrl+U paging', () => {
+    const content = Array.from({ length: 80 }, (_, i) => `row-${String(i + 1)}`).join('\n');
+    const viewer = makeViewer({
+      block: { type: 'file_content', path: 'src/big.ts', content },
+      rows: 14,
+    });
+    const rawRows = viewer.render(80);
+    expect(rawRows).toHaveLength(14);
+    for (const rawRow of rawRows.slice(2, -2)) {
+      expect(visibleWidth(rawRow)).toBe(80);
+      const row = stripTerminalSequences(rawRow);
+      expect(row.startsWith('│ ')).toBe(true);
+      expect(row.endsWith(' │')).toBe(true);
+      expect(row[78]).toBe(' ');
+      expect(row).not.toMatch(/[┃█]/);
+    }
+
+    viewer.handleInput('\u0004');
+    const down = strip(viewer.render(80).join('\n'));
+    expect(down).not.toContain('row-1\n');
+    expect(down).toContain('row-10');
+
+    viewer.handleInput('\u0015');
+    const backUp = strip(viewer.render(80).join('\n'));
+    expect(backUp).toContain('row-1');
+  });
+
+  it('supports mouse wheel, scrollbar inside rails, focus restoration, and clickable close in TuiAltScreen', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(10_000);
+
+    const onClose = vi.fn();
+    const width = 90;
+    const height = 14;
+    const vt = new VirtualTerminal(width, height);
+    const ui = new TuiAltScreen(vt);
+    const content = Array.from({ length: 80 }, (_, i) => `preview-line-${String(i + 1)}`).join('\n');
+    const viewer = new ApprovalPreviewViewer(
+      {
+        block: { type: 'file_content', path: 'src/big.ts', content },
+        onClose,
+      },
+      vt,
+    );
+
+    const takeover = beginScreenTakeover(ui, viewer);
+    ui.setFocus(viewer);
+    ui.start();
+    onTestFinished(() => {
+      endScreenTakeover(ui, takeover);
+      ui.stop();
+      vi.useRealTimers();
+    });
+    await vt.waitForRender();
+
+    const readRows = (): string[] => vt.getViewport().map(strip);
+
+    const initial = readRows();
+    expect(initial.join('\n')).toContain('preview-line-1');
+    const bodyRows = initial.slice(2, height - 2);
+    for (const row of bodyRows) {
+      expect(row[0]).toBe('│');
+      expect(row[width - 1]).toBe('│');
+    }
+    expect(bodyRows.some((row) => row[width - 2] === '┃' || row[width - 2] === '│')).toBe(true);
+
+    for (let i = 0; i < 8; i++) {
+      vt.sendInput('\u001B[<65;20;5M');
+    }
+    await vt.waitForRender();
+    const afterWheel = readRows();
+    expect(afterWheel.join('\n')).not.toContain('preview-line-1\n');
+    expect(afterWheel.join('\n')).toContain('preview-line-10');
+
+    const cancelCol = afterWheel[height - 1]!.indexOf('Q/Esc/Ctrl+E');
+    expect(cancelCol).toBeGreaterThan(0);
+
+    ui.setFocus(null);
+    expect(viewer.focused).toBe(false);
+    vi.setSystemTime(10_400);
+    vt.sendInput(`\u001B[<0;${String(cancelCol + 1)};${String(height)}M`);
+    vt.sendInput(`\u001B[<0;${String(cancelCol + 1)};${String(height)}m`);
+    await vt.waitForRender();
+    expect(ui.getFocusedComponent()).toBe(viewer);
+    expect(viewer.focused).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+
+    vt.sendInput(`\u001B[<0;${String(cancelCol + 1)};${String(height)}M`);
+    vt.sendInput(`\u001B[<0;${String(cancelCol + 1)};${String(height)}m`);
+    await vt.waitForRender();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(ui.getFocusedComponent()).toBe(viewer);
   });
 });

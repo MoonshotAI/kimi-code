@@ -1,9 +1,12 @@
-import type { Terminal } from '@moonshot-ai/pi-tui';
+import { TuiAltScreen, stripTerminalSequences, visibleWidth, type Terminal } from '@moonshot-ai/pi-tui';
 import type { BackgroundTaskInfo } from '@moonshot-ai/kimi-code-sdk';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { AgentActivityViewer, formatSubagentActivityPreview } from '#/tui/components/dialogs/agent-activity-viewer';
 import type { SubagentActivityRecord } from '#/tui/controllers/subagent-activity-store';
+import { beginScreenTakeover, endScreenTakeover } from '#/tui/utils/screen-takeover';
+
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
 function strip(text: string): string {
@@ -308,5 +311,120 @@ describe('formatSubagentActivityPreview', () => {
 
   it('returns an empty string for a terminal record without any activity', () => {
     expect(formatSubagentActivityPreview(record({ status: 'failed' }))).toBe('');
+  });
+});
+
+describe('AgentActivityViewer — fullscreen mouse and scrollbar', () => {
+  it('omits scrollbar glyphs in direct regular-mode render', () => {
+    const steps = Array.from({ length: 12 }, (_, i) => ({
+      step: i,
+      textTail: `step ${String(i)} output`,
+      toolCalls: [],
+    }));
+    const viewer = makeViewer({ record: record({ steps, totalSteps: 12 }) }, 12, 80);
+    const rawRows = viewer.render(80);
+    expect(rawRows).toHaveLength(12);
+    for (const rawRow of rawRows.slice(2, -2)) {
+      expect(visibleWidth(rawRow)).toBe(80);
+      const row = stripTerminalSequences(rawRow);
+      expect(row.startsWith('│ ')).toBe(true);
+      expect(row.endsWith(' │')).toBe(true);
+      expect(row[78]).toBe(' ');
+      expect(row).not.toMatch(/[┃█]/);
+    }
+  });
+
+  it('supports mouse wheel scrolling, clickable Ctrl+O expand toggle, and clickable close in TuiAltScreen', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(10_000);
+
+    const onClose = vi.fn();
+    const width = 90;
+    const height = 14;
+    const vt = new VirtualTerminal(width, height);
+    const ui = new TuiAltScreen(vt);
+    const longOutput = Array.from({ length: 10 }, (_, i) => `tool-line-${String(i + 1)}`).join('\n');
+    const rec = record({
+      steps: [
+        ...Array.from({ length: 8 }, (_, i) => ({
+          step: i,
+          textTail: `activity-step-${String(i)}`,
+          toolCalls: [],
+        })),
+        {
+          step: 8,
+          textTail: '',
+          toolCalls: [
+            {
+              id: 't1',
+              name: 'Bash',
+              args: { command: 'ls' },
+              status: 'done' as const,
+              startedAt: 0,
+              result: { tool_call_id: 't1', output: longOutput, is_error: false },
+            },
+          ],
+        },
+      ],
+      totalSteps: 9,
+    });
+    const viewer = new AgentActivityViewer(
+      {
+        taskId: 'agent-task-1',
+        info: agentTask(),
+        record: rec,
+        onClose,
+      },
+      vt,
+    );
+
+    const takeover = beginScreenTakeover(ui, viewer);
+    ui.setFocus(viewer);
+    ui.start();
+    onTestFinished(() => {
+      endScreenTakeover(ui, takeover);
+      ui.stop();
+      vi.useRealTimers();
+    });
+    await vt.waitForRender();
+
+    const readRows = (): string[] => vt.getViewport().map(strip);
+
+    const initial = readRows();
+    const bodyRows = initial.slice(2, height - 2);
+    for (const row of bodyRows) {
+      expect(row[0]).toBe('│');
+      expect(row[width - 1]).toBe('│');
+    }
+    expect(bodyRows.some((row) => row[width - 2] === '┃' || row[width - 2] === '│')).toBe(true);
+    expect(initial[height - 1]).toContain('Ctrl+O expand');
+
+    vi.setSystemTime(10_400);
+    const expandCol = initial[height - 1]!.indexOf('Ctrl+O');
+    expect(expandCol).toBeGreaterThan(0);
+    vt.sendInput(`\u001B[<0;${String(expandCol + 1)};${String(height)}M`);
+    vt.sendInput(`\u001B[<0;${String(expandCol + 1)};${String(height)}m`);
+    await vt.waitForRender();
+
+    const expanded = readRows();
+    expect(expanded[height - 1]).toContain('Ctrl+O collapse');
+    expect(expanded.join('\n')).toContain('tool-line-10');
+    expect(ui.getFocusedComponent()).toBe(viewer);
+    expect(viewer.focused).toBe(true);
+
+    for (let i = 0; i < 40; i++) {
+      vt.sendInput('\u001B[<64;20;5M');
+    }
+    await vt.waitForRender();
+    const scrolledUp = readRows();
+    expect(scrolledUp.join('\n')).toContain('activity-step-0');
+
+    const closeCol = scrolledUp[height - 1]!.indexOf('Q/Esc');
+    expect(closeCol).toBeGreaterThan(0);
+    vt.sendInput(`\u001B[<0;${String(closeCol + 1)};${String(height)}M`);
+    vt.sendInput(`\u001B[<0;${String(closeCol + 1)};${String(height)}m`);
+    await vt.waitForRender();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(ui.getFocusedComponent()).toBe(viewer);
   });
 });

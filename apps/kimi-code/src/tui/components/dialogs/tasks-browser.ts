@@ -1,11 +1,14 @@
 import {
-  Container,
+  HStack,
   Key,
+  VStack,
   matchesKey,
-  type Terminal,
   truncateToWidth,
   visibleWidth,
-  type Focusable,
+  type Component,
+  type Terminal,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 import type {
   BackgroundTaskInfo,
@@ -13,12 +16,27 @@ import type {
   ModelAlias,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { SELECT_POINTER } from '@/tui/constant/symbols';
+import {
+  FramedScrollPane,
+  ScreenTakeoverView,
+  fitLineExactly,
+  renderViewerFooter,
+} from '#/tui/components/chrome/screen-takeover-view';
+import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
-import { printableChar } from '@/tui/utils/printable-key';
+import {
+  ListMouseTracker,
+  SpanHitMap,
+  focusOnUnfocusedClick,
+  renderInlineSegments,
+  type InlineSegment,
+} from '#/tui/utils/mouse-regions';
+import { printableChar } from '#/tui/utils/printable-key';
 import { formatRelativeTime } from '#/tui/utils/relative-time';
 import { sanitizeShellOutput } from '#/tui/utils/shell-output';
+
 import { modelDisplayName } from './model-selector';
+import { STATUS_LABEL, statusColor } from './task-output-viewer';
 
 const ELLIPSIS = '…';
 
@@ -41,14 +59,16 @@ export interface TasksBrowserProps {
   readonly onStopIgnored?: (taskId: string, reason: 'terminal') => void;
 }
 
-const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
-  running: 'running',
-  completed: 'completed',
-  failed: 'failed',
-  timed_out: 'timed out',
-  killed: 'killed',
-  lost: 'lost',
-};
+type HeaderAction = 'toggle-filter';
+
+type FooterAction =
+  | 'open'
+  | 'stop'
+  | 'refresh'
+  | 'filter'
+  | 'close'
+  | 'confirm-stop'
+  | 'cancel-stop';
 
 const STOP_CONFIRM_TIMEOUT_MS = 5_000;
 
@@ -58,20 +78,6 @@ const MIN_HEIGHT = 10;
 const LIST_COL_MIN = 28;
 const LIST_COL_MAX = 44;
 const LIST_COL_RATIO = 0.32;
-
-function statusColor(status: BackgroundTaskStatus): 'success' | 'textMuted' | 'error' {
-  switch (status) {
-    case 'running':
-      return 'success';
-    case 'completed':
-      return 'textMuted';
-    case 'failed':
-    case 'timed_out':
-    case 'killed':
-    case 'lost':
-      return 'error';
-  }
-}
 
 function isTerminal(status: BackgroundTaskStatus): boolean {
   return (
@@ -87,17 +93,11 @@ function singleLine(text: string): string {
   return text.replaceAll(/\s+/g, ' ').trim();
 }
 
-function padToWidth(line: string, width: number): string {
-  const w = visibleWidth(line);
-  if (w === width) return line;
-  if (w > width) return truncateToWidth(line, width, ELLIPSIS);
-  return line + ' '.repeat(width - w);
-}
-
-function fitExactly(line: string, width: number): string {
-  let s = line;
-  if (visibleWidth(s) > width) s = truncateToWidth(s, width, ELLIPSIS);
-  return padToWidth(s, width);
+function listColumnWidth(totalWidth: number): number {
+  return Math.max(
+    LIST_COL_MIN,
+    Math.min(LIST_COL_MAX, Math.floor(totalWidth * LIST_COL_RATIO)),
+  );
 }
 
 export function isVisibleTask(task: BackgroundTaskInfo, filter: TasksFilter): boolean {
@@ -140,33 +140,157 @@ function countByStatus(tasks: readonly BackgroundTaskInfo[]): StatusCounts {
   return counts;
 }
 
-export class TasksBrowserApp extends Container implements Focusable {
-  focused = false;
+class SplitHStack extends HStack {
+  constructor(left: Component, right: Component) {
+    super([], { align: 'stretch' });
+    this.addChild(left, {
+      basis: LIST_COL_MIN,
+      grow: 0,
+      shrink: 0,
+      minSize: LIST_COL_MIN,
+      maxSize: LIST_COL_MAX,
+      visible: (viewport) => {
+        const entry = this.entries[0];
+        if (entry !== undefined) entry.basis = listColumnWidth(viewport.width);
+        return true;
+      },
+    });
+    this.addChild(right, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
+  }
+}
 
+export class TasksBrowserApp extends ScreenTakeoverView {
   private props: TasksBrowserProps;
-  private readonly terminal: Terminal;
   private sortedVisible: BackgroundTaskInfo[];
   private selectedIndex = 0;
-  private listScroll = 0;
+  private pendingRevealSelection = true;
+  private previewRawLines: string[];
   private pendingStopTaskId: string | undefined = undefined;
   private pendingStopTimer: NodeJS.Timeout | undefined = undefined;
+  private readonly listTracker = new ListMouseTracker<string>();
+  private readonly headerHits = new SpanHitMap<HeaderAction>();
+  private readonly footerHits = new SpanHitMap<FooterAction>();
+  private readonly listPane: FramedScrollPane;
+  private readonly detailPane: FramedScrollPane;
+  private readonly previewPane: FramedScrollPane;
 
   constructor(props: TasksBrowserProps, terminal: Terminal) {
-    super();
+    super(terminal, { minRows: 1 });
     this.props = props;
-    this.terminal = terminal;
     this.sortedVisible = props.tasks
       .filter((task) => isVisibleTask(task, props.filter))
       .toSorted(compareTasks);
     this.syncSelectionFromProps();
+    this.previewRawLines = this.buildPreviewLines(props);
+
+    this.listPane = this.registerPane(
+      new FramedScrollPane({
+        padX: 0,
+        follow: 'none',
+        initialPosition: 'start',
+        primary: false,
+        title: () => `Tasks [${this.props.filter}]`,
+        borderColor: () => currentTheme.palette.primary,
+        renderContent: (width) => this.renderListContent(width),
+        handleContentMouse: (event) => this.handleListMouse(event),
+      }),
+    );
+
+    this.detailPane = this.registerPane(
+      new FramedScrollPane({
+        padX: 0,
+        follow: 'none',
+        initialPosition: 'start',
+        primary: false,
+        title: () => 'Detail',
+        borderColor: () => currentTheme.palette.primary,
+        renderContent: (width) => this.renderDetailContent(width),
+      }),
+    );
+
+    this.previewPane = this.registerPane(
+      new FramedScrollPane({
+        padX: 0,
+        follow: 'end',
+        initialPosition: 'end',
+        primary: true,
+        title: () => 'Preview Output',
+        borderColor: () => currentTheme.palette.primary,
+        renderContent: (width) => this.renderPreviewContent(width),
+      }),
+    );
+
+    const rightVStack = new VStack();
+    rightVStack.addChild(this.detailPane, { basis: 10, grow: 40, minSize: 3 });
+    rightVStack.addChild(this.previewPane, { basis: 15, grow: 60, minSize: 3 });
+
+    const bodyHStack = new SplitHStack(this.listPane, rightVStack);
+
+    const normalLayout = new VStack();
+    normalLayout.addChild(
+      this.ownedView(
+        (width) => [this.renderHeader(width)],
+        (event) => this.handleHeaderMouse(event),
+      ),
+      { basis: 1, shrink: 0 },
+    );
+    normalLayout.addChild(bodyHStack, { basis: 0, grow: 1, shrink: 1, minSize: 0 });
+    normalLayout.addChild(
+      this.ownedView(
+        (width) => [this.renderFooter(width)],
+        (event) =>
+          this.footerHits.handle(event, {
+            focused: this.focused,
+            onActivate: (action) => this.handleFooterAction(action),
+          }),
+      ),
+      { basis: 1, shrink: 0 },
+    );
+
+    const tooSmallView = this.ownedView((width) => [
+      fitLineExactly(
+        currentTheme.fg(
+          'error',
+          `Terminal too small (need ≥ ${String(MIN_WIDTH)} × ${String(MIN_HEIGHT)})`,
+        ),
+        width,
+      ),
+    ]);
+
+    this.addChild(tooSmallView, {
+      basis: 0,
+      grow: 1,
+      shrink: 1,
+      minSize: 0,
+      visible: (vp) => vp.width < MIN_WIDTH || vp.height < MIN_HEIGHT,
+    });
+    this.addChild(normalLayout, {
+      basis: 0,
+      grow: 1,
+      shrink: 1,
+      minSize: 0,
+      visible: (vp) => vp.width >= MIN_WIDTH && vp.height >= MIN_HEIGHT,
+    });
   }
 
   setProps(next: TasksBrowserProps): void {
+    const prevSelectedId = this.currentSelectedTaskId();
+    const prevTailLoading = this.props.tailLoading;
+    const prevTailOutput = this.props.tailOutput;
     this.props = next;
     this.sortedVisible = next.tasks
       .filter((task) => isVisibleTask(task, next.filter))
       .toSorted(compareTasks);
     this.syncSelectionFromProps();
+    const nextSelectedId = this.currentSelectedTaskId();
+    if (nextSelectedId !== prevSelectedId) {
+      this.pendingRevealSelection = true;
+      this.detailPane.scrollView.scrollToStart();
+      this.previewPane.scrollView.scrollToEnd();
+    }
+    if (next.tailLoading !== prevTailLoading || next.tailOutput !== prevTailOutput) {
+      this.previewRawLines = this.buildPreviewLines(next);
+    }
     if (this.pendingStopTaskId !== undefined) {
       const task = next.tasks.find((t) => t.taskId === this.pendingStopTaskId);
       if (task === undefined || isTerminal(task.status)) this.clearPendingStop();
@@ -174,10 +298,21 @@ export class TasksBrowserApp extends Container implements Focusable {
     this.invalidate();
   }
 
+  private currentSelectedTaskId(): string | undefined {
+    return this.sortedVisible[this.selectedIndex]?.taskId;
+  }
+
+  private buildPreviewLines(props: TasksBrowserProps): string[] {
+    if (props.tailLoading) return ['[loading…]'];
+    if (props.tailOutput === undefined || props.tailOutput.length === 0) {
+      return ['[no output captured]'];
+    }
+    return sanitizeShellOutput(props.tailOutput).split('\n');
+  }
+
   private syncSelectionFromProps(): void {
     if (this.sortedVisible.length === 0) {
       this.selectedIndex = 0;
-      this.listScroll = 0;
       return;
     }
     if (this.props.selectedTaskId !== undefined) {
@@ -200,9 +335,125 @@ export class TasksBrowserApp extends Container implements Focusable {
     }
   }
 
-  private emitSelect(): void {
+  private confirmPendingStop(): void {
+    if (this.pendingStopTaskId === undefined) return;
+    const taskId = this.pendingStopTaskId;
+    this.clearPendingStop();
+    this.props.onStopConfirmed(taskId);
+    this.invalidate();
+  }
+
+  private cancelPendingStop(): void {
+    if (this.pendingStopTaskId === undefined) return;
+    this.clearPendingStop();
+    this.invalidate();
+  }
+
+  private requestStopSelected(): void {
     const task = this.sortedVisible[this.selectedIndex];
-    if (task) this.props.onSelect(task.taskId);
+    if (task === undefined || task.detached === false) return;
+    if (isTerminal(task.status)) {
+      this.props.onStopIgnored?.(task.taskId, 'terminal');
+      return;
+    }
+    this.pendingStopTaskId = task.taskId;
+    this.footerHits.resetSettling();
+    this.pendingStopTimer = setTimeout(() => {
+      this.clearPendingStop();
+      this.invalidate();
+    }, STOP_CONFIRM_TIMEOUT_MS);
+    this.invalidate();
+  }
+
+  private openSelectedOutput(): void {
+    const task = this.sortedVisible[this.selectedIndex];
+    if (task !== undefined) this.props.onOpenOutput(task.taskId);
+  }
+
+  private selectIndex(nextIndex: number): void {
+    if (this.sortedVisible.length === 0) return;
+    const prevTaskId = this.currentSelectedTaskId();
+    this.selectedIndex = Math.max(0, Math.min(this.sortedVisible.length - 1, nextIndex));
+    this.pendingRevealSelection = true;
+    const nextTaskId = this.currentSelectedTaskId();
+    if (nextTaskId !== prevTaskId) {
+      this.detailPane.scrollView.scrollToStart();
+      this.previewPane.scrollView.scrollToEnd();
+    }
+    if (nextTaskId !== undefined) this.props.onSelect(nextTaskId);
+    this.invalidate();
+  }
+
+  private selectTaskById(taskId: string): void {
+    const index = this.sortedVisible.findIndex((task) => task.taskId === taskId);
+    if (index === -1) return;
+    const prevTaskId = this.currentSelectedTaskId();
+    this.selectedIndex = index;
+    if (taskId !== prevTaskId) {
+      this.pendingRevealSelection = true;
+      this.detailPane.scrollView.scrollToStart();
+      this.previewPane.scrollView.scrollToEnd();
+      this.props.onSelect(taskId);
+    } else if (this.props.selectedTaskId !== taskId) {
+      this.props.onSelect(taskId);
+    }
+    this.invalidate();
+  }
+
+  private handleFooterAction(action: FooterAction): void {
+    switch (action) {
+      case 'open':
+        this.openSelectedOutput();
+        return;
+      case 'stop':
+        this.requestStopSelected();
+        return;
+      case 'refresh':
+        this.props.onRefresh();
+        return;
+      case 'filter':
+        this.props.onToggleFilter();
+        return;
+      case 'close':
+        this.props.onCancel();
+        return;
+      case 'confirm-stop':
+        this.confirmPendingStop();
+        return;
+      case 'cancel-stop':
+        this.cancelPendingStop();
+        return;
+      default: {
+        const _exhaustive: never = action;
+        return _exhaustive;
+      }
+    }
+  }
+
+  private handleHeaderMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (!this.focused) return focusOnUnfocusedClick(false, event);
+    if (this.pendingStopTaskId !== undefined) return undefined;
+    return this.headerHits.handle(event, {
+      focused: true,
+      onActivate: () => {
+        this.props.onToggleFilter();
+      },
+    });
+  }
+
+  private handleListMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (!this.focused) return focusOnUnfocusedClick(false, event);
+    if (this.pendingStopTaskId !== undefined) return undefined;
+    return this.listTracker.handle(event, {
+      focused: true,
+      onWheel: 'passthrough',
+      onActivate: (taskId, mouseEvent) => {
+        this.selectTaskById(taskId);
+        if ((mouseEvent.clickCount ?? 1) >= 2) {
+          this.props.onOpenOutput(taskId);
+        }
+      },
+    });
   }
 
   handleInput(data: string): void {
@@ -210,14 +461,10 @@ export class TasksBrowserApp extends Container implements Focusable {
 
     if (this.pendingStopTaskId !== undefined) {
       if (k === 'y' || k === 'Y') {
-        const taskId = this.pendingStopTaskId;
-        this.clearPendingStop();
-        this.props.onStopConfirmed(taskId);
-        this.invalidate();
+        this.confirmPendingStop();
         return;
       }
-      this.clearPendingStop();
-      this.invalidate();
+      this.cancelPendingStop();
       return;
     }
 
@@ -226,17 +473,11 @@ export class TasksBrowserApp extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.up) || k === 'k') {
-      if (this.sortedVisible.length === 0) return;
-      this.selectedIndex = Math.max(0, this.selectedIndex - 1);
-      this.emitSelect();
-      this.invalidate();
+      this.selectIndex(this.selectedIndex - 1);
       return;
     }
     if (matchesKey(data, Key.down) || k === 'j') {
-      if (this.sortedVisible.length === 0) return;
-      this.selectedIndex = Math.min(this.sortedVisible.length - 1, this.selectedIndex + 1);
-      this.emitSelect();
-      this.invalidate();
+      this.selectIndex(this.selectedIndex + 1);
       return;
     }
     if (matchesKey(data, Key.tab) || k === '\t') {
@@ -248,179 +489,129 @@ export class TasksBrowserApp extends Container implements Focusable {
       return;
     }
     if (k === 's' || k === 'S') {
-      const task = this.sortedVisible[this.selectedIndex];
-      if (task === undefined || task.detached === false) return;
-      if (isTerminal(task.status)) {
-        this.props.onStopIgnored?.(task.taskId, 'terminal');
-        return;
-      }
-      this.pendingStopTaskId = task.taskId;
-      this.pendingStopTimer = setTimeout(() => {
-        this.clearPendingStop();
-        this.invalidate();
-      }, STOP_CONFIRM_TIMEOUT_MS);
-      this.invalidate();
+      this.requestStopSelected();
       return;
     }
     if (k === 'o' || k === 'O' || matchesKey(data, Key.enter)) {
-      const task = this.sortedVisible[this.selectedIndex];
-      if (task) this.props.onOpenOutput(task.taskId);
+      this.openSelectedOutput();
       return;
     }
   }
 
-  override render(width: number): string[] {
-    const rows = Math.max(1, this.terminal.rows);
-    if (width < MIN_WIDTH || rows < MIN_HEIGHT) {
-      return this.renderTooSmall(width, rows);
-    }
-
-    const header = this.renderHeader(width);
-    const footer = this.renderFooter(width);
-    const bodyHeight = rows - 2;
-
-    const listWidth = Math.max(
-      LIST_COL_MIN,
-      Math.min(LIST_COL_MAX, Math.floor(width * LIST_COL_RATIO)),
-    );
-    const rightWidth = width - listWidth;
-
-    const listFrame = this.renderListFrame(listWidth, bodyHeight);
-    const rightFrames = this.renderRightStack(rightWidth, bodyHeight);
-
-    const lines: string[] = [header];
-    for (let i = 0; i < bodyHeight; i++) {
-      lines.push((listFrame[i] ?? ' '.repeat(listWidth)) + (rightFrames[i] ?? ' '.repeat(rightWidth)));
-    }
-    lines.push(footer);
-    return lines;
-  }
-
   private renderHeader(width: number): string {
-    const title = currentTheme.boldFg('primary', ' TASK BROWSER ');
-    const filterText = currentTheme.fg(
-      'textMuted',
-      ` filter=${this.props.filter === 'all' ? 'ALL' : 'ACTIVE'} `,
-    );
     const visible = this.sortedVisible;
     const counts = countByStatus(visible);
-    const countSegments: string[] = [];
-    if (counts.running > 0)
-      countSegments.push(currentTheme.fg('success', ` ${String(counts.running)} running `));
-    if (counts.completed > 0)
-      countSegments.push(currentTheme.fg('textDim', ` ${String(counts.completed)} completed `));
-    if (counts.terminalFailed > 0)
-      countSegments.push(
-        currentTheme.fg('error', ` ${String(counts.terminalFailed)} interrupted `),
-      );
-    const totals = currentTheme.fg('textMuted', ` ${String(visible.length)} total `);
-
-    const composed = title + filterText + countSegments.join('') + totals;
-    return fitExactly(composed, width);
+    const segments: InlineSegment<HeaderAction>[] = [
+      { text: currentTheme.boldFg('primary', ' TASK BROWSER ') },
+      {
+        text: currentTheme.fg(
+          'textMuted',
+          ` filter=${this.props.filter === 'all' ? 'ALL' : 'ACTIVE'} `,
+        ),
+        value: 'toggle-filter',
+      },
+    ];
+    if (counts.running > 0) {
+      segments.push({ text: currentTheme.fg('success', ` ${String(counts.running)} running `) });
+    }
+    if (counts.completed > 0) {
+      segments.push({
+        text: currentTheme.fg('textDim', ` ${String(counts.completed)} completed `),
+      });
+    }
+    if (counts.terminalFailed > 0) {
+      segments.push({
+        text: currentTheme.fg('error', ` ${String(counts.terminalFailed)} interrupted `),
+      });
+    }
+    segments.push({ text: currentTheme.fg('textMuted', ` ${String(visible.length)} total `) });
+    return renderViewerFooter(width, segments, '', this.headerHits);
   }
 
   private renderFooter(width: number): string {
+    const safeWidth = Math.max(0, Math.floor(width));
     const key = (text: string): string => currentTheme.boldFg('primary', text);
     const dim = (text: string): string => currentTheme.fg('textMuted', text);
 
     if (this.pendingStopTaskId !== undefined) {
       const warn = (text: string): string => currentTheme.boldFg('warning', text);
-      const line =
-        ` ${warn('Stop')} ${currentTheme.fg('text', this.pendingStopTaskId)}? ` +
-        `${key('Y')} ${dim('confirm')}  ${key('N')}${dim('/')}${key('esc')} ${dim('cancel')} `;
-      return fitExactly(line, width);
+      const segments: InlineSegment<FooterAction>[] = [
+        { text: ` ${warn('Stop')} ${currentTheme.fg('text', this.pendingStopTaskId)}? ` },
+        { text: `${key('Y')} ${dim('confirm')}`, value: 'confirm-stop' },
+        { text: '  ' },
+        { text: `${key('N')}${dim('/')}${key('esc')} ${dim('cancel')}`, value: 'cancel-stop' },
+        { text: ' ' },
+      ];
+      return renderViewerFooter(safeWidth, segments, '', this.footerHits);
     }
 
-    const parts = [
-      ` ${key('↑↓')} ${dim('select')}`,
-      `${key('Enter/O')} ${dim('output')}`,
-      `${key('R')} ${dim('refresh')}`,
-      `${key('Tab')} ${dim('filter')}`,
-      `${key('Q/Esc')} ${dim('cancel')} `,
+    const segments: InlineSegment<FooterAction>[] = [
+      { text: ' ' },
+      { text: `${key('↑↓')} ${dim('select')}` },
+      { text: '  ' },
+      { text: `${key('Enter/O')} ${dim('output')}`, value: 'open' },
     ];
     const task = this.sortedVisible[this.selectedIndex];
     if (task !== undefined && task.detached !== false) {
-      parts.splice(2, 0, `${key('S')} ${dim('stop')}`);
+      segments.push({ text: '  ' }, { text: `${key('S')} ${dim('stop')}`, value: 'stop' });
     }
-    const left = parts.join('  ');
+    segments.push(
+      { text: '  ' },
+      { text: `${key('R')} ${dim('refresh')}`, value: 'refresh' },
+      { text: '  ' },
+      { text: `${key('Tab')} ${dim('filter')}`, value: 'filter' },
+      { text: '  ' },
+      { text: `${key('Q/Esc')} ${dim('cancel')}`, value: 'close' },
+      { text: ' ' },
+    );
+
+    const { line, targets } = renderInlineSegments(segments, safeWidth);
+    this.footerHits.reset();
+    this.footerHits.addRow(0, targets);
     const flash = this.props.flashMessage;
     if (flash !== undefined && flash.length > 0) {
       const flashStyled = currentTheme.fg('warning', ` ${flash} `);
-      const total = visibleWidth(left) + visibleWidth(flashStyled);
-      if (total <= width) {
-        return left + ' '.repeat(width - total) + flashStyled;
+      const total = visibleWidth(line) + visibleWidth(flashStyled);
+      if (total <= safeWidth) {
+        return line + ' '.repeat(safeWidth - total) + flashStyled;
       }
     }
-    return fitExactly(left, width);
+    return fitLineExactly(line, safeWidth);
   }
 
-  private renderFrame(
-    title: string,
-    content: readonly string[],
-    width: number,
-    height: number,
-  ): string[] {
-    if (height < 2 || width < 4) {
-      const out: string[] = [];
-      for (let i = 0; i < height; i++) out.push(' '.repeat(width));
-      return out;
-    }
-    const innerWidth = width - 2;
-    const innerHeight = height - 2;
-
-    const titleStyled = currentTheme.boldFg('textStrong', title);
-    const titleWidth = visibleWidth(titleStyled);
-    const titleSegment = `─ ${titleStyled} `;
-    const titleSegmentWidth = visibleWidth(titleSegment);
-    const remainingDashes = Math.max(0, innerWidth - titleSegmentWidth);
-    const topMid =
-      titleWidth > 0 && titleSegmentWidth <= innerWidth
-        ? currentTheme.fg('primary', '─ ') +
-          titleStyled +
-          ' ' +
-          currentTheme.fg('primary', '─'.repeat(remainingDashes))
-        : currentTheme.fg('primary', '─'.repeat(innerWidth));
-    const top = currentTheme.fg('primary', '┌') + topMid + currentTheme.fg('primary', '┐');
-    const bottom = currentTheme.fg('primary', '└' + '─'.repeat(innerWidth) + '┘');
-
-    const lines: string[] = [top];
-    for (let i = 0; i < innerHeight; i++) {
-      const inner = content[i] ?? '';
-      lines.push(currentTheme.fg('primary', '│') + fitExactly(inner, innerWidth) + currentTheme.fg('primary', '│'));
-    }
-    lines.push(bottom);
-    return lines;
-  }
-
-  private renderListFrame(width: number, height: number): string[] {
-    const title = `Tasks [${this.props.filter}]`;
-    const innerHeight = Math.max(0, height - 2);
+  private renderListContent(width: number): string[] {
+    const innerWidth = Math.max(1, width);
+    this.listTracker.reset();
 
     if (this.sortedVisible.length === 0) {
+      this.pendingRevealSelection = false;
       const empty =
         this.props.filter === 'active'
           ? 'No active tasks. Tab = show all.'
           : 'No tasks in this session.';
-      const lines: string[] = [currentTheme.fg('textMuted', empty)];
-      while (lines.length < innerHeight) lines.push('');
-      return this.renderFrame(title, lines, width, height);
+      return [fitLineExactly(currentTheme.fg('textMuted', empty), innerWidth)];
     }
 
-    this.adjustScroll(innerHeight);
-
-    const innerWidth = width - 2;
-    const allLines: string[] = [];
+    const lines: string[] = [];
     for (const [index, task] of this.sortedVisible.entries()) {
-      allLines.push(this.renderListRow(task, index === this.selectedIndex, innerWidth));
-      const modelText = this.agentModelText(task);
-      if (modelText !== undefined) {
-        allLines.push(this.renderModelRow(modelText, innerWidth));
+      this.listTracker.track(lines, task.taskId, () => {
+        lines.push(this.renderListRow(task, index === this.selectedIndex, innerWidth));
+        const modelText = this.agentModelText(task);
+        if (modelText !== undefined) {
+          lines.push(this.renderModelRow(modelText, innerWidth));
+        }
+      });
+    }
+
+    if (this.pendingRevealSelection) {
+      this.pendingRevealSelection = false;
+      const selected = this.sortedVisible[this.selectedIndex];
+      const range = selected === undefined ? undefined : this.listTracker.rangeOf(selected.taskId);
+      if (range !== undefined) {
+        this.listPane.scrollView.scrollIntoView(range.start, range.end, { silent: true });
       }
     }
-    const lines = allLines.slice(this.listScroll, this.listScroll + innerHeight);
-    while (lines.length < innerHeight) lines.push('');
-
-    return this.renderFrame(title, lines, width, height);
+    return lines;
   }
 
   private renderListRow(task: BackgroundTaskInfo, selected: boolean, innerWidth: number): string {
@@ -445,14 +636,14 @@ export class TasksBrowserApp extends Container implements Focusable {
     const prefix = `${pointerStyled}${idText}${idPad} ${statusBadge}`;
     const prefixWidth = visibleWidth(prefix);
     const descBudget = Math.max(0, innerWidth - prefixWidth - 1);
-    if (descBudget < 4) return fitExactly(prefix, innerWidth);
+    if (descBudget < 4) return fitLineExactly(prefix, innerWidth);
 
     const description =
       singleLine(task.description) ||
       (task.kind === 'process' ? singleLine(task.command) : '') ||
       '(no description)';
     const desc = truncateToWidth(description, descBudget, ELLIPSIS);
-    return fitExactly(`${prefix} ${currentTheme.fg('text', desc)}`, innerWidth);
+    return fitLineExactly(`${prefix} ${currentTheme.fg('text', desc)}`, innerWidth);
   }
 
   private agentModelText(task: BackgroundTaskInfo): string | undefined {
@@ -464,57 +655,14 @@ export class TasksBrowserApp extends Container implements Focusable {
   private renderModelRow(text: string, innerWidth: number): string {
     const indent = '  ';
     const clipped = truncateToWidth(text, Math.max(0, innerWidth - indent.length), ELLIPSIS);
-    return indent + currentTheme.fg('textMuted', clipped);
+    return fitLineExactly(indent + currentTheme.fg('textMuted', clipped), innerWidth);
   }
 
-  private taskLineStarts(): { starts: number[]; total: number } {
-    const starts: number[] = [];
-    let total = 0;
-    for (const task of this.sortedVisible) {
-      starts.push(total);
-      total += this.agentModelText(task) === undefined ? 1 : 2;
-    }
-    return { starts, total };
-  }
-
-  private adjustScroll(visibleRows: number): void {
-    if (visibleRows <= 0) {
-      this.listScroll = 0;
-      return;
-    }
-    const { starts, total } = this.taskLineStarts();
-    const selectedStart = starts[this.selectedIndex] ?? 0;
-    const selectedEnd = (starts[this.selectedIndex + 1] ?? total) - 1;
-    if (selectedStart < this.listScroll) {
-      this.listScroll = selectedStart;
-    } else if (selectedEnd >= this.listScroll + visibleRows) {
-      this.listScroll = selectedEnd - visibleRows + 1;
-    }
-    const maxScroll = Math.max(0, total - visibleRows);
-    if (this.listScroll < 0) this.listScroll = 0;
-    if (this.listScroll > maxScroll) this.listScroll = maxScroll;
-  }
-
-  private renderRightStack(width: number, height: number): string[] {
-    const detailHeight = Math.min(
-      Math.max(10, Math.min(Math.floor(height * 0.4), height - 5)),
-      Math.max(3, height - 3),
-    );
-    const previewHeight = height - detailHeight;
-    return [
-      ...this.renderDetailFrame(width, detailHeight),
-      ...this.renderPreviewFrame(width, previewHeight),
-    ];
-  }
-
-  private renderDetailFrame(width: number, height: number): string[] {
-    const innerHeight = Math.max(0, height - 2);
+  private renderDetailContent(width: number): string[] {
+    const innerWidth = Math.max(1, width);
     const task = this.sortedVisible[this.selectedIndex];
     if (task === undefined) {
-      const empty = currentTheme.fg('textMuted', 'Select a task from the list.');
-      const lines: string[] = [empty];
-      while (lines.length < innerHeight) lines.push('');
-      return this.renderFrame('Detail', lines, width, height);
+      return [fitLineExactly(currentTheme.fg('textMuted', 'Select a task from the list.'), innerWidth)];
     }
 
     const label = (text: string): string => currentTheme.fg('textMuted', text.padEnd(14));
@@ -544,7 +692,9 @@ export class TasksBrowserApp extends Container implements Focusable {
       lines.push(`${label('Effort:')}${value(task.thinkingEffort)}`);
     }
     if (task.kind === 'question') {
-      lines.push(`${label('Questions:')}${currentTheme.fg('textMuted', String(task.questionCount))}`);
+      lines.push(
+        `${label('Questions:')}${currentTheme.fg('textMuted', String(task.questionCount))}`,
+      );
       if (task.toolCallId !== undefined) {
         lines.push(`${label('Tool call:')}${currentTheme.fg('textMuted', task.toolCallId)}`);
       }
@@ -565,40 +715,15 @@ export class TasksBrowserApp extends Container implements Focusable {
     if (task.stopReason !== undefined && task.stopReason.length > 0) {
       lines.push(`${label('Reason:')}${currentTheme.fg('textMuted', task.stopReason)}`);
     }
-    while (lines.length < innerHeight) lines.push('');
-    return this.renderFrame('Detail', lines, width, height);
+    return lines.map((line) => fitLineExactly(line, innerWidth));
   }
 
-  private renderPreviewFrame(width: number, height: number): string[] {
-    const innerHeight = Math.max(0, height - 2);
+  private renderPreviewContent(width: number): string[] {
+    const innerWidth = Math.max(1, width);
     const task = this.sortedVisible[this.selectedIndex];
     if (task === undefined) {
-      const lines: string[] = [currentTheme.fg('textMuted', 'No task selected.')];
-      while (lines.length < innerHeight) lines.push('');
-      return this.renderFrame('Preview Output', lines, width, height);
+      return [fitLineExactly(currentTheme.fg('textMuted', 'No task selected.'), innerWidth)];
     }
-
-    let body: string;
-    if (this.props.tailLoading) body = '[loading…]';
-    else if (this.props.tailOutput === undefined || this.props.tailOutput.length === 0)
-      body = '[no output captured]';
-    else body = sanitizeShellOutput(this.props.tailOutput);
-
-    const rawLines = body.split('\n');
-    const tailLines = rawLines.slice(-innerHeight);
-    const styled = tailLines.map((line) => currentTheme.fg('textDim', line));
-    while (styled.length < innerHeight) styled.push('');
-    return this.renderFrame('Preview Output', styled, width, height);
-  }
-
-  private renderTooSmall(width: number, rows: number): string[] {
-    const lines: string[] = [];
-    const msg = currentTheme.fg(
-      'error',
-      `Terminal too small (need ≥ ${String(MIN_WIDTH)} × ${String(MIN_HEIGHT)})`,
-    );
-    lines.push(fitExactly(msg, width));
-    for (let i = 1; i < rows; i++) lines.push(' '.repeat(width));
-    return lines;
+    return this.previewRawLines.map((line) => fitLineExactly(currentTheme.fg('textDim', line), innerWidth));
   }
 }
