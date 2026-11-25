@@ -14,6 +14,7 @@ import {
   IWorkspaceInstanceManager,
   SyncDescriptor,
 } from '@moonshot-ai/agent-core-v2';
+import { createFakeModel, say, type FakeModel } from '@moonshot-ai/testkit/model';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionSummary } from '@moonshot-ai/klient';
@@ -21,7 +22,6 @@ import type { SessionSummary } from '@moonshot-ai/klient';
 import { filterSessionSummariesByCwd } from '../src/server';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { writeFakeModelConfig } from './_helpers/fakeModelConfig';
-import { createScriptedProvider } from './_helpers/scriptedProvider';
 
 const STDIO_MCP_FIXTURE = fileURLToPath(
   new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url),
@@ -60,11 +60,21 @@ function createFakeOAuthToolkit(): {
 describe('acp-server session lifecycle', () => {
   let homeDir: string | undefined;
   let client: TestClient | undefined;
+  let model: FakeModel | undefined;
 
   afterEach(async () => {
     if (client !== undefined) {
       await client.close();
       client = undefined;
+    }
+    if (model !== undefined) {
+      const current = model;
+      model = undefined;
+      try {
+        current.verify();
+      } finally {
+        await current.close();
+      }
     }
     if (homeDir !== undefined) {
       await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -219,13 +229,14 @@ describe('acp-server session lifecycle', () => {
     'session/fork creates an independently promptable session carrying the source history',
     async () => {
       homeDir = await mkdtemp(join(tmpdir(), 'acp-fork-'));
-      await writeFakeModelConfig(homeDir);
-      const scripted = createScriptedProvider();
-      client = await createTestClient({ homeDir, extraSeeds: [scripted.seed] });
+      model = createFakeModel();
+      await model.listen();
+      await writeFakeModelConfig(homeDir, { baseUrl: model.origin });
+      client = await createTestClient({ homeDir });
       const c = client;
       await c.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
 
-      scripted.mockNextText('first turn reply');
+      model.script(say('first turn reply'));
       const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
         sessionId: string;
       };
@@ -257,7 +268,7 @@ describe('acp-server session lifecycle', () => {
       expect(ids).toContain(created.sessionId);
       expect(ids).toContain(forked.sessionId);
 
-      scripted.mockNextText('fork reply');
+      model.script(say('fork reply'));
       const forkTurn = (await c.send('session/prompt', {
         sessionId: forked.sessionId,
         prompt: [{ type: 'text', text: 'hello from the fork' }],
