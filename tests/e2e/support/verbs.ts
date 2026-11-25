@@ -17,6 +17,10 @@ const NO_REASON_OVER_ACP = 'ACP permission options carry only an option id, so a
 const ONE_PROMPT_AT_A_TIME_OVER_ACP =
   'ACP has no way to send a message while a turn runs: a second session/prompt is refused (-32600, another turn is already in progress).';
 const NO_FREE_TEXT_OVER_ACP = "ACP's permission request carries only option ids, so an editor cannot send a free-text answer.";
+const NO_WINDOW_TO_RESIZE = {
+  acp: 'An editor shows the conversation in its own window; the agent behind ACP has no window to resize.',
+  desktop: "The Desktop window cannot be made narrower than 900 pixels, so a user cannot give it a phone width, and Playwright can only resize it by running code in Electron's main process.",
+};
 const NO_CONTINUE = {
   tui: 'The terminal UI has no way to continue a failed turn; a user sends another message instead.',
   acp: 'ACP has no request to continue a failed turn.',
@@ -42,6 +46,7 @@ export const VERBS = {
   expectAbsent: { on: SURFACES, checksInterface: false },
   continue: { on: ['desktop', 'web'], absentBecause: NO_CONTINUE, checksInterface: false },
   restart: { on: SURFACES, checksInterface: false, bySession: true },
+  resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
   expectTranscript: { on: SURFACES, checksInterface: true },
   exit: { on: ['tui'], absentBecause: ONLY_IN_A_SHELL, checksInterface: false },
   expectTerminalRestored: { on: ['tui'], absentBecause: ONLY_IN_A_SHELL, checksInterface: true },
@@ -141,6 +146,8 @@ export interface ApproveOptions {
 
 export type PermissionMode = 'manual' | 'yolo' | 'auto';
 
+export type WindowSize = 'normal' | 'narrow';
+
 export const PERMISSION_MODE_NAMES: Readonly<Record<PermissionMode, string>> = {
   manual: 'Always Ask',
   yolo: 'Ask When Needed',
@@ -167,6 +174,7 @@ interface VerbSignatures {
   expectAbsent(text: string): Promise<void>;
   continue(): Promise<void>;
   restart(): Promise<void>;
+  resize(size: WindowSize): Promise<void>;
   expectTranscript(text: string): Promise<void>;
   exit(): Promise<void>;
   expectTerminalRestored(): Promise<void>;
@@ -187,6 +195,7 @@ type SessionVerb = { [Name in Verb]: (typeof VERBS)[Name] extends { readonly byS
 export interface ReopenState {
   readonly sessionId?: string;
   readonly port?: string;
+  readonly size?: WindowSize;
 }
 
 export interface Reopen {

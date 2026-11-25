@@ -1,4 +1,3 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
@@ -8,7 +7,6 @@ import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import {
   killProcessTree,
   kimiCliCommand,
-  kimiCliEnv,
   NETWORK_GUARD_PRELOAD,
   networkGuardEnv,
   readNetworkViolations,
@@ -16,6 +14,7 @@ import {
   until,
 } from '@moonshot-ai/testkit/fixtures';
 import { FAKE_PROVIDER_DEFAULTS } from '@moonshot-ai/testkit/model';
+import type { IPty } from 'node-pty';
 
 import {
   APPROVAL_PENDING,
@@ -36,15 +35,23 @@ import {
   type SurfaceLaunch,
   type ToolExpectation,
   type ToolStatus,
+  type WindowSize,
 } from '../support/verbs';
+import { productEnv } from './environment';
 import { offlineStubs } from './offline';
 
-const COLUMNS = 120;
-const ROWS = 40;
+const TERMINAL_NAME = 'xterm-256color';
+const TERMINAL_SIZES: Readonly<Record<WindowSize, { readonly columns: number; readonly rows: number }>> = {
+  normal: { columns: 120, rows: 40 },
+  narrow: { columns: 60, rows: 40 },
+};
+const COLUMNS = TERMINAL_SIZES.normal.columns;
+const ROWS = TERMINAL_SIZES.normal.rows;
 const SCROLLBACK_LINES = 1000;
 const OUTPUT_TAIL = 64 * 1024;
 const RECENT_INPUTS = 12;
 
+const FULL_REDRAW = '\x1b[2J\x1b[H\x1b[3J';
 const BEGIN_FRAME = '\x1b[?2026h';
 const END_FRAME = '\x1b[?2026l';
 const TERMINAL_ESCAPE = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*\x07|[@-Z\\-_])/g;
@@ -185,12 +192,6 @@ function quote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-function insidePseudoTerminal(launcher: string): string {
-  return process.platform === 'darwin'
-    ? `script -q /dev/null /bin/sh ${quote(launcher)}`
-    : `script -q -e -c ${quote(`/bin/sh ${quote(launcher)}`)} /dev/null`;
-}
-
 function unfinishedBeginning(text: string): number {
   for (let length = Math.min(BEGIN_FRAME.length - 1, text.length); length > 0; length -= 1) {
     if (BEGIN_FRAME.startsWith(text.slice(-length))) return length;
@@ -223,6 +224,11 @@ function screenOf(rows: readonly string[], viewport: readonly string[]): Screen 
   if (editor < 0) return { ...frame, input: 'none', transcript: rows, status: [], panel: [] };
   const gap = lines.findLastIndex((line, index) => index < editor && line === '');
   return { ...frame, input: 'editor', transcript: rows.slice(0, gap + 1), status: lines.slice(gap + 1, editor), panel: [] };
+}
+
+function drawnWidth(screen: Screen): number | undefined {
+  const line = screen.viewport.map((row) => row.trim()).findLast((row) => EDITOR_TOP.test(row) || APPROVAL_RULE.test(row));
+  return line?.length;
 }
 
 function failureNoticeEnd(rows: readonly string[], start: number): number | undefined {
@@ -519,43 +525,43 @@ function latestTurnEntries(screen: Screen): string {
 }
 
 class TuiDriver implements SurfaceDriver<'tui'> {
-  private readonly child: ChildProcessWithoutNullStreams;
+  private readonly pty: IPty;
   private readonly networkLog: string;
   private readonly exitStatus: RegExp;
   private readonly terminal = new VirtualTerminal(COLUMNS, ROWS);
   private readonly inputs: string[] = [];
   private output = '';
   private unshown = '';
-  private stderr = '';
+  private notes = '';
   private readonly lastPrompt: string | undefined;
   private readonly workspace: string;
   private released = false;
   private left = false;
+  private size: WindowSize;
+  private fullRedraws = 0;
+  private redrawTail = '';
   private turn: Turn | undefined;
 
-  constructor(child: ChildProcessWithoutNullStreams, networkLog: string, exitMarker: string, { workspace, lastPrompt }: { readonly workspace: string; readonly lastPrompt: string | undefined }) {
-    this.child = child;
+  constructor(pty: IPty, networkLog: string, exitMarker: string, { workspace, lastPrompt, size }: { readonly workspace: string; readonly lastPrompt: string | undefined; readonly size: WindowSize }) {
+    this.pty = pty;
+    this.size = size;
+    this.terminal.resize(TERMINAL_SIZES[size].columns, TERMINAL_SIZES[size].rows);
     this.networkLog = networkLog;
     this.workspace = workspace;
     this.lastPrompt = lastPrompt;
     this.exitStatus = new RegExp(`${exitMarker}(\\d+)`);
-    child.stdout.setEncoding('utf8').on('data', (text: string) => {
+    pty.onData((text) => {
       this.output = (this.output + text).slice(-OUTPUT_TAIL);
+      this.countFullRedraws(text);
       this.show(text);
     });
-    child.stderr.setEncoding('utf8').on('data', (text: string) => {
-      this.stderr = (this.stderr + text).slice(-OUTPUT_TAIL);
-    });
-    child.stdin.on('error', (error) => {
-      this.stderr = `${this.stderr}stdin: ${error.message}\n`;
-    });
-    child.once('close', () => {
+    pty.onExit(() => {
       this.terminal.write(this.unshown);
       this.unshown = '';
       this.released = true;
     });
     this.terminal.onReply((reply) => {
-      if (this.exitCode() === undefined && child.stdin.writable) child.stdin.write(reply);
+      if (this.exitCode() === undefined && !this.released) pty.write(reply);
     });
   }
 
@@ -592,7 +598,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   }
 
   reopenState(): ReopenState {
-    return {};
+    return { size: this.size };
   }
 
   async expectTranscript(text: string): Promise<void> {
@@ -607,6 +613,23 @@ class TuiDriver implements SurfaceDriver<'tui'> {
         settled.found,
       );
     }
+  }
+
+  async resize(size: WindowSize): Promise<void> {
+    const from = TERMINAL_SIZES[this.size];
+    const to = TERMINAL_SIZES[size];
+    if (size === this.size) throw new Error(`resize() found the terminal already ${size} (${from.columns}×${from.rows}); resize it to the other size.`);
+    const screen = await this.read();
+    const drawn = drawnWidth(screen);
+    if (drawn === undefined) throw this.failure('resize() needs the input box or a panel on screen to tell when the CLI has redrawn.', screen);
+    const redraws = this.fullRedraws;
+    this.terminal.resize(to.columns, to.rows);
+    this.pty.resize(to.columns, to.rows);
+    this.size = size;
+    const wanted = drawn - from.columns + to.columns;
+    await this.wait(`the CLI to clear the screen and redraw its input box or panel ${wanted} columns wide`, (current) =>
+      this.fullRedraws > redraws && drawnWidth(current) === wanted ? true : undefined,
+    );
   }
 
   exit(): Promise<void> {
@@ -907,7 +930,6 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private async waitForExit(action: string): Promise<void> {
     try {
       await until(`the CLI to exit after ${action}`, () => this.exitCode() !== undefined, { timeoutMs: TIMEOUTS.wait });
-      this.child.stdin.end();
       await until('the pseudo-terminal to close', () => this.released, { timeoutMs: TIMEOUTS.wait });
     } catch (cause) {
       throw new Error(`The CLI did not exit cleanly after ${action}.\n${await this.describe()}`, { cause });
@@ -918,12 +940,11 @@ class TuiDriver implements SurfaceDriver<'tui'> {
 
   async kill(): Promise<void> {
     if (this.released) return;
-    if (this.child.exitCode === null && this.child.signalCode === null && this.child.pid !== undefined) killProcessTree(this.child.pid);
-    this.child.stdin.destroy();
+    killProcessTree(this.pty.pid);
     try {
       await until('the pseudo-terminal to close', () => this.released, { timeoutMs: TIMEOUTS.wait });
     } catch {
-      this.stderr = `${this.stderr}The pseudo-terminal did not close after it was killed.\n`;
+      this.notes = `${this.notes}The pseudo-terminal did not close after it was killed.\n`;
     }
   }
 
@@ -946,7 +967,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
         body: [
           `exit status: ${String(this.exitCode() ?? 'still running')}`,
           `recent input: ${JSON.stringify(this.inputs)}`,
-          `stderr:\n${this.stderr === '' ? '(empty)' : this.stderr}`,
+          `driver notes:\n${this.notes === '' ? '(none)' : this.notes}`,
         ].join('\n'),
       },
     ];
@@ -1076,6 +1097,12 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     return screenOf(this.terminal.getScrollBuffer(), this.terminal.getViewport());
   }
 
+  private countFullRedraws(text: string): void {
+    const scanned = this.redrawTail + text;
+    this.fullRedraws += scanned.split(FULL_REDRAW).length - 1;
+    this.redrawTail = scanned.slice(-(FULL_REDRAW.length - 1));
+  }
+
   private show(text: string): void {
     const arrived = this.unshown + text;
     const begin = arrived.lastIndexOf(BEGIN_FRAME);
@@ -1088,7 +1115,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private write(input: string): void {
     this.inputs.push(input.slice(-200));
     if (this.inputs.length > RECENT_INPUTS) this.inputs.shift();
-    this.child.stdin.write(input);
+    this.pty.write(input);
   }
 
   private exitCode(): number | undefined {
@@ -1110,8 +1137,19 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   }
 }
 
+async function loadNodePty(): Promise<typeof import('node-pty')> {
+  try {
+    return await import('node-pty');
+  } catch (cause) {
+    throw new Error(
+      'The TUI surface could not load node-pty. On Linux it is compiled by the apps/desktop postinstall during pnpm install; run pnpm install again and let that postinstall finish.',
+      { cause },
+    );
+  }
+}
+
 export async function startTui({ home, reopen, workspaceTrust }: SurfaceLaunch): Promise<SurfaceDriver<'tui'>> {
-  if (process.platform === 'win32') throw new Error('The TUI surface needs the script command; Windows is not supported yet.');
+  if (process.platform === 'win32') throw new Error('The TUI surface runs the CLI from a /bin/sh launcher; Windows is not supported yet.');
   const command = kimiCliCommand();
   if (!existsSync(command.entry)) {
     throw new Error(`The CLI entry ${command.entry} does not exist; build the CLI before running against its bundle.`);
@@ -1122,18 +1160,21 @@ export async function startTui({ home, reopen, workspaceTrust }: SurfaceLaunch):
   const preloads = [...(command.imports ?? []), NETWORK_GUARD_PRELOAD.href].flatMap((specifier) => ['--import', specifier]);
   const cli = [process.execPath, ...preloads, command.entry, ...(reopen === undefined ? [] : ['--continue'])].map(quote).join(' ');
   const exitMarker = `E2E_CLI_EXIT_${randomUUID()}=`;
-  await writeFile(launcher, [`stty cols ${COLUMNS} rows ${ROWS}`, cli, `printf '\\n${exitMarker}%s\\n' "$?"`, 'stty -a', ''].join('\n'));
-  const env = kimiCliEnv(home, {
-    TERM: 'xterm-256color',
+  await writeFile(launcher, [cli, `printf '\\n${exitMarker}%s\\n' "$?"`, 'stty -a', ''].join('\n'));
+  const { spawn } = await loadNodePty();
+  const size = reopen?.state.size ?? 'normal';
+  const env = productEnv(home, {
+    TERM: TERMINAL_NAME,
     ...(workspaceTrust === undefined ? {} : { KIMI_CODE_TRUST_WORKSPACE: undefined }),
   });
-  const child = spawn('/bin/sh', ['-c', `cat | ${insidePseudoTerminal(launcher)}`], {
+  const pty = spawn('/bin/sh', [launcher], {
+    name: TERMINAL_NAME,
+    cols: TERMINAL_SIZES[size].columns,
+    rows: TERMINAL_SIZES[size].rows,
     cwd: home.workspace,
-    detached: true,
-    stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...env, ...command.env, ...networkGuardEnv(networkLog, offlineStubs()) },
   });
-  const driver = new TuiDriver(child, networkLog, exitMarker, { workspace: home.workspace, lastPrompt: reopen?.lastPrompt });
+  const driver = new TuiDriver(pty, networkLog, exitMarker, { workspace: home.workspace, lastPrompt: reopen?.lastPrompt, size });
   try {
     await driver.ready(reopen === undefined ? workspaceTrust : undefined);
   } catch (error) {

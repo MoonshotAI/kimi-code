@@ -44,6 +44,7 @@ import {
   type ToolExpectation,
   type ToolStatus,
 } from '../support/verbs';
+import { productEnv } from './environment';
 import { offlineStubs } from './offline';
 
 const EDITOR_NAME = 'e2e-editor';
@@ -989,7 +990,7 @@ export async function startAcp({ home, reopen }: SurfaceLaunch): Promise<Surface
     command: kimiCliCommand(),
     args: ['acp'],
     cwd: home.workspace,
-    env: kimiCliEnv(home),
+    env: productEnv(home),
     logDir: home.root,
     stdin: true,
     fetchStubs: offlineStubs(),
