@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { promises as fsp } from 'node:fs';
+import { mkdirSync, promises as fsp, realpathSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
+import { normalize } from 'pathe';
 import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
@@ -36,18 +37,48 @@ import {
   type PersistedProjectsFile,
   type PersistedWorkspaceEntry,
 } from '#/app/workspace/workspacePersistence';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IWorkspaceTrustStore, WorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 import { stubBootstrap } from '../bootstrap/stubs';
+import { stubConfigService } from '../config/stubs';
+import { stubHostEnvironment } from '../../stubs';
+import {
+  createLayoutLab,
+  forgedPointer,
+  linkedWorktree,
+  mainCheckout,
+  type LayoutLab,
+} from '../git/checkoutLayouts';
 
 interface SessionIndexLine {
   readonly sessionId: string;
   readonly sessionDir: string;
   readonly workDir: string;
+  readonly projectRoot?: string;
+}
+
+class WriteFailingStorage extends FileStorageService {
+  failingKey: string | undefined;
+
+  override async write(
+    scope: string,
+    key: string,
+    data: Uint8Array,
+    options?: { readonly atomic?: boolean; readonly signal?: AbortSignal },
+  ): Promise<void> {
+    if (key === this.failingKey) throw new Error('injected write failure');
+    return super.write(scope, key, data, options);
+  }
 }
 
 describe('WorkspaceService (file-backed)', () => {
   let homeDir: string;
+  let osHome: string;
   let currentHost: ReturnType<typeof createScopedTestHost> | undefined;
   let published: Array<{ type: string; payload: unknown }>;
+  let tracked: Array<{ event: string; properties: unknown }>;
+  let warnings: Array<{ message: string; fields: unknown }>;
   let appendLogs: AppendLogStore;
 
   beforeEach(async () => {
@@ -67,25 +98,39 @@ describe('WorkspaceService (file-backed)', () => {
       'workspace',
     );
     homeDir = await fsp.mkdtemp(join(os.tmpdir(), 'ws-registry-'));
+    osHome = await fsp.mkdtemp(join(os.tmpdir(), 'ws-registry-os-home-'));
     published = [];
+    tracked = [];
+    warnings = [];
   });
 
   afterEach(async () => {
     currentHost?.dispose();
     currentHost = undefined;
     await fsp.rm(homeDir, { recursive: true, force: true });
+    await fsp.rm(osHome, { recursive: true, force: true });
   });
 
   const noopLog = {
     error: () => {},
-    warn: () => {},
+    warn: (message: string, fields?: unknown) => {
+      warnings.push({ message, fields });
+    },
     info: () => {},
     debug: () => {},
   } as unknown as ILogService;
 
+  const recordingTelemetry = {
+    ...noopTelemetryService,
+    track2: (event: string, properties?: unknown) => {
+      tracked.push({ event, properties });
+    },
+  } as unknown as ITelemetryService;
+
   function build(
     hostFs: IHostFileSystem = new HostFileSystem(),
     storage?: IFileSystemStorageService,
+    hostHome: string = osHome,
   ): IWorkspaceService {
     const fileStorage = storage ?? new FileStorageService(homeDir);
     appendLogs = new AppendLogStore(fileStorage, noopLog);
@@ -109,9 +154,21 @@ describe('WorkspaceService (file-backed)', () => {
         },
         subscribe: () => ({ dispose: () => {} }),
       } as unknown as IEventService),
+      stubPair(IHostEnvironment, stubHostEnvironment(hostHome)),
+      stubPair(ITelemetryService, recordingTelemetry),
+      stubPair(IWorkspaceTrustStore, trustStoreFor(fileStorage)),
     ]);
     currentHost = host;
     return host.app.accessor.get(IWorkspaceService);
+  }
+
+  function trustStoreFor(storage: IFileSystemStorageService): WorkspaceTrustStore {
+    return new WorkspaceTrustStore(
+      new JsonAtomicDocumentStore(storage),
+      noopTelemetryService,
+      stubBootstrap(homeDir),
+      stubConfigService(),
+    );
   }
 
   function restart(hostFs?: IHostFileSystem, storage?: IFileSystemStorageService): IWorkspaceService {
@@ -124,6 +181,10 @@ describe('WorkspaceService (file-backed)', () => {
     return {
       stat: () => Promise.resolve({ isFile: false, isDirectory: true, size: 0 }),
     } as unknown as IHostFileSystem;
+  }
+
+  function legacyLine(sessionId: string, workDir: string): SessionIndexLine {
+    return { sessionId, sessionDir: `sessions/${encodeWorkDirKey(workDir)}/${sessionId}`, workDir };
   }
 
   async function seedSessionIndex(entries: SessionIndexLine[]): Promise<void> {
@@ -165,7 +226,9 @@ describe('WorkspaceService (file-backed)', () => {
   }
 
   it('persists the catalog across registry instances', async () => {
-    const created = await build().createOrTouch(homeDir, 'proj');
+    const registry = build();
+    const created = await registry.resolveImplicit(homeDir);
+    await registry.update(created.id, { name: 'proj' });
 
     const list = await restart().list();
     expect(list.map((w) => w.id)).toContain(created.id);
@@ -174,8 +237,8 @@ describe('WorkspaceService (file-backed)', () => {
 
   it('publishes lifecycle events on create, touch, rename, and delete', async () => {
     const service = build();
-    const created = await service.createOrTouch(homeDir, 'proj');
-    await service.createOrTouch(homeDir);
+    const created = await service.resolveImplicit(homeDir);
+    await service.resolveImplicit(homeDir);
     await service.update(created.id, { name: 'renamed' });
     await service.delete(created.id);
 
@@ -185,7 +248,7 @@ describe('WorkspaceService (file-backed)', () => {
       'event.workspace.updated',
       'event.workspace.deleted',
     ]);
-    expect(published[0]?.payload).toMatchObject({ workspace: { id: created.id, name: 'proj' } });
+    expect(published[0]?.payload).toMatchObject({ workspace: { id: created.id, name: created.name } });
     expect(published[2]?.payload).toMatchObject({ workspace: { id: created.id, name: 'renamed' } });
     expect(published[3]?.payload).toEqual({
       workspaceId: created.id,
@@ -310,8 +373,8 @@ describe('WorkspaceService (file-backed)', () => {
     await fsp.mkdir(dirA);
     await fsp.mkdir(dirB);
     const registry = build();
-    const a = await registry.createOrTouch(dirA);
-    await registry.createOrTouch(dirB);
+    const a = await registry.resolveImplicit(dirA);
+    await registry.resolveImplicit(dirB);
 
     await registry.delete(a.id);
     expect((await registry.list()).map((w) => w.id)).toEqual([encodeWorkDirKey(dirB)]);
@@ -330,28 +393,28 @@ describe('WorkspaceService (file-backed)', () => {
     expect((await restart().list()).map((w) => w.id)).toEqual([encodeWorkDirKey(dirB)]);
   });
 
-  it('createOrTouch clears the deletion tombstone', async () => {
+  it('resolveImplicit clears the deletion tombstone', async () => {
     const dirA = join(homeDir, 'dir-a');
     await fsp.mkdir(dirA);
     const registry = build();
-    const a = await registry.createOrTouch(dirA);
+    const a = await registry.resolveImplicit(dirA);
     await registry.delete(a.id);
 
-    await registry.createOrTouch(dirA);
+    await registry.resolveImplicit(dirA);
     expect((await registry.list()).map((w) => w.id)).toEqual([a.id]);
     expect(await readRegistry().then((f) => f.deleted_workspace_ids)).toEqual([]);
 
     expect((await restart().list()).map((w) => w.id)).toEqual([a.id]);
   });
 
-  it('createOrTouch preserves external additions and tombstones written after load', async () => {
+  it('resolveImplicit preserves external additions and tombstones written after load', async () => {
     const dirA = join(homeDir, 'dir-a');
     const dirB = join(homeDir, 'dir-b');
     const dirC = join(homeDir, 'dir-c');
     await fsp.mkdir(dirA);
     await fsp.mkdir(dirC);
     const registry = build();
-    await registry.createOrTouch(dirA);
+    await registry.resolveImplicit(dirA);
 
     const onDisk = await readRegistry();
     onDisk.workspaces[encodeWorkDirKey(dirB)] = {
@@ -363,7 +426,7 @@ describe('WorkspaceService (file-backed)', () => {
     };
     await writeProjectsJson(onDisk.workspaces, ['wd_external_tombstone']);
 
-    await registry.createOrTouch(dirC);
+    await registry.resolveImplicit(dirC);
 
     const after = await readRegistry();
     expect(Object.keys(after.workspaces).toSorted()).toEqual(
@@ -377,7 +440,7 @@ describe('WorkspaceService (file-backed)', () => {
     const dirA = join(homeDir, 'dir-a');
     await fsp.mkdir(dirA);
     const registry = build();
-    const a = await registry.createOrTouch(dirA);
+    const a = await registry.resolveImplicit(dirA);
 
     const onDisk = await readRegistry();
     await writeProjectsJson(onDisk.workspaces, ['wd_external_tombstone']);
@@ -395,7 +458,7 @@ describe('WorkspaceService (file-backed)', () => {
     const dirA = join(homeDir, 'dir-a');
     await fsp.mkdir(dirA);
     const registry = build();
-    const a = await registry.createOrTouch(dirA);
+    const a = await registry.resolveImplicit(dirA);
 
     const onDisk = await readRegistry();
     const entry = onDisk.workspaces[a.id];
@@ -412,7 +475,7 @@ describe('WorkspaceService (file-backed)', () => {
   });
 
   it('writes through on update and delete', async () => {
-    const created = await build().createOrTouch(homeDir, 'proj');
+    const created = await build().resolveImplicit(homeDir);
     await build().update(created.id, { name: 'renamed' });
 
     expect((await restart().get(created.id))?.name).toBe('renamed');
@@ -421,37 +484,37 @@ describe('WorkspaceService (file-backed)', () => {
     expect(await restart().get(created.id)).toBeUndefined();
   });
 
-  it('registers createOrTouch best-effort when the root does not exist locally', async () => {
+  it('registers a missing directory best-effort on resolveImplicit', async () => {
     const missing = join(homeDir, 'never-created');
-    const ws = await build().createOrTouch(missing);
+    const ws = await build().resolveImplicit(missing);
     expect(ws.root).toBe(missing);
     expect((await build().list()).map((w) => w.id)).toEqual([ws.id]);
   });
 
-  it('rejects createOrTouch when the root is not a directory', async () => {
+  it('rejects resolveImplicit when the directory is a file', async () => {
     const file = join(homeDir, 'a-file.txt');
     await fsp.writeFile(file, 'hi', 'utf8');
-    await expect(build().createOrTouch(file)).rejects.toMatchObject({
+    await expect(build().resolveImplicit(file)).rejects.toMatchObject({
       code: ErrorCodes.FS_PATH_NOT_FOUND,
     });
     expect(await build().list()).toEqual([]);
   });
 
-  it('accepts createOrTouch when the root is given through a symlink', async () => {
+  it('keeps the symlinked spelling of a plain directory on resolveImplicit', async () => {
     const real = join(homeDir, 'real-root');
     await fsp.mkdir(real, { recursive: true });
     const link = join(homeDir, 'link-root');
     await fsp.symlink(real, link, 'dir');
-    const ws = await build().createOrTouch(link);
+    const ws = await build().resolveImplicit(link);
     expect(ws.root).toBe(link);
     expect(ws.id).toBe(encodeWorkDirKey(link));
   });
 
-  it('registers createOrTouch best-effort when a parent of the root is not a directory', async () => {
+  it('registers resolveImplicit best-effort when a parent of the directory is not a directory', async () => {
     const file = join(homeDir, 'a-file.txt');
     await fsp.writeFile(file, 'hi', 'utf8');
     const child = join(file, 'child');
-    const ws = await build().createOrTouch(child);
+    const ws = await build().resolveImplicit(child);
     expect(ws.root).toBe(child);
   });
 
@@ -479,9 +542,9 @@ describe('WorkspaceService (file-backed)', () => {
   it('folds Windows casing/slash variants onto the first-registered entry', async () => {
     const registry = build(allDirsHostFs());
 
-    const first = await registry.createOrTouch('C:\\Users\\Foo\\Proj');
-    const cased = await registry.createOrTouch('c:\\Users\\Foo\\Proj');
-    const slashed = await registry.createOrTouch('C:/Users/Foo/Proj/');
+    const first = await registry.resolveImplicit('C:\\Users\\Foo\\Proj');
+    const cased = await registry.resolveImplicit('c:\\Users\\Foo\\Proj');
+    const slashed = await registry.resolveImplicit('C:/Users/Foo/Proj/');
 
     expect(cased.id).toBe(first.id);
     expect(slashed.id).toBe(first.id);
@@ -520,9 +583,9 @@ describe('WorkspaceService (file-backed)', () => {
   it('rebuild folds session-index workDir variants into one workspace', async () => {
     const firstSeen = '//Host/Share/Proj';
     await seedSessionIndex([
-      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: firstSeen },
-      { sessionId: 's2', sessionDir: 'sessions/b/s2', workDir: '//host/share/Proj/' },
-      { sessionId: 's3', sessionDir: 'sessions/c/s3', workDir: '//HOST/SHARE/PROJ' },
+      legacyLine('s1', firstSeen),
+      legacyLine('s2', '//host/share/Proj/'),
+      legacyLine('s3', '//HOST/SHARE/PROJ'),
     ]);
 
     const list = await build().list();
@@ -534,8 +597,8 @@ describe('WorkspaceService (file-backed)', () => {
   it('keeps POSIX roots case-sensitive', async () => {
     const registry = build(allDirsHostFs());
 
-    const upper = await registry.createOrTouch('/tmp/Foo');
-    const lower = await registry.createOrTouch('/tmp/foo');
+    const upper = await registry.resolveImplicit('/tmp/Foo');
+    const lower = await registry.resolveImplicit('/tmp/foo');
 
     expect(lower.id).not.toBe(upper.id);
     expect((await registry.list()).map((w) => w.root).toSorted()).toEqual(['/tmp/Foo', '/tmp/foo']);
@@ -545,7 +608,7 @@ describe('WorkspaceService (file-backed)', () => {
     const registry = build();
     const extra = join(homeDir, 'extra');
     await fsp.mkdir(extra, { recursive: true });
-    const implicit = await registry.createOrTouch(homeDir);
+    const implicit = await registry.resolveImplicit(homeDir);
 
     const created = await registry.create({ root: homeDir, additionalDirs: [extra], name: 'proj' });
 
@@ -588,11 +651,11 @@ describe('WorkspaceService (file-backed)', () => {
     });
   });
 
-  it('createOrTouch mints a separate hash entry when only a wm_ entry holds the root', async () => {
+  it('resolveImplicit mints a separate hash entry when only a wm_ entry holds the root', async () => {
     const registry = build();
     const project = await registry.create({ root: homeDir, name: 'proj' });
 
-    const touched = await registry.createOrTouch(homeDir);
+    const touched = await registry.resolveImplicit(homeDir);
 
     expect(touched.id).toBe(encodeWorkDirKey(homeDir));
     expect(touched.id).not.toBe(project.id);
@@ -626,7 +689,7 @@ describe('WorkspaceService (file-backed)', () => {
 
   it('delete of a wm_ entry tombstones only itself and keeps the same-root hash entry', async () => {
     const registry = build();
-    const implicit = await registry.createOrTouch(homeDir);
+    const implicit = await registry.resolveImplicit(homeDir);
     const project = await registry.create({ root: homeDir, name: 'proj' });
 
     await registry.delete(project.id);
@@ -639,7 +702,7 @@ describe('WorkspaceService (file-backed)', () => {
 
   it('delete of a hash entry leaves the same-root wm_ entry registered', async () => {
     const registry = build();
-    const implicit = await registry.createOrTouch(homeDir);
+    const implicit = await registry.resolveImplicit(homeDir);
     const project = await registry.create({ root: homeDir, name: 'proj' });
 
     await registry.delete(implicit.id);
@@ -676,7 +739,7 @@ describe('WorkspaceService (file-backed)', () => {
     const registry = build();
     const managed = await registry.create({ root: homeDir, name: 'proj' });
     expect(managed.kind).toBe('managed');
-    const implicit = await registry.createOrTouch(homeDir);
+    const implicit = await registry.resolveImplicit(homeDir);
     expect(implicit.kind).toBe('implicit');
 
     const saved = await readRegistry();
@@ -762,6 +825,98 @@ describe('WorkspaceService (file-backed)', () => {
     expect(noop?.additionalDirs).toEqual([homeDir, extraB]);
   });
 
+  it('setPrimary carries the trust record of a managed project to its new primary', async () => {
+    const extra = join(homeDir, 'extra');
+    const untrustedExtra = join(homeDir, 'untrusted-extra');
+    await fsp.mkdir(extra, { recursive: true });
+    await fsp.mkdir(untrustedExtra, { recursive: true });
+    const registry = build();
+    const trusted = await registry.create({ root: homeDir, additionalDirs: [extra] });
+    const untrusted = await registry.create({ root: untrustedExtra, additionalDirs: [extra] });
+    const store = trustStoreFor(new FileStorageService(homeDir));
+    await store.forRoot(homeDir).trust();
+
+    await registry.setPrimary(trusted.id, extra);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject({ root: extra, additionalDirs: [] }).get()).toBe(true);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forRoot(homeDir).get()).toBe(true);
+
+    await trustStoreFor(new FileStorageService(homeDir)).forRoot(extra).untrust();
+    await registry.setPrimary(untrusted.id, extra);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject({ root: extra, additionalDirs: [] }).get()).toBe(false);
+  });
+
+  it('untrusting a project after a primary swap keeps it untrusted when the primary swaps back', async () => {
+    const original = join(homeDir, 'original');
+    const promoted = join(homeDir, 'promoted');
+    await fsp.mkdir(original, { recursive: true });
+    await fsp.mkdir(promoted, { recursive: true });
+    const registry = build();
+    const project = await registry.create({ root: original, additionalDirs: [promoted] });
+    await trustStoreFor(new FileStorageService(homeDir)).forProject(project).trust();
+
+    const swapped = await registry.setPrimary(project.id, promoted);
+    await trustStoreFor(new FileStorageService(homeDir)).forProject(swapped!).untrust();
+    const restored = await registry.setPrimary(project.id, original);
+
+    expect(restored?.root).toBe(original);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject(restored!).get()).toBe(false);
+    const implicit = await registry.resolveImplicit(original);
+    expect(implicit.root).toBe(original);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject(implicit).get()).toBe(false);
+  });
+
+  it('setPrimary carries no trust record to the new primary when the catalog write fails', async () => {
+    const original = join(homeDir, 'original');
+    const promoted = join(homeDir, 'promoted');
+    await fsp.mkdir(original, { recursive: true });
+    await fsp.mkdir(promoted, { recursive: true });
+    const storage = new WriteFailingStorage(homeDir);
+    const registry = build(new HostFileSystem(), storage);
+    const project = await registry.create({ root: original, additionalDirs: [promoted] });
+    await trustStoreFor(new FileStorageService(homeDir)).forRoot(original).trust();
+
+    storage.failingKey = 'projects.json';
+    await expect(registry.setPrimary(project.id, promoted)).rejects.toThrow('injected write failure');
+
+    expect((await readRegistry()).workspaces[project.id]?.root).toBe(original);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forRoot(promoted).get()).toBe(false);
+  });
+
+  it('setPrimary reports a trust carry that fails after the swap and leaves the moved project untrusted', async () => {
+    const original = join(homeDir, 'original');
+    const promoted = join(homeDir, 'promoted');
+    await fsp.mkdir(original, { recursive: true });
+    await fsp.mkdir(promoted, { recursive: true });
+    const registry = build();
+    const project = await registry.create({ root: original, additionalDirs: [promoted] });
+    await trustStoreFor(new FileStorageService(homeDir)).forRoot(original).trust();
+    vi.spyOn(currentHost!.app.accessor.get(IWorkspaceTrustStore), 'carry').mockRejectedValueOnce(
+      new Error('injected carry failure'),
+    );
+
+    await expect(registry.setPrimary(project.id, promoted)).rejects.toThrow('injected carry failure');
+
+    const moved = { root: promoted, additionalDirs: [original] };
+    expect((await readRegistry()).workspaces[project.id]).toMatchObject({ root: promoted, additional_dirs: [original] });
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject(moved).get()).toBe(false);
+    expect(published.at(-1)).toMatchObject({ type: 'event.workspace.updated', payload: { workspace: moved } });
+  });
+
+  it('setPrimary refuses to move the primary directory of an implicit project', async () => {
+    const extra = join(homeDir, 'extra');
+    await fsp.mkdir(extra, { recursive: true });
+    const registry = build();
+    const implicit = await registry.resolveImplicit(homeDir);
+    await registry.update(implicit.id, { additionalDirs: [extra] });
+    const before = await fsp.readFile(join(homeDir, 'projects.json'), 'utf8');
+
+    await expect(registry.setPrimary(implicit.id, extra)).rejects.toMatchObject({
+      code: ErrorCodes.WORKSPACE_PRIMARY_IMMUTABLE,
+    });
+    expect(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')).toBe(before);
+    expect(await registry.update(implicit.id, { name: 'renamed' })).toMatchObject({ name: 'renamed', root: homeDir });
+  });
+
   it('setPrimary rejects a path outside the dir set, a missing path, or an unknown id', async () => {
     const registry = build();
     const outside = join(homeDir, 'outside');
@@ -832,13 +987,13 @@ describe('WorkspaceService (file-backed)', () => {
     expect(saved.future_top_level).toEqual({ nested: true });
   });
 
-  it('createOrTouch resurrects a tombstoned hash entry through the implicit channel', async () => {
+  it('resolveImplicit resurrects a tombstoned hash entry through the implicit channel', async () => {
     const registry = build();
-    const implicit = await registry.createOrTouch(homeDir);
+    const implicit = await registry.resolveImplicit(homeDir);
     await registry.delete(implicit.id);
     expect(await registry.list()).toEqual([]);
 
-    const revived = await registry.createOrTouch(homeDir);
+    const revived = await registry.resolveImplicit(homeDir);
     expect(revived.id).toBe(implicit.id);
     expect((await registry.list()).map((w) => w.id)).toEqual([implicit.id]);
   });
@@ -868,9 +1023,9 @@ describe('WorkspaceService (file-backed)', () => {
       },
     });
     await seedSessionIndex([
-      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: typedRoot },
-      { sessionId: 's2', sessionDir: 'sessions/b/s2', workDir: indexOnlyRoot },
-      { sessionId: 's3', sessionDir: 'sessions/c/s3', workDir: join(homeDir, 'unrelated') },
+      legacyLine('s1', typedRoot),
+      legacyLine('s2', indexOnlyRoot),
+      legacyLine('s3', join(homeDir, 'unrelated')),
     ]);
 
     const registry = build();
@@ -899,7 +1054,7 @@ describe('WorkspaceService (file-backed)', () => {
   function staleEntry(i: number): SessionIndexLine {
     return {
       sessionId: `s_stale_${i}`,
-      sessionDir: join(homeDir, 'sessions', `wd_stale_${i}`, `s_stale_${i}`),
+      sessionDir: join(homeDir, 'sessions', encodeWorkDirKey(join(homeDir, `stale-${i}`)), `s_stale_${i}`),
       workDir: join(homeDir, `stale-${i}`),
     };
   }
@@ -934,7 +1089,7 @@ describe('WorkspaceService (file-backed)', () => {
     const lines: unknown[] = [];
     for (let i = 0; i < 20; i++) lines.push(staleEntry(i));
     for (let i = 0; i < 8; i++) {
-      const sessionDir = join(homeDir, 'sessions', `wd_fresh_${i}`, `s_fresh_${i}`);
+      const sessionDir = join(homeDir, 'sessions', encodeWorkDirKey(join(homeDir, `fresh-${i}`)), `s_fresh_${i}`);
       await fsp.mkdir(sessionDir, { recursive: true });
       const entry: SessionIndexLine = {
         sessionId: `s_fresh_${i}`,
@@ -973,7 +1128,7 @@ describe('WorkspaceService (file-backed)', () => {
   it('keeps entries appended while the compaction scans session dirs', async () => {
     const lines: unknown[] = [];
     for (let i = 0; i < 20; i++) lines.push(staleEntry(i));
-    const gateDir = join(homeDir, 'sessions', 'wd_gate', 's_gate');
+    const gateDir = join(homeDir, 'sessions', encodeWorkDirKey(join(homeDir, 'gate')), 's_gate');
     await fsp.mkdir(gateDir, { recursive: true });
     lines.push({ sessionId: 's_gate', sessionDir: gateDir, workDir: join(homeDir, 'gate') });
     await writeSessionIndexLines(lines);
@@ -1000,7 +1155,7 @@ describe('WorkspaceService (file-backed)', () => {
 
     const listPromise = build(gated).list();
     await entered;
-    const appendedDir = join(homeDir, 'sessions', 'wd_new', 's_new');
+    const appendedDir = join(homeDir, 'sessions', encodeWorkDirKey(join(homeDir, 'new')), 's_new');
     await fsp.mkdir(appendedDir, { recursive: true });
     appendLogs.append('', 'session_index.jsonl', {
       sessionId: 's_new',
@@ -1020,37 +1175,400 @@ describe('WorkspaceService (file-backed)', () => {
   it('keeps the original file when the compaction rewrite fails and compacts on the next startup', async () => {
     const lines: unknown[] = [];
     for (let i = 0; i < 20; i++) lines.push(staleEntry(i));
-    const liveDir = join(homeDir, 'sessions', 'wd_live', 's_live');
+    const liveDir = join(homeDir, 'sessions', encodeWorkDirKey(join(homeDir, 'live')), 's_live');
     await fsp.mkdir(liveDir, { recursive: true });
     lines.push({ sessionId: 's_live', sessionDir: liveDir, workDir: join(homeDir, 'live') });
     await writeSessionIndexLines(lines);
     const before = await fsp.readFile(join(homeDir, 'session_index.jsonl'), 'utf8');
 
-    let failWrites = true;
-    class FlakyStorage extends FileStorageService {
-      override async write(
-        scope: string,
-        key: string,
-        data: Uint8Array,
-        options?: { readonly atomic?: boolean; readonly signal?: AbortSignal },
-      ): Promise<void> {
-        if (failWrites && key === 'session_index.jsonl') throw new Error('injected write failure');
-        return super.write(scope, key, data, options);
-      }
-    }
-    const flaky = new FlakyStorage(homeDir);
+    const flaky = new WriteFailingStorage(homeDir);
+    flaky.failingKey = 'session_index.jsonl';
 
     const list = await build(new HostFileSystem(), flaky).list();
     expect(list).toHaveLength(21);
     expect(await fsp.readFile(join(homeDir, 'session_index.jsonl'), 'utf8')).toBe(before);
 
-    failWrites = false;
+    flaky.failingKey = undefined;
     await restart(new HostFileSystem(), flaky).list();
 
     const { ids, lines: compacted } = await readSessionIndexIds();
     expect([...ids]).toEqual(['s_live']);
     expect(compacted).toHaveLength(1);
   });
+
+describe('implicit project resolution', () => {
+  let lab: LayoutLab;
+  const isolated: Array<ReturnType<typeof createScopedTestHost>> = [];
+
+  beforeEach(() => {
+    lab = createLayoutLab('ws-resolve-');
+  });
+
+  afterEach(() => {
+    for (const host of isolated.splice(0)) host.dispose();
+    lab.dispose();
+  });
+
+  function real(path: string): string {
+    return normalize(realpathSync(path));
+  }
+
+  function repository(): { readonly main: string; readonly worktree: string } {
+    const main = mainCheckout(lab.dir('app'));
+    const worktree = linkedWorktree(`${main}/.git`, lab.dir('app-fix'));
+    return { main, worktree };
+  }
+
+  async function seedSession(bucket: string, sessionId: string, meta: Record<string, unknown> = {}): Promise<void> {
+    const dir = join(homeDir, 'sessions', bucket, sessionId);
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(
+      join(dir, 'state.json'),
+      JSON.stringify({ version: 2, createdAt: 1, updatedAt: 1, ...meta }),
+      'utf8',
+    );
+  }
+
+  function implicitEntry(root: string): PersistedWorkspaceEntry {
+    return {
+      root,
+      name: root.split(/[\\/]/).pop() ?? root,
+      kind: 'implicit',
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    };
+  }
+
+  function buildIsolated(): IWorkspaceService {
+    const fileStorage = new FileStorageService(homeDir);
+    const hostFs = new HostFileSystem();
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+      stubPair(IAppendLogStore, new AppendLogStore(fileStorage, noopLog)),
+      stubPair(ILogService, noopLog),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(IHostFileSystem, hostFs),
+      stubPair(IProjectLocalConfigService, new FileProjectLocalConfigService(stubBootstrap(homeDir), hostFs)),
+      stubPair(IEventService, { publish: () => {}, subscribe: () => ({ dispose: () => {} }) } as unknown as IEventService),
+      stubPair(IHostEnvironment, stubHostEnvironment(osHome)),
+      stubPair(ITelemetryService, recordingTelemetry),
+      stubPair(IWorkspaceTrustStore, trustStoreFor(fileStorage)),
+    ]);
+    isolated.push(host);
+    return host.app.accessor.get(IWorkspaceService);
+  }
+
+  it('registers the main checkout, not the worktree, when a fresh worktree resolves first', async () => {
+    const { main, worktree } = repository();
+
+    const resolved = await build().resolveImplicit(worktree);
+
+    expect(resolved).toMatchObject({ id: encodeWorkDirKey(real(main)), root: real(main), kind: 'implicit' });
+    expect(Object.keys((await readRegistry()).workspaces)).toEqual([encodeWorkDirKey(real(main))]);
+    expect(published.map((event) => event.type)).toEqual(['event.workspace.created']);
+  });
+
+  it('groups a subdirectory of the main checkout into the project registered at the checkout', async () => {
+    const { main } = repository();
+    const registry = build();
+    const project = await registry.resolveImplicit(main);
+
+    const nested = await registry.resolveImplicit(lab.dir('app', 'src'));
+
+    expect(nested).toEqual({ ...project, lastOpenedAt: nested.lastOpenedAt });
+    expect(project.id).toBe(encodeWorkDirKey(main));
+  });
+
+  it('groups a worktree reached through a symlinked path into the existing main checkout project', async () => {
+    const { main, worktree } = repository();
+    const registry = build();
+    const project = await registry.resolveImplicit(main);
+    const link = `${lab.base}/app-fix-link`;
+    await fsp.symlink(worktree, link, 'dir');
+
+    expect((await registry.resolveImplicit(link)).id).toBe(project.id);
+    expect((await registry.resolveImplicit(worktree)).id).toBe(project.id);
+    expect(await registry.list()).toHaveLength(1);
+  });
+
+  it('never looks at the directories of other implicit projects while it resolves a repository', async () => {
+    const { main, worktree } = repository();
+    const share = '/unreachable-share/project';
+    await writeProjectsJson({ [encodeWorkDirKey(share)]: implicitEntry(share) });
+    const hostFs = new HostFileSystem();
+    const calls = [vi.spyOn(hostFs, 'realpath'), vi.spyOn(hostFs, 'stat'), vi.spyOn(hostFs, 'lstat')];
+    const registry = build(hostFs);
+
+    expect(await registry.peekImplicit(worktree)).toMatchObject({ root: real(main) });
+    expect((await registry.resolveImplicit(worktree)).root).toBe(real(main));
+
+    expect(calls.flatMap((call) => call.mock.calls.map(([path]) => path))).not.toContain(share);
+  });
+
+  it('moves a worktree whose own project holds no sessions over to the main checkout project', async () => {
+    const { main, worktree } = repository();
+    await writeProjectsJson({
+      [encodeWorkDirKey(main)]: implicitEntry(main),
+      [encodeWorkDirKey(worktree)]: implicitEntry(worktree),
+    });
+
+    const resolved = await build().resolveImplicit(worktree);
+
+    expect(resolved.id).toBe(encodeWorkDirKey(main));
+  });
+
+  it('keeps an existing worktree project that holds sessions, archived ones included', async () => {
+    const { main, worktree } = repository();
+    await writeProjectsJson({
+      [encodeWorkDirKey(main)]: implicitEntry(main),
+      [encodeWorkDirKey(worktree)]: implicitEntry(worktree),
+    });
+    await seedSession(encodeWorkDirKey(worktree), 's-archived', { cwd: worktree, archived: true });
+    const before = await fsp.readFile(join(homeDir, 'projects.json'), 'utf8');
+
+    const registry = build();
+    expect((await registry.list()).map((ws) => ws.id).toSorted()).toEqual(
+      [encodeWorkDirKey(main), encodeWorkDirKey(worktree)].toSorted(),
+    );
+    expect(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')).toBe(before);
+
+    const resolved = await registry.resolveImplicit(worktree);
+    expect(resolved).toMatchObject({ id: encodeWorkDirKey(worktree), root: worktree });
+  });
+
+  it('counts a session in a Windows casing alias bucket as the own project holding sessions', async () => {
+    const typedRoot = 'C:\\Users\\Me\\app-fix';
+    const aliasRoot = 'c:\\users\\me\\app-fix';
+    await writeProjectsJson({
+      [encodeWorkDirKey(typedRoot)]: implicitEntry(typedRoot),
+      [encodeWorkDirKey(aliasRoot)]: implicitEntry(aliasRoot),
+    });
+    await seedSession(encodeWorkDirKey(aliasRoot), 's-alias', { cwd: aliasRoot });
+
+    const resolved = await build(allDirsHostFs()).resolveImplicit('C:/Users/Me/app-fix');
+
+    expect(resolved.id).toBe(encodeWorkDirKey(typedRoot));
+  });
+
+  it('resolves the original directory of an implicit project whose primary moved to that project', async () => {
+    const original = lab.dir('app');
+    const moved = lab.dir('app-moved');
+    const id = encodeWorkDirKey(original);
+    await writeProjectsJson({ [id]: implicitEntry(moved) });
+    await seedSession(id, 's-old', { cwd: original });
+
+    const resolved = await build().resolveImplicit(original);
+
+    expect(resolved).toMatchObject({ id, root: moved });
+  });
+
+  it('keeps worktrees and subdirectories out of a project whose primary an older version moved out of their repository', async () => {
+    const { main, worktree } = repository();
+    const subdir = lab.dir('app', 'src');
+    const id = encodeWorkDirKey(main);
+    const moved = { id, root: mainCheckout(lab.dir('other')) };
+    await writeProjectsJson({ [id]: { ...implicitEntry(main), root: moved.root } });
+    const registry = build();
+
+    for (const dir of [worktree, subdir]) {
+      expect(await registry.resolveImplicit(dir)).toMatchObject({ id: encodeWorkDirKey(dir), root: dir });
+    }
+    expect(await registry.resolveImplicit(main)).toMatchObject(moved);
+    expect(await registry.resolveImplicit(lab.dir('other', 'src'))).toMatchObject(moved);
+  });
+
+  it('sends a deleted worktree project to the main checkout and revives it for its old sessions', async () => {
+    const { main, worktree } = repository();
+    const worktreeId = encodeWorkDirKey(worktree);
+    await writeProjectsJson({
+      [encodeWorkDirKey(main)]: implicitEntry(main),
+      [worktreeId]: implicitEntry(worktree),
+    });
+    await seedSession(worktreeId, 's-old', { cwd: worktree });
+    const registry = build();
+    await registry.delete(worktreeId);
+
+    expect((await registry.resolveImplicit(worktree)).id).toBe(encodeWorkDirKey(main));
+
+    const revived = await registry.reviveImplicit(worktreeId, worktree);
+    expect(revived).toMatchObject({ id: worktreeId, root: worktree, kind: 'implicit' });
+    expect((await readRegistry()).deleted_workspace_ids).toEqual([]);
+  });
+
+  it('revives a grouped bucket from the project root its worktree session recorded and refuses a bucket no recorded directory hashes to', async () => {
+    const { main, worktree } = repository();
+    const mainId = encodeWorkDirKey(real(main));
+    const movedId = encodeWorkDirKey('/moved');
+    await seedSessionIndex([
+      { sessionId: 's-wt', sessionDir: join(homeDir, 'sessions', mainId, 's-wt'), workDir: `${worktree}/src`, projectRoot: real(main) },
+      { sessionId: 's-moved', sessionDir: join(homeDir, 'sessions', movedId, 's-moved'), workDir: `${worktree}/src`, projectRoot: '/elsewhere' },
+    ]);
+    const registry = build();
+
+    expect(await registry.reviveImplicit(mainId, `${worktree}/src`)).toMatchObject({ id: mainId, root: real(main) });
+    await expect(registry.reviveImplicit(movedId, worktree)).rejects.toMatchObject({
+      code: ErrorCodes.WORKSPACE_NOT_FOUND,
+    });
+    await expect(registry.reviveImplicit(encodeWorkDirKey('/nowhere'), worktree)).rejects.toMatchObject({
+      code: ErrorCodes.WORKSPACE_NOT_FOUND,
+    });
+    await expect(registry.reviveImplicit('wm_00000000-0000-0000-0000-000000000000', worktree)).rejects.toMatchObject({
+      code: ErrorCodes.WORKSPACE_NOT_FOUND,
+    });
+  });
+
+  it('revives a removed repository project from the root a subdirectory session recorded after all of it is gone', async () => {
+    const { main } = repository();
+    const subdir = lab.dir('app', 'src', 'lib');
+    const registry = build();
+    const { id } = await registry.resolveImplicit(subdir);
+    const windowsId = encodeWorkDirKey('C:/code/app');
+    await seedSessionIndex([
+      { sessionId: 's-sub', sessionDir: join(homeDir, 'sessions', id, 's-sub'), workDir: subdir, projectRoot: main },
+      { sessionId: 's-win', sessionDir: join(homeDir, 'sessions', windowsId, 's-win'), workDir: 'C:\\code\\app\\src', projectRoot: 'C:\\code\\app' },
+    ]);
+    await registry.delete(id);
+    await fsp.rm(main, { recursive: true });
+
+    expect(await registry.reviveImplicit(id, subdir)).toMatchObject({ id, root: main, kind: 'implicit' });
+    expect((await readRegistry()).deleted_workspace_ids).toEqual([]);
+    expect(await registry.reviveImplicit(windowsId, 'C:\\code\\app\\src')).toMatchObject({ id: windowsId, root: 'C:\\code\\app' });
+  });
+
+  it('never registers a worktree project from grouped session-index lines on restart', async () => {
+    const { main, worktree } = repository();
+    const mainId = encodeWorkDirKey(main);
+    await writeProjectsJson({ [mainId]: implicitEntry(main) });
+    await seedSessionIndex([
+      { sessionId: 's-grouped', sessionDir: join(homeDir, 'sessions', mainId, 's-grouped'), workDir: worktree },
+    ]);
+
+    expect((await build().list()).map((ws) => ws.id)).toEqual([mainId]);
+    expect(Object.keys((await readRegistry()).workspaces)).toEqual([mainId]);
+  });
+
+  it('rebuilds the main checkout project, and no worktree project, from a cleared catalog', async () => {
+    const { main, worktree } = repository();
+    const other = repository2();
+    const mainId = encodeWorkDirKey(real(main));
+    const literalId = encodeWorkDirKey(other.main);
+    const legacyWorktreeId = encodeWorkDirKey(other.worktree);
+    await seedSessionIndex([
+      { sessionId: 's-1', sessionDir: join(homeDir, 'sessions', mainId, 's-1'), workDir: worktree, projectRoot: real(main) },
+      { sessionId: 's-2', sessionDir: join(homeDir, 'sessions', literalId, 's-2'), workDir: `${other.main}/src`, projectRoot: other.main },
+      { sessionId: 's-3', sessionDir: join(homeDir, 'sessions', legacyWorktreeId, 's-3'), workDir: other.worktree },
+      { sessionId: 's-4', sessionDir: join(homeDir, 'sessions', encodeWorkDirKey('/gone'), 's-4'), workDir: `${worktree}/missing`, projectRoot: '/elsewhere' },
+      { sessionId: 's-5', sessionDir: join(homeDir, 'sessions', encodeWorkDirKey('/gone/app'), 's-5'), workDir: '/gone/app/src', projectRoot: '/gone/app' },
+    ]);
+
+    const rebuilt = await build().list();
+
+    expect(rebuilt.map((ws) => [ws.id, ws.root]).toSorted()).toEqual(
+      [
+        [mainId, real(main)],
+        [literalId, other.main],
+        [legacyWorktreeId, other.worktree],
+        [encodeWorkDirKey('/gone/app'), '/gone/app'],
+      ].toSorted(),
+    );
+  });
+
+  function repository2(): { readonly main: string; readonly worktree: string } {
+    const main = mainCheckout(lab.dir('lib'));
+    mkdirSync(`${main}/src`, { recursive: true });
+    const worktree = linkedWorktree(`${main}/.git`, lab.dir('lib-fix'));
+    return { main, worktree };
+  }
+
+  it('converges two processes resolving two fresh worktrees on one main checkout project', async () => {
+    const main = mainCheckout(lab.dir('app'));
+    const first = linkedWorktree(`${main}/.git`, lab.dir('app-one'));
+    const second = linkedWorktree(`${main}/.git`, lab.dir('app-two'));
+
+    const [a, b] = await Promise.all([
+      buildIsolated().resolveImplicit(first),
+      buildIsolated().resolveImplicit(second),
+    ]);
+
+    expect(a.id).toBe(b.id);
+    expect(Object.keys((await readRegistry()).workspaces)).toEqual([a.id]);
+  });
+
+  it('keeps a directory below a home repository on its own project', async () => {
+    const home = mainCheckout(lab.dir('home'));
+    const notes = lab.dir('home', 'notes');
+
+    const resolved = await build(new HostFileSystem(), undefined, home).resolveImplicit(notes);
+
+    expect(resolved).toMatchObject({ id: encodeWorkDirKey(notes), root: notes });
+  });
+
+  it('keeps a directory under an empty .git directory on its own project', async () => {
+    lab.dir('emptygit', '.git');
+    const subdir = lab.dir('emptygit', 'sub');
+
+    const resolved = await build().resolveImplicit(subdir);
+
+    expect(resolved).toMatchObject({ id: encodeWorkDirKey(subdir), root: subdir });
+    expect(tracked).toEqual([{ event: 'project_locate_degraded', properties: { reason: 'unreadable-dotgit' } }]);
+  });
+
+  it('keeps a forged worktree pointer on its own project and reports it once however often it is asked', async () => {
+    const { main } = repository();
+    const evil = forgedPointer(lab.dir('evil'), `${main}/.git/worktrees/app-fix`);
+    const registry = build();
+
+    expect((await registry.resolveImplicit(evil)).root).toBe(evil);
+    expect((await registry.peekImplicit(evil)).root).toBe(evil);
+    expect((await registry.resolveImplicit(evil)).root).toBe(evil);
+
+    expect(tracked).toEqual([{ event: 'project_locate_degraded', properties: { reason: 'backpointer-mismatch' } }]);
+    expect(warnings).toEqual([
+      expect.objectContaining({ fields: expect.objectContaining({ reason: 'backpointer-mismatch', dir: evil }) }),
+    ]);
+  });
+
+  it('peeks the same decision without writing the catalog', async () => {
+    const { main, worktree } = repository();
+    const registry = build();
+    await registry.list();
+    const before = await fsp.readFile(join(homeDir, 'projects.json'), 'utf8');
+
+    const decision = await registry.peekImplicit(worktree);
+
+    expect(decision).toEqual({ id: encodeWorkDirKey(real(main)), root: real(main) });
+    expect(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')).toBe(before);
+    expect(published).toEqual([]);
+  });
+
+  it('accepts the checkouts of the project repository as working directories and nothing a project only registers', async () => {
+    const { main, worktree } = repository();
+    const registered = lab.dir('lib');
+    const registry = build();
+    const project = await registry.create({ root: main, additionalDirs: [registered] });
+
+    expect(await registry.acceptsWorkDir(project, main)).toBe(true);
+    expect(await registry.acceptsWorkDir(project, lab.dir('app', 'src'))).toBe(true);
+    expect(await registry.acceptsWorkDir(project, lab.dir('app-fix', 'src'))).toBe(true);
+    expect(await registry.acceptsWorkDir({ root: worktree }, main)).toBe(true);
+    expect(await registry.projectDirAt(project, lab.dir('app-fix', 'src'))).toBe(real(worktree));
+    expect(await registry.acceptsWorkDir(project, registered)).toBe(false);
+    expect(await registry.acceptsWorkDir(project, mainCheckout(lab.dir('other')))).toBe(false);
+  });
+
+  it('accepts a working directory where the resolver would group it and nowhere a home repository would', async () => {
+    const home = mainCheckout(lab.dir('home'));
+    const notes = lab.dir('home', 'notes');
+    const { main, worktree } = repository();
+    const registry = build(new HostFileSystem(), undefined, home);
+
+    expect((await registry.resolveImplicit(notes)).root).toBe(notes);
+    expect(await registry.acceptsWorkDir({ root: home }, notes)).toBe(false);
+    expect((await registry.resolveImplicit(worktree)).root).toBe(real(main));
+    expect(await registry.acceptsWorkDir({ root: real(main) }, worktree)).toBe(true);
+  });
+});
 
 describe('projects.json migration and patch', () => {
   function createPersistence(storage = new FileStorageService(homeDir)): FileWorkspacePersistence {

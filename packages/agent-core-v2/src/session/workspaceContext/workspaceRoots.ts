@@ -1,7 +1,8 @@
-import { workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { sameDir, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/environment';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
+import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import type { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 
 export interface EffectiveWorkspaceRoots {
@@ -9,6 +10,21 @@ export interface EffectiveWorkspaceRoots {
   readonly primaryDir?: string;
   readonly additionalDirs: readonly string[];
   readonly followsPrimary: boolean;
+}
+
+type SessionPlacement = Pick<SessionMeta, 'cwd' | 'environmentId' | 'environmentCwd'>;
+
+export function sessionWorkDir(session: SessionPlacement, projectRoot: string): string;
+export function sessionWorkDir(session: SessionPlacement, projectRoot: string | undefined): string | undefined;
+export function sessionWorkDir(session: SessionPlacement, projectRoot: string | undefined): string | undefined {
+  const local = (session.environmentId ?? LOCAL_ENVIRONMENT_ID) === LOCAL_ENVIRONMENT_ID;
+  return local
+    ? session.environmentCwd ?? projectRoot ?? session.cwd
+    : session.cwd ?? projectRoot;
+}
+
+export function workDirToPin(startDir: string, projectRoot: string): string | undefined {
+  return sameDir(startDir, projectRoot) ? undefined : startDir;
 }
 
 export function resolveEffectiveWorkspaceRoots(
@@ -21,10 +37,9 @@ export function resolveEffectiveWorkspaceRoots(
   const local = environmentId === LOCAL_ENVIRONMENT_ID;
   const primaryDir = local ? workspace.primaryByWorkspace[session.workspaceId] : undefined;
   const followsPrimary = local && binding?.cwd === undefined && primaryDir !== undefined;
-  const workDir = binding?.cwd ??
-    (local
-      ? primaryDir ?? session.cwd
-      : host?.cwd ?? host?.homeDir ?? session.cwd);
+  const workDir = local
+    ? sessionWorkDir({ cwd: session.cwd, environmentCwd: binding?.cwd }, primaryDir) ?? session.cwd
+    : binding?.cwd ?? host?.cwd ?? host?.homeDir ?? session.cwd;
   const workDirKey = workspaceRootKey(workDir);
   const seen = new Set([workDirKey]);
   const additionalDirs: string[] = [];

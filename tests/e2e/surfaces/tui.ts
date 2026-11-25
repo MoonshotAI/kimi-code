@@ -562,7 +562,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   async ready(workspaceTrust?: SurfaceLaunch['workspaceTrust']): Promise<void> {
     if (workspaceTrust !== undefined) {
       await this.wait('the workspace trust prompt', (screen) =>
-        screen.viewport.some((line) => line.includes('Trust this folder?')) &&
+        screen.viewport.some((line) => line.includes('Trust this project?')) &&
         screen.viewport.some((line) => line.includes('Trust and continue'))
           ? true
           : undefined,

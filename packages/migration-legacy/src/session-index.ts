@@ -1,16 +1,13 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { targetSessionIndex } from './paths.js';
 
-export interface SessionIndexEntry {
-  readonly sessionId: string;
-  readonly sessionDir: string;
-  readonly workDir: string;
-}
+import type { SessionIndexLine } from '@moonshot-ai/agent-core-v2/app/workspace/workspaceAlias';
+
+import { targetSessionIndex } from './paths.js';
 
 export async function appendSessionIndexEntry(
   targetHome: string,
-  entry: SessionIndexEntry,
+  entry: SessionIndexLine,
 ): Promise<void> {
   const path = targetSessionIndex(targetHome);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -19,7 +16,7 @@ export async function appendSessionIndexEntry(
 
 export async function ensureSessionIndexEntry(
   targetHome: string,
-  entry: SessionIndexEntry,
+  entry: SessionIndexLine,
 ): Promise<void> {
   const path = targetSessionIndex(targetHome);
   if (await hasSessionIndexEntry(path, entry.sessionId)) return;
