@@ -155,6 +155,11 @@ describe('worktree setup engine', () => {
     track('origin', 'both');
     track('fork', 'both');
     expect((await resolveRemoteRef(root, 'both'))?.ref).toBe('origin/both');
+    git(root, 'config', 'remote.pushDefault', 'fork');
+    expect((await resolveRemoteRef(root, 'both'))?.ref).toBe('fork/both');
+    git(root, 'config', 'checkout.defaultRemote', 'origin');
+    expect((await resolveRemoteRef(root, 'both'))?.ref).toBe('origin/both');
+    git(root, 'config', '--unset', 'remote.pushDefault');
     git(root, 'config', 'checkout.defaultRemote', 'fork');
     expect((await resolveRemoteRef(root, 'both'))?.ref).toBe('fork/both');
 

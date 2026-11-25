@@ -65,19 +65,22 @@ export async function branchExists(repoRoot: string, branch: string): Promise<bo
 interface RemoteLookup {
   readonly trackingRefs: ReadonlySet<string>;
   readonly remotes: readonly string[];
-  readonly defaultRemote?: string;
+  readonly preferredRemotes: readonly string[];
 }
 
 async function readRemoteLookup(repoRoot: string): Promise<RemoteLookup> {
-  const [remotes, tracking, defaultRemote] = await Promise.all([
+  const [remotes, tracking, checkoutDefault, pushDefault] = await Promise.all([
     gitText(repoRoot, ['remote']),
     gitText(repoRoot, ['for-each-ref', '--format=%(refname)', REMOTES_PREFIX]),
     gitText(repoRoot, ['config', '--get', 'checkout.defaultRemote']),
+    gitText(repoRoot, ['config', '--get', 'remote.pushDefault']),
   ]);
   return {
     remotes: (remotes ?? '').split('\n').filter((line) => line.length > 0),
     trackingRefs: new Set((tracking ?? '').split('\n').filter((line) => line.length > 0)),
-    defaultRemote: defaultRemote === undefined || defaultRemote.length === 0 ? undefined : defaultRemote,
+    preferredRemotes: [checkoutDefault, pushDefault].filter(
+      (remote): remote is string => remote !== undefined && remote.length > 0,
+    ),
   };
 }
 
@@ -88,7 +91,7 @@ function sameNamedRemote(branch: string, lookup: RemoteLookup): RemoteBranchRef 
   const remote =
     candidates.length === 1
       ? candidates[0]
-      : (candidates.find((candidate) => candidate === lookup.defaultRemote) ??
+      : (lookup.preferredRemotes.find((preferred) => candidates.includes(preferred)) ??
         candidates.find((candidate) => candidate === 'origin'));
   if (remote === undefined) return undefined;
   return {
