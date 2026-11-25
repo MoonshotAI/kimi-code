@@ -1506,7 +1506,7 @@ describe('KimiTUI message flow', () => {
     });
     const picker = driver.state.editorContainer.children[0] as {
       handleInput(data: string): void;
-      render(width: number): string[];
+      render(width: number): readonly string[];
     };
     const output = stripSgr(picker.render(40).join(' ')).replaceAll(/\s+/g, ' ');
     expect(output).toContain('Session in use');
@@ -1528,7 +1528,7 @@ describe('KimiTUI message flow', () => {
     const takeOverLock = vi.fn(async () => {});
     const session = makeSession({ prompt, takeOverLock });
     const { driver } = await makeDriver(session);
-    type Picker = { handleInput(data: string): void; render(width: number): string[] };
+    type Picker = { handleInput(data: string): void; render(width: number): readonly string[] };
     const picker = (): Picker => driver.state.editorContainer.children[0] as Picker;
 
     driver.handleUserInput('hello');
@@ -1577,7 +1577,7 @@ describe('KimiTUI message flow', () => {
     await (
       driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
     ).refreshSkillCommands(session);
-    type Picker = { handleInput(data: string): void; render(width: number): string[] };
+    type Picker = { handleInput(data: string): void; render(width: number): readonly string[] };
     const picker = (): Picker => driver.state.editorContainer.children[0] as Picker;
 
     (
@@ -7783,7 +7783,7 @@ command = "vim"
 
   describe('steer-draft delivery', () => {
     const occupied = (): KimiError => new KimiError(ErrorCodes.SESSION_OCCUPIED, 'in use');
-    type Picker = { handleInput(data: string): void; render(width: number): string[] };
+    type Picker = { handleInput(data: string): void; render(width: number): readonly string[] };
     const picker = (driver: MessageDriver): Picker => driver.state.editorContainer.children[0] as Picker;
     const userEntries = (driver: MessageDriver) =>
       driver.state.transcriptEntries.filter((entry) => entry.kind === 'user');

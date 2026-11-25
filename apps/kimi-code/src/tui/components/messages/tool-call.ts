@@ -549,13 +549,14 @@ class PrefixedWrappedLine implements Component {
     );
     const contentWidth = Math.max(1, safeWidth - prefixWidth);
     const wrapped = new Text(this.text, 0, 0).render(contentWidth);
-    const lines =
+    const tail =
       this.tailLines !== undefined && wrapped.length > this.tailLines
         ? wrapped.slice(wrapped.length - this.tailLines)
         : wrapped;
-    if (this.minLines !== undefined) {
-      while (lines.length < this.minLines) lines.push('');
-    }
+    const lines =
+      this.minLines !== undefined && tail.length < this.minLines
+        ? [...tail, ...Array.from<string>({ length: this.minLines - tail.length }).fill('')]
+        : tail;
     const rendered = lines
       .map((line, index) =>
         index === 0 ? `${this.firstPrefix}${line}` : `${this.continuationPrefix}${line}`,
@@ -790,7 +791,7 @@ export class ToolCallComponent extends Container {
   }
 
   private renderCache:
-    | { width: number; lines: string[]; childRefs: Component[]; childLines: string[][] }
+    | { width: number; lines: string[]; childRefs: Component[]; childLines: (readonly string[])[] }
     | undefined;
 
   override render(width: number): string[] {
@@ -802,7 +803,7 @@ export class ToolCallComponent extends Container {
       cache.childRefs.length === this.children.length;
 
     const childRefs: Component[] = [];
-    const childLines: string[][] = [];
+    const childLines: (readonly string[])[] = [];
     let allReused = cacheValid;
 
     let i = 0;
@@ -848,7 +849,7 @@ export class ToolCallComponent extends Container {
   }
 
   private rowDetailCache:
-    | { width: number; lines: string[]; parts: Component[]; partLines: string[][] }
+    | { width: number; lines: string[]; parts: Component[]; partLines: (readonly string[])[] }
     | undefined;
 
   renderRowDetail(width: number): string[] {

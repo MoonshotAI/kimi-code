@@ -18,6 +18,8 @@ export interface DockLayout {
 export type DockPart = 'head' | 'body' | 'foot';
 
 class OverflowScrollView extends ScrollView {
+  private overflowChanged = false;
+
   override get isScrollbarVisible(): boolean {
     return this.canScroll;
   }
@@ -25,7 +27,13 @@ class OverflowScrollView extends ScrollView {
   override updateLayout(contentHeight: number, viewportHeight: number, requestRender: () => void): void {
     const overflowed = this.canScroll;
     super.updateLayout(contentHeight, viewportHeight, requestRender);
-    if (this.canScroll !== overflowed) requestRender();
+    if (this.canScroll !== overflowed) this.overflowChanged = true;
+  }
+
+  consumeOverflowChange(): boolean {
+    if (!this.overflowChanged) return false;
+    this.overflowChanged = false;
+    return true;
   }
 
   override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
@@ -46,7 +54,7 @@ function mouseTarget(component: Component, event: TuiMouseEvent): TuiMouseDispat
 }
 
 export abstract class DockSection extends VStack {
-  private readonly bodyScroll: ScrollView | undefined;
+  private readonly bodyScroll: OverflowScrollView | undefined;
 
   constructor(readonly layout?: DockLayout) {
     super();
@@ -92,6 +100,10 @@ export abstract class DockSection extends VStack {
 
   scrollBodyToTop(): void {
     this.bodyScroll?.scrollToStart();
+  }
+
+  consumeOverflowChange(): boolean {
+    return this.bodyScroll?.consumeOverflowChange() ?? false;
   }
 
   protected abstract renderPart(part: DockPart, width: number): string[];

@@ -324,6 +324,11 @@ export class Editor implements Component, Focusable {
 	/** Focusable interface - set by TUI when focus changes */
 	focused: boolean = false;
 
+	/** The open autocomplete menu receives fullscreen viewport keys, such as PageUp/PageDown. */
+	get capturesViewportInput(): boolean {
+		return this.autocompleteState !== null;
+	}
+
 	protected tui: TUI;
 	private theme: EditorTheme;
 	private paddingX: number = 0;
@@ -484,13 +489,14 @@ export class Editor implements Component, Focusable {
 
 	/**
 	 * Add a prompt to history for up/down arrow navigation.
-	 * Called after successful submission.
+	 * A prompt already in history moves to the most recent position instead of being added twice.
 	 */
 	addToHistory(text: string): void {
 		const trimmed = text.trim();
 		if (!trimmed) return;
-		// Don't add consecutive duplicates
-		if (this.history.length > 0 && this.history[0] === trimmed) return;
+		// Callers re-add prompts when re-rendering a session (tree navigation, fork, resume).
+		const existing = this.history.indexOf(trimmed);
+		if (existing !== -1) this.history.splice(existing, 1);
 		this.history.unshift(trimmed);
 		// Limit history size
 		if (this.history.length > 100) {
@@ -880,7 +886,12 @@ export class Editor implements Component, Focusable {
 				return;
 			}
 
-			if (kb.matches(data, "tui.select.up") || kb.matches(data, "tui.select.down")) {
+			if (
+				kb.matches(data, "tui.select.up") ||
+				kb.matches(data, "tui.select.down") ||
+				kb.matches(data, "tui.select.pageUp") ||
+				kb.matches(data, "tui.select.pageDown")
+			) {
 				this.autocompleteList.handleInput(data);
 				return;
 			}
@@ -909,6 +920,15 @@ export class Editor implements Component, Focusable {
 			if (kb.matches(data, "tui.select.confirm")) {
 				const selected = this.autocompleteList.getSelectedItem();
 				if (selected && this.autocompleteProvider) {
+					// Enter runs a slash command only from the command-name menu. Path and argument menus can also have a
+					// "/" prefix ("look at /tmp/fi", "/open /tm"), so the prefix alone does not identify the menu. Read the
+					// context before applying the completion: the completed "/model " already contains a space.
+					// Inline completions marked by the provider (e.g. an inline skill token) are content edits and never submit.
+					const beforeCursor = (this.state.lines[this.state.cursorLine] || "").slice(0, this.state.cursorCol);
+					const submitsCommand =
+						this.autocompletePrefix.startsWith("/") &&
+						this.isInSlashCommandNameContext(beforeCursor) &&
+						selected.data?.["inlineSkill"] !== true;
 					this.pushUndoSnapshot();
 					this.lastAction = null;
 					const result = this.autocompleteProvider.applyCompletion(
@@ -922,11 +942,7 @@ export class Editor implements Component, Focusable {
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
 
-					// Slash-command completions submit on confirm (Enter runs the
-					// command); inline completions marked by the provider (e.g. an
-					// inline skill token mid-prompt) are content edits, so confirm
-					// behaves like Tab and never submits.
-					if (this.autocompletePrefix.startsWith("/") && selected.data?.["inlineSkill"] !== true) {
+					if (submitsCommand) {
 						this.cancelAutocomplete();
 						// Fall through to submit
 					} else {
@@ -1560,7 +1576,7 @@ export class Editor implements Component, Focusable {
 					line.replace(PASTE_MARKER_REGEX, (fullMatch, idGroup, suffixGroup) => {
 						const x = Number(idGroup);
 						if (x <= targetId) return fullMatch;
-						return `[paste #${x - 1}${suffixGroup}]`;
+						return `[paste #${x - 1}${suffixGroup ?? ""}]`;
 					}),
 				);
 			}
@@ -2381,6 +2397,11 @@ export class Editor implements Component, Focusable {
 		return this.isSlashMenuAllowed() && textBeforeCursor.trimStart().startsWith("/");
 	}
 
+	// A slash command name is being typed: "/mo", not "/model cla" or "/open /tm".
+	private isInSlashCommandNameContext(textBeforeCursor: string): boolean {
+		return this.isInSlashCommandContext(textBeforeCursor) && !textBeforeCursor.trimStart().includes(" ");
+	}
+
 	// Autocomplete methods
 	/**
 	 * Find the best autocomplete item index for the given prefix.
@@ -2447,7 +2468,7 @@ export class Editor implements Component, Focusable {
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 		const beforeCursor = currentLine.slice(0, this.state.cursorCol);
 
-		if (this.isInSlashCommandContext(beforeCursor) && !beforeCursor.trimStart().includes(" ")) {
+		if (this.isInSlashCommandNameContext(beforeCursor)) {
 			this.handleSlashCommandCompletion();
 		} else {
 			this.forceFileAutocomplete(true);
