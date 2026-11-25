@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject } from 'vue';
-import { OpenFileLinkKey } from '@moonshot-ai/app-core/contracts';
+import { OpenFileLinkKey, OpenSessionLinkKey } from '@moonshot-ai/app-core/contracts';
 import type { TurnAttachment } from '@moonshot-ai/app-core/client/types';
 import { mentionActionLine, mentionActionPath, mentionActionSuffix, pastedTextLineCount, pastedTextPillLabel, quotePillLabel, splitInlineSegments, splitQuoteBlocks, unescapeLinkDest, type AttachmentAttrs, type ComposerTextBlock, type InlineSegment, type MentionAttrs } from '../model';
 import { COMPOSER_CLIPBOARD_MIME, stashComposerFlavor } from '../features/attachment/clipboard';
@@ -89,7 +89,8 @@ function sepTouchesQuote(index: number): boolean {
 }
 
 function interactiveAttrs(attrs: MentionAttrs): { tabindex?: number; role?: string } {
-  if (!props.interactive || attrs.kind === 'folder' || attrs.kind === 'session') return {};
+  if (!props.interactive || attrs.kind === 'folder') return {};
+  if (attrs.kind === 'session') return resolveOpenSessionLink?.() === undefined ? {} : { tabindex: 0, role: 'button' };
   if (attrs.kind === 'skill') return { tabindex: 0, role: 'button' };
   return props.openFile ? { tabindex: 0, role: 'button' } : {};
 }
@@ -135,9 +136,18 @@ function actionPathFor(segment: InlineSegment): string | undefined {
 }
 
 const openFileLink = inject(OpenFileLinkKey, undefined);
+const resolveOpenSessionLink = inject(OpenSessionLinkKey, undefined);
 
 function onPillClick(segment: InlineSegment, event: Event): void {
-  if (segment.type !== 'mention' || !props.interactive || segment.attrs.kind !== 'file' || !props.openFile) return;
+  if (segment.type !== 'mention' || !props.interactive) return;
+  const openSession = segment.attrs.kind === 'session' ? resolveOpenSessionLink?.() : undefined;
+  if (openSession !== undefined) {
+    event.preventDefault();
+    event.stopPropagation();
+    openSession(segment.attrs.path);
+    return;
+  }
+  if (segment.attrs.kind !== 'file' || !props.openFile) return;
   event.preventDefault();
   event.stopPropagation();
   const snapshotAction = segment.rawDest === '' ? snapshotFileAction(segment.attrs) : null;

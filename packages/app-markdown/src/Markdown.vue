@@ -13,8 +13,8 @@ import { MarkdownRender, enableKatex, enableMermaid, languageMap } from 'markstr
 import { ensureMarkdownWorkers } from './lib/markdownWorkers';
 import { useIsDark } from '@moonshot-ai/app-core';
 import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
-import { HistoryStateKey, OpenFileLinkKey, OpenLocalHtmlFileKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
-import { classifyMentionHref, decodeSessionMention, decodeSkillMention, mentionActionLine, mentionActionPath, mentionActionSuffix, sessionMentionPath, unescapeLinkDest, unescapeRenderedLinkText } from '@moonshot-ai/app-composer/model';
+import { HistoryStateKey, OpenFileLinkKey, OpenLocalHtmlFileKey, OpenSessionLinkKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
+import { classifyMentionHref, decodeSessionMention, decodeSkillMention, mentionActionLine, mentionActionPath, mentionActionSuffix, unescapeLinkDest, unescapeRenderedLinkText } from '@moonshot-ai/app-composer/model';
 import { mentionHrefToPath, mentionIconSvg, truncateMentionName } from '@moonshot-ai/app-composer/features/mention';
 import { collectFilePathAliases, findFilePathLinks, isRelativeLinkCandidate, type FilePathResolution } from './lib/filePathLinks';
 import { splitFrontmatter } from './lib/frontmatter';
@@ -75,6 +75,7 @@ const resolveImageFn = computed(() => {
 const openSidebarBrowserUrl = inject(OpenSidebarBrowserUrlKey, undefined);
 const resolveOpenLocalHtmlFile = inject(OpenLocalHtmlFileKey, undefined);
 const openFileLink = inject(OpenFileLinkKey, undefined);
+const resolveOpenSessionLink = inject(OpenSessionLinkKey, undefined);
 const pinScroll = inject(PinScrollKey, undefined);
 const mdRef = ref<HTMLElement | null>(null);
 const props = withDefaults(
@@ -390,8 +391,11 @@ function processMarkdownLinks(): void {
     link.removeAttribute('title');
     const pathLike = kind === 'file' || kind === 'folder';
     const skill = kind === 'skill' ? decodeSkillMention(href) : undefined;
-    const session = kind === 'session' ? decodeSessionMention(href) : null;
-    const path = skill?.path ?? (session === null ? mentionHrefToPath(href) : sessionMentionPath(session));
+    const sessionId = kind === 'session' ? decodeSessionMention(href) : null;
+    const openSession = sessionId === null || resolveOpenSessionLink?.() === undefined
+      ? undefined
+      : () => resolveOpenSessionLink?.()?.(sessionId);
+    const path = skill?.path ?? sessionId ?? mentionHrefToPath(href);
     const name = unescapeRenderedLinkText(link.textContent ?? '');
     link.classList.add('mention-pill', `mention-${kind}`);
     link.dataset.mentionKind = kind;
@@ -404,7 +408,7 @@ function processMarkdownLinks(): void {
       if (actionPath !== link.dataset.mentionPath) link.dataset.mentionActionPath = actionPath;
     }
     if (!pathLike || props.openFile) link.removeAttribute('href');
-    if (kind === 'skill' || (kind === 'file' && props.openFile)) {
+    if (kind === 'skill' || (kind === 'file' && props.openFile) || openSession !== undefined) {
       link.tabIndex = 0;
       link.setAttribute('role', 'button');
     }
@@ -436,11 +440,20 @@ function processMarkdownLinks(): void {
       }
     }
     link.addEventListener('click', (event) => {
-      if (kind !== 'skill' && !props.openFile) return;
+      if (kind !== 'skill' && !props.openFile && openSession === undefined) return;
       event.preventDefault();
       event.stopPropagation();
       if (kind === 'file') openFileTarget({ ...fileTarget, ...resolvedOpenTarget(fileTarget.path) });
+      openSession?.();
     });
+    if (openSession !== undefined) {
+      link.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) openSession();
+      });
+    }
     if (kind === 'file' && props.openFile) {
       link.addEventListener('keydown', (event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;

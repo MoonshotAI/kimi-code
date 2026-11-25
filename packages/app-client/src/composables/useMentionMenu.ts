@@ -3,7 +3,6 @@ import type { FileItem } from '@moonshot-ai/app-core/client';
 import type { AppSkill } from '@moonshot-ai/app-core/api';
 import { skillIdentity } from '@moonshot-ai/app-core/lib';
 import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
-import { sessionMentionPath } from '@moonshot-ai/app-composer/model';
 import type { TextFieldLike } from '@moonshot-ai/app-composer/runtime';
 import type { SessionMentionCandidate } from '../lib/sessionReferences';
 
@@ -567,10 +566,7 @@ export function useMentionMenu(deps: MentionMenuDeps) {
 
   function toEntry(item: Exclude<MentionItem, { kind: 'session-group' }>): MentionEntry {
     if (item.kind === 'browser') return { kind: 'browser', captureId: item.browser.captureId, name: item.browser.label };
-    if (item.kind === 'session') {
-      const path = sessionMentionPath({ workspaceId: item.session.workspaceId, sessionId: item.session.id });
-      return { kind: 'session', name: item.session.title, path };
-    }
+    if (item.kind === 'session') return { kind: 'session', name: item.session.title, path: item.session.id };
     if (item.kind === 'attachment') {
       return {
         kind: 'attachment',

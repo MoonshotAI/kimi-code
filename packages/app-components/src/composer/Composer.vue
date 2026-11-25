@@ -674,6 +674,11 @@ onMounted(() => {
     onCompositionStart: handleCompositionStart,
     onCompositionEnd: handleCompositionEnd,
     pastedTextMeta: (lineCount) => t('composer.pastedTextLines', { n: lineCount }, lineCount),
+    sessionLinks: {
+      enabled: () => client.sessionMentionsAvailable.value,
+      title: client.sessionLinkTitle,
+      loadTitle: client.loadSessionLinkTitle,
+    },
     recognizeSlashCommands: !isSideChat.value,
     slashCommands: highlightCommands.value,
     attachments: {

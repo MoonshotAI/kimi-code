@@ -48,7 +48,7 @@ import { GlobalLoading } from '@moonshot-ai/app-components';
 import { getDeviceApi, useKimiWebClient, promptAttachmentToTurnAttachment, turnFileContentFetcher } from '@moonshot-ai/app-client/client';
 import { sessionViewsStore, workspacesStore, modelsStore, notificationsStore, authStore, sessionsStore, warningsStore, filesStore, permissionsStore, enableSessionRating, modelSwitchConfirmStore, effortSwitchStore, hostsStore } from '@moonshot-ai/app-client/stores';
 import { FetchTurnFileContentKey, InsertPathMentionKey, ModelDisplayKey, OpenWithDefaultAppKey, ResolveSwarmMembersKey, RevealInFolderKey, SelectionContextMenuKey, SessionRatingKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
-import { OpenFileLinkKey, OpenHtmlFileInPanelKey, OpenLocalHtmlFileKey, OpenMarkdownImageKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
+import { OpenFileLinkKey, OpenHtmlFileInPanelKey, OpenLocalHtmlFileKey, OpenMarkdownImageKey, OpenSessionLinkKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
 import { getKimiWebApi } from './api';
 import { useConfirmDialog, useSelectionQuoteBubble } from '@moonshot-ai/app-client/composables';
 import { runComposerMenuEdit } from '@moonshot-ai/app-composer/runtime';
@@ -76,11 +76,12 @@ import { effectiveThinkingLevel } from '@moonshot-ai/app-core/lib';
 import { isPurePreviewFile, modelDisplayName, subagentEffortSuffix } from '@moonshot-ai/app-core/lib';
 import { stripSkillPrefix, skillCommandArgs } from '@moonshot-ai/app-core/lib';
 import { TOWER_STATUS_PROMPT, TOWER_TEARDOWN_PROMPT } from '@moonshot-ai/app-core/lib';
-import { useContextInspector } from '@moonshot-ai/app-core';
+import { useContextInspector, useSessionMentions } from '@moonshot-ai/app-core';
 import { sessionDisplayStatus, type SessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 import { Icon, IconButton, StatusDot } from '@moonshot-ai/app-ui';
 import { hasCustomTitleBar, hasDesktopBridge, isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
 import CustomTitleBar from './components/window/CustomTitleBar.vue';
+import HistoryNavButtons from './components/window/HistoryNavButtons.vue';
 import TerminalDropZone from './components/terminal/TerminalDropZone.vue';
 import TerminalPanel from './components/terminal/TerminalPanel.vue';
 import TerminalResizeHandle from './components/terminal/TerminalResizeHandle.vue';
@@ -141,6 +142,7 @@ let offAuthRequired: (() => void) | null = null;
 useMenuDragRegions();
 const client = useKimiWebClient();
 const desktopBridge = hasDesktopBridge();
+const { sessionMentions } = useSessionMentions();
 const sessionViews = sessionViewsStore();
 provide(ComposerNativeMenuHostKey, { register: registerBrowserOverlayMenu });
 const browserAnnotationHost = createBrowserAnnotationHost({
@@ -376,6 +378,7 @@ onMounted(() => {
   window.addEventListener('resize', onTerminalWindowResize);
   installImeCompositionLatch();
   window.addEventListener('keydown', onShortcutKeydown);
+  window.addEventListener('mouseup', onHistoryMouseButton);
   offMenuAction =
     (window as { kimiDesktop?: { onMenuAction?: (cb: (id: string) => void) => () => void } })
       .kimiDesktop?.onMenuAction?.((menuId) => {
@@ -450,6 +453,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onShortcutKeydown);
+  window.removeEventListener('mouseup', onHistoryMouseButton);
   if (offMenuAction !== null) {
     offMenuAction();
     offMenuAction = null;
@@ -639,6 +643,12 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
     case 'selectNextSibling':
       sidebarRef.value?.selectSibling(1);
       break;
+    case 'navigateBack':
+      window.history.back();
+      break;
+    case 'navigateForward':
+      window.history.forward();
+      break;
     case 'captureScreenshot':
       void handleScreenshot();
       break;
@@ -708,6 +718,16 @@ function onShortcutKeydown(e: KeyboardEvent): void {
   }
   e.preventDefault();
   runShortcutAction(id, 'shortcut');
+}
+
+function navigateHistory(direction: 'back' | 'forward'): void {
+  runShortcutAction(direction === 'back' ? 'navigateBack' : 'navigateForward', 'button');
+}
+
+function onHistoryMouseButton(e: MouseEvent): void {
+  if (!desktopBridge || (e.button !== 3 && e.button !== 4) || anyOverlayOpen.value) return;
+  e.preventDefault();
+  navigateHistory(e.button === 3 ? 'back' : 'forward');
 }
 
 const filePreview = useFilePreview({
@@ -1545,6 +1565,10 @@ async function openBrowserUrlFromSettings(url: string): Promise<void> {
 }
 
 provide(OpenFileLinkKey, (target, open) => openFileOrLocalHtml(target, localHtmlOpener, client.status.value.cwd, open));
+const openSessionFromMention = (sessionId: string): void => {
+  void client.openSessionLink(sessionId, 'mention');
+};
+provide(OpenSessionLinkKey, () => (sessionMentions.value ? openSessionFromMention : undefined));
 provide(OpenLocalHtmlFileKey, localHtmlLinkHandler(localHtmlOpener, (target) => panel.openFilePreview(target), closeDockWorkPanel));
 provide(OpenHtmlFileInPanelKey, () => {
   if (!canOpenBrowserTab.value) return undefined;
@@ -2460,6 +2484,7 @@ function openPr(url: string): void {
       :class="{
         mobile: isMobile,
         'sidebar-collapsed': sidebarCollapsed && !isMobile,
+        'history-nav': desktopBridge && sessionMentions && !isMobile,
         'macos-desktop': isMacosDesktop,
         'windows-desktop': isWindowsDesktop,
         'custom-titlebar': hasCustomTitleBar,
@@ -2475,6 +2500,7 @@ function openPr(url: string): void {
       :fullscreen="isFullscreen"
       :sidebar-collapsed="sidebarCollapsed"
       @toggle-sidebar="runShortcutAction('toggleSidebar', 'button')"
+      @navigate="navigateHistory"
     />
     <template v-if="!isMobile">
       <Sidebar
@@ -2494,6 +2520,7 @@ function openPr(url: string): void {
         @open-feedback="openGlobalFeedback('sidebar')"
         @login="openLogin"
         @collapse="runShortcutAction('toggleSidebar', 'button')"
+        @navigate="navigateHistory"
       />
       <ResizeHandle
         v-show="!sidebarCollapsed"
@@ -2610,6 +2637,12 @@ function openPr(url: string): void {
     >
       <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" />
     </IconButton>
+
+    <HistoryNavButtons
+      v-if="desktopBridge && sessionMentions && !isMobile && (isMacosDesktop || (sidebarCollapsed && !hasCustomTitleBar))"
+      class="history-nav-btns"
+      @navigate="navigateHistory"
+    />
 
     <!-- New-chat shortcut — web-only while the sidebar is COLLAPSED (the
          expanded sidebar already owns the primary "New chat" button).
@@ -3037,6 +3070,20 @@ function openPr(url: string): void {
 .app.macos-desktop.fullscreen .sidebar-toggle-btn {
   left: 16px;
 }
+.history-nav-btns {
+  position: absolute;
+  top: 11px;
+  left: 42px;
+  z-index: var(--z-sticky);
+  animation: sidebar-toggle-btn-in 0.18s var(--ease-out) 0.12s backwards;
+}
+.app.macos-desktop .history-nav-btns {
+  left: 110px;
+  animation: none;
+}
+.app.macos-desktop.fullscreen .history-nav-btns {
+  left: 42px;
+}
 .new-chat-btn {
   position: absolute;
   top: 11px;
@@ -3050,6 +3097,15 @@ function openPr(url: string): void {
 }
 .app.macos-desktop.fullscreen .new-chat-btn {
   left: 42px;
+}
+.app.history-nav .new-chat-btn {
+  left: 94px;
+}
+.app.history-nav.macos-desktop .new-chat-btn {
+  left: 162px;
+}
+.app.history-nav.macos-desktop.fullscreen .new-chat-btn {
+  left: 94px;
 }
 @keyframes sidebar-toggle-btn-in {
   from { opacity: 0; }

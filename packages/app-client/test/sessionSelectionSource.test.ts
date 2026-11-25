@@ -206,6 +206,27 @@ describe('session selection source', () => {
     expect(warningsStore().warnings).toEqual([]);
   });
 
+  it('drops a linked session that finishes loading after the user navigated elsewhere', async () => {
+    const location = { pathname: '/sessions/current' };
+    vi.stubGlobal('window', { location });
+    try {
+      const linkFetch = deferred<AppSession>();
+      const workspace = createWorkspaceState(() => linkFetch.promise);
+      sessionsStore().setSessions([session('current')]);
+      sessionsStore().setActiveSessionId('current');
+
+      const opening = workspace.openSessionLink('linked', 'mention');
+      location.pathname = '/admin/sessions';
+      linkFetch.resolve(session('linked'));
+      await opening;
+
+      expect(sessionsStore().activeSessionId).toBe('current');
+      expect(trackMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('opens a linked session that is not loaded yet and records the link as its source', async () => {
     const getSession = vi.fn(async (id: string) => session(id));
     const workspace = createWorkspaceState(getSession);

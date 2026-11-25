@@ -101,7 +101,7 @@ import { configureWorkspaceHooks } from '../lib/workspaceHooks';
 import { workspaceModeActions } from '../lib/workspaceModeActions';
 import { closeSessionBusyWindow, openSessionBusyWindow } from '../lib/perfTracking';
 import { waitForSessionExecution, type SessionExecutionState } from '../lib/sessionExecutionReadiness';
-import { sessionMentionCandidates as buildSessionMentionCandidates, type SessionMentionCandidate } from '../lib/sessionReferences';
+import { sessionMentionCandidates as buildSessionMentionCandidates, sessionMentionTitle, type SessionMentionCandidate } from '../lib/sessionReferences';
 import { useSessionAdmin } from './useSessionAdmin';
 import { useBrowserTabTitle } from '../composables/useBrowserTabTitle';
 import { useDocumentTitle } from '../composables/useDocumentTitle';
@@ -2615,6 +2615,19 @@ const sessionMentionCandidates = computed<SessionMentionCandidate[]>(() => {
   return mentionCandidatesFrom(rawState.sessions);
 });
 
+function sessionLinkTitle(sessionId: string): string | undefined {
+  const session = rawState.sessions.find((candidate) => candidate.id === sessionId);
+  return session === undefined ? undefined : sessionMentionTitle(session);
+}
+
+async function loadSessionLinkTitle(sessionId: string): Promise<string | undefined> {
+  try {
+    return sessionMentionTitle(await getKimiWebApi().getSession(sessionId, { background: true }));
+  } catch {
+    return undefined;
+  }
+}
+
 async function searchSessionMentions(query: string, options: { signal: AbortSignal }): Promise<SessionMentionCandidate[]> {
   if (!sessionMentionsAvailable.value) return [];
   const page = await getKimiWebApi().listSessions(
@@ -3372,8 +3385,11 @@ export function useKimiWebClient() {
     workspaceSortMode,
     visibleWorkspace,
     activeWorkspaceId,
+    sessionMentionsAvailable,
     sessionMentionCandidates,
     searchSessionMentions,
+    sessionLinkTitle,
+    loadSessionLinkTitle,
     activeWorkspaceTrust,
     activeWorkspaceTrustError,
     activeWorkspaceTrustLoading,
