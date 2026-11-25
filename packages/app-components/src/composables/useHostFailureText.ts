@@ -15,6 +15,9 @@ export function useHostFailureText(): {
       if (failure === 'executor_outdated' && remoteVersion !== undefined && remoteVersion !== 'unknown') {
         return t('workspace.connectFailureOutdatedVersion', { version: remoteVersion });
       }
+      if (failure === 'client_outdated' && remoteVersion !== undefined && remoteVersion !== 'unknown') {
+        return t('workspace.connectFailureClientOutdatedVersion', { version: remoteVersion });
+      }
       return t(`workspace.connectFailure.${failure}`);
     },
     hint(failure, host, name) {

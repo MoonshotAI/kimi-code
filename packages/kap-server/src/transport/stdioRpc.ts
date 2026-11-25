@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { chmod, mkdir, rm, stat } from 'node:fs/promises';
-import type { IncomingHttpHeaders, IncomingMessage, OutgoingHttpHeaders } from 'node:http';
+import type { IncomingHttpHeaders, IncomingMessage, OutgoingHttpHeaders, Server as HttpServer } from 'node:http';
 import { createServer, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 import type { Duplex } from 'node:stream';
@@ -67,6 +67,27 @@ export interface RpcStreamOptions {
   readonly app: FastifyInstance;
   readonly wssV1: WebSocketServer;
   readonly wssDebug?: WebSocketServer;
+  readonly httpServer?: HttpServer;
+  readonly onWsConnect?: () => void;
+}
+
+const trustedUnixSockets = new WeakSet<object>();
+const trustedUnixRequests = new WeakSet<object>();
+
+export function markTrustedUnixSocket(socket: object): void {
+  trustedUnixSockets.add(socket);
+}
+
+export function isTrustedUnixSocket(socket: object | null | undefined): boolean {
+  return socket !== null && socket !== undefined && trustedUnixSockets.has(socket);
+}
+
+export function markTrustedUnixRequest(request: object): void {
+  trustedUnixRequests.add(request);
+}
+
+export function isTrustedUnixRequest(request: object | null | undefined): boolean {
+  return request !== null && request !== undefined && trustedUnixRequests.has(request);
 }
 
 class RpcBodyTooLargeError extends Error {
@@ -166,6 +187,7 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
               reply.destroy();
               return;
             }
+            markTrustedUnixRequest(request);
             requests.set(frame.id, () => reply.destroy());
             opts.app.routing(request, reply);
           }, {
@@ -245,6 +267,7 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
           headers: {},
           socket: { remoteAddress: 'unix' },
         } as unknown as IncomingMessage;
+        if (isV1) opts.onWsConnect?.();
         wss.emit('connection', fake as unknown as WebSocket, fakeReq);
         return;
       }
@@ -263,17 +286,78 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
   );
 }
 
+function firstNonWhitespaceByte(buf: Buffer): number | undefined {
+  for (let i = 0; i < buf.length; i += 1) {
+    const byte = buf[i]!;
+    if (byte !== 0x20 && byte !== 0x09 && byte !== 0x0d && byte !== 0x0a) return byte;
+  }
+  return undefined;
+}
+
+function dispatchUnixSocket(socket: Socket, opts: RpcStreamOptions): void {
+  const httpServer = opts.httpServer;
+  if (httpServer === undefined) {
+    attachRpcStream(socket, opts);
+    return;
+  }
+  const pendingChunks: Buffer[] = [];
+  let pendingBytes = 0;
+  const cleanup = (): void => {
+    socket.off('readable', onReadable);
+    socket.off('end', cleanup);
+    socket.off('close', cleanup);
+    socket.off('error', onError);
+  };
+  const onError = (): void => {
+    cleanup();
+    socket.destroy();
+  };
+  const onReadable = (): void => {
+    for (;;) {
+      const chunk = socket.read() as Buffer | null;
+      if (chunk === null) return;
+      pendingChunks.push(chunk);
+      pendingBytes += chunk.length;
+      const first = firstNonWhitespaceByte(chunk);
+      if (first === undefined) {
+        if (pendingBytes > 4096) {
+          cleanup();
+          socket.destroy();
+          return;
+        }
+        continue;
+      }
+      cleanup();
+      const combined = pendingChunks.length === 1 ? pendingChunks[0]! : Buffer.concat(pendingChunks);
+      socket.unshift(combined);
+      if (first === 0x7b) {
+        attachRpcStream(socket, opts);
+      } else {
+        markTrustedUnixSocket(socket);
+        httpServer.emit('connection', socket);
+      }
+      return;
+    }
+  };
+  socket.on('readable', onReadable);
+  socket.once('end', cleanup);
+  socket.once('close', cleanup);
+  socket.once('error', onError);
+}
+
 export async function startUnixRpcServer(
   socketPath: string,
   opts: RpcStreamOptions,
 ): Promise<{ close(): Promise<void> }> {
-  await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
+  const dir = dirname(socketPath);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700).catch(() => {});
   await rm(socketPath, { force: true });
   const clients = new Set<Socket>();
   const server = createServer((socket) => {
     clients.add(socket);
     socket.on('close', () => clients.delete(socket));
-    attachRpcStream(socket, opts);
+    dispatchUnixSocket(socket, opts);
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);

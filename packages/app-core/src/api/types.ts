@@ -780,6 +780,7 @@ export type AppHostConnectFailure =
   | 'host_key_changed'
   | 'executor_not_found'
   | 'executor_outdated'
+  | 'client_outdated'
   | 'remote_busy'
   | 'remote_start_failed'
   | 'unknown';

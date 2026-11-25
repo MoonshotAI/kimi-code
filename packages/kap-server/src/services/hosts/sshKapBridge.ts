@@ -4,7 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { HostEntry } from '@moonshot-ai/agent-core-v2';
 
-import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from './hostProtocol';
+import { HOST_PROTOCOL_VERSION, KAP_VERSION } from './hostProtocol';
 import type { HostSession } from './hostSession';
 import { StdioHostSession } from './stdioHostSession';
 
@@ -19,6 +19,7 @@ export type HostConnectFailure =
   | 'host_key_changed'
   | 'executor_not_found'
   | 'executor_outdated'
+  | 'client_outdated'
   | 'remote_busy'
   | 'remote_start_failed'
   | 'unknown';
@@ -26,7 +27,9 @@ export type HostConnectFailure =
 interface BootstrapMarker {
   readonly protocol: number | undefined;
   readonly api_level?: number;
+  readonly kap_version?: number;
   readonly version?: string;
+  readonly cli_version?: string;
   readonly error?: string;
   readonly message?: string;
 }
@@ -128,12 +131,36 @@ function outdatedError(version: string | undefined): HostConnectError {
   );
 }
 
+function clientOutdatedError(version: string | undefined): HostConnectError {
+  return new HostConnectError(
+    'client_outdated',
+    `this app (KAP v${String(KAP_VERSION)}) is older than kimi ${version ?? '(unknown version)'} on this host; update this app and reconnect`,
+    version,
+  );
+}
+
+function busyOldDaemonError(version: string | undefined): HostConnectError {
+  return new HostConnectError(
+    'remote_busy',
+    `a kimi server of version ${version ?? '(unknown version)'} is still running work on this host; retry after it finishes`,
+    version,
+  );
+}
+
 export function checkBootstrapOutput(stdout: string): boolean {
   const marker = readMarker(stdout);
   if (marker === undefined) return false;
   const version = marker.version ?? readVersionLine(stdout);
   if (marker.protocol === undefined || marker.protocol < HOST_PROTOCOL_VERSION) throw outdatedError(version);
-  if (marker.api_level === undefined || marker.api_level < HOST_API_LEVEL) throw outdatedError(version);
+  if (marker.protocol > HOST_PROTOCOL_VERSION) throw clientOutdatedError(version);
+  const remoteKapVersion = marker.kap_version ?? marker.api_level;
+  if (remoteKapVersion === undefined || remoteKapVersion < KAP_VERSION) {
+    if (marker.cli_version !== undefined && marker.cli_version !== marker.version) {
+      throw busyOldDaemonError(version);
+    }
+    throw outdatedError(version);
+  }
+  if (remoteKapVersion > KAP_VERSION) throw clientOutdatedError(version);
   if (marker.error !== undefined) {
     throw new HostConnectError(
       ENSURE_DAEMON_FAILURES[marker.error] ?? 'unknown',

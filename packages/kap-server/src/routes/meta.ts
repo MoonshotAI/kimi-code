@@ -3,6 +3,7 @@ import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { metaResponseSchema } from '../protocol/rest-meta';
 import type { MetaFeature, MetaResponse } from '../protocol/rest-meta';
+import { KAP_VERSION } from '../services/hosts/hostProtocol';
 
 interface RouteHost {
   get(
@@ -33,6 +34,7 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
   const product = opts.product !== undefined && opts.product.length > 0 ? opts.product : undefined;
   const staticData = Object.freeze({
     kimi_agent_protocol_version: KIMI_AGENT_PROTOCOL_VERSION,
+    kap_version: KAP_VERSION,
     server_version: opts.serverVersion,
     product,
     capabilities: Object.freeze({

@@ -21,16 +21,17 @@ Kimi Code Web 是 Kimi Code CLI 内置的浏览器图形界面：既可以在本
 <div class="step">
 <span class="step-num">3</span> <strong>服务就绪后自动用默认浏览器打开 Web 界面</strong>
 
-启动横幅会打印访问地址，浏览器没有自动打开时，手动复制这行地址打开即可：
+在 macOS 和 Linux 上，`kimi web` 会自动拉起或复用常驻后台 daemon，打印访问地址并在默认浏览器中打开页面后立即返回（Windows 上默认保持前台独立运行）：
 
 ```text
 Local:   http://127.0.0.1:58627/#token=...
 Token:   ...
-Stop:    Ctrl+C
+Logs:    ~/.kimi-code/server/daemon.log
+Stop:    kimi daemon stop
 ```
 
 ::: warning 注意
-地址里的 `#token=` 是访问凭证，请勿外发，停止服务在终端按 `Ctrl+C`。
+地址里的 `#token=` 是访问凭证，请勿外发。要停止后台 daemon 请运行 `kimi daemon stop`（前台 `--no-daemon` 模式在终端按 `Ctrl+C`）。
 :::
 </div>
 
@@ -38,10 +39,11 @@ Stop:    Ctrl+C
 
 | 选项 | 说明 |
 | --- | --- |
-| `--port <port>` | 绑定端口；默认 `58627`，被占用时自动 +1 重试 |
-| `--host [host]` | 开启局域网共享，让同一网络下的手机、平板或其他电脑访问；也可指定 IP，如 `--host 192.168.1.10` |
+| `--no-daemon` | 不复用后台 daemon，在当前终端前台启动独立服务，按 `Ctrl+C` 停止 |
+| `--port <port>` | 绑定端口（需配合 `--no-daemon` 或 `--json`）；默认 `58627`，被占用时自动 +1 重试 |
+| `--host [host]` | 开启局域网共享（需配合 `--no-daemon`），让同一网络下的手机、平板或其他电脑访问；也可指定 IP，如 `--no-daemon --host 192.168.1.10` |
 | `--no-open` | 就绪后不自动打开浏览器 |
-| `--log-level <level>` | 按所选级别开启服务日志；默认不输出 |
+| `--log-level <level>` | 按所选级别开启前台服务日志（需配合 `--no-daemon`）；后台 daemon 日志写入 `~/.kimi-code/server/daemon.log` |
 
 ## 远程控制（公网与手机访问） {#远程控制}
 
@@ -49,11 +51,12 @@ Stop:    Ctrl+C
 
 ### 启动与连接
 
-在本机任选一种方式启动前台进程（一台机器同时只能运行一个远程控制实例，每个账号最多支持约 **3 台**设备）：
+在本机任选一种方式开启远程控制（一台机器同时只能运行一个远程控制实例，每个账号最多支持约 **3 台**设备）：
 
-- **`kimi rc`**（别名 `kimi remote`）：直接启动远程控制；
+- **`kimi rc`**（别名 `kimi remote`）：在后台 daemon 上开启远程控制并持久化偏好（daemon 重启后自动恢复），打印链接与二维码后立即返回；
+- **`kimi rc stop`**：关闭远程控制并清除持久化偏好；
 - **`kimi web --remote-control`**：与 `kimi rc` 等价；
-- **`/remote-control`**（别名 `/rc`）：已在 CLI 会话中时，把当前会话直接交给远程界面。
+- **`/remote-control`**（别名 `/rc`）：已在 CLI 会话中时，复用后台 daemon 把当前会话直接交给远程界面。
 
 启动后终端会打印访问链接（国内 `https://code-rc.kimi.com/devices/<设备 ID>/`，全球区 `https://code-rc.kimi.ai/devices/<设备 ID>/`）、二维码（同时另存为 PNG 文件）与设备名：
 
@@ -63,7 +66,7 @@ Stop:    Ctrl+C
 2. 登录与本机**相同**的 Kimi 账号，在设备列表中选择这台机器即可查看并操控会话。
 
 ::: warning 注意
-远程控制链接对应这台机器的访问入口，仅限登录同一 Kimi 账号后使用，请勿分享给他人。结束时在本地终端按 `Ctrl+C` 即可下线（若找不到原终端，可根据 `~/.kimi-code/server/rc.json` 中的 `pid` 执行 `kill <pid>`）。关闭远程浏览器页面不会中断本机正在运行的任务。
+远程控制链接对应这台机器的访问入口，仅限登录同一 Kimi 账号后使用，请勿分享给他人。结束远程控制时运行 `kimi rc stop` 即可下线（若使用 `--no-daemon` 或在 Windows 前台运行，则在原终端按 `Ctrl+C`）。关闭远程浏览器页面不会中断本机正在运行的任务。
 :::
 
 ## 与 CLI 的关系

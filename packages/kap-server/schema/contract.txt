@@ -338,6 +338,7 @@ GET /api/v1/meta response 200.data.features[].name: string minLength=1
 GET /api/v1/meta response 200.data.features[].state: enum "Activating"|"Active"|"Failed"|"Pending"|"Unloading"
 GET /api/v1/meta response 200.data.features[]: object closed
 GET /api/v1/meta response 200.data.home_dir: string minLength=1
+GET /api/v1/meta response 200.data.kap_version: integer minimum=1 maximum=9007199254740991
 GET /api/v1/meta response 200.data.kimi_agent_protocol_version: string minLength=1
 GET /api/v1/meta response 200.data.open_in_apps: array
 GET /api/v1/meta response 200.data.open_in_apps[]: enum "cursor"|"finder"|"iterm"|"terminal"|"vscode"

@@ -95,7 +95,12 @@ describe('kimi web', () => {
       const line = String(write.mock.calls.at(-1)?.[0]);
       expect(line.startsWith('__KIMI_ENSURE_DAEMON__')).toBe(true);
       const payload = JSON.parse(line.slice('__KIMI_ENSURE_DAEMON__'.length)) as Record<string, unknown>;
-      expect(payload).toEqual({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: expect.any(String) });
+      expect(payload).toEqual({
+        protocol: HOST_PROTOCOL_VERSION,
+        api_level: HOST_API_LEVEL,
+        kap_version: HOST_API_LEVEL,
+        version: expect.any(String),
+      });
     } finally {
       write.mockRestore();
     }
@@ -1164,6 +1169,8 @@ describe('`kimi server ensure-daemon`', () => {
 
     await expect(ensureDaemon(deps)).resolves.toEqual({
       version: '1.0.0',
+      kapVersion: 1,
+      reusedBusyMismatch: false,
       stream: conn.stream,
     });
     expect(deps.spawnServer).not.toHaveBeenCalled();
@@ -1181,11 +1188,13 @@ describe('`kimi server ensure-daemon`', () => {
 
     await expect(ensureDaemon(deps)).resolves.toEqual({
       version: '1.0.0',
+      kapVersion: 1,
+      reusedBusyMismatch: false,
       stream: spawned.stream,
     });
     expect(deps.spawnServer).toHaveBeenCalledWith(
       daemonSocketPath(homeDir),
-      join(homeDir, 'server', 'ensure-daemon.log'),
+      join(homeDir, 'server', 'daemon.log'),
       join(homeDir, 'server', 'forwarded-ssh-agent.sock'),
     );
   });
@@ -1217,13 +1226,18 @@ describe('`kimi server ensure-daemon`', () => {
     expect(deps.spawnServer).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses to replace a daemon of another version that still has live work', async () => {
+  it('reuses a daemon of another version that still has live work without interrupting it', async () => {
+    const existing = connection({ version: '0.9.0', kapVersion: 1, stopIfIdle: async () => false });
     const deps = makeDeps({
-      connectSocket: async () =>
-        connection({ version: '0.9.0', stopIfIdle: async () => false }),
+      connectSocket: async () => existing,
     });
 
-    await expect(ensureDaemon(deps)).rejects.toMatchObject({ code: 'version_mismatch_busy' });
+    await expect(ensureDaemon(deps)).resolves.toEqual({
+      version: '0.9.0',
+      kapVersion: 1,
+      reusedBusyMismatch: true,
+      stream: existing.stream,
+    });
     expect(deps.spawnServer).not.toHaveBeenCalled();
   });
 
@@ -1241,17 +1255,18 @@ describe('`kimi server ensure-daemon`', () => {
   });
 
   it('releases the lock after a failure and clears dead or corrupted lock files', async () => {
-    const lockPath = join(homeDir, 'server', 'ensure-daemon.lock');
+    const lockPath = join(homeDir, 'server', 'daemon.lock');
+    mkdirSync(join(homeDir, 'server'), { recursive: true });
     await expect(
       ensureDaemon(
         makeDeps({
-          connectSocket: async () =>
-            connection({ version: '0.9.0', stopIfIdle: async () => false }),
+          connectSocket: async () => undefined,
+          spawnServer: () => {
+            throw new Error('boom');
+          },
         }),
       ),
-    ).rejects.toMatchObject({
-      code: 'version_mismatch_busy',
-    });
+    ).rejects.toThrow('boom');
     expect(existsSync(lockPath)).toBe(false);
 
     writeFileSync(lockPath, '999999999');
@@ -1433,5 +1448,269 @@ describe('kimi web --json', () => {
         handleWebCommand(opts, { openUrl: vi.fn(), stdout: io.stdout, stderr: io.stderr }),
       ).rejects.toThrow(pattern);
     }
+  });
+});
+
+describe('shared background daemon (`kimi web`, `kimi rc`, `kimi daemon`)', () => {
+  it('starts or reuses the shared daemon on Unix and returns immediately with daemon stop instructions', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const io = makeIo();
+    let stderrText = '';
+    const openUrl = vi.fn();
+    const ensureSharedDaemonMock = vi.fn(async () => ({
+      daemon: {
+        pid: 4321,
+        host: '127.0.0.1',
+        port: 58629,
+        origin: 'http://127.0.0.1:58629',
+        socketPath: '/tmp/kimi-home/server/daemon.sock',
+        logPath: '/tmp/kimi-home/server/daemon.log',
+        startedAt: '2026-11-25T00:00:00.000Z',
+        version: '2.7.0',
+        kapVersion: 1,
+      },
+      started: true,
+      reusedBusyMismatch: true,
+    }));
+
+    await handleWebCommand(
+      { open: true },
+      {
+        platform: 'linux',
+        homeDir: () => '/tmp/kimi-home',
+        ensureSharedDaemon: ensureSharedDaemonMock,
+        resolveToken: () => 'daemon-tok',
+        openUrl,
+        stdout: io.stdout,
+        stderr: {
+          write(chunk: string | Uint8Array) {
+            stderrText += String(chunk);
+            return true;
+          },
+        },
+      },
+    );
+
+    expect(ensureSharedDaemonMock).toHaveBeenCalledOnce();
+    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:58629/#token=daemon-tok');
+    const plain = stripAnsi(io.readStdout());
+    expect(plain).toContain('http://127.0.0.1:58629/#token=daemon-tok');
+    expect(plain).toContain('/tmp/kimi-home/server/daemon.log');
+    expect(plain).toContain('kimi daemon stop');
+    expect(stderrText).toContain('Kimi daemon 2.7.0 has active work');
+  });
+
+  it('rejects foreground-only flags unless --no-daemon is passed', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const io = makeIo();
+
+    for (const opts of [
+      { host: true, explicitServerFlags: ['--host'] },
+      { port: '59000', explicitServerFlags: ['--port'] },
+      { dangerousBypassAuth: true, explicitServerFlags: ['--dangerous-bypass-auth'] },
+      { logLevel: 'info', explicitServerFlags: ['--log-level'] },
+    ] as const) {
+      await expect(
+        handleWebCommand(opts, {
+          platform: 'darwin',
+          homeDir: () => '/tmp/kimi-home',
+          openUrl: vi.fn(),
+          stdout: io.stdout,
+          stderr: io.stderr,
+        }),
+      ).rejects.toThrow(/--no-daemon/);
+    }
+  });
+
+  it('fails loudly when managed KIMI_* env vars differ from the running daemon', async () => {
+    const {
+      computeManagedDaemonEnvHashes,
+      DaemonEnvMismatchError,
+      ensureSharedDaemon,
+    } = await import('#/cli/sub/web/daemon-client');
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-daemon-env-'));
+    try {
+      await expect(
+        ensureSharedDaemon({
+          homeDir: dir,
+          version: '2.7.3',
+          env: { KIMI_CODE_PASSWORD: 'new-secret', HTTPS_PROXY: 'http://127.0.0.1:7890' },
+          checkEnv: true,
+          probeDaemon: async () => ({
+            pid: process.pid,
+            host: '127.0.0.1',
+            port: 58627,
+            origin: 'http://127.0.0.1:58627',
+            socketPath: join(dir, 'server', 'daemon.sock'),
+            logPath: join(dir, 'server', 'daemon.log'),
+            startedAt: '2026-11-25T00:00:00.000Z',
+            version: '2.7.3',
+            kapVersion: 1,
+            envHashes: computeManagedDaemonEnvHashes({ KIMI_CODE_PASSWORD: 'old-secret' }),
+          }),
+          spawnDaemon: vi.fn(),
+          wait: async () => {},
+        }),
+      ).rejects.toThrow(DaemonEnvMismatchError);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('enables Remote Control on the shared daemon for `kimi rc` and prints `kimi rc stop`', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-rc-daemon-'));
+    const io = makeIo();
+    const openUrl = vi.fn();
+
+    try {
+      await handleWebCommand(
+        { remoteControl: true, open: true },
+        {
+          platform: 'darwin',
+          homeDir: () => dir,
+          ensureSharedDaemon: async () => ({
+            daemon: {
+              pid: 5555,
+              host: '127.0.0.1',
+              port: 58627,
+              origin: 'http://127.0.0.1:58627',
+              socketPath: join(dir, 'server', 'daemon.sock'),
+              logPath: join(dir, 'server', 'daemon.log'),
+              startedAt: '2026-11-25T00:00:00.000Z',
+              version: '2.7.3',
+              kapVersion: 1,
+            },
+            started: false,
+            reusedBusyMismatch: false,
+          }),
+          enableDaemonRemoteControl: async () => ({
+            url: 'https://code-rc.kimi.com/devices/dev-1/?rc=1&from=kimi_code_cli',
+            deviceId: 'dev-1',
+            deviceName: 'macbook',
+            relayOrigin: 'https://code-rc.kimi.com',
+          }),
+          resolveToken: () => 'tok-rc',
+          openUrl,
+          stdout: io.stdout,
+          stderr: io.stderr,
+        },
+      );
+
+      expect(openUrl).toHaveBeenCalledWith(
+        'https://code-rc.kimi.com/devices/dev-1/?rc=1&from=kimi_code_cli',
+      );
+      const plain = stripAnsi(io.readStdout());
+      expect(plain).toContain('Kimi Remote Control ready');
+      expect(plain).toContain('kimi rc stop');
+      expect(existsSync(join(dir, 'rc-qrcode.png'))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('formats `kimi daemon status` and enforces confirmation / --force on `kimi daemon stop`', async () => {
+    const {
+      formatDaemonStatus,
+      handleDaemonRestart,
+      handleDaemonStatus,
+      handleDaemonStop,
+      registerDaemonCommand,
+    } = await import('#/cli/sub/daemon');
+    const program = new Command('kimi').exitOverride();
+    registerDaemonCommand(program);
+    const daemonCmd = program.commands.find((c) => c.name() === 'daemon');
+    expect(daemonCmd?.commands.map((c) => c.name())).toEqual(['status', 'stop', 'restart']);
+
+    const io = makeIo();
+    await handleDaemonStatus({
+      platform: 'linux',
+      homeDir: () => '/tmp/kimi-home',
+      getStatus: async () => ({
+        running: true,
+        daemon: {
+          pid: 1234,
+          host: '127.0.0.1',
+          port: 58627,
+          origin: 'http://127.0.0.1:58627',
+          socketPath: '/tmp/kimi-home/server/daemon.sock',
+          logPath: '/tmp/kimi-home/server/daemon.log',
+          startedAt: '2026-11-25T00:00:00.000Z',
+          version: '2.7.3',
+          kapVersion: 1,
+        },
+        remoteControl: {
+          enabled: true,
+          state: 'on',
+          url: 'https://code-rc.kimi.com/devices/dev-1/',
+          deviceName: 'workstation',
+        },
+        persistedRemoteControl: true,
+        activeSessions: [{ id: 'ses-42', title: 'Fix tests', activity: 'turn' }],
+        logPath: '/tmp/kimi-home/server/daemon.log',
+      }),
+      stdout: io.stdout,
+      stderr: io.stderr,
+    });
+    const statusPlain = stripAnsi(io.readStdout());
+    expect(statusPlain).toContain('running');
+    expect(statusPlain).toContain('2.7.3 (KAP v1)');
+    expect(statusPlain).toContain('1234');
+    expect(statusPlain).toContain('http://127.0.0.1:58627');
+    expect(statusPlain).toContain('https://code-rc.kimi.com/devices/dev-1/');
+    expect(statusPlain).toContain('ses-42');
+    expect(statusPlain).toContain('/tmp/kimi-home/server/daemon.log');
+
+    expect(
+      stripAnsi(
+        formatDaemonStatus({
+          running: false,
+          persistedRemoteControl: true,
+          activeSessions: [],
+          logPath: '/tmp/kimi-home/server/daemon.log',
+        }),
+      ),
+    ).toContain('stopped');
+
+    const stopIo = makeIo();
+    const stopMock = vi.fn(async () => ({ outcome: 'stopped' as const, pid: 1234 }));
+    await handleDaemonStop(
+      { force: true },
+      {
+        platform: 'linux',
+        homeDir: () => '/tmp/kimi-home',
+        stopDaemon: stopMock,
+        stdout: stopIo.stdout,
+        stderr: stopIo.stderr,
+      },
+    );
+    expect(stopMock).toHaveBeenCalledWith({ homeDir: '/tmp/kimi-home', force: true });
+    expect(stopIo.readStdout()).toContain('Kimi daemon (pid 1234) stopped.');
+
+    const restartIo = makeIo();
+    await handleDaemonRestart(
+      { force: false },
+      {
+        platform: 'linux',
+        homeDir: () => '/tmp/kimi-home',
+        restartDaemon: async () => ({
+          cancelled: false,
+          daemon: {
+            pid: 7777,
+            host: '127.0.0.1',
+            port: 58627,
+            origin: 'http://127.0.0.1:58627',
+            socketPath: '/tmp/kimi-home/server/daemon.sock',
+            logPath: '/tmp/kimi-home/server/daemon.log',
+            startedAt: '2026-11-25T00:01:00.000Z',
+            version: '2.7.3',
+            kapVersion: 1,
+          },
+        }),
+        stdout: restartIo.stdout,
+        stderr: restartIo.stderr,
+      },
+    );
+    expect(restartIo.readStdout()).toContain('Kimi daemon 2.7.3 (pid 7777) listening on http://127.0.0.1:58627.');
   });
 });

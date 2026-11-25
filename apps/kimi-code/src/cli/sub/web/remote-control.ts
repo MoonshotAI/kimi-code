@@ -38,6 +38,8 @@ export interface RemoteControlOutputOptions {
   readonly deviceName: string;
   readonly qrCode: string;
   readonly pngPath: string;
+  readonly logPath?: string;
+  readonly stopCommand?: string;
 }
 
 export function formatRemoteControlOutput(options: RemoteControlOutputOptions): string {
@@ -72,7 +74,7 @@ export function formatRemoteControlOutput(options: RemoteControlOutputOptions): 
     `  ${label('Local UI: ')}${accent(localBase)}${dim(localFrag)} ${muted('(LAN: --host)')}`,
     '',
     `  ${docs} ${muted('·')} ${feedback}`,
-    `  ${label('Logs: ')}${muted('off (--log-level info)')} ${muted('·')} ${label('Stop: ')}${muted('Ctrl+C')}`,
+    `  ${label('Logs: ')}${muted(options.logPath ?? 'off (--log-level info)')} ${muted('·')} ${label('Stop: ')}${muted(options.stopCommand ?? 'Ctrl+C')}`,
     '',
   ].join('\n');
 }

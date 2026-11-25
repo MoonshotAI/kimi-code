@@ -1,37 +1,34 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { closeSync, mkdirSync, openSync } from 'node:fs';
-import { mkdir, open, readFile, rename, rm, symlink } from 'node:fs/promises';
 import { createConnection } from 'node:net';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
+import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION, KAP_VERSION } from '@moonshot-ai/kap-server';
 import type { Command } from 'commander';
 
 import { getDataDir } from '#/utils/paths';
 
 import { detectNativeInstall } from '../../update/source';
 import { getVersion } from '../../version';
+import {
+  acquireDaemonLock,
+  agentSocketPath,
+  daemonLockPath,
+  daemonLogPath,
+  daemonSocketPath,
+  syncForwardedAgentSocket,
+} from './daemon-client';
+
+export { daemonSocketPath };
 
 const ENSURE_DAEMON_MARKER = '__KIMI_ENSURE_DAEMON__';
-const ENSURE_DAEMON_MANAGED_BY = 'ensure-daemon';
-
-const LOCK_FILE = 'ensure-daemon.lock';
-const LOG_FILE = 'ensure-daemon.log';
-const SOCKET_FILE = 'daemon.sock';
-const AGENT_SOCKET_FILE = 'forwarded-ssh-agent.sock';
 const POLL_INTERVAL_MS = 200;
-const LOCK_MAX_ATTEMPTS = 225;
 const START_MAX_ATTEMPTS = 150;
 const SOCKET_TIMEOUT_MS = 2_000;
 
-type EnsureDaemonErrorCode =
-  | 'lock_timeout'
-  | 'start_timeout'
-  | 'version_mismatch_busy';
+type EnsureDaemonErrorCode = 'lock_timeout' | 'start_timeout';
 
 class EnsureDaemonError extends Error {
   constructor(
@@ -46,12 +43,15 @@ class EnsureDaemonError extends Error {
 export interface DaemonConnection {
   readonly stream: Duplex;
   readonly version: string;
+  readonly kapVersion?: number;
   stopIfIdle(): Promise<boolean>;
   close(): void;
 }
 
-interface EnsureDaemonResult {
+export interface EnsureDaemonResult {
   readonly version: string;
+  readonly kapVersion: number;
+  readonly reusedBusyMismatch: boolean;
   readonly stream: Duplex;
 }
 
@@ -64,81 +64,28 @@ export interface EnsureDaemonDeps {
   wait(ms: number): Promise<void>;
 }
 
-export function daemonSocketPath(homeDir: string): string {
-  const direct = join(homeDir, 'server', SOCKET_FILE);
-  if (Buffer.byteLength(direct) <= 100) return direct;
-  const hash = createHash('sha256').update(homeDir).digest('hex').slice(0, 16);
-  return join(tmpdir(), `kimi-daemon-${hash}.sock`);
-}
-
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-async function acquireLock(
-  lockPath: string,
-  wait: (ms: number) => Promise<void>,
-): Promise<() => Promise<void>> {
-  await mkdir(dirname(lockPath), { recursive: true });
-  for (let attempt = 0; attempt < LOCK_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      const handle = await open(lockPath, 'wx');
-      let written = false;
-      try {
-        await handle.writeFile(String(process.pid));
-        written = true;
-      } finally {
-        await handle.close();
-        if (!written) await rm(lockPath, { force: true });
-      }
-      return () => rm(lockPath, { force: true });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const holder = Number.parseInt(await readFile(lockPath, 'utf8').catch(() => ''), 10);
-      if ((!Number.isNaN(holder) && !pidAlive(holder)) || (Number.isNaN(holder) && attempt > 0)) {
-        await rm(lockPath, { force: true });
-      } else {
-        await wait(POLL_INTERVAL_MS);
-      }
-    }
-  }
-  throw new EnsureDaemonError('lock_timeout', `timed out waiting for ${lockPath}`);
-}
-
-function agentSocketPath(deps: EnsureDaemonDeps): string {
-  return join(deps.homeDir, 'server', AGENT_SOCKET_FILE);
-}
-
-async function syncAgentSocket(deps: EnsureDaemonDeps): Promise<void> {
-  const target = deps.sshAuthSock;
-  const linkPath = agentSocketPath(deps);
-  if (target === undefined || target.length === 0 || target === linkPath) return;
-  await mkdir(dirname(linkPath), { recursive: true });
-  const temp = `${linkPath}.${process.pid}.tmp`;
-  await rm(temp, { force: true });
-  await symlink(target, temp);
-  await rename(temp, linkPath);
-}
-
 async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> {
   const socketPath = daemonSocketPath(deps.homeDir);
   const existing = await deps.connectSocket(socketPath);
   if (existing !== undefined) {
     if (existing.version === deps.version) {
-      return { version: deps.version, stream: existing.stream };
+      return {
+        version: existing.version,
+        kapVersion: existing.kapVersion ?? KAP_VERSION,
+        reusedBusyMismatch: false,
+        stream: existing.stream,
+      };
     }
-    const stopped = await existing.stopIfIdle().finally(() => existing.close());
+    const stopped = await existing.stopIfIdle().catch(() => false);
     if (!stopped) {
-      throw new EnsureDaemonError(
-        'version_mismatch_busy',
-        `a kimi server of version ${existing.version} is still running work on this host; retry after it finishes`,
-      );
+      return {
+        version: existing.version,
+        kapVersion: existing.kapVersion ?? KAP_VERSION,
+        reusedBusyMismatch: true,
+        stream: existing.stream,
+      };
     }
+    existing.close();
     let closed = false;
     for (let attempt = 0; attempt < START_MAX_ATTEMPTS; attempt += 1) {
       const probe = await deps.connectSocket(socketPath);
@@ -156,12 +103,17 @@ async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> 
       );
     }
   }
-  const logPath = join(deps.homeDir, 'server', LOG_FILE);
-  deps.spawnServer(socketPath, logPath, agentSocketPath(deps));
+  const logPath = daemonLogPath(deps.homeDir);
+  deps.spawnServer(socketPath, logPath, agentSocketPath(deps.homeDir));
   for (let attempt = 0; attempt < START_MAX_ATTEMPTS; attempt += 1) {
     const started = await deps.connectSocket(socketPath);
     if (started !== undefined) {
-      return { version: deps.version, stream: started.stream };
+      return {
+        version: started.version,
+        kapVersion: started.kapVersion ?? KAP_VERSION,
+        reusedBusyMismatch: false,
+        stream: started.stream,
+      };
     }
     await deps.wait(POLL_INTERVAL_MS);
   }
@@ -169,40 +121,35 @@ async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> 
 }
 
 export async function ensureDaemon(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> {
-  const release = await acquireLock(join(deps.homeDir, 'server', LOCK_FILE), (ms) => deps.wait(ms));
+  let release: (() => Promise<void>) | undefined;
   try {
-    await syncAgentSocket(deps);
+    release = await acquireDaemonLock(daemonLockPath(deps.homeDir), (ms) => deps.wait(ms));
+  } catch (error) {
+    throw new EnsureDaemonError(
+      'lock_timeout',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  try {
+    await syncForwardedAgentSocket(deps.homeDir, deps.sshAuthSock);
     return await findOrStart(deps);
   } finally {
     await release();
   }
 }
 
-function spawnDetachedServer(socketPath: string, logPath: string, agentSocket: string): void {
+function spawnDetachedServer(_socketPath: string, logPath: string, agentSocket: string): void {
   const argv = detectNativeInstall()
     ? [process.execPath]
     : [process.execPath, ...process.execArgv, process.argv[1]!];
-  mkdirSync(dirname(logPath), { recursive: true });
-  const log = openSync(logPath, 'w', 0o600);
+  mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
+  const log = openSync(logPath, 'a', 0o600);
   try {
-    const child = spawn(
-      argv[0]!,
-      [
-        ...argv.slice(1),
-        'server',
-        '--socket',
-        socketPath,
-        '--log-level',
-        'info',
-        '--managed-by',
-        ENSURE_DAEMON_MANAGED_BY,
-      ],
-      {
-        detached: true,
-        stdio: ['ignore', log, log],
-        env: { ...process.env, SSH_AUTH_SOCK: agentSocket },
-      },
-    );
+    const child = spawn(argv[0]!, [...argv.slice(1), 'server', '--daemon-server'], {
+      detached: true,
+      stdio: ['ignore', log, log],
+      env: { ...process.env, SSH_AUTH_SOCK: agentSocket },
+    });
     child.on('error', () => {});
     child.unref();
     if (child.pid === undefined) {
@@ -288,7 +235,12 @@ async function connectUnixSocket(socketPath: string): Promise<DaemonConnection |
     });
   });
   if (socket === undefined) return undefined;
-  const meta = await rpcCall<{ server_version?: string }>(socket, 'meta', 'GET', '/api/v1/meta');
+  const meta = await rpcCall<{ server_version?: string; kap_version?: number }>(
+    socket,
+    'meta',
+    'GET',
+    '/api/v1/meta',
+  );
   if (meta?.data?.server_version === undefined) {
     socket.destroy();
     return undefined;
@@ -296,6 +248,7 @@ async function connectUnixSocket(socketPath: string): Promise<DaemonConnection |
   return {
     stream: socket,
     version: meta.data.server_version,
+    kapVersion: meta.data.kap_version ?? 1,
     stopIfIdle: async () => {
       const res = await rpcCall<{ ok?: boolean }>(
         socket,
@@ -355,9 +308,16 @@ export function registerEnsureDaemonCommand(web: Command): void {
     .description('Internal: reuse or start a background server and bridge stdio to its socket.')
     .option('--probe', 'Only report the host protocol and version.')
     .action(async (options: { probe?: boolean }) => {
+      const cliVersion = getVersion();
       const report = (payload: Record<string, unknown>): void => {
         process.stdout.write(
-          `${ENSURE_DAEMON_MARKER}${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: getVersion(), ...payload })}\n`,
+          `${ENSURE_DAEMON_MARKER}${JSON.stringify({
+            protocol: HOST_PROTOCOL_VERSION,
+            api_level: HOST_API_LEVEL,
+            kap_version: KAP_VERSION,
+            version: cliVersion,
+            ...payload,
+          })}\n`,
         );
       };
       if (options.probe === true) {
@@ -366,7 +326,17 @@ export function registerEnsureDaemonCommand(web: Command): void {
       }
       try {
         const daemon = await ensureDaemon(defaultDeps());
-        report({});
+        if (daemon.reusedBusyMismatch) {
+          process.stderr.write(
+            `Note: Kimi daemon ${daemon.version} is still running active work; reusing it until idle.\n`,
+          );
+        }
+        report({
+          api_level: daemon.kapVersion,
+          kap_version: daemon.kapVersion,
+          version: daemon.version,
+          ...(daemon.version !== cliVersion ? { cli_version: cliVersion } : {}),
+        });
         await relayStdio(process.stdin, process.stdout, daemon.stream);
       } catch (error) {
         const code = error instanceof EnsureDaemonError ? error.code : 'unknown';

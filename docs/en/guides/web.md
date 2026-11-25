@@ -21,16 +21,17 @@ If you're already in the CLI, you can also type `/web` to hand the current sessi
 <div class="step">
 <span class="step-num">3</span> <strong>The web UI opens in your default browser once ready</strong>
 
-The startup banner prints the access URL — if the browser doesn't open automatically, copy this URL and open it manually:
+On macOS and Linux, `kimi web` starts or reuses the shared background daemon, prints the access URL, opens the browser, and returns immediately (on Windows it runs in the foreground):
 
 ```text
 Local:   http://127.0.0.1:58627/#token=...
 Token:   ...
-Stop:    Ctrl+C
+Logs:    ~/.kimi-code/server/daemon.log
+Stop:    kimi daemon stop
 ```
 
 ::: warning
-The `#token=` fragment is the access credential — don't share it. Stop the server with `Ctrl+C` in the terminal.
+The `#token=` fragment is the access credential — don't share it. Run `kimi daemon stop` to stop the background daemon (or press `Ctrl+C` when running with `--no-daemon`).
 :::
 </div>
 
@@ -38,10 +39,11 @@ The `#token=` fragment is the access credential — don't share it. Stop the ser
 
 | Option | Description |
 | --- | --- |
-| `--port <port>` | Bind port; defaults to `58627`, auto-increments when taken |
-| `--host [host]` | Enable LAN sharing so phones, tablets, or other computers on the same network can connect; or specify an IP such as `--host 192.168.1.10` |
+| `--no-daemon` | Run an independent server in the foreground instead of sharing the background daemon; stop with `Ctrl+C` |
+| `--port <port>` | Bind port (requires `--no-daemon` or `--json`); defaults to `58627`, auto-increments when taken |
+| `--host [host]` | Enable LAN sharing (requires `--no-daemon`) so phones, tablets, or other computers on the same network can connect; or specify an IP such as `--no-daemon --host 192.168.1.10` |
 | `--no-open` | Don't open the browser when ready |
-| `--log-level <level>` | Enable server logs at the given level; off by default |
+| `--log-level <level>` | Enable foreground server logs at the given level (requires `--no-daemon`); daemon logs write to `~/.kimi-code/server/daemon.log` |
 
 ## Remote Control (phone & public internet access) {#remote-control}
 
@@ -49,11 +51,12 @@ To check task progress, approve permissions, or continue chatting from your phon
 
 ### Starting and connecting
 
-Run any of the following foreground commands on your machine (one Remote Control instance per machine; up to about **3 devices** per account):
+Run any of the following commands on your machine (one Remote Control instance per machine; up to about **3 devices** per account):
 
-- **`kimi rc`** (alias `kimi remote`): start Remote Control directly;
+- **`kimi rc`** (alias `kimi remote`): enable Remote Control on the background daemon (persisted across daemon restarts), print the link and QR code, and return immediately;
+- **`kimi rc stop`**: turn off Remote Control and clear the saved preference;
 - **`kimi web --remote-control`**: equivalent to `kimi rc`;
-- **`/remote-control`** (alias `/rc`): hand your active CLI session directly to the remote web UI.
+- **`/remote-control`** (alias `/rc`): hand your active CLI session directly to the remote web UI on the shared daemon.
 
 The terminal prints the access link (`https://code-rc.kimi.com/devices/<device ID>/` or `https://code-rc.kimi.ai/devices/<device ID>/` on global), a QR code (also saved as a PNG file), and your device hostname:
 
@@ -63,7 +66,7 @@ The terminal prints the access link (`https://code-rc.kimi.com/devices/<device I
 2. Log in with the **same** Kimi account as on your machine and select the device to view and control its sessions.
 
 ::: warning
-The Remote Control link grants access to your machine upon signing into the same Kimi account — do not share it publicly. Press `Ctrl+C` in the local terminal to go offline (or run `kill <pid>` using the `pid` in `~/.kimi-code/server/rc.json` if you lost the terminal). Closing the remote browser tab leaves local tasks running uninterrupted.
+The Remote Control link grants access to your machine upon signing into the same Kimi account — do not share it publicly. Run `kimi rc stop` to go offline (or press `Ctrl+C` when running with `--no-daemon` or on Windows). Closing the remote browser tab leaves local tasks running uninterrupted.
 :::
 
 ## Relationship with the CLI

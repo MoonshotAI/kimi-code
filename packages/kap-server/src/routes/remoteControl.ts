@@ -68,6 +68,7 @@ export interface RemoteControlRouteOptions {
   readonly devices: RemoteControlDeviceClient;
   readonly homeDir: string;
   readonly staticEnableError?: string;
+  readonly persistPreference?: (enabled: boolean) => Promise<void>;
   readonly telemetry?: ITelemetryService;
 }
 
@@ -134,6 +135,9 @@ export function registerRemoteControlRoutes(
       const { enabled } = req.body as { enabled: boolean };
       if (!enabled) {
         try {
+          await opts.persistPreference?.(false).catch((persistError: unknown) => {
+            requestLog(req)?.warn({ err: persistError }, 'remote-control preference clear failed');
+          });
           const status = await opts.service.disable();
           opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'ok' });
           reply.send(okEnvelope(toRemoteControlStatusResponse(status), req.id));
@@ -152,6 +156,9 @@ export function registerRemoteControlRoutes(
       }
       try {
         const status = await opts.service.enable();
+        await opts.persistPreference?.(true).catch((persistError: unknown) => {
+          requestLog(req)?.warn({ err: persistError }, 'remote-control preference save failed');
+        });
         opts.telemetry?.track2('remote_control_toggle', { enabled, outcome: 'ok' });
         reply.send(okEnvelope(toRemoteControlStatusResponse(status), req.id));
       } catch (error) {

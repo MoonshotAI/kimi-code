@@ -67,7 +67,11 @@ import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcast
 import type { ConfigWarningItem } from './transport/ws/v1/events';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { registerWsDebug, WS_DEBUG_PATH } from './transport/ws/debug/registerWsDebug';
-import { startUnixRpcServer } from './transport/stdioRpc';
+import {
+  isTrustedUnixRequest,
+  isTrustedUnixSocket,
+  startUnixRpcServer,
+} from './transport/stdioRpc';
 import { getServerVersion } from './version';
 import { classify } from './security/bindClassify';
 import {
@@ -77,7 +81,11 @@ import {
 } from './middleware/hostnames';
 import { createOriginHook, isOriginAllowed, parseCorsOrigins } from './middleware/origin';
 import { createSecurityHeadersHook } from './middleware/securityHeaders';
-import { createAuthHook } from './middleware/auth';
+import { createAuthHook, defaultIsBypassed } from './middleware/auth';
+import {
+  readDaemonRemoteControlPreference,
+  writeDaemonRemoteControlPreference,
+} from './services/daemonSettings';
 import {
   initializeServerTelemetry,
   type ServerTelemetry,
@@ -88,7 +96,7 @@ import { ConversationService } from './services/conversation/conversationService
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { HostBridgeManager, hostSnapshots } from './services/hosts/hostBridgeManager';
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from './services/hosts/hostProxy';
-import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
+import { ManagedIdleExit } from './services/managedIdleExit';
 import { SessionIdleReaper, closeIdleSessions, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
@@ -138,6 +146,9 @@ export interface ServerStartOptions {
   readonly serverVersion?: string;
   readonly telemetry?: boolean;
   readonly socketPath?: string;
+  readonly listenTcp?: boolean;
+  readonly persistRemoteControl?: boolean;
+  readonly onDidClose?: () => void | Promise<void>;
   readonly managedBy?: string;
   readonly managedIdleExitMs?: number;
 }
@@ -162,7 +173,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const homeDir = resolveKimiHome(opts.homeDir);
   const serverVersion = opts.serverVersion ?? getServerVersion();
   const idleReclaimMs = resolveSessionIdleReclaimMs(opts.env ?? process.env);
-  const disableAuth = opts.disableAuth === true || opts.socketPath !== undefined;
+  const listenTcp = opts.listenTcp !== false;
+  const disableAuth = opts.disableAuth === true || !listenTcp;
   const exposureClass = classify(host, { bindClass: opts.bindClass });
   if (exposureClass !== 'loopback' && opts.insecureNoTls !== true) {
     throw new Error(
@@ -201,7 +213,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
   const registration: InstanceRegistration =
-    opts.socketPath !== undefined || opts.skipInstanceRegistry === true
+    !listenTcp || opts.skipInstanceRegistry === true
       ? { serverId: 'socket', update: async () => {}, release: async () => {} }
       : await createInstanceRegistry({
           instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
@@ -255,6 +267,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       .get(IConfigService)
       .inspect<Record<string, { oauth?: { key: string; oauthHost?: string } }>>('providers')
       .userValue?.[KIMI_CODE_PROVIDER_NAME]?.oauth;
+  const persistRcPreference =
+    opts.persistRemoteControl === true
+      ? (enabled: boolean) => writeDaemonRemoteControlPreference(homeDir, enabled)
+      : undefined;
   const remoteControlManager = createRemoteControlManager({
     homeDir,
     localOrigin: () => `http://${localOriginHost}:${boundPort}`,
@@ -263,6 +279,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     urlSource: opts.hostIdentity.platform,
     configuredOAuthKey: () => readManagedOAuth()?.key,
     configuredOAuthHost: () => readManagedOAuth()?.oauthHost,
+    onUserRequestedClose: () => {
+      void persistRcPreference?.(false).catch((err: unknown) => {
+        logger.warn({ err }, 'remote-control preference clear failed');
+      });
+    },
     stderr: {
       write: (text) => {
         logger.warn(String(text).trimEnd());
@@ -339,10 +360,13 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   app.setValidatorCompiler(() => () => true);
   app.setSerializerCompiler(() => (data) => JSON.stringify(data));
   installErrorHandler(app);
+  const isTrustedRequest = (req: { raw: IncomingMessage }): boolean =>
+    isTrustedUnixRequest(req.raw) || isTrustedUnixSocket(req.raw.socket);
   const hostCheck = createHostCheck({
     boundHost: host,
     extra: [...parseAllowedHosts(process.env), ...(opts.allowedHosts ?? [])],
     disable: opts.disableHostCheck ?? isHostCheckDisabled(),
+    isTrustedRequest,
   });
   const allowedOrigins = opts.corsOrigins ?? parseCorsOrigins();
   app.addHook('onRequest', hostCheck.onRequest);
@@ -350,7 +374,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   if (!disableAuth) {
     app.addHook(
       'onRequest',
-      createAuthHook(authTokenService, { limiter: authFailureLimiter, validateCredential }),
+      createAuthHook(authTokenService, {
+        limiter: authFailureLimiter,
+        validateCredential,
+        isBypassed: (req) => isTrustedRequest(req) || defaultIsBypassed(req),
+      }),
     );
   } else if (opts.disableAuth === true) {
     logger.warn(
@@ -414,8 +442,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       try {
         await registration.release();
       } finally {
-        process.off('unhandledRejection', onUnhandledRejection);
-        process.off('uncaughtException', onUncaughtException);
+        try {
+          await opts.onDidClose?.();
+        } finally {
+          process.off('unhandledRejection', onUnhandledRejection);
+          process.off('uncaughtException', onUncaughtException);
+        }
       }
     }
   };
@@ -434,12 +466,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     return connectionRegistry.size() === 0 && sessionManager.list().length === 0;
   };
   const managedIdleExit =
-    opts.managedBy === undefined
+    opts.managedIdleExitMs === undefined
       ? undefined
       : new ManagedIdleExit(
           sessionManager,
           connectionRegistry,
-          opts.managedIdleExitMs ?? DEFAULT_MANAGED_IDLE_EXIT_MS,
+          opts.managedIdleExitMs,
           requestClose,
         );
   const conversations = new ConversationService(core);
@@ -551,7 +583,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       return;
     }
 
-    if (!hostCheck.isAllowed(req.headers.host)) {
+    const trustedUnixUpgrade = isTrustedUnixSocket(socket);
+    if (!trustedUnixUpgrade && !hostCheck.isAllowed(req.headers.host)) {
       logger.warn(
         { remoteAddress: req.socket.remoteAddress, path: url, reason: 'host_not_allowed' },
         'ws upgrade rejected',
@@ -560,7 +593,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       (socket as Socket).destroy();
       return;
     }
-    if (!isOriginAllowed(req.headers.origin, req.headers.host, allowedOrigins)) {
+    if (!trustedUnixUpgrade && !isOriginAllowed(req.headers.origin, req.headers.host, allowedOrigins)) {
       logger.warn(
         { remoteAddress: req.socket.remoteAddress, path: url, reason: 'origin_not_allowed' },
         'ws upgrade rejected',
@@ -570,7 +603,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       return;
     }
 
-    if (opts.disableAuth !== true) {
+    if (!trustedUnixUpgrade && !disableAuth) {
       const authHeader = req.headers.authorization;
       const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : null;
       const protocolToken = extractWsBearerToken(req.headers['sec-websocket-protocol']);
@@ -647,8 +680,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         service: remoteControlManager,
         devices: remoteControlDevices,
         homeDir,
+        persistPreference: persistRcPreference,
         staticEnableError:
-          opts.socketPath !== undefined
+          !listenTcp
             ? 'Remote Control requires a TCP listener.'
             : exposureClass !== 'loopback'
               ? 'Remote Control requires a loopback host.'
@@ -662,7 +696,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       conversations,
       sessionRating,
       dangerousBypassAuth: opts.disableAuth === true,
-      managedHost: opts.managedBy === 'ensure-daemon',
+      managedHost: opts.managedBy === 'ensure-daemon' || opts.managedBy === 'daemon',
       webTitle: opts.webTitle,
     });
 
@@ -683,11 +717,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       registerWebAssetRoutes(app, opts.webAssetsDir);
     }
 
-    if (opts.socketPath !== undefined) {
-      await app.ready();
-      rpcServer = await startUnixRpcServer(opts.socketPath, { app, wssV1, wssDebug });
-      boundPort = 0;
-    } else {
+    if (listenTcp) {
       await listenWithPortRetry({
         listen: (h, p) => app.listen({ host: h, port: p }),
         host,
@@ -697,6 +727,18 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       const address = app.server.address();
       boundPort = typeof address === 'object' && address !== null ? address.port : port;
       await registration.update({ port: boundPort });
+    } else {
+      await app.ready();
+      boundPort = 0;
+    }
+    if (opts.socketPath !== undefined) {
+      rpcServer = await startUnixRpcServer(opts.socketPath, {
+        app,
+        wssV1,
+        wssDebug,
+        httpServer: listenTcp ? app.server : undefined,
+        onWsConnect: () => hostBridges.activate(),
+      });
     }
   } catch (error) {
     try {
@@ -714,6 +756,17 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   });
   sessionIdleReaper.start();
   managedIdleExit?.start();
+  if (opts.persistRemoteControl === true && listenTcp && exposureClass === 'loopback' && opts.disableAuth !== true) {
+    void readDaemonRemoteControlPreference(homeDir).then((shouldEnable) => {
+      if (!shouldEnable) return;
+      return remoteControlManager.enable().catch((error: unknown) => {
+        logger.warn(
+          { err: error instanceof Error ? error.message : String(error) },
+          'failed to restore persisted Remote Control on startup',
+        );
+      });
+    });
+  }
 
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);

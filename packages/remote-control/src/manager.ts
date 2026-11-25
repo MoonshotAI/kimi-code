@@ -38,6 +38,7 @@ export interface RemoteControlManagerOptions {
   readonly relayOrigin?: string;
   readonly configuredOAuthKey?: () => string | undefined;
   readonly configuredOAuthHost?: () => string | undefined;
+  readonly onUserRequestedClose?: () => void;
   readonly stderr?: Pick<NodeJS.WriteStream, 'write'>;
 }
 
@@ -152,7 +153,10 @@ export function createRemoteControlManager(
       options,
       (handle) => {
         void handle.closed.then(
-          () => {
+          (reason) => {
+            if (reason === 'user_requested') {
+              options.onUserRequestedClose?.();
+            }
             actor.send({ type: 'tunnel.exited' });
           },
           (error) => {

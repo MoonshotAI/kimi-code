@@ -242,6 +242,24 @@ describe('HostsPanel', () => {
     expect(host.querySelector('.etr-step')).toBeNull();
   });
 
+  it('prompts to update the local app without offering `kimi upgrade` when the client is outdated', async () => {
+    const test = vi.fn(async (): Promise<AppHostTestResult> => ({
+      connected: false,
+      remoteVersion: '3.1.0',
+      connectError: 'this app (KAP v1) is older than kimi 3.1.0 on this host',
+      connectFailure: 'client_outdated',
+    }));
+    mountPanel({ test });
+    await openDraft();
+    saveButton().click();
+    await vi.waitFor(() => expect(host.querySelector('.etr-reason')).not.toBeNull());
+
+    expect(host.querySelector('.etr-reason')?.textContent).toContain('3.1.0');
+    expect(host.querySelector('.etr-hint')?.textContent).toContain('Update Kimi Code on this computer');
+    expect(host.querySelector('.etr-update-command')).toBeNull();
+    expect(host.querySelector('.etr-install-command')).toBeNull();
+  });
+
   it('offers failure guidance, reconnect, and edit in the expanded row', async () => {
     const { connect } = mountPanel({
       hosts: [sshHost('devbox', { status: 'disconnected', connectError: 'raw', connectFailure: 'authentication_failed' })],

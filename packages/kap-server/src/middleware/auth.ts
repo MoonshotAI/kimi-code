@@ -29,7 +29,7 @@ function decodeRequestPath(rawUrl: string): string | null {
   }
 }
 
-function defaultIsBypassed(req: FastifyRequest): boolean {
+export function defaultIsBypassed(req: FastifyRequest): boolean {
   if (req.method === 'OPTIONS') {
     return true;
   }
