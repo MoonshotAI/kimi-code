@@ -57,15 +57,16 @@ describe('readScrollIntent', () => {
     expect(dispatchAndRead(input, new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }), pane)).toBeNull();
   });
 
-  it('starts a drag only for a primary non-touch press on the scrollbar gutter', () => {
+  it('starts a drag only for a primary non-touch press on the scrollbar gutter and reads other primary or middle presses as presses', () => {
     const pane = scroller();
     expect(dispatchAndRead(pane, pointer('pointerdown', { clientX: 805 }), pane)).toEqual({ kind: 'drag-start' });
-    expect(dispatchAndRead(pane, pointer('pointerdown', { clientX: 400 }), pane)).toBeNull();
+    expect(dispatchAndRead(pane, pointer('pointerdown', { clientX: 400 }), pane)).toEqual({ kind: 'press', sticky: false });
     expect(dispatchAndRead(pane, pointer('pointerdown', { clientX: 805, button: 2 }), pane)).toBeNull();
     expect(dispatchAndRead(pane, pointer('pointerdown', { clientX: 805 }, 'touch'), pane)).toBeNull();
     const child = document.createElement('div');
     pane.append(child);
-    expect(dispatchAndRead(child, pointer('pointerdown', { clientX: 805 }), pane)).toBeNull();
+    expect(dispatchAndRead(child, pointer('pointerdown', { clientX: 805 }), pane)).toEqual({ kind: 'press', sticky: false });
+    expect(dispatchAndRead(child, pointer('pointerdown', { clientX: 400, button: 1 }), pane)).toEqual({ kind: 'press', sticky: true });
     expect(readScrollIntent(pointer('pointerup', {}), pane)).toEqual({ kind: 'drag-end' });
   });
 

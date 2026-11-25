@@ -232,6 +232,7 @@ import {
   projectPersistenceScope,
   logSeed,
   MAIN_AGENT_ID,
+  missingConfiguredModelAlias,
   prepareSystemPromptContext,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
@@ -389,7 +390,7 @@ import {
   v2MetaToSessionMeta,
   v2SummaryToSessionSummary,
 } from '#/v2/session-mapper';
-import { SessionEventWiring } from '#/v2/session-wiring';
+import { readStatusModelContext, SessionEventWiring } from '#/v2/session-wiring';
 import type {
   CreatedWorktree,
   CreateWorktreeInput,
@@ -1413,7 +1414,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * agent's fold may arrive already in flight via `mainWireFold` (started by
    * `resumeSession` ahead of the restore; subagents always fold lazily here).
    * `warning` reports when an implicit default model was missing and the
-   * previous session model was preserved instead.
+   * previous session model was preserved instead, or when the session's
+   * bound model alias is no longer configured in `config.toml`.
    */
   private async resumedSessionSummary(
     handle: ISessionScopeHandle,
@@ -1431,6 +1433,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const main = await this.materializeMainAgent(handle, undefined, (message) => {
       warning = message;
     });
+    try {
+      const missingModel = missingConfiguredModelAlias(main);
+      if (warning === undefined && missingModel !== undefined) {
+        warning = `Session model "${missingModel}" is not configured in config.toml. Use /model to select an available model.`;
+      }
+    } catch (error) {
+      if (
+        !isError2(error) ||
+        (error.code !== ErrorCodes.CONFIG_INVALID && error.code !== ProfileErrors.codes.MODEL_CONFIG_INVALID)
+      ) {
+        throw error;
+      }
+    }
     agents[MAIN_AGENT_ID] = await this.resumedAgentState(
       handle,
       main,
@@ -2314,8 +2329,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       facade.getUsage(),
     ]);
     const profile = agent.accessor.get(IAgentLoopService).data();
-    const model = profile.modelAlias === undefined ? undefined : agent.accessor.get(IAgentLoopService).resolveModelContext().model;
-    const maxContextTokens = model?.maxInputSize ?? model?.maxContextSize ?? 0;
+    const { maxContextTokens } = readStatusModelContext(agent);
     const contextTokens = context.tokenCount;
     const contextUsage = maxContextTokens > 0 ? contextTokens / maxContextTokens : 0;
     const hasUsage =

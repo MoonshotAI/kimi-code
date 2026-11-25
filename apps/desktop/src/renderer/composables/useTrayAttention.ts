@@ -113,16 +113,17 @@ export function createTraySessionSelector(
   return bridge.onTraySelectSession(openSession);
 }
 
-export function runWhenInitialized(initialized: Ref<boolean>, fn: () => void): void {
+export function runWhenInitialized(initialized: Ref<boolean>, fn: () => void): () => void {
   if (initialized.value) {
     fn();
-    return;
+    return () => {};
   }
   const stop = watch(initialized, (ready) => {
     if (!ready) return;
     stop();
     fn();
   });
+  return stop;
 }
 
 interface TrayAttentionBridge {
