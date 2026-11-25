@@ -11,6 +11,10 @@ const clientState = vi.hoisted(() => ({
   thinking: null as null | { value: string },
   models: null as null | { value: AppModel[] },
   recentModelIds: null as null | { value: string[] },
+  selectModel: vi.fn(async (id: string) => {
+    if (clientState.status!.value) clientState.status!.value = { ...clientState.status!.value, modelId: id, model: id };
+  }),
+  setThinking: vi.fn(),
 }));
 
 vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
@@ -75,7 +79,6 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       goal: vue.ref(null),
       activationBadges: vue.ref([]),
       models: clientState.models!,
-      starredModelIds: vue.ref([]),
       recentModelIds: clientState.recentModelIds!,
       skills: vue.ref([]),
       skillsLoaded: vue.ref(true),
@@ -90,9 +93,9 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       togglePlanMode: vi.fn(),
       toggleSwarmMode: vi.fn(),
       toggleTowerMode: vi.fn(),
-      setThinking: vi.fn(),
+      setThinking: clientState.setThinking,
       setPermission: vi.fn(),
-      selectModel: vi.fn(),
+      selectModel: clientState.selectModel,
     }),
     getKimiWebApi: () => ({
       getSessionContextSummary: vi.fn(async () => ({
@@ -264,8 +267,17 @@ describe('Composer context ring', () => {
 });
 
 describe('Composer recent model menu', () => {
-  it('puts the selected provider model first on open and freezes the order during draft changes', async () => {
+  it('puts the selected provider model first on open, applies clicks immediately, and freezes the open order', async () => {
     isMobileViewport = false;
+    clientState.status!.value = {
+      connected: true,
+      model: 'GPT-6.1 Sol',
+      modelId: 'gpt-6.1-sol',
+      permission: 'yolo',
+      ctxUsed: 76200,
+      ctxMax: 262144,
+    };
+    clientState.selectModel.mockClear();
     await mountComposer(1200, 820);
 
     const modelPill = host.querySelector<HTMLButtonElement>('.model-pill')!;
@@ -273,42 +285,39 @@ describe('Composer recent model menu', () => {
     await nextTick();
     await nextTick();
 
-    const sections = [...host.querySelectorAll<HTMLElement>('.md-list .md-section')].map(
+    const labels = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section > .mqm-label')].map(
       (section) => section.textContent?.trim(),
     );
-    const rows = [...host.querySelectorAll<HTMLElement>('.md-list .md-row')];
-    const names = rows.map((row) => row.querySelector('.md-name')?.textContent?.trim());
+    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row')];
+    const names = rows.map((row) => row.querySelector('.mqm-name')?.textContent?.trim());
 
-    expect(sections).toEqual(['最近使用', 'openai']);
+    expect(labels).toEqual(['最近使用', 'openai']);
     expect(names).toEqual(['GPT-6.1 Sol', 'GPT-6.1 Sol', 'GPT-6 Astra']);
-    expect(rows[0]?.querySelector('.md-provider')).toBeNull();
-    expect(rows.filter((row) => row.classList.contains('is-current'))).toHaveLength(2);
+    expect(rows[0]?.querySelector('.mqm-provider')?.textContent?.trim()).toBe('openai');
+    expect(rows.filter((row) => row.getAttribute('aria-checked') === 'true')).toHaveLength(2);
 
     rows[2]?.click();
     await nextTick();
+    await vi.waitFor(() => expect(clientState.selectModel).toHaveBeenCalledWith('gpt-6-astra'));
+    await nextTick();
 
-    const reorderedRows = [...host.querySelectorAll<HTMLElement>('.md-list .md-row')];
+    const reorderedRows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row')];
     expect(
-      reorderedRows.map((row) => row.querySelector('.md-name')?.textContent?.trim()),
+      reorderedRows.map((row) => row.querySelector('.mqm-name')?.textContent?.trim()),
     ).toEqual(['GPT-6.1 Sol', 'GPT-6.1 Sol', 'GPT-6 Astra']);
-    expect(
-      reorderedRows
-        .filter((row) => row.classList.contains('is-current'))
-        .map((row) => row.querySelector('.md-name')?.textContent?.trim()),
-    ).toEqual(['GPT-6 Astra']);
+    expect(host.querySelector('.model-dropdown')).not.toBeNull();
   });
 });
 
 describe('Composer toolbar popup viewport clamping', () => {
-  it('clamps the model dropdown inside a narrow mobile toolbar instead of overflowing off the left edge', async () => {
+  it('caps the model dropdown height to the space above the model pill on short mobile viewports', async () => {
     isMobileViewport = true;
-    menuDimensions = { modelWidth: 360, modelHeight: 305, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
     await mountComposer(360, 740);
 
     const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
     const modelPill = host.querySelector<HTMLElement>('.model-pill')!;
-    mockRect(toolbar, { left: 13, right: 347, width: 334, top: 659, bottom: 715, height: 56 });
-    mockRect(modelPill, { left: 223, right: 259, width: 36, top: 667, bottom: 703, height: 36 });
+    mockRect(toolbar, { left: 13, right: 347, width: 334, top: 290, bottom: 346, height: 56 });
+    mockRect(modelPill, { left: 223, right: 259, width: 36, top: 298, bottom: 334, height: 36 });
 
     modelPill.click();
     await nextTick();
@@ -316,15 +325,12 @@ describe('Composer toolbar popup viewport clamping', () => {
     await nextTick();
 
     const menu = host.querySelector<HTMLElement>('.model-dropdown')!;
-    expect(menu.style.maxWidth).toBe('334px');
-    expect(menu.style.right).toBe('0px');
-    expect(menu.classList.contains('flip-down')).toBe(false);
-    expect(menu.style.maxHeight).toBe('647px');
+    expect(menu.style.right).toBe('88px');
+    expect(menu.style.maxHeight).toBe('282px');
   });
 
-  it('keeps the model dropdown aligned to the model pill right edge on wide viewports', async () => {
+  it('keeps the model dropdown aligned to the model pill right edge and capped at 480px on wide viewports', async () => {
     isMobileViewport = false;
-    menuDimensions = { modelWidth: 392, modelHeight: 274, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
     await mountComposer(1200, 820);
 
     const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
@@ -338,9 +344,8 @@ describe('Composer toolbar popup viewport clamping', () => {
     await nextTick();
 
     const menu = host.querySelector<HTMLElement>('.model-dropdown')!;
-    expect(menu.style.maxWidth).toBe('726px');
     expect(menu.style.right).toBe('80px');
-    expect(menu.classList.contains('flip-down')).toBe(false);
+    expect(menu.style.maxHeight).toBe('480px');
   });
 
   it('clamps the permission dropdown inside a narrow mobile toolbar, flips downward when needed, and closes on resize', async () => {
@@ -370,16 +375,15 @@ describe('Composer toolbar popup viewport clamping', () => {
     expect(menu.classList.contains('ui-menu-pop-leave-active')).toBe(true);
   });
 
-  it('respects narrowed visualViewport bounds when clamping horizontally', async () => {
+  it('respects narrowed visualViewport top offset when clamping model menu height', async () => {
     isMobileViewport = true;
-    menuDimensions = { modelWidth: 320, modelHeight: 260, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
     Object.defineProperty(window, 'visualViewport', {
       configurable: true,
       value: {
         offsetLeft: 40,
-        offsetTop: 0,
+        offsetTop: 120,
         width: 260,
-        height: 700,
+        height: 580,
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
       },
@@ -397,8 +401,8 @@ describe('Composer toolbar popup viewport clamping', () => {
     await nextTick();
 
     const menu = host.querySelector<HTMLElement>('.model-dropdown')!;
-    expect(menu.style.maxWidth).toBe('244px');
-    expect(menu.style.right).toBe('55px');
+    expect(menu.style.maxHeight).toBe('480px');
+    expect(menu.style.right).toBe('88px');
   });
 
   it('centers the context ring card above the ring and clamps it within toolbar bounds', async () => {

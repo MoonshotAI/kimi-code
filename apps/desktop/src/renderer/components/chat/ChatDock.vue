@@ -160,6 +160,7 @@ const composerRef = ref<{
   restoreDraftEntries: (entries: AttachmentEntry[]) => void;
   focus: () => void;
   clearAfterDispatch: (expectedSnapshot?: ComposerDocumentSnapshot) => void;
+  openModelMenu?: () => void;
   closeOverlays?: () => void;
   anyPopupOpen?: boolean;
   isEmpty?: () => boolean;
@@ -415,7 +416,7 @@ onUnmounted(() => {
   workBodyResizeObserver = null;
 });
 
-defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, hasInsertableComposer, loadAttachmentsForEdit, restoreDraftEntries, focus, anyPopupOpen, isEmpty, clearAfterDispatch });
+defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, hasInsertableComposer, loadAttachmentsForEdit, restoreDraftEntries, focus, openModelMenu: () => composerRef.value?.openModelMenu?.(), anyPopupOpen, isEmpty, clearAfterDispatch });
 </script>
 
 <template>
@@ -699,7 +700,6 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
         @command="emit('command', $event)"
         @interrupt="emit('interrupt')"
         @focus-goal="emit('focusGoal')"
-        @pick-model="emit('pickModel')"
         @login="emit('login')"
         @configure-model="emit('configureModel')"
       />

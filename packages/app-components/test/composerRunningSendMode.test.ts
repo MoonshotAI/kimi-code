@@ -57,7 +57,6 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       goal: vue.ref(null),
       activationBadges: vue.ref([]),
       models: vue.ref([]),
-      starredModelIds: vue.ref([]),
       recentModelIds: vue.ref([]),
       skills: vue.ref([]),
       skillsLoaded: vue.ref(true),

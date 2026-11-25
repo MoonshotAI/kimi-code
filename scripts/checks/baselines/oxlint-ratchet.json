@@ -315,8 +315,7 @@
     "packages/app-components/src/chat/tool-calls/WebFetchTool.vue": 1,
     "packages/app-components/src/chat/tool-calls/browser/BrowserRetryRun.vue": 2,
     "packages/app-components/src/chat/tool-calls/toolRegistry.ts": 18,
-    "packages/app-components/src/index.ts": 33,
-    "packages/app-components/src/settings/ModelPicker.vue": 1
+    "packages/app-components/src/index.ts": 32
   },
   "import/no-duplicates": {
     "apps/desktop/src/main/app/ui-state.ts": 1,
@@ -808,7 +807,6 @@
     "packages/agent-core-v2/src/workspace/workspaceMcp/workspaceMcpService.ts": 1,
     "packages/agent-core-v2/src/workspace/workspaceMcpConfig/workspaceMcpConfigService.ts": 1,
     "packages/app-client/src/lib/trace.ts": 1,
-    "packages/app-client/src/stores/models.ts": 1,
     "packages/app-components/src/chat/tool-calls/browserToolPresentation.ts": 1,
     "packages/app-composer/src/features/attachment/clipboard.ts": 2,
     "packages/app-composer/src/model/schema.ts": 1,
@@ -1216,7 +1214,6 @@
     "packages/app-components/src/composer/SlashMenu.vue": 1,
     "packages/app-components/src/panel/InspectorHttpDetail.vue": 1,
     "packages/app-components/src/panel/InspectorPane.vue": 1,
-    "packages/app-components/src/settings/ModelPicker.vue": 1,
     "packages/app-components/src/settings/ProvidersPanel.vue": 1,
     "packages/app-composer/src/model/wireCodec.ts": 1,
     "packages/app-composer/test/features/attachment/clipboard.test.ts": 1,

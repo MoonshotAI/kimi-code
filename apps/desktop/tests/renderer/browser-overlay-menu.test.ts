@@ -1,4 +1,5 @@
 import type { BrowserOverlayClosed } from '../../src/shared/browser-overlay';
+import type { QuickModelMenuAction } from '@moonshot-ai/app-core/quick-model-menu';
 import { effectScope } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -7,7 +8,7 @@ const closeMenu = vi.fn();
 const releaseSurface = vi.fn();
 const addDocumentListener = vi.fn();
 let actionListener:
-  | ((payload: { menuId: string; itemId: string; keepOpen?: boolean }) => void)
+  | ((payload: { menuId: string; itemId: string; keepOpen?: boolean; modelAction?: QuickModelMenuAction }) => void)
   | undefined;
 let closedListener: ((payload: BrowserOverlayClosed) => void) | undefined;
 
@@ -175,6 +176,49 @@ describe('browser overlay menu renderer adapter', () => {
         ],
       }),
     );
+    scope.stop();
+  });
+
+  it('sends structured model menu payloads and routes model actions without closing the menu', async () => {
+    const { registerBrowserOverlayMenu } = await import('../../src/renderer/lib/browserOverlayMenu');
+    const onModelAction = vi.fn();
+    const onSelect = vi.fn();
+    const scope = effectScope();
+    const model = { id: 'p/m', provider: 'p', model: 'm', displayName: 'Model M', maxContextSize: 262144 };
+    const menu = scope.run(() =>
+      registerBrowserOverlayMenu({
+        id: 'composer.models',
+        width: 240,
+        maxHeight: 480,
+        items: () => [],
+        modelMenu: () => ({
+          models: [model],
+          recentModels: [model],
+          providerModels: [model],
+          providers: [{ id: 'p', label: 'Provider P' }],
+          activeProvider: 'p',
+          activeProviderLabel: 'Provider P',
+          currentModelId: 'p/m',
+          currentEffort: 'high',
+        }),
+        onSelect,
+        onModelAction,
+      }),
+    )!;
+
+    menu.showAt({ x: 800, y: 700, width: 120, height: 32 });
+    expect(openMenu).toHaveBeenCalledWith(expect.objectContaining({
+      width: 240,
+      maxHeight: 480,
+      items: [],
+      modelMenu: expect.objectContaining({ activeProvider: 'p', currentModelId: 'p/m' }),
+    }));
+
+    const action: QuickModelMenuAction = { type: 'select-model', modelId: 'p/m2', effort: 'max' };
+    actionListener?.({ menuId: openMenu.mock.lastCall![0].menuId, itemId: 'model-menu', keepOpen: true, modelAction: action });
+    expect(onModelAction).toHaveBeenCalledWith(action);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(menu.open.value).toBe(true);
     scope.stop();
   });
 });

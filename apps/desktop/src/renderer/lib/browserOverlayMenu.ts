@@ -2,6 +2,7 @@ import { v4 as randomUUID } from 'uuid';
 import { createBrowserFocusRequest } from './browserFocusRequest';
 import { onScopeDispose, readonly, ref, watch, type Ref } from 'vue';
 import { openDialogCount, registerExternalMenuSurface } from '@moonshot-ai/app-ui';
+import type { QuickModelMenuAction, QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
 import type {
   BrowserOverlayAction,
   BrowserOverlayAnchor,
@@ -23,9 +24,11 @@ interface BrowserOverlayHostBridge {
 export interface BrowserOverlayMenuRegistration {
   id: string;
   items: () => BrowserOverlayMenuItem[];
+  modelMenu?: () => QuickModelMenuPayload;
   footerStart?: () => number;
   highlightQuery?: () => string;
   onSelect: (itemId: string) => void;
+  onModelAction?: (action: QuickModelMenuAction) => void;
   onClose?: (payload: BrowserOverlayClosed) => void;
   onDismiss?: () => void;
   width?: number;
@@ -171,7 +174,8 @@ export function registerBrowserOverlayMenu(
   const offAction = bridge?.onBrowserOverlayAction((payload) => {
     if (payload.menuId !== nativeMenuId || disposed || actionConsumed) return;
     if (payload.keepOpen !== true) { actionConsumed = true; finish(); }
-    registration.onSelect(payload.itemId);
+    if (payload.modelAction !== undefined) registration.onModelAction?.(payload.modelAction);
+    else registration.onSelect(payload.itemId);
   });
   const offClosed = bridge?.onBrowserOverlayClosed((payload) => {
     if (payload.menuId !== nativeMenuId || disposed) return;
@@ -228,6 +232,7 @@ export function registerBrowserOverlayMenu(
       preserveFocus: options?.preserveFocus ?? registration.preserveFocus,
       submitOnCtrlEnter: registration.submitOnCtrlEnter === true ? true : undefined,
       items: registration.items(),
+      ...(registration.modelMenu === undefined ? {} : { modelMenu: registration.modelMenu() }),
       ...(registration.footerStart === undefined ? {} : { footerStart: registration.footerStart() }),
       ...(registration.highlightQuery === undefined ? {} : { query: registration.highlightQuery().slice(0, 1024) }),
     });

@@ -1207,6 +1207,89 @@ it('keeps keepOpen only when an item explicitly requests it', () => {
   })?.items[0]).not.toHaveProperty('keepOpen');
 });
 
+describe('browser overlay model menu', () => {
+  beforeEach(() => {
+    destroyBrowserOverlay();
+    mocks.FakeWebContentsView.instances = [];
+    vi.clearAllMocks();
+  });
+
+  const model = { id: 'managed:kimi-code/k3', provider: 'managed:kimi-code', model: 'k3', displayName: 'K3', maxContextSize: 262144, supportEfforts: ['low', 'high'] };
+  const modelMenu = {
+    models: [model],
+    recentModels: [model],
+    providerModels: [model],
+    providers: [{ id: 'managed:kimi-code', label: 'Kimi 订阅' }],
+    activeProvider: 'managed:kimi-code',
+    activeProviderLabel: 'Kimi 订阅',
+    currentModelId: model.id,
+    currentEffort: 'high',
+  };
+
+  it('validates model menu payloads with empty flat items and rejects unknown fields', () => {
+    const parsed = asBrowserOverlayMenuRequest({ ...request, items: [], modelMenu });
+    expect(parsed).toMatchObject({ modelMenu });
+    expect(isBrowserOverlayConfig({ ...parsed, kind: 'menu', requestId: 1 })).toBe(true);
+    expect(asBrowserOverlayMenuRequest({ ...request, items: [] })).toBeNull();
+    expect(asBrowserOverlayMenuRequest({ ...request, items: [], modelMenu: { ...modelMenu, extra: 1 } })).toBeNull();
+    expect(asBrowserOverlayMenuRequest({ ...request, items: [], modelMenu: { ...modelMenu, recentModels: [model, model, model, model] } })).toBeNull();
+  });
+
+  it('reserves horizontal flyout space around the 240px menu and clamps height to min(480, anchor.y - 16)', () => {
+    const host = createHost(1440, 900);
+    attachBrowserOverlayWindow(host as never);
+    const view = mocks.FakeWebContentsView.instances[0]!;
+    markBrowserOverlayReady(view.webContents as never);
+
+    openBrowserOverlayMenu({ ...request, width: 240, maxHeight: 480, anchor: { x: 700, y: 840, width: 140, height: 32 }, items: [], modelMenu });
+    expect(view.webContents.send).toHaveBeenCalledWith(
+      IPC.browserOverlayConfig,
+      expect.objectContaining({ width: 240, maxHeight: 480, autoWidth: false }),
+    );
+
+    showBrowserOverlayRendered(view.webContents as never, { requestId: 1, width: 240, height: 474 });
+    expect(view.bounds.x + 256).toBe(600);
+    expect(view.bounds.width).toBeGreaterThanOrEqual(240 + 244);
+    expect(view.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayShown, {
+      requestId: 1,
+      placement: 'top-end',
+      menuOffset: { x: 256, y: 84 },
+    });
+
+    openBrowserOverlayMenu({ ...request, menuId: 'short', width: 240, anchor: { x: 700, y: 300, width: 140, height: 32 }, items: [], modelMenu });
+    expect(view.webContents.send).toHaveBeenLastCalledWith(
+      IPC.browserOverlayConfig,
+      expect.objectContaining({ maxHeight: 284 }),
+    );
+  });
+
+  it('forwards structured model actions and keeps the overlay open', () => {
+    const host = createHost(1440, 900);
+    attachBrowserOverlayWindow(host as never);
+    const view = mocks.FakeWebContentsView.instances[0]!;
+    markBrowserOverlayReady(view.webContents as never);
+    openBrowserOverlayMenu({ ...request, items: [], modelMenu });
+    showBrowserOverlayRendered(view.webContents as never, { requestId: 1, width: 240, height: 300 });
+    host.webContents.send.mockClear();
+
+    activateBrowserOverlayItem(view.webContents as never, { requestId: 1, itemId: 'model-menu' });
+    expect(host.webContents.send).not.toHaveBeenCalled();
+
+    activateBrowserOverlayItem(view.webContents as never, {
+      requestId: 1,
+      itemId: 'model-menu',
+      modelAction: { type: 'select-provider', providerId: 'openrouter' },
+    });
+    expect(host.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayAction, {
+      menuId: request.menuId,
+      itemId: 'model-menu',
+      keepOpen: true,
+      modelAction: { type: 'select-provider', providerId: 'openrouter' },
+    });
+    expect(view.visible).toBe(true);
+  });
+});
+
 it('recreates a crashed native overlay on the next open', () => {
   const host = createHost();
   attachBrowserOverlayWindow(host as never);

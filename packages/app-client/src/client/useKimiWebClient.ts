@@ -3510,7 +3510,6 @@ export function useKimiWebClient() {
     isStartingFirstPrompt,
 
     models: modelProvider.models,
-    starredModelIds: modelProvider.starredModelIds,
     recentModelIds: modelProvider.recentModelIds,
     providers: modelProvider.providers,
 
@@ -3708,7 +3707,6 @@ export function useKimiWebClient() {
     activateSkill: modelProvider.activateSkill,
     selectModel,
     setSessionModel: modelProvider.setSessionModel,
-    toggleStarModel: modelProvider.toggleStarModel,
     addProvider: modelProvider.addProvider,
     updateProvider: modelProvider.updateProvider,
     getProvider: modelProvider.getProvider,

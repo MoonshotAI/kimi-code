@@ -3,6 +3,7 @@ import { Type, type Static } from 'typebox';
 import { asBrowserFavicon, asBrowserBounds, BrowserBoundsSchema } from './browser';
 import { parseBrowserAnnotationDetails, type BrowserAnnotationDetails } from './browser-annotation-details';
 import { BrowserRequestIdSchema } from './browser-schema';
+import type { QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
 
 export const BROWSER_OVERLAY_GUTTER = 12;
 const Id = Type.String({ minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9:_.-]+$' });
@@ -16,6 +17,31 @@ const Viewport = Type.Object({ width: Type.Number({ minimum: 1, maximum: 16384 }
 const ItemAction = Type.Object({ id: Id, label: Label, icon: IconName, keepOpen: OptionalFlag });
 const ItemProgress = Type.Object({ label: Label, value: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })), paused: OptionalFlag });
 const TextRange = Type.Object({ start: Type.Integer({ minimum: 0 }), end: Type.Integer({ minimum: 0 }) }, { additionalProperties: false });
+const QuickModel = Type.Object({
+  id: Type.String({ minLength: 1, maxLength: 512 }),
+  provider: Type.String({ minLength: 1, maxLength: 256 }),
+  model: Type.String({ minLength: 1, maxLength: 512 }),
+  displayName: Type.Optional(Type.String({ maxLength: 512 })),
+  maxContextSize: Type.Number({ minimum: 0 }),
+  capabilities: Type.Optional(Type.Array(Type.String({ maxLength: 64 }), { maxItems: 32 })),
+  supportEfforts: Type.Optional(Type.Array(Type.String({ maxLength: 32 }), { maxItems: 16 })),
+  defaultEffort: Type.Optional(Type.String({ maxLength: 32 })),
+}, { additionalProperties: false });
+const QuickModelMenuPayloadSchema = Type.Object({
+  models: Type.Array(QuickModel, { maxItems: 2048 }),
+  recentModels: Type.Array(QuickModel, { maxItems: 3 }),
+  providerModels: Type.Array(QuickModel, { maxItems: 2048 }),
+  providers: Type.Array(Type.Object({ id: Type.String({ minLength: 1, maxLength: 256 }), label: Type.String({ maxLength: 256 }) }, { additionalProperties: false }), { maxItems: 256 }),
+  activeProvider: Type.String({ maxLength: 256 }),
+  activeProviderLabel: Type.String({ maxLength: 256 }),
+  currentModelId: Type.Optional(Type.String({ maxLength: 512 })),
+  currentEffort: Type.Optional(Type.String({ maxLength: 32 })),
+}, { additionalProperties: false });
+const QuickModelMenuAction = Type.Union([
+  Type.Object({ type: Type.Literal('select-model'), modelId: Type.String({ minLength: 1, maxLength: 512 }), effort: Type.Optional(Type.String({ maxLength: 32 })) }, { additionalProperties: false }),
+  Type.Object({ type: Type.Literal('select-effort'), effort: Type.String({ minLength: 1, maxLength: 32 }) }, { additionalProperties: false }),
+  Type.Object({ type: Type.Literal('select-provider'), providerId: Type.String({ minLength: 1, maxLength: 256 }) }, { additionalProperties: false }),
+]);
 const MenuItem = Type.Union([
   Type.Object({ kind: Type.Literal('separator') }),
   Type.Object({ kind: Type.Enum(['section', 'note']), id: Id, label: Type.String({ maxLength: 1024 }), size: Type.Optional(Type.Literal('xs')) }),
@@ -35,8 +61,9 @@ const MenuFields = {
   menuId: Id, anchor: BrowserBoundsSchema, placement: Type.Optional(Placement), initialFocus: Type.Optional(InitialFocus),
   offset: Type.Optional(Type.Number({ minimum: -16, maximum: 32 })), width: Type.Optional(Type.Number({ minimum: 180 })),
   maxHeight: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096 })),
-  autoWidth: OptionalFlag, preserveFocus: OptionalFlag, submitOnCtrlEnter: OptionalFlag, items: Type.Array(MenuItem, { minItems: 1, maxItems: 2048 }),
+  autoWidth: OptionalFlag, preserveFocus: OptionalFlag, submitOnCtrlEnter: OptionalFlag, items: Type.Array(MenuItem, { minItems: 0, maxItems: 2048 }),
   footerStart: Type.Optional(Type.Integer({ minimum: 0 })), query: Type.Optional(Type.String({ maxLength: 1024 })),
+  modelMenu: Type.Optional(QuickModelMenuPayloadSchema),
 };
 export const BrowserOverlayMenuRequestSchema = Type.Object({ ...MenuFields, refresh: OptionalFlag });
 const DialogCoordinate = Type.Number({ minimum: 0, maximum: 32768 });
@@ -59,7 +86,7 @@ const DialogInput = Type.Object({ ...DialogFields, kind: Type.Optional(Type.Unkn
 export const BrowserOverlayDialogRequestSchema = Type.Object(DialogFields, { additionalProperties: false });
 const Rendered = Type.Object({ requestId: BrowserRequestIdSchema, ...Viewport.properties });
 const Visibility = Type.Object({ requestId: BrowserRequestIdSchema });
-const Activate = Type.Object({ ...Visibility.properties, itemId: Id }, { additionalProperties: false });
+const Activate = Type.Object({ ...Visibility.properties, itemId: Id, modelAction: Type.Optional(QuickModelMenuAction) }, { additionalProperties: false });
 const DialogKind = Type.Object({ kind: Type.Literal('dialog') });
 const Dismiss = Type.Object({ ...Visibility.properties, reason: Type.Enum(['dismiss', 'escape']) }, { additionalProperties: false });
 
@@ -67,7 +94,7 @@ export type BrowserOverlayPlacement = Static<typeof Placement>;
 export type BrowserOverlayInitialFocus = Static<typeof InitialFocus>;
 export type BrowserOverlayAnchor = Static<typeof BrowserBoundsSchema>;
 export type BrowserOverlayMenuItem = Static<typeof MenuItem>;
-export type BrowserOverlayMenuRequest = Static<typeof BrowserOverlayMenuRequestSchema>;
+export type BrowserOverlayMenuRequest = Omit<Static<typeof BrowserOverlayMenuRequestSchema>, 'modelMenu'> & { modelMenu?: QuickModelMenuPayload };
 export type BrowserOverlayDialogRequest = Omit<Static<typeof BrowserOverlayDialogRequestSchema>, 'annotation'> & { annotation?: BrowserAnnotationDetails };
 export type BrowserOverlayDialogVariant = NonNullable<BrowserOverlayDialogRequest['variant']>;
 export type BrowserOverlayViewport = Static<typeof Viewport>;
@@ -81,8 +108,8 @@ const MenuConfig = Type.Object({
   width: Type.Optional(Type.Number({ minimum: 1 })),
   minWidth: Type.Optional(Type.Number({ minimum: 1 })),
 });
-const Shown = Type.Object({ requestId: BrowserRequestIdSchema, placement: Type.Optional(Placement) });
-const Action = Type.Object({ menuId: Id, itemId: Id, keepOpen: OptionalFlag });
+const Shown = Type.Object({ requestId: BrowserRequestIdSchema, placement: Type.Optional(Placement), menuOffset: Type.Optional(Type.Object({ x: Type.Number(), y: Type.Number() }, { additionalProperties: false })) });
+const Action = Type.Object({ menuId: Id, itemId: Id, keepOpen: OptionalFlag, modelAction: Type.Optional(QuickModelMenuAction) });
 const CloseReason = Type.Enum(['action', 'dismiss', 'escape', 'replaced', 'window-blur', 'window-move', 'window-resize', 'host-closed', 'programmatic']);
 const Closed = Type.Object({ menuId: Id, reason: CloseReason });
 const DialogActionFields = {
@@ -93,7 +120,7 @@ const DialogAction = Type.Object({ ...DialogActionFields, dialogId: Id, value: T
 const FormAction = Type.Object({ ...DialogActionFields, requestId: BrowserRequestIdSchema });
 const DialogClosed = Type.Object({ dialogId: Id, reason: CloseReason });
 
-export type BrowserOverlayMenuConfig = Static<typeof MenuConfig>;
+export type BrowserOverlayMenuConfig = Omit<Static<typeof MenuConfig>, 'modelMenu'> & { modelMenu?: QuickModelMenuPayload };
 export interface BrowserOverlayDialogConfig extends BrowserOverlayDialogRequest {
   kind: 'dialog';
   requestId: number;
@@ -193,10 +220,11 @@ export function asBrowserOverlayMenuRequest(value: unknown): BrowserOverlayMenuR
     }
     items.push(item);
   }
-  if (items.every(item => item.kind === 'separator')) return null;
+  if (request.modelMenu === undefined && items.every(item => item.kind === 'separator')) return null;
   return {
     menuId: request.menuId, anchor, items, placement: request.placement ?? 'bottom-end',
     offset: Math.round(request.offset ?? 4), width: Math.round(request.width ?? 220),
+    ...(request.modelMenu === undefined ? {} : { modelMenu: request.modelMenu }),
     ...(request.maxHeight === undefined ? {} : { maxHeight: request.maxHeight }),
     ...(request.refresh === true ? { refresh: true } : {}),
     ...(request.initialFocus === undefined ? {} : { initialFocus: request.initialFocus }),

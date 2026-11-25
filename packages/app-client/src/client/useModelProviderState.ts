@@ -580,7 +580,6 @@ export function useModelProviderState(
 
   return {
     models: computed(() => store.activeModels),
-    starredModelIds: computed(() => store.starredModelIds),
     recentModelIds: computed(() => store.recentModelIds),
     providers: computed(() => store.providers),
     draftModel: computed(() => store.draftModel),
@@ -600,7 +599,6 @@ export function useModelProviderState(
     thinkingLevelForModelId,
     thinkingLevelForSessionId,
     resolveThinkingForPrompt,
-    toggleStarModel: store.toggleStarModel,
     activateSkill,
     addProvider,
     updateProvider,

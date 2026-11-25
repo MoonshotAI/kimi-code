@@ -85,7 +85,6 @@ const emit = defineEmits<{
   interrupt: [];
   continue: [];
   steerQueued: [index: number];
-  pickModel: [];
   login: [];
   configureModel: [];
   openMedia: [payload: OpenMediaRequest];
@@ -576,6 +575,7 @@ type ComposerHandle = {
   loadAttachmentsForEdit: (atts: TurnAttachment[]) => void;
   restoreDraftEntries?: (entries: AttachmentEntry[]) => void;
   focus: () => void;
+  openModelMenu?: () => void;
   clearAfterDispatch: (expectedSnapshot?: ComposerDocumentSnapshot) => void;
   anyPopupOpen?: boolean;
   isEmpty?: () => boolean;
@@ -621,6 +621,10 @@ function bindChatDock(el: RefArg): void {
           ? el.restoreDraftEntries.bind(el)
           : undefined,
       focus: el.focus.bind(el),
+      openModelMenu:
+        'openModelMenu' in el && typeof el.openModelMenu === 'function'
+          ? el.openModelMenu.bind(el)
+          : undefined,
       clearAfterDispatch:
         'clearAfterDispatch' in el && typeof el.clearAfterDispatch === 'function'
           ? el.clearAfterDispatch.bind(el)
@@ -832,7 +836,7 @@ const showEmptyToggles = computed(
   () => !props.mobile && turns.value.length === 0 && !sessionLoading.value,
 );
 
-defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMention, insertScreenshotAnnotation, addComposerFiles, hasInsertableComposer, isComposerEmpty, clearComposerAfterDispatch, focusComposer, notifyUndone, selectAllRegion, focusGoal, closeDockPanel, composerPopupOpen });
+defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMention, insertScreenshotAnnotation, addComposerFiles, hasInsertableComposer, isComposerEmpty, clearComposerAfterDispatch, focusComposer, openModelMenu: () => (dockedComposerRef.value ?? emptyComposerRef.value)?.openModelMenu?.(), notifyUndone, selectAllRegion, focusGoal, closeDockPanel, composerPopupOpen });
 </script>
 
 <template>
@@ -981,7 +985,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               @command="handleComposerCommand"
               @interrupt="handleInterrupt"
               @focus-goal="focusGoal"
-              @pick-model="emit('pickModel')"
               @login="emit('login')"
               @configure-model="emit('configureModel')"
             />
@@ -1079,7 +1082,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         @command="handleComposerCommand"
         @interrupt="handleInterrupt"
         @focus-goal="focusGoal"
-        @pick-model="emit('pickModel')"
         @login="emit('login')"
         @configure-model="emit('configureModel')"
       >

@@ -1,11 +1,6 @@
-import type { AppModel } from '@moonshot-ai/app-core/api';
+import { MANAGED_KIMI_CODE_PROVIDER_ID, type AppModel } from '@moonshot-ai/app-core/api';
 
-export const RECENT_MODELS_MENU_LIMIT = 5;
-
-export interface ModelProviderGroup {
-  provider: string;
-  models: AppModel[];
-}
+export const RECENT_MODELS_MENU_LIMIT = 3;
 
 export function recentModelsForMenu(
   models: readonly AppModel[],
@@ -27,23 +22,23 @@ export function recentModelsForMenu(
   return result;
 }
 
-export function groupUnstarredModelsByProvider(
+export function orderedModelProviders(models: readonly AppModel[]): string[] {
+  const seen = new Set<string>();
+  for (const model of models) seen.add(model.provider);
+  const providers = Array.from(seen);
+  return seen.has(MANAGED_KIMI_CODE_PROVIDER_ID)
+    ? [MANAGED_KIMI_CODE_PROVIDER_ID, ...providers.filter((id) => id !== MANAGED_KIMI_CODE_PROVIDER_ID)]
+    : providers;
+}
+
+export function providerModelsForMenu(
   models: readonly AppModel[],
-  starredIds: readonly string[],
-): ModelProviderGroup[] {
-  const starred = new Set(starredIds);
-  const byProvider = new Map<string, AppModel[]>();
-  for (const m of models) {
-    let list = byProvider.get(m.provider);
-    if (list === undefined) {
-      list = [];
-      byProvider.set(m.provider, list);
-    }
-    if (!starred.has(m.id)) list.push(m);
-  }
-  const groups: ModelProviderGroup[] = [];
-  for (const [provider, list] of byProvider) {
-    if (list.length > 0) groups.push({ provider, models: list });
-  }
-  return groups;
+  provider: string,
+  currentModelId: string | undefined,
+): AppModel[] {
+  const catalogModels = models.filter((model) => model.provider === provider);
+  const selected = catalogModels.find((model) => model.id === currentModelId);
+  return selected === undefined
+    ? catalogModels
+    : [selected, ...catalogModels.filter((model) => model.id !== selected.id)];
 }
