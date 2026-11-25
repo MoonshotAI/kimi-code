@@ -31,7 +31,7 @@ export interface SessionReviewRun {
 
 export interface ISessionAutoReviewService {
   readonly _serviceBrand: undefined;
-  assertConfiguredModelValid(): void;
+  assertConfigValid(): void;
   projectInstructions(): Promise<ProjectInstructions>;
   execute(input: SessionReviewInput): Promise<SessionReviewRun>;
 }

@@ -19,7 +19,13 @@ import {
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
-import { resolveSubagentModelPool } from '#/session/subagent/configSection';
+import {
+  assertModelSupportsConfiguredEffort,
+  resolveSubagentModelPool,
+  resolveSubagentThinking,
+  SECONDARY_MODEL_SECTION,
+  type SecondaryModelConfig,
+} from '#/session/subagent/configSection';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { Message } from '@moonshot-ai/core/llm/message';
 import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
@@ -27,7 +33,6 @@ import { readRetryAfterMs, retryBackoffDelay } from '@moonshot-ai/core/llm/polic
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
 import {
-  declaredDefaultEffortForModel,
   resolveForcedThinkingEffort,
   resolveThinkingEffortForModel,
   resolveThinkingKeep,
@@ -83,6 +88,11 @@ const RESPONSE_FORMAT = {
   },
 } as const;
 
+interface ReviewBinding {
+  readonly modelAlias: string;
+  readonly effort?: string;
+}
+
 type AttemptResult =
   | AutoReviewOutcome
   | { readonly decision: 'retry'; readonly reason: string; readonly retryAfterMs?: number };
@@ -107,7 +117,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
       this.cachedInstructions = undefined;
     }));
     if (this.flags.enabled(AUTO_REVIEW_FLAG_ID)) {
-      this.assertConfiguredModelValid();
+      this.assertConfigValid();
     }
   }
 
@@ -125,33 +135,54 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
   }
 
   async execute(input: SessionReviewInput): Promise<SessionReviewRun> {
-    this.assertConfiguredModelValid();
-    const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
-    const modelAlias =
-      config?.model ??
-      resolveSubagentModelPool(this.configService)?.defaultModel ??
-      input.mainModelAlias;
-    const outcome = await this.runWithDeadline(input, modelAlias);
-    return { modelAlias, outcome };
+    this.assertConfigValid();
+    const binding = this.bindingFor(input.mainModelAlias);
+    this.assertEffortSupported(binding.modelAlias);
+    const outcome = await this.runWithDeadline(input, binding);
+    return { modelAlias: binding.modelAlias, outcome };
   }
 
-  assertConfiguredModelValid(): void {
-    const model = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION)?.model;
-    if (model === undefined) return;
-    try {
-      this.models.get(model);
-    } catch (error) {
-      throw new Error2(
-        ErrorCodes.CONFIG_INVALID,
-        `[auto_review].model "${model}" could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error, details: { section: AUTO_REVIEW_SECTION, field: 'model', model } },
-      );
+  assertConfigValid(): void {
+    const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
+    const model = config?.model;
+    if (model !== undefined) {
+      try {
+        this.models.get(model);
+      } catch (error) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          `[auto_review].model "${model}" could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error, details: { section: AUTO_REVIEW_SECTION, field: 'model', model } },
+        );
+      }
     }
+    const configuredAlias = model ?? resolveSubagentModelPool(this.configService)?.defaultModel;
+    if (configuredAlias !== undefined) this.assertEffortSupported(configuredAlias);
+  }
+
+  private bindingFor(mainModelAlias: string): ReviewBinding {
+    const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
+    if (config?.model !== undefined) return { modelAlias: config.model, effort: config.effort };
+    const pooled = resolveSubagentModelPool(this.configService)?.defaultModel;
+    if (pooled === undefined) return { modelAlias: mainModelAlias, effort: config?.effort };
+    const secondary = this.configService.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION);
+    return { modelAlias: pooled, effort: config?.effort ?? secondary?.defaultEffort };
+  }
+
+  private assertEffortSupported(modelAlias: string): void {
+    const effort = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION)?.effort;
+    if (effort === undefined) return;
+    assertModelSupportsConfiguredEffort(
+      { section: AUTO_REVIEW_SECTION, field: 'effort', key: '[auto_review].effort' },
+      effort,
+      modelAlias,
+      this.models.get(modelAlias),
+    );
   }
 
   private async runWithDeadline(
     input: SessionReviewInput,
-    modelAlias: string,
+    binding: ReviewBinding,
   ): Promise<AutoReviewOutcome> {
     const { deadline } = input;
     let acquired = false;
@@ -159,7 +190,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
       await this.acquireSlot(deadline.signal);
       acquired = true;
       for (let attempt = 1; attempt <= MAX_REVIEW_ATTEMPTS; attempt += 1) {
-        const result = await this.reviewOnce(input, modelAlias);
+        const result = await this.reviewOnce(input, binding);
         if (result.decision !== 'retry') return result;
         if (attempt === MAX_REVIEW_ATTEMPTS) return { decision: 'failed', reason: result.reason };
         const delayMs = Math.min(
@@ -180,12 +211,12 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
 
   private async reviewOnce(
     input: SessionReviewInput,
-    modelAlias: string,
+    binding: ReviewBinding,
   ): Promise<AttemptResult> {
     const { deadline } = input;
     let outcome: LlmOutcome;
     try {
-      outcome = await this.sendRequest(modelAlias, input.messages, deadline.signal);
+      outcome = await this.sendRequest(binding, input.messages, deadline.signal);
     } catch (error) {
       if (deadline.signal.aborted) return deadlineFailure(deadline);
       const mapped = llmMessageFromError(error);
@@ -194,7 +225,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     }
     if (outcome.type === 'aborted') return deadlineFailure(deadline);
     if (outcome.type === 'failed') return classifyFailedOutcome(outcome, deadline);
-    void this.usage.record(input.agentContext, modelAlias, outcome.usage, {
+    void this.usage.record(input.agentContext, binding.modelAlias, outcome.usage, {
       type: 'operation',
       turnId: input.turnId,
       requestKind: AUTO_REVIEW_REQUEST_KIND,
@@ -211,15 +242,15 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
   }
 
   private sendRequest(
-    modelAlias: string,
+    binding: ReviewBinding,
     messages: readonly Message[],
     signal: AbortSignal,
   ): Promise<LlmOutcome> {
-    const model = this.models.get(modelAlias);
+    const model = this.models.get(binding.modelAlias);
     const overrides = this.configService.get<ModelOverrides>('modelOverrides');
     const thinkingConfig = this.configService.get<ThinkingConfig>(THINKING_SECTION);
     const strict = requiresStrictThinkingValidation(this.protocols, model.protocol, model.providerType);
-    const requestedEffort = thinkingConfig?.enabled === false ? 'off' : declaredDefaultEffortForModel(model.spec);
+    const requestedEffort = resolveSubagentThinking(this.configService, model, binding.effort);
     const resolvedEffort = resolveThinkingEffortForModel(requestedEffort, thinkingConfig, model.spec, strict);
     const thinkingEffort = resolveForcedThinkingEffort(
       thinkingConfig?.forcedEffort,

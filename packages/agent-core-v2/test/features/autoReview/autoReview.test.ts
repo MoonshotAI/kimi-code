@@ -365,9 +365,10 @@ describe('SessionAutoReviewService', () => {
   function makeSessionService(options: {
     readonly respond?: (signal: AbortSignal) => ScriptedStep | Promise<ScriptedStep>;
     readonly model?: string;
+    readonly effort?: string;
     readonly configured?: boolean;
     readonly flagEnabled?: boolean;
-    readonly secondaryModel?: { readonly defaultModel: string };
+    readonly secondaryModel?: { readonly defaultModel: string; readonly defaultEffort?: string };
     readonly catalogModel?: Model;
     readonly thinking?: ThinkingConfig;
   } = {}): SessionAutoReviewService {
@@ -377,7 +378,7 @@ describe('SessionAutoReviewService', () => {
     return disposables.add(new SessionAutoReviewService(
       stubFlag(options.flagEnabled ?? true),
       new StubConfigService({
-        ...(options.configured === false ? {} : { [AUTO_REVIEW_SECTION]: { model: options.model } }),
+        ...(options.configured === false ? {} : { [AUTO_REVIEW_SECTION]: { model: options.model, effort: options.effort } }),
         ...(options.secondaryModel === undefined ? {} : { [SECONDARY_MODEL_SECTION]: options.secondaryModel }),
         ...(options.thinking === undefined ? {} : { [THINKING_SECTION]: options.thinking }),
       }),
@@ -450,6 +451,31 @@ describe('SessionAutoReviewService', () => {
   ] as const)('requests %s', async (_label, catalogModel, thinking, effort) => {
     await execute(makeSessionService({ catalogModel, thinking }));
     expect(requestedEfforts).toEqual([effort]);
+  });
+
+  const pooled = { defaultModel: 'secondary-model', defaultEffort: 'low' };
+
+  it.each([
+    ['[auto_review].effort over the model entry default', { effort: 'low' }, 'low'],
+    ['[auto_review].effort while thinking is disabled', { effort: 'low', thinking: { enabled: false } }, 'low'],
+    ['[secondary_model].default_effort with the borrowed secondary model', { configured: false, secondaryModel: pooled }, 'low'],
+    ['[auto_review].effort over the borrowed [secondary_model].default_effort', { effort: 'max', secondaryModel: pooled }, 'max'],
+    ['the review model entry default without borrowing [secondary_model].default_effort', { model: 'review-model', secondaryModel: pooled }, 'high'],
+  ] as const)('requests %s', async (_label, options, effort) => {
+    const catalogModel = effortModel({ supportEfforts: ['low', 'high', 'max'], defaultEffort: 'high' });
+    await execute(makeSessionService({ catalogModel, ...options }));
+    expect(requestedEfforts).toEqual([effort]);
+  });
+
+  it('rejects an [auto_review].effort that the review model does not support', async () => {
+    const catalogModel = effortModel({ supportEfforts: ['low', 'high'], defaultEffort: 'high' });
+    expect(() => makeSessionService({ catalogModel, model: 'review-model', effort: 'xhigh' }))
+      .toThrow('[auto_review].effort "xhigh" is not supported by model "review-model"');
+    expect(() => makeSessionService({ catalogModel, secondaryModel: { defaultModel: 'secondary-model' }, effort: 'xhigh' }))
+      .toThrow('[auto_review].effort "xhigh" is not supported by model "secondary-model"');
+    await expect(execute(makeSessionService({ catalogModel, effort: 'xhigh' })))
+      .rejects.toThrow('[auto_review].effort "xhigh" is not supported by model "main-model"');
+    expect(requestedEfforts).toEqual([]);
   });
 
   it.each([
@@ -596,7 +622,7 @@ describe('AutoReviewService', () => {
     } as unknown as IEventDispatcher;
     const sessionReview: ISessionAutoReviewService = {
       _serviceBrand: undefined,
-      assertConfiguredModelValid: () => {},
+      assertConfigValid: () => {},
       projectInstructions: options.projectInstructions ?? (async () => ({ agentsMd: 'Do not delete user-data.', agentsMdPaths: ['/workspace/AGENTS.md'] })),
       execute: async (input) => {
         sentInputs.push(input);

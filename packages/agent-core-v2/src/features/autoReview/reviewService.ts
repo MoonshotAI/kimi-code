@@ -149,7 +149,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     context: ResolvedToolExecutionHookContext,
     trigger: string,
   ): Promise<AutoReviewOutcome> {
-    this.sessionReview.assertConfiguredModelValid();
+    this.sessionReview.assertConfigValid();
     const startedAt = Date.now();
     void this.dispatcher.dispatch(new AutoReviewStarted({
       agentId: this.scopeContext.agentId,
