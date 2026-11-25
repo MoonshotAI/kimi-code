@@ -2,9 +2,10 @@ import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'pathe';
 
-import type { AutocompleteItem } from '@moonshot-ai/pi-tui';
+import type { AutocompleteItem, TuiMode } from '@moonshot-ai/pi-tui';
 
 import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
+import { isExperimentalFlagEnabled } from './experimental-flags';
 import type { KimiSlashCommand, SlashCommandAvailability } from './types';
 
 const GOAL_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
@@ -237,6 +238,15 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'find',
+    aliases: [],
+    description: 'Search the conversation',
+    priority: 80,
+    argumentHint: '[query]',
+    availability: 'always',
+    visible: ({ tuiMode }) => tuiMode === 'fullscreen',
+  },
+  {
     name: 'new',
     aliases: ['clear'],
     description: 'Start a fresh session in the current environment',
@@ -465,11 +475,35 @@ export const BUILTIN_SLASH_COMMANDS = [
 export type BuiltinSlashCommand = (typeof BUILTIN_SLASH_COMMANDS)[number];
 export type BuiltinSlashCommandName = BuiltinSlashCommand['name'];
 
+export function isSlashCommandVisible(
+  command: Pick<KimiSlashCommand, 'name' | 'experimentalFlag' | 'visible'>,
+  tuiMode: TuiMode,
+): boolean {
+  return (
+    isExperimentalFlagEnabled(command.experimentalFlag) &&
+    (command.visible?.({ tuiMode }) ?? true)
+  );
+}
+
 export function findBuiltInSlashCommand(commandName: string): BuiltinSlashCommand | undefined {
   const commands = BUILTIN_SLASH_COMMANDS as readonly KimiSlashCommand<BuiltinSlashCommandName>[];
   return commands.find(
     (command) => command.name === commandName || command.aliases.includes(commandName),
   ) as BuiltinSlashCommand | undefined;
+}
+
+export function findVisibleBuiltInSlashCommand(
+  commandName: string,
+  tuiMode: TuiMode,
+): BuiltinSlashCommand | undefined {
+  const command = findBuiltInSlashCommand(commandName);
+  return command !== undefined && isSlashCommandVisible(command, tuiMode) ? command : undefined;
+}
+
+export function getVisibleBuiltInSlashCommands(tuiMode: TuiMode): KimiSlashCommand[] {
+  return sortSlashCommands(
+    BUILTIN_SLASH_COMMANDS.filter((command) => isSlashCommandVisible(command, tuiMode)),
+  );
 }
 
 export function resolveSlashCommandAvailability(

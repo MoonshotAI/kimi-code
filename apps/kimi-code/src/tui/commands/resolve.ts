@@ -1,16 +1,16 @@
+import type { TuiMode } from '@moonshot-ai/pi-tui';
+
 import {
-  findBuiltInSlashCommand,
+  findVisibleBuiltInSlashCommand,
   resolveSlashCommandAvailability,
   type BuiltinSlashCommand,
   type BuiltinSlashCommandName,
 } from './registry';
-import { isExperimentalFlagEnabled } from './experimental-flags';
 import { parseSlashInput } from './parse';
 import type { TUIState } from '../tui-state';
 import type { InlineSkillActivation } from '../types';
 import { extractInlineSkillActivations, findInlineSkillTokens } from '../utils/inline-skill-tokens';
 import type {
-  KimiSlashCommand,
   ParsedSlashInput,
   SlashCommandBusyReason,
   SlashCommandInvalidReason,
@@ -55,6 +55,7 @@ export interface ResolveSlashCommandInput {
   readonly pluginCommandMap: ReadonlyMap<string, string>;
   readonly isStreaming: boolean;
   readonly isCompacting: boolean;
+  readonly tuiMode?: TuiMode;
   readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
   readonly defaultSkillPathForCommand?: (commandName: string) => string | undefined;
 }
@@ -63,11 +64,8 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
   const parsed = parseSlashInput(options.input);
   if (parsed === null) return { kind: 'not-command' };
 
-  const command = findBuiltInSlashCommand(parsed.name);
-  if (
-    command !== undefined &&
-    isExperimentalFlagEnabled((command as KimiSlashCommand).experimentalFlag)
-  ) {
+  const command = findVisibleBuiltInSlashCommand(parsed.name, options.tuiMode ?? 'regular');
+  if (command !== undefined) {
     const busyReason = slashCommandBusyReason(options);
     if (
       busyReason !== undefined &&
@@ -170,6 +168,40 @@ export function resolveUserInput(options: ResolveSlashCommandInput): {
     };
   }
   return { intent, activations: selectedActivations };
+}
+
+export interface SlashCommandResolutionHost {
+  readonly state: {
+    readonly appState: Pick<TUIState['appState'], 'streamingPhase' | 'isCompacting'>;
+    readonly ui?: Partial<Pick<TUIState['ui'], 'mode'>>;
+  };
+  readonly skillCommandMap: ReadonlyMap<string, string>;
+  readonly pluginCommandMap: ReadonlyMap<string, string>;
+  readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
+  readonly defaultSkillPathForCommand?: (commandName: string) => string | undefined;
+}
+
+export function resolveHostUserInput(
+  host: SlashCommandResolutionHost,
+  input: string,
+  overrides?: Partial<Pick<ResolveSlashCommandInput, 'isStreaming' | 'isCompacting' | 'tuiMode'>>,
+): ReturnType<typeof resolveUserInput> {
+  return resolveUserInput({
+    input,
+    skillCommandMap: host.skillCommandMap,
+    pluginCommandMap: host.pluginCommandMap,
+    isStreaming: overrides?.isStreaming ?? host.state.appState.streamingPhase !== 'idle',
+    isCompacting: overrides?.isCompacting ?? host.state.appState.isCompacting,
+    tuiMode: overrides?.tuiMode ?? host.state.ui?.mode,
+    skillVariantPathForCommand:
+      host.skillVariantPathForCommand === undefined
+        ? undefined
+        : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart),
+    defaultSkillPathForCommand:
+      host.defaultSkillPathForCommand === undefined
+        ? undefined
+        : (commandName) => host.defaultSkillPathForCommand!(commandName),
+  });
 }
 
 export function resolveSkillCommand(

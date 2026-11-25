@@ -1,4 +1,12 @@
-import { ScrollView, Text, TuiAltScreen, TuiMainScreen, VStack, type Terminal } from '@moonshot-ai/pi-tui';
+import {
+  getKeybindings,
+  ScrollView,
+  Text,
+  TuiAltScreen,
+  TuiMainScreen,
+  VStack,
+  type Terminal,
+} from '@moonshot-ai/pi-tui';
 import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import { describe, it, expect, onTestFinished, vi } from 'vitest';
 
@@ -7,7 +15,9 @@ import { StickyUserMessageComponent } from '#/tui/components/messages/sticky-use
 import { TranscriptView } from '#/tui/components/messages/transcript-view';
 import type { WheelScrollLines } from '#/tui/config';
 import { createTUIState, type KimiTUIOptions } from '#/tui/kimi-tui';
+import { mountFooter } from '#/tui/tui-state';
 import type { AppState } from '#/tui/types';
+import { beginScreenTakeover, endScreenTakeover } from '#/tui/utils/screen-takeover';
 
 function fakeInitialAppState(): AppState {
   return {
@@ -239,5 +249,147 @@ describe('createTUIState', () => {
     };
     expect(typeof internals.openUrl).toBe('function');
     expect(typeof internals.onRightClickPaste).toBe('function');
+  });
+
+  it('injects fullscreen search keybindings without mutating global keybindings', async () => {
+    const state = createTUIState({
+      initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen' },
+      startup: { continueLast: false, yolo: false, auto: false, plan: false },
+    });
+    const vt = new VirtualTerminal(100, 12);
+    (state.ui as { terminal: Terminal }).terminal = vt;
+    state.transcriptContainer.addChild(new Text('needle one\nmiddle\nneedle two\nend', 0, 0));
+    mountFooter(state);
+    state.editorContainer.addChild(state.editor);
+    state.ui.setFocus(state.editor);
+    state.ui.start();
+
+    try {
+      await vt.waitForRender();
+
+      vt.sendInput('\u0006');
+      vt.sendInput('needle');
+      await vt.waitForRender();
+      expect(vt.getViewport().some((line) => line.includes('↑ Previous · ↓ Next'))).toBe(true);
+      const beforeNav = vt.getViewport().find((line) => line.includes('/2'));
+      expect(beforeNav).toBeDefined();
+
+      vt.sendInput('\u001B[B');
+      await vt.waitForRender();
+      const afterDown = vt.getViewport().find((line) => line.includes('/2'));
+      expect(afterDown).toBeDefined();
+      expect(afterDown).not.toBe(beforeNav);
+
+      vt.sendInput('\u001B[A');
+      await vt.waitForRender();
+      const afterUp = vt.getViewport().find((line) => line.includes('/2'));
+      expect(afterUp).toBe(beforeNav);
+
+      vt.sendInput('\u0006');
+      await vt.waitForRender();
+      expect(vt.getViewport().some((line) => line.includes('↑ Previous · ↓ Next'))).toBe(false);
+
+      vt.sendInput('\u001B[102;6u');
+      await vt.waitForRender();
+      expect(vt.getViewport().some((line) => line.includes('↑ Previous · ↓ Next'))).toBe(true);
+
+      vt.sendInput('\u001B[102;6u');
+      await vt.waitForRender();
+      expect(vt.getViewport().some((line) => line.includes('↑ Previous · ↓ Next'))).toBe(false);
+
+      expect(getKeybindings().getKeys('tui.altScreen.search')).toEqual(['ctrl+shift+f']);
+      expect(getKeybindings().getKeys('tui.altScreen.searchPrevious')).toEqual([
+        'shift+enter',
+        'ctrl+shift+g',
+      ]);
+      expect(getKeybindings().getKeys('tui.altScreen.searchNext')).toEqual(['enter', 'ctrl+g']);
+      expect(getKeybindings().getKeys('tui.editor.cursorRight')).toEqual(['right', 'ctrl+f']);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('keeps regular mode and Ctrl+F cursor movement unaffected', async () => {
+    const state = createTUIState({
+      initialAppState: { ...fakeInitialAppState(), tuiMode: 'regular' },
+      startup: { continueLast: false, yolo: false, auto: false, plan: false },
+    });
+    const vt = new VirtualTerminal(100, 12);
+    (state.ui as { terminal: Terminal }).terminal = vt;
+    state.ui.addChild(state.editor);
+    state.ui.setFocus(state.editor);
+    state.ui.start();
+
+    try {
+      await vt.waitForRender();
+
+      vt.sendInput('ac');
+      vt.sendInput('\u001B[D');
+      vt.sendInput('\u0006');
+      vt.sendInput('!');
+      await vt.waitForRender();
+
+      expect(state.ui).toBeInstanceOf(TuiMainScreen);
+      expect(state.editor.getText()).toBe('ac!');
+      expect(vt.getViewport().some((line) => line.includes('Find in transcript'))).toBe(false);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('lets fullscreen screen-takeover viewers receive Ctrl+F and opens search on Caps Lock Ctrl+F', async () => {
+    const state = createTUIState({
+      initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen' },
+      startup: { continueLast: false, yolo: false, auto: false, plan: false },
+    });
+    const vt = new VirtualTerminal(100, 12);
+    (state.ui as { terminal: Terminal }).terminal = vt;
+    state.transcriptContainer.addChild(new Text('needle line', 0, 0));
+    mountFooter(state);
+    state.editorContainer.addChild(state.editor);
+    state.ui.setFocus(state.editor);
+    state.ui.start();
+
+    try {
+      await vt.waitForRender();
+
+      vt.sendInput('ab');
+      vt.sendInput('\u001B[D');
+      vt.sendInput('\u001B[70;69u');
+      await vt.waitForRender();
+      expect(vt.getViewport().some((line) => line.includes('Find in transcript'))).toBe(true);
+      expect(state.editor.getCursor().col).toBe(1);
+
+      vt.sendInput('\u001B[70;69u');
+      await vt.waitForRender();
+      expect(vt.getViewport().some((line) => line.includes('Find in transcript'))).toBe(false);
+
+      const viewerInputs: string[] = [];
+      const takeoverViewer = {
+        handleInput: (data: string) => {
+          viewerInputs.push(data);
+        },
+        render: () => ['takeover viewer'],
+        invalidate: () => {},
+      };
+      const takeover = beginScreenTakeover(state.ui, takeoverViewer);
+      state.ui.setFocus(takeoverViewer);
+      await vt.waitForRender();
+
+      vt.sendInput('\u0006');
+      await vt.waitForRender();
+      expect(viewerInputs).toEqual(['\u0006']);
+      expect(vt.getViewport().some((line) => line.includes('Find in transcript'))).toBe(false);
+
+      endScreenTakeover(state.ui, takeover);
+      state.ui.setFocus(state.editor);
+      await vt.waitForRender();
+
+      vt.sendInput('\u0006');
+      await vt.waitForRender();
+      expect(vt.getViewport().some((line) => line.includes('Find in transcript'))).toBe(true);
+    } finally {
+      state.ui.stop();
+    }
   });
 });
