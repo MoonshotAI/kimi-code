@@ -178,7 +178,7 @@ defineExpose({ close, focusPanel });
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  padding: var(--space-1);
+  padding: var(--menu-pad);
   border: var(--p-hairline) solid var(--color-line);
   border-radius: var(--radius-lg);
   background: var(--color-menu-bg);

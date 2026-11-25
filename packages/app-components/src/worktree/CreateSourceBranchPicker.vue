@@ -373,10 +373,6 @@ onUnmounted(hideHover);
   font-weight: var(--weight-section-label);
   user-select: none;
 }
-.wsb-search.ui-menu-search {
-  margin-top: calc(-1 * var(--space-1));
-  padding-block: calc(var(--menu-item-padding-block) + var(--space-1) / 2);
-}
 .wsb-row {
   min-height: var(--wsb-row-h);
 }
