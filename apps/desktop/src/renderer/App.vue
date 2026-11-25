@@ -408,6 +408,12 @@ onMounted(() => {
         track('action_invoked', { action: 'retry-connection', source: 'menu' });
         return;
       }
+      if (menuId === 'open-feedback') {
+        if (!initialized.value || anyOverlayOpen.value) return;
+        track('action_invoked', { action: 'open-feedback', source: 'menu' });
+        openGlobalFeedback('sidebar');
+        return;
+      }
       const actionId = MENU_ACTION_TO_SHORTCUT[menuId];
       if (actionId === undefined) return;
       if (

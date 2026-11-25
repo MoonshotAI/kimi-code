@@ -695,3 +695,147 @@ testWithProvider('requires a reason from the SSH host before submitting reply fe
   const global = page.getByRole('dialog', { name: 'Send feedback' });
   await expect(global.getByRole('link', { name: 'Learn more', exact: true })).toHaveAttribute('href', localGuide);
 });
+
+async function readTooltipStyle(tooltip: Locator) {
+  return tooltip.evaluate(el => {
+    const style = getComputedStyle(el);
+    return {
+      hasArrow: el.classList.contains('ui-tip__bubble--arrow'),
+      fontSize: style.fontSize,
+      padding: style.padding,
+      borderRadius: style.borderRadius,
+      backgroundColor: style.backgroundColor,
+      color: style.color,
+    };
+  });
+}
+
+function resolveColorValue(page: Page, value: string): Promise<string> {
+  return page.evaluate(cssValue => {
+    const swatch = document.createElement('span');
+    swatch.style.color = cssValue;
+    document.body.append(swatch);
+    const resolved = getComputedStyle(swatch).color;
+    swatch.remove();
+    return resolved;
+  }, value);
+}
+
+async function clickHelpFeedbackMenu(app: DesktopApp): Promise<void> {
+  await app.electron.evaluate(({ Menu }) => {
+    const item = Menu.getApplicationMenu()?.getMenuItemById('open-feedback');
+    if (item === null || item === undefined) throw new Error('Help > Feedback menu item is missing');
+    item.click();
+  });
+}
+
+testWithProvider('opens feedback from the Help menu and aligns reply feedback buttons with copy and fork', async ({ app, provider }) => {
+  const page = app.window;
+  let signedIn = false;
+  const feedbackRequests: Array<{ path: string; body: unknown }> = [];
+
+  await page.route('**/api/v1/client-configs/feedback_form', route => route.fulfill({ status: 404 }));
+  await page.route('**/api/v1/auth', route => route.fulfill({ json: envelope({
+    models_ready: true, providers_count: 1, managed_provider: signedIn ? { status: 'authenticated' } : null,
+  }) }));
+  await page.route('**/api/v1/oauth/userinfo*', route => route.fulfill({ json: envelope({ kind: 'error' }) }));
+  await page.route('**/api/v1/feedback**', route => {
+    feedbackRequests.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+    return route.fulfill({ json: envelope({ feedback_id: 41 }) });
+  });
+  await page.reload();
+  await expect(page.locator('.gload')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Not signed in' })).toBeVisible();
+
+  const helpMenuOrder = await app.electron.evaluate(({ Menu }) => {
+    const menu = Menu.getApplicationMenu();
+    const help = menu?.items.find(item => item.submenu?.items.some(entry => entry.id === 'help-docs'));
+    return (help?.submenu?.items ?? []).map(entry => ({ id: entry.id, label: entry.label }));
+  });
+  const docsIndex = helpMenuOrder.findIndex(item => item.id === 'help-docs');
+  const feedbackIndex = helpMenuOrder.findIndex(item => item.id === 'open-feedback');
+  const consoleIndex = helpMenuOrder.findIndex(item => item.id === 'help-console');
+  expect(docsIndex).toBeGreaterThanOrEqual(0);
+  expect(feedbackIndex).toBe(docsIndex + 1);
+  expect(consoleIndex).toBe(feedbackIndex + 1);
+  expect(helpMenuOrder[feedbackIndex]?.label).toBe('Feedback');
+
+  await clickHelpFeedbackMenu(app);
+  const loginDialog = page.getByRole('dialog', { name: 'Sign in to Kimi Code' });
+  await expect(loginDialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(loginDialog).toBeHidden();
+
+  signedIn = true;
+  await page.reload();
+  provider.script(say('Reply for feedback alignment check.'));
+  await app.submit('Check reply actions');
+  await waitForSettledReply(page, 'Reply for feedback alignment check.');
+  const sessionId = await app.sessionId();
+
+  await clickHelpFeedbackMenu(app);
+  const dialog = page.getByRole('dialog', { name: 'Send feedback' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('checkbox', { name: 'Submit this conversation' })).toBeVisible();
+  await dialog.getByRole('textbox', { name: 'Description' }).fill('Opened from Help menu');
+  await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(feedbackRequests).toEqual([{
+    path: '/api/v1/feedback',
+    body: expect.objectContaining({ kind: 'global', source: 'sidebar', session_id: sessionId, content: 'Opened from Help menu' }),
+  }]);
+
+  const copy = page.locator('.a-cpbtn').first();
+  const fork = page.getByRole('button', { name: 'Fork from here' });
+  const up = page.getByRole('button', { name: 'Good response' });
+  const down = page.getByRole('button', { name: 'Poor response' });
+  const tooltip = page.getByRole('tooltip');
+  await expect(fork).toBeVisible();
+
+  for (const colorScheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme });
+    await page.mouse.move(0, 0);
+    const muted = await themeColor(page, '--color-text-muted');
+    const accent = await themeColor(page, '--color-accent');
+    const hoverBg = await themeColor(page, '--color-hover');
+    const radiusXs = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--radius-xs').trim());
+
+    for (const button of [copy, fork, up, down]) {
+      await expect(button).toHaveCSS('color', muted);
+      await expect(button).toHaveCSS('border-radius', radiusXs);
+    }
+
+    await copy.hover();
+    await expect(tooltip).toBeVisible();
+    await expect(copy).toHaveCSS('color', accent);
+    await expect(copy).toHaveCSS('background-color', hoverBg);
+    const copyTooltipStyle = await readTooltipStyle(tooltip);
+    expect(copyTooltipStyle.hasArrow).toBe(false);
+
+    for (const button of [fork, up, down]) {
+      await page.mouse.move(0, 0);
+      await expect(tooltip).toBeHidden();
+      await button.hover();
+      await expect(tooltip).toBeVisible();
+      await expect(button).toHaveCSS('color', accent);
+      await expect(button).toHaveCSS('background-color', hoverBg);
+      expect(await readTooltipStyle(tooltip)).toEqual(copyTooltipStyle);
+      if (colorScheme === 'light' && button === up) {
+        await app.snapshot('reply-feedback-hover-aligned');
+      }
+    }
+  }
+
+  await page.emulateMedia({ colorScheme: 'light' });
+  await up.click();
+  const liked = page.getByRole('button', { name: 'Remove like' });
+  await expect(liked).toHaveAttribute('aria-pressed', 'true');
+  const accent = await themeColor(page, '--color-accent');
+  const pressedBg = await resolveColorValue(page, 'color-mix(in srgb, var(--color-accent) 10%, transparent)');
+  await page.mouse.move(0, 0);
+  await expect(liked).toHaveCSS('color', accent);
+  await expect(liked).toHaveCSS('background-color', pressedBg);
+  await liked.hover();
+  await expect(liked).toHaveCSS('color', accent);
+  await expect(liked).toHaveCSS('background-color', pressedBg);
+});
