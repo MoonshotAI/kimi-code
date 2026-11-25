@@ -27,10 +27,11 @@ import {
   DESKTOP_BROWSER_ENABLED_REMINDER,
   DESKTOP_BROWSER_REMINDER_VARIANT,
   createDesktopBrowserAccess,
+  desktopBrowserRoutingGuidance,
   registerDesktopBrowserMcp,
 } from '../../../src/main/browser/browser-mcp-registration';
 import { runBrowserAutomation } from '../../../src/main/browser/browser-automation';
-import { DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE, DESKTOP_BROWSER_BLOCKED_GUIDANCE, DESKTOP_BROWSER_RESTRICTED_GUIDANCE, startDesktopBrowserMcp, type DesktopBrowserAgentControl } from '../../../src/main/browser/browser-mcp';
+import { DESKTOP_BROWSER_APPROVAL_FEEDBACK_GUIDANCE, DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE, DESKTOP_BROWSER_BLOCKED_GUIDANCE, DESKTOP_BROWSER_RESTRICTED_GUIDANCE, DESKTOP_BROWSER_TOOL_POLICY_GUIDANCE, DESKTOP_BROWSER_UNAVAILABLE_NOTICE, desktopBrowserBlockedGuidance, desktopBrowserToolPolicyGuidance, isComputerUseSupported, startDesktopBrowserMcp, type DesktopBrowserAgentControl } from '../../../src/main/browser/browser-mcp';
 import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { browserControlOwnership } from '../../../src/main/browser/browser-control-ownership';
@@ -570,11 +571,12 @@ it('tells every agent why the built-in browser is blocked and allows other avail
       expect(output).toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
       expect(output).not.toContain(DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE);
     };
-    const expectRestrictedGuidance = (result: Awaited<ReturnType<typeof call>>, reason: string) => {
+    const expectToolPolicyGuidance = (result: Awaited<ReturnType<typeof call>>, reason: string) => {
       expect(result.isError).toBe(true);
       const output = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
       expect(output).toContain(reason);
-      expect(output).toContain(DESKTOP_BROWSER_RESTRICTED_GUIDANCE);
+      expect(output).toContain(DESKTOP_BROWSER_TOOL_POLICY_GUIDANCE);
+      expect(output).not.toContain(DESKTOP_BROWSER_RESTRICTED_GUIDANCE);
       expect(output).not.toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
       expect(output).not.toContain(DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE);
     };
@@ -592,17 +594,35 @@ it('tells every agent why the built-in browser is blocked and allows other avail
     for (const agent of [explorer!, approver!, runner!]) {
       await vi.waitFor(() => expect(agent.accessor.get(IAgentToolRegistryService).resolve(name)).toBeDefined());
     }
-    expectRestrictedGuidance(await call(explorer!), 'tool policy of this agent does not allow');
+    expectToolPolicyGuidance(await call(explorer!), 'tool policy of this agent does not allow');
 
     const approval = approver!.accessor.get(IAgentToolApprovalService);
+    let vetoOutput = approval.formatApprovalRejectionMessage(name, { decision: 'rejected' });
     approver!.accessor.get(IAgentToolExecutorService).registerLegacyStarting((event) => {
-      event.veto({ output: approval.formatApprovalRejectionMessage(name, { decision: 'rejected' }), isError: true });
+      event.veto({ output: vetoOutput, isError: true });
     });
     const rejected = await call(approver!);
     expect(rejected.isError).toBe(true);
-    expect(rejected.output).toContain('was not run because the user rejected the approval request');
+    expect(rejected.output).toContain(vetoOutput);
     expect(rejected.output).toContain(DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE);
+    expect(rejected.output).not.toContain(DESKTOP_BROWSER_APPROVAL_FEEDBACK_GUIDANCE);
     expect(rejected.output).not.toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
+
+    vetoOutput = approval.formatApprovalRejectionMessage(name, { decision: 'rejected', feedback: 'Use another browser path' });
+    const rejectedWithFeedback = await call(approver!);
+    expect(rejectedWithFeedback.isError).toBe(true);
+    expect(rejectedWithFeedback.output).toContain(vetoOutput);
+    expect(rejectedWithFeedback.output).toContain(DESKTOP_BROWSER_APPROVAL_FEEDBACK_GUIDANCE);
+    expect(rejectedWithFeedback.output).not.toContain(DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE);
+    expect(rejectedWithFeedback.output).not.toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
+
+    vetoOutput = approval.formatApprovalRejectionMessage(name, { decision: 'cancelled' });
+    const cancelled = await call(approver!);
+    expect(cancelled.isError).toBe(true);
+    expect(cancelled.output).toContain(vetoOutput);
+    expect(cancelled.output).not.toContain(DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE);
+    expect(cancelled.output).not.toContain(DESKTOP_BROWSER_APPROVAL_FEEDBACK_GUIDANCE);
+    expect(cancelled.output).not.toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
 
     runner!.accessor.get(IAgentPermissionModeService).setMode('yolo');
     const runnerLoop = runner!.accessor.get(IAgentLoopService);
@@ -831,3 +851,24 @@ it('attaches trusted identity to an eligible subagent scope that already exists'
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 }, 30000);
+
+it.each([
+  ['darwin', 'arm64', true],
+  ['darwin', 'x64', true],
+  ['win32', 'x64', true],
+  ['win32', 'arm64', false],
+  ['linux', 'x64', false],
+  ['linux', 'arm64', false],
+] as const)('gates Computer Use guidance by platform support on %s/%s', (platform, arch, supported) => {
+  const cuMention = /\b(?:CU|Computer Use)\b/;
+  expect(isComputerUseSupported(platform, arch)).toBe(supported);
+  const routing = desktopBrowserRoutingGuidance(platform, arch);
+  const blocked = desktopBrowserBlockedGuidance(platform, arch);
+  const toolPolicy = desktopBrowserToolPolicyGuidance(platform, arch);
+  expect(cuMention.test(routing)).toBe(supported);
+  expect(cuMention.test(blocked)).toBe(supported);
+  expect(cuMention.test(toolPolicy)).toBe(supported);
+  expect(routing.split('\n- ')).toHaveLength(7);
+  expect(blocked.split('\n- ')).toHaveLength(4);
+  expect(blocked).toContain(DESKTOP_BROWSER_UNAVAILABLE_NOTICE);
+});
