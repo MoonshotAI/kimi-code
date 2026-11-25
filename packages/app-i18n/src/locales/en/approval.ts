@@ -33,6 +33,7 @@ export default {
   reviewFailed: 'Auto Review failed',
   reviewDenied: 'Auto Review: denied ({risk} risk)',
   reviewRisk: {
+    low: 'low',
     medium: 'medium',
     high: 'high',
   },

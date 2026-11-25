@@ -4,7 +4,7 @@ export type ApprovalDecision = 'approved' | 'rejected' | 'cancelled';
 
 export interface ApprovalReviewDetail {
   readonly outcome: 'denied' | 'failed';
-  readonly risk?: 'medium' | 'high';
+  readonly risk?: 'low' | 'medium' | 'high';
   readonly reason: string;
 }
 

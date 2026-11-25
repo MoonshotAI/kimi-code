@@ -43,10 +43,10 @@ const DecisionSchema = z.union([
   z.object({
     risk: z.enum(['low', 'medium']),
     decision: z.literal('allow'),
-    reason: z.null(),
+    reason: z.string().nullable(),
   }).strict().transform(({ risk }) => ({ decision: 'allow' as const, risk })),
   z.object({
-    risk: z.enum(['medium', 'high']),
+    risk: z.enum(['low', 'medium', 'high']),
     decision: z.literal('deny'),
     reason: z.string().nullable(),
   }).strict().transform(({ risk, reason }) => ({

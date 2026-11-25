@@ -339,6 +339,7 @@
                         },
                         "risk": {
                           "enum": [
+                            "low",
                             "medium",
                             "high"
                           ],

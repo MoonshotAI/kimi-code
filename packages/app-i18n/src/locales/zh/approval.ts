@@ -33,6 +33,7 @@ export default {
   reviewFailed: '自动复核失败',
   reviewDenied: '自动复核已拒绝（{risk}风险）',
   reviewRisk: {
+    low: '低',
     medium: '中等',
     high: '高',
   },

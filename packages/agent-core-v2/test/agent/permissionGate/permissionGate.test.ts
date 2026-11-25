@@ -351,20 +351,20 @@ describe('AgentPermissionGate', () => {
     );
   });
 
-  it('lets the user override a review denial in Ask When Needed and explains it without a user', () => {
+  it.each(['high', 'low'] as const)('lets the user override a %s-risk review denial in Ask When Needed and explains it without a user', (risk) => {
     const onUnderlyingApproved = vi.fn(() => undefined);
     const { result } = resolveAutoReview(
       makeContext('Bash'),
       modeApproval,
       { kind: 'ask', reason: { executable_name: 'ssh' }, resolveApproval: onUnderlyingApproved },
-      { decision: 'deny', risk: 'high', reason: 'Too broad.' },
+      { decision: 'deny', risk, reason: 'Too broad.' },
       'yolo',
     );
 
     expect(result).toMatchObject({
       kind: 'ask',
-      approvalDetail: { outcome: 'denied', risk: 'high', reason: 'Too broad.' },
-      reason: { executable_name: 'ssh', review_risk: 'high' },
+      approvalDetail: { outcome: 'denied', risk, reason: 'Too broad.' },
+      reason: { executable_name: 'ssh', review_risk: risk },
     });
     if (result.kind !== 'ask') return;
     expect(result.resolveApproval?.({ decision: 'approved' })).toBeUndefined();

@@ -341,6 +341,19 @@ describe('SessionAutoReviewService', () => {
     expect(selectedModels).toHaveLength(3);
   });
 
+  it.each([
+    ['low-risk deny', '{"risk":"low","decision":"deny","reason":"User boundary forbids this write."}', { decision: 'deny', risk: 'low', reason: 'User boundary forbids this write.' }],
+    ['low-risk deny without reason', '{"risk":"low","decision":"deny","reason":null}', { decision: 'deny', risk: 'low' }],
+    ['low-risk allow with reason', '{"risk":"low","decision":"allow","reason":"Local write to .tmp is safe."}', { decision: 'allow', risk: 'low' }],
+    ['medium-risk allow with reason', '{"risk":"medium","decision":"allow","reason":"Explicitly authorized."}', { decision: 'allow', risk: 'medium' }],
+  ] as const)('accepts %s without retrying', async (_label, text, expected) => {
+    const { outcome } = await execute(makeSessionService({
+      respond: async () => ({ message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] } }),
+    }));
+    expect(outcome).toEqual(expected);
+    expect(selectedModels).toHaveLength(1);
+  });
+
   it('rejects a reviewer tool call', async () => {
     const { outcome } = await execute(makeSessionService({
       respond: async () => ({

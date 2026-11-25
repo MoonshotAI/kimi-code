@@ -170,7 +170,7 @@ export type ApprovalBlock = (
 ) & {
   review?: {
     outcome: 'denied' | 'failed';
-    risk?: 'medium' | 'high';
+    risk?: 'low' | 'medium' | 'high';
     reason: string;
   };
 };

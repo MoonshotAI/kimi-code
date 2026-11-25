@@ -354,7 +354,7 @@ onActivated(() => {
 });
 function reviewTitle(review: NonNullable<ApprovalBlock['review']>): string {
   if (review.outcome === 'failed') return t('approval.reviewFailed');
-  const risk = review.risk === 'high' ? t('approval.reviewRisk.high') : t('approval.reviewRisk.medium');
+  const risk = t(`approval.reviewRisk.${review.risk ?? 'medium'}`);
   return t('approval.reviewDenied', { risk });
 }
 

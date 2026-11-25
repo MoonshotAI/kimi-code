@@ -10,7 +10,7 @@ export type ApprovalScope = z.infer<typeof approvalScopeSchema>;
 
 export const approvalDetailSchema = z.object({
   outcome: z.enum(['denied', 'failed']),
-  risk: z.enum(['medium', 'high']).optional(),
+  risk: z.enum(['low', 'medium', 'high']).optional(),
   reason: z.string(),
 });
 export type ApprovalDetail = z.infer<typeof approvalDetailSchema>;

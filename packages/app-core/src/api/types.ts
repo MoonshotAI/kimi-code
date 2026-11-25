@@ -350,7 +350,7 @@ export interface ApprovalResponse {
 
 export interface ApprovalReviewDetail {
   outcome: 'denied' | 'failed';
-  risk?: 'medium' | 'high';
+  risk?: 'low' | 'medium' | 'high';
   reason: string;
 }
 

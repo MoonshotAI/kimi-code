@@ -3693,7 +3693,7 @@ ws server message interaction<interaction#0>.outcome: enum "answered"|"approved"
 ws server message interaction<interaction#0>.request.action: string
 ws server message interaction<interaction#0>.request.approval_detail.outcome: enum "denied"|"failed"
 ws server message interaction<interaction#0>.request.approval_detail.reason: string
-ws server message interaction<interaction#0>.request.approval_detail.risk: enum "high"|"medium" optional
+ws server message interaction<interaction#0>.request.approval_detail.risk: enum "high"|"low"|"medium" optional
 ws server message interaction<interaction#0>.request.approval_detail: object optional
 ws server message interaction<interaction#0>.request.expires_at: string
 ws server message interaction<interaction#0>.request.tool_input_display: any optional
