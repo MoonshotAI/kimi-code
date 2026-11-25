@@ -53,7 +53,6 @@
     "packages/telemetry/src/client.ts": 1
   },
   "eslint/no-empty": {
-    "apps/kimi-code/test/tui/kimi-tui-message-flow.test.ts": 1,
     "packages/agent-core-v2/test/os/backends/node-local/hostFsService.test.ts": 1,
     "packages/app-markdown/src/lib/inlineMath.ts": 2
   },
@@ -89,7 +88,7 @@
     "packages/agent-core-v2/test/remote/protocol.test.ts": 1,
     "packages/app-client/test/panel-tabs.test.ts": 6,
     "packages/app-core/test/daemon-client.test.ts": 1,
-    "packages/klient/test/e2e/invalid-input-matrix.test.ts": 7,
+    "packages/klient/test/e2e/invalid-input-matrix.test.ts": 2,
     "packages/oauth/test/custom-registry.test.ts": 1
   },
   "eslint/no-unused-vars": {
@@ -692,7 +691,6 @@
     "packages/app-components/test/openInTarget.test.ts": 1,
     "packages/kap-server/src/middleware/defineRoute.ts": 1,
     "packages/kap-server/src/middleware/schema.ts": 2,
-    "packages/klient/test/e2e/invalid-input-matrix.test.ts": 1,
     "packages/minidb/src/compaction.ts": 1,
     "packages/minidb/src/generation-files.ts": 1,
     "packages/minidb/src/server.ts": 1,
@@ -1012,7 +1010,7 @@
     "packages/agent-core-v2/src/llm-adapter/contract/errors.ts": 1,
     "packages/agent-core-v2/src/persistence/interface/storage.ts": 1,
     "packages/agent-core-v2/src/project/projectFs/fsService.ts": 1,
-    "packages/agent-core-v2/test/harness/scripted-generate.ts": 6,
+    "packages/agent-core-v2/test/harness/scripted-generate.ts": 2,
     "packages/app-client/src/client/useKimiWebClient.ts": 1,
     "packages/app-client/src/lib/chatGate.ts": 1,
     "packages/app-core/src/api/hostRouting.ts": 1,

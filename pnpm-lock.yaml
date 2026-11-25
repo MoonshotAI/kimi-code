@@ -580,6 +580,9 @@ importers:
         specifier: ^5
         version: 5.0.14(@types/react@19.2.14)(immer@11.1.11)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
     devDependencies:
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../../packages/testkit
       '@tailwindcss/vite':
         specifier: 4.1.18
         version: 4.1.18(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1))
@@ -1271,6 +1274,9 @@ importers:
       '@moonshot-ai/kap-server':
         specifier: workspace:^
         version: link:../kap-server
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../testkit
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1
@@ -1391,6 +1397,9 @@ importers:
         specifier: 4.3.6
         version: 4.3.6
     devDependencies:
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../testkit
       '@types/semver':
         specifier: ^7.7.0
         version: 7.7.1

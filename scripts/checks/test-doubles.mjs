@@ -15,10 +15,16 @@ const EXCLUDED_PREFIXES = [
   'packages/testkit/',
   'apps/desktop/e2e/fixtures/',
   'packages/agent-core-v2/test/harness/',
-  'apps/vscode/test/fake-provider-harness.ts',
 ];
 const DESKTOP_APP_FIXTURE_IMPORT = /import\s*\{([^}]*)\}\s*from\s*['"][^'"]*fixtures\/app['"]/g;
 const DESKTOP_STUB_DSL_IMPORT = /from\s*['"][^'"]*fixtures\/model['"]/g;
+
+export const ENGINE_HARNESS_IMPORTERS = new Map([
+  [
+    'packages/product/test/survey-turns.test.ts',
+    'the survey counts turns, compactions and restores through engine services that only the harness agent exposes; its model replies come from a testkit model',
+  ],
+]);
 
 export const LEGACY_DOUBLES = [
   {
@@ -49,15 +55,9 @@ export const LEGACY_DOUBLES = [
     count: (text) => occurrences(text, /chat\.completion\.chunk/g),
   },
   {
-    id: 'vscode-fake-provider',
-    instead: 'point the extension at the testkit fake model (@moonshot-ai/testkit/model)',
-    applies: () => true,
-    count: (text) => occurrences(text, /fake-provider-harness/g),
-  },
-  {
     id: 'engine-harness-import',
-    instead: 'use @moonshot-ai/testkit; the agent-core-v2 test harness is internal to that package',
-    applies: (file) => !file.startsWith('packages/agent-core-v2/'),
+    instead: 'use @moonshot-ai/testkit; the agent-core-v2 test harness is internal to that package. A test that must drive the harness agent directly is listed in ENGINE_HARNESS_IMPORTERS with its reason',
+    applies: (file) => !file.startsWith('packages/agent-core-v2/') && !ENGINE_HARNESS_IMPORTERS.has(file),
     count: (text) => occurrences(text, /agent-core-v2\/test\/harness/g),
   },
 ];
