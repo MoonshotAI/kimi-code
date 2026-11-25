@@ -28,13 +28,18 @@ All `/api/v1/*`, `/openapi.json`, and `/asyncapi.json` endpoints require `Author
 
 ## 2. Request conventions
 
-- **JSON envelope**: JSON endpoints return `{ "code": 0, "msg": "success", "data": ..., "request_id": "..." }`. Check `code === 0` first (`40001` validation error with `details`, `40401` session/agent not found, `40404` interaction not found, `40901` session busy, `40902` interaction already ended, `40927` `prompt_id` conflict, `40931` session locked by another process, `40939` agent not closable, `40940` turn not continuable, `41001`/`41002` interaction expired; HTTP `401`/`403`/`429` indicate auth or rate-limit rejection).
+- **JSON envelope**: JSON endpoints return `{ "code": 0, "msg": "success", "data": ..., "request_id": "..." }`. Check `code === 0` first (`40001` validation error with `details`, `40401` session/agent not found, `40404` interaction not found, `40901` session busy, `40902` interaction already ended, `40927` `prompt_id` conflict, `40931` session locked by another process, `40939` agent not closable, `40940` turn not continuable, `40941` primary directory of an implicit workspace cannot be changed, `41001`/`41002` interaction expired; HTTP `401`/`403`/`429` indicate auth or rate-limit rejection).
 - **Workspace placement when creating sessions (`workspace_id` vs `workspace_root`)**:
   - Keep new or follow-up sessions in the **current project/workspace** unless the user explicitly asks for a different directory -- do **not** switch `workspace_root` to `$HOME` just because a task inspects machine-wide paths.
-  - On `POST /api/v1/sessions`, passing only `workspace_root` always routes to an `implicit` (`wd_*`) bucket and will **not** attach to a Desktop `managed` (`wm_*`) workspace. Resolve `workspace_id` first:
-    1. **Inside a Kimi Code session** (`$KIMI_CODE_WORKSPACE_ID` is injected in `Bash` tool child processes): pass `{ "workspace_id": "$KIMI_CODE_WORKSPACE_ID" }` directly when staying in the current workspace (omit `workspace_root`, or keep it equal to the workspace root).
+  - On `POST /api/v1/sessions`, passing only `workspace_root` always routes to an `implicit` (`wd_*`) workspace and will **not** attach to a Desktop `managed` (`wm_*`) workspace. A `workspace_root` inside a git repository (a subdirectory or a linked worktree) joins the implicit workspace of the repository's main checkout, unless that directory already has its own implicit workspace with at least one session (archived ones count): such a workspace stays in use until it is deleted (for example in the desktop app), after which new sessions there join the repository's workspace. Take `workspace_id` from the response instead of deriving it from `workspace_root`. Resolve `workspace_id` first:
+    1. **Inside a Kimi Code session** (`$KIMI_CODE_WORKSPACE_ID` and `$KIMI_CODE_SESSION_ID` are injected in `Bash` tool child processes): pass `{ "workspace_id": "$KIMI_CODE_WORKSPACE_ID" }` together with the `environment_id` and `environment_cwd` that `GET /api/v1/sessions/${KIMI_CODE_SESSION_ID}` reports for your session (omit `environment_cwd` when it is absent). Sessions of one workspace can run in different checkouts of its repository, and `workspace_id` alone starts the new session at the workspace root (usually the main checkout) even when yours runs in a linked worktree.
     2. **From an external agent** (`$KIMI_CODE_WORKSPACE_ID` unset): query `GET /api/v1/workspaces` and match `data.items[]` where `root` equals your target directory (preferring `kind == "managed"` if multiple match); pass `{ "workspace_id": "<id>" }` when found, or `{ "workspace_root": "<target_dir>" }` only when no workspace exists for that directory yet.
-  - `workspace_root` only selects the project. To make the agent work elsewhere, also pass `environment_id` (`"local"` or a configured remote environment) and `environment_cwd` (a directory on that environment, such as one package of a monorepo).
+  - A new session runs in the directory it starts in: `environment_cwd` when given, otherwise `workspace_root`, or the workspace root when only `workspace_id` is given. A session started at the root follows it when the root changes; one started anywhere else stays in its own directory. With `workspace_id`, `workspace_root` must equal the workspace root or lie in the same git repository -- its main checkout, a linked worktree, or a subdirectory of either (`40001` otherwise; the rule is the same for `managed` and `implicit` workspaces):
+    - When the workspace root is itself a subdirectory of a repository, `workspace_root` must be that subdirectory, or a directory inside it, in any checkout.
+    - Additional directories, nested repositories and submodules do not count, nor does a repository whose main checkout is the home directory or above it. Outside a repository only the root itself is accepted.
+    - Paths are compared after resolving symlinks, so a symlink inside the repository that points outside it is rejected, and a symlinked spelling of the workspace root is accepted.
+  - To make the agent work somewhere else, also pass `environment_id` (`"local"` or a configured remote environment) and `environment_cwd` (a directory on that environment, such as one package of a monorepo).
+  - A session reports the workspace root in `workspace_root`, and the directory it runs in, when that is not the workspace root, in `environment_cwd`.
 - **Shell variable bracing (`zsh` / `bash`)**: Always brace variables before `:action` suffixes -- write `"${ORIGIN}/api/v1/sessions/${SID}:wait"`, not `"$SID:wait"` (`zsh` treats `:w`, `:a`, `:r`, `:c`, `:t` as modifiers).
 
 ---
@@ -43,7 +48,7 @@ All `/api/v1/*`, `/openapi.json`, and `/asyncapi.json` endpoints require `Author
 
 ### A. Bidirectional session handoff (`HandOff`) & spawning parallel sessions
 
-- **Hand off TO Kimi Code (or fan out follow-up sessions)**: Attach to the live Desktop / `kimi web` server (§1.1) so sessions appear in real time, resolve `workspace_id` (§2) so they land in the active workspace, call `POST /api/v1/sessions` (`{ "workspace_id" | "workspace_root", "title", "agent_config"?: ... }`), then submit a concise structured brief (Goal, Modified files, Constraints, Next steps) via `POST /api/v1/sessions/{session_id}/prompts` and return each `session_id` (plus `kimi -S <session_id>`) to the user. If running against an on-demand `kimi web --port 0 --json` subprocess, wait via `:wait` until `activity !== "turn"` before stopping the subprocess so history persists cleanly.
+- **Hand off TO Kimi Code (or fan out follow-up sessions)**: Attach to the live Desktop / `kimi web` server (§1.1) so sessions appear in real time, resolve `workspace_id` (§2) so they land in the active workspace, call `POST /api/v1/sessions` (`{ "workspace_id"?, "workspace_root"?, "title", "agent_config"?: ... }`), then submit a concise structured brief (Goal, Modified files, Constraints, Next steps) via `POST /api/v1/sessions/{session_id}/prompts` and return each `session_id` (plus `kimi -S <session_id>`) to the user. If running against an on-demand `kimi web --port 0 --json` subprocess, wait via `:wait` until `activity !== "turn"` before stopping the subprocess so history persists cleanly.
 - **Pick up FROM Kimi Code**: Locate the session via `GET /api/v1/sessions?page_size=50&archived=false&sort=updated_at_desc` (add `query=<text>` to match title or last prompt, or an exact session id) or `POST /api/v1/search` (`{ "query": "..." }`), read `GET /api/v1/sessions/{session_id}/agents/main/turns?page_size=10` (plus `GET .../interactions` if `pending_interaction !== "none"`), summarize progress and blockers, and either wait for the user's next instruction or continue (optionally branching first via `POST /api/v1/sessions/{session_id}:fork` `{ "turn_index"?: number, "title"?: "..." }`).
 
 ### B. Cross-workspace session organization
@@ -58,7 +63,7 @@ Omitting `workspace_id` on `GET /api/v1/sessions` queries across all workspaces 
 
 1. **Resolve model (when the user names a specific model)** & **create a session**:
    - Query `GET /api/v1/models` (`data.items[]` has `{ provider, model, display_name, support_efforts }`) to map a human model name to `"${provider}/${model}"` instead of guessing model IDs.
-   - Create a session in the target workspace (§2) via `POST /api/v1/sessions` with `{ "workspace_id": "...", "title"?: "...", "agent_config"?: { "permission_mode": "manual" | "auto" | "yolo", "model"?: "${provider}/${model}", "thinking"?: "high", "plan_mode"?: false } }` (or `"workspace_root"` when no workspace exists yet).
+   - Create a session in the target workspace (§2) via `POST /api/v1/sessions` with `{ "workspace_id": "...", "workspace_root"?: "...", "title"?: "...", "agent_config"?: { "permission_mode": "manual" | "auto" | "yolo", "model"?: "${provider}/${model}", "thinking"?: "high", "plan_mode"?: false } }` (or only `"workspace_root"` when no workspace exists yet).
 2. **Submit a round prompt**: `POST /api/v1/sessions/{session_id}/prompts` with a unique `prompt_id` (`"round-1"`, `"round-2"`, ...) and `{ "content": [{ "type": "text", "text": "..." }] }`. Verify `code === 0` and `data.status` is `"running"` or `"queued"`.
 3. **Wait for the next stopping point**: `POST /api/v1/sessions/{session_id}:wait` with `{ "timeout_ms": 15000 }` (`0..60000`, default `15000`; use `1000`-`3000` for periodic progress checks). Returns in `0 ms` if `session.activity !== "turn"` or a pending interaction already exists; otherwise blocks until `main` leaves `"turn"`, a pending `approval`/`question` appears, or `timeout_ms` elapses (`{ session, pending_interactions, timed_out }`). When it returns with `timed_out: false`, everything the session recorded so far is on disk: a server restarted after a crash at that point shows the same turns.
 4. **Branch on the `:wait` result**:
@@ -74,7 +79,10 @@ Omitting `workspace_id` on `GET /api/v1/sessions` queries across all workspaces 
 
 ```sh
 TARGET_REQ=$(if [ -n "${KIMI_CODE_WORKSPACE_ID:-}" ]; then
-  jq -nc --arg wid "$KIMI_CODE_WORKSPACE_ID" '{workspace_id:$wid,agent_config:{permission_mode:"manual"}}'
+  ENV=$(curl -sf "${ORIGIN}/api/v1/sessions/${KIMI_CODE_SESSION_ID}" -H "Authorization: Bearer ${TOKEN}" \
+    | jq -c '.data | {environment_id, environment_cwd} | with_entries(select(.value != null))')
+  jq -nc --arg wid "$KIMI_CODE_WORKSPACE_ID" --arg env "$ENV" \
+    '{workspace_id:$wid,agent_config:{permission_mode:"manual"}} + (if $env == "" then {} else ($env | fromjson) end)'
 else
   WID=$(curl -sf "${ORIGIN}/api/v1/workspaces" -H "Authorization: Bearer ${TOKEN}" \
     | jq -r --arg root "$PWD" '[.data.items[] | select(.root == $root)] | sort_by(if .kind == "managed" then 0 else 1 end) | .[0].id // empty')
@@ -135,7 +143,7 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 | `GET /api/v1/kap.md` / `GET /openapi.json` / `GET /asyncapi.json` | `baseline` | Built-in runtime guide (`text/markdown`), REST OpenAPI 3.0 schema, and WS AsyncAPI 3.1 schema |
 | `GET /api/v1/workspaces` | `baseline` | List workspaces (`{ items: [{ id, root, name, kind: "managed" \| "implicit" }] }`) |
 | `GET /api/v1/models` | `baseline` | List available models (`{ items: [{ provider, model, display_name?, support_efforts? }] }`) |
-| `POST /api/v1/sessions` | `baseline` | Create a session (`workspace_id` or `workspace_root`, `title?`, `metadata?`, `agent_config?`, `environment_id?`, `environment_cwd?`) |
+| `POST /api/v1/sessions` | `baseline` | Create a session (`workspace_id` and / or `workspace_root`, `title?`, `metadata?`, `agent_config?`, `environment_id?`, `environment_cwd?`) |
 | `GET /api/v1/sessions` / `GET /api/v1/sessions/{session_id}` | `baseline` | List sessions across workspaces (`flat` or `by_workspace`, filters incl. `query` over title / last prompt / exact id, pagination) or get one session |
 | `POST /api/v1/sessions/{session_id}:wait` | `session_wait` | Wait until `activity !== "turn"`, a pending interaction appears, or `timeout_ms` (`0..60000`, default `15000`) |
 | `POST /api/v1/sessions/{session_id}:cancel` | `baseline` | Cancel active turn (`agent_id?`, `include_background?`) |

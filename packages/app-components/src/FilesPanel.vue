@@ -23,7 +23,7 @@ const workspace = computed(() => {
   const id = client.activeWorkspaceId.value;
   return id === null ? undefined : workspacesStore().mergedWorkspaces.find((w) => w.id === id);
 });
-const cwd = computed(() => client.status.value.cwd || workspace.value?.root || '');
+const cwd = computed(() => workspacesStore().activePanelRoots.root);
 const registeredWorkspaceId = computed(() => {
   const id = client.activeWorkspaceId.value;
   return id !== null && workspacesStore().workspaces.some((w) => w.id === id) ? id : undefined;
@@ -36,10 +36,7 @@ const fileTreeKey = computed(() => {
 });
 const workspaceName = computed(() => workspace.value?.name ?? cwd.value.split(/[\\/]/).filter(Boolean).at(-1) ?? '');
 
-const treeRoots = computed<string[]>(() => {
-  const ws = workspace.value;
-  return ws === undefined ? [] : [ws.root, ...ws.additionalDirs];
-});
+const treeRoots = computed(() => workspacesStore().activePanelRoots.roots);
 
 const treeRoot = computed(() =>
   filesStore().resolveFileTreeRoot(client.activeWorkspaceId.value, treeRoots.value, cwd.value),

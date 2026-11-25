@@ -1,10 +1,29 @@
 name: Nix Build
 
+# Pull requests run the Nix build only when they touch what it depends on
+# beyond ordinary source: dependencies, workspace layout, the flake, root
+# build config and the native build scripts. Pushes to main and release
+# branches always run it, so a source-only break still surfaces after merge.
 on:
   pull_request:
     branches:
       - main
       - release/**
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '**/package.json'
+      - 'patches/**'
+      - 'build/**'
+      - '.npmrc'
+      - '.nvmrc'
+      - 'tsconfig.base.json'
+      - 'tsconfig.json'
+      - 'apps/kimi-code/scripts/**'
+      - 'scripts/check-nix-workspace.mjs'
+      - '.github/workflows/nix-build.yml'
   push:
     branches:
       - main
@@ -13,6 +32,10 @@ on:
 permissions:
   contents: read
   pull-requests: write
+
+concurrency:
+  group: nix-build-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'push' && github.sha || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check-workspace-sync:

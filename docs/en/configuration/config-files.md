@@ -108,7 +108,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`models`](#models) | `table` | — | Model alias table |
 | [`thinking`](#thinking) | `table` | — | Default parameters for Thinking mode |
 | [`loop_control`](#loop-control) | `table` | — | Agent loop control parameters |
-| [`auto_review`](#auto_review) | `table` | — | Experimental LLM review in Ask When Needed and Never Ask modes |
+| [`auto_review`](#auto-review) | `table` | — | Experimental LLM review in Ask When Needed and Never Ask modes |
 | [`task`](#task) | `table` | — | Background task and Tower agent runtime parameters; `background` is the legacy section name |
 | [`tools`](#tools) | `table` | — | Global tool switch |
 | [`image`](#image) | `table` | — | Image compression parameters |
@@ -752,7 +752,7 @@ additional_dir = ["/absolute/path/to/shared"]
 
 Because directories are stored as absolute paths, which are specific to your machine, we recommend adding `.kimi-code/local.toml` to your project's `.gitignore` so it is not committed.
 
-Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the folder in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
+Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the project in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
 
 ## Next steps
 

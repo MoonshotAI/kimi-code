@@ -22,8 +22,8 @@ import { SessionLogService } from '#/session/sessionLog/sessionLogService';
 import { makeSessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
-import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
-import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
+import { IProjectStateService } from '#/project/state/projectState';
+import { ProjectStateService } from '#/project/state/projectStateService';
 
 let homeDir: string;
 let sessionDir: string;
@@ -70,7 +70,7 @@ function testSessionSeed() {
       metaScope: 'sessions/test-workspace/s1/session-meta',
       cwd: sessionDir,
     })),
-    [IWorkspaceStateService, new WorkspaceStateService()] as const,
+    [IProjectStateService, new ProjectStateService()] as const,
   ];
 }
 

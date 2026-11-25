@@ -13,6 +13,8 @@ export interface FakeModelConfigOptions {
   readonly altSupportEfforts?: readonly string[];
   readonly altDefaultEffort?: string;
   readonly baseUrl?: string;
+  readonly defaultPlanMode?: boolean;
+  readonly defaultPermissionMode?: 'manual' | 'yolo';
 }
 
 const configToml = (options?: FakeModelConfigOptions): string => {
@@ -32,7 +34,7 @@ const configToml = (options?: FakeModelConfigOptions): string => {
   const altDefaultEffort = options?.altDefaultEffort;
   const baseUrl = options?.baseUrl ?? 'http://localhost';
   return `defaultModel = "${FAKE_MODEL_ID}"
-
+${options?.defaultPlanMode === true ? 'default_plan_mode = true\n' : ''}${options?.defaultPermissionMode === undefined ? '' : `default_permission_mode = "${options.defaultPermissionMode}"\n`}
 [models.${FAKE_MODEL_ID}]
 name = "fake-model"
 protocol = "openai"

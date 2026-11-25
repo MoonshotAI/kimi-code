@@ -108,7 +108,7 @@ timeout = 5
 | [`models`](#models) | `table` | — | 模型别名表 |
 | [`thinking`](#thinking) | `table` | — | Thinking 模式默认参数 |
 | [`loop_control`](#loop-control) | `table` | — | Agent 循环控制参数 |
-| [`auto_review`](#auto_review) | `table` | — | "Ask When Needed" 和 "Never Ask" 模式下的实验性 LLM 复核 |
+| [`auto_review`](#auto-review) | `table` | — | "Ask When Needed" 和 "Never Ask" 模式下的实验性 LLM 复核 |
 | [`task`](#task) | `table` | — | 后台任务与 Tower Agent 运行参数；`background` 为 legacy 配置节名称 |
 | [`tools`](#tools) | `table` | — | 全局工具开关 |
 | [`image`](#image) | `table` | — | 图片压缩参数 |
@@ -751,7 +751,7 @@ additional_dir = ["/absolute/path/to/shared"]
 
 目录以绝对路径存储，与具体机器相关。因此建议把 `.kimi-code/local.toml` 加入项目的 `.gitignore`，避免被提交。
 
-除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server），受工作区信任门控：在启动提示中选择信任该文件夹后才生效。详见 [Model Context Protocol](../customization/mcp.md)。
+除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server），受工作区信任门控：在启动提示中选择信任该项目后才生效。详见 [Model Context Protocol](../customization/mcp.md)。
 
 ## 下一步
 

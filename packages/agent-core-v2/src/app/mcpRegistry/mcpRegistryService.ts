@@ -1,14 +1,15 @@
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
+import { canonicalProjectRoot } from '#/_base/utils/paths';
 
 import { ErrorCodes, Error2 } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { loadMcpServersDetailed } from '#/app/mcpConfig/configLoader';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
+import { IProjectService } from '#/app/project/project';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
+import { IProjectTrustStore } from '#/project/projectTrust/projectTrustStore';
 
 import {
   IMcpRegistryService,
@@ -24,13 +25,15 @@ export class McpRegistryService implements IMcpRegistryService {
     @IPluginService private readonly plugins: IPluginService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IWorkspaceTrustStore private readonly trust: IWorkspaceTrustStore,
+    @IProjectTrustStore private readonly trust: IProjectTrustStore,
+    @IProjectService private readonly projects: IProjectService,
   ) {}
 
   async list(query: McpRegistryQuery = {}): Promise<readonly McpRegistryEntry[]> {
     const out: McpRegistryEntry[] = [];
+    const dir = query.cwd === undefined ? undefined : await this.trustedProjectDir(canonicalProjectRoot(query.cwd));
 
-    if (query.cwd === undefined) {
+    if (dir === undefined) {
       const userEntries = await this.store.list();
       for (const server of userEntries) {
         const { name, ...config } = server;
@@ -43,36 +46,20 @@ export class McpRegistryService implements IMcpRegistryService {
         });
       }
     } else {
-      const cwd = canonicalWorkspaceRoot(query.cwd);
-      const trusted = await this.trust.forRoot(cwd).refresh();
-      if (!trusted) {
-        const userEntries = await this.store.list();
-        for (const server of userEntries) {
-          const { name, ...config } = server;
-          out.push({
-            name,
-            config,
-            source: 'global',
-            origin: this.store.path,
-            mutable: true,
-          });
-        }
-      } else {
-        const detailed = await loadMcpServersDetailed({
-          fs: this.fs,
-          cwd,
-          homeDir: this.bootstrap.homeDir,
+      const detailed = await loadMcpServersDetailed({
+        fs: this.fs,
+        cwd: dir,
+        homeDir: this.bootstrap.homeDir,
+      });
+      for (const [name, config] of Object.entries(detailed.servers)) {
+        const origin = detailed.origins[name] ?? this.store.path;
+        out.push({
+          name,
+          config,
+          source: 'global',
+          origin,
+          mutable: origin === this.store.path,
         });
-        for (const [name, config] of Object.entries(detailed.servers)) {
-          const origin = detailed.origins[name] ?? this.store.path;
-          out.push({
-            name,
-            config,
-            source: 'global',
-            origin,
-            mutable: origin === this.store.path,
-          });
-        }
       }
     }
 
@@ -104,6 +91,15 @@ export class McpRegistryService implements IMcpRegistryService {
     const file = matches.find((entry) => entry.source === 'global');
     if (file !== undefined) return file;
     return matches.find((entry) => entry.source === 'plugin' && entry.config.enabled !== false);
+  }
+
+  private async trustedProjectDir(cwd: string): Promise<string | undefined> {
+    const own = this.trust.forRoot(cwd);
+    await own.refresh();
+    if (own.isPersistedTrusted()) return cwd;
+    const { root } = await this.projects.peekImplicit(cwd);
+    if (!(await this.trust.forRoot(root).refresh())) return undefined;
+    return (await this.projects.projectDirAt({ root }, cwd)) ?? root;
   }
 }
 

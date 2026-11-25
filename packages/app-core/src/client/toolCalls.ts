@@ -318,7 +318,7 @@ export function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
 function buildApprovalBlockBody(a: AppApprovalRequest): ApprovalBlock {
   const d = (a.display ?? {}) as Record<string, unknown>;
   const kind = typeof d['kind'] === 'string' ? d['kind'] : '';
-  if (a.toolName === BROWSER_TOOL_NAME && kind === 'generic') {
+  if (a.toolName === BROWSER_TOOL_NAME) {
     const detail = d['detail'];
     const input = detail !== null && typeof detail === 'object' && !Array.isArray(detail)
       ? detail as Record<string, unknown> : {};

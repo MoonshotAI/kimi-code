@@ -25,7 +25,7 @@ import {
 } from '#/features/skill/catalog/skillSource';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { DEFAULT_PRODUCT_NAME } from '#/app/agentProfileCatalog/profile-shared';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager } from '#/project/projectInstance/projectInstanceManager';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 
 import { stubAgentIdentity } from '../../app/agentIdentity/stubs';

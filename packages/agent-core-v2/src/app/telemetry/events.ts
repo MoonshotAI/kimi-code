@@ -1,6 +1,7 @@
+import type { DegradedLocation } from '#/app/git/workTree';
 import type { PromptPredictionCancelReason } from '#/features/promptPrediction/promptPrediction';
 import type { TowerExitReason } from '#/features/tower/tower';
-import type { SessionCloseReason } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import type { SessionCloseReason } from '#/project/sessionLifecycle/sessionLifecycle';
 
 import type { TelemetryPrimitive } from './telemetry';
 
@@ -718,11 +719,15 @@ export interface SessionIndexMirrorGiveUpEvent {
   consecutive_failures: number;
 }
 
-export interface WorkspaceTrustChangedEvent {
+export interface ProjectLocateDegradedEvent {
+  reason: DegradedLocation['reason'];
+}
+
+export interface ProjectTrustChangedEvent {
   trusted: boolean;
 }
 
-export interface WorkspaceTrustReadFailedEvent {
+export interface ProjectTrustReadFailedEvent {
   error_type: string;
 }
 
@@ -1647,12 +1652,17 @@ export const telemetryEventDefinitions = {
       consecutive_failures: 'Number of consecutive write failures that triggered the give-up',
     },
   }),
-  workspace_trust_changed: defineTelemetryEvent<WorkspaceTrustChangedEvent>({
+  project_locate_degraded: defineTelemetryEvent<ProjectLocateDegradedEvent>({
+    owner: 'kimi-code',
+    comment: 'Resolving the implicit project for a directory found a .git entry it could not verify, so the directory stays its own project.',
+    properties: { reason: 'Why the checkout was not grouped: unreadable git metadata or a pointer that fails verification' },
+  }),
+  workspace_trust_changed: defineTelemetryEvent<ProjectTrustChangedEvent>({
     owner: 'kimi-code',
     comment: 'A workspace is trusted or untrusted.',
     properties: { trusted: 'Whether the workspace is now trusted' },
   }),
-  workspace_trust_read_failed: defineTelemetryEvent<WorkspaceTrustReadFailedEvent>({
+  workspace_trust_read_failed: defineTelemetryEvent<ProjectTrustReadFailedEvent>({
     owner: 'kimi-code',
     comment: 'Reading the workspace trust record fails and the error is propagated to the caller.',
     properties: { error_type: 'Classified error category' },

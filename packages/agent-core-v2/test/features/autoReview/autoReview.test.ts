@@ -51,7 +51,7 @@ import { SECONDARY_MODEL_SECTION } from '#/session/subagent/configSection';
 import type { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { ISessionWorkdir } from '#/session/workdir/workdir';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
-import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
+import type { IProjectGitService } from '#/project/projectGit/projectGit';
 import type { Message, ToolCall } from '@moonshot-ai/core/llm/message';
 import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import { call, createFakeModel, httpError, say, type FakeModel, type ScriptedStep } from '@moonshot-ai/testkit/model';
@@ -651,7 +651,7 @@ describe('AutoReviewService', () => {
       },
       lifecycleStub({ main: reviewerStub([], mainAuth, ['mkdir']) }) as IAgentLifecycleService,
       {
-        current: gitStatusAt === undefined ? undefined : { git: { statusAt: gitStatusAt } as unknown as IWorkspaceGitService },
+        current: gitStatusAt === undefined ? undefined : { git: { statusAt: gitStatusAt } as unknown as IProjectGitService },
         onDidChange: () => toDisposable(() => {}),
       } as LiveRef<ISessionWorkdir>,
       noopTelemetryService,

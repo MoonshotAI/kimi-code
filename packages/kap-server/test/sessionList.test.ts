@@ -9,8 +9,8 @@ import {
   IEnvironmentService,
   ISessionIndex,
   IEventService,
-  IWorkspaceAliases,
-  IWorkspaceService,
+  IProjectAliases,
+  IProjectService,
   closeSessionById,
   getLiveSessionById,
   resumeSessionById,
@@ -142,7 +142,7 @@ function stubSessionIndex(summaries: SessionSummary[]): ISessionIndex {
   };
 }
 
-const workspaceStub: IWorkspaceService = {
+const workspaceStub: IProjectService = {
   _serviceBrand: undefined,
   list: async () => [
     {
@@ -168,9 +168,17 @@ const workspaceStub: IWorkspaceService = {
   create: async () => {
     throw new Error('not used in these tests');
   },
-  createOrTouch: async () => {
+  resolveImplicit: async () => {
     throw new Error('not used in these tests');
   },
+  peekImplicit: async () => {
+    throw new Error('not used in these tests');
+  },
+  reviveImplicit: async () => {
+    throw new Error('not used in these tests');
+  },
+  projectDirAt: async () => undefined,
+  acceptsWorkDir: async () => false,
   touch: async () => {
     throw new Error('not used in these tests');
   },
@@ -248,7 +256,7 @@ describe('server /api/v1/sessions list', () => {
       logLevel: 'silent',
       seeds: [
         [ISessionIndex, stubSessionIndex(summaries)],
-        [IWorkspaceService, workspaceStub],
+        [IProjectService, workspaceStub],
         [IGitService, gitStub],
       ],
     });
@@ -694,6 +702,7 @@ describe('server /api/v1/sessions list', () => {
       id: 'local-shadow',
       workspaceId: WS_A,
       cwd: remoteRepo,
+      environmentCwd: remoteRepo,
       createdAt: 5_500,
       updatedAt: 5_500,
       archived: false,
@@ -1029,7 +1038,7 @@ describe('server /api/v1/sessions list', () => {
         archived: false,
       },
     ];
-    const aliasStub: IWorkspaceAliases = {
+    const aliasStub: IProjectAliases = {
       _serviceBrand: undefined,
       resolveAliasIds: async (id) =>
         id === WS_A || id === legacyAlias ? [WS_A, legacyAlias] : [id],
@@ -1042,9 +1051,9 @@ describe('server /api/v1/sessions list', () => {
       logLevel: 'silent',
       seeds: [
         [ISessionIndex, stubSessionIndex(aliasSummaries)],
-        [IWorkspaceService, workspaceStub],
+        [IProjectService, workspaceStub],
         [IGitService, gitStub],
-        [IWorkspaceAliases, aliasStub],
+        [IProjectAliases, aliasStub],
       ],
     });
     base = `http://127.0.0.1:${server.port}`;

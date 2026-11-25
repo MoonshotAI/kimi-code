@@ -10,7 +10,7 @@ import { ILogService, type LogPayload } from '#/_base/log/log';
 import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import type { SkillRoot } from '#/features/skill/catalog/types';
-import { EnvironmentSkillDiscovery } from '#/features/skill/workspace/environmentSkillDiscovery';
+import { EnvironmentSkillDiscovery } from '#/features/skill/project/environmentSkillDiscovery';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
 import { stubLog } from '../../../_base/log/stubs';

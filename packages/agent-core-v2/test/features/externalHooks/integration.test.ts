@@ -64,7 +64,7 @@ import {
   type SessionCreatedEvent,
   type SessionCreateSource,
   type SessionWillCloseEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
+} from '#/project/sessionLifecycle/sessionLifecycle';
 import { createHooks, OrderedHookSlot } from '#/hooks';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';

@@ -138,6 +138,8 @@ export class AcpSession {
   private currentModelId: string = '';
   private currentThinkingLevel: string = 'off';
   private currentModeId: AcpModeId = DEFAULT_MODE_ID;
+  private readMode: (() => AcpModeId | undefined) | undefined;
+  private modeChangesInFlight = 0;
   private skills: readonly SkillSummary[] = [];
   private driver: TurnDriver | undefined;
   private readonly pendingPromptAborts = new Set<{ aborted: boolean }>();
@@ -166,9 +168,17 @@ export class AcpSession {
     this.interactionBridge = new AcpInteractionBridge(conn, this.session, sessionId, elicitationForm);
   }
 
-  async init(): Promise<void> {
+  async init(readMode?: () => AcpModeId | undefined): Promise<void> {
+    this.readMode = readMode;
+    this.currentModeId = readMode?.() ?? DEFAULT_MODE_ID;
     const events = this.agent.events;
     this.subscriptions.push(
+      events.on('agent.status.updated', (event) => {
+        if (this.modeChangesInFlight > 0) return;
+        if (typeof event['planMode'] !== 'boolean' && typeof event['permission'] !== 'string') return;
+        const mode = this.readMode?.();
+        if (mode !== undefined && mode !== this.currentModeId) void this.publishMode(mode);
+      }),
       events.on('assistant.delta', (event) => {
         this.dispatchTurnEvent(event.turnId, () => {
           this.onAssistantDelta(event);
@@ -806,12 +816,26 @@ export class AcpSession {
 
   async setMode(id: AcpModeId): Promise<void> {
     const { plan, permission } = acpModeToToggles(id);
-    if (plan) {
-      await this.agent.enterPlan();
-    } else {
-      await this.agent.cancelPlan();
+    let requestedMode: AcpModeId | undefined;
+    this.modeChangesInFlight += 1;
+    try {
+      if (plan) {
+        await this.agent.enterPlan();
+      } else {
+        await this.agent.cancelPlan();
+      }
+      await this.agent.setPermission(permission);
+      requestedMode = id;
+    } finally {
+      this.modeChangesInFlight -= 1;
+      const mode = this.readMode?.() ?? requestedMode;
+      if (mode !== undefined && (requestedMode !== undefined || mode !== this.currentModeId)) {
+        await this.publishMode(mode);
+      }
     }
-    await this.agent.setPermission(permission);
+  }
+
+  private async publishMode(id: AcpModeId): Promise<void> {
     this.currentModeId = id;
     this.emit(currentModeUpdateNotification(this.sessionId, id));
     await this.emitConfigOptionUpdate();

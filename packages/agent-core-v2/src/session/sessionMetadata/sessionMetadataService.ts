@@ -11,7 +11,7 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/environment';
 
@@ -60,7 +60,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     @ILogService private readonly log: ILogService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
-    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
+    @ISessionProjectInfo private readonly projectInfo: ISessionProjectInfo,
   ) {
     super();
     this._register({
@@ -75,7 +75,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     );
     this.states.contributeState(sessionMetadataDataKey);
     this._register(
-      this.workspaceInfo.onDidChange(() => {
+      this.projectInfo.onDidChange(() => {
         if (this.states.get(sessionMetadataDataKey) !== undefined) this.mirrorToReadModel();
       }),
     );
@@ -234,7 +234,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       environmentId: this.data.environmentId ?? LOCAL_ENVIRONMENT_ID,
       cwd: this.data.environmentCwd,
     };
-    return resolveEffectiveWorkspaceRoots(this.ctx, binding, this.workspaceInfo).workDir;
+    return resolveEffectiveWorkspaceRoots(this.ctx, binding, this.projectInfo).workDir;
   }
 
   private mirrorToReadModel(): void {

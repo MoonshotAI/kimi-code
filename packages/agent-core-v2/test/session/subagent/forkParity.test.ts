@@ -43,7 +43,7 @@ const SUBAGENT_BACKGROUND_TASK_NOTICE =
   'You are running as a subagent: ending your turn is your final hand-off to the parent agent, and completion notifications that arrive after it reach no one. Do not end your turn while a background task whose result you need is still running. Keep waiting for it with WaitFor, calling it again after a timeout if needed, or run the command in the foreground with a suitable timeout instead. Still use the waiting time for other useful work on your task when you can.';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
-import { IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager, type ProjectInstanceChange } from '#/project/projectInstance/projectInstanceManager';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import {
@@ -210,8 +210,8 @@ describe('subagent task reminders and btw request parity', () => {
       telemetryServices(recordingTelemetry(telemetry)),
       sessionServices((reg) => {
         reg.defineDescriptor(IEnvironmentService, new SyncDescriptor(TestEnvironmentResolver));
-        reg.definePartialInstance(IWorkspaceInstanceManager, {
-          onDidChange: Event.None as Event<WorkspaceInstanceChange>,
+        reg.definePartialInstance(IProjectInstanceManager, {
+          onDidChange: Event.None as Event<ProjectInstanceChange>,
           get: () => undefined,
         });
         reg.defineInstance(ISessionNotify, {

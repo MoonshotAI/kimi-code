@@ -1,16 +1,17 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { RequestError, type NewSessionResponse, type RequestPermissionRequest } from '@agentclientprotocol/sdk';
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
 import { ToolUpdated } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { call, createFakeModel, say, type FakeModel } from '@moonshot-ai/testkit/model';
+import { call, createFakeModel, exitPlanMode, say, write, type FakeModel } from '@moonshot-ai/testkit/model';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { mapPromptLaunchError } from '../src/session';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
-import { writeFakeModelConfig } from './_helpers/fakeModelConfig';
+import { writeFakeModelConfig, type FakeModelConfigOptions } from './_helpers/fakeModelConfig';
 import { solidPngBase64 } from './_helpers/png';
 
 const STDIO_MCP_FIXTURE = fileURLToPath(
@@ -57,11 +58,12 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
   async function boot(
     clientCapabilities: Record<string, unknown> = {},
     imageInput = false,
+    defaults?: Pick<FakeModelConfigOptions, 'defaultPlanMode' | 'defaultPermissionMode'>,
   ): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-e2e-turn-'));
     model = createFakeModel();
     await model.listen();
-    await writeFakeModelConfig(homeDir, { image: imageInput, baseUrl: model.origin });
+    await writeFakeModelConfig(homeDir, { image: imageInput, baseUrl: model.origin, ...defaults });
     client = await createTestClient({ homeDir });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities });
     if (clientCapabilities['terminal'] === true) installTerminalClient(client);
@@ -98,6 +100,65 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(usageUpdate?.size).toBe(262144);
     expect(usageUpdate?.used).toBeGreaterThan(0);
     expect(usageUpdate?.cost).toBeUndefined();
+  }, 30_000);
+
+  it.each([
+    { optionId: 'plan_approve', expectedMode: 'default' },
+    { optionId: 'plan_reject_and_exit', expectedMode: 'default' },
+    { optionId: 'plan_approve', expectedMode: 'yolo', defaults: { defaultPlanMode: true, defaultPermissionMode: 'yolo' as const } },
+  ])('uses editor files for plan review and reports $expectedMode after $optionId', async ({ optionId, expectedMode, defaults }) => {
+    const c = await boot({ fs: { readTextFile: true, writeTextFile: true } }, false, defaults);
+    const plan = '# Proposed plan\n\nUpdate the example documentation.\n';
+    const permissions: RequestPermissionRequest[] = [];
+    let planPath: string | undefined;
+    c.onRequest('fs/read_text_file', async (params) => {
+      const { path } = params as { path: string };
+      try {
+        return { content: await readFile(path, 'utf8') };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw RequestError.resourceNotFound(path);
+        throw error;
+      }
+    });
+    c.onRequest('fs/write_text_file', async (params) => {
+      const { path, content } = params as { path: string; content: string };
+      await writeFile(path, content);
+      return {};
+    });
+    c.onRequest('session/request_permission', (params) => {
+      permissions.push(params as RequestPermissionRequest);
+      return { outcome: { outcome: 'selected', optionId } };
+    });
+
+    model!.script(
+      (request) => {
+        planPath = /^Plan file: (.+)$/m.exec(request.remindersSinceReply.join('\n'))?.[1];
+        if (planPath === undefined) throw new Error('The model did not receive the plan file in its plan mode reminder.');
+        return write({ path: planPath, content: plan });
+      },
+      exitPlanMode(),
+      ...(optionId === 'plan_approve' ? [say('The plan was approved.')] : []),
+    );
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as NewSessionResponse;
+    const { sessionId } = created;
+    if (defaults === undefined) {
+      await c.send('session/set_mode', { sessionId, modeId: 'plan' });
+    }
+    const start = c.sessionUpdates().length;
+    const result = await c.send('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Prepare a plan.' }] });
+    expect(result).toMatchObject({ stopReason: 'end_turn' });
+    expect(permissions).toHaveLength(1);
+    expect(permissions[0]?.toolCall.content).toContainEqual({
+      type: 'content',
+      content: { type: 'text', text: expect.stringContaining(plan.trim()) },
+    });
+    expect(await readFile(planPath!, 'utf8')).toBe(plan);
+    const updates = () => c.sessionUpdates().slice(start).map(({ params }) => (params as { update: unknown }).update);
+    await expect.poll(updates).toContainEqual({ sessionUpdate: 'current_mode_update', currentModeId: expectedMode });
+    await expect.poll(updates, { timeout: 5_000 }).toContainEqual({
+      sessionUpdate: 'config_option_update',
+      configOptions: expect.arrayContaining([expect.objectContaining({ id: 'mode', currentValue: expectedMode })]),
+    });
   }, 30_000);
 
   it('runs a tool call and bridges the approval request to the client', async () => {
