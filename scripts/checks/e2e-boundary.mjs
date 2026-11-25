@@ -35,7 +35,8 @@ const ALLOWED_EVERYWHERE = new Set([
 const ALLOWED_ONLY_IN = {
   '@agentclientprotocol/sdk': ['tests/e2e/surfaces/acp.ts'],
   '@moonshot-ai/pi-tui/testing': ['tests/e2e/surfaces/tui.ts'],
-  'node:child_process': ['tests/e2e/surfaces/tui.ts', 'tests/e2e/surfaces/acp.ts'],
+  'node-pty': ['tests/e2e/surfaces/tui.ts'],
+  'node:child_process': ['tests/e2e/surfaces/acp.ts'],
 };
 
 const USER_OPERATIONS = 'drive the product with user operations only: keys and screen reads, clicks and typing located by role and accessible name, or ACP messages as an editor sends them';

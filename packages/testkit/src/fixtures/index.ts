@@ -9,7 +9,7 @@ export {
   type TomlValue,
 } from '#/fixtures/config';
 export { CLI_BUILD_ENV, KIMI_SERVICE_URL, kimiCliBuild, kimiCliCommand, kimiCliEnv, kimiServiceStubs, type KimiCliBuild } from '#/fixtures/cli';
-export { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, type TestEnvOptions } from '#/fixtures/env';
+export { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, UNIT_TEST_SWITCHES, type TestEnvOptions } from '#/fixtures/env';
 export {
   describeDifferences,
   expectGolden,

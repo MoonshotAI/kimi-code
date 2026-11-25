@@ -159,8 +159,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     const ask = await this.pendingAsk(`an approval for ${wanted}`);
     if (ask === undefined) throw new Error(`expectApproval() found no approval for ${wanted}: the turn ended without asking for one.\n${await this.describe()}`);
     if (ask === 'question') throw new Error(`expectApproval() found no approval for ${wanted}: ${QUESTION_PENDING}.\n${await this.describe()}`);
-    const card = this.minimizeButton().locator('xpath=ancestor::*').filter({ has: this.approveButton() }).last();
-    const lines = (await card.innerText({ timeout: TIMEOUTS.wait }))
+    const lines = (await this.approvalCard().innerText({ timeout: TIMEOUTS.wait }))
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line !== '');
@@ -344,6 +343,35 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     } catch (error) {
       return `The page could not be read: ${reasonOf(error)}`;
     }
+  }
+
+  async resize(viewport: { readonly width: number; readonly height: number }): Promise<void> {
+    const area = await this.inputArea();
+    const before = await area.boundingBox({ timeout: TIMEOUTS.wait }).catch(() => null);
+    if (before === null) throw new Error(`resize() needs the message input, an approval or a question on screen to tell when the page has laid itself out again.\n${await this.describe()}`);
+    await this.page.setViewportSize(viewport);
+    let previous: string | undefined;
+    await this.wait(`the message input, approval or question to settle inside a window ${viewport.width} pixels wide`, async () => {
+      const box = await area.boundingBox({ timeout: TIMEOUTS.wait }).catch(() => null);
+      if (box === null || box.width === before.width || box.x < 0 || box.x + box.width > viewport.width) {
+        previous = undefined;
+        return undefined;
+      }
+      const reading = JSON.stringify(box);
+      const settled = reading === previous;
+      previous = reading;
+      return settled ? true : undefined;
+    });
+  }
+
+  private async inputArea(): Promise<Locator> {
+    if (await this.approvalShown()) return this.approvalCard();
+    if (await this.questionShown()) return this.questionCard();
+    return this.composer();
+  }
+
+  private approvalCard(): Locator {
+    return this.minimizeButton().locator('xpath=ancestor::*').filter({ has: this.approveButton() }).last();
   }
 
   private composer(): Locator {

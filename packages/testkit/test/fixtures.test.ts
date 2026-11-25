@@ -15,7 +15,7 @@ import { WaitTimeoutError } from '#/errors';
 import { CLI_BUILD_ENV, KIMI_SERVICE_URL, kimiCliBuild, kimiCliCommand, kimiCliEnv, kimiServiceStubs } from '#/fixtures/cli';
 import { kimiConfigToml, mergeKimiConfig } from '#/fixtures/config';
 import { expectGolden, jsonDifferences, REFRESH_ENV, stableJson } from '#/fixtures/golden';
-import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv } from '#/fixtures/env';
+import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, UNIT_TEST_SWITCHES } from '#/fixtures/env';
 import { createTestHome, osHomeEnv, type TestHome } from '#/fixtures/home';
 import { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
 import { installNetworkGuard, isLoopback, tcpTargetOf } from '#/fixtures/network';
@@ -285,6 +285,15 @@ describe('testEnv', () => {
     expect(env['KIMI_SHELL_PATH']).toBe('/bin/zsh');
     expect(env['KIMI_CODE_HOME']).toBe('/tmp/home');
     expect(env).not.toHaveProperty('KIMI_DISABLE_TELEMETRY');
+  });
+
+  it('applies the unit-test switches by default and drops them when each is set to undefined', () => {
+    const switches = Object.keys(UNIT_TEST_SWITCHES);
+    expect(switches.length).toBeGreaterThan(0);
+    expect(testEnv({ base: {} })).toMatchObject(UNIT_TEST_SWITCHES);
+    const productDefaults = testEnv({ base: {}, set: Object.fromEntries(switches.map((name) => [name, undefined])) });
+    for (const name of switches) expect(productDefaults).not.toHaveProperty(name);
+    expect(productDefaults['KIMI_DISABLE_TELEMETRY']).toBe('1');
   });
 
   it('isolates process.env and restores it exactly', () => {

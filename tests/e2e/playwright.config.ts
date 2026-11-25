@@ -14,7 +14,7 @@ export default defineConfig<SurfaceOptions>({
   projects: [
     { name: 'tui', use: { surface: 'tui' } },
     { name: 'acp', use: { surface: 'acp' } },
-    { name: 'desktop', use: { surface: 'desktop' }, workers: 1 },
+    { name: 'desktop', use: { surface: 'desktop' }, workers: process.env['E2E_HEADED'] === '1' ? 1 : 2 },
     { name: 'web', use: { surface: 'web' } },
   ],
 });

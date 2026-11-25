@@ -39,6 +39,7 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   expectAbsent: (text) => `检查回复里没有${quote(text)}`,
   continue: () => '用户点「继续」，让失败的回合接着做',
   restart: () => '用户关掉产品再打开，回到原来的会话',
+  resize: (size) => (size === 'narrow' ? '用户把窗口拉窄' : '用户把窗口拉回原来的大小'),
   expectTranscript: (text) => `检查整段对话里有${quote(text)}`,
   exit: () => '用户退出，回到原来的 shell',
   expectTerminalRestored: () => '检查终端回到了正常的输入模式',

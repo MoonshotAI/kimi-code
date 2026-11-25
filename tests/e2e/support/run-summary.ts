@@ -28,6 +28,15 @@ interface ReportedResult {
   readonly annotations?: readonly Annotation[];
 }
 
+interface Shard {
+  readonly current: number;
+  readonly total: number;
+}
+
+interface ReportedConfig {
+  readonly shard: Shard | null;
+}
+
 interface ReportedRun {
   readonly status: RunStatus;
   readonly duration: number;
@@ -110,10 +119,11 @@ function failed(outcome: Outcome): boolean {
   return outcome.status === 'failed' || outcome.status === 'timedOut' || outcome.status === 'interrupted';
 }
 
-function viewingHints(surface: string): string[] {
+function viewingHints(surface: string, shard: Shard | null): string[] {
   const known = isSurface(surface);
+  const report = `e2e-${surface}-report${shard === null ? '' : `-${shard.current}`}`;
   const hints = [
-    `看画面：下载本次运行的 artifact \`e2e-${surface}-report\`，解压后双击 \`index.html\`，点进场景。${known ? FRAME_PLACES[surface] : '每一步之后的画面在用例的附件里'}，按步骤编号排列。`,
+    `看画面：下载本次运行的 artifact \`${report}\`，解压后双击 \`index.html\`，点进场景。${known ? FRAME_PLACES[surface] : '每一步之后的画面在用例的附件里'}，按步骤编号排列。`,
   ];
   const trace = known ? TRACE_ATTACHMENTS[surface] : undefined;
   if (trace !== undefined) {
@@ -122,7 +132,7 @@ function viewingHints(surface: string): string[] {
   return hints;
 }
 
-function section(surface: string, outcomes: readonly Outcome[]): string[] {
+function section(surface: string, outcomes: readonly Outcome[], shard: Shard | null): string[] {
   const scenarios = outcomes.filter((outcome) => outcome.file.startsWith('scenarios/')).toSorted((left, right) => left.file.localeCompare(right.file));
   const selfTests = outcomes.filter((outcome) => outcome.file.startsWith('self-test/'));
   const failures = outcomes.filter(failed);
@@ -140,16 +150,21 @@ function section(surface: string, outcomes: readonly Outcome[]): string[] {
   if (brokenSelfTests.length > 0) {
     lines.push('', '没通过的自测：', ...brokenSelfTests.map((outcome) => `- \`${outcome.title}\`：${cell(outcome.note)}`));
   }
-  lines.push('', ...viewingHints(surface), '');
+  lines.push('', ...viewingHints(surface, shard), '');
   return lines;
 }
 
 export default class RunSummary {
   private readonly outcomes = new Map<string, Outcome>();
   private readonly errors: string[] = [];
+  private shard: Shard | null = null;
 
   printsToStdio(): boolean {
     return false;
+  }
+
+  onBegin(config: ReportedConfig): void {
+    this.shard = config.shard;
   }
 
   onError(error: ReportedError): void {
@@ -168,11 +183,12 @@ export default class RunSummary {
     const outcomes = [...this.outcomes.values()];
     const rank = (surface: string): number => (isSurface(surface) ? SURFACES.indexOf(surface) : SURFACES.length);
     const surfaces = [...new Set(outcomes.map((outcome) => outcome.surface))].toSorted((left, right) => rank(left) - rank(right));
-    const lines = [`## 新 E2E：${RUN_WORDS[run.status]}（用时 ${seconds(run.duration)}）`, ''];
+    const part = this.shard === null ? '' : `第 ${this.shard.current}/${this.shard.total} 片，`;
+    const lines = [`## 新 E2E：${RUN_WORDS[run.status]}（${part}用时 ${seconds(run.duration)}）`, ''];
     if (this.errors.length > 0) {
       lines.push('不属于任何用例的错误（例如加载场景文件时出错），这时下面的表可能不全：', '', ...this.errors.map((error) => `- ${cell(error)}`), '');
     }
-    lines.push(...surfaces.flatMap((surface) => section(surface, outcomes.filter((outcome) => outcome.surface === surface))));
+    lines.push(...surfaces.flatMap((surface) => section(surface, outcomes.filter((outcome) => outcome.surface === surface), this.shard)));
     appendFileSync(target, `${lines.join('\n')}\n`);
   }
 }

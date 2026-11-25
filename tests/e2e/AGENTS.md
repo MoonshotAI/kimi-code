@@ -18,13 +18,13 @@ playwright.config.ts               一个面一个 project
 
 - TUI 和 ACP 本地直接跑源码：`pnpm --filter @moonshot-ai/e2e exec playwright test --project=tui`，ACP 把 `tui` 换成 `acp`。要跑构建产物，先 `pnpm --filter @moonshot-ai/kimi-code run build`，再设 `TESTKIT_CLI_BUILD=dist`。CI 上一律跑构建产物。
 - 源码模式下每个用例都要重新加载一遍 CLI 源码，几个 worker 同时启动 `kimi acp` 时，光等它答复 `initialize` 就要十来秒。想跑得快就用构建产物，或者加 `--workers=2`。
-- TUI 驱动借系统的 `script` 命令给 CLI 一个真终端，只支持 Linux 和 macOS。
+- TUI 驱动用 `node-pty` 给 CLI 一个真终端：一个 `/bin/sh` 启动脚本先跑 CLI，CLI 退出后在同一个终端里打印退出码和 `stty -a`。终端是 xterm.js（`@moonshot-ai/pi-tui/testing` 的 `VirtualTerminal`），按键直接写字节。`node-pty` 先找自己包目录里编译好的原生模块，没有再用它自带的预编译文件（只有 macOS 和 Windows 的）。`pnpm install` 时 `apps/desktop` 的 `postinstall`（`apps/desktop/scripts/rebuild-native.mjs`）会为 Electron 重新编译它，编出来的是 N-API 模块，Node 也能加载；Linux 上只能靠这一步，设了 `KIMI_SKIP_DESKTOP_PTY_REBUILD=1` 安装的 Linux 检出里 TUI 跑不起来。启动脚本要 `/bin/sh`，所以只支持 Linux 和 macOS。
 - ACP 驱动把 `kimi acp` 当子进程启动，自己扮演编辑器：声明 fs 和终端两种能力，读写文件用真实的磁盘，跑命令用真实的 shell。终端命令跑在自己的进程组里，所以也只支持 Linux 和 macOS。
-- Desktop 跑的是构建产物，先 `pnpm --filter kimi-code-app run build`，再 `pnpm --filter @moonshot-ai/e2e exec playwright test --project=desktop`。改了 `apps/desktop` 或它依赖的 `packages/` 之后要重新构建，否则测到的是旧界面。Desktop 的用例一个一个跑。Linux 上没有显示器时，外面套一层 `xvfb-run -a`。
+- Desktop 跑的是构建产物，先 `pnpm --filter kimi-code-app run build`，再 `pnpm --filter @moonshot-ai/e2e exec playwright test --project=desktop`。改了 `apps/desktop` 或它依赖的 `packages/` 之后要重新构建，否则测到的是旧界面。Desktop 同时最多跑 2 个用例（`playwright.config.ts` 里的 `workers: 2`）；设了 `E2E_HEADED=1` 时只跑 1 个，因为看得见的窗口会互相抢焦点，失去焦点的窗口会关掉自己的权限菜单。Linux 上没有显示器时，外面套一层 `xvfb-run -a`。
 - Web 跑的是 CLI 自带的 Web 界面。先 `pnpm sync:web` 把界面构建出来，改了 `apps/desktop/src/renderer` 或它依赖的 `packages/` 之后要重跑；第一次还要装浏览器：`pnpm --filter @moonshot-ai/e2e exec playwright install chromium`。然后 `pnpm --filter @moonshot-ai/e2e exec playwright test --project=web`。CLI 本身和 TUI 一样，默认跑源码，设 `TESTKIT_CLI_BUILD=dist` 跑构建产物。结束时驱动给服务端发 Ctrl+C，所以也只支持 Linux 和 macOS。
 - Desktop 的窗口和 Web 的浏览器默认都不显示。想看着跑，设 `E2E_HEADED=1`。
 - 工作区必须在 git 工作树之外。`TMPDIR` 如果在某个仓库里，夹具会直接报错：POSIX 上，工作区在 git 工作树里时，Edit 和 Write 会被自动批准，审批场景会挂住。
-- CI：`.github/workflows/e2e.yml`，每个 PR 都在 Linux 上跑，作业名带 optional；Desktop 作业跑在 xvfb 的虚拟显示器里，Web 作业先装 Chromium。仓库目前没有必过检查，所以它红了不挡合并。
+- CI：`.github/workflows/e2e.yml`，每个 PR 都在 Linux 上跑，作业名带 optional；Desktop 和 Web 各分成两片（`--shard`），各占一个作业；Desktop 作业跑在 xvfb 的虚拟显示器里，Web 作业先装 Chromium。仓库目前没有必过检查，所以它红了不挡合并。
 
 ## 写场景
 
@@ -65,11 +65,11 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 
 ## 写驱动
 
-动作清单是 `support/verbs.ts` 里的 `VERBS`，它是一张表：每个动作写明存在于哪些面（`on`）、不在某个面上的理由（`absentBecause`）、算不算「查过界面」（`checksInterface`），以及是不是由场景会话而不是驱动来做（`bySession`，目前只有 `restart`）。动作有 `send`、`queue`、`steer`、`approve`、`reject`、`rejectWithFeedback`、`expectApproval`、`answer`、`answerOther`、`dismissQuestion`、`setPermissionMode`、`stop`、`waitIdle`、`expectTool`、`expectReply`、`expectError`、`expectAbsent`、`continue`、`restart`、`expectTranscript`，以及只在 TUI 上有的 `exit`、`expectTerminalRestored`。场景拿到的 `product` 由这张表按场景跑的面推导：用了只在部分面上有的动作，场景必须用 `except` 或 `onlyOn` 排除其他面，否则类型检查报错；驱动漏实现自己面上的动作，类型检查也会报错。
+动作清单是 `support/verbs.ts` 里的 `VERBS`，它是一张表：每个动作写明存在于哪些面（`on`）、不在某个面上的理由（`absentBecause`）、算不算「查过界面」（`checksInterface`），以及是不是由场景会话而不是驱动来做（`bySession`，目前只有 `restart`）。动作有 `send`、`queue`、`steer`、`approve`、`reject`、`rejectWithFeedback`、`expectApproval`、`answer`、`answerOther`、`dismissQuestion`、`setPermissionMode`、`stop`、`waitIdle`、`expectTool`、`expectReply`、`expectError`、`expectAbsent`、`continue`、`restart`、`expectTranscript`，只在 TUI 和 Web 上有的 `resize`，以及只在 TUI 上有的 `exit`、`expectTerminalRestored`。场景拿到的 `product` 由这张表按场景跑的面推导：用了只在部分面上有的动作，场景必须用 `except` 或 `onlyOn` 排除其他面，否则类型检查报错；驱动漏实现自己面上的动作，类型检查也会报错。
 
 | 规矩 | 由什么守 |
 |---|---|
-| 驱动只能做用户能做的操作：<br>TUI 只往真终端里写按键、读屏幕；<br>Desktop 和 Web 只点击、输入、读页面上的角色、名字、文字和状态，另外读文件按钮上的完整路径（界面上只在悬停提示里显示）；<br>ACP 只像编辑器那样收发 ACP 消息，并回应 fs 和终端请求 | `scripts/checks/e2e-boundary.mjs` 的 import 白名单和后门清单；评审 |
+| 驱动只能做用户能做的操作：<br>TUI 只往真终端里写按键、读屏幕；<br>Desktop 和 Web 只点击、输入、读页面上的角色、名字、文字和状态，另外读文件按钮上的完整路径（界面上只在悬停提示里显示），Web 上还可以改浏览器视口（等于用户拖浏览器窗口）；<br>ACP 只像编辑器那样收发 ACP 消息，并回应 fs 和终端请求 | `scripts/checks/e2e-boundary.mjs` 的 import 白名单和后门清单；评审 |
 | 不许在页面或 Electron 里执行代码，不许拦截或伪造网络请求，不许从测试直接请求产品的 HTTP 或 WebSocket 接口，不许 import 产品内部的包或旧夹具，不许带调试开关启动产品 | `scripts/checks/e2e-boundary.mjs` |
 | 前置准备只能用用户自己也能用的方式：配置文件、命令行参数、用户文档里公开的环境变量。绕不过去的界面就在界面上走。隔离用的环境变量一律来自 testkit 的 `testEnv()` 和 `kimiCliEnv()`，驱动不自己拼 | 评审；`scripts/checks/e2e-boundary.mjs` 要求这个目录里出现的每个 `KIMI_*` 名字都写在 `docs/en/configuration/env-vars.md` 里 |
 | 产品专门为测试加的开关和其他例外，只能登记在 `scripts/checks/e2e-boundary.json` 里并写明理由；不再用到的条目会被报出来 | `scripts/checks/e2e-boundary.mjs` |
@@ -94,10 +94,12 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | `expectAbsent(文字)` 查最近一回合的回复里没有这段文字，范围和 `expectReply` 一样：工具卡片、用户消息、更早的回合都不算。调用时产品必须已经空闲，否则直接报错、不等待，因为回合还在跑时「还没出现」和「不会出现」分不开。它不算查过界面，场景里还要有一个通过的 `expectReply` 一类的检查 | 驱动自测；收尾检查 |
 | `continue()` 只在 Desktop 和 Web 上有：先等到失败的回合或回合结束，点失败卡片（`alert`）里的 `Continue`，证据是这张卡片消失。没有失败卡片时报错；用户停止的回合也没有，那里只有 `Manually stopped`。模型收到的下一次请求里没有新的用户消息，`remindersSinceReply` 末尾多一条 `No new user message was sent. Continue the interrupted work…`。TUI 和 ACP 上没有这个动作，用户在那里再发一条消息 | 驱动自测 |
 | 重启：TUI 用同一个 home 和工作区跑 `kimi --continue`，等转录里出现上一条提示词；ACP 新起 `kimi acp`，要求 `initialize` 公布 `loadSession`，再对原会话 ID 发 `session/load`，回放在答复之前到齐；Desktop 用同一个 `--user-data-dir` 再启动，不再传 `--workspace`；Web 用原来的端口重新起 `kimi web`，浏览器从第一次启动就用持久的配置目录（`<测试目录>/web-profile`），重新打开它打印的地址。Desktop 和 Web 重启后不点引导向导，向导如果又出现就报错；它们都要自动回到原来的会话，等对话里出现上一条提示词 | `restart` 的自测 |
+| `resize(尺寸)` 只在 TUI 和 Web 上有，尺寸是 `normal` 或 `narrow`，产品启动时是 `normal`，改成当前的尺寸就报错。<br>TUI：`normal` 是 120×40，`narrow` 是 60×40。驱动先改虚拟终端，再改伪终端的尺寸（CLI 收到 `SIGWINCH`）；证据是改尺寸之后 CLI 清屏重画了一次（`ESC[2J ESC[H ESC[3J`），并且屏幕上最后一条输入框或面板的横线是新宽度。只看横线不够：xterm.js 会把旧的整行横线折成两行，长度可能正好等于新宽度。<br>Web：`normal` 是 1440×900，`narrow` 是 390×844（手机宽度），用 Playwright 改视口；证据是当时在屏幕上的输入区域（消息输入框，或者挂着的审批卡、问题卡）宽度变了、整块落在视口里，并且连续两次读到的位置一样。<br>重启之后保持重启前的尺寸，和用户在同一个窗口里重新打开产品一样。<br>ACP 没有窗口；Desktop 的窗口最窄 900 像素，用户拉不到手机宽度，而且只能在 Electron 主进程里执行代码才能改 | 驱动自测固定「能在空闲、审批挂着、重启之后改」和「改成当前尺寸就报错」；「产品没重画就不返回」造不出用户走得到的反例，靠改坏驱动的破坏性检查（不发 `SIGWINCH`、不改视口时正例超时） |
 | TUI 的 `exit()` 照用户的做法退出，等退出标记和伪终端关闭，要求退出码 0；`expectTerminalRestored()` 读启动脚本在 CLI 退出后、在同一个 shell 里跑的 `stty -a`，要求 `icanon` 和 `echo` 都开着 | `exit`、`expect-terminal-restored` 的自测只固定前置条件；「模式没恢复就报错」造不出用户走得到的反例，靠评审和改坏驱动的破坏性检查 |
 | 每个动作在每个面上都要有正例和反例。自测写成 `selfTest('动作', { positive, negative })`，放在以动作命名的文件里；要加动作，先改 `VERBS`。某个用例要用只在部分面上才有的动作（例如 `waitIdle` 的自测里用 `queue`），写成 `selfTestCase({ except: … }, run)`，`run` 拿到的 `product` 按这个用例跑的面收窄 | `selfTest()` 登记时检查每个面都有正反例；`self-test/coverage.spec.ts` 检查每个动作都有自测文件 |
 | 动作的含义由自测固定，改自测就等于改含义 | CODEOWNERS 评审 |
 | 产品不连真网络：会去 CDN 下载的工具和 Desktop 启动时要取的模型目录，在 `surfaces/offline.ts` 里桩成 404，其余对外连接由 testkit 的网络守卫记下 | 收尾检查 |
+| 产品进程的环境一律用 `surfaces/environment.ts` 的 `productEnv()`：它在 `kimiCliEnv()` 的基础上去掉 testkit 给单元测试关掉的会话索引读模型和搜索 worker，让产品按用户的默认配置跑。工作区信任仍由 `kimiCliEnv()` 预先设好（`KIMI_CODE_TRUST_WORKSPACE`） | 评审 |
 | Desktop 和 Web 的页面操作都在 `surfaces/renderer.ts` 里，两个面共用。证据只认用户看得见的内容：收起的工具分组和收起的卡片详情（页面上带 `inert`）里的东西不算，所以查工具卡片之前先点开收起的分组。只有一处例外：区分 rejected 和 failed 时，拒绝说明读自卡片的详情，不要求详情是展开的 | 驱动自测；评审 |
 | Desktop 和 Web 上，工具卡片靠三样认出来：工具标签（Bash 的标签是 `Run`）、目标、状态。文件类工具的目标对的是文件按钮上的完整路径，不是只对文件名；Bash 的目标对的是卡片头上的命令，命令输出里的文字不算。回复只认 Markdown 渲染出来的那一块，思考块和工具卡片不算。一块内容要么是回复、要么是卡片：回复里写了工具标签和目标（例如加粗的 `Run` 后面跟一段命令，或者被渲染成文件链接的文件名）不算工具卡片 | 驱动自测 |
 | Desktop 用启动参数 `--workspace=` 打开工作区，引导向导在界面上点 `Skip` 跳过。网络分三路：主进程里 Node 发的请求由 testkit 的网络守卫记下；渲染进程的请求由驱动记下（只看不拦）；域名解析用启动参数关掉。有一路记不到：主进程经 Electron 的 `net` 发的请求走 Chromium 的网络栈，只会因为域名解析被关而失败，不会让用例变红 | 评审 |
@@ -124,7 +126,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 - 画面只当证据，不拿来做断言。取画面失败不会让用例变红，那一帧会写成「取不到这一刻的画面」和原因。
 - 帧的附件名以 `.png` 或 `.txt` 结尾。Playwright 拿附件名里最后一个点之后的部分当文件扩展名，名字里的「b.txt」会让截图存成打不开的文件。
 - 本地跑完用 `pnpm --filter @moonshot-ai/e2e exec playwright show-report` 打开报告。Desktop 和 Web 的帧在用例的「Screenshots」里，TUI 和 ACP 的帧在「Attachments」里。
-- CI 上每个面的报告不管红绿都上传成 artifact `e2e-<面>-report`，保留 7 天；失败时另传 `e2e-<面>-failure`（`test-results/`）。报告解压后双击 `index.html` 就能看步骤和画面。Desktop 和 Web 失败时的 trace 在附件 `desktop-trace`、`web-trace` 里，报告不会把它们显示成「View Trace」，下载后用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <zip>` 打开。
+- CI 上每个面的报告不管红绿都上传成 artifact `e2e-<面>-report`，保留 7 天；失败时另传 `e2e-<面>-failure`（`test-results/`）。分片的面在名字后面加片号，例如 `e2e-desktop-report-2`。报告解压后双击 `index.html` 就能看步骤和画面。Desktop 和 Web 失败时的 trace 在附件 `desktop-trace`、`web-trace` 里，报告不会把它们显示成「View Trace」，下载后用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <zip>` 打开。
 - 运行页的摘要由 `support/run-summary.ts` 在设置了 `GITHUB_STEP_SUMMARY` 时写出：整体结果，不属于任何用例的错误（例如加载场景文件时出错），每个面的场景结果表和自测的通过数。摘要里写的 artifact 名字和 `.github/workflows/e2e.yml` 里的要一致。
 - 报告会作为公开仓库的 artifact 上传，场景里的提示词、文件内容和剧本只能用假数据。
 
