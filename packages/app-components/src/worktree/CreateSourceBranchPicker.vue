@@ -3,6 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { newSessionEnvironmentStore } from '@moonshot-ai/app-client/stores';
 import { Icon, MenuItem, Switch, menuNavigationIndex, useImeComposition } from '@moonshot-ai/app-ui';
+import MenuSearchField from '../MenuSearchField.vue';
 import CreatePicker from './CreatePicker.vue';
 
 const props = defineProps<{
@@ -34,7 +35,7 @@ const hoverRef = computed(() =>
 );
 
 const open = ref(false);
-const searchRef = ref<HTMLInputElement | null>(null);
+const searchRef = ref<InstanceType<typeof MenuSearchField> | null>(null);
 const listRef = ref<HTMLElement | null>(null);
 
 const query = ref('');
@@ -206,25 +207,19 @@ onUnmounted(hideHover);
         </div>
       </div>
     </template>
-    <div class="wsb-search">
-      <Icon name="search" size="sm" />
-      <input
-        ref="searchRef"
-        v-model="query"
-        class="wsb-search-input"
-        type="text"
-        role="combobox"
-        aria-expanded="true"
-        aria-autocomplete="list"
-        :placeholder="t('worktreeCreate.branch.searchPlaceholder')"
-        :aria-label="t('worktreeCreate.branch.searchPlaceholder')"
-        autocomplete="off"
-        spellcheck="false"
-        @keydown="onSearchKeydown"
-        @compositionstart="handleCompositionStart"
-        @compositionend="handleCompositionEnd"
-      />
-    </div>
+    <MenuSearchField
+      ref="searchRef"
+      v-model="query"
+      class="wsb-search-input"
+      role="combobox"
+      aria-expanded="true"
+      aria-autocomplete="list"
+      :placeholder="t('worktreeCreate.branch.searchPlaceholder')"
+      spellcheck="false"
+      @keydown="onSearchKeydown"
+      @compositionstart="handleCompositionStart"
+      @compositionend="handleCompositionEnd"
+    />
     <div
       ref="listRef"
       class="wsb-list"
@@ -237,7 +232,7 @@ onUnmounted(hideHover);
         <div v-if="startsGroup(index)" class="wsb-group">{{ t(groupLabel(row)) }}</div>
         <button
           type="button"
-          class="wsb-row"
+          class="wsb-row cp-row"
           :class="{ on: row.selected, active: activeIndex === index }"
           role="option"
           tabindex="-1"
@@ -340,32 +335,6 @@ onUnmounted(hideHover);
   width: min(320px, calc(100vw - var(--space-8)));
   overflow: hidden;
 }
-.wsb-search {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 0 var(--space-1);
-  padding: var(--space-2) var(--space-1);
-  border-bottom: var(--p-hairline) solid var(--color-line);
-  color: var(--color-text-faint);
-}
-.wsb-search:focus-within {
-  border-bottom-color: var(--color-line-strong);
-}
-.wsb-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-}
-.wsb-search-input::placeholder {
-  color: var(--color-text-faint);
-}
 .wsb-list {
   --wsb-row-h: 30px;
   flex: 0 1 auto;
@@ -404,24 +373,7 @@ onUnmounted(hideHover);
   user-select: none;
 }
 .wsb-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
   min-height: var(--wsb-row-h);
-  padding: var(--space-1) var(--space-2);
-  border: none;
-  border-radius: var(--radius-dropdown-row);
-  background: none;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.wsb-row.active {
-  background: var(--color-hover);
-}
-.wsb-row.on {
-  background: var(--color-selected);
 }
 .wsb-row .wsb-glyph {
   color: var(--color-text-muted);

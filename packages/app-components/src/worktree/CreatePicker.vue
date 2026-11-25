@@ -187,6 +187,25 @@ defineExpose({ close, focusPanel });
   box-shadow: var(--shadow-sm);
   animation: cp-pop var(--duration-base) var(--ease-out);
 }
+:slotted(.cp-row) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-dropdown-row);
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+:slotted(.cp-row.active) {
+  background: var(--color-hover);
+}
+:slotted(.cp-row.on) {
+  background: var(--color-selected);
+}
 .cp-panel:focus {
   outline: none;
 }

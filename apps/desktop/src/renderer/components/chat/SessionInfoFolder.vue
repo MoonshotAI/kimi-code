@@ -109,7 +109,7 @@ const branchTooltip = computed(() => {
 <template>
   <section class="sif" :class="{ 'is-missing': missing }" :data-folder="row.path">
     <div class="sif-head">
-      <button class="sif-heading" type="button" :aria-expanded="expanded" @click="toggleExpanded">
+      <button class="sif-heading si-heading" type="button" :aria-expanded="expanded" @click="toggleExpanded">
         <span class="sif-name" :title="name">{{ name }}</span>
         <Badge v-if="row.primary" class="sif-primary" size="sm" variant="soft">{{ t('worktreeSession.mainDirectory') }}</Badge>
         <Icon class="sif-chevron" :class="{ collapsed: !expanded }" name="chevron-down" size="sm" />
@@ -229,25 +229,12 @@ const branchTooltip = computed(() => {
   </section>
 </template>
 
+<style scoped src="./session-info-heading.css"></style>
 <style scoped>
 .sif { padding: 0 var(--space-4); }
 .sif + .sif { margin-top: var(--space-3); }
 .sif-head { min-width: 0; min-height: 32px; display: flex; align-items: center; gap: var(--space-2); }
-.sif-heading {
-  flex: 0 1 auto;
-  min-width: 0;
-  min-height: 32px;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--color-text);
-  text-align: left;
-  cursor: pointer;
-}
-.sif-heading:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.sif-heading { flex: 0 1 auto; }
 .sif-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); font-weight: var(--weight-medium); }
 .sif-chevron { flex: none; color: var(--color-text-faint); transition: transform var(--duration-fast) var(--ease-out); }
 .sif-chevron.collapsed { transform: rotate(-90deg); }

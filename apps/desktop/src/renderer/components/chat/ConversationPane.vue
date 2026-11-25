@@ -24,7 +24,7 @@ import { WorkspaceRecentSessions } from '@moonshot-ai/app-components';
 import { ConversationToc, type ConversationTocItem } from '@moonshot-ai/app-components';
 import TranscriptSearch from './TranscriptSearch.vue';
 import { KimiCodeWordmark, KimiMascotPeek } from '@moonshot-ai/app-components';
-import { CreateEnvironmentPicker, CreateSourceBranchPicker } from '@moonshot-ai/app-components';
+import { CreateEnvironmentPicker, CreateSourceBranchPicker, MenuSearchField } from '@moonshot-ai/app-components';
 import { Icon, Spinner, Tooltip, trackMenuSurface, useImeComposition } from '@moonshot-ai/app-ui';
 import { filterWorkspaces } from '@moonshot-ai/app-core/lib';
 import { safeRemove, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
@@ -207,7 +207,7 @@ const showWorkspaceHome = computed(
 const hasWorkspaces = computed(() => workspaces.value.length > 0);
 
 const workspaceQuery = ref('');
-const wsSearchInputRef = ref<HTMLInputElement | null>(null);
+const wsSearchInputRef = ref<InstanceType<typeof MenuSearchField> | null>(null);
 const filteredWorkspaces = computed(() =>
   filterWorkspaces(workspaces.value, workspaceQuery.value, hostsStore().searchTerms),
 );
@@ -878,20 +878,14 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
                   :style="wsPickMaxHeight ? { maxHeight: wsPickMaxHeight } : undefined"
                   role="menu"
                 >
-                  <div class="ws-search">
-                    <Icon name="search" size="sm" />
-                    <input
-                      ref="wsSearchInputRef"
-                      v-model="workspaceQuery"
-                      class="ws-search-input"
-                      type="text"
-                      :placeholder="t('workspace.projectSearchPlaceholder')"
-                      :aria-label="t('workspace.projectSearchPlaceholder')"
-                      autocomplete="off"
-                      @click.stop
-                      @keydown.stop
-                    />
-                  </div>
+                  <MenuSearchField
+                    ref="wsSearchInputRef"
+                    v-model="workspaceQuery"
+                    class="ws-search-input"
+                    :placeholder="t('workspace.projectSearchPlaceholder')"
+                    @click.stop
+                    @keydown.stop
+                  />
                   <div class="ws-list">
                     <button
                       v-for="w in filteredWorkspaces"
@@ -1367,36 +1361,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
 @keyframes ws-pop-up {
   from { opacity: 0; transform: translateY(var(--space-1)) scale(0.99); }
   to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-.ws-search {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: none;
-  margin: 0 var(--space-1);
-  padding: var(--space-2) var(--space-1);
-  border-bottom: var(--p-hairline) solid var(--color-line);
-  color: var(--color-text-faint);
-}
-
-.ws-search:focus-within {
-  border-bottom-color: var(--color-line-strong);
-}
-
-.ws-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-}
-
-.ws-search-input::placeholder {
-  color: var(--color-text-faint);
 }
 
 .ws-list {

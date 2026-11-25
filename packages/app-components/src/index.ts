@@ -26,6 +26,7 @@ export { default as SessionRow } from './SessionRow.vue';
 export { default as WorkspaceGroup } from './WorkspaceGroup.vue';
 export { default as FilterSelect } from './admin/FilterSelect.vue';
 export { default as MultiSelectMenu } from './admin/MultiSelectMenu.vue';
+export { default as MenuSearchField } from './MenuSearchField.vue';
 export { default as SessionAdminMenu } from './admin/SessionAdminMenu.vue';
 export { default as SessionAdminPagination } from './admin/SessionAdminPagination.vue';
 export { default as SessionAdminTable } from './admin/SessionAdminTable.vue';

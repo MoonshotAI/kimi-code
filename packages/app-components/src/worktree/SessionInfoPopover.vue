@@ -77,7 +77,7 @@ defineExpose({ close });
       <div
         v-if="open"
         :ref="setPopover"
-        class="sip"
+        class="sip hover-card-surface"
         role="dialog"
         :aria-label="title"
         :style="menuStyle"
@@ -100,6 +100,7 @@ defineExpose({ close });
   </Teleport>
 </template>
 
+<style scoped src="../lib/hover-card.css"></style>
 <style scoped>
 .sip-trigger {
   flex: none;
@@ -127,13 +128,6 @@ defineExpose({ close });
   width: 264px;
   max-width: calc(100vw - var(--space-4));
   padding: var(--space-3);
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-lg);
-  background: var(--color-menu-bg, var(--color-surface-raised));
-  box-shadow: var(--shadow-menu, var(--shadow-sm));
-  backdrop-filter: var(--p-menu-backdrop, blur(20px));
-  color: var(--color-text);
-  font-family: var(--font-ui);
 }
 .sip-title { color: var(--color-text-strong); font-size: var(--text-sm); font-weight: var(--weight-medium); line-height: var(--leading-tight); }
 .sip-body { margin: var(--space-1) 0 0; color: var(--color-text-muted); font-size: var(--text-xs); line-height: var(--leading-normal); }

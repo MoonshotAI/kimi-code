@@ -153,7 +153,7 @@ function onPanelKeydown(event: KeyboardEvent): void {
       v-for="(option, index) in options"
       :key="option.id"
       type="button"
-      class="wce-row"
+      class="wce-row cp-row"
       :class="{ on: option.id === current.id, active: index === activeIndex, disabled: option.disabled }"
       role="menuitemradio"
       tabindex="-1"
@@ -189,25 +189,6 @@ function onPanelKeydown(event: KeyboardEvent): void {
   width: max-content;
   min-width: calc(var(--space-8) * 8);
   max-width: min(calc(var(--space-8) * 13), calc(100vw - var(--space-8)));
-}
-.wce-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-1) var(--space-2);
-  border: none;
-  border-radius: var(--radius-dropdown-row);
-  background: none;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.wce-row.active {
-  background: var(--color-hover);
-}
-.wce-row.on {
-  background: var(--color-selected);
 }
 .wce-row.disabled {
   cursor: default;

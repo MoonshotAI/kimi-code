@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, Menu, MenuItem } from '@moonshot-ai/app-ui';
 import { useAnchoredMenu } from '@moonshot-ai/app-components';
+import MenuSearchField from '../MenuSearchField.vue';
 
 const props = defineProps<{
   options: Array<{ id: string; name: string }>;
@@ -28,7 +29,7 @@ const visibleTags = computed(() => selectedTags.value.slice(0, 2));
 const overflowCount = computed(() => selectedTags.value.length - visibleTags.value.length);
 
 const query = ref('');
-const searchRef = ref<HTMLInputElement | null>(null);
+const searchRef = ref<InstanceType<typeof MenuSearchField> | null>(null);
 const filteredOptions = computed(() => {
   const q = query.value.trim().toLowerCase();
   if (q === '') return props.options;
@@ -102,17 +103,12 @@ function toggleViaKeyboard(e: KeyboardEvent): void {
     <!-- role=dialog: the panel leads with a search input, so it isn't a pure
          menu (Menu's own contract); its rows take role=button to match. -->
     <Menu v-if="open" ref="menuRef" class="sa-menu" :style="menuStyle" role="dialog" @click.stop>
-      <div class="sa-search">
-        <Icon name="search" size="sm" />
-        <input
-          ref="searchRef"
-          v-model="query"
-          class="sa-search-input"
-          type="text"
-          :placeholder="t('admin.searchWorkspace')"
-          :aria-label="t('admin.searchWorkspace')"
-        />
-      </div>
+      <MenuSearchField
+        ref="searchRef"
+        v-model="query"
+        class="sa-search-input"
+        :placeholder="t('admin.searchWorkspace')"
+      />
       <MenuItem role="button" :active="allSelected" @click="toggleAll">
         {{ t('admin.selectAll') }}
       </MenuItem>
@@ -214,28 +210,15 @@ function toggleViaKeyboard(e: KeyboardEvent): void {
   z-index: var(--z-dropdown);
 }
 
-.sa-search {
-  display: flex;
-  align-items: center;
+.sa-menu .menu-search {
   gap: 7px;
+  margin: 0;
   padding: 5px 9px;
-  color: var(--color-text-faint);
+  border-bottom: none;
 }
-.sa-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
+.sa-menu .menu-search :deep(.menu-search-input) {
   line-height: var(--leading-tight);
 }
-.sa-search-input::placeholder {
-  color: var(--color-text-faint);
-}
-
 .sa-ws-name {
   overflow: hidden;
   text-overflow: ellipsis;

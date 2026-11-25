@@ -78,8 +78,8 @@ const directories = computed<HoverDirectory[]>(() => {
 </script>
 
 <template>
-  <div class="session-hover-card" data-session-hover-card role="dialog" :aria-label="session.title">
-    <div class="shc-title">{{ session.title }}</div>
+  <div class="session-hover-card hover-card-surface" data-session-hover-card role="dialog" :aria-label="session.title">
+    <div class="shc-title hover-card-title">{{ session.title }}</div>
     <div v-for="directory in directories" :key="directory.path" class="shc-directory" :data-directory="directory.path">
       <div class="shc-line shc-heading">
         <Icon name="folder-closed" size="sm" />
@@ -116,6 +116,7 @@ const directories = computed<HoverDirectory[]>(() => {
   </div>
 </template>
 
+<style scoped src="../lib/hover-card.css"></style>
 <style scoped>
 .session-hover-card {
   position: fixed;
@@ -126,23 +127,9 @@ const directories = computed<HoverDirectory[]>(() => {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: var(--space-3) var(--space-4);
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-lg);
-  background: var(--color-menu-bg, var(--color-surface-raised));
-  box-shadow: var(--shadow-menu, var(--shadow-sm));
-  backdrop-filter: var(--p-menu-backdrop, blur(20px));
-  color: var(--color-text);
-  font-family: var(--font-ui);
   user-select: none;
 }
 .shc-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text-strong);
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
 }
 .shc-directory { display: grid; gap: var(--space-1); min-width: 0; margin-top: var(--space-3); }

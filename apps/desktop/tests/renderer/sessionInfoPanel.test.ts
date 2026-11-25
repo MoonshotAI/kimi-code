@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, h, nextTick, reactive, type App } from 'vue';
 import { useContextInspector } from '@moonshot-ai/app-core';
@@ -24,6 +26,11 @@ import chatPaneSource from '../../../../packages/app-components/src/chat/ChatPan
 import turnFoldSource from '../../../../packages/app-components/src/chat/TurnFold.vue?raw';
 import pullRequestStateSource from '../../../../packages/app-components/src/worktree/SessionPullRequestState.vue?raw';
 import worktreeOutputSource from '../../../../packages/app-components/src/worktree/WorktreeOutput.vue?raw';
+
+const sessionInfoHeadingSource = readFileSync(
+  resolve(__dirname, '../../src/renderer/components/chat/session-info-heading.css'),
+  'utf8',
+);
 
 const store = vi.hoisted(() => ({
   rows: vi.fn(),
@@ -607,7 +614,7 @@ describe('SessionInfoPanel', () => {
   });
 
   it('uses primary text for folder names and section labels, and tertiary text for overflow', () => {
-    const headingStyle = sessionInfoFolderSource.match(/\.sif-heading\s*\{([^}]*)\}/)?.[1];
+    const headingStyle = sessionInfoHeadingSource.match(/\.si-heading\s*\{([^}]*)\}/)?.[1];
     const nameStyle = sessionInfoFolderSource.match(/^\.sif-name\s*\{([^}]*)\}/m)?.[1];
     const labelStyle = sessionInfoTabsSource.match(/\.sit-label\s*\{([^}]*)\}/)?.[1];
     const moreStyle = sessionInfoTabsSource.match(/\.sit-more\s*\{([^}]*)\}/)?.[1];

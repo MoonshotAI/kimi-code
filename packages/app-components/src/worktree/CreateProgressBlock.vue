@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppSessionWorktree } from '@moonshot-ai/app-core/api';
 import { Icon, Spinner } from '@moonshot-ai/app-ui';
 import { useHistoryState } from '../chat/historyState';
+import { useTickingNow } from '../chat/useTickingNow';
 import { recallCreateRun, rememberCreateRun } from './createBlockMemory';
 import { createBlockView, createElapsedSeconds } from './createPresentation';
 import WorktreeOutput from './WorktreeOutput.vue';
@@ -41,19 +42,7 @@ watch(
   },
 );
 
-const nowMs = ref(Date.now());
-watch(
-  () => view.value.running,
-  (running, _previous, onCleanup) => {
-    if (!running) return;
-    nowMs.value = Date.now();
-    const timer = setInterval(() => {
-      nowMs.value = Date.now();
-    }, 1000);
-    onCleanup(() => clearInterval(timer));
-  },
-  { immediate: true },
-);
+const nowMs = useTickingNow(() => view.value.running);
 
 const elapsedLabel = computed(() =>
   view.value.running
@@ -71,7 +60,7 @@ function toggle(): void {
   <div class="wcb" :class="{ open: effectiveOpen }" data-worktree-create-block>
     <component
       :is="view.expandable ? 'button' : 'div'"
-      class="wcb-head"
+      class="wcb-head disclosure-head"
       :class="{ 'is-static': !view.expandable }"
       v-bind="
         view.expandable
@@ -113,6 +102,7 @@ function toggle(): void {
   </div>
 </template>
 
+<style scoped src="../lib/disclosure-head.css"></style>
 <style scoped>
 .wcb {
   box-sizing: border-box;
@@ -128,23 +118,8 @@ function toggle(): void {
   animation: kimi-card-in var(--duration-base) var(--ease-out);
 }
 .wcb-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  min-width: 0;
-  min-height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
   color: var(--color-text);
   font-family: inherit;
-  font-size: var(--text-base);
-  line-height: 20px;
-  text-align: left;
-  cursor: pointer;
-  user-select: none;
 }
 .wcb-head.is-static {
   cursor: default;
