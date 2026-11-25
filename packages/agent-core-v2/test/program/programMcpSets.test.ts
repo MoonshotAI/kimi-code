@@ -439,6 +439,7 @@ describe('ProgramMcpSets', () => {
     mainCheckout(checkout);
     const gone = place();
     await writeMcpJson(userFile(), { user: stdioServer('user') });
+    await writeMcpJson(checkoutFile(checkout), { shared: stdioServer('shared') });
     await writeMcpJson(workDirFile(checkout), { home: stdioServer('home') });
     const sets = createSets();
 
@@ -447,13 +448,34 @@ describe('ProgramMcpSets', () => {
     expect(view.list().map((entry) => [entry.name, entry.status])).toEqual([['user', 'failed']]);
     expect(startedTags()).toEqual(['user']);
     await expect(sets.effectiveWorkDir(gone)).resolves.toBe(gone);
-  });
+  }, PROCESS_TIMEOUT_MS);
 
-  it('leaves a working directory under what is now a file without the servers of the primary directory', async () => {
+  it('leaves a working directory that no longer exists in another repository without the servers of that repository', async () => {
     mainCheckout(checkout);
-    const file = join(tempDir('kimi-mcp-sets-gone-'), 'worktrees');
+    const other = mainCheckout(tempDir('kimi-mcp-sets-other-'));
+    const gone = join(other, 'sub');
+    await writeMcpJson(userFile(), { user: stdioServer('user') });
+    await writeMcpJson(checkoutFile(other), { other: stdioServer('other') });
+    const sets = createSets();
+
+    const view = await settled(await sets.acquire(gone));
+
+    expect(view.list().map((entry) => [entry.name, entry.status])).toEqual([['user', 'failed']]);
+    expect(startedTags()).toEqual(['user']);
+    await expect(sets.effectiveWorkDir(gone)).resolves.toBe(gone);
+  }, PROCESS_TIMEOUT_MS);
+
+  it.each([
+    ['elsewhere', () => tempDir('kimi-mcp-sets-gone-')],
+    ['in the checkout', () => checkout],
+    ['in another repository', () => mainCheckout(tempDir('kimi-mcp-sets-other-'))],
+  ])('leaves a working directory under what is now a file %s without the servers of any project', async (_label, place) => {
+    mainCheckout(checkout);
+    const root = place();
+    const file = join(root, 'worktrees');
     await writeFile(file, '', 'utf8');
     const gone = join(file, 'feature');
+    await writeMcpJson(checkoutFile(root), { shared: stdioServer('shared') });
     await writeMcpJson(workDirFile(checkout), { home: stdioServer('home') });
     const sets = createSets();
 
@@ -462,6 +484,25 @@ describe('ProgramMcpSets', () => {
     expect(names(view)).toEqual([]);
     expect(startedTags()).toEqual([]);
     await expect(sets.effectiveWorkDir(gone)).resolves.toBe(gone);
+  }, PROCESS_TIMEOUT_MS);
+
+  it('serves a working directory that comes back by the rules of a checkout, not from the set it had while it was missing', async () => {
+    mainCheckout(checkout);
+    const later = join(tempDir('kimi-mcp-sets-later-'), 'worktree');
+    await writeMcpJson(userFile(), { user: disabledServer() });
+    const sets = createSets();
+    const whileMissing = await sets.acquire(later);
+    expect(names(await settled(whileMissing))).toEqual(['user']);
+
+    linkedWorktree(join(checkout, '.git'), later);
+    await writeMcpJson(checkoutFile(later), { shared: disabledServer() });
+    await writeMcpJson(workDirFile(later), { worktree: disabledServer() });
+    const back = await sets.acquire(later);
+
+    expect(back.service).not.toBe(whileMissing.service);
+    expect(names(await settled(back))).toEqual(['shared', 'user', 'worktree']);
+    await expect(sets.effectiveWorkDir(later)).resolves.toBe(later);
+    expect(startedTags()).toEqual([]);
   });
 
   it('serves every directory outside a repository from the set of the primary directory', async () => {
