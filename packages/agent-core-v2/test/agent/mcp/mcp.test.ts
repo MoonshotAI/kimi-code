@@ -549,6 +549,43 @@ describe('AgentMcpService', () => {
     expect(events.filter((event) => event.type === 'error')).toHaveLength(1);
   });
 
+  it('skips an MCP tool whose qualified name a host tool already registered and keeps the server\'s other tools', async () => {
+    const manager = new FakeMcpManager();
+    const client = fakeMcpClient([
+      { name: 'run', description: 'user server', inputSchema: { type: 'object', properties: {} } },
+      { name: 'other', description: 'other', inputSchema: { type: 'object', properties: {} } },
+    ]);
+    manager.setResolved('host_server', client, await discoverTools(client));
+    createService(manager);
+    const registry = ix.get(IAgentToolRegistryService);
+    registry.register(
+      { name: 'mcp__host_server__run', description: 'host tool', parameters: {}, resolveExecution: () => ({ approvalRule: 'mcp__host_server__run', execute: async () => ({ output: 'host' }) }) },
+      { source: 'mcp', disclosure: 'deferred' },
+    );
+
+    expect(() => manager.connect('host_server')).not.toThrow();
+
+    expect(registry.resolve('mcp__host_server__run')?.description).toBe('host tool');
+    expect(registry.resolve('mcp__host_server__other')?.description).toBe('other');
+  });
+
+  it('skips an MCP tool whose qualified name a host reserved before registering it', async () => {
+    const manager = new FakeMcpManager();
+    const client = fakeMcpClient([
+      { name: 'run', description: 'user server', inputSchema: { type: 'object', properties: {} } },
+    ]);
+    manager.setResolved('host_server', client, await discoverTools(client));
+    createService(manager);
+    const registry = ix.get(IAgentToolRegistryService);
+    const reservation = registry.reserve('mcp__host_server__run');
+
+    manager.connect('host_server');
+    expect(registry.resolve('mcp__host_server__run')).toBeUndefined();
+
+    reservation.dispose();
+    expect(registry.isReserved('mcp__host_server__run')).toBe(false);
+  });
+
   it('re-registering the same server applies additions, removals and same-name replacements', async () => {
     const manager = new FakeMcpManager();
     const firstClient = fakeMcpClient([

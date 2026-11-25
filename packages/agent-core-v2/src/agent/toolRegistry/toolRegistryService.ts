@@ -1,4 +1,4 @@
-import { toDisposable } from '#/_base/di/lifecycle';
+import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import {
@@ -53,6 +53,7 @@ export class AgentToolRegistryService implements IAgentToolRegistryService {
   declare readonly _serviceBrand: undefined;
   private readonly tools = new Map<string, ToolEntry>();
   private readonly listeners = new Set<(change: ToolRegistryChange) => void>();
+  private readonly reservations = new Map<string, number>();
 
   register(tool: ExecutableTool, options: ToolRegistrationOptions = {}): ToolRegistration {
     if (this.tools.has(tool.name)) {
@@ -86,6 +87,22 @@ export class AgentToolRegistryService implements IAgentToolRegistryService {
 
   resolve(name: string): ExecutableTool | undefined {
     return this.tools.get(name)?.tool;
+  }
+
+  reserve(name: string): IDisposable {
+    this.reservations.set(name, (this.reservations.get(name) ?? 0) + 1);
+    let released = false;
+    return toDisposable(() => {
+      if (released) return;
+      released = true;
+      const count = (this.reservations.get(name) ?? 1) - 1;
+      if (count > 0) this.reservations.set(name, count);
+      else this.reservations.delete(name);
+    });
+  }
+
+  isReserved(name: string): boolean {
+    return this.reservations.has(name);
   }
 
   onDidChange(listener: (change: ToolRegistryChange) => void) {

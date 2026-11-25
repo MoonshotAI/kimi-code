@@ -9,6 +9,7 @@ import {
   IAppendLogStore,
   IConfigService,
   IEventService,
+  IFeatureManager,
   IMcpOAuthService,
   IProviderDiscoveryService,
   ISessionIndex,
@@ -37,6 +38,7 @@ import {
   KIMI_CODE_PROVIDER_NAME,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
+import type { ServiceClassRecipe } from '@moonshot-ai/agent-core-v2/_base/di/fiber';
 import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -132,6 +134,7 @@ export interface ServerStartOptions {
   readonly webTitle?: string;
   readonly rpcToken?: string;
   readonly seeds?: ScopeSeed;
+  readonly features?: readonly ServiceClassRecipe[];
   readonly hostIdentity: ServerHostIdentity;
   readonly skillDirs?: readonly string[];
   readonly webAssetsDir?: string;
@@ -240,6 +243,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
+  const featureManager = core.accessor.get(IFeatureManager);
+  for (const feature of opts.features ?? []) featureManager.provideUnit(feature);
   const environments = core.accessor.get(IEnvironmentService);
   const legacyAcpBindingSubscription = core.accessor.get(ISessionManager).onDidCreateSession?.((event) => {
     const main = event.handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);

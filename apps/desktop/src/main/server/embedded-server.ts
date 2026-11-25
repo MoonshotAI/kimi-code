@@ -18,10 +18,12 @@ import { log } from '../diagnostics/log';
 import { createDesktopServerLogger } from './server-log';
 import { createDesktopAuthTokenService } from './server-auth';
 import { wireDesktopTelemetry } from '../diagnostics/telemetry';
-import { startDesktopBrowserMcp } from '../browser/browser-mcp';
-import { createDesktopBrowserAccess, registerDesktopBrowserMcp } from '../browser/browser-mcp-registration';
+import { HostBrowserFeature } from '../browser/browser-feature';
+import { IHostBrowser } from '../browser/browser-host-contract';
+import { createDesktopBrowserHost } from '../browser/browser-host';
+import { startBrowserTestEndpoint, type BrowserTestEndpoint } from '../browser/browser-test-endpoint';
 import { browserAgentControl, browserSubagentControl } from '../browser/browser-agent-control';
-import { registerDesktopBrowserDialogReminder } from '../browser/browser-dialog-reminder';
+import { registerBrowserDialogCleanup } from '../browser/browser-dialog-reminder';
 import { collectBrowserDialogReminder, forgetSessionBrowserDialogs } from '../browser/browser-automation';
 
 export interface DesktopServerHandle {
@@ -48,15 +50,9 @@ export async function startDesktopServer(
 
   process.env['KIMI_CODE_REGION_MARKER'] = 'off';
 
-  const browserAccess = createDesktopBrowserAccess(browserAgentControl, browserSubagentControl);
-  const browserMcp = await startDesktopBrowserMcp({
-    access: browserAccess,
-    token:
-      opts.debugEndpoints === true
-        ? process.env['KIMI_BROWSER_MCP_TEST_TOKEN']
-        : undefined,
-  });
-  log.info(`[kimi-desktop] Browser MCP listening on ${browserMcp.url}`);
+  const browserHost = createDesktopBrowserHost(browserAgentControl, browserSubagentControl, { collect: collectBrowserDialogReminder });
+  const browserTestToken = opts.debugEndpoints === true ? process.env['KIMI_BROWSER_TEST_TOKEN'] : undefined;
+  let browserTestEndpoint: BrowserTestEndpoint | undefined;
   let handle: Awaited<ReturnType<typeof startServer>>;
   try {
     handle = await startServer({
@@ -74,29 +70,33 @@ export async function startDesktopServer(
       corsOrigins: ['app://renderer', ...(opts.extraCorsOrigins ?? [])],
       authTokenService: createDesktopAuthTokenService(homeDir),
       debugEndpoints: opts.debugEndpoints === true,
+      seeds: [[IHostBrowser, browserHost]],
+      features: [HostBrowserFeature],
     });
   } catch (error) {
-    await browserMcp.close();
+    browserHost.dispose();
     throw error;
   }
 
-  let browserRegistration: ReturnType<typeof registerDesktopBrowserMcp> | undefined;
-  let dialogReminder: ReturnType<typeof registerDesktopBrowserDialogReminder> | undefined;
+  let dialogCleanup: ReturnType<typeof registerBrowserDialogCleanup> | undefined;
   let telemetry: Awaited<ReturnType<typeof wireDesktopTelemetry>>;
   const close = async (): Promise<void> => {
     const results = await Promise.allSettled([
-      Promise.resolve().then(() => browserRegistration?.dispose()),
-      Promise.resolve().then(() => dialogReminder?.dispose()),
+      Promise.resolve().then(() => dialogCleanup?.dispose()),
+      Promise.resolve().then(() => browserTestEndpoint?.close()),
       Promise.resolve().then(() => telemetry?.shutdown()),
       Promise.resolve().then(() => handle.close()),
-      Promise.resolve().then(() => browserMcp.close()),
+      Promise.resolve().then(() => browserHost.dispose()),
     ]);
     const failures = results.filter(result => result.status === 'rejected');
     if (failures.length > 0) throw new AggregateError(failures.map(result => result.reason), 'Server cleanup failed');
   };
   try {
-    browserRegistration = registerDesktopBrowserMcp(handle.core, browserMcp.config, browserAccess);
-    dialogReminder = registerDesktopBrowserDialogReminder(handle.core, { collect: collectBrowserDialogReminder, forgetSession: forgetSessionBrowserDialogs });
+    dialogCleanup = registerBrowserDialogCleanup(handle.core, forgetSessionBrowserDialogs);
+    if (browserTestToken !== undefined) {
+      browserTestEndpoint = await startBrowserTestEndpoint(browserHost, browserTestToken);
+      log.info(`[kimi-desktop] Browser test endpoint listening on ${browserTestEndpoint.url}`);
+    }
     telemetry = await wireDesktopTelemetry(handle.core, { deviceId: host.deviceId });
     log.info(`[kimi-desktop] embedded server listening on http://${handle.host}:${handle.port}`);
     return {

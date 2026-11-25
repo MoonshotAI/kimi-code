@@ -77,7 +77,7 @@ export interface Fixtures {
 interface Launch {
   readonly electron: ElectronApplication;
   readonly output: string[];
-  readonly mcpUrl: () => string | undefined;
+  readonly browserUrl: () => string | undefined;
   readonly serverOrigin: () => string | undefined;
 }
 
@@ -188,7 +188,7 @@ export const test = base.extend<Options & Fixtures>({
         ...networkGuardEnv(networkLog, [...kimiServiceStubs(), OFFLINE_MODELS_DEV]),
         KIMI_CODE_HOME: home,
         KIMI_CODE_BASE_URL: KIMI_SERVICE_URL,
-        KIMI_BROWSER_MCP_TEST_TOKEN: token,
+        KIMI_BROWSER_TEST_TOKEN: token,
         KIMI_MCP_RECONNECT_INITIAL_DELAY_MS: '600000',
         KIMI_MCP_RECONNECT_MAX_DELAY_MS: '600000',
         KIMI_DESKTOP_NO_SHELL_ENV: '1',
@@ -215,13 +215,13 @@ export const test = base.extend<Options & Fixtures>({
         env,
       });
       const launchOutput: string[] = [];
-      let mcpUrl: string | undefined;
+      let browserUrl: string | undefined;
       let serverOrigin: string | undefined;
       const collect = (chunk: Buffer): void => {
         const text = chunk.toString();
         output.push(text);
         launchOutput.push(text);
-        mcpUrl ??= /Browser MCP listening on (\S+)/.exec(launchOutput.join(''))?.[1];
+        browserUrl ??= /Browser test endpoint listening on (\S+)/.exec(launchOutput.join(''))?.[1];
         serverOrigin ??= /embedded server listening on (http:\/\/[^\s/]+)/.exec(launchOutput.join(''))?.[1];
       };
       electron.process().stdout?.on('data', collect);
@@ -239,7 +239,7 @@ export const test = base.extend<Options & Fixtures>({
         await closeApp(electron);
         throw error;
       }
-      return { electron, output: launchOutput, mcpUrl: () => mcpUrl, serverOrigin: () => serverOrigin };
+      return { electron, output: launchOutput, browserUrl: () => browserUrl, serverOrigin: () => serverOrigin };
     };
 
     const traces: Array<{ path: string; clean: boolean }> = [];
@@ -283,7 +283,7 @@ export const test = base.extend<Options & Fixtures>({
       serverOrigin = launch.serverOrigin()!;
       if (quietMode) await window.emulateMedia({ reducedMotion: 'reduce' });
       if (seed !== 'none') await seedRenderer(window, serverOrigin, seed === 'workspace' ? workspace : null, onboarded);
-      await expect.poll(launch.mcpUrl, { message: 'waiting for the browser MCP endpoint in the app log', timeout: 30_000 }).toBeDefined();
+      await expect.poll(launch.browserUrl, { message: 'waiting for the browser test endpoint in the app log', timeout: 30_000 }).toBeDefined();
       return window;
     };
 
@@ -376,8 +376,7 @@ export const test = base.extend<Options & Fixtures>({
             sessionId = /\/sessions\/([^/?#]+)/.exec(window.url())?.[1];
             return sessionId;
           }, { message: 'waiting for the session route' }).toBeDefined();
-          const mcpUrl = current.mcpUrl()!;
-          const agent = await connectBrowserAgent(mcpUrl, token, decodeURIComponent(sessionId!));
+          const agent = connectBrowserAgent(current.browserUrl()!, token, decodeURIComponent(sessionId!));
           agents.push(agent);
           return agent;
         },

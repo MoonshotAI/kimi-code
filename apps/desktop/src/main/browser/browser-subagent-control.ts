@@ -1,7 +1,6 @@
 import type { BrowserController, BrowserSubagentRun } from '../../shared/browser-run';
 import { BrowserControlError } from './browser-control-ownership';
 
-export const DESKTOP_BROWSER_SUBAGENT_RUN = '__kimiDesktopSubagentRun';
 export const DESKTOP_BROWSER_SUBAGENT_RUN_REASON = 'This subagent run is not currently running with built-in browser control enabled, so `mcp__desktop_browser__run` is unavailable.';
 
 export interface DesktopBrowserSubagentRun extends BrowserController {
