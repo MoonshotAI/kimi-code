@@ -70,7 +70,7 @@ Sessions created or restored with Plan mode active report Plan in both mode pick
 
 | Method | Implemented | Description |
 | --- | --- | --- |
-| `session/update` | Yes | Streams `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` |
+| `session/update` | Yes | Streams `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update`. Retry progress is sent as a warning `notice` when the client advertises `clientCapabilities.session.notices`; other clients receive the same status in an `agent_message_chunk`. Synthetic retry updates are not added to model history |
 | `session/request_permission` | Yes | Shared channel for tool approvals and questions. Bash approvals include the complete command and working directory. Resolved absolute file targets appear in `toolCall.locations` |
 | `fs/read_text_file` | Yes | Engine file reads are routed to the client when it advertises `fsCapabilities` |
 | `fs/write_text_file` | Yes | Engine file writes are routed to the client |

@@ -35,6 +35,7 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   waitIdle: () => '等回合结束',
   expectTool: toolCheck,
   expectReply: (text) => `检查回复里有${quote(text)}`,
+  expectNotice: (text) => `检查实时通知里有${quote(text)}`,
   expectError: (text) => `检查回合失败了，错误里有${quote(text)}`,
   expectAbsent: (text) => `检查回复里没有${quote(text)}`,
   continue: () => '用户点「继续」，让失败的回合接着做',

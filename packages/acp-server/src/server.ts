@@ -424,6 +424,7 @@ export class AcpServer {
       Boolean(this.clientCapabilities?.elicitation?.form),
       this.resolveOriginalsDir,
       hostCommands,
+      Boolean(this.clientCapabilities?.session?.notices),
     );
     await acpSession.init(() => this.resolveSessionMode?.(sessionId));
     return acpSession;

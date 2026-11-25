@@ -86,6 +86,54 @@ export function isAuthError(error?: { readonly code: string }): boolean {
   return error !== undefined && AUTH_ERROR_CODES.has(error.code);
 }
 
+export interface RetryProgress {
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly maxAttempts: number;
+  readonly delayMs: number;
+  readonly errorName: string;
+  readonly errorMessage: string;
+  readonly statusCode?: number;
+}
+
+const RETRY_MESSAGE_MAX_CHARS = 240;
+
+export function retryingToSessionUpdate(
+  sessionId: string,
+  event: RetryProgress,
+  useNotice: boolean,
+): SessionNotification {
+  const title = `Model request failed; retrying (attempt ${event.nextAttempt})`;
+  const delay =
+    event.delayMs <= 0 ? 'immediately' : `in ${Math.ceil(event.delayMs / 1000)}s`;
+  const message = event.errorMessage.replaceAll(/\s+/g, ' ').trim();
+  const detail = [
+    delay,
+    event.errorName,
+    event.statusCode === undefined ? undefined : String(event.statusCode),
+    message,
+  ]
+    .filter((part): part is string => part !== undefined && part.length > 0)
+    .join(' · ');
+  const description =
+    detail.length > RETRY_MESSAGE_MAX_CHARS
+      ? `${detail.slice(0, RETRY_MESSAGE_MAX_CHARS - 1)}…`
+      : detail;
+  if (useNotice) {
+    return {
+      sessionId,
+      update: { sessionUpdate: 'notice', severity: 'warning', title, description },
+    };
+  }
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: `\n\n${title} · ${description}\n\n` },
+    },
+  };
+}
+
 export function acpToolCallId(turnId: number, toolCallId: string): string {
   return `${turnId}:${toolCallId}`;
 }

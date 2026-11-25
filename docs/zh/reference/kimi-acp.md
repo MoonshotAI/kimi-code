@@ -70,7 +70,7 @@ kimi acp
 
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
-| `session/update` | 是 | 流式推送 `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` |
+| `session/update` | 是 | 流式推送 `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update`。客户端声明 `clientCapabilities.session.notices` 时，重试进度以 warning 级别的 `notice` 推送；其他客户端通过 `agent_message_chunk` 收到同样的状态。合成的重试状态不会写入模型历史 |
 | `session/request_permission` | 是 | 工具审批和提问共用此通道。Bash 审批包含完整命令和工作目录。已解析的绝对文件路径通过 `toolCall.locations` 提供 |
 | `fs/read_text_file` | 是 | 客户端声明 `fsCapabilities` 时，引擎的文件读取路由到客户端 |
 | `fs/write_text_file` | 是 | 引擎的文件写入路由到客户端 |

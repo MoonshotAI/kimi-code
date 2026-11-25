@@ -838,6 +838,7 @@ describe('event hub', () => {
       cancelled: [] as unknown[],
       completed: [] as unknown[],
       turnEnded: [] as unknown[],
+      retrying: [] as unknown[],
     };
     const errors: Error[] = [];
     agent.events.onError((error) => {
@@ -851,6 +852,7 @@ describe('event hub', () => {
     agent.events.on('compaction.cancelled', (event) => seen.cancelled.push(event));
     agent.events.on('compaction.completed', (event) => seen.completed.push(event));
     agent.events.on('turn.ended', (event) => seen.turnEnded.push(event));
+    agent.events.on('turn.step.retrying', (event) => seen.retrying.push(event));
 
     expect(channel.subscriptions).toHaveLength(1);
     expect(channel.subscriptions[0]?.scope).toEqual({ sessionId: 's1', agentId: 'main' });
@@ -874,6 +876,18 @@ describe('event hub', () => {
       type: 'compaction.completed',
       result: { summary: 's', compactedCount: 3, tokensBefore: 100, tokensAfter: 40 },
     };
+    const retrying = {
+      type: 'turn.step.retrying',
+      turnId: 1,
+      step: 1,
+      failedAttempt: 1,
+      nextAttempt: 2,
+      maxAttempts: 10,
+      delayMs: 500,
+      errorName: 'rate_limit',
+      errorMessage: 'Try again.',
+      statusCode: 429,
+    };
     channel.emit(0, delta);
     channel.emit(0, progress);
     channel.emit(0, started);
@@ -883,6 +897,7 @@ describe('event hub', () => {
     channel.emit(0, { type: 'turn.ended', turnId: 1, reason: 'completed', time: 1 });
     channel.emit(0, { type: 'turn.ended', turnId: 1, reason: 'completed', continuation: 'background', time: 2 });
     channel.emit(0, { type: 'turn.ended', turnId: 2, reason: 'completed', continuation: 'none', time: 3 });
+    channel.emit(0, retrying);
     channel.emit(0, { type: 'tool.updated', turnId: 1, toolCallId: 'tc1', taskId: 'task-1', status: 'running', detached: false }); // missing fields
     channel.emit(0, { type: 'unregistered.type', turnId: 1 });
     await tick();
@@ -893,6 +908,7 @@ describe('event hub', () => {
     expect(seen.blocked).toEqual([blocked]);
     expect(seen.cancelled).toEqual([cancelled]);
     expect(seen.completed).toEqual([completed]);
+    expect(seen.retrying).toEqual([retrying]);
     expect(seen.turnEnded).toEqual([
       { type: 'turn.ended', turnId: 1, reason: 'completed', time: 1 },
       { type: 'turn.ended', turnId: 1, reason: 'completed', continuation: 'background', time: 2 },

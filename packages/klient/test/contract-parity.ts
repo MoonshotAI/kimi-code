@@ -8,6 +8,7 @@ import type {
   AssistantDeltaEvent,
   ThinkingDeltaEvent,
   TurnStartedEvent,
+  TurnStepRetryingPayload,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { SessionActivityState } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
@@ -204,6 +205,7 @@ import {
   toolResultEventSchema,
   turnEndedEventSchema,
   turnStartedEventSchema,
+  turnStepRetryingEventSchema,
   warningEventSchema,
 } from '../src/contract/agent/events.js';
 import {
@@ -655,6 +657,13 @@ const _fullCompactionInput: AssertWire<typeof fullCompactionInputSchema, FullCom
 
 const _turnStartedEvent: AssertEngineToWire<typeof turnStartedEventSchema, TurnStartedEvent> = true;
 const _turnEndedEvent: AssertEngineToWire<typeof turnEndedEventSchema, TurnEndedEvent> = true;
+const _turnStepRetryingEvent: AssertWire<
+  typeof turnStepRetryingEventSchema,
+  Omit<TurnStepRetryingPayload, 'agentId' | 'type' | 'time'> & {
+    type: 'turn.step.retrying';
+    time?: number;
+  }
+> = true;
 const _assistantDeltaEvent: AssertWire<typeof assistantDeltaEventSchema, AssistantDeltaEvent> =
   true;
 const _thinkingDeltaEvent: AssertWire<typeof thinkingDeltaEventSchema, ThinkingDeltaEvent> = true;

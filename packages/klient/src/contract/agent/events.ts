@@ -34,6 +34,24 @@ export const turnEndedEventSchema = z.object({
   continuation: z.enum(['turn', 'background', 'none']).optional(),
 });
 
+const turnStepRetryingAttemptSchema = z.object({
+  failedAttempt: z.number(),
+  nextAttempt: z.number(),
+  maxAttempts: z.number(),
+  delayMs: z.number(),
+});
+
+export const turnStepRetryingEventSchema = turnStepRetryingAttemptSchema.extend({
+  type: z.literal('turn.step.retrying'),
+  time: z.number().optional(),
+  turnId: z.number(),
+  step: z.number(),
+  stepId: z.string().optional(),
+  errorName: z.string(),
+  errorMessage: z.string(),
+  statusCode: z.number().optional(),
+});
+
 export const assistantDeltaEventSchema = z.object({
   type: z.literal('assistant.delta'),
   time: z.number().optional(),
@@ -174,6 +192,7 @@ export const agentStatusUpdatedEventSchema = z.looseObject({
 export interface AgentEventPayloads {
   'turn.started': z.infer<typeof turnStartedEventSchema>;
   'turn.ended': z.infer<typeof turnEndedEventSchema>;
+  'turn.step.retrying': z.infer<typeof turnStepRetryingEventSchema>;
   'assistant.delta': z.infer<typeof assistantDeltaEventSchema>;
   'thinking.delta': z.infer<typeof thinkingDeltaEventSchema>;
   'tool.call.started': z.infer<typeof toolCallStartedEventSchema>;
@@ -198,6 +217,7 @@ export type AgentEventName = keyof AgentEventPayloads;
 export const agentEvents = {
   'turn.started': { kind: 'stream', name: 'events', type: 'turn.started', schema: turnStartedEventSchema },
   'turn.ended': { kind: 'stream', name: 'events', type: 'turn.ended', schema: turnEndedEventSchema },
+  'turn.step.retrying': { kind: 'stream', name: 'events', type: 'turn.step.retrying', schema: turnStepRetryingEventSchema },
   'assistant.delta': { kind: 'stream', name: 'events', type: 'assistant.delta', schema: assistantDeltaEventSchema },
   'thinking.delta': { kind: 'stream', name: 'events', type: 'thinking.delta', schema: thinkingDeltaEventSchema },
   'tool.call.started': { kind: 'stream', name: 'events', type: 'tool.call.started', schema: toolCallStartedEventSchema },
