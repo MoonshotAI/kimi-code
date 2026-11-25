@@ -42,8 +42,12 @@ export function resolveWindowsBashEnv(options: WindowsBashRuntimeOptions = {}): 
   const entries = env[pathKey]?.split(';').filter(Boolean) ?? [];
   const normalizedBin = normalizedPath(binDir);
   const bundled = (entry: string) => normalizedPath(entry) === normalizedBin;
-  return {
+  const runtime = {
     KIMI_SHELL_PATH: win32.join(binDir, 'bash.exe'),
     [pathKey]: [entries.find(bundled) ?? binDir, ...entries.filter(entry => !bundled(entry))].join(';'),
   };
+  if (!env['HOME'] && !(env['HOMEDRIVE'] && env['HOMEPATH']) && env['USERPROFILE']) {
+    runtime['HOME'] = env['USERPROFILE'];
+  }
+  return runtime;
 }

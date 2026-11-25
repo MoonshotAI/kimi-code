@@ -1,9 +1,9 @@
-import { mkdtemp, link, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, link, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { zstdCompressSync } from 'node:zlib';
-import { c as createTar } from 'tar';
+import { c as createTar, Header } from 'tar';
 import { afterEach, describe, expect, it } from 'vitest';
 // @ts-expect-error JavaScript build script has no declaration file.
 import { prepareWindowsBash, verifyWindowsBashRuntime } from '../../../scripts/prepare-windows-bash.mjs';
@@ -35,7 +35,6 @@ async function makePackage(dir: string, options: { depends?: string[]; traversal
   await mkdir(bin, { recursive: true });
   for (const file of requiredFiles) await writeFile(path.join(bin, file), file === 'bash.exe' ? 'bash' : file);
   await writeFile(path.join(bin, 'bash.exe'), 'bash');
-  await symlink('bash.exe', path.join(bin, 'alias.exe'));
   await link(path.join(bin, 'bash.exe'), path.join(bin, 'hardlink.exe'));
   await mkdir(path.join(source, 'usr', 'share', 'doc', 'bash'), { recursive: true });
   await writeFile(path.join(source, 'usr', 'share', 'doc', 'bash', 'COPYING'), 'license');
@@ -58,11 +57,13 @@ async function makePackage(dir: string, options: { depends?: string[]; traversal
     await writeFile(path.join(dir, 'outside.txt'), 'outside');
   }
   const tarPath = path.join(dir, 'package.tar');
-  await createTar({ cwd: source, file: tarPath, sync: true }, options.traversal === true ? ['.', '../outside.txt'] : ['.']);
+  await createTar({ cwd: source, file: tarPath }, options.traversal === true ? ['.', '../outside.txt'] : ['.']);
   const cacheDir = path.join(dir, 'cache');
   await mkdir(cacheDir, { recursive: true });
   const filename = 'bash-1-1-x86_64.pkg.tar.zst';
-  const body = zstdCompressSync(await readFile(tarPath));
+  const alias = Buffer.alloc(512);
+  new Header({ path: 'usr/bin/alias.exe', type: 'SymbolicLink', linkpath: 'bash.exe' }).encode(alias);
+  const body = zstdCompressSync(Buffer.concat([alias, await readFile(tarPath)]));
   await writeFile(path.join(cacheDir, filename), body);
   const lockPath = path.join(dir, 'lock.json');
   await writeFile(lockPath, JSON.stringify({
@@ -111,13 +112,18 @@ describe('prepareWindowsBash', () => {
     await expect(prepareWindowsBash({ platform: 'win32', ...options })).resolves.toEqual(result);
   });
 
-  it('ships the Windows user temp mount even when packaging omits empty directories', async () => {
+  it('ships drive-letter and user temp mounts and resolves home from the Windows environment', async () => {
     const otherMount = 'none /drives cygdrive binary 0 0';
     const options = await makePackage(await workspace(), { fstab: otherMount });
     await prepareWindowsBash({ platform: 'win32', ...options });
     await rm(path.join(options.outputDir, 'tmp'), { recursive: true, force: true });
     const fstab = path.join(options.outputDir, 'etc', 'fstab');
-    expect((await readFile(fstab, 'utf8')).trim().split(/\r?\n/)).toEqual([otherMount, 'none /tmp usertemp binary,posix=0 0 0']);
+    expect((await readFile(fstab, 'utf8')).trim().split(/\r?\n/)).toEqual([
+      otherMount,
+      'none / cygdrive binary,posix=0,noacl,user 0 0',
+      'none /tmp usertemp binary,posix=0 0 0',
+    ]);
+    expect((await readFile(path.join(options.outputDir, 'etc', 'nsswitch.conf'), 'utf8')).trim()).toBe('db_home: env windows cygwin desc');
     await expect(verifyWindowsBashRuntime(options.outputDir)).resolves.toBeDefined();
     await rm(fstab);
     await expect(verifyWindowsBashRuntime(options.outputDir)).rejects.toThrow('Missing Windows Bash runtime files: etc/fstab');

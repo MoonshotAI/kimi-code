@@ -23,10 +23,15 @@ describe('resolveWindowsBashEnv', () => {
     expect(env).toEqual({ [key]: 'D:\\Custom\\bash.exe', Path: 'D:\\Tools' });
   });
 
-  it('returns only the private shell and search path, without modifying the parent environment', () => {
+  it('uses the supplied Windows profile when HOME and the home drive are absent', () => {
     const env = Object.freeze({ Path: 'C:\\Windows\\System32', USERPROFILE: 'D:\\User' });
     expect(resolveWindowsBashEnv({ platform: 'win32', env, packaged: true, resourcesPath: 'C:\\Kimi Code\\resources', fileExists: exists }))
-      .toEqual({ KIMI_SHELL_PATH: `${bin}\\bash.exe`, Path: `${bin};C:\\Windows\\System32` });
+      .toEqual({ KIMI_SHELL_PATH: `${bin}\\bash.exe`, Path: `${bin};C:\\Windows\\System32`, HOME: 'D:\\User' });
+  });
+
+  it.each([{ HOME: 'D:\\Custom' }, { HOMEDRIVE: 'H:', HOMEPATH: '\\Home' }])('preserves a configured home ahead of USERPROFILE', (home) => {
+    const env = { ...home, USERPROFILE: 'D:\\User' };
+    expect(resolveWindowsBashEnv({ platform: 'win32', env, runtimeRoot: root, fileExists: exists })).not.toHaveProperty('HOME');
   });
 
   it('resolves the development runtime below resources-stage', () => {

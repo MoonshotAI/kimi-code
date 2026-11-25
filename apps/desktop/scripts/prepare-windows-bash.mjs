@@ -28,6 +28,7 @@ const defaultCacheDir = path.join(desktopDir, 'resources-stage', 'windows-bash-c
 
 const requiredFiles = [
   'etc/fstab',
+  'etc/nsswitch.conf',
   'usr/bin/bash.exe',
   'usr/bin/sh.exe',
   'usr/bin/cygpath.exe',
@@ -309,14 +310,20 @@ export async function verifyWindowsBashRuntime(runtimeDir, options = {}) {
   if (options.smoke === true && process.platform === 'win32') {
     const binDir = path.join(runtimeDir, 'usr', 'bin');
     const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
-    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !['PATH', 'TMP', 'TEMP', 'TMPDIR', 'BASH_ENV'].includes(key.toUpperCase())));
+    const isolatedKeys = ['PATH', 'TMP', 'TEMP', 'TMPDIR', 'BASH_ENV', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'USERPROFILE'];
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !isolatedKeys.includes(key.toUpperCase())));
     env.PATH = [binDir, `${systemRoot}\\System32`, systemRoot].join(';');
     const userTemp = await mkdtemp(path.join(tmpdir(), 'kimi bash temp '));
     try {
       env.TMP = userTemp;
       env.TEMP = userTemp;
+      env.USERPROFILE = path.join(userTemp, 'user profile');
+      env.HOMEDRIVE = path.parse(userTemp).root.slice(0, -1);
+      env.HOMEPATH = env.USERPROFILE.slice(env.HOMEDRIVE.length);
+      await mkdir(env.USERPROFILE);
       const marker = path.basename(userTemp);
       await writeFile(path.join(userTemp, marker), 'from-windows');
+      await writeFile(path.join(env.USERPROFILE, marker), 'from-profile');
       execFileSync(path.join(binDir, 'bash.exe'), ['-s', '--', marker], {
         input: await readFile(new URL('./verify-windows-bash.sh', import.meta.url)),
         env, cwd: runtimeDir, encoding: 'utf8', timeout: 30_000, windowsHide: true,
@@ -391,7 +398,8 @@ export async function prepareWindowsBash(options = {}) {
     await copyFile(path.join(temporary, 'usr/bin/bash.exe'), path.join(temporary, 'bin/bash.exe'));
     await copyFile(path.join(temporary, 'usr/bin/sh.exe'), path.join(temporary, 'bin/sh.exe'));
     for (const directory of ['etc', 'dev', 'proc']) await mkdir(path.join(temporary, directory), { recursive: true });
-    await appendFile(path.join(temporary, 'etc', 'fstab'), '\nnone /tmp usertemp binary,posix=0 0 0\n');
+    await appendFile(path.join(temporary, 'etc', 'fstab'), '\nnone / cygdrive binary,posix=0,noacl,user 0 0\nnone /tmp usertemp binary,posix=0 0 0\n');
+    await appendFile(path.join(temporary, 'etc', 'nsswitch.conf'), '\ndb_home: env windows cygwin desc\n');
     await cp(path.join(desktopDir, 'build', 'windows-bash-licenses'), path.join(temporary, 'licenses', 'common'), { recursive: true });
     await writeFile(path.join(temporary, 'source-manifest.json'), `${JSON.stringify(sourceManifest(lock), null, 2)}\n`);
     const result = await verifyWindowsBashRuntime(temporary);

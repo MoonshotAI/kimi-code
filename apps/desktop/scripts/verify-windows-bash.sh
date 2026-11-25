@@ -36,6 +36,7 @@ verify_runtime() {
     fi
   done
   test "$(cat "/tmp/$marker")" = from-windows
+  test "$(cd ~ && cat "$marker")" = from-profile
   tmp=$(mktemp)
   test "$tmp" -ef "/tmp/${tmp##*/}"
   printf 'alpha\nbeta\n' > "/tmp/${tmp##*/}"

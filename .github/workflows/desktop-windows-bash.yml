@@ -11,6 +11,10 @@ on:
       - 'apps/desktop/scripts/prepare-windows-bash.mjs'
       - 'apps/desktop/scripts/verify-windows-bash.sh'
       - 'apps/desktop/src/main/server/windows-bash-runtime.ts'
+      - 'apps/desktop/src/main/server/embedded-server.ts'
+      - 'apps/desktop/e2e/bash-tool-card.spec.ts'
+      - 'packages/agent-core-v2/src/_base/execEnv/shellPathBridge.ts'
+      - 'packages/agent-core-v2/src/os/backends/node-local/hostServices.ts'
 
 permissions:
   contents: read
@@ -50,3 +54,5 @@ jobs:
           exit 0
       - name: Start the built Desktop and complete a local session
         run: pnpm --filter kimi-code-app run e2e:headless --no-build --project=smoke --grep=desktop.first-turn
+      - name: Read workspace and user profile files through the Desktop Bash tool
+        run: pnpm --filter kimi-code-app run e2e:headless --no-build --project=turns-transcript --no-deps --grep=Bash.reads.files.in.the.workspace

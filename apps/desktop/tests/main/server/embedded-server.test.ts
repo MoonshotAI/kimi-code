@@ -188,11 +188,9 @@ describe('startDesktopServer', () => {
     try {
       expect(env?.[pathKey]).toBe(originalPath);
       expect(env?.['KIMI_SHELL_PATH']).toBe(originalShell);
-      if (process.platform === 'win32') {
-        const host = services.invokeFunction(a => a.get(IHostEnvironment));
-        await host.ready;
-        expect(host.shellPath).toBe(runtime.KIMI_SHELL_PATH);
-      }
+      const host = services.invokeFunction(a => a.get(IHostEnvironment));
+      await host.ready;
+      expect(host.shellPath === runtime.KIMI_SHELL_PATH).toBe(process.platform === 'win32');
       const processes = services.invokeFunction(a => a.get(IHostProcessService));
       const childEnv = async (command: string) => {
         const child = await processes.spawn(command, ['-p', 'JSON.stringify([process.env.PATH, process.env.KIMI_SHELL_PATH, process.env.KIMI_CODE_SESSION_ID])'], { env: { KIMI_CODE_SESSION_ID: 'test-session' } });
@@ -201,7 +199,7 @@ describe('startDesktopServer', () => {
           expect(code).toBe(0);
           return JSON.parse(output) as unknown;
         } finally {
-          child.dispose();
+          await child.dispose();
         }
       };
       await expect(childEnv(process.execPath)).resolves.toEqual([runtime[pathKey], process.execPath, 'test-session']);

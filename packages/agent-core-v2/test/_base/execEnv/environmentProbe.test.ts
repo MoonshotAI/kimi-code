@@ -46,11 +46,12 @@ describe('probeHostEnvironment', () => {
     const parent = probeHostEnvironmentFromNode();
     const explicit = probeHostEnvironmentFromNode(process.execPath);
     expect(explicit).not.toBe(parent);
-    const [parentResult, scoped] = await Promise.allSettled([parent, explicit]);
-    expect(scoped.status).toBe('fulfilled');
-    if (process.platform === 'win32') expect(scoped).toMatchObject({ value: { shellPath: process.execPath } });
+    const [defaultHost, scoped] = await Promise.all([parent.catch((error: unknown) => {
+      if (process.platform === 'win32' && error instanceof ProbeShellNotFoundError) return undefined;
+      throw error;
+    }), explicit]);
+    expect(scoped.shellPath).toBe(process.platform === 'win32' ? process.execPath : defaultHost?.shellPath);
     expect(probeHostEnvironmentFromNode()).toBe(parent);
-    if (parentResult.status === 'rejected') expect(parentResult.reason).toBeInstanceOf(ProbeShellNotFoundError);
   });
 
   it('resolves MSYS2 ucrt64 native git through git --exec-path', async () => {
