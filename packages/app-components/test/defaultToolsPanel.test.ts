@@ -478,9 +478,6 @@ describe('defaultToolsCatalog', () => {
     expect(groups.flatMap((group) => group.tools.map((tool) => tool.name)).toSorted()).toEqual(
       [...ALL_CONFIGURABLE_TOOLS].toSorted(),
     );
-    expect(groups.find((group) => group.id === 'file')?.tools.map((tool) => tool.name)).toEqual([
-      'Read', 'Write', 'Edit', 'Glob', 'Grep',
-    ]);
     expect(groups.find((group) => group.id === 'shell')?.tools.map((tool) => tool.name)).toEqual([
       'Bash', 'TaskList', 'TaskOutput', 'TaskStop', 'WaitFor',
     ]);

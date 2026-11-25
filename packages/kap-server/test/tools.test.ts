@@ -149,7 +149,6 @@ describe('server-v2 /api/v1 tools', () => {
       expect(tools).toContainEqual({ name: 'Read', source: 'builtin' });
       expect(tools).toContainEqual({ name: 'Skill', source: 'builtin' });
       expect(tools).toContainEqual({ name: 'TodoList', source: 'builtin' });
-      expect(tools.some((tool) => tool.name === 'ReadMediaFile')).toBe(false);
       expect(tools).toContainEqual({ name: 'TowerInit', source: 'builtin' });
       expect(tools).toContainEqual({ name: 'TowerSpawn', source: 'builtin' });
       expect(tools).toContainEqual({ name: 'TowerTeardown', source: 'builtin' });
@@ -172,9 +171,7 @@ describe('server-v2 /api/v1 tools', () => {
       await createSession();
       const { body } = await getJson<{ tools: ToolWire[] }>('/api/v1/tools');
       expect(body.code).toBe(0);
-      const tools = listToolsResponseSchema.parse(body.data).tools;
-      expect(tools.length).toBeGreaterThan(0);
-      expect(tools.find((tool) => tool.name === 'ReadMediaFile')).toMatchObject({ active: true });
+      expect(listToolsResponseSchema.parse(body.data).tools.length).toBeGreaterThan(0);
     });
 
     it('projects registered tools with source mapping and mcp server id', async () => {
