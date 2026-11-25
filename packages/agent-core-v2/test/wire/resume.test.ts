@@ -1,6 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { setImmediate } from 'node:timers/promises';
 import { join } from 'pathe';
 
 import { deferred } from '@moonshot-ai/testkit/fixtures';
@@ -34,6 +33,11 @@ import {
   homeDirServices,
   testAgent,
 } from '../harness';
+
+vi.mock('#/session/sessionMetadata/sessionMetadataService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/session/sessionMetadata/sessionMetadataService')>();
+  return { ...actual, drainSessionMetadataWrites: vi.fn(actual.drainSessionMetadataWrites) };
+});
 
 const MOCK_PROVIDER = {
   type: 'kimi',
@@ -796,17 +800,17 @@ describe('Agent resume', () => {
       );
 
       await writeStarted.promise;
-      const wireFlushed = deferred();
-      const flush = ctx.wire.flush.bind(ctx.wire);
-      vi.spyOn(ctx.wire, 'flush').mockImplementationOnce(async () => {
-        await flush();
-        wireFlushed.resolve();
+      const drainStarted = deferred();
+      const drain = vi.mocked(drainSessionMetadataWrites);
+      const drainWrites = drain.getMockImplementation()!;
+      drain.mockImplementationOnce(async () => {
+        drainStarted.resolve();
+        await drainWrites();
       });
       closing = ctx.dispose().then(() => {
         lifecycle.push('disposed');
       });
-      await wireFlushed.promise;
-      await setImmediate();
+      await Promise.race([drainStarted.promise, closing]);
       releaseWrite.resolve();
       await closing;
       await drainSessionMetadataWrites();
