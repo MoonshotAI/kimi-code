@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fileURLToPath } from 'node:url';
+import { text } from 'node:stream/consumers';
+import { InstantiationService } from '@moonshot-ai/agent-core-v2/_base/di/instantiationService';
+import { ServiceCollection } from '@moonshot-ai/agent-core-v2/_base/di/serviceCollection';
+import { IHostEnvironment } from '@moonshot-ai/agent-core-v2/os/interface/hostEnvironment';
+import { IHostProcessService } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
 
 const {
   startServerMock,
@@ -8,7 +13,7 @@ const {
   wireDesktopTelemetryMock,
   startDesktopBrowserMcpMock,
   configureSearchWorkerRuntimeMock,
-  configureWindowsBashRuntimeMock,
+  resolveWindowsBashEnvMock,
   browserMcpCloseMock,
   registerBrowserMcpMock,
   registrationDisposeMock,
@@ -20,7 +25,7 @@ const {
   wireDesktopTelemetryMock: vi.fn(),
   startDesktopBrowserMcpMock: vi.fn(),
   configureSearchWorkerRuntimeMock: vi.fn(),
-  configureWindowsBashRuntimeMock: vi.fn(() => undefined),
+  resolveWindowsBashEnvMock: vi.fn<typeof import('../../../src/main/server/windows-bash-runtime').resolveWindowsBashEnv>(),
   browserMcpCloseMock: vi.fn().mockResolvedValue(undefined),
   registerBrowserMcpMock: vi.fn(),
   registrationDisposeMock: vi.fn(),
@@ -68,7 +73,7 @@ vi.mock('../../../src/main/browser/browser-mcp', () => ({
   startDesktopBrowserMcp: startDesktopBrowserMcpMock,
 }));
 vi.mock('../../../src/main/server/windows-bash-runtime', () => ({
-  configureWindowsBashRuntime: configureWindowsBashRuntimeMock,
+  resolveWindowsBashEnv: resolveWindowsBashEnvMock,
 }));
 
 import { startDesktopServer } from '../../../src/main/server/embedded-server';
@@ -83,7 +88,7 @@ describe('startDesktopServer', () => {
     registerBrowserMcpMock.mockReset().mockReturnValue({ dispose: registrationDisposeMock });
     registrationDisposeMock.mockReset();
     startServerMock.mockReset();
-    configureWindowsBashRuntimeMock.mockReset().mockReturnValue(undefined);
+    resolveWindowsBashEnvMock.mockReset().mockReturnValue(undefined);
     installProxyMock.mockReset();
     createKimiDeviceIdMock.mockReset().mockReturnValue('device-1');
     wireDesktopTelemetryMock.mockReset().mockResolvedValue(null);
@@ -129,8 +134,8 @@ describe('startDesktopServer', () => {
     expect(installProxyMock).toHaveBeenCalledOnce();
     expect(startDesktopBrowserMcpMock).toHaveBeenCalledWith({ access: browserAccess, token: undefined });
     expect(startServerMock).toHaveBeenCalledOnce();
-    expect(configureWindowsBashRuntimeMock).toHaveBeenCalledOnce();
-    expect(configureWindowsBashRuntimeMock.mock.invocationCallOrder[0]).toBeLessThan(startServerMock.mock.invocationCallOrder[0]!);
+    expect(resolveWindowsBashEnvMock).toHaveBeenCalledOnce();
+    expect(resolveWindowsBashEnvMock.mock.invocationCallOrder[0]).toBeLessThan(startServerMock.mock.invocationCallOrder[0]!);
     expect(configureSearchWorkerRuntimeMock).toHaveBeenCalledWith(fileURLToPath(new URL('../../../src/main/server/search-worker.cjs', import.meta.url)));
     const args = startServerMock.mock.calls[0]![0];
     expect(args.host).toBe('127.0.0.1');
@@ -166,6 +171,47 @@ describe('startDesktopServer', () => {
     expect(close).toHaveBeenCalledOnce();
     expect(registrationDisposeMock).toHaveBeenCalledOnce();
     expect(browserMcpCloseMock).toHaveBeenCalledOnce();
+  });
+
+  it('gives only the selected local executable the bundled shell environment', async () => {
+    const pathKey = Object.keys(process.env).find(key => key.toUpperCase() === 'PATH') ?? 'PATH';
+    const originalPath = process.env[pathKey];
+    const originalShell = process.env['KIMI_SHELL_PATH'];
+    const runtime = { KIMI_SHELL_PATH: process.execPath, [pathKey]: 'D:\\Desktop Tools\\usr\\bin' };
+    resolveWindowsBashEnvMock.mockReturnValue(runtime);
+    startServerMock.mockResolvedValue({ host: '127.0.0.1', port: 54321, core: core(), close: vi.fn() });
+
+    const handle = await startDesktopServer({});
+    const { seeds, env } = startServerMock.mock.calls[0]![0] as Parameters<typeof import('@moonshot-ai/kap-server').startServer>[0];
+    expect(seeds).toBeDefined();
+    const services = new InstantiationService(new ServiceCollection(...(seeds ?? [])), true);
+    try {
+      expect(env?.[pathKey]).toBe(originalPath);
+      expect(env?.['KIMI_SHELL_PATH']).toBe(originalShell);
+      if (process.platform === 'win32') {
+        const host = services.invokeFunction(a => a.get(IHostEnvironment));
+        await host.ready;
+        expect(host.shellPath).toBe(runtime.KIMI_SHELL_PATH);
+      }
+      const processes = services.invokeFunction(a => a.get(IHostProcessService));
+      const childEnv = async (command: string) => {
+        const child = await processes.spawn(command, ['-p', 'JSON.stringify([process.env.PATH, process.env.KIMI_SHELL_PATH, process.env.KIMI_CODE_SESSION_ID])'], { env: { KIMI_CODE_SESSION_ID: 'test-session' } });
+        try {
+          const [output, code] = await Promise.all([text(child.stdout), child.wait()]);
+          expect(code).toBe(0);
+          return JSON.parse(output) as unknown;
+        } finally {
+          child.dispose();
+        }
+      };
+      await expect(childEnv(process.execPath)).resolves.toEqual([runtime[pathKey], process.execPath, 'test-session']);
+      await expect(childEnv('node')).resolves.toEqual([originalPath, originalShell ?? null, 'test-session']);
+      expect(process.env[pathKey]).toBe(originalPath);
+      expect(process.env['KIMI_SHELL_PATH']).toBe(originalShell);
+    } finally {
+      services.dispose();
+      await handle.close();
+    }
   });
 
   it('passes the minted device id to telemetry', async () => {

@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { windowsBashRuntimeSeed } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostServices';
 import { configureSearchWorkerRuntime } from '@moonshot-ai/kap-server/search-worker-runtime';
 import {
   startServer,
@@ -15,7 +16,7 @@ import {
 } from '../../shared/identity';
 import { resolveDesktopHostIdentity } from '../app/identity';
 import { log } from '../diagnostics/log';
-import { configureWindowsBashRuntime } from './windows-bash-runtime';
+import { resolveWindowsBashEnv } from './windows-bash-runtime';
 import { createDesktopServerLogger } from './server-log';
 import { createDesktopAuthTokenService } from './server-auth';
 import { wireDesktopTelemetry } from '../diagnostics/telemetry';
@@ -42,8 +43,8 @@ export interface StartDesktopServerOptions {
 export async function startDesktopServer(
   opts: StartDesktopServerOptions,
 ): Promise<DesktopServerHandle> {
-  const bundledShell = configureWindowsBashRuntime();
-  if (bundledShell !== undefined) log.info(`[kimi-desktop] Using bundled Windows Bash: ${bundledShell}`);
+  const bashEnv = resolveWindowsBashEnv();
+  if (bashEnv !== undefined) log.info(`[kimi-desktop] Using bundled Windows Bash: ${bashEnv.KIMI_SHELL_PATH}`);
   configureSearchWorkerRuntime(fileURLToPath(new URL('./search-worker.cjs', import.meta.url)));
   installGlobalProxyDispatcher();
   const homeDir = resolveKimiHome();
@@ -68,6 +69,7 @@ export async function startDesktopServer(
       logger: opts.logger ?? createDesktopServerLogger(),
       webAssetsDir: opts.webAssetsDir,
       env: { ...process.env },
+      seeds: bashEnv === undefined ? undefined : windowsBashRuntimeSeed(bashEnv),
       serverVersion: __KIMI_CORE_VERSION__,
       hostIdentity: {
         ...host.identity,

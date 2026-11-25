@@ -36,6 +36,7 @@ export interface HostEnvironmentProbeDeps {
   readonly release: string;
   readonly homeDir: string;
   readonly env: Record<string, string | undefined>;
+  readonly windowsShellPath?: string;
   readonly isFile: (path: string) => Promise<boolean>;
   readonly execFileText: (
     file: string,
@@ -121,7 +122,7 @@ export async function probeHostEnvironment(
 async function locateWindowsGitBash(deps: HostEnvironmentProbeDeps): Promise<string> {
   const checked: string[] = [];
 
-  const override = deps.env['KIMI_SHELL_PATH']?.trim();
+  const override = (deps.windowsShellPath ?? deps.env['KIMI_SHELL_PATH'])?.trim();
   if (override !== undefined && override.length > 0) {
     checked.push(override);
     if (await deps.isFile(override)) {
@@ -256,8 +257,8 @@ function dedupeWindowsPaths(paths: readonly string[]): readonly string[] {
 
 let cachedProbe: Promise<HostEnvironmentInfo> | undefined;
 
-export function probeHostEnvironmentFromNode(): Promise<HostEnvironmentInfo> {
-  if (cachedProbe !== undefined) return cachedProbe;
+export function probeHostEnvironmentFromNode(windowsShellPath?: string): Promise<HostEnvironmentInfo> {
+  if (windowsShellPath === undefined && cachedProbe !== undefined) return cachedProbe;
   const platform = process.platform;
   const env = process.env as Record<string, string | undefined>;
   const isFile = async (path: string): Promise<boolean> => {
@@ -268,16 +269,18 @@ export function probeHostEnvironmentFromNode(): Promise<HostEnvironmentInfo> {
       return false;
     }
   };
-  cachedProbe = probeHostEnvironment({
+  const probe = probeHostEnvironment({
     platform,
     arch: process.arch,
     release: nodeOs.release(),
     homeDir: nodeOs.homedir(),
     env,
+    windowsShellPath,
     isFile,
     execFileText,
   });
-  return cachedProbe;
+  if (windowsShellPath === undefined) cachedProbe = probe;
+  return probe;
 }
 
 async function findExecutablesOnPath(

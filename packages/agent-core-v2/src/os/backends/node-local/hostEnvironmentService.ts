@@ -21,9 +21,9 @@ export class HostEnvironmentService implements IHostEnvironment {
   private _probeError?: Error;
   readonly ready: Promise<void>;
 
-  constructor() {
+  constructor(windowsShellPath?: string) {
     this.ready = Promise.all([
-      probeHostEnvironmentFromNode().then((info) => {
+      probeHostEnvironmentFromNode(windowsShellPath).then((info) => {
         this._info = info;
       }),
       applyLoginShellPathFromNode(),

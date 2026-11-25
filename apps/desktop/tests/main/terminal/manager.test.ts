@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-
+import { resolveWindowsBashEnv } from '../../../src/main/server/windows-bash-runtime';
 import {
   createTerminalManager,
   defaultShellEnv,
@@ -8,6 +8,8 @@ import {
   type SpawnPty,
   type TerminalManagerDeps,
 } from '../../../src/main/terminal/manager';
+
+vi.mock('electron', () => ({ app: {} }));
 
 class FakePty implements PtyProcess {
   written: string[] = [];
@@ -128,6 +130,20 @@ describe('defaultShellEnv', () => {
 });
 
 describe('createTerminalManager', () => {
+  it.each(['C:\\Program Files\\PowerShell\\7\\pwsh.exe', 'C:\\Windows\\System32\\cmd.exe'])(
+    'keeps the original Windows environment for %s after selecting bundled Bash', async (shell) => {
+      const env = { Path: 'C:\\Windows\\System32;D:\\User Tools', COMSPEC: 'C:\\Windows\\System32\\cmd.exe' };
+      const original = { ...env };
+      const { deps, spawns } = makeDeps({ platform: 'win32', env, pathExists: path => path === shell });
+      const terminal = createTerminalManager(deps);
+      const runtime = resolveWindowsBashEnv({ platform: 'win32', runtimeRoot: 'D:\\App\\windows-bash', env, fileExists: () => true });
+      expect(runtime?.['Path']).toBe(`D:\\App\\windows-bash\\usr\\bin;${original.Path}`);
+      await terminal.create();
+      expect(spawns[0]?.file).toBe(shell);
+      expect(spawns[0]?.options['env']).toEqual(original);
+    },
+  );
+
   it('spawns the default shell with cwd, env and clamped dimensions', async () => {
     const { deps, spawns } = makeDeps();
     const manager = createTerminalManager(deps);
