@@ -2,10 +2,38 @@ import { TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 import { flattenChain } from '@moonshot-ai/agent-core-v2/wire/tree/index';
 import { sliceMainRecordsAtTurn } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/internal/forkTurnSlice';
-import { describe, expect, it, vi } from 'vitest';
+import { createFakeModel, say, type FakeModel } from '@moonshot-ai/testkit/model';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { InMemoryWireRecordPersistence, testAgent, type TestAgentContext } from '../../agent-core-v2/test/harness';
 import { isSurveyTurnOrigin, mountSurveyTurnCounter, SurveyTurnCounter } from '#/session-rating/node/index';
+
+const models = new Map<TestAgentContext, FakeModel>();
+
+afterEach(async () => {
+  const created = [...models.values()];
+  models.clear();
+  for (const model of created) {
+    try {
+      model.verify();
+    } finally {
+      await model.close();
+    }
+  }
+});
+
+function modelledAgent(persistence: InMemoryWireRecordPersistence): TestAgentContext {
+  const model = createFakeModel();
+  const ctx = testAgent({ persistence, model });
+  models.set(ctx, model);
+  return ctx;
+}
+
+function modelOf(ctx: TestAgentContext): FakeModel {
+  const model = models.get(ctx);
+  if (model === undefined) throw new Error('this agent has no fake model; create it with modelledAgent()');
+  return model;
+}
 
 function barrier() {
   let release = (): void => {};
@@ -20,7 +48,7 @@ function userPrompt(): TurnPrompt {
 describe('survey history attachment', () => {
   it('does not count history twice when undo overlaps late attachment', async () => {
     const persistence = new InMemoryWireRecordPersistence([]);
-    const ctx = testAgent({ persistence });
+    const ctx = modelledAgent(persistence);
     const early = mountSurveyTurnCounter(ctx.dispatcher);
     await ctx.restorePersisted();
     await runUserTurn(ctx, 'one');
@@ -252,7 +280,7 @@ describe('survey turn classification', () => {
 });
 
 async function runUserTurn(ctx: TestAgentContext, text: string): Promise<void> {
-  ctx.mockNextResponse({ type: 'text', text: `reply to ${text}` });
+  modelOf(ctx).script(say(`reply to ${text}`));
   await ctx.rpc.prompt({ input: [{ type: 'text', text }] });
   await ctx.untilTurnEnd();
 }
@@ -268,7 +296,7 @@ async function restoredCount(records: readonly WireRecord[]): Promise<number | u
 }
 
 async function freshAgent() {
-  const ctx = testAgent({ persistence: new InMemoryWireRecordPersistence([]) });
+  const ctx = modelledAgent(new InMemoryWireRecordPersistence([]));
   const counter = mountSurveyTurnCounter(ctx.dispatcher);
   await ctx.restorePersisted();
   return { ctx, counter };
@@ -310,7 +338,7 @@ describe('survey counts across journal transformations', () => {
     await runUserTurn(ctx, 'one');
     await runUserTurn(ctx, 'two');
     const completed = ctx.once('compaction.completed');
-    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    modelOf(ctx).lane('compaction').script(say('Compacted summary.'));
     await ctx.rpc.beginCompaction({});
     await completed;
     await runUserTurn(ctx, 'three');
