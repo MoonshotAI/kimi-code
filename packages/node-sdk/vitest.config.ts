@@ -23,6 +23,7 @@ export default defineConfig({
       KIMI_LOG_LEVEL: 'off',
     },
     include: ['test/**/*.test.ts'],
+    setupFiles: ['test/setup.ts'],
     testTimeout: 15_000,
   },
 });
