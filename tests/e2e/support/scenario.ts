@@ -234,6 +234,12 @@ function problemOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+interface RunningProduct {
+  readonly home: TestHome;
+  readonly model: FakeModel;
+  readonly driver: SurfaceDriver<Surface>;
+}
+
 class ScenarioSession {
   private readonly surface: Surface;
   private readonly variant: Variant | undefined;
@@ -326,6 +332,10 @@ class ScenarioSession {
       await this.restart();
       return;
     }
+    if (verb === 'restartDuringTurn') {
+      await this.restartDuringTurn();
+      return;
+    }
     const unavailable = unavailableReason(verb, process.platform);
     if (unavailable !== undefined) {
       throw new Error(`${verb}() cannot be checked on ${process.platform}: ${unavailable} Leave the platform out of the scenario with exceptPlatforms.`);
@@ -360,17 +370,36 @@ class ScenarioSession {
   }
 
   private async restart(): Promise<void> {
-    const { home, model, driver } = this;
-    if (home === undefined || model === undefined || driver === undefined) throw new Error('restart() was called while the product is not running.');
-    if (!(await driver.idle())) {
-      throw new Error('restart() needs an idle product: a user lets the turn end, or stops it, and answers any approval before closing the app.');
+    const running = this.running('restart');
+    if (!(await running.driver.idle())) {
+      throw new Error(
+        'restart() needs an idle product: a user lets the turn end, or stops it, and answers any approval before closing the app. To quit while a turn is running, use restartDuringTurn().',
+      );
     }
+    await this.reopen('restart', running, () => running.driver.close());
+  }
+
+  private async restartDuringTurn(): Promise<void> {
+    const running = this.running('restartDuringTurn');
+    if (await running.driver.idle()) {
+      throw new Error('restartDuringTurn() needs a running turn, but the product is idle; use restart() to close and reopen an idle product.');
+    }
+    await this.reopen('restartDuringTurn', running, () => running.driver.quitDuringTurn());
+  }
+
+  private running(verb: string): RunningProduct {
+    const { home, model, driver } = this;
+    if (home === undefined || model === undefined || driver === undefined) throw new Error(`${verb}() was called while the product is not running.`);
+    return { home, model, driver };
+  }
+
+  private async reopen(verb: string, { home, model, driver }: RunningProduct, quit: () => Promise<void>): Promise<void> {
     const state = driver.reopenState();
-    const problems = await this.shutdownProblems(driver);
+    const problems = await this.shutdownProblems(driver, quit);
     for (const diagnostic of await driver.diagnostics()) this.earlierDiagnostics.push({ ...diagnostic, name: `launch-${this.launches}-${diagnostic.name}` });
     await driver.kill();
     this.driver = undefined;
-    if (problems.length > 0) throw new Error(`The product did not shut down cleanly before restart():\n\n${problems.join('\n\n')}`);
+    if (problems.length > 0) throw new Error(`The product did not shut down cleanly before ${verb}():\n\n${problems.join('\n\n')}`);
     this.launches += 1;
     this.driver = await this.launch({
       home,
@@ -381,10 +410,10 @@ class ScenarioSession {
     });
   }
 
-  private async shutdownProblems(driver: SurfaceDriver<Surface>): Promise<string[]> {
+  private async shutdownProblems(driver: SurfaceDriver<Surface>, quit: () => Promise<void>): Promise<string[]> {
     const problems: string[] = [];
     try {
-      await driver.close();
+      await quit();
     } catch (error) {
       problems.push(`The product did not shut down cleanly:\n${problemOf(error)}`);
     }
@@ -446,7 +475,7 @@ class ScenarioSession {
   private async closingProblems(): Promise<string[]> {
     const { home, model, driver, baseline } = this;
     if (home === undefined || model === undefined || driver === undefined || baseline === undefined) return [];
-    const problems = await this.shutdownProblems(driver);
+    const problems = await this.shutdownProblems(driver, () => driver.close());
     if (this.interfaceChecks === 0) {
       problems.push('The scenario never checked the interface. Add at least one product.expectTool(), product.expectReply() or another product.expect…() check.');
     }

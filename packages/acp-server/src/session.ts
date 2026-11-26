@@ -291,7 +291,7 @@ export class AcpSession {
     }
   }
 
-  async replayHistory(): Promise<void> {
+  async replayHistory(cwd?: string): Promise<void> {
     let messages: readonly ContextMessage[];
     try {
       messages = (await this.agent.getContext()).history.map((message) => ({
@@ -315,7 +315,10 @@ export class AcpSession {
       });
       return;
     }
-    const updates = projectHistoryToSessionUpdates(this.sessionId, messages);
+    const updates = projectHistoryToSessionUpdates(this.sessionId, messages, {
+      cwd,
+      skillCommandMap: this.resolveCommands().skillCommandMap,
+    });
     for (const update of updates) {
       try {
         await this.conn.sessionUpdate(update);

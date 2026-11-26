@@ -51,6 +51,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | 不许跳过、只跑一个、重试、固定等待 | `scripts/checks/e2e-boundary.mjs`；`playwright.config.ts` 里的 `retries: 0` 和 `forbidOnly: true` |
 | 场景里不出现面名，也拿不到 `page`、终端、`process.env`、`test.info()`。面和面的差异在驱动里处理 | `scenario()` 不提供这些东西；`scripts/checks/e2e-boundary.mjs` |
 | `restart()` 关掉产品再打开，回到原来的会话：产品必须空闲；先走产品自己的退出，查这个进程的网络记录，把它的诊断留到失败时一起附上，再用同一个 home、工作区和假模型起新进程。重启之后、下一次发消息之前，`expectReply`、`expectTool`、`expectError`、`expectAbsent` 读的「最近一回合」是恢复出来的最后一回合，也就是对话里最后一条用户消息之后的内容；整段对话用 `expectTranscript` 查。ACP 上恢复出来的最后一回合取自 `session/load` 回放里最后一条用户消息之后：重启前的编辑器和它开的终端都已经不在，所以命令的输出从工具调用内容的文字里读，也不再要求编辑器那一侧的证据（读写文件、终端的退出码）；回放里没有「这一回合失败了」这种消息，重启后查失败的场景要排除 ACP。重启前一次消息都没发过时，驱动只能证明产品重新可用，证明不了回到的是原来的会话。`expectTranscript` 在整段对话的用户消息和回复里找（工具卡不算），要求恰好出现一次 | 场景会话；`restart`、`expect-transcript` 的自测 |
+| `restartDuringTurn()` 在回合进行中关掉产品再打开，回到原来的会话：回合必须在跑，产品空闲时直接报错，空闲时用 `restart()`。各面按用户在回合中途退出的方式退出：TUI 连按两次 Ctrl+D，看到 `Press Ctrl+D again to exit` 再按第二次（`/exit` 要等产品空闲，Ctrl+C 会先停掉回合），挂着审批或提问时报错，因为那时 Ctrl+D 会回答它；ACP 由编辑器关掉连接；Web 先关浏览器，再在 `kimi web` 的终端里按 Ctrl+C；Desktop 走应用的退出，E2E 模式下跳过退出确认框，所以确认框本身测不到。证据是产品进程以 0 退出。之后和 `restart()` 一样：查网络记录，把诊断留到失败时附上，用同一个 home、工作区和假模型起新进程。被打断的那次模型请求在假模型里记为 `aborted` | 场景会话；`restart-during-turn` 的自测 |
 | 某个面不适用，写 `except: { 面: '理由' }`；只在某些面跑，写 `onlyOn` 加 `reason`。理由不能为空，不适用的面在报告里显示为跳过并带着理由 | `scenario()` 登记用例时检查，理由为空时列用例那一步就失败 |
 | 跑法（`tui-kitty`、`acp-bare`）下某个用例不适用，写 `exceptVariants: { 'bare-editor': '理由' }`。只用在两种情形：协议或终端本来就提供不了这项能力；或者是已经记录的产品缺口，负责人在 PR 里同意先排除，理由开头写明 `Product gap` | `scenario()` 登记时检查理由不为空 |
 | 某个动作在某个平台上暂时查不了（动作表里的 `unavailableOn`，例如 Windows 上的 `expectTerminalRestored`），用到它的场景写 `exceptPlatforms: { win32: '理由' }`，这个平台上整条场景显示为不适用。没写就跑到这个动作时报错。自测按动作表自动带上。`unavailableOn` 只用于驱动还做不到的检查，不能用来绕开产品在某个平台上的 bug | 场景会话的分发；`scenario()` 登记时检查理由不为空；在其他平台上跑时，收尾检查要求场景确实用到了一个在被排除平台上不可用的动作 |
@@ -70,7 +71,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 
 ## 写驱动
 
-动作清单是 `support/verbs.ts` 里的 `VERBS`，它是一张表：每个动作写明存在于哪些面（`on`）、不在某个面上的理由（`absentBecause`）、算不算「查过界面」（`checksInterface`），以及是不是由场景会话而不是驱动来做（`bySession`，目前只有 `restart`）。动作有 `send`、`queue`、`steer`、`approve`、`reject`、`rejectWithFeedback`、`expectApproval`、`answer`、`answerOther`、`dismissQuestion`、`setPermissionMode`、`stop`、`waitIdle`、`expectTool`、`expectReply`、`expectError`、`expectAbsent`、`continue`、`restart`、`newSession`、`compact`、`expectTranscript`，只在 TUI 和 Web 上有的 `resize`，只在 TUI 上有的 `exit`、`expectTerminalRestored`，以及只在 ACP 上有的 `waitForUsageUpdates`。场景拿到的 `product` 由这张表按场景跑的面推导：用了只在部分面上有的动作，场景必须用 `except` 或 `onlyOn` 排除其他面，否则类型检查报错；驱动漏实现自己面上的动作，类型检查也会报错。
+动作清单是 `support/verbs.ts` 里的 `VERBS`，它是一张表：每个动作写明存在于哪些面（`on`）、不在某个面上的理由（`absentBecause`）、算不算「查过界面」（`checksInterface`），以及是不是由场景会话而不是驱动来做（`bySession`，目前只有 `restart` 和 `restartDuringTurn`）。动作有 `send`、`queue`、`steer`、`approve`、`reject`、`rejectWithFeedback`、`expectApproval`、`answer`、`answerOther`、`dismissQuestion`、`setPermissionMode`、`stop`、`waitIdle`、`expectTool`、`expectReply`、`expectError`、`expectAbsent`、`continue`、`restart`、`restartDuringTurn`、`newSession`、`compact`、`expectTranscript`，只在 TUI 和 Web 上有的 `resize`，只在 TUI 上有的 `exit`、`expectTerminalRestored`，以及只在 ACP 上有的 `waitForUsageUpdates`。场景拿到的 `product` 由这张表按场景跑的面推导：用了只在部分面上有的动作，场景必须用 `except` 或 `onlyOn` 排除其他面，否则类型检查报错；驱动漏实现自己面上的动作，类型检查也会报错。
 
 | 规矩 | 由什么守 |
 |---|---|

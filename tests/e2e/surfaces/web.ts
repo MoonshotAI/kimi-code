@@ -87,6 +87,16 @@ class WebDriver extends PageDriver {
   async close(): Promise<void> {
     if (this.server.exited) throw new Error(`The web server exited before the scenario closed it.\n${this.describe()}`);
     await this.leave();
+    await this.shutDown();
+  }
+
+  async quitDuringTurn(): Promise<void> {
+    if (this.server.exited) throw new Error(`The web server exited before the user quit it.\n${this.describe()}`);
+    await this.leaveDuringTurn();
+    await this.shutDown();
+  }
+
+  private async shutDown(): Promise<void> {
     this.open = false;
     await this.context.close();
     if (this.server.exited) throw new Error(`The web server exited while the browser was closing.\n${this.describe()}`);

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -95,6 +95,33 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(usageUpdate?.size).toBe(262144);
     expect(usageUpdate?.used).toBeGreaterThan(0);
     expect(usageUpdate?.cost).toBeUndefined();
+  }, 30_000);
+
+  it('replays a file tool card at the session directory, even when the editor loads the session from another one', async () => {
+    const c = await boot();
+    const project = join(homeDir!, 'project');
+    const elsewhere = join(homeDir!, 'elsewhere');
+    await mkdir(project);
+    await mkdir(elsewhere);
+    await writeFile(join(project, 'notes.txt'), 'hello\n');
+    model!.script(call('Read', { path: 'notes.txt' }, { id: 'call_read' }), say('read it'));
+
+    const created = (await c.send('session/new', { cwd: project, mcpServers: [] })) as { sessionId: string };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+    await c.send('session/prompt', { sessionId: created.sessionId, prompt: [{ type: 'text', text: 'read the notes' }] });
+
+    const beforeLoad = c.sessionUpdates().length;
+    await c.send('session/load', { sessionId: created.sessionId, cwd: elsewhere, mcpServers: [] });
+    type ToolCallWire = { sessionUpdate?: string; toolCallId?: string; locations?: Array<{ path: string }> };
+    const replayed = c
+      .sessionUpdates()
+      .slice(beforeLoad)
+      .map((m) => (m.params as { update?: ToolCallWire }).update)
+      .find((u) => u?.sessionUpdate === 'tool_call' && u.toolCallId?.endsWith(':call_read'));
+    const located = replayed?.locations?.[0]?.path;
+
+    expect(located).toBeDefined();
+    expect(await realpath(located!)).toBe(await realpath(join(project, 'notes.txt')));
   }, 30_000);
 
   it.each([

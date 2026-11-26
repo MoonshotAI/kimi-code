@@ -78,6 +78,16 @@ class DesktopDriver extends PageDriver {
   async close(): Promise<void> {
     if (this.exit !== undefined) throw new Error(`The Desktop app exited before the scenario closed it.\n${this.describe()}`);
     await this.leave();
+    await this.quit();
+  }
+
+  async quitDuringTurn(): Promise<void> {
+    if (this.exit !== undefined) throw new Error(`The Desktop app exited before the user quit it.\n${this.describe()}`);
+    await this.leaveDuringTurn();
+    await this.quit();
+  }
+
+  private async quit(): Promise<void> {
     let closed: { readonly refused: string | undefined } | undefined;
     void this.app.close().then(
       () => {
