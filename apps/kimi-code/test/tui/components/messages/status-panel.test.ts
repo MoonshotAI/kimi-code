@@ -185,4 +185,65 @@ describe('status panel report lines', () => {
     expect(output).toContain('Warning      No active session');
     expect(output).toContain('No context window data available.');
   });
+
+  it('renders Workspace and Plan rows only when the account owns a business workspace', () => {
+    const enterpriseOutput = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinkingEffort: 'max',
+      permissionMode: 'manual',
+      planMode: false,
+      towerMode: false,
+      towerAvailable: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {
+        k2: {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k2',
+          maxContextSize: 10000,
+          displayName: 'Kimi K2',
+        },
+      },
+      managedWorkspace: {
+        hasBusinessWorkspace: true,
+        statusWorkspaceLine: 'Alice · Acme Corp',
+        planLabel: 'Premium',
+      },
+    })
+      .map(strip)
+      .join('\n');
+
+    expect(enterpriseOutput).toContain('Workspace    Alice · Acme Corp');
+    expect(enterpriseOutput).toContain('Plan         Premium');
+
+    const personalOutput = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinkingEffort: 'max',
+      permissionMode: 'manual',
+      planMode: false,
+      towerMode: false,
+      towerAvailable: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+      managedWorkspace: {
+        hasBusinessWorkspace: false,
+      },
+    })
+      .map(strip)
+      .join('\n');
+
+    expect(personalOutput).not.toContain('Workspace');
+    expect(personalOutput).not.toMatch(/^\s*Plan\s{2,}/m);
+  });
 });

@@ -39,6 +39,12 @@ export interface EnvironmentSlotState {
   readonly connectError?: string;
 }
 
+export interface ManagedWorkspaceSummary {
+  readonly hasBusinessWorkspace: boolean;
+  readonly statusWorkspaceLine?: string;
+  readonly planLabel?: string;
+}
+
 export interface AppState {
   model: string;
   workDir: string;
@@ -91,6 +97,7 @@ export interface AppState {
   mcpServersSummary: string | null;
   banner?: BannerState | null;
   environment?: EnvironmentSlotState;
+  managedWorkspace?: ManagedWorkspaceSummary | null;
 }
 
 export function sumTokenUsage(total: TokenUsage): number | undefined {

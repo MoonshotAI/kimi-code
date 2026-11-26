@@ -8,6 +8,7 @@ import {
 
 import { PRODUCT_NAME } from '#/constant/app';
 import { currentTheme } from '#/tui/theme';
+import type { ManagedWorkspaceSummary } from '#/tui/types';
 import { PERMISSION_MODE_DISPLAY_NAMES } from '#/tui/utils/permission-mode';
 import {
   formatTokenCount,
@@ -48,6 +49,8 @@ export interface StatusReportOptions {
   readonly statusError?: string;
   readonly managedUsage?: ManagedUsageReport;
   readonly managedUsageError?: string;
+  readonly managedWorkspace?: ManagedWorkspaceSummary | null;
+  readonly managedWorkspaceError?: string;
 }
 
 type Colorize = (text: string) => string;
@@ -107,9 +110,27 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
   const rows: FieldRow[] = [
     { label: 'Model', value: formatModelStatus(options) },
     { label: 'Directory', value: options.workDir },
+  ];
+  if (options.managedWorkspace?.hasBusinessWorkspace === true) {
+    if (
+      options.managedWorkspace.statusWorkspaceLine !== undefined &&
+      options.managedWorkspace.statusWorkspaceLine.length > 0
+    ) {
+      rows.push({ label: 'Workspace', value: options.managedWorkspace.statusWorkspaceLine });
+    }
+    if (
+      options.managedWorkspace.planLabel !== undefined &&
+      options.managedWorkspace.planLabel.length > 0
+    ) {
+      rows.push({ label: 'Plan', value: options.managedWorkspace.planLabel });
+    }
+  } else if (options.managedWorkspaceError !== undefined) {
+    rows.push({ label: 'Workspace', value: options.managedWorkspaceError, severity: 'error' });
+  }
+  rows.push(
     { label: 'Permissions', value: PERMISSION_MODE_DISPLAY_NAMES[permission] },
     { label: 'Plan mode', value: planMode ? 'on' : 'off' },
-  ];
+  );
   if (options.towerAvailable) {
     rows.push({ label: 'Tower mode', value: towerMode ? 'on' : 'off' });
   }

@@ -686,3 +686,57 @@ describe('FooterComponent spinning transient hints', () => {
     expect(onRefresh).not.toHaveBeenCalled();
   });
 });
+
+describe('FooterComponent workspace plan badge', () => {
+  const managedModel: ModelAlias = {
+    provider: 'managed:kimi-code',
+    model: 'kimi-k2',
+    maxContextSize: 200_000,
+    displayName: 'Kimi K2',
+  };
+
+  const customModel: ModelAlias = {
+    provider: 'openai',
+    model: 'gpt-5',
+    maxContextSize: 200_000,
+    displayName: 'GPT-5',
+  };
+
+  it('displays the plan badge only for managed Kimi Code models when the user has a business workspace', () => {
+    const enterpriseFooter = new FooterComponent({
+      ...appState,
+      model: 'kimi-k2',
+      availableModels: { 'kimi-k2': managedModel },
+      managedWorkspace: {
+        hasBusinessWorkspace: true,
+        statusWorkspaceLine: 'Alice · Acme',
+        planLabel: 'Premium',
+      },
+    });
+    expect(plainText(enterpriseFooter.render(160)[0] ?? '')).toContain('Kimi K2  Premium');
+    enterpriseFooter.dispose();
+
+    const personalFooter = new FooterComponent({
+      ...appState,
+      model: 'kimi-k2',
+      availableModels: { 'kimi-k2': managedModel },
+      managedWorkspace: {
+        hasBusinessWorkspace: false,
+      },
+    });
+    expect(plainText(personalFooter.render(160)[0] ?? '')).not.toContain('Premium');
+    personalFooter.dispose();
+
+    const customProviderFooter = new FooterComponent({
+      ...appState,
+      model: 'gpt-5',
+      availableModels: { 'gpt-5': customModel },
+      managedWorkspace: {
+        hasBusinessWorkspace: true,
+        planLabel: 'Premium',
+      },
+    });
+    expect(plainText(customProviderFooter.render(160)[0] ?? '')).not.toContain('Premium');
+    customProviderFooter.dispose();
+  });
+});

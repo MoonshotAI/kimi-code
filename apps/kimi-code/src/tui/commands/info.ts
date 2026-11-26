@@ -1,10 +1,17 @@
 import { release as osRelease, type as osType } from 'node:os';
 
-import type { McpServerInfo, SessionStatus, SessionUsage } from '@moonshot-ai/kimi-code-sdk';
+import {
+  BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+  isBusinessMembershipRevokedCode,
+  type McpServerInfo,
+  type SessionStatus,
+  type SessionUsage,
+} from '@moonshot-ai/kimi-code-sdk';
 
 import { buildMcpStatusReportLines } from '../components/messages/mcp-status-panel';
 import { buildStatusReportLines } from '../components/messages/status-panel';
 import { buildUsageReportLines, UsagePanelComponent, type ManagedUsageReport } from '../components/messages/usage-panel';
+import type { ManagedWorkspaceSummary } from '../types';
 import { isExperimentalFlagEnabled } from './experimental-flags';
 import { quotaUsageRows } from '#/utils/usage/usage-format';
 import {
@@ -144,6 +151,11 @@ interface ManagedUsageResult {
   readonly error?: string;
 }
 
+interface ManagedWorkspaceResult {
+  readonly workspace?: ManagedWorkspaceSummary;
+  readonly error?: string;
+}
+
 export async function showUsage(host: SlashCommandHost): Promise<void> {
   const sessionUsage = await loadSessionUsageReport(host);
   const managedUsage = await loadManagedUsageReport(host);
@@ -162,9 +174,10 @@ export async function showUsage(host: SlashCommandHost): Promise<void> {
 }
 
 export async function showStatusReport(host: SlashCommandHost): Promise<void> {
-  const [runtimeStatus, managedUsage] = await Promise.all([
+  const [runtimeStatus, managedUsage, managedWorkspace] = await Promise.all([
     loadRuntimeStatusReport(host),
     loadManagedUsageReport(host),
+    loadManagedWorkspaceReport(host),
   ]);
   const appState = host.state.appState;
   const reportArgs = {
@@ -186,6 +199,8 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     statusError: runtimeStatus.error,
     managedUsage: managedUsage?.usage,
     managedUsageError: managedUsage?.error,
+    managedWorkspace: managedWorkspace?.workspace ?? appState.managedWorkspace,
+    managedWorkspaceError: managedWorkspace?.error,
   };
   const panel = new UsagePanelComponent(() => buildStatusReportLines(reportArgs), 'primary', ' Status ');
   host.state.transcriptContainer.addChild(panel);
@@ -248,7 +263,46 @@ async function loadManagedUsageReport(host: SlashCommandHost): Promise<ManagedUs
     return { error: formatErrorMessage(error) };
   }
   if (res.kind === 'error') {
+    if (res.message === BUSINESS_MEMBERSHIP_REVOKED_MESSAGE) {
+      host.authFlow?.handleBusinessMembershipRevoked();
+    }
     return { error: res.message };
   }
   return { usage: { rows: quotaUsageRows(res.quota), extraUsage: res.quota.extraUsage } };
+}
+
+async function loadManagedWorkspaceReport(
+  host: SlashCommandHost,
+): Promise<ManagedWorkspaceResult | undefined> {
+  const alias = host.state.appState.model;
+  const providerKey = host.state.appState.availableModels[alias]?.provider;
+  if (!isManagedUsageProvider(providerKey)) return undefined;
+  if (typeof host.harness.auth.getAccountProfile !== 'function') return undefined;
+
+  let res;
+  try {
+    res = await host.harness.auth.getAccountProfile(providerKey);
+  } catch (error) {
+    return { error: formatErrorMessage(error) };
+  }
+  if (res.kind === 'error') {
+    if (isBusinessMembershipRevokedCode(res.errorCode)) {
+      host.authFlow?.handleBusinessMembershipRevoked();
+    }
+    return { error: res.message };
+  }
+  const summary =
+    host.authFlow !== undefined
+      ? host.authFlow.applyAccountProfile(res.profile)
+      : {
+          hasBusinessWorkspace: res.profile.hasBusinessWorkspace,
+          ...(res.profile.statusWorkspaceLine !== undefined
+            ? { statusWorkspaceLine: res.profile.statusWorkspaceLine }
+            : {}),
+          ...(res.profile.planLabel !== undefined ? { planLabel: res.profile.planLabel } : {}),
+        };
+  if (host.authFlow === undefined) {
+    host.setAppState({ managedWorkspace: summary });
+  }
+  return { workspace: summary };
 }

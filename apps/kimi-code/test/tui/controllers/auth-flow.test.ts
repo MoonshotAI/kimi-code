@@ -1,9 +1,11 @@
+import type { ManagedAccountProfileResult } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import {
   AuthFlowController,
   type AuthFlowHost,
 } from '#/tui/controllers/auth-flow';
+import type { ManagedWorkspaceSummary } from '#/tui/types';
 import {
   refreshModelSwitchConfirmConfig,
   resetModelSwitchConfirmConfigCache,
@@ -16,7 +18,14 @@ function makeHost(
     boundModel?: string;
   } = {},
 ) {
-  const appState = {
+  const appState: {
+    workDir: string;
+    additionalDirs: string[];
+    planMode: boolean;
+    model: string;
+    thinkingEffort: string;
+    managedWorkspace?: ManagedWorkspaceSummary | null;
+  } = {
     workDir: '/tmp/work',
     additionalDirs: [] as string[],
     planMode: false,
@@ -66,6 +75,7 @@ function makeHost(
     harness: {
       createSession: ReturnType<typeof vi.fn>;
       getConfig: ReturnType<typeof vi.fn>;
+      auth: Record<string, ReturnType<typeof vi.fn>>;
     };
     setAppState: ReturnType<typeof vi.fn>;
   };
@@ -300,5 +310,158 @@ describe('refreshProviderModels', () => {
       availableModels: expect.anything(),
       availableProviders: expect.anything(),
     });
+  });
+});
+
+describe('managed workspace state sync', () => {
+  it('revokes auth and clears badge when getAccountProfile reports business membership removed', async () => {
+    const { host, appState } = makeHost();
+    appState.managedWorkspace = {
+      hasBusinessWorkspace: true,
+      planLabel: 'Premium',
+    };
+    host.harness.auth['status'] = vi.fn(async () => ({
+      providers: [{ providerName: 'managed:kimi-code', hasToken: true }],
+    }));
+    host.harness.auth['getAccountProfile'] = vi.fn(async () => ({
+      kind: 'error' as const,
+      status: 401,
+      errorCode: 'REASON_BUSINESS_MEMBER_REMOVED',
+      message: 'removed',
+    }));
+
+    await new AuthFlowController(host).refreshManagedWorkspaceInBackground();
+
+    expect(appState.managedWorkspace).toBeNull();
+    expect(host.setAuthRequired).toHaveBeenCalledWith(true);
+  });
+
+  it('discards an older background workspace refresh that finishes after logout', async () => {
+    const { host, appState } = makeHost();
+    let resolveProfile!: (value: ManagedAccountProfileResult) => void;
+    host.harness.auth['status'] = vi.fn(async () => ({
+      providers: [{ providerName: 'managed:kimi-code', hasToken: true }],
+    }));
+    host.harness.auth['getAccountProfile'] = vi.fn(
+      () =>
+        new Promise<ManagedAccountProfileResult>((resolve) => {
+          resolveProfile = resolve;
+        }),
+    );
+
+    const authFlow = new AuthFlowController(host);
+    const pendingRefresh = authFlow.refreshManagedWorkspaceInBackground();
+    await vi.waitFor(() => expect(host.harness.auth['getAccountProfile']).toHaveBeenCalledTimes(1));
+
+    await authFlow.refreshConfigAfterLogout();
+    expect(appState.managedWorkspace).toBeNull();
+
+    resolveProfile({
+      kind: 'ok',
+      profile: {
+        userId: 'u1',
+        nickname: 'Alice',
+        userLevelName: 'Premium',
+        workspaces: [],
+        hasBusinessWorkspace: true,
+        activeWorkspaceName: 'Acme Corp',
+        statusWorkspaceLine: 'Alice · Acme Corp',
+        planLabel: 'Premium',
+      },
+    });
+    await pendingRefresh;
+
+    expect(appState.managedWorkspace).toBeNull();
+  });
+
+  it('applies switched workspace profile without firing a redundant background profile fetch', async () => {
+    const { host, appState } = makeHost({ defaultModel: 'k2' });
+    const getAccountProfile = vi.fn();
+    host.harness.auth['getAccountProfile'] = getAccountProfile;
+    host.harness.auth['switchWorkspace'] = vi.fn(async () => ({
+      providerName: 'managed:kimi-code',
+      ok: true as const,
+      target: { kind: 'business' as const, businessId: 'biz-1' },
+      profile: {
+        userId: 'u1',
+        nickname: 'Alice',
+        userLevelName: 'Premium',
+        workspaceName: 'Acme Corp',
+        workspaces: [],
+        hasBusinessWorkspace: true,
+        activeWorkspaceName: 'Acme Corp',
+        statusWorkspaceLine: 'Alice · Acme Corp',
+        planLabel: 'Premium',
+      },
+    }));
+
+    const summary = await new AuthFlowController(host).switchWorkspace(
+      { kind: 'business', businessId: 'biz-1' },
+      {
+        kind: 'business',
+        key: 'business:biz-1',
+        target: { kind: 'business', businessId: 'biz-1' },
+        businessId: 'biz-1',
+        name: 'Acme Corp',
+        status: 'STATUS_ACTIVE',
+        kindLabel: 'Business workspace',
+        current: false,
+        disabled: false,
+        switchable: true,
+        roles: ['member'],
+      },
+    );
+
+    expect(summary).toEqual({ displayName: 'Acme Corp' });
+    expect(appState.managedWorkspace).toEqual({
+      hasBusinessWorkspace: true,
+      statusWorkspaceLine: 'Alice · Acme Corp',
+      planLabel: 'Premium',
+    });
+    expect(getAccountProfile).not.toHaveBeenCalled();
+  });
+
+  it('clears stale workspace badge when switchWorkspace commits without profile and background fetch fails', async () => {
+    const { host, appState } = makeHost({ defaultModel: 'k2' });
+    appState.managedWorkspace = {
+      hasBusinessWorkspace: true,
+      statusWorkspaceLine: 'Alice · Old Corp',
+      planLabel: 'Premium',
+    };
+    host.harness.auth['status'] = vi.fn(async () => ({
+      providers: [{ providerName: 'managed:kimi-code', hasToken: true }],
+    }));
+    host.harness.auth['getAccountProfile'] = vi.fn(async () => ({
+      kind: 'error' as const,
+      status: 502,
+      message: 'Failed to fetch profile: HTTP 502',
+    }));
+    host.harness.auth['switchWorkspace'] = vi.fn(async () => ({
+      providerName: 'managed:kimi-code',
+      ok: true as const,
+      target: { kind: 'personal' as const },
+      warning: 'Failed to fetch profile: HTTP 502',
+    }));
+
+    const summary = await new AuthFlowController(host).switchWorkspace(
+      { kind: 'personal' },
+      {
+        kind: 'personal',
+        key: 'personal',
+        target: { kind: 'personal' },
+        name: 'Alice',
+        kindLabel: 'Personal workspace',
+        current: false,
+        disabled: false,
+        switchable: true,
+        roles: ['owner'],
+      },
+    );
+
+    expect(summary).toEqual({
+      displayName: 'Alice · Personal workspace',
+      warning: 'Failed to fetch profile: HTTP 502',
+    });
+    expect(appState.managedWorkspace).toBeNull();
   });
 });

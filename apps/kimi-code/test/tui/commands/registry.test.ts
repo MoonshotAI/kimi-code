@@ -284,4 +284,10 @@ describe('built-in slash command registry', () => {
     });
   });
 
+  it('registers workspace as always available without an experimental flag', () => {
+    const command = findBuiltInSlashCommand('workspace');
+    expect(command).toBeDefined();
+    expect((command as KimiSlashCommand).experimentalFlag).toBeUndefined();
+    expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
+  });
 });

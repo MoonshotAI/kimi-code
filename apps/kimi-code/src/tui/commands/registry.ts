@@ -372,6 +372,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'workspace',
+    aliases: [],
+    description: 'Switch between personal and business workspaces',
+    priority: 60,
+    availability: 'always',
+  },
+  {
     name: 'feedback',
     aliases: ['bug'],
     description: 'Send feedback to make Kimi Code better',

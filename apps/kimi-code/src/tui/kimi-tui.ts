@@ -980,6 +980,7 @@ export class KimiTUI {
     mountFooter(this.state);
     this.renderWelcome();
     void this.loadBanner();
+    void this.authFlow.refreshManagedWorkspaceInBackground();
     this.setupAutocomplete();
     void this.loadPersistedInputHistory();
     setEditorSlot(this.state, this.state.editor);

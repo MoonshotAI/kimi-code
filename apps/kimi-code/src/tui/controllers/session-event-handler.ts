@@ -40,6 +40,11 @@ import {
   type SwarmModeMarkerState,
 } from '../components/messages/swarm-markers';
 import {
+  BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+  isBusinessMembershipRevokedCode,
+} from '@moonshot-ai/kimi-code-sdk';
+
+import {
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from '../constant/kimi-tui';
@@ -1055,6 +1060,15 @@ export class SessionEventHandler {
       this.compactionFailed = true;
       this.host.setAppState({ isCompacting: false });
       this.host.programStatus?.failRequest(formatErrorPayload(event));
+    }
+    if (
+      isBusinessMembershipRevokedCode(event.details?.['providerErrorCode']) ||
+      event.message === BUSINESS_MEMBERSHIP_REVOKED_MESSAGE
+    ) {
+      this.host.setAppState({ managedWorkspace: null });
+      this.host.programStatus?.setAuthRequired(true);
+      this.host.showError(BUSINESS_MEMBERSHIP_REVOKED_MESSAGE);
+      return;
     }
     if (event.code === OAUTH_LOGIN_REQUIRED_CODE) {
       this.host.programStatus?.setAuthRequired(true);
