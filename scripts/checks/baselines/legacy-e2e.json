@@ -5,7 +5,6 @@
     "apps/desktop/e2e/agents-side-chat-compaction.spec.ts": 1,
     "apps/desktop/e2e/agents-subagents.spec.ts": 1,
     "apps/desktop/e2e/agents-tasks-todos.spec.ts": 1,
-    "apps/desktop/e2e/approval-batch-and-questions.spec.ts": 1,
     "apps/desktop/e2e/approval-decisions.spec.ts": 1,
     "apps/desktop/e2e/approval-permission-modes.spec.ts": 1,
     "apps/desktop/e2e/approval-plan-review.spec.ts": 1,

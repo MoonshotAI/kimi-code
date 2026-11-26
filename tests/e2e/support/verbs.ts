@@ -29,6 +29,8 @@ const ONE_PROMPT_AT_A_TIME_OVER_ACP =
 const NO_FREE_TEXT_OVER_ACP = "ACP's permission request carries only option ids, so an editor cannot send a free-text answer.";
 const INPUT_IN_THE_EDITOR = "An editor writes prompts in its own input and keeps its own prompt history; the agent behind ACP never sees the user's input.";
 const NO_UNDO_OVER_ACP = 'ACP has no request to withdraw a message from the conversation.';
+const NO_STOP_MARK_OVER_ACP =
+  "ACP has no message that marks a turn as stopped: an editor learns it from the cancelled stop reason, which stop() already checks, and a session/load replay carries no trace of it.";
 const NO_WINDOW_TO_RESIZE = {
   acp: 'An editor shows the conversation in its own window; the agent behind ACP has no window to resize.',
   desktop: "The Desktop window cannot be made narrower than 900 pixels, so a user cannot give it a phone width, and Playwright can only resize it by running code in Electron's main process.",
@@ -51,6 +53,7 @@ export const VERBS = {
   dismissQuestion: { on: SURFACES, checksInterface: false },
   setPermissionMode: { on: SURFACES, checksInterface: false },
   stop: { on: SURFACES, checksInterface: false },
+  expectStopped: { on: ['tui', 'desktop', 'web'], absentBecause: NO_STOP_MARK_OVER_ACP, checksInterface: true },
   waitIdle: { on: SURFACES, checksInterface: false },
   waitForUsageUpdates: { on: ['acp'], absentBecause: 'This action waits for usage updates delivered to an ACP editor.', checksInterface: false },
   expectTool: { on: SURFACES, checksInterface: true },
@@ -205,6 +208,7 @@ interface VerbSignatures {
   dismissQuestion(): Promise<void>;
   setPermissionMode(mode: PermissionMode): Promise<void>;
   stop(): Promise<void>;
+  expectStopped(): Promise<void>;
   waitIdle(): Promise<void>;
   waitForUsageUpdates(count: number): Promise<void>;
   expectTool(expectation: ToolExpectation): Promise<void>;

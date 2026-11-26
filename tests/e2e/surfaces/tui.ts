@@ -1042,6 +1042,16 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     }
   }
 
+  async expectStopped(): Promise<void> {
+    const settled = await this.settle('the stop notice of the latest turn', (screen) => (endsWithStopNotice(screen) ? true : undefined));
+    if ('over' in settled) {
+      throw this.failure(
+        `expectStopped() found the latest turn ended without being stopped: its last entry is not ${JSON.stringify(TURN_STOPPED)}. The turn shows:\n${latestTurnEntries(settled.over)}`,
+        settled.over,
+      );
+    }
+  }
+
   async waitIdle(): Promise<void> {
     const settled = await this.settle('the turn to end', (screen) => (showsApproval(screen) || showsQuestion(screen) ? screen : undefined));
     if ('over' in settled) return;

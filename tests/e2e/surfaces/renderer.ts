@@ -335,6 +335,13 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     }
   }
 
+  async expectStopped(): Promise<void> {
+    const settled = await this.settle(`the ${JSON.stringify(MANUALLY_STOPPED)} mark of the latest turn`, async () => (await this.stoppedMarks()) > 0);
+    if (settled === 'over') {
+      throw new Error(`expectStopped() found the latest turn ended without being stopped: it has no ${JSON.stringify(MANUALLY_STOPPED)} mark.\n${await this.describe()}`);
+    }
+  }
+
   async waitIdle(): Promise<void> {
     const ask = await this.pendingAsk('the turn to end');
     if (ask === 'question') throw new Error(`waitIdle() found the turn waiting: ${QUESTION_PENDING}.\n${await this.describe()}`);

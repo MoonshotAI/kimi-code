@@ -149,6 +149,10 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().undo();
   }
 
+  expectStopped(): Promise<void> {
+    return this.window().expectStopped();
+  }
+
   recallPrevious(): Promise<void> {
     return this.window().recallPrevious();
   }

@@ -10,7 +10,6 @@ const journeySpecs = ['**/desktop/e2e/*.spec.ts', '**/desktop/test/e2e/**/*.spec
 const sessionApiGateSpecs = ['approval-permission-modes.spec.ts'];
 const approvalsStateSpecs = [
   'approval-plan-review.spec.ts',
-  'approval-batch-and-questions.spec.ts',
   'approval-decisions.spec.ts',
   'agents-tasks-todos.spec.ts',
   'agents-goal.spec.ts',
