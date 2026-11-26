@@ -175,6 +175,13 @@ export type ApprovalBlock = (
   };
 };
 
+export interface TurnCompactionError {
+  code: string;
+  message: string;
+  statusCode?: number;
+  requestId?: string;
+}
+
 export type TurnRole = 'user' | 'assistant' | 'compaction' | 'cron' | 'goal';
 
 export interface FilePreviewRequest {
@@ -256,7 +263,7 @@ export interface ChatTurn {
   daemonTurnState?: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   attachments?: TurnAttachment[];
   inlineAttachments?: TurnAttachment[];
-  compaction?: { trigger?: 'manual' | 'auto'; tokensBefore?: number; tokensAfter?: number };
+  compaction?: { trigger?: 'manual' | 'auto'; tokensBefore?: number; tokensAfter?: number; error?: TurnCompactionError };
   createdAt?: string;
   endedAt?: string;
   durationMs?: number;
