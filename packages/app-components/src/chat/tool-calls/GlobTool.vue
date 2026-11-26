@@ -9,7 +9,6 @@ import OutputPanel from './OutputPanel.vue';
 import { useToolCard, useToolCardExpansion, type ToolCardProps } from './useToolCard';
 
 const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
-const { t } = useI18n();
 const { panelApi, status, kind, args, argText } = useToolCard(props);
 const isGlob = computed(() => kind.value === 'glob');
 const pattern = computed(() => {
@@ -21,6 +20,7 @@ const dir = computed(() => {
   return str(d?.path) ?? str(d?.dir) ?? str(d?.directory) ?? str(d?.cwd) ?? '';
 });
 const files = computed(() => (props.tool.output ?? []).filter((l) => l.trim().length > 0));
+const { t } = useI18n();
 const canExpand = computed(() => files.value.length > 0);
 const { open } = useToolCardExpansion(props, canExpand);
 

@@ -9,7 +9,6 @@ import OutputPanel from './OutputPanel.vue';
 import { useToolCard, useToolCardExpansion, type ToolCardProps } from './useToolCard';
 
 const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
-const { t } = useI18n();
 const { status, label, summary, summaryFull, hasOutput } = useToolCard(props);
 const glyph = computed(() => toolGlyph(props.tool.name));
 const argFields = computed(() => computerUseArgFields(props.tool.name, props.tool.arg));
@@ -25,6 +24,7 @@ const chip = computed(() =>
 
 const reviewHint = useAutoReviewHint(() => props.tool.autoReviewing === true);
 
+const { t } = useI18n();
 const canExpand = computed(
   () => hasOutput.value || argFields.value.length > 0 || (Boolean(summaryFull.value) && summaryFull.value !== summary.value),
 );
