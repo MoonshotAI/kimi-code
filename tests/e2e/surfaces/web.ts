@@ -2,13 +2,14 @@ import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 import { kimiCliCommand, repoPath, TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
-import { chromium, type BrowserContext, type Page } from '@playwright/test';
+import { chromium, test, type BrowserContext, type Page } from '@playwright/test';
 
 import type { Diagnostic, ReopenState, SurfaceDriver, SurfaceLaunch, WindowSize } from '../support/verbs';
 import { productEnv } from './environment';
 import { offlineStubs } from './offline';
 import { OFFLINE_NAMES, PageDriver, reasonOf, WELCOME_DIALOG } from './page-driver';
 import { TerminalProcess } from './terminal-process';
+import { dynamicPorts, firstWebPort } from './web-port';
 
 const ADDRESS = /^\s*Local:\s+(http:\/\/127\.0\.0\.1:(\d+)\/#token=\S+)\s*$/;
 const SERVER_TERMINAL = { columns: 400, rows: 50 };
@@ -46,6 +47,13 @@ class WebDriver extends PageDriver {
   }
 
   reopenState(): ReopenState {
+    const { low, high } = dynamicPorts();
+    const port = Number(this.port);
+    if (port >= low && port <= high) {
+      throw new Error(
+        `restart() would reopen the web UI on port ${this.port}, inside the range ${low}–${high} this machine hands to any process that asks for a free port, so another process can take it while the product is closed and the page could not come back on the same origin.`,
+      );
+    }
     return { port: this.port, size: this.size };
   }
 
@@ -168,7 +176,7 @@ export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<Surface
   const server = await TerminalProcess.start({
     label: 'kimi web',
     command: kimiCliCommand(),
-    args: ['web', '--port', reopen?.state.port ?? '0', '--no-open'],
+    args: ['web', '--port', reopen?.state.port ?? String(firstWebPort(test.info().parallelIndex)), '--no-open'],
     cwd: home.workspace,
     env: productEnv(home, { FORCE_COLOR: '0' }),
     logDir: home.root,
