@@ -414,7 +414,8 @@ class ScenarioSession {
     const method: unknown = Reflect.get(driver, verb);
     if (typeof method !== 'function') throw new Error(`The ${this.surface} driver does not implement ${verb}().`);
     await Reflect.apply(method, driver, args);
-    if (verb === 'send' || verb === 'queue' || verb === 'steer') this.lastPrompt = String(args[0]);
+    if (verb === 'send' || verb === 'queue' || verb === 'steer' || verb === 'submit') this.lastPrompt = String(args[0]);
+    if (verb === 'undo') this.lastPrompt = undefined;
     if (verb === 'newSession') {
       this.lastPrompt = undefined;
       this.sessions += 1;

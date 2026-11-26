@@ -1,6 +1,6 @@
 import { held, say } from '@moonshot-ai/testkit/model';
 
-import { expect, selfTest } from '../support/scenario';
+import { expect, selfTest, selfTestCase } from '../support/scenario';
 
 selfTest('send', {
   positive: {
@@ -38,6 +38,17 @@ selfTest('send', {
     },
   },
   negative: {
+    'refuses to type over a prompt already in the input': selfTestCase(
+      { except: { acp: "An editor keeps its own input, so an ACP prompt never lands on top of the user's text." } },
+      async ({ product, model }) => {
+        model.script(say('Answered.'));
+        await product.send('The prompt that undo brings back.');
+        await product.waitIdle();
+        await product.undo();
+        await expect(product.send('A new prompt.')).rejects.toThrow('needs an empty');
+        await product.expectComposer('The prompt that undo brings back.');
+      },
+    ),
     'refuses a prompt that the product would read as a command': {
       run: async ({ product, model }) => {
         await expect(product.send('/help')).rejects.toThrow('cannot take a prompt that starts with');
