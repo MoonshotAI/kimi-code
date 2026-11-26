@@ -2,6 +2,8 @@ import { computed, ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DaemonApiError } from '@moonshot-ai/app-core/api';
+import type { BrowserCapture } from '@moonshot-ai/app-core/browser-reference';
+import { browserReferenceNode, composerSchema, createComposerSnapshot, docToText } from '@moonshot-ai/app-composer/model';
 import type {
   AppSession,
   AppSessionWorktree,
@@ -9,6 +11,7 @@ import type {
   WorkspaceGitBranches,
 } from '@moonshot-ai/app-core/api';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import { buildPromptContent, buildPromptMetadata } from '../src/lib/browserReferenceSubmission';
 import { createWorkspaceRig, type WorkspaceRig } from '../src/testing/workspaceRig';
 import { appSession, sessionWorktree as worktree } from '../src/testing/worktreeFixtures';
 import { configStore } from '../src/stores/config';
@@ -285,6 +288,45 @@ describe('worktree first-prompt hold', () => {
         skills: [{ name: 'review', args: 'now' }],
       }),
     ]);
+  });
+
+  it('restores a failed held prompt with a browser screenshot so that it sends the same content again', async () => {
+    const capture: BrowserCapture = {
+      version: 1, id: 'capture', ordinal: 1, label: 'Button: Save', capturedAt: '2026-11-18T00:00:00.000Z',
+      page: { url: 'https://example.test', title: 'Example' },
+      target: { kind: 'element', tagName: 'button', text: 'Save', bounds: { x: 10, y: 10, width: 50, height: 30 } },
+      viewport: { width: 800, height: 600, scrollX: 0, scrollY: 0, zoomFactor: 1, devicePixelRatio: 2 },
+      screenshot: { attachmentId: 'shot', crop: { x: 10, y: 10, width: 50, height: 30 }, pixelWidth: 100, pixelHeight: 60 },
+    };
+    const doc = composerSchema.node('doc', null, [
+      composerSchema.node('paragraph', null, [composerSchema.text('rename '), browserReferenceNode({ refId: 'ref-a', label: capture.label })]),
+    ]);
+    const snapshot = createComposerSnapshot(
+      doc,
+      [{ attId: 'shot', key: 'blob:shot', kind: 'image', name: 'shot.png', purpose: 'browser-screenshot', fileId: 'f-shot', uploading: false, refCount: 0 }],
+      ['shot'],
+      { references: [{ id: 'ref-a', captureId: capture.id, comment: 'Use Store' }], captures: [capture] },
+    );
+    const sent = { text: docToText(doc), snapshot, attachments: [{ clientId: 'shot', kind: 'image' as const, fileId: 'f-shot', name: 'shot.png' }] };
+    const content = buildPromptContent(sent);
+    const { ws } = await createRig({ worktree: false });
+    openExisting({
+      ...worktree('ready', { path: '/wt/a' }),
+      heldPrompt: {
+        promptId: 'held-1',
+        kind: 'prompt',
+        createdAt: '2026-11-18T00:00:00.000Z',
+        content,
+        metadata: buildPromptMetadata(sent),
+        failure: { code: 50001, msg: 'boom' },
+      },
+    });
+
+    ws.syncWorktreeHold(SID);
+
+    const restored = promptStore().queuedBySession[SID]![0]!;
+    expect(restored.attachments).toMatchObject([{ clientId: 'shot', fileId: 'f-shot' }]);
+    expect(buildPromptContent(restored)).toEqual(content);
   });
 
   it('drops a held prompt that is withdrawn while setup runs and flushes the queue once setup ends', async () => {

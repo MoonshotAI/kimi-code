@@ -21,8 +21,7 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
 import { offsetAttachmentLinkIndices } from '@moonshot-ai/app-composer/model';
-import { buildPromptContent, buildPromptMetadata } from '../lib/browserReferenceSubmission';
-import { contentToAttachments } from './attachmentsToContent';
+import { buildPromptContent, buildPromptMetadata, promptFromSentContent } from '../lib/browserReferenceSubmission';
 import { prepareMergedPromptSnapshots } from '../lib/composerMessageSnapshot';
 import { consumeSessionIntent, getKimiWebApi, t, type SessionCreatedSource } from './deps';
 import { markDraftPromotion } from './draftPromotion';
@@ -181,8 +180,9 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   function heldPromptEnvelope(sid: string, held: AppWorktreeHeldPrompt): PromptEnvelope {
     const sent = sentToWorktreeHold.get(sid);
     if (sent?.promptId === held.promptId) return sent.prompt;
-    const attachments = contentToAttachments(held.content, sid);
     const snapshot = heldPromptSnapshot(held);
+    const restored = promptFromSentContent(held.content, sid, snapshot);
+    const attachments = restored.attachments;
     if (held.kind === 'skill' && held.skill !== undefined) {
       const { name, path, args } = held.skill;
       return {
@@ -192,12 +192,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
         skills: [{ name, ...(path === undefined ? {} : { path }), ...(args === undefined ? {} : { args }) }],
       };
     }
-    return {
-      text: held.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n'),
-      snapshot,
-      attachments,
-      skills: held.skills ?? [],
-    };
+    return { text: restored.text, snapshot, attachments, skills: held.skills ?? [] };
   }
 
   function importFailedHeldPrompt(sid: string, held: AppWorktreeHeldPrompt): void {
