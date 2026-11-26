@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bundlePath = resolve(appRoot, 'dist', 'main.mjs');
-const webIndexPath = resolve(appRoot, 'dist-web', 'index.html');
+const webIndexPath = resolve(appRoot, 'web-dist', 'index.html');
 const packageJson = JSON.parse(await readFile(resolve(appRoot, 'package.json'), 'utf-8'));
 const expectedVersion = packageJson.version;
 

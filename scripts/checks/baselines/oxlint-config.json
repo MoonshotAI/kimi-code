@@ -15,7 +15,7 @@
   "globals": {},
   "ignorePatterns": [
     "dist/",
-    "dist-web/",
+    "web-dist/",
     "coverage/",
     "node_modules/",
     "apps/*/scripts/",

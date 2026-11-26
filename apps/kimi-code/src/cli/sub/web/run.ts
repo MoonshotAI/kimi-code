@@ -53,7 +53,7 @@ import {
   type ServerCliOptions,
 } from './shared';
 
-const WEB_ASSETS_DIR = 'dist-web';
+const WEB_ASSETS_DIR = 'web-dist';
 
 interface RoutedServer {
   readonly address: string;
