@@ -27,6 +27,8 @@ const NO_REASON_OVER_ACP = 'ACP permission options carry only an option id, so a
 const ONE_PROMPT_AT_A_TIME_OVER_ACP =
   'ACP has no way to send a message while a turn runs: a second session/prompt is refused (-32600, another turn is already in progress).';
 const NO_FREE_TEXT_OVER_ACP = "ACP's permission request carries only option ids, so an editor cannot send a free-text answer.";
+const INPUT_IN_THE_EDITOR = "An editor writes prompts in its own input and keeps its own prompt history; the agent behind ACP never sees the user's input.";
+const NO_UNDO_OVER_ACP = 'ACP has no request to withdraw a message from the conversation.';
 const NO_WINDOW_TO_RESIZE = {
   acp: 'An editor shows the conversation in its own window; the agent behind ACP has no window to resize.',
   desktop: "The Desktop window cannot be made narrower than 900 pixels, so a user cannot give it a phone width, and Playwright can only resize it by running code in Electron's main process.",
@@ -58,6 +60,10 @@ export const VERBS = {
   continue: { on: ['desktop', 'web'], absentBecause: NO_CONTINUE, checksInterface: false },
   restart: { on: SURFACES, checksInterface: false, bySession: true },
   restartDuringTurn: { on: SURFACES, checksInterface: false, bySession: true },
+  undo: { on: ['tui', 'desktop', 'web'], absentBecause: NO_UNDO_OVER_ACP, checksInterface: false },
+  recallPrevious: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: false },
+  submit: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: false },
+  expectComposer: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: true },
   newSession: { on: SURFACES, checksInterface: false },
   compact: { on: SURFACES, checksInterface: false },
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
@@ -208,6 +214,10 @@ interface VerbSignatures {
   continue(): Promise<void>;
   restart(): Promise<void>;
   restartDuringTurn(): Promise<void>;
+  undo(): Promise<void>;
+  recallPrevious(): Promise<void>;
+  submit(text: string): Promise<void>;
+  expectComposer(text: string): Promise<void>;
   newSession(): Promise<void>;
   compact(): Promise<void>;
   resize(size: WindowSize): Promise<void>;
