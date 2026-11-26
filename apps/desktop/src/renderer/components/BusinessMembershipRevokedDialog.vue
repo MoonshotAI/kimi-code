@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Dialog } from '@moonshot-ai/app-ui';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
@@ -9,10 +10,19 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const client = useKimiWebClient();
+const acknowledging = ref(false);
 
 async function onConfirm(): Promise<void> {
-  await client.acknowledgeBusinessMembershipRevoked();
-  emit('relogin');
+  if (acknowledging.value) return;
+  acknowledging.value = true;
+  try {
+    const cleared = await client.acknowledgeBusinessMembershipRevoked();
+    if (cleared) {
+      emit('relogin');
+    }
+  } finally {
+    acknowledging.value = false;
+  }
 }
 </script>
 
@@ -30,7 +40,7 @@ async function onConfirm(): Promise<void> {
       {{ t('account.membershipRevokedBody') }}
     </p>
     <template #foot>
-      <Button variant="primary" @click="void onConfirm()">
+      <Button variant="primary" :disabled="acknowledging" @click="void onConfirm()">
         {{ t('account.membershipRevokedConfirm') }}
       </Button>
     </template>

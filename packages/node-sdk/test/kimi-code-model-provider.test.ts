@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import {
   BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+  BusinessMembershipRevokedError,
   KimiOAuthToolkit,
   OAuthConnectionError,
   OAuthError,
@@ -105,6 +106,25 @@ describe('KimiForCodingProvider OAuth error mapping', () => {
       details: {
         statusCode: 401,
         providerErrorCode: 'REASON_BUSINESS_MEMBER_REMOVED',
+      },
+    });
+  });
+
+  it('preserves REASON_BUSINESS_MEMBER_DISABLED when token refresh fails with BusinessMembershipRevokedError', async () => {
+    vi.spyOn(KimiOAuthToolkit.prototype, 'ensureFresh').mockRejectedValue(
+      new BusinessMembershipRevokedError('REASON_BUSINESS_MEMBER_DISABLED'),
+    );
+
+    const auth = resolveAuth();
+    const caught = await auth(async () => 'ok').catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(KimiError);
+    expect(caught).toMatchObject({
+      code: ErrorCodes.PROVIDER_AUTH_ERROR,
+      message: BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+      details: {
+        statusCode: 401,
+        providerErrorCode: 'REASON_BUSINESS_MEMBER_DISABLED',
       },
     });
   });

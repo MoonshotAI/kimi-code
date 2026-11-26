@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { BusinessMembershipRevokedError } from '../src/business-membership';
 import {
   DeviceCodeTimeoutError,
   OAuthAccessDeniedError,
@@ -837,6 +838,41 @@ describe('OAuthManager + FileTokenStorage integration', () => {
     const persisted = await storage.load('kimi-code');
     expect(persisted?.accessToken).toBe('rotated-access');
     expect(persisted?.refreshToken).toBe('rotated-refresh');
+  });
+
+  it('persists business membership revocation reason codes in revoked tombstones across manager restarts', async () => {
+    const storage = new FileTokenStorage(dir);
+    await storage.save(
+      'kimi-code',
+      makeToken({ refreshToken: 'rt-revoked', expiresAt: currentNow + 100 }),
+    );
+    const refreshImpl = vi
+      .fn()
+      .mockRejectedValue(new BusinessMembershipRevokedError('REASON_BUSINESS_MEMBER_REMOVED'));
+    const mgr = new OAuthManager({
+      config,
+      storage,
+      now,
+      sleep: async () => {},
+      refreshTokenImpl: refreshImpl,
+    });
+
+    await expect(mgr.ensureFresh()).rejects.toMatchObject({
+      name: 'BusinessMembershipRevokedError',
+      reasonCode: 'REASON_BUSINESS_MEMBER_REMOVED',
+    });
+
+    const mgrAfterRestart = new OAuthManager({ config, storage, now });
+    await expect(mgrAfterRestart.ensureFresh()).rejects.toMatchObject({
+      name: 'BusinessMembershipRevokedError',
+      reasonCode: 'REASON_BUSINESS_MEMBER_REMOVED',
+    });
+    await expect(
+      mgrAfterRestart.switchWorkspace({ kind: 'personal' }),
+    ).rejects.toMatchObject({
+      name: 'BusinessMembershipRevokedError',
+      reasonCode: 'REASON_BUSINESS_MEMBER_REMOVED',
+    });
   });
 });
 

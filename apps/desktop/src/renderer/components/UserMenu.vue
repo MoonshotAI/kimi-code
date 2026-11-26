@@ -50,9 +50,16 @@ const rcMode = isRcLocation(window.location);
 const userInfo = client.managedUserInfo;
 const membership = client.managedMembership;
 const managedWorkspaces = client.managedWorkspaces;
+const workspacesLoaded = client.managedWorkspacesLoaded;
 const workspacesLoading = client.managedWorkspacesLoading;
 const workspacesError = client.managedWorkspacesError;
 const hasBusinessWorkspace = client.hasBusinessWorkspace;
+const showWorkspaceSection = computed(
+  () =>
+    signedIn.value &&
+    (hasBusinessWorkspace.value ||
+      (!workspacesLoaded.value && (workspacesLoading.value || Boolean(workspacesError.value)))),
+);
 const currentWorkspace = client.currentManagedWorkspace;
 const recentWorkspaceKeys = client.recentWorkspaceKeys;
 const switchingKey = client.switchingWorkspaceKey;
@@ -564,7 +571,7 @@ async function onLogout(): Promise<void> {
   <Teleport to="body">
     <Transition name="ui-menu-pop">
       <Menu v-if="menuOpen" ref="menuRef" class="ui-menu-floating user-menu" :style="menuStyle" @click.stop>
-        <template v-if="signedIn && hasBusinessWorkspace">
+        <template v-if="showWorkspaceSection">
           <div class="user-menu-section-title">{{ t('account.workspaceSection') }}</div>
           <template v-if="primaryWorkspaces.length > 0">
             <UserMenuWorkspaceItem

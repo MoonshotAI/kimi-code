@@ -83,6 +83,7 @@ export const useAuthStore = defineStore('kimi.auth', () => {
   let membershipFlight: Promise<void> | null = null;
   let switchWorkspaceFlight: Promise<SwitchManagedWorkspaceOutcome> | null = null;
   let revokingFlight: Promise<void> | null = null;
+  let revocationLogoutPending = false;
 
   function recordRecentWorkspaceKey(key: string | undefined): void {
     if (!key) return;
@@ -118,26 +119,13 @@ export const useAuthStore = defineStore('kimi.auth', () => {
     return isBusinessMembershipRevokedCode(wsResult.errorCode);
   }
 
-  async function fetchManagedProfile(generation: number): Promise<void> {
+  async function fetchUserInfo(generation: number): Promise<void> {
     const api = getKimiWebApi();
-    const canListWorkspaces = typeof api.listManagedWorkspaces === 'function';
-    const wsGen = canListWorkspaces ? ++workspacesFetchGeneration : workspacesFetchGeneration;
-    if (canListWorkspaces) {
-      managedWorkspacesLoading.value = true;
-    }
-    const [infoSettled, workspacesSettled] = await Promise.allSettled([
-      (async () => api.getUserInfo())(),
-      canListWorkspaces ? (async () => api.listManagedWorkspaces())() : Promise.resolve(null),
-    ]);
-    if (generation !== userInfoFetchGeneration) return;
-    if (canListWorkspaces && wsGen === workspacesFetchGeneration) {
-      managedWorkspacesLoading.value = false;
-    }
-    if (managedProviderStatus.value !== 'authenticated') return;
-
     let revoked = false;
-    if (infoSettled.status === 'fulfilled') {
-      const infoResult = infoSettled.value;
+    try {
+      const infoResult = await api.getUserInfo();
+      if (generation !== userInfoFetchGeneration) return;
+      if (managedProviderStatus.value !== 'authenticated') return;
       if (infoResult.kind === 'ok') {
         managedUserInfo.value = infoResult.userInfo;
         managedMembership.value = isFreePlan(
@@ -146,6 +134,12 @@ export const useAuthStore = defineStore('kimi.auth', () => {
         )
           ? 'free'
           : 'member';
+        if (managedWorkspaces.value.length > 0) {
+          managedWorkspaces.value = normalizeWorkspacesWithNickname(
+            managedWorkspaces.value,
+            infoResult.userInfo.nickname,
+          );
+        }
       } else {
         managedUserInfo.value = null;
         managedMembership.value = infoResult.status === 402 ? 'free' : null;
@@ -153,22 +147,11 @@ export const useAuthStore = defineStore('kimi.auth', () => {
           revoked = true;
         }
       }
-    } else {
+    } catch {
+      if (generation !== userInfoFetchGeneration) return;
+      if (managedProviderStatus.value !== 'authenticated') return;
       managedUserInfo.value = null;
       managedMembership.value = null;
-    }
-
-    if (canListWorkspaces && wsGen === workspacesFetchGeneration) {
-      if (workspacesSettled.status === 'fulfilled' && workspacesSettled.value !== null) {
-        if (applyWorkspacesResult(workspacesSettled.value)) {
-          revoked = true;
-        }
-      } else if (workspacesSettled.status === 'rejected') {
-        managedWorkspacesError.value =
-          workspacesSettled.reason instanceof Error
-            ? workspacesSettled.reason.message
-            : String(workspacesSettled.reason);
-      }
     }
 
     if (revoked) {
@@ -177,7 +160,7 @@ export const useAuthStore = defineStore('kimi.auth', () => {
   }
 
   function trackMembershipFlight(generation: number): Promise<void> {
-    const flight = fetchManagedProfile(generation).finally(() => {
+    const flight = fetchUserInfo(generation).finally(() => {
       if (membershipFlight === flight) membershipFlight = null;
     });
     membershipFlight = flight;
@@ -186,6 +169,9 @@ export const useAuthStore = defineStore('kimi.auth', () => {
 
   async function probeMembership(): Promise<void> {
     if (managedProviderStatus.value !== 'authenticated') return;
+    if (!managedWorkspacesLoaded.value && !managedWorkspacesLoading.value) {
+      void reloadManagedWorkspaces();
+    }
     if (membershipFlight !== null) return membershipFlight;
     await trackMembershipFlight(++userInfoFetchGeneration);
   }
@@ -299,7 +285,10 @@ export const useAuthStore = defineStore('kimi.auth', () => {
       applyCommittedWorkspaceTarget(targetKey, displayName);
       managedWorkspacesError.value = null;
 
-      await trackMembershipFlight(++userInfoFetchGeneration).catch(() => undefined);
+      await Promise.allSettled([
+        trackMembershipFlight(++userInfoFetchGeneration),
+        reloadManagedWorkspaces(),
+      ]);
       if (
         switchEpoch !== epoch ||
         businessMembershipRevokedOpen.value ||
@@ -342,14 +331,19 @@ export const useAuthStore = defineStore('kimi.auth', () => {
     }
   }
 
-  function handleBusinessMembershipRevoked(): Promise<void> {
-    if (revokingFlight !== null) return revokingFlight;
-    businessMembershipRevokedOpen.value = true;
-    resetAuth({ keepRevokedModal: true });
+  function startRevocationCleanup(): Promise<void> {
     const flight = (async () => {
       const api = getKimiWebApi();
       if (typeof api.logout === 'function') {
-        await api.logout().catch(() => undefined);
+        try {
+          await api.logout();
+          revocationLogoutPending = false;
+        } catch (err) {
+          warningsStore().pushOperationFailure('logout', err);
+          return;
+        }
+      } else {
+        revocationLogoutPending = false;
       }
       resetAuth({ keepRevokedModal: true });
       await checkAuth().catch(() => 'retry' as AuthCheckResult);
@@ -361,11 +355,26 @@ export const useAuthStore = defineStore('kimi.auth', () => {
     return flight;
   }
 
-  async function acknowledgeBusinessMembershipRevoked(): Promise<void> {
-    businessMembershipRevokedOpen.value = false;
+  function handleBusinessMembershipRevoked(): Promise<void> {
+    if (revokingFlight !== null) return revokingFlight;
+    businessMembershipRevokedOpen.value = true;
+    revocationLogoutPending = true;
+    resetAuth({ keepRevokedModal: true });
+    return startRevocationCleanup();
+  }
+
+  async function acknowledgeBusinessMembershipRevoked(): Promise<boolean> {
     if (revokingFlight !== null) {
       await revokingFlight;
     }
+    if (revocationLogoutPending) {
+      await startRevocationCleanup();
+    }
+    if (revocationLogoutPending) {
+      return false;
+    }
+    businessMembershipRevokedOpen.value = false;
+    return true;
   }
 
   async function runCheckAuth(
@@ -382,6 +391,7 @@ export const useAuthStore = defineStore('kimi.auth', () => {
       if (managedProviderStatus.value === 'authenticated') {
         if (!skipMembershipProbe) {
           void trackMembershipFlight(++userInfoFetchGeneration);
+          void reloadManagedWorkspaces();
         }
       } else {
         userInfoFetchGeneration += 1;
@@ -450,6 +460,7 @@ export const useAuthStore = defineStore('kimi.auth', () => {
     clearWorkspaceState();
     if (!options?.keepRevokedModal) {
       businessMembershipRevokedOpen.value = false;
+      revocationLogoutPending = false;
     }
     authChecked.value = false;
   }

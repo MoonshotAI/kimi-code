@@ -5,6 +5,10 @@ import { dirname } from 'node:path';
 import lockfile from 'proper-lockfile';
 
 import {
+  BusinessMembershipRevokedError,
+  isBusinessMembershipRevokedCode,
+} from './business-membership';
+import {
   DeviceCodeTimeoutError,
   OAuthAccessDeniedError,
   OAuthError,
@@ -262,6 +266,15 @@ export class OAuthManager {
     return run;
   }
 
+  private revokedStateError(reasonCode: string | undefined): OAuthUnauthorizedError {
+    if (isBusinessMembershipRevokedCode(reasonCode)) {
+      return new BusinessMembershipRevokedError(reasonCode);
+    }
+    return new OAuthUnauthorizedError(
+      `Stored token for "${this.config.name}" was rejected; re-login required.`,
+    );
+  }
+
   private async doSwitchWorkspace(target: WorkspaceTarget): Promise<TokenInfo> {
     const release = await this.acquireRefreshLock();
     try {
@@ -272,9 +285,7 @@ export class OAuthManager {
             `No token for "${this.config.name}". Run /login to authenticate.`,
           );
         case 'revoked':
-          throw new OAuthUnauthorizedError(
-            `Stored token for "${this.config.name}" was rejected; re-login required.`,
-          );
+          throw this.revokedStateError(state.reasonCode);
         case 'valid':
           break;
       }
@@ -312,9 +323,7 @@ export class OAuthManager {
           `No token for "${this.config.name}". Run /login to authenticate.`,
         );
       case 'revoked':
-        throw new OAuthUnauthorizedError(
-          `Stored token for "${this.config.name}" was rejected; re-login required.`,
-        );
+        throw this.revokedStateError(initial.reasonCode);
       case 'valid':
         break;
     }
@@ -331,9 +340,7 @@ export class OAuthManager {
       let activeToken: TokenInfo;
       switch (afterLock.kind) {
         case 'revoked':
-          throw new OAuthUnauthorizedError(
-            `Stored token for "${this.config.name}" was rejected; re-login required.`,
-          );
+          throw this.revokedStateError(afterLock.reasonCode);
         case 'missing':
           activeToken = token;
           break;
@@ -380,7 +387,9 @@ export class OAuthManager {
             this.notifyRefresh({ success: true });
             return recovery.token.accessToken;
           }
-          await this.storage.save(this.config.name, revokedTombstone(activeToken));
+          const revokedReason =
+            error instanceof BusinessMembershipRevokedError ? error.reasonCode : undefined;
+          await this.storage.save(this.config.name, revokedTombstone(activeToken, revokedReason));
           this.notifyRefresh({ success: false, reason: 'unauthorized' });
         } else {
           this.notifyRefresh({ success: false, reason: 'network_or_other' });

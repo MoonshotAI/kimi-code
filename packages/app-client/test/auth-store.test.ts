@@ -807,4 +807,74 @@ describe('kimi.auth — enterprise workspaces and membership revocation', () => 
     expect(authStore().managedWorkspaces.find((ws) => ws.key === 'personal')?.current).toBe(false);
     expect(authStore().managedWorkspacesError).toBe('Workspace directory temporarily unavailable');
   });
+
+  it('resolves probeMembership as soon as getUserInfo finishes without waiting on a slow listManagedWorkspaces call', async () => {
+    let resolveWorkspaces!: (value: ManagedWorkspacesResult) => void;
+    getKimiWebApiMock.mockReturnValue({
+      getAuth: vi.fn().mockResolvedValue(AUTHENTICATED),
+      getUserInfo: vi.fn().mockResolvedValue({ kind: 'ok', userInfo: profile }),
+      listManagedWorkspaces: vi.fn().mockImplementation(
+        () =>
+          new Promise<ManagedWorkspacesResult>((resolve) => {
+            resolveWorkspaces = resolve;
+          }),
+      ),
+    });
+
+    await authStore().checkAuth();
+    await authStore().probeMembership();
+
+    expect(authStore().managedMembership).toBe('member');
+    expect(authStore().managedWorkspacesLoading).toBe(true);
+
+    resolveWorkspaces({
+      kind: 'ok',
+      workspaces: [
+        {
+          kind: 'personal',
+          key: 'personal',
+          name: 'Personal',
+          current: true,
+          disabled: false,
+          switchable: true,
+          roles: ['ROLE_OWNER'],
+        },
+      ],
+    });
+    await flushUserInfo();
+    expect(authStore().managedWorkspacesLoading).toBe(false);
+    expect(authStore().managedWorkspaces[0]?.name).toBe('Kimi User');
+  });
+
+  it('keeps the revocation modal open and retries logout on confirm when initial revocation logout fails', async () => {
+    let shouldFailLogout = true;
+    const logout = vi.fn().mockImplementation(async () => {
+      if (shouldFailLogout) {
+        throw new Error('remote-control logout gate busy');
+      }
+      return { loggedOut: true };
+    });
+    const getAuth = vi.fn().mockResolvedValue(ANONYMOUS);
+    getKimiWebApiMock.mockReturnValue({
+      getAuth,
+      getUserInfo: vi.fn().mockResolvedValue({ kind: 'error', status: 401, message: 'Unauthorized' }),
+      logout,
+    });
+
+    await authStore().handleBusinessMembershipRevoked();
+    expect(logout).toHaveBeenCalledTimes(1);
+    expect(getAuth).not.toHaveBeenCalled();
+    expect(authStore().businessMembershipRevokedOpen).toBe(true);
+    expect(authStore().signedIn).toBe(false);
+
+    await expect(authStore().acknowledgeBusinessMembershipRevoked()).resolves.toBe(false);
+    expect(logout).toHaveBeenCalledTimes(2);
+    expect(authStore().businessMembershipRevokedOpen).toBe(true);
+
+    shouldFailLogout = false;
+    await expect(authStore().acknowledgeBusinessMembershipRevoked()).resolves.toBe(true);
+    expect(logout).toHaveBeenCalledTimes(3);
+    expect(getAuth).toHaveBeenCalledTimes(1);
+    expect(authStore().businessMembershipRevokedOpen).toBe(false);
+  });
 });

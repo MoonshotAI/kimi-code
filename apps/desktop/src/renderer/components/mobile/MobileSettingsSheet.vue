@@ -552,7 +552,14 @@ function toggleAutoSessionTitle(): void {
       </div>
     </div>
 
-    <template v-if="signedIn && client.hasBusinessWorkspace.value">
+    <template
+      v-if="
+        signedIn &&
+        (client.hasBusinessWorkspace.value ||
+          (!client.managedWorkspacesLoaded.value &&
+            (client.managedWorkspacesLoading.value || Boolean(client.managedWorkspacesError.value))))
+      "
+    >
       <div class="group-title">{{ t('account.workspaceSection') }}</div>
       <div class="card">
         <div v-if="client.managedWorkspaces.value.length > 3" class="srow read-only mobile-ws-search-row">

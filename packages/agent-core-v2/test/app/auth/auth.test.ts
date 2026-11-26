@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import {
+  BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+  BusinessMembershipRevokedError,
   clearManagedKimiCodeConfig,
   resolveKimiCodeOAuthKey,
   resolveKimiCodeRuntimeAuth,
@@ -25,6 +27,8 @@ import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { WebSearchProviderService } from '#/app/auth/webSearch/webSearchService';
 import { IAuthLegacyService } from '#/app/authLegacy/authLegacy';
 import { AuthLegacyService } from '#/app/authLegacy/authLegacyService';
+import { ModelOAuthTokenAdapter } from '#/app/kosongConfig/oauthTokenAdapter';
+import { toErrorPayload } from '#/_base/errors/serialize';
 import { IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
 import { IEventService } from '#/app/event/event';
@@ -2157,5 +2161,32 @@ describe('AuthLegacyService', () => {
     defaultModel = 'k2';
     await expect(svc.get()).resolves.toMatchObject({ models_ready: true });
     expect(configReload).not.toHaveBeenCalled();
+  });
+
+  it('preserves providerErrorCode when ModelOAuthTokenAdapter encounters BusinessMembershipRevokedError during refresh', async () => {
+    const adapter = new ModelOAuthTokenAdapter({
+      getCachedAccessToken: vi.fn(),
+      resolveTokenProvider: vi.fn(() => ({
+        getAccessToken: vi
+          .fn()
+          .mockRejectedValue(
+            new BusinessMembershipRevokedError('REASON_BUSINESS_MEMBER_REMOVED'),
+          ),
+      })),
+    } as unknown as IOAuthService);
+
+    const caught = await adapter
+      .getAccessToken('managed:kimi-code', { storage: 'file', key: 'oauth/kimi-code' })
+      .catch((error: unknown) => error);
+
+    expect(toErrorPayload(caught)).toMatchObject({
+      code: 'provider.auth_error',
+      message: BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+      retryable: false,
+      details: {
+        statusCode: 401,
+        providerErrorCode: 'REASON_BUSINESS_MEMBER_REMOVED',
+      },
+    });
   });
 });

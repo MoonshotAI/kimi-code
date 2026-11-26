@@ -1,5 +1,6 @@
 import { ErrorCodes, KimiError } from '#/errors';
 import {
+  BusinessMembershipRevokedError,
   OAuthConnectionError,
   OAuthUnauthorizedError,
   RetryableRefreshError,
@@ -23,6 +24,13 @@ import {
  * remediation path.
  */
 export function mapOAuthTokenError(error: unknown, providerName: string): KimiError | undefined {
+  if (error instanceof BusinessMembershipRevokedError) {
+    return new KimiError(ErrorCodes.PROVIDER_AUTH_ERROR, error.message, {
+      details: { statusCode: 401, providerErrorCode: error.reasonCode },
+      retryable: false,
+      cause: error,
+    });
+  }
   if (error instanceof OAuthUnauthorizedError) {
     return new KimiError(
       ErrorCodes.AUTH_LOGIN_REQUIRED,
