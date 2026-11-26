@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { fakeMcpServer } from '@moonshot-ai/testkit/fixtures';
-import { agent, bash, call, held, httpError, say, think, type FakeModel, type ModelRequest, type ReplyStep } from '@moonshot-ai/testkit/model';
+import { agent, bash, call, held, httpError, say, think, withUsage, type FakeModel, type ModelRequest, type ReplyStep } from '@moonshot-ai/testkit/model';
 import { describe, expect, test as base } from 'vitest';
 
 import { scenarioFixtures, type ScenarioFixtures, type ScenarioOptions } from './support/scenario';
@@ -86,6 +86,13 @@ const PROFILES: readonly Profile[] = [
   },
 ];
 
+const AUTO_COMPACTION_RATIO = 0.5;
+const PAST_THE_TRIGGER = { input: 160_000, output: 1 };
+
+function withAutoCompaction(options: ScenarioOptions): ScenarioOptions {
+  return { ...options, config: { ...options.config, loopControl: { compaction_trigger_ratio: AUTO_COMPACTION_RATIO } } };
+}
+
 function answer(text: string): ReplyStep {
   return think(`planning: ${text}`, say(text));
 }
@@ -103,6 +110,16 @@ async function searchDocs(kap: Kap, model: FakeModel, sessionId: string, mcp: Pr
   expect(model.requests('main').at(-1)?.texts('tool').join('\n')).toContain('found 2 pages');
 }
 
+async function runPastTheCompactionTrigger(kap: Kap, model: FakeModel, sessionId: string, roleMetadata: boolean): Promise<void> {
+  const summary = say('Summary: four commands ran.');
+  if (roleMetadata) model.lane('compaction').script(summary);
+  else model.expectCacheBreak('without role metadata the request after compaction cannot be told apart from a rewritten history', { at: 'history' });
+  model.script(bash('echo four'), withUsage(PAST_THE_TRIGGER, answer('fourth answer')), ...(roleMetadata ? [] : [summary]), answer('continued after compacting'));
+  await turn(kap, sessionId, 'Run one more command.');
+  await turn(kap, sessionId, 'Carry on.');
+  expect(model.requests('main').at(-1)?.texts('user').join('\n')).toContain('Summary: four commands ran.');
+}
+
 async function compact(kap: Kap, model: FakeModel, sessionId: string, summary: string, roleMetadata: boolean): Promise<void> {
   if (!roleMetadata) model.expectCacheBreak('without role metadata the request after compaction cannot be told apart from a rewritten history', { at: 'history' });
   model.lane(roleMetadata ? 'compaction' : 'main').script(say(summary));
@@ -111,9 +128,9 @@ async function compact(kap: Kap, model: FakeModel, sessionId: string, summary: s
 }
 
 describe.each(PROFILES)('one session with $name', ({ options, roleMetadata, mcp, takesEffect }) => {
-  const test = base.extend<ScenarioFixtures>(scenarioFixtures({ ...options, modelOptions: { reportCachedTokens: true } }));
+  const test = base.extend<ScenarioFixtures>(scenarioFixtures({ ...withAutoCompaction(options), modelOptions: { reportCachedTokens: true } }));
 
-  test('keeps every main request on the prompt cache prefix through a retry, compaction, a restart and a subagent', async ({ kap, model }) => {
+  test('keeps every main request on the prompt cache prefix through a retry, compaction, a restart, an automatic compaction and a subagent', async ({ kap, model }) => {
     const session = await kap.createSession();
 
     model.script(think('planning the first command', bash('echo one')), answer('first answer'));
@@ -127,8 +144,7 @@ describe.each(PROFILES)('one session with $name', ({ options, roleMetadata, mcp,
     await turn(kap, session.id, 'What happened so far?');
 
     await kap.restart();
-    model.script(bash('echo four'), answer('fourth answer'));
-    await turn(kap, session.id, 'Run one more command.');
+    await runPastTheCompactionTrigger(kap, model, session.id, roleMetadata);
     await searchDocs(kap, model, session.id, mcp);
     if (roleMetadata) {
       model.script(agent({ prompt: 'look around the workspace', description: 'scout' }), answer('fifth answer'));
