@@ -28,6 +28,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const API = 'http://daemon.test/api/v1';
+
 function createApi(): DaemonKimiWebApi {
   return new DaemonKimiWebApi({
     origin: 'http://daemon.test',
@@ -99,8 +101,8 @@ describe('session worktree mapping', () => {
         request: { sourceBranch: 'main', includeLocalChanges: true, useRemote: true },
         steps: [
           { kind: 'fetch', state: 'failed', ref: 'origin/main', command: 'git fetch origin main', output: 'boom', timedOut: true },
-          { kind: 'prune', state: 'done', ref: undefined, command: undefined, output: undefined, timedOut: undefined },
-          { kind: 'create', state: 'pending', ref: undefined, command: undefined, output: undefined, timedOut: undefined },
+          { kind: 'prune', state: 'done' },
+          { kind: 'create', state: 'pending' },
         ],
         commandsRan: 1,
         startedAt: '2026-11-18T00:00:01.000Z',
@@ -141,7 +143,7 @@ describe('worktree routes', () => {
     respond(WIRE_SESSION);
     const session = await createApi().sessionWorktreeAction('sess/1', action);
     const request = lastRequest();
-    expect(request.url).toBe(`http://daemon.test/api/v1/sessions/sess%2F1/worktree:${segment}`);
+    expect(request.url).toBe(`${API}/sessions/sess%2F1/worktree:${segment}`);
     expect(request.method).toBe('POST');
     expect(request.body).toEqual({});
     expect(session.worktree?.branch).toBe('kimi/1118-a3f2');
@@ -156,20 +158,19 @@ describe('worktree routes', () => {
     expect(lastRequest().body).toEqual({});
   });
 
-  it('deletes a session with worktree options and maps the outcome', async () => {
+  it('deletes a session with an empty body by default, or with worktree options and their outcome', async () => {
+    const api = createApi();
+    respond({ deleted: true });
+    expect(await api.deleteSession('sess-1')).toEqual({ deleted: true });
+    expect(lastRequest().body).toEqual({});
+
     respond({ deleted: true, worktree: { outcome: 'kept_in_use', branch_deleted: false, other_sessions: 2, output: 'busy' } });
-    const result = await createApi().deleteSession('sess-1', { removeWorktree: true, deleteBranch: true });
+    const result = await api.deleteSession('sess-1', { removeWorktree: true, deleteBranch: true });
     expect(lastRequest().body).toEqual({ remove_worktree: true, delete_branch: true });
     expect(result).toEqual({
       deleted: true,
       worktree: { outcome: 'kept_in_use', branchDeleted: false, otherSessions: 2, output: 'busy' },
     });
-  });
-
-  it('deletes a session without a body by default', async () => {
-    respond({ deleted: true });
-    expect(await createApi().deleteSession('sess-1')).toEqual({ deleted: true });
-    expect(lastRequest().body).toEqual({});
   });
 
   it('lists branches for a workspace', async () => {
@@ -197,7 +198,7 @@ describe('worktree routes', () => {
       ],
     });
     const result = await createApi().getWorkspaceGitBranches('ws/1');
-    expect(lastRequest().url).toBe('http://daemon.test/api/v1/workspaces/ws%2F1/git/branches');
+    expect(lastRequest().url).toBe(`${API}/workspaces/ws%2F1/git/branches`);
     expect(result).toEqual({
       isRepo: true,
       headBranch: 'main',
@@ -218,13 +219,7 @@ describe('worktree routes', () => {
           remote: 'fork',
           remoteSource: 'same_name',
         },
-        {
-          name: 'topic',
-          committedAt: '2026-11-17T00:00:00.000Z',
-          remoteRef: undefined,
-          remote: undefined,
-          remoteSource: undefined,
-        },
+        { name: 'topic', committedAt: '2026-11-17T00:00:00.000Z' },
       ],
     });
   });
@@ -249,7 +244,7 @@ describe('worktree routes', () => {
     vi.mocked(fetch).mockImplementation(async () => envelope(wire));
     const api = createApi();
     const list = await api.listWorktrees();
-    expect(lastRequest().url).toBe('http://daemon.test/api/v1/worktrees');
+    expect(lastRequest().url).toBe(`${API}/worktrees`);
     expect(list).toEqual({
       items: [
         {
@@ -267,7 +262,7 @@ describe('worktree routes', () => {
       totalSizeBytes: 42,
     });
     await api.listWorktrees({ refreshSizes: true });
-    expect(lastRequest().url).toBe('http://daemon.test/api/v1/worktrees?refresh=sizes');
+    expect(lastRequest().url).toBe(`${API}/worktrees?refresh=sizes`);
   });
 
   it('inspects, removes and looks up worktrees', async () => {
@@ -280,11 +275,11 @@ describe('worktree routes', () => {
       items: [{ path: '/wt/a', branch: 'kimi/a', uncommittedFiles: 3, unpushedCommits: 1, sessions: [] }],
       errors: { '/wt/b': { code: 40423, msg: 'gone' } },
     });
-    expect(lastRequest()).toMatchObject({ url: 'http://daemon.test/api/v1/worktrees:inspect', body: { paths: ['/wt/a', '/wt/b'] } });
+    expect(lastRequest()).toMatchObject({ url: `${API}/worktrees:inspect`, body: { paths: ['/wt/a', '/wt/b'] } });
 
     respond({ removed: true, branch_deleted: true });
     expect(await api.removeWorktree({ path: '/wt/a', deleteBranch: true })).toEqual({ removed: true, branchDeleted: true });
-    expect(lastRequest()).toMatchObject({ url: 'http://daemon.test/api/v1/worktrees:remove', body: { path: '/wt/a', delete_branch: true } });
+    expect(lastRequest()).toMatchObject({ url: `${API}/worktrees:remove`, body: { path: '/wt/a', delete_branch: true } });
 
     respond({
       worktree: {
@@ -296,14 +291,14 @@ describe('worktree routes', () => {
     });
     const found = await api.lookupWorktree('/wt/a');
     expect(found).toMatchObject({ repoRoot: '/repo', branch: 'kimi/a', sessionCount: 2, workspace: { id: 'ws-1', root: '/repo' } });
-    expect(lastRequest()).toMatchObject({ url: 'http://daemon.test/api/v1/worktrees:lookup', body: { path: '/wt/a' } });
+    expect(lastRequest()).toMatchObject({ url: `${API}/worktrees:lookup`, body: { path: '/wt/a' } });
 
     respond({ worktree: null, enclosing_repo_root: null });
     expect(await api.lookupWorktree('/elsewhere')).toBeNull();
 
     respond({ worktree: null, enclosing_repo_root: '/repo' });
     expect(await api.enclosingRepoRoot('/repo/app')).toBe('/repo');
-    expect(lastRequest()).toMatchObject({ url: 'http://daemon.test/api/v1/worktrees:lookup', body: { path: '/repo/app' } });
+    expect(lastRequest()).toMatchObject({ url: `${API}/worktrees:lookup`, body: { path: '/repo/app' } });
   });
 });
 
@@ -381,8 +376,8 @@ describe('git status mapping', () => {
     expect(await createApi().getPullRequestBatch('sess-1', { roots: ['/a', '/b', '/c', '/d'] })).toEqual({
       results: { '/a': { number: 7, state: 'open', url: 'https://example.test/7' }, '/b': null, '/c': null },
       statuses: {
-        '/a': { status: 'found', error: undefined },
-        '/b': { status: 'unavailable', error: undefined },
+        '/a': { status: 'found' },
+        '/b': { status: 'unavailable' },
         '/c': { status: 'failed', error: 'gh: timeout' },
       },
       errors: { '/d': { code: 40422, msg: 'missing' } },
