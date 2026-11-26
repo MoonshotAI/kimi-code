@@ -34,6 +34,9 @@ export class AcpInteractionBridge {
     private readonly session: SessionHandle,
     private readonly sessionId: string,
     private readonly elicitationForm = false,
+    private readonly schedule: (dispatch: () => void) => void = (dispatch) => {
+      dispatch();
+    },
   ) {
     this.subscription = session.events.on('interactions.changed', (pending) => {
       this.onPendingChanged(pending);
@@ -64,7 +67,9 @@ export class AcpInteractionBridge {
       if (this.inFlight.has(interaction.id)) continue;
       if (interaction.kind !== 'approval' && interaction.kind !== 'question') continue;
       this.inFlight.add(interaction.id);
-      void this.dispatch(interaction);
+      this.schedule(() => {
+        void this.dispatch(interaction);
+      });
     }
   }
 

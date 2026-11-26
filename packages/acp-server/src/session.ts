@@ -127,13 +127,17 @@ interface ResolvedCommands {
   readonly skillCommandMap: ReadonlyMap<string, string>;
 }
 
+type EarlyDispatch =
+  | { readonly kind: 'turnEvent'; readonly turnId: number; readonly dispatch: () => void }
+  | { readonly kind: 'interaction'; readonly dispatch: () => void };
+
 interface TurnDriver {
   resolve(response: PromptResponse): void;
   reject(error: unknown): void;
   turnId?: number;
   settled: boolean;
   cancelRequested?: boolean;
-  early: Array<{ readonly turnId: number; readonly dispatch: () => void }>;
+  early: EarlyDispatch[];
 }
 
 export class AcpSession {
@@ -176,7 +180,9 @@ export class AcpSession {
     this.klient = klient;
     this.session = klient.session(sessionId);
     this.agent = this.session.agent('main');
-    this.interactionBridge = new AcpInteractionBridge(conn, this.session, sessionId, elicitationForm);
+    this.interactionBridge = new AcpInteractionBridge(conn, this.session, sessionId, elicitationForm, (dispatch) => {
+      this.dispatchInteraction(dispatch);
+    });
   }
 
   async init(readMode?: () => AcpModeId | undefined): Promise<void> {
@@ -518,7 +524,7 @@ export class AcpSession {
             });
           }
           for (const early of driver.early.splice(0)) {
-            if (early.turnId === driver.turnId) early.dispatch();
+            if (early.kind === 'interaction' || early.turnId === driver.turnId) early.dispatch();
           }
         },
         (error) => {
@@ -538,16 +544,28 @@ export class AcpSession {
     const driver = this.driver;
     if (driver === undefined || driver.settled) return;
     if (driver.turnId === undefined) {
-      driver.early.push({ turnId, dispatch });
+      driver.early.push({ kind: 'turnEvent', turnId, dispatch });
       return;
     }
     if (driver.turnId === turnId) dispatch();
+  }
+
+  private dispatchInteraction(dispatch: () => void): void {
+    const driver = this.driver;
+    if (driver === undefined || driver.settled || driver.turnId !== undefined) {
+      dispatch();
+      return;
+    }
+    driver.early.push({ kind: 'interaction', dispatch });
   }
 
   private settleDriver(driver: TurnDriver, action: () => void): void {
     if (driver.settled) return;
     driver.settled = true;
     if (this.driver === driver) this.driver = undefined;
+    for (const early of driver.early.splice(0)) {
+      if (early.kind === 'interaction') early.dispatch();
+    }
     action();
   }
 

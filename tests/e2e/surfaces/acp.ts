@@ -908,7 +908,12 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private askedQuestions(pending: PendingPermission): readonly string[] {
-    return toolsOf(this.turnUpdates()).find((tool) => tool.id === pending.params.toolCall.toolCallId)?.questions ?? [];
+    const { toolCallId } = pending.params.toolCall;
+    const asked = toolsOf(this.turnUpdates()).find((tool) => tool.id === toolCallId)?.questions ?? [];
+    if (asked.length === 0) {
+      throw new Error(`answer() got a question for tool call ${toolCallId}, but the agent asked it before showing that tool call with its questions.\n${this.describe()}`);
+    }
+    return asked;
   }
 
   private async answerQuestion(pending: PendingPermission, optionId: string): Promise<void> {
