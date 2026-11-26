@@ -1,4 +1,4 @@
-import { PERMISSION_MODE_NAMES, wantedChanges, wantedOutput, type Actions, type ApprovalExpectation, type ToolExpectation, type ToolStatus, type Verb } from './verbs';
+import { PERMISSION_MODE_NAMES, wantedChanges, wantedOutput, type Actions, type ApprovalExpectation, type TaskStatus, type ToolExpectation, type ToolStatus, type Verb } from './verbs';
 
 const LONGEST_QUOTE = 60;
 
@@ -8,6 +8,8 @@ export const TOOL_STATUS_WORDS: Readonly<Record<ToolStatus, string>> = {
   rejected: '被拒绝',
   running: '运行中',
 };
+
+const TASK_STATUS_WORDS: { readonly [S in TaskStatus]: string } = { running: '正在跑', done: '已完成', failed: '失败了', stopped: '已停止' };
 
 export function quote(text: string): string {
   return `「${text.length > LONGEST_QUOTE ? `${text.slice(0, LONGEST_QUOTE)}…` : text}」`;
@@ -30,6 +32,9 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   queue: (text) => `用户趁回合还在进行，把${quote(text)}排进队列`,
   steer: (text) => `用户趁回合还在进行，插话${quote(text)}`,
   steerQueued: () => '用户把排队的那条消息改成插进当前回合（Ctrl+S）',
+  background: () => '用户把正在跑的命令转到后台',
+  expectTask: ({ description, status, output }) => `检查后台任务：${quote(description)}${TASK_STATUS_WORDS[status]}${output === undefined ? '' : `，输出里有${quote(output)}`}`,
+  stopTask: (description) => `用户在任务列表里停掉${quote(description)}`,
   approve: (options) => (options?.for === 'session' ? '用户批准，本会话内同样的操作不再询问' : '用户批准'),
   reject: () => '用户拒绝',
   rejectWithFeedback: (feedback) => `用户拒绝，并说明理由${quote(feedback)}`,

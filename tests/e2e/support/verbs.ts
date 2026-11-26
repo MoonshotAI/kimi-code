@@ -39,6 +39,7 @@ const NO_WINDOW_TO_RESIZE = {
   acp: 'An editor shows the conversation in its own window; the agent behind ACP has no window to resize.',
   desktop: "The Desktop window cannot be made narrower than 900 pixels, so a user cannot give it a phone width, and Playwright can only resize it by running code in Electron's main process.",
 };
+const NO_TASKS_OVER_ACP = 'ACP has no background tasks an editor can move, list or stop: the agent reports only tool calls.';
 const NO_PAGE_TO_RELOAD = {
   tui: 'A terminal shows the CLI itself; there is no page to reload.',
   acp: 'An editor shows the conversation in its own interface; there is no page of the agent to reload.',
@@ -54,6 +55,9 @@ export const VERBS = {
   queue: { on: ['tui', 'desktop', 'web'], absentBecause: ONE_PROMPT_AT_A_TIME_OVER_ACP, checksInterface: false },
   steer: { on: ['tui', 'desktop', 'web'], absentBecause: ONE_PROMPT_AT_A_TIME_OVER_ACP, checksInterface: false },
   steerQueued: { on: ['tui', 'desktop', 'web'], absentBecause: ONE_PROMPT_AT_A_TIME_OVER_ACP, checksInterface: false },
+  background: { on: ['tui', 'desktop', 'web'], absentBecause: NO_TASKS_OVER_ACP, checksInterface: false },
+  expectTask: { on: ['tui', 'desktop', 'web'], absentBecause: NO_TASKS_OVER_ACP, checksInterface: true },
+  stopTask: { on: ['tui', 'desktop', 'web'], absentBecause: NO_TASKS_OVER_ACP, checksInterface: false },
   approve: { on: SURFACES, checksInterface: false },
   reject: { on: SURFACES, checksInterface: false },
   rejectWithFeedback: { on: ['tui', 'desktop', 'web'], absentBecause: NO_REASON_OVER_ACP, checksInterface: false },
@@ -170,6 +174,14 @@ export function describeTool(expectation: ToolExpectation): string {
   return `${expectation.name} on ${JSON.stringify(expectation.target)} with status ${expectation.status}${printed}`;
 }
 
+export type TaskStatus = 'running' | 'done' | 'failed' | 'stopped';
+
+export interface TaskExpectation {
+  readonly description: string;
+  readonly status: TaskStatus;
+  readonly output?: string;
+}
+
 export type ApprovalToolName = Exclude<ToolName, 'Read' | 'AskUserQuestion'>;
 
 export const QUESTION_PENDING = 'a question is pending; answer it with answer() or dismissQuestion() first';
@@ -247,6 +259,9 @@ interface VerbSignatures {
   queue(text: string): Promise<void>;
   steer(text: string): Promise<void>;
   steerQueued(): Promise<void>;
+  background(): Promise<void>;
+  expectTask(expectation: TaskExpectation): Promise<void>;
+  stopTask(description: string): Promise<void>;
   approve(options?: ApproveOptions): Promise<void>;
   reject(): Promise<void>;
   rejectWithFeedback(feedback: string): Promise<void>;

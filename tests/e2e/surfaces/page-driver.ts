@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { TIMEOUTS } from '@moonshot-ai/testkit/fixtures';
 import type { BrowserContext, Page } from '@playwright/test';
 
-import type { ApprovalExpectation, ApproveOptions, Diagnostic, Frame, PermissionMode, ReopenState, SurfaceDriver, ToolExpectation } from '../support/verbs';
+import type { ApprovalExpectation, ApproveOptions, Diagnostic, Frame, PermissionMode, ReopenState, SurfaceDriver, TaskExpectation, ToolExpectation } from '../support/verbs';
 import { RendererSurface, type MenuPage } from './renderer';
 
 export const WELCOME_DIALOG = 'Welcome to Kimi Code';
@@ -151,6 +151,18 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
 
   steerQueued(): Promise<void> {
     return this.window().steerQueued();
+  }
+
+  background(): Promise<void> {
+    return this.window().background();
+  }
+
+  expectTask(expectation: TaskExpectation): Promise<void> {
+    return this.window().expectTask(expectation);
+  }
+
+  stopTask(description: string): Promise<void> {
+    return this.window().stopTask(description);
   }
 
   expectStopped(): Promise<void> {

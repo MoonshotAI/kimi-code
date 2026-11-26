@@ -29,6 +29,8 @@ import {
   missingChanges,
   type ApprovalExpectation,
   type ChangedLines,
+  type TaskExpectation,
+  type TaskStatus,
   type ApprovalToolName,
   type ApproveOptions,
   type Diagnostic,
@@ -78,6 +80,7 @@ const KITTY_KEYS: Readonly<Record<string, { readonly code: number; readonly modi
   '\x0f': { code: 111, modifiers: 5 },
   '\x11': { code: 113, modifiers: 5 },
   '\x13': { code: 115, modifiers: 5 },
+  '\x02': { code: 98, modifiers: 5 },
 };
 const BEGIN_FRAME = '\x1b[?2026h';
 const END_FRAME = '\x1b[?2026l';
@@ -100,6 +103,9 @@ const KEYS = {
   toggleDetails: '\x0f',
   queue: '\x11',
   steer: '\x13',
+  background: '\x02',
+  stopTask: 's',
+  confirmStop: 'y',
 } as const;
 
 const USER_MARK = '❯';
@@ -163,6 +169,13 @@ const ASKED_ANSWER = '→';
 const DISMISSED_NOTE = 'User dismissed the question without answering.';
 const NEW_SESSION_COMMAND = '/new';
 const COMPACT_COMMAND = '/compact';
+const TASKS_COMMAND = '/tasks';
+const TASK_BROWSER = 'TASK BROWSER';
+const TASK_PREVIEW = '─ Preview Output ─';
+const TASK_LOADING = '[loading…]';
+const TUI_TASK_STATUS: { readonly [S in TaskStatus]: string } = { running: 'running', done: 'completed', failed: 'failed', stopped: 'killed' };
+const MOVED_TO_BACKGROUND = 'to background. /tasks to view.';
+const NOT_MOVED = ['No foreground task running.', 'Task already finished.', 'Command already finished.', 'Command is still starting'];
 const MODEL_COMMAND = '/model';
 const EFFORT_COMMAND = '/effort';
 const PICKER_HINT = 'Enter select';
@@ -368,6 +381,28 @@ function thinkingChoices(screen: Screen): { readonly choices: readonly string[];
   const choices = tokens.map((token) => token.replace(/^\[ /, '').replace(/ \]$/, ''));
   const selected = tokens.find((token) => token.startsWith('[ '))?.replace(/^\[ /, '').replace(/ \]$/, '');
   return { choices, selected };
+}
+
+interface TaskBrowser {
+  readonly total: number;
+  readonly id: string | undefined;
+  readonly status: string | undefined;
+  readonly description: string | undefined;
+  readonly output: readonly string[];
+}
+
+function taskBrowser(screen: Screen): TaskBrowser | undefined {
+  const lines = screen.viewport;
+  const header = lines.find((line) => line.trimStart().startsWith(TASK_BROWSER));
+  if (header === undefined) return undefined;
+  const total = Number(/(\d+) total/.exec(header)?.[1] ?? 0);
+  const details = lines.map((line) => line.split('││')[1]?.replace(/│\s*$/, '').trim() ?? '');
+  const field = (name: string): string | undefined => details.find((text) => text.startsWith(`${name}:`))?.slice(name.length + 1).trim();
+  const preview = lines.findIndex((line) => line.includes(TASK_PREVIEW));
+  const below = preview < 0 ? [] : lines.slice(preview + 1);
+  const end = below.findIndex((line) => line.includes('└'));
+  const output = (end < 0 ? below : below.slice(0, end)).map((line) => line.split('││')[1]?.replace(/│\s*$/, '').trim() ?? '').filter((text) => text !== '');
+  return { total, id: field('Task ID'), status: field('Status'), description: field('Description'), output };
 }
 
 function pickerOpen(screen: Screen): boolean {
@@ -1042,6 +1077,86 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     if ('over' in settled) {
       throw this.failure(`steer() did not see ${JSON.stringify(text)} reach the turn before it ended.`, settled.over);
     }
+  }
+
+  async background(): Promise<void> {
+    const screen = await this.read();
+    if (showsQuestion(screen)) throw this.failure(`background() cannot move a command: ${QUESTION_PENDING}.`, screen);
+    if (showsApproval(screen)) throw this.failure('background() cannot move a command while an approval is pending; answer it with approve() or reject() first.', screen);
+    if (this.turnOver(screen)) throw this.failure('background() needs a running command, but the product is idle.', screen);
+    const moved = screen.viewport.filter((line) => line.includes(MOVED_TO_BACKGROUND)).length;
+    this.write(KEYS.background);
+    const settled = await this.settle('the command to move to the background', (current) => {
+      if (current.viewport.filter((line) => line.includes(MOVED_TO_BACKGROUND)).length > moved) return 'moved' as const;
+      return current.viewport.some((line) => NOT_MOVED.some((hint) => line.includes(hint))) ? ('refused' as const) : undefined;
+    });
+    if ('over' in settled) throw this.failure('background() did not see the command move to the background before the turn ended.', settled.over);
+    if (settled.found === 'refused') throw this.failure('background() found no running command to move to the background.', await this.read());
+  }
+
+  async expectTask({ description, status, output }: TaskExpectation): Promise<void> {
+    const screen = await this.read();
+    if (showsQuestion(screen)) throw this.failure(`expectTask() cannot open the task browser: ${QUESTION_PENDING}.`, screen);
+    if (showsApproval(screen)) throw this.failure('expectTask() cannot open the task browser while an approval is pending; answer it with approve() or reject() first.', screen);
+    this.write(paste(TASKS_COMMAND));
+    this.write(KEYS.enter);
+    let browser = await this.selectTask(description, await this.wait('the task browser to open', (current) => taskBrowser(current)));
+    const shown = await this.wait('the task preview to load', (current) => {
+      const loaded = taskBrowser(current);
+      return loaded !== undefined && !loaded.output.includes(TASK_LOADING) ? current : undefined;
+    });
+    browser = taskBrowser(shown) ?? browser;
+    this.write(KEYS.escape);
+    await this.wait('the task browser to close', (current) => (current.input === 'editor' && taskBrowser(current) === undefined ? true : undefined));
+    if (browser.description !== description) {
+      throw this.failure(`expectTask() found no task described as ${JSON.stringify(description)} among the ${browser.total} task(s) the task browser lists.`, shown);
+    }
+    if (browser.status !== TUI_TASK_STATUS[status]) {
+      throw this.failure(`expectTask() found ${JSON.stringify(description)} ${browser.status ?? 'without a status'}, not ${TUI_TASK_STATUS[status]}.`, shown);
+    }
+    if (output !== undefined && !browser.output.includes(output)) {
+      throw this.failure(`expectTask() found ${JSON.stringify(description)}, but its output has no line ${JSON.stringify(output)}; it shows:\n${browser.output.join('\n')}`, shown);
+    }
+  }
+
+  async stopTask(description: string): Promise<void> {
+    const screen = await this.read();
+    if (showsQuestion(screen)) throw this.failure(`stopTask() cannot open the task browser: ${QUESTION_PENDING}.`, screen);
+    if (showsApproval(screen)) throw this.failure('stopTask() cannot open the task browser while an approval is pending; answer it with approve() or reject() first.', screen);
+    this.write(paste(TASKS_COMMAND));
+    this.write(KEYS.enter);
+    const browser = await this.selectTask(description, await this.wait('the task browser to open', (current) => taskBrowser(current)));
+    if (browser.description !== description || browser.status !== TUI_TASK_STATUS.running) {
+      const shown = await this.read();
+      this.write(KEYS.escape);
+      await this.wait('the task browser to close', (current) => (current.input === 'editor' && taskBrowser(current) === undefined ? true : undefined));
+      const reason = browser.description === description ? `it is ${browser.status ?? 'without a status'}` : 'the task browser does not list it';
+      throw this.failure(`stopTask() needs a running task described as ${JSON.stringify(description)}, but ${reason}.`, shown);
+    }
+    this.write(KEYS.stopTask);
+    await this.wait('the task browser to ask for confirmation', (current) => (current.viewport.some((line) => line.includes(`Stop ${browser.id ?? ''}?`)) ? true : undefined));
+    this.write(KEYS.confirmStop);
+    const stopped = await this.wait(`the task browser to show ${JSON.stringify(description)} stopped`, (current) => {
+      const now = taskBrowser(current);
+      return now !== undefined && now.description === description && now.status !== TUI_TASK_STATUS.running ? current : undefined;
+    });
+    this.write(KEYS.escape);
+    await this.wait('the task browser to close', (current) => (current.input === 'editor' && taskBrowser(current) === undefined ? true : undefined));
+    const final = taskBrowser(stopped);
+    if (final?.status !== TUI_TASK_STATUS.stopped) throw this.failure(`stopTask() stopped ${JSON.stringify(description)}, but the task browser shows it ${final?.status ?? 'without a status'}.`, stopped);
+  }
+
+  private async selectTask(description: string, opened: TaskBrowser): Promise<TaskBrowser> {
+    let browser = opened;
+    for (let moves = 0; browser.description !== description && moves < browser.total - 1; moves += 1) {
+      const from = browser.id;
+      this.write(KEYS.down);
+      browser = await this.wait('the task browser to select the next task', (current) => {
+        const next = taskBrowser(current);
+        return next !== undefined && next.id !== from ? next : undefined;
+      });
+    }
+    return browser;
   }
 
   async steerQueued(): Promise<void> {

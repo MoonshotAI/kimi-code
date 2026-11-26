@@ -13,6 +13,8 @@ import {
   missingChanges,
   type ApprovalExpectation,
   type ChangedLines,
+  type TaskExpectation,
+  type TaskStatus,
   type ApprovalToolName,
   type ApproveOptions,
   type DriverActionsOn,
@@ -33,6 +35,11 @@ const ROW = '[role="listitem"]';
 const STATE = '[role="status"]';
 const MENU_BUTTON = 'button[aria-haspopup="menu"]';
 const THINKING = 'Thinking';
+const TO_BACKGROUND = 'To background';
+const DETAIL_PANEL = 'Detail panel';
+const STOP_TASK = 'stop';
+const RENDERER_TASK_STATUS: { readonly [S in TaskStatus]: string } = { running: 'running', done: 'Done', failed: 'Failed', stopped: 'Stopped' };
+const TASKS_PILL = /^(?:Bash|Background tasks)\b/;
 const SETTINGS = 'Settings';
 const SETTINGS_AGENT_TAB = 'Agent & Sessions';
 const DEFAULT_PERMISSION = /^Default permission/;
@@ -265,6 +272,67 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     if ((await this.settle(`the message ${JSON.stringify(text)} to reach the running turn`, reached)) === 'over') {
       throw new Error(`steer() did not see ${JSON.stringify(text)} reach the turn before it ended.\n${await this.describe()}`);
     }
+  }
+
+  async background(): Promise<void> {
+    if (await this.questionShown()) throw new Error(`background() cannot move a command: ${QUESTION_PENDING}.\n${await this.describe()}`);
+    if (await this.approvalShown()) throw new Error(`background() cannot move a command while an approval is pending; answer it with approve() or reject() first.\n${await this.describe()}`);
+    const button = this.turnItems().getByRole('button', { name: TO_BACKGROUND, exact: true });
+    const offered = await button.count();
+    if (offered !== 1) throw new Error(`background() found no running command to move to the background: ${offered} command card(s) offer ${TO_BACKGROUND}.\n${await this.describe()}`);
+    await this.press('background()', TO_BACKGROUND, button);
+    await this.wait('the command to move to the background', async () => ((await button.count()) === 0 ? true : undefined));
+  }
+
+  async expectTask({ description, status, output }: TaskExpectation): Promise<void> {
+    const pill = this.page.getByRole('button', { name: TASKS_PILL }).first();
+    if ((await pill.count()) === 0) throw new Error(`expectTask() found no background tasks: the conversation shows no tasks button.\n${await this.describe()}`);
+    const opened = (await pill.getAttribute('aria-pressed')) === 'true';
+    if (!opened) await this.press('expectTask()', 'the background tasks', pill);
+    const entry = this.page.getByRole('button', { name: description, exact: true }).last();
+    try {
+      if ((await this.settle(`the task ${JSON.stringify(description)} in the task list`, async () => (await entry.count()) > 0)) === 'over' && (await entry.count()) === 0) {
+        const listed = await this.page.getByRole('button', { name: TASKS_PILL }).first().textContent();
+        throw new Error(`expectTask() found no task described as ${JSON.stringify(description)} (${String(listed)}).\n${await this.describe()}`);
+      }
+      const shown = await entry.locator('xpath=..').getByRole('img').first().getAttribute('aria-label');
+      if (shown !== RENDERER_TASK_STATUS[status]) {
+        throw new Error(`expectTask() found ${JSON.stringify(description)} ${String(shown)}, not ${RENDERER_TASK_STATUS[status]}.\n${await this.describe()}`);
+      }
+      if (output !== undefined) await this.expectTaskOutput(description, entry, output);
+    } finally {
+      if (!opened && (await pill.getAttribute('aria-pressed')) === 'true') await this.press('expectTask()', 'the background tasks, to close them', pill);
+    }
+  }
+
+  async stopTask(description: string): Promise<void> {
+    const pill = this.page.getByRole('button', { name: TASKS_PILL }).first();
+    if ((await pill.count()) === 0) throw new Error(`stopTask() found no background tasks: the conversation shows no tasks button.\n${await this.describe()}`);
+    const opened = (await pill.getAttribute('aria-pressed')) === 'true';
+    if (!opened) await this.press('stopTask()', 'the background tasks', pill);
+    try {
+      const row = this.page.getByRole('button', { name: description, exact: true }).last().locator('xpath=..');
+      const stop = row.getByRole('button', { name: STOP_TASK, exact: true });
+      if ((await stop.count()) === 0) {
+        throw new Error(`stopTask() needs a running task described as ${JSON.stringify(description)}, but the task list offers no stop button for it.\n${await this.describe()}`);
+      }
+      await this.press('stopTask()', STOP_TASK, stop);
+      await this.wait(`the task ${JSON.stringify(description)} to show ${RENDERER_TASK_STATUS.stopped}`, async () =>
+        (await row.getByRole('img').first().getAttribute('aria-label')) === RENDERER_TASK_STATUS.stopped ? true : undefined,
+      );
+    } finally {
+      if (!opened && (await pill.getAttribute('aria-pressed')) === 'true') await this.press('stopTask()', 'the background tasks, to close them', pill);
+    }
+  }
+
+  private async expectTaskOutput(description: string, entry: Locator, output: string): Promise<void> {
+    await this.press('expectTask()', description, entry);
+    const panel = this.page.getByRole('complementary', { name: DETAIL_PANEL });
+    const line = panel.getByText(output, { exact: true });
+    const found = await this.wait(`the output of ${JSON.stringify(description)} to show ${JSON.stringify(output)}`, async () => ((await line.count()) > 0 ? true : undefined)).catch(() => false);
+    const lines = (await panel.innerText({ timeout: TIMEOUTS.wait })).split('\n').map((text) => text.trim());
+    await this.press('expectTask()', 'Close tab', panel.getByRole('button', { name: 'Close tab', exact: true }).first());
+    if (!found) throw new Error(`expectTask() found ${JSON.stringify(description)}, but its output has no line ${JSON.stringify(output)}; it shows:\n${lines.join('\n')}\n${await this.describe()}`);
   }
 
   async steerQueued(): Promise<void> {
