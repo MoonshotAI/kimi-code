@@ -257,9 +257,6 @@
     "packages/app-markdown/src/lib/markdownWorkers.ts": 1
   },
   "import/no-cycle": {
-    "apps/desktop/src/main/browser/browser-annotations.ts": 1,
-    "apps/desktop/src/main/browser/browser-overlay.ts": 1,
-    "apps/desktop/src/main/browser/browser-view.ts": 1,
     "packages/app-client/src/stores/files.ts": 2,
     "packages/app-client/src/stores/pinnedOrder.ts": 2,
     "packages/app-client/src/stores/prompt.ts": 1,

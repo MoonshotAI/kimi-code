@@ -1,8 +1,5 @@
 {
   "runtime-cycle": {
-    "apps/desktop/src/main/browser/browser-annotations.ts": 3,
-    "apps/desktop/src/main/browser/browser-overlay.ts": 3,
-    "apps/desktop/src/main/browser/browser-view.ts": 3,
     "packages/app-client/src/stores/files.ts": 6,
     "packages/app-client/src/stores/pinnedOrder.ts": 6,
     "packages/app-client/src/stores/prompt.ts": 6,

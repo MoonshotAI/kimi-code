@@ -1,9 +1,16 @@
 import { browserAnnotationViewBounds } from './browser-annotations';
 import { browserCaptureBindingId } from '@moonshot-ai/app-core/browser-reference';
 import { app, WebContentsView } from 'electron';
-import type { MouseInputEvent, Rectangle, View, WebContents } from 'electron';
+import type { Rectangle, WebContents } from 'electron';
 import type { MainWindow } from '../window/main-window';
+import {
+  onBrowserAnnotationOverlayRefresh,
+  onBrowserOverlayOutsidePointer,
+  setBrowserOverlayView,
+} from './browser-overlay-state';
 import { join } from 'node:path';
+
+export { isBrowserOverlayView, observeBrowserOverlayOutsidePointer } from './browser-overlay-state';
 
 import {
   BROWSER_OVERLAY_GUTTER,
@@ -53,22 +60,12 @@ interface BrowserOverlayEntry {
 
 let hostWindow: MainWindow | null = null;
 let overlayEntry: BrowserOverlayEntry | null = null;
-const outsidePointerContents = new WeakSet<WebContents>();
 
-export function observeBrowserOverlayOutsidePointer(contents: WebContents, isUserSurface: () => boolean = () => true): void {
-  if (outsidePointerContents.has(contents)) return;
-  outsidePointerContents.add(contents);
-  contents.on('before-mouse-event', (_event, mouse: MouseInputEvent) => {
-    if (mouse.type !== 'mouseDown' || !isUserSurface()) return;
-    closeBrowserOverlayMenu(undefined, 'dismiss');
-    const current = liveEntry()?.current;
-    if (current?.kind === 'dialog' && current.anchor !== undefined) closeBrowserOverlayDialog(undefined, 'dismiss');
-  });
-}
-
-export function isBrowserOverlayView(view: View): boolean {
-  return overlayEntry !== null && overlayEntry.view === view;
-}
+onBrowserOverlayOutsidePointer(() => {
+  closeBrowserOverlayMenu(undefined, 'dismiss');
+  const current = liveEntry()?.current;
+  if (current?.kind === 'dialog' && current.anchor !== undefined) closeBrowserOverlayDialog(undefined, 'dismiss');
+});
 
 function liveHost(): MainWindow | null {
   return hostWindow !== null && !hostWindow.isDestroyed() ? hostWindow : null;
@@ -154,7 +151,10 @@ function hideEntry(
 function destroyEntry(entry: BrowserOverlayEntry | null = overlayEntry, reason: 'host-closed' | 'replaced' = 'host-closed'): void {
   if (entry === null || entry.disposed) return;
   entry.disposed = true;
-  if (overlayEntry === entry) overlayEntry = null;
+  if (overlayEntry === entry) {
+    overlayEntry = null;
+    setBrowserOverlayView(null);
+  }
   if (
     entry.current !== null &&
     !entry.host.isDestroyed() &&
@@ -247,6 +247,7 @@ function ensureEntry(): BrowserOverlayEntry {
     initialUrl,
   };
   overlayEntry = entry;
+  setBrowserOverlayView(entry.view);
 
   browserOverlayView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   browserOverlayView.webContents.on('will-navigate', (event, url) => {
@@ -688,3 +689,5 @@ export function refreshBrowserAnnotationOverlay(): void {
   const boundary = browserAnnotationViewBounds(browserCaptureBindingId(current.annotation.capture));
   if (JSON.stringify(boundary) !== JSON.stringify(current.boundary)) flushConfig(entry);
 }
+
+onBrowserAnnotationOverlayRefresh(refreshBrowserAnnotationOverlay);
