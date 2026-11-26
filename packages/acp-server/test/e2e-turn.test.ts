@@ -677,7 +677,13 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
   }, 30_000);
 
   describe('when the editor learns the turn id only after the model has called a tool', () => {
-    function holdLaunchUntilAnInteractionIsPending(land: (launched: unknown) => unknown = (launched) => launched): () => void {
+    type ReactToPending = (pending: readonly Interaction[], release: () => void) => void;
+
+    const releaseOnceAnInteractionIsPending: ReactToPending = (pending, release) => {
+      if (pending.length > 0) release();
+    };
+
+    function holdLaunch(react: ReactToPending, land: (launched: unknown) => unknown = (launched) => launched): () => void {
       let releaseLaunch!: () => void;
       const launchHeld = new Promise<void>((resolve) => {
         releaseLaunch = resolve;
@@ -701,7 +707,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       const onPendingChanged = bridges.onPendingChanged;
       const watchedBridge = vi.spyOn(bridges, 'onPendingChanged').mockImplementation(function (this: AcpInteractionBridge, pending) {
         onPendingChanged.call(this, pending);
-        if (pending.length > 0) releaseLaunch();
+        react(pending, releaseLaunch);
       });
       return () => {
         heldLaunch.mockRestore();
@@ -735,7 +741,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     }
 
     it('announces every question of the tool call before asking the editor the first one', async () => {
-      const restore = holdLaunchUntilAnInteractionIsPending();
+      const restore = holdLaunch(releaseOnceAnInteractionIsPending);
       try {
         const c = await boot();
         model!.script(askUserQuestion({
@@ -762,7 +768,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     }, 30_000);
 
     it('shows the tool call to the editor before asking it to approve the call', async () => {
-      const restore = holdLaunchUntilAnInteractionIsPending();
+      const restore = holdLaunch(releaseOnceAnInteractionIsPending);
       try {
         const c = await boot();
         model!.script(write({ path: 'late-turn.txt', content: 'written after approval\n' }, { id: 'call_w' }));
@@ -785,7 +791,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     }, 30_000);
 
     it('still asks the editor to approve the call when the prompt fails before the editor learns the turn id', async () => {
-      const restore = holdLaunchUntilAnInteractionIsPending(() => {
+      const restore = holdLaunch(releaseOnceAnInteractionIsPending, () => {
         throw new Error('the prompt launch was lost');
       });
       try {
@@ -803,6 +809,41 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
         expect(asked).toBeGreaterThanOrEqual(0);
         expect((c.received[asked]!.params as WirePermission).toolCall?.toolCallId).toMatch(/:call_w$/);
         expect(await readFile(join(homeDir!, 'lost-launch.txt'), 'utf8')).toBe('written after approval\n');
+      } finally {
+        restore();
+      }
+    }, 30_000);
+
+    it('does not ask the editor about a call the user stopped before the editor learned the turn id', async () => {
+      let stopTurn = (): void => undefined;
+      let stopped = false;
+      const restore = holdLaunch((pending, release) => {
+        if (pending.length > 0) {
+          stopped = true;
+          stopTurn();
+          return;
+        }
+        if (stopped) release();
+      });
+      try {
+        const c = await boot();
+        model!.script(write({ path: 'stopped.txt', content: 'never written\n' }, { id: 'call_w' }));
+        c.onRequest('session/request_permission', () => ({ outcome: { outcome: 'cancelled' } }));
+        const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as { sessionId: string };
+        await c.waitForSessionUpdate('available_commands_update', 10_000);
+        stopTurn = () => {
+          c.notify('session/cancel', { sessionId: created.sessionId });
+        };
+
+        const result = (await c.send('session/prompt', {
+          sessionId: created.sessionId,
+          prompt: [{ type: 'text', text: 'Write the file.' }],
+        })) as { stopReason: string };
+
+        expect(stopped).toBe(true);
+        expect(result.stopReason).toBe('cancelled');
+        expect(c.received.filter((m) => m.method === 'session/request_permission')).toEqual([]);
+        await expect(readFile(join(homeDir!, 'stopped.txt'), 'utf8')).rejects.toThrow();
       } finally {
         restore();
       }

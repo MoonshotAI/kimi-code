@@ -26,6 +26,7 @@ import {
 
 export class AcpInteractionBridge {
   private readonly inFlight = new Set<string>();
+  private readonly queued = new Set<string>();
   private readonly subscription: IDisposable;
   private disposed = false;
 
@@ -39,6 +40,7 @@ export class AcpInteractionBridge {
     },
   ) {
     this.subscription = session.events.on('interactions.changed', (pending) => {
+      this.withdrawResolved(pending);
       this.onPendingChanged(pending);
     });
     void this.session.interactions.list().then(
@@ -59,6 +61,14 @@ export class AcpInteractionBridge {
     this.disposed = true;
     this.subscription.dispose();
     this.inFlight.clear();
+    this.queued.clear();
+  }
+
+  private withdrawResolved(pending: readonly Interaction[]): void {
+    const stillPending = new Set(pending.map((interaction) => interaction.id));
+    for (const id of this.queued) {
+      if (!stillPending.has(id)) this.queued.delete(id);
+    }
   }
 
   private onPendingChanged(pending: readonly Interaction[]): void {
@@ -67,8 +77,9 @@ export class AcpInteractionBridge {
       if (this.inFlight.has(interaction.id)) continue;
       if (interaction.kind !== 'approval' && interaction.kind !== 'question') continue;
       this.inFlight.add(interaction.id);
+      this.queued.add(interaction.id);
       this.schedule(() => {
-        void this.dispatch(interaction);
+        if (this.queued.delete(interaction.id)) void this.dispatch(interaction);
       });
     }
   }
