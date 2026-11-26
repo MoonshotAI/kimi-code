@@ -615,6 +615,39 @@ describe('core LoopService integration', () => {
     expect(loop.snapshot().paused).toBe(false);
   });
 
+  const idleBeforeFirstTurn = [
+    { state: 'held after restore', agent: async () => ctx },
+    { state: 'not started', agent: async () => createTestAgent() },
+  ];
+
+  it.each(idleBeforeFirstTurn)('stays quiescent when a reminder arrives while the loop is $state', async ({ agent }) => {
+    const target = await agent();
+    try {
+      const loop = target.get(IAgentLoopService);
+      loop.remind({ role: 'user', content: [{ type: 'text', text: '<system-reminder>queued</system-reminder>' }] });
+
+      expect(loop.snapshot().hasPendingRequests).toBe(false);
+      const lease = loop.tryAcquireQuiescence();
+      expect(lease).toBeDefined();
+      lease?.dispose();
+      await expect(loop.settled()).resolves.toBeUndefined();
+    } finally {
+      if (target !== ctx) await target.dispose();
+    }
+  });
+
+  it('does not report the agent busy to undo for a reminder queued before the first turn', async () => {
+    ctx.appendTurnExchange('kept', 'answer');
+    ctx.appendTurnExchange('removed', 'answer');
+    ctx.get(IAgentLoopService).remind({
+      role: 'user',
+      content: [{ type: 'text', text: '<system-reminder>queued</system-reminder>' }],
+    });
+
+    await expect(ctx.get(IAgentConversationUndoService).undo(1)).resolves.toBe(1);
+  });
+
+
   it('restores an interrupted public Wire turn without resuming Core-only unfinished state', async () => {
     const original = createTestAgent();
     await original.restorePersisted();
@@ -1025,3 +1058,25 @@ testkitTest(
     expect(finished).toEqual([1]);
   },
 );
+
+for (const { state, restore } of [
+  { state: 'held after restore', restore: true },
+  { state: 'not started', restore: false },
+]) {
+  testkitTest(`merges a reminder queued while the loop is ${state} into the first turn`, async ({ agent, model }) => {
+    if (restore) await agent.restorePersisted();
+    const loop = agent.get(IAgentLoopService);
+    loop.remind({ role: 'user', content: [{ type: 'text', text: '<system-reminder>queued before the first turn</system-reminder>' }] });
+    model.script(say('answer'));
+
+    const { turn } = submitPromptTurn(loop, {
+      role: 'user',
+      content: [{ type: 'text', text: 'first prompt' }],
+      attributes: { origin: { kind: 'user' } },
+    });
+    await expect(turn.result).resolves.toMatchObject({ type: 'completed' });
+
+    expect(model.requests()).toHaveLength(1);
+    expect(JSON.stringify(model.requests()[0])).toContain('queued before the first turn');
+  });
+}

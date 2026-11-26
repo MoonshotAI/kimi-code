@@ -1390,10 +1390,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return (
       this.pendingSubmissions.length > 0 ||
       this.pendingNotifications.length > 0 ||
-      this.pendingReminders.length > 0 ||
       (this.loop?.state.inbox.normal.length ?? 0) > 0 ||
       (this.loop?.state.inbox.notify.length ?? 0) > 0 ||
-      (this.loop?.state.inbox.remind.length ?? 0) > 0 ||
       (this.loop?.state.completionPending ?? false) ||
       (this.loop?.state.resetting ?? false) ||
       (this.loop !== undefined && this.loop.state.status !== 'idle')
