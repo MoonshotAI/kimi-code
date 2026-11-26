@@ -1,7 +1,9 @@
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IProjectService } from '#/app/project/project';
 import { ISessionIndex, ISessionIndexMirror, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
@@ -12,7 +14,7 @@ import { sessionScopeOf, legacySessionMetaScopeOf, projectPersistenceScope } fro
 export interface ColdSessionMeta {
   readonly summary: SessionSummary;
   readonly persisted: SessionMeta;
-  readonly write: (next: SessionMeta, indexedCwd?: string) => Promise<void>;
+  readonly write: (next: SessionMeta) => Promise<void>;
 }
 
 export async function withColdSessionMeta<T>(
@@ -39,14 +41,21 @@ export async function withColdSessionMeta<T>(
     return await use({
       summary,
       persisted: normalizeSessionMeta(raw, sessionId),
-      write: async (next, indexedCwd) => {
+      write: async (next) => {
+        const local = next.environmentId === undefined || next.environmentId === LOCAL_ENVIRONMENT_ID;
+        const workspaceRoot = local
+          ? (await accessor.get(IProjectService).get(summary.workspaceId))?.root
+          : undefined;
+        const cwd = local
+          ? (next.environmentCwd ?? workspaceRoot ?? next.cwd ?? summary.cwd)
+          : (next.cwd ?? summary.cwd);
         await docs.set(metaScope, 'state.json', encodeSessionMeta(next));
         if (legacyMetaScope !== undefined) await docs.delete(legacyMetaScope, 'state.json');
         accessor.get(ISessionIndexMirror).record(
           buildSessionSummary({
             id: sessionId,
             workspaceId: summary.workspaceId,
-            cwd: indexedCwd ?? next.cwd ?? summary.cwd,
+            cwd,
             environmentId: next.environmentId,
             environmentCwd: next.environmentCwd,
             title: next.title,

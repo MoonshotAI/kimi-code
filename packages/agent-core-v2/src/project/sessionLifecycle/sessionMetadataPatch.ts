@@ -1,8 +1,6 @@
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { getLiveSessionById } from '#/app/sessionManager/sessionLookup';
-import { IProjectService } from '#/app/project/project';
-import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import {
   ISessionMetadata,
   type SessionMeta,
@@ -35,19 +33,11 @@ async function patchColdSessionMetadata(
   sessionId: string,
   patcher: SessionMetadataPatcher,
 ): Promise<SessionMeta | undefined> {
-  return withColdSessionMeta(accessor, sessionId, async ({ summary, persisted, write }) => {
+  return withColdSessionMeta(accessor, sessionId, async ({ persisted, write }) => {
     const patch = patcher(persisted);
     if (patch === undefined) return persisted;
     const nextMeta: SessionMeta = { ...persisted, ...patch };
-    const local =
-      nextMeta.environmentId === undefined || nextMeta.environmentId === LOCAL_ENVIRONMENT_ID;
-    const workspaceRoot = local
-      ? (await accessor.get(IProjectService).get(summary.workspaceId))?.root
-      : undefined;
-    await write(
-      nextMeta,
-      local ? (nextMeta.environmentCwd ?? workspaceRoot ?? nextMeta.cwd ?? summary.cwd) : undefined,
-    );
+    await write(nextMeta);
     return nextMeta;
   });
 }
