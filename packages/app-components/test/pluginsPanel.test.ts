@@ -978,6 +978,61 @@ describe('PluginsPanel', () => {
     expect(host.querySelector(`${rowActions} [aria-label="More actions"]`)).not.toBeNull();
   });
 
+  it('closes an open more-actions menu when installing starts and keeps it closed after settlement', async () => {
+    rowData.push(row('vercel', {
+      catalogEntry: entry('vercel', 'Vercel', { version: '2.0.0' }),
+      installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }),
+      displayName: 'Vercel',
+      updateAvailable: true,
+    }));
+    await mountPanel();
+
+    const addDocumentListener = vi.spyOn(document, 'addEventListener');
+    const removeDocumentListener = vi.spyOn(document, 'removeEventListener');
+    const addWindowListener = vi.spyOn(window, 'addEventListener');
+    const removeWindowListener = vi.spyOn(window, 'removeEventListener');
+    try {
+      const trigger = host.querySelector<HTMLButtonElement>(
+        '.plugin-row .plugin-actions [aria-label="More actions"]',
+      )!;
+      trigger.click();
+      await settle();
+
+      expect(trigger.getAttribute('aria-expanded')).toBe('true');
+      expect(host.querySelector('.plugin-row .plugin-actions__menu .ui-menu-item')).not.toBeNull();
+      const docMouseDown = addDocumentListener.mock.calls.findLast(([type]) => type === 'mousedown')?.[1];
+      const docKeyDown = addDocumentListener.mock.calls.findLast(([type]) => type === 'keydown')?.[1];
+      const winResize = addWindowListener.mock.calls.findLast(([type]) => type === 'resize')?.[1];
+      const winBlur = addWindowListener.mock.calls.findLast(([type]) => type === 'blur')?.[1];
+      expect(docMouseDown).toBeDefined();
+      expect(docKeyDown).toBeDefined();
+      expect(winResize).toBeDefined();
+      expect(winBlur).toBeDefined();
+
+      plugins.state.busy['vercel:install'] = true;
+      await settle();
+
+      expect(host.querySelector('.plugin-row .plugin-actions [aria-label="More actions"]')).toBeNull();
+      expect(host.querySelector('.plugin-actions__menu')).toBeNull();
+      expect(removeDocumentListener).toHaveBeenCalledWith('mousedown', docMouseDown);
+      expect(removeDocumentListener).toHaveBeenCalledWith('keydown', docKeyDown);
+      expect(removeWindowListener).toHaveBeenCalledWith('resize', winResize);
+      expect(removeWindowListener).toHaveBeenCalledWith('blur', winBlur);
+
+      plugins.state.busy['vercel:install'] = undefined;
+      await settle();
+
+      const restoredTrigger = host.querySelector<HTMLButtonElement>(
+        '.plugin-row .plugin-actions [aria-label="More actions"]',
+      );
+      expect(restoredTrigger).not.toBeNull();
+      expect(restoredTrigger!.getAttribute('aria-expanded')).toBe('false');
+      expect(host.querySelector('.plugin-actions__menu')).toBeNull();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it('returns to the install button when a first install fails', async () => {
     rowData.push(row('vercel', {
       catalogEntry: entry('vercel', 'Vercel'),

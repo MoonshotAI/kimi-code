@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   Button,
@@ -60,6 +60,10 @@ const installLabel = computed(() => {
 function isBusy(id: string, action: PluginRowAction): boolean {
   return state.busy[busyKey(id, action)] === true;
 }
+
+watch(installing, (isInstalling) => {
+  if (isInstalling) close();
+});
 
 async function install(): Promise<void> {
   const firstInstall = props.row.installedPlugin === undefined;
