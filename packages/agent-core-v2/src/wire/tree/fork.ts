@@ -1,6 +1,6 @@
 import { cutTurnUndo } from '#/agent/undo/turnUndo';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { markWireTurnClockOnly } from '#/wire/human';
+import { markWireTurnClockOnly } from '#/wire/turnInput';
 import type { WireRecord } from '#/wire/record';
 
 import { activeChain, AGENT_SWITCHED_TYPE, parseTree, type WireLine, type WireTree } from './tree';

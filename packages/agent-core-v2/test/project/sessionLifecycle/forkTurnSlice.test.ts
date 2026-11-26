@@ -188,6 +188,15 @@ describe('sliceMainRecordsAtTurn', () => {
       })), label).toEqual(expectedUsers);
       expect(replayUsers(cold), label).toEqual(expectedUsers);
       expect(userTexts(cold), label).toEqual(expectedUsers.map(({ text }) => text));
+
+      for (const [turnId, expected] of [[2, expectedUsers.slice(0, 2)], [3, expectedUsers.slice(0, 3)]] as const) {
+        const early = sliceMainRecordsAtTurn(source, 'session_source', turnId).records;
+        const earlyCold = normalizeLegacyTurnSteerRecords(JSON.parse(JSON.stringify(early)) as WireRecord[]);
+        expect(replayUsers(early), label).toEqual(expected);
+        expect(userTexts(early), label).toEqual(expected.map(({ text }) => text));
+        expect(replayUsers(earlyCold), label).toEqual(expected);
+        expect(userTexts(earlyCold), label).toEqual(expected.map(({ text }) => text));
+      }
     }
 
     const modernNotify: WireRecord[] = [
@@ -201,5 +210,42 @@ describe('sliceMainRecordsAtTurn', () => {
       { text: 'same', turnId: 7 },
     ]);
     expect(sliceMainRecordsAtTurn(modernNotify, 'session_source', 7).records).toEqual(modernNotify);
+
+    for (const trigger of ['normal', 'notify']) {
+      const modernStrongId: WireRecord[] = [
+        append('same', 'p7'),
+        { ...prompt('same', 7, 'p7'), trigger },
+        append('same', 'p7'),
+        ended(7),
+      ];
+      expect(replayUsers(modernStrongId)).toEqual([
+        { text: 'same', turnId: undefined },
+        { text: 'same', turnId: 7 },
+      ]);
+      expect(sliceMainRecordsAtTurn(modernStrongId, 'session_source', 7).records).toEqual(modernStrongId);
+    }
+
+    const repeated = normalizeLegacyTurnSteerRecords([
+      prompt('C', 2), append('C'),
+      append('X'), steer('X', 2),
+      append('X'), steer('X', 2),
+      ended(2),
+    ]);
+    expect(replayUsers(sliceMainRecordsAtTurn(repeated, 'session_source', 4).records)).toEqual([
+      { text: 'C', turnId: 2 },
+      { text: 'X', turnId: 3 },
+      { text: 'X', turnId: 4 },
+    ]);
+
+    const relaxed = normalizeLegacyTurnSteerRecords([
+      prompt('C', 2), append('C'),
+      append('C1 altered', 'id-C1'),
+      { ...steer('C1', 2), promptIds: ['id-C1'] },
+      ended(2),
+    ]);
+    expect(replayUsers(sliceMainRecordsAtTurn(relaxed, 'session_source', 3).records)).toEqual([
+      { text: 'C', turnId: 2 },
+      { text: 'C1 altered', turnId: 3 },
+    ]);
   });
 });
