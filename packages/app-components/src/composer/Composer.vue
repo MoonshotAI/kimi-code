@@ -80,8 +80,8 @@ import {
   effortLabel,
   isThinkingOn,
   resolveEffortDescription,
+  thinkingLevelAfterSessionModelSwitch,
   thinkingLevelForModelSwitch,
-  thinkingLevelKeptAcrossModelSwitch,
 } from '@moonshot-ai/app-core/lib';
 import { openAgentSettings, openHostSettings, useInputHistory, useIsMobile, useRunningSendMode } from '@moonshot-ai/app-client/composables';
 import { slashMenuQuery, useSlashMenu } from '@moonshot-ai/app-client/composables';
@@ -3018,7 +3018,8 @@ const menuModel = computed(() =>
 );
 const menuDefaultThinkingLevel = computed(() => {
   const sid = sessionId.value;
-  if (sid === null || sid === undefined) {
+  const target = menuTargetSessionId || sid;
+  if (!target) {
     return effectiveThinkingLevel(
       menuModel.value,
       thinkingLevelForModelSwitch(
@@ -3029,9 +3030,12 @@ const menuDefaultThinkingLevel = computed(() => {
       ),
     );
   }
-  const target = menuTargetSessionId ?? sid;
-  const current = target === sid ? thinking.value : modeStore().thinkingBySession[target];
-  return thinkingLevelKeptAcrossModelSwitch(menuModel.value, current);
+  if (target === sid) {
+    return thinkingLevelAfterSessionModelSwitch(currentModel.value, menuModel.value, thinking.value);
+  }
+  const targetModelId = sessionsStore().sessions.find((session) => session.id === target)?.model;
+  const targetModel = models.value?.find((model) => model.id === targetModelId || model.model === targetModelId);
+  return thinkingLevelAfterSessionModelSwitch(targetModel, menuModel.value, modeStore().thinkingBySession[target]);
 });
 const menuThinkingLevel = computed(() =>
   menuDraftEffortSegment.value === undefined

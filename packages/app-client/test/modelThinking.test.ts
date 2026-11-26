@@ -26,6 +26,7 @@ import {
   markThinkingPending,
   modelThinkingAvailability,
   segmentsFor,
+  thinkingLevelAfterSessionModelSwitch,
   thinkingLevelForModelSwitch,
   thinkingLevelFromConfig,
   thinkingLevelToConfig,
@@ -198,6 +199,24 @@ describe('modelThinking', () => {
       expect(
         thinkingLevelForModelSwitch(booleanModel, 'off', true, { enabled: true, effort: 'low' }),
       ).toBe('on');
+    });
+  });
+
+  describe('thinkingLevelAfterSessionModelSwitch', () => {
+    it('keeps the session level when the new model declares it', () => {
+      expect(thinkingLevelAfterSessionModelSwitch(effortModel, effortModel, 'max')).toBe('max');
+      expect(thinkingLevelAfterSessionModelSwitch(effortModel, booleanModel, 'off')).toBe('off');
+    });
+
+    it('falls back to the new model default when it does not declare the session level', () => {
+      expect(thinkingLevelAfterSessionModelSwitch(effortModel, booleanModel, 'max')).toBe('on');
+      expect(thinkingLevelAfterSessionModelSwitch(effortModel, maxOnlyModel, 'off')).toBe('max');
+    });
+
+    it('uses the new model default when the session model has no thinking support', () => {
+      expect(thinkingLevelAfterSessionModelSwitch(unsupportedModel, effortModel, 'off')).toBe('high');
+      expect(thinkingLevelAfterSessionModelSwitch(unsupportedModel, booleanModel, 'off')).toBe('on');
+      expect(thinkingLevelAfterSessionModelSwitch(unsupportedModel, unsupportedModel, 'off')).toBe('off');
     });
   });
 
@@ -525,6 +544,59 @@ describe('useModelProviderState thinking on model selection', () => {
     expect(persistSessionProfileMock.mock.calls).toEqual([
       [{ model: effortAppModel.id, thinking: undefined }, 'session-1'],
       [{ model: maxOnlyAppModel.id, thinking: 'max' }, 'session-1'],
+    ]);
+  });
+
+  it('writes the new model default level when an active session switches away from a model without thinking support', async () => {
+    const plainAppModel: AppModel = {
+      id: 'provider/plain-model',
+      provider: 'provider',
+      model: 'plain-model',
+      maxContextSize: 128_000,
+      capabilities: [],
+    };
+    const state = reactive(
+      createState({
+        activeSession: { id: 'session-1', model: plainAppModel.id },
+        defaultModel: plainAppModel.id,
+      }),
+    ) as ExtendedState;
+    state.thinkingBySession = { 'session-1': 'off' };
+    const provider = createModelProvider(state);
+    modelsStore().setModels([...modelsStore().models, plainAppModel]);
+
+    await provider.setModel(effortAppModel.id);
+    await nextTick();
+
+    expect(persistSessionProfileMock).toHaveBeenCalledWith(
+      { model: effortAppModel.id, thinking: 'high' },
+      'session-1',
+    );
+    expect(state.thinking).toBe('high');
+  });
+
+  it('writes the new model default level when a background session switches away from a model without thinking support', async () => {
+    const plainAppModel: AppModel = {
+      id: 'provider/plain-model',
+      provider: 'provider',
+      model: 'plain-model',
+      maxContextSize: 128_000,
+      capabilities: [],
+    };
+    const state = createState({
+      activeSession: { id: 'session-1', model: plainAppModel.id },
+      defaultModel: plainAppModel.id,
+    });
+    state.thinkingBySession = { 'session-1': 'off' };
+    const provider = createModelProvider(state);
+    modelsStore().setModels([...modelsStore().models, plainAppModel]);
+
+    await provider.setSessionModel('session-1', booleanAppModel.id);
+    await provider.setSessionModel('session-1', plainAppModel.id);
+
+    expect(persistSessionProfileMock.mock.calls).toEqual([
+      [{ model: booleanAppModel.id, thinking: 'on' }, 'session-1'],
+      [{ model: plainAppModel.id, thinking: undefined }, 'session-1'],
     ]);
   });
 

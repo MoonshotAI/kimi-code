@@ -76,6 +76,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       goal: vue.ref(null),
       activationBadges: vue.ref([]),
       models: clientState.models!,
+      config: vue.ref(null),
       recentModelIds: clientState.recentModelIds!,
       skills: vue.ref([]),
       skillsLoaded: vue.ref(true),
@@ -373,6 +374,63 @@ describe('Composer recent model menu', () => {
     expect(host.querySelector('.model-dropdown')?.classList.contains('ui-menu-pop-leave-active')).toBe(true);
     expect(clientState.selectModel).not.toHaveBeenCalled();
     expect(clientState.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('previews the picked model default effort on a new-session page and applies a chosen effort equal to the current one', async () => {
+    clientState.activeSessionId!.value = '';
+    await mountComposer(1200, 820);
+
+    host.querySelector<HTMLButtonElement>('.model-pill')!.click();
+    await nextTick();
+    await nextTick();
+
+    const astra = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')].findLast(
+      (row) => row.querySelector('.mqm-name')?.textContent?.trim() === 'GPT-6 Astra',
+    )!;
+    astra.click();
+    await nextTick();
+    expect(host.querySelector('[data-row-key="action:effort"] .mqm-action-value')?.textContent?.trim()).toBe('High');
+
+    host.querySelector<HTMLElement>('[data-row-key="action:effort"]')!.click();
+    await nextTick();
+    [...host.querySelectorAll<HTMLElement>('.mqm-flyout .mqm-row')].find((row) => row.textContent?.trim() === 'Max')!.click();
+    await nextTick();
+
+    document.body.click();
+    await nextTick();
+    await vi.waitFor(() => expect(clientState.selectModel).toHaveBeenCalledWith('gpt-6-astra'));
+    expect(clientState.setThinking).toHaveBeenCalledWith('max');
+  });
+
+  it('previews the picked model default effort when the session model has no thinking support', async () => {
+    const catalog = clientState.models!.value;
+    clientState.models!.value = [
+      ...catalog,
+      { id: 'plain-model', provider: 'openai', model: 'plain-model', displayName: 'Plain Model', maxContextSize: 128000, capabilities: [] },
+    ];
+    clientState.status!.value = { ...clientState.status!.value!, model: 'Plain Model', modelId: 'plain-model' };
+    clientState.thinking!.value = 'off';
+    try {
+      await mountComposer(1200, 820);
+
+      host.querySelector<HTMLButtonElement>('.model-pill')!.click();
+      await nextTick();
+      await nextTick();
+
+      const astra = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')].findLast(
+        (row) => row.querySelector('.mqm-name')?.textContent?.trim() === 'GPT-6 Astra',
+      )!;
+      astra.click();
+      await nextTick();
+      expect(host.querySelector('[data-row-key="action:effort"] .mqm-action-value')?.textContent?.trim()).toBe('High');
+
+      document.body.click();
+      await nextTick();
+      await vi.waitFor(() => expect(clientState.selectModel).toHaveBeenCalledWith('gpt-6-astra'));
+      expect(clientState.setThinking).not.toHaveBeenCalled();
+    } finally {
+      clientState.models!.value = catalog;
+    }
   });
 
   it('repairs a background session model on blur without switching the active session or choosing its thinking level', async () => {

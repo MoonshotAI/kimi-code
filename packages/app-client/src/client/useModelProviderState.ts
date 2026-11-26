@@ -12,6 +12,8 @@ import {
   defaultThinkingLevelFor,
   levelDeclaredBy,
   markThinkingPending,
+  modelThinkingAvailability,
+  thinkingLevelAfterSessionModelSwitch,
   thinkingLevelForModelSwitch,
   thinkingLevelFromConfig,
   thinkingLevelKeptAcrossModelSwitch,
@@ -190,6 +192,17 @@ export function useModelProviderState(
     }
   }
 
+  function thinkingWrittenWithModelSwitch(
+    sessionId: string,
+    fromModelId: string | undefined,
+    toModel: AppModel | undefined,
+  ): ThinkingLevel | undefined {
+    const fromModel = modelById(fromModelId);
+    if (toModel === undefined || modelThinkingAvailability(fromModel) !== 'unsupported') return undefined;
+    const next = thinkingLevelAfterSessionModelSwitch(fromModel, toModel, rawState.thinkingBySession[sessionId]);
+    return next === rawState.thinkingBySession[sessionId] ? undefined : next;
+  }
+
   function writeSessionModel(
     sid: string,
     modelId: string,
@@ -224,7 +237,11 @@ export function useModelProviderState(
       store.noteRecentModel(targetModelId, previousModelId);
       return true;
     }
-    const switched = await writeSessionModel(sid, modelId, undefined);
+    const switched = await writeSessionModel(
+      sid,
+      modelId,
+      thinkingWrittenWithModelSwitch(sid, previousModelId, targetModel),
+    );
     if (switched) store.noteRecentModel(targetModelId, previousModelId);
     return switched;
   }
@@ -234,10 +251,11 @@ export function useModelProviderState(
     if (sessionEntry === undefined) return false;
     const targetModelId = canonicalModelId(modelId) ?? modelId;
     const previousModelId = canonicalModelId(sessionEntry.model || store.activeDefaultModel);
+    const nextThinking = thinking ?? thinkingWrittenWithModelSwitch(sessionId, previousModelId, modelById(modelId));
     const switched = await writeSessionModel(
       sessionId,
       modelId,
-      thinking === rawState.thinkingBySession[sessionId] ? undefined : thinking,
+      nextThinking === rawState.thinkingBySession[sessionId] ? undefined : nextThinking,
     );
     if (switched) store.noteRecentModel(targetModelId, previousModelId);
     return switched;
