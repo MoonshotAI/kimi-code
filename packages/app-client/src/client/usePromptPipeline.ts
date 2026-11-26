@@ -232,7 +232,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     }
     const shown = promptStore().releaseHeldFirstPrompt(sid);
     if (held !== undefined) importFailedHeldPrompt(sid, held);
-    else if (shown !== undefined) promptStore().addOptimisticMessage(sid, shown);
+    else if (shown !== undefined && !worktreeHoldsPrompts(sid)) promptStore().addOptimisticMessage(sid, shown);
     sentToWorktreeHold.delete(sid);
     if (worktreeHoldsPrompts(sid) || worktreeBlocksSend(sid)) return;
     if (held === undefined) resumeQueueIfIdle(sid);

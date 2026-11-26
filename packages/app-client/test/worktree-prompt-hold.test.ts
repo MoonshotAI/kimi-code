@@ -287,6 +287,22 @@ describe('worktree first-prompt hold', () => {
     ]);
   });
 
+  it('drops a held prompt that is withdrawn while setup runs and flushes the queue once setup ends', async () => {
+    const { api, ws } = await createRig();
+    await start(ws, 'first');
+    ws.syncWorktreeHold(SID);
+    await send(ws, 'second');
+
+    setWorktree(worktree('running'));
+    ws.syncWorktreeHold(SID);
+
+    expect(promptStore().heldFirstPromptBySession[SID]).toBeUndefined();
+    expect(promptStore().optimisticMessagesBySession[SID]).toBeUndefined();
+
+    await becomeReady(ws);
+    expect(sentTexts(api.submitPrompt)).toEqual(['first', 'second']);
+  });
+
   it('shows a prompt the server holds after the client reloads', async () => {
     const { ws } = await createRig({ worktree: false });
     openExisting({

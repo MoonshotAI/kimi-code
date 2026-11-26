@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppSession,
+  AppWorktreeHeldPrompt,
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
@@ -49,20 +50,17 @@ describe('useKimiWebClient worktree session', () => {
       close: vi.fn(),
     };
     const created = session({ worktree: worktree('running') });
+    let heldPrompt: AppWorktreeHeldPrompt | undefined;
     const submitPrompt = vi.fn(async (_sid: string, input: PromptSubmission) => {
-      const holding = session({
-        worktree: {
-          ...worktree('running'),
-          heldPrompt: { promptId: input.promptId!, kind: 'prompt', createdAt: '2026-11-18T00:00:00.000Z', content: input.content },
-        },
-      });
+      heldPrompt = { promptId: input.promptId!, kind: 'prompt', createdAt: '2026-11-18T00:00:00.000Z', content: input.content };
+      const holding = session({ worktree: { ...worktree('running'), heldPrompt } });
       handlers!.onEvent(
         { type: 'sessionWorkChanged', sessionId: SID, busy: false, mainTurnActive: false, session: holding },
         { sessionId: SID },
       );
       return { promptId: input.promptId!, userMessageId: input.promptId! };
     });
-    const sessionWorktreeAction = vi.fn(async () => session({ worktree: worktree('stopped') }));
+    const sessionWorktreeAction = vi.fn(async () => session({ worktree: { ...worktree('stopped'), heldPrompt } }));
     const cancelSession = vi.fn(async () => ({ cancelled: true }));
     const getGitStatus = vi.fn(async () => ({
       branch: 'main',
