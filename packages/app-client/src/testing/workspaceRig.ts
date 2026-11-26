@@ -155,6 +155,7 @@ export function createWorkspaceRig(rawState: ExtendedState, deps: WorkspaceRigDe
     createPromptEnvelope: promptPipeline.createPromptEnvelope,
     startSessionAndSendPrompt: promptPipeline.startSessionAndSendPrompt,
     startSessionAndActivateSkill: promptPipeline.startSessionAndActivateSkill,
+    activateSkill: promptPipeline.activateSkill,
     startSessionAndOpenSideChat: promptPipeline.startSessionAndOpenSideChat,
     getDraftPromotion,
     writeSessionUrl: sessionRoute.writeSessionUrl,

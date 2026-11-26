@@ -403,7 +403,7 @@ describe('worktree first-prompt hold', () => {
 
     const started = await ws.startSessionAndActivateSkill('workspace', 'review', 'now');
 
-    expect(started).toEqual({ sessionId: SID, activated: true });
+    expect(started).toMatchObject({ sessionId: SID, activated: true });
     expect(modelProvider.activateSkill).not.toHaveBeenCalled();
     expect(promptStore().heldFirstPromptBySession[SID]?.content).toEqual([{ type: 'text', text: '/review now' }]);
 
@@ -415,5 +415,39 @@ describe('worktree first-prompt hold', () => {
       snapshot: undefined,
       skillPath: undefined,
     });
+  });
+
+  it('reports a deferred first skill activation that fails so the draft can come back', async () => {
+    const { modelProvider, ws } = await createRig();
+    modelProvider.activateSkill.mockResolvedValueOnce(false);
+
+    const started = await ws.startSessionAndActivateSkill('workspace', 'review', 'now');
+    expect(started.activated).toBe(true);
+
+    setWorktree(worktree('ready', { path: '/wt/a' }), '/wt/a');
+    ws.syncWorktreeHold(SID);
+    expect(await started.deferred).toBe(false);
+  });
+
+  it('holds a later skill activation in an existing session until setup finishes', async () => {
+    const { modelProvider, ws } = await createRig();
+    await start(ws);
+
+    const activation = ws.activateSkill('review', undefined, undefined, SID);
+    await flush();
+    expect(modelProvider.activateSkill).not.toHaveBeenCalled();
+
+    await moveTo(ws, worktree('ready', { path: '/wt/a' }), '/wt/a');
+    expect(await activation).toBe(true);
+    expect(modelProvider.activateSkill).toHaveBeenCalledExactlyOnceWith('review', undefined, undefined, SID);
+  });
+
+  it('refuses a skill activation while the worktree is missing', async () => {
+    const { modelProvider, ws } = await createRig();
+    await start(ws);
+    await moveTo(ws, worktree('ready', { path: '/wt/a', missing: true }), '/wt/a');
+
+    expect(await ws.activateSkill('review', undefined, undefined, SID)).toBe(false);
+    expect(modelProvider.activateSkill).not.toHaveBeenCalled();
   });
 });

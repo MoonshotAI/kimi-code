@@ -115,6 +115,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   });
   const pendingSubmitBySession = new Map<string, { promise: Promise<void>; resolve: () => void }>();
   const heldFirstSendBySession = new Map<string, () => Promise<'ok' | 'rejected' | 'requeued'>>();
+  const worktreeWaitersBySession = new Map<string, Array<(ready: boolean) => void>>();
 
   function sessionOf(sid: string): AppSession | undefined {
     return sessionsStore().sessions.find((session) => session.id === sid);
@@ -141,10 +142,23 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     promptStore().holdFirstPrompt(sid, message);
   }
 
+  function settleWorktreeWaiters(sid: string, ready: boolean): void {
+    const waiters = worktreeWaitersBySession.get(sid);
+    worktreeWaitersBySession.delete(sid);
+    for (const resolve of waiters ?? []) resolve(ready);
+  }
+
+  function whenWorktreeSettles(sid: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      worktreeWaitersBySession.set(sid, [...(worktreeWaitersBySession.get(sid) ?? []), resolve]);
+    });
+  }
+
   function syncWorktreeHold(sid: string): void {
     if (sessionOf(sid) === undefined) {
       heldFirstSendBySession.delete(sid);
       promptStore().releaseHeldFirstPrompt(sid);
+      settleWorktreeWaiters(sid, false);
       return;
     }
     if (worktreeHoldsPrompts(sid) || worktreeBlocksSend(sid)) return;
@@ -153,11 +167,23 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     promptStore().releaseHeldFirstPrompt(sid);
     if (send === undefined) {
       resumeQueueIfIdle(sid);
+      settleWorktreeWaiters(sid, true);
       return;
     }
-    void send().then((outcome) => {
+    const sent = send();
+    settleWorktreeWaiters(sid, true);
+    void sent.then((outcome) => {
       if (outcome === 'rejected') resumeQueueIfIdle(sid);
     });
+  }
+
+  async function activateSkill(
+    ...args: Parameters<UseModelProviderState['activateSkill']>
+  ): Promise<boolean> {
+    const sid = args[3] ?? sessionsStore().activeSessionId;
+    if (sid !== undefined && worktreeBlocksSend(sid)) return false;
+    if (sid !== undefined && worktreeGated(sid) && !(await whenWorktreeSettles(sid))) return false;
+    return modelProvider.activateSkill(...args);
   }
 
   function applyWorktreeSession(session: AppSession): void {
@@ -359,7 +385,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     attachments?: PromptAttachment[],
     snapshot?: PromptEnvelope['snapshot'],
     skillPath?: string,
-  ): Promise<{ sessionId: string | null; activated: boolean }> {
+  ): Promise<{ sessionId: string | null; activated: boolean; deferred?: Promise<boolean> }> {
     if (!promptStore().tryBeginStartingFirstPrompt(workspaceId)) return { sessionId: null, activated: false };
     const savedSnapshot = snapshot === undefined ? undefined : structuredClone(snapshot);
     let createdId: string | null = null;
@@ -378,13 +404,15 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
             origin: { kind: 'skill_activation', trigger: 'user-slash', skillName, skillPath, skillArgs: args },
           },
         );
-        holdFirstSend(sid, message, async () =>
-          (await modelProvider.activateSkill(skillName, args, attachments, sid, { snapshot: savedSnapshot, skillPath }))
-            ? 'ok'
-            : 'rejected',
-        );
+        const deferred = new Promise<boolean>((resolve) => {
+          holdFirstSend(sid, message, async () => {
+            const ok = await modelProvider.activateSkill(skillName, args, attachments, sid, { snapshot: savedSnapshot, skillPath });
+            resolve(ok);
+            return ok ? 'ok' : 'rejected';
+          });
+        });
         syncWorktreeHold(sid);
-        return { sessionId: sid, activated: true };
+        return { sessionId: sid, activated: true, deferred };
       }
       const activated = await modelProvider.activateSkill(skillName, args, attachments, sid, { snapshot: savedSnapshot, skillPath });
       return { sessionId: sid, activated };
@@ -1078,6 +1106,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     reorderQueue,
     syncWorktreeHold,
     runSessionWorktreeAction,
+    activateSkill,
   };
 }
 

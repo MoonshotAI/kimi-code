@@ -2108,7 +2108,7 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
       if (!(await passCommandGates(cmd, attachments, restoreText, restoreEntries, snapshot))) return;
       if (!client.activeSessionId.value && client.activeWorkspaceId.value) {
         const workspaceId = client.activeWorkspaceId.value;
-        const { sessionId: createdId, activated } = await client.startSessionAndActivateSkill(
+        const { sessionId: createdId, activated, deferred } = await client.startSessionAndActivateSkill(
           workspaceId,
           name,
           args,
@@ -2119,6 +2119,9 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
         if (!activated && (createdId !== null || client.activeWorkspaceId.value === workspaceId)) {
           restoreDraftAfterFailedSend(generation, createdId ?? undefined, cmd, attachments, restoreText, restoreEntries, snapshot);
         }
+        void deferred?.then((ok) => {
+          if (!ok) restoreDraftAtOrigin(createdId ?? undefined, cmd, attachments, restoreText, restoreEntries, snapshot);
+        });
       } else {
         const sid = client.activeSessionId.value;
         void client.activateSkill(name, args, attachments, undefined, { snapshot, skillPath: payload.skillPath }).then((ok) => {

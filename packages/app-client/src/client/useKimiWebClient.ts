@@ -3815,7 +3815,7 @@ export function useKimiWebClient() {
     loadProviders: modelProvider.loadProviders,
     skills,
     skillsLoaded,
-    activateSkill: modelProvider.activateSkill,
+    activateSkill: promptPipeline.activateSkill,
     selectModel,
     setSessionModel: (sessionId: string, modelId: string, thinking?: ThinkingLevel) => {
       beginModelSelect(sessionId);
