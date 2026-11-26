@@ -13,6 +13,7 @@ import {
   plannedRecreationSteps,
   recreateWorktree,
   type SetupProgress,
+  type WorktreeCreationOptions,
 } from '../../src/services/worktrees/worktreeSetup';
 import { createRepoTemplate, git, hangingRemote, type RepoTemplate } from '../helpers/gitRepo';
 
@@ -38,6 +39,20 @@ describe('worktree setup engine', () => {
     return { steps: creation.plannedSteps(), commandsRan: 0, notify: () => {} };
   }
 
+  function plan(root: string, name: string, options: Partial<WorktreeCreationOptions> = {}): Promise<WorktreeCreation> {
+    return WorktreeCreation.plan({
+      repoRoot: root,
+      projectDir: join(scratch, `${name}-worktrees`),
+      osHomeDir: scratch,
+      request: { source_branch: 'main' },
+      ...options,
+    });
+  }
+
+  function run(creation: WorktreeCreation, progress = progressOf(creation)) {
+    return creation.run(progress, new AbortController().signal);
+  }
+
   it('abbreviates the home directory and quotes only what needs quoting', () => {
     expect(abbreviateHome('/Users/dev/.kimi-code/worktrees/app/1109-a3f2', '/Users/dev')).toBe(
       '~/.kimi-code/worktrees/app/1109-a3f2',
@@ -60,14 +75,7 @@ describe('worktree setup engine', () => {
     const projectDir = join(scratch, 'collide-worktrees');
     await mkdir(join(projectDir, '0102-beef-3'), { recursive: true });
 
-    const creation = await WorktreeCreation.plan({
-      repoRoot: root,
-      projectDir,
-      osHomeDir: scratch,
-      request: { source_branch: 'main' },
-      now: () => new Date(2026, 0, 2),
-      randomSuffix: () => 'beef',
-    });
+    const creation = await plan(root, 'collide', { now: () => new Date(2026, 0, 2), randomSuffix: () => 'beef' });
     expect(creation.target).toEqual({
       branch: 'kimi/0102-beef-4',
       path: join(projectDir, '0102-beef-4'),
@@ -81,8 +89,7 @@ describe('worktree setup engine', () => {
       },
     ]);
 
-    const outcome = await creation.run(progressOf(creation), new AbortController().signal);
-    expect(outcome).toMatchObject({
+    expect(await run(creation)).toMatchObject({
       kind: 'done',
       value: { branch: 'kimi/0102-beef-4', base: { ref: 'main', remote: false } },
     });
@@ -93,24 +100,13 @@ describe('worktree setup engine', () => {
 
   it('leaves the worktree of a setup that picked the same name first untouched', async () => {
     const root = await createRepo('same-name');
-    const plan = (): Promise<WorktreeCreation> =>
-      WorktreeCreation.plan({
-        repoRoot: root,
-        projectDir: join(scratch, 'same-name-worktrees'),
-        osHomeDir: scratch,
-        request: { source_branch: 'main' },
-        now: () => new Date(2026, 0, 2),
-        randomSuffix: () => 'cafe',
-      });
-    const [first, second] = [await plan(), await plan()];
+    const fixed = { now: () => new Date(2026, 0, 2), randomSuffix: () => 'cafe' };
+    const [first, second] = [await plan(root, 'same-name', fixed), await plan(root, 'same-name', fixed)];
     expect(second.target).toEqual(first.target);
 
-    expect(await first.run(progressOf(first), new AbortController().signal)).toMatchObject({ kind: 'done' });
+    expect(await run(first)).toMatchObject({ kind: 'done' });
     const progress = progressOf(second);
-    expect(await second.run(progress, new AbortController().signal)).toMatchObject({
-      kind: 'failed',
-      step: 'create',
-    });
+    expect(await run(second, progress)).toMatchObject({ kind: 'failed', step: 'create' });
 
     expect(progress.steps[0]?.output).toMatch(/EEXIST|already exists/);
     expect(git(first.target.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(first.target.branch);
@@ -137,18 +133,10 @@ describe('worktree setup engine', () => {
 
   it('keeps a branch of the same name that appeared after planning', async () => {
     const root = await createRepo('late-branch');
-    const creation = await WorktreeCreation.plan({
-      repoRoot: root,
-      projectDir: join(scratch, 'late-branch-worktrees'),
-      osHomeDir: scratch,
-      request: { source_branch: 'main' },
-    });
+    const creation = await plan(root, 'late-branch');
     git(root, 'branch', creation.target.branch);
 
-    expect(await creation.run(progressOf(creation), new AbortController().signal)).toMatchObject({
-      kind: 'failed',
-      step: 'create',
-    });
+    expect(await run(creation)).toMatchObject({ kind: 'failed', step: 'create' });
 
     expect(git(root, 'branch', '--list', creation.target.branch)).toContain(creation.target.branch);
     expect(existsSync(creation.target.path)).toBe(false);
@@ -158,11 +146,7 @@ describe('worktree setup engine', () => {
     const root = await createRepo('include-cancel');
     await writeFile(join(root, '.worktreeinclude'), '.env\n');
     const controller = new AbortController();
-    const creation = await WorktreeCreation.plan({
-      repoRoot: root,
-      projectDir: join(scratch, 'include-cancel-worktrees'),
-      osHomeDir: scratch,
-      request: { source_branch: 'main' },
+    const creation = await plan(root, 'include-cancel', {
       copyIncludedFiles: async () => {
         controller.abort();
         return [];
@@ -177,33 +161,22 @@ describe('worktree setup engine', () => {
   it('starts from the branch when a tag has the same name', async () => {
     const root = await createRepo('ambiguous');
     git(root, 'tag', 'main', git(root, 'commit-tree', '-m', 'tagged', git(root, 'rev-parse', 'HEAD^{tree}')));
-    const creation = await WorktreeCreation.plan({
-      repoRoot: root,
-      projectDir: join(scratch, 'ambiguous-worktrees'),
-      osHomeDir: scratch,
-      request: { source_branch: 'main' },
-    });
+    const creation = await plan(root, 'ambiguous');
 
-    expect(await creation.run(progressOf(creation), new AbortController().signal)).toMatchObject({ kind: 'done' });
+    expect(await run(creation)).toMatchObject({ kind: 'done' });
     expect(git(creation.target.path, 'rev-parse', 'HEAD')).toBe(git(root, 'rev-parse', 'refs/heads/main'));
   });
 
   it('fails with a timeout and creates nothing when the fetch hangs', async () => {
     const root = await createRepo('fetch-timeout');
     hangingRemote(root);
-    const projectDir = join(scratch, 'fetch-timeout-worktrees');
-    const creation = await WorktreeCreation.plan({
-      repoRoot: root,
-      projectDir,
-      osHomeDir: scratch,
+    const creation = await plan(root, 'fetch-timeout', {
       request: { source_branch: 'main', use_remote: true },
       fetchTimeoutMs: 50,
     });
     const progress = progressOf(creation);
 
-    const outcome = await creation.run(progress, new AbortController().signal);
-
-    expect(outcome).toEqual({
+    expect(await run(creation, progress)).toEqual({
       kind: 'failed',
       step: 'fetch',
       failure: { kind: 'fetch_timeout', remote_ref: 'origin/main', timeout_seconds: 1 },

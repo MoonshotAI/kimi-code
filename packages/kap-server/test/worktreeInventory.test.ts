@@ -38,6 +38,14 @@ describe('server-v2 worktree inventory', () => {
     return listed.data;
   }
 
+  async function listedAt(path: string): Promise<WorktreeWire | undefined> {
+    return (await listWorktrees()).items.find((item) => item.path === path);
+  }
+
+  function deleteSession(id: string, body?: { remove_worktree?: boolean; delete_branch?: boolean }) {
+    return post<Deletion>(`/sessions/${id}:delete`, body);
+  }
+
   function worktreeCount(root: string): number {
     return git(root, 'worktree', 'list', '--porcelain').match(/^worktree /gm)?.length ?? 0;
   }
@@ -85,8 +93,7 @@ describe('server-v2 worktree inventory', () => {
     expect(listed.total_size_bytes).toBe(
       listed.items.reduce((total, item) => total + (item.size_bytes ?? 0), 0),
     );
-    const cached = await listWorktrees();
-    expect(cached.items.find((item) => item.path === path)?.size_bytes).toBe(product.size_bytes);
+    expect((await listedAt(path))?.size_bytes).toBe(product.size_bytes);
 
     git(path, 'branch', '-m', 'renamed-by-agent');
     const realNow = Date.now.bind(Date);
@@ -96,9 +103,7 @@ describe('server-v2 worktree inventory', () => {
     });
     expect((await get<Session>(`/sessions/${session.id}`)).data.worktree?.branch).toBe('renamed-by-agent');
     await expect.poll(async () => (await stored(session.id))?.branch).toBe('renamed-by-agent');
-    expect((await listWorktrees()).items.find((item) => item.path === path)?.branch).toBe(
-      'renamed-by-agent',
-    );
+    expect((await listedAt(path))?.branch).toBe('renamed-by-agent');
   });
 
   it('reports what removing a worktree would lose', async () => {
@@ -167,7 +172,7 @@ describe('server-v2 worktree inventory', () => {
     expect(busy.code).toBe(ErrorCode.WORKTREE_REMOVE_FAILED);
     expect(busy.details).toMatchObject({ reason: 'session_busy' });
     expect(existsSync(path)).toBe(true);
-    expect((await listWorktrees()).items.find((item) => item.path === path)?.sessions).toEqual(
+    expect((await listedAt(path))?.sessions).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: other.data.id, busy: true })]),
     );
     await post(`/sessions/${other.data.id}:delete`);
@@ -183,7 +188,7 @@ describe('server-v2 worktree inventory', () => {
     expect(existsSync(path)).toBe(false);
     expect(git(root, 'branch', '--list', branch)).toBe('');
     expect(worktreeCount(root)).toBe(1);
-    expect((await listWorktrees()).items.some((item) => item.path === path)).toBe(false);
+    expect(await listedAt(path)).toBeUndefined();
     const after = await get<Session>(`/sessions/${session.id}`);
     expect(after.data.worktree).toMatchObject({ path, missing: true, branch_missing: true });
     await expect
@@ -200,7 +205,7 @@ describe('server-v2 worktree inventory', () => {
     const session = await settledWorktree(workspaceId);
     const { path, branch } = session.worktree as { path: string; branch: string };
     await rm(path, { recursive: true, force: true });
-    expect((await listWorktrees()).items.some((item) => item.path === path)).toBe(false);
+    expect(await listedAt(path)).toBeUndefined();
     const missing = await get<Session>(`/sessions/${session.id}`);
     expect(missing.data.worktree).toMatchObject({ missing: true });
     expect(missing.data.worktree?.branch_missing).toBeUndefined();
@@ -221,11 +226,10 @@ describe('server-v2 worktree inventory', () => {
     await repointSession(fixture.server.core, nested.data.id, join(path, 'packages', 'app'));
     await post(`/sessions/${nested.data.id}:archive`);
 
-    const listed = await get<{ items: WorktreeWire[] }>('/worktrees');
-    expect(listed.data.items.find((item) => item.path === path)?.sessions.map((ref) => ref.id).toSorted()).toEqual(
+    expect((await listedAt(path))?.sessions.map((ref) => ref.id).toSorted()).toEqual(
       [first.id, nested.data.id].toSorted(),
     );
-    const kept = await post<Deletion>(`/sessions/${first.id}:delete`, { remove_worktree: true });
+    const kept = await deleteSession(first.id, { remove_worktree: true });
     expect(kept.data).toEqual({ deleted: true, worktree: { outcome: 'kept_in_use', other_sessions: 1 } });
     expect(existsSync(path)).toBe(true);
   });
@@ -237,7 +241,7 @@ describe('server-v2 worktree inventory', () => {
     const second = await post<Session>(`/sessions/${first.id}:fork`, {});
     await post(`/sessions/${second.data.id}:archive`);
 
-    const kept = await post<Deletion>(`/sessions/${first.id}:delete`, {
+    const kept = await deleteSession(first.id, {
       remove_worktree: true,
       delete_branch: true,
     });
@@ -245,7 +249,7 @@ describe('server-v2 worktree inventory', () => {
     expect(existsSync(path)).toBe(true);
     expect(git(root, 'branch', '--list', branch)).toContain(branch);
 
-    const removed = await post<Deletion>(`/sessions/${second.data.id}:delete`, {
+    const removed = await deleteSession(second.data.id, {
       remove_worktree: true,
       delete_branch: true,
     });
@@ -255,15 +259,15 @@ describe('server-v2 worktree inventory', () => {
 
     const third = await settledWorktree(workspaceId);
     await rm(third.worktree!.path!, { recursive: true, force: true });
-    const gone = await post<Deletion>(`/sessions/${third.id}:delete`, { remove_worktree: true });
+    const gone = await deleteSession(third.id, { remove_worktree: true });
     expect(gone.data).toEqual({ deleted: true, worktree: { outcome: 'missing', branch_deleted: false } });
 
     const fourth = await settledWorktree(workspaceId);
-    const plainDelete = await post<Deletion>(`/sessions/${fourth.id}:delete`);
+    const plainDelete = await deleteSession(fourth.id);
     expect(plainDelete.data).toEqual({ deleted: true });
     expect(existsSync(fourth.worktree!.path!)).toBe(true);
     const local = await post<Session>('/sessions', { workspace_id: workspaceId });
-    const localDelete = await post<Deletion>(`/sessions/${local.data.id}:delete`, { remove_worktree: true });
+    const localDelete = await deleteSession(local.data.id, { remove_worktree: true });
     expect(localDelete.data).toEqual({ deleted: true });
     expect(existsSync(root)).toBe(true);
   });
@@ -281,7 +285,7 @@ describe('server-v2 worktree inventory', () => {
     };
 
     const viaSession = await lockedWorktree();
-    const deleted = await post<Deletion>(`/sessions/${viaSession.id}:delete`, { remove_worktree: true });
+    const deleted = await deleteSession(viaSession.id, { remove_worktree: true });
     expect(deleted.code).toBe(0);
     expect(deleted.data.deleted).toBe(true);
     expect(deleted.data.worktree?.outcome).toBe('failed');

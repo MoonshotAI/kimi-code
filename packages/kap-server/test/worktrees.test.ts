@@ -43,6 +43,15 @@ describe('server-v2 session worktrees', () => {
     expectNothingLeft,
   } = fixture;
 
+  function agentState(id: string) {
+    const { accessor } = mainAgent(id);
+    return {
+      cwd: accessor.get(IAgentEnvironmentBindingService).current.cwd,
+      workDir: accessor.get(IAgentEnvironmentService).workspaceRoots().workDir,
+      prompt: accessor.get(IAgentLoopService).getSystemPrompt(),
+    };
+  }
+
   it('re-points a fresh session at another directory and back to the workspace root', async () => {
     const { root, workspaceId } = await project('repoint');
     const worktree = join(fixture.scratch, 'repoint-wt');
@@ -51,7 +60,7 @@ describe('server-v2 session worktrees', () => {
     const created = await post<Session>('/sessions', { workspace_id: workspaceId });
     const id = created.data.id;
     expect(created.data.cwd).toBe(root);
-    expect(mainAgent(id).accessor.get(IAgentLoopService).getSystemPrompt()).not.toContain(worktree);
+    expect(agentState(id).prompt).not.toContain(worktree);
 
     await repointSession(fixture.server.core, id, worktree);
 
@@ -64,19 +73,18 @@ describe('server-v2 session worktrees', () => {
     );
     expect(status.data.branch).toBe('side');
     expect(status.data.entries).toEqual({ 'only-here.txt': 'untracked' });
-    const main = mainAgent(id);
-    expect(main.accessor.get(IAgentEnvironmentBindingService).current.cwd).toBe(worktree);
-    expect(main.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(worktree);
-    expect(main.accessor.get(IAgentLoopService).getSystemPrompt()).toContain(worktree);
+    const agent = agentState(id);
+    expect(agent).toMatchObject({ cwd: worktree, workDir: worktree });
+    expect(agent.prompt).toContain(worktree);
 
     await repointSession(fixture.server.core, id, undefined);
 
     const back = await get<Session>(`/sessions/${id}`);
     expect(back.data.cwd).toBe(root);
     expect(await branchOf(id)).toBe('main');
-    const restored = mainAgent(id);
-    expect(restored.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(root);
-    expect(restored.accessor.get(IAgentLoopService).getSystemPrompt()).not.toContain(worktree);
+    const restored = agentState(id);
+    expect(restored.workDir).toBe(root);
+    expect(restored.prompt).not.toContain(worktree);
   });
 
   it('creates a worktree from a local branch and moves the session into it', async () => {
@@ -123,9 +131,9 @@ describe('server-v2 session worktrees', () => {
     expect(git(worktree.path!, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(worktree.branch);
 
     expect(await branchOf(created.id)).toBe(worktree.branch);
-    const main = mainAgent(created.id);
-    expect(main.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(worktree.path);
-    expect(main.accessor.get(IAgentLoopService).getSystemPrompt()).toContain(worktree.path);
+    const agent = agentState(created.id);
+    expect(agent.workDir).toBe(worktree.path);
+    expect(agent.prompt).toContain(worktree.path);
     const live = getLiveSessionById(fixture.server.core.accessor, created.id)!;
     expect(live.accessor.get(IProjectTrust).isTrusted()).toBe(true);
 
@@ -577,10 +585,9 @@ describe('server-v2 session worktrees', () => {
     expect(local.data.worktree?.path).toBeUndefined();
     expect(local.data.worktree?.branch).toBeUndefined();
     expect(local.data.worktree?.missing).toBeUndefined();
-    const main = mainAgent(session.id);
-    expect(main.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(root);
-    expect(main.accessor.get(IAgentEnvironmentBindingService).current.cwd).toBeUndefined();
-    expect(main.accessor.get(IAgentLoopService).getSystemPrompt()).not.toContain(path);
+    const agent = agentState(session.id);
+    expect(agent).toMatchObject({ cwd: undefined, workDir: root });
+    expect(agent.prompt).not.toContain(path);
     expect(await branchOf(session.id)).toBe('main');
   });
 });
