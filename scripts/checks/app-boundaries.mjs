@@ -17,7 +17,7 @@ const TEST_FILE = /(?:^|\/)(?:test|tests|e2e|__tests__|testing)\/|\.(?:test|spec
 const STORES_PREFIX = 'packages/app-client/src/stores/';
 const STORES_INFRA = new Set(['packages/app-client/src/stores/index.ts', 'packages/app-client/src/stores/pinia.ts']);
 const BROWSER_VIEW_PREFIXES = ['/components/browser/', '/components/browser-overlay/'];
-const SCRIPT_BLOCK = /<script\b([^>]*)>([\s\S]*?)<\/script>/g;
+const SCRIPT_BLOCK = /<script\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/script>/g;
 const DIRECT_API_CALL = /(?<![\w.$])(?:getKimiWebApi|getDeviceApi|fetch)\s*\(/g;
 const DIRECT_IPC_ACCESS = /\bwindow\.kimiDesktop\b|(?<![\w.$])(?:getNativeBrowserBridge|getDesktopBridge)\s*\(/g;
 

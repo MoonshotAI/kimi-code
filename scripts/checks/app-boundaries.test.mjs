@@ -94,6 +94,11 @@ await test('extractImports parses .tsx sources and Vue lang="tsx" blocks with JS
   assert.deepEqual(extractImports(CHAT_PANE, vue), [{ specifier: './helper', typeOnly: false }]);
 });
 
+await test('extractImports accepts Vue generic script attributes with > inside quotes', () => {
+  const vue = '<script setup lang="ts" generic="T extends Record<string, unknown>">import { helper } from "./helper";\ndefineProps<{ value: T }>();</script>';
+  assert.deepEqual(extractImports(CHAT_PANE, vue), [{ specifier: './helper', typeOnly: false }]);
+});
+
 await test('packageOfFile recognizes app-i18n and enforces its upward and self-import boundaries', () => {
   const file = 'packages/app-i18n/src/createKimiI18n.ts';
   assert.equal(packageOfFile(file), 'app-i18n');
