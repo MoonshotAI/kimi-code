@@ -70,5 +70,5 @@
 ## 浏览器 Web UI 产物
 
 - 桌面端与浏览器共用 `apps/desktop/src/renderer`。在仓库根目录运行 `pnpm build:web`，Web 版本会生成到 `apps/desktop/web-dist`。
-- 要为 CLI 打包，在仓库根目录运行 `pnpm sync:web`。它通过 `scripts/sync-web-dist.mjs` 构建 Web 版本并复制到 `apps/kimi-code/dist-web`。完整的 `pnpm build` 会在 CLI 的 prebuild 阶段自动同步，`scripts/check-web-assets.mjs` 会在打包时检查入口文件。两个产物目录都由 Git 忽略。
+- 要为 CLI 打包，在仓库根目录运行 `pnpm sync:web`。它通过 `scripts/sync-web-dist.mjs` 构建 Web 版本并复制到 `apps/kimi-code/web-dist`。完整的 `pnpm build` 会在 CLI 的 prebuild 阶段自动同步，`scripts/check-web-assets.mjs` 会在打包时检查入口文件。两个产物目录都由 Git 忽略。
 - 本地联调时，在仓库根目录分别运行 `pnpm dev:server` 和 `pnpm dev:web`。Web 开发服务器将 `/api/v1` 和 `/api/v2` 代理到 `KIMI_SERVER_URL`，默认地址为 `http://127.0.0.1:58627`。

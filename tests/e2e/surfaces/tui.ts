@@ -12,6 +12,7 @@ import {
   readNetworkViolations,
   TIMEOUTS,
   until,
+  WaitTimeoutError,
 } from '@moonshot-ai/testkit/fixtures';
 import { FAKE_PROVIDER_DEFAULTS } from '@moonshot-ai/testkit/model';
 import type { IPty } from 'node-pty';
@@ -101,6 +102,9 @@ const APPROVAL_HINT = '↵ confirm';
 const APPROVAL_RULE = /^─+$/;
 const EDITOR_TOP = /^╭─+╮$/;
 const EDITOR_PROMPT = '│ >';
+const EDITOR_BOTTOM = /^╰─+╯$/;
+const UNDO_PICKER = 'Enter select · Esc cancel';
+const UNDO_FAILED = 'Failed to undo:';
 const ACTIVITY = /^[\u{1F311}-\u{1F318}\u2800-\u28FF]/u;
 const READ_GROUP = /^Read(?:ing)? \d+ files?…?(?: · .*)?$/;
 const TOOL_CARD =
@@ -256,6 +260,24 @@ function screenOf(rows: readonly string[], viewport: readonly string[]): Screen 
   if (editor < 0) return { ...frame, input: 'none', transcript: rows, status: [], panel: [] };
   const gap = lines.findLastIndex((line, index) => index < editor && line === '');
   return { ...frame, input: 'editor', transcript: rows.slice(0, gap + 1), status: lines.slice(gap + 1, editor), panel: [] };
+}
+
+function composerText(screen: Screen): string | undefined {
+  const lines = screen.viewport.map((row) => row.trim());
+  const top = lines.findLastIndex((line, index) => EDITOR_TOP.test(line) && lines[index + 1]?.startsWith(EDITOR_PROMPT) === true);
+  const bottom = lines.findIndex((line, index) => index > top && EDITOR_BOTTOM.test(line));
+  if (top < 0 || bottom < 0) return undefined;
+  return lines
+    .slice(top + 1, bottom)
+    .map((line, index) =>
+      line
+        .replace(/^│/, '')
+        .replace(/│$/, '')
+        .replace(index === 0 ? /^ > ?/ : /^ {1,3}/, '')
+        .trimEnd(),
+    )
+    .join('\n')
+    .trimEnd();
 }
 
 function compactionNotices(screen: Screen, notice: string): number {
@@ -580,6 +602,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private received = 0;
   private readonly kitty: boolean;
   private keyboardFlags = 0;
+  private recalled: string | undefined;
   private readonly keyboardStack: number[] = [];
   private keyboardTail = '';
   private modifyOtherKeys = false;
@@ -753,19 +776,99 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     if (!this.turnOver(screen)) {
       throw this.failure('send() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
     }
+    this.assertEmptyInput('send()', screen);
+    this.write(paste(text));
+    await this.enter(text, screen);
+  }
+
+  async submit(text: string): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('submit() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
+    }
+    const held = composerText(screen);
+    if (held !== text) throw this.failure(`submit() expected the input box to hold ${JSON.stringify(text)}, but it holds ${JSON.stringify(held)}.`, screen);
+    await this.enter(text, screen);
+  }
+
+  async expectComposer(text: string): Promise<void> {
+    let held: string | undefined;
+    const settled = await this.settle(`the input box to hold ${JSON.stringify(text)}`, (current) => {
+      held = composerText(current);
+      return held === text ? true : undefined;
+    });
+    if ('over' in settled) throw this.failure(`expectComposer() expected the input box to hold ${JSON.stringify(text)}, but it holds ${JSON.stringify(held)}.`, settled.over);
+  }
+
+  async recallPrevious(): Promise<void> {
+    const screen = await this.read();
+    const before = composerText(screen);
+    if (before === undefined) throw this.failure('recallPrevious() needs the input box on screen.', screen);
+    if (before !== '' && before !== this.recalled) {
+      throw this.failure(
+        `recallPrevious() needs an empty input box, or one holding the prompt it recalled last; it holds ${JSON.stringify(before)}, and the up key there moves the cursor instead of walking the history.`,
+        screen,
+      );
+    }
+    this.write(KEYS.up);
+    try {
+      this.recalled = await until(
+        'an earlier prompt to appear in the input box',
+        async () => {
+          const now = composerText(await this.read());
+          return now !== undefined && now !== '' && now !== before ? now : undefined;
+        },
+        { timeoutMs: TIMEOUTS.wait },
+      );
+    } catch (cause) {
+      if (!(cause instanceof WaitTimeoutError)) throw cause;
+      throw this.failure('recallPrevious() found no earlier prompt: the input box did not change.', await this.read());
+    }
+  }
+
+  async undo(): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('undo() needs an idle product: the terminal UI refuses /undo while a turn runs, a message is queued or an approval is pending.', screen);
+    }
+    this.assertEmptyInput('undo()', screen);
+    const latest = blocksOf(screen).findLast((block) => block.mark === USER_MARK);
+    if (latest === undefined) throw this.failure('undo() found no user message to withdraw.', screen);
+    const shown = userMessages(screen, latest.text);
+    this.write(paste('/undo'));
+    this.write(KEYS.enter);
+    await this.wait('the terminal UI to list the prompts it can undo', (current) => (current.text.includes(UNDO_PICKER) ? true : undefined));
+    this.write(KEYS.enter);
+    const outcome = await this.wait(`the user message ${JSON.stringify(latest.head)} to leave the transcript and come back to the input box`, (current) => {
+      if (current.text.includes(UNDO_FAILED)) return 'failed' as const;
+      return !current.text.includes(UNDO_PICKER) && userMessages(current, latest.text) < shown && (composerText(current) ?? '') !== '' ? ('undone' as const) : undefined;
+    });
+    if (outcome === 'failed') throw this.failure('undo() picked the latest prompt, but the terminal UI could not undo it.', await this.read());
+    this.recalled = undefined;
+  }
+
+  private async enter(text: string, screen: Screen): Promise<void> {
     const shown = userMessages(screen, text);
     this.turn = { stopped: statusLines(screen, TURN_STOPPED), failed: statusLines(screen, TURN_FAILED) };
     this.queued = [];
-    this.write(paste(text));
+    this.recalled = undefined;
     this.write(KEYS.enter);
     await this.wait(`the user message ${JSON.stringify(text)} to appear in the transcript`, (current) =>
       userMessages(current, text) > shown ? true : undefined,
     );
   }
 
+  private assertEmptyInput(verb: string, screen: Screen): void {
+    const held = composerText(screen);
+    if (held !== undefined && held !== '') {
+      throw this.failure(`${verb} needs an empty input box, but it holds ${JSON.stringify(held)}; send it with submit() first.`, screen);
+    }
+  }
+
   async queue(text: string): Promise<void> {
     const screen = await this.read();
     this.assertTurnRunning('queue()', screen);
+    this.assertEmptyInput('queue()', screen);
     if (queuedMessages(screen).includes(text)) {
       throw this.failure(`queue() found ${JSON.stringify(text)} already in the queue; queue each message once.`, screen);
     }
@@ -788,6 +891,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   async steer(text: string): Promise<void> {
     const screen = await this.read();
     this.assertTurnRunning('steer()', screen);
+    this.assertEmptyInput('steer()', screen);
     if (queuedMessages(screen).length > 0) {
       throw this.failure(
         'steer() needs an empty queue: with messages queued, Ctrl+S on the terminal UI steers the whole queue into the turn along with this message, while Desktop and Web steer only this one. Let the queue run first.',

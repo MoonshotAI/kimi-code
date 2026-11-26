@@ -165,7 +165,7 @@
     "packages/kap-server/test/remoteControl.test.ts": 4,
     "packages/kap-server/test/requestLogging.test.ts": 1,
     "packages/kap-server/test/search/searchRoute.test.ts": 1,
-    "packages/kap-server/test/search/searchService.test.ts": 5,
+    "packages/kap-server/test/search/searchService.test.ts": 3,
     "packages/kap-server/test/services/conversation.test.ts": 1,
     "packages/kap-server/test/sessionEventBroadcaster.test.ts": 2,
     "packages/kap-server/test/sessionList.test.ts": 2,

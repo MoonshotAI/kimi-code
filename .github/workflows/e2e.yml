@@ -77,7 +77,7 @@ jobs:
           name: e2e-cli
           path: |
             apps/kimi-code/dist/
-            apps/kimi-code/dist-web/
+            apps/kimi-code/web-dist/
             apps/kimi-code/native/
           if-no-files-found: error
           retention-days: 1

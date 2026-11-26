@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises';
-import { isAbsolute, relative } from 'node:path';
+import { relative } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 
 import {
@@ -13,11 +13,7 @@ import {
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 
 import {
-  createSetupFailedPrompt,
-  createSetupScriptPrompt,
   createWorktreeFailedPrompt,
-  type SetupFailedChoice,
-  type SetupScriptChoice,
   type WorktreeFailedChoice,
 } from '#/tui/components/dialogs/worktree-choices';
 import {
@@ -25,7 +21,6 @@ import {
   type WorktreeProgress,
   type WorktreeProgressRow,
 } from '#/tui/components/messages/worktree-progress';
-import { WORKTREE_SETUP_OUTPUT_LINES } from '#/tui/constant/worktree';
 import type { TUIState } from '#/tui/tui-state';
 import type { WorkLocation } from '#/tui/types';
 import { formatErrorMessage } from '#/tui/utils/event-payload';
@@ -43,14 +38,13 @@ export interface WorktreeCreationOptions {
 }
 
 export interface WorktreeCreationHost {
-  readonly harness: Pick<KimiHarness, 'createWorktree' | 'runWorktreeSetupScript' | 'removeWorktree'>;
+  readonly harness: Pick<KimiHarness, 'createWorktree'>;
   readonly state: Pick<TUIState, 'appState' | 'transcriptContainer' | 'ui'>;
   mountEditorReplacement(panel: Component & Focusable, onDisplaced?: () => void): void;
   restoreEditor(): void;
   applyWorkLocation(location: WorkLocation): Promise<void>;
   showError(message: string): void;
   exitWithError(message: string): void;
-  stop(exitCode?: number): Promise<void>;
 }
 
 type PlannedWorktree = Extract<WorktreeCreateEvent, { type: 'planned' }>;
@@ -103,12 +97,6 @@ export class WorktreeCreationController {
     try {
       const created = await this.create(request, sourceDir, progress, options);
       if (created === undefined) return;
-      if (
-        created.setupScript !== undefined &&
-        !(await this.runSetupScript(created, created.setupScript, progress))
-      ) {
-        return;
-      }
       const location: WorkLocation = {
         cwd: created.cwd,
         projectRoot: created.repoRoot,
@@ -226,89 +214,6 @@ export class WorktreeCreationController {
     }
   }
 
-  private async runSetupScript(
-    created: CreatedWorktree,
-    setupScript: string,
-    progress: ProgressRows,
-  ): Promise<boolean> {
-    const fromWorktree = relative(created.worktree.path, setupScript);
-    const inWorktree =
-      fromWorktree !== '' && !/^\.\.(?:[\\/]|$)/.test(fromWorktree) && !isAbsolute(fromWorktree);
-    const scriptRoot = inWorktree ? created.worktree.path : created.sourceRoot;
-    const script = inWorktree ? fromWorktree : relative(created.sourceRoot, setupScript);
-    const choice = await this.choose<SetupScriptChoice>(
-      (onChoose) => createSetupScriptPrompt({ script, sourceDir: scriptRoot, onChoose }),
-      'skip',
-    );
-    if (choice === 'skip') return true;
-    for (;;) {
-      const abort = new AbortController();
-      this.abort = abort;
-      const output = new OutputTail(WORKTREE_SETUP_OUTPUT_LINES);
-      const show = (status: 'running' | 'done' | 'failed', exitCode?: number): void => {
-        progress.set({ step: 'setup', status, script, output: output.lines, exitCode });
-      };
-      progress.resume();
-      show('running');
-      let exitCode: number | undefined;
-      try {
-        ({ exitCode } = await this.host.harness.runWorktreeSetupScript(
-          { worktreePath: created.worktree.path, sourceRoot: created.sourceRoot },
-          {
-            signal: abort.signal,
-            onOutput: (text) => {
-              output.push(text);
-              show('running');
-            },
-          },
-        ));
-      } catch (error) {
-        if (this.disposed) return false;
-        if (!abort.signal.aborted) {
-          output.push(`${messageOf(error)}\n`);
-          exitCode = -1;
-        }
-      }
-      this.abort = undefined;
-      if (exitCode === 0) {
-        show('done');
-        return true;
-      }
-      show('failed', exitCode);
-      progress.stop();
-      const next = await this.choose<SetupFailedChoice>(
-        (onChoose) => createSetupFailedPrompt({ onChoose }),
-        'continue',
-      );
-      if (next === 'continue') return true;
-      if (next === 'delete') {
-        await this.deleteAndExit(created, progress);
-        return false;
-      }
-    }
-  }
-
-  private async deleteAndExit(created: CreatedWorktree, progress: ProgressRows): Promise<void> {
-    const path = created.worktree.path;
-    progress.resume();
-    progress.set({ step: 'remove', status: 'running', path });
-    try {
-      await this.host.harness.removeWorktree({
-        repoRoot: created.repoRoot,
-        path,
-        deleteBranch: false,
-        discard: 'all',
-      });
-    } catch (error) {
-      progress.set({ step: 'remove', status: 'failed', path, output: errorOutput(error) });
-      progress.stop();
-      return;
-    }
-    progress.set({ step: 'remove', status: 'done', path });
-    progress.stop();
-    void this.host.stop(0);
-  }
-
   private choose<T>(
     build: (onChoose: (choice: T) => void) => Component & Focusable,
     fallback: T,
@@ -364,11 +269,6 @@ class ProgressRows {
     this.render();
   }
 
-  resume(): void {
-    this.phase = 'creating';
-    this.render();
-  }
-
   stop(): void {
     this.phase = 'stopped';
     this.render();
@@ -381,27 +281,6 @@ class ProgressRows {
 
   private render(): void {
     this.finish({ phase: this.phase, name: this.title, rows: this.rows });
-  }
-}
-
-class OutputTail {
-  private complete: string[] = [];
-  private partial = '';
-
-  constructor(private readonly limit: number) {}
-
-  push(text: string): void {
-    const parts = `${this.partial}${text}`.replaceAll('\r\n', '\n').split('\n');
-    this.partial = parts.pop() ?? '';
-    this.complete = [
-      ...this.complete,
-      ...parts.map(visibleLine).filter((line) => line !== ''),
-    ].slice(-this.limit);
-  }
-
-  get lines(): readonly string[] {
-    const partial = visibleLine(this.partial);
-    return partial === '' ? this.complete : [...this.complete, partial].slice(-this.limit);
   }
 }
 

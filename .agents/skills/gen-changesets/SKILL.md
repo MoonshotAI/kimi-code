@@ -47,7 +47,7 @@ Desktop and `kimi web` share `apps/desktop/src/renderer` and `packages/app-*`, *
 
 Add a `@moonshot-ai/kimi-code` entry **only when the change specifically targets `kimi web`**, and name `kimi web` in the sentence:
 
-- `kimi web` CLI flags, daemon lifecycle, token/host handling, or serving `dist-web`.
+- `kimi web` CLI flags, daemon lifecycle, token/host handling, or serving `web-dist`.
 - Browser-only behavior: `!isDesktop` branches, web-only routes, browser APIs, CSP, or insecure/non-loopback browser contexts.
 - If the change fixes both a web-specific path and desktop, write both entries; otherwise write only `@moonshot-ai/kimi-code`.
 
