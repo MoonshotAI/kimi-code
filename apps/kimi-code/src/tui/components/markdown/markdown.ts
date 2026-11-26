@@ -78,7 +78,7 @@ export class Markdown extends Container {
   private readonly defaultTextStyle?: DefaultTextStyle;
   private readonly options: KimiMarkdownOptions;
   private structure: MarkdownStructure | undefined;
-  private childCache: { width: number; refs: Component[]; childLines: string[][]; lines: string[] } | undefined;
+  private childCache: { width: number; refs: Component[]; childLines: (readonly string[])[]; lines: string[] } | undefined;
 
   constructor(
     text: string,

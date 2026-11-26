@@ -1,6 +1,7 @@
 import { visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
+import { contrastingTextColor } from '#/tui/theme/color-mix';
 import type { ColorPalette } from '#/tui/theme/colors';
 
 export interface RenderTabStripOptions {
@@ -13,21 +14,39 @@ export interface RenderTabStripOptions {
 function styleTab(label: string, isActive: boolean, colors: ColorPalette): string {
   const cell = ` ${label} `;
   return isActive
-    ? chalk.bgHex(colors.primary).hex(colors.text).bold(cell)
+    ? chalk.bgHex(colors.primary).hex(contrastingTextColor(colors.primary)).bold(cell)
     : chalk.hex(colors.textMuted)(cell);
 }
 
-export function renderTabStrip(opts: RenderTabStripOptions): string {
+export interface TabStripHitRange {
+  readonly index: number;
+  readonly start: number;
+  readonly end: number;
+}
+
+export interface TabStripLayout {
+  readonly line: string;
+  readonly hitRanges: readonly TabStripHitRange[];
+}
+
+export function layoutTabStrip(opts: RenderTabStripOptions): TabStripLayout {
   const { labels, activeIndex, width, colors } = opts;
   const segments = labels.map((label, i) => styleTab(label, i === activeIndex, colors));
+  const segmentWidths = segments.map((s) => visibleWidth(s));
 
-  const totalSegmentWidth = segments.reduce((sum, s) => sum + visibleWidth(s), 0);
+  const totalSegmentWidth = segmentWidths.reduce((sum, w) => sum + w, 0);
   const fullSeparatorWidth = Math.max(0, segments.length - 1);
   if (1 + totalSegmentWidth + fullSeparatorWidth <= width) {
-    return ' ' + segments.join(' ');
+    const hitRanges: TabStripHitRange[] = [];
+    let col = 1;
+    for (let i = 0; i < segments.length; i++) {
+      const w = segmentWidths[i]!;
+      hitRanges.push({ index: i, start: col, end: col + w });
+      col += w + 1;
+    }
+    return { line: ' ' + segments.join(' '), hitRanges };
   }
 
-  const segmentWidths = segments.map((s) => visibleWidth(s));
   let start = activeIndex;
   let end = activeIndex + 1;
   let contentWidth = segmentWidths[activeIndex] ?? 0;
@@ -68,10 +87,21 @@ export function renderTabStrip(opts: RenderTabStripOptions): string {
 
   const hasLeft = start > 0;
   const hasRight = end < segments.length;
+  const hitRanges: TabStripHitRange[] = [];
+  let col = hasLeft ? 2 : 1;
+  for (let i = start; i < end; i++) {
+    const w = segmentWidths[i]!;
+    hitRanges.push({ index: i, start: col, end: col + w });
+    col += w + 1;
+  }
   let strip = hasLeft ? chalk.hex(colors.textMuted)('< ') : ' ';
   strip += segments.slice(start, end).join(' ');
   if (hasRight) {
     strip += chalk.hex(colors.textMuted)(' >');
   }
-  return strip;
+  return { line: strip, hitRanges };
+}
+
+export function renderTabStrip(opts: RenderTabStripOptions): string {
+  return layoutTabStrip(opts).line;
 }

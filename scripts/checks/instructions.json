@@ -22,7 +22,7 @@
     },
     {
       "file": "apps/kimi-code/AGENTS.md",
-      "reference": "apps/kimi-code/dist-web",
+      "reference": "apps/kimi-code/web-dist",
       "why": "The web bundle copied into the CLI during prebuild, ignored by Git."
     }
   ]

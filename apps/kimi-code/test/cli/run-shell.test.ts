@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,7 +8,9 @@ import { normalize } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runShell } from '#/cli/run-shell';
+import type { WorktreeExitOutcome } from '#/tui/controllers/worktree-exit';
 import { resetKimiRegionCache } from '#/utils/region';
+import { quoteShellArg } from '#/utils/shell-quote';
 
 import { captureProcessWrite, ExitCalled, mockProcessExit } from '../helpers/process';
 
@@ -43,6 +45,15 @@ const mocks = vi.hoisted(() => {
       telemetry: true,
     })),
     harnessGetConfigDiagnostics: vi.fn(async () => ({ warnings: [] as readonly string[] })),
+    harnessResolveWorkLocation: vi.fn(
+      async (cwd: string): Promise<{
+        cwd: string;
+        projectRoot: string;
+        isGitRepo: boolean;
+        worktree?: { root: string; name: string; repoRoot: string };
+      }> => ({ cwd, projectRoot: cwd, isGitRepo: false }),
+    ),
+    harnessGetExperimentalFeatures: vi.fn(async (): Promise<{ id: string; enabled: boolean }[]> => []),
     harnessGetCachedAccessToken: vi.fn(),
     harnessClose: vi.fn(),
     detectPendingMigration: vi.fn<() => Promise<unknown>>(async () => null),
@@ -86,6 +97,8 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
       ensureConfigFile: mocks.harnessEnsureConfigFile,
       getConfig: mocks.harnessGetConfig,
       getConfigDiagnostics: mocks.harnessGetConfigDiagnostics,
+      resolveWorkLocation: mocks.harnessResolveWorkLocation,
+      getExperimentalFeatures: mocks.harnessGetExperimentalFeatures,
       close: mocks.harnessClose,
       track: mocks.harnessTrack,
     };
@@ -137,6 +150,8 @@ vi.mock('../../src/tui/index', () => ({
     onExit?: () => Promise<void>;
 
     readonly state = { ui: { mode: 'regular' as const } };
+
+    readonly worktreeExit: { outcome?: unknown } = {};
 
     constructor(...args: unknown[]) {
       mocks.kimiTuiConstructor(this, ...args);
@@ -374,6 +389,148 @@ describe('runShell', () => {
       tui_mode_config: 'unset',
       tui_mode_fallback: undefined,
     });
+  });
+
+  it('passes resolved worktree location metadata to the TUI when launched inside a Kimi worktree', async () => {
+    stubTuiStartup();
+    const worktree = {
+      root: '/home/me/.kimi-code/worktrees/wd_repo/fix-login',
+      name: 'fix-login',
+      repoRoot: '/home/me/repo',
+    };
+    mocks.harnessResolveWorkLocation.mockResolvedValueOnce({
+      cwd: `${worktree.root}/pkg`,
+      projectRoot: '/home/me/repo',
+      isGitRepo: true,
+      worktree,
+    });
+
+    await runShell(minimalCliOptions, '1.2.3-test');
+
+    expect(mocks.harnessResolveWorkLocation).toHaveBeenCalledExactlyOnceWith(process.cwd());
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({
+      workDir: `${worktree.root}/pkg`,
+      projectRoot: '/home/me/repo',
+      isGitRepo: true,
+      worktree,
+    });
+  });
+
+  it('rejects -w before starting the TUI while the worktree flag is off', async () => {
+    stubTuiStartup();
+    mocks.harnessGetExperimentalFeatures.mockResolvedValueOnce([{ id: 'worktree', enabled: false }]);
+
+    await expect(runShell({ ...minimalCliOptions, worktree: 'fix-login' }, '1.2.3-test')).rejects.toThrow(
+      /^-w\/--worktree is experimental\. Turn it on with KIMI_CODE_EXPERIMENTAL_WORKTREE=1, with worktree = true under \[experimental\] in config\.toml, or from \/experiments\.$/,
+    );
+    expect(mocks.harnessClose).toHaveBeenCalledOnce();
+    expect(mocks.kimiTuiConstructor).not.toHaveBeenCalled();
+  });
+
+  it('passes -w to the TUI while the worktree flag is on and leaves runs without -w alone', async () => {
+    stubTuiStartup();
+    mocks.harnessGetExperimentalFeatures.mockResolvedValueOnce([{ id: 'worktree', enabled: true }]);
+
+    await runShell({ ...minimalCliOptions, worktree: '', worktreeBase: 'v1.2.0' }, '1.2.3-test');
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({ cliOptions: { worktree: '', worktreeBase: 'v1.2.0' } });
+
+    mocks.harnessGetExperimentalFeatures.mockClear();
+    await runShell(minimalCliOptions, '1.2.3-test');
+    expect(mocks.harnessGetExperimentalFeatures).not.toHaveBeenCalled();
+  });
+
+  it('resolves relative --agent-file against the launch directory when -w is set', async () => {
+    stubTuiStartup();
+    const launchDir = await mkdtemp(join(tmpdir(), 'kimi-shell-agent-launch-'));
+    await writeFile(
+      join(launchDir, 'local.md'),
+      '---\nname: local-agent\ndescription: Local.\n---\n\nPrompt.\n',
+    );
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(launchDir);
+    mocks.harnessGetExperimentalFeatures.mockResolvedValueOnce([{ id: 'worktree', enabled: true }]);
+    try {
+      await runShell(
+        { ...minimalCliOptions, worktree: 'fix-login', agentFiles: ['./local.md'] },
+        '1.2.3-test',
+      );
+      const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+      expect(startupInput).toMatchObject({
+        agentProfile: 'local-agent',
+        cliOptions: {
+          worktree: 'fix-login',
+          agentFiles: [normalize(join(launchDir, 'local.md'))],
+        },
+      });
+    } finally {
+      cwdSpy.mockRestore();
+      await rm(launchDir, { recursive: true, force: true });
+    }
+  });
+
+  it('prints the TUI exit error instead of Bye', async () => {
+    stubTuiStartup();
+    const stdout = captureProcessWrite('stdout');
+    const stderr = captureProcessWrite('stderr');
+    const exitSpy = mockProcessExit();
+    try {
+      await runShell(minimalCliOptions, '1.2.3-test');
+      const [tui] = mocks.kimiTuiConstructor.mock.calls[0]! as [
+        { exitError?: string; onExit: (code?: number) => Promise<void> },
+      ];
+      tui.exitError = 'error: A worktree already exists at /wt/fix-login.';
+      await expect(tui.onExit(1)).rejects.toBeInstanceOf(ExitCalled);
+      expect(stdout.text()).toBe('');
+      expect(stderr.text()).toBe('error: A worktree already exists at /wt/fix-login.\n');
+    } finally {
+      exitSpy.mockRestore();
+      stdout.restore();
+      stderr.restore();
+    }
+  });
+
+  it('prints what happened to the worktree on stderr before Bye', async () => {
+    stubTuiStartup();
+    mocks.tuiGetCurrentSessionId.mockReturnValue('ses-1');
+    mocks.tuiHasSessionContent.mockReturnValue(true);
+    const exitSpy = mockProcessExit();
+    const output: string[] = [];
+    const spies: { mockRestore(): void }[] = [];
+    try {
+      await withEnv({ HOME: '/home/user' }, async () => {
+        await runShell(minimalCliOptions, '1.2.3-test');
+        const [tui] = mocks.kimiTuiConstructor.mock.calls[0]! as [
+          { worktreeExit: { outcome?: WorktreeExitOutcome }; onExit: () => Promise<void> },
+        ];
+        tui.worktreeExit.outcome = {
+          kind: 'kept',
+          name: 'fix-login',
+          path: '/home/user/.kimi-code/worktrees/wd_repo_abc/fix-login',
+          branch: undefined,
+          uniqueCommits: 2,
+        };
+        for (const stream of ['stdout', 'stderr'] as const) {
+          spies.push(
+            vi.spyOn(process[stream], 'write').mockImplementation(((chunk: string) => {
+              output.push(`${stream}:${chunk}`);
+              return true;
+            }) as never),
+          );
+        }
+        await expect(tui.onExit()).rejects.toBeInstanceOf(ExitCalled);
+      });
+      expect(output).toEqual([
+        'stderr: Kept worktree fix-login at ~/.kimi-code/worktrees/wd_repo_abc/fix-login (detached HEAD).\n' +
+          ' 2 commits exist only in this worktree. To keep them on a branch:\n' +
+          `   git -C ${quoteShellArg('/home/user/.kimi-code/worktrees/wd_repo_abc/fix-login')} switch -c <branch-name>\n`,
+        'stdout: Bye!\n',
+        'stderr:\n To resume this session: kimi -r ses-1\n',
+      ]);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+      exitSpy.mockRestore();
+    }
   });
 
   it('never runs stty on Windows, where it would resolve into the untrusted cwd', async () => {
@@ -735,6 +892,30 @@ describe('runShell', () => {
         editorCommand: 'vim',
         notifications: { enabled: true, condition: 'always' },
       },
+    });
+  });
+
+  it('forwards per-field tui.toml warnings into the startup notice', async () => {
+    mocks.loadTuiConfig.mockImplementationOnce(
+      async (_filePath?: string, warn?: (message: string) => void) => {
+        warn?.(
+          '[tui.toml] ignoring invalid wheel_scroll_lines value: 0.5 (expected "auto" or a positive integer)',
+        );
+        return {
+          theme: 'dark',
+          editorCommand: null,
+          notifications: { enabled: true, condition: 'unfocused' },
+        };
+      },
+    );
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await runShell(minimalCliOptions, '1.2.3-test');
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({
+      startupNotice:
+        '[tui.toml] ignoring invalid wheel_scroll_lines value: 0.5 (expected "auto" or a positive integer)',
     });
   });
 

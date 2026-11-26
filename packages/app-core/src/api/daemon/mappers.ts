@@ -374,10 +374,6 @@ export function toAppAgentState(frame: WireAgentStateFrame): AppAgentState {
     planMode: frame.plan_mode,
     swarmMode: frame.swarm_mode,
     towerMode: frame.tower_mode,
-    planModeAvailable: frame.plan_mode_available,
-    swarmModeAvailable: frame.swarm_mode_available,
-    towerModeAvailable: frame.tower_mode_available,
-    goalModeAvailable: frame.goal_mode_available,
   };
 }
 
@@ -722,7 +718,6 @@ export function toAppConfig(wire: WireConfig): AppConfig {
     defaultProvider: wire.default_provider,
     defaultModel: wire.default_model,
     secondaryModel: wire.secondary_model as AppConfig['secondaryModel'],
-    tools: wire.tools,
     models: wire.models,
     thinking: wire.thinking as { enabled?: boolean; effort?: string } | undefined,
     planMode: wire.plan_mode,

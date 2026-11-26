@@ -2,7 +2,7 @@ import { mkdtempSync, realpathSync } from 'node:fs';
 import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
-import { basename, join, relative } from 'pathe';
+import { basename, join, normalize, relative } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -34,13 +34,15 @@ import type { ProjectTrustChange } from '#/project/projectTrust/projectTrust';
 import { stubLog } from '../_base/log/stubs';
 import { stubAgentIdentity } from '../app/agentIdentity/stubs';
 import { bareRepository, forgedPointer, linkedWorktree, mainCheckout } from '../app/git/checkoutLayouts';
-import { createMemoryMcpOAuthStore, cwdStdioFixture, startInProcessHttpMcpServer } from '../mcpCore/stubs';
+import { fakeMcpServerName } from '@moonshot-ai/testkit/fixtures';
+
+import { createMemoryMcpOAuthStore, cwdStdioServer, hostPathClass, startEchoHttpMcpServer } from '../mcpCore/stubs';
 
 const NO_ABORT = new AbortController().signal;
 const PROCESS_TIMEOUT_MS = 20_000;
 
 function stdioServer(tag: string, config: Partial<McpServerConfig> = {}): McpServerConfig {
-  return { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture, tag], ...config } as McpServerConfig;
+  return { transport: 'stdio', ...cwdStdioServer(tag), ...config } as McpServerConfig;
 }
 
 function disabledServer(): McpServerConfig {
@@ -60,7 +62,7 @@ async function cwdOf(view: McpConnectionView, name: string): Promise<string> {
   const resolved = view.resolved(name);
   if (resolved === undefined) throw new Error(`expected ${name} to be connected, got ${JSON.stringify(view.get(name))}`);
   const result = await resolved.client.callTool('get_cwd', {});
-  return realpathSync((result.content[0] as { type: 'text'; text: string }).text);
+  return normalize(realpathSync.native((result.content[0] as { type: 'text'; text: string }).text));
 }
 
 describe('ProgramMcpSets', () => {
@@ -109,7 +111,7 @@ describe('ProgramMcpSets', () => {
   });
 
   function tempDir(prefix: string): string {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+    const dir = normalize(realpathSync.native(mkdtempSync(join(tmpdir(), prefix))));
     tempDirs.push(dir);
     return dir;
   }
@@ -130,7 +132,7 @@ describe('ProgramMcpSets', () => {
 
   function createSets(overrides: Partial<ProgramDependencies> = {}): ProgramMcpSets {
     const environment = Object.assign(
-      new FakeEnvironment({ environmentId: 'local', generation: 'test' }, { capabilities: ['process'] }),
+      new FakeEnvironment({ environmentId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass: hostPathClass }),
       { process: new HostProcessService() },
     );
     const lease = { environment, track: <T,>(resource: T): T => resource, dispose: () => {} };
@@ -192,7 +194,7 @@ describe('ProgramMcpSets', () => {
   }
 
   function startedTags(): string[] {
-    return spawn.mock.calls.map(([, args]) => args?.[1] ?? '').toSorted();
+    return spawn.mock.calls.map(([, args]) => fakeMcpServerName(args) ?? '').toSorted();
   }
 
   function startedProcesses(): Promise<IHostProcess[]> {
@@ -584,7 +586,7 @@ describe('ProgramMcpSets', () => {
   it('reconnects a server in every set once it is authorized', async () => {
     mainCheckout(checkout);
     const worktree = worktreeOf(checkout);
-    const remote = await startInProcessHttpMcpServer({ authToken: 'secret' });
+    const remote = await startEchoHttpMcpServer({ bearerToken: 'secret' });
     try {
       await writeMcpJson(userFile(), { remote: { transport: 'http', url: remote.url } });
       const sets = createSets();
@@ -703,6 +705,10 @@ describe('ProgramMcpSets', () => {
     await expect(cwdOf(inWorktree.view, 'eph')).resolves.toBe(worktree);
     await expect(cwdOf(unrelated.view, 'eph')).resolves.toBe(checkout);
     for (const session of [atPrimary, inWorktree, unrelated]) session.close();
+    const children = await startedProcesses();
+    await vi.waitFor(() => {
+      expect(children.map((child) => child.exitCode === null)).toEqual([false, false, false]);
+    }, PROCESS_TIMEOUT_MS);
   }, PROCESS_TIMEOUT_MS);
 
   it('stops every set when the program goes away and admits no new holder', async () => {

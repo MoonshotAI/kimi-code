@@ -48,6 +48,7 @@ import {
   availableCommandsUpdateNotification,
   configOptionUpdateNotification,
   currentModeUpdateNotification,
+  liveToolOutputToSessionUpdate,
   planFromDisplayBlock,
   sessionInfoUpdateNotification,
   thinkingDeltaToSessionUpdate,
@@ -64,6 +65,7 @@ import {
   stringifyArgs,
 } from './events-map';
 import { AcpInteractionBridge } from './interaction-bridge';
+import { LiveToolOutput } from './live-output';
 import { log } from './log';
 import { projectModelCatalog } from './model-catalog';
 import { ACP_MODES, type AcpModeId, acpModeToToggles, DEFAULT_MODE_ID } from './modes';
@@ -155,6 +157,9 @@ export class AcpSession {
   private readonly bashCallsAwaitingTerminal = new Map<string, string>();
   private readonly terminalBackedCalls = new Map<string, string>();
   private readonly terminalsAwaitingCall: AcpTerminalCreatedEvent[] = [];
+  private readonly liveOutput = new LiveToolOutput((toolCallId, text) => {
+    this.emit(liveToolOutputToSessionUpdate(this.sessionId, toolCallId, text));
+  });
   private readonly interactionBridge: AcpInteractionBridge;
 
   constructor(
@@ -286,12 +291,13 @@ export class AcpSession {
       });
     }
     this.interactionBridge.dispose();
+    this.liveOutput.dispose();
     for (const subscription of this.subscriptions.splice(0)) {
       subscription.dispose();
     }
   }
 
-  async replayHistory(): Promise<void> {
+  async replayHistory(cwd?: string): Promise<void> {
     let messages: readonly ContextMessage[];
     try {
       messages = (await this.agent.getContext()).history.map((message) => ({
@@ -315,7 +321,10 @@ export class AcpSession {
       });
       return;
     }
-    const updates = projectHistoryToSessionUpdates(this.sessionId, messages);
+    const updates = projectHistoryToSessionUpdates(this.sessionId, messages, {
+      cwd,
+      skillCommandMap: this.resolveCommands().skillCommandMap,
+    });
     for (const update of updates) {
       try {
         await this.conn.sessionUpdate(update);
@@ -603,6 +612,9 @@ export class AcpSession {
 
   private onToolUpdated(event: AgentEventPayloads['tool.updated']): void {
     const key = acpToolCallId(event.turnId, event.toolCallId);
+    if (event.output !== undefined && this.toolCallStreamArgs.has(key) && !this.terminalBackedCalls.has(key)) {
+      this.liveOutput.append(key, event.output.offset, event.output.text);
+    }
     const status = event.fields['status'];
     if (typeof status !== 'string' || status.length === 0 || this.toolStatuses.get(key) === status) return;
     this.toolStatuses.set(key, status);
@@ -612,6 +624,7 @@ export class AcpSession {
 
   private onToolResult(event: AgentEventPayloads['tool.result']): void {
     const key = acpToolCallId(event.turnId, event.toolCallId);
+    this.liveOutput.end(key);
     this.toolStatuses.delete(key);
     const locations = this.toolLocations.get(key);
     this.toolLocations.delete(key);
@@ -648,6 +661,7 @@ export class AcpSession {
   }
 
   private attachTerminal(key: string, terminalId: string): void {
+    this.liveOutput.end(key);
     this.bashCallsAwaitingTerminal.delete(key);
     this.terminalBackedCalls.set(key, terminalId);
     this.emit({

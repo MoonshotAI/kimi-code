@@ -160,7 +160,10 @@ describe('WorktreeService', () => {
     peekImplicitError = undefined;
 
     disposables = new DisposableStore();
-    const environment = { process: new HostProcessService() } as unknown as Environment;
+    const processService = new HostProcessService();
+    const environment = {
+      process: processService,
+    } as unknown as Environment;
     const lease = { environment, track: <T>(resource: T): T => resource, dispose: () => {} };
     const hostFs = new HostFileSystem();
     const ix = createServices(disposables, {
@@ -228,7 +231,6 @@ describe('WorktreeService', () => {
       expect(created.cwd).toBe(path);
       expect(created.cwdFallback).toBe(false);
       expect(created.sourceDirty).toBe(false);
-      expect(created.setupScript).toBeUndefined();
       expect(git(path, 'rev-parse', 'HEAD')).toBe(head);
       expect(() => git(path, 'symbolic-ref', '-q', 'HEAD')).toThrow();
       expect(branches(repo)).toEqual(['main']);
@@ -500,14 +502,23 @@ describe('WorktreeService', () => {
       expect(existsSync(join(created.worktree.path, 'new.txt'))).toBe(false);
     });
 
-    it('points at the setup script of the source checkout without running it', async () => {
-      mkdirSync(join(repo, '.kimi-code'));
-      writeFileSync(join(repo, '.kimi-code', 'worktree-setup.sh'), 'touch ran\n');
+    it('does not execute .kimi-code/worktree-setup.sh while still copying .worktreeinclude files', async () => {
+      commitFile(repo, '.gitignore', '.env\n');
+      commitFile(repo, '.kimi-code/worktree-setup.sh', 'touch ran-committed\n');
+      writeFileSync(join(repo, '.worktreeinclude'), '.env\n');
+      writeFileSync(join(repo, '.env'), 'SECRET=1\n');
 
-      const created = await create({ name: 'scripted' });
+      const fromCommitted = await create({ name: 'ignores-committed-script' });
+      expect(fromCommitted.copiedFiles).toEqual(['.env']);
+      expect(readFileSync(join(fromCommitted.worktree.path, '.env'), 'utf8')).toBe('SECRET=1\n');
+      expect(existsSync(join(fromCommitted.worktree.path, 'ran-committed'))).toBe(false);
 
-      expect(created.setupScript).toBe(join(realRepo, '.kimi-code', 'worktree-setup.sh'));
-      expect(existsSync(join(created.worktree.path, 'ran'))).toBe(false);
+      const beforeScript = git(repo, 'rev-parse', 'HEAD~1');
+      writeFileSync(join(repo, '.kimi-code', 'worktree-setup.sh'), 'touch ran-uncommitted\n');
+      const fromUncommitted = await create({ name: 'ignores-uncommitted-script', base: beforeScript });
+      expect(fromUncommitted.copiedFiles).toEqual(['.env']);
+      expect(readFileSync(join(fromUncommitted.worktree.path, '.env'), 'utf8')).toBe('SECRET=1\n');
+      expect(existsSync(join(fromUncommitted.worktree.path, 'ran-uncommitted'))).toBe(false);
     });
 
     it('creates the requested branch', async () => {
@@ -1229,89 +1240,6 @@ describe('WorktreeService', () => {
 
       await service.remove({ ...removal(wt), force: true });
       expect(registeredPaths(repo)).toEqual([realRepo]);
-    });
-  });
-
-  describe('runSetupScript', () => {
-    function writeScript(body: string): void {
-      mkdirSync(join(repo, '.kimi-code'), { recursive: true });
-      writeFileSync(join(repo, '.kimi-code', 'worktree-setup.sh'), body);
-    }
-
-    it.skipIf(isWindows)('runs in the worktree root with both directories in the environment', async () => {
-      writeScript('echo "source=$KIMI_CODE_WORKTREE_SOURCE_DIR"\necho "dir=$KIMI_CODE_WORKTREE_DIR"\necho "pwd=$(pwd -P)"\necho oops >&2\nexit 3\n');
-      const created = await create({ name: 'setup' });
-      let output = '';
-
-      const result = await service.runSetupScript(
-        { worktreePath: created.worktree.path, sourceRoot: created.sourceRoot },
-        { onOutput: (text) => (output += text) },
-      );
-
-      expect(result.exitCode).toBe(3);
-      expect(output).toContain(`source=${realRepo}\n`);
-      expect(output).toContain(`dir=${created.worktree.path}\n`);
-      expect(output).toContain(`pwd=${created.worktree.path}\n`);
-      expect(output).toContain('oops\n');
-    });
-
-    it.skipIf(isWindows)('returns once the script exits even if a background child holds its output', async () => {
-      writeScript('sleep 5 &\necho done\n');
-      const created = await create({ name: 'background-setup' });
-      const started = Date.now();
-
-      const result = await service.runSetupScript({ worktreePath: created.worktree.path, sourceRoot: created.sourceRoot });
-
-      expect(result.exitCode).toBe(0);
-      expect(Date.now() - started).toBeLessThan(4_000);
-    });
-
-    it.skipIf(isWindows)('kills the script on cancel', async () => {
-      writeScript('echo started\nsleep 30\n');
-      const created = await create({ name: 'slow-setup' });
-      const controller = new AbortController();
-      const started = Date.now();
-
-      const error = await failure(
-        service.runSetupScript(
-          { worktreePath: created.worktree.path, sourceRoot: created.sourceRoot },
-          {
-            signal: controller.signal,
-            onOutput: () => {
-              controller.abort();
-            },
-          },
-        ),
-      );
-
-      expect(error.code).toBe('worktree.cancelled');
-      expect(Date.now() - started).toBeLessThan(10_000);
-    });
-
-    it('refuses runSetupScript while the worktree flag is off', async () => {
-      writeScript('echo ran\n');
-      const created = await create({ name: 'flag-off-setup' });
-      flagEnabled = false;
-
-      const error = await failure(
-        service.runSetupScript({ worktreePath: created.worktree.path, sourceRoot: created.sourceRoot }),
-      );
-      expect(error.code).toBe('worktree.disabled');
-    });
-
-    it.skipIf(isWindows)('keeps draining output when onOutput throws', async () => {
-      writeScript('head -c 200000 /dev/zero | tr "\\0" "a"\n');
-      const created = await create({ name: 'noisy-callback' });
-
-      const result = await service.runSetupScript(
-        { worktreePath: created.worktree.path, sourceRoot: created.sourceRoot },
-        {
-          onOutput: () => {
-            throw new Error('listener failed');
-          },
-        },
-      );
-      expect(result.exitCode).toBe(0);
     });
   });
 

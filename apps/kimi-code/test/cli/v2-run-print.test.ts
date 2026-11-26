@@ -24,10 +24,13 @@ import {
   IEventDispatcher,
   IEventService,
   IFileSystemStorageService,
+  IFlagService,
   ILogService,
   IMcpOAuthService,
   IModelService,
   IOAuthToolkit,
+  IProjectAliases,
+  IProjectService,
   IProviderService,
   IRegionService,
   ISessionContext,
@@ -51,9 +54,12 @@ import {
 import {
   KimiError,
   SDKRpcClientV2,
+  type CreatedWorktree,
   type WorkspaceTrustInfo,
   type WorkspaceTrustMcpServerInfo,
 } from '@moonshot-ai/kimi-code-sdk';
+
+import { OptionConflictError } from '#/cli/options';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 
@@ -358,6 +364,9 @@ function makeFakeHarness(toolUpdates = false) {
       },
     ],
     [IFileSystemStorageService, {}],
+    [IFlagService, { enabled: vi.fn(() => false) }],
+    [IProjectService, { peekImplicit: vi.fn(async () => ({ id: 'wd_v2', root: process.cwd() })) }],
+    [IProjectAliases, { resolveAliasIds: vi.fn(async (id: string) => [id]) }],
     [IEnvironmentService, { addProvider: vi.fn(async () => ({ dispose: vi.fn() })) }],
     [
       ITelemetryService,
@@ -948,7 +957,7 @@ describe('runV2Print', () => {
     expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({ workDir: process.cwd() }));
   });
 
-  it('refuses to resume a session pinned in another directory and names that directory', async () => {
+  it('refuses to resume a session from another project and names that directory', async () => {
     const stdout = writer();
     const stderr = writer();
     const otherDir = await mkdtemp(join(tmpdir(), 'kimi-print-app-fix-'));
@@ -956,7 +965,7 @@ describe('runV2Print', () => {
     const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
     index.get.mockResolvedValue({
       id: 'ses_other',
-      workspaceId: 'wd_v2',
+      workspaceId: 'wd_other',
       cwd: otherDir,
       environmentCwd: otherDir,
       createdAt: 1,
@@ -979,7 +988,7 @@ describe('runV2Print', () => {
     expect(sessions.resume).not.toHaveBeenCalled();
   });
 
-  it('refuses to resume a session whose directory no longer exists and gives no cd hint', async () => {
+  it('refuses to resume a session from another project whose directory no longer exists and gives no cd hint', async () => {
     const stdout = writer();
     const stderr = writer();
     const removed = await mkdtemp(join(tmpdir(), 'kimi-print-removed-'));
@@ -988,7 +997,7 @@ describe('runV2Print', () => {
     const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
     index.get.mockResolvedValue({
       id: 'ses_gone',
-      workspaceId: 'wd_v2',
+      workspaceId: 'wd_other',
       cwd: missing,
       environmentCwd: missing,
       createdAt: 1,
@@ -1515,5 +1524,253 @@ describe('runV2Print', () => {
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
     expect(stdout.text()).toContain('hello world');
+  });
+
+  describe('worktree and same-project resume', () => {
+    function sampleCreated(overrides: Partial<CreatedWorktree> = {}): CreatedWorktree {
+      return {
+        worktree: {
+          path: '/tmp/home/worktrees/wd_repo/fix-login',
+          name: 'fix-login',
+          head: '1234567890abcdef',
+          branch: undefined,
+          missing: false,
+          managed: true,
+        },
+        repoRoot: '/tmp/repo',
+        sourceRoot: '/tmp/repo',
+        cwd: '/tmp/home/worktrees/wd_repo/fix-login',
+        cwdFallback: false,
+        copiedFiles: ['.env'],
+        sourceDirty: true,
+        ...overrides,
+      };
+    }
+
+    it('rejects -w with OptionConflictError when the worktree flag is off', async () => {
+      const { app } = makeFakeHarness();
+      mocks.bootstrap.mockReturnValue({ app });
+
+      await expect(
+        runV2Print(opts({ worktree: 'fix-login' }) as never, '1.2.3-test', { stdout: writer(), stderr: writer() }),
+      ).rejects.toThrow(OptionConflictError);
+    });
+
+    it('creates a worktree, runs session in worktree cwd, and reports it', async () => {
+      const stdout = writer();
+      const stderr = writer();
+      const { app, appServices } = makeFakeHarness();
+      (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
+      const created = sampleCreated();
+      const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree').mockResolvedValueOnce(created);
+      const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
+        repoRoot: created.repoRoot,
+        currentCheckoutRoot: created.repoRoot,
+        bare: false,
+        worktrees: [created.worktree],
+      });
+      mocks.bootstrap.mockReturnValue({ app });
+      mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+      try {
+        await runV2Print(opts({ worktree: 'fix-login', worktreeBase: 'v1' }) as never, '1.2.3-test', { stdout, stderr });
+
+        expect(createWt).toHaveBeenCalledWith({ cwd: process.cwd(), name: 'fix-login', base: 'v1' });
+        const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+        expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({ workDir: created.cwd }));
+        expect(stderr.text()).toContain('Copied 1 file from .worktreeinclude: .env');
+        expect(stderr.text()).toContain('Uncommitted changes in /tmp/repo stay there.');
+        expect(stderr.text()).not.toContain('git stash');
+        expect(stderr.text()).toContain('Worktree: /tmp/home/worktrees/wd_repo/fix-login (detached at 1234567)');
+      } finally {
+        createWt.mockRestore();
+        listWt.mockRestore();
+      }
+    });
+
+    it('creates a worktree in an untrusted project and warns about skipped project-level MCP servers', async () => {
+      const stdout = writer();
+      const stderr = writer();
+      const { app, appServices } = makeFakeHarness();
+      (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
+      const created = sampleCreated({ copiedFiles: [], sourceDirty: false });
+      const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree').mockResolvedValueOnce(created);
+      const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
+        repoRoot: created.repoRoot,
+        currentCheckoutRoot: created.repoRoot,
+        bare: false,
+        worktrees: [created.worktree],
+      });
+      trustInfo.mockResolvedValueOnce(
+        gated({
+          name: 'proj-mcp',
+          transport: 'stdio',
+          command: 'node',
+          args: ['server.js'],
+          origin: '/tmp/repo/.mcp.json',
+        }),
+      );
+      mocks.bootstrap.mockReturnValue({ app });
+      mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+      const previousExitCode = process.exitCode;
+
+      try {
+        await runV2Print(opts({ worktree: 'fix-login' }) as never, '1.2.3-test', { stdout, stderr });
+
+        expect(process.exitCode).toBe(previousExitCode);
+        expect(createWt).toHaveBeenCalledOnce();
+        expect(trustInfo).toHaveBeenCalledWith(created.cwd, {
+          sessionId: undefined,
+          environmentId: 'local',
+          environmentCwd: undefined,
+        });
+        const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+        expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({ workDir: created.cwd }));
+        expect(stderr.text()).toContain(
+          'Warning: this project is not trusted; skipped 1 project-level MCP server: proj-mcp (stdio: node server.js).',
+        );
+        expect(stderr.text()).toContain('Worktree: /tmp/home/worktrees/wd_repo/fix-login (detached at 1234567)');
+        expect(stdout.text()).toContain('hello world');
+      } finally {
+        process.exitCode = previousExitCode;
+        createWt.mockRestore();
+        listWt.mockRestore();
+      }
+    });
+
+    it('auto-switches for -S in another directory of the same project, warns if missing, and rejects other projects', async () => {
+      const existingOtherDir = await mkdtemp(join(tmpdir(), 'kimi-print-same-project-'));
+      try {
+        const { app, appServices } = makeFakeHarness();
+        (appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> }).get.mockResolvedValue({
+          id: 'ses_same',
+          workspaceId: 'wd_v2',
+          cwd: existingOtherDir,
+        });
+        mocks.bootstrap.mockReturnValue({ app });
+        mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+        const stderrSame = writer();
+        await runV2Print(opts({ session: 'ses_same' }) as never, '1.2.3-test', { stdout: writer(), stderr: stderrSame });
+        expect(stderrSame.text()).toContain(`Switched to ${existingOtherDir} to resume this session.`);
+
+        const missingDir = join(existingOtherDir, 'deleted');
+        (appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> }).get.mockResolvedValue({
+          id: 'ses_gone',
+          workspaceId: 'wd_v2',
+          cwd: missingDir,
+        });
+        const stderrGone = writer();
+        await runV2Print(opts({ session: 'ses_gone' }) as never, '1.2.3-test', { stdout: writer(), stderr: stderrGone });
+        expect(stderrGone.text()).toContain(`working directory "${missingDir}" no longer exists; continuing anyway.`);
+
+        (appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> }).get.mockResolvedValue({
+          id: 'ses_other_project',
+          workspaceId: 'wd_different_project',
+          cwd: existingOtherDir,
+        });
+        await expect(
+          runV2Print(opts({ session: 'ses_other_project' }) as never, '1.2.3-test', { stdout: writer(), stderr: writer() }),
+        ).rejects.toThrow('Session "ses_other_project" was created under a different directory.');
+      } finally {
+        await rm(existingOtherDir, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves relative --agent-file and --add-dir from the launch directory when creating a -w worktree', async () => {
+      const launchDir = await mkdtemp(join(tmpdir(), 'kimi-print-agent-launch-'));
+      const worktreeDir = await mkdtemp(join(tmpdir(), 'kimi-print-agent-wt-'));
+      await writeFile(
+        join(launchDir, 'local-reviewer.md'),
+        '---\nname: local-reviewer\ndescription: Reviews code.\n---\n\nYou review code.\n',
+      );
+      const cwd = vi.spyOn(process, 'cwd').mockReturnValue(launchDir);
+      const { app, appServices } = makeFakeHarness();
+      (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
+      const created = sampleCreated({
+        repoRoot: launchDir,
+        sourceRoot: launchDir,
+        cwd: worktreeDir,
+        worktree: {
+          path: worktreeDir,
+          name: 'fix-login',
+          head: '1234567890abcdef',
+          branch: undefined,
+          missing: false,
+          managed: true,
+        },
+        copiedFiles: [],
+        sourceDirty: false,
+      });
+      const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree').mockResolvedValueOnce(created);
+      const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
+        repoRoot: launchDir,
+        currentCheckoutRoot: launchDir,
+        bare: false,
+        worktrees: [created.worktree],
+      });
+      mocks.bootstrap.mockReturnValue({ app });
+      mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+      try {
+        await runV2Print(
+          opts({
+            worktree: 'fix-login',
+            agentFiles: ['./local-reviewer.md'],
+            addDirs: ['../shared', '~/team-dir'],
+          }) as never,
+          '1.2.3-test',
+          { stdout: writer(), stderr: writer() },
+        );
+
+        const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+        expect(sessions.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workDir: worktreeDir,
+            environmentId: 'local',
+            additionalDirs: [normalize(join(launchDir, '..', 'shared')), '~/team-dir'],
+            mainAgentBinding: { profile: 'local-reviewer', model: 'k2' },
+          }),
+        );
+      } finally {
+        createWt.mockRestore();
+        listWt.mockRestore();
+        cwd.mockRestore();
+        await rm(launchDir, { recursive: true, force: true });
+        await rm(worktreeDir, { recursive: true, force: true });
+      }
+    });
+
+    it('exits with code 1 and skips session creation when createWorktree fails', async () => {
+      const stdout = writer();
+      const stderr = writer();
+      const { app, appServices } = makeFakeHarness();
+      (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
+      const createWt = vi
+        .spyOn(SDKRpcClientV2.prototype, 'createWorktree')
+        .mockRejectedValueOnce(new Error('A worktree already exists at /tmp/home/worktrees/wd_repo/fix-login.'));
+      const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees');
+      mocks.bootstrap.mockReturnValue({ app });
+      const previousExitCode = process.exitCode;
+
+      try {
+        await runV2Print(opts({ worktree: 'fix-login' }) as never, '1.2.3-test', { stdout, stderr });
+
+        expect(process.exitCode).toBe(1);
+        expect(stderr.text()).toContain(
+          'error: A worktree already exists at /tmp/home/worktrees/wd_repo/fix-login.',
+        );
+        expect(stderr.text()).not.toContain('Worktree:');
+        expect(stdout.text()).toBe('');
+        const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+        expect(sessions.create).not.toHaveBeenCalled();
+        expect(listWt).not.toHaveBeenCalled();
+        expect(trustInfo).not.toHaveBeenCalled();
+      } finally {
+        process.exitCode = previousExitCode;
+        createWt.mockRestore();
+        listWt.mockRestore();
+      }
+    });
   });
 });

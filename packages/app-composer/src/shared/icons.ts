@@ -7,13 +7,13 @@ import RawExternalLinkLine from '~icons/ri/external-link-line?raw';
 import RawTarget from '~icons/kimi/target?raw';
 import RawEdit from '~icons/kimi/edit?raw';
 import RawClose from '~icons/kimi/close?raw';
-import RawAttachment2 from '~icons/ri/attachment-2?raw';
-import RawImageLine from '~icons/ri/image-line?raw';
+import RawPaperclip from '~icons/tabler/paperclip?raw';
+import RawImage from '~icons/kimi/image?raw';
 import RawVideoLine from '~icons/ri/video-line?raw';
-import RawFullscreenLine from '~icons/ri/fullscreen-line?raw';
+import RawExpand from '~icons/kimi/expand?raw';
 import RawChatQuoteLine from '~icons/ri/chat-quote-line?raw';
 import RawBrowser from '~icons/kimi/browser?raw';
-import RawFileTextLine from '~icons/ri/file-text-line?raw';
+import RawFileText from '~icons/kimi/file-text?raw';
 import RawComment from '~icons/kimi/comment?raw';
 
 type IconName = 'file' | 'folder' | 'skill' | 'session' | 'copy' | 'check' | 'external-link' | 'target' | 'file-edit' | 'close' | 'attachment' | 'image' | 'video' | 'fullscreen' | 'quote' | 'browser' | 'text';
@@ -32,18 +32,20 @@ const RAW: Record<IconName, string> = {
   target: RawTarget,
   'file-edit': RawEdit,
   close: RawClose,
-  attachment: RawAttachment2,
-  image: RawImageLine,
+  attachment: RawPaperclip,
+  image: RawImage,
   video: RawVideoLine,
-  fullscreen: RawFullscreenLine,
+  fullscreen: RawExpand,
   quote: RawChatQuoteLine,
   browser: RawBrowser,
-  text: RawFileTextLine,
+  text: RawFileText,
 };
 
 export function iconSvg(name: IconName, size: IconSize = 'md'): string {
   const px = SIZE_PX[size];
   return RAW[name]
     .replace(/<svg\b[^>]*>/, (tag) => tag.replace(/\s(?:width|height)="[^"]*"/g, ''))
-    .replace(/^<svg\b/, `<svg class="kw-icon" width="${px}" height="${px}" aria-hidden="true"`);
+    .replace(/^<svg\b/, `<svg class="kw-icon" width="${px}" height="${px}" aria-hidden="true"`)
+    .replace(/>\s+</g, '><')
+    .trim();
 }

@@ -1135,56 +1135,9 @@ export class ProjectFsService implements IProjectFsService {
         for (const root of roots) args.push(root.dir);
       }
 
-      const lease = this.resolver.acquire(
-        { environmentId: this.environmentId },
-        ['process'],
-      );
-      const proc = await lease.environment.process!.spawn(rgBinary, args, { cwd: this.workDir });
-      let killed = false;
-      const kill = (): void => {
-        if (killed) return;
-        killed = true;
-        void proc.kill('SIGKILL');
-      };
-      const onAbort = (): void => kill();
-      if (signal.aborted) kill();
-      else signal.addEventListener('abort', onAbort, { once: true });
-
-      let stdoutBuf = '';
-      const drainStdout = async (): Promise<void> => {
-        proc.stdout.setEncoding('utf-8');
-        try {
-          for await (const chunk of proc.stdout) {
-            stdoutBuf += chunk as string;
-            let nl = stdoutBuf.indexOf('\n');
-            while (nl >= 0) {
-              handleLine(stdoutBuf.slice(0, nl), ignored);
-              stdoutBuf = stdoutBuf.slice(nl + 1);
-              nl = stdoutBuf.indexOf('\n');
-            }
-          }
-          if (stdoutBuf.length > 0) handleLine(stdoutBuf, ignored);
-        } catch (error) {
-          if (!(killed && isPrematureCloseError(error))) throw error;
-        }
-      };
-
-      let exitCode: number;
-      try {
-        [, , exitCode] = await Promise.all([
-          drainStdout(),
-          readStream(proc.stderr),
-          proc.wait().catch(() => -1),
-        ]);
-      } finally {
-        signal.removeEventListener('abort', onAbort);
-        try {
-          void proc.dispose();
-        } catch {
-        }
-        lease.dispose();
-      }
-
+      const { exitCode, killed } = await this.runRgLines(rgBinary, args, signal, (line) => {
+        handleLine(line, ignored);
+      });
       if (!killed && exitCode !== 0 && exitCode !== 1) {
         throw new Error(`rg --files exited with code ${exitCode}`);
       }
@@ -1398,9 +1351,6 @@ export class ProjectFsService implements IProjectFsService {
     const roots = await this.suggestRoots();
     args.push('.', ...roots.filter((root) => !root.primary).map((root) => root.dir));
 
-    const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
-    const proc = await lease.environment.process!.spawn(rgPath, args, { cwd: this.workDir });
-
     const primary = roots.find((root) => root.primary);
     const acc = new RgJsonAccumulator(req, (path) => {
       if (!this.path.isAbsolute(path) || primary === undefined) return path;
@@ -1408,49 +1358,10 @@ export class ProjectFsService implements IProjectFsService {
         ? this.toRelFrom(primary.dir, path)
         : path;
     });
-    let killed = false;
-    const kill = (): void => {
-      if (killed) return;
-      killed = true;
-      void proc.kill('SIGKILL');
-    };
-    const onAbort = (): void => kill();
-    if (signal.aborted) kill();
-    else signal.addEventListener('abort', onAbort, { once: true });
-
-    let stdoutBuf = '';
-    const drainStdout = async (): Promise<void> => {
-      proc.stdout.setEncoding('utf-8');
-      try {
-        for await (const chunk of proc.stdout) {
-          stdoutBuf += chunk as string;
-          let nl = stdoutBuf.indexOf('\n');
-          while (nl >= 0) {
-            const line = stdoutBuf.slice(0, nl);
-            stdoutBuf = stdoutBuf.slice(nl + 1);
-            if (line.length > 0) {
-              acc.feed(line);
-              if (acc.capped) kill();
-            }
-            nl = stdoutBuf.indexOf('\n');
-          }
-        }
-        if (stdoutBuf.length > 0) acc.feed(stdoutBuf);
-      } catch (error) {
-        if (!(killed && isPrematureCloseError(error))) throw error;
-      }
-    };
-
-    try {
-      await Promise.all([drainStdout(), readStream(proc.stderr), proc.wait().catch(() => -1)]);
-    } finally {
-      signal.removeEventListener('abort', onAbort);
-      try {
-        void proc.dispose();
-      } catch {
-      }
-      lease.dispose();
-    }
+    await this.runRgLines(rgPath, args, signal, (line, stop) => {
+      acc.feed(line);
+      if (acc.capped) stop();
+    });
 
     return acc.finish(signal.aborted, Date.now() - startedAt);
   }
@@ -1608,6 +1519,69 @@ export class ProjectFsService implements IProjectFsService {
       lease.dispose();
     }
     return this.fdResolution;
+  }
+
+  private async runRgLines(
+    binary: string,
+    args: readonly string[],
+    signal: AbortSignal,
+    onLine: (line: string, stop: () => void) => void,
+  ): Promise<{ readonly exitCode: number; readonly killed: boolean }> {
+    const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
+    const proc = await lease.environment.process!.spawn(binary, args, { cwd: this.workDir }).catch((error: unknown) => {
+      lease.dispose();
+      throw error;
+    });
+    let killed = false;
+    const kill = (): void => {
+      if (killed) return;
+      killed = true;
+      void proc.kill('SIGKILL');
+    };
+    let streaming = true;
+    const stop = (): void => {
+      if (streaming) kill();
+    };
+    const onAbort = (): void => kill();
+    if (signal.aborted) kill();
+    else signal.addEventListener('abort', onAbort, { once: true });
+
+    let stdoutBuf = '';
+    const drainStdout = async (): Promise<void> => {
+      proc.stdout.setEncoding('utf-8');
+      try {
+        for await (const chunk of proc.stdout) {
+          stdoutBuf += chunk as string;
+          let nl = stdoutBuf.indexOf('\n');
+          while (nl >= 0) {
+            const line = stdoutBuf.slice(0, nl);
+            stdoutBuf = stdoutBuf.slice(nl + 1);
+            if (line.length > 0) onLine(line, stop);
+            nl = stdoutBuf.indexOf('\n');
+          }
+        }
+        streaming = false;
+        if (stdoutBuf.length > 0) onLine(stdoutBuf, stop);
+      } catch (error) {
+        if (!(killed && isPrematureCloseError(error))) throw error;
+      }
+    };
+
+    try {
+      const [, , exitCode] = await Promise.all([
+        drainStdout(),
+        readStream(proc.stderr),
+        proc.wait().catch(() => -1),
+      ]);
+      return { exitCode, killed };
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+      try {
+        void proc.dispose();
+      } catch {
+      }
+      lease.dispose();
+    }
   }
 
   private async resolveRg(): Promise<RgResolution | null> {

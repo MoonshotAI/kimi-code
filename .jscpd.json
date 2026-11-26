@@ -12,7 +12,8 @@
     "**/*.generated.*",
     "**/webp-dec-wasm.ts",
     "**/locales/**",
-    "**/{tsdown,vite,vitest,playwright}*.config.*"
+    "**/{tsdown,vite,vitest,playwright}*.config.*",
+    "packages/pi-tui/src/**"
   ],
   "minTokens": 60,
   "minLines": 6,

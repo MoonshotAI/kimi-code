@@ -854,9 +854,226 @@ describe('PluginsPanel', () => {
     rowData[0]!.capability!.install = { running: true, step: 'daemon', percent: 42 };
     await nextTick();
     expect(host.querySelector('.plugin-row .plugin-actions .ui-button')?.textContent).toContain('Installing');
+    expect(host.querySelector('.plugin-row .plugin-actions [role="switch"]')).toBeNull();
+    expect(host.querySelector('.plugin-row .plugin-actions [aria-label="More actions"]')).toBeNull();
     expect(host.querySelector('[role="progressbar"]')).toBeNull();
     expect(host.textContent).not.toContain('Background service');
     expect(host.textContent).not.toContain('42%');
+  });
+
+  it('shows only the installing status while a capability install is running and restores actions after settlement', async () => {
+    rowData.push(row('kimi-browser-extension', {
+      installId: 'kimi-webbridge',
+      catalogEntry: entry('kimi-browser-extension', 'Kimi Browser Extension', {
+        capabilityId: 'kimi-webbridge',
+        version: '1.11.3',
+      }),
+      installedPlugin: installed('kimi-browser-extension', 'marketplace', { version: '1.11.3' }),
+      capability: {
+        id: 'kimi-webbridge',
+        pluginId: 'kimi-browser-extension',
+        displayName: 'Kimi Browser Extension',
+        description: 'Browser control',
+        supported: true,
+        state: 'partial',
+        steps: [{ id: 'skill', state: 'ok' }, { id: 'daemon', state: 'missing' }],
+        install: { running: true, step: 'daemon' },
+      },
+      capabilityRequired: true,
+      displayName: 'Kimi Browser Extension',
+    }));
+    await mountPanel();
+
+    const rowActions = '.plugin-row .plugin-actions';
+    expect(host.querySelector(`${rowActions} .ui-button`)?.textContent).toContain('Installing');
+    expect(host.querySelector<HTMLButtonElement>(`${rowActions} .ui-button`)?.disabled).toBe(true);
+    expect(host.querySelector(`${rowActions} [role="switch"]`)).toBeNull();
+    expect(host.querySelector(`${rowActions} [aria-label="More actions"]`)).toBeNull();
+
+    clickButton('Kimi Browser Extension');
+    await settle();
+    const detailActions = '.plugin-details .plugin-actions';
+    expect(host.querySelector(`${detailActions} .ui-button`)?.textContent).toContain('Installing');
+    expect(host.querySelector<HTMLButtonElement>(`${detailActions} .ui-button`)?.disabled).toBe(true);
+    expect(host.querySelector(`${detailActions} [role="switch"]`)).toBeNull();
+    expect(host.querySelector(`${detailActions} [aria-label="More actions"]`)).toBeNull();
+
+    rowData[0]!.capability = {
+      ...rowData[0]!.capability!,
+      state: 'ready',
+      install: { running: false },
+    };
+    await settle();
+
+    expect(host.querySelector(`${detailActions} .ui-button`)).toBeNull();
+    expect(host.querySelector(`${detailActions} [role="switch"]`)).not.toBeNull();
+    expect(host.querySelector<HTMLButtonElement>(`${detailActions} [role="switch"]`)?.disabled).toBe(false);
+    expect(host.querySelector<HTMLButtonElement>(`${detailActions} [aria-label="More actions"]`)?.disabled).toBe(false);
+
+    host.querySelector<HTMLButtonElement>('.plugin-details__header [aria-label="Back"]')!.click();
+    await settle();
+    expect(host.querySelector(`${rowActions} .ui-button`)).toBeNull();
+    expect(host.querySelector(`${rowActions} [role="switch"]`)).not.toBeNull();
+    expect(host.querySelector<HTMLButtonElement>(`${rowActions} [role="switch"]`)?.disabled).toBe(false);
+    expect(host.querySelector<HTMLButtonElement>(`${rowActions} [aria-label="More actions"]`)?.disabled).toBe(false);
+  });
+
+  it('shows only the installing status during a marketplace update and restores actions when it fails or succeeds', async () => {
+    const updateRow = row('vercel', {
+      catalogEntry: entry('vercel', 'Vercel', { version: '2.0.0' }),
+      installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }),
+      displayName: 'Vercel',
+      updateAvailable: true,
+    });
+    rowData.push(updateRow);
+    await mountPanel();
+
+    plugins.state.busy['vercel:install'] = true;
+    await nextTick();
+
+    const rowActions = '.plugin-row .plugin-actions';
+    expect(host.querySelector(`${rowActions} .ui-button`)?.textContent).toContain('Installing');
+    expect(host.querySelector(`${rowActions} [role="switch"]`)).toBeNull();
+    expect(host.querySelector(`${rowActions} [aria-label="More actions"]`)).toBeNull();
+
+    clickButton('Vercel');
+    await settle();
+    const detailActions = '.plugin-details .plugin-actions';
+    expect(host.querySelector(`${detailActions} .ui-button`)?.textContent).toContain('Installing');
+    expect(host.querySelector(`${detailActions} [role="switch"]`)).toBeNull();
+    expect(host.querySelector(`${detailActions} [aria-label="More actions"]`)).toBeNull();
+
+    plugins.state.busy['vercel:install'] = undefined;
+    plugins.state.rowErrors['vercel'] = 'network down';
+    await settle();
+
+    expect(host.querySelector(`${detailActions} .ui-button`)?.textContent).toContain('Update');
+    expect(host.querySelector<HTMLButtonElement>(`${detailActions} .ui-button`)?.disabled).toBe(false);
+    expect(host.querySelector(`${detailActions} [role="switch"]`)).not.toBeNull();
+    expect(host.querySelector<HTMLButtonElement>(`${detailActions} [aria-label="More actions"]`)?.disabled).toBe(false);
+    expect(host.querySelector('.plugin-details .plugin-status__error')?.textContent).toBe('network down');
+
+    host.querySelector<HTMLButtonElement>('.plugin-details__header [aria-label="Back"]')!.click();
+    await settle();
+    expect(host.querySelector(`${rowActions} .ui-button`)?.textContent).toContain('Update');
+    expect(host.querySelector(`${rowActions} [role="switch"]`)).not.toBeNull();
+    expect(host.querySelector(`${rowActions} [aria-label="More actions"]`)).not.toBeNull();
+
+    plugins.state.rowErrors['vercel'] = undefined;
+    plugins.state.busy['vercel:install'] = true;
+    await nextTick();
+    expect(host.querySelector(`${rowActions} [role="switch"]`)).toBeNull();
+    expect(host.querySelector(`${rowActions} [aria-label="More actions"]`)).toBeNull();
+
+    rowData[0] = {
+      ...updateRow,
+      installedPlugin: installed('vercel', 'marketplace', { version: '2.0.0' }),
+      updateAvailable: false,
+    };
+    plugins.state.busy['vercel:install'] = undefined;
+    await settle();
+
+    expect(host.querySelector(`${rowActions} .ui-button`)).toBeNull();
+    expect(host.querySelector(`${rowActions} [role="switch"]`)).not.toBeNull();
+    expect(host.querySelector(`${rowActions} [aria-label="More actions"]`)).not.toBeNull();
+  });
+
+  it('closes an open more-actions menu when installing starts and keeps it closed after settlement', async () => {
+    rowData.push(row('vercel', {
+      catalogEntry: entry('vercel', 'Vercel', { version: '2.0.0' }),
+      installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }),
+      displayName: 'Vercel',
+      updateAvailable: true,
+    }));
+    await mountPanel();
+
+    const addDocumentListener = vi.spyOn(document, 'addEventListener');
+    const removeDocumentListener = vi.spyOn(document, 'removeEventListener');
+    const addWindowListener = vi.spyOn(window, 'addEventListener');
+    const removeWindowListener = vi.spyOn(window, 'removeEventListener');
+    try {
+      const trigger = host.querySelector<HTMLButtonElement>(
+        '.plugin-row .plugin-actions [aria-label="More actions"]',
+      )!;
+      trigger.click();
+      await settle();
+
+      expect(trigger.getAttribute('aria-expanded')).toBe('true');
+      expect(host.querySelector('.plugin-row .plugin-actions__menu .ui-menu-item')).not.toBeNull();
+      const docMouseDown = addDocumentListener.mock.calls.findLast(([type]) => type === 'mousedown')?.[1];
+      const docKeyDown = addDocumentListener.mock.calls.findLast(([type]) => type === 'keydown')?.[1];
+      const winResize = addWindowListener.mock.calls.findLast(([type]) => type === 'resize')?.[1];
+      const winBlur = addWindowListener.mock.calls.findLast(([type]) => type === 'blur')?.[1];
+      expect(docMouseDown).toBeDefined();
+      expect(docKeyDown).toBeDefined();
+      expect(winResize).toBeDefined();
+      expect(winBlur).toBeDefined();
+
+      plugins.state.busy['vercel:install'] = true;
+      await settle();
+
+      expect(host.querySelector('.plugin-row .plugin-actions [aria-label="More actions"]')).toBeNull();
+      expect(host.querySelector('.plugin-actions__menu')).toBeNull();
+      expect(removeDocumentListener).toHaveBeenCalledWith('mousedown', docMouseDown);
+      expect(removeDocumentListener).toHaveBeenCalledWith('keydown', docKeyDown);
+      expect(removeWindowListener).toHaveBeenCalledWith('resize', winResize);
+      expect(removeWindowListener).toHaveBeenCalledWith('blur', winBlur);
+
+      plugins.state.busy['vercel:install'] = undefined;
+      await settle();
+
+      const restoredTrigger = host.querySelector<HTMLButtonElement>(
+        '.plugin-row .plugin-actions [aria-label="More actions"]',
+      );
+      expect(restoredTrigger).not.toBeNull();
+      expect(restoredTrigger!.getAttribute('aria-expanded')).toBe('false');
+      expect(host.querySelector('.plugin-actions__menu')).toBeNull();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('returns to the install button when a first install fails', async () => {
+    rowData.push(row('vercel', {
+      catalogEntry: entry('vercel', 'Vercel'),
+      displayName: 'Vercel',
+    }));
+    await mountPanel();
+
+    plugins.state.busy['vercel:install'] = true;
+    await nextTick();
+    expect(host.querySelector('.plugin-row .plugin-actions .ui-button')?.textContent).toContain('Installing');
+    expect(host.querySelector('.plugin-row .plugin-actions [role="switch"]')).toBeNull();
+    expect(host.querySelector('.plugin-row .plugin-actions [aria-label="More actions"]')).toBeNull();
+
+    plugins.state.busy['vercel:install'] = undefined;
+    plugins.state.rowErrors['vercel'] = 'download failed';
+    await nextTick();
+
+    expect(host.querySelector<HTMLButtonElement>('.plugin-row .plugin-actions .ui-button')?.textContent).toContain('Install');
+    expect(host.querySelector<HTMLButtonElement>('.plugin-row .plugin-actions .ui-button')?.disabled).toBe(false);
+    expect(host.querySelector('.plugin-row .plugin-status__error')?.textContent).toBe('download failed');
+  });
+
+  it('keeps the switch and more actions disabled in place during toggle and remove', async () => {
+    rowData.push(row('vercel', {
+      catalogEntry: entry('vercel', 'Vercel'),
+      installedPlugin: installed('vercel', 'marketplace'),
+      displayName: 'Vercel',
+    }));
+    await mountPanel();
+
+    plugins.state.busy['vercel:toggle'] = true;
+    await nextTick();
+    expect(host.querySelector('.plugin-row .plugin-actions [role="switch"]')).not.toBeNull();
+    expect(host.querySelector<HTMLButtonElement>('.plugin-row .plugin-actions [role="switch"]')?.disabled).toBe(true);
+    expect(host.querySelector<HTMLButtonElement>('.plugin-row .plugin-actions [aria-label="More actions"]')?.disabled).toBe(true);
+
+    plugins.state.busy['vercel:toggle'] = undefined;
+    plugins.state.busy['vercel:remove'] = true;
+    await nextTick();
+    expect(host.querySelector('.plugin-row .plugin-actions [role="switch"]')).not.toBeNull();
+    expect(host.querySelector<HTMLButtonElement>('.plugin-row .plugin-actions [aria-label="More actions"]')?.disabled).toBe(true);
   });
 
   it('disables installation for a cloud-only row and explains the boundary', async () => {

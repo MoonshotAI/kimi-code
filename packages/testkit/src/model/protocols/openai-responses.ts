@@ -1,5 +1,6 @@
 import { emissionsOf, type Emission } from '#/model/emission';
 import { jsonResponse, SSE_HEADERS, type EncodeContext, type ProtocolCodec, type ResolvedUsage } from '#/model/protocols/codec';
+import { pickedFields, promptSegment, type PromptPrefix } from '#/model/prompt-cache';
 import { asArray, asRecord, contentPartsOf, optionalString, stringOf } from '#/model/protocols/json';
 import { argumentsText } from '#/model/steps';
 import type { ErrorSpec, ReplyStep, RequestView, ToolCallSpec, ViewCall, ViewMessage, ViewPart } from '#/model/types';
@@ -32,6 +33,7 @@ export const openaiResponsesCodec: ProtocolCodec = {
   name: 'openai-responses',
   matches: (path) => path.endsWith('/responses'),
   parseRequest,
+  promptPrefix,
   encodeStream(step, context) {
     const writer = new EventWriter(context);
     const emissions = emissionsOf(step, (callIndex, call) => context.callId(callIndex, call));
@@ -253,6 +255,32 @@ interface DraftMessage {
   calls: ViewCall[];
   callId?: string;
   reasoning?: string;
+}
+
+const SYSTEM_ROLES: ReadonlySet<unknown> = new Set(['system', 'developer']);
+
+function promptPrefix(body: unknown): PromptPrefix {
+  const record = asRecord(body);
+  const input = record['input'];
+  const items = typeof input === 'string' ? [{ role: 'user', content: input }] : asArray(input);
+  const firstConversational = items.findIndex((item) => !SYSTEM_ROLES.has(asRecord(item)['role']));
+  const systemCount = firstConversational === -1 ? items.length : firstConversational;
+  const labelOf = (item: unknown, index: number): string => {
+    const entry = asRecord(item);
+    return `input[${index}] ${stringOf(entry['role'] ?? entry['type'])}`;
+  };
+  const instructions = record['instructions'];
+  return {
+    cacheKey: optionalString(record['prompt_cache_key']),
+    model: optionalString(record['model']),
+    segments: [
+      promptSegment('params', 'params', pickedFields(record, ['model', 'reasoning', 'text'])),
+      ...(instructions === undefined ? [] : [promptSegment('system', 'instructions', instructions)]),
+      ...items.slice(0, systemCount).map((item, index) => promptSegment('system', labelOf(item, index), item)),
+      ...asArray(record['tools']).map((tool, index) => promptSegment('tools', `tools[${index}] ${stringOf(asRecord(tool)['name'])}`, tool)),
+      ...items.slice(systemCount).map((item, offset) => promptSegment('messages', labelOf(item, systemCount + offset), item)),
+    ],
+  };
 }
 
 function parseRequest(body: unknown): RequestView {

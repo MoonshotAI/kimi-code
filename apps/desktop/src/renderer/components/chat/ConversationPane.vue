@@ -85,7 +85,6 @@ const emit = defineEmits<{
   interrupt: [];
   continue: [];
   steerQueued: [index: number];
-  pickModel: [];
   login: [];
   configureModel: [];
   openMedia: [payload: OpenMediaRequest];
@@ -160,6 +159,9 @@ const {
 
 const trustSubmitBlockedReason = computed(() =>
   trustReadPending.value && !hostBlocked.value ? t('workspace.trust.checking') : undefined,
+);
+const trustSubmitBlockedTooltip = computed(() =>
+  trustReadPending.value && !hostBlocked.value ? t('workspace.trust.checkingHint') : undefined,
 );
 
 function gateSubmit(): boolean {
@@ -575,6 +577,7 @@ type ComposerHandle = {
   loadAttachmentsForEdit: (atts: TurnAttachment[]) => void;
   restoreDraftEntries?: (entries: AttachmentEntry[]) => void;
   focus: () => void;
+  openModelMenu?: (targetSid?: string) => void;
   clearAfterDispatch: (expectedSnapshot?: ComposerDocumentSnapshot) => void;
   anyPopupOpen?: boolean;
   isEmpty?: () => boolean;
@@ -620,6 +623,10 @@ function bindChatDock(el: RefArg): void {
           ? el.restoreDraftEntries.bind(el)
           : undefined,
       focus: el.focus.bind(el),
+      openModelMenu:
+        'openModelMenu' in el && typeof el.openModelMenu === 'function'
+          ? el.openModelMenu.bind(el)
+          : undefined,
       clearAfterDispatch:
         'clearAfterDispatch' in el && typeof el.clearAfterDispatch === 'function'
           ? el.clearAfterDispatch.bind(el)
@@ -750,7 +757,7 @@ async function selectAllRegion(target: EventTarget | null): Promise<void> {
   const attended = target instanceof Element && target !== document.body ? target : lastPointerTarget;
   const panel = closestRegion(attended, '.global-preview');
   if (panel) {
-    selectContentsOf(panel);
+    selectContentsOf(panel.querySelector('[data-panel-content]') ?? panel);
     return;
   }
   historySelection.value = true;
@@ -831,7 +838,7 @@ const showEmptyToggles = computed(
   () => !props.mobile && turns.value.length === 0 && !sessionLoading.value,
 );
 
-defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMention, insertScreenshotAnnotation, addComposerFiles, hasInsertableComposer, isComposerEmpty, clearComposerAfterDispatch, focusComposer, notifyUndone, selectAllRegion, focusGoal, closeDockPanel, composerPopupOpen });
+defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMention, insertScreenshotAnnotation, addComposerFiles, hasInsertableComposer, isComposerEmpty, clearComposerAfterDispatch, focusComposer, openModelMenu: (targetSid?: string) => (dockedComposerRef.value ?? emptyComposerRef.value)?.openModelMenu?.(targetSid), notifyUndone, selectAllRegion, focusGoal, closeDockPanel, composerPopupOpen });
 </script>
 
 <template>
@@ -971,6 +978,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               class="empty-composer"
               hide-context
               :session-submit-blocked-reason="trustSubmitBlockedReason"
+              :session-submit-blocked-tooltip="trustSubmitBlockedTooltip"
               :before-submit="gateSubmit"
               :defer-submit-reset="true"
               :extra-builtin-commands="feedbackCommands"
@@ -981,7 +989,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               @command="handleComposerCommand"
               @interrupt="handleInterrupt"
               @focus-goal="focusGoal"
-              @pick-model="emit('pickModel')"
               @login="emit('login')"
               @configure-model="emit('configureModel')"
             />
@@ -1066,6 +1073,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :approval-busy="approvalBusy"
         :mobile="mobile"
         :session-submit-blocked-reason="trustSubmitBlockedReason"
+        :session-submit-blocked-tooltip="trustSubmitBlockedTooltip"
         :before-submit="gateSubmit"
         :defer-submit-reset="true"
         :extra-builtin-commands="feedbackCommands"
@@ -1080,7 +1088,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         @command="handleComposerCommand"
         @interrupt="handleInterrupt"
         @focus-goal="focusGoal"
-        @pick-model="emit('pickModel')"
         @login="emit('login')"
         @configure-model="emit('configureModel')"
       >

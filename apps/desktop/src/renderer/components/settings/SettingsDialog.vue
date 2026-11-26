@@ -7,7 +7,7 @@ import { serverEndpointLabel } from '../../api/config';
 import { useDialogFocus } from '@moonshot-ai/app-components';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import LanguageSwitcher from './LanguageSwitcher.vue';
-import { BrowserTabTitleSetting, DefaultToolsSetting, FontSettingsPage, FontSettingsRow, GlobalAgentsMdSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
+import { BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, GlobalAgentsMdSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
 import type { FontTarget } from '@moonshot-ai/app-core';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import type { ShortcutActionId } from '../../../shared/action-ids';
@@ -641,13 +641,10 @@ function toggleAutoSessionTitle(): void {
 
 const globalAgentsMdSettingRef = ref<InstanceType<typeof GlobalAgentsMdSetting> | null>(null);
 const globalAgentsMdOpen = ref(false);
-const defaultToolsSettingRef = ref<InstanceType<typeof DefaultToolsSetting> | null>(null);
-const defaultToolsOpen = ref(false);
 
 async function setTab(tab: SettingsTab): Promise<void> {
   if (tab !== activeTab.value) {
     if (globalAgentsMdOpen.value && !(await globalAgentsMdSettingRef.value?.confirmDiscard())) return;
-    if (defaultToolsOpen.value && !(await defaultToolsSettingRef.value?.confirmDiscard())) return;
     clearHighlightTimer();
     highlightedSetting.value = null;
   }
@@ -656,7 +653,6 @@ async function setTab(tab: SettingsTab): Promise<void> {
 
 async function confirmDiscard(): Promise<boolean> {
   if (globalAgentsMdOpen.value && !(await globalAgentsMdSettingRef.value?.confirmDiscard())) return false;
-  if (defaultToolsOpen.value && !(await defaultToolsSettingRef.value?.confirmDiscard())) return false;
   return true;
 }
 
@@ -671,7 +667,6 @@ const fontPageTarget = fontPage.page;
 watch(activeTab, () => {
   fontPage.reset();
   globalAgentsMdSettingRef.value?.reset();
-  defaultToolsSettingRef.value?.reset();
 });
 
 const client = useKimiWebClient();
@@ -1077,7 +1072,7 @@ defineExpose({ confirmDiscard });
         </section>
 
         <section v-show="activeTab === 'agent'" class="panel">
-          <div v-show="!defaultToolsOpen && !globalAgentsMdOpen" class="panel-sections">
+          <div v-show="!globalAgentsMdOpen">
           <section class="sec">
             <div class="sec-head">
               <h3 class="sec-title">{{ t('settings.agentDefaults') }}</h3>
@@ -1156,9 +1151,9 @@ defineExpose({ confirmDiscard });
           </section>
           </div>
 
-          <GlobalAgentsMdSetting v-show="!defaultToolsOpen" ref="globalAgentsMdSettingRef" @open-change="globalAgentsMdOpen = $event" />
+          <GlobalAgentsMdSetting ref="globalAgentsMdSettingRef" @open-change="globalAgentsMdOpen = $event" />
 
-          <div v-show="!defaultToolsOpen && !globalAgentsMdOpen" class="panel-sections">
+          <div v-show="!globalAgentsMdOpen">
           <SecondaryModelSettings
             v-if="config"
             :config="config.secondaryModel"
@@ -1254,8 +1249,6 @@ defineExpose({ confirmDiscard });
             </div>
           </section>
           </div>
-
-          <DefaultToolsSetting v-show="!globalAgentsMdOpen" ref="defaultToolsSettingRef" @open-change="defaultToolsOpen = $event" />
         </section>
 
         <section v-show="activeTab === 'advanced'" class="panel">

@@ -4,7 +4,7 @@ name: E2E
 # ready for review and either carries the e2e label or changes the suite
 # itself, so the shared runner pool is not spent on every push of every PR.
 # The Windows jobs run on those pull requests and on manual runs, not on
-# pushes to main, so each merge does not take another five runners.
+# pushes to main, so each merge does not take another six runners.
 on:
   workflow_dispatch:
   push:
@@ -77,7 +77,7 @@ jobs:
           name: e2e-cli
           path: |
             apps/kimi-code/dist/
-            apps/kimi-code/dist-web/
+            apps/kimi-code/web-dist/
             apps/kimi-code/native/
           if-no-files-found: error
           retention-days: 1
@@ -252,7 +252,8 @@ jobs:
         include:
           - { surface: tui, shard: 1, shards: 1 }
           - { surface: acp, shard: 1, shards: 1 }
-          - { surface: desktop, shard: 1, shards: 1 }
+          - { surface: desktop, shard: 1, shards: 2 }
+          - { surface: desktop, shard: 2, shards: 2 }
           - { surface: web, shard: 1, shards: 2 }
           - { surface: web, shard: 2, shards: 2 }
     steps:

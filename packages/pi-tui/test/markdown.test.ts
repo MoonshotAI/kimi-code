@@ -1,5 +1,7 @@
 import assert from "node:assert";
 import { afterEach, describe, it } from "node:test";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Chalk } from "chalk";
 import { Markdown, type MarkdownTheme } from "../src/components/markdown.ts";
@@ -62,6 +64,77 @@ describe("Markdown component", () => {
 			markdown.render(60);
 			assert.deepStrictEqual(calls.at(-1), { source: "updated", availableWidth: 56 });
 			assert.strictEqual(calls.length, 4);
+		});
+	});
+
+	describe("Block reuse", () => {
+		afterEach(() => resetCapabilitiesCache());
+
+		function countingTheme(calls: string[]): MarkdownTheme {
+			return {
+				...defaultMarkdownTheme,
+				highlightCode: (code, lang) => {
+					calls.push(`${lang}:${code}`);
+					return code.split("\n").map((line) => chalk.green(line));
+				},
+			};
+		}
+
+		it("highlights a code block once across streamed text and resizes, and again after invalidate", () => {
+			const calls: string[] = [];
+			const markdown = new Markdown("```ts\nx\n```", 0, 0, countingTheme(calls));
+			markdown.render(80);
+			markdown.setText("```ts\nx\n```\n\nafter");
+			markdown.render(40);
+			assert.deepStrictEqual(calls, ["ts:x"]);
+			markdown.invalidate();
+			markdown.render(40);
+			assert.deepStrictEqual(calls, ["ts:x", "ts:x"]);
+		});
+
+		it("holds rendered blocks weakly, so a full garbage collection releases them", async () => {
+			setFlagsFromString("--expose-gc");
+			const gc = runInNewContext("gc") as (options: { execution: "async" }) => Promise<void>;
+			const calls: string[] = [];
+			const markdown = new Markdown("```ts\nx\n```", 0, 0, countingTheme(calls));
+			markdown.render(80);
+			// A WeakRef keeps its target alive until the current job ends; async GC runs after it.
+			await gc({ execution: "async" });
+			markdown.render(40);
+			assert.deepStrictEqual(calls, ["ts:x", "ts:x"]);
+		});
+
+		it("renders a block again when the block after it changes its spacing", () => {
+			const markdown = new Markdown("# Title", 0, 0, defaultMarkdownTheme);
+			markdown.render(80);
+			markdown.setText("# Title\nfoo");
+			assert.deepStrictEqual(
+				markdown.render(80).map((line) => stripAnsi(line).trim()),
+				["Title", "", "foo"],
+			);
+		});
+
+		it("follows changed reference link definitions", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: false });
+			const markdown = new Markdown("[a][x]\n\n[x]: https://one.example", 0, 0, defaultMarkdownTheme);
+			markdown.render(80);
+			markdown.setText("[a][x]\n\n[x]: https://two.example");
+			assert.ok(stripAnsi(markdown.render(80).join("\n")).includes("https://two.example"));
+		});
+	});
+
+	describe("Images", () => {
+		it("keeps hard breaks after an inline image as separate rows", () => {
+			setCapabilities({ images: "kitty", trueColor: false, hyperlinks: false });
+			const image = "\x1b_Ga=T,f=100,q=2,c=20,r=3,C=1;AAAA\x1b\\";
+			const markdown = new Markdown(`\`${image}\`  \n\` \`  \n\` \`\n\n- one`, 0, 0, defaultMarkdownTheme);
+			const lines = markdown.render(80);
+			assert.ok(lines.every((line) => !line.includes("\n")));
+			assert.ok(lines[0]!.includes(image));
+			assert.deepStrictEqual(
+				lines.slice(1).map((line) => stripAnsi(line).trim()),
+				["", "", "", "- one"],
+			);
 		});
 	});
 
@@ -922,6 +995,21 @@ A=
 			assert.deepStrictEqual(shellLines, [shellVariables]);
 		});
 
+		it("keeps Markdown after an unclosed currency dollar sign", () => {
+			const cases = [
+				["Costs +$50 for **this** option.", ["Costs +$50 for this option."]],
+				["**A:** costs +$50 (once).\n**B:** next.", ["A: costs +$50 (once).", "B: next."]],
+				["**A:** costs $x + y\n**B:** next.", ["A: costs $x + y", "B: next."]],
+			] as const;
+
+			for (const [source, expected] of cases) {
+				const lines = new Markdown(source, 0, 0, defaultMarkdownTheme)
+					.render(80)
+					.map((line) => stripAnsi(line).trimEnd());
+				assert.deepStrictEqual(lines, expected);
+			}
+		});
+
 		it("preserves unsupported and incomplete LaTeX exactly", () => {
 			const cases = [String.raw`Unknown $x + \unknown{y}$ after`, String.raw`Streaming $\mathbb{C}^3`];
 
@@ -984,6 +1072,29 @@ Inline \(A_{sf}\)`,
 					String.raw`Inline \(A_{sf}\)`,
 				],
 			);
+		});
+
+		// Regression test for https://github.com/earendil-works/pi/issues/11483
+		it("falls back to raw source when display math is wider than the content width", () => {
+			const source = [
+				"\\[",
+				String.raw`\frac{\partial^2 u}{\partial x^2} + \frac{\partial^2 u}{\partial y^2} = \sum_{i=1}^{n} \frac{1}{i^2} + \int_0^1 f(x)\,dx`,
+				"\\]",
+			].join("\n");
+			const render = (width: number) =>
+				new Markdown(source, 0, 0, defaultMarkdownTheme).render(width).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(render(40), [
+				"∂² u   ∂² u   n   1   1",
+				"──── + ──── = ∑   ── +∫ f(x) dx",
+				"∂ x²   ∂ y²  i=1  i²  0",
+			]);
+
+			const narrow = render(30);
+			assert.strictEqual(narrow[0], "\\[");
+			assert.strictEqual(narrow[narrow.length - 1], "\\]");
+			assert.ok(!narrow.some((line) => line.includes("─")));
+			assert.ok(narrow.every((line) => line.length <= 30));
 		});
 
 		// Regression tests for https://github.com/earendil-works/pi/issues/11159
@@ -1367,6 +1478,18 @@ again, hello world`,
 		});
 	});
 
+	describe("Deeply nested blockquotes", () => {
+		// Regression test for https://github.com/earendil-works/pi/issues/11272
+		it("should render quotes nested deeper than the width allows without exploding", () => {
+			const markdown = new Markdown(`${">".repeat(60)}x`, 1, 0, defaultMarkdownTheme);
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
+
+			assert.strictEqual(plainLines.length, 1, `Expected a single line: ${JSON.stringify(plainLines)}`);
+			assert.ok(plainLines[0]!.endsWith("x"), `Expected content to be kept: ${JSON.stringify(plainLines)}`);
+		});
+	});
+
 	describe("Blockquotes with multiline content", () => {
 		it("should apply consistent styling to all lines in lazy continuation blockquote", () => {
 			// Markdown "lazy continuation" - second line without > is still part of the quote
@@ -1654,6 +1777,22 @@ bar`,
 		});
 	});
 
+	// #10925
+	describe("styled words at the wrap boundary", () => {
+		it("should not start the next line with a space or carry styles into padding", () => {
+			const markdown = new Markdown("aaaa **bold** next ~~strk~~ more words", 1, 0, defaultMarkdownTheme, {
+				bgColor: (text) => `\x1b[44m${text}\x1b[49m`,
+			});
+
+			assert.deepStrictEqual(markdown.render(11), [
+				"\x1b[44m aaaa \x1b[1mbold\x1b[22m \x1b[49m",
+				"\x1b[44m next \x1b[9mstrk\x1b[29m \x1b[49m",
+				"\x1b[44m more      \x1b[49m",
+				"\x1b[44m words     \x1b[49m",
+			]);
+		});
+	});
+
 	// #10154
 	describe("CJK emphasis", () => {
 		const tagTheme: MarkdownTheme = {
@@ -1679,6 +1818,60 @@ bar`,
 	describe("Links", () => {
 		afterEach(() => {
 			resetCapabilitiesCache();
+		});
+
+		it("should stop bare URLs at CJK punctuation and preserve the following text", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			for (const punctuation of "。，；：！？、“”‘’（）【】《》「」『』…—·・〈〉［］｛｝．｡｢｣､･") {
+				for (const url of ["https://example.com", "https://example.com/中文?q=搜索#片段", "www.example.com"]) {
+					const source = `${url}${punctuation}后面的中文`;
+					const output = new Markdown(source, 0, 0, defaultMarkdownTheme).render(160).join("");
+					const href = url.startsWith("www.") ? `http://${url}` : url;
+					assert.ok(output.includes(`\x1b]8;;${href}\x1b\\`), source);
+					assert.ok(stripAnsi(output).includes(`\x1b]8;;\x1b\\${punctuation}后面的中文`), source);
+					assert.strictEqual(stripAnsi(output.replace(/\x1b\]8;;[^\x1b]*\x1b\\/g, "")).trimEnd(), source);
+				}
+			}
+		});
+
+		it("should preserve Chinese characters without punctuation in bare URLs", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			for (const url of [
+				"https://example.com紧接着中文",
+				"https://example.com/中文?q=搜索#片段",
+				"https://example.com/テストー한글",
+			]) {
+				const output = new Markdown(url, 0, 0, defaultMarkdownTheme).render(160).join("");
+				assert.ok(output.includes(`\x1b]8;;${url}\x1b\\`));
+			}
+		});
+
+		it("should preserve CJK punctuation in explicit links and angle autolinks", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const url = "https://example.com/中文，路径·テスト・한글…—。";
+			for (const source of [`[文档](${url})`, `<${url}>`]) {
+				const output = new Markdown(source, 0, 0, defaultMarkdownTheme).render(160).join("");
+				assert.ok(output.includes(`\x1b]8;;${url}\x1b\\`), source);
+			}
+		});
+
+		it("should preserve English punctuation trimming before Chinese punctuation", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const source = "https://example.com.，后面的中文";
+			const output = new Markdown(source, 0, 0, defaultMarkdownTheme).render(160).join("");
+			assert.ok(output.includes("\x1b]8;;https://example.com\x1b\\"));
+			assert.ok(stripAnsi(output).includes("\x1b]8;;\x1b\\.，后面的中文"));
+		});
+
+		it("should not hyperlink a bare URL that runs into a very long line", () => {
+			// A bare URL ends only at whitespace, so it can swallow a long base64 line. Wrapping re-opens
+			// a hyperlink on every line with the full URL, which made the output quadratic in its length.
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const url = `https://example.com/path,data:${"x".repeat(20_000)}`;
+			const output = new Markdown(url, 0, 0, defaultMarkdownTheme).render(80).join("");
+			assert.ok(!output.includes("\x1b]8;"));
+			assert.ok(output.length < 3 * url.length);
+			assert.strictEqual(stripAnsi(output).replace(/\s/g, ""), url);
 		});
 
 		it("should not duplicate URL for autolinked emails", () => {
@@ -1873,6 +2066,22 @@ bar`,
 				"Punctuation inside balanced full-width parens remains part of the hyperlink target",
 			);
 		});
+
+		it("should stop bare URLs at full-width punctuation outside the autocomplete separator set", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			for (const sample of [
+				"https://example.com／后面的中文",
+				"https://example.com～说明文字",
+				"https://example.com＠用户",
+			]) {
+				const markdown = new Markdown(sample, 0, 0, defaultMarkdownTheme);
+				const joined = markdown.render(80).join("");
+				assert.ok(
+					joined.includes("\x1b]8;;https://example.com\x1b\\"),
+					`OSC 8 target should stop before full-width punctuation in: ${sample}`,
+				);
+			}
+		});
 	});
 
 	describe("HTML-like tags in text", () => {
@@ -1909,6 +2118,49 @@ bar`,
 				joinedPlain.includes("<div>") && joinedPlain.includes("</div>"),
 				"Should render HTML in code blocks",
 			);
+		});
+	});
+
+	describe("HTML comments", () => {
+		// Regression tests for https://github.com/earendil-works/pi/issues/11710
+		function renderPlain(text: string): string[] {
+			return new Markdown(text, 0, 0, defaultMarkdownTheme).render(60).map((line) => stripAnsi(line).trimEnd());
+		}
+
+		it("hides block and inline comments without extra spacing", () => {
+			assert.deepStrictEqual(
+				renderPlain(
+					"## [1.0.0]\n\n<!-- release-notes:start -->\nFixed a bug.\n\nSee <!-- todo: link --> the docs.",
+				),
+				renderPlain("## [1.0.0]\n\nFixed a bug.\n\nSee the docs."),
+			);
+		});
+
+		it("drops one blank line around comment-only blocks", () => {
+			assert.deepStrictEqual(
+				renderPlain(
+					"<!-- start -->\n\n## [1.0.0]\n\n<!-- a -->\n\n- item\n\n<!-- b -->\n\n## [0.9.0]\n\n<!-- end -->",
+				),
+				renderPlain("## [1.0.0]\n\n- item\n\n## [0.9.0]"),
+			);
+		});
+
+		it("hides multi-line and unclosed comments", () => {
+			assert.deepStrictEqual(renderPlain("<!--\nmulti\nline\n-->\ntext"), renderPlain("text"));
+			assert.deepStrictEqual(renderPlain("text\n\n<!-- streaming"), renderPlain("text"));
+		});
+
+		it("hides comments in blockquotes and list items", () => {
+			assert.deepStrictEqual(
+				renderPlain("> q\n>\n> <!-- c -->\n>\n> r\n\n- a\n\n  <!-- c -->\n\n  b\n- <!-- c --> item"),
+				renderPlain("> q\n>\n> r\n\n- a\n\n  b\n- item"),
+			);
+		});
+
+		it("keeps other HTML and the text after a comment in a block", () => {
+			assert.deepStrictEqual(renderPlain("with <tag> markers"), ["with <tag> markers"]);
+			assert.deepStrictEqual(renderPlain("<!-- c --> trailing text"), ["trailing text"]);
+			assert.deepStrictEqual(renderPlain("<div>\n<!-- c -->a</div>"), ["<div>", "a</div>"]);
 		});
 	});
 

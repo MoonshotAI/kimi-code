@@ -1,4 +1,4 @@
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path/posix';
 import { Readable, Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -82,6 +82,10 @@ function workspaceGitStub(git: IGitService): IProjectGitService {
   };
 }
 
+function posixPathOf(path: string): string {
+  return path.replaceAll('\\', '/');
+}
+
 function fakeFs(
   files: Record<string, string | Buffer>,
   symlinks: readonly string[] = [],
@@ -130,7 +134,7 @@ function fakeFs(
     return err;
   };
   const resolveSymlinks = (p: string): string => {
-    let cur = p;
+    let cur = posixPathOf(p);
     for (let hops = 0; hops < 10; hops += 1) {
       let longest: string | undefined;
       for (const linkPath of symlinkTargetMap.keys()) {
@@ -154,7 +158,7 @@ function fakeFs(
     return `${resolveSymlinks(p.slice(0, slash))}${p.slice(slash)}`;
   };
   const lstatImpl = async (rawPath: string) => {
-    const p = resolveParentSymlinks(rawPath);
+    const p = resolveParentSymlinks(posixPathOf(rawPath));
     if (fileMap.has(p)) {
       const c = fileMap.get(p)!;
       return {
@@ -235,8 +239,9 @@ function fakeFs(
       for (const s of symlinkSet) visit(s, 'symlink');
       return [...children.values()];
     },
-    walk: (path, options, visit) => walkDirectoryTree(fs, path, options, visit),
-    mkdir: async (p, options) => {
+    walk: (path, options, visit) => walkDirectoryTree(fs, posixPathOf(path), options, visit),
+    mkdir: async (rawPath, options) => {
+      const p = posixPathOf(rawPath);
       const recursive = options?.recursive ?? false;
       const exists = isDir(p) || fileMap.has(p);
       if (recursive) {
@@ -264,7 +269,8 @@ function fakeFs(
       dirSet.add(p);
     },
     remove: async () => {},
-    realpath: async (p) => {
+    realpath: async (rawPath) => {
+      const p = posixPathOf(rawPath);
       let current = p;
       for (let i = 0; i < 40; i++) {
         let longest: string | undefined;
@@ -1398,7 +1404,7 @@ describe('WorkspaceFsService.suggest', () => {
     const readdir = backend.readdir.bind(backend);
     const reads: string[] = [];
     backend.readdir = async (path) => {
-      reads.push(path);
+      reads.push(posixPathOf(path));
       return readdir(path);
     };
     const nodeFs = makeRemoteWalkSession(backend);
@@ -1603,7 +1609,7 @@ describe('WorkspaceFsService.suggest', () => {
     const readdir = backend.readdir.bind(backend);
     const reads: string[] = [];
     backend.readdir = async (path) => {
-      reads.push(path);
+      reads.push(posixPathOf(path));
       return readdir(path);
     };
     const fs = makeRemoteWalkSession(backend);
@@ -1665,6 +1671,53 @@ describe('WorkspaceFsService.suggest', () => {
       event: 'fs_suggest_node_fallback',
       properties: { reason: 'rg_error' },
     });
+  });
+
+  function rgSpawnFailureSession(): { readonly fs: IProjectFsService; activeLeases(): number } {
+    const runner: IHostProcessService = {
+      _serviceBrand: undefined,
+      spawn: async (_command, args) => {
+        if (args?.[0] === '--version') return fakeProcess('ripgrep 15.0.0', '', 0);
+        throw new Error('spawn EAGAIN');
+      },
+    };
+    const fs = makeSession({ 'src/foo.ts': 'hello\n' }, emptyHandler, [], defaultGitStub(), [], runner);
+    let active = 0;
+    Object.defineProperty(fs, 'resolver', {
+      value: {
+        acquire: () => {
+          active += 1;
+          let released = false;
+          return {
+            environment: { process: runner },
+            track: (resource: unknown) => resource,
+            dispose: () => {
+              if (released) return;
+              released = true;
+              active -= 1;
+            },
+          };
+        },
+      },
+    });
+    Object.defineProperty(fs, 'rgResolution', { value: { path: 'rg' } });
+    return { fs, activeLeases: () => active };
+  }
+
+  it('releases the environment lease when rg fails to spawn for suggest', async () => {
+    const session = rgSpawnFailureSession();
+
+    const result = await session.fs.suggest({ query: 'foo', limit: 50, follow_gitignore: true, show_hidden: false });
+
+    expect(result.items.map((item) => item.path)).toContain('src/foo.ts');
+    expect(session.activeLeases()).toBe(0);
+  });
+
+  it('releases the environment lease when rg fails to spawn for grep', async () => {
+    const session = rgSpawnFailureSession();
+
+    await expect(session.fs.grep(WALK_GREP_REQUEST)).rejects.toThrow('spawn EAGAIN');
+    expect(session.activeLeases()).toBe(0);
   });
 
   it('falls back to the node walk when rg exits with an error status', async () => {
@@ -2204,6 +2257,71 @@ describe('WorkspaceFsService.grep', () => {
     expect(streaming?.yieldedLines()).toBeLessThan(TOTAL);
   });
 
+  it.each([
+    {
+      method: 'grep',
+      deadlineMs: 30_000,
+      call: (fs: IProjectFsService) => fs.grep(WALK_GREP_REQUEST),
+    },
+    {
+      method: 'suggest',
+      deadlineMs: 10_000,
+      call: (fs: IProjectFsService) =>
+        fs.suggest({ query: 'foo', limit: 50, follow_gitignore: true, show_hidden: false }),
+    },
+  ])('kills rg when the $method deadline aborts it', async ({ deadlineMs, call }) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let killed = false;
+      let spawned = false;
+      const runner: IHostProcessService = {
+        _serviceBrand: undefined,
+        spawn: async (_command, args) => {
+          if (args?.[0] === '--version') return fakeProcess('ripgrep 15.0.0', '', 0);
+          spawned = true;
+          const stdout = new Readable({ read() {} });
+          let exit: (code: number) => void = () => {};
+          const exited = new Promise<number>((resolve) => {
+            exit = resolve;
+          });
+          return {
+            _serviceBrand: undefined,
+            stdin: new Writable({ write(_c, _e, cb) { cb(); } }),
+            stdout,
+            stderr: Readable.from(['']),
+            pid: 1,
+            exitCode: null,
+            wait: () => exited,
+            kill: async () => {
+              killed = true;
+              stdout.push(null);
+              exit(137);
+            },
+            dispose: () => undefined,
+          };
+        },
+      };
+      const fs = makeSession({ 'src/foo.ts': 'hello\n' }, emptyHandler, [], defaultGitStub(), [], runner);
+      Object.defineProperty(fs, 'rgResolution', { value: { path: 'rg' } });
+      const settled = call(fs).then(
+        () => undefined,
+        () => undefined,
+      );
+      await vi.waitFor(() => {
+        expect(spawned).toBe(true);
+      });
+
+      await vi.advanceTimersByTimeAsync(deadlineMs);
+
+      await vi.waitFor(() => {
+        expect(killed).toBe(true);
+      });
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('searches additional roots with rg and preserves unambiguous paths', async () => {
     const rgFile = (path: string, text: string): string => [
       { type: 'begin', data: { path: { text: path } } },
@@ -2403,7 +2521,7 @@ describe('WorkspaceFsService.list', () => {
     const backend = fakeFs({ 'huge/hidden.txt': '', 'visible.txt': '' });
     const readdir = backend.readdir;
     backend.readdir = async (path) => {
-      if (path === '/repo/huge') {
+      if (posixPathOf(path) === '/repo/huge') {
         throw new HostFsError('os.fs.directory_too_large', 'Directory /repo/huge exceeds 50000 entries');
       }
       return readdir(path);

@@ -9,7 +9,7 @@ import {
   resolveKimiCodeOAuthRef,
   resolveKimiTokenStorageName,
 } from '@moonshot-ai/kimi-code-oauth';
-import { createGitRepository, createGitWorktree, type GitWorktreeLayout } from '@moonshot-ai/testkit/fixtures';
+import { createGitRepository, createGitWorktree, fakeMcpServer, type GitWorktreeLayout } from '@moonshot-ai/testkit/fixtures';
 import { createFakeModel, say } from '@moonshot-ai/testkit/model';
 import { createKimiServices } from '@moonshot-ai/testkit/services';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -3955,10 +3955,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
 });
 
 describe('SDKRpcClientV2 workspace MCP servers', () => {
-  const server = {
-    command: process.execPath,
-    args: [new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url).pathname],
-  };
+  const server = fakeMcpServer('project', { tools: [{ name: 'echo', description: 'Echoes input text', inputSchema: { properties: { text: { type: 'string' } }, required: ['text'] }, reply: { text: { argument: 'text' } } }] });
 
   async function setup() {
     vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
@@ -4095,7 +4092,7 @@ describe('SDKRpcClientV2 workspace MCP servers', () => {
     try {
       const session = await client.engineAccessor.get(ISessionManager).create({
         workDir,
-        mcpServers: { own: { transport: 'stdio', ...server, environment_id: 'local' } },
+        mcpServers: { own: { transport: 'stdio', command: server.command, args: [...server.args], environment_id: 'local' } },
       });
       const mcp = session.accessor.get(ISessionMcpHandle);
       await mcp.ready;
@@ -4111,10 +4108,7 @@ describe('SDKRpcClientV2 workspace MCP servers', () => {
 });
 
 describe('SDKRpcClientV2 MCP servers of a working directory', () => {
-  const cwdServer = {
-    command: process.execPath,
-    args: [new URL('../../agent-core-v2/test/mcpCore/fixtures/cwd-stdio-server.mjs', import.meta.url).pathname],
-  };
+  const cwdServer = fakeMcpServer('cwd', { tools: [{ name: 'get_cwd', reply: { text: { cwd: true } } }] });
 
   async function repository(): Promise<GitWorktreeLayout> {
     const base = await realpath(await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-repo-')));
@@ -4242,7 +4236,7 @@ describe('SDKRpcClientV2 MCP servers of a working directory', () => {
     const src = join(main, 'src');
     await mkdir(src);
     const client = await makeClient();
-    const mcpServers = { eph: { transport: 'stdio', ...cwdServer, environment_id: 'local' } } as const;
+    const mcpServers = { eph: { transport: 'stdio' as const, command: cwdServer.command, args: [...cwdServer.args], environment_id: 'local' } };
     try {
       for (const [start, dir] of [
         [{ workDir: main }, main],
@@ -5390,11 +5384,6 @@ describe('KimiHarness worktrees', () => {
       code: ErrorCodes.NOT_IMPLEMENTED,
     });
     await expect(SDKRpcClientBase.prototype.createWorktree({ cwd: '/tmp/repo' })).rejects.toMatchObject({
-      code: ErrorCodes.NOT_IMPLEMENTED,
-    });
-    await expect(
-      SDKRpcClientBase.prototype.runWorktreeSetupScript({ worktreePath: '/tmp/wt', sourceRoot: '/tmp/repo' }),
-    ).rejects.toMatchObject({
       code: ErrorCodes.NOT_IMPLEMENTED,
     });
     await expect(

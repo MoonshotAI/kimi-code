@@ -59,4 +59,4 @@ export class TaskListTool implements ITaskListTool {
   }
 }
 
-registerAgentToolService(ITaskListTool, TaskListTool, { name: 'TaskList', domain: 'agentTask', userConfigurable: true });
+registerAgentToolService(ITaskListTool, TaskListTool, { name: 'TaskList', domain: 'agentTask' });

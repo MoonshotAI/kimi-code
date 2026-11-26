@@ -33,7 +33,6 @@ import { permissionModeFromConfig } from '@moonshot-ai/app-core/lib';
 import { clearTurnFileHistorySession } from './turnFileHistory';
 import { ackSwarmPending, foldDaemonSwarmMode } from '@moonshot-ai/app-core/lib';
 import { ackTowerPending, foldDaemonTowerMode } from '@moonshot-ai/app-core/lib';
-import { isDefaultToolEnabled, TOWER_MODE_TOOL_NAMES } from '@moonshot-ai/app-core/lib';
 import {
   effectiveThinkingLevel,
   matchEffortSwitchRule,
@@ -525,6 +524,8 @@ function forgetSession(sessionId: string): void {
   promptStore().clearOptimisticMessages(sessionId);
   delete rawState.sessionStatusSettledBySession[sessionId];
   notifiedInteractionIdsBySession.delete(sessionId);
+  failedCompactionSettled.delete(sessionId);
+  failedCompactionErrorDue.delete(sessionId);
   promptStore().forgetLocalTurnState(sessionId);
   promptStore().clearQueued(sessionId);
   promptStore().clearInFlight(sessionId);
@@ -833,8 +834,14 @@ function mainCompacting(sessionId: string): boolean {
 }
 
 function observeMainCompaction(sessionId: string): void {
-  if (mainCompacting(sessionId)) promptStore().noteCompactionStarted(sessionId);
+  if (!mainCompacting(sessionId)) return;
+  failedCompactionSettled.delete(sessionId);
+  failedCompactionErrorDue.delete(sessionId);
+  promptStore().noteCompactionStarted(sessionId);
 }
+
+const failedCompactionSettled = new Set<string>();
+const failedCompactionErrorDue = new Set<string>();
 
 const latestCompactionKeyByEntry = new WeakMap<ConversationEntry, string | undefined>();
 
@@ -842,9 +849,13 @@ function settleMainCompaction(entry: ConversationEntry, initial: boolean): void 
   const latest = latestCompactionOf(entry.view.turns);
   const seen = latestCompactionKeyByEntry.get(entry);
   latestCompactionKeyByEntry.set(entry, latest?.key);
-  if (!initial && latest !== undefined && latest.key !== seen) {
+  if (initial || latest === undefined || latest.key === seen) return;
+  if (latest.item.error === undefined) {
     settleCompaction(entry.sessionId, 'completed', latest.item.trigger);
+    return;
   }
+  failedCompactionSettled.add(entry.sessionId);
+  settleCompaction(entry.sessionId, 'cancelled', latest.item.trigger);
 }
 
 function settleCompaction(
@@ -1956,12 +1967,20 @@ function onMainNotice(sessionId: string, notice: ConversationNotice): void {
     });
     return;
   }
-  if (notice.code === 'compaction.cancelled') settleCompaction(sessionId, 'cancelled', undefined);
+  if (notice.code === 'compaction.cancelled') {
+    if (failedCompactionSettled.delete(sessionId)) {
+      failedCompactionErrorDue.add(sessionId);
+      return;
+    }
+    settleCompaction(sessionId, 'cancelled', undefined);
+  }
   warningsStore().markSessionWarningShown(sessionId, `${notice.code ?? ''} ${notice.title}`);
   if (notice.level === 'error') {
-    if (isModelTurnErrorNotice(notice)) return;
+    const compactionFailure = failedCompactionErrorDue.delete(sessionId);
+    if (!compactionFailure && isModelTurnErrorNotice(notice)) return;
     if (sessionId === rawState.activeSessionId) return;
-    warningsStore().pushWarning(buildAgentErrorNotice(notice, t));
+    const toast = buildAgentErrorNotice(notice, t);
+    warningsStore().pushWarning(compactionFailure ? { ...toast, title: t('warnings.agentError.compactionFailed') } : toast);
     return;
   }
   warningsStore().pushWarning({ severity: notice.level, title: t('warnings.noteLabel'), message: notice.title });
@@ -2027,24 +2046,6 @@ const webTitle = computed<string>(() => rawState.webTitle);
 const experimentalFlags = computed<Record<string, boolean>>(() => rawState.experimentalFlags);
 const backend = computed<'v1' | 'v2'>(() => rawState.backend);
 const dangerousBypassAuth = computed<boolean>(() => rawState.dangerousBypassAuth);
-
-function modeAvailability(
-  toolName: string,
-  field: 'planModeAvailable' | 'swarmModeAvailable' | 'towerModeAvailable' | 'goalModeAvailable',
-): boolean {
-  const sid = sessionsStore().activeSessionId;
-  const reported = sid === undefined ? undefined : agentStatesStore().stateOf(sid, MAIN_AGENT_ID)?.[field];
-  if (reported !== undefined) return reported;
-  if (field === 'towerModeAvailable') {
-    return TOWER_MODE_TOOL_NAMES.every((name) => isDefaultToolEnabled(configStore().config?.tools, name));
-  }
-  return isDefaultToolEnabled(configStore().config?.tools, toolName);
-}
-
-const planModeAvailable = computed(() => modeAvailability('ExitPlanMode', 'planModeAvailable'));
-const swarmModeAvailable = computed(() => modeAvailability('AgentSwarm', 'swarmModeAvailable'));
-const towerModeAvailable = computed(() => modeAvailability('TowerInit', 'towerModeAvailable'));
-const goalModeAvailable = computed(() => modeAvailability('UpdateGoal', 'goalModeAvailable'));
 
 function clearDangerousBypassAuth(): void {
   rawState.dangerousBypassAuth = false;
@@ -2276,7 +2277,14 @@ export type EnsureChatReadyResult = ChatGateVerdict | 'server-auth-required';
 
 const MODEL_SWITCH_COMPACT_TIMEOUT_MS = 10 * 60 * 1000;
 
-let modelSelectGeneration = 0;
+let modelSelectSequence = 0;
+const modelSelectGenerationBySession = new Map<string | null | undefined, number>();
+
+function beginModelSelect(sessionId: string | null | undefined): number {
+  modelSelectSequence += 1;
+  modelSelectGenerationBySession.set(sessionId, modelSelectSequence);
+  return modelSelectSequence;
+}
 
 async function applySelectModel(modelId: string): Promise<void> {
   const hostId = chatHostId();
@@ -2323,7 +2331,7 @@ async function runModelSwitchAction(
   generation: number,
 ): Promise<void> {
   const isSuperseded = () =>
-    generation !== modelSelectGeneration || rawState.activeSessionId !== triggerSid;
+    modelSelectGenerationBySession.get(triggerSid) !== generation || rawState.activeSessionId !== triggerSid;
   switch (action) {
     case 'cancel':
       return;
@@ -2339,6 +2347,7 @@ async function runModelSwitchAction(
       }
       const sid = triggerSid;
       if (isSuperseded()) return;
+      const fromModel = rawState.sessions.find((s) => s.id === sid)?.model;
       const request = sessionActions.compact(
         undefined,
         modelSwitchConfirmStore().hasCompactionWait(sid)
@@ -2357,17 +2366,15 @@ async function runModelSwitchAction(
       const outcome = await modelSwitchConfirmStore().waitCompactionSettled(sid, MODEL_SWITCH_COMPACT_TIMEOUT_MS);
       try {
         if (outcome === 'request-failed') return;
-        if (generation !== modelSelectGeneration) return;
+        if (modelSelectGenerationBySession.get(sid) !== generation) return;
         if (outcome === 'completed') {
-          if (rawState.activeSessionId !== sid) {
-            warningsStore().pushOperationFailure(
-              'modelSwitch',
-              new Error('session changed while compacting'),
-              { sessionId: sid, message: t('model.switchCompactAborted') },
-            );
-            return;
+          const session = rawState.sessions.find((s) => s.id === sid);
+          if (session === undefined || session.model !== fromModel) return;
+          if (rawState.activeSessionId === sid) {
+            await applySelectModel(modelId);
+          } else {
+            await modelProvider.setSessionModel(sid, modelId);
           }
-          await applySelectModel(modelId);
           return;
         }
         warningsStore().pushOperationFailure(
@@ -2383,15 +2390,14 @@ async function runModelSwitchAction(
 }
 
 async function selectModel(modelId: string): Promise<void> {
-  modelSelectGeneration += 1;
-  const generation = modelSelectGeneration;
   const triggerSid = rawState.activeSessionId;
+  const generation = beginModelSelect(triggerSid);
   const readiness: Promise<unknown>[] = [];
   if (modelSwitchConfirmStore().needsLoad()) readiness.push(modelSwitchConfirmStore().refresh());
   if (configStore().config === null) readiness.push(configStore().loadConfig());
   if (readiness.length > 0) {
     await Promise.all(readiness);
-    if (generation !== modelSelectGeneration || rawState.activeSessionId !== triggerSid) return;
+    if (modelSelectGenerationBySession.get(triggerSid) !== generation || rawState.activeSessionId !== triggerSid) return;
   }
   const matched = matchedModelSwitchRuleForActiveSession(modelId);
   if (matched === undefined) {
@@ -3483,10 +3489,6 @@ export function useKimiWebClient() {
     planArmed,
     swarmMode,
     towerMode,
-    planModeAvailable,
-    swarmModeAvailable,
-    towerModeAvailable,
-    goalModeAvailable,
     goalMode,
     queued,
     promptPrediction: computed(() => {
@@ -3520,7 +3522,7 @@ export function useKimiWebClient() {
     isStartingFirstPrompt,
 
     models: modelProvider.models,
-    starredModelIds: modelProvider.starredModelIds,
+    recentModelIds: modelProvider.recentModelIds,
     providers: modelProvider.providers,
 
     fontScale: appearance.fontScale,
@@ -3717,8 +3719,10 @@ export function useKimiWebClient() {
     skillsLoaded,
     activateSkill: modelProvider.activateSkill,
     selectModel,
-    setSessionModel: modelProvider.setSessionModel,
-    toggleStarModel: modelProvider.toggleStarModel,
+    setSessionModel: (sessionId: string, modelId: string, thinking?: ThinkingLevel) => {
+      beginModelSelect(sessionId);
+      return modelProvider.setSessionModel(sessionId, modelId, thinking);
+    },
     addProvider: modelProvider.addProvider,
     updateProvider: modelProvider.updateProvider,
     getProvider: modelProvider.getProvider,

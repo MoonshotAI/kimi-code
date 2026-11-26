@@ -1,7 +1,6 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { RequestError, type NewSessionResponse, type RequestPermissionRequest } from '@agentclientprotocol/sdk';
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
@@ -13,10 +12,6 @@ import { AcpSession, mapPromptLaunchError } from '../src/session';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { writeFakeModelConfig, type FakeModelConfigOptions } from './_helpers/fakeModelConfig';
 import { solidPngBase64 } from './_helpers/png';
-
-const STDIO_MCP_FIXTURE = fileURLToPath(
-  new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url),
-);
 
 describe('acp-server real prompt turn (scripted LLM)', () => {
   let homeDir: string | undefined;
@@ -100,6 +95,33 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(usageUpdate?.size).toBe(262144);
     expect(usageUpdate?.used).toBeGreaterThan(0);
     expect(usageUpdate?.cost).toBeUndefined();
+  }, 30_000);
+
+  it('replays a file tool card at the session directory, even when the editor loads the session from another one', async () => {
+    const c = await boot();
+    const project = join(homeDir!, 'project');
+    const elsewhere = join(homeDir!, 'elsewhere');
+    await mkdir(project);
+    await mkdir(elsewhere);
+    await writeFile(join(project, 'notes.txt'), 'hello\n');
+    model!.script(call('Read', { path: 'notes.txt' }, { id: 'call_read' }), say('read it'));
+
+    const created = (await c.send('session/new', { cwd: project, mcpServers: [] })) as { sessionId: string };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+    await c.send('session/prompt', { sessionId: created.sessionId, prompt: [{ type: 'text', text: 'read the notes' }] });
+
+    const beforeLoad = c.sessionUpdates().length;
+    await c.send('session/load', { sessionId: created.sessionId, cwd: elsewhere, mcpServers: [] });
+    type ToolCallWire = { sessionUpdate?: string; toolCallId?: string; locations?: Array<{ path: string }> };
+    const replayed = c
+      .sessionUpdates()
+      .slice(beforeLoad)
+      .map((m) => (m.params as { update?: ToolCallWire }).update)
+      .find((u) => u?.sessionUpdate === 'tool_call' && u.toolCallId?.endsWith(':call_read'));
+    const located = replayed?.locations?.[0]?.path;
+
+    expect(located).toBeDefined();
+    expect(await realpath(located!)).toBe(await realpath(join(project, 'notes.txt')));
   }, 30_000);
 
   it.each([
@@ -204,6 +226,31 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       .find((u) => u?.sessionUpdate === 'tool_call_update' && u?.status === 'completed');
     expect(terminal).toBeDefined();
     expect(model!.requests()[1]?.rawBody).toContain('hello_from_bash');
+  }, 30_000);
+
+  it('keeps a command card on the editor terminal, without repeating its output as text, when the editor offers terminals', async () => {
+    const c = await boot({ terminal: true });
+    model!.script(call('Bash', { command: 'printf terminal_probe' }, { id: 'call_term' }), say('ran it'));
+    c.onRequest('session/request_permission', () => ({
+      outcome: { outcome: 'selected', optionId: 'approve_once' },
+    }));
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as { sessionId: string };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+
+    const result = (await c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'run it' }],
+    })) as { stopReason: string };
+    expect(result.stopReason).toBe('end_turn');
+    expect(model!.requests()[1]?.rawBody).toContain('delta_stream');
+
+    type ToolCallWire = { sessionUpdate?: string; toolCallId?: string; content?: Array<{ type: string }> };
+    const cardUpdates = c
+      .sessionUpdates()
+      .map((m) => (m.params as { update?: ToolCallWire }).update)
+      .filter((u) => u?.sessionUpdate === 'tool_call_update' && u.toolCallId?.endsWith(':call_term'));
+    expect(cardUpdates.at(-1)?.content).toEqual([{ type: 'terminal', terminalId: 'term-1' }]);
+    expect(JSON.stringify(cardUpdates)).not.toContain('delta_stream');
   }, 30_000);
 
   it('bridges AskUserQuestion through elicitation/create for form-capable clients', async () => {
@@ -589,6 +636,44 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     ).toBe(true);
     expect(updates.some((u) => u?.title === 'raw-stdout-bytes')).toBe(false);
   }, 30_000);
+
+  it('shows what a running command has printed when the editor offers no terminal', async () => {
+    const c = await boot();
+    model!.script(call('Bash', { command: "printf 'rea%s\\n' dy; sleep 30" }, { id: 'call_slow' }));
+    c.onRequest('session/request_permission', () => ({
+      outcome: { outcome: 'selected', optionId: 'approve_once' },
+    }));
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as { sessionId: string };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+    const promptPromise = c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'run the slow command' }],
+    });
+
+    type ToolCallWire = {
+      sessionUpdate?: string;
+      toolCallId?: string;
+      status?: string;
+      content?: Array<{ type: string; content?: { type: string; text?: string } }>;
+    };
+    const cardUpdates = () =>
+      c
+        .sessionUpdates()
+        .map((m) => (m.params as { update?: ToolCallWire }).update)
+        .filter((u) => u?.sessionUpdate === 'tool_call_update' && u.toolCallId?.endsWith(':call_slow'))
+        .map((u) => ({ status: u?.status, text: (u?.content ?? []).map((part) => part.content?.text ?? '').join('') }));
+    await vi.waitFor(() => {
+      expect(cardUpdates().map((u) => u.text)).toContain('ready\n');
+    }, 10_000);
+    expect(cardUpdates().map((u) => u.status)).not.toEqual(expect.arrayContaining(['completed']));
+    expect(cardUpdates().map((u) => u.status)).not.toEqual(expect.arrayContaining(['failed']));
+
+    c.notify('session/cancel', { sessionId: created.sessionId });
+    const result = (await promptPromise) as { stopReason: string };
+    expect(result.stopReason).toBe('cancelled');
+    expect(cardUpdates().at(-1)?.status).toBe('failed');
+    expect(cardUpdates().at(-1)?.text).toContain('ready');
+  }, 30_000);
 });
 
 describe('mapPromptLaunchError', () => {
@@ -777,7 +862,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
           type: 'http',
           name: 'mock',
           url: 'http://127.0.0.1:1/mcp',
-          headers: [{ name: 'X-Test-Fixture', value: STDIO_MCP_FIXTURE }],
+          headers: [{ name: 'X-Test-Fixture', value: 'example' }],
         },
       ],
     })) as { sessionId: string };

@@ -8,6 +8,7 @@ import {
   type ProtocolCodec,
   type ResolvedUsage,
 } from '#/model/protocols/codec';
+import { pickedFields, promptSegment, type PromptPrefix } from '#/model/prompt-cache';
 import { asArray, asRecord, optionalString, stringOf } from '#/model/protocols/json';
 import type { ErrorSpec, ReplyStep, RequestView, ToolCallSpec, ViewCall, ViewMessage, ViewPart } from '#/model/types';
 import { textOfParts } from '#/model/view';
@@ -16,6 +17,7 @@ export const googleCodec: ProtocolCodec = {
   name: 'google',
   matches: (path) => path.includes(':streamGenerateContent') || path.includes(':generateContent'),
   parseRequest,
+  promptPrefix,
   encodeStream(step, context) {
     const emissions = emissionsOf({ ...step, interleaveCalls: false }, (callIndex, call) => context.callId(callIndex, call));
     const segments = emissions.flatMap((emission, unit) => {
@@ -126,6 +128,37 @@ function statusOf(status: number): string {
   }
 }
 
+function modelOfPath(path: string): string | undefined {
+  return /\/models\/([^/:]+):/.exec(path)?.[1];
+}
+
+function promptPrefix(body: unknown, path: string): PromptPrefix {
+  const record = asRecord(body);
+  const declarations = asArray(record['tools']).flatMap((tool) => {
+    const functions = asRecord(tool)['functionDeclarations'];
+    return functions === undefined ? [tool] : asArray(functions);
+  });
+  return {
+    model: modelOfPath(path),
+    segments: [
+      promptSegment('params', 'params', {
+        model: modelOfPath(path),
+        ...pickedFields(asRecord(record['generationConfig']), ['thinkingConfig', 'responseMimeType', 'responseJsonSchema', 'responseSchema']),
+      }),
+      ...(record['systemInstruction'] === undefined ? [] : [promptSegment('system', 'systemInstruction', record['systemInstruction'])]),
+      ...declarations.map((declaration, index) => promptSegment('tools', `tools[${index}] ${stringOf(asRecord(declaration)['name'])}`, declaration)),
+      ...asArray(record['contents']).flatMap((raw, index) => {
+        const content = asRecord(raw);
+        const label = `contents[${index}] ${stringOf(content['role'])}`;
+        return [
+          promptSegment('messages', label, { ...content, parts: undefined }),
+          ...asArray(content['parts']).map((part, position) => promptSegment('messages', `${label} parts[${position}]`, part)),
+        ];
+      }),
+    ],
+  };
+}
+
 function parseRequest(body: unknown, path: string): RequestView {
   const record = asRecord(body);
   const contents = asArray(record['contents']);
@@ -135,6 +168,7 @@ function parseRequest(body: unknown, path: string): RequestView {
     const content = asRecord(raw);
     const role = content['role'] === 'model' ? 'assistant' : 'user';
     const wireParts = asArray(content['parts']);
+    const contentMessages: ViewMessage[] = [];
     let parts: ViewPart[] = [];
     const calls: ViewCall[] = [];
     const reasoning: string[] = [];
@@ -146,13 +180,13 @@ function parseRequest(body: unknown, path: string): RequestView {
         calls.push({ id: callIds.forCall(name, functionCall['id']), name, arguments: JSON.stringify(functionCall['args'] ?? {}) });
       } else if (part['functionResponse'] !== undefined) {
         if (role === 'user' && parts.length > 0) {
-          messages.push({ role, text: textOfParts(parts), parts, calls: [] });
+          contentMessages.push({ role, text: textOfParts(parts), parts, calls: [] });
           parts = [];
         }
         const response = asRecord(part['functionResponse']);
         const name = stringOf(response['name']);
         const text = JSON.stringify(response['response'] ?? {});
-        messages.push({ role: 'tool', text, parts: [{ type: 'text', text }], calls: [], callId: callIds.forResult(name, response['id']) });
+        contentMessages.push({ role: 'tool', text, parts: [{ type: 'text', text }], calls: [], callId: callIds.forResult(name, response['id']) });
       } else if (part['thought'] === true) {
         reasoning.push(stringOf(part['text']));
       } else {
@@ -160,13 +194,14 @@ function parseRequest(body: unknown, path: string): RequestView {
       }
     }
     if (role === 'assistant') {
-      messages.push({ role, text: textOfParts(parts), parts, calls, reasoning: reasoning.length === 0 ? undefined : reasoning.join('') });
+      contentMessages.push({ role, text: textOfParts(parts), parts, calls, reasoning: reasoning.length === 0 ? undefined : reasoning.join('') });
     } else if (parts.length > 0 || wireParts.length === 0) {
-      messages.push({ role, text: textOfParts(parts), parts, calls: [] });
+      contentMessages.push({ role, text: textOfParts(parts), parts, calls: [] });
     }
+    messages.push(...withOpeningPartsAfterTheirResults(contentMessages));
   }
   return {
-    model: /\/models\/([^/:]+):/.exec(path)?.[1],
+    model: modelOfPath(path),
     stream: path.includes(':streamGenerateContent'),
     system: asArray(asRecord(record['systemInstruction'])['parts'])
       .map((part) => stringOf(asRecord(part)['text']))
@@ -183,6 +218,14 @@ function parseRequest(body: unknown, path: string): RequestView {
     ),
     messages,
   };
+}
+
+function withOpeningPartsAfterTheirResults(contentMessages: readonly ViewMessage[]): readonly ViewMessage[] {
+  const [opening, ...rest] = contentMessages;
+  const firstAfterResults = rest.findIndex((message) => message.role !== 'tool');
+  const resultCount = firstAfterResults === -1 ? rest.length : firstAfterResults;
+  if (opening?.role !== 'user' || resultCount === 0) return contentMessages;
+  return [...rest.slice(0, resultCount), opening, ...rest.slice(resultCount)];
 }
 
 class GoogleToolCallIds {

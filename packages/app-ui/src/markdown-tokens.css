@@ -54,11 +54,7 @@
 
   --markdown-text-color: light-dark(rgb(0 0 0 / 90%), rgb(255 255 255 / 84%));
   --markdown-secondary-icon-color: light-dark(rgb(0 0 0 / 45%), rgb(255 255 255 / 42%));
-  --markdown-link-color: light-dark(#0f6ef2, #3393ff);
-  --markdown-link-hover-background: color-mix(in srgb, var(--markdown-link-color) 10%, transparent);
-  --markdown-link-padding-block: 0.125rem;
-  --markdown-link-padding-inline: 0.25rem;
-  --markdown-link-radius: 0.25rem;
+  --markdown-link-color: var(--color-link);
   --markdown-border-color: light-dark(rgb(0 0 0 / 13%), rgb(255 255 255 / 12%));
   --markdown-quote-rule-color: light-dark(rgb(0 0 0 / 15%), rgb(255 255 255 / 18%));
   --markdown-inline-code-background: var(--color-selected);

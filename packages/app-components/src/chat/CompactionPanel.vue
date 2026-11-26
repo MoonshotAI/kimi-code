@@ -35,7 +35,7 @@ const assumedFilePathResolver = computed(() =>
 
 <template>
   <section class="cp" :aria-label="t('panel.tabs.compaction')">
-    <ScrollArea v-if="displayText" class="cp-scroll">
+    <ScrollArea v-if="displayText" class="cp-scroll" data-panel-content>
       <div class="cp-doc">
         <Markdown
           :text="displayText"
@@ -45,7 +45,7 @@ const assumedFilePathResolver = computed(() =>
         />
       </div>
     </ScrollArea>
-    <div v-else class="cp-empty">
+    <div v-else class="cp-empty" data-panel-content>
       <EmptyState :title="t('panel.compactionUnavailable')" />
     </div>
   </section>

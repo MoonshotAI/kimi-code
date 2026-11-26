@@ -679,6 +679,7 @@ describe('Session.prompt events', () => {
       await runPrompt(source, 'first question', 'first answer');
       await runPrompt(source, 'second question', 'second answer');
       await runPrompt(source, 'third question', 'third answer');
+      model.expectCacheBreak('undo rewrites the history', { at: 'history' });
       await source.undoHistory(1);
       await source.close();
 
@@ -857,6 +858,7 @@ describe('Session.prompt events', () => {
       await runPrompt(source, 'kept prompt one', 'kept answer one');
       await runPrompt(source, 'kept prompt two', 'kept answer two');
       await runPrompt(source, 'retracted prompt', 'retracted answer');
+      model.expectCacheBreak('undo rewrites the history', { at: 'history' });
       await source.undoHistory(1);
       await runPrompt(source, 'follow-up prompt', 'follow-up answer');
 
@@ -1088,7 +1090,7 @@ async function configureFakeProvider(harness: KimiHarness): Promise<void> {
   await harness.setConfig({
     providers: {
       local: {
-        type: 'openai',
+        type: 'kimi',
         baseUrl: 'https://model.example.test/v1',
         apiKey: 'sk-test',
       },

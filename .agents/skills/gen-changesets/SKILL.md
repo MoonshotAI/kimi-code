@@ -7,7 +7,7 @@ description: Use when generating changesets in the kimi-code repository — deci
 
 ## Products And Libraries
 
-Three user-facing products live under `apps/`. Every workspace package under `packages/` is a dependency library.
+Three user-facing products live under `apps/`. Workspace packages under `packages/` are dependency libraries, except the private `packages/app-*` UI layers.
 
 | Product | Package | Path | Ships via |
 |---|---|---|---|
@@ -15,17 +15,19 @@ Three user-facing products live under `apps/`. Every workspace package under `pa
 | Desktop | `kimi-code-app` | `apps/desktop` | GitHub Release + CDN |
 | VS Code extension | `kimi-code` | `apps/vscode` | VS Marketplace + Open VSX |
 
+`kimi web` is not a separate package: it serves the browser UI built from `apps/desktop/src/renderer` and `packages/app-*`, bundled inside `@moonshot-ai/kimi-code`. Web-facing entries therefore go on `@moonshot-ai/kimi-code`.
+
 Product changesets are user-facing changelog entries (they feed release notes, update dialogs, and marketplace changelogs). Library changesets are technical entries for the library's own changelog.
 
 ## 1. Whether To Write
 
-- **Changed a product's code and users can perceive it** → write for that product.
-- **Changed a library's source code** → always write for that library, even for internal refactors; the library's own changelog is the honest record of what changed. Test-only and docs-only changes are exempt.
+- **Changed a product's code and users can perceive it** → write for that product (see section 2 for desktop vs. `kimi web`).
+- **Changed a library's source code** → always write for that library, even for internal refactors; the library's own changelog is the honest record of what changed. Test-only and docs-only changes are exempt. **Never write a library changeset for `packages/app-*`** — they are private UI layers bundled into the apps, not published libraries.
 - **Changed public KAP (HTTP API) behavior that external callers can perceive** → write for the owning package (for example `kap-server`); hidden first-party endpoints (`hide: true`) are exempt.
 - **A library change flows into a product and is user-perceivable there** → also write for the product, as a separate file with a user-facing sentence.
   - Changed `kap-server`'s session-list behavior → a `kap-server` entry; desktop embeds kap-server and users feel the change → a `kimi-code-app` entry too.
   - `agent-core-v2` internal refactor (wire / journal / lifecycle plumbing) → an `agent-core-v2` entry only.
-- The packages ignored in `.changeset/config.json` (the `app-*` UI layers, `vite-preset`, the vis packages, and `kimi-inspect`) never appear in a changeset. Changes to the `app-*` UI layers are written as `kimi-code-app` product entries instead.
+- **Never write changesets for `packages/app-*` or packages ignored in `.changeset/config.json`**, even if an `app-*` package is missing from the `ignore` list. User-perceivable changes in `packages/app-*` are written as `kimi-code-app` product entries by default instead.
 - When unsure whether users can perceive a change, ask first.
 
 ## 2. Which Package
@@ -33,9 +35,23 @@ Product changesets are user-facing changelog entries (they feed release notes, u
 - `apps/kimi-code/**` → `@moonshot-ai/kimi-code`
 - `apps/desktop/**` → `kimi-code-app`
 - `apps/vscode/**` → `kimi-code`
-- `packages/<lib>/**` → `<lib>`, plus one entry per affected product when the change is user-perceivable there.
+- `packages/app-*` → no package entry; write `kimi-code-app` when user-perceivable (subject to the desktop/web rule below).
+- `packages/<lib>/**` (other libraries) → `<lib>`, plus one entry per affected product when the change is user-perceivable there.
 
-To judge whether a library change reaches a product, check its consumers (`pnpm why <pkg>`). Common flows: `kap-server` → CLI (`kimi web`) and desktop (embedded server); `agent-core` / `pi-tui` → CLI; `oauth` → all three products.
+### Desktop vs. `kimi web`
+
+Desktop and `kimi web` share `apps/desktop/src/renderer` and `packages/app-*`, **but a desktop change does not automatically get a `kimi web` entry**. Do not mirror desktop entries onto `@moonshot-ai/kimi-code`:
+
+- **Desktop-only** (`apps/desktop/src/main/**`, `apps/desktop/src/shared/**`, or `isDesktop` branches such as the updater, tray, native menus, window chrome, and screenshots) → `kimi-code-app` only. These never run in `kimi web`.
+- **Shared UI and session behavior** (`apps/desktop/src/renderer/**`, `packages/app-*`, shared `kap-server` behavior) → `kimi-code-app` only by default, even though `kimi web` ships the same code.
+
+Add a `@moonshot-ai/kimi-code` entry **only when the change specifically targets `kimi web`**, and name `kimi web` in the sentence:
+
+- `kimi web` CLI flags, daemon lifecycle, token/host handling, or serving `web-dist`.
+- Browser-only behavior: `!isDesktop` branches, web-only routes, browser APIs, CSP, or insecure/non-loopback browser contexts.
+- If the change fixes both a web-specific path and desktop, write both entries; otherwise write only `@moonshot-ai/kimi-code`.
+
+To judge whether a library change reaches a product, check its consumers (`pnpm why <pkg>`). Common flows: `kap-server` → CLI (`kimi web`) and desktop (embedded server); `agent-core` / `pi-tui` → CLI; `oauth` → all three products. When a flow reaches both desktop and `kimi web`, apply the desktop/web rule above instead of writing both product entries.
 
 One PR may carry several changesets — a library plus affected products, or several products changed at once. Never mix packages ignored in the config with non-ignored packages in one frontmatter.
 

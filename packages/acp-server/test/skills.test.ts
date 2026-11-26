@@ -288,4 +288,43 @@ describe('acp-server skills / available commands', () => {
       'acp-fixture',
     );
   }, 30_000);
+
+  it('replays a sub-skill on session/load under the command name the session advertises', async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'acp-skills-sub-'));
+    model = createFakeModel();
+    await model.listen();
+    await writeFakeModelConfig(homeDir, { baseUrl: model.origin });
+    const bundle = join(homeDir, '.kimi-code', 'skills', 'bundle');
+    await mkdir(join(bundle, 'child'), { recursive: true });
+    await writeFile(
+      join(bundle, 'SKILL.md'),
+      '---\nname: bundle\ndescription: Bundle skill\nhas-sub-skill: true\n---\n\nBundle body.\n',
+    );
+    await writeFile(
+      join(bundle, 'child', 'SKILL.md'),
+      '---\nname: child\ndescription: Child skill\n---\n\nAlways answer with the word CHILD.\n',
+    );
+    const c = await createTestClient({ homeDir });
+    client = c;
+    await c.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+    model.script(say('CHILD'));
+    const sessionId = await newSession(c);
+
+    const result = (await c.send('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: '/bundle.child some args' }],
+    })) as { stopReason: string };
+    expect(result.stopReason).toBe('end_turn');
+    expect(model.requests()[0]?.rawBody).toContain('Always answer with the word CHILD');
+
+    const beforeLoad = c.sessionUpdates().length;
+    await c.send('session/load', { sessionId, cwd: homeDir, mcpServers: [] });
+    const replayedUserTexts = c
+      .sessionUpdates()
+      .slice(beforeLoad)
+      .map((m) => (m.params as { update?: { sessionUpdate?: string; content?: { text?: string } } }).update)
+      .flatMap((update) => (update?.sessionUpdate === 'user_message_chunk' ? [update.content?.text] : []));
+
+    expect(replayedUserTexts).toEqual(['/bundle.child some args']);
+  }, 30_000);
 });

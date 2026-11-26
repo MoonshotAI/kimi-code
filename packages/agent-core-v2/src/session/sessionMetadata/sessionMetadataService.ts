@@ -34,6 +34,16 @@ export async function drainSessionMetadataWrites(): Promise<void> {
   await Promise.all(pendingWrites);
 }
 
+function trackPendingWrite(write: Promise<unknown>): Promise<void> {
+  const tracked = write.then(
+    () => undefined,
+    () => undefined,
+  );
+  pendingWrites.add(tracked);
+  void tracked.finally(() => pendingWrites.delete(tracked));
+  return tracked;
+}
+
 export const sessionMetadataDataKey = defineState<SessionMeta | undefined>(
   'sessionMetadata.data',
   () => undefined,
@@ -82,6 +92,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     this.scope = ctx.metaScope;
     this.onDidChangeMetadata = this._onDidChangeMetadata.event;
     this.ready = this.load();
+    void trackPendingWrite(this.ready);
   }
 
   private get data(): SessionMeta {
@@ -216,13 +227,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
 
   private enqueueUpdate<T>(work: () => Promise<T>): Promise<T> {
     const run = this.updateQueue.then(work, work);
-    const tracked: Promise<void> = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    this.updateQueue = tracked;
-    pendingWrites.add(tracked);
-    void tracked.finally(() => pendingWrites.delete(tracked));
+    this.updateQueue = trackPendingWrite(run);
     return run;
   }
 
