@@ -167,9 +167,6 @@ const nativeMenu = useNativeMenuHost()?.register({
     else if (id === 'select-all') selectAll();
     else if (id === 'add-to-chat') addToChat();
   },
-  onClose: ({ reason }) => {
-    if (reason !== 'action') restoreWrapperFocus();
-  },
 });
 
 function closeMenu(): void {

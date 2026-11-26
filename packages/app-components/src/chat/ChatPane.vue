@@ -545,6 +545,18 @@ function onChatPointerdown(): void {
   selectionKeyboard.value = false;
 }
 
+function onChatKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const wrapper = target.closest<HTMLElement>('.table-node-wrapper');
+  if (!wrapper || tableSelectionContextText(target) === null) return;
+  event.preventDefault();
+  if (selectionBubble.value !== null) onSelectionBubbleClose();
+  const rect = wrapper.getBoundingClientRect();
+  void tableSelectionMenuRef.value?.show(wrapper, rect.x, rect.bottom, true);
+}
+
 function onChatContextMenu(event: MouseEvent): void {
   openFileContextMenu(event, props.cwd);
   if (event.defaultPrevented) {
@@ -560,7 +572,7 @@ function onChatContextMenu(event: MouseEvent): void {
       event.preventDefault();
       selectionPointerDown = false;
       if (selectionBubble.value !== null) onSelectionBubbleClose();
-      void tableSelectionMenuRef.value?.show(wrapper, event.clientX, event.clientY, event.button === -1);
+      void tableSelectionMenuRef.value?.show(wrapper, event.clientX, event.clientY);
       return;
     }
   }
@@ -1354,7 +1366,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 </script>
 
 <template>
-  <div class="chat" :class="{ 'chat-unwindowed': !windowHistory }" :data-first-kind="turns[0]?.role" ref="chatRootRef" tabindex="-1" @mouseup="onChatMouseup" @keyup="onChatKeyup" @pointerdown="onChatPointerdown" @contextmenu="onChatContextMenu">
+  <div class="chat" :class="{ 'chat-unwindowed': !windowHistory }" :data-first-kind="turns[0]?.role" ref="chatRootRef" tabindex="-1" @mouseup="onChatMouseup" @keydown="onChatKeydown" @keyup="onChatKeyup" @pointerdown="onChatPointerdown" @contextmenu="onChatContextMenu">
     <BrowserReferenceDetails :state="browserDetails.state.value" @resolve="browserDetails.finish" />
     <div v-if="sessionLoadingVisible" :ref="transcriptAux('loading')" class="chat-loading">
       <Spinner size="sm" />

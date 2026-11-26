@@ -183,8 +183,8 @@ function flushConfig(entry: BrowserOverlayEntry): void {
   } else {
     const [contentWidth, contentHeight] = hostContentSize(entry.host).map(size => size / entry.zoom) as [number, number];
     const maxWidth = Math.max(1, contentWidth - BROWSER_OVERLAY_GUTTER * 2);
-    current.viewportWidth = Math.max(1, Math.floor(contentWidth));
-    current.viewportHeight = Math.max(1, Math.floor(contentHeight));
+    current.viewportWidth = Math.min(16384, Math.max(1, Math.floor(contentWidth)));
+    current.viewportHeight = Math.min(16384, Math.max(1, Math.floor(contentHeight)));
     if (current.autoWidth === true) {
       if (current.width !== undefined) current.minWidth = Math.min(current.minWidth ?? current.width, maxWidth);
       else if (current.minWidth !== undefined) current.minWidth = Math.min(current.minWidth, maxWidth);

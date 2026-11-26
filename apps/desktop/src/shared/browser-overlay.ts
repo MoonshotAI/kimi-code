@@ -225,7 +225,7 @@ export function asBrowserOverlayMenuRequest(value: unknown): BrowserOverlayMenuR
   return {
     menuId: request.menuId, anchor, items, placement: request.placement ?? 'bottom-end',
     offset: Math.round(request.offset ?? 4),
-    ...(request.width === undefined ? {} : { width: Math.round(request.width) }),
+    ...(request.width === undefined && request.autoWidth === true ? {} : { width: Math.round(request.width ?? 220) }),
     ...(request.refresh === true ? { refresh: true } : {}),
     ...(request.initialFocus === undefined ? {} : { initialFocus: request.initialFocus }),
     ...(request.autoWidth === true ? { autoWidth: true } : {}),
