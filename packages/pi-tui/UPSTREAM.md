@@ -273,6 +273,6 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 ### component-click-horizontal-cell-tolerance — keep
 
-**Decision:** Component-handled pointer gestures synthesize `click` (and preserve consecutive `clickCount`) when the pointer stays on the pressed row and within at most 1 horizontal column (`|dx| <= 1`, `dy === 0`) between `press` and `release`, dispatching `click` at the release coordinates.
+**Decision:** Component-handled pointer gestures synthesize `click` (and preserve consecutive `clickCount`) when the pointer stays on the pressed row and within at most 1 horizontal column (`|dx| <= 1`, `dy === 0`) between `press` and `release`, dispatching `click` at the pressed coordinates.
 
 **Why not in the app:** `TuiAltScreen.handleMouseEvent` suppresses `click` synthesis before calling component mouse handlers whenever `mousePressMoved` flips.

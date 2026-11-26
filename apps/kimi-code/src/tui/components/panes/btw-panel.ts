@@ -15,6 +15,7 @@ import {
 
 import { CHROME_GUTTER, THINKING_PREVIEW_LINES } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
+import type { ColorPalette } from '#/tui/theme/colors';
 import type { KimiMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import type { InlineSkillActivation } from '#/tui/types';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
@@ -45,6 +46,7 @@ interface BtwBodyRender {
 interface TurnLinesCache {
   readonly revision: number;
   readonly width: number;
+  readonly palette: ColorPalette;
   readonly lines: readonly string[];
 }
 
@@ -290,7 +292,7 @@ export class BtwPanelComponent extends VStack {
     const targetUncapped = Math.max(this.minBodyLines, lineCount);
     const target = bodyLimit === undefined ? targetUncapped : Math.min(bodyLimit, targetUncapped);
     this.minBodyLines = Math.max(this.minBodyLines, target);
-    return this.minBodyLines;
+    return target;
   }
 
   private renderUnclippedBody(width: number): readonly string[] {
@@ -301,12 +303,17 @@ export class BtwPanelComponent extends VStack {
 
   private getTurnLines(width: number): readonly string[] {
     const safeWidth = Math.max(1, width);
+    const palette = currentTheme.palette;
     const cached = this.turnLinesCache;
-    if (cached?.revision === this.contentRevision && cached.width === safeWidth) {
+    if (
+      cached?.revision === this.contentRevision &&
+      cached.width === safeWidth &&
+      cached.palette === palette
+    ) {
       return cached.lines;
     }
     const lines = this.collectTurnLines(safeWidth);
-    this.turnLinesCache = { revision: this.contentRevision, width: safeWidth, lines };
+    this.turnLinesCache = { revision: this.contentRevision, width: safeWidth, palette, lines };
     return lines;
   }
 

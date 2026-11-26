@@ -1,8 +1,11 @@
 import { ScrollView, Text, TuiAltScreen, VStack } from '@moonshot-ai/pi-tui';
 import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
+import chalk from 'chalk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
+import { currentTheme } from '#/tui/theme';
+import { darkColors, lightColors } from '#/tui/theme/colors';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 
 function strip(text: string): string {
@@ -35,8 +38,9 @@ describe('BtwPanelComponent', () => {
     expect(done).toContain('┌');
   });
 
-  it('bounds regular-mode render height to one third of terminal rows', () => {
-    const panel = makePanel({ terminalRows: () => 15 });
+  it('bounds regular-mode render height to one third of terminal rows and shrinks when terminal rows decrease', () => {
+    let rows = 15;
+    const panel = makePanel({ terminalRows: () => rows });
     panel.submit('long answer');
     panel.appendAnswer(Array.from({ length: 20 }, (_, i) => `line ${String(i + 1)}`).join('\n'));
     panel.markDone();
@@ -45,6 +49,32 @@ describe('BtwPanelComponent', () => {
     expect(rendered).toHaveLength(5);
     expect(rendered[0]).toMatch(/^╭ BTW ─ Esc close ─+╮$/);
     expect(rendered.at(-1)).toContain('line 20');
+
+    rows = 4;
+    const shrunk = panel.render(50).map(strip);
+    expect(shrunk).toHaveLength(3);
+    expect(shrunk.at(-1)).toContain('line 20');
+  });
+
+  it('refreshes cached turn styling when theme palette changes without explicit invalidate', () => {
+    const previousLevel = chalk.level;
+    const previousPalette = currentTheme.palette;
+    try {
+      chalk.level = 3;
+      currentTheme.setPalette(darkColors);
+      const panel = makePanel();
+      panel.submit('theme check');
+      panel.appendAnswer('hello world');
+      panel.markDone();
+      const darkPromptLine = panel.render(50)[1];
+
+      currentTheme.setPalette(lightColors);
+      const lightPromptLine = panel.render(50)[1];
+      expect(lightPromptLine).not.toBe(darkPromptLine);
+    } finally {
+      currentTheme.setPalette(previousPalette);
+      chalk.level = previousLevel;
+    }
   });
 
   it('supports fullscreen Box + ScrollView wheel scrolling, overscroll containment, clean copy without borders, and top-bar close click', async () => {
