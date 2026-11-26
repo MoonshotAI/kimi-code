@@ -1,4 +1,4 @@
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path/posix';
 import { Readable, Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -82,6 +82,10 @@ function workspaceGitStub(git: IGitService): IProjectGitService {
   };
 }
 
+function posixPathOf(path: string): string {
+  return path.replaceAll('\\', '/');
+}
+
 function fakeFs(
   files: Record<string, string | Buffer>,
   symlinks: readonly string[] = [],
@@ -130,7 +134,7 @@ function fakeFs(
     return err;
   };
   const resolveSymlinks = (p: string): string => {
-    let cur = p;
+    let cur = posixPathOf(p);
     for (let hops = 0; hops < 10; hops += 1) {
       let longest: string | undefined;
       for (const linkPath of symlinkTargetMap.keys()) {
@@ -154,7 +158,7 @@ function fakeFs(
     return `${resolveSymlinks(p.slice(0, slash))}${p.slice(slash)}`;
   };
   const lstatImpl = async (rawPath: string) => {
-    const p = resolveParentSymlinks(rawPath);
+    const p = resolveParentSymlinks(posixPathOf(rawPath));
     if (fileMap.has(p)) {
       const c = fileMap.get(p)!;
       return {
@@ -235,8 +239,9 @@ function fakeFs(
       for (const s of symlinkSet) visit(s, 'symlink');
       return [...children.values()];
     },
-    walk: (path, options, visit) => walkDirectoryTree(fs, path, options, visit),
-    mkdir: async (p, options) => {
+    walk: (path, options, visit) => walkDirectoryTree(fs, posixPathOf(path), options, visit),
+    mkdir: async (rawPath, options) => {
+      const p = posixPathOf(rawPath);
       const recursive = options?.recursive ?? false;
       const exists = isDir(p) || fileMap.has(p);
       if (recursive) {
@@ -264,7 +269,8 @@ function fakeFs(
       dirSet.add(p);
     },
     remove: async () => {},
-    realpath: async (p) => {
+    realpath: async (rawPath) => {
+      const p = posixPathOf(rawPath);
       let current = p;
       for (let i = 0; i < 40; i++) {
         let longest: string | undefined;
@@ -1398,7 +1404,7 @@ describe('WorkspaceFsService.suggest', () => {
     const readdir = backend.readdir.bind(backend);
     const reads: string[] = [];
     backend.readdir = async (path) => {
-      reads.push(path);
+      reads.push(posixPathOf(path));
       return readdir(path);
     };
     const nodeFs = makeRemoteWalkSession(backend);
@@ -1603,7 +1609,7 @@ describe('WorkspaceFsService.suggest', () => {
     const readdir = backend.readdir.bind(backend);
     const reads: string[] = [];
     backend.readdir = async (path) => {
-      reads.push(path);
+      reads.push(posixPathOf(path));
       return readdir(path);
     };
     const fs = makeRemoteWalkSession(backend);
@@ -2403,7 +2409,7 @@ describe('WorkspaceFsService.list', () => {
     const backend = fakeFs({ 'huge/hidden.txt': '', 'visible.txt': '' });
     const readdir = backend.readdir;
     backend.readdir = async (path) => {
-      if (path === '/repo/huge') {
+      if (posixPathOf(path) === '/repo/huge') {
         throw new HostFsError('os.fs.directory_too_large', 'Directory /repo/huge exceeds 50000 entries');
       }
       return readdir(path);

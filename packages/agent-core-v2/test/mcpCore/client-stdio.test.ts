@@ -1,9 +1,9 @@
 import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
-import { join } from 'pathe';
 import { describe, expect, it } from 'vitest';
 
 import type { EnvironmentLease, EnvironmentStatus } from '#/environment/environment';
@@ -23,6 +23,7 @@ import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment
 import {
   crashAfterConnectFixture,
   cwdStdioFixture,
+  hostPathClass,
   stderrThenExitFixture,
   stdioFixture,
 } from './stubs';
@@ -34,7 +35,7 @@ function createClient(
   const environment = Object.assign(
     new FakeEnvironment(
       { environmentId: 'local', generation: 'test' },
-      { capabilities: ['process'] },
+      { capabilities: ['process'], pathClass: hostPathClass },
     ),
     { process: new HostProcessService() },
   );
@@ -92,6 +93,7 @@ function createEnvironmentClient(
     { environmentId, generation: 'test' },
     {
       capabilities: ['process'],
+      pathClass: hostPathClass,
       status: options.status ?? 'ready',
       host: options.host ?? { homeDir: process.cwd() },
     },
@@ -522,7 +524,7 @@ describe('StdioMcpClient', () => {
     const environment = Object.assign(
       new FakeEnvironment(
         { environmentId: 'local', generation: 'test' },
-        { capabilities: ['process'] },
+        { capabilities: ['process'], pathClass: hostPathClass },
       ),
       { process: new HostProcessService() },
     );
