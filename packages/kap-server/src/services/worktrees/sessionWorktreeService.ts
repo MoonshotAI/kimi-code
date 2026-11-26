@@ -94,6 +94,10 @@ class SetupRecorder implements SetupProgress {
     this.flush().catch(() => undefined);
   }
 
+  claim(target: { path: string; branch: string }): Promise<void> {
+    return this.update((stored) => ({ ...stored, pending: { path: target.path, branch: target.branch } }));
+  }
+
   update(change: StoredChange): Promise<void> {
     this.stored = change(this.stored);
     return this.flush();
@@ -207,7 +211,6 @@ export class SessionWorktreeService {
       creation,
       stored: {
         repo_root: workspace.root,
-        pending: creation.target,
         setup: {
           status: 'running',
           purpose: 'create',
@@ -345,7 +348,7 @@ export class SessionWorktreeService {
       return;
     }
     forgetWorktreeFacts(recorder.current);
-    await recorder.update((stored) => ({ ...stored, setup: ended(stored.setup, 'ready') }));
+    await recorder.update((stored) => ({ ...withoutPending(stored), setup: ended(stored.setup, 'ready') }));
   }
 
   async read(sessionId: string): Promise<StoredSessionWorktree | undefined> {
@@ -494,11 +497,9 @@ export class SessionWorktreeService {
       throw error;
     }
     if (leftovers === undefined) return;
-    const { repo_root: repoRoot, path, branch, pending } = leftovers;
+    const { repo_root: repoRoot, path, pending } = leftovers;
     if (leftovers.setup.purpose === 'recreate') {
-      if (path !== undefined && branch !== undefined) {
-        await removeWorktreeArtifacts(repoRoot, { path, branch }, false);
-      }
+      if (pending !== undefined) await removeWorktreeArtifacts(repoRoot, pending, false);
       return;
     }
     if (path !== undefined) {

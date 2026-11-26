@@ -38,6 +38,7 @@ export interface SetupProgress {
   readonly steps: SetupStep[];
   commandsRan: number;
   notify(outputOnly: boolean): void;
+  claim?(target: WorktreeTarget): Promise<void>;
 }
 
 export interface CreatedWorktree {
@@ -288,6 +289,7 @@ export class WorktreeCreation {
       await mkdir(dirname(this.target.path), { recursive: true });
       await mkdir(this.target.path);
       reserved = true;
+      await progress.claim?.(this.target);
       if (await branchExists(repoRoot, this.target.branch)) {
         throw new Error(`a branch named '${this.target.branch}' already exists`);
       }
@@ -491,6 +493,7 @@ export async function recreateWorktree(
     await mkdir(dirname(path), { recursive: true });
     await mkdir(path);
     reserved = true;
+    await progress.claim?.(target);
     return runGit(repoRoot, ['worktree', 'add', path, branch], {
       signal,
       timeoutMs: WORKTREE_ADD_TIMEOUT_MS,

@@ -417,6 +417,21 @@ describe('server-v2 session worktrees', () => {
     expect(resumed.data.worktree?.setup.status).toBe('ready');
     expect(resumed.data.worktree?.path).toBe(ready.worktree!.path);
     expect(existsSync(ready.worktree!.path!)).toBe(true);
+
+    await forceRunning(plain.data.id, {
+      ...ready.worktree!.setup,
+      purpose: 'recreate',
+      steps: [
+        { kind: 'prune', state: 'running' },
+        { kind: 'create', state: 'pending' },
+      ],
+    }, { repo_root: root, path: ready.worktree!.path, branch: ready.worktree!.branch, pending: undefined });
+    await new SessionWorktreeService(fixture.server.core).recoverInterrupted();
+    expect((await get<Session>(`/sessions/${plain.data.id}`)).data.worktree?.setup).toMatchObject({
+      status: 'stopped',
+      stopped_step: 'prune',
+    });
+    expect(existsSync(ready.worktree!.path!)).toBe(true);
   });
 
   it('lists local branches by latest commit with their remote branch and the dirty flag', async () => {
