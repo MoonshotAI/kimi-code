@@ -3016,6 +3016,19 @@ watch(
   },
 );
 
+watch(
+  () =>
+    rawState.sessions.flatMap((session) => {
+      const held = session.worktree?.heldPrompt;
+      return held === undefined ? [] : [`${session.id} ${held.promptId} ${held.failure === undefined ? 'held' : 'failed'}`];
+    }),
+  (next, previous = []) => {
+    const changed = new Set([...next, ...previous].filter((entry) => !next.includes(entry) || !previous.includes(entry)));
+    for (const id of new Set([...changed].map((entry) => entry.split(' ')[0]!))) promptPipeline.syncWorktreeHold(id);
+  },
+  { immediate: true },
+);
+
 function reloadSessionDirectoryViews(id: string): void {
   if (!rawState.sessions.some((session) => session.id === id)) return;
   const readOptions = id === rawState.activeSessionId

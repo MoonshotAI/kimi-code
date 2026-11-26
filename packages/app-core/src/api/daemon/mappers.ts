@@ -19,6 +19,7 @@ import type {
   AppPluginSummary,
   AppProvider,
   FsEntry,
+  ImageSource,
   AppMessageContent,
   AppSession,
   AppSessionRatingReport,
@@ -27,6 +28,7 @@ import type {
   AppSessionWorktree,
   AppWorkspace,
   AppWorktree,
+  AppWorktreeHeldPrompt,
   AppWorktreeRisk,
   AppWorktreeSessionRef,
   AppWorktreeSetupRequest,
@@ -67,6 +69,7 @@ import type {
   WireTaskState,
   WireFsEntry,
   WireImageSource,
+  WireWorktreeHeldPrompt,
   WireMessageContent,
   WireModel,
   WirePromptSubmission,
@@ -197,6 +200,7 @@ export function toAppSessionWorktree(wire: WireSessionWorktree): AppSessionWorkt
               timeoutSeconds: setup.failure.timeout_seconds,
             },
     },
+    ...(wire.held_prompt === undefined ? {} : { heldPrompt: toAppWorktreeHeldPrompt(wire.held_prompt) }),
   };
 }
 
@@ -353,6 +357,51 @@ export function toAppWorkspace(wire: WireWorkspace): AppWorkspace {
     lastOpenedAt: wire.last_opened_at,
     sessionCount: wire.session_count,
     ...(wire.host_id === undefined ? {} : { hostId: wire.host_id }),
+  };
+}
+
+function toAppImageSource(wire: WireImageSource): ImageSource {
+  switch (wire.kind) {
+    case 'base64':
+      return { kind: 'base64', mediaType: wire.media_type, data: wire.data };
+    case 'file':
+      return { kind: 'file', fileId: wire.file_id };
+    case 'session_media':
+      return { kind: 'sessionMedia', fileId: wire.file_id };
+    case 'url':
+      return { kind: 'url', url: wire.url };
+  }
+}
+
+export function toAppPromptContent(wire: WireMessageContent): AppMessageContent {
+  switch (wire.type) {
+    case 'text':
+      return { type: 'text', text: wire.text };
+    case 'image':
+    case 'video':
+      return {
+        type: wire.type,
+        source: toAppImageSource(wire.source),
+        ...(wire.name === undefined ? {} : { name: wire.name }),
+      };
+    case 'file':
+      return { type: 'file', fileId: wire.file_id, name: wire.name, mediaType: wire.media_type, size: wire.size };
+    case 'tool_use':
+    case 'tool_result':
+    case 'thinking':
+      return { type: 'unknown', raw: wire };
+  }
+}
+
+export function toAppWorktreeHeldPrompt(wire: WireWorktreeHeldPrompt): AppWorktreeHeldPrompt {
+  return {
+    promptId: wire.prompt_id,
+    kind: wire.kind,
+    createdAt: wire.created_at,
+    content: wire.content.map(toAppPromptContent),
+    ...(wire.skill === undefined ? {} : { skill: wire.skill }),
+    ...(wire.metadata === undefined ? {} : { metadata: wire.metadata }),
+    ...(wire.failure === undefined ? {} : { failure: wire.failure }),
   };
 }
 

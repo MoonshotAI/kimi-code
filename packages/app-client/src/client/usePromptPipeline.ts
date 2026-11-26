@@ -5,6 +5,7 @@ import type {
   AppMessageContent,
   AppSession,
   AppWorkspace,
+  AppWorktreeHeldPrompt,
   SessionWorktreeAction,
   SessionWorktreeRetryInput,
 } from '@moonshot-ai/app-core/api';
@@ -21,7 +22,6 @@ import {
 import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
 import { offsetAttachmentLinkIndices } from '@moonshot-ai/app-composer/model';
 import { buildPromptContent, buildPromptMetadata } from '../lib/browserReferenceSubmission';
-import { attachmentsToContent } from './attachmentsToContent';
 import { prepareMergedPromptSnapshots } from '../lib/composerMessageSnapshot';
 import { consumeSessionIntent, getKimiWebApi, t, type SessionCreatedSource } from './deps';
 import { markDraftPromotion } from './draftPromotion';
@@ -114,7 +114,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     mapSendAuthFailure,
   });
   const pendingSubmitBySession = new Map<string, { promise: Promise<void>; resolve: () => void }>();
-  const heldFirstSendBySession = new Map<string, () => Promise<'ok' | 'rejected' | 'requeued'>>();
+  const importedHeldFailures = new Set<string>();
   const worktreeWaitersBySession = new Map<string, Array<(ready: boolean) => void>>();
 
   function sessionOf(sid: string): AppSession | undefined {
@@ -129,17 +129,77 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     return sessionWorktreeBlocksSend(sessionOf(sid));
   }
 
-  function worktreeGated(sid: string): boolean {
-    return worktreeHoldsPrompts(sid) || worktreeBlocksSend(sid) || promptStore().hasHeldFirstPrompt(sid);
+  function pendingHeldPrompt(sid: string): AppWorktreeHeldPrompt | undefined {
+    const held = sessionOf(sid)?.worktree?.heldPrompt;
+    return held?.failure === undefined ? held : undefined;
   }
 
-  function holdFirstSend(
-    sid: string,
-    message: AppMessage,
-    send: () => Promise<'ok' | 'rejected' | 'requeued'>,
-  ): void {
-    heldFirstSendBySession.set(sid, send);
-    promptStore().holdFirstPrompt(sid, message);
+  function worktreeGated(sid: string): boolean {
+    return worktreeHoldsPrompts(sid) || worktreeBlocksSend(sid) || pendingHeldPrompt(sid) !== undefined;
+  }
+
+  function takeOptimisticMessage(sid: string, promptId: string): AppMessage | undefined {
+    const message = (promptStore().optimisticMessagesBySession[sid] ?? []).find(
+      (candidate) => candidate.metadata?.['kimiWeb.promptId'] === promptId,
+    );
+    if (message !== undefined) promptStore().removeOptimisticMessage(sid, message.id);
+    return message;
+  }
+
+  function heldPromptSnapshot(held: AppWorktreeHeldPrompt): PromptEnvelope['snapshot'] {
+    return held.metadata?.['kimi_code_composer'] as PromptEnvelope['snapshot'];
+  }
+
+  function heldPromptMessage(sid: string, held: AppWorktreeHeldPrompt): AppMessage {
+    const snapshot = heldPromptSnapshot(held);
+    const metadata = {
+      'kimiWeb.promptId': held.promptId,
+      ...(snapshot === undefined ? {} : { 'kimiWeb.composerSnapshot': snapshot }),
+    };
+    if (held.kind === 'prompt') return buildOptimisticUserMessage(sid, nextOptimisticMsgId(), held.content, [], metadata);
+    const skill = held.skill ?? { name: '' };
+    return buildOptimisticUserMessage(
+      sid,
+      nextOptimisticMsgId(),
+      [{ type: 'text', text: `/${skill.name}${skill.args ? ` ${skill.args}` : ''}` }, ...held.content],
+      [],
+      {
+        ...metadata,
+        origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: skill.name, skillPath: skill.path, skillArgs: skill.args },
+      },
+    );
+  }
+
+  function showHeldPrompt(sid: string, held: AppWorktreeHeldPrompt): void {
+    const shown = promptStore().heldFirstPromptBySession[sid];
+    if (shown?.metadata?.['kimiWeb.promptId'] === held.promptId) return;
+    promptStore().holdFirstPrompt(sid, takeOptimisticMessage(sid, held.promptId) ?? heldPromptMessage(sid, held));
+  }
+
+  function importFailedHeldPrompt(sid: string, held: AppWorktreeHeldPrompt): void {
+    if (importedHeldFailures.has(held.promptId)) return;
+    importedHeldFailures.add(held.promptId);
+    takeOptimisticMessage(sid, held.promptId);
+    const failure = new Error(held.failure?.msg ?? '');
+    if (held.kind === 'skill') {
+      warningsStore().pushOperationFailure('activateSkill', failure, { sessionId: sid });
+      return;
+    }
+    if (!(promptStore().queuedBySession[sid] ?? []).some((entry) => entry.id === held.promptId)) {
+      const text = held.content
+        .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+        .join('\n');
+      promptStore().restoreQueueEntry(sid, {
+        text,
+        snapshot: heldPromptSnapshot(held),
+        attachments: [],
+        skills: [],
+        enqueuedAt: Date.now(),
+        id: held.promptId,
+      });
+      promptStore().noteQueueFlushFailure(sid, held.promptId, MAX_QUEUE_FLUSH_FAILURES);
+    }
+    pushSendFailure('sendPrompt', failure, sid);
   }
 
   function settleWorktreeWaiters(sid: string, ready: boolean): void {
@@ -155,26 +215,23 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   }
 
   function syncWorktreeHold(sid: string): void {
-    if (sessionOf(sid) === undefined) {
-      heldFirstSendBySession.delete(sid);
+    const session = sessionOf(sid);
+    if (session === undefined) {
       promptStore().releaseHeldFirstPrompt(sid);
       settleWorktreeWaiters(sid, false);
       return;
     }
-    if (worktreeHoldsPrompts(sid) || worktreeBlocksSend(sid)) return;
-    const send = heldFirstSendBySession.get(sid);
-    heldFirstSendBySession.delete(sid);
-    promptStore().releaseHeldFirstPrompt(sid);
-    if (send === undefined) {
-      resumeQueueIfIdle(sid);
-      settleWorktreeWaiters(sid, true);
+    const held = session.worktree?.heldPrompt;
+    if (held !== undefined && held.failure === undefined) {
+      showHeldPrompt(sid, held);
       return;
     }
-    const sent = send();
+    const shown = promptStore().releaseHeldFirstPrompt(sid);
+    if (held !== undefined) importFailedHeldPrompt(sid, held);
+    else if (shown !== undefined) promptStore().addOptimisticMessage(sid, shown);
+    if (worktreeHoldsPrompts(sid) || worktreeBlocksSend(sid)) return;
+    if (held === undefined) resumeQueueIfIdle(sid);
     settleWorktreeWaiters(sid, true);
-    void sent.then((outcome) => {
-      if (outcome === 'rejected') resumeQueueIfIdle(sid);
-    });
   }
 
   async function activateSkill(
@@ -352,23 +409,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       const sid = await createDraftSession(workspaceId);
       if (!sid) return { sessionId: null, promptRejected: false };
       createdId = sid;
-      if (worktreeHoldsPrompts(sid)) {
-        const content = buildPromptContent(prompt);
-        if (content.length === 0) return { sessionId: sid, promptRejected: true };
-        const message = buildOptimisticUserMessage(sid, nextOptimisticMsgId(), content, prompt.skills,
-          prompt.snapshot === undefined ? {} : { 'kimiWeb.composerSnapshot': prompt.snapshot },
-        );
-        holdFirstSend(sid, message, async () => {
-          const outcome = await submitPromptInternal(sid, prompt);
-          if (outcome === 'ok' || sessionOf(sid) === undefined) return outcome;
-          promptStore().restoreQueueEntry(sid, { ...prompt, enqueuedAt: Date.now(), id: message.id });
-          promptStore().noteQueueFlushFailure(sid, message.id, 1);
-          return 'requeued';
-        });
-        syncWorktreeHold(sid);
-        return { sessionId: sid, promptRejected: false };
-      }
-      const outcome = await submitPromptInternal(sid, prompt);
+      const outcome = await submitPromptInternal(sid, prompt, { throughWorktreeHold: true });
       return { sessionId: sid, promptRejected: outcome === 'rejected' };
     } catch (err) {
       warningsStore().pushOperationFailure('startSessionAndSendPrompt', err);
@@ -385,7 +426,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     attachments?: PromptAttachment[],
     snapshot?: PromptEnvelope['snapshot'],
     skillPath?: string,
-  ): Promise<{ sessionId: string | null; activated: boolean; deferred?: Promise<boolean> }> {
+  ): Promise<{ sessionId: string | null; activated: boolean }> {
     if (!promptStore().tryBeginStartingFirstPrompt(workspaceId)) return { sessionId: null, activated: false };
     const savedSnapshot = snapshot === undefined ? undefined : structuredClone(snapshot);
     let createdId: string | null = null;
@@ -393,27 +434,6 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       const sid = await createDraftSession(workspaceId);
       if (!sid) return { sessionId: null, activated: false };
       createdId = sid;
-      if (worktreeHoldsPrompts(sid)) {
-        const message = buildOptimisticUserMessage(
-          sid,
-          nextOptimisticMsgId(),
-          [{ type: 'text', text: `/${skillName}${args ? ` ${args}` : ''}` }, ...attachmentsToContent(attachments)],
-          [],
-          {
-            ...(savedSnapshot === undefined ? {} : { 'kimiWeb.composerSnapshot': savedSnapshot }),
-            origin: { kind: 'skill_activation', trigger: 'user-slash', skillName, skillPath, skillArgs: args },
-          },
-        );
-        const deferred = new Promise<boolean>((resolve) => {
-          holdFirstSend(sid, message, async () => {
-            const ok = await modelProvider.activateSkill(skillName, args, attachments, sid, { snapshot: savedSnapshot, skillPath });
-            resolve(ok);
-            return ok ? 'ok' : 'rejected';
-          });
-        });
-        syncWorktreeHold(sid);
-        return { sessionId: sid, activated: true, deferred };
-      }
       const activated = await modelProvider.activateSkill(skillName, args, attachments, sid, { snapshot: savedSnapshot, skillPath });
       return { sessionId: sid, activated };
     } catch (err) {
@@ -545,9 +565,9 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   async function submitPromptInternal(
     sid: string,
     prompt: PromptEnvelope,
-    opts?: { recoverConflicts?: boolean },
+    opts?: { recoverConflicts?: boolean; throughWorktreeHold?: boolean },
   ): Promise<'ok' | 'rejected'> {
-    if (worktreeGated(sid)) return 'rejected';
+    if (opts?.throughWorktreeHold === true ? worktreeBlocksSend(sid) : worktreeGated(sid)) return 'rejected';
     const { sessionGenAtEntry, endFlight } = beginSubmitFlight(sid);
     const { text, skills } = prompt;
     const tempId = nextOptimisticMsgId();

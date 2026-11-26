@@ -2,7 +2,12 @@ import { computed, ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DaemonApiError } from '@moonshot-ai/app-core/api';
-import type { AppSession, AppSessionWorktree, WorkspaceGitBranches } from '@moonshot-ai/app-core/api';
+import type {
+  AppSession,
+  AppSessionWorktree,
+  AppWorktreeHeldPrompt,
+  WorkspaceGitBranches,
+} from '@moonshot-ai/app-core/api';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { createWorkspaceRig, type WorkspaceRig } from '../src/testing/workspaceRig';
 import { appSession, sessionWorktree as worktree } from '../src/testing/worktreeFixtures';
@@ -88,6 +93,21 @@ function becomeReady(ws: WorkspaceRig): Promise<void> {
   return moveTo(ws, worktree('ready', { path: '/wt/a' }));
 }
 
+function heldPrompt(): AppWorktreeHeldPrompt | undefined {
+  return sessionsStore().sessions.find((candidate) => candidate.id === SID)?.worktree?.heldPrompt;
+}
+
+function failHeldPrompt(ws: WorkspaceRig): void {
+  const current = sessionsStore().sessions.find((candidate) => candidate.id === SID)!.worktree!;
+  setWorktree(
+    { ...worktree('ready', { path: '/wt/a' }), heldPrompt: { ...current.heldPrompt!, failure: { code: 50001, msg: 'boom' } } },
+    '/wt/a',
+  );
+  ws.syncWorktreeHold(SID);
+}
+
+const HOLDING = new Set(['running', 'failed', 'stopped']);
+
 async function createRig(options: { worktree?: boolean } = {}) {
   const created = session(options.worktree === false ? {} : { worktree: worktree('running') });
   const api = {
@@ -97,10 +117,27 @@ async function createRig(options: { worktree?: boolean } = {}) {
     getSessionWarnings: vi.fn(async () => []),
     getWorkspaceGitBranches: vi.fn(async (): Promise<WorkspaceGitBranches> => BRANCHES),
     updateSession: vi.fn(async () => ({})),
-    submitPrompt: vi.fn(async (_sid: string, input: { promptId?: string }) => ({
-      promptId: input.promptId!,
-      userMessageId: input.promptId!,
-    })),
+    submitPrompt: vi.fn(
+      async (sid: string, input: { promptId?: string; content: AppWorktreeHeldPrompt['content']; metadata?: Record<string, unknown> }) => {
+        const current = sessionsStore().sessions.find((candidate) => candidate.id === sid)?.worktree;
+        if (current !== undefined && HOLDING.has(current.setup.status)) {
+          sessionsStore().updateSession(sid, (existing) => ({
+            ...existing,
+            worktree: {
+              ...current,
+              heldPrompt: {
+                promptId: input.promptId!,
+                kind: 'prompt',
+                createdAt: '2026-11-18T00:00:00.000Z',
+                content: input.content,
+                ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+              },
+            },
+          }));
+        }
+        return { promptId: input.promptId!, userMessageId: input.promptId! };
+      },
+    ),
     cancelSession: vi.fn(async () => ({ cancelled: true })),
     sessionWorktreeAction: vi.fn(async (): Promise<AppSession> => session({ worktree: worktree('stopped') })),
   };
@@ -179,10 +216,11 @@ describe('worktree first-prompt hold', () => {
     resetKimiClientDeps();
   });
 
-  it('creates the session with the worktree request and holds the first prompt', async () => {
+  it('creates the session with the worktree request and hands the first prompt to the server to hold', async () => {
     const { api, ws } = await createRig();
 
     const started = await start(ws);
+    ws.syncWorktreeHold(SID);
 
     expect(started).toEqual({ sessionId: SID, promptRejected: false });
     expect(api.createSession.mock.calls[0]![0]).toMatchObject({
@@ -190,31 +228,63 @@ describe('worktree first-prompt hold', () => {
       cwd: '/workspace',
       worktree: { sourceBranch: 'main' },
     });
-    expect(api.submitPrompt).not.toHaveBeenCalled();
-    expect(promptStore().heldFirstPromptBySession[SID]?.content).toEqual([{ type: 'text', text: 'hello' }]);
+    expect(sentTexts(api.submitPrompt)).toEqual(['hello']);
+    const shown = promptStore().heldFirstPromptBySession[SID];
+    expect(shown?.content).toEqual([{ type: 'text', text: 'hello' }]);
+    expect(shown?.metadata?.['kimiWeb.promptId']).toBe(heldPrompt()?.promptId);
+    expect(promptStore().optimisticMessagesBySession[SID]).toBeUndefined();
     expect(promptStore().isStartingFirstPrompt).toBe(false);
   });
 
-  it('sends the held prompt exactly once when the worktree becomes ready', async () => {
+  it('keeps the held prompt on screen until its echo once the server sends it', async () => {
     const { api, ws } = await createRig();
     await start(ws);
-
     ws.syncWorktreeHold(SID);
-    await flush();
-    expect(api.submitPrompt).not.toHaveBeenCalled();
+    const promptId = heldPrompt()!.promptId;
 
     setWorktree(worktree('ready', { path: '/wt/a' }), '/wt/a');
     ws.syncWorktreeHold(SID);
     ws.syncWorktreeHold(SID);
     await flush();
 
-    expect(sentTexts(api.submitPrompt)).toEqual(['hello']);
+    expect(api.submitPrompt).toHaveBeenCalledTimes(1);
     expect(promptStore().heldFirstPromptBySession[SID]).toBeUndefined();
+    expect(promptStore().optimisticMessagesBySession[SID]?.map((message) => message.metadata?.['kimiWeb.promptId'])).toEqual([
+      promptId,
+    ]);
+  });
+
+  it('shows a prompt the server holds after the client reloads', async () => {
+    const { ws } = await createRig({ worktree: false });
+    openExisting({
+      ...worktree('running'),
+      heldPrompt: {
+        promptId: 'held-1',
+        kind: 'skill',
+        createdAt: '2026-11-18T00:00:00.000Z',
+        content: [{ type: 'text', text: 'evidence' }],
+        skill: { name: 'review', args: 'now' },
+      },
+    });
+
+    ws.syncWorktreeHold(SID);
+
+    const shown = promptStore().heldFirstPromptBySession[SID];
+    expect(shown?.content).toEqual([
+      { type: 'text', text: '/review now' },
+      { type: 'text', text: 'evidence' },
+    ]);
+    expect(shown?.metadata).toMatchObject({
+      'kimiWeb.promptId': 'held-1',
+      origin: { kind: 'skill_activation', skillName: 'review', skillArgs: 'now' },
+    });
+    expect(ws.wouldEnqueuePrompt(SID)).toBe(true);
   });
 
   it('queues later messages behind the held prompt and flushes them in order', async () => {
     const { api, ws } = await createRig();
     await start(ws, 'first');
+    ws.syncWorktreeHold(SID);
 
     expect(ws.wouldEnqueuePrompt(SID)).toBe(true);
     expect(ws.wouldSteerPrompt(SID)).toBe(false);
@@ -223,7 +293,7 @@ describe('worktree first-prompt hold', () => {
     ws.flushQueueHead(SID);
     ws.resumeQueueIfIdle(SID);
     await flush();
-    expect(api.submitPrompt).not.toHaveBeenCalled();
+    expect(sentTexts(api.submitPrompt)).toEqual(['first']);
     expect(promptStore().queuedBySession[SID]?.map((entry) => entry.text)).toEqual(['second', 'third']);
 
     await becomeReady(ws);
@@ -235,8 +305,10 @@ describe('worktree first-prompt hold', () => {
     const { api, ws } = await createRig();
     await start(ws, 'first');
 
+    ws.syncWorktreeHold(SID);
+
     expect(await ws.submitPromptInternal(SID, ws.createPromptEnvelope({ text: 'sneaky' }))).toBe('rejected');
-    expect(api.submitPrompt).not.toHaveBeenCalled();
+    expect(sentTexts(api.submitPrompt)).toEqual(['first']);
     expect(promptStore().optimisticMessagesBySession[SID]).toBeUndefined();
   });
 
@@ -265,24 +337,27 @@ describe('worktree first-prompt hold', () => {
   it('applies a worktree action result and releases the hold when it settles', async () => {
     const { api, ws } = await createRig();
     await start(ws);
-    setWorktree(worktree('failed'));
+    await send(ws, 'second');
+    const held = heldPrompt()!;
+    setWorktree({ ...worktree('failed'), heldPrompt: held });
 
-    api.sessionWorktreeAction.mockResolvedValueOnce(session({ worktree: worktree('running') }));
+    api.sessionWorktreeAction.mockResolvedValueOnce(session({ worktree: { ...worktree('running'), heldPrompt: held } }));
     expect(await ws.runSessionWorktreeAction(SID, 'retry', { useRemote: false })).toBe(true);
     expect(api.sessionWorktreeAction).toHaveBeenLastCalledWith(SID, 'retry', { useRemote: false });
     await flush();
-    expect(api.submitPrompt).not.toHaveBeenCalled();
+    expect(sentTexts(api.submitPrompt)).toEqual(['hello']);
 
     api.sessionWorktreeAction.mockResolvedValueOnce(session({ worktree: worktree('local') }));
     expect(await ws.runSessionWorktreeAction(SID, 'useLocal')).toBe(true);
     await flush();
     expect(sessionsStore().sessions[0]?.worktree?.setup.status).toBe('local');
-    expect(sentTexts(api.submitPrompt)).toEqual(['hello']);
+    expect(sentTexts(api.submitPrompt)).toEqual(['hello', 'second']);
   });
 
   it('reports a failed worktree action and keeps the hold', async () => {
     const { api, ws } = await createRig();
     await start(ws);
+    ws.syncWorktreeHold(SID);
     const before = sessionsStore().sessions[0]?.worktree;
     api.sessionWorktreeAction.mockRejectedValueOnce(new Error('offline'));
 
@@ -294,41 +369,54 @@ describe('worktree first-prompt hold', () => {
   });
 
   it('drops the held prompt when the session disappears', async () => {
-    const { api, ws } = await createRig();
+    const { ws } = await createRig();
     await start(ws);
+    ws.syncWorktreeHold(SID);
 
     sessionsStore().removeSession(SID);
     ws.syncWorktreeHold(SID);
     await flush();
 
     expect(promptStore().heldFirstPromptBySession[SID]).toBeUndefined();
-    expect(api.submitPrompt).not.toHaveBeenCalled();
   });
 
-  it('puts the first prompt at the head of the queue when its send fails after release', async () => {
+  it('puts a held prompt the server could not send at the head of the queue, once', async () => {
     const { api, ws } = await createRig();
     await start(ws, 'first');
+    ws.syncWorktreeHold(SID);
     await send(ws, 'second');
-    api.submitPrompt.mockRejectedValueOnce(Object.assign(new Error('bad request'), { name: 'DaemonApiError', code: 40001 }));
+    const promptId = heldPrompt()!.promptId;
 
-    await becomeReady(ws);
+    failHeldPrompt(ws);
+    ws.syncWorktreeHold(SID);
+    await flush();
 
-    expect(api.submitPrompt).toHaveBeenCalledTimes(1);
-    expect(promptStore().queuedBySession[SID]?.map((entry) => entry.text)).toEqual(['first', 'second']);
+    expect(sentTexts(api.submitPrompt)).toEqual(['first']);
+    expect(promptStore().heldFirstPromptBySession[SID]).toBeUndefined();
+    expect(promptStore().queuedBySession[SID]?.map((entry) => [entry.id ?? 'local', entry.text])).toEqual([
+      [promptId, 'first'],
+      [expect.any(String), 'second'],
+    ]);
+    expect(warningsStore().warnings).toHaveLength(1);
+
+    ws.resumeQueueIfIdle(SID);
+    await flush();
+    expect(sentTexts(api.submitPrompt)).toEqual(['first']);
   });
 
   it('keeps holding while setup is still running, after the session already points at the worktree', async () => {
     const { api, ws } = await createRig();
     await start(ws);
+    await send(ws, 'second');
 
     await moveTo(ws, worktree('running', { path: '/wt/a', branch: 'kimi/a' }));
-    expect(api.submitPrompt).not.toHaveBeenCalled();
+    expect(sentTexts(api.submitPrompt)).toEqual(['hello']);
 
     expect(await ws.abortCurrentPrompt()).toBe(true);
     expect(api.sessionWorktreeAction).toHaveBeenCalledExactlyOnceWith(SID, 'cancel', undefined);
 
     await becomeReady(ws);
-    expect(sentTexts(api.submitPrompt)[0]).toBe('hello');
+    expect(sentTexts(api.submitPrompt)).toEqual(['hello', 'second']);
   });
 
   it('sends in local mode after a missing worktree is abandoned', async () => {
@@ -406,35 +494,16 @@ describe('worktree first-prompt hold', () => {
     expect(api.getWorkspaceGitBranches).not.toHaveBeenCalled();
   });
 
-  it('holds a first skill activation until the worktree is ready', async () => {
+  it('hands a first skill activation to the server while the worktree is set up', async () => {
     const { modelProvider, ws } = await createRig();
 
     const started = await ws.startSessionAndActivateSkill('workspace', 'review', 'now');
 
-    expect(started).toMatchObject({ sessionId: SID, activated: true });
-    expect(modelProvider.activateSkill).not.toHaveBeenCalled();
-    expect(promptStore().heldFirstPromptBySession[SID]?.content).toEqual([{ type: 'text', text: '/review now' }]);
-
-    setWorktree(worktree('ready', { path: '/wt/a' }), '/wt/a');
-    ws.syncWorktreeHold(SID);
-    ws.syncWorktreeHold(SID);
-    await flush();
+    expect(started).toEqual({ sessionId: SID, activated: true });
     expect(modelProvider.activateSkill).toHaveBeenCalledExactlyOnceWith('review', 'now', undefined, SID, {
       snapshot: undefined,
       skillPath: undefined,
     });
-  });
-
-  it('reports a deferred first skill activation that fails so the draft can come back', async () => {
-    const { modelProvider, ws } = await createRig();
-    modelProvider.activateSkill.mockResolvedValueOnce(false);
-
-    const started = await ws.startSessionAndActivateSkill('workspace', 'review', 'now');
-    expect(started.activated).toBe(true);
-
-    setWorktree(worktree('ready', { path: '/wt/a' }), '/wt/a');
-    ws.syncWorktreeHold(SID);
-    expect(await started.deferred).toBe(false);
   });
 
   it('holds a later skill activation in an existing session until setup finishes', async () => {

@@ -141,6 +141,17 @@ export interface WireSessionWorktree {
   missing?: boolean;
   branch_missing?: boolean;
   setup: WireWorktreeSetup;
+  held_prompt?: WireWorktreeHeldPrompt;
+}
+
+export interface WireWorktreeHeldPrompt {
+  prompt_id: string;
+  kind: 'prompt' | 'skill';
+  created_at: string;
+  content: WireMessageContent[];
+  skill?: { name: string; path?: string; args?: string };
+  metadata?: Record<string, unknown>;
+  failure?: { code: number; msg: string };
 }
 
 export interface WireWorktreeSessionRef {

@@ -164,6 +164,17 @@ export interface AppSessionWorktree {
   missing?: boolean;
   branchMissing?: boolean;
   setup: AppWorktreeSetup;
+  heldPrompt?: AppWorktreeHeldPrompt;
+}
+
+export interface AppWorktreeHeldPrompt {
+  promptId: string;
+  kind: 'prompt' | 'skill';
+  createdAt: string;
+  content: AppMessageContent[];
+  skill?: { name: string; path?: string; args?: string };
+  metadata?: Record<string, unknown>;
+  failure?: { code: number; msg: string };
 }
 
 export interface AppWorktreeSessionRef {
