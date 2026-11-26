@@ -18,7 +18,7 @@ export const TEST_ENVIRONMENT: RemoteEnvironmentInfo = {
   shellName: 'bash',
   shellPath: '/bin/bash',
   pathClass: 'posix',
-  homeDir: '/home/test',
+  homeDir: '/nonexistent',
   cwd: '/tmp',
   tempDir: '/tmp',
 };

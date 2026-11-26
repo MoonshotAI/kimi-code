@@ -154,6 +154,7 @@ export class AcpSession {
   private readonly toolLocations = new Map<string, ToolCallLocation[]>();
   private readonly bashCallsAwaitingTerminal = new Map<string, string>();
   private readonly terminalBackedCalls = new Map<string, string>();
+  private readonly terminalsAwaitingCall: AcpTerminalCreatedEvent[] = [];
   private readonly interactionBridge: AcpInteractionBridge;
 
   constructor(
@@ -564,11 +565,9 @@ export class AcpSession {
     if (locations !== undefined) {
       this.toolLocations.set(key, locations);
     }
-    if (mapped.name === 'Bash') {
-      const command = (mapped.args as { command?: unknown } | undefined)?.command;
-      if (typeof command === 'string') {
-        this.bashCallsAwaitingTerminal.set(key, command);
-      }
+    const command = mapped.name === 'Bash' ? (mapped.args as { command?: unknown } | undefined)?.command : undefined;
+    if (typeof command === 'string') {
+      this.bashCallsAwaitingTerminal.set(key, command);
     }
     const streamArgs = { args: stringifyArgs(mapped.args) };
     const lazyCreated = this.toolCallStreamArgs.has(key);
@@ -582,6 +581,11 @@ export class AcpSession {
       this.emit(
         planFromDisplayBlock(this.sessionId, event.turnId, event.display as ToolInputDisplay),
       );
+    }
+    if (typeof command === 'string' && command.length > 0) {
+      const index = this.terminalsAwaitingCall.findIndex((terminal) => terminal.shellCommand.endsWith(command));
+      const [terminal] = index < 0 ? [] : this.terminalsAwaitingCall.splice(index, 1);
+      if (terminal !== undefined) this.attachTerminal(key, terminal.terminalId);
     }
   }
 
@@ -637,18 +641,23 @@ export class AcpSession {
     if (event.sessionId !== this.sessionId) return;
     for (const [key, command] of this.bashCallsAwaitingTerminal) {
       if (command.length === 0 || !event.shellCommand.endsWith(command)) continue;
-      this.bashCallsAwaitingTerminal.delete(key);
-      this.terminalBackedCalls.set(key, event.terminalId);
-      this.emit({
-        sessionId: this.sessionId,
-        update: {
-          sessionUpdate: 'tool_call_update',
-          toolCallId: key,
-          content: [{ type: 'terminal', terminalId: event.terminalId }],
-        },
-      });
+      this.attachTerminal(key, event.terminalId);
       return;
     }
+    this.terminalsAwaitingCall.push(event);
+  }
+
+  private attachTerminal(key: string, terminalId: string): void {
+    this.bashCallsAwaitingTerminal.delete(key);
+    this.terminalBackedCalls.set(key, terminalId);
+    this.emit({
+      sessionId: this.sessionId,
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: key,
+        content: [{ type: 'terminal', terminalId }],
+      },
+    });
   }
 
   private onCompactionStarted(event: AgentEventPayloads['compaction.started']): void {
@@ -675,6 +684,7 @@ export class AcpSession {
   }
 
   private onTurnEnded(event: AgentEventPayloads['turn.ended']): void {
+    this.terminalsAwaitingCall.length = 0;
     if (event.turnId === this.taskNotificationTurnId) {
       this.taskNotificationTurnId = undefined;
       void this.emitUsageUpdate();

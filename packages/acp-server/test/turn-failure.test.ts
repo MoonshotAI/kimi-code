@@ -205,6 +205,7 @@ describe('a turn that fails after the editor asked to cancel it', () => {
       skills: [],
       hostCommands: [],
       pendingPromptAborts: new Set(),
+      terminalsAwaitingCall: [],
       conn: { sessionUpdate: async () => {} },
       klient: { global: { kosong: { listModels: async () => [] } } },
       agent: {

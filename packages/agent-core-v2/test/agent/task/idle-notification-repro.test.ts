@@ -2,10 +2,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
+import { deferred } from '@moonshot-ai/testkit/fixtures';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
+import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
@@ -57,6 +59,19 @@ function pendingResult(result: string): { readonly done: Promise<{ readonly resu
     finish = () => resolve({ result });
   });
   return { done, finish: () => finish() };
+}
+
+function completeTogether(ctx: TestAgentContext, count: number): void {
+  const outputs = ctx.get(IAgentTaskOutputService);
+  const createCompletion = outputs.createCompletion.bind(outputs);
+  const allCompleted = deferred();
+  let completed = 0;
+  vi.spyOn(outputs, 'createCompletion').mockImplementation(async (...args) => {
+    completed += 1;
+    if (completed === count) allCompleted.resolve();
+    await allCompleted.promise;
+    return createCompletion(...args);
+  });
 }
 
 function startControlledAgent(ctx: TestAgentContext, description: string) {
@@ -178,6 +193,7 @@ describe('task notification → main agent (real Agent instance)', () => {
         ['group-3', pendingResult('bg #3 result')],
       ]);
       mockSubagentRuns(ctx, new Map([...runs].map(([prompt, run]) => [prompt, run.done])));
+      completeTogether(ctx, runs.size);
       const handlers = [];
       for (const prompt of runs.keys()) handlers.push(await startControlledAgent(ctx, prompt));
       const turnEnd = ctx.untilTurnEnd();

@@ -265,7 +265,7 @@ import {
   type WireSnapshotEntry,
 } from './snapshots';
 
-const TEST_HOME_DIR = '/home/test';
+const TEST_HOME_DIR = '/nonexistent';
 
 const MOCK_PROVIDER = {
   type: 'kimi',
