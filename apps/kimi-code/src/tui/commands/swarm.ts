@@ -143,7 +143,7 @@ async function setSwarmMode(
     );
     return false;
   }
-  host.setAppState({ swarmMode: enabled });
+  host.setAppState(enabled ? { swarmMode: true, towerMode: false } : { swarmMode: false });
   host.state.swarmModeEntry = enabled ? trigger : undefined;
   return true;
 }

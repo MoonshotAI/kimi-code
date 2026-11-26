@@ -3,11 +3,13 @@ import * as win32Path from 'node:path/win32';
 
 import { createHash, randomUUID } from 'node:crypto';
 
+import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { Error2, ErrorCodes } from '#/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentModeMutexService } from '#/agent/modeMutex/modeMutex';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { PlanModeInjection } from '#/features/plan/injection/planModeInjection';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -67,6 +69,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly agentState: IAgentStateService,
+    @ref(IAgentModeMutexService) private readonly modeMutex: LiveRef<IAgentModeMutexService>,
   ) {
     super();
     this.agentState.contributeState(planKey);
@@ -189,6 +192,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     if (this.isActive) {
       throw new Error2(ErrorCodes.SESSION_PLAN_MODE_INVALID, 'Already in plan mode');
     }
+    await this.modeMutex.current?.beforePlanEnter();
 
     const target = this.planFileTarget(id);
     let enterRecorded = false;

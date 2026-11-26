@@ -214,6 +214,71 @@ describe('mode store setGoalMode', () => {
     modeStore().setGoalMode(true);
     expect(modeStore().draftModes.goalMode).toBe(true);
   });
+
+  it('disarms an active tower mode when enabling goal mode for a session', () => {
+    sessionsStore().setActiveSessionId('sess_1');
+    const persist = vi.fn().mockResolvedValue(true);
+    setModeHooks({ persistSessionProfile: persist });
+    modeStore().towerModeBySession = { sess_1: true };
+
+    modeStore().setGoalMode(true);
+
+    expect(modeStore().goalModeBySession.sess_1).toBe(true);
+    expect(modeStore().towerModeBySession.sess_1).toBe(false);
+    expect(persist).toHaveBeenCalledWith({ towerMode: false }, 'sess_1');
+  });
+
+  it('disarms draft tower mode when enabling draft goal mode', () => {
+    modeStore().draftModes.towerMode = true;
+    modeStore().draftModes.towerBase = 'main';
+
+    modeStore().setGoalMode(true);
+
+    expect(modeStore().draftModes.goalMode).toBe(true);
+    expect(modeStore().draftModes.towerMode).toBe(false);
+    expect(modeStore().draftModes.towerBase).toBeUndefined();
+  });
+});
+
+describe('mode store setTowerMode', () => {
+  it('disarms plan, swarm, and goal modes when enabling tower mode for a session', async () => {
+    sessionsStore().setActiveSessionId('sess_1');
+    const persist = vi.fn().mockResolvedValue(true);
+    setModeHooks({ persistSessionProfile: persist });
+    modeStore().planArmedBySession = { sess_1: true };
+    modeStore().planModeBySession = { sess_1: true };
+    modeStore().swarmModeBySession = { sess_1: true };
+    modeStore().goalModeBySession = { sess_1: true };
+
+    await modeStore().setTowerMode(true);
+
+    expect(modeStore().towerModeBySession.sess_1).toBe(true);
+    expect(modeStore().planArmedBySession.sess_1).toBe(false);
+    expect(modeStore().planModeBySession.sess_1).toBe(false);
+    expect(modeStore().swarmModeBySession.sess_1).toBe(false);
+    expect(modeStore().goalModeBySession.sess_1).toBe(false);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.goalMode)!)).toEqual({});
+    expect(persist).toHaveBeenCalledWith(
+      { towerMode: true, towerBase: undefined, swarmMode: false, planMode: false },
+      'sess_1',
+    );
+  });
+
+  it('disarms draft plan, swarm, and goal modes when enabling draft tower mode', async () => {
+    modeStore().draftModes.planMode = true;
+    modeStore().draftModes.swarmMode = true;
+    modeStore().draftModes.goalMode = true;
+
+    await modeStore().setTowerMode(true);
+
+    expect(modeStore().draftModes).toEqual({
+      planMode: false,
+      swarmMode: false,
+      towerMode: true,
+      towerBase: undefined,
+      goalMode: false,
+    });
+  });
 });
 
 describe('mode store projections', () => {

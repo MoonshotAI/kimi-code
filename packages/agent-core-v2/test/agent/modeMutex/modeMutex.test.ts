@@ -15,11 +15,10 @@ import { GoalUpdated } from '#/features/goal/goalOps';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import type { GoalSnapshot } from '#/features/goal/types';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { PlanModeEnter, planKey } from '#/features/plan/planOps';
+import { planKey } from '#/features/plan/planOps';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
-import { SwarmModeEnter } from '#/features/swarm/swarmOps';
 import { IAgentTowerService } from '#/features/tower/tower';
-import { TowerModeEnter } from '#/features/tower/towerOps';
+import { OrderedHookSlot } from '#/hooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { registerTestAgentWire, testWireScope } from '../../wire/stubs';
@@ -32,6 +31,7 @@ describe('AgentModeMutexService', () => {
   let towerExit: ReturnType<typeof vi.fn>;
   let goalPause: ReturnType<typeof vi.fn>;
   let dispatch: ReturnType<typeof vi.fn>;
+  let onDidRestore: OrderedHookSlot<Record<string, never>>;
   let swarmActive: boolean;
   let towerActive: boolean;
   let goalStatus: string | undefined;
@@ -46,9 +46,10 @@ describe('AgentModeMutexService', () => {
     });
     planExit = vi.fn();
     swarmExit = vi.fn();
-    towerExit = vi.fn();
-    goalPause = vi.fn();
+    towerExit = vi.fn(async () => {});
+    goalPause = vi.fn(async () => {});
     dispatch = vi.fn();
+    onDidRestore = new OrderedHookSlot();
     swarmActive = false;
     towerActive = false;
     goalStatus = undefined;
@@ -69,109 +70,131 @@ describe('AgentModeMutexService', () => {
       pauseGoal: goalPause,
       getGoal: () => ({ goal: goalStatus === undefined ? null : { status: goalStatus } }),
     } as unknown as IAgentGoalService);
-    ix.stub(IEventDispatcher, { dispatch } as unknown as IEventDispatcher);
+    ix.stub(IEventDispatcher, {
+      dispatch,
+      hooks: { onDidRestore },
+    } as unknown as IEventDispatcher);
     ix.get(IAgentStateService).contributeState(planKey);
     ix.set(IAgentModeMutexService, new SyncDescriptor(AgentModeMutexService));
     ix.get(IAgentModeMutexService);
   });
   afterEach(() => disposables.dispose());
 
-  function publish(event: PlanModeEnter | SwarmModeEnter | TowerModeEnter | GoalUpdated): void {
+  function publishGoal(snapshot: GoalSnapshot): void {
     const agentContext = ix.get(IAgentScopeContext).agentContext;
-    ix.get(IEventBus).publish(event, agentContext);
+    ix.get(IEventBus).publish(
+      new GoalUpdated({ agentId: 'test-agent', snapshot }),
+      agentContext,
+    );
   }
 
-  it('plan mode entry exits an active tower mode', () => {
+  it('plan entry exits an active tower mode', async () => {
     towerActive = true;
-    publish(new PlanModeEnter({ agentId: 'test-agent', id: 'plan_1' }));
+    await ix.get(IAgentModeMutexService).beforePlanEnter();
     expect(towerExit).toHaveBeenCalledTimes(1);
     expect(towerExit).toHaveBeenCalledWith('mode-mutex');
   });
 
-  it('plan mode entry leaves an inactive tower mode alone', () => {
-    publish(new PlanModeEnter({ agentId: 'test-agent', id: 'plan_1' }));
+  it('plan entry leaves an inactive tower mode alone', async () => {
+    await ix.get(IAgentModeMutexService).beforePlanEnter();
     expect(towerExit).not.toHaveBeenCalled();
   });
 
-  it('swarm mode entry exits an active tower mode', () => {
+  it('swarm entry exits an active tower mode', () => {
     towerActive = true;
-    publish(new SwarmModeEnter({ agentId: 'test-agent', trigger: 'manual' }));
+    ix.get(IAgentModeMutexService).beforeSwarmEnter();
     expect(towerExit).toHaveBeenCalledTimes(1);
     expect(towerExit).toHaveBeenCalledWith('mode-mutex');
   });
 
-  it('swarm mode entry leaves an inactive tower mode alone', () => {
-    publish(new SwarmModeEnter({ agentId: 'test-agent', trigger: 'manual' }));
+  it('swarm entry leaves an inactive tower mode alone', () => {
+    ix.get(IAgentModeMutexService).beforeSwarmEnter();
     expect(towerExit).not.toHaveBeenCalled();
   });
 
-  it('tower mode entry exits an active plan mode and an active swarm mode', () => {
+  it('tower entry exits an active plan mode and an active swarm mode', async () => {
     ix.get(IAgentStateService).set(planKey, { active: true, id: 'plan_1' });
     swarmActive = true;
-    publish(new TowerModeEnter({ agentId: 'test-agent' }));
+    await ix.get(IAgentModeMutexService).beforeTowerEnter();
     expect(planExit).toHaveBeenCalledTimes(1);
     expect(swarmExit).toHaveBeenCalledTimes(1);
   });
 
-  it('tower mode entry leaves inactive plan and swarm modes alone', () => {
-    publish(new TowerModeEnter({ agentId: 'test-agent' }));
+  it('tower entry leaves inactive plan and swarm modes alone', async () => {
+    await ix.get(IAgentModeMutexService).beforeTowerEnter();
     expect(planExit).not.toHaveBeenCalled();
     expect(swarmExit).not.toHaveBeenCalled();
   });
 
-  it('tower mode entry pauses an active goal', () => {
+  it('tower entry pauses an active goal', async () => {
     goalStatus = 'active';
-    publish(new TowerModeEnter({ agentId: 'test-agent' }));
+    await ix.get(IAgentModeMutexService).beforeTowerEnter();
     expect(goalPause).toHaveBeenCalledTimes(1);
+    expect(goalPause).toHaveBeenCalledWith(
+      { reason: 'Paused after tower mode entered' },
+      'system',
+    );
   });
 
-  it('tower mode entry leaves a non-active goal alone', () => {
+  it('tower entry leaves a non-active goal alone', async () => {
     goalStatus = 'paused';
-    publish(new TowerModeEnter({ agentId: 'test-agent' }));
+    await ix.get(IAgentModeMutexService).beforeTowerEnter();
     expect(goalPause).not.toHaveBeenCalled();
   });
 
   it('goal activation exits an active tower mode with the mode-mutex reason', () => {
     towerActive = true;
-    publish(
-      new GoalUpdated({
-        agentId: 'test-agent',
-        snapshot: { status: 'active' } as GoalSnapshot,
-      }),
-    );
+    publishGoal({ status: 'active' } as GoalSnapshot);
     expect(towerExit).toHaveBeenCalledTimes(1);
     expect(towerExit).toHaveBeenCalledWith('mode-mutex');
     expect(dispatch).toHaveBeenCalledTimes(1);
     const status = dispatch.mock.calls[0]![0] as AgentStatusUpdated;
     expect(status).toBeInstanceOf(AgentStatusUpdated);
-    expect(status.agentId).toBe('test-agent');
-    expect(status.towerMode).toBe(false);
-    expect(status.towerExitReason).toBe('mode-mutex');
+    expect(status).toMatchObject({
+      agentId: 'test-agent',
+      towerMode: false,
+      towerExitReason: 'mode-mutex',
+    });
     expect(dispatch.mock.invocationCallOrder[0]).toBeLessThan(
       towerExit.mock.invocationCallOrder[0]!,
     );
   });
 
   it('goal activation leaves an inactive tower mode alone', () => {
-    publish(
-      new GoalUpdated({
-        agentId: 'test-agent',
-        snapshot: { status: 'active' } as GoalSnapshot,
-      }),
-    );
+    publishGoal({ status: 'active' } as GoalSnapshot);
     expect(towerExit).not.toHaveBeenCalled();
-    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it('a non-active goal update does not exit tower mode', () => {
     towerActive = true;
-    publish(
-      new GoalUpdated({
-        agentId: 'test-agent',
-        snapshot: { status: 'paused' } as GoalSnapshot,
-      }),
-    );
+    publishGoal({ status: 'paused' } as GoalSnapshot);
     expect(towerExit).not.toHaveBeenCalled();
-    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('restore reconciles conflicting modes when tower is active', async () => {
+    towerActive = true;
+    swarmActive = true;
+    goalStatus = 'active';
+    ix.get(IAgentStateService).set(planKey, { active: true, id: 'plan_1' });
+
+    await onDidRestore.run({});
+
+    expect(planExit).toHaveBeenCalledTimes(1);
+    expect(swarmExit).toHaveBeenCalledTimes(1);
+    expect(goalPause).toHaveBeenCalledTimes(1);
+    expect(towerExit).not.toHaveBeenCalled();
+  });
+
+  it('restore leaves non-tower modes alone when tower is inactive', async () => {
+    swarmActive = true;
+    goalStatus = 'active';
+    ix.get(IAgentStateService).set(planKey, { active: true, id: 'plan_1' });
+
+    await onDidRestore.run({});
+
+    expect(planExit).not.toHaveBeenCalled();
+    expect(swarmExit).not.toHaveBeenCalled();
+    expect(goalPause).not.toHaveBeenCalled();
+    expect(towerExit).not.toHaveBeenCalled();
   });
 });

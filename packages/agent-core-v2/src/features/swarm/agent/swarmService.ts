@@ -1,3 +1,4 @@
+import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { TurnEnded } from '#/agent/loop/turnOps';
@@ -6,6 +7,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus } from '#/app/event/eventBus';
 import type { SwarmModeTransitionEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IAgentModeMutexService } from '#/agent/modeMutex/modeMutex';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { Error2, ErrorCodes } from '#/errors';
@@ -27,6 +29,7 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @IAgentStateService private readonly agentState: IAgentStateService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @ref(IAgentModeMutexService) private readonly modeMutex: LiveRef<IAgentModeMutexService>,
   ) {
     super();
     this.agentState.contributeState(swarmKey);
@@ -74,6 +77,7 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
       throw new Error2(ErrorCodes.VALIDATION_FAILED, 'Only the user can turn on swarm mode.');
     }
     if (this.agentState.get(swarmKey) !== null) return;
+    this.modeMutex.current?.beforeSwarmEnter();
     void this.dispatcher.dispatch(new SwarmModeEnter({ agentId: this.agentCtx.agentId, trigger }));
     const properties: SwarmModeTransitionEvent = { trigger };
     this.telemetry.track2('swarm_mode_entered', properties);

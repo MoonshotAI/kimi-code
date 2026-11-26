@@ -81,6 +81,10 @@ export const useGoalStore = defineStore('kimi.goal', () => {
     try {
       await getKimiWebApi().updateSession(sessionId, { goalObjective: objective, planMode: false });
       modeStore().planModeBySession = { ...modeStore().planModeBySession, [sessionId]: false };
+      if (modeStore().towerModeBySession[sessionId]) {
+        modeStore().towerModeBySession = { ...modeStore().towerModeBySession, [sessionId]: false };
+        modeStore().saveTowerModeToStorage();
+      }
     } catch (err) {
       goalHooks?.pushOperationFailure('createGoal', err, {
         sessionId,
@@ -99,6 +103,12 @@ export const useGoalStore = defineStore('kimi.goal', () => {
     const sid = sessionsStore().activeSessionId;
     if (!sid) return;
     void Promise.resolve(getKimiWebApi().updateSession(sid, { goalControl: action }))
+      .then(() => {
+        if (action === 'resume' && modeStore().towerModeBySession[sid]) {
+          modeStore().towerModeBySession = { ...modeStore().towerModeBySession, [sid]: false };
+          modeStore().saveTowerModeToStorage();
+        }
+      })
       .catch((err) => {
         goalHooks?.pushOperationFailure('controlGoal', err, {
           sessionId: sid,

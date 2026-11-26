@@ -166,6 +166,10 @@ export const useModeStore = defineStore('kimi.mode', () => {
         planModeBySession.value = { ...planModeBySession.value, [sid]: false };
         savePlanModeToStorage();
         markPlanPending({ pendingPlanBySession: pendingPlanBySession.value }, sid);
+        if (goalModeBySession.value[sid] ?? false) {
+          goalModeBySession.value = { ...goalModeBySession.value, [sid]: false };
+          saveGoalModeToStorage();
+        }
       }
       towerModeBySession.value = { ...towerModeBySession.value, [sid]: on };
       saveTowerModeToStorage();
@@ -184,6 +188,7 @@ export const useModeStore = defineStore('kimi.mode', () => {
     }
     if (on && draftModes.swarmMode) draftModes.swarmMode = false;
     if (on && draftModes.planMode) draftModes.planMode = false;
+    if (on && draftModes.goalMode) draftModes.goalMode = false;
     draftModes.towerMode = on;
     draftModes.towerBase = on ? base : undefined;
     return Promise.resolve(true);
@@ -192,9 +197,14 @@ export const useModeStore = defineStore('kimi.mode', () => {
   function setGoalMode(on: boolean): void {
     const sid = sessionsStore().activeSessionId;
     if (sid) {
+      if (on && (towerModeBySession.value[sid] ?? false)) void setTowerMode(false);
       goalModeBySession.value = { ...goalModeBySession.value, [sid]: on };
       saveGoalModeToStorage();
     } else {
+      if (on && draftModes.towerMode) {
+        draftModes.towerMode = false;
+        draftModes.towerBase = undefined;
+      }
       draftModes.goalMode = on;
     }
   }
