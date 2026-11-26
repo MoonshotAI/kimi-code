@@ -13,7 +13,7 @@ name: E2E
 # posts nothing. A manual run with the notify input does the same. A manual
 # run given notify_run_id skips the suite and posts a card marked as a test
 # about that earlier run, which checks the webhook, the signature and the
-# mention in a minute.
+# card in a minute.
 on:
   workflow_dispatch:
     inputs:

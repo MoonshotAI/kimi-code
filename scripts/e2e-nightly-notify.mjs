@@ -7,7 +7,7 @@ import { parseArgs } from 'node:util';
 const MOST_CASES = 15;
 const LONGEST_NOTE = 120;
 const BEIJING_OFFSET = 8 * 60 * 60 * 1000;
-const FEISHU_USER_ID = /^[\w-]+$/;
+const TRIAGE_NAME = /^[\p{L}\p{N}_.-]+$/u;
 
 const PLATFORMS = { linux: 'Linux', win32: 'Windows', darwin: 'macOS' };
 
@@ -119,7 +119,7 @@ function plain(lines) {
 }
 
 export function triageUser(value) {
-  if (!FEISHU_USER_ID.test(value)) throw new Error('FEISHU_E2E_TRIAGE_USER must be a Feishu open_id or user_id');
+  if (!TRIAGE_NAME.test(value)) throw new Error("FEISHU_E2E_TRIAGE_USER must be the name to write after @, made of letters, digits, '.', '_' or '-'");
   return value;
 }
 
@@ -128,7 +128,7 @@ function triageRequest(user, url) {
     tag: 'div',
     text: {
       tag: 'lark_md',
-      content: `<at id=${triageUser(user)}></at> 看到这条消息后，请立刻打开这次 E2E 运行 [${url}](${url})，分析报错的根因是哪个 PR 引入的，然后 @ 提这个 PR 的人，让对方去修。`,
+      content: `@${triageUser(user)} 看到这条消息后，请立刻打开这次 E2E 运行 [${url}](${url})，分析报错的根因是哪个 PR 引入的，然后 @ 提这个 PR 的人，让对方去修。`,
     },
   };
 }

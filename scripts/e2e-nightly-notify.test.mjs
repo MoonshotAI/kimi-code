@@ -116,24 +116,25 @@ await test('reports errors that belong to no case, such as a scenario file that 
   assert.deepEqual(texts(card).slice(3, 5), ['**用例以外的错误**', 'Linux · 用例以外的错误\n· SyntaxError: Unexpected token in scenarios/broken.spec.ts']);
 });
 
-await test('ends the card by mentioning the triage user and asking them to find the PR behind the failure', () => {
-  const card = failureCard({ run, jobs: [job('Build (optional)', 'failure'), notifyJob], results: [], triage: 'ou_0123456789abcdef' });
+await test('ends the card with the triage name after a plain @ and asks them to find the PR behind the failure', () => {
+  const card = failureCard({ run, jobs: [job('Build (optional)', 'failure'), notifyJob], results: [], triage: 'triage-bot' });
   const last = card.elements.at(-1);
   assert.equal(last.text.tag, 'lark_md');
   assert.equal(
     last.text.content,
-    '<at id=ou_0123456789abcdef></at> 看到这条消息后，请立刻打开这次 E2E 运行 [https://github.com/example/repo/actions/runs/42](https://github.com/example/repo/actions/runs/42)，分析报错的根因是哪个 PR 引入的，然后 @ 提这个 PR 的人，让对方去修。',
+    '@triage-bot 看到这条消息后，请立刻打开这次 E2E 运行 [https://github.com/example/repo/actions/runs/42](https://github.com/example/repo/actions/runs/42)，分析报错的根因是哪个 PR 引入的，然后 @ 提这个 PR 的人，让对方去修。',
   );
   assert.equal(failureCard({ run, jobs: [job('Build (optional)', 'failure'), notifyJob], results: [] }).elements.at(-1).tag, 'action');
 });
 
-await test('refuses a triage user that is not a bare Feishu id, so it cannot break out of the mention tag', () => {
-  assert.equal(triageUser('ou_0123456789abcdef'), 'ou_0123456789abcdef');
-  assert.equal(triageUser('a1b2c3d4'), 'a1b2c3d4');
-  for (const value of ['', 'ou_1></at><at id=all', 'someone@example.com', 'ou 1']) {
-    assert.throws(() => triageUser(value), /FEISHU_E2E_TRIAGE_USER must be a Feishu open_id or user_id/);
+await test('accepts a plain name and refuses anything that could turn into markup in the card', () => {
+  assert.equal(triageUser('triage-bot'), 'triage-bot');
+  assert.equal(triageUser('值班同学'), '值班同学');
+  assert.equal(triageUser('bot.v2_on-call'), 'bot.v2_on-call');
+  for (const value of ['', '@triage-bot', '<at id=all></at>', '**all**', '[x](https://example.com)', 'two words']) {
+    assert.throws(() => triageUser(value), /FEISHU_E2E_TRIAGE_USER must be the name to write after @/);
   }
-  assert.throws(() => failureCard({ run, jobs: [job('Build (optional)', 'failure')], results: [], triage: 'x></at>' }), /FEISHU_E2E_TRIAGE_USER/);
+  assert.throws(() => failureCard({ run, jobs: [job('Build (optional)', 'failure')], results: [], triage: 'x <at' }), /FEISHU_E2E_TRIAGE_USER/);
 });
 
 await test('reads every results file under the download folder, one folder per artifact or none at all', () => {
@@ -247,10 +248,10 @@ await test('posts only when something failed, reading the jobs of the run\'s lat
   assert.equal(posted.length, 0);
   assert.deepEqual(asked, [['42', 2]]);
   const red = { run: async () => run, jobs: async () => [job('Build (optional)', 'failure'), notifyJob] };
-  assert.equal(await notify({ runId: '42', resultsDir: missing, triage: 'ou_0123456789abcdef', github: red, post }), 'posted');
+  assert.equal(await notify({ runId: '42', resultsDir: missing, triage: 'triage-bot', github: red, post }), 'posted');
   assert.equal(posted.length, 1);
   assert.equal(posted[0].header.title.content, '每晚 E2E 没通过 · 2026-11-27');
-  assert.match(posted[0].elements.at(-1).text.content, /^<at id=ou_0123456789abcdef><\/at> /);
+  assert.match(posted[0].elements.at(-1).text.content, /^@triage-bot /);
 });
 
 await test('still posts a card, then fails, when it cannot read the run from GitHub', async () => {
@@ -258,24 +259,24 @@ await test('still posts a card, then fails, when it cannot read the run from Git
   const runUrl = 'https://github.com/example/repo/actions/runs/42';
   const down = { run: async () => run, jobs: async () => Promise.reject(new Error('GET repos/example/repo/actions/runs/42/attempts/1/jobs failed with HTTP 502: Bad Gateway')) };
   await assert.rejects(
-    notify({ runId: '42', runUrl, resultsDir: join(tmpdir(), 'e2e-nightly-notify-missing-folder'), triage: 'ou_0123456789abcdef', github: down, post: async card => posted.push(card) }),
+    notify({ runId: '42', runUrl, resultsDir: join(tmpdir(), 'e2e-nightly-notify-missing-folder'), triage: 'triage-bot', github: down, post: async card => posted.push(card) }),
     /HTTP 502/,
   );
-  assert.deepEqual(posted, [unknownOutcomeCard({ runUrl, reason: 'GET repos/example/repo/actions/runs/42/attempts/1/jobs failed with HTTP 502: Bad Gateway', triage: 'ou_0123456789abcdef' })]);
+  assert.deepEqual(posted, [unknownOutcomeCard({ runUrl, reason: 'GET repos/example/repo/actions/runs/42/attempts/1/jobs failed with HTTP 502: Bad Gateway', triage: 'triage-bot' })]);
   assert.equal(posted[0].header.title.content, '每晚 E2E：没能读到结果');
   assert.deepEqual(texts(posted[0]).slice(0, 1), ['通知作业没能读到这次运行的结果，不知道有没有作业没通过。\n原因：GET repos/example/repo/actions/runs/42/attempts/1/jobs failed with HTTP 502: Bad Gateway']);
   assert.equal(texts(posted[0]).at(-2), runUrl);
-  assert.match(posted[0].elements.at(-1).text.content, /^<at id=ou_0123456789abcdef><\/at> /);
+  assert.match(posted[0].elements.at(-1).text.content, /^@triage-bot /);
 });
 
 await test('marks a test card about an earlier run so nobody takes it for tonight\'s failure', async () => {
   const posted = [];
   const red = { run: async () => ({ ...run, event: 'push' }), jobs: async () => [job('Desktop (optional, 2/2)', 'failure'), notifyJob] };
   const missing = join(tmpdir(), 'e2e-nightly-notify-missing-folder');
-  await notify({ runId: '42', resultsDir: missing, triage: 'ou_0123456789abcdef', rehearsal: true, github: red, post: async card => posted.push(card) });
+  await notify({ runId: '42', resultsDir: missing, triage: 'triage-bot', rehearsal: true, github: red, post: async card => posted.push(card) });
   assert.equal(posted[0].header.title.content, '【测试】每晚 E2E 没通过 · 2026-11-27');
   assert.equal(texts(posted[0])[0], 'main@d5263af02 · 合并后运行');
-  assert.match(posted[0].elements.at(-1).text.content, /^<at id=ou_0123456789abcdef><\/at> 看到这条消息后/);
+  assert.match(posted[0].elements.at(-1).text.content, /^@triage-bot 看到这条消息后/);
   assert.equal(unknownOutcomeCard({ runUrl: run.html_url, reason: 'x', rehearsal: true }).header.title.content, '【测试】每晚 E2E：没能读到结果');
   assert.equal(failureCard({ run, jobs: [job('Build (optional)', 'failure')], results: [] }).header.title.content, '每晚 E2E 没通过 · 2026-11-27');
 });
