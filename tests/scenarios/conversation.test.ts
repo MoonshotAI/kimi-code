@@ -178,7 +178,7 @@ describe('conversation over KAP', () => {
     );
     const session = await kap.createSession();
 
-    model.expectCacheBreak('the argument correction is dropped once the retry succeeds', { at: 'history' });
+    model.expectCacheBreak('the retry drops the trailing argument correction, which only costs that message', { at: 'history' });
     await kap.prompt(session.id, 'run it');
     await kap.waitIdle(session.id);
 

@@ -10,6 +10,7 @@ export interface PromptSegment {
   readonly region: PromptRegion;
   readonly label: string;
   readonly text: string;
+  readonly role?: true;
 }
 
 export interface PromptPrefix {
@@ -90,6 +91,10 @@ export function promptSegment(region: PromptRegion, label: string, value: unknow
   return { region, label, text: JSON.stringify(value) ?? '' };
 }
 
+export function roleSegment(label: string, value: unknown): PromptSegment {
+  return { ...promptSegment('messages', label, value), role: true };
+}
+
 export function pickedFields(record: Readonly<Record<string, unknown>>, keys: readonly string[]): Record<string, unknown> {
   return Object.fromEntries(keys.filter((key) => record[key] !== undefined).map((key) => [key, record[key]]));
 }
@@ -159,7 +164,9 @@ export class PromptCacheLedger {
       const pool = this.observations.slice(0, position).filter((earlier) => !earlier.rejected && sameThread(earlier, thread));
       const baseline = pool.findLast((earlier) => earlier.source.role === 'main');
       if (baseline === undefined) return { observation };
-      const found = breakBetween(baseline.segments, observation.segments);
+      const difference = breakBetween(baseline.segments, observation.segments);
+      const trimsOnlyTheTail = observation.source.role === 'compaction' && difference?.part === 'history' && !resendsAfter(baseline.segments, observation.segments, difference.index);
+      const found = trimsOnlyTheTail ? undefined : difference;
       const compactedSinceBaseline = pool.some((earlier) => earlier.source.role === 'compaction' && earlier.source.request > baseline.source.request);
       const restartsAfterCompaction = observation.source.role === 'main' && found?.part === 'history' && compactedSinceBaseline;
       return { observation, baseline: baseline.source.request, break: found, allowance: restartsAfterCompaction ? AFTER_COMPACTION : undefined };
@@ -231,6 +238,15 @@ function breakBetween(previous: readonly PromptSegment[], next: readonly PromptS
     next: after?.label,
     detail: describeChange(previous, next, index),
   };
+}
+
+function resendsAfter(previous: readonly PromptSegment[], next: readonly PromptSegment[], index: number): boolean {
+  const sent = new Set(previous.slice(index).filter(carriesContent).map((segment) => segment.text));
+  return next.slice(index).some((segment) => carriesContent(segment) && sent.has(segment.text));
+}
+
+function carriesContent(segment: PromptSegment): boolean {
+  return segment.region === 'messages' && segment.role !== true;
 }
 
 function sameSegment(previous: PromptSegment, next: PromptSegment): boolean {

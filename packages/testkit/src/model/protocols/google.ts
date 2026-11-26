@@ -8,7 +8,7 @@ import {
   type ProtocolCodec,
   type ResolvedUsage,
 } from '#/model/protocols/codec';
-import { pickedFields, promptSegment, type PromptPrefix } from '#/model/prompt-cache';
+import { pickedFields, promptSegment, roleSegment, type PromptPrefix } from '#/model/prompt-cache';
 import { asArray, asRecord, optionalString, stringOf } from '#/model/protocols/json';
 import type { ErrorSpec, ReplyStep, RequestView, ToolCallSpec, ViewCall, ViewMessage, ViewPart } from '#/model/types';
 import { textOfParts } from '#/model/view';
@@ -151,7 +151,7 @@ function promptPrefix(body: unknown, path: string): PromptPrefix {
         const content = asRecord(raw);
         const label = `contents[${index}] ${stringOf(content['role'])}`;
         return [
-          promptSegment('messages', label, { ...content, parts: undefined }),
+          roleSegment(label, { ...content, parts: undefined }),
           ...asArray(content['parts']).map((part, position) => promptSegment('messages', `${label} parts[${position}]`, part)),
         ];
       }),

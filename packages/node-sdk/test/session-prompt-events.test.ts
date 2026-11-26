@@ -679,7 +679,6 @@ describe('Session.prompt events', () => {
       await runPrompt(source, 'first question', 'first answer');
       await runPrompt(source, 'second question', 'second answer');
       await runPrompt(source, 'third question', 'third answer');
-      model.expectCacheBreak('undo rewrites the history', { at: 'history' });
       await source.undoHistory(1);
       await source.close();
 

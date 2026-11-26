@@ -1,6 +1,6 @@
 import { emissionsOf, type Emission } from '#/model/emission';
 import { jsonResponse, objectArguments, SSE_HEADERS, type ProtocolCodec, type ResolvedUsage } from '#/model/protocols/codec';
-import { pickedFields, promptSegment, type PromptPrefix } from '#/model/prompt-cache';
+import { pickedFields, promptSegment, roleSegment, type PromptPrefix } from '#/model/prompt-cache';
 import { asArray, asRecord, optionalString, stringOf } from '#/model/protocols/json';
 import type { ReplyStep, RequestView, ViewCall, ViewMessage, ViewPart } from '#/model/types';
 import { textOfParts } from '#/model/view';
@@ -177,7 +177,7 @@ function promptPrefix(body: unknown): PromptPrefix {
         const message = asRecord(raw);
         const label = `messages[${index}] ${stringOf(message['role'])}`;
         return [
-          promptSegment('messages', label, { ...message, content: undefined }),
+          roleSegment(label, { ...message, content: undefined }),
           ...contentBlocks(message['content']).map((block, position) => promptSegment('messages', `${label} content[${position}]`, blockWithoutCacheMarkers(block))),
         ];
       }),

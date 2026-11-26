@@ -160,6 +160,19 @@ describe('prompt cache ledger', () => {
     expect(problemsOf(model)).toEqual([expect.stringContaining('request #3 (every request) does not extend request #2 under prompt cache key "session-1": tools[1] Bash is missing')]);
   });
 
+  it('accepts a compaction request that summarizes only the leading messages and leaves the rest out', async () => {
+    const model = fakeModel();
+    const ask = openai(model);
+
+    await ask({ messages: SECOND_TURN, role: 'main' });
+    await ask({ messages: [...FIRST_TURN, { role: 'user', content: 'Summarize the conversation.' }], role: 'compaction' });
+
+    const [, compaction] = model.promptCache();
+    expect(compaction).toMatchObject({ role: 'compaction', baseline: 0 });
+    expect(compaction?.break).toBeUndefined();
+    expect(problemsOf(model)).toEqual([]);
+  });
+
   it('reports a compaction request that drops the oldest messages', async () => {
     const model = fakeModel();
     const ask = openai(model);
