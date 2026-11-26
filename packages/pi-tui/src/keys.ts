@@ -300,7 +300,8 @@ const MODIFIERS = {
 	super: 8,
 } as const;
 
-const LOCK_MASK = 64 + 128; // Caps Lock + Num Lock
+const CAPS_LOCK_BIT = 64;
+const LOCK_MASK = CAPS_LOCK_BIT + 128; // Caps Lock + Num Lock
 
 const CODEPOINTS = {
 	escape: 27,
@@ -378,9 +379,12 @@ function normalizeKittyFunctionalCodepoint(codepoint: number): number {
 	return KITTY_FUNCTIONAL_KEY_EQUIVALENTS.get(codepoint) ?? codepoint;
 }
 
-function normalizeShiftedLetterIdentityCodepoint(codepoint: number, modifier: number): number {
+function normalizeLetterIdentityCodepoint(codepoint: number, modifier: number): number {
 	const effectiveModifier = modifier & ~LOCK_MASK;
-	if ((effectiveModifier & MODIFIERS.shift) !== 0 && codepoint >= 65 && codepoint <= 90) {
+	const normalizeUppercaseLetter =
+		(effectiveModifier & MODIFIERS.shift) !== 0 ||
+		((modifier & CAPS_LOCK_BIT) !== 0 && effectiveModifier !== 0);
+	if (normalizeUppercaseLetter && codepoint >= 65 && codepoint <= 90) {
 		return codepoint + 32;
 	}
 	return codepoint;
@@ -721,11 +725,11 @@ function matchesKittySequence(data: string, expectedCodepoint: number, expectedM
 	const actualMod = parsed.modifier & ~LOCK_MASK;
 	const expectedMod = expectedModifier & ~LOCK_MASK;
 
-	const normalizedCodepoint = normalizeShiftedLetterIdentityCodepoint(
+	const normalizedCodepoint = normalizeLetterIdentityCodepoint(
 		normalizeKittyFunctionalCodepoint(parsed.codepoint),
 		parsed.modifier,
 	);
-	const normalizedExpectedCodepoint = normalizeShiftedLetterIdentityCodepoint(
+	const normalizedExpectedCodepoint = normalizeLetterIdentityCodepoint(
 		normalizeKittyFunctionalCodepoint(expectedCodepoint),
 		expectedModifier,
 	);
@@ -844,8 +848,8 @@ function matchesPrintableModifyOtherKeys(data: string, expectedKeycode: number, 
 	if (!parsed) return false;
 	const physicalMatch =
 		parsed.modifier === expectedModifier &&
-		normalizeShiftedLetterIdentityCodepoint(parsed.codepoint, parsed.modifier) ===
-			normalizeShiftedLetterIdentityCodepoint(expectedKeycode, expectedModifier);
+		normalizeLetterIdentityCodepoint(parsed.codepoint, parsed.modifier) ===
+			normalizeLetterIdentityCodepoint(expectedKeycode, expectedModifier);
 	if (physicalMatch) return true;
 	const logicalShiftedSymbol = getLogicalShiftedSymbolCandidate(
 		parsed.codepoint,
@@ -1302,7 +1306,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
  */
 function formatParsedKey(codepoint: number, modifier: number, baseLayoutKey?: number): string | undefined {
 	const normalizedCodepoint = normalizeKittyFunctionalCodepoint(codepoint);
-	const identityCodepoint = normalizeShiftedLetterIdentityCodepoint(normalizedCodepoint, modifier);
+	const identityCodepoint = normalizeLetterIdentityCodepoint(normalizedCodepoint, modifier);
 
 	// Use base layout key only when codepoint is not a recognized Latin
 	// letter (a-z), digit (0-9), or symbol (/, -, [, ;, etc.). For those,

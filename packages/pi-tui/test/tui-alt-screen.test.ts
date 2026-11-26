@@ -940,13 +940,13 @@ describe("TuiAltScreen", () => {
 		assert.match(lines[0] ?? "", /^┌─+┐$/);
 		assert.match(lines[1] ?? "", /^│ Find in transcript +│$/);
 		assert.ok(rendered[1]?.includes("\x1b[2m"));
-		assert.match(lines[2] ?? "", /^└─+ ↑ Shift\+Enter · ↓ Enter ─┘$/);
+		assert.match(lines[2] ?? "", /^└─+ ↑ Previous · ↓ Next ─┘$/);
 		const controls = lines[2] ?? "";
 		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("↑")), -1);
-		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("Shift+Enter") + 5), -1);
+		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("Previous") + 4), -1);
 		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("·")), undefined);
 		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("↓")), 1);
-		assert.strictEqual(component.getNavigationDirectionAt(2, controls.lastIndexOf("Enter") + 2), 1);
+		assert.strictEqual(component.getNavigationDirectionAt(2, controls.indexOf("Next") + 2), 1);
 
 		component.handleInput("n");
 		component.setResult(0, 2);
@@ -956,6 +956,249 @@ describe("TuiAltScreen", () => {
 		assert.ok(populated[1]?.includes("1/2"));
 		assert.ok(populatedRender[1]?.includes("\x1b[2m 1/2 \x1b[22m"));
 		assert.ok(!populated.some((line) => line.includes("Find in transcript")));
+	});
+
+	it("formats custom search controls, handles narrow fallback, and suppresses whitespace no-matches", () => {
+		const originalKeybindings = getKeybindings();
+		const changes: string[] = [];
+		const component = new AltScreenSearchComponent((query) => changes.push(query));
+		try {
+			const narrow = component.render(20).map((line) => stripTerminalSequences(line));
+			const narrowControls = narrow[2] ?? "";
+			assert.match(narrowControls, /^└─+ ↑ ↓ ─┘$/);
+			assert.strictEqual(component.getNavigationDirectionAt(2, narrowControls.indexOf("↑")), -1);
+			assert.strictEqual(component.getNavigationDirectionAt(2, narrowControls.indexOf("↑") + 1), undefined);
+			assert.strictEqual(component.getNavigationDirectionAt(2, narrowControls.indexOf("↓")), 1);
+
+			setKeybindings(
+				new KeybindingsManager(TUI_KEYBINDINGS, {
+					"tui.altScreen.searchPrevious": ["shift+enter", "ctrl+shift+g"],
+					"tui.altScreen.searchNext": ["enter", "ctrl+g"],
+				}),
+			);
+			const keyNameLines = component.render(48).map((line) => stripTerminalSequences(line));
+			const keyNameControls = keyNameLines[2] ?? "";
+			assert.match(keyNameControls, /^└─+ ↑ Shift\+Enter · ↓ Enter ─┘$/);
+			assert.strictEqual(component.getNavigationDirectionAt(2, keyNameControls.indexOf("Shift+Enter") + 5), -1);
+			assert.strictEqual(component.getNavigationDirectionAt(2, keyNameControls.lastIndexOf("Enter") + 2), 1);
+
+			setKeybindings(
+				new KeybindingsManager(TUI_KEYBINDINGS, {
+					"tui.altScreen.searchPrevious": "down",
+					"tui.altScreen.searchNext": "up",
+				}),
+			);
+			const reversedLines = component.render(48).map((line) => stripTerminalSequences(line));
+			assert.match(reversedLines[2] ?? "", /^└─+ ↑ Down · ↓ Up ─┘$/);
+
+			component.setQuery("   ");
+			component.setResult(-1, 0);
+			assert.deepStrictEqual(changes, []);
+			const whitespaceLines = component.render(48).map((line) => stripTerminalSequences(line));
+			assert.ok(!whitespaceLines.some((line) => line.includes("No matches")));
+
+			component.setQuery("missing");
+			component.setResult(-1, 0);
+			const missingLines = component.render(48).map((line) => stripTerminalSequences(line));
+			assert.ok(missingLines.some((line) => line.includes("No matches")));
+		} finally {
+			setKeybindings(originalKeybindings);
+		}
+	});
+
+	it("toggles transcript search with Ctrl+F or Ctrl+Shift+F and navigates with Up/Down by default", async () => {
+		const terminal = new VirtualTerminal(100, 6);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("needle one\nmiddle\nneedle two\nend", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+
+			terminal.sendInput("\x06");
+			terminal.sendInput("needle");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
+			assert.ok(terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+
+			terminal.sendInput("\x1b[B");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
+
+			terminal.sendInput("\x1b[A");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
+
+			terminal.sendInput("\x06");
+			await terminal.waitForRender();
+			assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+
+			terminal.sendInput("\x1b[102;6u");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+
+			terminal.sendInput("\x1b[102;6u");
+			await terminal.waitForRender();
+			assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("opens search empty or prefilled with cursor at end via openSearch", async () => {
+		const terminal = new VirtualTerminal(80, 6);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(
+			new Text(
+				[
+					"line 1",
+					"line 2 needl short",
+					"line 3",
+					"line 4",
+					"line 5 needle one",
+					"line 6",
+					"line 7",
+					"line 8",
+					"line 9",
+					"line 10 needle two",
+					"line 11",
+					"line 12",
+				].join("\n"),
+				0,
+				0,
+			),
+		);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+
+			tui.openSearch();
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("Find in transcript")));
+
+			terminal.sendInput("\x1b");
+			await terminal.waitForRender();
+			assert.ok(!terminal.getViewport().some((line) => line.includes("Find in transcript")));
+
+			tui.openSearch("needle");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("needle") && line.includes("2/2")));
+
+			terminal.sendInput("\x7f");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("needl ") && line.includes("3/3")));
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("refocuses, replaces, recenters same queries, and sanitizes multiline queries in openSearch", async () => {
+		const terminal = new RecordingTerminal(80, 6);
+		const tui = new TuiAltScreen(terminal);
+		const transcript = new ScrollView(
+			new Text(
+				[
+					"line 1",
+					"line 2 needle one",
+					"line 3 alpha target",
+					"line 4",
+					"line 5",
+					"line 6",
+					"quick",
+					"brown",
+					"fox end",
+					"line 10",
+					"line 11",
+					"line 12",
+					"line 13 needle two",
+					"line 14",
+					"line 15",
+				].join("\n"),
+				0,
+				0,
+			),
+			{ follow: "end", primary: true },
+		);
+		const editorInputs: string[] = [];
+		const editor = {
+			focused: false,
+			render: () => ["editor"],
+			invalidate: () => {},
+			handleInput: (data: string) => editorInputs.push(data),
+		};
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1, minSize: 1 },
+				{ component: editor, basis: 1, shrink: 0 },
+			]),
+		);
+		tui.setFocus(editor);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+
+			tui.openSearch("needle");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("needle") && line.includes("2/2")));
+
+			tui.setFocus(null);
+			tui.setFocus(editor);
+			terminal.sendInput("z");
+			assert.deepStrictEqual(editorInputs, ["z"]);
+
+			tui.openSearch();
+			await terminal.waitForRender();
+			assert.notStrictEqual(tui.getFocusedComponent(), editor);
+			assert.ok(terminal.getViewport().some((line) => line.includes("needle") && line.includes("2/2")));
+			terminal.sendInput("\x07");
+			await terminal.waitForRender();
+			assert.deepStrictEqual(editorInputs, ["z"]);
+			assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
+			terminal.sendInput("\x1b[103;6u");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
+
+			tui.scrollToTop();
+			await terminal.waitForRender();
+			assert.strictEqual(transcript.scrollTop, 0);
+			assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
+
+			const sameQueryEventCount = terminal.events.length;
+			tui.openSearch("needle");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
+			assert.ok(terminal.getViewport().some((line) => line.includes("line 2 needle one")));
+			assert.ok(
+				terminal.events
+					.slice(sameQueryEventCount)
+					.every((event) => event.type !== "write" || !event.data.includes("No matches")),
+			);
+
+			tui.openSearch("alpha");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("alpha") && line.includes("1/1")));
+			assert.ok(terminal.getViewport().some((line) => line.includes("line 3 alpha target")));
+
+			tui.scrollToBottom();
+			await terminal.waitForRender();
+			assert.ok(!terminal.getViewport().some((line) => line.includes("line 3 alpha target")));
+
+			const recenterEventCount = terminal.events.length;
+			tui.openSearch("alpha");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("alpha") && line.includes("1/1")));
+			assert.ok(terminal.getViewport().some((line) => line.includes("line 3 alpha target")));
+			assert.ok(
+				terminal.events
+					.slice(recenterEventCount)
+					.every((event) => event.type !== "write" || !event.data.includes("No matches")),
+			);
+
+			tui.openSearch("quick\r\nbrown\nfox\tend");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("quick brown fox end") && line.includes("1/1")));
+		} finally {
+			tui.stop();
+		}
 	});
 
 	it("navigates transcript search with hoverable arrow buttons and toggles it with its shortcut", async () => {
@@ -972,10 +1215,10 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 		let viewport = terminal.getViewport();
 		assert.ok(viewport.some((line) => line.includes("1/2")));
-		assert.ok(viewport.some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+		assert.ok(viewport.some((line) => line.includes("↑ Previous · ↓ Next")));
 
 		let arrowRow = viewport.findIndex((line) => line.includes("↑") && line.includes("↓"));
-		let arrowColumn = viewport[arrowRow]?.lastIndexOf("Enter") ?? -1;
+		let arrowColumn = viewport[arrowRow]?.lastIndexOf("Next") ?? -1;
 		assert.ok(arrowRow >= 0 && arrowColumn >= 0);
 		const hoverEventCount = terminal.events.length;
 		terminal.sendInput(`\x1b[<35;${arrowColumn + 1};${arrowRow + 1}M`);
@@ -983,25 +1226,25 @@ describe("TuiAltScreen", () => {
 		assert.ok(
 			terminal.events
 				.slice(hoverEventCount)
-				.some((event) => event.type === "write" && event.data.includes("\x1b[45m↓ Enter\x1b[49m")),
+				.some((event) => event.type === "write" && event.data.includes("\x1b[45m↓ Next\x1b[49m")),
 		);
 		terminal.sendInput(`\x1b[<0;${arrowColumn + 1};${arrowRow + 1}M`);
 		await terminal.waitForRender();
 		viewport = terminal.getViewport();
 		assert.ok(viewport.some((line) => line.includes("2/2")));
-		assert.ok(viewport.some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+		assert.ok(viewport.some((line) => line.includes("↑ Previous · ↓ Next")));
 
 		arrowRow = viewport.findIndex((line) => line.includes("↑") && line.includes("↓"));
-		arrowColumn = (viewport[arrowRow]?.indexOf("Shift+Enter") ?? -3) + 3;
+		arrowColumn = (viewport[arrowRow]?.indexOf("Previous") ?? -3) + 3;
 		assert.ok(arrowRow >= 0 && arrowColumn >= 0);
 		terminal.sendInput(`\x1b[<0;${arrowColumn + 1};${arrowRow + 1}M`);
 		await terminal.waitForRender();
 		assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
-		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
 
 		terminal.sendInput("\x1b[102;6u");
 		await terminal.waitForRender();
-		assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+		assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
 		tui.stop();
 	});
 
@@ -1137,7 +1380,7 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 		assert.strictEqual(transcript.isFollowingEnd, false);
 		assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
-		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
 		assert.ok(terminal.getViewport().some((line) => line.includes("line 10 needle two")));
 		assert.deepStrictEqual(editorInputs, []);
 		assert.ok(
@@ -1162,7 +1405,7 @@ describe("TuiAltScreen", () => {
 		terminal.sendInput("\x1b");
 		terminal.sendInput("x");
 		await terminal.waitForRender();
-		assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Shift+Enter · ↓ Enter")));
+		assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
 		assert.deepStrictEqual(editorInputs, ["x"]);
 
 		tui.stop();
@@ -2741,6 +2984,114 @@ describe("TuiAltScreen", () => {
 		terminal.sendInput("\x1b[5~"); // PageUp scrolls the transcript again
 		await terminal.waitForRender();
 		assert.ok(tui.viewportTop < topWithoutMenu);
+		tui.stop();
+	});
+
+	it("defers search shortcut and ignores openSearch when layoutRoot has no scroll view, but keeps search for short scrollable layouts", async () => {
+		const terminal = new VirtualTerminal(60, 8);
+		const tui = new TuiAltScreen(terminal);
+		const takeover = new InputOverlay();
+		tui.setLayoutRoot(takeover);
+		tui.setFocus(takeover);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x06");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(takeover.inputs, ["\x06"]);
+		assert.ok(!terminal.getViewport().some((line) => line.includes("Find in transcript")));
+
+		tui.openSearch("alpha");
+		await terminal.waitForRender();
+		assert.ok(!terminal.getViewport().some((line) => line.includes("Find in transcript")));
+		assert.ok(!terminal.getViewport().some((line) => line.includes("No matches")));
+
+		const shortScrollView = new ScrollView(new Text("short alpha line", 0, 0), { primary: true });
+		tui.setLayoutRoot(new VStack([{ component: shortScrollView, basis: 0, grow: 1 }]));
+		await terminal.waitForRender();
+		assert.strictEqual(shortScrollView.canScroll, false);
+
+		terminal.sendInput("\x06");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("Find in transcript")));
+		tui.stop();
+	});
+
+	it("opens and closes search with Kitty Ctrl+F when Caps Lock is active", async () => {
+		const terminal = new VirtualTerminal(60, 8);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("alpha\nbeta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[70;69u");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("Find in transcript")));
+
+		terminal.sendInput("\x1b[70;69u");
+		await terminal.waitForRender();
+		assert.ok(!terminal.getViewport().some((line) => line.includes("Find in transcript")));
+		tui.stop();
+	});
+
+	it("closes active search when clicking a focusable editor while keeping search open on scroll, wheel focus results, selection, and search-box clicks", async () => {
+		const terminal = new VirtualTerminal(80, 12);
+		const tui = new TuiAltScreen(terminal);
+		const scrollView = new ScrollView(
+			new Text(Array.from({ length: 20 }, (_, index) => `alpha line ${index + 1}`).join("\n"), 0, 0),
+			{ primary: true },
+		);
+		const wheelFocusRegion = new MouseRegion(new Text("wheel strip", 0, 0), (event) =>
+			event.type === "wheel" ? { handled: true, focus: true } : undefined,
+		);
+		const editor = new Editor(tui, defaultEditorTheme);
+		tui.setLayoutRoot(new VStack([{ component: scrollView, basis: 0, grow: 1 }, wheelFocusRegion, editor]));
+		tui.setFocus(editor);
+		tui.start();
+		await terminal.waitForRender();
+
+		tui.openSearch("alpha");
+		await terminal.waitForRender();
+		assert.strictEqual(editor.focused, false);
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+
+		const wheelStripRow = terminal.getViewport().findIndex((line) => line.includes("wheel strip"));
+		assert.ok(wheelStripRow >= 0);
+		terminal.sendInput(`\x1b[<64;3;${wheelStripRow + 1}M`);
+		terminal.sendInput("\x1b[<64;5;3M");
+		terminal.sendInput("\x1b[<0;2;2M");
+		terminal.sendInput("\x1b[<32;6;2M");
+		terminal.sendInput("\x1b[<0;6;2m");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+		assert.notStrictEqual(tui.getFocusedComponent(), wheelFocusRegion);
+
+		const searchRow = terminal.getViewport().findIndex((line) => line.includes("alpha") && line.includes("/20"));
+		assert.ok(searchRow >= 0);
+		const searchCol = terminal.getViewport()[searchRow]!.indexOf("alpha") + 1;
+		terminal.sendInput(`\x1b[<0;${searchCol};${searchRow + 1}M`);
+		terminal.sendInput(`\x1b[<0;${searchCol};${searchRow + 1}m`);
+		terminal.sendInput("x");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+		assert.strictEqual(editor.getText(), "");
+
+		const editorRow = wheelStripRow + 3;
+		terminal.sendInput(`\x1b[<0;5;${editorRow}M`);
+		terminal.sendInput(`\x1b[<0;5;${editorRow}m`);
+		await terminal.waitForRender();
+		assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+		assert.strictEqual(editor.focused, true);
+		assert.strictEqual(tui.getFocusedComponent(), editor);
+
+		terminal.sendInput("hello");
+		await terminal.waitForRender();
+		assert.strictEqual(editor.getText(), "hello");
+		assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+
+		terminal.sendInput(`\x1b[<64;3;${wheelStripRow + 1}M`);
+		await terminal.waitForRender();
+		assert.strictEqual(tui.getFocusedComponent(), wheelFocusRegion);
 		tui.stop();
 	});
 });

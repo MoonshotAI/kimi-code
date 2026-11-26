@@ -4,6 +4,7 @@ import {
   Key,
   decodeKittyPrintable,
   type Focusable,
+  type TuiMode,
   truncateToWidth,
 } from '@moonshot-ai/pi-tui';
 import {
@@ -34,10 +35,12 @@ const SUBMIT_DESCRIPTIONS: Readonly<Record<FollowUpDelivery, string>> = {
 export function keyboardShortcuts(
   followUpBehavior: FollowUpBehavior,
   ctrlEnterRecognized: boolean,
+  tuiMode: TuiMode = 'regular',
 ): readonly KeyboardShortcut[] {
   const submit = FOLLOW_UP_KEYMAP[followUpBehavior];
   return [
     { keys: 'Shift-Tab', description: 'Toggle plan mode' },
+    ...(tuiMode === 'fullscreen' ? [{ keys: 'Ctrl-F', description: 'Search conversation' }] : []),
     { keys: 'Ctrl-G', description: 'Edit in external editor ($VISUAL / $EDITOR)' },
     { keys: 'Ctrl-O', description: 'Toggle tool output / compaction summary expansion' },
     { keys: 'Ctrl-S', description: 'Steer — inject a follow-up during streaming' },
