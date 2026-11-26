@@ -55,7 +55,7 @@ export interface ResolveSlashCommandInput {
   readonly pluginCommandMap: ReadonlyMap<string, string>;
   readonly isStreaming: boolean;
   readonly isCompacting: boolean;
-  readonly tuiMode?: TuiMode;
+  readonly tuiMode: TuiMode;
   readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
   readonly defaultSkillPathForCommand?: (commandName: string) => string | undefined;
 }
@@ -64,7 +64,7 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
   const parsed = parseSlashInput(options.input);
   if (parsed === null) return { kind: 'not-command' };
 
-  const command = findVisibleBuiltInSlashCommand(parsed.name, options.tuiMode ?? 'regular');
+  const command = findVisibleBuiltInSlashCommand(parsed.name, options.tuiMode);
   if (command !== undefined) {
     const busyReason = slashCommandBusyReason(options);
     if (
@@ -173,7 +173,7 @@ export function resolveUserInput(options: ResolveSlashCommandInput): {
 export interface SlashCommandResolutionHost {
   readonly state: {
     readonly appState: Pick<TUIState['appState'], 'streamingPhase' | 'isCompacting'>;
-    readonly ui?: Partial<Pick<TUIState['ui'], 'mode'>>;
+    readonly ui: Pick<TUIState['ui'], 'mode'>;
   };
   readonly skillCommandMap: ReadonlyMap<string, string>;
   readonly pluginCommandMap: ReadonlyMap<string, string>;
@@ -192,7 +192,7 @@ export function resolveHostUserInput(
     pluginCommandMap: host.pluginCommandMap,
     isStreaming: overrides?.isStreaming ?? host.state.appState.streamingPhase !== 'idle',
     isCompacting: overrides?.isCompacting ?? host.state.appState.isCompacting,
-    tuiMode: overrides?.tuiMode ?? host.state.ui?.mode,
+    tuiMode: overrides?.tuiMode ?? host.state.ui.mode,
     skillVariantPathForCommand:
       host.skillVariantPathForCommand === undefined
         ? undefined

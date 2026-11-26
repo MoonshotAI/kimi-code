@@ -476,7 +476,7 @@ export type BuiltinSlashCommand = (typeof BUILTIN_SLASH_COMMANDS)[number];
 export type BuiltinSlashCommandName = BuiltinSlashCommand['name'];
 
 export function isSlashCommandVisible(
-  command: Pick<KimiSlashCommand, 'name' | 'experimentalFlag' | 'visible'>,
+  command: KimiSlashCommand,
   tuiMode: TuiMode,
 ): boolean {
   return (

@@ -22,6 +22,7 @@ function resolve(
     pluginCommandMap: new Map<string, string>(),
     isStreaming: false,
     isCompacting: false,
+    tuiMode: 'regular',
     ...overrides,
   });
 }
@@ -30,6 +31,7 @@ describe('resolveUserInput', () => {
   const options = {
     isStreaming: false,
     isCompacting: false,
+    tuiMode: 'regular' as const,
     skillCommandMap: new Map([
       ['skill:review', 'review'],
       ['quick', 'review'],
@@ -516,24 +518,20 @@ describe('resolveSlashCommandInput', () => {
 });
 
 describe('resolveHostUserInput', () => {
-  const makeHost = (mode?: 'regular' | 'fullscreen') => ({
+  const makeHost = (mode: 'regular' | 'fullscreen') => ({
     state: {
       appState: {
         streamingPhase: 'idle' as const,
         isCompacting: false,
       },
-      ...(mode !== undefined ? { ui: { mode } } : {}),
+      ui: { mode },
     },
     skillCommandMap: new Map<string, string>(),
     pluginCommandMap: new Map<string, string>(),
   });
 
-  it('injects tuiMode from host.state.ui.mode and defaults omitted ui to regular', () => {
+  it('resolves built-in visibility from host.state.ui.mode', () => {
     expect(resolveHostUserInput(makeHost('regular'), '/find needle').intent).toEqual({
-      kind: 'message',
-      input: '/find needle',
-    });
-    expect(resolveHostUserInput(makeHost(undefined), '/find needle').intent).toEqual({
       kind: 'message',
       input: '/find needle',
     });
