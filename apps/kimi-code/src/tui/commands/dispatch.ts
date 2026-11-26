@@ -75,6 +75,7 @@ import { handleSwarmCommand } from './swarm';
 import { handleTowerCommand } from './tower';
 import { handleUndoCommand } from './undo';
 import { handleRemoteControlCommand, handleWebCommand } from './web';
+import { handleWorkspaceCommand } from './workspace';
 
 export { handleLoginCommand, handleLogoutCommand } from './auth';
 export { handleBtwCommand } from './btw';
@@ -109,6 +110,7 @@ export {
 } from './session';
 export { handleUndoCommand } from './undo';
 export { handleRemoteControlCommand, handleWebCommand } from './web';
+export { handleWorkspaceCommand } from './workspace';
 
 export interface SlashCommandHost {
   state: TUIState;
@@ -445,6 +447,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'status':
       void showStatusReport(host);
+      return;
+    case 'workspace':
+      await handleWorkspaceCommand(host);
       return;
     case 'feedback':
       await handleFeedbackCommand(host);

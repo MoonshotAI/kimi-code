@@ -157,7 +157,24 @@ export type {
   FeedbackSubmitInput,
   FeedbackSubmitResult,
 } from '@moonshot-ai/agent-core-v2/app/auth/feedback';
-export type { KimiAuthLoginResult, KimiAuthLogoutResult } from '#/auth';
+export type {
+  KimiAuthLoginResult,
+  KimiAuthLogoutResult,
+  KimiAuthWorkspaceSwitchResult,
+} from '#/auth';
+export {
+  BUSINESS_MEMBERSHIP_REVOKED_CODES,
+  BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+  isBusinessMembershipRevokedCode,
+} from '@moonshot-ai/kimi-code-oauth';
+export type {
+  BusinessMembershipRevokedCode,
+  ManagedAccountProfile,
+  ManagedAccountProfileResult,
+  ManagedWorkspace,
+  ManagedWorkspacesResult,
+  WorkspaceTarget,
+} from '@moonshot-ai/kimi-code-oauth';
 
 export * from '#/events';
 export type * from '#/types';

@@ -145,6 +145,7 @@ export interface LlmStatusErrorInput {
   readonly retryAfterMs?: number | null;
   readonly headers?: Record<string, string> | null;
   readonly retryable: boolean;
+  readonly code?: string;
 }
 
 export function isTransientHttpStatus(statusCode: number | undefined): boolean {
@@ -173,6 +174,7 @@ export function toLlmStreamErrorMessage(
     retryAfterMs: input.retryAfterMs ?? null,
     headers: input.headers ?? null,
     retryable: input.retryable,
+    ...(input.code !== undefined ? { code: input.code } : {}),
   };
   if (input.businessCode === 429) {
     return { kind: 'rate_limit', message: input.message, ...info };
@@ -209,6 +211,7 @@ export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteEr
     retryAfterMs: input.retryAfterMs ?? null,
     headers: input.headers ?? null,
     retryable: input.retryable,
+    ...(input.code !== undefined ? { code: input.code } : {}),
   };
   if (input.statusCode === 429) {
     return { kind: 'rate_limit', message: input.message, ...info };

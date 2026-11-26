@@ -749,4 +749,344 @@ describe('KimiOAuthToolkit', () => {
     expect(write).toHaveBeenCalledWith(config);
     await expect(storage.load('kimi-code')).resolves.toBeUndefined();
   });
+
+  it('skips force refresh and goes straight to device login when /models returns 401 REASON_BUSINESS_MEMBER_REMOVED', async () => {
+    const storage = new MemoryTokenStorage();
+    storage.tokens.set('kimi-code', token('removed-access'));
+    const tokenCalls: string[] = [];
+    const fetchImpl = vi.fn(
+      async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith('/api/oauth/device_authorization')) {
+        return new Response(
+          JSON.stringify({
+            user_code: 'ABCD-1234',
+            device_code: 'dev-code-1',
+            verification_uri_complete: 'https://auth.example/verify',
+            interval: 1,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.endsWith('/api/oauth/token')) {
+        const body = new URLSearchParams(typeof init?.body === 'string' ? init.body : '');
+        tokenCalls.push(body.get('grant_type') ?? '');
+        return new Response(
+          JSON.stringify({
+            access_token: 'device-fresh-access',
+            refresh_token: 'device-fresh-refresh',
+            expires_in: 3600,
+            scope: 'kimi-code',
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.endsWith('/models')) {
+        const auth = new Headers(init?.headers).get('Authorization');
+        if (auth === 'Bearer removed-access') {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 'REASON_BUSINESS_MEMBER_REMOVED',
+                message: 'removed',
+                type: 'invalid_authentication_error',
+              },
+            }),
+            { status: 401, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            data: [{ id: 'kimi-for-coding', limit: { context: 200000 } }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const config = { providers: {} };
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      fetchImpl,
+      now: () => 100,
+      sleep: async () => {},
+      configAdapter: {
+        read: () => config,
+        write: () => {},
+        apply: () => ({ defaultModel: 'kimi-code/kimi-for-coding', defaultThinking: true }),
+      },
+    });
+
+    await expect(toolkit.login()).resolves.toMatchObject({ ok: true });
+    expect(tokenCalls).toEqual(['urn:ietf:params:oauth:grant-type:device_code']);
+  });
+
+  it('serializes logout behind an in-flight switchWorkspace so config and credentials end cleared', async () => {
+    const storage = new MemoryTokenStorage();
+    storage.tokens.set('kimi-code', token('initial-access'));
+
+    let resolveSwitchFetch!: (response: Response) => void;
+    const fetchImpl = vi.fn(
+      async (input: Parameters<typeof fetch>[0]) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.endsWith('/api/oauth/token')) {
+          return new Promise<Response>((resolve) => {
+            resolveSwitchFetch = resolve;
+          });
+        }
+        if (url.endsWith('/models')) {
+          return new Response(
+            JSON.stringify({
+              data: [{ id: 'kimi-for-coding', limit: { context: 200000 } }],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (url.endsWith('/me')) {
+          return new Response(
+            JSON.stringify({
+              user_id: 'u-1',
+              nickname: 'Alex',
+              status: 'USER_STATUS_NORMAL',
+              region: 'REGION_CN',
+              user_level: 50,
+              user_level_name: 'Premium',
+              domain: 1,
+              domain_name: 'DOMAIN_EXAMPLE',
+              workspace_name: 'Acme AI',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (url.endsWith('/workspaces')) {
+          return new Response(
+            JSON.stringify({
+              workspaces: [
+                {
+                  kind: 'business',
+                  business_id: 'biz-1',
+                  name: 'Acme AI',
+                  status: 'STATUS_ACTIVE',
+                  current: true,
+                  disabled: false,
+                  roles: ['ROLE_MEMBER'],
+                },
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      },
+    ) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const config: { providers: Record<string, unknown> } = { providers: {} };
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      fetchImpl,
+      now: () => 100,
+      configAdapter: {
+        read: () => config,
+        write: () => {},
+        apply: (target) => {
+          target.providers[KIMI_CODE_PROVIDER_NAME] = { type: 'kimi', apiKey: '' };
+          return { defaultModel: 'kimi-code/kimi-for-coding', defaultThinking: true };
+        },
+        remove: (target) => {
+          delete target.providers[KIMI_CODE_PROVIDER_NAME];
+        },
+      },
+    });
+
+    const pendingSwitch = toolkit.switchWorkspace({ kind: 'business', businessId: 'biz-1' });
+    await vi.waitFor(() => expect(resolveSwitchFetch).toBeTypeOf('function'));
+
+    const pendingLogout = toolkit.logout();
+
+    resolveSwitchFetch(
+      new Response(
+        JSON.stringify({
+          access_token: 'switched-access',
+          refresh_token: 'switched-refresh',
+          expires_in: 3600,
+          scope: 'kimi-code',
+          token_type: 'Bearer',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+
+    await pendingSwitch;
+    await pendingLogout;
+
+    await expect(storage.load('kimi-code')).resolves.toBeUndefined();
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toBeUndefined();
+  });
+
+  it('skips overwriting provisioned config when another process rotates the token before /models finishes', async () => {
+    const storage = new MemoryTokenStorage();
+    storage.tokens.set('kimi-code', token('initial-access'));
+
+    let resolveModelsFetch!: (response: Response) => void;
+    const fetchImpl = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith('/api/oauth/token')) {
+        return new Response(
+          JSON.stringify({
+            access_token: 'workspace-a-access',
+            refresh_token: 'workspace-a-refresh',
+            expires_in: 3600,
+            scope: 'kimi-code',
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.endsWith('/models')) {
+        return new Promise<Response>((resolve) => {
+          resolveModelsFetch = resolve;
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const write = vi.fn();
+    const config: { providers: Record<string, unknown> } = { providers: {} };
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      fetchImpl,
+      now: () => 100,
+      configAdapter: {
+        read: () => config,
+        write,
+        apply: (target) => {
+          target.providers[KIMI_CODE_PROVIDER_NAME] = { type: 'kimi', apiKey: '' };
+          return { defaultModel: 'kimi-code/workspace-a-only', defaultThinking: true };
+        },
+      },
+    });
+
+    const pendingSwitch = toolkit.switchWorkspace({ kind: 'business', businessId: 'biz-a' });
+    await vi.waitFor(() => expect(resolveModelsFetch).toBeTypeOf('function'));
+
+    storage.tokens.set('kimi-code', token('workspace-b-access'));
+    resolveModelsFetch(
+      new Response(
+        JSON.stringify({
+          data: [{ id: 'workspace-a-only', limit: { context: 200000 } }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+
+    await expect(pendingSwitch).resolves.toMatchObject({ ok: true });
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('honors custom oauthHost and baseUrl in listWorkspaces and getAccountProfile without an explicit oauthRef', async () => {
+    const storage = new MemoryTokenStorage();
+    const customOauthHost = 'https://auth.custom.example.test';
+    const customBaseUrl = 'https://api.custom.example.test/coding/v1';
+    const customKey = resolveKimiCodeOAuthKey({
+      oauthHost: customOauthHost,
+      baseUrl: customBaseUrl,
+    });
+    storage.tokens.set(
+      resolveKimiTokenStorageName({ oauthKey: customKey }),
+      token('custom-env-access'),
+    );
+
+    const seenAuthHeaders: string[] = [];
+    const fetchImpl = vi.fn(
+      async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const url = fetchInputUrl(input);
+        seenAuthHeaders.push(new Headers(init?.headers).get('authorization') ?? '');
+        if (url === `${customBaseUrl}/me`) {
+          return new Response(
+            JSON.stringify({
+              user_id: 'u-custom',
+              nickname: 'Alex Chen',
+              status: 'USER_STATUS_NORMAL',
+              region: 'REGION_CN',
+              user_level: 50,
+              user_level_name: 'Premium',
+              domain: 1,
+              domain_name: 'DOMAIN_EXAMPLE',
+              workspace_name: 'Acme AI',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (url === `${customBaseUrl}/workspaces`) {
+          return new Response(
+            JSON.stringify({
+              workspaces: [
+                {
+                  type: 'business',
+                  business: {
+                    id: 'biz-custom',
+                    name: 'Acme AI',
+                    status: 'STATUS_ACTIVE',
+                  },
+                  current: true,
+                  roles: ['ROLE_MEMBER'],
+                },
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      },
+    ) as unknown as typeof fetch;
+
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      fetchImpl,
+      now: () => 100,
+    });
+
+    await expect(
+      toolkit.listWorkspaces(undefined, {
+        baseUrl: customBaseUrl,
+        oauthHost: customOauthHost,
+      }),
+    ).resolves.toMatchObject({
+      kind: 'ok',
+      workspaces: [expect.objectContaining({ key: 'business:biz-custom', current: true })],
+    });
+
+    await expect(
+      toolkit.getAccountProfile(undefined, {
+        baseUrl: customBaseUrl,
+        oauthHost: customOauthHost,
+      }),
+    ).resolves.toMatchObject({
+      kind: 'ok',
+      profile: expect.objectContaining({
+        nickname: 'Alex Chen',
+        hasBusinessWorkspace: true,
+        activeWorkspaceName: 'Acme AI',
+      }),
+    });
+
+    expect(seenAuthHeaders).toEqual([
+      'Bearer custom-env-access',
+      'Bearer custom-env-access',
+      'Bearer custom-env-access',
+    ]);
+  });
 });

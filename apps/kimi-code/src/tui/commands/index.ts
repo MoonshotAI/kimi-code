@@ -31,6 +31,7 @@ export { goalArgumentCompletions } from './registry';
 export { handleForkCommand, handleInitCommand, handleTitleCommand } from './session';
 export { handleUndoCommand } from './undo';
 export { handleRemoteControlCommand, handleWebCommand } from './web';
+export { handleWorkspaceCommand } from './workspace';
 export {
   promptApiKey,
   promptCatalogProviderSelection,

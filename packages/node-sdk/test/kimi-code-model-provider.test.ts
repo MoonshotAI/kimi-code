@@ -3,12 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
   KimiOAuthToolkit,
   OAuthConnectionError,
   OAuthError,
   OAuthUnauthorizedError,
   RetryableRefreshError,
 } from '@moonshot-ai/kimi-code-oauth';
+import { errorFromLlmMessage } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ErrorCodes, KimiError, KimiForCodingProvider } from '#/index';
@@ -72,5 +74,38 @@ describe('KimiForCodingProvider OAuth error mapping', () => {
 
     const auth = resolveAuth();
     await expect(auth(async () => 'ok')).rejects.toBe(oauthError);
+  });
+
+  it('preserves REASON_BUSINESS_MEMBER_REMOVED from errorFromLlmMessage without forcing a token refresh', async () => {
+    const ensureFreshSpy = vi
+      .spyOn(KimiOAuthToolkit.prototype, 'ensureFresh')
+      .mockResolvedValue('tok-initial');
+
+    const auth = resolveAuth();
+    const llmError = errorFromLlmMessage({
+      kind: 'auth',
+      statusCode: 401,
+      message: 'You have been removed from this business workspace.',
+      requestId: 'req-1',
+      retryAfterMs: null,
+      headers: null,
+      retryable: false,
+      code: 'REASON_BUSINESS_MEMBER_REMOVED',
+    });
+
+    const caught = await auth(async () => {
+      throw llmError;
+    }).catch((error: unknown) => error);
+
+    expect(ensureFreshSpy).toHaveBeenCalledTimes(1);
+    expect(caught).toBeInstanceOf(KimiError);
+    expect(caught).toMatchObject({
+      code: ErrorCodes.PROVIDER_AUTH_ERROR,
+      message: BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+      details: {
+        statusCode: 401,
+        providerErrorCode: 'REASON_BUSINESS_MEMBER_REMOVED',
+      },
+    });
   });
 });

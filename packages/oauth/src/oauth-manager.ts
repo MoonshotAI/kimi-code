@@ -4,8 +4,20 @@ import { dirname } from 'node:path';
 
 import lockfile from 'proper-lockfile';
 
-import { DeviceCodeTimeoutError, OAuthAccessDeniedError, OAuthError, OAuthUnauthorizedError } from './errors';
-import { pollDeviceToken, refreshAccessToken, requestDeviceAuthorization } from './oauth';
+import {
+  DeviceCodeTimeoutError,
+  OAuthAccessDeniedError,
+  OAuthError,
+  OAuthUnauthorizedError,
+  OAuthWorkspaceSwitchError,
+} from './errors';
+import type { WorkspaceTarget } from './managed-workspaces';
+import {
+  pollDeviceToken,
+  refreshAccessToken,
+  requestDeviceAuthorization,
+  switchWorkspaceToken,
+} from './oauth';
 import type { DevicePollResult, RefreshOptions } from './oauth';
 import type { TokenStorage } from './storage';
 import { classifyToken, revokedTombstone, type TokenState } from './token-state';
@@ -48,6 +60,14 @@ export interface OAuthManagerOptions {
         options?: ManagerRefreshOptions,
       ) => Promise<TokenInfo>)
     | undefined;
+  readonly switchWorkspaceImpl?:
+    | ((
+        config: OAuthFlowConfig,
+        refreshToken: string,
+        target: WorkspaceTarget,
+        options?: ManagerRefreshOptions,
+      ) => Promise<TokenInfo>)
+    | undefined;
   readonly requestDeviceImpl?:
     | ((config: OAuthFlowConfig) => Promise<DeviceAuthorization>)
     | undefined;
@@ -71,6 +91,7 @@ export class OAuthManager {
   private readonly now: () => number;
   private readonly sleep: Sleep;
   private readonly refreshImpl: NonNullable<OAuthManagerOptions['refreshTokenImpl']>;
+  private readonly switchImpl: NonNullable<OAuthManagerOptions['switchWorkspaceImpl']>;
   private readonly requestImpl: NonNullable<OAuthManagerOptions['requestDeviceImpl']>;
   private readonly pollImpl: NonNullable<OAuthManagerOptions['pollDeviceImpl']>;
   private readonly deviceHeaders: (() => OAuthRequestHeaders | undefined) | undefined;
@@ -78,6 +99,8 @@ export class OAuthManager {
   private readonly onRefresh: ((outcome: OAuthRefreshOutcome) => void) | undefined;
 
   private inFlightRefresh: { promise: Promise<string>; force: boolean } | undefined;
+  private inFlightExclusive: Promise<unknown> | undefined;
+  private volatileToken: TokenInfo | undefined;
 
   constructor(options: OAuthManagerOptions) {
     this.config = options.config;
@@ -92,6 +115,13 @@ export class OAuthManager {
       options.refreshTokenImpl ??
       ((config, refreshToken, refreshOptions) =>
         refreshAccessToken(config, refreshToken, {
+          ...refreshOptions,
+          deviceHeaders: this.resolveDeviceHeaders(),
+        }));
+    this.switchImpl =
+      options.switchWorkspaceImpl ??
+      ((config, refreshToken, target, refreshOptions) =>
+        switchWorkspaceToken(config, refreshToken, target, {
           ...refreshOptions,
           deviceHeaders: this.resolveDeviceHeaders(),
         }));
@@ -117,6 +147,9 @@ export class OAuthManager {
   }
 
   private async loadState(): Promise<TokenState> {
+    if (this.volatileToken !== undefined) {
+      return classifyToken(this.volatileToken);
+    }
     return classifyToken(await this.storage.load(this.config.name));
   }
 
@@ -179,10 +212,23 @@ export class OAuthManager {
   }
 
   async logout(): Promise<void> {
-    await this.storage.remove(this.config.name);
+    return this.runExclusive(() => this.doLogout());
+  }
+
+  private async doLogout(): Promise<void> {
+    const release = await this.acquireRefreshLock();
+    try {
+      this.volatileToken = undefined;
+      await this.storage.remove(this.config.name);
+    } finally {
+      await release();
+    }
   }
 
   async ensureFresh(options: { force?: boolean } = {}): Promise<string> {
+    if (this.inFlightExclusive !== undefined) {
+      return this.inFlightExclusive.catch(() => undefined).then(() => this.ensureFresh(options));
+    }
     const force = options.force === true;
     const current = this.inFlightRefresh;
     if (current !== undefined) {
@@ -199,6 +245,63 @@ export class OAuthManager {
     });
     this.inFlightRefresh = { promise, force };
     return promise;
+  }
+
+  async switchWorkspace(target: WorkspaceTarget): Promise<TokenInfo> {
+    return this.runExclusive(() => this.doSwitchWorkspace(target));
+  }
+
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const prior = this.inFlightExclusive ?? this.inFlightRefresh?.promise;
+    const run = (prior === undefined ? fn() : prior.catch(() => undefined).then(fn)).finally(() => {
+      if (this.inFlightExclusive === run) {
+        this.inFlightExclusive = undefined;
+      }
+    });
+    this.inFlightExclusive = run;
+    return run;
+  }
+
+  private async doSwitchWorkspace(target: WorkspaceTarget): Promise<TokenInfo> {
+    const release = await this.acquireRefreshLock();
+    try {
+      const state = await this.loadState();
+      switch (state.kind) {
+        case 'missing':
+          throw new OAuthUnauthorizedError(
+            `No token for "${this.config.name}". Run /login to authenticate.`,
+          );
+        case 'revoked':
+          throw new OAuthUnauthorizedError(
+            `Stored token for "${this.config.name}" was rejected; re-login required.`,
+          );
+        case 'valid':
+          break;
+      }
+      if (state.token.refreshToken.length === 0) {
+        throw new OAuthUnauthorizedError(
+          `Token for "${this.config.name}" has no refresh_token; re-login required.`,
+        );
+      }
+      const switched = await this.switchImpl(this.config, state.token.refreshToken, target);
+      try {
+        await this.storage.save(this.config.name, switched);
+        this.volatileToken = undefined;
+      } catch (saveError) {
+        this.volatileToken = switched;
+        this.notifyRefresh({ success: true });
+        throw new OAuthWorkspaceSwitchError(
+          `Workspace switched, but failed to persist credentials: ${
+            saveError instanceof Error ? saveError.message : String(saveError)
+          }`,
+          { committed: true, token: switched, cause: saveError },
+        );
+      }
+      this.notifyRefresh({ success: true });
+      return switched;
+    } finally {
+      await release();
+    }
   }
 
   private async doEnsureFresh(force: boolean): Promise<string> {
@@ -263,6 +366,7 @@ export class OAuthManager {
       try {
         const refreshed = await this.refreshImpl(this.config, activeToken.refreshToken);
         await this.storage.save(this.config.name, refreshed);
+        this.volatileToken = undefined;
         this.notifyRefresh({ success: true });
         return refreshed.accessToken;
       } catch (error) {
@@ -308,8 +412,16 @@ export class OAuthManager {
 
         const result = await this.pollImpl(this.config, auth.deviceCode);
         if (result.kind === 'success') {
-          await this.storage.save(this.config.name, result.token);
-          return result.token;
+          return this.runExclusive(async () => {
+            const release = await this.acquireRefreshLock();
+            try {
+              await this.storage.save(this.config.name, result.token);
+              this.volatileToken = undefined;
+              return result.token;
+            } finally {
+              await release();
+            }
+          });
         }
         if (result.kind === 'denied') {
           throw new OAuthAccessDeniedError(

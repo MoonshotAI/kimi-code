@@ -1,7 +1,39 @@
+import {
+  BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+  isBusinessMembershipRevokedCode,
+} from './business-membership';
 import { isRecord } from './utils';
 
 const DIRECT_ERROR_KEYS = ['error_description', 'message', 'detail'] as const;
 const NESTED_ERROR_KEYS = ['message', 'error_description', 'detail', 'code', 'type'] as const;
+
+export interface ApiErrorDetails {
+  readonly message: string;
+  readonly code?: string;
+  readonly type?: string;
+}
+
+export function extractApiErrorCode(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const error = value['error'];
+  if (isRecord(error)) {
+    const nestedCode = stringField(error, 'code');
+    if (nestedCode !== undefined) return nestedCode;
+  }
+  const directCode = stringField(value, 'code');
+  if (directCode !== undefined) return directCode;
+  return nonEmptyString(error);
+}
+
+function extractApiErrorType(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const error = value['error'];
+  if (isRecord(error)) {
+    const nestedType = stringField(error, 'type');
+    if (nestedType !== undefined) return nestedType;
+  }
+  return stringField(value, 'type');
+}
 
 export function extractApiErrorMessage(value: unknown): string | undefined {
   if (Array.isArray(value)) {
@@ -41,18 +73,36 @@ export function extractApiErrorMessage(value: unknown): string | undefined {
   return undefined;
 }
 
-export async function readApiErrorMessage(
+export async function readApiErrorDetails(
   response: Response,
   fallback: string,
-): Promise<string> {
+): Promise<ApiErrorDetails> {
   let parsed: unknown;
   try {
     parsed = await response.json();
   } catch {
-    return fallback;
+    return { message: fallback };
   }
 
-  return extractApiErrorMessage(parsed) ?? fallback;
+  const code = extractApiErrorCode(parsed);
+  const type = extractApiErrorType(parsed);
+  const message =
+    response.status === 401 && isBusinessMembershipRevokedCode(code)
+      ? BUSINESS_MEMBERSHIP_REVOKED_MESSAGE
+      : (extractApiErrorMessage(parsed) ?? fallback);
+
+  return {
+    message,
+    ...(code !== undefined ? { code } : {}),
+    ...(type !== undefined ? { type } : {}),
+  };
+}
+
+export async function readApiErrorMessage(
+  response: Response,
+  fallback: string,
+): Promise<string> {
+  return (await readApiErrorDetails(response, fallback)).message;
 }
 
 function stringField(record: Record<string, unknown>, key: string): string | undefined {

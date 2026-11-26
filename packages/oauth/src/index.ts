@@ -5,8 +5,18 @@ export {
   OAuthConnectionError,
   OAuthError,
   OAuthUnauthorizedError,
+  OAuthWorkspaceSwitchError,
   RetryableRefreshError,
 } from './errors';
+export type { OAuthWorkspaceSwitchErrorOptions } from './errors';
+
+export {
+  BUSINESS_MEMBERSHIP_REVOKED_CODES,
+  BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+  BusinessMembershipRevokedError,
+  isBusinessMembershipRevokedCode,
+} from './business-membership';
+export type { BusinessMembershipRevokedCode } from './business-membership';
 
 export type {
   DeviceAuthorization,
@@ -22,7 +32,13 @@ export type { TokenStorage } from './storage';
 export { FileTokenStorage } from './storage';
 
 export type { DevicePollResult, RefreshOptions } from './oauth';
-export { pollDeviceToken, refreshAccessToken, requestDeviceAuthorization } from './oauth';
+export {
+  pollDeviceToken,
+  refreshAccessToken,
+  requestDeviceAuthorization,
+  switchWorkspaceToken,
+  WORKSPACE_SWITCH_GRANT_TYPE,
+} from './oauth';
 
 export type { LoginOptions, OAuthManagerOptions, OAuthRefreshOutcome } from './oauth-manager';
 export { OAuthManager, defaultRefreshThreshold, newInstanceId } from './oauth-manager';
@@ -239,6 +255,25 @@ export type {
   ProviderCredentialView,
 } from './provider-credential';
 
+export {
+  buildManagedAccountProfile,
+  fetchManagedAccountProfile,
+  fetchManagedWorkspaces,
+  kimiCodeWorkspacesUrl,
+  parseManagedWorkspacesPayload,
+} from './managed-workspaces';
+export type {
+  FetchManagedAccountProfileOk,
+  FetchManagedWorkspacesError,
+  FetchManagedWorkspacesOk,
+  ManagedAccountProfile,
+  ManagedAccountProfileResult,
+  ManagedEndpointFetchOptions,
+  ManagedWorkspace,
+  ManagedWorkspacesResult,
+  WorkspaceTarget,
+} from './managed-workspaces';
+
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
 export type {
   AuthManagedUsageResult,
@@ -251,6 +286,8 @@ export type {
   KimiOAuthLogoutResult,
   KimiOAuthTokenRef,
   KimiOAuthToolkitOptions,
+  KimiOAuthWorkspaceOptions,
+  KimiOAuthWorkspaceSwitchResult,
 } from './toolkit';
 
 export { refreshProviderModels } from './refreshProviderModels';

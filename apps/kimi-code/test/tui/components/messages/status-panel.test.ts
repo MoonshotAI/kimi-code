@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
+import type { SlashCommandHost } from '#/tui/commands/dispatch';
+import { showStatusReport } from '#/tui/commands/info';
 import { buildStatusReportLines } from '#/tui/components/messages/status-panel';
 
 function strip(text: string): string {
@@ -184,5 +186,158 @@ describe('status panel report lines', () => {
     expect(output).toContain('Session      none');
     expect(output).toContain('Warning      No active session');
     expect(output).toContain('No context window data available.');
+  });
+
+  it('renders Workspace and Plan rows only when the account owns a business workspace', () => {
+    const enterpriseOutput = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinkingEffort: 'max',
+      permissionMode: 'manual',
+      planMode: false,
+      towerMode: false,
+      towerAvailable: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {
+        k2: {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k2',
+          maxContextSize: 10000,
+          displayName: 'Kimi K2',
+        },
+      },
+      managedWorkspace: {
+        hasBusinessWorkspace: true,
+        statusWorkspaceLine: 'Alice · Acme Corp',
+        planLabel: 'Premium',
+      },
+    })
+      .map(strip)
+      .join('\n');
+
+    expect(enterpriseOutput).toContain('Workspace    Alice · Acme Corp');
+    expect(enterpriseOutput).toContain('Plan         Premium');
+
+    const personalOutput = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinkingEffort: 'max',
+      permissionMode: 'manual',
+      planMode: false,
+      towerMode: false,
+      towerAvailable: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+      managedWorkspace: {
+        hasBusinessWorkspace: false,
+      },
+    })
+      .map(strip)
+      .join('\n');
+
+    expect(personalOutput).not.toContain('Workspace');
+    expect(personalOutput).not.toMatch(/^\s*Plan\s{2,}/m);
+  });
+
+  it('surfaces a live workspace lookup error instead of displaying stale cached workspace rows', () => {
+    const output = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinkingEffort: 'max',
+      permissionMode: 'manual',
+      planMode: false,
+      towerMode: false,
+      towerAvailable: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+      managedWorkspace: {
+        hasBusinessWorkspace: true,
+        statusWorkspaceLine: 'Alice · Stale Corp',
+        planLabel: 'Premium',
+      },
+      managedWorkspaceError: 'Failed to fetch workspaces: HTTP 503',
+    })
+      .map(strip)
+      .join('\n');
+
+    expect(output).toContain('Workspace    Failed to fetch workspaces: HTTP 503');
+    expect(output).not.toContain('Stale Corp');
+    expect(output).not.toMatch(/^\s*Plan\s{2,}/m);
+  });
+
+  it('hides cached managed workspace rows in /status when the active model uses a custom provider', async () => {
+    const addedPanels: Array<{ render(width: number): string[] }> = [];
+    const host = {
+      session: undefined,
+      harness: {
+        auth: {
+          getManagedUsage: vi.fn(),
+          getAccountProfile: vi.fn(),
+        },
+      },
+      state: {
+        appState: {
+          version: '1.2.3',
+          model: 'custom-gpt',
+          workDir: '/tmp/project',
+          additionalDirs: [],
+          sessionId: 'ses-custom',
+          sessionTitle: null,
+          thinkingEffort: 'off',
+          permissionMode: 'manual',
+          planMode: false,
+          towerMode: false,
+          contextUsage: 0,
+          contextTokens: 0,
+          maxContextTokens: 128_000,
+          availableModels: {
+            'custom-gpt': {
+              provider: 'custom-openai',
+              model: 'gpt-4o',
+              maxContextSize: 128_000,
+              displayName: 'Custom GPT',
+            },
+          },
+          availableProviders: {},
+          managedWorkspace: {
+            hasBusinessWorkspace: true,
+            statusWorkspaceLine: 'Alice · Acme Corp',
+            planLabel: 'Premium',
+          },
+        },
+        transcriptContainer: {
+          addChild: (panel: { render(width: number): string[] }) => {
+            addedPanels.push(panel);
+          },
+        },
+        ui: {
+          requestRender: vi.fn(),
+        },
+      },
+    } as unknown as SlashCommandHost;
+
+    await showStatusReport(host);
+
+    expect(addedPanels).toHaveLength(1);
+    const rendered = addedPanels[0]!.render(100).map(strip).join('\n');
+    expect(rendered).toContain('Custom GPT');
+    expect(rendered).not.toContain('Acme Corp');
+    expect(rendered).not.toMatch(/^\s*Workspace\s{2,}/m);
+    expect(rendered).not.toMatch(/^\s*Plan\s{2,}/m);
   });
 });

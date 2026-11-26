@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
 import { ALL_TIPS, TRANSCRIPT_GROUPING_TIP, type ToolbarTip } from '#/tui/constant/tips';
+import { isManagedUsageProvider } from '#/tui/constant/kimi-tui';
 import { transcriptGroupingActive } from '#/tui/config';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
@@ -457,7 +458,17 @@ export class FooterComponent implements Component {
       if (isRainbowDancing()) {
         renderedModelLabel = renderDanceFooterModel(modelLabel);
       }
-      slots['model'] = [renderedModelLabel];
+      const modelPieces = [renderedModelLabel];
+      const planLabel = state.managedWorkspace?.planLabel;
+      if (
+        isManagedUsageProvider(rawCurrentModel?.provider) &&
+        state.managedWorkspace?.hasBusinessWorkspace === true &&
+        planLabel !== undefined &&
+        planLabel.length > 0
+      ) {
+        modelPieces.push(chalk.hex(colors.primary)(planLabel));
+      }
+      slots['model'] = modelPieces;
     }
 
     const taskBadges: string[] = [];

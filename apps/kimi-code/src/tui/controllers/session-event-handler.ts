@@ -41,6 +41,11 @@ import {
   type SwarmModeMarkerState,
 } from '../components/messages/swarm-markers';
 import {
+  BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+  isBusinessMembershipRevokedCode,
+} from '@moonshot-ai/kimi-code-sdk';
+
+import {
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from '../constant/kimi-tui';
@@ -99,6 +104,7 @@ export interface SessionEventHost {
   state: TUIState;
   session: Session | undefined;
   aborted: boolean;
+  authFlow?: { handleBusinessMembershipRevoked(): void };
   sessionEventUnsubscribe: (() => void) | undefined;
   readonly streamingUI: StreamingUIController;
   readonly programStatus?: ProgramStatusController;
@@ -1066,6 +1072,19 @@ export class SessionEventHandler {
       this.compactionFailed = true;
       this.host.setAppState({ isCompacting: false });
       this.host.programStatus?.failRequest(formatErrorPayload(event));
+    }
+    if (
+      isBusinessMembershipRevokedCode(event.details?.['providerErrorCode']) ||
+      event.message === BUSINESS_MEMBERSHIP_REVOKED_MESSAGE
+    ) {
+      if (this.host.authFlow !== undefined) {
+        this.host.authFlow.handleBusinessMembershipRevoked();
+      } else {
+        this.host.setAppState({ managedWorkspace: null });
+        this.host.programStatus?.setAuthRequired(true);
+      }
+      this.host.showError(BUSINESS_MEMBERSHIP_REVOKED_MESSAGE);
+      return;
     }
     if (event.code === OAUTH_LOGIN_REQUIRED_CODE) {
       this.host.programStatus?.setAuthRequired(true);

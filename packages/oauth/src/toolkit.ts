@@ -1,8 +1,9 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { isBusinessMembershipRevokedCode } from './business-membership';
 import { KIMI_CODE_FLOW_CONFIG } from './constants';
-import { OAuthUnauthorizedError } from './errors';
+import { OAuthUnauthorizedError, OAuthWorkspaceSwitchError } from './errors';
 import {
   assertKimiHostIdentity,
   createKimiDefaultHeaders,
@@ -11,6 +12,7 @@ import {
 import {
   KIMI_CODE_OAUTH_KEY,
   KIMI_CODE_PROVIDER_NAME,
+  ManagedKimiCodeModelsAuthError,
   provisionManagedKimiCodeConfig,
   resolveKimiCodeOAuthKey,
   type ManagedKimiCodeProvisionResult,
@@ -27,12 +29,22 @@ import {
   type FetchManagedUsageError,
   type ManagedQuota,
 } from './managed-usage';
+import {
+  fetchManagedAccountProfile,
+  fetchManagedWorkspaces,
+  kimiCodeWorkspacesUrl,
+  type ManagedAccountProfile,
+  type ManagedAccountProfileResult,
+  type ManagedWorkspacesResult,
+  type WorkspaceTarget,
+} from './managed-workspaces';
 import { OAuthManager, type LoginOptions, type OAuthManagerOptions } from './oauth-manager';
 import { FileTokenStorage, type TokenStorage } from './storage';
 import type { OAuthFlowConfig } from './types';
 
 export interface BearerTokenProvider {
   getAccessToken(options?: { readonly force?: boolean | undefined }): Promise<string>;
+  readonly isNonRecoverableErrorCode?: (code: string) => boolean;
 }
 
 export interface AuthProviderStatus {
@@ -91,6 +103,22 @@ export type AuthManagedUsageResult =
 
 export type AuthManagedUserInfoResult = ManagedUserInfoResult;
 
+export interface KimiOAuthWorkspaceOptions {
+  readonly oauthRef?: KimiOAuthTokenRef;
+  readonly baseUrl?: string;
+  readonly oauthHost?: string;
+  readonly provisionConfig?: boolean;
+}
+
+export interface KimiOAuthWorkspaceSwitchResult {
+  readonly providerName: string;
+  readonly ok: true;
+  readonly target: WorkspaceTarget;
+  readonly provision?: ManagedKimiCodeProvisionResult;
+  readonly profile?: ManagedAccountProfile;
+  readonly warning?: string;
+}
+
 export class KimiOAuthToolkit<TConfig = unknown> {
   private readonly homeDir: string;
   private readonly identity: KimiHostIdentity | undefined;
@@ -103,6 +131,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     'now' | 'sleep' | 'deviceCodeTimeoutMs' | 'refreshThreshold' | 'onRefresh'
   >;
   private readonly managers = new Map<string, OAuthManager>();
+  private readonly mutationQueues = new Map<string, Promise<unknown>>();
   private _identityHeaders: Record<string, string> | undefined;
 
   constructor(options: KimiOAuthToolkitOptions<TConfig>) {
@@ -192,20 +221,27 @@ export class KimiOAuthToolkit<TConfig = unknown> {
         if (!(error instanceof OAuthUnauthorizedError) || !hadToken || usedDeviceLogin) {
           throw error;
         }
-        let retryToken: string;
-        try {
-          retryToken = await manager.ensureFresh({ force: true });
-        } catch (refreshError) {
-          if (!(refreshError instanceof OAuthUnauthorizedError)) throw refreshError;
-          retryToken = await loginWithDevice();
-        }
-        try {
-          provision = await provisionWithToken(retryToken);
-        } catch (retryError) {
-          if (!(retryError instanceof OAuthUnauthorizedError) || usedDeviceLogin) {
-            throw retryError;
-          }
+        if (
+          error instanceof ManagedKimiCodeModelsAuthError &&
+          isBusinessMembershipRevokedCode(error.errorCode)
+        ) {
           provision = await provisionWithToken(await loginWithDevice());
+        } else {
+          let retryToken: string;
+          try {
+            retryToken = await manager.ensureFresh({ force: true });
+          } catch (refreshError) {
+            if (!(refreshError instanceof OAuthUnauthorizedError)) throw refreshError;
+            retryToken = await loginWithDevice();
+          }
+          try {
+            provision = await provisionWithToken(retryToken);
+          } catch (retryError) {
+            if (!(retryError instanceof OAuthUnauthorizedError) || usedDeviceLogin) {
+              throw retryError;
+            }
+            provision = await provisionWithToken(await loginWithDevice());
+          }
         }
       }
     }
@@ -220,13 +256,15 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
     const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
-    await this.managerFor(name, oauthKey, oauthHost).logout();
-    if (this.configAdapter?.remove !== undefined && name === KIMI_CODE_PROVIDER_NAME) {
-      const config = await this.configAdapter.read();
-      this.configAdapter.remove(config);
-      await this.configAdapter.write(config);
-    }
-    return { providerName: name, ok: true };
+    return this.enqueueMutation(this.mutationKeyFor(name, oauthKey, oauthHost), async () => {
+      await this.managerFor(name, oauthKey, oauthHost).logout();
+      if (this.configAdapter?.remove !== undefined && name === KIMI_CODE_PROVIDER_NAME) {
+        const config = await this.configAdapter.read();
+        this.configAdapter.remove(config);
+        await this.configAdapter.write(config);
+      }
+      return { providerName: name, ok: true };
+    });
   }
 
   async ensureFresh(
@@ -261,7 +299,147 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
     return {
       getAccessToken: (options) => this.managerFor(name, oauthKey, oauthHost).ensureFresh(options),
+      isNonRecoverableErrorCode: isBusinessMembershipRevokedCode,
     };
+  }
+
+  async listWorkspaces(
+    providerName?: string,
+    options: KimiOAuthWorkspaceOptions = {},
+  ): Promise<ManagedWorkspacesResult> {
+    return this.withManagedAccessToken(providerName, options, (accessToken) =>
+      fetchManagedWorkspaces(
+        managedWorkspacesUrl(options.baseUrl),
+        accessToken,
+        this.managedRequestInit(),
+      ),
+    );
+  }
+
+  async getAccountProfile(
+    providerName?: string,
+    options: KimiOAuthWorkspaceOptions = {},
+  ): Promise<ManagedAccountProfileResult> {
+    return this.withManagedAccessToken(providerName, options, (accessToken) =>
+      fetchManagedAccountProfile({
+        userInfoUrl: managedUserInfoUrl(options.baseUrl),
+        workspacesUrl: managedWorkspacesUrl(options.baseUrl),
+        accessToken,
+        ...this.managedRequestInit(),
+      }),
+    );
+  }
+
+  async switchWorkspace(
+    target: WorkspaceTarget,
+    providerName?: string,
+    options: KimiOAuthWorkspaceOptions = {},
+  ): Promise<KimiOAuthWorkspaceSwitchResult> {
+    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    const oauthHost = this.oauthHostFor(options.oauthRef, options.oauthHost);
+    const oauthKey = options.oauthRef?.key ?? this.defaultOAuthKey(options.baseUrl, oauthHost);
+    return this.enqueueMutation(this.mutationKeyFor(name, oauthKey, oauthHost), async () => {
+      const manager = this.managerFor(name, oauthKey, oauthHost);
+      const warnings: string[] = [];
+      let switchedAccessToken: string;
+      try {
+        const switched = await manager.switchWorkspace(target);
+        switchedAccessToken = switched.accessToken;
+      } catch (error) {
+        if (
+          error instanceof OAuthWorkspaceSwitchError &&
+          error.committed &&
+          error.token !== undefined
+        ) {
+          switchedAccessToken = error.token.accessToken;
+          warnings.push(error.message);
+        } else {
+          throw error;
+        }
+      }
+
+      const isActiveSwitchToken = async (): Promise<boolean> =>
+        (await manager.getCachedAccessToken()) === switchedAccessToken;
+
+      if (!(await isActiveSwitchToken())) {
+        if (!(await manager.hasToken())) {
+          throw new OAuthUnauthorizedError(
+            `No token for "${name}". Run /login to authenticate.`,
+          );
+        }
+        return { providerName: name, ok: true, target };
+      }
+
+      const shouldProvision = options.provisionConfig ?? this.configAdapter !== undefined;
+      const configAdapter = this.configAdapter;
+      let provision: ManagedKimiCodeProvisionResult | undefined;
+      if (shouldProvision && configAdapter !== undefined) {
+        let supersededDuringProvision = false;
+        const guardedAdapter: ManagedKimiConfigAdapter<TConfig> = {
+          ...configAdapter,
+          write: async (nextConfig) => {
+            if (!(await isActiveSwitchToken())) {
+              supersededDuringProvision = true;
+              return;
+            }
+            await configAdapter.write(nextConfig);
+          },
+        };
+        try {
+          provision = await provisionManagedKimiCodeConfig({
+            accessToken: switchedAccessToken,
+            adapter: guardedAdapter,
+            baseUrl: options.baseUrl,
+            oauthKey,
+            oauthHost,
+            preserveDefaultModel: true,
+            fetchImpl: this.fetchImpl,
+            headers: this.identityHeaders(),
+          });
+        } catch (error) {
+          warnings.push(
+            `Failed to refresh model config: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        if (supersededDuringProvision || !(await isActiveSwitchToken())) {
+          if (!(await manager.hasToken())) {
+            throw new OAuthUnauthorizedError(
+              `No token for "${name}". Run /login to authenticate.`,
+            );
+          }
+          return { providerName: name, ok: true, target };
+        }
+      }
+
+      const profileRes = await fetchManagedAccountProfile({
+        userInfoUrl: managedUserInfoUrl(options.baseUrl),
+        workspacesUrl: managedWorkspacesUrl(options.baseUrl),
+        accessToken: switchedAccessToken,
+        ...this.managedRequestInit(),
+      });
+      if (!(await isActiveSwitchToken())) {
+        if (!(await manager.hasToken())) {
+          throw new OAuthUnauthorizedError(
+            `No token for "${name}". Run /login to authenticate.`,
+          );
+        }
+        return { providerName: name, ok: true, target };
+      }
+      const profile = profileRes.kind === 'ok' ? profileRes.profile : undefined;
+      if (profileRes.kind === 'error') {
+        warnings.push(profileRes.message);
+      }
+
+      const warning = warnings.length > 0 ? warnings.join(' ') : undefined;
+      return {
+        providerName: name,
+        ok: true,
+        target,
+        ...(provision !== undefined ? { provision } : {}),
+        ...(profile !== undefined ? { profile } : {}),
+        ...(warning !== undefined ? { warning } : {}),
+      };
+    });
   }
 
   async getManagedUsage(
@@ -344,6 +522,22 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     return manager;
   }
 
+  private mutationKeyFor(providerName: string, oauthKey: string, oauthHost: string): string {
+    const storageName = resolveKimiTokenStorageName({ providerName, oauthKey });
+    return `${storageName}\0${normalizeOAuthHost(oauthHost)}`;
+  }
+
+  private enqueueMutation<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prior = this.mutationQueues.get(key);
+    const run = (prior === undefined ? fn() : prior.catch(() => undefined).then(fn)).finally(() => {
+      if (this.mutationQueues.get(key) === run) {
+        this.mutationQueues.delete(key);
+      }
+    });
+    this.mutationQueues.set(key, run);
+    return run;
+  }
+
   private defaultOAuthKey(
     baseUrl?: string,
     oauthHost?: string,
@@ -354,10 +548,15 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     });
   }
 
-  private defaultOAuthRef(baseUrl?: string): KimiOAuthTokenRef {
+  private defaultOAuthRef(
+    baseUrl?: string,
+    oauthHost?: string,
+    oauthRef?: KimiOAuthTokenRef,
+  ): KimiOAuthTokenRef {
+    const resolvedHost = this.oauthHostFor(oauthRef, oauthHost);
     return {
-      key: this.defaultOAuthKey(baseUrl, this.flowConfig.oauthHost),
-      oauthHost: this.flowConfig.oauthHost,
+      key: oauthRef?.key ?? this.defaultOAuthKey(baseUrl, resolvedHost),
+      oauthHost: resolvedHost,
     };
   }
 
@@ -366,6 +565,36 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     oauthHost?: string,
   ): string {
     return oauthRef?.oauthHost ?? oauthHost ?? this.flowConfig.oauthHost;
+  }
+
+  private managedRequestInit(): {
+    readonly fetchImpl?: typeof fetch;
+    readonly headers?: Readonly<Record<string, string>>;
+  } {
+    const headers = this.identityHeaders();
+    return {
+      ...(this.fetchImpl !== undefined ? { fetchImpl: this.fetchImpl } : {}),
+      ...(headers !== undefined ? { headers } : {}),
+    };
+  }
+
+  private async withManagedAccessToken<TResult>(
+    providerName: string | undefined,
+    options: KimiOAuthWorkspaceOptions,
+    run: (accessToken: string) => Promise<TResult>,
+  ): Promise<TResult | { readonly kind: 'error'; readonly message: string }> {
+    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    try {
+      const accessToken = await this.ensureFresh(name, {
+        oauthRef: this.defaultOAuthRef(options.baseUrl, options.oauthHost, options.oauthRef),
+      });
+      return await run(accessToken);
+    } catch (error) {
+      return {
+        kind: 'error',
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   private identityHeaders(): Record<string, string> | undefined {
@@ -408,6 +637,11 @@ function managedUsageUrl(baseUrl: string | undefined): string {
 function managedUserInfoUrl(baseUrl: string | undefined): string {
   if (baseUrl === undefined) return kimiCodeUserInfoUrl();
   return `${baseUrl.replace(/\/+$/, '')}/me`;
+}
+
+function managedWorkspacesUrl(baseUrl: string | undefined): string {
+  if (baseUrl === undefined) return kimiCodeWorkspacesUrl();
+  return `${baseUrl.replace(/\/+$/, '')}/workspaces`;
 }
 
 function normalizeOAuthHost(oauthHost: string): string {

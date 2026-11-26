@@ -1,3 +1,5 @@
+import type { TokenInfo } from './types';
+
 export class OAuthError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -44,5 +46,28 @@ export class RetryableRefreshError extends OAuthError {
   constructor(message: string) {
     super(message);
     this.name = 'RetryableRefreshError';
+  }
+}
+
+export interface OAuthWorkspaceSwitchErrorOptions extends ErrorOptions {
+  readonly status?: number;
+  readonly oauthError?: string;
+  readonly committed?: boolean;
+  readonly token?: TokenInfo;
+}
+
+export class OAuthWorkspaceSwitchError extends OAuthError {
+  readonly status?: number;
+  readonly oauthError?: string;
+  readonly committed: boolean;
+  readonly token?: TokenInfo;
+
+  constructor(message: string, options: OAuthWorkspaceSwitchErrorOptions = {}) {
+    super(message, options.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = 'OAuthWorkspaceSwitchError';
+    if (options.status !== undefined) this.status = options.status;
+    if (options.oauthError !== undefined) this.oauthError = options.oauthError;
+    this.committed = options.committed === true;
+    if (options.token !== undefined) this.token = options.token;
   }
 }

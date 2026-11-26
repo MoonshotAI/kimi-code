@@ -29,6 +29,7 @@ import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel'
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { GoalStartPermissionPromptComponent } from '#/tui/components/dialogs/goal-start-permission-prompt';
 import { SettingsSelectorComponent } from '#/tui/components/dialogs/settings-selector';
+import { WorkspaceSelectorComponent } from '#/tui/components/dialogs/workspace-selector';
 import { NotifyController } from '#/tui/controllers/notify';
 import {
   editorSlotComponent,
@@ -1712,5 +1713,100 @@ describe('fullscreen layout', () => {
     expect(responses).toEqual([{ response: 'rejected', feedback: undefined, selected_label: undefined }]);
 
     state.ui.stop();
+  });
+
+  it('supports mouse hover, wheel, disabled warning, and click selection in fullscreen /workspace', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(10_000);
+    const { state, vt } = await mountFullscreen(28);
+    onTestFinished(() => {
+      state.ui.stop();
+      vi.useRealTimers();
+    });
+
+    const onSelect = vi.fn();
+    const selector = new WorkspaceSelectorComponent({
+      workspaces: [
+        {
+          kind: 'personal',
+          key: 'personal',
+          target: { kind: 'personal' },
+          name: 'Alice',
+          kindLabel: 'Personal workspace',
+          current: true,
+          disabled: false,
+          switchable: true,
+          roles: ['ROLE_OWNER'],
+        },
+        {
+          kind: 'business',
+          key: 'business:biz-disabled',
+          target: { kind: 'business', businessId: 'biz-disabled' },
+          businessId: 'biz-disabled',
+          name: 'Disabled Org',
+          status: 'STATUS_DISABLED',
+          kindLabel: 'Business workspace',
+          current: false,
+          disabled: true,
+          switchable: false,
+          roles: ['ROLE_MEMBER'],
+        },
+        {
+          kind: 'business',
+          key: 'business:biz-active',
+          target: { kind: 'business', businessId: 'biz-active' },
+          businessId: 'biz-active',
+          name: 'Active Org',
+          status: 'STATUS_ACTIVE',
+          kindLabel: 'Business workspace',
+          current: false,
+          disabled: false,
+          switchable: true,
+          roles: ['ROLE_MEMBER'],
+        },
+      ],
+      onSelect,
+      onCancel: vi.fn(),
+    });
+    const host = {
+      state,
+      surveyController: { notifyDisplaced: () => {} },
+      promptPredictionController: {},
+      disposeEditorReplacement() {},
+    } as unknown as KimiTUI;
+    KimiTUI.prototype.mountEditorReplacement.call(host, selector);
+    await vt.waitForRender();
+
+    vi.setSystemTime(10_500);
+
+    const disabledScreenRow = screenRows(vt).findIndex((row) => row.includes('Disabled Org'));
+    expect(disabledScreenRow).toBeGreaterThan(0);
+    vt.sendInput(`\u001B[<35;8;${String(disabledScreenRow + 1)}M`);
+    await vt.waitForRender();
+    expect(screenRows(vt).join('\n')).toContain('❯ Disabled Org');
+
+    vt.sendInput(`\u001B[<0;8;${String(disabledScreenRow + 1)}M`);
+    vt.sendInput(`\u001B[<0;8;${String(disabledScreenRow + 1)}m`);
+    await vt.waitForRender();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screenRows(vt).join('\n')).toContain(
+      'This business workspace is disabled and cannot be selected.',
+    );
+
+    const activeScreenRow = screenRows(vt).findIndex((row) => row.includes('Active Org'));
+    expect(activeScreenRow).toBeGreaterThan(0);
+    vt.sendInput(`\u001B[<65;8;${String(activeScreenRow + 1)}M`);
+    await vt.waitForRender();
+    expect(screenRows(vt).join('\n')).toContain('❯ Active Org');
+    expect(screenRows(vt).join('\n')).not.toContain(
+      'This business workspace is disabled and cannot be selected.',
+    );
+
+    const refreshedActiveRow = screenRows(vt).findIndex((row) => row.includes('Active Org'));
+    vt.sendInput(`\u001B[<0;8;${String(refreshedActiveRow + 1)}M`);
+    vt.sendInput(`\u001B[<0;8;${String(refreshedActiveRow + 1)}m`);
+    await vt.waitForRender();
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ businessId: 'biz-active' }));
   });
 });
