@@ -18,6 +18,7 @@ import {
   buildCompactionContinuationText,
   COMPACTION_SUMMARY_PREFIX,
 } from '#/agent/contextMemory/compactionHandoff';
+import type { SystemTriggerOrigin } from '#/agent/contextMemory/types';
 import { makeHookRunner } from '../../features/externalHooks/runner-stub';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { MASTER_ENV } from '#/app/flag/flagService';
@@ -43,7 +44,7 @@ import {
   type TestkitAgentFixtures,
   type MockProviderResponse,
 } from '../../harness';
-import { batch, call, say } from '@moonshot-ai/testkit/model';
+import { batch, call, held, say, withUsage } from '@moonshot-ai/testkit/model';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
@@ -2162,13 +2163,15 @@ describe('FullCompaction', () => {
     await compactionRequested.promise;
     await turnEnded;
 
+    const followUpBlocked = ctx.once('compaction.blocked');
     const followUpEnded = ctx.untilTurnEnd();
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Follow up while compacting' }] });
-    await followUpRequested.promise;
+    await followUpBlocked;
     ctx.newEvents();
     const compactionCompleted = ctx.once('compaction.completed');
     releaseCompaction.resolve();
     await compactionCompleted;
+    await followUpRequested.promise;
     releaseFollowUp.resolve();
     const events = await followUpEnded;
 
@@ -2189,6 +2192,80 @@ describe('FullCompaction', () => {
     expect(splicedIndex).toBeGreaterThan(applyCompactionIndex);
     await ctx.expectResumeMatches();
   });
+
+  const earlyCompactionTest = base.extend<TestkitAgentFixtures>(
+    testkitAgentFixtures({ initialConfig: { loopControl: { compactionTriggerRatio: 0.5 } } }),
+  );
+
+  earlyCompactionTest(
+    'waits for an auto compaction started below the block ratio before requesting the step',
+    async ({ agent: ctx, model }) => {
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 600_000);
+      model.lane('compaction').script(held('early-summary', say('Early compacted summary.')));
+      model.script(say('Answer after compacting.'));
+      const blocked = ctx.once('compaction.blocked');
+      const turnEnded = ctx.untilTurnEnd();
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Answer after compacting' }] });
+      await model.hold('early-summary').reached();
+      await Promise.race([blocked, model.waitForRequest((request) => request.lane === 'main')]);
+      const mainRequestsDuringCompaction = model.requests('main').length;
+      model.hold('early-summary').release();
+      const events = await turnEnded;
+
+      expect(mainRequestsDuringCompaction).toBe(0);
+      expect(countEvents(events, 'full_compaction.cancel')).toBe(0);
+      expect(eventIndex(events, 'context.apply_compaction')).toBeGreaterThanOrEqual(0);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'turn.ended',
+          args: expect.objectContaining({ turnId: 0, reason: 'completed' }),
+        }),
+      );
+      expect(model.requests('main').map((request) => request.view.messages.map((message) => message.text))).toEqual([
+        expect.arrayContaining([expect.stringContaining('Early compacted summary.')]),
+      ]);
+      await ctx.expectResumeMatches();
+    },
+  );
+
+  earlyCompactionTest(
+    'compacts again instead of cancelling the turn when the compaction it waits for is discarded',
+    async ({ agent: ctx, model }) => {
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 100_000);
+      model.lane('compaction').script(held('stale-summary', say('Stale summary.')), say('Fresh summary.'));
+      model.script(withUsage({ input: 900_000, output: 1 }, say('First turn answer.')), say('Continued the goal.'));
+      const firstTurnEnded = ctx.untilTurnEnd();
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the goal' }] });
+      await firstTurnEnded;
+      await model.hold('stale-summary').reached();
+
+      const blocked = ctx.once('compaction.blocked');
+      const continuationEnded = ctx.untilTurnEnd();
+      const goalContinuation: SystemTriggerOrigin = { kind: 'system_trigger', name: 'goal_continuation' };
+      ctx.get(IAgentLoopService).submit({
+        role: 'user',
+        content: [{ type: 'text', text: 'Continue toward the active goal.' }],
+        attributes: { origin: goalContinuation },
+      });
+      await blocked;
+      model.hold('stale-summary').release();
+      const events = await continuationEnded;
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'turn.ended',
+          args: expect.objectContaining({ turnId: 1, reason: 'completed' }),
+        }),
+      );
+      expect(countEvents(events, 'context.apply_compaction')).toBe(1);
+      expect(model.requests('compaction')).toHaveLength(2);
+      const continuationTexts = model.requests('main').at(-1)?.view.messages.map((message) => message.text) ?? [];
+      expect(continuationTexts).toEqual(expect.arrayContaining([expect.stringContaining('Fresh summary.')]));
+      expect(continuationTexts.some((text) => text.includes('Stale summary.'))).toBe(false);
+      await ctx.expectResumeMatches();
+    },
+  );
 
   it('keeps a deferred system reminder behind an unresolved tool exchange across compaction', async () => {
     const ctx = testAgent();
@@ -4168,6 +4245,13 @@ describe('prompt deferral during full compaction', () => {
 describe('goal reminder re-injection after full compaction', () => {
   const GOAL_OBJECTIVE = 'ship the goal parity fixes';
 
+  const completeGoalCall: ToolCall = {
+    type: 'function',
+    id: 'complete-goal',
+    name: 'UpdateGoal',
+    arguments: JSON.stringify({ status: 'complete' }),
+  };
+
   function goalReminderCount(history: readonly Message[] | readonly string[]): number {
     const texts =
       typeof history[0] === 'string'
@@ -4189,9 +4273,12 @@ describe('goal reminder re-injection after full compaction', () => {
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 950_000);
 
     ctx.mockNextResponse({ type: 'text', text: 'Auto compacted summary.' });
-    ctx.mockNextResponse({ type: 'text', text: 'I can answer after compaction.' });
+    ctx.mockNextResponse({ type: 'text', text: 'I can answer after compaction.' }, completeGoalCall);
+    ctx.mockNextResponse({ type: 'text', text: 'Goal complete.' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Answer after compacting' }] });
     await ctx.untilTurnEnd();
+    await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+    await ctx.get(IAgentLoopService).settled();
 
     expect(ctx.llmCalls.length).toBeGreaterThanOrEqual(2);
     expect(goalReminderCount(ctx.llmCalls[0]!.history)).toBe(1);
@@ -4233,10 +4320,13 @@ describe('goal reminder re-injection after full compaction', () => {
     expect(floor).toBe(ctx.tokenCounting.get().size);
     expect(floor).toBe(tokensAfter);
 
-    ctx.mockNextResponse({ type: 'text', text: 'Reply after compaction.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Reply after compaction.' }, completeGoalCall);
+    ctx.mockNextResponse({ type: 'text', text: 'Goal complete.' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'next prompt' }] });
     await ctx.untilTurnEnd();
-    expect(goalReminderCount(ctx.llmCalls.at(-1)!.history)).toBe(1);
+    await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+    await ctx.get(IAgentLoopService).settled();
+    expect(goalReminderCount(ctx.llmCalls[1]!.history)).toBe(1);
   });
 
   it('replays a deferred prompt whose first request carries the re-injected goal reminder', async () => {
@@ -5003,7 +5093,7 @@ describe('FullCompaction prompt-cache prefix', () => {
     );
     if (media !== 'none') {
       ctx.appendRichToolExchange();
-      ctx.appendRichToolExchange();
+      ctx.appendRichToolExchange('inspect this image again');
       ctx.mockNextProviderResponse(
         media === 'media-degraded'
           ? providerHttpError(413, 'Request Entity Too Large')

@@ -15,6 +15,15 @@ export interface FdResolution {
   readonly source: 'system-path' | 'share-bin-cached';
 }
 
+const FD_USAGE_ERROR_EXIT_CODE = 2;
+
+export class FdArgumentsRejectedError extends Error {
+  constructor(stderr: string) {
+    super(`fd rejected its arguments: ${stderr}`);
+    this.name = 'FdArgumentsRejectedError';
+  }
+}
+
 interface FdProbe {
   exec(args: readonly string[]): Promise<{ readonly exitCode: number }>;
 }
@@ -205,6 +214,7 @@ export async function* suggestWithFdEvents(options: FdSuggestOptions): AsyncGene
       '--type', 'f',
       '--type', 'd',
       '--hidden',
+      '--no-require-git',
     ];
     for (const dir of VCS_METADATA_DIRS) {
       args.push('--exclude', dir, '--exclude', `${dir}/*`, '--exclude', `${dir}/**`);
@@ -217,6 +227,9 @@ export async function* suggestWithFdEvents(options: FdSuggestOptions): AsyncGene
       cwd: options.workDir,
       signal: options.signal,
     });
+    if (result.exitCode === FD_USAGE_ERROR_EXIT_CODE && !options.signal.aborted) {
+      throw new FdArgumentsRejectedError(result.stderr.trim());
+    }
     if (result.exitCode !== 0 || result.stdout.length === 0 || options.signal.aborted) {
       return { target, entries: [], capped: false };
     }

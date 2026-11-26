@@ -4,14 +4,19 @@ on:
   push:
     branches: ['release/*']
   workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Exact release commit; defaults to the selected branch head'
+        required: false
+        type: string
 
 concurrency:
-  group: release-${{ github.ref }}-${{ github.sha }}
+  group: release-${{ github.ref }}-${{ inputs.sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
   version:
-    if: github.repository_owner == 'MoonshotAI' && startsWith(github.ref, 'refs/heads/release/')
+    if: github.repository_owner == 'MoonshotAI' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
     concurrency:
       group: release-version-${{ github.ref }}
       cancel-in-progress: false
@@ -19,7 +24,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      actions: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -38,43 +42,67 @@ jobs:
           title: 'ci: release packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Check version PR
-        if: steps.version.outputs.pullRequestNumber != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION_BRANCH: changeset-release/${{ github.ref_name }}
-        run: gh workflow run ci.yml --ref "$VERSION_BRANCH"
-
   candidate:
-    if: github.repository_owner == 'MoonshotAI' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    if: github.repository_owner == 'MoonshotAI' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/heads/release/')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read
       pull-requests: read
-      actions: read
-      checks: read
     outputs:
       publish: ${{ steps.trigger.outputs.publish }}
-      ci-run-id: ${{ steps.trigger.outputs.ci-run-id }}
+      sha: ${{ steps.commit.outputs.sha }}
       cli-tag: ${{ steps.cli.outputs.tag }}
       cli-targets: ${{ steps.cli.outputs.targets }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.sha || github.sha }}
           fetch-depth: 0
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-      - name: Wait for merged version commit CI
+      - name: Resolve release commit
+        id: commit
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+          EVENT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${REQUESTED_SHA:-$EVENT_SHA}"
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'Release SHA must be a full commit SHA' >&2
+            exit 1
+          fi
+          git cat-file -e "$sha^{commit}"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Check release candidate
         id: trigger
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.commit.outputs.sha }}
         run: node scripts/release-trigger.mjs
+      - uses: pnpm/action-setup@v6
+        if: steps.trigger.outputs.publish == 'true'
+      - uses: actions/setup-node@v6
+        if: steps.trigger.outputs.publish == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install dependencies
+        if: steps.trigger.outputs.publish == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Verify release plan
+        if: steps.trigger.outputs.publish == 'true'
+        env:
+          RELEASE_SHA: ${{ steps.commit.outputs.sha }}
+        run: node scripts/release.mjs check
+      - name: Run unit tests
+        if: steps.trigger.outputs.publish == 'true'
+        run: pnpm run test --exclude='**/test/e2e/tui/**' --exclude='**/test/reconnect/**'
       - name: Plan native build for the tested commit
         if: steps.trigger.outputs.publish == 'true'
         id: cli
+        env:
+          RELEASE_SHA: ${{ steps.commit.outputs.sha }}
         run: node scripts/release.mjs plan-cli
 
   desktop-release:
@@ -95,14 +123,18 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.sha }}
+          ref: ${{ needs.candidate.outputs.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
       - name: Verify release branch, plan and tested commit
+        env:
+          RELEASE_SHA: ${{ needs.candidate.outputs.sha }}
         run: node scripts/release.mjs check
       - name: Prepare draft release
         id: prepare
+        env:
+          RELEASE_SHA: ${{ needs.candidate.outputs.sha }}
         run: node scripts/release.mjs prepare
 
   desktop-artifacts:
@@ -119,10 +151,10 @@ jobs:
       actions: read
     uses: ./.github/workflows/desktop-build.yml
     with:
+      sha: ${{ needs.candidate.outputs.sha }}
       retention-days: 7
       upload-artifact-prefix: kimi-code-app
       pnpm-cache-restore-only: ${{ needs.desktop-release.outputs.cli-planned == 'true' }}
-      renderer-ci-run-id: ${{ needs.candidate.outputs.ci-run-id }}
     secrets:
       APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -136,6 +168,7 @@ jobs:
   publish-desktop-assets:
     name: Publish desktop release assets
     needs:
+      - candidate
       - desktop-release
       - desktop-artifacts
     if: needs.desktop-release.outputs.build == 'true'
@@ -147,6 +180,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          ref: ${{ needs.candidate.outputs.sha }}
 
       - name: Download installer artifacts
         uses: actions/download-artifact@v8
@@ -172,6 +206,7 @@ jobs:
       - name: Publish completed release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.candidate.outputs.sha }}
         run: node scripts/release.mjs finish
 
   vscode:
@@ -180,6 +215,8 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/vscode-publish.yml
+    with:
+      sha: ${{ needs.candidate.outputs.sha }}
     secrets:
       VSCE_PAT: ${{ secrets.VSCE_PAT }}
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
@@ -201,6 +238,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ needs.candidate.outputs.sha }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -275,7 +313,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/_native-build.yml
     with:
-      web-ci-run-id: ${{ needs.candidate.outputs.ci-run-id }}
+      sha: ${{ needs.candidate.outputs.sha }}
       upload-artifact-prefix: kimi-code-native
       retention-days: 7
       sign-macos: true
@@ -303,6 +341,8 @@ jobs:
         target: ${{ fromJSON(needs.candidate.outputs.cli-targets) }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.candidate.outputs.sha }}
       - uses: actions/download-artifact@v8
         with:
           name: kimi-code-native-${{ matrix.target }}
@@ -333,7 +373,7 @@ jobs:
       - candidate
       - release
       - compress-native
-    if: needs.candidate.outputs.cli-tag != '' && (needs.release.outputs.kimi_native_release == 'true' || github.run_attempt > 1)
+    if: needs.candidate.outputs.cli-tag != '' && (needs.release.outputs.kimi_native_release == 'true' || github.run_attempt > 1 || github.event_name == 'workflow_dispatch')
     env:
       RELEASE_TAG: ${{ needs.candidate.outputs.cli-tag }}
     runs-on: ubuntu-latest
@@ -343,6 +383,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.candidate.outputs.sha }}
 
       - name: Download native artifacts
         uses: actions/download-artifact@v8
@@ -359,6 +401,7 @@ jobs:
         if: needs.release.outputs.kimi_native_release != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.candidate.outputs.sha }}
         run: node scripts/release.mjs check-cli-retry
 
       - name: Upload assets to GitHub Release

@@ -1,4 +1,6 @@
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
+import { isError2 } from '#/_base/errors/errors';
+import { ConfigErrors } from '#/app/config/errors';
 
 export const ProfileErrors = {
   codes: {
@@ -12,3 +14,12 @@ export const ProfileErrors = {
 } as const satisfies ErrorDomain;
 
 registerErrorDomain(ProfileErrors);
+
+export function isMissingConfiguredModelError(error: unknown, model: string): boolean {
+  return (
+    isError2(error) &&
+    (error.code === ConfigErrors.codes.CONFIG_INVALID || error.code === ProfileErrors.codes.MODEL_CONFIG_INVALID) &&
+    error.details?.['model'] === model &&
+    error.message === `Model "${model}" is not configured in config.toml.`
+  );
+}

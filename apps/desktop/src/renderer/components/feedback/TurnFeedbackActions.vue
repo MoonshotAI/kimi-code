@@ -32,10 +32,9 @@ onBeforeUnmount(() => {
   <div v-if="target && feedback" class="feedback-actions">
     <IconButton
       v-if="activeRating !== 'down'"
-      size="sm"
+      size="xs"
       :label="t(activeRating === 'up' ? 'feedback.undoUp' : 'feedback.up')"
       :tooltip="t(activeRating === 'up' ? 'feedback.undoUp' : 'feedback.up')"
-      tooltip-arrow
       :pressed="activeRating === 'up'"
       :disabled="pending"
       @pointerenter="prefetchForm"
@@ -47,10 +46,9 @@ onBeforeUnmount(() => {
     <IconButton
       v-if="activeRating !== 'up'"
       ref="downButton"
-      size="sm"
+      size="xs"
       :label="t(activeRating === 'down' ? 'feedback.undoDown' : 'feedback.down')"
       :tooltip="open ? undefined : t(activeRating === 'down' ? 'feedback.undoDown' : 'feedback.down')"
-      tooltip-arrow
       :pressed="activeRating === 'down'"
       :aria-expanded="open"
       :aria-controls="open ? popoverId : undefined"
@@ -84,13 +82,14 @@ onBeforeUnmount(() => {
   gap: 2px;
 }
 .feedback-actions .ui-icon-button {
-  width: 20px;
-  height: 20px;
   border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--color-send-bg);
 }
-.feedback-actions .ui-icon-button[aria-pressed='true'] {
+.feedback-actions .ui-icon-button:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-accent);
+}
+.feedback-actions .ui-icon-button[aria-pressed='true'],
+.feedback-actions .ui-icon-button[aria-pressed='true']:hover:not(:disabled) {
   background: color-mix(in srgb, var(--color-accent) 10%, transparent);
   color: var(--color-accent);
 }

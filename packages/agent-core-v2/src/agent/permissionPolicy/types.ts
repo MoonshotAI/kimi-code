@@ -1,8 +1,10 @@
+import type { ApprovalReviewDetail } from '#/agent/interaction/approval';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 
+export type { ApprovalReviewDetail };
 export type PermissionMode = 'manual' | 'yolo' | 'auto';
 
 
@@ -12,6 +14,7 @@ export interface ApprovalRequest {
   toolName: string;
   action: string;
   display: ToolInputDisplay;
+  approvalDetail?: ApprovalReviewDetail;
 }
 
 export interface ApprovalResponse {
@@ -52,6 +55,7 @@ export type PermissionPolicyResult =
   | {
       readonly kind: 'ask';
       readonly reason?: PermissionDecisionReason;
+      readonly approvalDetail?: ApprovalReviewDetail;
       readonly resolveApproval?: (
         result: ApprovalResponse,
       ) => PermissionPolicyResolution | undefined;
@@ -66,5 +70,6 @@ export interface PermissionPolicy {
   readonly name: string;
   evaluate(
     context: PermissionPolicyContext,
+    mode: PermissionMode,
   ): PermissionPolicyResult | undefined | Promise<PermissionPolicyResult | undefined>;
 }

@@ -91,7 +91,7 @@ Google SDK 只把「单独一次读到的错误 JSON」识别为流中错误。�
 
 ## 在引擎进程内接入假模型
 
-agent-core-v2 的集成测试不起服务端，用 harness 的 `testkitAgentFixtures()` 取得 `{ agent, model }`。它把 `model.fetch` 注入引擎真实的 provider 请求链：步骤、命名挂起点、通道、请求记录和 `verify()` 都与其他层相同，请求会经过真实的协议编码和解析。harness 默认的 provider 是 `kimi`，所以子 agent 和压缩请求会自动进入各自的通道。这时调用旧的 `agent.mockNextResponse()` 会直接报错，避免两套脚本混用。[引擎用例](../../agent-core-v2/test/integration/conversation/testkit-model.test.ts) · [harness 夹具](../../agent-core-v2/test/harness/testkit.ts)
+agent-core-v2 的集成测试不起服务端，用 harness 的 `testkitAgentFixtures()` 取得 `{ agent, model }`。它把 `model.fetch` 注入引擎真实的 provider 请求链：步骤、命名挂起点、通道、请求记录和 `verify()` 都与其他层相同，请求会经过真实的协议编码和解析。harness 默认的 provider 是 `kimi`，所以子 agent 和压缩请求会自动进入各自的通道。这时调用旧的 `agent.mockNextResponse()` 会直接报错，避免两套脚本混用。存量用例里的 `mockNextResponse` 也由 testkit 模型回答：harness 把每条旧剧本翻译成 testkit 步骤，用例结束时同样检查没写剧本的请求、没被请求的剧本和不合法的消息序列。[引擎用例](../../agent-core-v2/test/integration/conversation/testkit-model.test.ts) · [harness 夹具](../../agent-core-v2/test/harness/testkit.ts)
 
 ## 在桌面端接入假模型
 

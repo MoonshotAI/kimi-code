@@ -14,7 +14,6 @@ import {
 } from '@moonshot-ai/core/llm/builtin/provider/kimi/protocol';
 import { openAIProtocol } from '@moonshot-ai/core/llm/builtin/protocol/openai/index';
 import { googleGenAIProtocol } from '@moonshot-ai/core/llm/builtin/protocol/google-genai/index';
-import { APIError as RawOpenAISDKAPIError } from 'openai/error';
 import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
 import {
@@ -26,9 +25,34 @@ import {
 } from '@moonshot-ai/core/llm/requester';
 import type { FinishReason } from '@moonshot-ai/core/llm/response';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
+import {
+  call,
+  createFakeModel,
+  disconnect,
+  finishWith,
+  held,
+  httpError,
+  networkError,
+  reply,
+  say,
+  streamError,
+  think,
+  thinkSigned,
+  unitsOf,
+  withResponseId,
+  withUsage,
+  type FakeModel,
+  type Hold,
+  type HttpErrorOptions,
+  type Lane,
+  type ReplyStep,
+  type ScriptedStep,
+} from '@moonshot-ai/testkit/model';
+import { afterEach } from 'vitest';
+
 import { isError2 } from '#/_base/errors/errors';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import { ChatProviderError, errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
+import { errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
 
 import {
   generateInputSnapshot,
@@ -56,8 +80,7 @@ export interface MockProviderResponse {
   readonly requestId?: string | null;
   readonly httpError?: MockProviderHttpError;
   readonly error?: unknown;
-  readonly fetch?: typeof fetch;
-  readonly onStream?: () => void | Promise<void>;
+  readonly step?: ScriptedStep;
 }
 
 export type MockProviderHandler = (
@@ -65,27 +88,58 @@ export type MockProviderHandler = (
   signal: AbortSignal,
 ) => MockProviderResponse | Promise<MockProviderResponse>;
 
+export interface MockProviderOptions {
+  readonly checkMessages?: boolean;
+  readonly checkCalls?: boolean;
+}
+
 interface PreparedAttempt {
   readonly request: LlmRequest;
-  readonly result: {
-    readonly id: string | null;
-    readonly message: AssistantMessage;
-    readonly usage: Partial<TokenUsage> | null;
-    readonly finishReason: FinishReason | null;
-    readonly rawFinishReason: string | null;
-    readonly requestId?: string | null;
-  };
-  readonly parts: readonly StreamedMessagePart[];
-  readonly httpError?: MockProviderHttpError;
-  readonly error?: unknown;
-  readonly fetch?: typeof fetch;
-  readonly onStream?: () => void | Promise<void>;
+  readonly signal?: AbortSignal;
+  readonly step?: ScriptedStep;
+  readonly fault?: unknown;
 }
 
 export interface MockProvider {
   respond(request: LlmRequest, signal: AbortSignal): PreparedAttempt | Promise<PreparedAttempt>;
   readonly fetch: typeof fetch;
 }
+
+export interface ScriptedMockProvider extends MockProvider {
+  hold(name: string): Hold;
+}
+
+const UNSCRIPTED = Symbol('unscripted');
+
+class ScriptTranslationError extends Error {}
+
+type ScriptedHandler = (
+  request: LlmRequest,
+  signal: AbortSignal,
+) => MockProviderResponse | typeof UNSCRIPTED | Promise<MockProviderResponse | typeof UNSCRIPTED>;
+
+type ScriptedCheck = () => readonly string[];
+
+const scriptedChecks = new Set<ScriptedCheck>();
+const retiredProblems: string[] = [];
+
+export function takeScriptedModelProblems(): string[] {
+  return [...retiredProblems.splice(0), ...[...scriptedChecks].flatMap((check) => check())];
+}
+
+function retireChecks(checks: readonly ScriptedCheck[]): void {
+  for (const check of checks) {
+    retiredProblems.push(...check());
+    scriptedChecks.delete(check);
+  }
+}
+
+afterEach(() => {
+  const problems = takeScriptedModelProblems();
+  if (problems.length > 0) {
+    throw new Error(`The scripted model found ${String(problems.length)} problem(s):\n- ${problems.join('\n- ')}`);
+  }
+});
 
 export function generateCallOf(request: LlmRequest): GenerateCall {
   return normalizeGenerateInput({
@@ -101,29 +155,56 @@ export function generateCallOf(request: LlmRequest): GenerateCall {
   });
 }
 
-export function createMockProvider(handler: MockProviderHandler): MockProvider {
+export function createMockProvider(handler: MockProviderHandler, options: MockProviderOptions = {}): ScriptedMockProvider {
+  return createModelProvider(handler, options);
+}
+
+interface CheckedProvider extends ScriptedMockProvider {
+  readonly check: ScriptedCheck;
+}
+
+function createModelProvider(handler: ScriptedHandler, options: MockProviderOptions): CheckedProvider {
+  const model = createFakeModel({ checkMessages: options.checkMessages ?? true, checkCalls: options.checkCalls ?? false });
+  const lane = model.route('scripted', () => true);
+  const handlerProblems: string[] = [];
   const pending: Promise<PreparedAttempt>[] = [];
   let index = 0;
+  let reported = 0;
+  const check = (): readonly string[] => {
+    const all = [...handlerProblems, ...model.problems()];
+    const fresh = all.slice(reported);
+    reported = all.length;
+    return fresh;
+  };
+  scriptedChecks.add(check);
   return {
+    check,
+    hold: (name) => model.hold(name),
     respond: (request, signal) => {
       const attempt = (async (): Promise<PreparedAttempt> => {
+        const current = index++;
         try {
-          return prepareProviderAttempt(request, await handler(request, signal), index++);
+          const response = await handler(request, signal);
+          if (response === UNSCRIPTED) return { request, signal };
+          return { ...attemptOf(request, response, current), signal };
         } catch (error) {
-          return { ...prepareProviderAttempt(request, {}, index++), parts: [], error };
+          if (error instanceof ScriptTranslationError) {
+            handlerProblems.push(`the reply for request #${String(current)} could not be prepared: ${error.message}`);
+            return { request, step: networkError() };
+          }
+          return { request, fault: error };
         }
       })();
       pending.push(attempt);
       return attempt;
     },
-    fetch: mockProviderFetch(pending),
+    fetch: modelFetch(pending, lane, model),
   };
 }
 
 export function fetchBackedProvider(fetchImpl: typeof fetch): MockProvider {
-  let index = 0;
   return {
-    respond: (request) => prepareProviderAttempt(request, {}, index++),
+    respond: (request) => ({ request }),
     fetch: fetchImpl,
   };
 }
@@ -137,16 +218,17 @@ export function providerHttpError(
 }
 
 export function createMockProviderRequester(
-  input: MockProviderHandler | readonly (MockProviderResponse | Error)[],
+  input: MockProviderHandler | readonly MockProviderResponse[],
 ): InitializedLlmRequester {
   const responses = typeof input === 'function' ? undefined : [...input];
-  const provider = createMockProvider((request, signal) => {
-    if (responses === undefined) return (input as MockProviderHandler)(request, signal);
-    const response = responses.shift();
-    if (response instanceof Error) throw response;
-    if (response === undefined) throw new Error('Unexpected provider request');
-    return response;
-  });
+  if (responses !== undefined) scriptedChecks.add(() => leftoverProblems(responses));
+  const provider = createModelProvider(
+    (request, signal) => {
+      if (responses === undefined) return (input as MockProviderHandler)(request, signal);
+      return responses.shift() ?? UNSCRIPTED;
+    },
+    {},
+  );
   return withMockProvider(
     createRequester().with({
       protocol: { base: openAIProtocol },
@@ -161,56 +243,12 @@ export function createMockProviderRequester(
   );
 }
 
-function prepareProviderAttempt(
-  request: LlmRequest,
-  response: MockProviderResponse,
-  index: number,
-): PreparedAttempt {
-  const parts = normalizeProviderStreamParts(
-    response.parts ?? (response.message === undefined ? [] : partsFromGeneratedMessage(response.message)),
-  );
-  const message = response.message ?? {
-    role: 'assistant' as const,
-    content: parts.filter(isContentPart),
-    toolCalls: parts.filter(isToolCall),
-  };
-  const finishReason = response.finishReason === undefined
-    ? message.toolCalls.length > 0
-      ? 'tool_calls'
-      : 'completed'
-    : response.finishReason;
-  if (response.error !== undefined) void Promise.resolve(response.error).catch(() => {});
-  return {
-    request,
-    result: {
-      id: response.id === undefined ? `mock-${String(index + 1)}` : response.id,
-      message,
-      usage: response.usage === undefined
-        ? {
-            inputOther: estimateTokensForMessages(normalizeMessagesForTokenEstimates(request.content.messages)),
-            output: estimateTokensForMessages(normalizeMessagesForTokenEstimates([message])),
-            inputCacheRead: 0,
-            inputCacheCreation: 0,
-          }
-        : response.usage,
-      finishReason,
-      rawFinishReason: response.rawFinishReason === undefined
-        ? defaultRawFinishReason(finishReason, protocolKind(request))
-        : response.rawFinishReason,
-      requestId: response.requestId,
-    },
-    parts,
-    httpError: response.httpError,
-    error: response.error,
-    fetch: response.fetch,
-    onStream: response.onStream,
-  };
-}
-
-export function createScriptedGenerate() {
+export function createScriptedGenerate(options: MockProviderOptions = {}) {
   const calls: GenerateCall[] = [];
   const responses: MockProviderResponse[] = [];
   let assertedCallCount = 0;
+  const leftovers = (): readonly string[] => leftoverProblems(responses);
+  scriptedChecks.add(leftovers);
 
   function mockNextResponse(...response: StreamedMessagePart[]) {
     responses.push({ parts: structuredClone(response) });
@@ -224,14 +262,12 @@ export function createScriptedGenerate() {
     });
   }
 
-  const provider = createMockProvider((request) => {
+  const provider = createModelProvider((request) => {
     const response = responses.shift();
-    if (response === undefined) {
-      return providerHttpError(400, `Unexpected generate call #${String(calls.length + 1)}`);
-    }
+    if (response === undefined) return UNSCRIPTED;
     calls.push(generateCallOf(request));
     return response;
-  });
+  }, options);
 
   return {
     provider,
@@ -262,6 +298,7 @@ export function createScriptedGenerate() {
     },
     mockNextResponse,
     mockNextProviderResponse,
+    retire: () => retireChecks([leftovers, provider.check]),
   };
 }
 
@@ -305,7 +342,7 @@ export function withMockProvider(
         try {
           return await provider.fetch(input, init);
         } catch (error) {
-          if (isError2(error) && !(error instanceof ChatProviderError)) {
+          if (isError2(error)) {
             directError = error;
             directAbort.abort(error);
           }
@@ -330,172 +367,209 @@ export function withMockProvider(
   };
 }
 
-function mockProviderError(error: unknown): Error {
+function modelFetch(pending: Promise<PreparedAttempt>[], lane: Lane, model: FakeModel): typeof fetch {
+  return async (input, init) => {
+    let next = pending.shift();
+    if (next === undefined) {
+      throw new Error('mock provider received an unscheduled fetch');
+    }
+    let attempt = await next;
+    while (attempt.signal?.aborted === true && pending.length > 0) {
+      next = pending.shift()!;
+      attempt = await next;
+    }
+    if (attempt.fault !== undefined && attempt.step === undefined) throw providerFault(attempt.fault);
+    if (attempt.step !== undefined) lane.script(attempt.step);
+    const response = await model.fetch(input, init);
+    return attempt.fault === undefined ? response : failingAfterBody(response, providerFault(attempt.fault));
+  };
+}
+
+function providerFault(error: unknown): Error {
   const message = llmMessageFromError(error);
   if (message !== undefined) return errorFromLlmMessage(message);
   return error instanceof Error ? error : new Error(String(error));
 }
 
-function mockProviderFetch(pending: Promise<PreparedAttempt>[]): typeof fetch {
-  return async (input, init) => {
-    const pendingAttempt = pending.shift();
-    if (pendingAttempt === undefined) {
-      throw new Error('mock provider received an unscheduled fetch');
-    }
-    const attempt = await pendingAttempt;
-    if (attempt.fetch !== undefined) return attempt.fetch(input, init);
-    const headers = new Headers({ 'content-type': 'application/json' });
-    const requestId = attempt.result.requestId ?? attempt.httpError?.requestId;
-    const traceId = attempt.httpError?.traceId ?? requestId;
-    if (traceId !== undefined && traceId !== null) headers.set('x-trace-id', traceId);
-    if (requestId !== undefined && requestId !== null) headers.set('x-request-id', requestId);
-    if (attempt.httpError?.retryAfterMs !== undefined && attempt.httpError.retryAfterMs !== null) {
-      headers.set('retry-after-ms', String(attempt.httpError.retryAfterMs));
-    }
-    if (attempt.httpError !== undefined && attempt.parts.length > 0) {
-      return streamFailure(attempt, headers, init?.signal ?? undefined);
-    }
-    if (attempt.httpError !== undefined) {
-      return new Response(
-        JSON.stringify({
-          error: {
-            message: attempt.httpError.message,
-            type: 'provider_error',
-            code: attempt.httpError.code ?? attempt.httpError.statusCode,
-            status: googleErrorStatus(attempt.httpError.statusCode),
-            requestId: attempt.httpError.requestId,
-          },
-        }),
-        { status: attempt.httpError.statusCode, headers },
-      );
-    }
-    if (attempt.error !== undefined) {
-      if (attempt.parts.length > 0 || (attempt.result.requestId !== undefined && attempt.result.requestId !== null)) {
-        return streamFailure(attempt, headers, init?.signal ?? undefined);
-      }
-      let resolvedError: unknown;
-      try {
-        resolvedError = await Promise.resolve(attempt.error);
-      } catch (caught) {
-        resolvedError = caught;
-      }
-      throw mockProviderError(resolvedError);
-    }
-    const result = attempt.result;
-    const kind = protocolKind(attempt.request);
-    if (attempt.request.protocol.stream === false) {
-      return new Response(JSON.stringify(nonStreamingBody(attempt, kind, result), replacer), {
-        status: 200,
-        headers,
-      });
-    }
-    const chunks = streamingChunks(attempt, kind, result);
-    headers.set('content-type', 'text/event-stream');
-    return chunkedResponse(attempt, chunks, headers, init?.signal ?? undefined);
-  };
-}
-
-function streamFailure(attempt: PreparedAttempt, headers: Headers, signal?: AbortSignal): Response {
-  const kind = protocolKind(attempt.request);
-  const result = attempt.result;
-  const chunks = kind === 'openai'
-    ? [
-        openAIChunk(attempt, result, { role: 'assistant' }),
-        ...openAIStreamParts(attempt.parts).map((part) => openAIChunk(attempt, result, openAIDelta(part))),
-        openAIChunk(attempt, result, {}, null, openAIUsage(result.usage)),
-      ]
-    : kind === 'anthropic'
-      ? [
-          ...anthropicChunks(attempt, result).slice(0, -2),
-          {
-            type: 'message_delta',
-            delta: { stop_reason: null, stop_sequence: null },
-            usage: anthropicUsage(result.usage),
-          },
-        ]
-      : kind === 'responses'
-        ? responsesChunks(attempt, result)
-        : [googleResponse(attempt, result)];
-  headers.set('content-type', 'text/event-stream');
-  return chunkedResponse(attempt, chunks, headers, signal);
-}
-
-function chunkedResponse(
-  attempt: PreparedAttempt,
-  chunks: readonly Record<string, unknown>[],
-  headers: Headers,
-  signal?: AbortSignal,
-): Response {
-  const hasTerminalFailure = attempt.httpError !== undefined || attempt.error !== undefined;
-  const events = chunks.map((chunk) => {
-    const event = protocolKind(attempt.request) === 'anthropic' ? `event: ${String(chunk['type'])}\n` : '';
-    return `${event}data: ${JSON.stringify(chunk, replacer)}\n\n`;
-  });
-  if (protocolKind(attempt.request) !== 'google' && !hasTerminalFailure) {
-    events.push('data: [DONE]\n\n');
-  }
-  const streamPauseIndex =
-    attempt.onStream === undefined
-      ? -1
-      : hasTerminalFailure
-        ? events.length
-        : Math.max(0, events.length - 2);
-  const isSignalAborted = (): boolean => signal?.aborted === true;
-  let onStreamCalled = false;
-  let index = 0;
+function failingAfterBody(response: Response, fault: Error): Response {
+  const reader = response.body?.getReader();
   return new Response(
     new ReadableStream<Uint8Array>({
       async pull(controller) {
-        await Promise.resolve();
-        if (isSignalAborted()) {
-          controller.error(signal?.reason);
-          return;
-        }
-        if (!onStreamCalled && index === streamPauseIndex) {
-          onStreamCalled = true;
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
-          await attempt.onStream?.();
-          if (isSignalAborted()) {
-            controller.error(signal?.reason);
+        try {
+          const chunk = await reader?.read();
+          if (chunk === undefined || chunk.done) {
+            controller.error(fault);
             return;
           }
+          controller.enqueue(chunk.value);
+        } catch {
+          controller.error(fault);
         }
-        if (index < events.length) {
-          controller.enqueue(new TextEncoder().encode(events[index++]!));
-          return;
-        }
-        if (attempt.httpError !== undefined) {
-          controller.error(new RawOpenAISDKAPIError(
-            attempt.httpError.statusCode,
-            {
-              message: attempt.httpError.message,
-              code: attempt.httpError.statusCode,
-              type: 'provider_error',
-            },
-            attempt.httpError.message,
-            headers,
-          ));
-          return;
-        }
-        if (attempt.error !== undefined) {
-          let resolvedError: unknown;
-          try {
-            resolvedError = await Promise.resolve(attempt.error);
-          } catch (caught) {
-            resolvedError = caught;
-          }
-          if (isSignalAborted()) {
-            controller.error(signal?.reason);
-            return;
-          }
-          controller.error(mockProviderError(resolvedError));
-          return;
-        }
-        controller.close();
       },
-    }, { highWaterMark: 0 }),
-    { status: 200, headers },
+      cancel: (reason) => reader?.cancel(reason),
+    }),
+    { status: response.status, headers: response.headers },
   );
+}
+
+function leftoverProblems(responses: MockProviderResponse[]): string[] {
+  if (responses.length === 0) return [];
+  const leftovers = responses.splice(0).map(responseSummary);
+  const count = leftovers.length;
+  return [`${String(count)} scripted repl${count === 1 ? 'y was' : 'ies were'} never requested: ${leftovers.join(', ')}`];
+}
+
+function responseSummary(response: MockProviderResponse): string {
+  const shown = response.step?.label ?? JSON.stringify(response.httpError ?? response.parts ?? response.message?.content ?? null);
+  return shown.length > 80 ? `${shown.slice(0, 77)}...` : shown;
+}
+
+function attemptOf(request: LlmRequest, response: MockProviderResponse, index: number): PreparedAttempt {
+  if (response.error instanceof Promise) response.error.catch(() => undefined);
+  const faults = response.error !== undefined && !(response.error instanceof Promise) && response.httpError === undefined;
+  if (!faults) return { request, ...stepOf(request, response, index) };
+  const { step } = stepOf(request, { ...response, error: undefined }, index);
+  if (step.kind !== 'reply' || step.parts.length === 0) return { request, fault: response.error };
+  return { request, step: disconnect(step, { afterUsage: response.usage !== null }), fault: response.error };
+}
+
+function stepOf(request: LlmRequest, response: MockProviderResponse, index: number): { readonly step: ScriptedStep } {
+  const base = response.step === undefined
+    ? replyOf(request, response, index)
+    : response.step.kind === 'reply' && response.step.responseId === undefined
+      ? withResponseId(`mock-${String(index + 1)}`, response.step)
+      : response.step;
+  const step = base.kind === 'reply' ? withRequestId(response.requestId, base) : base;
+  const failed = failureOf(response, step);
+  if (!(response.error instanceof Promise) || failed.kind !== 'reply') return { step: failed };
+  return { step: held(`reply-${String(index)}`, failed, unitsOf(failed)) };
+}
+
+function replyOf(request: LlmRequest, response: MockProviderResponse, index: number): ReplyStep {
+  const parts = normalizeProviderStreamParts(
+    response.parts ?? (response.message === undefined ? [] : partsFromGeneratedMessage(response.message)),
+  );
+  const message = response.message ?? {
+    role: 'assistant' as const,
+    content: parts.filter(isContentPart),
+    toolCalls: parts.filter(isToolCall),
+  };
+  const finishReason = response.finishReason === undefined
+    ? message.toolCalls.length > 0
+      ? 'tool_calls'
+      : 'completed'
+    : response.finishReason;
+  const rawFinishReason = response.rawFinishReason === undefined
+    ? defaultRawFinishReason(finishReason, protocolKind(request))
+    : response.rawFinishReason;
+  const usage = response.usage === undefined
+    ? {
+        inputOther: estimateTokensForMessages(normalizeMessagesForTokenEstimates(request.content.messages)),
+        output: estimateTokensForMessages(normalizeMessagesForTokenEstimates([message])),
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      }
+    : response.usage;
+  let step = replyFromParts(parts);
+  step = withUsage(
+    usage === null
+      ? null
+      : { input: usage.inputOther ?? 0, output: usage.output ?? 0, cacheRead: usage.inputCacheRead ?? 0, cacheWrite: usage.inputCacheCreation ?? 0 },
+    step,
+  );
+  step = finishWith(rawFinishReason === null ? null : { raw: rawFinishReason }, step);
+  const id = response.id === undefined ? `mock-${String(index + 1)}` : response.id;
+  return id === null ? step : withResponseId(id, step);
+}
+
+function withRequestId(requestId: string | null | undefined, step: ReplyStep): ReplyStep {
+  if (requestId === undefined || requestId === null) return step;
+  return { ...step, headers: { ...step.headers, 'x-request-id': requestId, 'x-trace-id': requestId } };
+}
+
+function failureOf(response: MockProviderResponse, step: ScriptedStep): ScriptedStep {
+  if (response.httpError !== undefined) {
+    const failure = response.httpError;
+    const options: HttpErrorOptions = {
+      message: failure.message,
+      type: 'provider_error',
+      code: failure.code ?? failure.statusCode,
+      requestId: failure.requestId ?? undefined,
+      traceId: failure.traceId ?? failure.requestId ?? undefined,
+      retryAfterMs: failure.retryAfterMs ?? undefined,
+      body: {
+        error: {
+          message: failure.message,
+          type: 'provider_error',
+          code: failure.code ?? failure.statusCode,
+          status: googleErrorStatus(failure.statusCode),
+          requestId: failure.requestId,
+        },
+      },
+    };
+    if (step.kind === 'reply' && step.parts.length > 0) return streamError(step, { ...options, status: failure.statusCode });
+    return httpError(failure.statusCode, options);
+  }
+  return step;
+}
+
+function replyFromParts(parts: readonly StreamedMessagePart[]): ReplyStep {
+  interface PendingCall {
+    readonly kind: 'call';
+    readonly name: string;
+    readonly id: string;
+    readonly streamIndex?: number | string;
+    readonly extras?: Readonly<Record<string, unknown>>;
+    raw: string;
+    chunks: number;
+  }
+  const entries: Array<ReplyStep | PendingCall> = [];
+  for (const part of parts) {
+    if (part.type === 'text') {
+      entries.push(say(part.text));
+    } else if (part.type === 'think') {
+      entries.push(part.encrypted === undefined ? think(part.think) : thinkSigned(part.think, part.encrypted));
+    } else if (part.type === 'function') {
+      entries.push({
+        kind: 'call',
+        name: part.name,
+        id: part.id,
+        streamIndex: part._streamIndex,
+        extras: part.extras,
+        raw: part.arguments ?? '',
+        chunks: 1,
+      });
+    } else if (part.type === 'tool_call_part') {
+      const calls = entries.filter((entry): entry is PendingCall => entry.kind === 'call');
+      const target = calls.find((entry) => part.index !== undefined && entry.streamIndex === part.index) ?? calls.at(-1);
+      if (target === undefined) throw new ScriptTranslationError('a tool_call_part arrived before any tool call');
+      target.raw += part.argumentsPart ?? '';
+      target.chunks += 1;
+    } else {
+      throw new ScriptTranslationError(`the testkit model cannot send a ${part.type} part in a reply`);
+    }
+  }
+  return reply(...entries.map((entry) => (entry.kind === 'call' ? callStep(entry) : entry)));
+}
+
+function callStep(entry: { readonly name: string; readonly id: string; readonly raw: string; readonly chunks: number; readonly extras?: Readonly<Record<string, unknown>> }): ReplyStep {
+  let args: Record<string, unknown> = {};
+  let invalid = false;
+  try {
+    const parsed: unknown = JSON.parse(entry.raw);
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) args = parsed as Record<string, unknown>;
+    else invalid = true;
+  } catch {
+    invalid = true;
+  }
+  return call(entry.name, args, {
+    id: entry.id,
+    rawArguments: entry.raw,
+    argumentChunks: Math.max(1, Math.min(entry.chunks, Array.from(entry.raw).length)),
+    invalid,
+    extras: entry.extras,
+  });
 }
 
 function googleErrorStatus(statusCode: number): string {
@@ -522,363 +596,6 @@ function protocolKind(request: LlmRequest): 'openai' | 'anthropic' | 'responses'
   if (base.client === openAIResponsesProtocol.client || base.client === kimiResponsesProtocol.client) return 'responses';
   if (base.client === googleGenAIProtocol.client) return 'google';
   return 'openai';
-}
-
-function googleResponse(
-  attempt: PreparedAttempt,
-  result: PreparedAttempt['result'],
-): Record<string, unknown> {
-  return {
-    responseId: result.id ?? undefined,
-    candidates: [
-      {
-        content: { role: 'model', parts: attempt.parts.flatMap(googlePart) },
-        finishReason: result.rawFinishReason ?? undefined,
-      },
-    ],
-    usageMetadata: googleUsage(result.usage),
-  };
-}
-
-function googlePart(part: StreamedMessagePart): Record<string, unknown>[] {
-  switch (part.type) {
-    case 'text':
-      return [{ text: part.text, thoughtSignature: part.meta?.['thought_signature_b64'] }];
-    case 'think':
-      return [{ text: part.think, thought: true, thoughtSignature: part.encrypted }];
-    case 'function':
-      return [{
-        functionCall: {
-          id: part.rawId,
-          name: part.name,
-          args: JSON.parse(part.arguments ?? '{}') as Record<string, unknown>,
-        },
-        thoughtSignature: part.extras?.['thought_signature_b64'],
-      }];
-    case 'tool_call_part':
-      return [];
-    case 'image_url':
-      return [googleMediaPart(part.imageUrl.url, 'image/jpeg')];
-    case 'audio_url':
-      return [googleMediaPart(part.audioUrl.url, 'audio/mpeg')];
-    case 'video_url':
-      return [googleMediaPart(part.videoUrl.url, 'video/mp4')];
-  }
-}
-
-function googleMediaPart(url: string, mimeType: string): Record<string, unknown> {
-  if (url.startsWith('data:')) {
-    const commaIndex = url.indexOf(',');
-    const metadata = commaIndex === -1 ? '' : url.slice(0, commaIndex);
-    const data = commaIndex === -1 ? url : url.slice(commaIndex + 1);
-    const mediaType = metadata.split(':')[1]?.split(';')[0] ?? mimeType;
-    return { inlineData: { mimeType: mediaType, data } };
-  }
-  return { fileData: { fileUri: url, mimeType } };
-}
-
-function googleUsage(usage: Partial<TokenUsage> | null): Record<string, unknown> | undefined {
-  if (usage === null) return undefined;
-  return {
-    promptTokenCount: (usage.inputOther ?? 0) + (usage.inputCacheRead ?? 0) + (usage.inputCacheCreation ?? 0),
-    candidatesTokenCount: usage.output ?? 0,
-    cachedContentTokenCount: usage.inputCacheRead,
-  };
-}
-
-function nonStreamingBody(
-  attempt: PreparedAttempt,
-  kind: 'openai' | 'anthropic' | 'responses' | 'google',
-  result: PreparedAttempt['result'],
-): Record<string, unknown> {
-  const content = result.message.content.filter(isContentPart);
-  const text = content.filter((part) => part.type === 'text').map((part) => part.text).join('');
-  const thinking = content.filter((part) => part.type === 'think').map((part) => part.think).join('');
-  const toolCalls = result.message.toolCalls;
-  if (kind === 'google') return googleResponse(attempt, result);
-  if (kind === 'anthropic') {
-    return {
-      id: result.id ?? 'mock',
-      type: 'message',
-      role: 'assistant',
-      model: attempt.request.model.spec.name,
-      content: anthropicBlocks(attempt.parts),
-      stop_reason: anthropicStopReason(result),
-      usage: anthropicUsage(result.usage),
-    };
-  }
-  if (kind === 'responses') {
-    return {
-      id: result.id ?? 'mock',
-      object: 'response',
-      created: 0,
-      model: attempt.request.model.spec.name,
-      output: [
-        {
-          type: 'message',
-          id: result.id ?? 'mock',
-          role: 'assistant',
-          content: text.length > 0 ? [{ type: 'output_text', text }] : [],
-        },
-      ],
-      status: 'completed',
-      usage: openAIUsage(result.usage),
-    };
-  }
-  return {
-    id: result.id ?? 'mock',
-    object: 'chat.completion',
-    created: 0,
-    model: attempt.request.model.spec.name,
-    choices: [
-      {
-        index: 0,
-        finish_reason: openAIFinishReason(result),
-        message: {
-          role: 'assistant',
-          content: text,
-          reasoning_content: thinking.length > 0 ? thinking : undefined,
-          tool_calls: toolCalls.length > 0
-            ? toolCalls.map((part, index) => openAIToolCall({ ...part, _streamIndex: part._streamIndex ?? index }))
-            : undefined,
-        },
-      },
-    ],
-    usage: openAIUsage(result.usage),
-  };
-}
-
-function streamingChunks(
-  attempt: PreparedAttempt,
-  kind: 'openai' | 'anthropic' | 'responses' | 'google',
-  result: PreparedAttempt['result'],
-): Record<string, unknown>[] {
-  if (kind === 'google') return [googleResponse(attempt, result)];
-  if (kind === 'anthropic') return anthropicChunks(attempt, result);
-  if (kind === 'responses') return responsesChunks(attempt, result);
-  const chunks: Record<string, unknown>[] = [
-    openAIChunk(attempt, result, { role: 'assistant' }),
-    ...openAIStreamParts(attempt.parts).map((part) => openAIChunk(attempt, result, openAIDelta(part))),
-    openAIChunk(attempt, result, {}, openAIFinishReason(result), openAIUsage(result.usage)),
-  ];
-  return chunks;
-}
-
-function openAIStreamParts(parts: readonly StreamedMessagePart[]): StreamedMessagePart[] {
-  let toolCallIndex = 0;
-  return parts.map((part) =>
-    part.type === 'function'
-      ? { ...part, _streamIndex: part._streamIndex ?? toolCallIndex++ }
-      : part
-  );
-}
-
-function openAIChunk(
-  attempt: PreparedAttempt,
-  result: PreparedAttempt['result'],
-  delta: Record<string, unknown>,
-  finishReason?: string | null,
-  usage?: Record<string, unknown>,
-): Record<string, unknown> {
-  return {
-    id: result.id ?? 'mock',
-    object: 'chat.completion.chunk',
-    created: 0,
-    model: attempt.request.model.spec.name,
-    choices: [{ index: 0, delta, finish_reason: finishReason ?? null }],
-    usage,
-  };
-}
-
-function openAIDelta(part: StreamedMessagePart): Record<string, unknown> {
-  switch (part.type) {
-    case 'text':
-      return { content: part.text };
-    case 'think':
-      if (part.encrypted !== undefined || part.reasoningKey === 'reasoning_details') {
-        return {
-          reasoning_details: [
-            {
-              type: 'summary',
-              index: part.detailsIndex ?? 0,
-              summary: part.think,
-            },
-            {
-              type: 'encrypted',
-              index: part.detailsIndex ?? 0,
-              summary: '',
-              encrypted: part.encrypted,
-            },
-          ],
-        };
-      }
-      return { reasoning_content: part.think };
-    case 'function':
-      return { tool_calls: [openAIToolCall(part)] };
-    case 'tool_call_part':
-      return {
-        tool_calls: [
-          {
-            index: part.index ?? 0,
-            function: { arguments: part.argumentsPart },
-          },
-        ],
-      };
-    default:
-      return { content: '' };
-  }
-}
-
-function openAIToolCall(part: Extract<StreamedMessagePart, { type: 'function' }>): Record<string, unknown> {
-  return {
-    index: part._streamIndex ?? 0,
-    id: part.id,
-    type: 'function',
-    function: { name: part.name, arguments: part.arguments },
-    extras: part.extras,
-  };
-}
-
-function anthropicChunks(
-  attempt: PreparedAttempt,
-  result: PreparedAttempt['result'],
-): Record<string, unknown>[] {
-  const chunks: Record<string, unknown>[] = [
-    {
-      type: 'message_start',
-      message: {
-        id: result.id ?? 'mock',
-        type: 'message',
-        role: 'assistant',
-        model: attempt.request.model.spec.name,
-        content: [],
-        stop_reason: null,
-        stop_sequence: null,
-        usage: { input_tokens: 0, output_tokens: 0 },
-      },
-    },
-  ];
-  for (const [index, part] of attempt.parts.entries()) {
-    const block = anthropicBlock(part);
-    if (block === undefined) continue;
-    chunks.push({ type: 'content_block_start', index, content_block: block });
-    const delta = anthropicDelta(part);
-    if (delta !== undefined) chunks.push({ type: 'content_block_delta', index, delta });
-    chunks.push({ type: 'content_block_stop', index });
-  }
-  chunks.push({
-    type: 'message_delta',
-    delta: { stop_reason: anthropicStopReason(result), stop_sequence: null },
-    usage: anthropicUsage(result.usage),
-  });
-  chunks.push({ type: 'message_stop' });
-  return chunks;
-}
-
-function anthropicBlocks(parts: readonly StreamedMessagePart[]): Record<string, unknown>[] {
-  return parts.flatMap((part) => {
-    const block = anthropicBlock(part);
-    return block === undefined ? [] : [block];
-  });
-}
-
-function anthropicBlock(part: StreamedMessagePart): Record<string, unknown> | undefined {
-  switch (part.type) {
-    case 'text':
-      return { type: 'text', text: part.text };
-    case 'think':
-      return { type: 'thinking', thinking: part.think, signature: part.encrypted };
-    case 'function':
-      return { type: 'tool_use', id: part.id, name: part.name, input: JSON.parse(part.arguments ?? '{}') };
-    default:
-      return undefined;
-  }
-}
-
-function anthropicDelta(part: StreamedMessagePart): Record<string, unknown> | undefined {
-  switch (part.type) {
-    case 'text':
-      return { type: 'text_delta', text: part.text };
-    case 'think':
-      return { type: 'thinking_delta', thinking: part.think };
-    case 'tool_call_part':
-      return { type: 'input_json_delta', partial_json: part.argumentsPart };
-    default:
-      return undefined;
-  }
-}
-
-function responsesChunks(
-  attempt: PreparedAttempt,
-  result: PreparedAttempt['result'],
-): Record<string, unknown>[] {
-  const text = attempt.parts
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join('');
-  return [
-    {
-      type: 'response.output_text.delta',
-      item_id: result.id ?? 'mock',
-      output_index: 0,
-      content_index: 0,
-      delta: text,
-    },
-    {
-      type: 'response.completed',
-      response: nonStreamingBody(attempt, 'responses', result),
-    },
-  ];
-}
-
-function openAIUsage(usage: Partial<TokenUsage> | null): Record<string, unknown> | undefined {
-  if (usage === null) return undefined;
-  const inputOther = usage.inputOther ?? 0;
-  const inputCacheRead = usage.inputCacheRead ?? 0;
-  const inputCacheCreation = usage.inputCacheCreation ?? 0;
-  const output = usage.output ?? 0;
-  return {
-    prompt_tokens: inputOther + inputCacheRead + inputCacheCreation,
-    completion_tokens: output,
-    total_tokens: inputOther + inputCacheRead + inputCacheCreation + output,
-    prompt_tokens_details: { cached_tokens: inputCacheRead },
-    completion_tokens_details: { reasoning_tokens: 0 },
-  };
-}
-
-function anthropicUsage(usage: Partial<TokenUsage> | null): Record<string, unknown> {
-  return {
-    input_tokens: usage === null ? 0 : (usage.inputOther ?? 0) + (usage.inputCacheRead ?? 0) + (usage.inputCacheCreation ?? 0),
-    output_tokens: usage?.output ?? 0,
-    cache_read_input_tokens: usage?.inputCacheRead ?? 0,
-    cache_creation_input_tokens: usage?.inputCacheCreation ?? 0,
-  };
-}
-
-function openAIFinishReason(result: PreparedAttempt['result']): string | null {
-  if (result.rawFinishReason !== null) return result.rawFinishReason;
-  if (result.finishReason === 'filtered') return 'content_filter';
-  if (result.finishReason === null) return null;
-  return result.finishReason === 'completed' ? 'stop' : result.finishReason;
-}
-
-function anthropicStopReason(result: PreparedAttempt['result']): string | null {
-  if (result.rawFinishReason !== null) return result.rawFinishReason;
-  if (result.finishReason === null) return null;
-  switch (result.finishReason) {
-    case 'completed':
-      return 'end_turn';
-    case 'tool_calls':
-      return 'tool_use';
-    case 'truncated':
-      return 'max_tokens';
-    case 'filtered':
-      return 'refusal';
-    case 'paused':
-      return 'pause_turn';
-    default:
-      return 'other';
-  }
 }
 
 function partsFromGeneratedMessage(message: AssistantMessage): StreamedMessagePart[] {
@@ -971,11 +688,21 @@ function defaultRawFinishReason(
         return 'other';
     }
   }
+  if (kind === 'responses') {
+    switch (finishReason) {
+      case 'completed':
+      case 'tool_calls':
+        return 'completed';
+      case 'truncated':
+        return 'max_output_tokens';
+      case 'filtered':
+        return 'content_filter';
+      case 'paused':
+      case 'other':
+        return 'incomplete';
+    }
+  }
   if (finishReason === 'filtered') return 'content_filter';
   if (finishReason === 'completed') return 'stop';
   return finishReason;
-}
-
-function replacer(_key: string, value: unknown): unknown {
-  return value === undefined ? null : value;
 }

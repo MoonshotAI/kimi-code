@@ -551,6 +551,16 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     this.assertPromptValid();
   }
 
+  async waitForUsageUpdates(count: number): Promise<void> {
+    const received = await this.wait(`the editor to receive ${count} usage updates for the session`, () => {
+      const updates = this.sessionUpdates().filter((update) => update.sessionUpdate === 'usage_update').length;
+      return updates >= count ? updates : undefined;
+    });
+    if (received !== count) {
+      throw new Error(`waitForUsageUpdates() expected ${count}, received ${received}.\n${this.describe()}`);
+    }
+  }
+
   async expectTool(expectation: ToolExpectation): Promise<void> {
     const wanted = describeTool(expectation);
     const state = await this.wait(`the tool ${wanted}`, () => {

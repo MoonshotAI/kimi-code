@@ -6,9 +6,9 @@ import {
   type ProtocolCodec,
   type ResolvedUsage,
 } from '#/model/protocols/codec';
-import { asArray, asRecord, optionalString, stringOf } from '#/model/protocols/json';
+import { asArray, asRecord, contentPartsOf, optionalString, stringOf } from '#/model/protocols/json';
 import { argumentsText } from '#/model/steps';
-import type { ErrorSpec, FinishSpec, ReplyStep, RequestView, ViewCall, ViewMessage, ViewPart } from '#/model/types';
+import type { ErrorSpec, FinishSpec, ReplyStep, RequestView, ToolCallSpec, ViewCall, ViewMessage, ViewPart } from '#/model/types';
 import { textOfParts } from '#/model/view';
 
 export const openaiCodec: ProtocolCodec = {
@@ -36,6 +36,7 @@ export const openaiCodec: ProtocolCodec = {
         chunk(emissions.length === 0 ? { role: 'assistant' } : {}, finishReasonOf(step), usageOf(context.usage)),
         'data: [DONE]\n\n',
       ],
+      usageOnly: context.usage === null ? undefined : chunk({}, null, usageOf(context.usage)),
     };
   },
   encodeStreamError(error) {
@@ -68,6 +69,7 @@ export const openaiCodec: ProtocolCodec = {
                     id: context.callId(callIndex, call),
                     type: 'function',
                     function: { name: call.name, arguments: argumentsText(call) },
+                    ...extrasOf(call),
                   })),
           },
         },
@@ -89,7 +91,7 @@ function deltaOf(emission: Emission): Record<string, unknown> {
       return { reasoning_details: signedDetails(emission.text, emission.signature, 0) };
     case 'call-start':
       return {
-        tool_calls: [{ index: emission.callIndex, id: emission.id, type: 'function', function: { name: emission.call.name, arguments: '' } }],
+        tool_calls: [{ index: emission.callIndex, id: emission.id, type: 'function', function: { name: emission.call.name, arguments: '' }, ...extrasOf(emission.call) }],
       };
     case 'call-arguments':
       return { tool_calls: [{ index: emission.callIndex, function: { arguments: emission.piece } }] };
@@ -187,9 +189,7 @@ function callOf(raw: unknown): ViewCall {
 }
 
 function contentParts(content: unknown): ViewPart[] {
-  if (typeof content === 'string') return [{ type: 'text', text: content }];
-  return asArray(content).map((raw): ViewPart => {
-    const part = asRecord(raw);
+  return contentPartsOf(content, (part, raw) => {
     switch (part['type']) {
       case 'text':
         return { type: 'text', text: stringOf(part['text']) };
@@ -201,4 +201,8 @@ function contentParts(content: unknown): ViewPart[] {
         return { type: 'other', raw };
     }
   });
+}
+
+function extrasOf(call: ToolCallSpec): { readonly extras?: Readonly<Record<string, unknown>> } {
+  return call.extras === undefined ? {} : { extras: call.extras };
 }

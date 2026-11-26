@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.10.0
+
+### Minor Changes
+
+- [#5414](https://github.com/MoonshotAI/kimi-code/pull/5414) [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7) Thanks [@liruifengv](https://github.com/liruifengv)! - Remove the experimental `fork` parameter that let `Agent` and `AgentSwarm` start subagents with the caller's conversation history.
+
+### Patch Changes
+
+- [#5414](https://github.com/MoonshotAI/kimi-code/pull/5414) [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7) Thanks [@liruifengv](https://github.com/liruifengv)! - Automatically approve statically verified read-only Bash commands in Always Ask mode. Add an `ask` permission rule to keep confirming them.
+
+- [#5414](https://github.com/MoonshotAI/kimi-code/pull/5414) [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7) Thanks [@liruifengv](https://github.com/liruifengv)! - Skip the legacy `[experimental]` section when migrating configuration from kimi-cli instead of carrying entries such as `tower` or `wait_for`.
+
+- [#5414](https://github.com/MoonshotAI/kimi-code/pull/5414) [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix MCP servers being started when listing skills or suggesting files before a session is open.
+
+- [#5414](https://github.com/MoonshotAI/kimi-code/pull/5414) [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7) Thanks [@liruifengv](https://github.com/liruifengv)! - Automatically reclaim session locks recorded under a different hostname. Shared state directories no longer protect live holders across machines or containers.
+
+- Updated dependencies [[`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7), [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7), [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7), [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7), [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7), [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7), [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7)]:
+  - @moonshot-ai/migration-legacy@0.1.19
+  - @moonshot-ai/kimi-code-sdk@0.24.0
+
 ## 0.9.0
 
 ### Minor Changes

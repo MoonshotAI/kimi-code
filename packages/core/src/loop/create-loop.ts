@@ -173,7 +173,7 @@ export interface Loop {
    * Returns `undefined` once the loop is closed. Throws `TypeError` when
    * `promptId` is not a string.
    */
-  cancel(promptId: string): LoopAck<'prompt.canceled'> | undefined;
+  cancel(promptId: string, options?: { readonly includeStarting?: boolean }): LoopAck<'prompt.canceled'> | undefined;
   abort(reason?: unknown, options?: { readonly continue?: boolean }): void;
   abortTool(toolCallId: string, reason?: unknown): void;
   detachTool(toolCallId: string, text?: string, completion?: ToolCompletionFactory): void;

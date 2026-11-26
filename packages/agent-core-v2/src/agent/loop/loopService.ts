@@ -29,7 +29,7 @@ import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTok
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
-import { resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
+import { resolveMaxOutputTokens } from '#/llm-adapter/model/completion-budget';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
@@ -76,7 +76,6 @@ import {
 } from '#/agent/profile/profile';
 import type {
   LlmRequest as CoreLlmRequest,
-  LlmRequestModel,
   ThinkingEffort,
 } from '@moonshot-ai/core/llm/request';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
@@ -776,17 +775,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): RequesterBinding {
     const resolved = config.resolved;
     const model = this.modelCatalog.get(resolved.modelAlias);
-    const budget = resolveCompletionBudget({
+    const maxOutputTokens = resolveMaxOutputTokens({
       maxOutputSize: options.maxOutputSize ?? resolved.maxOutputSize,
       maxCompletionTokensCap: config.maxCompletionTokensCap,
     });
-    const maxCompletionTokensCap = config.maxCompletionTokensCap;
-    const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
-    const maxOutputTokens: LlmRequestModel['maxOutputTokens'] = optedOut
-      ? 'none'
-      : budget === undefined
-        ? undefined
-        : Math.max(1, budget);
     const params: InitializedLlmRequestPart = {
       ...config.params,
       model: {
@@ -975,14 +967,25 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private async submitClient(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
-    await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
+    const text = promptMetadataTextFromContentParts(payload.input);
+    const rejectIfBusy = payload.rejectIfBusy === true;
+    if (!rejectIfBusy) await this.updatePromptMetadata(text);
     const status = this.snapshot();
+    const wouldQueue = status.state === 'running' || status.paused || status.queue.length > 0;
+    if (rejectIfBusy && wouldQueue) {
+      throw new Error2(ErrorCodes.TURN_AGENT_BUSY, 'another turn is already in progress');
+    }
     const { id } = this.submit({
       role: 'user',
       content: [...payload.input],
       attributes: { promptId: payload.promptId, origin: { kind: 'user' } },
     });
-    if (status.state === 'running' || status.paused || status.queue.length > 0) return undefined;
+    if (rejectIfBusy) {
+      await this.updatePromptMetadata(text).catch((error: unknown) => {
+        this.logger.warn('failed to update metadata for an accepted prompt', { error });
+      });
+    }
+    if (wouldQueue) return undefined;
     return this.launchResult(id);
   }
 
@@ -1255,7 +1258,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       for (let index = this.pendingSubmissions.length - 1; index >= 0; index -= 1) {
         if (this.pendingSubmissions[index]!.attributes?.promptId === target.promptId) this.pendingSubmissions.splice(index, 1);
       }
-      this.loop?.cancel(target.promptId);
+      this.loop?.cancel(target.promptId, { includeStarting: true });
       this.prompts.cancel(target.promptId);
       return true;
     }

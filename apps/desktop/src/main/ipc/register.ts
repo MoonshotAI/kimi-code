@@ -22,7 +22,7 @@ import { createLocalPagesPolicy } from '../browser/local-pages-policy';
 import { asBrowserAnnotationPickRequest } from '../../shared/browser-annotation';
 import { collectBrowserAnnotationAssets, completeBrowserAnnotationCapture, cancelBrowserAnnotationPick, hideBrowserAnnotation, pickBrowserAnnotation, readBrowserAnnotationAsset, showBrowserAnnotation } from '../browser/browser-annotations';
 
-import { getMainWindow, showMainWindow, applyWindowVibrancy, markQuitting, sendToRenderer, windowForWebContents } from '../window/main-window';
+import { getMainWindow, showMainWindow, applyWindowVibrancy, markQuitting, markRendererUiMounted, sendToRenderer, windowForWebContents } from '../window/main-window';
 import { listAvailableOpenInApps, openInApp } from '../system/open-in';
 import { getTerminalManager, initTerminalManager, type NativeTerminalCreateOptions } from '../terminal/manager';
 import { normalizeTerminalSshTarget } from '../../shared/terminal-activity';
@@ -514,7 +514,11 @@ export function registerIpcHandlers(): void {
     rendererLogWriter(payload, rendererLogSource(event.sender));
   });
   ipcMain.on(IPC.startupMilestone, (event, payload: unknown) => {
-    if (isMainRendererSender(event.sender)) recordRendererMilestone(payload);
+    if (!isMainRendererSender(event.sender)) return;
+    const milestone = recordRendererMilestone(payload);
+    if (milestone?.milestone !== 'ui-mounted') return;
+    const frame = event.senderFrame;
+    if (frame !== null && frame === event.sender.mainFrame) markRendererUiMounted(frame.url);
   });
   ipcMain.on(IPC.track, (_event, eventName: unknown, payload: unknown) => {
     const parsed = asRendererTrackEvent(eventName, payload);

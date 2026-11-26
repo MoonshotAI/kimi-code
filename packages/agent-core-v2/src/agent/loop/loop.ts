@@ -202,6 +202,7 @@ export interface PromptHandle extends PromptSnapshot {
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
   readonly promptId?: string;
+  readonly rejectIfBusy?: boolean;
 }
 
 export interface PromptLaunchResult {

@@ -52,6 +52,7 @@ import {
   ManualMcpOAuthScheduler,
   startInProcessHttpMcpServer,
   stdioFixture,
+  UNREACHABLE_SERVER_ORIGIN,
 } from '../../mcpCore/stubs';
 
 function stdioServer(): McpServerConfig {
@@ -554,7 +555,7 @@ describe('WorkspaceMcpService', () => {
   });
 
   describe('credential events', () => {
-    const SERVER_URL = 'https://mcp.example.test/mcp';
+    const SERVER_URL = `${UNREACHABLE_SERVER_ORIGIN}/mcp`;
     let httpServers: HttpServer[] = [];
 
     afterEach(async () => {

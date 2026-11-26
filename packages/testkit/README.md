@@ -1,10 +1,11 @@
 # @moonshot-ai/testkit
 
-Shared test infrastructure for this repository: a protocol-level fake model, a driver for the Kimi Agent Protocol (KAP), and the fixtures around them. The package depends on no `@moonshot-ai/*` package, so the tests of any package can use it. Code that needs a product package, such as the server, is passed in by the caller.
+Shared test infrastructure for this repository: a protocol-level fake model, fake Kimi managed services, a driver for the Kimi Agent Protocol (KAP), and the fixtures around them. The package depends on no `@moonshot-ai/*` package, so the tests of any package can use it. Code that needs a product package, such as the server, is passed in by the caller.
 
 | Import | What it provides |
 |---|---|
 | `@moonshot-ai/testkit/model` | the fake model, the step DSL, tool-call builders, and the provider config that points the product at the fake model |
+| `@moonshot-ai/testkit/services` | fake Kimi managed services: session titles and feedback with signed uploads, scripted and recorded like the fake model |
 | `@moonshot-ai/testkit/kap` | `startKap`: an in-process KAP server backed by the fake model; `KapProcess`: the CLI's `web --json` server in a child process; `KapClient`: the session operations both of them share, with REST and WebSocket clients and a turn reducer |
 | `@moonshot-ai/testkit/fixtures` | temporary homes, a `config.toml` writer, git repositories with a linked worktree, environment isolation, the network guard, child processes that stay offline, the CLI command and environment, repository paths, directory snapshots, waits, timeouts, media samples and normalizers |
 | `@moonshot-ai/testkit/contract` | a field-per-line summary of OpenAPI and AsyncAPI documents, a check that lists contract changes as breaking, non-breaking or unclassified, and a digest that ignores wording, for pinning an API level |
@@ -17,6 +18,7 @@ This is a private workspace package. When adopting it in another package, add `"
 | What you want to test | Guide |
 |---|---|
 | What a provider client sends and how it parses the reply | [假模型与 SDK 测试](docs/model.md) |
+| How the product uses the session title or feedback service | [The fake Kimi services](#the-fake-kimi-services) |
 | What a KAP client sees during tool use, approval, cancellation or restart | [编写 KAP 场景测试](docs/kap-scenarios.md) |
 | Code that reads configuration, uses a workspace or produces snapshots | [夹具、隔离与快照](docs/fixtures.md) |
 | A Playwright test that drives Kimi Code Desktop against a scripted provider | [在桌面端接入假模型](docs/model.md#在桌面端接入假模型) |
@@ -62,7 +64,7 @@ Failed KAP tests also print summaries of the most recent 32 WebSocket frames and
 `createFakeModel(options)` returns a model that answers like a provider:
 
 - `model.fetch` serves requests in process. `await model.listen()` also serves them on `127.0.0.1` with a random port; then `model.baseUrl` is `http://127.0.0.1:<port>/v1` and `model.origin` has no path.
-- The request path picks the protocol: OpenAI chat completions (`kimi` and `openai` providers), Anthropic messages, or Google GenAI. `GET …/models` lists `options.models`.
+- The request path picks the protocol: OpenAI chat completions (`kimi` and `openai` providers), OpenAI Responses (`…/responses`, the `openai_responses` provider and Kimi's Responses protocol), Anthropic messages, or Google GenAI. `GET …/models` lists `options.models`.
 - `fakeModelConfig(model, { type })` produces the provider and model entries for `config.toml`. `startKap` adds them for you. New tests should use the default `kimi` type, because only that type sends the request metadata that routes subagent and compaction requests (see Lanes).
 - `alias` names the configured model, `providerAlias` names its provider (defaults to `alias`), and `modelName` is sent to the provider. For example, the desktop fixture registers `e2e/stub` under provider `e2e` and sends `stub` on the wire.
 
@@ -75,18 +77,20 @@ Failed KAP tests also print summaries of the most recent 32 WebSocket frames and
 | `say(text \| chunks)` | text, one chunk per array entry |
 | `{ ...say('ok'), headers: { 'x-request-id': 'example-request' } }` | response headers on a streamed or JSON reply |
 | `think(text, then?)`, `thinkSigned(text, signature, then?)` | reasoning before the next step. For OpenAI chat completions, signed reasoning includes the signature in `reasoning_details` in both streaming and non-streaming replies |
-| `call(name, args, { text, id, rawArguments, argumentChunks, invalid })` | one tool call. OpenAI and streaming Anthropic can preserve raw argument text. Google and non-streaming Anthropic require a JSON object |
+| `call(name, args, { text, id, rawArguments, argumentChunks, invalid, extras })` | one tool call. OpenAI and streaming Anthropic can preserve raw argument text. Google and non-streaming Anthropic require a JSON object. `extras` rides on the OpenAI tool call as `extras`; its `thought_signature_b64` becomes a Google `thoughtSignature` |
 | `reply(...)`, `batch(...)` | several parts in one reply; `batch` reads as parallel calls |
 | `interleave(step)` | interleaves argument pieces of parallel calls in an OpenAI stream |
 | `finishWith(reason, step)`, `withUsage(usage, step)` | finish reason and token usage, including cache reads and writes |
-| `withResponseId(id, step)` | the reply's ID: OpenAI `id`, Anthropic message `id`, Google `responseId`. Unscripted replies get `testkit-<requestIndex>` |
+| `withResponseId(id, step)` | the reply's ID: OpenAI and OpenAI Responses `id`, Anthropic message `id`, Google `responseId`. Unscripted replies get `testkit-<requestIndex>` |
 | `paced(ms, step)`, `after(ms, step)` | delay between chunks, or before the reply |
 | `held(name, step, beforeUnit?)` | pauses before a chunk until the test releases it |
 | `httpError(status, options)` | an HTTP error with body, headers, `retry-after`, request and trace ids |
-| `streamError(step, options)`, `disconnect(step)` | fails or drops the stream after the step's chunks |
+| `streamError(step, options)`, `disconnect(step, { afterUsage })` | fails or drops the stream after the step's chunks; `afterUsage` sends the usage chunk before the drop |
 | `networkError()`, `rawResponse({ status, headers, chunks })` | a connection reset, or a custom response body built from UTF-8 string chunks |
 
 Tool calls get deterministic ids, `call_<requestIndex>_<callIndex>`; `model.callId(r, c)` returns them.
+
+The model also answers the Kimi files API: `POST …/files` stores the upload and returns a ready file object with ID `file-<uploadIndex>`, and `GET …/files/<id>` returns it again. `model.uploads()` lists each upload's filename, purpose, content types and raw body. After `model.holdUploads()`, uploads stay open until the client gives up, and are then recorded as `aborted`.
 
 When inspecting Google request history, use the IDs in `request.view.messages` to match results to calls. The view preserves explicit wire IDs. Each call with an omitted ID gets its own ID, and results with omitted IDs match pending calls of the same name in order.
 
@@ -129,6 +133,17 @@ model.hold('slow').release();
 A hold can also `fail(status)` before the headers or `cut()` the connection. `model.releaseHeld()` releases every hold a request is waiting at, and leaves holds that no request has reached yet. After parsing and routing, `model.requests(lane?)` and `model.request(index)` expose the raw body, parsed body, headers, metadata, state (`pending`, `streaming`, `held`, `finished`, `aborted`, `cut`, `failed`) and a normalized `view` of system text, tools and messages. Earlier failures such as invalid JSON or a wrong API key appear in `model.problems()`. Helpers include `firstUserText`, `userTextsSinceReply`, `remindersSinceReply` and `texts(role)`. `model.waitForRequest(index | predicate)` waits for a matching record.
 
 For OpenAI chat completions, `request.texts('system')` returns the individual system and developer messages in request order, including empty entries. Use `request.view.system` for the combined prompt across providers.
+
+## The fake Kimi services
+
+`createKimiServices({ accessToken })` answers the Kimi managed services that are not model calls. `services.fetch` serves them in process; `await services.listen()` (or `startKimiServices()`) also serves them on `127.0.0.1`. Point the product at `services.baseUrl`, which ends in `/coding/v1`, through its provider `base_url`, `KIMI_CODE_BASE_URL` or `KIMI_CODE_FEEDBACK_BASE_URL`. Endpoints are matched by the end of the path, so a test can tell two configured deployments apart by giving each its own path prefix under `services.origin`.
+
+- Session titles: `services.title('A title', serviceError(503, 'unavailable'))` queues replies for `POST …/tools` `chat_title` calls, in order.
+- Feedback: `POST …/feedback` returns ids from 1, `…/feedback/update` and `…/feedback/upload_url` answer 409 for an id the services did not hand out, and the upload URL points at `services.origin`. Storage rejects an `Authorization` header or a method other than the signed one (`services.uploadMethod('POST')` changes it). `services.feedback()` lists each submission with its updates, uploads, stored bytes and completion.
+- `services.holdNext('title' | 'storage' | …)` holds the next request to that endpoint; `hold.reached()` resolves with the request and `hold.release()` lets it answer. A request whose client gives up while held is dropped.
+- `services.requests(endpoint?)` lists every request with its path, headers, `authorization` and parsed JSON. With `accessToken` set, a wrong bearer token gets 401 and fails `verify()`.
+
+`services.verify()` fails on an unexpected request, a title request with no scripted reply, a scripted title nobody asked for, a hold never reached or never released, an upload completed before its bytes reached storage, with the wrong etag or for an unknown upload, and a storage request that carried a token or used the wrong method. `packages/oauth/test/kimi-services-contract.test.ts` drives the real managed clients against these services.
 
 ## The KAP harness
 

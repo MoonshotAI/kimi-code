@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
@@ -10,6 +10,8 @@ import {
   resolveKimiTokenStorageName,
 } from '@moonshot-ai/kimi-code-oauth';
 import { createGitRepository, createGitWorktree, type GitWorktreeLayout } from '@moonshot-ai/testkit/fixtures';
+import { createFakeModel, say } from '@moonshot-ai/testkit/model';
+import { createKimiServices } from '@moonshot-ai/testkit/services';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -19,6 +21,7 @@ import {
   fromKimiErrorPayload,
   isDaemonFileUrl,
   isKimiError,
+  KIMI_ERROR_INFO,
   KimiHarness,
   limitAgentReplayByTurns,
   SDKRpcClientBase,
@@ -26,6 +29,7 @@ import {
   Session,
   toKimiErrorPayload,
   type Event,
+  type WorktreeCreateEvent,
 } from '#/index';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
@@ -61,6 +65,7 @@ import {
   IProjectService,
   MAIN_AGENT_ID,
   OsProcessErrors,
+  WorktreeErrors,
   APIProviderRateLimitError,
   APIStatusError,
 } from '@moonshot-ai/agent-core-v2';
@@ -1382,7 +1387,8 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     tempDirs.push(homeDir);
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
-    const titleBaseUrl = 'https://api.example.test/coding/v1';
+    const kimi = createKimiServices({ accessToken: 'test-access-token' });
+    const titleBaseUrl = kimi.baseUrl;
     const titleOAuthRef = resolveKimiCodeOAuthRef({ baseUrl: titleBaseUrl });
     await new FileTokenStorage(join(homeDir, 'credentials')).save(
       resolveKimiTokenStorageName({ oauthKey: titleOAuthRef.key }),
@@ -1420,16 +1426,8 @@ key = "${titleOAuthRef.key}"
 `,
       'utf-8',
     );
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url === 'https://api.example.test/coding/v1/tools') {
-        return new Response(JSON.stringify({ title: 'Generated title' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+    kimi.title('Generated title');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(kimi.fetch);
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
@@ -1473,6 +1471,7 @@ key = "${titleOAuthRef.key}"
           patch: { title: 'Generated title', isCustomTitle: false },
         }),
       ]);
+      kimi.verify();
     } finally {
       await harness.close();
       fetchSpy.mockRestore();
@@ -1484,7 +1483,8 @@ key = "${titleOAuthRef.key}"
     tempDirs.push(homeDir);
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
-    const titleBaseUrl = 'https://api.example.test/coding/v1';
+    const kimi = createKimiServices({ accessToken: 'test-access-token' });
+    const titleBaseUrl = kimi.baseUrl;
     const titleOAuthRef = resolveKimiCodeOAuthRef({ baseUrl: titleBaseUrl });
     await new FileTokenStorage(join(homeDir, 'credentials')).save(
       resolveKimiTokenStorageName({ oauthKey: titleOAuthRef.key }),
@@ -1522,22 +1522,9 @@ key = "${titleOAuthRef.key}"
 `,
       'utf-8',
     );
-    let markFetchStarted!: () => void;
-    let resolveFetch!: (response: Response) => void;
-    const fetchStarted = new Promise<void>((resolve) => {
-      markFetchStarted = resolve;
-    });
-    const fetchResponse = new Promise<Response>((resolve) => {
-      resolveFetch = resolve;
-    });
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url === 'https://api.example.test/coding/v1/tools') {
-        markFetchStarted();
-        return fetchResponse;
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+    kimi.title('Generated title');
+    const titleRequest = kimi.holdNext('title');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(kimi.fetch);
     const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
 
     try {
@@ -1550,7 +1537,7 @@ key = "${titleOAuthRef.key}"
       await client.closeSession({ sessionId: 'ses_title_race' });
 
       const titlePromise = client.generateSessionTitle({ id: 'ses_title_race' });
-      await fetchStarted;
+      await titleRequest.reached();
       const sessionManager = client.engineAccessor.get(ISessionManager);
       const tempHandle = sessionManager.get('ses_title_race');
       expect(tempHandle).toBeDefined();
@@ -1568,12 +1555,7 @@ key = "${titleOAuthRef.key}"
         event.waitUntil(closeGate);
       });
 
-      resolveFetch(
-        new Response(JSON.stringify({ title: 'Generated title' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      );
+      titleRequest.release();
       await closeStarted;
 
       const order: string[] = [];
@@ -1599,6 +1581,7 @@ key = "${titleOAuthRef.key}"
           { interval: 50, timeout: 4000 },
         )
         .toBe('Resumed title');
+      kimi.verify();
     } finally {
       await client.close();
       fetchSpy.mockRestore();
@@ -1827,38 +1810,111 @@ key = "${titleOAuthRef.key}"
       await expect(client.getStatus({ sessionId: 'ses_resume_missing_default' })).resolves.toMatchObject({
         model: 'acme/new',
       });
-      const requestModels: string[] = [];
-      const fetchStub = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
-        const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as { model?: string };
-        requestModels.push(body.model ?? '');
-        const chunks = [
-          { delta: { role: 'assistant', content: 'ok' }, finish_reason: null },
-          { delta: {}, finish_reason: 'stop' },
-        ].map((choice) => `data: ${JSON.stringify({
-          id: 'chatcmpl-stub',
-          object: 'chat.completion.chunk',
-          created: 0,
-          model: 'new-wire',
-          choices: [{ index: 0, ...choice }],
-        })}`);
-        return new Response([...chunks, 'data: [DONE]'].map((line) => `${line}\n\n`).join(''), {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
-      });
+      const model = createFakeModel();
+      model.route('prompt', () => true).script(say('ok'));
+      const fetchStub = vi.spyOn(globalThis, 'fetch').mockImplementation(model.fetch);
       try {
         await client.prompt({ sessionId: 'ses_resume_missing_default', input: [{ type: 'text', text: 'hello' }] });
         await vi.waitFor(() => {
-          expect(requestModels).toEqual(['new-wire']);
+          expect(model.requests().map((request) => (request.body as { model?: string }).model)).toEqual([
+            'new-wire',
+          ]);
+          expect(model.requests()[0]?.state).toBe('finished');
         });
+        model.verify();
       } finally {
         fetchStub.mockRestore();
+        await model.close();
       }
       await expect(client.createSession({
         id: 'ses_resume_invalid_explicit',
         workDir,
         model: 'acme/missing',
       })).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('resumes a session whose saved model was removed and lets the caller switch models', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-resume-removed-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      await client.setConfig({
+        providers: {
+          acme: { type: 'openai', baseUrl: 'https://acme.example.test/v1' },
+        },
+        models: {
+          'acme/old': { provider: 'acme', model: 'old-wire', maxContextSize: 100_000 },
+          'acme/new': { provider: 'acme', model: 'new-wire', maxContextSize: 200_000 },
+        },
+        defaultModel: 'acme/old',
+      });
+      await client.createSession({ id: 'ses_resume_removed_model', workDir, model: 'acme/old' });
+      await client.importContext({
+        sessionId: 'ses_resume_removed_model',
+        content: 'history from removed model',
+        source: "session 'source-a'",
+      });
+      await client.closeSession({ sessionId: 'ses_resume_removed_model' });
+      await writeFile(
+        join(homeDir, 'config.toml'),
+        `default_model = "acme/new"\n\n[providers.acme]\ntype = "openai"\nbase_url = "https://acme.example.test/v1"\n\n[models."acme/new"]\nprovider = "acme"\nmodel = "new-wire"\nmax_context_size = 200000\n`,
+      );
+      await client.getConfig({ reload: true });
+
+      const events: Event[] = [];
+      const unsubscribe = client.onEvent((event) => {
+        events.push(event);
+      });
+      const summary = await client.resumeSession({ id: 'ses_resume_removed_model' });
+
+      expect(summary.agents[MAIN_AGENT_ID]?.config.modelAlias).toBe('acme/old');
+      expect(summary.warning).toBe(
+        'Session model "acme/old" is not configured in config.toml. Use /model to select an available model.',
+      );
+      await expect(client.getStatus({ sessionId: 'ses_resume_removed_model' })).resolves.toMatchObject({
+        model: 'acme/old',
+        maxContextTokens: 200_000,
+      });
+      await expect(
+        client.setPermission({ sessionId: 'ses_resume_removed_model', mode: 'yolo' }),
+      ).resolves.toBeUndefined();
+      await expect(
+        client.setPlanMode({ sessionId: 'ses_resume_removed_model', enabled: true }),
+      ).resolves.toBeUndefined();
+      await vi.waitFor(() => {
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: 'agent.status.updated',
+            model: 'acme/old',
+            maxContextTokens: 200_000,
+          }),
+        );
+      });
+      unsubscribe();
+
+      const session = new Session({
+        id: summary.id,
+        workDir: summary.workDir,
+        summary,
+        rpc: client,
+      });
+      expect(session.getResumeState()?.warning).toBe(summary.warning);
+      await expect(session.setModel('acme/missing')).rejects.toMatchObject({
+        code: ErrorCodes.CONFIG_INVALID,
+      });
+      expect(session.getResumeState()?.warning).toBe(summary.warning);
+
+      await session.setModel('acme/new');
+      expect(session.getResumeState()?.warning).toBeUndefined();
+      await expect(client.getStatus({ sessionId: 'ses_resume_removed_model' })).resolves.toMatchObject({
+        model: 'acme/new',
+        maxContextTokens: 200_000,
+      });
     } finally {
       await client.close();
     }
@@ -5196,3 +5252,244 @@ async function writeSkill(dir: string, name: string): Promise<void> {  await mkd
     'utf-8',
   );
 }
+
+describe('KimiHarness worktrees', () => {
+  const execFileAsync = promisify(execFile);
+
+  async function git(cwd: string, ...args: string[]): Promise<string> {
+    const { stdout } = await execFileAsync('git', args, { cwd });
+    return stdout;
+  }
+
+  async function makeWorktreeHarness(): Promise<{ harness: KimiHarness; homeDir: string; repo: string }> {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '1');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-home-'));
+    const repoDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-repo-'));
+    tempDirs.push(homeDir, repoDir);
+    await git(repoDir, 'init', '-q', '-b', 'main');
+    await git(repoDir, 'config', 'user.email', 'test@example.com');
+    await git(repoDir, 'config', 'user.name', 'Test');
+    await git(repoDir, 'config', 'commit.gpgsign', 'false');
+    await writeFile(join(repoDir, 'README.md'), 'hello\n');
+    await git(repoDir, 'add', 'README.md');
+    await git(repoDir, 'commit', '-q', '-m', 'init');
+    const repo = await realpath(repoDir);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    return { harness, homeDir, repo };
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('registers every worktree engine error code in the SDK', () => {
+    for (const code of Object.values(WorktreeErrors.codes)) {
+      expect(Object.hasOwn(KIMI_ERROR_INFO, code)).toBe(true);
+    }
+  });
+
+  it('creates a worktree and resolves work locations cleanly', async () => {
+    const { harness, homeDir, repo } = await makeWorktreeHarness();
+    const events: WorktreeCreateEvent[] = [];
+    try {
+      const source = join(repo, 'packages', 'app');
+      await mkdir(source, { recursive: true });
+      await writeFile(join(source, 'index.ts'), 'export {};\n');
+      await git(repo, 'add', 'packages/app/index.ts');
+      await git(repo, 'commit', '-q', '-m', 'add app');
+
+      const created = await harness.createWorktree({ cwd: source, name: 'feat-a' }, { onEvent: (event) => events.push(event) });
+      const root = created.worktree.path;
+      const worktree = { root, name: 'feat-a', repoRoot: repo };
+      expect(created.cwd).toBe(join(root, 'packages', 'app'));
+      expect(events.some((event) => event.type === 'planned' && event.name === 'feat-a')).toBe(true);
+
+      const session = await harness.createSession({ workDir: created.cwd });
+      expect(session.summary?.projectWorkDir).toBe(repo);
+      expect((await harness.listSessions({ workDir: created.cwd })).map((item) => item.id)).toEqual([session.id]);
+      expect((await harness.listSessions({ workDir: created.cwd, limit: 0 })).map((item) => item.id)).toEqual([
+        session.id,
+      ]);
+      expect((await harness.listSessions({ workDir: repo, scope: 'project' })).map((item) => item.id)).toEqual([session.id]);
+      await expect(
+        harness.listSessionsPage({ workDir: repo, scope: 'repository' as unknown as 'project' }),
+      ).rejects.toMatchObject({ code: ErrorCodes.REQUEST_INVALID });
+
+      expect(await harness.resolveWorkLocation(repo)).toStrictEqual({
+        cwd: repo,
+        projectRoot: repo,
+        isGitRepo: true,
+      });
+
+      const linked = join(repo, '..', `${basename(repo)}-linked`);
+      tempDirs.push(linked);
+      await git(repo, 'worktree', 'add', '-q', '--detach', linked);
+      const linkedRoot = await realpath(linked);
+      expect(await harness.resolveWorkLocation(linkedRoot)).toStrictEqual({
+        cwd: linkedRoot,
+        projectRoot: repo,
+        isGitRepo: true,
+      });
+
+      expect(await harness.resolveWorkLocation(created.cwd)).toStrictEqual({
+        cwd: created.cwd,
+        projectRoot: repo,
+        isGitRepo: true,
+        worktree,
+      });
+
+      const spelledThroughHome = join(homeDir, relative(await realpath(homeDir), created.cwd));
+      expect(await harness.resolveWorkLocation(spelledThroughHome)).toStrictEqual({
+        cwd: created.cwd,
+        projectRoot: repo,
+        isGitRepo: true,
+        worktree,
+      });
+
+      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '0');
+      expect(await harness.resolveWorkLocation(created.cwd)).toStrictEqual({
+        cwd: created.cwd,
+        projectRoot: repo,
+        isGitRepo: true,
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('restates worktree engine errors as KimiError with their details', async () => {
+    const { harness, homeDir, repo } = await makeWorktreeHarness();
+    try {
+      const created = await harness.createWorktree({ cwd: repo, name: 'feat-a' });
+
+      const duplicate: unknown = await harness.createWorktree({ cwd: repo, name: 'feat-a' }).catch((error: unknown) => error);
+      expect(isKimiError(duplicate)).toBe(true);
+      expect(duplicate).toMatchObject({
+        code: ErrorCodes.WORKTREE_ALREADY_EXISTS,
+        details: { path: created.worktree.path },
+      });
+      await expect(harness.createWorktree({ cwd: repo, name: 'feat/login' })).rejects.toMatchObject({
+        name: 'KimiError',
+        code: ErrorCodes.WORKTREE_INVALID_NAME,
+        details: { name: 'feat/login', reason: 'slash' },
+      });
+
+      await writeFile(join(homeDir, 'projects.json'), '{not-valid-json');
+      const locateErr: unknown = await harness.resolveWorkLocation(repo).catch((error: unknown) => error);
+      expect(isKimiError(locateErr)).toBe(true);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('rejects unsupported worktree methods on SDKRpcClientBase with NOT_IMPLEMENTED', async () => {
+    await expect(SDKRpcClientBase.prototype.resolveWorkLocation('/tmp/repo')).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+    await expect(SDKRpcClientBase.prototype.listWorktrees('/tmp/repo')).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+    await expect(SDKRpcClientBase.prototype.createWorktree({ cwd: '/tmp/repo' })).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+    await expect(
+      SDKRpcClientBase.prototype.runWorktreeSetupScript({ worktreePath: '/tmp/wt', sourceRoot: '/tmp/repo' }),
+    ).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+    await expect(
+      SDKRpcClientBase.prototype.inspectWorktreeRemoval({ repoRoot: '/tmp/repo', path: '/tmp/wt', deleteBranch: false }),
+    ).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+    await expect(
+      SDKRpcClientBase.prototype.removeWorktree({ repoRoot: '/tmp/repo', path: '/tmp/wt', deleteBranch: false, discard: 'all' }),
+    ).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+  });
+
+  it('lists, inspects and removes a worktree', async () => {
+    const { harness, repo } = await makeWorktreeHarness();
+    try {
+      const created = await harness.createWorktree({ cwd: repo, name: 'feat-a' });
+      const path = created.worktree.path;
+      const head = (await git(repo, 'rev-parse', 'HEAD')).trim();
+      const worktrees = [{ path, name: 'feat-a', head, branch: undefined, missing: false, managed: true }];
+      expect(await harness.listWorktrees(repo)).toEqual({
+        repoRoot: repo,
+        currentCheckoutRoot: repo,
+        bare: false,
+        repoBranch: 'main',
+        repoHead: head,
+        worktrees,
+      });
+      expect(await harness.listWorktrees(path)).toEqual({
+        repoRoot: repo,
+        currentCheckoutRoot: path,
+        bare: false,
+        repoBranch: 'main',
+        repoHead: head,
+        worktrees,
+      });
+
+      await writeFile(join(path, 'scratch.txt'), 'draft\n');
+      const target = { repoRoot: repo, path, deleteBranch: false };
+      expect(await harness.inspectWorktreeRemoval(target)).toMatchObject({
+        path,
+        missing: false,
+        uncommittedFiles: 1,
+        uniqueCommits: 0,
+      });
+      await expect(
+        harness.removeWorktree({ ...target, discard: { uncommittedFiles: 0, uniqueCommits: 0 } }),
+      ).rejects.toMatchObject({ code: ErrorCodes.WORKTREE_HAS_UNCOMMITTED, details: { path, uncommittedFiles: 1 } });
+
+      await harness.removeWorktree({ ...target, discard: { uncommittedFiles: 1, uniqueCommits: 0 } });
+      expect(await harness.listWorktrees(repo)).toEqual({
+        repoRoot: repo,
+        currentCheckoutRoot: repo,
+        bare: false,
+        repoBranch: 'main',
+        repoHead: head,
+        worktrees: [],
+      });
+      await expect(readdir(path)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('awaits config before checking the worktree flag in removeWorktree', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-cfg-home-'));
+    const repo = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-cfg-repo-'));
+    tempDirs.push(homeDir, repo);
+    await writeFile(join(homeDir, 'config.toml'), '[experimental]\nworktree = true\n');
+    await git(repo, 'init', '-q', '-b', 'main');
+    await git(repo, 'config', 'user.email', 'test@example.com');
+    await git(repo, 'config', 'user.name', 'Test');
+    await writeFile(join(repo, 'README.md'), 'hello\n');
+    await git(repo, 'add', 'README.md');
+    await git(repo, 'commit', '-q', '-m', 'init');
+
+    const creator = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const created = await creator.createWorktree({ cwd: repo, name: 'cfg-remove' });
+    await creator.close();
+
+    const remover = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await remover.removeWorktree({
+        repoRoot: created.repoRoot,
+        path: created.worktree.path,
+        deleteBranch: false,
+        discard: { uncommittedFiles: 0, uniqueCommits: 0 },
+      });
+      await expect(readdir(created.worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await remover.close();
+      vi.unstubAllEnvs();
+    }
+  });
+});

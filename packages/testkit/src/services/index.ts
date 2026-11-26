@@ -1,0 +1,15 @@
+export {
+  createKimiServices,
+  serviceError,
+  startKimiServices,
+  type FeedbackRecord,
+  type HoldableEndpoint,
+  type KimiEndpoint,
+  type KimiServices,
+  type KimiServicesOptions,
+  type ServiceFailure,
+  type ServiceHold,
+  type ServiceRequest,
+  type TitleReply,
+  type UploadRecord,
+} from '#/services/kimi-services';

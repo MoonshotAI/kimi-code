@@ -33,6 +33,7 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   setPermissionMode: (mode) => `用户把权限模式切到${quote(PERMISSION_MODE_NAMES[mode])}`,
   stop: () => '用户停止回合',
   waitIdle: () => '等回合结束',
+  waitForUsageUpdates: (count) => `等 ACP 编辑器收到 ${count} 次用量更新`,
   expectTool: toolCheck,
   expectReply: (text) => `检查回复里有${quote(text)}`,
   expectError: (text) => `检查回合失败了，错误里有${quote(text)}`,
