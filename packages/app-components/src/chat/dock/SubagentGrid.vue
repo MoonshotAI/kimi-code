@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
 import type { TaskItem } from '@moonshot-ai/app-core/client/types';
 import { Icon, IconButton, Spinner, StatusDot, Tooltip } from '@moonshot-ai/app-ui';
 import { useTaskList, type TaskListEmits, type TaskListProps } from './useTaskList';
@@ -22,7 +23,8 @@ function canOpen(task: TaskItem): boolean {
   return Boolean(task.agentId) || Boolean(task.output && task.output.length > 0);
 }
 
-const { t, panelApi, modelDisplay, subagentEffort, isCancelling, stateLabel, durationLabel } = useTaskList(props);
+const { t } = useI18n();
+const { panelApi, modelDisplay, subagentEffort, isCancelling, stateLabel, durationLabel } = useTaskList(props, t);
 </script>
 
 <template>

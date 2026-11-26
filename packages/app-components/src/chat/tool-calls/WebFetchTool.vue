@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 import { str, urlHost } from '@moonshot-ai/app-components';
 import ToolDisclosure from './ToolDisclosure.vue';
@@ -8,7 +9,8 @@ import OutputPanel from './OutputPanel.vue';
 import { useToolCard, useToolCardExpansion, type ToolCardProps } from './useToolCard';
 
 const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
-const { t, status, args, argText, hasOutput } = useToolCard(props);
+const { t } = useI18n();
+const { status, args, argText, hasOutput } = useToolCard(props);
 const url = computed(() => str(args.value?.url) ?? str(args.value?.uri) ?? '');
 const host = computed(() => (url.value ? urlHost(url.value) : ''));
 const canExpand = computed(() => hasOutput.value);

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useAutoReviewHint } from '@moonshot-ai/app-client/composables';
 import { computerUseArgFields, toolChip, toolGlyph } from '@moonshot-ai/app-components';
 import ToolDisclosure from './ToolDisclosure.vue';
@@ -8,7 +9,8 @@ import OutputPanel from './OutputPanel.vue';
 import { useToolCard, useToolCardExpansion, type ToolCardProps } from './useToolCard';
 
 const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
-const { t, status, label, summary, summaryFull, hasOutput } = useToolCard(props);
+const { t } = useI18n();
+const { status, label, summary, summaryFull, hasOutput } = useToolCard(props);
 const glyph = computed(() => toolGlyph(props.tool.name));
 const argFields = computed(() => computerUseArgFields(props.tool.name, props.tool.arg));
 const chip = computed(() =>

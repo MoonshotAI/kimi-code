@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Badge, Icon } from '@moonshot-ai/app-ui';
 import { formatDuration, parseWaitForResult, type WaitForResult } from '@moonshot-ai/app-core/lib';
 import { str } from '@moonshot-ai/app-components';
@@ -104,7 +105,8 @@ const details = computed(() => {
   ].filter((row) => row.value !== '');
 });
 
-const { t, status, args, hasOutput, toolLabel } = useToolCard(props);
+const { t } = useI18n();
+const { status, args, hasOutput, toolNameLabel } = useToolCard(props);
 const canExpand = computed(() => details.value.length > 0 || hasOutput.value);
 const { open } = useToolCardExpansion(props, canExpand);
 </script>
@@ -112,7 +114,7 @@ const { open } = useToolCardExpansion(props, canExpand);
 <template>
   <ToolDisclosure :status="status" :open="open" :expandable="canExpand" @toggle="open = !open">
     <template #leading><Icon name="clock" size="sm" /></template>
-    <span class="tl-name">{{ toolLabel(tool.name) }}</span>
+    <span class="tl-name">{{ toolNameLabel }}</span>
     <span v-if="headline" class="tl-dim">{{ headline }}</span>
     <span v-if="chip" class="tl-faint">{{ chip }}</span>
     <template #trailing>

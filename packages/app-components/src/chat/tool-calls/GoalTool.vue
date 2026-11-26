@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
@@ -6,7 +7,8 @@ import OutputPanel from './OutputPanel.vue';
 import { GOAL_TOOL_KIND, useGoalToolCard, type ToolCardProps } from './goalToolOutput';
 
 const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
-const { t, status, kind, hasOutput, toolNameLabel, objective, criterion, headline, visibleOutput, canExpand, open } = useGoalToolCard(props);
+const { t } = useI18n();
+const { status, kind, hasOutput, toolNameLabel, objective, criterion, headline, visibleOutput, canExpand, open } = useGoalToolCard(props, t);
 </script>
 
 <template>

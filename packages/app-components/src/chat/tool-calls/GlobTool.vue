@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
-import { normalizeToolName } from '@moonshot-ai/app-core/lib';
-import { parseArgRecord, str } from '@moonshot-ai/app-components';
+import { str } from '@moonshot-ai/app-components';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import OutputPanel from './OutputPanel.vue';
 import { useToolCard, useToolCardExpansion, type ToolCardProps } from './useToolCard';
 
 const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
-const isGlob = computed(() => normalizeToolName(props.tool.name) === 'glob');
-const args = computed(() => parseArgRecord(props.tool.arg));
+const { t } = useI18n();
+const { panelApi, status, kind, args, argText } = useToolCard(props);
+const isGlob = computed(() => kind.value === 'glob');
 const pattern = computed(() => {
   const d = args.value;
   return str(d?.pattern) ?? str(d?.glob) ?? str(d?.query) ?? '';
@@ -21,7 +22,6 @@ const dir = computed(() => {
 });
 const files = computed(() => (props.tool.output ?? []).filter((l) => l.trim().length > 0));
 const canExpand = computed(() => files.value.length > 0);
-const { t, panelApi, status, argText } = useToolCard(props);
 const { open } = useToolCardExpansion(props, canExpand);
 
 function openPath(path: string): void {

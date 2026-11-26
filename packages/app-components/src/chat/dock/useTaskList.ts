@@ -1,5 +1,4 @@
 import { inject } from 'vue';
-import { useI18n } from 'vue-i18n';
 import type { TaskItem } from '@moonshot-ai/app-core/client/types';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { ModelDisplayKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
@@ -14,9 +13,7 @@ export interface TaskListEmits {
   cancel: [taskId: string];
 }
 
-export function useTaskList(props: TaskListProps) {
-  const { t: translate } = useI18n();
-  const t = translate as (key: string, params?: Record<string, unknown> | number, plural?: number) => string;
+export function useTaskList(props: TaskListProps, t: (key: string) => string) {
   const panelApi = inject(panelApiKey, undefined);
   const modelDisplay = inject(ModelDisplayKey, undefined);
   const subagentEffort = inject(SubagentEffortKey, undefined);
@@ -41,5 +38,5 @@ export function useTaskList(props: TaskListProps) {
     });
   }
 
-  return { t, panelApi, modelDisplay, subagentEffort, isCancelling, stateLabel, durationLabel };
+  return { panelApi, modelDisplay, subagentEffort, isCancelling, stateLabel, durationLabel };
 }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 import { parseArgRecord, str } from '@moonshot-ai/app-components';
 import ToolDisclosure from './ToolDisclosure.vue';
@@ -11,7 +12,8 @@ const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
 const argRecord = computed(() => parseArgRecord(props.tool.arg));
 const skillName = computed(() => str(argRecord.value?.skill) ?? str(argRecord.value?.name) ?? '');
 const skillArgs = computed(() => str(argRecord.value?.args) ?? '');
-const { t, status, summary, summaryFull, hasOutput } = useToolCard(props);
+const { t } = useI18n();
+const { status, summary, summaryFull, hasOutput } = useToolCard(props);
 const showOutput = computed(() => status.value === 'error' && hasOutput.value);
 const canExpand = computed(
   () => Boolean(skillArgs.value) || showOutput.value || summaryFull.value !== summary.value,

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 import {
   parseTaskListResult,
@@ -62,7 +63,8 @@ const details = computed(() => {
 });
 
 const parsed = computed(() => list.value !== null || fields.value !== null);
-const { t, te, status, kind, args, hasOutput, toolLabel } = useToolCard(props);
+const { t, te } = useI18n();
+const { status, kind, args, hasOutput, toolNameLabel } = useToolCard(props);
 const canExpand = computed(() => (list.value?.tasks.length ?? 0) > 0 || details.value.length > 0 || hasOutput.value);
 const { open } = useToolCardExpansion(props, canExpand);
 </script>
@@ -70,7 +72,7 @@ const { open } = useToolCardExpansion(props, canExpand);
 <template>
   <ToolDisclosure :status="status" :open="open" :expandable="canExpand" @toggle="open = !open">
     <template #leading><Icon :name="glyph" size="sm" /></template>
-    <span class="tl-name">{{ toolLabel(tool.name) }}</span>
+    <span class="tl-name">{{ toolNameLabel }}</span>
     <span v-if="subject" class="tl-dim">{{ subject }}</span>
     <span v-if="chip" class="tl-faint">{{ chip }}</span>
     <template #body>

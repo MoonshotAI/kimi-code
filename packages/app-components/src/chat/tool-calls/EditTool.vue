@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useHistoryState } from '../historyState';
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Icon, Tooltip } from '@moonshot-ai/app-ui';
 import type { DiffViewLine } from '@moonshot-ai/app-core/client/types';
 import { diffStats } from '@moonshot-ai/app-core/client';
@@ -14,7 +15,8 @@ import OutputPanel from './OutputPanel.vue';
 import { useToolCard, type ToolCardProps } from './useToolCard';
 
 const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
-const { t, panelApi, status, kind } = useToolCard(props);
+const { t } = useI18n();
+const { panelApi, status, kind } = useToolCard(props);
 const isWrite = computed(() => kind.value === 'write');
 
 const path = computed(() => argFilePath(parseArgRecord(props.tool.arg)) ?? '');

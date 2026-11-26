@@ -51,9 +51,9 @@ export function goalVisibleOutput(lines: readonly string[], kind: string): strin
   return kind === GOAL_TOOL_KIND.update ? updateGoalVisibleOutput(lines) : [...lines];
 }
 
-export function useGoalToolCard(props: ToolCardProps) {
+export function useGoalToolCard(props: ToolCardProps, t: Translate) {
   const card = useToolCard(props);
-  const { t, kind, args, hasOutput } = card;
+  const { kind, args, hasOutput } = card;
   const objective = computed(() => str(args.value?.objective) ?? '');
   const criterion = computed(() => str(args.value?.completionCriterion) ?? str(args.value?.completion_criterion) ?? '');
   const headline = computed(() => goalHeadline(kind.value, args.value, t));

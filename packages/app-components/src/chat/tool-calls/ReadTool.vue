@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Icon, Tooltip } from '@moonshot-ai/app-ui';
 import { basename } from '@moonshot-ai/app-core/lib';
 import { parseReadOutput } from '@moonshot-ai/app-core/lib';
@@ -11,7 +12,8 @@ import OutputPanel from './OutputPanel.vue';
 import { useToolCard, useToolCardExpansion, type ToolCardProps } from './useToolCard';
 
 const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
-const { t, panelApi, status, args, argText, hasOutput } = useToolCard(props);
+const { t } = useI18n();
+const { panelApi, status, args, argText, hasOutput } = useToolCard(props);
 
 const path = computed(() => argFilePath(args.value) ?? '');
 const fileName = computed(() => (path.value ? basename(path.value) : ''));
