@@ -775,7 +775,6 @@
     "packages/agent-core-v2/src/agent/loop/loopService.ts": 1,
     "packages/agent-core-v2/src/agent/loop/turnProjection.ts": 1,
     "packages/agent-core-v2/src/agent/toolExecutor/toolExecutorService.ts": 13,
-    "packages/agent-core-v2/src/agent/tools/agent/agentTool.ts": 1,
     "packages/agent-core-v2/src/agent/undo/undoService.ts": 1,
     "packages/agent-core-v2/src/app/kosongConfig/configSection.ts": 2,
     "packages/agent-core-v2/src/app/mcpConfig/configLoader.ts": 3,
