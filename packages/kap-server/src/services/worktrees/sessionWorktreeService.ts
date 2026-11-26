@@ -84,10 +84,14 @@ class SetupRecorder implements SetupProgress {
 
   notify(outputOnly: boolean): void {
     if (!outputOnly) {
-      void this.flush();
+      this.flushInBackground();
       return;
     }
-    this.timer ??= setTimeout(() => void this.flush(), OUTPUT_PUBLISH_INTERVAL_MS);
+    this.timer ??= setTimeout(() => this.flushInBackground(), OUTPUT_PUBLISH_INTERVAL_MS);
+  }
+
+  private flushInBackground(): void {
+    this.flush().catch(() => undefined);
   }
 
   update(change: StoredChange): Promise<void> {
@@ -109,12 +113,11 @@ class SetupRecorder implements SetupProgress {
       },
     };
     this.stored = snapshot;
-    const run = this.writes.then(() => writeStoredWorktree(this.core, this.sessionId, () => snapshot));
-    this.writes = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return this.writes;
+    const run = this.writes.then(async () => {
+      await writeStoredWorktree(this.core, this.sessionId, () => snapshot);
+    });
+    this.writes = run.catch(() => undefined);
+    return run;
   }
 }
 
