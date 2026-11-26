@@ -68,8 +68,15 @@ function pointer(target: EventTarget, type: string, coords: { clientX?: number; 
   target.dispatchEvent(event);
 }
 
+const origGetClientRects = HTMLElement.prototype.getClientRects;
+
 beforeEach(() => {
   vi.useFakeTimers();
+  HTMLElement.prototype.getClientRects = function (this: HTMLElement): DOMRectList {
+    const hidden = (node: HTMLElement | null): boolean =>
+      node !== null && (node.style?.display === 'none' || hidden(node.parentElement));
+    return (hidden(this) ? [] : [{}]) as unknown as DOMRectList;
+  };
   HTMLElement.prototype.scrollIntoView = vi.fn();
   HTMLElement.prototype.setPointerCapture = vi.fn();
   HTMLElement.prototype.releasePointerCapture = vi.fn();
@@ -93,6 +100,7 @@ afterEach(() => {
   Reflect.deleteProperty(window, 'visualViewport');
   Reflect.deleteProperty(HTMLElement.prototype, 'animate');
   Reflect.deleteProperty(HTMLElement.prototype, 'getAnimations');
+  HTMLElement.prototype.getClientRects = origGetClientRects;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -338,6 +346,36 @@ describe('ModelQuickSheet search and detail', () => {
     expect(actions).toEqual([{ type: 'select-model', modelId: 'openrouter/sonnet', effort: 'medium', fromSearch: true }]);
     expect(host.querySelector<HTMLInputElement>('.mqs-search-input')!.value).toBe('');
     expect(host.querySelector('.sheet-title')?.textContent).toBe('切换模型');
+
+    host.querySelector<HTMLElement>('[data-row-key="action:provider"]')!.click();
+    await nextTick();
+    const focusSpy = vi.spyOn(HTMLInputElement.prototype, 'focus');
+    host.querySelector<HTMLElement>('.sheet-back')!.click();
+    await nextTick();
+    expect(focusSpy).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-row-key="action:provider"]')).not.toBeNull();
+  });
+
+  it('resets search focus state when dismissed while the search input is focused', async () => {
+    mountSheet();
+    await nextTick();
+    await nextTick();
+    const input = host.querySelector<HTMLInputElement>('.mqs-search-input')!;
+    input.focus();
+    input.dispatchEvent(new FocusEvent('focus'));
+    await nextTick();
+    expect(host.querySelector('[data-row-key="action:provider"]')).toBeNull();
+
+    host.querySelector<HTMLElement>('.sheet-scrim')!.click();
+    await nextTick();
+    await nextTick();
+    expect(state.open).toBe(false);
+
+    state.open = true;
+    await nextTick();
+    await nextTick();
+    expect(host.querySelector('[data-row-key="action:provider"]')).not.toBeNull();
+    expect(host.querySelector('.mqs-body.is-fluid')).toBeNull();
   });
 
   it('stages non-thinking search results directly and returns to the main list', async () => {
@@ -522,6 +560,28 @@ describe('BottomSheet gestures, focus, and accessibility', () => {
     last.focus();
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
     expect(document.activeElement).toBe(focusables[0]);
+  });
+
+  it('excludes v-show hidden controls from the sheet Tab trap boundaries', async () => {
+    mountSheet();
+    await nextTick();
+    await nextTick();
+    const panel = host.querySelector<HTMLElement>('.sheet-panel')!;
+    const hiddenWrap = document.createElement('div');
+    hiddenWrap.style.display = 'none';
+    const hiddenButton = document.createElement('button');
+    hiddenWrap.append(hiddenButton);
+    panel.append(hiddenWrap);
+
+    const visibleFocusables = [...panel.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])')].filter((el) => el !== hiddenButton);
+    const first = visibleFocusables[0]!;
+    const lastVisible = visibleFocusables[visibleFocusables.length - 1]!;
+    lastVisible.focus();
+    const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    lastVisible.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(first);
+    hiddenWrap.remove();
   });
 
   it('wraps Shift+Tab from the initially focused panel to the last control instead of escaping behind the scrim', async () => {

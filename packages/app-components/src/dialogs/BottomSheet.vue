@@ -47,7 +47,9 @@ function close(): void {
 }
 
 function sheetFocusables(): HTMLElement[] {
-  return panelEl.value ? Array.from(panelEl.value.querySelectorAll<HTMLElement>(FOCUSABLE)) : [];
+  return panelEl.value
+    ? Array.from(panelEl.value.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.getClientRects().length > 0)
+    : [];
 }
 
 function onKeydown(e: KeyboardEvent): void {

@@ -265,6 +265,7 @@ function stageModel(model: AppModel, effort: string | undefined, fromSearch: boo
   pendingRevealModelId = model.id;
   query.value = '';
   detailModel.value = undefined;
+  detailFromSearch.value = false;
   searchInputEl.value?.blur();
   activeKey.value = `provider:${model.id}`;
   if (page.value !== 'main') {
@@ -368,6 +369,7 @@ watch(
   () => props.modelValue,
   (open) => {
     clearLongPress();
+    searchFocused.value = false;
     if (typeof document !== 'undefined') {
       if (open) document.addEventListener('keydown', onKeydown);
       else document.removeEventListener('keydown', onKeydown);
