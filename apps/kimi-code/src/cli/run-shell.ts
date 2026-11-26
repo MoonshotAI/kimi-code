@@ -45,10 +45,14 @@ export async function runShell(
 ): Promise<void> {
   const startedAt = Date.now();
   const configStartedAt = startedAt;
+  const configWarnings: string[] = [];
   let tuiConfig: TuiConfig;
   let configWarning: string | undefined;
   try {
-    tuiConfig = await loadTuiConfig();
+    tuiConfig = await loadTuiConfig(undefined, (message) => {
+      configWarnings.push(message);
+    });
+    configWarning = configWarnings.length > 0 ? configWarnings.join('\n') : undefined;
   } catch (error) {
     if (!(error instanceof TuiConfigParseError)) throw error;
     tuiConfig = error.fallback;
