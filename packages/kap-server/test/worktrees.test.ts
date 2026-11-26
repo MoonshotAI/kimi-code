@@ -20,7 +20,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ErrorCode } from '../src/protocol/error-codes';
 import type { Session } from '../src/protocol/session';
 import { repointSession } from '../src/services/worktrees/sessionRepoint';
-import { SessionWorktreeService } from '../src/services/worktrees/sessionWorktreeService';
+import { SessionWorktreeService, writeStoredWorktree } from '../src/services/worktrees/sessionWorktreeService';
 import { commitAll, git, hangingRemote } from './helpers/gitRepo';
 import { type Envelope, useWorktreeServer } from './helpers/worktreeServer';
 
@@ -511,9 +511,12 @@ describe('server-v2 session worktrees', () => {
       { name: 'update-config' },
     ]);
 
+    const before = await stored(created.id);
+
     const aborted = await post(`/sessions/${created.id}/prompts/${held.data.prompt_id}:abort`);
 
     expect(aborted).toMatchObject({ code: 0, data: { aborted: true } });
+    await writeStoredWorktree(fixture.server.core, created.id, () => before);
     expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt).toBeUndefined();
     await post<Session>(`/sessions/${created.id}/worktree:cancel`);
     expect((await post<Session>(`/sessions/${created.id}/worktree:use_local`)).code).toBe(0);

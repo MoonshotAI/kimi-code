@@ -148,9 +148,14 @@ export async function writeStoredWorktree(
     const current = storedSessionWorktree(meta.custom);
     const next = change(current);
     written =
-      next === undefined || options.held === 'replace' || current?.held_prompt === undefined
+      next === undefined || options.held === 'replace'
         ? next
-        : { ...withoutHeldPrompt(next), held_prompt: current.held_prompt, held_request: current.held_request };
+        : {
+            ...withoutHeldPrompt(next),
+            ...(current?.held_prompt === undefined
+              ? {}
+              : { held_prompt: current.held_prompt, held_request: current.held_request }),
+          };
     return written === undefined
       ? undefined
       : { custom: withStoredSessionWorktree(meta.custom, written) };
