@@ -392,4 +392,44 @@ describe('createTUIState', () => {
       state.ui.stop();
     }
   });
+
+  it('closes fullscreen search and routes typing to the editor when clicking the editor', async () => {
+    const state = createTUIState({
+      initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen' },
+      startup: { continueLast: false, yolo: false, auto: false, plan: false },
+    });
+    const vt = new VirtualTerminal(100, 12);
+    (state.ui as { terminal: Terminal }).terminal = vt;
+    state.transcriptContainer.addChild(new Text('needle line one\nmiddle\nneedle line two', 0, 0));
+    mountFooter(state);
+    state.editorContainer.addChild(state.editor);
+    state.ui.setFocus(state.editor);
+    state.ui.start();
+
+    try {
+      await vt.waitForRender();
+
+      vt.sendInput('\u0006');
+      vt.sendInput('needle');
+      await vt.waitForRender();
+      expect(vt.getViewport().some((line) => line.includes('↑ Previous · ↓ Next'))).toBe(true);
+      expect(state.editor.focused).toBe(false);
+
+      const editorRow = vt.getViewport().findIndex((line) => line.includes('>'));
+      expect(editorRow).toBeGreaterThanOrEqual(0);
+      vt.sendInput(`\u001B[<0;6;${editorRow + 1}M`);
+      vt.sendInput(`\u001B[<0;6;${editorRow + 1}m`);
+      await vt.waitForRender();
+
+      expect(vt.getViewport().some((line) => line.includes('↑ Previous · ↓ Next'))).toBe(false);
+      expect(state.editor.focused).toBe(true);
+
+      vt.sendInput('hello');
+      await vt.waitForRender();
+      expect(state.editor.getText()).toBe('hello');
+      expect(vt.getViewport().some((line) => line.includes('↑ Previous · ↓ Next'))).toBe(false);
+    } finally {
+      state.ui.stop();
+    }
+  });
 });

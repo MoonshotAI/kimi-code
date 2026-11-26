@@ -21,7 +21,7 @@ import { extractAtPrefix } from './file-mention-provider';
 import { findInlineSkillTokens } from '../../utils/inline-skill-tokens';
 import { WrappingSelectList } from './wrapping-select-list';
 
-const ANSI_SGR = /\u001B\[[0-9;]*m/g;
+const ANSI_NON_VISIBLE = /\u001B\[[0-9;]*m|\u001B_[^\u0007\u001B]*(?:\u0007|\u001B\\)/g;
 
 const PASTE_MARKER_RE = /\[paste #(\d+)(?: (?:\+\d+ lines|\d+ chars))?\]/g;
 const BRACKET_PASTE_START = '\u001B[200~';
@@ -72,7 +72,7 @@ export function normalizeCapsLockedCtrl(data: string): string {
 function mapVisibleIdxToRaw(line: string, visibleIdx: number): number {
   let visibleCount = 0;
   let i = 0;
-  const re = new RegExp(ANSI_SGR.source, 'y');
+  const re = new RegExp(ANSI_NON_VISIBLE.source, 'y');
   while (i < line.length && visibleCount < visibleIdx) {
     re.lastIndex = i;
     const m = re.exec(line);
@@ -87,7 +87,7 @@ function mapVisibleIdxToRaw(line: string, visibleIdx: number): number {
 }
 
 function stripSgr(s: string): string {
-  return s.replace(ANSI_SGR, '');
+  return s.replace(ANSI_NON_VISIBLE, '');
 }
 
 function alternateSubmitKey(data: string): Exclude<SubmitKey, 'enter'> | undefined {
@@ -673,18 +673,22 @@ function injectArgumentHint(
   realTextLength: number,
   width: number,
 ): string {
-  const cursorIdx = line.indexOf(CURSOR_BLOCK);
-  const cursorPresent = cursorIdx !== -1;
+  const fakeCursorEnd = line.indexOf(FAKE_CURSOR_END);
+  const legacyCursorIdx = line.indexOf(CURSOR_BLOCK);
+  const cursorPresent = fakeCursorEnd !== -1 || legacyCursorIdx !== -1;
   const contentWidth = Math.max(1, width - EDITOR_LEFT_PADDING * 2);
   const available = contentWidth - realTextLength - (cursorPresent ? 1 : 0);
   const trimmed = truncateHint(hint, available);
   if (trimmed.length === 0) return line;
   const colored = currentTheme.fg('textDim', trimmed);
-  const insertAt = cursorPresent
-    ? cursorIdx + CURSOR_BLOCK.length
-    : mapVisibleIdxToRaw(line, EDITOR_LEFT_PADDING + realTextLength);
-  const trailing = line.length - insertAt;
-  return line.slice(0, insertAt) + colored + ' '.repeat(Math.max(0, trailing - trimmed.length));
+  const insertAt = fakeCursorEnd !== -1
+    ? fakeCursorEnd + FAKE_CURSOR_END.length
+    : legacyCursorIdx !== -1
+      ? legacyCursorIdx + CURSOR_BLOCK.length
+      : mapVisibleIdxToRaw(line, EDITOR_LEFT_PADDING + realTextLength);
+  const trailing = line.slice(insertAt);
+  const remaining = Math.max(0, visibleWidth(trailing) - visibleWidth(trimmed));
+  return line.slice(0, insertAt) + colored + ' '.repeat(remaining);
 }
 
 function truncateHint(hint: string, maxLen: number): string {
