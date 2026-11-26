@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { mkdtempSync, rmSync, appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -897,6 +897,79 @@ describe('AppendLogStore session lock integration', () => {
     await readAll();
 
     expect(log.externallyModified(SCOPE, KEY)).toBe(true);
+  });
+
+  it.each([false, true])(
+    'does not report external modification when an own append lands while reading (priorRead=%s)',
+    async (priorRead) => {
+      const path = join(homeDir, SCOPE, KEY);
+      writeFileSync(path, `${JSON.stringify({ n: 1 })}\n`);
+      if (priorRead) await readAll();
+      const originalReadStream = storage.readStream.bind(storage);
+      storage.readStream = async function* (scope, key, range) {
+        yield* originalReadStream(scope, key, range);
+        log.append<Rec>(SCOPE, KEY, { n: 2 });
+        await log.flush();
+      };
+
+      await readAll();
+
+      expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+      expect(JSON.parse(readFileSync(path, 'utf8').trim().split('\n').at(-1)!)).toEqual({ n: 2 });
+    },
+  );
+
+  it('still reports external modification when an external append races an own append while reading', async () => {
+    const path = join(homeDir, SCOPE, KEY);
+    writeFileSync(path, `${JSON.stringify({ n: 1 })}\n`);
+    await readAll();
+    const originalReadStream = storage.readStream.bind(storage);
+    storage.readStream = async function* (scope, key, range) {
+      yield* originalReadStream(scope, key, range);
+      log.append<Rec>(SCOPE, KEY, { n: 2 });
+      await log.flush();
+      appendFileSync(path, `${JSON.stringify({ n: 3 })}\n`);
+    };
+
+    await readAll();
+
+    expect(log.externallyModified(SCOPE, KEY)).toBe(true);
+  });
+
+  it('does not let an earlier overlapping read roll back length known to a later read', async () => {
+    const path = join(homeDir, SCOPE, KEY);
+    writeFileSync(path, `${JSON.stringify({ n: 1 })}\n`);
+    await readAll();
+    const originalReadStream = storage.readStream.bind(storage);
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let markFirstReading!: () => void;
+    const firstReading = new Promise<void>((resolve) => {
+      markFirstReading = resolve;
+    });
+    let call = 0;
+    storage.readStream = async function* (scope, key, range) {
+      call += 1;
+      if (call === 1) {
+        markFirstReading();
+        await firstGate;
+      }
+      yield* originalReadStream(scope, key, range);
+    };
+
+    const firstRead = readAll();
+    await firstReading;
+    log.append<Rec>(SCOPE, KEY, { n: 2 });
+    await log.flush();
+    await readAll();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+
+    releaseFirst();
+    await firstRead;
+
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
   });
 
   it('resets known length after rewrite', async () => {
