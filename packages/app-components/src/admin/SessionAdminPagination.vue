@@ -3,7 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, IconButton, Tooltip } from '@moonshot-ai/app-ui';
 import FilterSelect from './FilterSelect.vue';
-import { pageItems } from '@moonshot-ai/app-components';
+import { pageItems } from './pageItems';
 
 const props = defineProps<{
   page: number;

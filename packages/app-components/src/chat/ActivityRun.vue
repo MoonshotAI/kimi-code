@@ -15,11 +15,10 @@ import BrowserRetryRun from './tool-calls/browser/BrowserRetryRun.vue';
 import { BrowserToolContextKey } from './tool-calls/browserToolContext';
 import { browserToolFailed } from './tool-calls/browserToolPresentation';
 import { foldBrowserRetries, type ActivityRunItem } from './tool-calls/browserRetries';
-import { formatDuration, toolStackKey } from '@moonshot-ai/app-components';
-import type { ActivityItem } from '@moonshot-ai/app-components';
+import { formatDuration } from '@moonshot-ai/app-core/lib';
+import { toolStackKey, type ActivityItem } from '../chatTurnRendering';
 import type { OpenMediaRequest } from '@moonshot-ai/app-core/client/types';
-import { summarizeActivity, summarizeLive } from '@moonshot-ai/app-components';
-import type { SummaryClause, SummaryTone } from '@moonshot-ai/app-components';
+import { summarizeActivity, summarizeLive, type SummaryClause, type SummaryTone } from '../lib/activitySummary';
 import type { ToolCall as ToolCallData } from '@moonshot-ai/app-core/client/types';
 
 const props = withDefaults(

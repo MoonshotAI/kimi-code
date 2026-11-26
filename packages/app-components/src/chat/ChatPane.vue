@@ -45,7 +45,7 @@ import TableSelectionContextMenu from './TableSelectionContextMenu.vue';
 import { Icon, IconButton, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
 import { useActivityRunFolding, useConfirmDialog, useIsMobile, useTurnFolding } from '@moonshot-ai/app-client/composables';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import { copyTextToClipboard, formatMessageTime } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, formatMessageTime, formatTokens } from '@moonshot-ai/app-core/lib';
 import { editRefillAttachments } from '@moonshot-ai/app-client/lib';
 import { SELECTION_QUOTE_ENABLED, isContextClick, selectionHitByPointer, selectionOwnedByRoot, selectionQuoteAnchor, type SelectionActionPayload, type SelectionQuoteAnchor } from '@moonshot-ai/app-client/lib';
 import { parseAttachmentLinks, serializeMention, stripAttachmentLinks } from '@moonshot-ai/app-composer/model';
@@ -54,7 +54,6 @@ import { canUndoSkillActivation, canUndoSkillActivations, skillActivationEditTex
 import { ComposerText, copyComposerSnapshot, copyTextWithFlavor } from '@moonshot-ai/app-composer/transcript';
 import {
   activityRunTailIndex as getActivityRunTailIndex,
-  formatTokens,
   canCopyUserTurn,
   estimateUserTurnHeight,
   isoMs,
@@ -71,8 +70,9 @@ import {
   turnToMarkdown,
   turnVisibleFinalText,
   userTurnDisplayText,
-} from '@moonshot-ai/app-components';
-import type { AssistantFold, AssistantRenderBlock } from '@moonshot-ai/app-components';
+  type AssistantFold,
+  type AssistantRenderBlock,
+} from '../chatTurnRendering';
 
 const { t } = useI18n();
 const mediaLabels = computed(() => ({

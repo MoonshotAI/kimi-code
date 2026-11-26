@@ -2,7 +2,7 @@
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, Menu, MenuItem } from '@moonshot-ai/app-ui';
-import { useAnchoredMenu } from '@moonshot-ai/app-components';
+import { useAnchoredMenu } from '../composables/useAnchoredMenu';
 
 export type SessionAdminMenuMode = 'single' | 'rowActions' | 'multi';
 

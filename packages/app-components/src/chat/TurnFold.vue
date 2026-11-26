@@ -11,8 +11,8 @@ import RequestDebugRow from './RequestDebugRow.vue';
 import ActivityRun from './ActivityRun.vue';
 import ToolCall from './ToolCall.vue';
 import NotificationCard from './NotificationCard.vue';
-import { formatDuration, renderBlockKey, turnWorkMs } from '@moonshot-ai/app-components';
-import type { AssistantRenderBlock } from '@moonshot-ai/app-components';
+import { formatDuration } from '@moonshot-ai/app-core/lib';
+import { renderBlockKey, turnWorkMs, type AssistantRenderBlock } from '../chatTurnRendering';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import type { OpenMediaRequest } from '@moonshot-ai/app-core/client/types';
 

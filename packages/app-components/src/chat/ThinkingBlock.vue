@@ -3,7 +3,7 @@ import { useHistoryState } from './historyState';
 import { computed, inject, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
-import { formatDuration } from '@moonshot-ai/app-components';
+import { formatDuration } from '@moonshot-ai/app-core/lib';
 import { PinScrollKey, track } from '@moonshot-ai/app-client/contracts';
 
 const props = withDefaults(
