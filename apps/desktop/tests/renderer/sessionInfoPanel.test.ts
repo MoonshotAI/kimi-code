@@ -88,6 +88,7 @@ afterEach(() => {
   host = undefined;
   document.querySelectorAll('[data-session-info-popover]').forEach(node => node.remove());
   delete (window as { kimiDesktop?: unknown }).kimiDesktop;
+  vi.useRealTimers();
 });
 
 function readyRow(overrides: Partial<GitStatusEntry> = {}): SessionFolderInfoRow {
@@ -148,6 +149,12 @@ function mount(component: unknown, props: Record<string, unknown>) {
   return host;
 }
 
+async function mountFolder(props: Record<string, unknown>): Promise<HTMLDivElement> {
+  const el = mount(SessionInfoFolder, props);
+  await nextTick();
+  return el;
+}
+
 async function mountPanel(
   rows: SessionFolderInfoRow[] = [readyRow()],
   props: Record<string, unknown> = {},
@@ -200,8 +207,7 @@ describe('SessionInfoFolder', () => {
   });
 
   it('shows the rows in the specified order for a worktree main directory', async () => {
-    mount(SessionInfoFolder, { row: readyRow(), worktree: worktree() });
-    await nextTick();
+    await mountFolder({ row: readyRow(), worktree: worktree() });
 
     const order = [...host!.querySelectorAll('.sif-body > *')].map(node => node.className.split(' ').find(name =>
       ['sif-path-line', 'sif-created', 'sif-branch-line', 'sif-row', 'sif-pr'].includes(name))
@@ -210,11 +216,10 @@ describe('SessionInfoFolder', () => {
   });
 
   it('abbreviates the home directory in the path and keeps the full path as its title', async () => {
-    mount(SessionInfoFolder, {
+    await mountFolder({
       row: { ...readyRow(), path: '/Users/me/.kimi-code/worktrees/demo' },
       home: '/Users/me',
     });
-    await nextTick();
 
     const path = host!.querySelector<HTMLElement>('.sif-path')!;
     expect(path.textContent).toBe('~/.kimi-code/worktrees/demo');
@@ -238,8 +243,7 @@ describe('SessionInfoFolder', () => {
     { name: 'behind', value: { ahead: 0, behind: 4 }, text: null, sync: '↓4' },
     { name: 'in sync', value: { ahead: 0, behind: 0 }, text: null, sync: null },
   ])('shows the $name sync status after the branch name', async ({ value, text, sync }) => {
-    mount(SessionInfoFolder, { row: readyRow(value) });
-    await nextTick();
+    await mountFolder({ row: readyRow(value) });
 
     expect(host!.querySelector('.sif-not-pushed')?.textContent ?? null).toBe(text);
     expect(host!.querySelector('.sif-sync')?.textContent ?? null).toBe(sync);
@@ -247,21 +251,16 @@ describe('SessionInfoFolder', () => {
 
   it('shows the short head with a warning tooltip when detached', async () => {
     vi.useFakeTimers();
-    try {
-      mount(SessionInfoFolder, { row: readyRow({ branch: '', detached: true, head: '3f2a91c', upstream: undefined }) });
-      await nextTick();
+    await mountFolder({ row: readyRow({ branch: '', detached: true, head: '3f2a91c', upstream: undefined }) });
 
-      const branch = host!.querySelector<HTMLElement>('.sif-branch-line .ui-tip .sif-branch')!;
-      expect(branch.textContent).toBe('HEAD @ 3f2a91c');
-      expect(host!.querySelector('.sif-not-pushed')).toBeNull();
+    const branch = host!.querySelector<HTMLElement>('.sif-branch-line .ui-tip .sif-branch')!;
+    expect(branch.textContent).toBe('HEAD @ 3f2a91c');
+    expect(host!.querySelector('.sif-not-pushed')).toBeNull();
 
-      branch.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 10, clientY: 10 }));
-      branch.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 27, clientY: 10 }));
-      await vi.advanceTimersByTimeAsync(200);
-      expect(document.querySelector('.ui-tip__bubble')?.textContent).toBe('当前不在任何分支上，新提交可能会丢失。');
-    } finally {
-      vi.useRealTimers();
-    }
+    branch.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 10, clientY: 10 }));
+    branch.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 27, clientY: 10 }));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(document.querySelector('.ui-tip__bubble')?.textContent).toBe('当前不在任何分支上，新提交可能会丢失。');
   });
 
   it('uses the app tooltip only when the branch is truncated', async () => {
@@ -346,46 +345,36 @@ describe('SessionInfoFolder', () => {
 
   it('shows a spinner on the changes row only once the status has been loading for a while', async () => {
     vi.useFakeTimers();
-    try {
-      const row = reactive<SessionFolderInfoRow>({ ...readyRow(), statusLoading: true });
-      mount(SessionInfoFolder, { row });
-      await nextTick();
+    const row = reactive<SessionFolderInfoRow>({ ...readyRow(), statusLoading: true });
+    await mountFolder({ row });
 
-      expect(host!.querySelector('.sif-changes-loading')).toBeNull();
-      await vi.advanceTimersByTimeAsync(399);
-      expect(host!.querySelector('.sif-changes-loading')).toBeNull();
-      await vi.advanceTimersByTimeAsync(1);
-      await nextTick();
-      expect(host!.querySelector('.sif-diff-button .sif-changes-loading')).not.toBeNull();
-      expect(host!.querySelector('.sif-diff')?.textContent).toBe('+128−42');
+    expect(host!.querySelector('.sif-changes-loading')).toBeNull();
+    await vi.advanceTimersByTimeAsync(399);
+    expect(host!.querySelector('.sif-changes-loading')).toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    await nextTick();
+    expect(host!.querySelector('.sif-diff-button .sif-changes-loading')).not.toBeNull();
+    expect(host!.querySelector('.sif-diff')?.textContent).toBe('+128−42');
 
-      row.statusLoading = false;
-      await nextTick();
-      expect(host!.querySelector('.sif-changes-loading')).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
+    row.statusLoading = false;
+    await nextTick();
+    expect(host!.querySelector('.sif-changes-loading')).toBeNull();
   });
 
   it('does not show the changes spinner for a status that returns quickly', async () => {
     vi.useFakeTimers();
-    try {
-      const row = reactive<SessionFolderInfoRow>({ ...readyRow(), statusLoading: true });
-      mount(SessionInfoFolder, { row });
-      await vi.advanceTimersByTimeAsync(200);
-      row.statusLoading = false;
-      await vi.advanceTimersByTimeAsync(1000);
-      await nextTick();
+    const row = reactive<SessionFolderInfoRow>({ ...readyRow(), statusLoading: true });
+    mount(SessionInfoFolder, { row });
+    await vi.advanceTimersByTimeAsync(200);
+    row.statusLoading = false;
+    await vi.advanceTimersByTimeAsync(1000);
+    await nextTick();
 
-      expect(host!.querySelector('.sif-changes-loading')).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(host!.querySelector('.sif-changes-loading')).toBeNull();
   });
 
   it('keeps the PR placeholder until the pull request has been read', async () => {
-    mount(SessionInfoFolder, { row: { ...readyRow({ pullRequest: null }), pullRequestLoading: true } });
-    await nextTick();
+    await mountFolder({ row: { ...readyRow({ pullRequest: null }), pullRequestLoading: true } });
     expect(host!.querySelector('.sif-pr-pending')).not.toBeNull();
   });
 
@@ -404,17 +393,18 @@ describe('SessionInfoFolder', () => {
   });
 
   it('shows the local branch a worktree was created from', async () => {
-    mount(SessionInfoFolder, { row: readyRow(), worktree: worktree({ base: { ref: 'main', remote: false } }) });
-    await nextTick();
+    await mountFolder({ row: readyRow(), worktree: worktree({ base: { ref: 'main', remote: false } }) });
 
     const created = host!.querySelector('.sif-created')!;
     expect(created.textContent).toBe('基于 main 创建');
     expect(created.querySelector('[data-worktree-icon]')?.getAttribute('data-worktree-icon')).toBe('git-fork');
   });
 
-  it('marks a missing worktree: struck path, amber notice, branch kept, changes and PR hidden', async () => {
-    mount(SessionInfoFolder, { row: readyRow(), worktree: worktree({ missing: true }) });
-    await nextTick();
+  it.each([
+    { name: 'a worktree flagged missing', row: readyRow(), display: worktree({ missing: true }) },
+    { name: 'a directory the store reported missing', row: { ...readyRow(), state: { status: 'missing' as const } }, display: worktree() },
+  ])('marks $name: struck path, amber notice, branch kept, changes and PR hidden', async ({ row, display }) => {
+    await mountFolder({ row, worktree: display });
 
     expect(host!.querySelector('.sif-path')?.classList.contains('struck')).toBe(true);
     expect(host!.querySelector('.sif-missing')?.textContent).toBe('工作树目录不存在');
@@ -424,22 +414,12 @@ describe('SessionInfoFolder', () => {
     expect(host!.querySelector('.sif-pr')).toBeNull();
   });
 
-  it('marks a directory reported missing by the store', async () => {
-    mount(SessionInfoFolder, { row: { ...readyRow(), state: { status: 'missing' } }, worktree: worktree() });
-    await nextTick();
-
-    expect(host!.querySelector('.sif-path')?.classList.contains('struck')).toBe(true);
-    expect(host!.querySelector('.sif-missing')?.textContent).toBe('工作树目录不存在');
-    expect(host!.querySelector('.sif-diff-button')).toBeNull();
-  });
-
   it('explains a failed change count in a popover with retry and copy', async () => {
     const retry = vi.fn();
     const writeClipboardText = vi.fn(async () => true);
     (window as { kimiDesktop?: unknown }).kimiDesktop = { writeClipboardText };
     const output = Array.from({ length: 12 }, (_, index) => `fatal: line ${index + 1}`).join('\n');
-    mount(SessionInfoFolder, { row: readyRow({ statsError: output }), onRetry: retry });
-    await nextTick();
+    await mountFolder({ row: readyRow({ statsError: output }), onRetry: retry });
 
     expect(host!.querySelector('.sif-diff-button')?.textContent).toBe('改动—');
     expect(host!.querySelector('.sif-diff')).toBeNull();
@@ -458,8 +438,7 @@ describe('SessionInfoFolder', () => {
   });
 
   it('closes the popover on Escape and on an outside press', async () => {
-    mount(SessionInfoFolder, { row: readyRow({ statsError: 'boom' }) });
-    await nextTick();
+    await mountFolder({ row: readyRow({ statsError: 'boom' }) });
 
     await openPopover('.sif-stats-error');
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
@@ -477,11 +456,10 @@ describe('SessionInfoFolder', () => {
 
   it('explains a failed PR read in a popover', async () => {
     const retry = vi.fn();
-    mount(SessionInfoFolder, {
+    await mountFolder({
       row: readyRow({ pullRequest: null, pullRequestStatus: 'failed', pullRequestError: 'gh pr view timed out' }),
       onRetry: retry,
     });
-    await nextTick();
 
     expect(host!.querySelector('.sif-pr-failed')?.textContent).toBe('PR—');
     expect(host!.querySelector('.sif-pr')).toBeNull();

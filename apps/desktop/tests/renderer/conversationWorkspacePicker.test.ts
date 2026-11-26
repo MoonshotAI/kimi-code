@@ -48,7 +48,6 @@ vi.mock('@moonshot-ai/app-client/client', () => ({
     activeSessionId: ref(undefined),
     activeSessionWorktree: ref(undefined),
     activeSessionEnvironment: mockEnvironment,
-   
     sessionById: () => undefined,
     loadOlderMessages: vi.fn(),
     reorderQueuedPrompts: vi.fn(),

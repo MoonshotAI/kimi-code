@@ -93,6 +93,11 @@ async function press(action: string): Promise<void> {
   await nextTick();
 }
 
+async function show(next: AppSessionWorktree): Promise<void> {
+  worktree.value = next;
+  await nextTick();
+}
+
 const composer = () => host.querySelector<HTMLElement>('.composer-stub')!;
 
 beforeEach(() => {
@@ -124,24 +129,21 @@ describe('desktop ChatDock worktree cards', () => {
     await press('createFromLocal');
     expect(actions.retrySessionWorktree).toHaveBeenLastCalledWith('s1', { useRemote: false });
 
-    worktree.value = {
+    await show({
       setup: worktreeSetup({ status: 'failed', failure: { kind: 'conflict', remoteRef: 'origin/main', conflictFiles: ['a.ts'] } }),
-    };
-    await nextTick();
+    });
     await press('createFromRemote');
     expect(actions.retrySessionWorktree).toHaveBeenLastCalledWith('s1', { useRemote: true, includeLocalChanges: false });
 
     const openSettings = vi.fn();
     registerWorktreeSettingsOpener(openSettings);
-    worktree.value = { setup: worktreeSetup({ status: 'failed', failure: { kind: 'disk_full' } }) };
-    await nextTick();
+    await show({ setup: worktreeSetup({ status: 'failed', failure: { kind: 'disk_full' } }) });
     await press('manage');
     expect(openSettings).toHaveBeenCalledTimes(1);
     await press('useLocal');
     expect(actions.useLocalForSessionWorktree).toHaveBeenCalledWith('s1');
 
-    worktree.value = { setup: worktreeSetup({ status: 'local' }) };
-    await nextTick();
+    await show({ setup: worktreeSetup({ status: 'local' }) });
     expect(host.querySelector('[data-worktree-card]')).toBeNull();
     expect(composer().style.display).toBe('');
   });
@@ -156,25 +158,22 @@ describe('desktop ChatDock worktree cards', () => {
     await press('recreate');
     expect(actions.recreateSessionWorktree).toHaveBeenCalledWith('s1');
 
-    worktree.value = {
+    await show({
       branch: 'kimi/1',
       missing: true,
       setup: worktreeSetup({ purpose: 'recreate', status: 'running', steps: [{ kind: 'create', state: 'running', command: 'git worktree add /w kimi/1' }] }),
-    };
-    await nextTick();
+    });
     expect(host.querySelector('[data-worktree-invalid="recreating"] .wcc-command')?.textContent).toBe('git worktree add /w kimi/1');
     expect(composer().style.display).toBe('none');
     await press('stop');
     expect(actions.cancelSessionWorktree).toHaveBeenCalledWith('s1');
 
-    worktree.value = { branch: 'kimi/1', missing: true, setup: worktreeSetup({ purpose: 'recreate', status: 'stopped', stoppedStep: 'create' }) };
-    await nextTick();
+    await show({ branch: 'kimi/1', missing: true, setup: worktreeSetup({ purpose: 'recreate', status: 'stopped', stoppedStep: 'create' }) });
     expect(host.querySelector('[data-worktree-invalid="stopped"]')).not.toBeNull();
     await press('retry');
     expect(actions.retrySessionWorktree).toHaveBeenLastCalledWith('s1');
 
-    worktree.value = { path: '/w', branch: 'kimi/1', setup: worktreeSetup({ purpose: 'recreate' }) };
-    await nextTick();
+    await show({ path: '/w', branch: 'kimi/1', setup: worktreeSetup({ purpose: 'recreate' }) });
     expect(host.querySelector('[data-worktree-invalid]')).toBeNull();
     expect(composer().style.display).toBe('');
   });
