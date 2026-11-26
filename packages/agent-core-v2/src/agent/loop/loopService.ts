@@ -166,6 +166,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private readonly errorHandlers: LoopErrorHandler[] = [];
   private readonly pendingSubmissions: UserMessage[] = [];
+  private clientCancelEpoch = 0;
   private readonly pendingReminders: Message[] = [];
   private readonly pendingNotifications: UserMessage[] = [];
   private readonly pendingSendNowNotifications = new Set<string>();
@@ -844,6 +845,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private async submitClient(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
+    const cancelEpoch = this.clientCancelEpoch;
     const text = promptMetadataTextFromContentParts(payload.input);
     const rejectIfBusy = payload.rejectIfBusy === true;
     if (!rejectIfBusy) await this.updatePromptMetadata(text);
@@ -857,6 +859,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       content: [...payload.input],
       attributes: { promptId: payload.promptId, origin: { kind: 'user' } },
     });
+    if (this.clientCancelEpoch !== cancelEpoch) this.cancel({ promptId: id });
     if (rejectIfBusy) {
       await this.updatePromptMetadata(text).catch((error: unknown) => {
         this.logger.warn('failed to update metadata for an accepted prompt', { error });
@@ -1081,7 +1084,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       id: pending.entry.attributes?.promptId,
       origin: pending.entry.attributes?.origin as PromptOrigin | undefined,
     };
-    const ctx: PromptSubmitContext = { promptMessage, isSteer: false, hookParts: [], block: false };
+    const ctx: PromptSubmitContext = { promptMessage, isSteer: false, signal, hookParts: [], block: false };
     try {
       await this.hooks.onBeforeSubmitPrompt.run(ctx);
       if (ctx.block) return { type: 'blocked' as const, cause: { by: 'prompt', reason: 'blocked' } };
@@ -1139,7 +1142,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.prompts.cancel(target.promptId);
       return true;
     }
-    return this.cancelActiveTurn(target?.turnId, cancellation);
+    const awaitingPromptId = target === undefined ? this.promptAwaitingItsTurn() : undefined;
+    if (awaitingPromptId !== undefined) return this.cancel({ promptId: awaitingPromptId }, cancellation);
+    const cancelled = this.cancelActiveTurn(target?.turnId, cancellation);
+    if (!cancelled && target === undefined) this.clientCancelEpoch += 1;
+    return cancelled;
+  }
+
+  private promptAwaitingItsTurn(): string | undefined {
+    const loop = this.loop;
+    const turnId = loop?.state.turn?.id;
+    if (turnId !== undefined) return this.prompts.pending(turnId)?.entry.attributes?.promptId;
+    const next = [...(loop?.state.inbox.normal ?? []), ...this.pendingSubmissions][0];
+    return next?.attributes?.promptId;
   }
 
   detachTool(task: LoopDetachedTask, text?: string): void {

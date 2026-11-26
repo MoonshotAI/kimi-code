@@ -1352,6 +1352,73 @@ describe('Agent loop', () => {
     }
   });
 
+  testWithProvider('cancels a prompt while its turn is starting when the client cancels without naming the prompt', async ({ agent, model }) => {
+    const agentLoop = agent.get(IAgentLoopService);
+    const entered = deferred();
+    const release = deferred();
+    const firstPrompt = 'Cancel this prompt.';
+    const nextPrompt = 'Keep this prompt.';
+    let hookSignal: AbortSignal | undefined;
+    const hook = agentLoop.hooks.onBeforeSubmitPrompt.register('hold-starting-prompt', async (context, next) => {
+      if (context.promptMessage.content.some((part) => part.type === 'text' && part.text === firstPrompt)) {
+        hookSignal = context.signal;
+        entered.resolve();
+        await release.promise;
+      }
+      await next();
+    });
+    model.script(say('Here is the reply.'));
+    try {
+      const starting = submitTurn(agentLoop, firstPrompt).turn;
+      await entered.promise;
+
+      expect(agentLoop.cancel()).toBe(true);
+      expect(hookSignal?.aborted).toBe(true);
+      release.resolve();
+      await expect(starting.result).resolves.toMatchObject({ type: 'cancelled' });
+      const next = await submitTurn(agentLoop, nextPrompt).turn.result;
+
+      expect(next).toMatchObject({ type: 'completed' });
+      expect(model.requests('main').map((request) => request.firstUserText)).toEqual([nextPrompt]);
+      await agent.expectResumeMatches();
+    } finally {
+      release.resolve();
+      hook.dispose();
+    }
+  });
+
+  testWithProvider('cancels a submitted prompt before its turn starts when the client cancels without naming the prompt', async ({ agent, model }) => {
+    const agentLoop = agent.get(IAgentLoopService);
+    const firstPrompt = 'Cancel this prompt.';
+    const nextPrompt = 'Keep this prompt.';
+    model.script(say('Here is the reply.'));
+
+    const submitted = submitTurn(agentLoop, firstPrompt).turn;
+    expect(agentLoop.cancel()).toBe(true);
+    await expect(submitted.result).resolves.toMatchObject({ type: 'cancelled' });
+    const next = await submitTurn(agentLoop, nextPrompt).turn.result;
+
+    expect(next).toMatchObject({ type: 'completed' });
+    expect(model.requests('main').map((request) => request.firstUserText)).toEqual([nextPrompt]);
+    await agent.expectResumeMatches();
+  });
+
+  testWithProvider('cancels a client prompt that is still being admitted when the client cancels without naming it', async ({ agent, model }) => {
+    const agentLoop = agent.get(IAgentLoopService);
+    const firstPrompt = 'Cancel this prompt.';
+    const nextPrompt = 'Keep this prompt.';
+    model.script(say('Here is the reply.'));
+
+    const launching = agentLoop.submit({ input: [{ type: 'text', text: firstPrompt }] });
+    agentLoop.cancel();
+    await expect(launching).resolves.toBeUndefined();
+    const next = await submitTurn(agentLoop, nextPrompt).turn.result;
+
+    expect(next).toMatchObject({ type: 'completed' });
+    expect(model.requests('main').map((request) => request.firstUserText)).toEqual([nextPrompt]);
+    await agent.expectResumeMatches();
+  });
+
   testWithProvider('rejects a prompt before admission when a client opts out of queueing', async ({ agent, model }) => {
     const agentLoop = agent.get(IAgentLoopService);
     const metadata = agent.get(ISessionMetadata);
