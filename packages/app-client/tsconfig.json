@@ -2,7 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": [],
+    "types": ["unplugin-icons/types/vue", "@moonshot-ai/vite-preset/icons"],
     // Match the consumers: both apps compile package source with
     // noPropertyAccessFromIndexSignature off (same rationale as app-core).
     "noPropertyAccessFromIndexSignature": false

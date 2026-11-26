@@ -14,6 +14,7 @@
     "./preview": "./src/lib/purePreview.ts",
     "./browser-panel-state": "./src/client/browserPanelState.ts",
     "./native-menu": "./src/nativeMenu.ts",
+    "./quick-model-menu": "./src/quickModelMenu.ts",
     "./browser-reference": "./src/browserReference.ts",
     "./shortcut-keys": "./src/lib/shortcutKeys.ts"
   },

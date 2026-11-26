@@ -21,7 +21,7 @@ const buildInfo = (() => {
   return { version, sha, short: sha === '' ? '' : sha.slice(0, 8), built };
 })();
 
-const commitUrl = buildInfo.sha === '' ? '' : `https://github.com/MoonshotAI/kimi-code-app/commit/${buildInfo.sha}`;
+const commitUrl = buildInfo.sha === '' ? '' : `https://github.com/MoonshotAI/kimi-code/commit/${buildInfo.sha}`;
 
 function openCommit(): void {
   if (commitUrl === '') return;

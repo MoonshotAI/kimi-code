@@ -7,6 +7,7 @@ export default defineConfig<SurfaceOptions>({
   testDir: '.',
   testMatch: ['scenarios/**/*.spec.ts', 'self-test/**/*.spec.ts'],
   outputDir: 'test-results',
+  globalSetup: './support/global-setup.ts',
   fullyParallel: true,
   retries: 0,
   forbidOnly: true,

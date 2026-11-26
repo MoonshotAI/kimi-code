@@ -22,6 +22,7 @@ import KimiArrowLeft from '~icons/kimi/arrow-left';
 import KimiArrowRight from '~icons/kimi/arrow-right';
 import KimiArrowUp from '~icons/kimi/arrow-up';
 import KimiCheck from '~icons/kimi/check';
+import KimiCheckCheck from '~icons/kimi/check-check';
 import KimiChevronDown from '~icons/kimi/chevron-down';
 import KimiChevronRight from '~icons/kimi/chevron-right';
 import KimiChevronUp from '~icons/kimi/chevron-up';
@@ -266,6 +267,7 @@ import RawKimiArrowLeft from '~icons/kimi/arrow-left?raw';
 import RawKimiArrowRight from '~icons/kimi/arrow-right?raw';
 import RawKimiArrowUp from '~icons/kimi/arrow-up?raw';
 import RawKimiCheck from '~icons/kimi/check?raw';
+import RawKimiCheckCheck from '~icons/kimi/check-check?raw';
 import RawKimiChevronDown from '~icons/kimi/chevron-down?raw';
 import RawKimiChevronRight from '~icons/kimi/chevron-right?raw';
 import RawKimiChevronUp from '~icons/kimi/chevron-up?raw';
@@ -502,6 +504,7 @@ export type IconName =
   | 'tabs-close-all'
   | 'close'
   | 'check'
+  | 'check-check'
   | 'circle-check'
   | 'circle-check-filled'
   | 'circle-empty'
@@ -756,6 +759,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   'tabs-close-all': entry(TablerCopyX, RawTablerCopyX),
   close: entry(KimiClose, RawKimiClose),
   check: entry(KimiCheck, RawKimiCheck),
+  'check-check': entry(KimiCheckCheck, RawKimiCheckCheck),
   'circle-check': entry(KimiCircleCheck, RawKimiCircleCheck),
   'circle-check-filled': entry(KimiCircleCheckFilled, RawKimiCircleCheckFilled),
   'circle-empty': entry(KimiCircleEmpty, RawKimiCircleEmpty),
