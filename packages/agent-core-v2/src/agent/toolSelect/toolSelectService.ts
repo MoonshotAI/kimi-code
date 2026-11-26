@@ -9,6 +9,7 @@ import {
   type ToolDescription as Tool,
 } from '@moonshot-ai/core/llm/message';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
+import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
@@ -55,6 +56,12 @@ import {
 
 const STOP_RETRY_THRESHOLD = 2;
 const READ_TOOL_NAME = 'Read';
+const LEGACY_READ_MEDIA_MERGED_VARIANT = 'legacy_read_media_merged';
+const LEGACY_READ_MEDIA_MERGED_REMINDER =
+  'Tool "ReadMediaFile" has been retired and merged into "Read" in this version. ' +
+  'Any earlier "ReadMediaFile" calls in this session are from an older version; do not call "ReadMediaFile" again. ' +
+  'Call Read with { "path": "..." } to read text, image, and video files when the current model supports the modality. ' +
+  'The "region" and "full_resolution" parameters are no longer supported.';
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
   properties: {},
@@ -104,6 +111,21 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
         return text === undefined ? undefined : legacyRejectedResult(context, text);
       },
     }));
+    this._register(
+      this.reminder.register(LEGACY_READ_MEDIA_MERGED_VARIANT, ({ injectedPositions }) => {
+        if (injectedPositions.length > 0) return undefined;
+        if (
+          !this.hasRetiredReadMediaInInitial() ||
+          this.toolRegistry.resolve(LEGACY_READ_MEDIA_FILE_TOOL_NAME) !== undefined ||
+          !this.toolPolicy.isToolActive(READ_TOOL_NAME)
+        ) {
+          return undefined;
+        }
+        const history = this.history();
+        if (!history.some(isCompactionSummaryMessage)) return LEGACY_READ_MEDIA_MERGED_REMINDER;
+        return history.some(hasLegacyReadMediaCall) ? LEGACY_READ_MEDIA_MERGED_REMINDER : undefined;
+      }),
+    );
   }
 
   private history(): readonly ContextMessage[] {
@@ -826,6 +848,13 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       'Do not retry it unless it becomes available again.'
     );
   }
+}
+
+function hasLegacyReadMediaCall(message: ContextMessage): boolean {
+  return (
+    message.role === 'assistant' &&
+    message.toolCalls.some((call) => call.name === LEGACY_READ_MEDIA_FILE_TOOL_NAME)
+  );
 }
 
 function normalizeTool(info: ToolInfo, origin: ToolSelectTool['origin']): ToolSelectTool {

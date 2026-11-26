@@ -418,6 +418,15 @@ describe('Agent resume', () => {
     await resumed.untilTurnEnd();
 
     expect(resumed.llmCalls[0]!.tools.map((tool) => tool.name)).toEqual(liveTools);
+    expect(
+      resumed.context
+        .history()
+        .some(
+          (message) =>
+            message.origin?.kind === 'injection' &&
+            message.origin.variant === 'legacy_read_media_merged',
+        ),
+    ).toBe(false);
     await live.dispose();
     await resumed.dispose();
   });
@@ -564,6 +573,118 @@ describe('Agent resume', () => {
                 JSON.stringify(message).includes('\\"Read\\"'),
             ),
         ).toBe(false);
+        expect(
+          ctx.context
+            .history()
+            .some(
+              (message) =>
+                message.origin?.kind === 'injection' &&
+                message.origin.variant === 'legacy_read_media_merged',
+            ),
+        ).toBe(false);
+      });
+    });
+  });
+
+  it('explains retired ReadMediaFile once when resuming a legacy session with ReadMediaFile history', async (context) => {
+    const fixtures = testkitAgentFixtures({
+      persistence: new RecordingAgentPersistence(legacyReadMediaHistory()),
+      autoConfigure: false,
+    });
+    await fixtures.model(context, async (model) => {
+      await fixtures.agent({ model }, async (ctx) => {
+        ctx.configure({
+          modelCapabilities: {
+            image_in: true,
+            video_in: true,
+            audio_in: false,
+            thinking: false,
+            tool_use: true,
+            dynamically_loaded_tools: true,
+            maxContextSize: 0,
+          },
+        });
+        await ctx.restorePersisted();
+        const mergeReminders = () =>
+          ctx.context
+            .history()
+            .filter(
+              (message) =>
+                message.origin?.kind === 'injection' &&
+                message.origin.variant === 'legacy_read_media_merged',
+            );
+
+        model.script(say('Viewed with Read.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'What about this image?' }] });
+        await ctx.untilTurnEnd();
+
+        expect(mergeReminders()).toHaveLength(1);
+        const firstRequestText = JSON.stringify(model.requests('main')[0]!.view.messages);
+        expect(firstRequestText).toContain('Tool \\"ReadMediaFile\\" has been retired and merged into \\"Read\\"');
+        expect(firstRequestText).toContain('do not call \\"ReadMediaFile\\" again');
+
+        model.script(say('Done.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Thanks' }] });
+        await ctx.untilTurnEnd();
+
+        expect(mergeReminders()).toHaveLength(1);
+      });
+    });
+  });
+
+  it('re-injects the legacy merge reminder only while ReadMediaFile calls survive compaction', async (context) => {
+    const partialCompaction: WireRecord = {
+      type: 'context.apply_compaction',
+      agentId: 'main',
+      summary: 'Earlier turns summarized.',
+      compactedCount: 1,
+      tokensBefore: 100,
+      tokensAfter: 50,
+    } as unknown as WireRecord;
+    const fixtures = testkitAgentFixtures({
+      persistence: new RecordingAgentPersistence([...legacyReadMediaHistory(), partialCompaction]),
+      autoConfigure: false,
+    });
+    await fixtures.model(context, async (model) => {
+      await fixtures.agent({ model }, async (ctx) => {
+        ctx.configure({
+          modelCapabilities: {
+            image_in: true,
+            video_in: true,
+            audio_in: false,
+            thinking: false,
+            tool_use: true,
+            dynamically_loaded_tools: true,
+            maxContextSize: 0,
+          },
+        });
+        await ctx.restorePersisted();
+        const mergeReminderCount = () =>
+          ctx.context
+            .history()
+            .filter(
+              (message) =>
+                message.origin?.kind === 'injection' &&
+                message.origin.variant === 'legacy_read_media_merged',
+            ).length;
+
+        model.script(say('First turn after resume.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue' }] });
+        await ctx.untilTurnEnd();
+        expect(mergeReminderCount()).toBe(1);
+
+        model.lane('compaction').script(say('Compacted summary.'));
+        const compacted = ctx.once('full_compaction.complete');
+        const completed = ctx.once('compaction.completed');
+        await ctx.rpc.beginCompaction({});
+        await compacted;
+        await completed;
+        expect(mergeReminderCount()).toBe(0);
+
+        model.script(say('Second turn after compaction.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue again' }] });
+        await ctx.untilTurnEnd();
+        expect(mergeReminderCount()).toBe(0);
       });
     });
   });
@@ -1732,6 +1853,68 @@ function resumeProfileRecord(): WireRecord {
     thinkingEffort: 'off',
     disallowedTools: [],
   } as unknown as WireRecord;
+}
+
+function legacyReadMediaHistory(): WireRecord[] {
+  return [
+    resumeProfileRecord(),
+    {
+      type: 'tool_select.initialized',
+      agentId: 'main',
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read a UTF-8 text file only. Use ReadMediaFile for images.',
+          parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+          source: 'builtin',
+          origin: 'initial',
+        },
+        {
+          name: 'ReadMediaFile',
+          description: 'Read media content from a file.',
+          parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+          source: 'builtin',
+          origin: 'initial',
+        },
+      ],
+    },
+    {
+      type: 'context.append_message',
+      agentId: 'main',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'What is in this image?' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    },
+    {
+      type: 'context.append_message',
+      agentId: 'main',
+      message: {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          {
+            type: 'function',
+            id: 'call_old_media',
+            name: 'ReadMediaFile',
+            arguments: '{"path":"/tmp/old.png"}',
+          },
+        ],
+      },
+    },
+    {
+      type: 'context.append_message',
+      agentId: 'main',
+      message: {
+        role: 'tool',
+        toolCallId: 'call_old_media',
+        content: [{ type: 'text', text: '<image path="/tmp/old.png">' }],
+        toolCalls: [],
+      },
+    },
+  ] as unknown as WireRecord[];
 }
 
 function contextAppendRecord(
