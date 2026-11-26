@@ -15,6 +15,7 @@ import {
   type ConversationProjector,
 } from '@moonshot-ai/app-core/client';
 import { findPromptMessage, type ConversationTurn } from '@moonshot-ai/app-core/conversation';
+import { sessionWorktreeBlocksSend, sessionWorktreeHoldsPrompts } from '@moonshot-ai/app-core/lib';
 import type { ChatTurn } from '@moonshot-ai/app-core/client/types';
 import type { PermissionMode } from '@moonshot-ai/app-core/client/types';
 import { permissionsStore } from '../stores/permissions';
@@ -25,6 +26,7 @@ import type { ChatGateVerdict } from '../lib/chatGate';
 import { sideChatDrafts } from './sideChatDrafts';
 import { createSendFailureNotifier, PromptFailedError } from './sendFailure';
 import { newPromptId } from './promptId';
+import { t } from './deps';
 import { submitWithNetworkRetry } from './submitRetry';
 import { modelsStore } from '../stores/models';
 import type { PromptAttachment } from './types';
@@ -331,11 +333,20 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     sideChatDraftBySession.value = rest;
   }
 
+  function refusedWhileWorktreeHeld(parent: string, operation: string): boolean {
+    const session = rawState.sessions.find((candidate) => candidate.id === parent);
+    if (!sessionWorktreeHoldsPrompts(session) && !sessionWorktreeBlocksSend(session)) return false;
+    const message = t('sideChat.waitsForWorktree');
+    pushOperationFailure(operation, new Error(message), { sessionId: parent, message });
+    return true;
+  }
+
   async function openSideChatOn(
     parent: string,
     initialPrompt?: string | PromptEnvelopeContent,
     opts?: { permissionMode?: PermissionMode },
   ): Promise<SideChatOpenResult> {
+    if (refusedWhileWorktreeHeld(parent, 'openSideChat')) return { target: null, sent: false };
     if (initialPrompt !== undefined && typeof initialPrompt !== 'string') initialPrompt = structuredClone(initialPrompt);
     const firstSendOpts =
       opts !== undefined ? opts : { permissionMode: permissionsStore().forSession(parent) };
@@ -369,6 +380,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     const source = typeof input === 'string' ? { text: input } : structuredClone(input);
     const prompt = { ...source, text: source.text.trim(), attachments: source.attachments ?? opts?.attachments ?? [] };
     if (!prompt.text && prompt.attachments.length === 0) return false;
+    if (refusedWhileWorktreeHeld(parent, 'sendSideChatPrompt')) return false;
     let content: AppMessageContent[];
     let metadata: Record<string, unknown> | undefined;
     try {

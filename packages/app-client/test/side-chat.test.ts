@@ -11,6 +11,7 @@ import { permissionsStore } from '../src/stores/permissions';
 import { agentStatesStore } from '../src/stores/agentStates';
 import type { ExtendedState } from '../src/client/types';
 import { networkError } from './daemonErrors';
+import { sessionWorktree } from '../src/testing/worktreeFixtures';
 
 const apiMock = {
   getFileUrl: (id: string) => `/files/${id}`,
@@ -194,6 +195,21 @@ beforeEach(() => {
   apiMock.submitPrompt.mockImplementation(async (_sid: string, input: PromptSubmission) => echoSubmit(input));
   seedCatalog();
   permissionsStore().$reset();
+});
+
+describe('useSideChat — worktree setup', () => {
+  it('neither starts nor sends a side chat while the worktree is being set up', async () => {
+    const state = createState();
+    state.sessions[0] = { ...state.sessions[0]!, worktree: sessionWorktree('running') };
+    const { sideChat, pushOperationFailure } = createSideChat(state);
+
+    expect(await sideChat.openSideChatOn('sess_1', 'what changed?')).toEqual({ target: null, sent: false });
+    expect(await sideChat.sendSideChatPromptOn('sess_1', 'agent_btw_1', 'and now?')).toBe(false);
+
+    expect(apiMock.startBtw).not.toHaveBeenCalled();
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
+    expect(pushOperationFailure).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('useSideChat — sendSideChatPromptOn', () => {
