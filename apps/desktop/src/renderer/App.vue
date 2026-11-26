@@ -515,6 +515,7 @@ const MENU_ACTION_TO_SHORTCUT: Record<string, AppActionId> = {
 };
 
 const sidebarRef = ref<InstanceType<typeof Sidebar> | null>(null);
+const settingsDialogRef = ref<InstanceType<typeof SettingsDialog> | null>(null);
 
 const OPEN_IN_FILE_EXCLUDED_IDS: ReadonlySet<string> = new Set([
   'terminal',
@@ -561,8 +562,12 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
     case 'openSettings':
       if (isMobile.value) {
         showMobileSettings.value = !showMobileSettings.value;
+      } else if (showSettings.value) {
+        void Promise.resolve(settingsDialogRef.value?.confirmDiscard()).then((discard) => {
+          if (discard) showSettings.value = false;
+        });
       } else {
-        showSettings.value = !showSettings.value;
+        showSettings.value = true;
       }
       break;
     case 'toggleSidebar':
@@ -2720,6 +2725,7 @@ function openPr(url: string): void {
     <ErrorBoundary closable @close="showSettings = false">
     <SettingsDialog
       v-if="showSettings"
+      ref="settingsDialogRef"
       :color-scheme="colorScheme"
       :font-scale="fontScale"
       :managed-provider-status="managedProviderStatus"
