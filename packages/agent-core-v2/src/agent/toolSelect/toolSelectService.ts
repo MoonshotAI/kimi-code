@@ -9,7 +9,6 @@ import {
   type ToolDescription as Tool,
 } from '@moonshot-ai/core/llm/message';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
-import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
@@ -55,11 +54,7 @@ import {
 } from './toolSelectOps';
 
 const STOP_RETRY_THRESHOLD = 2;
-const LEGACY_READ_MEDIA_MERGED_VARIANT = 'legacy_read_media_merged';
-const LEGACY_READ_MEDIA_MERGED_REMINDER =
-  'Tool "ReadMediaFile" has been merged into "Read" (region and full_resolution were removed). ' +
-  'In this session, call Read with { "path": "..." } to view image and video files as well as text files, ' +
-  'even though the frozen Read schema from earlier in this session only mentions text files.';
+const READ_TOOL_NAME = 'Read';
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
   properties: {},
@@ -109,28 +104,6 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
         return text === undefined ? undefined : legacyRejectedResult(context, text);
       },
     }));
-    this._register(
-      this.reminder.register(LEGACY_READ_MEDIA_MERGED_VARIANT, ({ injectedPositions, lastInjectedAt }) => {
-        if (
-          this.modelState().initial?.some((tool) => tool.name === LEGACY_READ_MEDIA_FILE_TOOL_NAME) !== true ||
-          this.toolRegistry.resolve(LEGACY_READ_MEDIA_FILE_TOOL_NAME) !== undefined ||
-          !this.toolPolicy.isToolActive('Read')
-        ) {
-          return undefined;
-        }
-        const capabilities = this.profile.getModelCapabilities();
-        if (!capabilities.image_in && !capabilities.video_in) {
-          return undefined;
-        }
-        if (
-          injectedPositions.length > 0 &&
-          !this.history().slice(lastInjectedAt ?? 0).some(isCompactionSummaryMessage)
-        ) {
-          return undefined;
-        }
-        return LEGACY_READ_MEDIA_MERGED_REMINDER;
-      }),
-    );
   }
 
   private history(): readonly ContextMessage[] {
@@ -178,25 +151,41 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     disclosure = this.enabled(),
   ): readonly Tool[] {
     const tools = base ?? [];
+    const readMediaRetired = this.toolRegistry.resolve(LEGACY_READ_MEDIA_FILE_TOOL_NAME) === undefined;
+    const refreshRead = readMediaRetired && this.hasRetiredReadMediaInInitial();
+    let liveRead: Tool | undefined;
     let shaped: Tool[] | undefined;
     for (let index = 0; index < tools.length; index += 1) {
       const tool = tools[index]!;
       const drop =
-        (tool.name === LEGACY_READ_MEDIA_FILE_TOOL_NAME &&
-          this.toolRegistry.resolve(LEGACY_READ_MEDIA_FILE_TOOL_NAME) === undefined) ||
+        (readMediaRetired && tool.name === LEGACY_READ_MEDIA_FILE_TOOL_NAME) ||
         (disclosure ? tool.deferred === true : tool.name === SELECT_TOOLS_TOOL_NAME);
       if (drop) {
         if (shaped === undefined) shaped = tools.slice(0, index);
         continue;
       }
-      if (!disclosure && tool.deferred === true) {
+      let current = tool;
+      if (
+        readMediaRetired &&
+        current.name === READ_TOOL_NAME &&
+        (refreshRead || current.description.includes(LEGACY_READ_MEDIA_FILE_TOOL_NAME))
+      ) {
+        liveRead ??= this.liveReadDescription();
+        if (liveRead !== undefined) current = liveRead;
+      }
+      if (!disclosure && current.deferred === true) {
         if (shaped === undefined) shaped = tools.slice(0, index);
-        const { deferred: _deferred, ...description } = tool;
+        const { deferred: _deferred, ...description } = current;
         void _deferred;
         shaped.push(description);
         continue;
       }
-      shaped?.push(tool);
+      if (current !== tool) {
+        if (shaped === undefined) shaped = tools.slice(0, index);
+        shaped.push(current);
+        continue;
+      }
+      shaped?.push(current);
     }
     return shaped ?? tools;
   }
@@ -392,21 +381,64 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return this.states.get(toolSelectKey);
   }
 
-  private withoutRetiredReadMedia(tools: readonly ToolSelectTool[]): readonly ToolSelectTool[] {
+  private hasRetiredReadMediaInInitial(): boolean {
+    return (
+      this.modelState().initial?.some((tool) => tool.name === LEGACY_READ_MEDIA_FILE_TOOL_NAME) === true
+    );
+  }
+
+  private liveReadTool(origin: ToolSelectTool['origin']): ToolSelectTool | undefined {
+    const info = this.toolRegistry.list().find((entry) => entry.name === READ_TOOL_NAME);
+    return info === undefined ? undefined : normalizeTool(info, origin);
+  }
+
+  private liveReadDescription(): Tool | undefined {
+    const tool = this.liveReadTool('initial');
+    if (tool === undefined) return undefined;
+    return {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters ?? EMPTY_TOOL_PARAMETERS,
+      deferred: tool.disclosure === 'deferred' ? true : undefined,
+    };
+  }
+
+  private migrateLegacyReadMedia(tools: readonly ToolSelectTool[]): readonly ToolSelectTool[] {
     if (this.toolRegistry.resolve(LEGACY_READ_MEDIA_FILE_TOOL_NAME) !== undefined) return tools;
-    return tools.filter((tool) => tool.name !== LEGACY_READ_MEDIA_FILE_TOOL_NAME);
+    const refreshRead = this.hasRetiredReadMediaInInitial();
+    let updated: ToolSelectTool[] | undefined;
+    for (let index = 0; index < tools.length; index += 1) {
+      const tool = tools[index]!;
+      if (tool.name === LEGACY_READ_MEDIA_FILE_TOOL_NAME) {
+        if (updated === undefined) updated = tools.slice(0, index);
+        continue;
+      }
+      if (
+        tool.name === READ_TOOL_NAME &&
+        (refreshRead || tool.description.includes(LEGACY_READ_MEDIA_FILE_TOOL_NAME))
+      ) {
+        const liveRead = this.liveReadTool(tool.origin);
+        if (liveRead !== undefined && toolSelectVersionSignature(liveRead) !== toolSelectVersionSignature(tool)) {
+          if (updated === undefined) updated = tools.slice(0, index);
+          updated.push(liveRead);
+          continue;
+        }
+      }
+      updated?.push(tool);
+    }
+    return updated ?? tools;
   }
 
   private currentTools(): readonly ToolSelectTool[] {
     const state = this.modelState();
-    if (state.initial !== undefined) return this.withoutRetiredReadMedia(state.current);
+    if (state.initial !== undefined) return this.migrateLegacyReadMedia(state.current);
     return this.activeTools('initial');
   }
 
   private initialToolInfos(): readonly ToolSelectTool[] {
     const initial = this.modelState().initial;
     if (initial === undefined) return this.activeTools('initial');
-    return this.withoutRetiredReadMedia(initial);
+    return this.migrateLegacyReadMedia(initial);
   }
 
   private activeTools(origin: ToolSelectTool['origin']): readonly ToolSelectTool[] {
@@ -487,13 +519,8 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private notifyUpdatedTools(live: readonly ToolSelectTool[], signal?: AbortSignal): void {
-    const state = this.modelState();
     const liveByName = new Map(live.map((tool) => [tool.name, tool]));
-    const hadLegacyReadMedia =
-      state.initial?.some((tool) => tool.name === LEGACY_READ_MEDIA_FILE_TOOL_NAME) === true &&
-      !liveByName.has(LEGACY_READ_MEDIA_FILE_TOOL_NAME);
-    for (const active of state.current) {
-      if (hadLegacyReadMedia && active.name === 'Read') continue;
+    for (const active of this.currentTools()) {
       const next = liveByName.get(active.name);
       if (next === undefined || toolSelectVersionSignature(next) === toolSelectVersionSignature(active)) {
         continue;
