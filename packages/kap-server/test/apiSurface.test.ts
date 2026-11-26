@@ -10,7 +10,7 @@ import { KAP_VERSION, KIMI_AGENT_PROTOCOL_VERSION, startServer, type RunningServ
 import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
-const KAP_CONTRACT = { kapVersion: 1, digest: '08ff7b15570d2de22a4fdedf6f9c5f2f3f37121994dc9bacb681f1d8c2a6d765' };
+const KAP_CONTRACT = { kapVersion: 1, digest: 'd7e92821ec2af8a9284fd426879e139f4be9e3204cc95646a38e6c267f782d9a' };
 
 const DEBUG_ROUTES = [
   'GET /api/v1/debug/channels',

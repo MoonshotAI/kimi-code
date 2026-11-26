@@ -57,6 +57,7 @@ export const VERBS = {
   expectAbsent: { on: SURFACES, checksInterface: false },
   continue: { on: ['desktop', 'web'], absentBecause: NO_CONTINUE, checksInterface: false },
   restart: { on: SURFACES, checksInterface: false, bySession: true },
+  restartDuringTurn: { on: SURFACES, checksInterface: false, bySession: true },
   newSession: { on: SURFACES, checksInterface: false },
   compact: { on: SURFACES, checksInterface: false },
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
@@ -206,6 +207,7 @@ interface VerbSignatures {
   expectAbsent(text: string): Promise<void>;
   continue(): Promise<void>;
   restart(): Promise<void>;
+  restartDuringTurn(): Promise<void>;
   newSession(): Promise<void>;
   compact(): Promise<void>;
   resize(size: WindowSize): Promise<void>;
@@ -221,6 +223,15 @@ export type ProductOn<S extends Surface> = { readonly [Name in Verb as [S] exten
 export type Product = ProductOn<Surface>;
 
 export type Diagnostic = { readonly name: string; readonly body: string } | { readonly name: string; readonly path: string };
+
+export class StartupFailure extends Error {
+  readonly diagnostics: readonly Diagnostic[];
+
+  constructor(cause: unknown, diagnostics: readonly Diagnostic[], message = cause instanceof Error ? cause.message : String(cause)) {
+    super(message, { cause });
+    this.diagnostics = diagnostics;
+  }
+}
 
 export type Frame = { readonly kind: 'image'; readonly png: Buffer } | { readonly kind: 'text'; readonly text: string };
 
@@ -243,6 +254,7 @@ export interface SurfaceControls {
   reopenState(): ReopenState;
   frame(): Promise<Frame>;
   close(): Promise<void>;
+  quitDuringTurn(): Promise<void>;
   kill(): Promise<void>;
   networkViolations(): Promise<readonly string[]>;
   diagnostics(): Promise<readonly Diagnostic[]>;

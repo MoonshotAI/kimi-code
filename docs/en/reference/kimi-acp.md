@@ -76,7 +76,7 @@ Sessions created or restored with Plan mode active report Plan in both mode pick
 | `session/request_permission` | Yes | Shared channel for tool approvals and questions. Bash approvals include the complete command and working directory. Resolved absolute file targets appear in `toolCall.locations` |
 | `fs/read_text_file` | Yes | Engine file reads are routed to the client when it advertises `fsCapabilities` |
 | `fs/write_text_file` | Yes | Engine file writes are routed to the client |
-| `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | Yes | Shell executions reverse-RPC to the client when it advertises `clientCapabilities.terminal` |
+| `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | Yes | Shell executions reverse-RPC to the client when it advertises `clientCapabilities.terminal`. Otherwise the command runs locally, and what it has printed so far is sent as `tool_call_update` text content while it runs |
 | `elicitation/create` | Yes | Ask-user questions go through the native form when the client advertises `elicitation.form`; RPC failures fall back to `session/request_permission` |
 | `elicitation/complete` | No | |
 
