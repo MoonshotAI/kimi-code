@@ -10,12 +10,15 @@ import type {
   UpdateMCPServerRequest,
 } from "shared/legacy-sdk";
 import type {
+  AccountProfileResponse,
   FileChange,
   SessionConfig,
   ExtensionConfig,
   WorkspaceStatus,
   LoginStatus,
+  SwitchWorkspaceResponse,
   UIStreamEvent,
+  WorkspaceTarget,
 } from "shared/types";
 
 interface PendingRequest {
@@ -132,6 +135,17 @@ class Bridge {
 
   logout() {
     return this.call<LoginResult>(Methods.Logout);
+  }
+
+  getAccountProfile() {
+    return this.call<AccountProfileResponse>(Methods.GetAccountProfile);
+  }
+
+  switchWorkspace(target: WorkspaceTarget, fromType?: "personal" | "enterprise") {
+    return this.call<SwitchWorkspaceResponse>(Methods.SwitchWorkspace, {
+      target,
+      ...(fromType === undefined ? {} : { fromType }),
+    });
   }
 
   saveConfig(sessionConfig: SessionConfig) {

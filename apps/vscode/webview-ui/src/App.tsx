@@ -7,6 +7,7 @@ import { MCPServersModal } from "./components/MCPServersModal";
 import { WorkDirModal } from "./components/WorkDirModal";
 import { ConfigErrorScreen } from "./components/ConfigErrorScreen";
 import { LoginScreen } from "./components/LoginScreen";
+import { BusinessMembershipRevokedDialog } from "./components/BusinessMembershipRevokedDialog";
 import { Toaster, toast } from "./components/ui/sonner";
 import { useChatStore, useSettingsStore } from "./stores";
 import { bridge, Events } from "./services";
@@ -112,6 +113,7 @@ export default function App() {
       <div className="flex flex-col h-screen text-foreground overflow-hidden">
         <Header />
         <LoginScreen onLoginSuccess={handleLoginSuccess} onSkip={handleSkip} />
+        <BusinessMembershipRevokedDialog onConfirm={handleShowLogin} />
         <Toaster position="top-center" />
       </div>
     );
@@ -127,6 +129,7 @@ export default function App() {
           onRefresh={refresh}
           onBackToLogin={resolution.canGoToLogin ? handleShowLogin : undefined}
         />
+        <BusinessMembershipRevokedDialog onConfirm={handleShowLogin} />
         <Toaster position="top-center" />
       </div>
     );
@@ -136,6 +139,7 @@ export default function App() {
     <div className="flex flex-col h-screen text-foreground overflow-hidden">
       <Header />
       <MainContent onAuthAction={handleAuthAction} />
+      <BusinessMembershipRevokedDialog onConfirm={handleShowLogin} />
       <Toaster position="top-center" />
     </div>
   );

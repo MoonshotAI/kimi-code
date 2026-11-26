@@ -85,11 +85,54 @@ export const ERROR_MESSAGES: Record<string, string> = {
   internal: "Internal error occurred.",
 };
 
+export const BUSINESS_MEMBERSHIP_REVOKED_MESSAGE =
+  "You have been removed from Business Membership. Your access to the workspace will no longer be available. Please log in again. If you have any questions, please contact your business administrator.";
+
+export function isBusinessMembershipRevokedReason(code: unknown): boolean {
+  return (
+    code === "REASON_BUSINESS_MEMBER_REMOVED" || code === "REASON_BUSINESS_MEMBER_DISABLED"
+  );
+}
+
+export interface DescribedRuntimeError {
+  readonly code: string;
+  readonly detail: string;
+  readonly providerErrorCode?: string;
+  readonly message: string;
+  readonly membershipRevoked: boolean;
+}
+
+export function describeCaughtRuntimeError(
+  error: unknown,
+  extractKimiError: (err: unknown) => { code: string; details?: Record<string, unknown> } | undefined,
+): DescribedRuntimeError {
+  const kimiErr = extractKimiError(error);
+  const code = kimiErr?.code ?? "internal";
+  const detail = error instanceof Error ? error.message : String(error);
+  const providerErrorCode =
+    typeof kimiErr?.details?.["providerErrorCode"] === "string"
+      ? kimiErr.details["providerErrorCode"]
+      : undefined;
+  const membershipRevoked =
+    detail === BUSINESS_MEMBERSHIP_REVOKED_MESSAGE ||
+    isBusinessMembershipRevokedReason(providerErrorCode);
+  return {
+    code,
+    detail,
+    ...(providerErrorCode === undefined ? {} : { providerErrorCode }),
+    message: getUserMessage(code, detail),
+    membershipRevoked,
+  };
+}
+
 export function classifyError(code: string): ErrorPhase {
   return PREFLIGHT_CODES.has(code) ? "preflight" : "runtime";
 }
 
 export function getUserMessage(code: string, fallback?: string): string {
+  if (fallback === BUSINESS_MEMBERSHIP_REVOKED_MESSAGE) {
+    return BUSINESS_MEMBERSHIP_REVOKED_MESSAGE;
+  }
   return ERROR_MESSAGES[code] || fallback || "An unknown error occurred.";
 }
 

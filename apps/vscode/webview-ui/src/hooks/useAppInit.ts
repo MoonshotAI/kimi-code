@@ -65,14 +65,21 @@ export function useAppInit(): AppInitState {
   }, [setExtensionConfig, refresh]);
 
   useEffect(() => {
+    const eventName = Events.BusinessMembershipRevoked ?? "businessMembershipRevoked";
+    return bridge.on<{ message?: string }>(eventName, (payload) => {
+      useSettingsStore.getState().triggerMembershipRevoked(payload?.message);
+    });
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     let latestRead = 0;
     const unsubscribe = bridge.on(Events.ModelCatalogChanged, () => {
       const read = ++latestRead;
-      void bridge.getModels().then(({ models }) => {
+      void bridge.getModels().then(({ models, defaultModel }) => {
         if (!cancelled && read === latestRead) {
           catalogApplied.current = true;
-          setModels(models);
+          setModels(models, defaultModel);
         }
       }).catch((error: unknown) => {
         console.error("[AppInit] Failed to refresh models:", error);
@@ -120,6 +127,9 @@ export function useAppInit(): AppInitState {
         console.log("[AppInit] Login status:", loginStatus, "kimiConfig:", kimiConfig);
 
         setIsLoggedIn(loginStatus.loggedIn);
+        if (loginStatus.loggedIn) {
+          void useSettingsStore.getState().loadAccountProfile();
+        }
         initModels(
           catalogApplied.current ? useSettingsStore.getState().models : kimiConfig.models,
           kimiConfig.defaultModel,

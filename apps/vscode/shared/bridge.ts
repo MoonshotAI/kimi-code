@@ -7,6 +7,8 @@ export const Methods = {
   CheckLoginStatus: "checkLoginStatus",
   Login: "login",
   Logout: "logout",
+  GetAccountProfile: "getAccountProfile",
+  SwitchWorkspace: "switchWorkspace",
   SaveConfig: "saveConfig",
   GetExtensionConfig: "getExtensionConfig",
   OpenSettings: "openSettings",
@@ -86,6 +88,7 @@ export const Events = {
   FileChangesUpdated: "fileChangesUpdated",
   RollbackInput: "rollbackInput",
   LoginUrl: "loginUrl",
+  BusinessMembershipRevoked: "businessMembershipRevoked",
 } as const;
 
 const rpcMethods = new Set<string>(Object.values(Methods));
@@ -123,6 +126,7 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.CheckLoginStatus:
     case Methods.Login:
     case Methods.Logout:
+    case Methods.GetAccountProfile:
     case Methods.GetExtensionConfig:
     case Methods.OpenSettings:
     case Methods.OpenFolder:
@@ -206,7 +210,28 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.RevertFiles:
     case Methods.KeepChanges:
       return isPlainObject(params) && isOptionalType(params["filePath"], "string");
+    case Methods.SwitchWorkspace:
+      return isSwitchWorkspaceParams(params);
   }
+}
+
+function isSwitchWorkspaceParams(value: unknown): boolean {
+  if (!isPlainObject(value) || !isPlainObject(value["target"])) return false;
+  if (
+    value["fromType"] !== undefined &&
+    value["fromType"] !== "personal" &&
+    value["fromType"] !== "enterprise"
+  ) {
+    return false;
+  }
+  const target = value["target"];
+  if (target["kind"] === "personal") {
+    return Object.keys(target).every((key) => key === "kind");
+  }
+  if (target["kind"] === "business") {
+    return isNonEmptyString(target["businessId"]);
+  }
+  return false;
 }
 
 function isStreamChatParams(value: unknown): boolean {
