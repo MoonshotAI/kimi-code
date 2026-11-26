@@ -1768,4 +1768,143 @@ describe('PluginsPanel', () => {
     });
   });
 
+  it('does not flash stale authorized state while authorization reloads after reinstall', async () => {
+    rowData.push(row('vercel', {
+      catalogEntry: entry('vercel', 'Vercel', { version: '1.0.0' }),
+      installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }),
+      displayName: 'Vercel',
+    }));
+    await mountPanel('zh');
+    authorization.states['plugin-vercel:vercel'] = { status: 'oauth-authorized', phase: 'idle' };
+    vi.mocked(plugins.loadPluginCapabilities).mockResolvedValue({
+      skills: [],
+      mcpServers: [{
+        name: 'vercel',
+        runtimeName: 'plugin-vercel:vercel',
+        enabled: true,
+        transport: 'http',
+      }],
+    });
+
+    clickButton('Vercel');
+    await settle();
+    expect(host.querySelector('.plugin-capabilities__identity')?.textContent).toContain('已授权');
+
+    rowData[0] = { ...rowData[0]!, installedPlugin: undefined };
+    await settle();
+    expect(host.querySelector('.plugin-capabilities__identity')?.textContent).not.toContain('已授权');
+
+    let finishRefresh!: () => void;
+    authorization.refresh.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { finishRefresh = resolve; });
+      authorization.states['plugin-vercel:vercel'] = { status: 'oauth-required', phase: 'idle' };
+    });
+    rowData[0] = { ...rowData[0]!, installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }) };
+    await settle();
+
+    expect(host.querySelector('.plugin-capabilities__loading')).not.toBeNull();
+    expect(host.querySelector('.plugin-details')?.textContent).not.toContain('已授权');
+    expect(host.querySelector('.plugin-capabilities__actions button')).toBeNull();
+
+    finishRefresh();
+    await settle();
+
+    expect(host.querySelector('.plugin-capabilities__loading')).toBeNull();
+    expect(host.querySelector('.plugin-details')?.textContent).not.toContain('已授权');
+    expect(host.querySelector('.plugin-capabilities__actions button')?.textContent).toBe('授权');
+  });
+
+  it('waits for the initial authorization status before rendering installed MCP actions', async () => {
+    rowData.push(row('vercel', {
+      catalogEntry: entry('vercel', 'Vercel', { version: '1.0.0' }),
+      installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }),
+      displayName: 'Vercel',
+    }));
+    await mountPanel('zh');
+    vi.mocked(plugins.loadPluginCapabilities).mockResolvedValue({
+      skills: [],
+      mcpServers: [{
+        name: 'vercel',
+        runtimeName: 'plugin-vercel:vercel',
+        enabled: true,
+        transport: 'http',
+      }],
+    });
+    let finishRefresh!: () => void;
+    authorization.refresh.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { finishRefresh = resolve; });
+      authorization.states['plugin-vercel:vercel'] = { status: 'oauth-required', phase: 'idle' };
+    });
+
+    clickButton('Vercel');
+    await settle();
+
+    expect(host.querySelector('.plugin-capabilities__loading')).not.toBeNull();
+    expect(host.querySelector('.plugin-capabilities__item')).toBeNull();
+
+    finishRefresh();
+    await settle();
+
+    expect(host.querySelector('.plugin-capabilities__loading')).toBeNull();
+    expect(host.querySelector('.plugin-capabilities__actions button')?.textContent).toBe('授权');
+  });
+
+  it('keeps capabilities loading while automatic plugin authorization is discovering servers', async () => {
+    rowData.push(row('vercel', {
+      catalogEntry: entry('vercel', 'Vercel', { version: '1.0.0' }),
+      installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }),
+      displayName: 'Vercel',
+    }));
+    await mountPanel('zh');
+    authorization.states.vercel = { phase: 'starting' };
+    vi.mocked(plugins.loadPluginCapabilities).mockResolvedValue({
+      skills: [],
+      mcpServers: [{
+        name: 'vercel',
+        runtimeName: 'plugin-vercel:vercel',
+        enabled: true,
+        transport: 'http',
+      }],
+    });
+
+    clickButton('Vercel');
+    await settle();
+
+    expect(host.querySelector('.plugin-capabilities__loading')).not.toBeNull();
+
+    authorization.states.vercel = { phase: 'idle' };
+    authorization.states['plugin-vercel:vercel'] = { status: 'oauth-required', phase: 'waiting' };
+    await settle();
+
+    expect(host.querySelector('.plugin-capabilities__loading')).toBeNull();
+    expect(host.querySelector('.plugin-capabilities__actions')?.textContent).toContain('等待授权…');
+  });
+
+  it('shows waiting actions instead of an empty slot when status is authorized during an active flow', async () => {
+    rowData.push(row('vercel', {
+      catalogEntry: entry('vercel', 'Vercel', { version: '1.0.0' }),
+      installedPlugin: installed('vercel', 'marketplace', { version: '1.0.0' }),
+      displayName: 'Vercel',
+    }));
+    await mountPanel('zh');
+    authorization.states['plugin-vercel:vercel'] = { status: 'oauth-authorized', phase: 'waiting' };
+    vi.mocked(plugins.loadPluginCapabilities).mockResolvedValue({
+      skills: [],
+      mcpServers: [{
+        name: 'vercel',
+        runtimeName: 'plugin-vercel:vercel',
+        enabled: true,
+        transport: 'http',
+      }],
+    });
+
+    clickButton('Vercel');
+    await settle();
+
+    const actions = host.querySelector('.plugin-capabilities__actions');
+    expect(actions?.textContent).toContain('等待授权…');
+    expect(actions?.querySelector('button')?.textContent).toBe('取消授权');
+    expect(host.querySelector('.plugin-capabilities__identity')?.textContent).not.toContain('已授权');
+  });
+
 });

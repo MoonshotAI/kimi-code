@@ -111,8 +111,17 @@ async function inspectPluginAuthorization(pluginId: string): Promise<PluginAutho
   return { capabilities, statuses };
 }
 
+function invalidatePluginStatuses(pluginId: string): void {
+  const prefix = `plugin-${pluginId}:`;
+  for (const [key, state] of Object.entries(states)) {
+    if (!key.startsWith(prefix) || state?.phase !== 'idle') continue;
+    states[key] = { phase: 'idle', cancelled: state.cancelled };
+  }
+}
+
 async function refresh(pluginId?: string): Promise<void> {
   const generation = ++refreshGeneration;
+  if (pluginId !== undefined) invalidatePluginStatuses(pluginId);
   try {
     const statuses = pluginId === undefined
       ? await getKimiWebApi().getMcpAuthStatuses()
@@ -242,6 +251,7 @@ async function performAuthorization(
   try {
     states[target.runtimeName] = {
       ...states[target.runtimeName],
+      status: undefined,
       phase: 'starting',
       error: undefined,
       openBlocked: undefined,
@@ -451,7 +461,8 @@ export function useMcpAuthorization() {
   }
 
   async function authorizePlugin(pluginId: string): Promise<void> {
-    states[pluginId] = { ...states[pluginId], phase: 'idle', discoveryError: undefined };
+    invalidatePluginStatuses(pluginId);
+    states[pluginId] = { ...states[pluginId], phase: 'starting', discoveryError: undefined };
     try {
       const { capabilities, statuses } = await inspectPluginAuthorization(pluginId);
       const required = new Set(
@@ -465,9 +476,10 @@ export function useMcpAuthorization() {
     } catch (error) {
       states[pluginId] = {
         ...states[pluginId],
-        phase: 'idle',
         discoveryError: errorMessage(error),
       };
+    } finally {
+      states[pluginId] = { ...states[pluginId], phase: 'idle' };
     }
   }
 

@@ -666,4 +666,98 @@ describe('useMcpAuthorization', () => {
       error: 'reset failed',
     });
   });
+
+  it('invalidates cached idle plugin statuses as soon as a targeted refresh starts', async () => {
+    const inspection = deferred<unknown>();
+    apiMock.getPluginInfo.mockResolvedValue({
+      skills: [],
+      mcpServers: [{ name: target.serverName, runtimeName: target.runtimeName, enabled: true, transport: 'http' }],
+    });
+    apiMock.inspectMcpAuthStatuses.mockReturnValue(inspection.promise);
+    const auth = useMcpAuthorization();
+    auth.states[target.runtimeName] = { status: 'oauth-authorized', phase: 'idle' };
+    auth.states['plugin-other:other'] = { status: 'oauth-authorized', phase: 'idle' };
+
+    const pending = auth.refresh('vercel');
+
+    expect(auth.states[target.runtimeName]?.status).toBeUndefined();
+    expect(auth.states['plugin-other:other']?.status).toBe('oauth-authorized');
+
+    inspection.resolve([{ name: target.runtimeName, authStatus: 'oauth-required' }]);
+    await pending;
+
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-required',
+      phase: 'idle',
+    });
+  });
+
+  it('preserves active flows when a targeted refresh invalidates cached plugin statuses', async () => {
+    const inspection = deferred<unknown>();
+    apiMock.getPluginInfo.mockResolvedValue({
+      skills: [],
+      mcpServers: [{ name: target.serverName, runtimeName: target.runtimeName, enabled: true, transport: 'http' }],
+    });
+    apiMock.inspectMcpAuthStatuses.mockReturnValue(inspection.promise);
+    const auth = useMcpAuthorization();
+    await auth.authorize(target);
+
+    const pending = auth.refresh('vercel');
+
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-required',
+      phase: 'waiting',
+      flowId: 'flow-1',
+    });
+
+    inspection.resolve([{ name: target.runtimeName, authStatus: 'oauth-required' }]);
+    await pending;
+    expect(auth.states[target.runtimeName]?.phase).toBe('waiting');
+  });
+
+  it('marks plugin discovery as starting and drops stale authorized state on automatic authorization', async () => {
+    const inspection = deferred<unknown>();
+    apiMock.getPluginInfo.mockResolvedValue({
+      skills: [],
+      mcpServers: [{ name: target.serverName, runtimeName: target.runtimeName, enabled: true, transport: 'http' }],
+    });
+    apiMock.inspectMcpAuthStatuses.mockReturnValue(inspection.promise);
+    const auth = useMcpAuthorization();
+    auth.states[target.runtimeName] = { status: 'oauth-authorized', phase: 'idle' };
+
+    const pending = auth.authorizePlugin('vercel');
+
+    expect(auth.states[target.runtimeName]?.status).toBeUndefined();
+    expect(auth.states.vercel?.phase).toBe('starting');
+
+    inspection.resolve([{ name: target.runtimeName, authStatus: 'oauth-required' }]);
+    await pending;
+
+    expect(auth.states.vercel?.phase).toBe('idle');
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-required',
+      phase: 'waiting',
+    });
+  });
+
+  it('clears a stale authorized status while explicit authorization is starting', async () => {
+    const begin = deferred<AppMcpAuthBeginResult>();
+    apiMock.beginMcpAuth.mockReturnValue(begin.promise);
+    const auth = useMcpAuthorization();
+    auth.states[target.runtimeName] = { status: 'oauth-authorized', phase: 'idle' };
+
+    const pending = auth.authorize(target);
+
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: undefined,
+      phase: 'starting',
+    });
+
+    begin.resolve(authorizationRequired());
+    await pending;
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-required',
+      phase: 'waiting',
+    });
+  });
 });
