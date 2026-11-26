@@ -118,6 +118,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       this.configService,
       { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
       input.model,
+      this.modelCatalog,
     );
     let model: Model;
     try {

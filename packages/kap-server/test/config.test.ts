@@ -195,6 +195,43 @@ describe('server-v2 /api/v1/config', () => {
     expect(after.default_model).toBe('provider/main');
   });
 
+  it('POST { secondary_model } replaces the section cleanly across modes and preserves entry effort objects', async () => {
+    await boot();
+    await patchConfig({
+      secondary_model: {
+        default_model: 'provider/fast_model',
+        rule: 'Prefer fast for search.',
+        models: {
+          'provider/fast_model': { description: 'fast', effort: 'low' },
+          'provider/smart_model': { description: 'smart' },
+        },
+      },
+    });
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+    const pooled = await getConfig();
+    expect(pooled.secondary_model).toEqual({
+      defaultModel: 'provider/fast_model',
+      rule: 'Prefer fast for search.',
+      models: {
+        'provider/fast_model': { description: 'fast', effort: 'low' },
+        'provider/smart_model': 'smart',
+      },
+    });
+
+    await patchConfig({
+      secondary_model: {
+        all_models: true,
+        rule: 'Pick any model.',
+      },
+    });
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+    const allModels = await getConfig();
+    expect(allModels.secondary_model).toEqual({
+      allModels: true,
+      rule: 'Pick any model.',
+    });
+  });
+
   it('POST { providers } converts fields of a provider id colliding with a map-valued key', async () => {
     await boot();
     await patchConfig({

@@ -1,5 +1,72 @@
 import { describe, expect, it } from 'vitest';
-import { buildSecondaryModelPatch } from './secondaryModel';
+import {
+  buildAllModelsSecondaryConfig,
+  buildFixedSecondaryModelConfig,
+  buildSecondaryModelPatch,
+  buildSelectedModelsSecondaryConfig,
+  readSecondaryModelEntry,
+  resolveSecondaryModelAutoScope,
+  resolveSecondaryModelMode,
+  serializeSecondaryModelEntry,
+} from './secondaryModel';
+
+describe('secondaryModel helpers', () => {
+  it('resolves modes and auto scopes from config shapes', () => {
+    expect(resolveSecondaryModelMode(undefined)).toBe('follow');
+    expect(resolveSecondaryModelMode(null)).toBe('follow');
+    expect(resolveSecondaryModelMode({ defaultModel: 'kimi/k2' })).toBe('fixed');
+    expect(resolveSecondaryModelMode({ model: 'kimi/k2' })).toBe('fixed');
+    expect(resolveSecondaryModelMode({ allModels: true })).toBe('auto');
+    expect(resolveSecondaryModelMode({ defaultModel: 'a', models: { a: '' } })).toBe('auto');
+    expect(resolveSecondaryModelAutoScope({ allModels: true })).toBe('all');
+    expect(resolveSecondaryModelAutoScope({ defaultModel: 'a', models: { a: '' } })).toBe('selected');
+  });
+
+  it('normalizes and collapses pool entries on demand', () => {
+    expect(readSecondaryModelEntry('fast')).toEqual({ description: 'fast', effort: '' });
+    expect(readSecondaryModelEntry({ description: 'fast', effort: 'low' })).toEqual({
+      description: 'fast',
+      effort: 'low',
+    });
+    expect(serializeSecondaryModelEntry({ description: 'fast', effort: '' })).toBe('fast');
+    expect(serializeSecondaryModelEntry({ description: 'fast', effort: 'low' })).toEqual({
+      description: 'fast',
+      effort: 'low',
+    });
+    expect(serializeSecondaryModelEntry({ description: '', effort: 'high' })).toEqual({
+      effort: 'high',
+    });
+  });
+
+  it('builds fixed, all-models, and selected-models configs cleanly', () => {
+    expect(buildFixedSecondaryModelConfig({ model: 'kimi/k2', effort: 'low' })).toEqual({
+      defaultModel: 'kimi/k2',
+      defaultEffort: 'low',
+    });
+    expect(buildAllModelsSecondaryConfig('  Prefer cheap models  ')).toEqual({
+      allModels: true,
+      rule: 'Prefer cheap models',
+    });
+    expect(
+      buildSelectedModelsSecondaryConfig({
+        defaultModel: 'b',
+        entries: {
+          a: { description: 'fast', effort: 'low' },
+          b: { description: 'strong', effort: '' },
+        },
+        rule: 'Cost first',
+      }),
+    ).toEqual({
+      defaultModel: 'b',
+      rule: 'Cost first',
+      models: {
+        a: { description: 'fast', effort: 'low' },
+        b: 'strong',
+      },
+    });
+    expect(buildSelectedModelsSecondaryConfig({ entries: {} })).toBeNull();
+  });
+});
 
 describe('buildSecondaryModelPatch', () => {
   it('writes defaultModel when no pool exists', () => {

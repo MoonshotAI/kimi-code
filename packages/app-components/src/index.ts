@@ -143,6 +143,7 @@ export { default as ProvidersPanel } from './settings/ProvidersPanel.vue';
 export { default as PluginsPanel } from './settings/PluginsPanel.vue';
 export { default as HostsPanel } from './settings/HostsPanel.vue';
 export { default as SecondaryModelPicker } from './settings/SecondaryModelPicker.vue';
+export { default as SecondaryModelSettings } from './settings/SecondaryModelSettings.vue';
 
 export * from './chatTurnRendering';
 export * from './chat/tool-calls/toolArgs';

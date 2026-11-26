@@ -98,6 +98,11 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     return this.entry(id);
   }
 
+  listAliases(): readonly string[] {
+    this.runtime.sync();
+    return this.runtime.aliases();
+  }
+
   findByName(name: string): readonly string[] {
     const out: string[] = [];
     for (const alias of this.runtime.aliases()) {

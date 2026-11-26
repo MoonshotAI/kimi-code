@@ -1065,6 +1065,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     await this.configReady;
     for (const [domain, domainPatch] of Object.entries(patch)) {
       if (domainPatch === undefined) continue;
+      if (
+        domain === 'secondaryModel' &&
+        (domainPatch === null ||
+          (typeof domainPatch === 'object' &&
+            'allModels' in domainPatch &&
+            domainPatch.allModels === true))
+      ) {
+        await this.klient.global.config.replace({ domain, value: domainPatch });
+        continue;
+      }
       await this.klient.global.config.set({ domain, patch: domainPatch });
     }
     return this.getConfig();

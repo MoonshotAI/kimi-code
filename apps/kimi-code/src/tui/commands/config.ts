@@ -225,14 +225,44 @@ export async function handleModelCommand(host: SlashCommandHost, args: string): 
   await showModelPicker(host, alias);
 }
 
+const SECONDARY_MODEL_FOLLOW_ARGS = new Set(['follow', 'reset', 'clear', 'off']);
+
 export async function handleSecondaryModelCommand(host: SlashCommandHost, args: string): Promise<void> {
   const alias = args.trim();
+  const normalized = alias.toLowerCase();
   await refreshModelsForPicker(host);
   const models = pickerModelsForHost(host);
+  if (SECONDARY_MODEL_FOLLOW_ARGS.has(normalized) && models[alias] === undefined) {
+    try {
+      await host.harness.setConfig({ secondaryModel: null });
+    } catch (error) {
+      host.showError(`Failed to reset secondary model: ${formatErrorMessage(error)}`);
+      return;
+    }
+    host.showStatus('Subagents now follow the primary model.', 'success');
+    return;
+  }
   if (Object.keys(models).length === 0) {
     host.showNotice(
       'No models configured',
       'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+    );
+    return;
+  }
+  if (normalized === 'all' && models[alias] === undefined) {
+    try {
+      const config = await host.harness.getConfig({ reload: true });
+      const rule = config.secondaryModel?.rule;
+      await host.harness.setConfig({
+        secondaryModel: rule ? { allModels: true, rule } : { allModels: true },
+      });
+    } catch (error) {
+      host.showError(`Failed to save secondary model: ${formatErrorMessage(error)}`);
+      return;
+    }
+    host.showStatus(
+      'Subagents can now choose from all configured models. Run /secondary-model follow to reset.',
+      'success',
     );
     return;
   }
@@ -242,7 +272,14 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
   }
   const secondary = (await host.harness.getConfig()).secondaryModel;
   const current = secondary?.defaultModel ?? secondary?.model ?? '';
-  showSecondaryModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
+  const poolSize = secondary?.models ? Object.keys(secondary.models).length : 0;
+  const title =
+    secondary?.allModels === true
+      ? ' Select a secondary model (subagents · all models)'
+      : poolSize > 1
+        ? ` Select a secondary model (subagents · pool of ${poolSize})`
+        : ' Select a secondary model (subagents)';
+  showSecondaryModelPicker(host, models, current, alias.length > 0 ? alias : undefined, title);
 }
 
 export async function handleEffortCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -680,6 +717,7 @@ function showSecondaryModelPicker(
   models: Record<string, ModelAlias>,
   currentValue: string,
   selectedValue?: string,
+  title = ' Select a secondary model (subagents)',
 ): void {
   host.mountEditorReplacement(
     new TabbedModelSelectorComponent({
@@ -688,7 +726,7 @@ function showSecondaryModelPicker(
       selectedValue,
       currentThinkingEffort: 'off',
       thinkingControl: false,
-      title: ' Select a secondary model (subagents)',
+      title,
       onSelect: ({ alias }) => {
         host.restoreEditor();
         void performSecondaryModelSave(host, alias);
@@ -705,10 +743,18 @@ async function performSecondaryModelSave(host: SlashCommandHost, alias: string):
   try {
     const config = await host.harness.getConfig({ reload: true });
     const existing = config.secondaryModel?.models;
-    const patch: { defaultModel: string; models?: Record<string, string> } = {
+    const patch: {
+      defaultModel: string;
+      models?: Record<string, string | { description?: string; effort?: string }>;
+      allModels?: boolean;
+      rule?: string;
+    } = {
       defaultModel: alias,
     };
-    if (existing !== undefined) {
+    if (config.secondaryModel?.allModels === true) {
+      patch.allModels = true;
+      if (config.secondaryModel.rule) patch.rule = config.secondaryModel.rule;
+    } else if (existing !== undefined) {
       patch.models = { ...existing, [alias]: existing[alias] ?? '' };
     }
     await host.harness.setConfig({ secondaryModel: patch });
@@ -717,7 +763,7 @@ async function performSecondaryModelSave(host: SlashCommandHost, alias: string):
     return;
   }
   host.showStatus(
-    `Secondary model set to ${displayName}. Newly spawned subagents will use it by default.`,
+    `Secondary model set to ${displayName}. Newly spawned subagents will use it by default. Run /secondary-model follow to reset.`,
     'success',
   );
 }

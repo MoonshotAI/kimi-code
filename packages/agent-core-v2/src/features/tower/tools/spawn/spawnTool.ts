@@ -69,11 +69,12 @@ function resolveSpawnBinding(
   config: IConfigService,
   args: TowerSpawnToolInput,
   own: { modelAlias: string; thinkingLevel: string },
+  modelCatalog: IModelCatalog,
 ): SubagentBinding {
   if (args.kind === 'reviewer' && args.model === undefined) {
     return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' };
   }
-  return resolveSubagentBinding(config, own, args.model);
+  return resolveSubagentBinding(config, own, args.model, modelCatalog);
 }
 
 async function findCompletionReport(
@@ -226,10 +227,15 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         binding =
           own.modelAlias === undefined
             ? undefined
-            : resolveSpawnBinding(this.config, args, {
-                modelAlias: own.modelAlias,
-                thinkingLevel: own.thinkingLevel,
-              });
+            : resolveSpawnBinding(
+                this.config,
+                args,
+                {
+                  modelAlias: own.modelAlias,
+                  thinkingLevel: own.thinkingLevel,
+                },
+                this.modelCatalog,
+              );
       } catch (error) {
         return {
           output: error instanceof Error ? error.message : String(error),

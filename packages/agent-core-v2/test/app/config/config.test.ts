@@ -2231,7 +2231,7 @@ describe('subagent config section', () => {
     });
     expect(resolveSubagentModelPool(config)).toEqual({
       defaultModel: 'provider/fast',
-      models: { 'provider/fast': '' },
+      models: { 'provider/fast': { description: '' } },
     });
     expect(resolveSubagentBinding(config, own)).toEqual({
       model: 'provider/fast',
@@ -2363,6 +2363,88 @@ describe('subagent config section', () => {
     expect((caught as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
     expect((caught as Error2).message).toBe(
       'Invalid model "provider/typo". Available models: provider/fast, provider/smart.',
+    );
+
+    disposables.dispose();
+  });
+
+  it('binds per-entry effort over default_effort and collapses object entries without effort on TOML write', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, storage, disposables } = await createConfig(
+      {},
+      [
+        '[secondary_model]',
+        'default_model = "provider/fast"',
+        'default_effort = "high"',
+        'rule = "Cost first."',
+        '',
+        '[secondary_model.models]',
+        '"provider/fast" = { description = "fast and cheap", effort = "low" }',
+        '"provider/smart" = "hard tasks"',
+        '',
+      ].join('\n'),
+    );
+
+    expect(resolveSubagentBinding(config, own, 'provider/fast')).toEqual({
+      model: 'provider/fast',
+      thinking: 'low',
+      modelSource: 'secondary_pool',
+    });
+    expect(resolveSubagentBinding(config, own, 'provider/smart')).toEqual({
+      model: 'provider/smart',
+      thinking: 'high',
+      modelSource: 'secondary_pool',
+    });
+
+    await config.replace(SECONDARY_MODEL_SECTION, {
+      defaultModel: 'provider/fast',
+      rule: 'Cost first.',
+      models: {
+        'provider/fast': { description: 'fast and cheap', effort: 'low' },
+        'provider/smart': { description: 'hard tasks' },
+      },
+    });
+    const rawToml = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(rawToml).toContain('"provider/smart" = "hard tasks"');
+    expect(rawToml).toContain('effort = "low"');
+
+    disposables.dispose();
+  });
+
+  it('binds any catalog model when all_models is enabled and rejects unknown models', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      [
+        '[models."provider/main"]',
+        'provider = "p"',
+        'model = "main"',
+        'max_context_size = 100000',
+        '',
+        '[models."provider/fast"]',
+        'provider = "p"',
+        'model = "fast"',
+        'max_context_size = 100000',
+        '',
+        '[secondary_model]',
+        'all_models = true',
+        'rule = "Pick by complexity."',
+        '',
+      ].join('\n'),
+    );
+
+    expect(resolveSubagentBinding(config, own)).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+      modelSource: 'inherited',
+    });
+    expect(resolveSubagentBinding(config, own, 'provider/fast')).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+      modelSource: 'secondary_pool',
+    });
+    expect(() => resolveSubagentBinding(config, own, 'provider/missing')).toThrow(
+      'Invalid model "provider/missing". Available models: provider/main, provider/fast.',
     );
 
     disposables.dispose();

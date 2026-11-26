@@ -211,4 +211,63 @@ describe('handleSecondaryModelCommand', () => {
     expect(host.showError.mock.calls[0]![0]).toContain('disk full');
     expect(host.showStatus).not.toHaveBeenCalled();
   });
+
+  it('resets secondary model to follow primary via /secondary-model follow', async () => {
+    const { host } = makeHost({ secondaryModel: { defaultModel: 'cheap' } });
+
+    await handleSecondaryModelCommand(host, 'follow');
+
+    expect(host.harness.setConfig).toHaveBeenCalledWith({ secondaryModel: null });
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+    expect(host.showStatus).toHaveBeenCalledWith(
+      'Subagents now follow the primary model.',
+      'success',
+    );
+  });
+
+  it('enables all_models mode via /secondary-model all while preserving rule', async () => {
+    const { host } = makeHost({
+      secondaryModel: {
+        defaultModel: 'cheap',
+        rule: 'Cost first.',
+        models: { cheap: 'fast' },
+      } as { defaultModel?: string; models?: Record<string, string> },
+    });
+
+    await handleSecondaryModelCommand(host, 'all');
+
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      secondaryModel: { allModels: true, rule: 'Cost first.' },
+    });
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+    expect(host.showStatus).toHaveBeenCalled();
+  });
+
+  it('preserves object pool entries with effort when changing the default model', async () => {
+    const { host } = makeHost({
+      secondaryModel: {
+        defaultModel: 'cheap',
+        models: {
+          cheap: { description: 'fast', effort: 'low' },
+          k2: { description: 'strong', effort: 'high' },
+        },
+      } as unknown as { defaultModel?: string; models?: Record<string, string> },
+    });
+
+    await handleSecondaryModelCommand(host, '');
+    mountedPicker(host).onSelect({ alias: 'k2' });
+
+    await vi.waitFor(() => {
+      expect(host.showStatus).toHaveBeenCalled();
+    });
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      secondaryModel: {
+        defaultModel: 'k2',
+        models: {
+          cheap: { description: 'fast', effort: 'low' },
+          k2: { description: 'strong', effort: 'high' },
+        },
+      },
+    });
+  });
 });

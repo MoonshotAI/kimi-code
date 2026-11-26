@@ -306,6 +306,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       get: () => {
         throw new Error('unused');
       },
+      listAliases: () => [],
       findByName: () => [],
       listModels: async () => [],
       listProviders: async () => [],

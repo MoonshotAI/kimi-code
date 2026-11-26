@@ -45,6 +45,7 @@ describe('server-v2 /api/v1 tools', () => {
       get: () => {
         throw new Error('modelCatalog.get not exercised in this test');
       },
+      listAliases: () => [],
       findByName: () => [],
       listModels: async () => [],
       listProviders: async () => [],

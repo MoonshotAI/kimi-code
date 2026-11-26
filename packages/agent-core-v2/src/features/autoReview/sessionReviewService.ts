@@ -145,22 +145,26 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
 
   assertConfigValid(): void {
     const configured = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION)?.model
-      ?? resolveSubagentModelPool(this.configService)?.defaultModel;
+      ?? resolveSubagentModelPool(this.configService, this.models)?.defaultModel;
     if (configured !== undefined) this.assertReviewModelValid(configured);
   }
 
   private bindingFor(mainModelAlias: string): ReviewBinding {
     const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
     if (config?.model !== undefined) return { modelAlias: config.model, effort: config.effort };
-    const pooled = resolveSubagentModelPool(this.configService)?.defaultModel;
+    const pool = resolveSubagentModelPool(this.configService, this.models);
+    const pooled = pool?.defaultModel;
     if (pooled === undefined) return { modelAlias: mainModelAlias, effort: config?.effort };
     const secondary = this.configService.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION);
-    return { modelAlias: pooled, effort: config?.effort ?? secondary?.defaultEffort };
+    return {
+      modelAlias: pooled,
+      effort: config?.effort ?? pool?.models[pooled]?.effort ?? secondary?.defaultEffort,
+    };
   }
 
   private assertReviewModelValid(modelAlias: string): void {
     const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
-    const configured = config?.model ?? resolveSubagentModelPool(this.configService)?.defaultModel;
+    const configured = config?.model ?? resolveSubagentModelPool(this.configService, this.models)?.defaultModel;
     if (modelAlias !== configured && config?.effort === undefined) return;
     let model;
     try {

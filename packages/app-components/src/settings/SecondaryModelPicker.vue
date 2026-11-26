@@ -6,12 +6,15 @@ import { effortLabel, providerDisplayName, segmentsFor, type ModelThinkingInfo }
 
 export type SecondaryModelGroup = { provider: string; options: Array<{ id: string; label: string }> };
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: string;
   effort: string;
   groups: SecondaryModelGroup[];
   modelInfoById: Record<string, ModelThinkingInfo>;
-}>();
+  allowFollowDefault?: boolean;
+}>(), {
+  allowFollowDefault: true,
+});
 
 const emit = defineEmits<{ select: [value: { model: string | null; effort?: string }] }>();
 
@@ -47,10 +50,11 @@ let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
 const flatModels = computed<Array<{ id: string; label: string }>>(() =>
   props.groups.flatMap((group) => group.options),
 );
-const modelIds = computed(() => [
-  FOLLOW_DEFAULT_MODEL_ID,
-  ...flatModels.value.map((option) => option.id),
-]);
+const modelIds = computed(() =>
+  props.allowFollowDefault
+    ? [FOLLOW_DEFAULT_MODEL_ID, ...flatModels.value.map((option) => option.id)]
+    : flatModels.value.map((option) => option.id),
+);
 
 const modelLabel = computed(() => {
   if (!props.modelValue) return '';
@@ -159,8 +163,12 @@ function closeFlyout(): void {
 function openMenu(): void {
   if (open.value) return;
   open.value = true;
-  activeModelId.value = props.modelValue;
-  activeModelIndex.value = Math.max(0, modelIds.value.indexOf(activeModelId.value));
+  const initialId =
+    props.modelValue && modelIds.value.includes(props.modelValue)
+      ? props.modelValue
+      : (modelIds.value[0] ?? FOLLOW_DEFAULT_MODEL_ID);
+  activeModelId.value = initialId;
+  activeModelIndex.value = Math.max(0, modelIds.value.indexOf(initialId));
   flyoutFor.value = null;
   focusColumn.value = 'models';
   void nextTick(positionMenu);
@@ -347,6 +355,7 @@ onUnmounted(() => {
       >
         <div class="sm-picker__models" role="listbox" :aria-label="t('settings.secondaryModel')">
           <button
+            v-if="allowFollowDefault"
             class="sm-picker__option"
             :class="{
               'is-selected': !modelValue,
