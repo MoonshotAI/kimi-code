@@ -369,6 +369,21 @@ export class SessionWorktreeService {
       return;
     }
     const created = outcome.value;
+    let adopted: boolean;
+    try {
+      adopted = await this.adoptCreated(recorder, created, signal);
+    } catch (error) {
+      await this.discardCreated(recorder, created, { error });
+      return;
+    }
+    if (!adopted) {
+      await this.discardCreated(recorder, created, { stopped: true });
+      return;
+    }
+    void this.releaseHeld(recorder.sessionId);
+  }
+
+  private async adoptCreated(recorder: SetupRecorder, created: CreatedWorktree, signal: AbortSignal): Promise<boolean> {
     await recorder.update((stored) => ({
       ...withoutPending(stored),
       path: created.path,
@@ -376,22 +391,11 @@ export class SessionWorktreeService {
       base: created.base,
       included_local_changes: created.includedLocalChanges,
     }));
-    if (signal.aborted) {
-      await this.discardCreated(recorder, created, { stopped: true });
-      return;
-    }
-    try {
-      await repointSession(this.core, recorder.sessionId, created.path);
-    } catch (error) {
-      await this.discardCreated(recorder, created, { error });
-      return;
-    }
-    if (signal.aborted) {
-      await this.discardCreated(recorder, created, { stopped: true });
-      return;
-    }
+    if (signal.aborted) return false;
+    await repointSession(this.core, recorder.sessionId, created.path);
+    if (signal.aborted) return false;
     await recorder.update((stored) => ({ ...stored, setup: ended(stored.setup, 'ready') }));
-    void this.releaseHeld(recorder.sessionId);
+    return true;
   }
 
   releaseHeld(sessionId: string): Promise<void> {

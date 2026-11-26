@@ -13,6 +13,7 @@ import {
   IAgentLoopService,
   IProjectTrust,
   IWorktreeService,
+  SessionMetadata,
   closeSessionById,
   getLiveSessionById,
   patchSessionMetadata,
@@ -23,6 +24,7 @@ import { ErrorCode } from '../src/protocol/error-codes';
 import type { Session } from '../src/protocol/session';
 import { repointSession } from '../src/services/worktrees/sessionRepoint';
 import { SessionWorktreeService, writeStoredWorktree } from '../src/services/worktrees/sessionWorktreeService';
+import { storedSessionWorktree } from '../src/services/worktrees/sessionWorktreeState';
 import { commitAll, git, hangingRemote } from './helpers/gitRepo';
 import { type Envelope, useWorktreeServer } from './helpers/worktreeServer';
 
@@ -418,6 +420,35 @@ describe('server-v2 session worktrees', () => {
       turn.items.flatMap((item) => (item.type === 'user_message' && item.text !== undefined ? [item.text] : [])),
     );
   }
+
+  it('removes the new worktree and moves the session back when recording it as ready fails', async () => {
+    const { root, workspaceId } = await project('ready-write-fails');
+    const before = await worktreeDirectories();
+    const originalUpdate = SessionMetadata.prototype.update;
+    let failed = false;
+    vi.spyOn(SessionMetadata.prototype, 'update').mockImplementation(function (
+      this: SessionMetadata,
+      ...args: Parameters<SessionMetadata['update']>
+    ) {
+      if (!failed && storedSessionWorktree(args[0].custom)?.setup.status === 'ready') {
+        failed = true;
+        return Promise.reject(new Error('metadata write failed'));
+      }
+      return originalUpdate.apply(this, args);
+    });
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+
+    const created = await createWorktreeSession(workspaceId);
+    const session = await settled(created.id);
+
+    expect(failed).toBe(true);
+    expect(session.worktree?.setup).toMatchObject({ status: 'failed', failure: { kind: 'create_failed' } });
+    expect(session.worktree?.path).toBeUndefined();
+    expect(session.cwd).toBe(root);
+    await expectNothingLeft(root, before);
+  });
 
   it('holds a prompt sent during setup and sends it once the worktree is ready', async () => {
     const { workspaceId } = await project('held-ready');
