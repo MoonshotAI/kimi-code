@@ -29,6 +29,15 @@ export const AGENT_WIRE_RECORD_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 const LEGACY_HUMAN_RECORD_PREFIX = 'human.';
+const WIRE_TURN_CLOCK_ONLY = Symbol('wire.turn.clock-only');
+
+export function markWireTurnClockOnly(record: WireRecord): WireRecord {
+  return { ...record, [WIRE_TURN_CLOCK_ONLY]: true };
+}
+
+export function isWireTurnClockOnly(record: WireRecord): boolean {
+  return (record as WireRecord & { readonly [WIRE_TURN_CLOCK_ONLY]?: boolean })[WIRE_TURN_CLOCK_ONLY] === true;
+}
 
 export function isHumanRecordType(type: string): boolean {
   return AGENT_WIRE_RECORD_TYPES.has(type) || type.startsWith(LEGACY_HUMAN_RECORD_PREFIX);

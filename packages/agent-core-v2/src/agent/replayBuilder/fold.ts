@@ -25,7 +25,7 @@ import {
   isWireMetadataRecord,
   type WireRecord,
 } from '#/wire/record';
-import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
+import { isWireTurnClockOnly, normalizeLegacyTurnSteerRecords } from '#/wire/human';
 
 import type { AgentReplayRecord, AgentReplayRecordPayload } from './types';
 
@@ -651,7 +651,7 @@ export function matchWireTurnInputRecords(
     const isInput = allUserMessages
       ? record.type === 'turn.prompt' || record.type === 'turn.steer'
       : isVisibleWireTurnInput(record);
-    if (isInput) inputIndices.push(index);
+    if (isInput && !isWireTurnClockOnly(record)) inputIndices.push(index);
     const isAppend = allUserMessages
       ? record.type === 'context.append_message' &&
         wireRecordObject(record['message'])?.['role'] === 'user'
@@ -665,14 +665,22 @@ export function matchWireTurnInputRecords(
   for (const append of appends) {
     const exact = unused.findIndex(
       (index) =>
-        (records[index]!.type !== 'turn.prompt' || index < append.index) &&
+        (
+          records[index]!.type !== 'turn.prompt' ||
+          index < append.index ||
+          records[index]!['trigger'] === 'notify'
+        ) &&
         wireTurnInputMatches(records[index]!, append.record, true, allUserMessages),
     );
     const matchAt = exact !== -1
       ? exact
       : unused.findIndex(
           (index) =>
-            (records[index]!.type !== 'turn.prompt' || index < append.index) &&
+            (
+              records[index]!.type !== 'turn.prompt' ||
+              index < append.index ||
+              records[index]!['trigger'] === 'notify'
+            ) &&
             wireTurnInputMatches(records[index]!, append.record, false, allUserMessages),
         );
     const inputIndex = matchAt === -1 ? undefined : unused.splice(matchAt, 1)[0];
