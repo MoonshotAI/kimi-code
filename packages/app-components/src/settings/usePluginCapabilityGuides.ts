@@ -1,4 +1,6 @@
 import { computed, onBeforeUnmount, ref, watch, type ComputedRef } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { toast } from '@moonshot-ai/app-client/client';
 import { track } from '@moonshot-ai/app-client/contracts';
 import {
   isKimiCuMacCapability,
@@ -18,6 +20,7 @@ const CU_PERMISSION_TIMEOUT_MS = 240_000;
 export type PluginGuideEntry = 'install' | 'detail';
 
 export function usePluginCapabilityGuides(rows: ComputedRef<readonly PluginViewModel[]>) {
+  const { t } = useI18n();
   const { refreshCapability, requestCapabilityPermissions } = usePlugins();
   const webBridgeGuideOpen = ref(false);
   const webBridgeChecking = ref(false);
@@ -152,10 +155,17 @@ export function usePluginCapabilityGuides(rows: ComputedRef<readonly PluginViewM
     const row = cuRow.value;
     if (row === undefined || !isKimiCuMacCapability(row) || cuWatchActive) return;
     startCuPermissionWatch('detail');
-    const status = await requestCapabilityPermissions('kimi-cu');
+    const result = await requestCapabilityPermissions('kimi-cu');
     if (!cuWatchActive) return;
-    if (status === undefined) {
+    if (result.failed) {
       stopCuPermissionWatch();
+      toast({
+        mode: 'replace',
+        variant: 'danger',
+        title: t('settings.plugins.cuPermissionRequestFailedTitle'),
+        message: t('settings.plugins.cuPermissionRequestFailedMessage'),
+        duration: 5_000,
+      });
       return;
     }
     const latest = cuRow.value;

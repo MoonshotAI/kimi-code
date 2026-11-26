@@ -2033,7 +2033,7 @@ describe('usePlugins', () => {
     ).resolves.toBe('cancelled');
   });
 
-  it('requestCapabilityPermissions preserves late errors even after a poll refresh starts', async () => {
+  it('requestCapabilityPermissions reports late failures without writing inline row errors', async () => {
     apiMock.listCapabilities.mockResolvedValue([capabilityCu]);
     const { state, refresh, refreshCapability, requestCapabilityPermissions } = usePlugins();
     await refresh();
@@ -2047,8 +2047,8 @@ describe('usePlugins', () => {
     slowRequest.reject(new Error('helper launch failed'));
     const result = await pending;
 
-    expect(result).toBeUndefined();
-    expect(state.rowErrors['kimi-cu']).toBe('helper launch failed');
+    expect(result).toEqual({ failed: true });
+    expect(state.rowErrors['kimi-cu']).toBeUndefined();
   });
 
   it('requestCapabilityPermissions treats helper wait timeouts as unfinished without row errors', async () => {
@@ -2065,9 +2065,10 @@ describe('usePlugins', () => {
       steps: [{ id: 'permissions', state: 'missing' }],
     });
 
-    const status = await requestCapabilityPermissions('kimi-cu');
+    const result = await requestCapabilityPermissions('kimi-cu');
 
-    expect(status?.state).toBe('partial');
+    expect(result.failed).toBe(false);
+    expect(result.status?.state).toBe('partial');
     expect(state.rowErrors['kimi-cu']).toBeUndefined();
   });
 
@@ -2094,18 +2095,20 @@ describe('usePlugins', () => {
       }),
     );
     const afterTimeout = await requestCapabilityPermissions('kimi-cu');
-    expect(afterTimeout?.state).toBe('partial');
+    expect(afterTimeout.failed).toBe(false);
+    expect(afterTimeout.status?.state).toBe('partial');
     expect(state.rowErrors['kimi-cu']).toBeUndefined();
 
     apiMock.requestCapabilityPermissions.mockRejectedValueOnce(
       Object.assign(new Error('aborted'), { name: 'AbortError' }),
     );
     const afterAbort = await requestCapabilityPermissions('kimi-cu');
-    expect(afterAbort?.state).toBe('partial');
+    expect(afterAbort.failed).toBe(false);
+    expect(afterAbort.status?.state).toBe('partial');
     expect(state.rowErrors['kimi-cu']).toBeUndefined();
   });
 
-  it('requestCapabilityPermissions still surfaces business errors and HTTP error responses', async () => {
+  it('requestCapabilityPermissions flags business and HTTP errors for toast without inline row errors', async () => {
     apiMock.listCapabilities.mockResolvedValue([capabilityCu]);
     const { state, refresh, requestCapabilityPermissions } = usePlugins();
     await refresh();
@@ -2117,8 +2120,8 @@ describe('usePlugins', () => {
         requestId: 'r2',
       }),
     );
-    await expect(requestCapabilityPermissions('kimi-cu')).resolves.toBeUndefined();
-    expect(state.rowErrors['kimi-cu']).toContain('xpc service unavailable');
+    await expect(requestCapabilityPermissions('kimi-cu')).resolves.toEqual({ failed: true });
+    expect(state.rowErrors['kimi-cu']).toBeUndefined();
 
     apiMock.requestCapabilityPermissions.mockRejectedValueOnce(
       new DaemonNetworkError({
@@ -2134,8 +2137,8 @@ describe('usePlugins', () => {
         statusText: 'Bad Gateway',
       }),
     );
-    await expect(requestCapabilityPermissions('kimi-cu')).resolves.toBeUndefined();
-    expect(state.rowErrors['kimi-cu']).toContain('Failed to parse JSON response');
+    await expect(requestCapabilityPermissions('kimi-cu')).resolves.toEqual({ failed: true });
+    expect(state.rowErrors['kimi-cu']).toBeUndefined();
   });
 });
 

@@ -151,6 +151,8 @@ export default {
     webbridgeGuideDone: 'Done',
     cuPermissionMissing: 'Permissions not enabled',
     cuPermissionWaiting: 'Waiting for permissions…',
+    cuPermissionRequestFailedTitle: 'Couldn\'t open permission settings',
+    cuPermissionRequestFailedMessage: 'Make sure KimiCU is installed, then try again',
     catalogUnavailable: 'The marketplace catalog is unavailable. You can still manage installed plugins in My plugins',
   },
   appearance: 'Appearance',

@@ -151,6 +151,8 @@ export default {
     webbridgeGuideDone: '已完成',
     cuPermissionMissing: '权限未开启',
     cuPermissionWaiting: '等待开启权限…',
+    cuPermissionRequestFailedTitle: '无法打开权限设置',
+    cuPermissionRequestFailedMessage: '请确认已安装 KimiCU 后重试',
     catalogUnavailable: '插件市场目录暂不可用，已安装的插件仍可在「我的插件」中管理',
   },
   appearance: '外观',

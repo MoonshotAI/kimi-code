@@ -833,22 +833,32 @@ function isCapabilityPermissionInterruption(error: unknown): boolean {
   return isDaemonNetworkError(error) && error.phase === 'fetch' && error.status === undefined;
 }
 
-async function requestCapabilityPermissions(id: string): Promise<AppCapabilityStatus | undefined> {
-  state.rowErrors[id] = undefined;
+export interface CapabilityPermissionRequestResult {
+  readonly status?: AppCapabilityStatus;
+  readonly failed: boolean;
+}
+
+async function requestCapabilityPermissions(
+  id: string,
+): Promise<CapabilityPermissionRequestResult> {
   const generation = (capabilityReadGenerations.get(id) ?? 0) + 1;
   capabilityReadGenerations.set(id, generation);
   try {
     const status = await getKimiWebApi().requestCapabilityPermissions(id);
-    if (capabilityReadGenerations.get(id) !== generation) return status;
-    applyCapabilityStatus(status);
-    syncExtensionHint();
-    return status;
+    if (capabilityReadGenerations.get(id) === generation) {
+      applyCapabilityStatus(status);
+      syncExtensionHint();
+    }
+    return { status, failed: false };
   } catch (error) {
     if (isCapabilityPermissionInterruption(error)) {
-      return refreshCapability(id);
+      const refreshed = await refreshCapability(id);
+      return {
+        status: refreshed ?? state.capabilities.find((candidate) => candidate.id === id),
+        failed: false,
+      };
     }
-    state.rowErrors[id] = errorMessage(error);
-    return undefined;
+    return { failed: true };
   }
 }
 

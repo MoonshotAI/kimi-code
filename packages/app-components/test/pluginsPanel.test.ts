@@ -22,6 +22,7 @@ const fakes = vi.hoisted(() => ({
   authorization: null as unknown as ReturnType<typeof useMcpAuthorization>,
   isMacosDesktop: false,
   track: vi.fn(),
+  toast: vi.fn(),
 }));
 
 vi.mock('@moonshot-ai/app-client/composables', async (importOriginal) => {
@@ -51,9 +52,14 @@ vi.mock('@moonshot-ai/app-core/lib', async (importOriginal) => {
   };
 });
 
-vi.mock('@moonshot-ai/app-client/client', () => ({
-  connectEventsIfNeeded: vi.fn(),
-}));
+vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@moonshot-ai/app-client/client')>();
+  return {
+    ...actual,
+    connectEventsIfNeeded: vi.fn(),
+    toast: (options: unknown, key?: number) => fakes.toast(options, key),
+  };
+});
 
 import PluginsPanel from '../src/settings/PluginsPanel.vue';
 
@@ -176,7 +182,10 @@ function makePlugins(rows: PluginViewModel[]): ReturnType<typeof usePlugins> {
     }),
     refresh: vi.fn(async () => {}),
     refreshCapability: vi.fn(async (id: string) => state.capabilities.find((item) => item.id === id)),
-    requestCapabilityPermissions: vi.fn(async (id: string) => state.capabilities.find((item) => item.id === id)),
+    requestCapabilityPermissions: vi.fn(async (id: string) => ({
+      failed: false as const,
+      status: state.capabilities.find((item) => item.id === id),
+    })),
     install: vi.fn(async () => 'installed' as const),
     installRow: vi.fn(async () => 'installed' as const),
     installSource: vi.fn(async (source: string) => {
@@ -206,6 +215,7 @@ beforeEach(() => {
   rowData = reactive<PluginViewModel[]>([]);
   fakes.isMacosDesktop = false;
   fakes.track.mockReset();
+  fakes.toast.mockReset();
   localStorage.clear();
 });
 
@@ -1824,7 +1834,10 @@ describe('PluginsPanel', () => {
         displayName: 'Kimi Computer Use',
       }));
       await mountPanel();
-      vi.mocked(plugins.requestCapabilityPermissions).mockResolvedValue(rowData[0]!.capability!);
+      vi.mocked(plugins.requestCapabilityPermissions).mockResolvedValue({
+        failed: false,
+        status: rowData[0]!.capability!,
+      });
       clickButton('Kimi Computer Use');
       await settle();
 
@@ -1872,7 +1885,7 @@ describe('PluginsPanel', () => {
     }
   });
 
-  it('exits the CU waiting state when the permission request itself fails', async () => {
+  it('exits the CU waiting state and shows a toast without inline errors when the permission request fails', async () => {
     fakes.isMacosDesktop = true;
     rowData.push(row('kimi-cu', {
       installId: 'kimi-cu',
@@ -1899,16 +1912,73 @@ describe('PluginsPanel', () => {
       displayName: 'Kimi Computer Use',
     }));
     await mountPanel();
-    vi.mocked(plugins.requestCapabilityPermissions).mockResolvedValue(undefined);
+    vi.mocked(plugins.requestCapabilityPermissions).mockResolvedValue({ failed: true });
     clickButton('Kimi Computer Use');
     await settle();
+    const heroBefore = host.querySelector('.plugin-details__hero')!.textContent;
 
     host.querySelector<HTMLButtonElement>('.plugin-details__status-badge')!.click();
     await flushAsync();
 
     expect(host.querySelector('.plugin-details__status-waiting')).toBeNull();
     expect(host.querySelector('.plugin-details__status-badge')?.textContent).toContain('Permissions not enabled');
+    expect(host.querySelector('.plugin-details__hero')!.textContent).toBe(heroBefore);
+    expect(host.querySelector('.plugin-status__error')).toBeNull();
+    expect(host.querySelector('.plugin-status')).toBeNull();
+    expect(plugins.state.rowErrors['kimi-cu']).toBeUndefined();
+    expect(fakes.toast).toHaveBeenCalledTimes(1);
+    expect(fakes.toast).toHaveBeenCalledWith({
+      mode: 'replace',
+      variant: 'danger',
+      title: 'Couldn\'t open permission settings',
+      message: 'Make sure KimiCU is installed, then try again',
+      duration: 5_000,
+    }, undefined);
     expect(fakes.track).not.toHaveBeenCalledWith('cu_permission_result', expect.anything());
+  });
+
+  it('shows a localized Chinese toast when opening CU permission settings fails', async () => {
+    fakes.isMacosDesktop = true;
+    rowData.push(row('kimi-cu', {
+      installId: 'kimi-cu',
+      catalogEntry: entry('kimi-cu', 'Kimi Computer Use', { capabilityId: 'kimi-cu' }),
+      installedPlugin: installed('kimi-cu', 'marketplace', { version: '0.5.4' }),
+      capability: {
+        id: 'kimi-cu',
+        pluginId: 'kimi-cu',
+        displayName: 'Kimi Computer Use',
+        description: 'macOS GUI automation',
+        supported: true,
+        state: 'partial',
+        steps: [
+          { id: 'plugin', state: 'ok' },
+          { id: 'app', state: 'ok' },
+          { id: 'service', state: 'ok' },
+          { id: 'permissions', state: 'missing' },
+          { id: 'permissions.accessibility', state: 'missing' },
+          { id: 'permissions.screenRecording', state: 'missing' },
+        ],
+        install: { running: false },
+      },
+      capabilityRequired: true,
+      displayName: 'Kimi Computer Use',
+    }));
+    await mountPanel('zh');
+    vi.mocked(plugins.requestCapabilityPermissions).mockResolvedValue({ failed: true });
+    clickButton('Kimi Computer Use');
+    await settle();
+
+    host.querySelector<HTMLButtonElement>('.plugin-details__status-badge')!.click();
+    await flushAsync();
+
+    expect(host.querySelector('.plugin-status')).toBeNull();
+    expect(fakes.toast).toHaveBeenCalledWith({
+      mode: 'replace',
+      variant: 'danger',
+      title: '无法打开权限设置',
+      message: '请确认已安装 KimiCU 后重试',
+      duration: 5_000,
+    }, undefined);
   });
 
   it('restores the CU permission badge without an error banner when the waiting window expires', async () => {
@@ -1955,6 +2025,7 @@ describe('PluginsPanel', () => {
       expect(host.querySelector('.plugin-details__status-waiting')).toBeNull();
       expect(host.querySelector('.plugin-details__status-badge')?.textContent).toContain('Permissions not enabled');
       expect(host.querySelector('.plugin-status__error')).toBeNull();
+      expect(fakes.toast).not.toHaveBeenCalled();
       expect(fakes.track).toHaveBeenCalledWith('cu_permission_result', {
         plugin_id: 'kimi-cu',
         accessibility_granted: true,
@@ -1996,7 +2067,10 @@ describe('PluginsPanel', () => {
       }));
       await mountPanel();
       let grantedByUser = false;
-      vi.mocked(plugins.requestCapabilityPermissions).mockImplementation(async () => rowData[0]!.capability!);
+      vi.mocked(plugins.requestCapabilityPermissions).mockImplementation(async () => ({
+        failed: false as const,
+        status: rowData[0]!.capability!,
+      }));
       vi.mocked(plugins.refreshCapability).mockImplementation(async () => {
         if (grantedByUser) {
           rowData[0]!.capability = {
@@ -2023,6 +2097,7 @@ describe('PluginsPanel', () => {
 
       expect(host.querySelector('.plugin-details__status-waiting')?.textContent).toContain('Waiting for permissions…');
       expect(host.querySelector('.plugin-status__error')).toBeNull();
+      expect(fakes.toast).not.toHaveBeenCalled();
 
       grantedByUser = true;
       await vi.advanceTimersByTimeAsync(2_000);
@@ -2031,6 +2106,7 @@ describe('PluginsPanel', () => {
       expect(host.querySelector('.plugin-details__status-waiting')).toBeNull();
       expect(host.querySelector('.plugin-details__status-badge')).toBeNull();
       expect(host.querySelector('.plugin-status__error')).toBeNull();
+      expect(fakes.toast).not.toHaveBeenCalled();
       expect(fakes.track).toHaveBeenCalledWith('cu_permission_result', {
         plugin_id: 'kimi-cu',
         accessibility_granted: true,
