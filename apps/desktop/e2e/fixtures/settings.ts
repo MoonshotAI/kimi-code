@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 import { textOf, withoutReminders, type ChatMessage } from './model';
 
@@ -143,29 +143,4 @@ export async function chooseOption(window: Page, combobox: Locator, option: stri
   await expect(listbox).toBeVisible();
   await listbox.getByRole('option', { name: option }).click();
   await expect(listbox).toBeHidden();
-}
-
-export function luminance(color: string): number {
-  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(color.trim());
-  const rgb = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(color);
-  const match = hex === null ? rgb : [hex[0], ...hex.slice(1).map(part => String(Number.parseInt(part, 16)))];
-  if (match === null) throw new Error(`Unexpected color ${color}`);
-  const [r, g, b] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-}
-
-export interface MenuItemState {
-  readonly label: string;
-  readonly accelerator: string | null;
-}
-
-export async function menuItem(electron: ElectronApplication, id: string): Promise<MenuItemState | null> {
-  return electron.evaluate(({ Menu }, itemId) => {
-    const item = Menu.getApplicationMenu()?.getMenuItemById(itemId);
-    return item == null ? null : { label: item.label, accelerator: typeof item.accelerator === 'string' ? item.accelerator : null };
-  }, id);
-}
-
-export async function nativeThemeSource(electron: ElectronApplication): Promise<string> {
-  return electron.evaluate(({ nativeTheme }) => nativeTheme.themeSource);
 }
