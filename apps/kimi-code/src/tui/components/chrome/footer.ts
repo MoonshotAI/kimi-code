@@ -194,6 +194,10 @@ export class FooterComponent implements Component {
   private gitCache: GitStatusCache | null = null;
   private gitCacheKey: string | null = null;
   private transientHint: string | null = null;
+  private transientHintSpinning = false;
+  private readonly transientSpinner = new SpinnerTicker(() => {
+    this.onRefresh();
+  });
   private warningHint: string | null = null;
   private expandHintProvider: (() => ToolOutputExpandHint | null) | null = null;
   private goalSnapshotKey: string | null = null;
@@ -255,8 +259,15 @@ export class FooterComponent implements Component {
     }
   }
 
-  setTransientHint(hint: string | null): void {
+  setTransientHint(hint: string | null, options?: { readonly spinning?: boolean }): void {
     this.transientHint = hint;
+    const spinning = hint !== null && hint.length > 0 && options?.spinning === true;
+    this.transientHintSpinning = spinning;
+    if (spinning) {
+      this.transientSpinner.start();
+    } else {
+      this.transientSpinner.stop();
+    }
   }
 
   getTransientHint(): string | null {
@@ -347,7 +358,10 @@ export class FooterComponent implements Component {
     );
     const contextWidth = visibleWidth(contextText);
     let line2: string;
-    const hint = this.transientHint ?? this.warningHint;
+    const hint =
+      this.transientHint !== null && this.transientHint.length > 0 && this.transientHintSpinning
+        ? `${this.transientSpinner.current} ${this.transientHint}`
+        : (this.transientHint ?? this.warningHint);
     if (hint) {
       const maxHintWidth = Math.max(0, width - contextWidth - 1);
       const shownHint =
@@ -561,6 +575,7 @@ export class FooterComponent implements Component {
       this.goalTimer = null;
     }
     this.environmentSpinner.dispose();
+    this.transientSpinner.dispose();
   }
 
   private goalWallClockMs(goal: AppState['goal']): number | undefined {

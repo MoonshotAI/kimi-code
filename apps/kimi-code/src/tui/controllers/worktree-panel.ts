@@ -73,6 +73,13 @@ export class WorktreePanelController {
 
   constructor(private readonly host: WorktreePanelHost) {}
 
+  get pendingDeleteLabel(): string | undefined {
+    const names = [...this.pendingDeletes.values()].map((pending) => pending.name);
+    if (names.length === 0) return undefined;
+    if (names.length === 1) return `Deleting worktree ${names[0]}…`;
+    return `Deleting ${String(names.length)} worktrees…`;
+  }
+
   async waitForPendingDeletes(): Promise<void> {
     if (this.deleteTasks.size === 0) return;
     await Promise.allSettled(this.deleteTasks);
