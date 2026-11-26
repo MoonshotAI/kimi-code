@@ -193,6 +193,15 @@ function comparePoints(aNode: Node, aOffset: number, bNode: Node, bOffset: numbe
   return 0;
 }
 
+const lineEols = computed<string[] | null>(() => {
+  if (typeof props.code !== 'string') return null;
+  const segments = props.code.split(/(\r\n|\n)/);
+  const eols: string[] = [];
+  for (let i = 1; i < segments.length; i += 2) eols.push(segments[i]!);
+  if (props.code !== '' && !props.code.endsWith('\n')) eols.push('');
+  return eols;
+});
+
 function onCopy(event: ClipboardEvent): void {
   const sel = window.getSelection();
   const root = rootRef.value;
@@ -219,7 +228,14 @@ function onCopy(event: ClipboardEvent): void {
   if (comparePoints(selected.endContainer, selected.endOffset, full.endContainer, full.endOffset) > 0) selected.setEnd(full.endContainer, full.endOffset);
 
   const parts: string[] = [];
+  const partEols: string[] = [];
+  const textEls = root.querySelectorAll('.hl-row .hl-text');
+  const eols = lineEols.value;
+  let startClamped = false;
+  let endClamped = false;
+  let rowIndex = -1;
   for (const row of root.querySelectorAll('.hl-row')) {
+    rowIndex++;
     const textEl = row.querySelector('.hl-text');
     if (!textEl) continue;
     if (comparePoints(selected.endContainer, selected.endOffset, textEl, 0) <= 0) {
@@ -229,9 +245,18 @@ function onCopy(event: ClipboardEvent): void {
     if (comparePoints(selected.startContainer, selected.startOffset, textEl, textEl.childNodes.length) > 0) continue;
     const rowRange = doc.createRange();
     rowRange.selectNodeContents(textEl);
-    if (comparePoints(selected.startContainer, selected.startOffset, rowRange.startContainer, rowRange.startOffset) > 0) rowRange.setStart(selected.startContainer, selected.startOffset);
-    if (comparePoints(selected.endContainer, selected.endOffset, rowRange.endContainer, rowRange.endOffset) < 0) rowRange.setEnd(selected.endContainer, selected.endOffset);
-    parts.push(rowRange.toString());
+    if (comparePoints(selected.startContainer, selected.startOffset, rowRange.startContainer, rowRange.startOffset) > 0) {
+      rowRange.setStart(selected.startContainer, selected.startOffset);
+      startClamped = true;
+    }
+    if (comparePoints(selected.endContainer, selected.endOffset, rowRange.endContainer, rowRange.endOffset) < 0) {
+      rowRange.setEnd(selected.endContainer, selected.endOffset);
+      endClamped = true;
+    }
+    const eol = eols?.[rowIndex] ?? '';
+    const text = eol === '\r\n' ? rowRange.toString().replace(/\r$/, '') : rowRange.toString();
+    parts.push(text);
+    partEols.push(eol);
   }
   if (parts.length === 0) return;
 
@@ -243,7 +268,17 @@ function onCopy(event: ClipboardEvent): void {
   const htmlHost = doc.createElement('div');
   htmlHost.appendChild(fragment);
 
-  clip.setData('text/plain', parts.join('\n'));
+  let plain = parts.join('\n');
+  if (eols !== null) {
+    const coversAll = parts.length === textEls.length && !startClamped && !endClamped;
+    plain = '';
+    for (let k = 0; k < parts.length; k++) {
+      plain += parts[k];
+      if (k < parts.length - 1 || coversAll) plain += partEols[k];
+    }
+  }
+
+  clip.setData('text/plain', plain);
   clip.setData('text/html', htmlHost.innerHTML);
   event.preventDefault();
 }

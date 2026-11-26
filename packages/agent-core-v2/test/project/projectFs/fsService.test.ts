@@ -2210,6 +2210,71 @@ describe('WorkspaceFsService.grep', () => {
     expect(streaming?.yieldedLines()).toBeLessThan(TOTAL);
   });
 
+  it.each([
+    {
+      method: 'grep',
+      deadlineMs: 30_000,
+      call: (fs: IProjectFsService) => fs.grep(WALK_GREP_REQUEST),
+    },
+    {
+      method: 'suggest',
+      deadlineMs: 10_000,
+      call: (fs: IProjectFsService) =>
+        fs.suggest({ query: 'foo', limit: 50, follow_gitignore: true, show_hidden: false }),
+    },
+  ])('kills rg when the $method deadline aborts it', async ({ deadlineMs, call }) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let killed = false;
+      let spawned = false;
+      const runner: IHostProcessService = {
+        _serviceBrand: undefined,
+        spawn: async (_command, args) => {
+          if (args?.[0] === '--version') return fakeProcess('ripgrep 15.0.0', '', 0);
+          spawned = true;
+          const stdout = new Readable({ read() {} });
+          let exit: (code: number) => void = () => {};
+          const exited = new Promise<number>((resolve) => {
+            exit = resolve;
+          });
+          return {
+            _serviceBrand: undefined,
+            stdin: new Writable({ write(_c, _e, cb) { cb(); } }),
+            stdout,
+            stderr: Readable.from(['']),
+            pid: 1,
+            exitCode: null,
+            wait: () => exited,
+            kill: async () => {
+              killed = true;
+              stdout.push(null);
+              exit(137);
+            },
+            dispose: () => undefined,
+          };
+        },
+      };
+      const fs = makeSession({ 'src/foo.ts': 'hello\n' }, emptyHandler, [], defaultGitStub(), [], runner);
+      Object.defineProperty(fs, 'rgResolution', { value: { path: 'rg' } });
+      const settled = call(fs).then(
+        () => undefined,
+        () => undefined,
+      );
+      await vi.waitFor(() => {
+        expect(spawned).toBe(true);
+      });
+
+      await vi.advanceTimersByTimeAsync(deadlineMs);
+
+      await vi.waitFor(() => {
+        expect(killed).toBe(true);
+      });
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('searches additional roots with rg and preserves unambiguous paths', async () => {
     const rgFile = (path: string, text: string): string => [
       { type: 'begin', data: { path: { text: path } } },

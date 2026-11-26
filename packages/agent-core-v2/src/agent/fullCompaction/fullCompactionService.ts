@@ -43,6 +43,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, fromErrorPayload, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
+import type { KimiErrorPayload } from "#/_base/errors/serialize";
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
@@ -450,9 +451,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     super.dispose();
   }
 
-  private cancelActive(active: ActiveCompaction): boolean {
+  private cancelActive(active: ActiveCompaction, error?: KimiErrorPayload): boolean {
     if (this._compacting !== active) return false;
-    void this.dispatcher.dispatch(new FullCompactionCancel({ agentId: this.agent.agentId }));
+    void this.dispatcher.dispatch(new FullCompactionCancel({ agentId: this.agent.agentId, error }));
     this._compacting = null;
     if (!active.abortController.signal.aborted) {
       active.abortController.abort();
@@ -626,15 +627,13 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         throw error;
       }
       const blockedByTurn = this._compacting === active && active.blockedByTurn;
-      if (this._compacting === active) {
-        this.cancelActive(active);
-      }
       if (blockedByTurn) {
+        this.cancelActive(active);
         throw error;
       }
-      void this.dispatcher.dispatch(
-        new AgentErrorEvent({ ...toKimiErrorPayload(error), agentId: this.agent.agentId }),
-      );
+      const payload = toKimiErrorPayload(error);
+      this.cancelActive(active, payload);
+      void this.dispatcher.dispatch(new AgentErrorEvent({ ...payload, agentId: this.agent.agentId }));
       throw error;
     } finally {
       try {
