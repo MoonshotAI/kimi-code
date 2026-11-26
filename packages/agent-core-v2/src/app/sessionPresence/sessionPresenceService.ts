@@ -109,13 +109,15 @@ export class SessionPresenceService extends Disposable implements ISessionPresen
       }
       return isUnder(canonical, roots);
     };
+    const excludedIds = new Set(options.excludeSessionIds);
+    if (options.excludeSessionId !== undefined) excludedIds.add(options.excludeSessionId);
     const openSessionIds: string[] = [];
     let closedSessionCount = 0;
     const { items } = await this.index.listRecent({ includeArchived: true });
     for (const summary of items) {
       if (summary.environmentId !== undefined && summary.environmentId !== LOCAL_ENVIRONMENT_ID) continue;
       if (summary.cwd === undefined || !(await under(summary.cwd))) continue;
-      const excluded = summary.id === options.excludeSessionId;
+      const excluded = excludedIds.has(summary.id);
       if (this.hasLiveMarker(summary, excluded)) openSessionIds.push(summary.id);
       else if (!excluded) closedSessionCount += 1;
     }

@@ -1430,6 +1430,22 @@ describe('WorktreeService', () => {
       open.dispose();
     });
 
+    it('leaves out every listed session when several are excluded', async () => {
+      const created = await create({ name: 'several' });
+      const wt = created.worktree.path;
+      const first = presence.markOpen(indexSession('first', wt));
+      const second = presence.markOpen(indexSession('second', join(wt, 'src')));
+      const third = presence.markOpen(indexSession('third', wt));
+      const inspect = { repoRoot: realRepo, path: wt, deleteBranch: false };
+
+      expect(
+        await service.inspectRemoval({ ...inspect, excludeSessionId: 'first', excludeSessionIds: ['second'] }),
+      ).toMatchObject({ openSessionIds: ['third'] });
+      await service.remove({ ...removal(wt), excludeSessionIds: ['first', 'second', 'third'] });
+      expect(existsSync(wt)).toBe(false);
+      for (const marker of [first, second, third]) marker.dispose();
+    });
+
     it('counts a session whose marker was left by a dead process as closed', async () => {
       const created = await create({ name: 'crashed' });
       const markers = join(indexSession('crashed', created.worktree.path), SESSION_PRESENCE_DIR);

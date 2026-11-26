@@ -19,6 +19,7 @@ import type { IHostProcess } from '#/os/interface/hostProcess';
 import {
   IWorktreeService,
   WORKTREE_FLAG_ID,
+  type CopyIncludedFilesInput,
   type CreateWorktreeInput,
   type CreateWorktreeOptions,
   type CreatedWorktree,
@@ -187,7 +188,7 @@ export class WorktreeService implements IWorktreeService {
       emit({ type: 'step', step: 'add', status: 'finished' });
 
       emit({ type: 'step', step: 'include', status: 'started' });
-      copiedFiles = await this.copyIncludes(plan, signal);
+      copiedFiles = await this.copyIncludedFiles({ sourceRoot: plan.sourceRoot, worktreePath: plan.path }, { signal });
       throwIfCancelled(signal);
       emit({ type: 'step', step: 'include', status: 'finished' });
     } catch (error) {
@@ -261,14 +262,14 @@ export class WorktreeService implements IWorktreeService {
   async inspectRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck> {
     const repo = await this.readRepository(input.repoRoot, input.repoRoot);
     const target = await this.findLinkedEntry(repo, input.path);
-    return this.measureRemoval(repo, target, input.deleteBranch, input.excludeSessionId);
+    return this.measureRemoval(repo, target, input);
   }
 
   async remove(input: RemoveWorktreeInput): Promise<void> {
     this.requireEnabled();
     const repo = await this.readRepository(input.repoRoot, input.repoRoot);
     const target = await this.findLinkedEntry(repo, input.path);
-    const check = await this.measureRemoval(repo, target, input.deleteBranch, input.excludeSessionId);
+    const check = await this.measureRemoval(repo, target, input);
     if (check.openSessionIds.length > 0) {
       throw new Error2(
         ErrorCodes.WORKTREE_IN_USE,
@@ -430,27 +431,32 @@ export class WorktreeService implements IWorktreeService {
     if (added.exitCode !== 0) throw gitFailed(`git worktree add failed for ${plan.path}.`, added);
   }
 
-  private async copyIncludes(plan: CreationPlan, signal: AbortSignal | undefined): Promise<readonly string[]> {
-    const includeFile = join(plan.sourceRoot, INCLUDE_FILE);
+  async copyIncludedFiles(
+    input: CopyIncludedFilesInput,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<readonly string[]> {
+    this.requireEnabled();
+    const { signal } = options;
+    const includeFile = join(input.sourceRoot, INCLUDE_FILE);
     if (!(await this.isFile(includeFile))) return [];
-    const options = { signal, untimed: true };
+    const gitOptions = { signal, untimed: true };
     const matched = await this.git(
       ['ls-files', '-z', '--others', '--ignored', `--exclude-from=${includeFile}`],
-      plan.sourceRoot,
-      options,
+      input.sourceRoot,
+      gitOptions,
     );
     if (matched.exitCode !== 0) throw includeFailed(matched.stderr);
     const candidates = splitNul(matched.stdout);
     if (candidates.length === 0) return [];
-    const ignored = await this.git(['check-ignore', '-z', '--stdin'], plan.sourceRoot, {
-      ...options,
+    const ignored = await this.git(['check-ignore', '-z', '--stdin'], input.sourceRoot, {
+      ...gitOptions,
       stdin: `${candidates.join('\0')}\0`,
     });
     if (ignored.exitCode !== 0 && ignored.exitCode !== 1) throw includeFailed(ignored.stderr);
     try {
       return await copyIncludedFiles({
-        sourceRoot: plan.sourceRoot,
-        worktreeRoot: plan.path,
+        sourceRoot: input.sourceRoot,
+        worktreeRoot: input.worktreePath,
         files: splitNul(ignored.stdout),
         signal,
       });
@@ -604,8 +610,7 @@ export class WorktreeService implements IWorktreeService {
   private async measureRemoval(
     repo: Repository,
     target: LinkedEntry,
-    deleteBranch: boolean,
-    excludeSessionId?: string,
+    input: InspectWorktreeRemovalInput,
   ): Promise<WorktreeRemovalCheck> {
     const { worktree } = target;
     let uncommittedFiles = 0;
@@ -620,8 +625,11 @@ export class WorktreeService implements IWorktreeService {
       hasSubmodules = indexInfo.hasSubmodules;
     }
     const [sessions, uniqueCommits] = await Promise.all([
-      this.presence.sessionsUnder(worktree.path, { excludeSessionId }),
-      this.countUniqueCommits(repo, target, deleteBranch),
+      this.presence.sessionsUnder(worktree.path, {
+        excludeSessionId: input.excludeSessionId,
+        excludeSessionIds: input.excludeSessionIds,
+      }),
+      this.countUniqueCommits(repo, target, input.deleteBranch),
     ]);
     return {
       path: worktree.path,
