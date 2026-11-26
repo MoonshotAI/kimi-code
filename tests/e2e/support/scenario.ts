@@ -338,8 +338,8 @@ class ScenarioSession {
       base.step(title, async () => {
         const before = server.requests.length;
         change();
-        await until(`the product to list the tools of MCP server ${JSON.stringify(name)} again`, () =>
-          server.requests.slice(before).some((request) => request.rpcMethods.includes('tools/list')),
+        await until(`MCP server ${JSON.stringify(name)} to answer the product's next tools/list`, () =>
+          server.answered.some((request) => server.requests.indexOf(request) >= before && request.rpcMethods.includes('tools/list')),
         );
       });
     return {

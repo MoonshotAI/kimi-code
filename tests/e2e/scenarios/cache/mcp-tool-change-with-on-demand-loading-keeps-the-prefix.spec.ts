@@ -28,7 +28,9 @@ scenario(
     expect(requests[0]?.tools).toContain('select_tools');
     expect(requests.map((request) => request.tools)).toEqual(requests.map(() => requests[0]?.tools));
     expect(requests[0]?.texts('user').join('\n')).toContain('mcp__docs__search');
-    expect(requests[1]?.remindersSinceReply.join('\n')).toContain('mcp__docs__lookup');
+    const announced = requests.map((request) => request.remindersSinceReply.join('\n').includes('mcp__docs__lookup'));
+    expect(announced[0]).toBe(false);
+    expect(announced.slice(1).filter(Boolean)).toHaveLength(1);
     const main = model.promptCache().filter((entry) => entry.role === 'main');
     expect(main.map((entry) => entry.baseline)).toEqual([undefined, main[0]?.request, main[1]?.request]);
     expect(main.every((entry) => entry.break === undefined)).toBe(true);
