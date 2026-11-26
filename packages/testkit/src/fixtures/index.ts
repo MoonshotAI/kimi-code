@@ -44,6 +44,8 @@ export {
   type FakeMcpText,
   type FakeMcpTool,
   type McpCall,
+  type McpConfigEntry,
+  type McpRemoteServerEntry,
   type McpServerEntry,
 } from '#/fixtures/mcp';
 export {

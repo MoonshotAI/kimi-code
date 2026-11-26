@@ -8,6 +8,7 @@
 
 ```text
 scenarios/<业务>/<行为>.spec.ts   场景，各个面共用
+scenarios/cache/                   prompt 缓存专题的场景，和登记它们的 catalog.yaml
 self-test/<动作>.spec.ts          驱动自测：每个动作的正例和反例
 surfaces/                          各个面的驱动
 support/                           scenario()、selfTest()、VERBS、收尾检查、步骤标题、CI 运行页摘要
@@ -30,7 +31,7 @@ playwright.config.ts               一个面一个 project，另有两个跑法�
 
 ## 写场景
 
-场景文件长这样，`scenario(标题, 选项, 本体)` 的本体只拿得到 `product`、`model`、`workspace`：
+场景文件长这样，`scenario(标题, 选项, 本体)` 的本体只拿得到 `product`、`model`、`workspace` 和 `mcp`：
 
 ```ts
 scenario('reads one file and edits another after approval', { workspace: { 'a.txt': 'hello\n' } }, async ({ product, model, workspace }) => {
@@ -57,6 +58,10 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | 某个动作在某个平台上暂时查不了（动作表里的 `unavailableOn`，例如 Windows 上的 `expectTerminalRestored`），用到它的场景写 `exceptPlatforms: { win32: '理由' }`，这个平台上整条场景显示为不适用。没写就跑到这个动作时报错。自测按动作表自动带上。`unavailableOn` 只用于驱动还做不到的检查，不能用来绕开产品在某个平台上的 bug | 场景会话的分发；`scenario()` 登记时检查理由不为空；在其他平台上跑时，收尾检查要求场景确实用到了一个在被排除平台上不可用的动作 |
 | 常规场景预先信任工作区。首次打开工作区的 TUI 场景可设 `workspaceTrust: 'trust'` 或 `workspaceTrust: 'exit'`。驱动通过终端选择信任并继续，或按 Esc 返回 shell。重启沿用同一个 home，由产品读取已记录的信任状态 | 信任场景检查模型收到的项目指令和重启后的会话。退出场景检查终端模式和模型请求 |
 | 场景结束时产品必须空闲，产品要能正常退出，除了假模型和本机不能连别的地址 | 收尾检查 |
+| 假模型的缓存账本默认开着：主请求和压缩请求都要延续上一个主请求，有意的断点用 `model.expectCacheBreak(原因, { at })` 声明。主请求用到的缓存键个数不能超过「1 + `newSession()` 的次数」：同一个会话的请求必须一直用同一个键，重启之后也一样，否则供应商那边的缓存用不上 | `model.verify()` 和收尾检查 |
+| 选项 `provider` 设假模型服务的类型、模型能力和窗口大小（`type`、`capabilities`、`maxContextSize`），`config` 合并进测试 home 的 `config.toml`（例如 `loopControl`、第二个模型）。只写用户自己也能写进配置文件的内容 | 评审 |
+| 选项 `mcp` 声明用户配置的 MCP 服务：每个服务是本机的一个 testkit HTTP 假服务，写进测试 home 的 `mcp.json`，`deferred` 照写。本体里 `mcp(名字)` 拿到它，`addTool`、`updateTool`、`removeTool` 相当于 MCP 服务自己改了工具：改完通知产品，等到这个服务答复了产品重新要的工具清单才返回。产品收到答复之后是异步更新的，没有承诺紧接着的下一次请求就反映这次变化，所以场景只断言「变化之前的请求里没有、之后的请求里恰好有一次」，不断言是哪一次。没声明的名字直接报错 | `mcp()` 的运行时检查 |
+| `scenarios/cache/` 下的场景各自对应 `scenarios/cache/catalog.yaml` 里的一项：清单列出会改变产品发给模型服务的请求的用户操作，写明承诺保持前缀还是有意断开、哪些测试覆盖它，没覆盖的写明缺什么。缓存场景先证明操作生效了（用户看得见的效果，或者模型收到的内容），再断言前后的主请求在账本里的延续关系。别的场景只有在这个操作前后都发了主请求时，才能记成 `implicit` 覆盖，否则账本什么也没比较 | `scripts/checks/e2e-cache-catalog.mjs`：每项都有测试或写明的缺口，每个缓存场景都登记了，承诺保持的场景不声明断点，承诺断开的场景用清单里的原因声明 |
 | 改场景断言就是改产品行为，PR 里要写明为什么改 | CODEOWNERS 评审 |
 | 提示词用一行文字，可以是中文，不含控制字符，不以 `/`、`!`、`@` 开头，不以反斜杠结尾 | `send()`、`queue()`、`steer()` 的运行时检查 |
 | 回合进行中再发消息用 `queue(文字)`（排到回合结束后，按顺序作为新回合发出）或 `steer(文字)`（插进正在跑的回合）。两者都要求回合正在跑，剧本里先用 `held` 或门控把回合挂住再调用。ACP 上没有这两个动作，场景用 `except: { acp: '理由' }` 排除它。插话时模型正在输出，这次请求会被中止、立刻带着插话重发；命令正在跑时不中止，插话排在工具结果之后随下一次请求送出。被中止的思考不进上下文，被中止的正文会留下，所以插话之后的请求断言写 `userTextsSinceReply.at(-1)` | 类型（`product` 按场景跑的面收窄）；评审 |
@@ -147,7 +152,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 
 - **先分清是产品坏了还是驱动坏了。** 自测也红，多半是驱动或产品的界面变了；只有场景红，先看场景断言的那条产品行为。
 - **不许靠重试、加等待、跳过让它变绿。** flaky 用例照根 `AGENTS.md` 的规则处理：先找根因。实在找不到根因可以删，PR 里写明删掉的用例原来覆盖什么、现在由谁覆盖。
-- **看失败附件。** 先看报告里这个用例的步骤：红在哪一步，最后一帧「失败时的画面」是什么样。每个失败的用例还附上假模型的请求摘要、网络守卫的记录和产品日志；TUI 另有完整的屏幕内容、最近的输入和退出码；ACP 另有按顺序记下的 JSON-RPC 消息（最近 4000 条）、不是 JSON-RPC 的 stdout 行和 stderr 末尾；Desktop 和 Web 另有 Playwright trace（用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <trace.zip>` 打开）、页面内容的末尾、应用或服务端的输出和页面里的未捕获错误。产品没能启动（包括 `restart()` 之后没能重新启动）时，驱动在关掉进程之前收集同样的诊断，附件名前加上第几次启动，例如 `launch-1-desktop-trace`、`launch-2-tui-screen`；Web 在打开页面之前就失败时，附上 `kimi web` 终端里的内容（`launch-1-web-server`）。隔离目录在失败时保留，路径记在用例的 `test home` 标注里。
+- **看失败附件。** 先看报告里这个用例的步骤：红在哪一步，最后一帧「失败时的画面」是什么样。每个失败的用例还附上假模型的请求摘要、缓存账本（附件 `prompt-cache`：每个请求的通道、缓存键、基线、断点和复用量，以及账本报出的问题）、网络守卫的记录和产品日志；TUI 另有完整的屏幕内容、最近的输入和退出码；ACP 另有按顺序记下的 JSON-RPC 消息（最近 4000 条）、不是 JSON-RPC 的 stdout 行和 stderr 末尾；Desktop 和 Web 另有 Playwright trace（用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <trace.zip>` 打开）、页面内容的末尾、应用或服务端的输出和页面里的未捕获错误。产品没能启动（包括 `restart()` 之后没能重新启动）时，驱动在关掉进程之前收集同样的诊断，附件名前加上第几次启动，例如 `launch-1-desktop-trace`、`launch-2-tui-screen`；Web 在打开页面之前就失败时，附上 `kimi web` 终端里的内容（`launch-1-web-server`）。隔离目录在失败时保留，路径记在用例的 `test home` 标注里。
 
 ## 不在这里做的事
 

@@ -725,6 +725,10 @@ describe('fake MCP server', () => {
       const path = await writeMcpConfig(join(home.dataDir, 'mcp.json'), { docs: entry });
       expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ mcpServers: { docs: { command: process.execPath, args: [...entry.args] } } });
       expect(await readMcpCalls(join(home.root, 'never-written.jsonl'))).toEqual([]);
+      await writeMcpConfig(path, { docs: entry, wiki: { transport: 'http', url: 'http://127.0.0.1:9/mcp', deferred: true } });
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+        mcpServers: { docs: { command: process.execPath, args: [...entry.args] }, wiki: { transport: 'http', url: 'http://127.0.0.1:9/mcp', deferred: true } },
+      });
     } finally {
       await home.remove();
     }
@@ -816,7 +820,10 @@ describe('fake MCP server', () => {
 
       server.addTool({ name: 'added', description: 'Initial description' });
       await until('both clients hear about the added tool', () => announced.every((count) => count === 1));
+      const listed = server.answered.filter((request) => request.rpcMethods.includes('tools/list')).length;
       expect((await clients[0]!.listTools()).tools.map((tool) => tool.name)).toEqual(['echo', 'added']);
+      expect(server.answered.filter((request) => request.rpcMethods.includes('tools/list'))).toHaveLength(listed + 1);
+      expect(server.answered.every((request) => server.requests.includes(request))).toBe(true);
       server.updateTool('added', { description: 'Updated description' });
       await until('both clients hear about the updated tool', () => announced.every((count) => count === 2));
       expect((await clients[0]!.listTools()).tools.find((tool) => tool.name === 'added')?.description).toBe('Updated description');
