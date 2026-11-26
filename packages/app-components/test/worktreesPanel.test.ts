@@ -72,6 +72,14 @@ function row(name: string): HTMLElement {
   return host.querySelector<HTMLElement>(`.manage-row[data-path="/wt/${name}"]`)!;
 }
 
+function failedRemoval(name: string, reason: 'in_use' | 'unknown', output: string): WorktreeRemovalItem {
+  return { path: `/wt/${name}`, name, deleteBranch: false, state: 'failed', reason, output };
+}
+
+function deletingRemoval(name: string): WorktreeRemovalItem {
+  return { path: `/wt/${name}`, name, deleteBranch: false, state: 'deleting' };
+}
+
 function text(el: Element | null | undefined): string {
   if (el === null || el === undefined) return '';
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
@@ -171,10 +179,7 @@ describe('Worktrees settings page', () => {
   it('renders each kind of row', () => {
     mount({
       items: [...fixture(), worktree('hello')],
-      removals: [
-        { path: '/wt/hello', name: 'hello', deleteBranch: false, state: 'failed', reason: 'in_use', output: 'busy' },
-        { path: '/wt/badge', name: 'badge', deleteBranch: false, state: 'deleting' },
-      ],
+      removals: [failedRemoval('hello', 'in_use', 'busy'), deletingRemoval('badge')],
       deleted: { '/wt/hello': 'Hello' },
     });
 
@@ -259,8 +264,8 @@ describe('Worktrees settings page', () => {
   it('shows the failure reason with expandable raw output', async () => {
     mount({
       removals: [
-        { path: '/wt/demo', name: 'demo', deleteBranch: false, state: 'failed', reason: 'in_use', output: 'Directory not empty' },
-        { path: '/wt/retry', name: 'retry', deleteBranch: false, state: 'failed', reason: 'unknown', output: 'fatal: boom' },
+        failedRemoval('demo', 'in_use', 'Directory not empty'),
+        failedRemoval('retry', 'unknown', 'fatal: boom'),
       ],
     });
 
@@ -282,11 +287,7 @@ describe('Worktrees settings page', () => {
 
   it('clears the failures the user has seen when the page closes', () => {
     const { store } = mount({
-      removals: [
-        { path: '/wt/demo', name: 'demo', deleteBranch: false, state: 'failed', reason: 'in_use', output: 'busy' },
-        { path: '/wt/gone', name: 'gone', deleteBranch: false, state: 'failed', reason: 'in_use', output: 'busy' },
-        { path: '/wt/login', name: 'login', deleteBranch: false, state: 'deleting' },
-      ],
+      removals: [failedRemoval('demo', 'in_use', 'busy'), failedRemoval('gone', 'in_use', 'busy'), deletingRemoval('login')],
     });
 
     app?.unmount();

@@ -19,13 +19,17 @@ const t = createKimiI18n({ locale: 'en' }).global.t as unknown as CreateTranslat
 let app: App | null = null;
 let host: HTMLDivElement;
 
-function mount(component: Component, props: Record<string, unknown> | (() => Record<string, unknown>)): HTMLDivElement {
+async function mount(component: Component, props: Record<string, unknown> | (() => Record<string, unknown>)): Promise<void> {
   const read = typeof props === 'function' ? props : () => props;
   app = createApp({ render: () => h(component, read()) });
   app.use(createKimiI18n({ locale: 'en' }));
   app.provide(IconResolverKey, (name: string) => ({ render: () => h('svg', { 'data-icon': name }) }));
   app.mount(host);
-  return host;
+  await nextTick();
+}
+
+function pressEnter(): void {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
 }
 
 function step(kind: AppWorktreeSetupStep['kind'], state: AppWorktreeSetupStep['state'], extra: Partial<AppWorktreeSetupStep> = {}): AppWorktreeSetupStep {
@@ -64,8 +68,7 @@ describe('CreateProgressBlock', () => {
         step('changes', 'pending', { command: 'git cherry-pick --no-commit abc' }),
       ],
     });
-    mount(CreateProgressBlock, { worktree, sessionId: 's1' });
-    await nextTick();
+    await mount(CreateProgressBlock, { worktree, sessionId: 's1' });
 
     expect(text('.wcb-title')).toBe('Creating Worktree');
     expect(text('.wcb-meta')).toBe('2 commands ran');
@@ -83,8 +86,7 @@ describe('CreateProgressBlock', () => {
       { path: '/w', includedLocalChanges: true },
       { commandsRan: 2, steps: [step('create', 'done', { ref: 'main', command: 'git worktree add /w main' }), step('changes', 'done')] },
     );
-    mount(CreateProgressBlock, { worktree, sessionId: 's1' });
-    await nextTick();
+    await mount(CreateProgressBlock, { worktree, sessionId: 's1' });
 
     expect(text('.wcb-title')).toBe('Worktree created');
     expect(text('.wcb-meta')).toBe('2 commands ran');
@@ -103,8 +105,7 @@ describe('CreateProgressBlock', () => {
     const state = reactive<{ worktree: AppSessionWorktree }>({
       worktree: sessionWorktree('running', {}, { steps: [step('fetch', 'running', { ref: 'origin/main', command: 'git fetch' })] }),
     });
-    mount(CreateProgressBlock, () => ({ worktree: state.worktree, sessionId: 's1' }));
-    await nextTick();
+    await mount(CreateProgressBlock, () => ({ worktree: state.worktree, sessionId: 's1' }));
     host.querySelector<HTMLButtonElement>('.wcb-head')!.click();
     await nextTick();
     expect(stepRows()).toHaveLength(0);
@@ -128,8 +129,7 @@ describe('CreateProgressBlock', () => {
     const state = reactive<{ worktree: AppSessionWorktree }>({
       worktree: sessionWorktree('ready', { path: '/w' }, { commandsRan: 1, steps: [step('create', 'done', { ref: 'main' })] }),
     });
-    mount(CreateProgressBlock, () => ({ worktree: state.worktree, sessionId: 's1' }));
-    await nextTick();
+    await mount(CreateProgressBlock, () => ({ worktree: state.worktree, sessionId: 's1' }));
 
     state.worktree = sessionWorktree(
       'running',
@@ -148,8 +148,7 @@ describe('CreateDecisionCard', () => {
   it('renders the problem, the body and the buttons with the primary one last', async () => {
     const onAction = vi.fn();
     const view = createDecisionCardView(sessionWorktree('failed', {}, { failure: { kind: 'disk_full' } }), t)!;
-    mount(CreateDecisionCard, { view, onAction });
-    await nextTick();
+    await mount(CreateDecisionCard, { view, onAction });
 
     expect(text('.akind')).toBe('Worktree creation failed');
     expect(text('.wcc-text')).toContain('Insufficient disk space');
@@ -168,8 +167,7 @@ describe('CreateDecisionCard', () => {
       sessionWorktree('failed', {}, { failure: { kind: 'conflict', remoteRef: 'origin/main', conflictFiles: ['src/a.ts', 'src/b.ts'] } }),
       t,
     )!;
-    mount(CreateDecisionCard, { view: conflict });
-    await nextTick();
+    await mount(CreateDecisionCard, { view: conflict });
     expect([...host.querySelectorAll('.wcc-file')].map((item) => item.textContent)).toEqual(['src/a.ts', 'src/b.ts']);
   });
 
@@ -177,24 +175,23 @@ describe('CreateDecisionCard', () => {
     const onAction = vi.fn();
     const view = createDecisionCardView(sessionWorktree('failed', {}, { failure: { kind: 'fetch_failed' } }), t)!;
     const state = reactive<{ busy: string | null }>({ busy: null });
-    mount(CreateDecisionCard, () => ({ view, busyAction: state.busy, onAction }));
-    await nextTick();
+    await mount(CreateDecisionCard, () => ({ view, busyAction: state.busy, onAction }));
 
     const input = document.createElement('textarea');
     document.body.append(input);
     input.focus();
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    pressEnter();
     expect(onAction).not.toHaveBeenCalled();
     input.remove();
 
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    pressEnter();
     expect(onAction).toHaveBeenCalledWith('retry');
 
     state.busy = 'retry';
     await nextTick();
     onAction.mockClear();
     expect([...host.querySelectorAll<HTMLButtonElement>('.abtns button')].every((item) => item.disabled)).toBe(true);
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    pressEnter();
     expect(onAction).not.toHaveBeenCalled();
   });
 });
@@ -203,8 +200,7 @@ describe('CreateDecisionCard for a missing worktree', () => {
   it('offers recreate and local mode for a missing worktree', async () => {
     const onAction = vi.fn();
     const view = createInvalidCardView(sessionWorktree('ready', { path: '/w', branch: 'kimi/1', missing: true }), t)!;
-    mount(CreateDecisionCard, { view, onAction });
-    await nextTick();
+    await mount(CreateDecisionCard, { view, onAction });
 
     expect(text('.wcc-text')).toBe(view.body);
     expect(button('Recreate Worktree').classList.contains('ui-button--primary')).toBe(true);
@@ -223,8 +219,7 @@ describe('CreateDecisionCard for a missing worktree', () => {
       ),
       t,
     )!;
-    mount(CreateDecisionCard, { view, onAction });
-    await nextTick();
+    await mount(CreateDecisionCard, { view, onAction });
 
     expect(text('.wcc-command')).toBe('git worktree add /w kimi/1');
     expect(host.querySelectorAll('.abtns button')).toHaveLength(1);
@@ -247,8 +242,7 @@ describe('CreateDecisionCard for a missing worktree', () => {
       ),
       t,
     )!;
-    mount(CreateDecisionCard, { view, onAction });
-    await nextTick();
+    await mount(CreateDecisionCard, { view, onAction });
 
     expect(text('.akind')).toBe('Worktree recreation failed');
     expect(host.querySelector('.wcc-output')).toBeNull();

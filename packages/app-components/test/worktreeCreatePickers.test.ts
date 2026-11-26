@@ -108,18 +108,22 @@ afterEach(() => {
 });
 
 describe('CreateEnvironmentPicker', () => {
+  async function mountOpen(): Promise<void> {
+    mount(CreateEnvironmentPicker, { workspaceId: 'ws1' });
+    await nextTick();
+    q('.wce-chip')!.click();
+    await settle();
+  }
+
+  const worktreeRow = () => q('.wce-row[data-option="worktree"]')!;
+
   it('starts on Local and enables Worktree once the project is known to be a Git repository', async () => {
     const branches = Promise.withResolvers<WorkspaceGitBranches>();
     api.getWorkspaceGitBranches.mockReturnValueOnce(branches.promise);
-    mount(CreateEnvironmentPicker, { workspaceId: 'ws1' });
-    await nextTick();
+    await mountOpen();
 
     expect(q('.wce')?.dataset.environment).toBe('local');
     expect(q('.wce-chip-name')?.textContent).toBe('Local');
-
-    q('.wce-chip')!.click();
-    await nextTick();
-    const worktreeRow = () => q('.wce-row[data-option="worktree"]')!;
     expect(q('.wce-row[data-option="local"] .wce-row-desc')?.textContent).toBe('Work directly in the project directory');
     expect(worktreeRow().getAttribute('aria-disabled')).toBe('true');
     expect(worktreeRow().querySelector('.ui-spinner')).not.toBeNull();
@@ -144,13 +148,10 @@ describe('CreateEnvironmentPicker', () => {
     setBranches('ws1', plain);
     api.getWorkspaceGitBranches.mockResolvedValue(plain);
     useNewSessionEnvironment().selectEnvironment('worktree');
-    mount(CreateEnvironmentPicker, { workspaceId: 'ws1' });
-    await nextTick();
+    await mountOpen();
 
     expect(q('.wce-chip-name')?.textContent).toBe('Local');
-    q('.wce-chip')!.click();
-    await settle();
-    const row = q('.wce-row[data-option="worktree"]')!;
+    const row = worktreeRow();
     expect(row.classList.contains('disabled')).toBe(true);
     expect(row.querySelector('.ui-spinner')).toBeNull();
     expect(row.querySelector('.wce-row-desc')?.textContent).toBe('The current project is not a Git repository.');
@@ -161,31 +162,24 @@ describe('CreateEnvironmentPicker', () => {
     setBranches('ws1', { isRepo: false, dirty: false, remotes: [], branches: [] });
     const branches = Promise.withResolvers<WorkspaceGitBranches>();
     api.getWorkspaceGitBranches.mockReturnValueOnce(branches.promise);
-    mount(CreateEnvironmentPicker, { workspaceId: 'ws1' });
-    await nextTick();
-    q('.wce-chip')!.click();
-    await nextTick();
-    const row = () => q('.wce-row[data-option="worktree"]')!;
-    expect(row().querySelector('.ui-spinner')).not.toBeNull();
+    await mountOpen();
+    expect(worktreeRow().querySelector('.ui-spinner')).not.toBeNull();
 
     branches.resolve(repo);
     await settle();
-    expect(row().getAttribute('aria-disabled')).toBe('false');
-    expect(row().querySelector('.ui-spinner')).toBeNull();
+    expect(worktreeRow().getAttribute('aria-disabled')).toBe('false');
+    expect(worktreeRow().querySelector('.ui-spinner')).toBeNull();
   });
 
   it('supports arrow keys, Enter and Esc', async () => {
     setBranches('ws1', repo);
-    mount(CreateEnvironmentPicker, { workspaceId: 'ws1' });
-    await nextTick();
-    q('.wce-chip')!.click();
-    await settle();
+    await mountOpen();
 
     const panel = q('.wce-panel')!;
     expect(document.activeElement).toBe(panel);
     pressKey(panel, 'ArrowDown');
     await nextTick();
-    expect(q('.wce-row[data-option="worktree"]')?.classList.contains('active')).toBe(true);
+    expect(worktreeRow().classList.contains('active')).toBe(true);
     pressKey(panel, 'Enter');
     await settle();
     expect(useNewSessionEnvironment().preferred).toBe('worktree');
@@ -204,11 +198,8 @@ describe('CreateEnvironmentPicker', () => {
     const openSettings = vi.fn();
     registerWorktreeSettingsOpener(openSettings);
     setBranches('ws1', repo);
-    mount(CreateEnvironmentPicker, { workspaceId: 'ws1' });
-    await nextTick();
-    q('.wce-chip')!.click();
-    await nextTick();
-    q('.wce-row[data-option="worktree"]')!.click();
+    await mountOpen();
+    worktreeRow().click();
     await vi.waitFor(() => expect(toasts).toHaveLength(1));
 
     expect(toasts[0]).toMatchObject({ layout: 'bar', title: 'Worktrees are using 5.3 GB ·', duration: 8000 });
@@ -316,15 +307,16 @@ describe('CreateSourceBranchPicker', () => {
 
   it('filters while typing and reports no matches', async () => {
     await mountOpen();
-    const input = q<HTMLInputElement>('.wsb-search input')!;
-    input.value = 'LOGIN';
-    input.dispatchEvent(new Event('input'));
-    await settle();
+    const search = async (text: string) => {
+      const input = q<HTMLInputElement>('.wsb-search input')!;
+      input.value = text;
+      input.dispatchEvent(new Event('input'));
+      await settle();
+    };
+    await search('LOGIN');
     expect(all('.wsb-row').map((el) => el.dataset.row)).toEqual(['feature/login']);
 
-    input.value = 'nothing-here';
-    input.dispatchEvent(new Event('input'));
-    await settle();
+    await search('nothing-here');
     expect(all('.wsb-row')).toHaveLength(0);
     expect(q('.wsb-empty')?.textContent).toBe('No matching branches');
   });
