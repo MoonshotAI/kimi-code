@@ -13,6 +13,8 @@ import { FileManager } from "./managers/file.manager";
 import { KimiRuntime } from "./runtime/kimi-runtime";
 import type { SessionRuntime } from "./runtime/session-runtime";
 import { areSameFsPath } from "./utils/fs-path";
+import { updateLoginContext } from "./utils/context";
+import { resolveExtensionRegion } from "./utils/region";
 import {
   isWorkspacePathContained,
   isWorkspacePathContainedSync,
@@ -45,6 +47,10 @@ export class BridgeHandler {
           this.captureFileBaseline(session, filePath, webviewIds);
         },
         log: (message, error) => this.logRuntimeError(message, error),
+        onAuthChanged: async () => {
+          await updateLoginContext(this.runtime.harness);
+          resolveExtensionRegion({ homeDir: this.runtime.harness.homeDir, refresh: true });
+        },
       });
     } catch (error) {
       throw new Error(

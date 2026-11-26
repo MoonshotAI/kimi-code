@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type * as vscode from "vscode";
 
-import { Methods } from "../shared/bridge";
+import { BUSINESS_MEMBERSHIP_REVOKED_MESSAGE as OAUTH_REVOKED_MESSAGE } from "@moonshot-ai/kimi-code-oauth";
+import { Events, Methods } from "../shared/bridge";
+import { BUSINESS_MEMBERSHIP_REVOKED_MESSAGE } from "../shared/errors";
 import { BridgeHandler } from "../src/bridge-handler";
 
 const host = vi.hoisted(() => {
@@ -25,8 +27,18 @@ const host = vi.hoisted(() => {
     resumeSession: vi.fn(),
     forkSession: vi.fn(),
     deleteSession: vi.fn(async () => undefined),
+    auth: {
+      status: vi.fn(async () => ({
+        providers: [{ providerName: "managed:kimi-code", hasToken: true }],
+      })),
+      logout: vi.fn(async () => ({ providerName: "managed:kimi-code", ok: true })),
+      getAccountProfile: vi.fn(),
+      switchWorkspace: vi.fn(),
+    },
   };
   const showWarningMessage = vi.fn(async () => undefined as string | undefined);
+  const executeCommand = vi.fn(async () => undefined);
+  const track = vi.fn();
 
   class Uri {
     readonly scheme = "file";
@@ -52,12 +64,16 @@ const host = vi.hoisted(() => {
     harness,
     createKimiHarness: vi.fn(() => harness),
     showWarningMessage,
+    executeCommand,
+    track,
     workspaceFolders: [] as Array<{ uri: Uri }>,
   };
 });
 
 vi.mock("vscode", () => ({
   Uri: host.Uri,
+  env: { remoteName: undefined },
+  commands: { executeCommand: host.executeCommand },
   workspace: {
     get workspaceFolders() {
       return host.workspaceFolders;
@@ -69,6 +85,14 @@ vi.mock("vscode", () => ({
   window: { showWarningMessage: host.showWarningMessage },
 }));
 
+vi.mock("@moonshot-ai/kimi-telemetry", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@moonshot-ai/kimi-telemetry")>();
+  return {
+    ...original,
+    track: host.track,
+  };
+});
+
 vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {
   const original = await importOriginal<typeof import("@moonshot-ai/kimi-code-sdk")>();
   return {
@@ -79,6 +103,7 @@ vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {
 
 let bridge: BridgeHandler;
 let root: string;
+let broadcast: Mock<(event: string, data: unknown, webviewId?: string) => void>;
 let showLogs: Mock<() => void>;
 let writeLog: Mock<(message: string) => void>;
 let workspaceState: { get: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
@@ -86,17 +111,27 @@ let workspaceState: { get: ReturnType<typeof vi.fn>; update: ReturnType<typeof v
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "kimi-vscode-bridge-"));
   host.workspaceFolders.splice(0, host.workspaceFolders.length, { uri: new host.Uri(root) });
+  broadcast = vi.fn();
   showLogs = vi.fn();
   writeLog = vi.fn();
   host.harness.resumeSession.mockReset();
   host.harness.getConfig.mockReset();
   host.harness.getConfig.mockResolvedValue({ models: {} });
+  host.harness.auth.status.mockReset();
+  host.harness.auth.status.mockResolvedValue({
+    providers: [{ providerName: "managed:kimi-code", hasToken: true }],
+  });
+  host.harness.auth.logout.mockReset();
+  host.harness.auth.logout.mockResolvedValue({ providerName: "managed:kimi-code", ok: true });
+  host.harness.auth.getAccountProfile.mockReset();
+  host.harness.auth.switchWorkspace.mockReset();
+  host.track.mockReset();
   host.createKimiHarness.mockImplementation(() => host.harness);
   host.showWarningMessage.mockReset();
   host.showWarningMessage.mockResolvedValue(undefined);
   workspaceState = { get: vi.fn((_key, fallback) => fallback), update: vi.fn() };
   bridge = new BridgeHandler(
-    vi.fn(),
+    broadcast,
     workspaceState as unknown as vscode.Memento,
     join(root, "global-storage"),
     vi.fn(),
@@ -658,6 +693,424 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
     );
 
     expect(host.harness.setConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe("Enterprise workspace RPC and membership revocation", () => {
+  it("keeps shared BUSINESS_MEMBERSHIP_REVOKED_MESSAGE identical to @moonshot-ai/kimi-code-oauth", () => {
+    expect(BUSINESS_MEMBERSHIP_REVOKED_MESSAGE).toBe(OAUTH_REVOKED_MESSAGE);
+  });
+
+  it("validates switchWorkspace target payloads at the RPC boundary", async () => {
+    const missingBusinessId = await bridge.handle(
+      {
+        id: "rpc-ws-bad-1",
+        method: Methods.SwitchWorkspace,
+        params: { target: { kind: "business", businessId: "  " } },
+      },
+      "view-1",
+    );
+    const extraPersonalKey = await bridge.handle(
+      {
+        id: "rpc-ws-bad-2",
+        method: Methods.SwitchWorkspace,
+        params: { target: { kind: "personal", businessId: "biz_1" } },
+      },
+      "view-1",
+    );
+
+    expect(missingBusinessId).toEqual({
+      id: "rpc-ws-bad-1",
+      error: "Invalid bridge params for method: switchWorkspace",
+    });
+    expect(extraPersonalKey).toEqual({
+      id: "rpc-ws-bad-2",
+      error: "Invalid bridge params for method: switchWorkspace",
+    });
+    expect(host.harness.auth.switchWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("switches workspace, tracks identity_switch, and broadcasts ModelCatalogChanged", async () => {
+    host.harness.auth.switchWorkspace.mockResolvedValueOnce({
+      providerName: "managed:kimi-code",
+      ok: true,
+      target: { kind: "business", businessId: "biz_acme" },
+      profile: {
+        userId: "u_1",
+        nickname: "Alex Chen",
+        userLevelName: "Premium",
+        workspaceName: "Acme AI",
+        hasBusinessWorkspace: true,
+        activeWorkspaceName: "Acme AI",
+        workspaces: [
+          {
+            kind: "personal",
+            key: "personal",
+            name: "Alex Chen",
+            current: false,
+            disabled: false,
+            switchable: true,
+            roles: ["ROLE_OWNER"],
+          },
+          {
+            kind: "business",
+            key: "business:biz_acme",
+            businessId: "biz_acme",
+            name: "Acme AI",
+            status: "STATUS_ACTIVE",
+            current: true,
+            disabled: false,
+            switchable: true,
+            roles: ["ROLE_MEMBER"],
+          },
+        ],
+      },
+    });
+
+    const response = await bridge.handle(
+      {
+        id: "rpc-switch-1",
+        method: Methods.SwitchWorkspace,
+        params: { target: { kind: "business", businessId: "biz_acme" }, fromType: "personal" },
+      },
+      "view-1",
+    );
+
+    expect(response).toMatchObject({
+      id: "rpc-switch-1",
+      result: {
+        kind: "ok",
+        target: { kind: "business", businessId: "biz_acme" },
+        profile: {
+          nickname: "Alex Chen",
+          userLevelName: "Premium",
+          hasBusinessWorkspace: true,
+          activeWorkspaceName: "Acme AI",
+        },
+      },
+    });
+    expect(host.track).toHaveBeenCalledWith("identity_switch", {
+      from_type: "personal",
+      to_type: "enterprise",
+      enterprise_id: "biz_acme",
+    });
+    expect(broadcast).toHaveBeenCalledWith(Events.ModelCatalogChanged, {});
+  });
+
+  it("signs out once and broadcasts BusinessMembershipRevoked when getAccountProfile reports REASON_BUSINESS_MEMBER_REMOVED", async () => {
+    host.harness.auth.getAccountProfile.mockResolvedValueOnce({
+      kind: "error",
+      status: 401,
+      errorCode: "REASON_BUSINESS_MEMBER_REMOVED",
+      message: "Removed from workspace",
+    });
+
+    const response = await bridge.handle(
+      { id: "rpc-profile-revoked", method: Methods.GetAccountProfile },
+      "view-1",
+    );
+
+    expect(response).toEqual({
+      id: "rpc-profile-revoked",
+      result: {
+        kind: "error",
+        message: BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+        errorCode: "REASON_BUSINESS_MEMBER_REMOVED",
+        revoked: true,
+      },
+    });
+    expect(host.harness.auth.logout).toHaveBeenCalledOnce();
+    expect(broadcast).toHaveBeenCalledWith(Events.BusinessMembershipRevoked, {
+      message: BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+    });
+  });
+
+  it("does not revoke managed login when a custom API-key model reports a business membership error code", async () => {
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "custom/openai",
+      models: {
+        "custom/openai": { provider: "custom-openai", model: "gpt-4o" },
+      },
+    });
+
+    await bridge.runtime.handleModelBusinessMembershipRevoked("custom/openai");
+
+    expect(host.harness.auth.logout).not.toHaveBeenCalled();
+    expect(broadcast).not.toHaveBeenCalledWith(
+      Events.BusinessMembershipRevoked,
+      expect.anything(),
+    );
+  });
+
+  it("completes revocation cleanup and broadcasts BusinessMembershipRevoked even when the token was already tombstoned", async () => {
+    host.harness.auth.status.mockResolvedValue({
+      providers: [{ providerName: "managed:kimi-code", hasToken: false }],
+    });
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "kimi-code/kimi-k2",
+      providers: { "managed:kimi-code": { type: "kimi", apiKey: "" } },
+      models: {
+        "kimi-code/kimi-k2": { provider: "managed:kimi-code", model: "kimi-k2" },
+      },
+    });
+
+    await bridge.runtime.handleModelBusinessMembershipRevoked("kimi-code/kimi-k2");
+
+    expect(host.harness.auth.logout).toHaveBeenCalledOnce();
+    expect(broadcast).toHaveBeenCalledWith(Events.ModelCatalogChanged, {});
+    expect(broadcast).toHaveBeenCalledWith(Events.BusinessMembershipRevoked, {
+      message: BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+    });
+  });
+
+  it("defers model resynchronization for a busy session during workspace switch until its active turn settles", async () => {
+    let currentModel = "enterprise-only";
+    const setModel = vi.fn(async (next: string) => {
+      currentModel = next;
+    });
+    const setThinking = vi.fn(async () => undefined);
+    const busySession = {
+      ...createResumedSession("ses-busy", "/workspace/project"),
+      getStatus: vi.fn(async () => ({ model: currentModel, thinkingEffort: "off", permission: "manual" })),
+      setModel,
+      setThinking,
+    };
+    const runtime = await bridge.runtime.attachResumedSession("view-busy", busySession as never);
+    const actionId = runtime.beginHostAction("streaming prompt");
+
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "kimi-code/kimi-for-coding",
+      thinking: { enabled: true, effort: "high" },
+      models: {
+        "kimi-code/kimi-for-coding": {
+          provider: "managed:kimi-code",
+          model: "kimi-for-coding",
+        },
+      },
+    });
+
+    await bridge.runtime.syncActiveSessionsModel();
+    expect(setModel).not.toHaveBeenCalled();
+
+    runtime.completeHostAction("finished", actionId);
+    await vi.waitFor(() => {
+      expect(setModel).toHaveBeenCalledWith("kimi-code/kimi-for-coding");
+    });
+    expect(setThinking).toHaveBeenCalledWith("high");
+    expect(broadcast).toHaveBeenCalledWith(
+      Events.StreamEvent,
+      expect.objectContaining({
+        type: "StatusUpdate",
+        payload: expect.objectContaining({ model: "kimi-code/kimi-for-coding" }),
+      }),
+      "view-busy",
+    );
+  });
+
+  it("discards a stale getAccountProfile revocation response after the auth generation advances", async () => {
+    let resolveStaleProfile!: (value: unknown) => void;
+    host.harness.auth.getAccountProfile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStaleProfile = resolve;
+        }),
+    );
+    host.harness.auth.switchWorkspace.mockResolvedValueOnce({
+      providerName: "managed:kimi-code",
+      ok: true,
+      target: { kind: "personal" },
+    });
+
+    const staleProfilePromise = bridge.handle(
+      { id: "rpc-stale-profile", method: Methods.GetAccountProfile },
+      "view-1",
+    );
+
+    await bridge.handle(
+      {
+        id: "rpc-switch-personal",
+        method: Methods.SwitchWorkspace,
+        params: { target: { kind: "personal" } },
+      },
+      "view-1",
+    );
+
+    resolveStaleProfile({
+      kind: "error",
+      status: 401,
+      errorCode: "REASON_BUSINESS_MEMBER_REMOVED",
+      message: "Removed from old business workspace",
+    });
+
+    const staleResponse = await staleProfilePromise;
+    expect(staleResponse).toEqual({
+      id: "rpc-stale-profile",
+      result: {
+        kind: "error",
+        message: "Removed from old business workspace",
+        errorCode: "REASON_BUSINESS_MEMBER_REMOVED",
+      },
+    });
+    expect(host.harness.auth.logout).not.toHaveBeenCalled();
+    expect(broadcast).not.toHaveBeenCalledWith(
+      Events.BusinessMembershipRevoked,
+      expect.anything(),
+    );
+  });
+
+  it("converts HTTPS account avatars into CSP-safe data URIs and omits unsafe avatar URLs", async () => {
+    const pngBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const fetchMock = vi.fn(async () =>
+      new Response(pngBytes, {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      host.harness.auth.getAccountProfile.mockResolvedValueOnce({
+        kind: "ok",
+        profile: {
+          userId: "u_avatar",
+          nickname: "Alex Chen",
+          avatar: "https://example.com/avatar-safe.png",
+          userLevelName: "Pro",
+          hasBusinessWorkspace: true,
+          activeWorkspaceName: "Alex Chen",
+          workspaces: [
+            {
+              kind: "personal",
+              key: "personal",
+              name: "Alex Chen",
+              current: true,
+              disabled: false,
+              switchable: true,
+              roles: ["ROLE_OWNER"],
+            },
+          ],
+        },
+      });
+
+      const okRes = await bridge.handle(
+        { id: "rpc-avatar-https", method: Methods.GetAccountProfile },
+        "view-1",
+      );
+      expect(okRes).toMatchObject({
+        id: "rpc-avatar-https",
+        result: {
+          kind: "ok",
+          profile: {
+            avatar: `data:image/png;base64,${pngBytes.toString("base64")}`,
+          },
+        },
+      });
+
+      host.harness.auth.getAccountProfile.mockResolvedValueOnce({
+        kind: "ok",
+        profile: {
+          userId: "u_http",
+          nickname: "Alex Chen",
+          avatar: "http://example.com/insecure.png",
+          userLevelName: "Pro",
+          hasBusinessWorkspace: false,
+          activeWorkspaceName: "Alex Chen",
+          workspaces: [],
+        },
+      });
+
+      const httpRes = await bridge.handle(
+        { id: "rpc-avatar-http", method: Methods.GetAccountProfile },
+        "view-1",
+      );
+      expect(httpRes).toMatchObject({
+        id: "rpc-avatar-http",
+        result: {
+          kind: "ok",
+          profile: { nickname: "Alex Chen" },
+        },
+      });
+      expect(
+        (httpRes as { result: { profile: { avatar?: string } } }).result.profile.avatar,
+      ).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("blocks switchWorkspace while a managed session is busy and waits for in-flight auth mutations before streamChat", async () => {
+    const busySession = {
+      ...createResumedSession("ses-managed-busy", root),
+      getStatus: vi.fn(async () => ({
+        model: "kimi-code/kimi-for-coding",
+        thinkingEffort: "off",
+        permission: "manual",
+      })),
+    };
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "kimi-code/kimi-for-coding",
+      models: {
+        "kimi-code/kimi-for-coding": {
+          provider: "managed:kimi-code",
+          model: "kimi-for-coding",
+        },
+      },
+    });
+    const runtime = await bridge.runtime.attachResumedSession("view-1", busySession as never);
+    const actionId = runtime.beginHostAction("streaming prompt");
+
+    const rejected = await bridge.handle(
+      {
+        id: "rpc-switch-busy",
+        method: Methods.SwitchWorkspace,
+        params: { target: { kind: "business", businessId: "biz_acme" } },
+      },
+      "view-1",
+    );
+    expect(rejected).toEqual({
+      id: "rpc-switch-busy",
+      result: {
+        kind: "error",
+        message: "Finish or stop the active response before switching workspaces.",
+      },
+    });
+    expect(host.harness.auth.switchWorkspace).not.toHaveBeenCalled();
+
+    runtime.completeHostAction("finished", actionId);
+
+    let resolveSwitch!: () => void;
+    let switchSettled = false;
+    const gatedMutation = bridge.runtime.enqueueAuthMutation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSwitch = () => {
+            switchSettled = true;
+            resolve();
+          };
+        }),
+    );
+
+    const openSpy = vi.spyOn(bridge.runtime, "openSession").mockImplementation(async () => {
+      expect(switchSettled).toBe(true);
+      throw new Error("stop-after-gate-check");
+    });
+
+    const chatPromise = bridge.handle(
+      {
+        id: "rpc-chat-after-switch",
+        method: Methods.StreamChat,
+        params: { content: "hello", model: "kimi-code/kimi-for-coding" },
+      },
+      "view-1",
+    );
+
+    await Promise.resolve();
+    expect(openSpy).not.toHaveBeenCalled();
+
+    resolveSwitch();
+    await gatedMutation;
+    await chatPromise;
+    expect(openSpy).toHaveBeenCalledOnce();
   });
 });
 

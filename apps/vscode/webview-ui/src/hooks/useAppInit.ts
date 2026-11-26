@@ -65,18 +65,28 @@ export function useAppInit(): AppInitState {
   }, [setExtensionConfig, refresh]);
 
   useEffect(() => {
+    const eventName = Events.BusinessMembershipRevoked ?? "businessMembershipRevoked";
+    return bridge.on<{ message?: string }>(eventName, (payload) => {
+      useSettingsStore.getState().triggerMembershipRevoked(payload?.message);
+    });
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     let latestRead = 0;
     const unsubscribe = bridge.on(Events.ModelCatalogChanged, () => {
       const read = ++latestRead;
-      void bridge.getModels().then(({ models }) => {
-        if (!cancelled && read === latestRead) {
-          catalogApplied.current = true;
-          setModels(models);
-        }
-      }).catch((error: unknown) => {
-        console.error("[AppInit] Failed to refresh models:", error);
-      });
+      void bridge
+        .getModels()
+        .then(({ models, defaultModel, defaultThinking, defaultThinkingEffort }) => {
+          if (!cancelled && read === latestRead) {
+            catalogApplied.current = true;
+            setModels(models, defaultModel, defaultThinking, defaultThinkingEffort);
+          }
+        })
+        .catch((error: unknown) => {
+          console.error("[AppInit] Failed to refresh models:", error);
+        });
     });
     return () => {
       cancelled = true;
@@ -120,11 +130,15 @@ export function useAppInit(): AppInitState {
         console.log("[AppInit] Login status:", loginStatus, "kimiConfig:", kimiConfig);
 
         setIsLoggedIn(loginStatus.loggedIn);
+        if (loginStatus.loggedIn) {
+          void useSettingsStore.getState().loadAccountProfile();
+        }
+        const currentStore = useSettingsStore.getState();
         initModels(
-          catalogApplied.current ? useSettingsStore.getState().models : kimiConfig.models,
-          kimiConfig.defaultModel,
-          kimiConfig.defaultThinking,
-          kimiConfig.defaultThinkingEffort,
+          catalogApplied.current ? currentStore.models : kimiConfig.models,
+          catalogApplied.current ? currentStore.defaultModel : kimiConfig.defaultModel,
+          catalogApplied.current ? currentStore.defaultThinking : kimiConfig.defaultThinking,
+          catalogApplied.current ? currentStore.defaultThinkingEffort : kimiConfig.defaultThinkingEffort,
         );
 
         const modelsCount = useSettingsStore.getState().models.length;

@@ -133,6 +133,11 @@ export function adaptSdkEvent(
 
   if (sdkEvent.type === 'error') {
     if (sdkEvent.agentId !== mainAgentId) return { state };
+    const rawProviderCode = sdkEvent.details?.['providerErrorCode'];
+    const providerErrorCode =
+      typeof rawProviderCode === 'string' && rawProviderCode.length > 0
+        ? rawProviderCode
+        : undefined;
     return {
       state,
       event: {
@@ -140,6 +145,7 @@ export function adaptSdkEvent(
         code: sdkEvent.code,
         message: sdkEvent.message,
         detail: serializeDetails(sdkEvent.details),
+        ...(providerErrorCode === undefined ? {} : { providerErrorCode }),
         phase: options.errorPhase ?? 'runtime',
         _sessionId: sdkEvent.sessionId,
       },

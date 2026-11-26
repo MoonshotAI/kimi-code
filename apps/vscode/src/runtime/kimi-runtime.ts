@@ -8,6 +8,7 @@ import {
 import { setTelemetryContext, track, withTelemetryContext } from "@moonshot-ai/kimi-telemetry";
 
 import { Events } from "../../shared/bridge";
+import { BUSINESS_MEMBERSHIP_REVOKED_MESSAGE } from "../../shared/errors";
 import { startModelCatalogRefresh } from "./model-catalog-refresh";
 import type { RuntimeBroadcast } from "./session-runtime";
 import {
@@ -30,6 +31,7 @@ export interface KimiRuntimeOptions {
     webviewIds: readonly string[],
   ) => void;
   readonly log: (message: string, error?: unknown) => void;
+  readonly onAuthChanged?: () => Promise<void> | void;
   readonly homeDir?: string;
   readonly harness?: KimiHarness;
 }
@@ -49,16 +51,22 @@ export class KimiRuntime {
   private readonly broadcast: RuntimeBroadcast;
   private readonly captureBaseline: KimiRuntimeOptions["captureBaseline"];
   private readonly log: KimiRuntimeOptions["log"];
+  private readonly onAuthChanged: KimiRuntimeOptions["onAuthChanged"];
   private readonly disposeModelCatalogRefresh: () => void;
   private readonly sessions = new Map<string, SessionRuntime>();
   private readonly sessionByView = new Map<string, string>();
   private readonly viewChains = new Map<string, Promise<void>>();
+  private readonly deferredModelSyncSessions = new Set<string>();
+  private authMutationChain: Promise<void> = Promise.resolve();
+  private revokingFlight: Promise<void> | undefined;
+  private _authGeneration = 0;
   private closed = false;
 
   constructor(options: KimiRuntimeOptions) {
     this.broadcast = options.broadcast;
     this.captureBaseline = options.captureBaseline;
     this.log = options.log;
+    this.onAuthChanged = options.onAuthChanged;
     this.harness =
       options.harness ??
       createKimiHarness({
@@ -261,6 +269,178 @@ export class KimiRuntime {
     );
   }
 
+  get authGeneration(): number {
+    return this._authGeneration;
+  }
+
+  bumpAuthGeneration(): number {
+    this._authGeneration += 1;
+    return this._authGeneration;
+  }
+
+  waitForAuthMutations(): Promise<void> {
+    return this.authMutationChain;
+  }
+
+  async hasBusyManagedSession(): Promise<boolean> {
+    const busySessions = [...this.sessions.values()].filter((runtime) => runtime.isBusy);
+    if (busySessions.length === 0) return false;
+    try {
+      const config = await this.harness.getConfig();
+      for (const runtime of busySessions) {
+        const status = await runtime.session.getStatus();
+        const modelId = status.model || config.defaultModel;
+        const entry = modelId ? config.models?.[modelId] : undefined;
+        if (entry?.provider === "managed:kimi-code") {
+          return true;
+        }
+      }
+    } catch (error) {
+      this.log("Unable to inspect busy session model before workspace switch", error);
+      return true;
+    }
+    return false;
+  }
+
+  enqueueAuthMutation<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.authMutationChain.then(work, work);
+    this.authMutationChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  async syncActiveSessionsModel(): Promise<void> {
+    if (this.closed) return;
+    try {
+      const config = await this.harness.getConfig({ reload: true });
+      if (this.sessions.size === 0) return;
+      await Promise.all(
+        [...this.sessions.values()].map((runtime) => this.syncSingleSessionModel(runtime, config)),
+      );
+    } catch (error) {
+      this.log("Unable to reload config after workspace switch", error);
+    }
+  }
+
+  private deferBusySessionModelSync(runtime: SessionRuntime): void {
+    if (this.deferredModelSyncSessions.has(runtime.id)) return;
+    this.deferredModelSyncSessions.add(runtime.id);
+    void runtime.whenIdle().then(async () => {
+      this.deferredModelSyncSessions.delete(runtime.id);
+      if (this.closed || !this.sessions.has(runtime.id)) return;
+      try {
+        const config = await this.harness.getConfig({ reload: true });
+        await this.syncSingleSessionModel(runtime, config);
+      } catch (error) {
+        this.log("Unable to reload config after deferred session turn settled", error);
+      }
+    });
+  }
+
+  private async syncSingleSessionModel(
+    runtime: SessionRuntime,
+    config: Awaited<ReturnType<KimiHarness["getConfig"]>>,
+  ): Promise<void> {
+    if (runtime.isBusy) {
+      this.deferBusySessionModelSync(runtime);
+      return;
+    }
+    const models = config.models ?? {};
+    const fallback =
+      config.defaultModel !== undefined && config.defaultModel in models
+        ? config.defaultModel
+        : Object.keys(models)[0];
+    if (!fallback) return;
+    try {
+      const status = await runtime.session.getStatus();
+      if (status.model && !(status.model in models)) {
+        await runtime.session.setModel(fallback);
+        const targetEffort =
+          config.thinking?.enabled === false
+            ? "off"
+            : normalizeEffort(config.thinking?.effort ?? "on");
+        await runtime.session.setThinking(targetEffort).catch(async () => {
+          await runtime.session.setThinking("off").catch(() => undefined);
+        });
+        await Promise.all(
+          runtime.subscribers.map((webviewId) => runtime.announceStatus(webviewId)),
+        );
+      }
+    } catch (error) {
+      this.log("Unable to sync session model after workspace switch", error);
+    }
+  }
+
+  async performBusinessMembershipRevocation(): Promise<void> {
+    let shouldRevoke = false;
+    try {
+      const [status, config] = await Promise.all([
+        this.harness.auth?.status?.(),
+        this.harness.getConfig().catch(() => undefined),
+      ]);
+      const hasManagedToken =
+        status?.providers.some(
+          (provider) => provider.providerName === "managed:kimi-code" && provider.hasToken,
+        ) ?? false;
+      const hasManagedProviderConfig = Boolean(config?.providers?.["managed:kimi-code"]);
+      shouldRevoke = hasManagedToken || hasManagedProviderConfig;
+      if (!shouldRevoke) {
+        return;
+      }
+      this._authGeneration += 1;
+      await this.harness.auth?.logout?.();
+    } catch (error) {
+      this.log("Failed to clear credentials after business membership revocation", error);
+    }
+    try {
+      await this.onAuthChanged?.();
+    } catch (error) {
+      this.log("Failed to refresh login state after business membership revocation", error);
+    }
+    await this.syncActiveSessionsModel();
+    this.broadcast(Events.ModelCatalogChanged, {});
+    this.broadcast(Events.BusinessMembershipRevoked, {
+      message: BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+    });
+  }
+
+  handleBusinessMembershipRevoked(): Promise<void> {
+    if (this.revokingFlight !== undefined) return this.revokingFlight;
+    const flight = this.enqueueAuthMutation(() => this.performBusinessMembershipRevocation()).finally(
+      () => {
+        if (this.revokingFlight === flight) this.revokingFlight = undefined;
+      },
+    );
+    this.revokingFlight = flight;
+    return flight;
+  }
+
+  async handleModelBusinessMembershipRevoked(modelId?: string): Promise<void> {
+    try {
+      const config = await this.harness.getConfig();
+      const resolvedId = modelId || config.defaultModel;
+      const modelEntry = resolvedId ? config.models?.[resolvedId] : undefined;
+      if (modelEntry?.provider !== "managed:kimi-code") {
+        return;
+      }
+    } catch (error) {
+      this.log("Unable to inspect model provider during membership revocation check", error);
+      return;
+    }
+    await this.handleBusinessMembershipRevoked();
+  }
+
+  async handleSessionBusinessMembershipRevoked(session: Session): Promise<void> {
+    try {
+      const status = await session.getStatus();
+      await this.handleModelBusinessMembershipRevoked(status.model);
+    } catch (error) {
+      this.log("Unable to inspect session model during membership revocation check", error);
+    }
+  }
+
   async dispose(): Promise<void> {
     this.disposeModelCatalogRefresh();
     if (this.closed) return;
@@ -278,6 +458,9 @@ export class KimiRuntime {
       broadcast: this.broadcast,
       captureBaseline: this.captureBaseline,
       log: this.log,
+      onBusinessMembershipRevoked: (targetSession) => {
+        void this.handleSessionBusinessMembershipRevoked(targetSession);
+      },
     });
     this.sessions.set(session.id, runtime);
     return runtime;

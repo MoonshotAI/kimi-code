@@ -9,7 +9,12 @@ import {
 
 import type { ContentPart as LegacyContentPart, ApprovalResponse } from "../../shared/legacy-sdk";
 import { Events } from "../../shared/bridge";
-import { getUserMessage } from "../../shared/errors";
+import {
+  BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+  describeCaughtRuntimeError,
+  getUserMessage,
+  isBusinessMembershipRevokedReason,
+} from "../../shared/errors";
 import type { ErrorPhase, UIStreamEvent } from "../../shared/types";
 import {
   adaptSdkEvent,
@@ -36,6 +41,7 @@ export interface SessionRuntimeOptions {
     webviewIds: readonly string[],
   ) => void;
   readonly log: (message: string, error?: unknown) => void;
+  readonly onBusinessMembershipRevoked?: (session: Session) => void;
 }
 
 interface ActivePrompt {
@@ -68,6 +74,7 @@ export class SessionRuntime {
   private readonly broadcast: RuntimeBroadcast;
   private readonly captureBaseline: SessionRuntimeOptions["captureBaseline"];
   private readonly log: SessionRuntimeOptions["log"];
+  private readonly onBusinessMembershipRevoked: SessionRuntimeOptions["onBusinessMembershipRevoked"];
   private readonly webviewIds = new Set<string>();
   private readonly reverseRpc: ReverseRpcController;
   private readonly unsubscribe: () => void;
@@ -79,6 +86,7 @@ export class SessionRuntime {
   private readonly cancelledHostActions = new Set<number>();
   private pendingHostCompaction: PendingHostCompaction | undefined;
   private readonly activeWorkSettledWaiters = new Set<() => void>();
+  private readonly idleWaiters = new Set<() => void>();
   private exclusiveActionActive = false;
   private readonly terminalKeys = new Set<string>();
   private suppressedError: SuppressedError | undefined;
@@ -90,6 +98,7 @@ export class SessionRuntime {
     this.broadcast = options.broadcast;
     this.captureBaseline = options.captureBaseline;
     this.log = options.log;
+    this.onBusinessMembershipRevoked = options.onBusinessMembershipRevoked;
     this.legacyApproval = options.legacyApproval;
     this.reverseRpc = new ReverseRpcController((event) => this.emitStreamEvent(event));
 
@@ -112,6 +121,13 @@ export class SessionRuntime {
 
   get isBusy(): boolean {
     return this.hasActiveWork || this.exclusiveActionActive;
+  }
+
+  whenIdle(): Promise<void> {
+    if (!this.isBusy) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.idleWaiters.add(resolve);
+    });
   }
 
   get legacyApprovalFlags(): LegacyApprovalFlags {
@@ -336,6 +352,7 @@ export class SessionRuntime {
       return await action();
     } finally {
       this.exclusiveActionActive = false;
+      this.notifyActiveWorkSettled();
     }
   }
 
@@ -427,8 +444,17 @@ export class SessionRuntime {
       );
     }
 
-    if (event.type === "error" && this.consumeSuppressedError(event.code, event.message)) {
-      return;
+    if (event.type === "error") {
+      const providerCode = event.details?.["providerErrorCode"];
+      if (
+        isBusinessMembershipRevokedReason(providerCode) ||
+        event.message === BUSINESS_MEMBERSHIP_REVOKED_MESSAGE
+      ) {
+        this.onBusinessMembershipRevoked?.(this.session);
+      }
+      if (this.consumeSuppressedError(event.code, event.message)) {
+        return;
+      }
     }
 
     const pendingInput = this.activePrompt?.input;
@@ -501,6 +527,9 @@ export class SessionRuntime {
     const code = terminal.error?.code ?? `turn.${terminal.reason}`;
     this.reverseRpc.cancelAll("Turn ended");
     const detail = terminal.error?.message ?? `Turn ended with reason: ${terminal.reason}`;
+    if (detail === BUSINESS_MEMBERSHIP_REVOKED_MESSAGE) {
+      this.onBusinessMembershipRevoked?.(this.session);
+    }
     const message = getUserMessage(code, detail);
     this.log("Session turn failed", new Error(`${code}: ${detail}`));
     this.emitStreamEvent({
@@ -525,14 +554,21 @@ export class SessionRuntime {
   }
 
   private emitError(error: unknown, phase: ErrorPhase, options?: { readonly terminal?: boolean }): void {
-    const code = isKimiError(error) ? error.code : "internal";
-    const detail = error instanceof Error ? error.message : String(error);
+    const described = describeCaughtRuntimeError(error, (err) =>
+      isKimiError(err) ? { code: err.code, details: err.details } : undefined,
+    );
+    if (described.membershipRevoked) {
+      this.onBusinessMembershipRevoked?.(this.session);
+    }
     this.log(`Session ${phase} error`, error);
     this.emitStreamEvent({
       type: "error",
-      code,
-      message: getUserMessage(code, detail),
-      detail,
+      code: described.code,
+      message: described.message,
+      detail: described.detail,
+      ...(described.providerErrorCode === undefined
+        ? {}
+        : { providerErrorCode: described.providerErrorCode }),
       phase,
       _sessionId: this.session.id,
       terminal: options?.terminal,
@@ -566,9 +602,14 @@ export class SessionRuntime {
   }
 
   private notifyActiveWorkSettled(): void {
-    if (this.hasActiveWork) return;
-    for (const resolve of this.activeWorkSettledWaiters) resolve();
-    this.activeWorkSettledWaiters.clear();
+    if (!this.hasActiveWork) {
+      for (const resolve of this.activeWorkSettledWaiters) resolve();
+      this.activeWorkSettledWaiters.clear();
+    }
+    if (!this.isBusy) {
+      for (const resolve of this.idleWaiters) resolve();
+      this.idleWaiters.clear();
+    }
   }
 
   private ensureOpen(): void {

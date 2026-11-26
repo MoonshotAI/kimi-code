@@ -3,7 +3,7 @@ import { isKimiError } from "@moonshot-ai/kimi-code-sdk";
 
 import { Events, Methods } from "../../shared/bridge";
 import type { ApprovalResponse, ContentPart } from "../../shared/legacy-sdk";
-import { getUserMessage } from "../../shared/errors";
+import { describeCaughtRuntimeError } from "../../shared/errors";
 import type { ErrorPhase } from "../../shared/types";
 import { VSCodeSettings } from "../config/vscode-settings";
 import { normalizeEffort } from "../runtime/kimi-runtime";
@@ -80,11 +80,13 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
     return { done: false };
   }
 
+  await ctx.runtime?.waitForAuthMutations?.();
+
   if (VSCodeSettings.autosave) {
     try {
       await ctx.saveAllDirty();
     } catch (error) {
-      emitCaughtError(ctx, error, "preflight");
+      emitCaughtError(ctx, error, "preflight", undefined, params.model);
       return { done: false };
     }
   }
@@ -97,7 +99,7 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
       params.sessionId,
     );
   } catch (error) {
-    emitCaughtError(ctx, error, "preflight");
+    emitCaughtError(ctx, error, "preflight", undefined, params.model);
     return { done: false };
   }
 
@@ -117,7 +119,7 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
     }
     runtime.announceSessionStart(model);
   } catch (error) {
-    emitCaughtError(ctx, error, "preflight", runtime.id);
+    emitCaughtError(ctx, error, "preflight", runtime.id, params.model);
     return { done: false };
   }
 
@@ -194,17 +196,32 @@ function emitCaughtError(
   error: unknown,
   phase: ErrorPhase,
   sessionId?: string,
+  requestedModel?: string,
 ): void {
-  const code = isKimiError(error) ? error.code : "internal";
-  const detail = error instanceof Error ? error.message : String(error);
+  const described = describeCaughtRuntimeError(error, (err) =>
+    isKimiError(err) ? { code: err.code, details: err.details } : undefined,
+  );
+  if (described.membershipRevoked) {
+    if (requestedModel !== undefined) {
+      void ctx.runtime.handleModelBusinessMembershipRevoked(requestedModel);
+    } else {
+      const runtime = ctx.getSession();
+      if (runtime !== undefined) {
+        void ctx.runtime.handleSessionBusinessMembershipRevoked(runtime.session);
+      }
+    }
+  }
   ctx.logError(`Chat ${phase} request failed`, error);
   ctx.broadcast(
     Events.StreamEvent,
     {
       type: "error",
-      code,
-      message: getUserMessage(code, detail),
-      detail,
+      code: described.code,
+      message: described.message,
+      detail: described.detail,
+      ...(described.providerErrorCode === undefined
+        ? {}
+        : { providerErrorCode: described.providerErrorCode }),
       phase,
       ...(sessionId === undefined ? {} : { _sessionId: sessionId }),
     },

@@ -1,10 +1,19 @@
 import { create } from "zustand";
 import { bridge } from "@/services";
 import { toast } from "@/components/ui/sonner";
-import type { ExtensionConfig } from "shared/types";
+import { BUSINESS_MEMBERSHIP_REVOKED_MESSAGE } from "shared/errors";
+import type {
+  AccountProfileSnapshot,
+  ExtensionConfig,
+  WorkspaceTarget,
+} from "shared/types";
 import type { ModelConfig, ThinkingMode, SlashCommandInfo } from "shared/legacy-sdk";
 
 let settingsSaveRevision = 0;
+let accountProfileRevision = 0;
+let authSessionEpoch = 0;
+let switchWorkspaceFlight: Promise<SwitchWorkspaceOutcome> | null = null;
+const MAX_RECENT_WORKSPACE_KEYS = 8;
 const MANAGED_KIMI_CODE_PROVIDER = "managed:kimi-code";
 
 function saveConfigWithRollback(
@@ -146,6 +155,18 @@ export function getMediaFallbackModel(
     ?? compatibleModels[0];
 }
 
+function pushRecentWorkspaceKey(existing: readonly string[], key: string | undefined): string[] {
+  if (!key) return [...existing];
+  return [key, ...existing.filter((item) => item !== key)].slice(0, MAX_RECENT_WORKSPACE_KEYS);
+}
+
+export interface SwitchWorkspaceOutcome {
+  readonly ok: boolean;
+  readonly revoked?: boolean;
+  readonly warning?: string;
+  readonly error?: string;
+}
+
 interface SettingsState {
   currentModel: string;
   thinkingEffort: string;
@@ -162,9 +183,21 @@ interface SettingsState {
   wireSlashCommands: SlashCommandInfo[];
   slashCommands: SlashCommandInfo[];
   isLoggedIn: boolean;
+  accountProfile: AccountProfileSnapshot | null;
+  accountProfileLoading: boolean;
+  accountProfileError: string | null;
+  recentWorkspaceKeys: string[];
+  switchingWorkspaceKey: string | null;
+  membershipRevokedOpen: boolean;
+  membershipRevokedMessage: string;
 
   setCurrentModel: (model: string) => void;
-  setModels: (models: ModelConfig[]) => void;
+  setModels: (
+    models: ModelConfig[],
+    nextDefaultModel?: string | null,
+    nextDefaultThinking?: boolean,
+    nextDefaultThinkingEffort?: string,
+  ) => void;
   setThinkingEffort: (effort: string) => void;
   updateModel: (modelId: string) => void;
   toggleThinking: () => void;
@@ -177,6 +210,12 @@ interface SettingsState {
   initModels: (models: ModelConfig[], defaultModel: string | null, defaultThinking: boolean, defaultThinkingEffort?: string) => void;
   setWireSlashCommands: (commands: SlashCommandInfo[]) => void;
   setIsLoggedIn: (loggedIn: boolean) => void;
+  setAccountProfile: (profile: AccountProfileSnapshot | null) => void;
+  loadAccountProfile: () => Promise<void>;
+  switchWorkspace: (target: WorkspaceTarget) => Promise<SwitchWorkspaceOutcome>;
+  waitForWorkspaceSwitch: () => Promise<void>;
+  triggerMembershipRevoked: (message?: string) => void;
+  acknowledgeMembershipRevoked: () => void;
   getCurrentThinkingMode: () => ThinkingMode;
 }
 
@@ -195,10 +234,66 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   wireSlashCommands: [],
   slashCommands: [],
   isLoggedIn: false,
+  accountProfile: null,
+  accountProfileLoading: false,
+  accountProfileError: null,
+  recentWorkspaceKeys: [],
+  switchingWorkspaceKey: null,
+  membershipRevokedOpen: false,
+  membershipRevokedMessage: BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
 
   setCurrentModel: (currentModel) => set({ currentModel }),
 
-  setModels: (models) => set({ models }),
+  setModels: (models, nextDefaultModel, nextDefaultThinking, nextDefaultThinkingEffort) => {
+    const { currentModel, defaultModel, defaultThinking, defaultThinkingEffort } = get();
+    const resolvedDefault = nextDefaultModel !== undefined ? nextDefaultModel : defaultModel;
+    const resolvedThinking =
+      nextDefaultThinking !== undefined ? nextDefaultThinking : defaultThinking;
+    const resolvedThinkingEffort =
+      nextDefaultThinking !== undefined || nextDefaultThinkingEffort !== undefined
+        ? nextDefaultThinkingEffort
+        : defaultThinkingEffort;
+    const defaultsPatch: Partial<SettingsState> = {
+      ...(nextDefaultModel !== undefined ? { defaultModel: nextDefaultModel } : {}),
+      ...(nextDefaultThinking !== undefined
+        ? {
+            defaultThinking: nextDefaultThinking,
+            defaultThinkingEffort: nextDefaultThinkingEffort,
+          }
+        : nextDefaultThinkingEffort !== undefined
+          ? { defaultThinkingEffort: nextDefaultThinkingEffort }
+          : {}),
+    };
+    if (models.length === 0) {
+      set({
+        models,
+        ...defaultsPatch,
+        currentModel: "",
+        thinkingEffort: "off",
+      });
+      return;
+    }
+    if (currentModel && getModelById(models, currentModel)) {
+      set({
+        models,
+        ...defaultsPatch,
+      });
+      return;
+    }
+    const fallbackId =
+      (resolvedDefault && getModelById(models, resolvedDefault) ? resolvedDefault : undefined) ??
+      models[0]?.id ??
+      "";
+    const fallbackModel = getModelById(models, fallbackId);
+    set({
+      models,
+      ...defaultsPatch,
+      currentModel: fallbackId,
+      thinkingEffort: fallbackModel
+        ? defaultEffortForModel(fallbackModel, resolvedThinking, resolvedThinkingEffort)
+        : "off",
+    });
+  },
 
   setThinkingEffort: (thinkingEffort) => set({ thinkingEffort }),
 
@@ -320,7 +415,177 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     });
   },
 
-  setIsLoggedIn: (isLoggedIn) => set({ isLoggedIn }),
+  setIsLoggedIn: (isLoggedIn) => {
+    if (isLoggedIn) {
+      set({ isLoggedIn: true });
+      return;
+    }
+    authSessionEpoch += 1;
+    accountProfileRevision += 1;
+    switchWorkspaceFlight = null;
+    set({
+      isLoggedIn: false,
+      accountProfile: null,
+      accountProfileLoading: false,
+      accountProfileError: null,
+      recentWorkspaceKeys: [],
+      switchingWorkspaceKey: null,
+    });
+  },
+
+  setAccountProfile: (profile) => {
+    const currentKey = profile?.workspaces.find((ws) => ws.current)?.key;
+    set((state) => ({
+      accountProfile: profile,
+      accountProfileError: null,
+      recentWorkspaceKeys: pushRecentWorkspaceKey(state.recentWorkspaceKeys, currentKey),
+    }));
+  },
+
+  loadAccountProfile: async () => {
+    if (!get().isLoggedIn || typeof bridge.getAccountProfile !== "function") return;
+    const revision = ++accountProfileRevision;
+    const epoch = authSessionEpoch;
+    set({ accountProfileLoading: true });
+    try {
+      const response = await bridge.getAccountProfile();
+      if (revision !== accountProfileRevision || epoch !== authSessionEpoch || !get().isLoggedIn) {
+        return;
+      }
+      if (response.kind === "error") {
+        if (response.revoked) {
+          get().triggerMembershipRevoked(response.message);
+          return;
+        }
+        set({ accountProfileError: response.message });
+        return;
+      }
+      const currentKey = response.profile.workspaces.find((ws) => ws.current)?.key;
+      set((state) => ({
+        accountProfile: response.profile,
+        accountProfileError: null,
+        recentWorkspaceKeys: pushRecentWorkspaceKey(state.recentWorkspaceKeys, currentKey),
+      }));
+    } catch (error) {
+      if (revision !== accountProfileRevision || epoch !== authSessionEpoch || !get().isLoggedIn) {
+        return;
+      }
+      set({
+        accountProfileError: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      if (revision === accountProfileRevision) {
+        set({ accountProfileLoading: false });
+      }
+    }
+  },
+
+  switchWorkspace: async (target) => {
+    const state = get();
+    if (
+      state.switchingWorkspaceKey !== null ||
+      !state.isLoggedIn ||
+      typeof bridge.switchWorkspace !== "function"
+    ) {
+      return { ok: false };
+    }
+    const epoch = authSessionEpoch;
+    accountProfileRevision += 1;
+    const targetKey = target.kind === "personal" ? "personal" : `business:${target.businessId}`;
+    const previousCurrent = state.accountProfile?.workspaces.find((ws) => ws.current);
+    const previousKey = previousCurrent?.key;
+    const fromType: "personal" | "enterprise" =
+      previousCurrent?.kind === "business" ? "enterprise" : "personal";
+    set({ switchingWorkspaceKey: targetKey, accountProfileLoading: false });
+    const flight = (async (): Promise<SwitchWorkspaceOutcome> => {
+      try {
+        const response = await bridge.switchWorkspace(target, fromType);
+        if (epoch !== authSessionEpoch || !get().isLoggedIn) {
+          return { ok: false, revoked: get().membershipRevokedOpen };
+        }
+        if (response.kind === "error") {
+          if (response.revoked) {
+            get().triggerMembershipRevoked(response.message);
+            return { ok: false, revoked: true };
+          }
+          return { ok: false, error: response.message };
+        }
+        accountProfileRevision += 1;
+        set((curr) => {
+          const withPrev = pushRecentWorkspaceKey(curr.recentWorkspaceKeys, previousKey);
+          const withTarget = pushRecentWorkspaceKey(withPrev, targetKey);
+          const nextProfile =
+            response.profile ??
+            (curr.accountProfile
+              ? {
+                  ...curr.accountProfile,
+                  workspaces: curr.accountProfile.workspaces.map((ws) => ({
+                    ...ws,
+                    current: ws.key === targetKey,
+                  })),
+                }
+              : null);
+          return {
+            accountProfile: nextProfile,
+            accountProfileLoading: false,
+            accountProfileError: null,
+            recentWorkspaceKeys: withTarget,
+          };
+        });
+        if (response.profile === undefined) {
+          void get().loadAccountProfile();
+        }
+        return {
+          ok: true,
+          ...(response.warning !== undefined ? { warning: response.warning } : {}),
+        };
+      } catch (error) {
+        if (epoch !== authSessionEpoch || !get().isLoggedIn) {
+          return { ok: false, revoked: get().membershipRevokedOpen };
+        }
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      } finally {
+        if (get().switchingWorkspaceKey === targetKey) {
+          set({ switchingWorkspaceKey: null });
+        }
+      }
+    })().finally(() => {
+      if (switchWorkspaceFlight === flight) {
+        switchWorkspaceFlight = null;
+      }
+    });
+    switchWorkspaceFlight = flight;
+    return flight;
+  },
+
+  waitForWorkspaceSwitch: async () => {
+    if (switchWorkspaceFlight !== null) {
+      await switchWorkspaceFlight.catch(() => undefined);
+    }
+  },
+
+  triggerMembershipRevoked: (message) => {
+    authSessionEpoch += 1;
+    accountProfileRevision += 1;
+    switchWorkspaceFlight = null;
+    set({
+      isLoggedIn: false,
+      accountProfile: null,
+      accountProfileLoading: false,
+      accountProfileError: null,
+      recentWorkspaceKeys: [],
+      switchingWorkspaceKey: null,
+      membershipRevokedOpen: true,
+      membershipRevokedMessage: message ?? BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+    });
+  },
+
+  acknowledgeMembershipRevoked: () => {
+    set({ membershipRevokedOpen: false });
+  },
 
   getCurrentThinkingMode: () => {
     const { models, currentModel } = get();
