@@ -1,3 +1,4 @@
+import { toDisposable } from '#/_base/di/lifecycle';
 import {
   ISessionIndexMirror,
   type SessionSummary,
@@ -14,6 +15,8 @@ export function stubSessionIndexMirror(): ISessionIndexMirror & {
       recorded.push(summary);
     },
     pending: () => recorded,
+    readConsistently: (read) => read(),
+    retainFlushes: () => toDisposable(() => {}),
     evict: async () => {},
     drain: async () => {},
   };

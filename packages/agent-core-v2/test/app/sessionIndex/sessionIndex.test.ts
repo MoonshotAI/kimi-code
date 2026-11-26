@@ -30,6 +30,7 @@ import {
   SESSION_INDEX_MANIFEST,
   recencyColumn,
   sessionCollection,
+  sessionCountersCollection,
 } from '#/app/sessionIndex/sessionIndexModel';
 import { markSessionDirty } from '#/app/sessionIndex/sessionIndexDirtyJournal';
 import { FileSessionIndex } from '#/app/sessionIndex/sessionIndexService';
@@ -539,6 +540,85 @@ describe('FileSessionIndex (read model)', () => {
     expect(JSON.parse(persisted).cwd).toBe('/old');
   });
 
+  it('reprojects with the primary that changed while a projection was publishing', async () => {
+    const changes = new Emitter<void>();
+    const workspace: Project = {
+      id: workspaceId,
+      root: '/old',
+      name: 'project',
+      kind: 'managed',
+      additionalDirs: [],
+      createdAt: 0,
+      lastOpenedAt: 0,
+    };
+    let primary = workspace.root;
+    const sawNewPrimary = deferred();
+    const service = {
+      list: async () => {
+        if (primary === '/new') sawNewPrimary.resolve();
+        return [{ ...workspace, root: primary }];
+      },
+    } as unknown as IProjectService;
+    const persistence = { onDidChange: changes.event } as IProjectPersistence;
+    const storage = new FileStorageService(homeDir);
+    await seedSession('closed', { cwd: '/old', createdAt: 1, updatedAt: 2 });
+    const store = build(storage, { service, persistence });
+    await store.prepare();
+    store.stopReconcileLoop();
+    const publishing = deferred();
+    const releasePublish = deferred();
+    const setCheckpoint = queryStore.setCheckpoint.bind(queryStore);
+    vi.spyOn(queryStore, 'setCheckpoint').mockImplementationOnce(async (...args) => {
+      publishing.resolve();
+      await releasePublish.promise;
+      return setCheckpoint(...args);
+    });
+
+    const projecting = store.reprojectNow();
+    try {
+      await publishing.promise;
+      primary = '/new';
+      changes.fire();
+      await sawNewPrimary.promise;
+    } finally {
+      releasePublish.resolve();
+      await projecting;
+    }
+
+    expect((await store.get('closed'))?.cwd).toBe('/new');
+    const manifest = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    expect(manifest?.workspacePrimaries).toEqual({ [workspaceId]: '/new' });
+
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+    const restarted = build(storage, { service, persistence });
+    await restarted.prepare();
+    expect((await restarted.get('closed'))?.cwd).toBe('/new');
+  });
+
+  it('stops re-projecting after a few rounds while the project primaries keep changing', async () => {
+    const workspace: Project = {
+      id: workspaceId,
+      root: '/r0',
+      name: 'project',
+      kind: 'managed',
+      additionalDirs: [],
+      createdAt: 0,
+      lastOpenedAt: 0,
+    };
+    let reads = 0;
+    const service = {
+      list: async () => [{ ...workspace, root: `/r${reads++}` }],
+    } as unknown as IProjectService;
+    const persistence = { onDidChange: new Emitter<void>().event } as IProjectPersistence;
+    await seedSession('closed', { createdAt: 1, updatedAt: 2 });
+    const store = build(new FileStorageService(homeDir), { service, persistence });
+
+    await expect(store.prepare()).resolves.toMatchObject({ state: 'ready', generation: 3 });
+  });
+
   it('publishes the primary snapshot used to build reconciliation summaries', async () => {
     const changes = new Emitter<void>();
     const workspace: Project = {
@@ -984,6 +1064,123 @@ describe('FileSessionIndex (read model)', () => {
       await expect(store.count(query)).resolves.toBe(1);
     },
   );
+
+  it.each([
+    {
+      change: 'created',
+      seeded: [],
+      written: { createdAt: 3, updatedAt: 10 },
+      listed: ['fresh', 'kept'],
+      active: 2,
+    },
+    {
+      change: 'archived',
+      seeded: [{ createdAt: 3, updatedAt: 10 }],
+      written: { createdAt: 3, updatedAt: 11, archived: true },
+      listed: ['kept'],
+      active: 1,
+    },
+  ])('keeps a session $change while the index re-projects once the new generation is published', async ({ seeded, written, listed, active }) => {
+    await seedSession('kept', { createdAt: 1, updatedAt: 2 });
+    for (const meta of seeded) await seedSession('fresh', meta);
+    const store = build();
+    await store.prepare();
+    store.stopReconcileLoop();
+    const publishing = deferred();
+    const releasePublish = deferred();
+    const setCheckpoint = queryStore.setCheckpoint.bind(queryStore);
+    vi.spyOn(queryStore, 'setCheckpoint').mockImplementationOnce(async (...args) => {
+      publishing.resolve();
+      await releasePublish.promise;
+      return setCheckpoint(...args);
+    });
+
+    const projecting = store.reprojectNow();
+    try {
+      await publishing.promise;
+      await seedSession('fresh', written);
+      mirror.record(summary('fresh', written));
+      await mirror.drain();
+    } finally {
+      releasePublish.resolve();
+      await projecting;
+    }
+
+    expect(store.status()).toMatchObject({ state: 'ready', generation: 2 });
+    const query = { workspaceIds: [workspaceId] };
+    expect((await store.listRecent(query)).items.map((session) => session.id)).toEqual(listed);
+    await expect(store.count(query)).resolves.toBe(active);
+    await expect(store.count({ ...query, includeArchived: true })).resolves.toBe(2);
+    expect((await store.get('fresh'))?.archived).toBe(written.archived === true);
+  });
+
+  it.each([
+    { change: 'created', seeded: [], written: { createdAt: 3, updatedAt: 10 }, active: 2 },
+    {
+      change: 'archived',
+      seeded: [{ createdAt: 3, updatedAt: 10 }],
+      written: { createdAt: 3, updatedAt: 11, archived: true },
+      active: 1,
+    },
+  ])('counts a session $change by a mirror flush that lands while the count is being read', async ({ seeded, written, active }) => {
+    await seedSession('kept', { createdAt: 1, updatedAt: 2 });
+    for (const meta of seeded) await seedSession('fresh', meta);
+    const store = build();
+    await store.prepare();
+    store.stopReconcileLoop();
+    await seedSession('fresh', written);
+    mirror.record(summary('fresh', written));
+
+    const getMany = queryStore.getMany.bind(queryStore);
+    let flushedMidCount = false;
+    vi.spyOn(queryStore, 'getMany').mockImplementation(async (collection, keys) => {
+      const values = await getMany(collection, keys);
+      if (!flushedMidCount && collection === sessionCountersCollection(1)) {
+        flushedMidCount = true;
+        await mirror.drain();
+      }
+      return values as never;
+    });
+
+    await expect(store.count({ workspaceIds: [workspaceId] })).resolves.toBe(active);
+    expect(flushedMidCount).toBe(true);
+    expect(mirror.pending()).toEqual([]);
+  });
+
+  it('keeps a session deleted while the index re-projects out of the published generation', async () => {
+    await seedSession('kept', { createdAt: 1, updatedAt: 2 });
+    const store = build();
+    await store.prepare();
+    store.stopReconcileLoop();
+    const publishing = deferred();
+    const releasePublish = deferred();
+    const setCheckpoint = queryStore.setCheckpoint.bind(queryStore);
+    vi.spyOn(queryStore, 'setCheckpoint').mockImplementationOnce(async (...args) => {
+      publishing.resolve();
+      await releasePublish.promise;
+      return setCheckpoint(...args);
+    });
+
+    const projecting = store.reprojectNow();
+    let removing: Promise<void> | undefined;
+    try {
+      await publishing.promise;
+      await seedSession('fresh', { createdAt: 3, updatedAt: 10 });
+      mirror.record(summary('fresh', { createdAt: 3, updatedAt: 10 }));
+      await mirror.drain();
+      await fsp.rm(join(sessionsDir, workspaceId, 'fresh'), { recursive: true });
+      removing = store.remove('fresh');
+    } finally {
+      releasePublish.resolve();
+      await Promise.all([projecting, removing]);
+    }
+    await mirror.drain();
+
+    const query = { workspaceIds: [workspaceId] };
+    expect((await store.listRecent(query)).items.map((session) => session.id)).toEqual(['kept']);
+    await expect(store.count(query)).resolves.toBe(1);
+    await expect(store.get('fresh')).resolves.toBeUndefined();
+  });
 
   it('keeps a deleted session unlisted after a concurrent reconciliation', async () => {
     await seedSession('kept', { createdAt: 1, updatedAt: 2 });

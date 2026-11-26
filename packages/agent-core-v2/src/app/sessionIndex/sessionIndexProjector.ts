@@ -49,6 +49,7 @@ export interface SessionIndexProjectorDeps {
 export interface ProjectionResult {
   readonly generation: number;
   readonly sessions: number;
+  readonly primaryByWorkspace: Readonly<Record<string, string>>;
 }
 
 export interface ReconcileResult {
@@ -175,7 +176,7 @@ export class SessionIndexProjector {
           });
         });
     }
-    return { generation, sessions: summaries.length };
+    return { generation, sessions: summaries.length, primaryByWorkspace };
   }
 
   async reconcile(generation: number): Promise<ReconcileResult> {

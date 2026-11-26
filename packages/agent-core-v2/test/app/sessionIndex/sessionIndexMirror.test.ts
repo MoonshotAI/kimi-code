@@ -133,6 +133,101 @@ describe('SessionIndexMirror', () => {
     expect(counters.get(WORKSPACE)).toEqual({ active: 1, archived: 1 });
   });
 
+  it('keeps a summary flushed while flushes are retained visible and writes it into the generation published afterwards', async () => {
+    build();
+    await publishGeneration();
+
+    const retention = mirror.retainFlushes();
+    mirror.record(summary('a', { updatedAt: 5 }));
+    await mirror.drain();
+    expect(mirror.pending().map((s) => s.id)).toEqual(['a']);
+    expect((await queryStore.getMany(sessionCollection(GENERATION), ['a'])).has('a')).toBe(true);
+
+    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: GENERATION + 1 });
+    retention.dispose();
+    await mirror.drain();
+
+    expect(mirror.pending()).toEqual([]);
+    const stored = await queryStore.getMany<{ updatedAt: number }>(sessionCollection(GENERATION + 1), ['a']);
+    expect(stored.get('a')).toMatchObject({ updatedAt: 5 });
+    const counters = await queryStore.getMany<SessionProjectCounts>(
+      sessionCountersCollection(GENERATION + 1),
+      [WORKSPACE],
+    );
+    expect(counters.get(WORKSPACE)).toEqual({ active: 1, archived: 0 });
+  });
+
+  it('does not write back a retained summary that was evicted before the retention ends', async () => {
+    build();
+    await publishGeneration();
+
+    const retention = mirror.retainFlushes();
+    mirror.record(summary('a'));
+    await mirror.drain();
+    await mirror.evict('a');
+    expect(mirror.pending()).toEqual([]);
+
+    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: GENERATION + 1 });
+    retention.dispose();
+    await mirror.drain();
+
+    expect((await queryStore.getMany(sessionCollection(GENERATION + 1), ['a'])).has('a')).toBe(false);
+  });
+
+  it('keeps a summary pending when a new generation is published while it is being flushed', async () => {
+    build();
+    await publishGeneration();
+    const batch = queryStore.batch.bind(queryStore);
+    let republished = false;
+    queryStore.batch = async (ops) => {
+      await batch(ops);
+      if (republished) return;
+      republished = true;
+      await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: GENERATION + 1 });
+    };
+
+    mirror.record(summary('a', { updatedAt: 5 }));
+    await mirror.drain();
+
+    expect(mirror.pending()).toEqual([]);
+    const stored = await queryStore.getMany<{ updatedAt: number }>(sessionCollection(GENERATION + 1), ['a']);
+    expect(stored.get('a')).toMatchObject({ updatedAt: 5 });
+    const counters = await queryStore.getMany<SessionProjectCounts>(
+      sessionCountersCollection(GENERATION + 1),
+      [WORKSPACE],
+    );
+    expect(counters.get(WORKSPACE)).toEqual({ active: 1, archived: 0 });
+  });
+
+  it('keeps a summary pending when the retention ends while its flush is finishing', async () => {
+    build();
+    await publishGeneration();
+    const retention = mirror.retainFlushes();
+    const batch = queryStore.batch.bind(queryStore);
+    const getCheckpoint = queryStore.getCheckpoint.bind(queryStore);
+    let batchLanded = false;
+    queryStore.batch = async (ops) => {
+      await batch(ops);
+      batchLanded = true;
+    };
+    queryStore.getCheckpoint = async (source) => {
+      const value = await getCheckpoint(source);
+      if (batchLanded) {
+        batchLanded = false;
+        await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: GENERATION + 1 });
+        retention.dispose();
+      }
+      return value;
+    };
+
+    mirror.record(summary('a', { updatedAt: 5 }));
+    await mirror.drain();
+
+    expect(mirror.pending()).toEqual([]);
+    const stored = await queryStore.getMany<{ updatedAt: number }>(sessionCollection(GENERATION + 1), ['a']);
+    expect(stored.get('a')).toMatchObject({ updatedAt: 5 });
+  });
+
   it('tracks archive transitions against the stored summary', async () => {
     build();
     await publishGeneration();
