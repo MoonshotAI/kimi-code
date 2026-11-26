@@ -1071,7 +1071,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="shot__conversation-actions" role="group" :aria-label="s.add">
         <Tooltip :text="s.addHint">
-          <Button variant="primary" size="xs" :loading="busy" @click="perform('add')">{{ s.add }}<Kbd class="shot__enter" :keys="['enter']" variant="button" /></Button>
+          <Button variant="primary" size="xs" :loading="busy" @click="perform('add')">{{ s.add }}<Kbd :keys="['enter']" variant="button" /></Button>
         </Tooltip>
       </div>
       <p v-if="message" class="shot__message" role="status">{{ message }}</p>
@@ -1116,7 +1116,6 @@ onBeforeUnmount(() => {
 .shot__properties, .shot__comment { border-top: var(--p-hairline) solid var(--shot-toolbar-line); }
 .shot__toolbar .is-active { background: var(--shot-toolbar-hover); color: var(--shot-toolbar-text); }
 .shot__conversation-actions { grid-column: 1 / -1; grid-row: 4; display: flex; align-items: center; justify-content: flex-end; padding: 0 var(--space-2) var(--space-2); }
-.shot__enter { margin-left: var(--space-1); }
 .shot__properties { gap: var(--space-3); font-size: var(--text-xs); color: var(--shot-toolbar-muted); }
 .shot__properties label, .shot__colors { display: flex; align-items: center; gap: var(--space-2); }
 .shot__properties input[type='range'] { width: 64px; accent-color: var(--shot-toolbar-text); }

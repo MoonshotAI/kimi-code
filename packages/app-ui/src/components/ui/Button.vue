@@ -95,7 +95,14 @@ const capParts = computed<CapPart[]>(() =>
 .ui-button--md { height: 36px; padding: 0 var(--space-4); font-size: var(--text-base); }
 .ui-button--lg { height: 42px; padding: 0 var(--space-5); font-size: 15px; border-radius: var(--radius-lg); }
 
+.ui-button--xs:has(.ui-button__cap, .ui-kbd--button) { padding-right: var(--space-1); }
+.ui-button--sm:has(.ui-button__cap, .ui-kbd--button) { padding-right: var(--space-1-5); }
+.ui-button--md:has(.ui-button__cap, .ui-kbd--button) { padding-right: var(--space-2); }
+.ui-button--lg:has(.ui-button__cap, .ui-kbd--button) { padding-right: var(--space-3); }
+.ui-button:has(.ui-button__cap) { gap: var(--space-1); }
+
 .ui-button__content { display: inline-flex; align-items: center; gap: var(--space-2); }
+.ui-button__content:has(.ui-kbd--button) { gap: var(--space-1); }
 
 .ui-button__content :deep(svg) { flex: none; }
 .ui-button__content :deep(svg:not([width])) { width: 1em; height: 1em; }
