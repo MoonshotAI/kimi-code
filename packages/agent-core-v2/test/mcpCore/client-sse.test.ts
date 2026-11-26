@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { SseMcpClient, isTerminalSseTransportError } from '#/mcpCore/client-sse';
 
-import { startInProcessSseMcpServer } from './stubs';
+import { startEchoHttpMcpServer } from './stubs';
 
 const cleanups: Array<() => Promise<void> | void> = [];
 
@@ -15,7 +15,7 @@ afterEach(async () => {
 
 describe('SseMcpClient', () => {
   it('connects, lists tools, and round-trips a call over real SSE', async () => {
-    const server = await startInProcessSseMcpServer();
+    const server = await startEchoHttpMcpServer({ name: 'mock-sse', transport: 'sse' });
     cleanups.push(server.close);
 
     const client = new SseMcpClient({ transport: 'sse', url: server.url });
@@ -33,7 +33,7 @@ describe('SseMcpClient', () => {
   }, 15000);
 
   it('forwards bearer token from envLookup on the SSE and POST requests', async () => {
-    const server = await startInProcessSseMcpServer({ authToken: 'good-token' });
+    const server = await startEchoHttpMcpServer({ name: 'mock-sse', transport: 'sse', bearerToken: 'good-token' });
     cleanups.push(server.close);
 
     const client = new SseMcpClient(

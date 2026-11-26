@@ -7,7 +7,7 @@ Shared test infrastructure for this repository: a protocol-level fake model, fak
 | `@moonshot-ai/testkit/model` | the fake model, the step DSL, tool-call builders, and the provider config that points the product at the fake model |
 | `@moonshot-ai/testkit/services` | fake Kimi managed services: session titles and feedback with signed uploads, scripted and recorded like the fake model |
 | `@moonshot-ai/testkit/kap` | `startKap`: an in-process KAP server backed by the fake model; `KapProcess`: the CLI's `web --json` server in a child process; `KapClient`: the session operations both of them share, with REST and WebSocket clients and a turn reducer |
-| `@moonshot-ai/testkit/fixtures` | temporary homes, a `config.toml` writer, git repositories with a linked worktree, environment isolation, the network guard, child processes that stay offline, the CLI command and environment, repository paths, directory snapshots, waits, timeouts, media samples, normalizers, and a fake stdio MCP server |
+| `@moonshot-ai/testkit/fixtures` | temporary homes, a `config.toml` writer, git repositories with a linked worktree, environment isolation, the network guard, child processes that stay offline, the CLI command and environment, repository paths, directory snapshots, waits, timeouts, media samples, normalizers, and fake MCP servers over stdio, streamable HTTP and SSE |
 | `@moonshot-ai/testkit/contract` | a field-per-line summary of OpenAPI and AsyncAPI documents, a check that lists contract changes as breaking, non-breaking or unclassified, and a digest that ignores wording, for pinning an API level |
 | `@moonshot-ai/testkit/vitest` | fixture definitions for `test.extend` and the network guard hooks |
 
@@ -93,6 +93,8 @@ Tool calls get deterministic ids, `call_<requestIndex>_<callIndex>`; `model.call
 The model also answers the Kimi files API: `POST …/files` stores the upload and returns a ready file object with ID `file-<uploadIndex>`, and `GET …/files/<id>` returns it again. `model.uploads()` lists each upload's filename, purpose, content types and raw body. After `model.holdUploads()`, uploads stay open until the client gives up, and are then recorded as `aborted`.
 
 When inspecting Google request history, use the IDs in `request.view.messages` to match results to calls. The view preserves explicit wire IDs. Each call with an omitted ID gets its own ID, and results with omitted IDs match pending calls of the same name in order.
+
+A Google user content may open with ordinary parts and carry its function responses after them. The engine builds this when it merges a user message, such as the compaction instruction after a mid-turn tool call, into the tool results it follows, and Gemini accepts that order. The view lists those opening parts as a user message right after the results that follow them, so the sequence check passes. User parts anywhere else in the content, such as between two results, keep their wire position and are still checked.
 
 The tool builders write calls in the wire shape of the engine's tools: `bash`, `read`, `write`, `edit`, `glob`, `grep`, `agent`, `waitFor`, `taskOutput`, `taskStop`, `todoList`, `askUserQuestion`, `exitPlanMode`, `createGoal`, `updateGoal` and `skill`. Their argument types mirror the engine's schemas, and `tests/scenarios/tool-builders.test.ts` checks every argument against the schemas a real engine offers.
 

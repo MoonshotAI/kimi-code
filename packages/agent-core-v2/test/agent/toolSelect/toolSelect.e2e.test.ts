@@ -30,7 +30,7 @@ import {
   type TestAgentContext,
   type TestkitAgentFixtures,
 } from '../../harness';
-import { createMemoryMcpOAuthStore, startInProcessHttpMcpServer } from '../../mcpCore/stubs';
+import { createMemoryMcpOAuthStore, startEchoHttpMcpServer } from '../../mcpCore/stubs';
 import type { Message } from '@moonshot-ai/core/llm/message';
 
 function toolsOf(message: Message | undefined) {
@@ -643,7 +643,7 @@ describe('progressive tool disclosure end-to-end', () => {
 
 describe('same-turn MCP tool replacement', () => {
   it.each([true, false])('authenticates and calls the replacement tool with deferred=%s', async (deferred) => {
-    const server = await startInProcessHttpMcpServer({ authToken: 'test-token' });
+    const server = await startEchoHttpMcpServer({ bearerToken: 'test-token' });
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     const authenticating = createControlledPromise<void>();
     const authorized = createControlledPromise<void>();

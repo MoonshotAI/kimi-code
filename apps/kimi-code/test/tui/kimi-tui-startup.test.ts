@@ -6364,5 +6364,151 @@ describe('KimiTUI work location', () => {
       expect(inspectWorktreeRemoval).not.toHaveBeenCalled();
       expect(driver.worktreeExit.outcome).toBeUndefined();
     });
+
+    it('updates the spinning footer hint across shutdown hooks and worktree deletion stages', async () => {
+      const { harness, session, removeWorktree, driver, mount } = await startInWorktree(
+        { uncommittedFiles: 0 },
+        { mockStop: false },
+      );
+      let finishClose!: () => void;
+      let finishRemove!: () => void;
+      let finishHarness!: () => void;
+      session.close.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            finishClose = resolve;
+          }),
+      );
+      removeWorktree.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            finishRemove = resolve;
+          }),
+      );
+      harness.close.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            finishHarness = resolve;
+          }),
+      );
+      await driver.ensureSession();
+
+      driver.handleUserInput('/exit');
+      await vi.waitFor(() => {
+        expect(mount).toHaveBeenCalled();
+      });
+      const dialog = mount.mock.calls[0]![0];
+      dialog.handleInput?.('\u001B[B');
+      dialog.handleInput?.('\r');
+
+      await vi.waitFor(() => {
+        expect(finishClose).toBeDefined();
+      });
+      expect(stripVTControlCharacters(driver.state.footer.render(160)[1] ?? '')).toMatch(
+        /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Shutting down… \(running shutdown hooks\)/,
+      );
+
+      finishClose();
+      await vi.waitFor(() => {
+        expect(finishRemove).toBeDefined();
+      });
+      expect(stripVTControlCharacters(driver.state.footer.render(160)[1] ?? '')).toMatch(
+        /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Deleting worktree wt… \(Ctrl\+C to force quit\)/,
+      );
+
+      finishRemove();
+      await vi.waitFor(() => {
+        expect(finishHarness).toBeDefined();
+      });
+      expect(stripVTControlCharacters(driver.state.footer.render(160)[1] ?? '')).toMatch(
+        /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Shutting down…/,
+      );
+
+      finishHarness();
+      await vi.waitFor(() => {
+        expect(driver.state.footer.getTransientHint()).toBeNull();
+      });
+      expect(driver.worktreeExit.outcome?.kind).toBe('deleted');
+    });
+
+    it('shows pending /worktree background delete progress in the footer during shutdown', async () => {
+      onTestFinished(() => {
+        setExperimentalFeatures([]);
+      });
+      const project = tempDir('kimi-bg-delete-project-');
+      const otherWt = tempDir('kimi-bg-delete-other-');
+      let finishRemove!: () => void;
+      const removeWorktree = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishRemove = resolve;
+          }),
+      );
+      const session = makeSession({ id: 'ses-main' });
+      const harness = makeHarness(session, {
+        getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
+        listWorktrees: vi.fn(async () => ({
+          repoRoot: project,
+          isBare: false,
+          mainBranch: 'main',
+          currentCheckoutRoot: project,
+          worktrees: [
+            {
+              path: otherWt,
+              name: 'fix-auth',
+              managed: true,
+              branch: 'feat/auth',
+              head: 'abc1234',
+              dirty: false,
+              locked: false,
+              prunable: false,
+            },
+          ],
+        })),
+        inspectWorktreeRemoval: vi.fn(async () => ({
+          path: otherWt,
+          missing: false,
+          branch: 'feat/auth',
+          uniqueCommits: 0,
+          uncommittedFiles: 0,
+          openSessionIds: [],
+          closedSessionCount: 0,
+        })),
+        removeWorktree,
+      });
+      const driver = makeDriver(harness, {
+        ...makeStartupInput({ model: 'k2' }),
+        workDir: project,
+        projectRoot: project,
+        isGitRepo: true,
+      }) as ExitDriver & { showWorktreePanel(): Promise<void> };
+      await driver.initMainTui();
+      const mount = vi.spyOn(driver, 'mountEditorReplacement');
+
+      await driver.showWorktreePanel();
+      const panel = mount.mock.calls[0]![0];
+      panel.handleInput?.('\u001B[B');
+      panel.handleInput?.('\u0018');
+      await vi.waitFor(() => {
+        expect(mount).toHaveBeenCalledTimes(2);
+      });
+      const confirm = mount.mock.calls[1]![0];
+      confirm.handleInput?.('\u001B[B');
+      confirm.handleInput?.('\r');
+      await vi.waitFor(() => {
+        expect(finishRemove).toBeDefined();
+      });
+
+      const stopPromise = driver.stop();
+      await vi.waitFor(() => {
+        expect(stripVTControlCharacters(driver.state.footer.render(160)[1] ?? '')).toMatch(
+          /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Deleting worktree fix-auth… \(Ctrl\+C to force quit\)/,
+        );
+      });
+
+      finishRemove();
+      await stopPromise;
+      expect(driver.state.footer.getTransientHint()).toBeNull();
+    });
   });
 });

@@ -168,6 +168,7 @@ function parseRequest(body: unknown, path: string): RequestView {
     const content = asRecord(raw);
     const role = content['role'] === 'model' ? 'assistant' : 'user';
     const wireParts = asArray(content['parts']);
+    const contentMessages: ViewMessage[] = [];
     let parts: ViewPart[] = [];
     const calls: ViewCall[] = [];
     const reasoning: string[] = [];
@@ -179,13 +180,13 @@ function parseRequest(body: unknown, path: string): RequestView {
         calls.push({ id: callIds.forCall(name, functionCall['id']), name, arguments: JSON.stringify(functionCall['args'] ?? {}) });
       } else if (part['functionResponse'] !== undefined) {
         if (role === 'user' && parts.length > 0) {
-          messages.push({ role, text: textOfParts(parts), parts, calls: [] });
+          contentMessages.push({ role, text: textOfParts(parts), parts, calls: [] });
           parts = [];
         }
         const response = asRecord(part['functionResponse']);
         const name = stringOf(response['name']);
         const text = JSON.stringify(response['response'] ?? {});
-        messages.push({ role: 'tool', text, parts: [{ type: 'text', text }], calls: [], callId: callIds.forResult(name, response['id']) });
+        contentMessages.push({ role: 'tool', text, parts: [{ type: 'text', text }], calls: [], callId: callIds.forResult(name, response['id']) });
       } else if (part['thought'] === true) {
         reasoning.push(stringOf(part['text']));
       } else {
@@ -193,10 +194,11 @@ function parseRequest(body: unknown, path: string): RequestView {
       }
     }
     if (role === 'assistant') {
-      messages.push({ role, text: textOfParts(parts), parts, calls, reasoning: reasoning.length === 0 ? undefined : reasoning.join('') });
+      contentMessages.push({ role, text: textOfParts(parts), parts, calls, reasoning: reasoning.length === 0 ? undefined : reasoning.join('') });
     } else if (parts.length > 0 || wireParts.length === 0) {
-      messages.push({ role, text: textOfParts(parts), parts, calls: [] });
+      contentMessages.push({ role, text: textOfParts(parts), parts, calls: [] });
     }
+    messages.push(...withOpeningPartsAfterTheirResults(contentMessages));
   }
   return {
     model: modelOfPath(path),
@@ -216,6 +218,14 @@ function parseRequest(body: unknown, path: string): RequestView {
     ),
     messages,
   };
+}
+
+function withOpeningPartsAfterTheirResults(contentMessages: readonly ViewMessage[]): readonly ViewMessage[] {
+  const [opening, ...rest] = contentMessages;
+  const firstAfterResults = rest.findIndex((message) => message.role !== 'tool');
+  const resultCount = firstAfterResults === -1 ? rest.length : firstAfterResults;
+  if (opening?.role !== 'user' || resultCount === 0) return contentMessages;
+  return [...rest.slice(0, resultCount), opening, ...rest.slice(resultCount)];
 }
 
 class GoogleToolCallIds {

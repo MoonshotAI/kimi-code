@@ -60,7 +60,7 @@ import {
   type TestAgentContext,
 } from '../../harness';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
-import { startInProcessHttpMcpServer } from '../../mcpCore/stubs';
+import { startEchoHttpMcpServer } from '../../mcpCore/stubs';
 import { held, reply, say } from '@moonshot-ai/testkit/model';
 import { stubFlag } from '../../app/flag/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -462,7 +462,7 @@ describe('subagent task reminders and btw request parity', () => {
   });
 
   async function expectForkBaselineParity(timing: 'startup' | 'runtime', context: TestContext): Promise<void> {
-    const server = await startInProcessHttpMcpServer();
+    const server = await startEchoHttpMcpServer();
     const manager = new McpConnectionManager();
     const fixtures = testkitAgentFixtures(
       mcpServices({ manager }),
