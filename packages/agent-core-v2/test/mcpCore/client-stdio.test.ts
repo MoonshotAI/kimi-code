@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
@@ -426,11 +426,13 @@ describe('StdioMcpClient', () => {
 
   it('notifies a session-evidence listener with hard evidence when the child exits after connect', async () => {
     const banner = `kimi-test-crash-${Date.now()}`;
+    const signalDir = mkdtempSync(join(tmpdir(), 'kimi-mcp-exit-signal-'));
+    const exitSignal = join(signalDir, 'exit');
     const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [crashAfterConnectFixture],
-      env: { KIMI_TEST_MCP_EXIT_AFTER_MS: '50', KIMI_TEST_MCP_STDERR: banner },
+      env: { KIMI_TEST_MCP_EXIT_WHEN_FILE: exitSignal, KIMI_TEST_MCP_STDERR: banner },
     });
     const closes: Array<{ kind?: string; stderr?: string; error?: string }> = [];
     client.onSessionEvidence((evidence) => {
@@ -442,6 +444,8 @@ describe('StdioMcpClient', () => {
     });
     try {
       await client.connect();
+      expect(closes).toEqual([]);
+      writeFileSync(exitSignal, '');
       for (let i = 0; i < 100; i++) {
         if (closes.length > 0) break;
         await new Promise((r) => setTimeout(r, 25));
@@ -451,6 +455,7 @@ describe('StdioMcpClient', () => {
       expect(closes[0]?.stderr ?? '').toContain(banner);
     } finally {
       await client.close();
+      await rm(signalDir, { recursive: true, force: true });
     }
   }, 15000);
 

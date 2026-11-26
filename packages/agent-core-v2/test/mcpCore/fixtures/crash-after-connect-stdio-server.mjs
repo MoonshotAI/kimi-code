@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -40,7 +42,11 @@ server.registerTool(
 
 await server.connect(new StdioServerTransport());
 
-const exitAfterMsRaw = process.env['KIMI_TEST_MCP_EXIT_AFTER_MS'];
-if (exitAfterMsRaw !== undefined) {
-  setTimeout(exitWithBanner, Number.parseInt(exitAfterMsRaw, 10));
+const exitSignalFile = process.env['KIMI_TEST_MCP_EXIT_WHEN_FILE'];
+if (exitSignalFile !== undefined) {
+  const poll = setInterval(() => {
+    if (!existsSync(exitSignalFile)) return;
+    clearInterval(poll);
+    exitWithBanner();
+  }, 10);
 }

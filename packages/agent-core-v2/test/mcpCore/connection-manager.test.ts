@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, realpathSync } from 'node:fs';
+import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import {
   createServer as createHttpServer,
   type IncomingMessage,
@@ -1510,17 +1510,20 @@ describe('McpConnectionManager', () => {
     const cm = createManager();
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
     cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
+    const signalDir = mkdtempSync(join(tmpdir(), 'kimi-mcp-exit-signal-'));
+    const exitSignal = join(signalDir, 'exit');
     try {
       await cm.connectAll({
         crashy: {
           transport: 'stdio',
           command: process.execPath,
           args: [crashAfterConnectFixture],
-          env: { KIMI_TEST_MCP_EXIT_AFTER_MS: '500', KIMI_TEST_MCP_STDERR: 'fatal: out of memory' },
+          env: { KIMI_TEST_MCP_EXIT_WHEN_FILE: exitSignal, KIMI_TEST_MCP_STDERR: 'fatal: out of memory' },
           startupTimeoutMs: 4_000,
         },
       });
       expect(cm.get('crashy')?.status).toBe('connected');
+      writeFileSync(exitSignal, '');
 
       for (let i = 0; i < 100; i++) {
         if (cm.get('crashy')?.status === 'failed') break;
@@ -1538,6 +1541,7 @@ describe('McpConnectionManager', () => {
       ]);
     } finally {
       await cm.shutdown();
+      await rm(signalDir, { recursive: true, force: true });
     }
   }, 10000);
 
