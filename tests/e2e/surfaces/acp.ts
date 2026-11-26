@@ -17,7 +17,9 @@ import {
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionConfigOption,
+  type SessionCapabilities,
   type SessionConfigSelectOption,
+  type SessionInfo,
   type SessionUpdate,
   type StopReason,
   type TerminalExitStatus,
@@ -216,6 +218,10 @@ function entriesOf(updates: readonly SessionUpdate[]): Entry[] {
   return entries;
 }
 
+function offered(capability: object | null | undefined): boolean {
+  return capability !== undefined && capability !== null;
+}
+
 function repliesOf(updates: readonly SessionUpdate[]): string[] {
   return entriesOf(updates).flatMap((entry) => (entry.kind === 'reply' ? [entry.text] : []));
 }
@@ -307,6 +313,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private configOptions: readonly SessionConfigOption[] = [];
   private configOptionsAt = 0;
   private restored = false;
+  private sessionCapabilities: SessionCapabilities = {};
   private readonly leftSessions = new Set<string>();
   private leftSessionUpdates = 0;
   private turn: Turn | undefined;
@@ -361,6 +368,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     if (initialized.protocolVersion !== PROTOCOL_VERSION) {
       throw new Error(`kimi acp answered initialize with protocol version ${String(initialized.protocolVersion)}; the editor speaks ${String(PROTOCOL_VERSION)}.`);
     }
+    this.sessionCapabilities = initialized.agentCapabilities?.sessionCapabilities ?? {};
     if (resume === undefined) {
       const session = await this.response(
         'the agent to create a session',
@@ -555,6 +563,99 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     });
     this.assertPromptValid();
     if (outcome === 'failed') throw new Error(`compact() saw the compaction cancelled or blocked.\n${this.describe()}`);
+  }
+
+  async fork(): Promise<void> {
+    await this.settledForSessions('fork()');
+    if (!offered(this.sessionCapabilities.fork)) throw new Error(`fork() needs session/fork, but kimi acp does not advertise it.\n${this.describe()}`);
+    if (this.conversation().length === 0) throw new Error(`fork() needs a session with messages, but the editor holds none.\n${this.describe()}`);
+    const forked = await this.response(
+      `the agent to fork session ${this.sessionId}`,
+      this.connection.agent.request(methods.agent.session.fork, { sessionId: this.sessionId, cwd: this.home.workspace, mcpServers: this.mcpServers }),
+    );
+    if (forked.sessionId === this.sessionId) throw new Error(`fork() asked for a fork, but the agent answered with the current session, ${forked.sessionId}.\n${this.describe()}`);
+    await this.load(forked.sessionId);
+  }
+
+  async openSession(title: string): Promise<void> {
+    await this.settledForSessions('openSession()');
+    const sessions = await this.listedSessions('openSession()');
+    const others = sessions.filter((session) => session.title === title && session.sessionId !== this.sessionId);
+    if (others.length !== 1) {
+      const reason = others.length === 0 ? 'no other session has that title' : `${others.length} other sessions have that title`;
+      throw new Error(`openSession() cannot pick the session ${JSON.stringify(title)}: ${reason}. session/list returns ${this.describeSessions(sessions)}.\n${this.describe()}`);
+    }
+    await this.load(others[0]!.sessionId);
+  }
+
+  async deleteSession(title: string): Promise<void> {
+    await this.settledForSessions('deleteSession()');
+    if (!offered(this.sessionCapabilities.delete)) throw new Error(`deleteSession() needs session/delete, but kimi acp does not advertise it.\n${this.describe()}`);
+    const sessions = await this.listedSessions('deleteSession()');
+    const matching = sessions.filter((session) => session.title === title);
+    if (matching.length !== 1 || matching[0]!.sessionId === this.sessionId) {
+      const reason =
+        matching.length === 0 ? 'no session has that title' : matching.length > 1 ? `${matching.length} sessions have that title` : 'it is the open session; open another one first';
+      throw new Error(`deleteSession() cannot pick the session ${JSON.stringify(title)}: ${reason}. session/list returns ${this.describeSessions(sessions)}.\n${this.describe()}`);
+    }
+    const target = matching[0]!.sessionId;
+    await this.response(`the agent to delete session ${target}`, this.connection.agent.request(methods.agent.session.delete, { sessionId: target }));
+    const after = await this.listedSessions('deleteSession()');
+    if (after.some((session) => session.sessionId === target)) {
+      throw new Error(`deleteSession() deleted ${JSON.stringify(title)}, but session/list still returns it: ${this.describeSessions(after)}.\n${this.describe()}`);
+    }
+  }
+
+  async expectSessions(titles: readonly string[]): Promise<void> {
+    await this.settledForSessions('expectSessions()');
+    const sessions = await this.listedSessions('expectSessions()');
+    const listed = sessions.map((session) => session.title ?? '').toSorted();
+    const wanted = titles.toSorted();
+    if (JSON.stringify(listed) !== JSON.stringify(wanted)) {
+      throw new Error(`expectSessions() wanted session/list to return ${JSON.stringify(wanted)}, but it returns ${JSON.stringify(listed)}.\n${this.describe()}`);
+    }
+  }
+
+  private async settledForSessions(verb: string): Promise<void> {
+    const state = await this.wait('the turn to end', () => {
+      if (this.permissions.length > 0) return 'waiting' as const;
+      return this.turnOver() && this.handledUpdates() >= this.receivedUpdates ? ('idle' as const) : undefined;
+    });
+    if (state === 'waiting') throw new Error(`${verb} needs an idle product, but an approval or a question is pending.\n${this.describe()}`);
+  }
+
+  private async listedSessions(verb: string): Promise<SessionInfo[]> {
+    if (!offered(this.sessionCapabilities.list)) throw new Error(`${verb} needs session/list, but kimi acp does not advertise it.\n${this.describe()}`);
+    const sessions: SessionInfo[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.response('the agent to list the sessions', this.connection.agent.request(methods.agent.session.list, { cwd: this.home.workspace, cursor }));
+      sessions.push(...page.sessions);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor !== undefined);
+    return sessions;
+  }
+
+  private describeSessions(sessions: readonly SessionInfo[]): string {
+    if (sessions.length === 0) return 'no sessions';
+    return sessions.map((session) => `${JSON.stringify(session.title ?? null)}${session.sessionId === this.sessionId ? ' (open)' : ''}`).join(', ');
+  }
+
+  private async load(sessionId: string): Promise<void> {
+    this.leftSessions.add(this.sessionId);
+    this.leftSessions.delete(sessionId);
+    const start = this.updates.length;
+    const loaded = await this.response(
+      `the agent to load session ${sessionId}`,
+      this.connection.agent.request(methods.agent.session.load, { sessionId, cwd: this.home.workspace, mcpServers: this.mcpServers }),
+    );
+    this.sessionId = sessionId;
+    this.sessionStart = start;
+    this.restored = true;
+    this.prompts = [];
+    this.turn = undefined;
+    this.openedMode = loaded.modes?.currentModeId;
+    this.adoptConfigOptions(loaded.configOptions);
   }
 
   async newSession(): Promise<void> {

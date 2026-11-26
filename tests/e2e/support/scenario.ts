@@ -459,10 +459,8 @@ class ScenarioSession {
     await Reflect.apply(method, driver, args);
     if (verb === 'send' || verb === 'queue' || verb === 'steer' || verb === 'submit') this.lastPrompt = String(args[0]);
     if (verb === 'undo') this.lastPrompt = undefined;
-    if (verb === 'newSession') {
-      this.lastPrompt = undefined;
-      this.sessions += 1;
-    }
+    if (verb === 'newSession' || verb === 'openSession') this.lastPrompt = undefined;
+    if (verb === 'newSession' || verb === 'fork') this.sessions += 1;
   }
 
   private async launch(launch: SurfaceLaunch): Promise<SurfaceDriver<Surface>> {

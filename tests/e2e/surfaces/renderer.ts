@@ -36,6 +36,12 @@ const STATE = '[role="status"]';
 const MENU_BUTTON = 'button[aria-haspopup="menu"]';
 const THINKING = 'Thinking';
 const TO_BACKGROUND = 'To background';
+const SESSION_ID = 'data-session-id';
+const SESSION_TITLE = '.t';
+const OPEN_SESSION = /\/sessions\/([^/?#]+)/;
+const FORK_SESSION = 'Fork session';
+const DELETE_SESSION = 'Delete session';
+const PERMANENTLY_DELETE = 'Permanently delete';
 const DETAIL_PANEL = 'Detail panel';
 const STOP_TASK = 'stop';
 const RENDERER_TASK_STATUS: { readonly [S in TaskStatus]: string } = { running: 'running', done: 'Done', failed: 'Failed', stopped: 'Stopped' };
@@ -128,6 +134,16 @@ function effortLabelOf(level: string): string {
 function shownThinking(level: string): string {
   if (level === 'off') return '';
   return level === 'on' ? THINKING : effortLabelOf(level);
+}
+
+interface SessionRowReading {
+  readonly id: string;
+  readonly title: string;
+}
+
+function describeRows(rows: readonly SessionRowReading[], current: string | undefined): string {
+  if (rows.length === 0) return 'no sessions';
+  return rows.map((row) => `${JSON.stringify(row.title)}${row.id === current ? ' (open)' : ''}`).join(', ');
 }
 
 export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
@@ -668,6 +684,111 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     }
     await this.press('newSession()', `the ${NEW_SESSION} button`, this.page.getByRole('button', { name: new RegExp(`^${NEW_SESSION}`) }).first());
     await this.wait('a new, empty conversation', async () => ((await this.conversationSize()) === 0 && (await this.composer().isVisible()) ? true : undefined));
+  }
+
+  async fork(): Promise<void> {
+    const source = this.openSessionId();
+    if (source === undefined) throw new Error(`fork() needs a session with messages, but the page has no session open.\n${await this.describe()}`);
+    if ((await this.conversationSize()) === 0) throw new Error(`fork() needs a session with messages, but the conversation is empty.\n${await this.describe()}`);
+    const before = new Set((await this.sessionRows()).map((row) => row.id));
+    const menu = await this.sessionMenu('fork()', source);
+    await this.press('fork()', FORK_SESSION, menu.getByRole('menuitem', { name: FORK_SESSION, exact: true }));
+    await this.wait('the page to open the forked session', async () => {
+      const opened = this.openSessionId();
+      return opened !== undefined && opened !== source && !before.has(opened) && (await this.conversationSize()) > 0 ? true : undefined;
+    });
+  }
+
+  async openSession(title: string): Promise<void> {
+    const current = this.openSessionId();
+    const rows = await this.sessionRows();
+    const others = rows.filter((row) => row.title === title && row.id !== current);
+    if (others.length !== 1) {
+      const reason = others.length === 0 ? 'no other session has that title' : `${others.length} other sessions have that title`;
+      throw new Error(`openSession() cannot pick the session ${JSON.stringify(title)}: ${reason}. The sidebar lists ${describeRows(rows, current)}.\n${await this.describe()}`);
+    }
+    const target = others[0]!.id;
+    await this.press('openSession()', `the session ${JSON.stringify(title)}`, this.sessionRow(target).locator(SESSION_TITLE));
+    await this.wait(`the page to open the session ${JSON.stringify(title)}`, async () => (this.openSessionId() === target && (await this.conversationSize()) > 0 ? true : undefined));
+  }
+
+  async deleteSession(title: string): Promise<void> {
+    const target = await this.closedSession('deleteSession()', title);
+    const menu = await this.sessionMenu('deleteSession()', target);
+    await this.press('deleteSession()', 'Delete', menu.getByRole('menuitem', { name: 'Delete', exact: true }));
+    const confirm = this.page.getByRole('dialog', { name: DELETE_SESSION });
+    await this.press('deleteSession()', PERMANENTLY_DELETE, confirm.getByRole('button', { name: PERMANENTLY_DELETE, exact: true }));
+    await this.wait(`the sidebar to drop the session ${JSON.stringify(title)}`, async () => ((await this.sessionRow(target).count()) === 0 ? true : undefined));
+  }
+
+  async archiveSession(title: string): Promise<void> {
+    const target = await this.closedSession('archiveSession()', title);
+    const menu = await this.sessionMenu('archiveSession()', target);
+    await this.press('archiveSession()', 'Archive', menu.getByRole('menuitem', { name: 'Archive', exact: true }));
+    await this.wait(`the sidebar to drop the session ${JSON.stringify(title)}`, async () => ((await this.sessionRow(target).count()) === 0 ? true : undefined));
+  }
+
+  async expectSessions(titles: readonly string[]): Promise<void> {
+    const wanted = titles.toSorted();
+    let previous: string | undefined;
+    const shown = await this.wait(`the sidebar to list the sessions ${JSON.stringify(titles)}`, async () => {
+      const listed = (await this.sessionRows()).map((row) => row.title).toSorted();
+      const reading = JSON.stringify(listed);
+      if (reading === JSON.stringify(wanted)) return listed;
+      const settled = reading === previous && (await this.idle());
+      previous = reading;
+      return settled ? listed : undefined;
+    });
+    if (JSON.stringify(shown) !== JSON.stringify(wanted)) {
+      throw new Error(`expectSessions() wanted the sidebar to list ${JSON.stringify(wanted)}, but it lists ${JSON.stringify(shown)}.\n${await this.describe()}`);
+    }
+  }
+
+  private sidebar(): Locator {
+    return this.page.getByRole('complementary').filter({ has: this.page.getByRole('button', { name: new RegExp(`^${NEW_SESSION}`) }) });
+  }
+
+  private sessionRow(id: string): Locator {
+    return this.sidebar().locator(`[${SESSION_ID}=${quoted(id)}]`);
+  }
+
+  private async sessionRows(): Promise<SessionRowReading[]> {
+    const read = await this.sidebar()
+      .locator(`[${SESSION_ID}]`)
+      .evaluateAll(
+        (elements, selectors) =>
+          elements.map((element) => ({ id: element.getAttribute(selectors.id) ?? '', title: (element.querySelector(selectors.title)?.textContent ?? '').trim() })),
+        { id: SESSION_ID, title: SESSION_TITLE },
+      );
+    return read.filter((row, index) => read.findIndex((other) => other.id === row.id) === index);
+  }
+
+  private openSessionId(): string | undefined {
+    return OPEN_SESSION.exec(this.page.url())?.[1];
+  }
+
+  private async closedSession(verb: string, title: string): Promise<string> {
+    const rows = await this.sessionRows();
+    const current = this.openSessionId();
+    const matching = rows.filter((row) => row.title === title);
+    if (matching.length !== 1 || matching[0]!.id === current) {
+      const reason =
+        matching.length === 0 ? 'no session has that title' : matching.length > 1 ? `${matching.length} sessions have that title` : 'it is the open session; open another one first';
+      throw new Error(`${verb} cannot pick the session ${JSON.stringify(title)}: ${reason}. The sidebar lists ${describeRows(rows, current)}.\n${await this.describe()}`);
+    }
+    return matching[0]!.id;
+  }
+
+  private async sessionMenu(verb: string, id: string): Promise<Locator> {
+    const row = this.sessionRow(id);
+    try {
+      await row.locator(SESSION_TITLE).click({ button: 'right', timeout: TIMEOUTS.wait });
+    } catch (cause) {
+      throw new Error(`${verb} could not open the menu of the session ${id}: ${reasonOf(cause)}\n${await this.describe()}`, { cause });
+    }
+    const menu = this.page.getByRole('menu');
+    await this.wait(`the menu of the session ${id} to open`, async () => ((await menu.count()) === 1 && (await menu.isVisible()) ? true : undefined));
+    return menu;
   }
 
   async resize(viewport: { readonly width: number; readonly height: number }): Promise<void> {

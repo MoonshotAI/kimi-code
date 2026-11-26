@@ -41,6 +41,10 @@ const NO_WINDOW_TO_RESIZE = {
 };
 const NO_BACKGROUNDING_OVER_ACP = 'An editor cannot move a running command to the background over ACP.';
 const TASK_LIST_OVER_ACP = 'ACP lists background tasks only in the text reply of the /tasks command, without their output; the driver does not read it yet.';
+const NO_ARCHIVE = {
+  tui: 'The terminal UI has no archive; a user deletes sessions from /sessions instead.',
+  acp: 'ACP has no request to archive a session.',
+};
 const NO_TASK_STOP_OVER_ACP = 'An editor cannot stop one background task over ACP; it can only cancel the whole turn.';
 const NO_PAGE_TO_RELOAD = {
   tui: 'A terminal shows the CLI itself; there is no page to reload.',
@@ -87,6 +91,11 @@ export const VERBS = {
   submit: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: false },
   expectComposer: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: true },
   newSession: { on: SURFACES, checksInterface: false },
+  fork: { on: SURFACES, checksInterface: false },
+  openSession: { on: SURFACES, checksInterface: false },
+  deleteSession: { on: SURFACES, checksInterface: false },
+  archiveSession: { on: ['desktop', 'web'], absentBecause: NO_ARCHIVE, checksInterface: false },
+  expectSessions: { on: SURFACES, checksInterface: true },
   compact: { on: SURFACES, checksInterface: false },
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
   reload: { on: ['web'], absentBecause: NO_PAGE_TO_RELOAD, checksInterface: false },
@@ -291,6 +300,11 @@ interface VerbSignatures {
   submit(text: string): Promise<void>;
   expectComposer(text: string): Promise<void>;
   newSession(): Promise<void>;
+  fork(): Promise<void>;
+  openSession(title: string): Promise<void>;
+  deleteSession(title: string): Promise<void>;
+  archiveSession(title: string): Promise<void>;
+  expectSessions(titles: readonly string[]): Promise<void>;
   compact(): Promise<void>;
   resize(size: WindowSize): Promise<void>;
   reload(): Promise<void>;

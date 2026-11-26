@@ -81,6 +81,7 @@ const KITTY_KEYS: Readonly<Record<string, { readonly code: number; readonly modi
   '\x11': { code: 113, modifiers: 5 },
   '\x13': { code: 115, modifiers: 5 },
   '\x02': { code: 98, modifiers: 5 },
+  '\x18': { code: 120, modifiers: 5 },
 };
 const BEGIN_FRAME = '\x1b[?2026h';
 const END_FRAME = '\x1b[?2026l';
@@ -106,6 +107,8 @@ const KEYS = {
   background: '\x02',
   stopTask: 's',
   confirmStop: 'y',
+  deleteSession: '\x18',
+  confirmDelete: 'y',
 } as const;
 
 const USER_MARK = '❯';
@@ -187,6 +190,20 @@ const FOOTER_THINKING = ' thinking';
 const COMPACTION_DONE = 'Compaction complete';
 const COMPACTION_CANCELLED = 'Compaction cancelled';
 const NEW_SESSION_NOTICE = 'Started a new session (';
+const SESSIONS_COMMAND = '/sessions';
+const FORK_COMMAND = '/fork';
+const SESSION_PICKER_TITLE = /^Sessions\b/;
+const SESSION_PICKER_HINT = 'Esc cancel';
+const SESSIONS_LOADING = 'Loading sessions…';
+const SESSION_CARD_ID = /^(session_[\w-]+)(?:\s{3,}.*)?$/;
+const SESSION_POINTER = '❯';
+const CURRENT_SESSION = '← current';
+const SESSION_LIST_WINDOW = /^Showing \d+-\d+ of /;
+const DELETE_SESSION_PROMPT = 'Delete session "';
+const DELETING_SESSION = 'Deleting session "';
+const RESUMED_SESSION = 'Resumed session (';
+const FORKED_SESSION = /Session forked \((session_[\w-]+)\)\. Still in the original session/;
+const FORK_FAILED = ['Failed to fork session:', 'No active session'];
 
 interface Screen {
   readonly text: string;
@@ -291,6 +308,8 @@ function screenOf(rows: readonly string[], viewport: readonly string[]): Screen 
   }
   if (editor < 0) return { ...frame, input: 'none', transcript: rows, status: [], panel: [] };
   const gap = lines.findLastIndex((line, index) => index < editor && line === '');
+  const resumed = lines.findLastIndex((line, index) => index < editor && line.startsWith(RESUMED_SESSION));
+  if (resumed > gap) return { ...frame, input: 'editor', transcript: rows.slice(0, resumed), status: lines.slice(resumed + 1, editor), panel: [] };
   return { ...frame, input: 'editor', transcript: rows.slice(0, gap + 1), status: lines.slice(gap + 1, editor), panel: [] };
 }
 
@@ -403,6 +422,51 @@ function taskBrowser(screen: Screen): TaskBrowser | undefined {
   const end = below.findIndex((line) => line.includes('└'));
   const output = (end < 0 ? below : below.slice(0, end)).map((line) => line.split('││')[1]?.replace(/│\s*$/, '').trim() ?? '').filter((text) => text !== '');
   return { total, id: field('Task ID'), status: field('Status'), description: field('Description'), output };
+}
+
+interface SessionCard {
+  readonly id: string;
+  readonly title: string;
+  readonly selected: boolean;
+  readonly current: boolean;
+}
+
+type ForkOutcome = { readonly kind: 'forked'; readonly id: string } | { readonly kind: 'failed'; readonly screen: Screen };
+
+interface SessionPicker {
+  readonly loading: boolean;
+  readonly cards: readonly SessionCard[];
+  readonly windowed: boolean;
+  readonly deleting: boolean;
+}
+
+function sessionPicker(screen: Screen): SessionPicker | undefined {
+  const lines = screen.viewport.map((line) => line.trim());
+  const title = lines.findLastIndex((line, index) => SESSION_PICKER_TITLE.test(line) && lines[index + 1]?.includes(SESSION_PICKER_HINT) === true);
+  const loadingTitle = lines.findLastIndex((line, index) => SESSION_PICKER_TITLE.test(line) && lines[index + 1] === SESSIONS_LOADING);
+  if (title < 0 && loadingTitle < 0) return undefined;
+  if (loadingTitle > title) return { loading: true, cards: [], windowed: false, deleting: false };
+  const body = lines.slice(title + 2);
+  const cards = body.flatMap((line, index): SessionCard[] => {
+    const id = SESSION_CARD_ID.exec(line)?.[1];
+    const header = body[index - 1];
+    if (id === undefined || header === undefined) return [];
+    const selected = header.startsWith(SESSION_POINTER);
+    const current = header.endsWith(CURRENT_SESSION);
+    const label = (current ? header.slice(0, -CURRENT_SESSION.length) : header).replace(SESSION_POINTER, '').trim();
+    return [{ id, title: label.split(/\s{2,}/)[0] ?? '', selected, current }];
+  });
+  return {
+    loading: false,
+    cards,
+    windowed: body.some((line) => SESSION_LIST_WINDOW.test(line)),
+    deleting: body.some((line) => line.startsWith(DELETE_SESSION_PROMPT) || line.startsWith(DELETING_SESSION)),
+  };
+}
+
+function describeCards(cards: readonly SessionCard[]): string {
+  if (cards.length === 0) return 'no sessions';
+  return cards.map((card) => `${JSON.stringify(card.title)}${card.current ? ' (open)' : ''}`).join(', ');
 }
 
 function pickerOpen(screen: Screen): boolean {
@@ -876,6 +940,118 @@ class TuiDriver implements SurfaceDriver<'tui'> {
       return compactionNotices(screen, COMPACTION_DONE) > done && this.turnOver(screen) ? ('done' as const) : undefined;
     });
     if (outcome === 'cancelled') throw this.failure('compact() saw the compaction cancelled.', await this.read());
+  }
+
+  async fork(): Promise<void> {
+    const before = await this.idleForSessions('fork()');
+    if (conversationBlocks(before).length === 0) throw this.failure('fork() needs a session with messages, but the conversation is empty.', before);
+    this.write(paste(FORK_COMMAND));
+    this.write(KEYS.enter);
+    const failures = (screen: Screen): number => screen.viewport.filter((line) => FORK_FAILED.some((failure) => line.includes(failure))).length;
+    const outcome = await this.wait('the CLI to fork the session', (screen): ForkOutcome | undefined => {
+      const forked = screen.viewport.map((line) => FORKED_SESSION.exec(line)?.[1]).findLast((id) => id !== undefined);
+      if (forked !== undefined && !before.viewport.some((line) => line.includes(forked))) return { kind: 'forked', id: forked };
+      return failures(screen) > failures(before) ? { kind: 'failed', screen } : undefined;
+    });
+    if (outcome.kind === 'failed') throw this.failure('fork() needs a session with messages, but the CLI could not fork the session.', outcome.screen);
+    const picker = await this.openSessionPicker('fork()');
+    if (!picker.cards.some((card) => card.id === outcome.id)) {
+      const shown = await this.read();
+      await this.closeSessionPicker();
+      throw this.failure(`fork() forked the session into ${outcome.id}, but /sessions does not list it; it lists ${describeCards(picker.cards)}.`, shown);
+    }
+    await this.resumeFromPicker('fork()', outcome.id);
+  }
+
+  async openSession(title: string): Promise<void> {
+    const picker = await this.openSessionPicker('openSession()');
+    const others = picker.cards.filter((card) => card.title === title && !card.current);
+    if (others.length !== 1) {
+      const shown = await this.read();
+      await this.closeSessionPicker();
+      const reason = others.length === 0 ? 'no other session has that title' : `${others.length} other sessions have that title`;
+      throw this.failure(`openSession() cannot pick the session ${JSON.stringify(title)}: ${reason}. /sessions lists ${describeCards(picker.cards)}.`, shown);
+    }
+    await this.resumeFromPicker('openSession()', others[0]!.id);
+  }
+
+  async deleteSession(title: string): Promise<void> {
+    const picker = await this.openSessionPicker('deleteSession()');
+    const matching = picker.cards.filter((card) => card.title === title);
+    if (matching.length !== 1 || matching[0]!.current) {
+      const shown = await this.read();
+      await this.closeSessionPicker();
+      const reason =
+        matching.length === 0 ? 'no session has that title' : matching.length > 1 ? `${matching.length} sessions have that title` : 'it is the open session; open another one first';
+      throw this.failure(`deleteSession() cannot pick the session ${JSON.stringify(title)}: ${reason}. /sessions lists ${describeCards(picker.cards)}.`, shown);
+    }
+    const target = matching[0]!.id;
+    await this.selectSessionCard('deleteSession()', target);
+    this.write(KEYS.deleteSession);
+    await this.wait(`the CLI to ask before deleting ${JSON.stringify(title)}`, (screen) => (sessionPicker(screen)?.deleting === true ? true : undefined));
+    this.write(KEYS.confirmDelete);
+    await this.wait(`/sessions to drop ${JSON.stringify(title)}`, (screen) => {
+      const now = sessionPicker(screen);
+      return now !== undefined && !now.loading && !now.deleting && !now.cards.some((card) => card.id === target) ? true : undefined;
+    });
+    await this.closeSessionPicker();
+  }
+
+  async expectSessions(titles: readonly string[]): Promise<void> {
+    const picker = await this.openSessionPicker('expectSessions()');
+    const shown = await this.read();
+    await this.closeSessionPicker();
+    if (picker.windowed) throw this.failure('expectSessions() can read only the sessions /sessions shows at once; keep the scenario to fewer sessions.', shown);
+    const listed = picker.cards.map((card) => card.title).toSorted();
+    const wanted = titles.toSorted();
+    if (JSON.stringify(listed) !== JSON.stringify(wanted)) {
+      throw this.failure(`expectSessions() wanted /sessions to list ${JSON.stringify(wanted)}, but it lists ${JSON.stringify(listed)}.`, shown);
+    }
+  }
+
+  private async idleForSessions(verb: string): Promise<Screen> {
+    const screen = await this.wait('the turn to end', (current) => (this.turnOver(current) || current.input === 'approval' || current.input === 'question' ? current : undefined));
+    if (!this.turnOver(screen)) throw this.failure(`${verb} needs an idle product, but an approval or a question is pending.`, screen);
+    return screen;
+  }
+
+  private async openSessionPicker(verb: string): Promise<SessionPicker> {
+    await this.idleForSessions(verb);
+    this.write(paste(SESSIONS_COMMAND));
+    this.write(KEYS.enter);
+    return this.wait('/sessions to list the sessions', (current) => {
+      const picker = sessionPicker(current);
+      return picker !== undefined && !picker.loading ? picker : undefined;
+    });
+  }
+
+  private async closeSessionPicker(): Promise<void> {
+    this.write(KEYS.escape);
+    await this.wait('/sessions to close', (screen) => (sessionPicker(screen) === undefined && screen.input === 'editor' ? true : undefined));
+  }
+
+  private async selectSessionCard(verb: string, id: string): Promise<void> {
+    let picker = await this.wait('/sessions to show its cards', (screen) => sessionPicker(screen));
+    for (let moves = 0; picker.cards.find((card) => card.selected)?.id !== id; moves += 1) {
+      if (moves > picker.cards.length) throw this.failure(`${verb} could not select the session ${id} in /sessions.`, await this.read());
+      const from = picker.cards.find((card) => card.selected)?.id;
+      const below = picker.cards.findIndex((card) => card.id === id) > picker.cards.findIndex((card) => card.selected);
+      this.write(below ? KEYS.down : KEYS.up);
+      picker = await this.wait('/sessions to move the selection', (screen) => {
+        const next = sessionPicker(screen);
+        return next !== undefined && next.cards.find((card) => card.selected)?.id !== from ? next : undefined;
+      });
+    }
+  }
+
+  private async resumeFromPicker(verb: string, id: string): Promise<void> {
+    await this.selectSessionCard(verb, id);
+    this.write(KEYS.enter);
+    await this.wait(`the CLI to resume the session ${id}`, (screen) =>
+      sessionPicker(screen) === undefined && screen.input === 'editor' && screen.viewport.some((line) => line.includes(`${RESUMED_SESSION}${id})`)) ? true : undefined,
+    );
+    this.queued = [];
+    this.turn = undefined;
   }
 
   async newSession(): Promise<void> {

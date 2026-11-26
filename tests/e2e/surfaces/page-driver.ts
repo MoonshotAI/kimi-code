@@ -197,6 +197,26 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().newSession();
   }
 
+  fork(): Promise<void> {
+    return this.window().fork();
+  }
+
+  openSession(title: string): Promise<void> {
+    return this.window().openSession(title);
+  }
+
+  deleteSession(title: string): Promise<void> {
+    return this.window().deleteSession(title);
+  }
+
+  archiveSession(title: string): Promise<void> {
+    return this.window().archiveSession(title);
+  }
+
+  expectSessions(titles: readonly string[]): Promise<void> {
+    return this.window().expectSessions(titles);
+  }
+
   compact(): Promise<void> {
     return this.window().compact();
   }
