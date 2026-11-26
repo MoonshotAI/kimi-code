@@ -94,6 +94,8 @@ The model also answers the Kimi files API: `POST …/files` stores the upload an
 
 When inspecting Google request history, use the IDs in `request.view.messages` to match results to calls. The view preserves explicit wire IDs. Each call with an omitted ID gets its own ID, and results with omitted IDs match pending calls of the same name in order.
 
+A Google user content may open with ordinary parts and carry its function responses after them. The engine builds this when it merges a user message, such as the compaction instruction after a mid-turn tool call, into the tool results it follows, and Gemini accepts that order. The view lists those opening parts as a user message right after the results that follow them, so the sequence check passes. User parts anywhere else in the content, such as between two results, keep their wire position and are still checked.
+
 The tool builders write calls in the wire shape of the engine's tools: `bash`, `read`, `write`, `edit`, `glob`, `grep`, `agent`, `waitFor`, `taskOutput`, `taskStop`, `todoList`, `askUserQuestion`, `exitPlanMode`, `createGoal`, `updateGoal` and `skill`. Their argument types mirror the engine's schemas, and `tests/scenarios/tool-builders.test.ts` checks every argument against the schemas a real engine offers.
 
 ### Lanes
