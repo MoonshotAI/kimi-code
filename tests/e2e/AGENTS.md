@@ -157,8 +157,3 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 - **先分清是产品坏了还是驱动坏了。** 自测也红，多半是驱动或产品的界面变了；只有场景红，先看场景断言的那条产品行为。
 - **不许靠重试、加等待、跳过让它变绿。** flaky 用例照根 `AGENTS.md` 的规则处理：先找根因。实在找不到根因可以删，PR 里写明删掉的用例原来覆盖什么、现在由谁覆盖。
 - **看失败附件。** 先看报告里这个用例的步骤：红在哪一步，最后一帧「失败时的画面」是什么样。每个失败的用例还附上假模型的请求摘要、缓存账本（附件 `prompt-cache`：每个请求的通道、缓存键、基线、断点和复用量，以及账本报出的问题）、网络守卫的记录和产品日志；TUI 另有完整的屏幕内容、最近的输入和退出码；ACP 另有按顺序记下的 JSON-RPC 消息（最近 4000 条）、不是 JSON-RPC 的 stdout 行和 stderr 末尾；Desktop 和 Web 另有 Playwright trace（用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <trace.zip>` 打开）、页面内容的末尾、应用或服务端的输出和页面里的未捕获错误。产品没能启动（包括 `restart()` 之后没能重新启动）时，驱动在关掉进程之前收集同样的诊断，附件名前加上第几次启动，例如 `launch-1-desktop-trace`、`launch-2-tui-screen`；Web 在打开页面之前就失败时，附上 `kimi web` 终端里的内容（`launch-1-web-server`）。隔离目录在失败时保留，路径记在用例的 `test home` 标注里。
-
-## 不在这里做的事
-
-- 不往 `tests/protected.yaml` 登记。现在登记的 Playwright 条目都会被当成 Desktop 旅程去检查。
-- 不写 `@quarantine`。`scripts/checks/quarantine.mjs` 只允许 Desktop 旅程进隔离名单。

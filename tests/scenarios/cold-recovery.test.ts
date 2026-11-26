@@ -77,7 +77,7 @@ test('every released corpus is complete and unchanged since it was captured', as
   for (const corpus of corpora) expect(await corpusProblems(corpus), corpus.manifest.writer).toEqual([]);
 });
 
-test('[L0:kap.cold-recovery] continues sessions written by every released version in fresh KAP processes and recovers the completed turn after a crash', { timeout: CORPUS_TIMEOUT_MS * Math.max(corpora.length, 1) }, async ({ model }) => {
+test('continues sessions written by every released version in fresh KAP processes and recovers the completed turn after a crash', { timeout: CORPUS_TIMEOUT_MS * Math.max(corpora.length, 1) }, async ({ model }) => {
   expect(corpora.map(corpus => corpus.version), 'released corpora').not.toEqual([]);
   await model.listen();
   for (const corpus of corpora) {

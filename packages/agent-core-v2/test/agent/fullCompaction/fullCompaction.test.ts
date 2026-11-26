@@ -2672,7 +2672,7 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('[L0:core.overflow-recovery-after-retry] compacts and retries when provider context overflow follows an earlier LLM retry', async () => {
+  it('compacts and retries when provider context overflow follows an earlier LLM retry', async () => {
     let callCount = 0;
     const inputs: string[][] = [];
     const generate: GenerateFn = createMockProvider(async (request, _signal) => {
