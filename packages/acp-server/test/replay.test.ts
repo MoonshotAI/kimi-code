@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { projectHistoryToSessionUpdates } from '../src/replay';
+import { projectHistoryToSessionUpdates, type ReplayContext } from '../src/replay';
 
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
@@ -129,8 +129,8 @@ describe('projectHistoryToSessionUpdates', () => {
 });
 
 describe('projectHistoryToSessionUpdates replays what the user saw', () => {
-  function userTexts(messages: readonly ContextMessage[]): string[] {
-    return projectHistoryToSessionUpdates(SESSION_ID, messages).flatMap((u) =>
+  function userTexts(messages: readonly ContextMessage[], context?: ReplayContext): string[] {
+    return projectHistoryToSessionUpdates(SESSION_ID, messages, context).flatMap((u) =>
       u.update.sessionUpdate === 'user_message_chunk' && u.update.content.type === 'text'
         ? [u.update.content.text]
         : [],
@@ -220,6 +220,78 @@ describe('projectHistoryToSessionUpdates replays what the user saw', () => {
     expect(userTexts(messages)).toEqual(['/skill:review src/a.ts and check the tests']);
   });
 
+  it('shows a sub-skill with the command name the session advertises for it', () => {
+    const messages: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Full text of the child skill.' }],
+        origin: { kind: 'skill_activation', activationId: 's1', skillName: 'bundle.child', skillArgs: 'src', skillSource: 'user', trigger: 'user-slash' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Full text of the project review skill.' }],
+        origin: { kind: 'skill_activation', activationId: 's2', skillName: 'review', skillSource: 'project', trigger: 'user-slash' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Full text of a skill that is gone.' }],
+        origin: { kind: 'skill_activation', activationId: 's3', skillName: 'gone', skillSource: 'project', trigger: 'user-slash' },
+      },
+    ];
+    const skillCommandMap = new Map([
+      ['review', 'review'],
+      ['bundle.child', 'bundle.child'],
+      ['skill:review', 'review'],
+    ]);
+
+    expect(userTexts(messages, { skillCommandMap })).toEqual(['/bundle.child src', '/skill:review', '/skill:gone']);
+  });
+
+  it('shows a shell command the user ran, then its output, as the terminal UI does', () => {
+    const messages: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<bash-input>\ngrep -n &quot;a &amp; b&quot; notes.txt\n</bash-input>' }],
+        origin: { kind: 'shell_command', phase: 'input' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<bash-stdout>1:a &amp; b &lt;ok&gt;\n</bash-stdout><bash-stderr></bash-stderr>' }],
+        origin: { kind: 'shell_command', phase: 'output' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<bash-input>\ntouch done\n</bash-input>' }],
+        origin: { kind: 'shell_command', phase: 'input' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<bash-stdout></bash-stdout><bash-stderr></bash-stderr>' }],
+        origin: { kind: 'shell_command', phase: 'output' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<bash-input>\ncat README.md\n</bash-input>' }],
+        origin: { kind: 'shell_command', phase: 'input' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<bash-stdout>```sh\nls\n```\n</bash-stdout><bash-stderr>cat: warning\n</bash-stderr>' }],
+        origin: { kind: 'shell_command', phase: 'output', isError: true },
+      },
+      { role: 'user', content: [{ type: 'text', text: 'What changed?' }], origin: { kind: 'user' } },
+    ];
+
+    expect(userTexts(messages)).toEqual([
+      '$ grep -n "a & b" notes.txt\n\n',
+      '```\n1:a & b <ok>\n```\n\n',
+      '$ touch done\n\n',
+      '$ cat README.md\n\n',
+      '````\n```sh\nls\n```\ncat: warning\n````\n\n',
+      'What changed?',
+    ]);
+  });
+
   it('locates a file tool call by resolving its recorded path against the session directory', () => {
     const messages: ContextMessage[] = [
       {
@@ -234,7 +306,7 @@ describe('projectHistoryToSessionUpdates replays what the user saw', () => {
       },
     ];
     const locations = (cwd?: string) =>
-      projectHistoryToSessionUpdates(SESSION_ID, messages, cwd)
+      projectHistoryToSessionUpdates(SESSION_ID, messages, { cwd })
         .filter((u) => u.update.sessionUpdate === 'tool_call')
         .map((u) => (u.update as { locations?: unknown }).locations);
 

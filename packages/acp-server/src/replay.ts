@@ -33,19 +33,25 @@ import {
   toolCallStartToSessionUpdate,
 } from './events-map';
 
+export interface ReplayContext {
+  readonly cwd?: string;
+  readonly skillCommandMap?: ReadonlyMap<string, string>;
+}
+
 export function projectHistoryToSessionUpdates(
   sessionId: string,
   messages: readonly ContextMessage[],
-  cwd?: string,
+  context: ReplayContext = {},
 ): SessionNotification[] {
   const out: SessionNotification[] = [];
   let turnId = 0;
   const toolCallTurnIds = new Map<string, number>();
+  const skillCommandMap = context.skillCommandMap ?? new Map<string, string>();
 
   for (const message of messages) {
     switch (message.role) {
       case 'user':
-        for (const text of typedTexts(message)) {
+        for (const text of typedTexts(message, skillCommandMap)) {
           out.push(userMessageChunk(sessionId, text));
         }
         break;
@@ -57,7 +63,7 @@ export function projectHistoryToSessionUpdates(
         }
         for (const toolCall of message.toolCalls ?? []) {
           toolCallTurnIds.set(toolCall.id, turnId);
-          out.push(syntheticToolCall(sessionId, turnId, toolCall, message.toolCallDisplays?.[toolCall.id], cwd));
+          out.push(syntheticToolCall(sessionId, turnId, toolCall, message.toolCallDisplays?.[toolCall.id], context.cwd));
         }
         break;
       }
@@ -73,11 +79,18 @@ export function projectHistoryToSessionUpdates(
   return out;
 }
 
-function typedTexts(message: Extract<ContextMessage, { role: 'user' }>): string[] {
-  if (!isRealUserInput(message)) return [];
+function typedTexts(
+  message: Extract<ContextMessage, { role: 'user' }>,
+  skillCommandMap: ReadonlyMap<string, string>,
+): string[] {
   const origin = message.origin;
+  if (origin?.kind === 'shell_command') {
+    return shellCommandTexts(message.content, origin.phase);
+  }
+  if (!isRealUserInput(message)) return [];
   if (origin?.kind === 'skill_activation') {
-    const name = origin.skillSource === 'builtin' ? origin.skillName : `skill:${origin.skillName}`;
+    const sourceName = origin.skillSource === 'builtin' ? origin.skillName : `skill:${origin.skillName}`;
+    const name = skillCommandName(skillCommandMap, origin.skillName, sourceName);
     return [slashSkillText(message.content, slashCommandText(name, origin.skillArgs))];
   }
   if (origin?.kind === 'plugin_command') {
@@ -86,6 +99,37 @@ function typedTexts(message: Extract<ContextMessage, { role: 'user' }>): string[
   return stripBundledSkillBlocks(message).flatMap((part) =>
     part.type === 'text' && part.text && !isUserPromptSubmitHookPart(part) ? [part.text] : [],
   );
+}
+
+function skillCommandName(
+  skillCommandMap: ReadonlyMap<string, string>,
+  skillName: string,
+  sourceName: string,
+): string {
+  if (skillCommandMap.get(sourceName) === skillName) return sourceName;
+  return [...skillCommandMap].find(([, target]) => target === skillName)?.[0] ?? sourceName;
+}
+
+function shellCommandTexts(content: readonly ContentPart[], phase: 'input' | 'output'): string[] {
+  const text = content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('');
+  if (phase === 'input') return [`$ ${(bashTag(text, 'bash-input') ?? text).trim()}\n\n`];
+  const output = [bashTag(text, 'bash-stdout'), bashTag(text, 'bash-stderr')]
+    .map((stream) => stream?.trimEnd() ?? '')
+    .filter((stream) => stream.length > 0)
+    .join('\n');
+  if (output.length === 0) return [];
+  const longestBackticks = Math.max(0, ...[...output.matchAll(/`+/g)].map((run) => run[0].length));
+  const fence = '`'.repeat(Math.max(3, longestBackticks + 1));
+  return [`${fence}\n${output}\n${fence}\n\n`];
+}
+
+function bashTag(text: string, tag: 'bash-input' | 'bash-stdout' | 'bash-stderr'): string | undefined {
+  const inner = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(text)?.[1];
+  return inner
+    ?.replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&amp;', '&');
 }
 
 function slashSkillText(content: readonly ContentPart[], command: string): string {
