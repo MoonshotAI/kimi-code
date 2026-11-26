@@ -161,7 +161,7 @@
     "packages/kap-server/test/instanceRegistry.test.ts": 1,
     "packages/kap-server/test/mcp.test.ts": 1,
     "packages/kap-server/test/prompts.test.ts": 1,
-    "packages/kap-server/test/remoteControl.test.ts": 4,
+    "packages/kap-server/test/remoteControl.test.ts": 3,
     "packages/kap-server/test/requestLogging.test.ts": 1,
     "packages/kap-server/test/search/searchRoute.test.ts": 1,
     "packages/kap-server/test/search/searchService.test.ts": 3,
