@@ -22,6 +22,7 @@ import type {
 } from '#/tool/toolContract';
 
 export const fixturesDir = new URL('./fixtures/', import.meta.url).pathname;
+export const UNREACHABLE_SERVER_ORIGIN = 'https://127.0.0.1:9';
 export const stdioFixture = new URL('./fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
 export const cwdStdioFixture = new URL('./fixtures/cwd-stdio-server.mjs', import.meta.url).pathname;
 export const slowStdioFixture = new URL('./fixtures/slow-stdio-server.mjs', import.meta.url)
