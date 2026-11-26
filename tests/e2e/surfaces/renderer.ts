@@ -267,6 +267,25 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     }
   }
 
+  async steerQueued(): Promise<void> {
+    await this.assertTurnRunning('steerQueued()');
+    await this.assertEmptyInput('steerQueued()');
+    const queued = (await this.queuePanel().getByRole('button').allTextContents()).map((text) => text.trim()).filter((text) => text !== '' && text !== 'Remove');
+    if (queued.length !== 1) {
+      throw new Error(
+        `steerQueued() needs exactly one message in the queue, but ${queued.length} wait there: with several queued, Ctrl+S on the terminal UI steers them all into the turn while Desktop and Web steer only the first.\n${await this.describe()}`,
+      );
+    }
+    const text = queued[0] ?? '';
+    const latest = await this.latestUserPosition();
+    await this.press('steerQueued()', 'the message input', this.composer());
+    await this.page.keyboard.press('ControlOrMeta+s');
+    const reached = async (): Promise<boolean> => (await this.userMessages(latest + 1, text).count()) > 0 && !(await this.queueShown());
+    if ((await this.settle(`the queued message ${JSON.stringify(text)} to reach the running turn`, reached)) === 'over') {
+      throw new Error(`steerQueued() did not see ${JSON.stringify(text)} reach the turn before it ended.\n${await this.describe()}`);
+    }
+  }
+
   approve(options?: ApproveOptions): Promise<void> {
     return this.answerApproval('approve()', options?.for === 'session' ? this.approveForSessionButton() : this.approveButton());
   }
@@ -693,14 +712,17 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     return this.page.getByText(QUEUE_WAITING).first().isVisible();
   }
 
-  private queuedMessage(text: string): Locator {
+  private queuePanel(): Locator {
     return this.page
       .getByText(QUEUE_WAITING)
       .first()
       .locator('xpath=ancestor::*')
       .filter({ has: this.page.getByRole('button', { name: 'Remove', exact: true }) })
-      .last()
-      .getByRole('button', { name: text, exact: true });
+      .last();
+  }
+
+  private queuedMessage(text: string): Locator {
+    return this.queuePanel().getByRole('button', { name: text, exact: true });
   }
 
   private async assertTurnRunning(verb: string): Promise<void> {

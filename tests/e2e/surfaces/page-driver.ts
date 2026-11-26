@@ -149,6 +149,10 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().undo();
   }
 
+  steerQueued(): Promise<void> {
+    return this.window().steerQueued();
+  }
+
   expectStopped(): Promise<void> {
     return this.window().expectStopped();
   }
@@ -198,6 +202,16 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     if (this.page !== undefined && (await this.page.getByRole('dialog', { name: WELCOME_DIALOG }).isVisible())) {
       throw new Error(`The welcome dialog came back after the restart; a returning user should not be onboarded again.\n${await this.window().describe()}`);
     }
+  }
+
+  protected async reloadPage(): Promise<void> {
+    const page = this.page;
+    if (page === undefined) throw new Error(`The ${this.name} page is not ready.`);
+    const before = page.url();
+    await page.reload({ timeout: TIMEOUTS.server });
+    await page.getByRole('status', { name: 'Connecting…' }).first().waitFor({ state: 'hidden', timeout: TIMEOUTS.server });
+    await page.getByRole('combobox', { name: 'Message input' }).waitFor({ state: 'visible', timeout: TIMEOUTS.server });
+    if (page.url() !== before) throw new Error(`reload() came back at ${page.url()} instead of ${before}.\n${await this.window().describe()}`);
   }
 
   protected async startTrace(): Promise<void> {

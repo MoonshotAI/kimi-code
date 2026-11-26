@@ -39,6 +39,11 @@ const NO_WINDOW_TO_RESIZE = {
   acp: 'An editor shows the conversation in its own window; the agent behind ACP has no window to resize.',
   desktop: "The Desktop window cannot be made narrower than 900 pixels, so a user cannot give it a phone width, and Playwright can only resize it by running code in Electron's main process.",
 };
+const NO_PAGE_TO_RELOAD = {
+  tui: 'A terminal shows the CLI itself; there is no page to reload.',
+  acp: 'An editor shows the conversation in its own interface; there is no page of the agent to reload.',
+  desktop: "Desktop reloads its window only from the Force Reload item of its native View menu, which the driver cannot reach.",
+};
 const NO_CONTINUE = {
   tui: 'The terminal UI has no way to continue a failed turn; a user sends another message instead.',
   acp: 'ACP has no request to continue a failed turn.',
@@ -48,6 +53,7 @@ export const VERBS = {
   send: { on: SURFACES, checksInterface: false },
   queue: { on: ['tui', 'desktop', 'web'], absentBecause: ONE_PROMPT_AT_A_TIME_OVER_ACP, checksInterface: false },
   steer: { on: ['tui', 'desktop', 'web'], absentBecause: ONE_PROMPT_AT_A_TIME_OVER_ACP, checksInterface: false },
+  steerQueued: { on: ['tui', 'desktop', 'web'], absentBecause: ONE_PROMPT_AT_A_TIME_OVER_ACP, checksInterface: false },
   approve: { on: SURFACES, checksInterface: false },
   reject: { on: SURFACES, checksInterface: false },
   rejectWithFeedback: { on: ['tui', 'desktop', 'web'], absentBecause: NO_REASON_OVER_ACP, checksInterface: false },
@@ -77,6 +83,7 @@ export const VERBS = {
   newSession: { on: SURFACES, checksInterface: false },
   compact: { on: SURFACES, checksInterface: false },
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
+  reload: { on: ['web'], absentBecause: NO_PAGE_TO_RELOAD, checksInterface: false },
   expectTranscript: { on: SURFACES, checksInterface: true },
   exit: { on: ['tui'], absentBecause: ONLY_IN_A_SHELL, checksInterface: false },
   expectTerminalRestored: {
@@ -239,6 +246,7 @@ interface VerbSignatures {
   send(text: string): Promise<void>;
   queue(text: string): Promise<void>;
   steer(text: string): Promise<void>;
+  steerQueued(): Promise<void>;
   approve(options?: ApproveOptions): Promise<void>;
   reject(): Promise<void>;
   rejectWithFeedback(feedback: string): Promise<void>;
@@ -268,6 +276,7 @@ interface VerbSignatures {
   newSession(): Promise<void>;
   compact(): Promise<void>;
   resize(size: WindowSize): Promise<void>;
+  reload(): Promise<void>;
   expectTranscript(text: string): Promise<void>;
   exit(): Promise<void>;
   expectTerminalRestored(): Promise<void>;

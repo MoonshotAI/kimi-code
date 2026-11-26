@@ -1044,6 +1044,27 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     }
   }
 
+  async steerQueued(): Promise<void> {
+    const screen = await this.read();
+    this.assertTurnRunning('steerQueued()', screen);
+    this.assertEmptyInput('steerQueued()', screen);
+    const queued = queuedMessages(screen);
+    if (queued.length !== 1) {
+      throw this.failure(
+        `steerQueued() needs exactly one message in the queue, but ${queued.length} wait there: with several queued, Ctrl+S on the terminal UI steers them all into the turn while Desktop and Web steer only the first.`,
+        screen,
+      );
+    }
+    const text = queued[0] ?? '';
+    const shown = userMessages(screen, text);
+    this.write(KEYS.steer);
+    const settled = await this.settle(`the queued message ${JSON.stringify(text)} to reach the running turn`, (current) =>
+      userMessages(current, text) > shown && queuedMessages(current).length === 0 ? true : undefined,
+    );
+    if ('over' in settled) throw this.failure(`steerQueued() did not see ${JSON.stringify(text)} reach the turn before it ended.`, settled.over);
+    this.queued = this.queued.filter((message) => message.text !== text);
+  }
+
   approve(options?: ApproveOptions): Promise<void> {
     if (options?.for === 'session') return this.answerApproval('approve()', KEYS.approveForSession, APPROVED_FOR_SESSION);
     return this.answerApproval('approve()', KEYS.approveOnce, APPROVED);
