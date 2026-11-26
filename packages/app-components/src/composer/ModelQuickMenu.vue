@@ -186,6 +186,9 @@ function openSubmenu(next: SubmenuState): void {
   if (changed && next.kind === 'effort') {
     const currentIndex = currentSegments.value.indexOf(currentEffortValue.value);
     submenuIndex.value = currentIndex >= 0 ? currentIndex : 0;
+  } else if (changed && next.kind === 'provider') {
+    const currentIndex = props.providers.findIndex((provider) => provider.id === props.activeProvider);
+    submenuIndex.value = currentIndex >= 0 ? currentIndex : 0;
   } else if (changed) {
     submenuIndex.value = 0;
   }
@@ -382,8 +385,7 @@ function syncFlyoutPosition(): void {
   const triggerRect = trigger.getBoundingClientRect();
   const flyoutRect = flyout.getBoundingClientRect();
   const firstOption = submenu.value !== null ? flyout.querySelector<HTMLElement>('[data-first-option]') : null;
-  const firstOptionOffset =
-    firstOption === null ? 0 : firstOption.getBoundingClientRect().top - flyoutRect.top;
+  const firstOptionOffset = firstOption?.offsetTop ?? 0;
   const frame = props.hostFrame;
   const position = computeAnchoredFlyoutPosition({
     menuLeft: frame?.x ?? menuRect.left,
@@ -407,6 +409,29 @@ watch([submenu, hoverModel], () => {
   flyoutStyle.value = { visibility: 'hidden' };
   void nextTick(syncFlyoutPosition);
 });
+
+watch(
+  [() => props.hostFrame, () => props.providerModels, () => props.recentModels, () => props.maxHeight, searchResults],
+  () => {
+    if (submenu.value === null && hoverModel.value === null) return;
+    void nextTick(syncFlyoutPosition);
+  },
+  { flush: 'post' },
+);
+
+watch(
+  [rootEl, flyoutEl],
+  ([menu, flyout], _, onCleanup) => {
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      if (submenu.value !== null || hoverModel.value !== null) syncFlyoutPosition();
+    });
+    if (menu) observer.observe(menu);
+    if (flyout) observer.observe(flyout);
+    onCleanup(() => observer.disconnect());
+  },
+  { flush: 'post' },
+);
 
 watch(query, () => {
   closeSubmenu();

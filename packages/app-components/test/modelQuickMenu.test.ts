@@ -24,6 +24,7 @@ let app: App | undefined;
 let host: HTMLDivElement;
 let actions: QuickModelMenuAction[];
 let dismissed = 0;
+let menuProps: { state: QuickModelMenuPayload; maxHeight: number };
 
 function initialState(overrides: Partial<QuickModelMenuPayload> = {}): QuickModelMenuPayload {
   return {
@@ -44,6 +45,7 @@ function initialState(overrides: Partial<QuickModelMenuPayload> = {}): QuickMode
 
 function mountMenu(state: QuickModelMenuPayload, maxHeight = 480): void {
   const props = reactive({ state, maxHeight });
+  menuProps = props;
   app = createApp({
     render: () =>
       h(ModelQuickMenu, {
@@ -337,6 +339,63 @@ describe('ModelQuickMenu states', () => {
     expect(menu.querySelector(':scope .mqm-provider-scroll [data-row-key^="recent:"]')).toBeNull();
     expect(menu.querySelector(':scope > .mqm-actions')).not.toBeNull();
     expect(menu.querySelector(':scope > .mqm-search')).not.toBeNull();
+  });
+
+  it('re-anchors the open provider flyout within the viewport when switching to a provider with fewer models', async () => {
+    const observerCallbacks: (() => void)[] = [];
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(cb: () => void) { observerCallbacks.push(cb); }
+      observe(): void {}
+      disconnect(): void {}
+    });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+
+    const manyModels = Array.from({ length: 10 }, (_, i) => ({
+      id: `kimi/m${i}`,
+      provider: 'managed:kimi-code',
+      model: `m${i}`,
+      displayName: `Model ${i}`,
+      maxContextSize: 128 * 1024,
+      capabilities: ['tool_use'],
+    }));
+    const providers = Array.from({ length: 8 }, (_, i) => ({ id: `p-${i}`, label: `Provider ${i}` }));
+    mountMenu(initialState({ providerModels: manyModels, providers, activeProvider: 'p-0', activeProviderLabel: 'Provider 0' }));
+
+    let menuTop = 362;
+    const rect = (top: number, width: number, height: number) => ({ x: 600, y: top, left: 600, top, right: 600 + width, bottom: top + height, width, height, toJSON: () => ({}) }) as DOMRect;
+    const menuEl = host.querySelector<HTMLElement>('.mqm')!;
+    const triggerEl = host.querySelector<HTMLElement>('[data-row-key="action:provider"]')!;
+    vi.spyOn(menuEl, 'getBoundingClientRect').mockImplementation(() => rect(menuTop, 240, menuTop === 362 ? 480 : 280));
+    vi.spyOn(triggerEl, 'getBoundingClientRect').mockImplementation(() => rect(712, 224, 32));
+
+    triggerEl.click();
+    await nextTick();
+    await nextTick();
+
+    const flyout = host.querySelector<HTMLElement>('.mqm-flyout')!;
+    vi.spyOn(flyout, 'getBoundingClientRect').mockImplementation(() => rect(600, 240, 292));
+    Object.defineProperty(flyout.querySelector('[data-first-option]'), 'offsetTop', { configurable: true, value: 32 });
+    for (const cb of observerCallbacks) cb();
+    await nextTick();
+    expect(flyout.style.top).toBe('238px');
+
+    const options = [...flyout.querySelectorAll<HTMLElement>('.mqm-row')];
+    options[1]!.click();
+    menuProps.state = {
+      ...menuProps.state,
+      activeProvider: 'p-1',
+      activeProviderLabel: 'Provider 1',
+      providerModels: [otherModels[0]!, otherModels[1]!],
+    };
+    menuTop = 562;
+    await nextTick();
+    for (const cb of observerCallbacks) cb();
+    await nextTick();
+
+    expect(host.querySelector('.mqm-flyout')).not.toBeNull();
+    expect(flyout.style.top).toBe('38px');
+    expect(menuTop + Number.parseFloat(flyout.style.top) + 292).toBeLessThanOrEqual(892);
   });
 
   it('falls back to a single scrollable upper body when maxHeight cannot fit the fixed chrome', () => {
