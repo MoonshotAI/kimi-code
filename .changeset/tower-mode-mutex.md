@@ -4,4 +4,4 @@
 'kimi-code-app': patch
 ---
 
-Fix Tower mode mutual exclusion with Plan, Swarm, and Goal modes.
+Fix Tower mode mutual exclusion with Plan, Swarm, and Goal modes, and remove the NotifyUser tool from Tower worker profiles.
