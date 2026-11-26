@@ -284,9 +284,10 @@ entries:
     operation: The local date changes in the middle of a session
     promise: keeps
     coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/date-change-keeps-the-prefix.spec.ts
       - kind: engine
         test: packages/agent-core-v2/test/features/dateChange/dateChangeInjection.test.ts
-    gap: Needs a test clock that the product reads through IHostClock.
 
   - id: E6
     operation: Generate AGENTS.md with /init, then continue

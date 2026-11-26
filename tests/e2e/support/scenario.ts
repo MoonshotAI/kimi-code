@@ -25,9 +25,10 @@ import { expect, test as base, type TestInfo } from '@playwright/test';
 
 import { startAcp } from '../surfaces/acp';
 import { startDesktop } from '../surfaces/desktop';
+import { clockFileOf } from '../surfaces/environment';
 import { startTui } from '../surfaces/tui';
 import { startWeb } from '../surfaces/web';
-import { DISK_TITLES, MCP_TITLES, STEP_TITLES } from './steps';
+import { CLOCK_TITLE, DISK_TITLES, MCP_TITLES, STEP_TITLES } from './steps';
 import {
   absenceReason,
   StartupFailure,
@@ -78,6 +79,7 @@ export interface McpServerHandle {
 
 export interface ScenarioOptions {
   readonly workspace?: Readonly<Record<string, string>>;
+  readonly clock?: string;
   readonly provider?: ScenarioProvider;
   readonly config?: KimiConfig;
   readonly mcp?: Readonly<Record<string, ScenarioMcpServer>>;
@@ -101,6 +103,7 @@ export interface ScenarioContext<S extends Surface> {
   readonly model: FakeModel;
   readonly workspace: Workspace;
   readonly mcp: (name: string) => McpServerHandle;
+  readonly clock: (time: string) => Promise<void>;
 }
 
 export type ScenarioBody<S extends Surface> = (context: ScenarioContext<S>) => Promise<void>;
@@ -110,6 +113,7 @@ interface RunningContext {
   readonly model: FakeModel;
   readonly workspace: Workspace;
   readonly mcp: (name: string) => McpServerHandle;
+  readonly clock: (time: string) => Promise<void>;
 }
 
 type RunningBody = (context: RunningContext) => Promise<void>;
@@ -259,6 +263,11 @@ const PRECHECKS: { readonly [V in Verb]?: (...args: Parameters<Actions[V]>) => v
 };
 
 
+function timeOf(time: string): string {
+  if (Number.isNaN(Date.parse(time))) throw new Error(`A clock time must be an ISO-8601 time like 2030-01-01T12:00:00Z, got ${JSON.stringify(time)}`);
+  return time;
+}
+
 function problemOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -310,13 +319,24 @@ class ScenarioSession {
     this.model = model;
     await writeKimiConfig(home.dataDir, mergeKimiConfig(fakeModelConfig(model, options.provider), options.config ?? {}));
     await this.startMcpServers(home, options.mcp);
+    if (options.clock !== undefined) await writeFile(clockFileOf(home), timeOf(options.clock));
     const startupStep = this.workspaceTrust === undefined ? '启动产品，等到可以输入' : '启动产品，处理工作区信任提示';
     await base.step(startupStep, async () => {
       this.driver = await this.launch({ home, model, workspaceTrust: this.workspaceTrust, ...this.launchOptions() });
       this.baseline = await snapshotDirectory(home.workspace);
       if (frames === 'every-step') await this.show('00 启动完成');
     });
-    return { product: this.userActions(), model, workspace: this.workspace(home.workspace), mcp: (name) => this.mcpServer(name) };
+    return {
+      product: this.userActions(),
+      model,
+      workspace: this.workspace(home.workspace),
+      mcp: (name) => this.mcpServer(name),
+      clock: (time) =>
+        base.step(CLOCK_TITLE(time), async () => {
+          if (options.clock === undefined) throw new Error('clock() moves the clock of the machine; give the scenario a starting time with the clock option.');
+          await writeFile(clockFileOf(home), timeOf(time));
+        }),
+    };
   }
 
   private async startMcpServers(home: TestHome, servers: ScenarioOptions['mcp']): Promise<void> {
