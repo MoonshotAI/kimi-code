@@ -249,15 +249,14 @@ function goBack(): void {
 
 function chooseProvider(providerId: string): void {
   suppressRowClick = false;
+  activeKey.value = `subprovider:${providerId}`;
   emit('selectProvider', providerId);
-  activeKey.value = `provider:${menu.value.providerModels[0]?.id ?? ''}`;
-  page.value = 'main';
 }
 
 function chooseEffort(segment: string): void {
   suppressRowClick = false;
+  activeKey.value = `effort:${segment}`;
   emit('selectEffort', segment);
-  page.value = 'main';
 }
 
 function stageModel(model: AppModel, effort: string | undefined, fromSearch: boolean): void {

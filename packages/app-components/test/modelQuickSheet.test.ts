@@ -172,6 +172,11 @@ describe('ModelQuickSheet subpages', () => {
     host.querySelector<HTMLElement>('[data-provider-id="p-3"]')!.click();
     await nextTick();
     expect(actions).toEqual([{ type: 'select-provider', providerId: 'p-3' }]);
+    expect(host.querySelector('.sheet-title')?.textContent).toBe('切换供应商');
+    expect(host.querySelector('[data-provider-id="p-3"]')?.classList.contains('is-active')).toBe(true);
+
+    host.querySelector<HTMLElement>('.sheet-back')!.click();
+    await nextTick();
     expect(host.querySelector('.sheet-title')?.textContent).toBe('切换模型');
   });
 
@@ -204,14 +209,22 @@ describe('ModelQuickSheet subpages', () => {
   });
 
   it('pushes effort subpage with cloud description for the active effort and stages selection', async () => {
-    mountSheet({ effortDescriptions: { high: '深入思考，适合复杂任务' } });
+    mountSheet({ effortDescriptions: { low: '轻量思考，响应更快', high: '深入思考，适合复杂任务' } });
     host.querySelector<HTMLElement>('[data-row-key="action:effort"]')!.click();
     await nextTick();
     expect(host.querySelector('.sheet-title')?.textContent).toBe('思考强度');
     expect(host.querySelector('.mqs-desc')?.textContent).toBe('深入思考，适合复杂任务');
     host.querySelector<HTMLElement>('[data-effort="low"]')!.click();
+    state.payload = { ...state.payload, currentEffort: 'low' };
     await nextTick();
     expect(actions).toEqual([{ type: 'select-effort', effort: 'low' }]);
+    expect(host.querySelector('.sheet-title')?.textContent).toBe('思考强度');
+    expect(host.querySelector('[data-effort="low"]')?.classList.contains('is-active')).toBe(true);
+    expect(host.querySelector('[data-effort="low"] .mqs-check')).not.toBeNull();
+    expect(host.querySelector('.mqs-desc')?.textContent).toBe('轻量思考，响应更快');
+
+    host.querySelector<HTMLElement>('.sheet-back')!.click();
+    await nextTick();
     expect(host.querySelector('.sheet-title')?.textContent).toBe('切换模型');
   });
 

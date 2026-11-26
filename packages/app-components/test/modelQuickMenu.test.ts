@@ -124,7 +124,7 @@ describe('ModelQuickMenu states', () => {
     expect(card?.textContent).toContain('思考');
   });
 
-  it('opens the provider submenu, emits selectProvider without switching models, and caps provider scroll height', async () => {
+  it('keeps the provider submenu open after choosing a provider and closes it when toggled again', async () => {
     mountMenu(initialState());
     host.querySelector<HTMLElement>('[data-row-key="action:provider"]')!.click();
     await nextTick();
@@ -135,6 +135,11 @@ describe('ModelQuickMenu states', () => {
     options[1]!.click();
     await nextTick();
     expect(actions).toEqual([{ type: 'select-provider', providerId: 'openrouter' }]);
+    expect(host.querySelector('.mqm-flyout')).not.toBeNull();
+    expect(host.querySelector('.mqm-flyout .mqm-row.is-active')?.textContent?.trim()).toBe('openrouter');
+
+    host.querySelector<HTMLElement>('[data-row-key="action:provider"]')!.click();
+    await nextTick();
     expect(host.querySelector('.mqm-flyout')).toBeNull();
   });
 
@@ -148,7 +153,7 @@ describe('ModelQuickMenu states', () => {
     expect(host.querySelector('.mqm-flyout')).toBeNull();
   });
 
-  it('opens the thinking submenu with description and emits selectEffort on choice', async () => {
+  it('keeps the thinking submenu open after choosing an effort and moves the highlight to it', async () => {
     mountMenu(initialState());
     host.querySelector<HTMLElement>('[data-row-key="action:effort"]')!.click();
     await nextTick();
@@ -157,7 +162,10 @@ describe('ModelQuickMenu states', () => {
     const options = [...flyout.querySelectorAll<HTMLElement>('.mqm-row')];
     expect(options.map((el) => el.textContent?.trim())).toEqual(['Off', 'Low', 'High']);
     options[1]!.click();
+    await nextTick();
     expect(actions).toEqual([{ type: 'select-effort', effort: 'low' }]);
+    expect(host.querySelector('.mqm-flyout')).not.toBeNull();
+    expect(host.querySelector('.mqm-flyout .mqm-row.is-active')?.textContent?.trim()).toBe('Low');
   });
 
   it('highlights the active effort on open, previews cloud descriptions per highlighted effort, and falls back when unconfigured', async () => {

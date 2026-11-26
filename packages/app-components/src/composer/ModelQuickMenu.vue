@@ -250,7 +250,8 @@ function onRowClick(row: NavRow): void {
 }
 
 function chooseProvider(providerId: string): void {
-  closeSubmenu();
+  const index = props.providers.findIndex((provider) => provider.id === providerId);
+  if (index >= 0) submenuIndex.value = index;
   emit('selectProvider', providerId);
 }
 
@@ -275,10 +276,11 @@ function chooseSubmenuEffort(segment: string): void {
   const current = submenu.value;
   if (current?.kind === 'search-effort') {
     selectSearchedModel(current.model, commitLevel(current.model, segment));
-  } else {
-    closeSubmenu();
-    emit('selectEffort', segment);
+    return;
   }
+  const index = activeSubmenuSegments.value.indexOf(segment);
+  if (index >= 0) submenuIndex.value = index;
+  emit('selectEffort', segment);
 }
 
 function moveActive(delta: number): void {
