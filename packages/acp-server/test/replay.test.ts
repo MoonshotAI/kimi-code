@@ -204,6 +204,22 @@ describe('projectHistoryToSessionUpdates replays what the user saw', () => {
     expect(userTexts(messages)).toEqual(['/skill:review src/a.ts', '/init', '/acme:deploy prod']);
   });
 
+  it('keeps the text the user attached to a slash skill after the command', () => {
+    const messages: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Full text of the review skill.' },
+          { type: 'text', text: 'and check the tests' },
+          userPromptSubmitHookPart('<hook>extra context</hook>'),
+        ],
+        origin: { kind: 'skill_activation', activationId: 's1', skillName: 'review', skillArgs: 'src/a.ts', skillSource: 'project', trigger: 'user-slash' },
+      },
+    ];
+
+    expect(userTexts(messages)).toEqual(['/skill:review src/a.ts and check the tests']);
+  });
+
   it('locates a file tool call by resolving its recorded path against the session directory', () => {
     const messages: ContextMessage[] = [
       {
@@ -213,6 +229,7 @@ describe('projectHistoryToSessionUpdates replays what the user saw', () => {
           { type: 'function', id: 'r1', name: 'Read', arguments: '{"path":"notes/a.txt"}' },
           { type: 'function', id: 'r2', name: 'Read', arguments: '{"path":"/elsewhere/b.txt"}' },
           { type: 'function', id: 'b1', name: 'Bash', arguments: '{"command":"cat notes/a.txt"}' },
+          { type: 'function', id: 'r3', name: 'Read', arguments: '{"path":"~/notes/c.txt"}' },
         ],
       },
     ];
@@ -222,8 +239,8 @@ describe('projectHistoryToSessionUpdates replays what the user saw', () => {
         .map((u) => (u.update as { locations?: unknown }).locations);
 
     const cwd = resolve('/work');
-    expect(locations(cwd)).toEqual([[{ path: resolve(cwd, 'notes/a.txt') }], [{ path: '/elsewhere/b.txt' }], undefined]);
-    expect(locations()).toEqual([undefined, [{ path: '/elsewhere/b.txt' }], undefined]);
+    expect(locations(cwd)).toEqual([[{ path: resolve(cwd, 'notes/a.txt') }], [{ path: '/elsewhere/b.txt' }], undefined, undefined]);
+    expect(locations()).toEqual([undefined, [{ path: '/elsewhere/b.txt' }], undefined, undefined]);
   });
 
   it('locates a file tool call from the display it recorded, as the live card does', () => {

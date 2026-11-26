@@ -144,7 +144,9 @@ export function toolCallLocations(
       : undefined;
   const requested = argsPath(name, args);
   const argsLocation =
-    requested === undefined || cwd === undefined || isAbsolute(requested) ? requested : resolve(cwd, requested);
+    requested === undefined || cwd === undefined || isAbsolute(requested) || requested.startsWith('~')
+      ? requested
+      : resolve(cwd, requested);
   const path = [displayPath, argsLocation].find(
     (candidate): candidate is string => candidate !== undefined && isAbsolute(candidate),
   );

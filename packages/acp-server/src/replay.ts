@@ -78,7 +78,7 @@ function typedTexts(message: Extract<ContextMessage, { role: 'user' }>): string[
   const origin = message.origin;
   if (origin?.kind === 'skill_activation') {
     const name = origin.skillSource === 'builtin' ? origin.skillName : `skill:${origin.skillName}`;
-    return [slashCommandText(name, origin.skillArgs)];
+    return [slashSkillText(message.content, slashCommandText(name, origin.skillArgs))];
   }
   if (origin?.kind === 'plugin_command') {
     return [slashCommandText(`${origin.pluginId}:${origin.commandName}`, origin.commandArgs)];
@@ -86,6 +86,17 @@ function typedTexts(message: Extract<ContextMessage, { role: 'user' }>): string[
   return stripBundledSkillBlocks(message).flatMap((part) =>
     part.type === 'text' && part.text && !isUserPromptSubmitHookPart(part) ? [part.text] : [],
   );
+}
+
+function slashSkillText(content: readonly ContentPart[], command: string): string {
+  const parts = content.filter((part) => !isUserPromptSubmitHookPart(part));
+  const callerParts = parts[0]?.type === 'text' ? parts.slice(1) : parts;
+  const callerText = callerParts
+    .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+    .join('')
+    .trim();
+  if (callerText.length === 0) return command;
+  return callerText.startsWith('/') ? callerText : `${command} ${callerText}`;
 }
 
 function slashCommandText(name: string, args: string | undefined): string {
