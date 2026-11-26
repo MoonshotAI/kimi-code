@@ -55,6 +55,7 @@ export function toPendingInteraction(
         tool_name: request.toolName,
         action: request.action,
         tool_input_display: request.display,
+        approval_detail: request.approvalDetail,
         expires_at: approvalExpiresAt(interaction),
       },
     };
@@ -88,6 +89,7 @@ export function toWireApproval(interaction: Interaction, sessionId: string): {
   tool_name: string;
   action: string;
   tool_input_display: unknown;
+  approval_detail?: ApprovalRequest['approvalDetail'];
   created_at: string;
   expires_at: string;
 } {
@@ -102,6 +104,7 @@ export function toWireApproval(interaction: Interaction, sessionId: string): {
     tool_name: p.toolName,
     action: p.action,
     tool_input_display: p.display,
+    approval_detail: p.approvalDetail,
     created_at: new Date(interaction.createdAt).toISOString(),
     expires_at: approvalExpiresAt(interaction),
   };

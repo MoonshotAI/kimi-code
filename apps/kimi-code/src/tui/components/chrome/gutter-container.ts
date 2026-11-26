@@ -12,7 +12,7 @@ import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 interface TranscriptRenderCache {
   width: number;
   childRefs: Component[];
-  childRenderRefs: string[][];
+  childRenderRefs: (readonly string[])[];
   prefixed: string[][];
   out: string[];
 }
@@ -59,7 +59,7 @@ export class GutterContainer extends Container {
       cache.childRefs.length === this.children.length;
 
     const childRefs: Component[] = [];
-    const childRenderRefs: string[][] = [];
+    const childRenderRefs: (readonly string[])[] = [];
     const prefixed: string[][] = [];
     let allReused = cacheValid;
     const previousLayout = this.renderedLayout;

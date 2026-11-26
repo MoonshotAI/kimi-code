@@ -1,6 +1,7 @@
+import type { DegradedLocation } from '#/app/git/workTree';
 import type { PromptPredictionCancelReason } from '#/features/promptPrediction/promptPrediction';
 import type { TowerExitReason } from '#/features/tower/tower';
-import type { SessionCloseReason } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import type { SessionCloseReason } from '#/project/sessionLifecycle/sessionLifecycle';
 
 import type { TelemetryPrimitive } from './telemetry';
 
@@ -210,6 +211,17 @@ export interface PermissionPolicyDecisionEvent {
     | 'unsafe_arguments'
     | 'path_check_failed';
   [key: string]: TelemetryPrimitive;
+}
+
+export interface AutoReviewDecisionEvent {
+  turn_id: number;
+  tool_call_id: string;
+  tool_name: string;
+  trigger_policy: string;
+  model: string;
+  decision: 'allow' | 'deny' | 'failed';
+  risk?: 'low' | 'medium' | 'high';
+  duration_ms: number;
 }
 
 export interface PermissionApprovalResultEvent {
@@ -707,11 +719,15 @@ export interface SessionIndexMirrorGiveUpEvent {
   consecutive_failures: number;
 }
 
-export interface WorkspaceTrustChangedEvent {
+export interface ProjectLocateDegradedEvent {
+  reason: DegradedLocation['reason'];
+}
+
+export interface ProjectTrustChangedEvent {
   trusted: boolean;
 }
 
-export interface WorkspaceTrustReadFailedEvent {
+export interface ProjectTrustReadFailedEvent {
   error_type: string;
 }
 
@@ -949,6 +965,20 @@ export const telemetryEventDefinitions = {
       command_count: 'Number of commands in an approved compound read-only invocation',
       executable_name: 'Normalized executable basename considered by read-only analysis',
       read_only_rejection: 'Coarse reason static read-only analysis did not approve the command',
+    },
+  }),
+  auto_review_decision: defineAgentTelemetryEvent<AutoReviewDecisionEvent>({
+    owner: 'kimi-code',
+    comment: 'An LLM auto review of a pending tool call finishes.',
+    properties: {
+      turn_id: 'Per-agent turn index; pair with agent_id to locate a turn within a session',
+      tool_call_id: 'Provider-assigned tool call id',
+      tool_name: 'Tool being reviewed',
+      trigger_policy: 'Policy that would have asked the user without the mode-level approval',
+      model: 'Reviewer model alias',
+      decision: 'Whether the reviewer allowed, denied, or failed to decide',
+      risk: 'Reviewer risk classification; absent when review failed',
+      duration_ms: 'Total review time in milliseconds',
     },
   }),
   permission_approval_result: defineAgentTelemetryEvent<PermissionApprovalResultEvent>({
@@ -1622,12 +1652,17 @@ export const telemetryEventDefinitions = {
       consecutive_failures: 'Number of consecutive write failures that triggered the give-up',
     },
   }),
-  workspace_trust_changed: defineTelemetryEvent<WorkspaceTrustChangedEvent>({
+  project_locate_degraded: defineTelemetryEvent<ProjectLocateDegradedEvent>({
+    owner: 'kimi-code',
+    comment: 'Resolving the implicit project for a directory found a .git entry it could not verify, so the directory stays its own project.',
+    properties: { reason: 'Why the checkout was not grouped: unreadable git metadata or a pointer that fails verification' },
+  }),
+  workspace_trust_changed: defineTelemetryEvent<ProjectTrustChangedEvent>({
     owner: 'kimi-code',
     comment: 'A workspace is trusted or untrusted.',
     properties: { trusted: 'Whether the workspace is now trusted' },
   }),
-  workspace_trust_read_failed: defineTelemetryEvent<WorkspaceTrustReadFailedEvent>({
+  workspace_trust_read_failed: defineTelemetryEvent<ProjectTrustReadFailedEvent>({
     owner: 'kimi-code',
     comment: 'Reading the workspace trust record fails and the error is propagated to the caller.',
     properties: { error_type: 'Classified error category' },

@@ -40,6 +40,7 @@ export * from './parseSwarmResult';
 export * from './parseTaskToolResult';
 export * from './parseWaitForResult';
 export * from './normalizeRelativePath';
+export * from './panelRoots';
 export * from './pathBasename';
 export * from './pathDirname';
 export * from './pathRelativeTo';

@@ -8,14 +8,16 @@ import {
   type ProtocolCodec,
   type ResolvedUsage,
 } from '#/model/protocols/codec';
+import { pickedFields, promptSegment, type PromptPrefix } from '#/model/prompt-cache';
 import { asArray, asRecord, optionalString, stringOf } from '#/model/protocols/json';
-import type { ErrorSpec, ReplyStep, RequestView, ViewCall, ViewMessage, ViewPart } from '#/model/types';
+import type { ErrorSpec, ReplyStep, RequestView, ToolCallSpec, ViewCall, ViewMessage, ViewPart } from '#/model/types';
 import { textOfParts } from '#/model/view';
 
 export const googleCodec: ProtocolCodec = {
   name: 'google',
   matches: (path) => path.includes(':streamGenerateContent') || path.includes(':generateContent'),
   parseRequest,
+  promptPrefix,
   encodeStream(step, context) {
     const emissions = emissionsOf({ ...step, interleaveCalls: false }, (callIndex, call) => context.callId(callIndex, call));
     const segments = emissions.flatMap((emission, unit) => {
@@ -71,7 +73,7 @@ function partOfEmission(emission: Emission): Record<string, unknown> | undefined
     case 'think':
       return { text: emission.text, thought: true, thoughtSignature: emission.signature };
     case 'call-start':
-      return { functionCall: { id: emission.id, name: emission.call.name, args: objectArguments(emission.call, 'google') } };
+      return { functionCall: { id: emission.id, name: emission.call.name, args: objectArguments(emission.call, 'google') }, ...thoughtSignatureOf(emission.call) };
     case 'call-arguments':
       return undefined;
   }
@@ -126,6 +128,37 @@ function statusOf(status: number): string {
   }
 }
 
+function modelOfPath(path: string): string | undefined {
+  return /\/models\/([^/:]+):/.exec(path)?.[1];
+}
+
+function promptPrefix(body: unknown, path: string): PromptPrefix {
+  const record = asRecord(body);
+  const declarations = asArray(record['tools']).flatMap((tool) => {
+    const functions = asRecord(tool)['functionDeclarations'];
+    return functions === undefined ? [tool] : asArray(functions);
+  });
+  return {
+    model: modelOfPath(path),
+    segments: [
+      promptSegment('params', 'params', {
+        model: modelOfPath(path),
+        ...pickedFields(asRecord(record['generationConfig']), ['thinkingConfig', 'responseMimeType', 'responseJsonSchema', 'responseSchema']),
+      }),
+      ...(record['systemInstruction'] === undefined ? [] : [promptSegment('system', 'systemInstruction', record['systemInstruction'])]),
+      ...declarations.map((declaration, index) => promptSegment('tools', `tools[${index}] ${stringOf(asRecord(declaration)['name'])}`, declaration)),
+      ...asArray(record['contents']).flatMap((raw, index) => {
+        const content = asRecord(raw);
+        const label = `contents[${index}] ${stringOf(content['role'])}`;
+        return [
+          promptSegment('messages', label, { ...content, parts: undefined }),
+          ...asArray(content['parts']).map((part, position) => promptSegment('messages', `${label} parts[${position}]`, part)),
+        ];
+      }),
+    ],
+  };
+}
+
 function parseRequest(body: unknown, path: string): RequestView {
   const record = asRecord(body);
   const contents = asArray(record['contents']);
@@ -166,7 +199,7 @@ function parseRequest(body: unknown, path: string): RequestView {
     }
   }
   return {
-    model: /\/models\/([^/:]+):/.exec(path)?.[1],
+    model: modelOfPath(path),
     stream: path.includes(':streamGenerateContent'),
     system: asArray(asRecord(record['systemInstruction'])['parts'])
       .map((part) => stringOf(asRecord(part)['text']))
@@ -232,4 +265,9 @@ function viewPartOf(part: Record<string, unknown>): ViewPart {
   const url = part['inlineData'] !== undefined ? `data:${mediaType ?? 'application/octet-stream'};base64,${stringOf(inline['data'])}` : stringOf(file['fileUri']);
   if (part['inlineData'] === undefined && part['fileData'] === undefined) return { type: 'other', raw: part };
   return { type: mediaType?.startsWith('video/') === true ? 'video' : 'image', url, mediaType };
+}
+
+function thoughtSignatureOf(call: ToolCallSpec): { readonly thoughtSignature?: string } {
+  const signature = call.extras?.['thought_signature_b64'];
+  return typeof signature === 'string' ? { thoughtSignature: signature } : {};
 }

@@ -1,17 +1,18 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { RequestError, type NewSessionResponse, type RequestPermissionRequest } from '@agentclientprotocol/sdk';
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
 import { ToolUpdated } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { afterEach, describe, expect, it } from 'vitest';
+import { call, createFakeModel, exitPlanMode, say, write, type FakeModel } from '@moonshot-ai/testkit/model';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { mapPromptLaunchError } from '../src/session';
+import { AcpSession, mapPromptLaunchError } from '../src/session';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
-import { writeFakeModelConfig } from './_helpers/fakeModelConfig';
+import { writeFakeModelConfig, type FakeModelConfigOptions } from './_helpers/fakeModelConfig';
 import { solidPngBase64 } from './_helpers/png';
-import { createScriptedProvider, type ScriptedProvider } from './_helpers/scriptedProvider';
 
 const STDIO_MCP_FIXTURE = fileURLToPath(
   new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url),
@@ -20,12 +21,21 @@ const STDIO_MCP_FIXTURE = fileURLToPath(
 describe('acp-server real prompt turn (scripted LLM)', () => {
   let homeDir: string | undefined;
   let client: TestClient | undefined;
-  let scripted: ScriptedProvider | undefined;
+  let model: FakeModel | undefined;
 
   afterEach(async () => {
     if (client !== undefined) {
       await client.close();
       client = undefined;
+    }
+    if (model !== undefined) {
+      const current = model;
+      model = undefined;
+      try {
+        current.verify();
+      } finally {
+        await current.close();
+      }
     }
     if (homeDir !== undefined) {
       await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -48,11 +58,13 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
   async function boot(
     clientCapabilities: Record<string, unknown> = {},
     imageInput = false,
+    defaults?: Pick<FakeModelConfigOptions, 'defaultPlanMode' | 'defaultPermissionMode'>,
   ): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-e2e-turn-'));
-    await writeFakeModelConfig(homeDir, imageInput ? { image: true } : undefined);
-    scripted = createScriptedProvider();
-    client = await createTestClient({ homeDir, extraSeeds: [scripted.seed] });
+    model = createFakeModel();
+    await model.listen();
+    await writeFakeModelConfig(homeDir, { image: imageInput, baseUrl: model.origin, ...defaults });
+    client = await createTestClient({ homeDir });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities });
     if (clientCapabilities['terminal'] === true) installTerminalClient(client);
     return client;
@@ -60,7 +72,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
 
   it('drives initialize → new → prompt and streams the assistant text as agent_message_chunk', async () => {
     const c = await boot();
-    scripted!.mockNextText('hello from the scripted model');
+    model!.script(say('hello from the scripted model'));
 
     const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
       sessionId: string;
@@ -79,26 +91,80 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
 
     const result = (await promptPromise) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
-    expect(scripted!.callCount()).toBe(1);
+    expect(model!.requests().length).toBe(1);
 
     const usage = await c.waitForSessionUpdate('usage_update', 10_000);
     const usageUpdate = (
       usage.params as { update?: { used?: number; size?: number; cost?: unknown } }
     ).update;
-    expect(usageUpdate?.size).toBe(8192);
+    expect(usageUpdate?.size).toBe(262144);
     expect(usageUpdate?.used).toBeGreaterThan(0);
     expect(usageUpdate?.cost).toBeUndefined();
   }, 30_000);
 
+  it.each([
+    { optionId: 'plan_approve', expectedMode: 'default' },
+    { optionId: 'plan_reject_and_exit', expectedMode: 'default' },
+    { optionId: 'plan_approve', expectedMode: 'yolo', defaults: { defaultPlanMode: true, defaultPermissionMode: 'yolo' as const } },
+  ])('uses editor files for plan review and reports $expectedMode after $optionId', async ({ optionId, expectedMode, defaults }) => {
+    const c = await boot({ fs: { readTextFile: true, writeTextFile: true } }, false, defaults);
+    const plan = '# Proposed plan\n\nUpdate the example documentation.\n';
+    const permissions: RequestPermissionRequest[] = [];
+    let planPath: string | undefined;
+    c.onRequest('fs/read_text_file', async (params) => {
+      const { path } = params as { path: string };
+      try {
+        return { content: await readFile(path, 'utf8') };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw RequestError.resourceNotFound(path);
+        throw error;
+      }
+    });
+    c.onRequest('fs/write_text_file', async (params) => {
+      const { path, content } = params as { path: string; content: string };
+      await writeFile(path, content);
+      return {};
+    });
+    c.onRequest('session/request_permission', (params) => {
+      permissions.push(params as RequestPermissionRequest);
+      return { outcome: { outcome: 'selected', optionId } };
+    });
+
+    model!.script(
+      (request) => {
+        planPath = /^Plan file: (.+)$/m.exec(request.remindersSinceReply.join('\n'))?.[1];
+        if (planPath === undefined) throw new Error('The model did not receive the plan file in its plan mode reminder.');
+        return write({ path: planPath, content: plan });
+      },
+      exitPlanMode(),
+      ...(optionId === 'plan_approve' ? [say('The plan was approved.')] : []),
+    );
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as NewSessionResponse;
+    const { sessionId } = created;
+    if (defaults === undefined) {
+      await c.send('session/set_mode', { sessionId, modeId: 'plan' });
+    }
+    const start = c.sessionUpdates().length;
+    const result = await c.send('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Prepare a plan.' }] });
+    expect(result).toMatchObject({ stopReason: 'end_turn' });
+    expect(permissions).toHaveLength(1);
+    expect(permissions[0]?.toolCall.content).toContainEqual({
+      type: 'content',
+      content: { type: 'text', text: expect.stringContaining(plan.trim()) },
+    });
+    expect(await readFile(planPath!, 'utf8')).toBe(plan);
+    const updates = () => c.sessionUpdates().slice(start).map(({ params }) => (params as { update: unknown }).update);
+    await expect.poll(updates).toContainEqual({ sessionUpdate: 'current_mode_update', currentModeId: expectedMode });
+    await expect.poll(updates, { timeout: 5_000 }).toContainEqual({
+      sessionUpdate: 'config_option_update',
+      configOptions: expect.arrayContaining([expect.objectContaining({ id: 'mode', currentValue: expectedMode })]),
+    });
+  }, 30_000);
+
   it('runs a tool call and bridges the approval request to the client', async () => {
     const c = await boot({ terminal: true });
-    scripted!.mockNextResponse({
-      type: 'function',
-      id: 'call_1',
-      name: 'Bash',
-      arguments: '{"command":"printf hello_from_bash > approval-probe.txt"}',
-    });
-    scripted!.mockNextText('ran it');
+    model!.script(call('Bash', { command: 'printf hello_from_bash > approval-probe.txt' }, { id: 'call_1' }));
+    model!.script(say('ran it'));
 
     const permissionRequests: unknown[] = [];
     c.onRequest('session/request_permission', (params) => {
@@ -121,7 +187,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
 
     const result = (await promptPromise) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
-    expect(scripted!.callCount()).toBe(2);
+    expect(model!.requests().length).toBe(2);
 
     expect(permissionRequests).toHaveLength(1);
     const req = permissionRequests[0] as { toolCall?: { toolCallId?: string } };
@@ -137,33 +203,28 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       .map((m) => (m.params as { update?: ToolCallUpdate }).update)
       .find((u) => u?.sessionUpdate === 'tool_call_update' && u?.status === 'completed');
     expect(terminal).toBeDefined();
-    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('hello_from_bash');
+    expect(model!.requests()[1]?.rawBody).toContain('hello_from_bash');
   }, 30_000);
 
   it('bridges AskUserQuestion through elicitation/create for form-capable clients', async () => {
     const c = await boot({ elicitation: { form: {} } });
-    scripted!.mockNextResponse({
-      type: 'function',
-      id: 'call_q',
-      name: 'AskUserQuestion',
-      arguments: JSON.stringify({
-        questions: [
-          {
-            question: 'Pick one',
-            header: 'One',
-            options: [{ label: 'A' }, { label: 'B' }],
-            multi_select: false,
-          },
-          {
-            question: 'Pick many',
-            header: 'Many',
-            options: [{ label: 'X' }, { label: 'Y' }, { label: 'Z' }],
-            multi_select: true,
-          },
-        ],
-      }),
-    });
-    scripted!.mockNextText('noted');
+    model!.script(call('AskUserQuestion', {
+      questions: [
+        {
+          question: 'Pick one',
+          header: 'One',
+          options: [{ label: 'A' }, { label: 'B' }],
+          multi_select: false,
+        },
+        {
+          question: 'Pick many',
+          header: 'Many',
+          options: [{ label: 'X' }, { label: 'Y' }, { label: 'Z' }],
+          multi_select: true,
+        },
+      ],
+    }, { id: 'call_q' }));
+    model!.script(say('noted'));
 
     const elicitationRequests: unknown[] = [];
     c.onRequest('elicitation/create', (params) => {
@@ -186,7 +247,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       prompt: [{ type: 'text', text: 'ask me things' }],
     })) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
-    expect(scripted!.callCount()).toBe(2);
+    expect(model!.requests().length).toBe(2);
 
     expect(elicitationRequests).toHaveLength(1);
     expect(permissionRequests.filter((p) => JSON.stringify(p).includes('AskUserQuestion')))
@@ -202,20 +263,15 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(elicitation.requestedSchema?.properties?.['q0']?.type).toBe('string');
     expect(elicitation.requestedSchema?.properties?.['q1']?.type).toBe('array');
 
-    const history = JSON.stringify(scripted!.callHistory()[1]);
+    const history = model!.requests()[1]?.rawBody;
     expect(history).toContain('\\"Pick one\\":\\"B\\"');
     expect(history).toContain('\\"Pick many\\":\\"X, Z\\"');
   }, 30_000);
 
   it('rejects a second prompt while a turn is in flight', async () => {
     const c = await boot();
-    scripted!.mockNextResponse({
-      type: 'function',
-      id: 'call_busy',
-      name: 'Bash',
-      arguments: '{"command":"printf busy_probe > approval-probe.txt"}',
-    });
-    scripted!.mockNextText('done');
+    model!.script(call('Bash', { command: 'printf busy_probe > approval-probe.txt' }, { id: 'call_busy' }));
+    model!.script(say('done'));
 
     let answerPermission: ((response: unknown) => void) | undefined;
     const permissionSeen = new Promise<void>((seen) => {
@@ -248,17 +304,12 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     answerPermission!({ outcome: { outcome: 'selected', optionId: 'approve_once' } });
     const result = (await firstPrompt) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
-    expect(scripted!.callCount()).toBe(2);
+    expect(model!.requests().length).toBe(2);
   }, 30_000);
 
   it('settles as cancelled when cancel arrives while the launch is in flight', async () => {
     const c = await boot();
-    scripted!.mockNextResponse({
-      type: 'function',
-      id: 'call_cancel',
-      name: 'Bash',
-      arguments: '{"command":"echo cancel_probe"}',
-    });
+    model!.lane('main').unscripted('hang');
     c.onRequest('session/request_permission', () => ({
       outcome: { outcome: 'selected', optionId: 'approve_once' },
     }));
@@ -282,13 +333,8 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const c = await boot();
     const filePath = join(homeDir!, 'note.txt');
     await writeFile(filePath, 'location probe');
-    scripted!.mockNextResponse({
-      type: 'function',
-      id: 'call_read',
-      name: 'Read',
-      arguments: JSON.stringify({ path: filePath }),
-    });
-    scripted!.mockNextText('read it');
+    model!.script(call('Read', { path: filePath }, { id: 'call_read' }));
+    model!.script(say('read it'));
 
     c.onRequest('session/request_permission', () => ({
       outcome: { outcome: 'selected', optionId: 'approve_once' },
@@ -345,16 +391,13 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const result = (await promptPromise) as { stopReason: string };
 
     expect(result.stopReason).toBe('cancelled');
-    expect(scripted!.callCount()).toBe(0);
+    expect(model!.requests().length).toBe(0);
   }, 30_000);
 
   it('streams tool-call args deltas: lazy pending CREATE → cumulative update → started upgrade → completed', async () => {
     const c = await boot({ terminal: true }, true);
-    scripted!.mockNextResponse(
-      { type: 'function', id: 'call_1', name: 'Bash', arguments: '{"command":"ec' },
-      { type: 'tool_call_part', argumentsPart: 'ho delta_stream"}' },
-    );
-    scripted!.mockNextText('done');
+    model!.script(call('Bash', { command: 'echo delta_stream' }, { id: 'call_1', argumentChunks: 2 }));
+    model!.script(say('done'));
     c.onRequest('session/request_permission', () => ({
       outcome: { outcome: 'selected', optionId: 'approve_once' },
     }));
@@ -392,31 +435,35 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(updates[0]?.title).toBe('Bash');
     expect(updates[0]?.kind).toBe('execute');
     expect(updates[0]?.rawInput).toBeUndefined();
-    expect(textOf(updates[0])).toBe('{"command":"ec');
+    expect(textOf(updates[0])).toBe('');
 
+    const fullArgs = '{"command":"echo delta_stream"}';
+    const partial = textOf(updates[1]);
     expect(updates[1]?.sessionUpdate).toBe('tool_call_update');
     expect(updates[1]?.status).toBe('in_progress');
-    expect(textOf(updates[1])).toBe('{"command":"echo delta_stream"}');
+    expect(partial.length).toBeGreaterThan(0);
+    expect(partial.length).toBeLessThan(fullArgs.length);
+    expect(fullArgs.startsWith(partial)).toBe(true);
 
     expect(updates[2]?.sessionUpdate).toBe('tool_call_update');
     expect(updates[2]?.status).toBe('in_progress');
-    expect(updates[2]?.kind).toBe('execute');
-    expect(updates[2]?.rawInput).toEqual({ command: 'echo delta_stream' });
+    expect(textOf(updates[2])).toBe(fullArgs);
+
+    expect(updates[3]?.sessionUpdate).toBe('tool_call_update');
+    expect(updates[3]?.status).toBe('in_progress');
+    expect(updates[3]?.kind).toBe('execute');
+    expect(updates[3]?.rawInput).toEqual({ command: 'echo delta_stream' });
 
     expect(updates.at(-1)?.sessionUpdate).toBe('tool_call_update');
     expect(updates.at(-1)?.status).toBe('completed');
-    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('delta_stream');
+    expect(model!.requests()[1]?.rawBody).toContain('delta_stream');
 
-    const mediaCallOffset = scripted!.callHistory().length;
+    const mediaCallOffset = model!.requests().length;
     const mediaPath = join(homeDir!, 'picture.png');
     await writeFile(mediaPath, Buffer.from(solidPngBase64(1, 1), 'base64'));
     const args = JSON.stringify({ path: mediaPath });
-    const splitAt = 12;
-    scripted!.mockNextResponse(
-      { type: 'function', id: 'call_media', name: 'ReadMediaFile', arguments: args.slice(0, splitAt) },
-      { type: 'tool_call_part', argumentsPart: args.slice(splitAt) },
-    );
-    scripted!.mockNextText('done');
+    model!.script(call('ReadMediaFile', { path: mediaPath }, { id: 'call_media', argumentChunks: 2 }));
+    model!.script(say('done'));
 
     const mediaResult = (await c.send('session/prompt', {
       sessionId: created.sessionId,
@@ -433,14 +480,20 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(mediaUpdates[0]?.title).toBe('ReadMediaFile');
     expect(mediaUpdates[0]?.kind).toBe('other');
     expect(mediaUpdates[0]?.rawInput).toBeUndefined();
-    expect(textOf(mediaUpdates[0])).toBe(args.slice(0, splitAt));
+    expect(textOf(mediaUpdates[0])).toBe('');
+    const mediaPartial = textOf(mediaUpdates[1]);
     expect(mediaUpdates[1]?.sessionUpdate).toBe('tool_call_update');
     expect(mediaUpdates[1]?.status).toBe('in_progress');
-    expect(textOf(mediaUpdates[1])).toBe(args);
+    expect(mediaPartial.length).toBeGreaterThan(0);
+    expect(mediaPartial.length).toBeLessThan(args.length);
+    expect(args.startsWith(mediaPartial)).toBe(true);
     expect(mediaUpdates[2]?.sessionUpdate).toBe('tool_call_update');
     expect(mediaUpdates[2]?.status).toBe('in_progress');
-    expect(mediaUpdates[2]?.kind).toBe('other');
-    expect(mediaUpdates[2]?.rawInput).toEqual({ path: mediaPath });
+    expect(textOf(mediaUpdates[2])).toBe(args);
+    expect(mediaUpdates[3]?.sessionUpdate).toBe('tool_call_update');
+    expect(mediaUpdates[3]?.status).toBe('in_progress');
+    expect(mediaUpdates[3]?.kind).toBe('other');
+    expect(mediaUpdates[3]?.rawInput).toEqual({ path: mediaPath });
 
     const terminal = mediaUpdates.at(-1);
     expect(terminal?.sessionUpdate).toBe('tool_call_update');
@@ -454,7 +507,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       ]),
     );
     expect(JSON.stringify(terminal?.rawOutput)).not.toContain('"source"');
-    expect(JSON.stringify(scripted!.callHistory()[mediaCallOffset + 1])).toContain('picture.png');
+    expect(model!.requests()[mediaCallOffset + 1]?.rawBody).toContain('picture.png');
 
     const beforeLoad = c.sessionUpdates().length;
     await c.send('session/load', { sessionId: created.sessionId, cwd: homeDir, mcpServers: [] });
@@ -474,13 +527,8 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
 
   it('refreshes the tool card title on a status progress update and drops other progress kinds', async () => {
     const c = await boot();
-    scripted!.mockNextResponse({
-      type: 'function',
-      id: 'call_1',
-      name: 'Bash',
-      arguments: JSON.stringify({ command: 'sleep 1 && echo progress_done' }),
-    });
-    scripted!.mockNextText('done');
+    model!.script(call('Bash', { command: 'sleep 1 && echo progress_done' }, { id: 'call_1' }));
+    model!.script(say('done'));
     c.onRequest('session/request_permission', () => ({
       outcome: { outcome: 'selected', optionId: 'approve_once' },
     }));
@@ -614,12 +662,21 @@ describe('acp-server prompt error hygiene', () => {
 describe('acp-server builtin slash commands (local execution, no LLM turn)', () => {
   let homeDir: string | undefined;
   let client: TestClient | undefined;
-  let scripted: ScriptedProvider | undefined;
+  let model: FakeModel | undefined;
 
   afterEach(async () => {
     if (client !== undefined) {
       await client.close();
       client = undefined;
+    }
+    if (model !== undefined) {
+      const current = model;
+      model = undefined;
+      try {
+        current.verify();
+      } finally {
+        await current.close();
+      }
     }
     if (homeDir !== undefined) {
       await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -629,9 +686,10 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
 
   async function boot(): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-builtin-'));
-    await writeFakeModelConfig(homeDir);
-    scripted = createScriptedProvider();
-    client = await createTestClient({ homeDir, extraSeeds: [scripted.seed] });
+    model = createFakeModel();
+    await model.listen();
+    await writeFakeModelConfig(homeDir, { baseUrl: model.origin });
+    client = await createTestClient({ homeDir });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
     return client;
   }
@@ -670,9 +728,9 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
 
     const { chunk, stopReason } = await runSlash(c, sessionId, '/usage');
     expect(stopReason).toBe('end_turn');
-    expect(chunk).toContain('Context: 0 / 8192 tokens');
+    expect(chunk).toContain('Context: 0 / 262144 tokens');
     expect(chunk).toContain('no LLM calls yet');
-    expect(scripted!.callCount()).toBe(0);
+    expect(model!.requests().length).toBe(0);
   }, 30_000);
 
   it('/status answers with the session summary and never calls the model', async () => {
@@ -685,7 +743,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
     expect(chunk).toContain('Model: fake');
     expect(chunk).toContain('Mode: default');
     expect(chunk).toContain(`Working directory: ${homeDir}`);
-    expect(scripted!.callCount()).toBe(0);
+    expect(model!.requests().length).toBe(0);
   }, 30_000);
 
   it('/help lists every advertised builtin command and never calls the model', async () => {
@@ -697,7 +755,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
     for (const name of ['compact', 'status', 'usage', 'mcp', 'tasks', 'help']) {
       expect(chunk).toContain(`/${name}`);
     }
-    expect(scripted!.callCount()).toBe(0);
+    expect(model!.requests().length).toBe(0);
   }, 30_000);
 
   it('/tasks answers with the empty background-task list and never calls the model', async () => {
@@ -707,7 +765,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
     const { chunk, stopReason } = await runSlash(c, sessionId, '/tasks');
     expect(stopReason).toBe('end_turn');
     expect(chunk).toContain('No background tasks.');
-    expect(scripted!.callCount()).toBe(0);
+    expect(model!.requests().length).toBe(0);
   }, 30_000);
 
   it('/mcp lists the session MCP servers and never calls the model', async () => {
@@ -729,7 +787,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
     expect(stopReason).toBe('end_turn');
     expect(chunk).toContain('MCP servers (1):');
     expect(chunk).toContain('- mock (http):');
-    expect(scripted!.callCount()).toBe(0);
+    expect(model!.requests().length).toBe(0);
   }, 30_000);
 
   it('/mcp on a session without servers says so and never calls the model', async () => {
@@ -739,20 +797,20 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
     const { chunk, stopReason } = await runSlash(c, sessionId, '/mcp');
     expect(stopReason).toBe('end_turn');
     expect(chunk).toContain('No MCP servers configured for this session.');
-    expect(scripted!.callCount()).toBe(0);
+    expect(model!.requests().length).toBe(0);
   }, 30_000);
 
   it('/compact triggers engine compaction (fire-and-forget) after a turn', async () => {
     const c = await boot();
     const sessionId = await newSession(c);
 
-    scripted!.mockNextText('turn reply');
+    model!.script(say('turn reply'));
     const result = (await c.send('session/prompt', {
       sessionId,
       prompt: [{ type: 'text', text: 'say something' }],
     })) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
-    scripted!.mockNextText('compaction summary');
+    model!.script(say('compaction summary'));
 
     const { chunk, stopReason } = await runSlash(c, sessionId, '/compact');
     expect(stopReason).toBe('end_turn');
@@ -763,13 +821,13 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
     const c = await boot();
     const sessionId = await newSession(c);
 
-    scripted!.mockNextText('turn reply');
+    model!.script(say('turn reply'));
     const result = (await c.send('session/prompt', {
       sessionId,
       prompt: [{ type: 'text', text: 'say something' }],
     })) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
-    scripted!.mockNextText('compaction summary');
+    model!.script(say('compaction summary'));
 
     const { chunk, stopReason } = await runSlash(c, sessionId, '/compact keep it short');
     expect(stopReason).toBe('end_turn');
@@ -807,19 +865,28 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
     expect(stopReason).toBe('end_turn');
     expect(chunk).toContain('/compact failed:');
     expect(chunk).toContain('No messages to compact');
-    expect(scripted!.callCount()).toBe(0);
+    expect(model!.requests().length).toBe(0);
   }, 30_000);
 });
 
 describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => {
   let homeDir: string | undefined;
   let client: TestClient | undefined;
-  let scripted: ScriptedProvider | undefined;
+  let model: FakeModel | undefined;
 
   afterEach(async () => {
     if (client !== undefined) {
       await client.close();
       client = undefined;
+    }
+    if (model !== undefined) {
+      const current = model;
+      model = undefined;
+      try {
+        current.verify();
+      } finally {
+        await current.close();
+      }
     }
     if (homeDir !== undefined) {
       await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -884,23 +951,22 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     return terminals;
   }
 
-  async function boot(clientCapabilities: Record<string, unknown>): Promise<TestClient> {
+  async function boot(
+    clientCapabilities: Record<string, unknown>,
+    defaults?: Pick<FakeModelConfigOptions, 'defaultPermissionMode'>,
+  ): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-terminal-'));
-    await writeFakeModelConfig(homeDir);
-    scripted = createScriptedProvider();
-    client = await createTestClient({ homeDir, extraSeeds: [scripted.seed] });
+    model = createFakeModel();
+    await model.listen();
+    await writeFakeModelConfig(homeDir, { baseUrl: model.origin, ...defaults });
+    client = await createTestClient({ homeDir });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities });
     return client;
   }
 
   function scriptBashTurn(command: string): void {
-    scripted!.mockNextResponse({
-      type: 'function',
-      id: 'call_1',
-      name: 'Bash',
-      arguments: JSON.stringify({ command }),
-    });
-    scripted!.mockNextText('done');
+    model!.script(call('Bash', { command }, { id: 'call_1' }));
+    model!.script(say('done'));
   }
 
   async function runPrompt(c: TestClient): Promise<{ sessionId: string; stopReason: string }> {
@@ -937,7 +1003,7 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
 
     const { sessionId, stopReason } = await runPrompt(c);
     expect(stopReason).toBe('end_turn');
-    expect(scripted!.callCount()).toBe(2);
+    expect(model!.requests().length).toBe(2);
 
     expect(terminals).toHaveLength(1);
     const t = terminals[0]!;
@@ -956,8 +1022,58 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     const completed = updates.find((u) => u.status === 'completed');
     expect(completed?.content).toEqual([{ type: 'terminal', terminalId: t.id }]);
 
-    const secondCall = scripted!.callHistory()[1];
-    expect(JSON.stringify(secondCall)).toContain('hello_from_terminal');
+    expect(model!.requests()[1]?.rawBody).toContain('hello_from_terminal');
+  }, 30_000);
+
+  it('attaches the terminal to a command that runs before the editor learns which turn it belongs to', async () => {
+    let releaseLaunch!: () => void;
+    const launchHeld = new Promise<void>((resolve) => {
+      releaseLaunch = resolve;
+    });
+    const sessions = AcpSession.prototype as unknown as {
+      driveLaunch(this: AcpSession, launch: Promise<unknown>): Promise<unknown>;
+    };
+    const driveLaunch = sessions.driveLaunch;
+    const heldLaunch = vi.spyOn(sessions, 'driveLaunch').mockImplementation(function (this: AcpSession, launch) {
+      return driveLaunch.call(
+        this,
+        launch.then(async (launched) => {
+          await launchHeld;
+          return launched;
+        }),
+      );
+    });
+    try {
+      const c = await boot({ terminal: true }, { defaultPermissionMode: 'yolo' });
+      const terminals = fakeTerminalClient(c, 'hello_from_terminal\n');
+      c.onRequest('terminal/wait_for_exit', async () => {
+        releaseLaunch();
+        await c.waitForSessionUpdate('tool_call', 10_000);
+        return { exitCode: 0, signal: null };
+      });
+      scriptBashTurn('echo hello_from_terminal');
+
+      const { stopReason } = await runPrompt(c);
+      expect(stopReason).toBe('end_turn');
+
+      const created = c.received.findIndex((m) => m.method === 'terminal/create');
+      const announced = c.received.findIndex(
+        (m) =>
+          m.method === 'session/update' &&
+          (m.params as { update?: { sessionUpdate?: string } }).update?.sessionUpdate === 'tool_call',
+      );
+      expect(created).toBeGreaterThanOrEqual(0);
+      expect(announced).toBeGreaterThan(created);
+
+      const t = terminals[0]!;
+      const updates = toolCallUpdates(c);
+      const attached = updates.find((u) => u.content?.[0]?.type === 'terminal');
+      expect(attached?.content?.[0]?.terminalId).toBe(t.id);
+      const completed = updates.find((u) => u.status === 'completed');
+      expect(completed?.content).toEqual([{ type: 'terminal', terminalId: t.id }]);
+    } finally {
+      heldLaunch.mockRestore();
+    }
   }, 30_000);
 
   it('falls back to local execution when the client does not advertise the capability', async () => {

@@ -7,6 +7,7 @@ import type { AppDetailsOptions, BaseWindowConstructorOptions, WebContents, WebP
 import { DESKTOP_DISPLAY_NAME } from '../../shared/identity';
 import { connect } from '../server/connect';
 import { e2eWindowMode } from '../app/e2e-mode';
+import { deepLinkSchemeAvailable } from '../app/deep-link';
 import { installEditableContextMenu } from '../shell/context-menu';
 import { installDownloadHandler } from '../browser/downloads';
 import { installExternalLinkGuard } from '../shell/external-links';
@@ -199,6 +200,7 @@ export function installWindowsSessionEndWatch(
 }
 
 let rendererReady = false;
+let rendererLaunchActionsReady = false;
 let pendingTraySessionSelect: string | null = null;
 
 export function isRendererReady(): boolean {
@@ -226,11 +228,8 @@ export function isAppRendererUrl(url: string): boolean {
 }
 
 export function selectSessionInRenderer(sessionId: string): void {
-  if (mainWindow !== null && !mainWindow.isDestroyed() && rendererReady) {
-    sendToRenderer(IPC.traySelectSession, sessionId);
-  } else {
-    pendingTraySessionSelect = sessionId;
-  }
+  pendingTraySessionSelect = sessionId;
+  flushRendererLaunchActions();
 }
 
 let pendingLaunchActions: LaunchActionPayload[] = [];
@@ -240,10 +239,26 @@ export function drainLaunchActions(actions: LaunchActionPayload[]): LaunchAction
 }
 
 export function sendLaunchAction(action: LaunchActionPayload): void {
-  if (mainWindow !== null && !mainWindow.isDestroyed() && rendererReady) {
+  pendingLaunchActions.push(action);
+  flushRendererLaunchActions();
+}
+
+export function markRendererUiMounted(url: string): void {
+  if (!isAppRendererUrl(url)) return;
+  rendererLaunchActionsReady = true;
+  flushRendererLaunchActions();
+}
+
+function flushRendererLaunchActions(): void {
+  if (!rendererReady || !rendererLaunchActionsReady || mainWindow === null || mainWindow.isDestroyed()) return;
+  const contents = mainWindow.webContents;
+  if (contents.isDestroyed() || contents.isCrashed() || contents.isLoadingMainFrame()) return;
+  if (pendingTraySessionSelect !== null) {
+    sendToRenderer(IPC.traySelectSession, pendingTraySessionSelect);
+    pendingTraySessionSelect = null;
+  }
+  for (const action of drainLaunchActions(pendingLaunchActions)) {
     sendToRenderer(IPC.launchAction, action);
-  } else {
-    pendingLaunchActions.push(action);
   }
 }
 
@@ -539,7 +554,7 @@ export function createWindow(): void {
     ...titleBarWindowOptions(process.platform, nativeTheme.shouldUseDarkColors, linuxNativeTitleBar),
   }, {
     preload: join(__dirname, 'preload.cjs'),
-    additionalArguments: ['--kimi-native-overlay-host'],
+    additionalArguments: ['--kimi-native-overlay-host', ...(deepLinkSchemeAvailable() ? ['--kimi-session-links'] : [])],
     contextIsolation: true,
     nodeIntegration: false,
     sandbox: true,
@@ -581,6 +596,7 @@ export function createWindow(): void {
   nativeTheme.on('updated', syncBackground);
   win.once('closed', () => nativeTheme.removeListener('updated', syncBackground));
   rendererReady = false;
+  rendererLaunchActionsReady = false;
   installEmbeddedServerAuthInjection(win.webContents.session);
   registerAppWebContents(win.webContents);
   attachWindowDiagnostics(win.webContents);
@@ -666,6 +682,7 @@ export function createWindow(): void {
     recordWindowLifecycle('closed');
     if (mainWindow === win) {
       mainWindow = null;
+      rendererLaunchActionsReady = false;
     }
     notifyMainWindowGone();
   });
@@ -685,19 +702,17 @@ export function createWindow(): void {
     bumpTerminalGeneration();
     setTerminalMenuFocus(false);
   });
+  win.webContents.on('did-navigate', () => {
+    rendererLaunchActionsReady = false;
+  });
+  win.webContents.on('did-stop-loading', flushRendererLaunchActions);
   let abortedNavTerminalFocus = false;
   let clearStartupHistoryAfterLoad = false;
   const settleRendererReady = (isMainFrame: boolean): void => {
     if (win.isDestroyed() || !isMainFrame || !isAppRendererUrl(win.webContents.getURL())) return;
     rendererReady = true;
     reportStartupPhase('renderer_ready');
-    if (pendingTraySessionSelect !== null) {
-      sendToRenderer(IPC.traySelectSession, pendingTraySessionSelect);
-      pendingTraySessionSelect = null;
-    }
-    for (const action of drainLaunchActions(pendingLaunchActions)) {
-      sendToRenderer(IPC.launchAction, action);
-    }
+    flushRendererLaunchActions();
   };
   const restoreTerminalFocusOnAbort = (isMainFrame: boolean): void => {
     if (win.isDestroyed() || !isMainFrame || !isAppRendererUrl(win.webContents.getURL())) return;
@@ -707,7 +722,13 @@ export function createWindow(): void {
     settleRendererReady(isMainFrame);
     restoreTerminalFocusOnAbort(isMainFrame);
   });
-  win.webContents.on('did-fail-provisional-load', (_event, _code, _desc, _url, isMainFrame) => {
+  win.webContents.on('did-fail-provisional-load', (_event, _code, _desc, _url, isMainFrame, frameProcessId, frameRoutingId) => {
+    if (isMainFrame && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      const frame = win.webContents.mainFrame;
+      if (frame.processId === frameProcessId && frame.routingId === frameRoutingId) {
+        rendererLaunchActionsReady = false;
+      }
+    }
     settleRendererReady(isMainFrame);
     restoreTerminalFocusOnAbort(isMainFrame);
   });
@@ -718,6 +739,7 @@ export function createWindow(): void {
     if (rendererRecoveryResetTimer !== null) clearTimeout(rendererRecoveryResetTimer);
     rendererRecoveryResetTimer = null;
     rendererReady = false;
+    rendererLaunchActionsReady = false;
     notifyMainWindowGone();
     bumpTerminalGeneration();
     killAllTerminals();

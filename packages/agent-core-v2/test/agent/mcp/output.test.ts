@@ -19,6 +19,8 @@ import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/mcpCore/types'
 import type { ToolExecution } from '#/tool/toolContract';
 import { sniffImageDimensions } from '#/agent/media/file-type';
 
+import { hostPathClass } from '../../mcpCore/stubs';
+
 function modelText(result: Awaited<ReturnType<typeof mcpResultToExecutableOutput>>): string {
   return renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
 }
@@ -977,7 +979,7 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
     const environment = Object.assign(
       new FakeEnvironment(
         { environmentId: 'local', generation: 'test' },
-        { capabilities: ['process'] },
+        { capabilities: ['process'], pathClass: hostPathClass },
       ),
       { process: new HostProcessService() },
     );

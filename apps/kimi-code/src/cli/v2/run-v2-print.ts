@@ -13,15 +13,19 @@ import {
   IConfigService,
   IEventBus,
   IEventDispatcher,
-  IHostFileSystem,
+  IFlagService,
   IOAuthToolkit,
+  IProjectAliases,
+  IProjectInstanceManager,
+  IProjectService,
   ISessionIndex,
   ISessionManager,
   ISessionRunGate,
   ITelemetryService,
-  IWorkspaceInstanceManager,
+  IProjectSessions,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
+  WORKTREE_FLAG_ID,
   applyPrintModeConfigDefaults,
   createCloudAppender,
   ensureMainAgent,
@@ -40,19 +44,14 @@ import {
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type LoopRunResult,
-  type McpServerConfig,
   type PrintBackgroundMode,
   type ServicesAccessor,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  loadMcpServersDetailed,
-  resolveMcpJsonPaths,
-} from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
-import {
   createKimiDeviceId,
   KIMI_CODE_PROVIDER_NAME,
 } from '@moonshot-ai/kimi-code-oauth';
-import { SDKRpcClientV2 } from '@moonshot-ai/kimi-code-sdk';
+import { SDKRpcClientV2, type CreatedWorktree, type WorkspaceTrustMcpServerInfo } from '@moonshot-ai/kimi-code-sdk';
 import {
   initializeTelemetry,
   setCrashPhase,
@@ -76,14 +75,17 @@ import type {
   ToolUpdated,
   ToolResultEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { resolve } from 'pathe';
+import { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import { isAbsolute, relative } from 'pathe';
 
 import {
   CLI_SHUTDOWN_TIMEOUT_MS,
   CLI_USER_AGENT_PRODUCT,
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
+import { WORKTREE_LISTED_FILES, WORKTREE_SHORT_SHA_LENGTH } from '#/constant/worktree';
 import { currentKimiProfile, currentKimiRegionResolution } from '#/utils/region';
+import { isDirectory, resumeElsewhereHint } from '#/utils/session-directory';
 
 import {
   formatGoalSummaryText,
@@ -101,7 +103,8 @@ import {
 } from '../run-prompt';
 import { createKimiCodeHostIdentity } from '../host-identity';
 
-import { resolveOutputFormat } from '../options';
+import { resolveAdditionalDirs, resolveLaunchPaths } from '../launch-paths';
+import { resolveOutputFormat, worktreeFlagOffError } from '../options';
 import type { CLIOptions, PromptOutputFormat } from '../options';
 import {
   type PromptOutput,
@@ -138,12 +141,12 @@ export async function runV2Print(
       firstLaunch = true;
     },
   });
+  const launchPaths = resolveLaunchPaths(opts, workDir);
   const client = new SDKRpcClientV2({
     homeDir,
     identity: createKimiCodeHostIdentity(version),
     nonInteractive: true,
-    skillDirs: opts.skillsDirs,
-    agentFiles: opts.agentFiles,
+    ...launchPaths,
   });
   const services = client.engineAccessor;
   const auth = services.get(IOAuthToolkit);
@@ -161,6 +164,10 @@ export async function runV2Print(
   const telemetryEnabled = shouldEnableTelemetry({ enabled: configTelemetryEnabled });
   for (const diagnostic of configService.diagnostics()) {
     stderr.write(`${diagnostic.severity === 'error' ? 'Error' : 'Warning'}: ${diagnostic.message}\n`);
+  }
+  if (opts.worktree !== undefined && !services.get(IFlagService).enabled(WORKTREE_FLAG_ID)) {
+    await client.close();
+    throw worktreeFlagOffError();
   }
 
   let restorePermission = async (): Promise<void> => {};
@@ -196,6 +203,7 @@ export async function runV2Print(
   };
   removeTerminationCleanup = installPromptTerminationCleanup(promptProcess, cleanup);
 
+  let worktree: CreatedWorktree | undefined;
   try {
     telemetryService = services.get(ITelemetryService);
     if (telemetryEnabled) {
@@ -226,12 +234,35 @@ export async function runV2Print(
       });
     }
 
+    if (opts.worktree !== undefined) {
+      const prepared = await preparePrintWorktree(client, services, opts, workDir, stderr);
+      worktree = prepared.created;
+      if (!prepared.ready) {
+        process.exitCode = 1;
+        return;
+      }
+    }
+
+    const sessionWorkDir = worktree?.cwd ?? workDir;
+    const sessionOpts =
+      worktree === undefined ? opts : { ...opts, environment: 'local', environmentCwd: undefined };
     try {
-      const gated = await listTrustGatedMcpServers(services, workDir, homeDir);
+      const gated = await listTrustGatedMcpServers(client, sessionOpts, sessionWorkDir);
       if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
     } catch {}
 
-    let resolved = await resolveNativeSession(services, opts, workDir, defaultModel, stderr);
+    let resolved = await resolveNativeSession(
+      services,
+      {
+        ...sessionOpts,
+        agentFiles: launchPaths.agentFiles,
+        addDirs:
+          worktree === undefined ? opts.addDirs : resolveAdditionalDirs(opts.addDirs, workDir),
+      },
+      sessionWorkDir,
+      defaultModel,
+      stderr,
+    );
     const { previousPermissionMode } = resolved;
     if (previousPermissionMode !== undefined) {
       restorePermission = async () => {
@@ -298,8 +329,102 @@ export async function runV2Print(
       duration_ms: Date.now() - startedAt,
     });
   } finally {
+    if (worktree !== undefined) await reportPrintWorktree(client, worktree, stderr);
     await cleanup();
   }
+}
+
+async function preparePrintWorktree(
+  client: SDKRpcClientV2,
+  services: ServicesAccessor,
+  opts: CLIOptions,
+  cwd: string,
+  stderr: PromptOutput,
+): Promise<{ readonly created?: CreatedWorktree; readonly ready: boolean }> {
+  let trusted: boolean;
+  try {
+    trusted = await isProjectTrusted(services, cwd);
+  } catch (error) {
+    stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return { ready: false };
+  }
+  if (!trusted) {
+    stderr.write(
+      'error: This project is not trusted; cannot create a worktree with -w/--worktree.\n' +
+        '  Run `kimi` here and choose "Trust and continue", or set KIMI_CODE_TRUST_WORKSPACE=1, to trust it first.\n',
+    );
+    return { ready: false };
+  }
+  let created: CreatedWorktree;
+  try {
+    created = await client.createWorktree({ cwd, name: opts.worktree, base: opts.worktreeBase });
+  } catch (error) {
+    stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return { ready: false };
+  }
+  const copied = created.copiedFiles;
+  if (copied.length > 0) {
+    const listed = copied.slice(0, WORKTREE_LISTED_FILES).join(', ');
+    const more = copied.length > WORKTREE_LISTED_FILES ? ` +${String(copied.length - WORKTREE_LISTED_FILES)} more` : '';
+    stderr.write(
+      `Copied ${String(copied.length)} ${copied.length === 1 ? 'file' : 'files'} from .worktreeinclude: ${listed}${more}\n`,
+    );
+  }
+  if (created.sourceDirty) {
+    stderr.write(`Uncommitted changes in ${created.sourceRoot} stay there.\n`);
+  }
+  if (created.cwdFallback) {
+    const subdir = relative(created.sourceRoot, cwd);
+    stderr.write(`${subdir} doesn't exist at this commit, so the session starts at the worktree root.\n`);
+  }
+  if (created.setupScript === undefined) return { created, ready: true };
+  const fromWorktree = relative(created.worktree.path, created.setupScript);
+  const inWorktree =
+    fromWorktree !== '' && !/^\.\.(?:[\\/]|$)/.test(fromWorktree) && !isAbsolute(fromWorktree);
+  const script = inWorktree ? fromWorktree : relative(created.sourceRoot, created.setupScript);
+  try {
+    const { exitCode } = await client.runWorktreeSetupScript(
+      { worktreePath: created.worktree.path, sourceRoot: created.sourceRoot },
+      { onOutput: (text) => stderr.write(text) },
+    );
+    if (exitCode === 0) return { created, ready: true };
+    stderr.write(`error: The worktree setup script ${script} exited with code ${String(exitCode)}.\n`);
+  } catch (error) {
+    stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+  }
+  return { created, ready: false };
+}
+
+async function isProjectTrusted(services: ServicesAccessor, workDir: string): Promise<boolean> {
+  const lease = await services.get(IProjectInstanceManager).acquire({ cwd: workDir });
+  try {
+    return await lease.instance.program.trust.get();
+  } finally {
+    lease.dispose();
+  }
+}
+
+async function reportPrintWorktree(
+  client: SDKRpcClientV2,
+  created: CreatedWorktree,
+  stderr: PromptOutput,
+): Promise<void> {
+  const listing = await client.listWorktrees(created.repoRoot).catch(() => undefined);
+  const current = listing?.worktrees.find((entry) => entry.path === created.worktree.path) ?? created.worktree;
+  const head = current.head ?? created.worktree.head ?? '';
+  const checkout = current.branch ?? `detached at ${head.slice(0, WORKTREE_SHORT_SHA_LENGTH)}`;
+  stderr.write(`Worktree: ${current.path} (${checkout})\n`);
+}
+
+async function canResumeAcrossDirs(
+  services: ServicesAccessor,
+  workDir: string,
+  targetWorkspaceId: string | undefined,
+): Promise<boolean> {
+  if (targetWorkspaceId === undefined) return false;
+  const project = await services.get(IProjectService).peekImplicit(workDir);
+  const aliasIds = await services.get(IProjectAliases).resolveAliasIds(project.id);
+  return aliasIds.includes(targetWorkspaceId);
 }
 
 interface ResolvedNativeSession {
@@ -386,12 +511,18 @@ async function resolveNativeSession(
     if (target === undefined) {
       throw new Error(`Session "${opts.session}" not found.`);
     }
-    if (target.cwd !== undefined && resolve(target.cwd) !== resolve(workDir)) {
-      stderr.write(
-        `Session "${opts.session}" was created under a different directory.\n` +
-          `  cd "${target.cwd}" && kimi -r ${opts.session}\n\n`,
-      );
-      throw new Error(`Session "${opts.session}" was created under a different directory.`);
+    if (target.cwd !== undefined && !sameDir(target.cwd, workDir)) {
+      if (await canResumeAcrossDirs(services, workDir, target.workspaceId)) {
+        if (isDirectory(target.cwd)) {
+          stderr.write(`Switched to ${target.cwd} to resume this session.\n`);
+        } else {
+          stderr.write(`Warning: working directory "${target.cwd}" no longer exists; continuing anyway.\n`);
+        }
+      } else {
+        const hint = resumeElsewhereHint(opts.session, target.cwd);
+        stderr.write(`${hint.summary}\n${hint.detail}\n\n`);
+        throw new Error(hint.summary);
+      }
     }
     const session = await resumeById(opts.session);
     const agentContext = await ensureMainAgent(session);
@@ -411,8 +542,7 @@ async function resolveNativeSession(
   }
 
   if (opts.continue) {
-    const page = await index.listRecent({});
-    const previous = page.items.find((summary) => summary.cwd === workDir);
+    const [previous] = (await services.get(IProjectSessions).listForWorkdir(workDir, { limit: 1 })).items;
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
       const agentContext = await ensureMainAgent(session);
@@ -465,46 +595,40 @@ export interface TrustGatedMcpServer {
   readonly target: string;
 }
 
-export async function listTrustGatedMcpServers(
-  services: ServicesAccessor,
+async function listTrustGatedMcpServers(
+  client: SDKRpcClientV2,
+  opts: Pick<CLIOptions, 'session' | 'environment' | 'environmentCwd'>,
   workDir: string,
-  homeDir: string,
 ): Promise<readonly TrustGatedMcpServer[]> {
-  const lease = await services
-    .get(IWorkspaceInstanceManager)
-    .acquire({ root: workDir });
-  try {
-    if (await lease.instance.program.trust.get()) return [];
-    const fs = services.get(IHostFileSystem);
-    const [paths, loaded] = await Promise.all([
-      resolveMcpJsonPaths({ fs, cwd: workDir, homeDir }),
-      loadMcpServersDetailed({ fs, cwd: workDir, homeDir, includeProject: true }),
-    ]);
-    const projectPaths = new Set([paths.projectRoot, paths.project]);
-    return Object.entries(loaded.servers)
-      .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
-      .map(([name, config]) => ({ name, target: describeMcpTarget(config) }))
-      .toSorted((a, b) => a.name.localeCompare(b.name));
-  } finally {
-    lease.dispose();
-  }
+  const target = opts.session === undefined ? undefined : await client.engineAccessor.get(ISessionIndex).get(opts.session);
+  const canResume =
+    target !== undefined &&
+    (target.cwd === undefined ||
+      sameDir(target.cwd, workDir) ||
+      (await canResumeAcrossDirs(client.engineAccessor, workDir, target.workspaceId)));
+  const { gatedMcpServers } = await client.getWorkspaceTrustInfo(workDir, {
+    sessionId: canResume ? target.id : undefined,
+    environmentId: opts.environment,
+    environmentCwd: opts.environmentCwd,
+  });
+  return gatedMcpServers.map((server) => ({ name: server.name, target: describeMcpTarget(server) }));
 }
 
 export function formatTrustGatedMcpWarning(servers: readonly TrustGatedMcpServer[]): string {
   const noun = servers.length === 1 ? 'server' : 'servers';
   const list = servers.map((server) => `${server.name} (${server.target})`).join(', ');
   return (
-    `Warning: this folder is not trusted; skipped ${servers.length} project-level MCP ${noun}: ${list}.\n` +
-    '  Run `kimi` here and choose "Trust this folder", or set KIMI_CODE_TRUST_WORKSPACE=1, to enable them.\n\n'
+    `Warning: this project is not trusted; skipped ${servers.length} project-level MCP ${noun}: ${list}.\n` +
+    '  Run `kimi` here and choose "Trust and continue", or set KIMI_CODE_TRUST_WORKSPACE=1, to enable them.\n\n'
   );
 }
 
-function describeMcpTarget(config: McpServerConfig): string {
-  if (config.transport === 'stdio') {
-    const args = config.args === undefined ? '' : ` ${config.args.join(' ')}`;
-    return `stdio: ${config.command}${args}`;
+function describeMcpTarget(server: WorkspaceTrustMcpServerInfo): string {
+  if (server.transport === 'stdio') {
+    const args = server.args === undefined ? '' : ` ${server.args.join(' ')}`;
+    return `stdio: ${server.command}${args}`;
   }
-  return `${config.transport}: ${config.url}`;
+  return `${server.transport}: ${server.url}`;
 }
 
 async function runNativeTurn(
@@ -732,6 +856,9 @@ function dispatchNativeEvent(
       }
       return;
     }
+    case 'auto_review.started':
+    case 'auto_review.decision':
+      return;
   }
 }
 

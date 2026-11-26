@@ -18,6 +18,7 @@ import {
   telemetryServices,
   wireRecordPersistenceServices,
   type TestAgentContext,
+  type TestAgentOptions,
 } from '../../../harness';
 import { recordingTelemetry } from '../../../app/telemetry/stubs';
 import { stubToolResultTruncationService } from '../../../agent/toolResultTruncation/stubs';
@@ -257,17 +258,22 @@ describe('ToolManager SkillTool wire behavior', () => {
   let persistence: InMemoryWireRecordPersistence;
   let skills: InMemorySkillCatalog;
 
-  beforeEach(() => {
+  function setup(options: TestAgentOptions = {}): void {
     skills = new InMemorySkillCatalog();
     skills.register(makeSkill('review'));
     persistence = new InMemoryWireRecordPersistence();
     ctx = createTestAgent(
+      options,
       skillServices(skills),
       wireRecordPersistenceServices(persistence),
     );
     context = ctx.get(IAgentLoopService);
     profile = ctx.get(IAgentLoopService);
     profile.update({ activeToolNames: ['Skill'] });
+  }
+
+  beforeEach(() => {
+    setup();
   });
 
   afterEach(async () => {
@@ -506,6 +512,8 @@ describe('ToolManager SkillTool wire behavior', () => {
     expect(JSON.stringify(loaded.slice(0, 3))).not.toContain('nested-skill');
   });
   it('clears the parent workspace after a cross-workspace root batch', async () => {
+    await ctx.dispose();
+    setup({ scriptedModelChecks: { checkMessages: false } });
     skills.register({ ...makeSkill('child'), path: '/work/A/child/SKILL.md', dir: '/work/A/child', content: 'child from A', workspaceDir: '/work/A' });
     skills.registerVariants([
       { ...makeSkill('parent'), path: '/work/A/parent/SKILL.md', dir: '/work/A/parent', content: 'parent from A', workspaceDir: '/work/A' },

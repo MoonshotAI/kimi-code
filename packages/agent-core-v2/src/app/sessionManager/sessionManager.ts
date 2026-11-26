@@ -14,7 +14,7 @@ import type {
   SessionForkedEvent,
   SessionWillCloseEvent,
   SessionWillCreateEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
+} from '#/project/sessionLifecycle/sessionLifecycle';
 
 export interface CreateManagedSessionOptions extends CreateSessionOptions {
   readonly workspaceId?: string;

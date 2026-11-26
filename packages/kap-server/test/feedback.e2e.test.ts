@@ -1,15 +1,15 @@
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { closeSessionById, IOAuthService, ISessionExportService, MAIN_AGENT_ID, sessionDirOf } from '@moonshot-ai/agent-core-v2';
-import { FileTokenStorage, OAuthUnauthorizedError, resolveKimiCodeOAuthRef, resolveKimiTokenStorageName } from '@moonshot-ai/kimi-code-oauth';
-import { deferred } from '@moonshot-ai/testkit/fixtures';
+import { fetchSubmitFeedback, FileTokenStorage, OAuthUnauthorizedError, resolveKimiCodeOAuthRef, resolveKimiTokenStorageName } from '@moonshot-ai/kimi-code-oauth';
+import { installNetworkGuard } from '@moonshot-ai/testkit/fixtures';
 import { agent, createFakeModel, held, say, type ReplyStep } from '@moonshot-ai/testkit/model';
-import { afterAll, afterEach, assert, beforeAll, describe, expect, it, type TestContext, vi } from 'vitest';
+import { createKimiServices, startKimiServices } from '@moonshot-ai/testkit/services';
+import { afterAll, afterEach, assert, beforeAll, describe, expect, it, onTestFinished, type TestContext, vi } from 'vitest';
 
 import { ErrorCode } from '../src/protocol/error-codes';
 import { FeedbackGateway, readFeedbackFile } from '../src/services/feedback/feedbackService';
@@ -21,7 +21,11 @@ import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 const token = 'test-feedback-access-token';
 
 it('sends feedback to the configured managed deployment with its scoped OAuth credentials', async ({ onTestFinished }) => {
-  const baseUrl = 'https://api.example.test/coding/v1';
+  const kimi = await startKimiServices({ accessToken: token });
+  onTestFinished(() => kimi.close());
+  const network = installNetworkGuard();
+  onTestFinished(() => { network.uninstall(); });
+  const baseUrl = kimi.baseUrl;
   const oauthHost = 'https://auth.example.test';
   const ref = resolveKimiCodeOAuthRef({ baseUrl, oauthHost });
   const home = await mkdtemp(join(tmpdir(), 'kimi-feedback-deployment-'));
@@ -39,20 +43,16 @@ oauth = { storage = "file", key = "${ref.key}", oauth_host = "${oauthHost}" }
   vi.stubEnv('KIMI_CODE_FEEDBACK_BASE_URL', undefined);
   vi.stubEnv('KIMI_OAUTH_HOST', undefined);
   onTestFinished(() => { vi.unstubAllEnvs(); });
-  const requests = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-    const request = new Request(input, init);
-    if (request.url !== `${baseUrl}/feedback`) throw new Error('Unexpected outbound request');
-    if (request.headers.get('authorization') !== `Bearer ${token}`) return new Response(null, { status: 401 });
-    return Response.json({ feedback_id: 17 });
-  });
-  onTestFinished(() => { requests.mockRestore(); });
   const server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent', skipInstanceRegistry: true });
   onTestFinished(() => server.close());
   const result = await server.app.inject({
     method: 'POST', url: '/api/v1/feedback', headers: authHeaders(server),
     payload: { kind: 'global', source: 'sidebar', category: 'bug', content: 'Deployment feedback' },
   });
-  expect(result.json()).toMatchObject({ code: 0, data: { feedback_id: 17 } });
+  expect(result.json()).toMatchObject({ code: 0, data: { feedback_id: 1 } });
+  expect(kimi.requests().map((request) => request.endpoint)).toEqual(['feedback']);
+  kimi.verify();
+  network.assertNoViolations();
 });
 
 function withRequestId(id: string, step: ReplyStep): ReplyStep {
@@ -62,89 +62,27 @@ function withRequestId(id: string, step: ReplyStep): ReplyStep {
 describe('desktop feedback', () => {
   let server: RunningServer;
   let home: string;
-  let gatewayOrigin: string;
   let signedIn = true;
-  let lastFeedbackId = 0;
-  let lastUploadId = 0;
-  const ownedFeedback = new Set<number>();
-  const uploads = new Map<number, Record<string, unknown>>();
-  const signedMethods = new Map<number, string>();
-  const receivedParts = new Map<number, { method: string; bytes: Buffer }>();
-  const created: Record<string, unknown>[] = [];
-  const updates: Record<string, unknown>[] = [];
-  const completed: Record<string, unknown>[] = [];
+  const kimi = createKimiServices({ accessToken: token });
+  const created = () => kimi.feedback().map((feedback) => feedback.body);
+  const updates = () => kimi.requests('feedback-update').map((request) => request.json);
+  const completed = () => kimi.requests('upload-complete').map((request) => request.json);
+  const uploads = () => kimi.feedback().flatMap((feedback) => feedback.uploads);
+  const uploadRequest = (id: number) => uploads().find((upload) => upload.id === id)?.request;
+  const storedPartCount = () => uploads().filter((upload) => upload.bytes !== undefined).length;
+  const storedPart = (id: number) => {
+    const upload = uploads().find((candidate) => candidate.id === id);
+    return upload?.bytes === undefined ? undefined : { method: upload.method, bytes: Buffer.from(upload.bytes) };
+  };
   const model = createFakeModel();
   const managed = model.route('managed', req => req.path.startsWith('/managed/'));
-  const gateway = createServer((req, res) => {
-    void handleGateway(req, res).catch(() => {
-      res.writeHead(500).end();
-    });
-  });
-
-  async function handleGateway(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) {
-      if (Buffer.isBuffer(chunk)) chunks.push(chunk);
-    }
-    const data = Buffer.concat(chunks);
-    const path = req.url ?? '';
-    if (path.startsWith('/storage/') && (req.method === 'PUT' || req.method === 'POST')) {
-      if (req.headers.authorization !== undefined) {
-        res.writeHead(403).end();
-        return;
-      }
-      receivedParts.set(Number(path.split('/').at(-1)), { method: req.method, bytes: data });
-      res.writeHead(200, { etag: '"test-etag"' }).end();
-      return;
-    }
-    if (req.headers.authorization !== `Bearer ${token}`) {
-      res.writeHead(401).end();
-      return;
-    }
-
-    const body = JSON.parse(data.toString()) as Record<string, unknown>;
-    res.setHeader('content-type', 'application/json');
-    if (path === '/coding/v1/feedback') {
-      created.push(body);
-      ownedFeedback.add(++lastFeedbackId);
-      res.end(JSON.stringify({ feedback_id: lastFeedbackId }));
-    } else if (path === '/coding/v1/feedback/update') {
-      if (!ownedFeedback.has(Number(body['feedback_id']))) {
-        res.writeHead(409).end(JSON.stringify({ message: 'not owned or expired' }));
-        return;
-      }
-      updates.push(body);
-      res.end('{}');
-    } else if (path === '/coding/v1/feedback/upload_url') {
-      if (!ownedFeedback.has(Number(body['feedback_id']))) {
-        res.writeHead(409).end(JSON.stringify({ message: 'not owned or expired' }));
-        return;
-      }
-      const id = ++lastUploadId;
-      uploads.set(id, body);
-      res.end(JSON.stringify({
-        upload: {
-          id,
-          parts: [{ part_number: 1, url: `${gatewayOrigin}/storage/${id}`, size: body['file_size'], method: signedMethods.get(Number(body['feedback_id'])) }],
-        },
-      }));
-    } else if (path === '/coding/v1/feedback/upload_complete') {
-      completed.push(body);
-      res.end('{}');
-    } else {
-      res.writeHead(404).end();
-    }
-  }
 
   beforeAll(async () => {
-    await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve));
-    const address = gateway.address();
-    if (address === null || typeof address === 'string') throw new Error('No test gateway port.');
-    gatewayOrigin = `http://127.0.0.1:${address.port}`;
+    await kimi.listen();
     await model.listen();
     const managedBaseUrl = `${model.origin}/managed/v1`;
     vi.stubEnv('KIMI_CODE_BASE_URL', managedBaseUrl);
-    vi.stubEnv('KIMI_CODE_FEEDBACK_BASE_URL', `${gatewayOrigin}/coding/v1/`);
+    vi.stubEnv('KIMI_CODE_FEEDBACK_BASE_URL', `${kimi.baseUrl}/`);
     vi.stubEnv('KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START', '0');
     vi.stubEnv('KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS', '0');
     home = await mkdtemp(join(tmpdir(), 'kimi-feedback-test-'));
@@ -203,17 +141,15 @@ default_model = "alternate"
     });
   });
 
-  afterEach(() => model.verify());
+  afterEach(() => {
+    model.verify();
+    kimi.verify();
+  });
 
   afterAll(async () => {
     await server?.close();
     await model.close();
-    await new Promise<void>((resolve, reject) => {
-      gateway.close((error) => {
-        if (error === undefined) resolve();
-        else reject(error);
-      });
-    });
+    await kimi.close();
     if (home !== undefined) await rm(home, { recursive: true, force: true });
     vi.unstubAllEnvs();
   });
@@ -234,14 +170,14 @@ default_model = "alternate"
     signedIn = false;
     try {
       expect((await request('POST', '/feedback', input)).code).toBe(ErrorCode.AUTH_TOKEN_MISSING);
-      expect(created).toEqual([]);
+      expect(created()).toEqual([]);
     } finally {
       signedIn = true;
     }
 
     const result = await request('POST', '/feedback', input);
     expect(result).toMatchObject({ code: 0, data: { feedback_id: 1 } });
-    expect(created.at(-1)).toMatchObject({
+    expect(created().at(-1)).toMatchObject({
       session_id: 'global',
       content: 'App issue',
       version: TEST_HOST_IDENTITY.version,
@@ -250,14 +186,26 @@ default_model = "alternate"
   });
 
   it('records the client and each upload choice without starting an upload', async () => {
-    const previousUploads = uploads.size;
+    const previousUploads = uploads().length;
     const { code } = await request('POST', '/feedback', {
       kind: 'global', source: 'command', category: 'other', content: 'Feedback from a browser',
       session_id: 'example-session', upload_session: true, upload_logs: false,
     }, { 'x-kimi-client-ui-mode': 'web', 'x-kimi-client-version': '2.3.4', 'sec-ch-ua-platform': '"Windows"' });
     expect(code).toBe(0);
-    expect(created.at(-1)).toMatchObject({ session_id: 'example-session', version: '2.3.4', os: 'Windows', info: { client: 'web', upload_session: true, upload_logs: false } });
-    expect(uploads.size).toBe(previousUploads);
+    expect(created().at(-1)).toMatchObject({ session_id: 'example-session', version: '2.3.4', os: 'Windows', info: { client: 'web', upload_session: true, upload_logs: false } });
+    expect(uploads().length).toBe(previousUploads);
+  });
+
+  it('records menu as a global feedback source', async () => {
+    const result = await request('POST', '/feedback', {
+      kind: 'global', source: 'menu', category: 'suggestion', content: 'Feedback from Help menu',
+    });
+    expect(result.code).toBe(0);
+    expect(created().at(-1)).toMatchObject({
+      session_id: 'global',
+      content: 'Feedback from Help menu',
+      info: { kind: 'global', source: 'menu', category: 'suggestion', client: 'desktop' },
+    });
   });
 
   it('attaches a chosen file and finalizes it using the same upload id', async () => {
@@ -269,14 +217,14 @@ default_model = "alternate"
     const path = `/feedback/${data.feedback_id}/attachments?kind=media`;
     const result = await request<{ upload_id: number }>('POST', path, form);
     expect(result.code).toBe(0);
-    expect(uploads.get(result.data.upload_id)).toEqual({
+    expect(uploadRequest(result.data.upload_id)).toEqual({
       feedback_id: data.feedback_id,
       file_name: 'image.png',
       file_size: Buffer.byteLength('chosen image'),
       file_hash: createHash('sha256').update('chosen image').digest('hex'),
     });
-    expect(receivedParts.get(result.data.upload_id)).toEqual({ method: 'PUT', bytes: Buffer.from('chosen image') });
-    expect(completed.at(-1)).toEqual({ upload_id: result.data.upload_id, parts: [{ part_number: 1, etag: '"test-etag"' }] });
+    expect(storedPart(result.data.upload_id)).toEqual({ method: 'PUT', bytes: Buffer.from('chosen image') });
+    expect(completed().at(-1)).toEqual({ upload_id: result.data.upload_id, parts: [{ part_number: 1, etag: `"testkit-etag-${String(result.data.upload_id)}"` }] });
     const invalid = new FormData();
     invalid.append('file', new Blob(['unexpected file type'], { type: 'text/plain' }), 'text.txt');
     expect((await request('POST', path, invalid)).code).toBe(ErrorCode.VALIDATION_FAILED);
@@ -290,74 +238,56 @@ default_model = "alternate"
     const { data } = await request<{ feedback_id: number }>('POST', '/feedback', {
       kind: 'global', source: 'sidebar', category: 'other', content: 'Example attachment',
     });
-    signedMethods.set(data.feedback_id, 'POST');
+    kimi.uploadMethod('POST');
+    onTestFinished(() => { kimi.uploadMethod('PUT'); });
     const form = new FormData();
     form.append('file', new Blob(['chosen image'], { type: 'image/png' }), 'image.png');
     const result = await request<{ upload_id: number }>('POST', `/feedback/${data.feedback_id}/attachments?kind=media`, form);
     expect(result.code).toBe(0);
-    expect(receivedParts.get(result.data.upload_id)).toEqual({ method: 'POST', bytes: Buffer.from('chosen image') });
-    expect(completed.at(-1)).toEqual({ upload_id: result.data.upload_id, parts: [{ part_number: 1, etag: '"test-etag"' }] });
+    expect(storedPart(result.data.upload_id)).toEqual({ method: 'POST', bytes: Buffer.from('chosen image') });
+    expect(completed().at(-1)).toEqual({ upload_id: result.data.upload_id, parts: [{ part_number: 1, etag: `"testkit-etag-${String(result.data.upload_id)}"` }] });
   });
 
   it('keeps a signed upload part active past one minute', async ({ onTestFinished }) => {
     const path = join(home, 'slow-attachment.zip');
     await writeFile(path, 'session');
     const file = await readFeedbackFile('session.zip', path);
-    const feedback = new FeedbackGateway(new URL('https://example.test/coding/v1/feedback'), token);
-    const storageUrl = 'https://example.test/storage/1';
-    const caller = new AbortController();
-    const partStarted = deferred<AbortSignal>();
-    const stored = deferred();
-    const requests = vi.spyOn(globalThis, 'fetch')
-      .mockRejectedValue(new Error('Unexpected feedback request'))
-      .mockResolvedValueOnce(Response.json({ upload: { id: 5, parts: [
-        { part_number: 1, method: 'PUT', url: storageUrl, size: file.size },
-      ] } }))
-      .mockImplementationOnce(async (url, init) => {
-        expect(url).toBe(storageUrl);
-        expect(await new Response(init?.body).text()).toBe('session');
-        const signal = init?.signal;
-        assert.isOk(signal);
-        partStarted.resolve(signal);
-        await stored.promise;
-        signal.throwIfAborted();
-        return new Response(null, { headers: { etag: 'part-etag' } });
-      })
-      .mockResolvedValueOnce(Response.json({}));
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    onTestFinished(() => {
-      requests.mockRestore();
-      vi.useRealTimers();
+    const slow = createKimiServices({ accessToken: token });
+    vi.stubGlobal('fetch', slow.fetch);
+    onTestFinished(async () => {
+      vi.unstubAllGlobals();
+      await slow.close();
     });
-    const upload = feedback.upload(3, file, caller.signal);
+    const submitted = await fetchSubmitFeedback(`${slow.baseUrl}/feedback`, token, { content: 'slow upload', version: '1.0.0', os: 'darwin', model: null });
+    assert(submitted.kind === 'ok');
+    const feedback = new FeedbackGateway(new URL(`${slow.baseUrl}/feedback`), token);
+    const storage = slow.holdNext('storage');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    onTestFinished(() => { vi.useRealTimers(); });
+    const caller = new AbortController();
+    const upload = feedback.upload(submitted.feedbackId, file, caller.signal);
     try {
-      const signal = await partStarted.promise;
+      await storage.reached();
       vi.advanceTimersByTime(60_001);
-      expect(signal.aborted).toBe(false);
-      stored.resolve();
-      await expect(upload).resolves.toBe(5);
+      storage.release();
+      await expect(upload).resolves.toBe(1);
     } finally {
       caller.abort();
-      stored.resolve();
+      storage.release();
       await upload.catch(() => {});
     }
-    expect(requests).toHaveBeenLastCalledWith('https://example.test/coding/v1/feedback/upload_complete', expect.objectContaining({
-      body: JSON.stringify({ upload_id: 5, parts: [{ part_number: 1, etag: 'part-etag' }] }),
-    }));
+    expect(slow.requests('storage')).toHaveLength(1);
+    const [stored] = slow.feedback()[0]?.uploads ?? [];
+    expect(new TextDecoder().decode(stored?.bytes)).toBe('session');
+    expect(stored?.completion).toEqual({ upload_id: 1, parts: [{ part_number: 1, etag: '"testkit-etag-1"' }] });
+    slow.verify();
   });
 
   async function connectRemoteFeedbackHost({ onTestFinished }: TestContext) {
-    const remoteFeedbackRequests: string[] = [];
-    const remoteGateway = createServer((req, res) => {
-      remoteFeedbackRequests.push(req.url ?? '');
-      res.writeHead(409).end();
-    });
-    await new Promise<void>(resolve => remoteGateway.listen(0, '127.0.0.1', resolve));
-    onTestFinished(() => remoteGateway[Symbol.asyncDispose]());
-    const address = remoteGateway.address();
-    if (address === null || typeof address === 'string') throw new Error('No remote feedback gateway port.');
-    const remoteHome = await mkdtemp(join(home, 'remote-'));
     const remoteToken = 'test-remote-feedback-access-token';
+    const remoteKimi = await startKimiServices({ accessToken: remoteToken });
+    onTestFinished(() => remoteKimi.close());
+    const remoteHome = await mkdtemp(join(home, 'remote-'));
     const oauth: IOAuthService = {
       ...server.core.accessor.get(IOAuthService),
       resolveTokenProvider: () => ({ getAccessToken: async () => remoteToken }),
@@ -366,7 +296,7 @@ default_model = "alternate"
     const remote = await startServer({
       hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: remoteHome,
       configPath: join(home, 'config.toml'), logLevel: 'silent', skipInstanceRegistry: true,
-      env: { ...process.env, KIMI_CODE_FEEDBACK_BASE_URL: `http://127.0.0.1:${address.port}/coding/v1/` },
+      env: { ...process.env, KIMI_CODE_FEEDBACK_BASE_URL: `${remoteKimi.baseUrl}/` },
       seeds: [[IOAuthService, oauth]],
     });
     onTestFinished(() => remote.close());
@@ -384,11 +314,11 @@ default_model = "alternate"
       openWebSocket: () => { throw new Error('Unexpected WebSocket.'); },
     });
     onTestFinished(() => { connect.mockRestore(); });
-    return { remote, remoteHome, connect, forward, remoteFeedbackRequests };
+    return { remote, remoteHome, connect, forward, remoteKimi };
   }
 
   it('attaches a remote-only session to the global feedback created on this host', async context => {
-    const { remote, remoteHome, connect, forward, remoteFeedbackRequests } = await connectRemoteFeedbackHost(context);
+    const { remote, remoteHome, connect, forward, remoteKimi } = await connectRemoteFeedbackHost(context);
     const createdSession = await remote.app.inject({
       method: 'POST', url: '/api/v1/sessions', headers: authHeaders(remote), payload: { metadata: { cwd: remoteHome } },
     });
@@ -420,24 +350,24 @@ default_model = "alternate"
     expect(forward).toHaveBeenCalledTimes(3);
     const deleted = await remote.app.inject({ method: 'GET', url: download.path, headers: authHeaders(remote) });
     expect(deleted.json()).toMatchObject({ code: ErrorCode.FILE_NOT_FOUND });
-    expect(uploads.get(attached.data.upload_id)).toMatchObject({ feedback_id: feedback.feedback_id, file_name: 'session.zip' });
-    const archive = receivedParts.get(attached.data.upload_id)?.bytes;
+    expect(uploadRequest(attached.data.upload_id)).toMatchObject({ feedback_id: feedback.feedback_id, file_name: 'session.zip' });
+    const archive = storedPart(attached.data.upload_id)?.bytes;
     expect(archive?.includes(Buffer.from('remote-only.txt'))).toBe(true);
     for (const forbidden of ['logs/global/kimi-code.log', 'logs/kimi-desktop.log', 'logs/kimi-web.jsonl']) {
       expect(archive?.includes(Buffer.from(forbidden))).toBe(false);
     }
-    expect(completed.at(-1)).toMatchObject({ upload_id: attached.data.upload_id });
+    expect(completed().at(-1)).toMatchObject({ upload_id: attached.data.upload_id });
 
-    const previousUploads = uploads.size;
+    const previousUploads = uploads().length;
     const missing = await request('POST', path, { session_id: 'missing-session', host_id: 'example' });
     expect(missing.code).toBe(ErrorCode.SESSION_NOT_FOUND);
     expect(forward).toHaveBeenCalledTimes(4);
-    expect(uploads.size).toBe(previousUploads);
-    expect(remoteFeedbackRequests).toEqual([]);
+    expect(uploads().length).toBe(previousUploads);
+    expect(remoteKimi.requests()).toEqual([]);
   });
 
   it('cancels the remote archive export when the feedback client disconnects', async context => {
-    const { remote, remoteFeedbackRequests } = await connectRemoteFeedbackHost(context);
+    const { remote, remoteKimi } = await connectRemoteFeedbackHost(context);
     const started = new Promise<AbortSignal>(resolve => {
       vi.spyOn(remote.core.accessor.get(ISessionExportService), 'export').mockImplementationOnce(async (_input, options) => {
         const signal = options?.signal;
@@ -450,7 +380,7 @@ default_model = "alternate"
     const { data } = await request<{ feedback_id: number }>('POST', '/feedback', {
       kind: 'global', source: 'sidebar', category: 'other', content: 'Cancel the attachment', upload_session: true,
     });
-    const previousUploads = uploads.size;
+    const previousUploads = uploads().length;
     const client = new AbortController();
     context.onTestFinished(() => client.abort());
     const response = fetch(`http://127.0.0.1:${server.port}/api/v1/feedback/${data.feedback_id}/attachments/session`, {
@@ -465,8 +395,8 @@ default_model = "alternate"
     client.abort();
     await expect(response).rejects.toMatchObject({ name: 'AbortError' });
     await stopped;
-    expect(uploads.size).toBe(previousUploads);
-    expect(remoteFeedbackRequests).toEqual([]);
+    expect(uploads().length).toBe(previousUploads);
+    expect(remoteKimi.requests()).toEqual([]);
   });
 
   it('rates the selected historical turn, updates that rating, and uploads a session without diagnostics', async () => {
@@ -499,7 +429,7 @@ default_model = "alternate"
       kind: 'turn', session_id: session.id, turn_id: newer.turnId, reply_id: newer.replyId, rating: 'up',
     });
     expect(newerRating.code).toBe(0);
-    expect(created.at(-1)).toMatchObject({
+    expect(created().at(-1)).toMatchObject({
       content: 'null',
       model: 'different-model',
       info: { request_id: 'request-2', is_kfc: true },
@@ -510,7 +440,7 @@ default_model = "alternate"
     expect((await request('POST', '/feedback', { ...target, reply_id: 'missing' })).code).toBe(ErrorCode.TURN_NOT_FOUND);
     const result = await request<{ feedback_id: number }>('POST', '/feedback', target);
     expect(result.code).toBe(0);
-    expect(created.at(-1)).toMatchObject({
+    expect(created().at(-1)).toMatchObject({
       session_id: session.id,
       content: 'null',
       model: 'stub',
@@ -518,7 +448,7 @@ default_model = "alternate"
     });
     const path = `/feedback/${result.data.feedback_id}`;
     expect((await request('PATCH', path, { kind: 'details', reasons: ['incorrect'], content: 'Wrong answer', upload_session: true })).code).toBe(0);
-    expect(updates.at(-1)).toEqual({
+    expect(updates().at(-1)).toEqual({
       feedback_id: result.data.feedback_id, content: 'Wrong answer', info: { reasons: ['incorrect'], upload_session: true },
     });
 
@@ -527,20 +457,20 @@ default_model = "alternate"
     await writeFile(join(logs, 'kimi-code.log'), 'global log that was not selected');
     await writeFile(join(logs, 'kimi-code-desktop.log'), 'desktop log that was not selected');
 
-    const previousParts = receivedParts.size;
+    const previousParts = storedPartCount();
     const rejected = await request('POST', '/feedback/999/attachments/session', { session_id: session.id });
     expect(rejected.code).toBe(ErrorCode.FEEDBACK_REJECTED);
-    expect(receivedParts.size).toBe(previousParts);
+    expect(storedPartCount()).toBe(previousParts);
     const attached = await request<{ upload_id: number }>('POST', `${path}/attachments/session`, { session_id: session.id });
     expect(attached.code, JSON.stringify(attached)).toBe(0);
-    expect(uploads.get(attached.data.upload_id)).toMatchObject({ feedback_id: result.data.feedback_id, file_name: 'session.zip' });
-    const archive = receivedParts.get(attached.data.upload_id)?.bytes;
+    expect(uploadRequest(attached.data.upload_id)).toMatchObject({ feedback_id: result.data.feedback_id, file_name: 'session.zip' });
+    const archive = storedPart(attached.data.upload_id)?.bytes;
     expect(archive?.includes(Buffer.from('manifest.json'))).toBe(true);
     for (const forbidden of ['logs/global/kimi-code.log', 'logs/kimi-desktop.log', 'logs/kimi-web.jsonl']) {
       expect(archive?.includes(Buffer.from(forbidden))).toBe(false);
     }
     expect((await request('PATCH', path, { kind: 'cancel' })).code).toBe(0);
-    expect(updates.at(-1)).toEqual({ feedback_id: result.data.feedback_id, info: { cancel: true } });
+    expect(updates().at(-1)).toEqual({ feedback_id: result.data.feedback_id, info: { cancel: true } });
   });
 
   async function completedTurn(sessionId: string, text: string) {
@@ -592,7 +522,7 @@ default_model = "alternate"
       expect(replyId).toBeDefined();
       const rating = await request('POST', '/feedback', { kind: 'turn', session_id: session.id, turn_id: turn.turn_id, reply_id: replyId, rating: 'up' });
       expect(rating.code).toBe(0);
-      return created.at(-1);
+      return created().at(-1);
     };
     const final = await rate('The review is complete.');
     const earlier = await rate('I will consult a helper.');
@@ -641,7 +571,7 @@ default_model = "alternate"
       const rate = async (turnId: string) => {
         const rating = await request('POST', '/feedback', { kind: 'turn', session_id: session.id, turn_id: turnId, rating: 'up' });
         expect(rating.code).toBe(0);
-        return created.at(-1);
+        return created().at(-1);
       };
       const main = { role: 'step', model_id: 'stub', is_kfc: false };
       expect(await rate(first.turn_id)).toMatchObject({ info: {

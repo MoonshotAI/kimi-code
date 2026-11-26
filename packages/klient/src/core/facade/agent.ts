@@ -77,6 +77,7 @@ export interface AgentFacade {
   prompt(input: {
     input: readonly ContentPart[];
     promptId?: string;
+    rejectIfBusy?: boolean;
   }): Promise<PromptLaunchResult>;
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
   steer(input: { input: readonly ContentPart[]; promptId?: string }): Promise<SteerResult>;

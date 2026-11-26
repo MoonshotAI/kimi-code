@@ -4609,44 +4609,94 @@ describe('state lock recovery and prepared writes', () => {
   });
 
   type LockDriver = {
+    acquireStateLockReaper(
+      lockPath: string,
+    ): Promise<{ readonly ref: string; readonly token: string } | undefined>;
     reapStaleStateLock(lockPath: string): Promise<boolean>;
     stateLockReaperRef(lockPath: string): Promise<string>;
-    stateLockHolderIsDead(pid: number): Promise<boolean>;
     tryAcquireStateLock(lockPath: string, token: string): Promise<boolean>;
     releaseStateLock(lockPath: string, token: string): Promise<void>;
     withStateLock<T>(fn: () => Promise<T>): Promise<T>;
   };
 
+  function pauseFirstReaperInsideGuard(driver: LockDriver): {
+    readonly entered: Promise<void>;
+    guardsTaken(): number;
+    release(): void;
+    restore(): void;
+  } {
+    const original = driver.acquireStateLockReaper;
+    const paused = deferred();
+    const entered = deferred();
+    let taken = 0;
+    driver.acquireStateLockReaper = async (lockPath) => {
+      const guard = await original.call(driver, lockPath);
+      if (guard === undefined) return guard;
+      taken += 1;
+      if (taken === 1) {
+        entered.resolve();
+        await paused.promise;
+      }
+      return guard;
+    };
+    return {
+      entered: entered.promise,
+      guardsTaken: () => taken,
+      release: () => paused.resolve(),
+      restore: () => {
+        driver.acquireStateLockReaper = original;
+      },
+    };
+  }
+
   it('never deletes a replacement created after stale removal', async () => {
     const lockPath = `${store.abs(STATE_FILE)}.lock`;
     await writeFile(lockPath, 'pid=999999 since=2026-09-26T00:00:00.000Z token=stale');
     const driver = store as unknown as LockDriver;
-    const originalCheck = driver.stateLockHolderIsDead;
-    const paused = deferred();
-    const entered = deferred();
-    let staleChecks = 0;
-    driver.stateLockHolderIsDead = async (pid) => {
-      if (pid === 999999 && staleChecks === 0) {
-        staleChecks += 1;
-        entered.resolve();
-        await paused.promise;
-      }
-      return originalCheck(pid);
-    };
+    const reaper = pauseFirstReaperInsideGuard(driver);
     const first = driver.reapStaleStateLock(lockPath);
     try {
-      await entered.promise;
+      await reaper.entered;
       expect(await driver.reapStaleStateLock(lockPath)).toBe(false);
-      expect(staleChecks).toBe(1);
-      paused.resolve();
+      expect(reaper.guardsTaken()).toBe(1);
+      reaper.release();
       expect(await first).toBe(true);
       expect(await driver.tryAcquireStateLock(lockPath, 'replacement')).toBe(true);
       expect(await driver.reapStaleStateLock(lockPath)).toBe(false);
       expect(await readFile(lockPath, 'utf8')).toContain('token=replacement');
     } finally {
-      paused.resolve();
+      reaper.release();
       await Promise.allSettled([first]);
-      driver.stateLockHolderIsDead = originalCheck;
+      reaper.restore();
+      await driver.releaseStateLock(lockPath, 'replacement');
+      await rm(lockPath, { force: true });
+    }
+  });
+
+  it('rechecks the holder under the guard when the lock is replaced before the guard is taken', async () => {
+    const lockPath = `${store.abs(STATE_FILE)}.lock`;
+    await writeFile(lockPath, 'pid=999999 since=2026-09-26T00:00:00.000Z token=stale');
+    const driver = store as unknown as LockDriver;
+    const original = driver.acquireStateLockReaper;
+    const reached = deferred();
+    const replaced = deferred();
+    driver.acquireStateLockReaper = async (path) => {
+      reached.resolve();
+      await replaced.promise;
+      return original.call(driver, path);
+    };
+    const late = driver.reapStaleStateLock(lockPath);
+    try {
+      await reached.promise;
+      await rm(lockPath);
+      expect(await driver.tryAcquireStateLock(lockPath, 'replacement')).toBe(true);
+      replaced.resolve();
+      expect(await late).toBe(false);
+      expect(await readFile(lockPath, 'utf8')).toContain('token=replacement');
+    } finally {
+      replaced.resolve();
+      await Promise.allSettled([late]);
+      driver.acquireStateLockReaper = original;
       await driver.releaseStateLock(lockPath, 'replacement');
       await rm(lockPath, { force: true });
     }
@@ -4660,18 +4710,7 @@ describe('state lock recovery and prepared writes', () => {
     const aliasStore = new TowerStore(alias);
     const aliasDriver = aliasStore as unknown as LockDriver;
     const aliasLockPath = `${aliasStore.abs(STATE_FILE)}.lock`;
-    const originalCheck = realDriver.stateLockHolderIsDead;
-    const paused = deferred();
-    const entered = deferred();
-    let staleChecks = 0;
-    realDriver.stateLockHolderIsDead = async (pid) => {
-      if (pid === 999999 && staleChecks === 0) {
-        staleChecks += 1;
-        entered.resolve();
-        await paused.promise;
-      }
-      return originalCheck(pid);
-    };
+    const reaper = pauseFirstReaperInsideGuard(realDriver);
     let first: Promise<boolean> | undefined;
     let contender: Promise<unknown> | undefined;
     try {
@@ -4680,9 +4719,9 @@ describe('state lock recovery and prepared writes', () => {
       );
       await writeFile(lockPath, 'pid=999999 since=2026-09-26T00:00:00.000Z token=stale');
       first = realDriver.reapStaleStateLock(lockPath);
-      await entered.promise;
+      await reaper.entered;
       expect(await aliasDriver.reapStaleStateLock(aliasLockPath)).toBe(false);
-      paused.resolve();
+      reaper.release();
       expect(await first).toBe(true);
       expect(await realDriver.tryAcquireStateLock(lockPath, 'replacement')).toBe(true);
       expect(await aliasDriver.reapStaleStateLock(aliasLockPath)).toBe(false);
@@ -4700,13 +4739,34 @@ describe('state lock recovery and prepared writes', () => {
       await contender;
       expect(contenderEntered).toBe(true);
     } finally {
-      paused.resolve();
-      realDriver.stateLockHolderIsDead = originalCheck;
+      reaper.release();
+      reaper.restore();
       await realDriver.releaseStateLock(lockPath, 'replacement');
       if (first !== undefined) await Promise.allSettled([first]);
       if (contender !== undefined) await Promise.allSettled([contender]);
       await rm(lockPath, { force: true });
       await rm(alias, { force: true });
+    }
+  });
+
+  it.each([
+    ['this process', process.pid],
+    ['another live process', process.ppid],
+  ])('waits for a live holder in %s without taking the reaper guard', async (_holder, pid) => {
+    const lockPath = `${store.abs(STATE_FILE)}.lock`;
+    await writeFile(lockPath, `pid=${String(pid)} since=2026-09-26T00:00:00.000Z token=live`);
+    const waiter = new TowerStore(repo, { stateLockTimeoutMs: 50, stateLockPollMs: 10 });
+    const driver = waiter as unknown as LockDriver;
+    const acquireGuard = vi.spyOn(driver, 'acquireStateLockReaper');
+    try {
+      await expect(driver.withStateLock(async () => {})).rejects.toThrow(
+        /timed out.*tower state lock/s,
+      );
+      expect(acquireGuard).not.toHaveBeenCalled();
+      expect(await readFile(lockPath, 'utf8')).toContain('token=live');
+    } finally {
+      acquireGuard.mockRestore();
+      await rm(lockPath, { force: true });
     }
   });
 

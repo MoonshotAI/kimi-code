@@ -5,6 +5,8 @@ import {
 	AltScreenSearchIndex,
 	findAltScreenSearchMatches,
 } from "../src/alt-screen-search.ts";
+import { Box } from "../src/components/box.ts";
+import { Editor } from "../src/components/editor.ts";
 import { HStack } from "../src/components/h-stack.ts";
 import { Image } from "../src/components/image.ts";
 import { MouseRegion } from "../src/components/mouse-region.ts";
@@ -20,9 +22,10 @@ import {
 	resetCapabilitiesCache,
 	setCapabilities,
 } from "../src/terminal-image.ts";
-import { renderFakeCursor, type TuiMouseEvent } from "../src/tui.ts";
+import { CURSOR_MARKER, renderFakeCursor, type TuiMouseEvent } from "../src/tui.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
+import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -62,6 +65,34 @@ class RecordingTerminal extends VirtualTerminal {
 }
 
 describe("TuiAltScreen", () => {
+	it("does not leak cursor markers while selecting after the caret", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false });
+		// Regression for #9257 and #9332: selection slicing must not duplicate cursor markers.
+		tui.addChild({
+			render: () => [`ab${CURSOR_MARKER}cdefghij`],
+			invalidate() {},
+		});
+
+		tui.start();
+		await terminal.waitForRender();
+		const eventCount = terminal.events.length;
+
+		terminal.sendInput("\x1b[<0;5;1M");
+		terminal.sendInput("\x1b[<32;7;1M");
+		await terminal.waitForRender();
+
+		const output = terminal.events
+			.slice(eventCount)
+			.filter((event) => event.type === "write")
+			.map((event) => event.data)
+			.join("");
+		assert.ok(output.includes("\x1b[7m"), "dragged text should be highlighted");
+		assert.ok(!output.includes(CURSOR_MARKER), "internal cursor markers must not reach the terminal");
+		terminal.sendInput("\x1b[<0;7;1m");
+		tui.stop();
+	});
+
 	it("preserves word selections when an effect adds or removes leading content padding", async () => {
 		const terminal = new VirtualTerminal(30, 6);
 		const copied: string[] = [];
@@ -225,6 +256,63 @@ describe("TuiAltScreen", () => {
 				(event) => event.type !== "write" || !event.data.includes("\x1b[42mneedle\x1b[49m pill"),
 			),
 		);
+		tui.stop();
+	});
+
+	it("coalesces view-only scroll requests made inside layout effects and re-renders when an effect changes content after scrolling", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const tui = new TuiAltScreen(terminal);
+		let heading = "";
+		let bodyRenders = 0;
+		const bodyText = new Text("one\ntwo\nthree\nfour\nfive\nsix", 0, 0);
+		const body = {
+			render: (width: number) => {
+				bodyRenders += 1;
+				return bodyText.render(width);
+			},
+			invalidate: () => bodyText.invalidate(),
+		};
+		const header = { render: () => (heading ? [heading] : []), invalidate: () => {} };
+		const scroll = new ScrollView(body, { follow: "end", primary: true });
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: header, shrink: 0 },
+				{ component: scroll, basis: 0, grow: 1 },
+			]),
+		);
+		let snapToTopOnce = false;
+		tui.addLayoutEffect(() => {
+			if (snapToTopOnce && scroll.scrollTop !== 0) {
+				snapToTopOnce = false;
+				tui.scrollToTop();
+				return;
+			}
+			const next = scroll.scrollTop === 0 ? "at top" : `top ${scroll.scrollTop}`;
+			if (next === heading) return;
+			heading = next;
+			tui.requestRender();
+		});
+		tui.start();
+		await terminal.waitForRender();
+		assert.strictEqual(terminal.getViewport()[0]?.trimEnd(), "top 4");
+
+		terminal.events.length = 0;
+		snapToTopOnce = true;
+		tui.scrollBy(-1);
+		await terminal.waitForRender();
+		assert.deepStrictEqual(
+			terminal.getViewport().map((line) => line.trimEnd()),
+			["at top", "one", "two"],
+		);
+		const frames = terminal.events.filter((event) => event.type === "write" && event.data.includes("\x1b[?2026h"));
+		assert.strictEqual(frames.length, 1);
+
+		// Scrolling when the layout effect leaves content unchanged keeps body render count O(viewport).
+		const rendersBeforeNoOpScroll = bodyRenders;
+		tui.addLayoutEffect(() => {});
+		tui.scrollBy(0);
+		await terminal.waitForRender();
+		assert.strictEqual(bodyRenders, rendersBeforeNoOpScroll);
 		tui.stop();
 	});
 
@@ -484,6 +572,42 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	// #9549: re-rendering a long transcript on every wheel event saturated a core.
+	it("scrolls without re-rendering components until content changes", async () => {
+		const terminal = new VirtualTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		const text = new Text(Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0);
+		let renders = 0;
+		const counted = {
+			render: (width: number) => {
+				renders += 1;
+				return text.render(width);
+			},
+			invalidate: () => text.invalidate(),
+		};
+		tui.setLayoutRoot(new ScrollView(counted, { follow: "end", primary: true }));
+		tui.start();
+		await terminal.waitForRender();
+		const initialRenders = renders;
+
+		terminal.sendInput("\x1b[<64;1;1M");
+		await terminal.waitForRender();
+		tui.scrollBy(-1);
+		await terminal.waitForRender();
+		assert.strictEqual(renders, initialRenders);
+		assert.deepStrictEqual(
+			terminal.getViewport().map((line) => line.trimEnd()),
+			["line 5", "line 6", "line 7", "line 8"],
+		);
+
+		text.setText("changed");
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.ok(renders > initialRenders);
+		assert.strictEqual(terminal.getViewport()[0]?.trimEnd(), "changed");
+		tui.stop();
+	});
+
 	it("scrolls faster while Alt is held during wheel input", async () => {
 		const terminal = new VirtualTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);
@@ -584,7 +708,7 @@ describe("TuiAltScreen", () => {
 		}
 	});
 
-	it("invokes the right-click paste handler only on Windows outside VS Code", () => {
+	it("invokes the right-click paste handler only on Windows outside terminals that paste on right-click", () => {
 		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 		const termProgram = process.env.TERM_PROGRAM;
 		assert.ok(platformDescriptor);
@@ -604,6 +728,10 @@ describe("TuiAltScreen", () => {
 			assert.strictEqual(pasteCount, 1);
 
 			process.env.TERM_PROGRAM = "vscode";
+			terminal.sendInput("\x1b[<2;1;1M");
+			assert.strictEqual(pasteCount, 1);
+
+			process.env.TERM_PROGRAM = "Tabby";
 			terminal.sendInput("\x1b[<2;1;1M");
 			assert.strictEqual(pasteCount, 1);
 
@@ -937,6 +1065,40 @@ describe("TuiAltScreen", () => {
 		assert.ok(
 			terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[41mneedle\x1b[49m")),
 		);
+		tui.stop();
+	});
+
+	// #9549: scroll frames reuse earlier output; search must still see content that changed in between.
+	it("keeps search matches current across view-only scroll frames and content changes", async () => {
+		const terminal = new RecordingTerminal(60, 8);
+		const tui = new TuiAltScreen(terminal);
+		const lines = Array.from({ length: 12 }, (_, index) => (index === 4 ? "line 5 needle one" : `line ${index + 1}`));
+		const transcriptText = new Text(lines.join("\n"), 0, 0);
+		const transcript = new ScrollView(transcriptText, { follow: "end", primary: true });
+		tui.setLayoutRoot(transcript);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[102;6u");
+		terminal.sendInput("needle");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("1/1")));
+
+		for (let index = 0; index < 3; index++) terminal.sendInput("\x1b[<65;1;4M");
+		await terminal.waitForRender();
+		const scrolledTop = transcript.scrollTop;
+		assert.ok(scrolledTop > 0);
+
+		lines[10] = "line 11 needle two";
+		transcriptText.setText(lines.join("\n"));
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
+
+		terminal.sendInput("\x1b[103;6u");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("line 11 needle two")));
 		tui.stop();
 	});
 
@@ -1374,11 +1536,55 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("redraws WezTerm Kitty images after writes to covered rows", async () => {
-		// Regression test for #10319: a scrollbar update below an unchanged image anchor erased its cells.
-		const weztermPane = process.env.WEZTERM_PANE;
+	it("crops a Kitty image in a padded, colored box whose first line is above the viewport", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const tui = new TuiAltScreen(terminal);
+		const imageId = 11271;
+		const imageLine = encodeKitty("AAAA", { columns: 2, rows: 3, imageId, moveCursor: false });
+		registerKittyImageMetadata({ imageId, columns: 2, rows: 3, widthPx: 100, heightPx: 100 });
+		const box = new Box(1, 0, (text: string) => `\x1b[44m${text}\x1b[49m`);
+		box.addChild({ render: () => [imageLine, "", ""], invalidate: () => {} });
+		tui.addChild({ render: () => ["before"], invalidate: () => {} });
+		tui.addChild(box);
+		tui.addChild({ render: () => ["after", "end"], invalidate: () => {} });
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.viewportTop, 3);
+		assert.ok(
+			terminal.events.some(
+				(event) => event.type === "write" && event.data.includes("i=11271") && event.data.includes("y=66,h=34,r=1"),
+			),
+		);
+
+		tui.stop();
+	});
+
+	it("crops a Kitty image whose placeholder rows contain text when its first line is above the viewport", async () => {
+		// Regression test for #11271: borders or side-by-side text on placeholder rows stopped the search.
+		const terminal = new RecordingTerminal(20, 3);
+		const tui = new TuiAltScreen(terminal);
+		const imageId = 11272;
+		const imageLine = encodeKitty("AAAA", { columns: 2, rows: 3, imageId, moveCursor: false });
+		registerKittyImageMetadata({ imageId, columns: 2, rows: 3, widthPx: 100, heightPx: 100 });
+		tui.addChild({ render: () => ["before", imageLine, "   | side", "   | side"], invalidate: () => {} });
+		tui.addChild({ render: () => ["after", "end"], invalidate: () => {} });
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.viewportTop, 3);
+		assert.ok(
+			terminal.events.some(
+				(event) => event.type === "write" && event.data.includes("i=11272") && event.data.includes("y=66,h=34,r=1"),
+			),
+		);
+
+		tui.stop();
+	});
+
+	it("redraws Kitty images after writes to covered rows", async () => {
+		// Regression test for #10319: in WezTerm, a scrollbar update below an unchanged image anchor erased its cells.
 		let tui: TuiAltScreen | undefined;
-		process.env.WEZTERM_PANE = "1";
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
 		try {
 			const terminal = new RecordingTerminal(20, 4);
@@ -1410,8 +1616,67 @@ describe("TuiAltScreen", () => {
 		} finally {
 			tui?.stop();
 			resetCapabilitiesCache();
-			if (weztermPane === undefined) delete process.env.WEZTERM_PANE;
-			else process.env.WEZTERM_PANE = weztermPane;
+		}
+	});
+
+	it("keeps uploaded Kitty images across a full redraw", async () => {
+		// Regression test for #12010: Kitty frees image data without placements on ED 2, so a full redraw
+		// that deleted placements and then cleared the screen left placement-only reuse pointing at nothing.
+		let tui: TuiAltScreen | undefined;
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		try {
+			const terminal = new RecordingTerminal(20, 6);
+			const imageId = 12010;
+			const imageLine = encodeKitty("AAAA", { columns: 2, rows: 3, imageId, moveCursor: false });
+			registerKittyImageMetadata({ imageId, columns: 2, rows: 3, widthPx: 100, heightPx: 100 });
+			tui = new TuiAltScreen(terminal);
+			tui.setLayoutRoot({ render: () => ["before", imageLine, "", "", "after"], invalidate: () => {} });
+			tui.start();
+			await terminal.waitForRender();
+			const eventCount = terminal.events.length;
+
+			terminal.resize(20, 8);
+			await terminal.waitForRender();
+			const redrawWrites = terminal.events
+				.slice(eventCount)
+				.filter((event): event is { type: "write"; data: string } => event.type === "write")
+				.map((event) => event.data)
+				.join("");
+			assert.ok(redrawWrites.includes("\x1b_Ga=p,q=2"));
+			assert.ok(!redrawWrites.includes("\x1b_Ga=T"));
+			assert.ok(!redrawWrites.includes("\x1b[2J"));
+			assert.ok(terminal.getViewport().some((line) => line.trimEnd() === "after"));
+		} finally {
+			tui?.stop();
+			resetCapabilitiesCache();
+		}
+	});
+
+	it("draws Kitty images after clearing the rows they cover", async () => {
+		// Regression test for #11835: Orca's xterm.js image addon stores images in cells, so clearing
+		// the covered rows after the placement erased all but the first image row.
+		let tui: TuiAltScreen | undefined;
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		try {
+			const terminal = new RecordingTerminal(20, 5);
+			const imageId = 11835;
+			const imageLine = encodeKitty("AAAA", { columns: 2, rows: 3, imageId, moveCursor: false });
+			registerKittyImageMetadata({ imageId, columns: 2, rows: 3, widthPx: 100, heightPx: 100 });
+			tui = new TuiAltScreen(terminal);
+			tui.setLayoutRoot({ render: () => ["before", imageLine, "", "", "after"], invalidate: () => {} });
+			tui.start();
+			await terminal.waitForRender();
+
+			const writes = terminal.events
+				.filter((event): event is { type: "write"; data: string } => event.type === "write")
+				.map((event) => event.data)
+				.join("");
+			const transmitIndex = writes.indexOf("\x1b_Ga=T");
+			assert.ok(transmitIndex > writes.lastIndexOf("\x1b[4;1H\x1b[2K"));
+			assert.ok(transmitIndex > writes.indexOf("after"));
+		} finally {
+			tui?.stop();
+			resetCapabilitiesCache();
 		}
 	});
 
@@ -1844,6 +2109,9 @@ describe("TuiAltScreen", () => {
 		for (const { line, needle } of [
 			{ line: "extensions/starline/fixed-editor/compositor.ts", needle: "starline" },
 			{ line: "earendil-works/pi-tui", needle: "works" },
+			{ line: "~/.pi/agent/settings.json", needle: "agent" },
+			{ line: "~\\Documents\\pi", needle: "Documents" },
+			{ line: "foo+bar", needle: "bar" },
 		]) {
 			const copied: string[] = [];
 			const terminal = new RecordingTerminal(80, 1);
@@ -2395,6 +2663,84 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 		assert.ok(tui.viewportTop < topBefore);
 		assert.ok(terminal.getViewport().some((line) => line.includes("↑ ↓")));
+		tui.stop();
+	});
+
+	it("defers viewport keys to a focused list instead of scrolling the transcript (#7629)", async () => {
+		const terminal = new VirtualTerminal(20, 6);
+		const tui = new TuiAltScreen(terminal);
+		const list = new SelectList(
+			Array.from({ length: 12 }, (_, index) => ({ value: `item-${index}`, label: `item-${index}` })),
+			3,
+			{
+				selectedPrefix: (text) => text,
+				selectedText: (text) => text,
+				description: (text) => text,
+				scrollInfo: (text) => text,
+				noMatch: (text) => text,
+			},
+		);
+		tui.addChild(new Text(Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0));
+		tui.addChild(list);
+		tui.setFocus(list);
+		tui.start();
+		await terminal.waitForRender();
+		const topBefore = tui.viewportTop;
+
+		terminal.sendInput("\x1b[6~"); // PageDown
+		terminal.sendInput("\x1b[1;5H"); // Ctrl+Home
+		await terminal.waitForRender();
+		assert.strictEqual(list.getSelectedItem()?.value, "item-3");
+		assert.strictEqual(tui.viewportTop, topBefore);
+		tui.stop();
+	});
+
+	it("gives viewport keys back to the transcript when editor autocomplete closes (#7629)", async () => {
+		const terminal = new VirtualTerminal(40, 8);
+		const tui = new TuiAltScreen(terminal);
+		const editor = new Editor(tui, defaultEditorTheme);
+		let submitted = "";
+		editor.onSubmit = (text) => {
+			submitted = text;
+		};
+		editor.setAutocompleteProvider({
+			getSuggestions: async () => ({
+				items: Array.from({ length: 12 }, (_, index) => ({
+					value: `/command-${index}`,
+					label: `command-${index}`,
+				})),
+				prefix: "/",
+			}),
+			applyCompletion: (lines, cursorLine, _cursorCol, item) => ({
+				lines: lines.map((line, index) => (index === cursorLine ? item.value : line)),
+				cursorLine,
+				cursorCol: item.value.length,
+			}),
+		});
+		tui.addChild(new Text(Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0));
+		tui.addChild(editor);
+		tui.setFocus(editor);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("/");
+		await Promise.resolve();
+		await Promise.resolve();
+		await terminal.waitForRender();
+		assert.strictEqual(editor.isShowingAutocomplete(), true);
+		const topWithMenu = tui.viewportTop;
+		terminal.sendInput("\x1b[6~"); // PageDown pages the menu
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, topWithMenu);
+
+		terminal.sendInput("\r");
+		await terminal.waitForRender();
+		assert.strictEqual(submitted, "/command-5");
+		assert.strictEqual(editor.isShowingAutocomplete(), false);
+		const topWithoutMenu = tui.viewportTop;
+		terminal.sendInput("\x1b[5~"); // PageUp scrolls the transcript again
+		await terminal.waitForRender();
+		assert.ok(tui.viewportTop < topWithoutMenu);
 		tui.stop();
 	});
 });

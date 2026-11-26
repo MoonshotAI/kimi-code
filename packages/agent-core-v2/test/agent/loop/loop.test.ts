@@ -2,7 +2,7 @@ import { getMaxListeners } from 'node:events';
 
 import { type ToolCall } from '@moonshot-ai/core/llm/message';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
-import { call, say } from '@moonshot-ai/testkit/model';
+import { call, held, reply, say, think, thinkSigned } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
@@ -22,6 +22,7 @@ import {
   IAgentLifecycleService,
   type AgentScopeCreatedEvent,
 } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   AssistantDelta,
   ThinkingDelta,
@@ -535,13 +536,82 @@ describe('Agent loop', () => {
       },
       handle: async () => undefined,
     });
+    ctx.mockNextProviderResponse({ step: held('cancelled', reply(say('unreached'))) });
     const { turn } = submitTurn(loop, 'go');
+    await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(1));
     turn.cancel(new Error('stop'));
 
     const result = await turn.result;
 
     expect(result.type).toBe('cancelled');
     expect(called).toBe(false);
+  });
+
+  testWithProvider('cancels a prompt while its turn is starting and runs the next queued prompt', async ({ agent, model }) => {
+    const agentLoop = agent.get(IAgentLoopService);
+    const entered = deferred();
+    const release = deferred();
+    const firstPrompt = 'Cancel this prompt.';
+    const nextPrompt = 'Keep this prompt.';
+    const hook = agentLoop.hooks.onBeforeSubmitPrompt.register('hold-starting-prompt', async (context, next) => {
+      if (context.promptMessage.content.some((part) => part.type === 'text' && part.text === firstPrompt)) {
+        entered.resolve();
+        await release.promise;
+      }
+      await next();
+    });
+    model.script(say('Here is the reply.'));
+    try {
+      const starting = submitTurn(agentLoop, firstPrompt).turn;
+      await entered.promise;
+      const queued = submitTurn(agentLoop, nextPrompt).turn;
+
+      expect(starting.cancel()).toBe(true);
+      release.resolve();
+      await expect(starting.result).resolves.toMatchObject({ type: 'cancelled' });
+      const result = await queued.result;
+
+      expect(model.requests('main').map((request) => request.firstUserText)).toEqual([nextPrompt]);
+      expect(result).toMatchObject({ type: 'completed' });
+      expect(agentLoop.snapshot()).toMatchObject({ hasPendingRequests: false, queue: [] });
+      const records = await agent.persistedWireRecords();
+      expect(records.filter((record) => record.type === 'turn.prompt').map((record) => record['input'])).toEqual([
+        [{ type: 'text', text: nextPrompt }],
+      ]);
+      expect(records).toContainEqual(expect.objectContaining({ type: 'turn.cancel', target: 'queued', turnId: 0 }));
+      await agent.expectResumeMatches();
+    } finally {
+      release.resolve();
+      hook.dispose();
+    }
+  });
+
+  testWithProvider('rejects a prompt before admission when a client opts out of queueing', async ({ agent, model }) => {
+    const agentLoop = agent.get(IAgentLoopService);
+    const metadata = agent.get(ISessionMetadata);
+    const first = 'Start the first turn.';
+    const queued = 'Run the queued turn.';
+    model.script(held('first', say('The first turn finished.')), say('The queued turn finished.'));
+
+    await expect(agentLoop.submit({ input: [{ type: 'text', text: first }], rejectIfBusy: true })).resolves.toMatchObject({ turn_id: 0 });
+    await model.hold('first').reached();
+    await expect(agentLoop.submit({
+      input: [{ type: 'text', text: 'Reject this prompt.' }],
+      rejectIfBusy: true,
+    })).rejects.toMatchObject({ code: 'turn.agent_busy' });
+    await expect(metadata.read()).resolves.toMatchObject({ lastPrompt: first });
+    expect(agentLoop.snapshot().queue).toEqual([]);
+
+    await expect(agentLoop.submit({
+      input: [{ type: 'text', text: queued }],
+      promptId: 'queued-prompt',
+    })).resolves.toBeUndefined();
+    const queuedPrompt = agentLoop.promptHandle('queued-prompt');
+    expect(queuedPrompt).toBeDefined();
+    model.hold('first').release();
+    await expect(queuedPrompt?.completion).resolves.toMatchObject({ state: 'completed' });
+    expect(model.requests('main')[1]?.texts('user')).toContain(queued);
+    await expect(metadata.read()).resolves.toMatchObject({ lastPrompt: queued });
   });
 
   it('fails with the error handler error when recovery throws', async () => {
@@ -614,7 +684,8 @@ describe('Agent loop', () => {
       [wire] tool_select.initialized         { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Lookup", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] llm.tools_snapshot              { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [emit] assistant.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up.", "block": 0 }
-      [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }
+      [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "" }
+      [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }
       [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "I will look it up." } ], "toolCalls": [ { "type": "function", "id": "call_lookup", "name": "Lookup", "arguments": "{\\"query\\":\\"moon\\"}" } ], "providerMessageId": "mock-1", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
       [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "contextTokens": 20 }
@@ -1128,7 +1199,6 @@ describe('Agent loop', () => {
     });
 
     ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
-    ctx.mockNextResponse({ type: 'text', text: 'This step should not run.' });
 
     const { turn } = submitTurn(loop, 'Look up moon');
     await ctx.untilApproval(true);
@@ -1245,7 +1315,6 @@ describe('Agent loop', () => {
     ctx.get(IAgentToolRegistryService).register(stopperTool);
 
     ctx.mockNextResponse({ type: 'text', text: 'Stopping.' }, stopCall);
-    ctx.mockNextResponse({ type: 'text', text: 'This step should not run.' });
 
     const { turn } = submitTurn(loop, 'stop');
     await ctx.untilApproval(true);
@@ -1275,7 +1344,6 @@ describe('Agent loop', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'one' });
     ctx.mockNextResponse({ type: 'text', text: 'two' });
-    ctx.mockNextResponse({ type: 'text', text: 'three' });
 
     const first = submitTurn(loop, 'first').turn;
     const second = submitTurn(loop, 'second').turn;
@@ -2287,7 +2355,7 @@ describe('interruption reminder', () => {
   }
 
   it('preserves the partial stream and appends one reminder before turn.ended', async () => {
-    ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
+    ctx.mockNextProviderResponse({ step: held('rest', reply(say('partial answer'), say(' more')), 1) });
     const subscription = cancelOnFirstDelta();
     const turn = submitTurn(loop, 'Hello').turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
@@ -2347,7 +2415,7 @@ describe('interruption reminder', () => {
   });
 
   it('writes one active cancellation when cancel repeats before the turn settles', async () => {
-    ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
+    ctx.mockNextProviderResponse({ step: held('rest', reply(say('partial answer'), say(' more')), 1) });
     const results: boolean[] = [];
     let cancelled = false;
     const subscription = ctx.get(IEventBus).subscribe(AssistantDelta, () => {
@@ -2372,7 +2440,7 @@ describe('interruption reminder', () => {
   });
 
   it('preserves the partial stream but appends no reminder on programmatic abort', async () => {
-    ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
+    ctx.mockNextProviderResponse({ step: held('rest', reply(say('partial answer'), say(' more')), 1) });
     const subscription = ctx.get(IEventBus).subscribe(AssistantDelta, () => {
       loop.cancel(undefined, new Error('stop'));
     });
@@ -2438,7 +2506,6 @@ describe('interruption reminder', () => {
       }
       await next();
     });
-    ctx.mockNextResponse({ type: 'text', text: 'unreached' });
 
     const active = submitTurn(loop, 'active').turn;
     const queued = submitTurn(loop, 'queued').turn;
@@ -2459,7 +2526,7 @@ describe('interruption reminder', () => {
   });
 
   it('sends the reminder recorded on the cancelled turn ahead of the next user message', async () => {
-    ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
+    ctx.mockNextProviderResponse({ step: held('rest', reply(say('partial answer'), say(' more')), 1) });
     const subscription = cancelOnFirstDelta();
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
@@ -2487,6 +2554,7 @@ describe('interruption reminder', () => {
     subscription.dispose();
     expect(interruptionReminders()).toHaveLength(1);
 
+    ctx.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await ctx.undoHistory(1);
 
     expect(ctx.contextData().history).toEqual([]);
@@ -2537,7 +2605,7 @@ describe('interruption reminder', () => {
   });
 
   it('drops unsigned thinking but keeps signed thinking on user cancel', async () => {
-    ctx.mockNextResponse({ type: 'think', think: 'pondering' }, { type: 'text', text: 'answer' });
+    ctx.mockNextProviderResponse({ step: held('rest', reply(think('pondering'), say('answer')), 1) });
     const subscription = ctx.get(IEventBus).subscribe(ThinkingDelta, () => {
       loop.cancel();
     });
@@ -2552,10 +2620,7 @@ describe('interruption reminder', () => {
     expect(thinkParts).toEqual([]);
     expect(interruptionReminders()).toHaveLength(1);
 
-    ctx.mockNextResponse(
-      { type: 'think', think: 'seg', encrypted: 'sig' },
-      { type: 'text', text: 'partial answer' },
-    );
+    ctx.mockNextProviderResponse({ step: held('end', reply(thinkSigned('seg', 'sig'), say('partial answer')), 2) });
     const second = ctx.get(IEventBus).subscribe(AssistantDelta, () => {
       loop.cancel();
     });
@@ -2581,7 +2646,7 @@ describe('interruption reminder', () => {
   });
 
   it('records no partial content when the stream only produced whitespace', async () => {
-    ctx.mockNextResponse({ type: 'text', text: '  ' }, { type: 'text', text: 'answer' });
+    ctx.mockNextProviderResponse({ step: held('rest', reply(say('  '), say('answer')), 1) });
     const subscription = cancelOnFirstDelta();
     const turn = submitTurn(loop, 'Hello').turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });

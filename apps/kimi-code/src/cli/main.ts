@@ -82,14 +82,22 @@ export async function handleMainCommand(
     process.exit(0);
   }
 
-  if (validated.uiMode === 'print') {
-    await runPrompt(validated.options, version);
-    return { headlessCompleted: true };
-  }
+  try {
+    if (validated.uiMode === 'print') {
+      await runPrompt(validated.options, version);
+      return { headlessCompleted: true };
+    }
 
-  startupTrace('runShell:begin');
-  await runShell(validated.options, version);
-  return { headlessCompleted: false };
+    startupTrace('runShell:begin');
+    await runShell(validated.options, version);
+    return { headlessCompleted: false };
+  } catch (error) {
+    if (error instanceof OptionConflictError) {
+      process.stderr.write(`error: ${error.message}\n`);
+      process.exit(1);
+    }
+    throw error;
+  }
 }
 
 async function handleMigrateCommand(

@@ -580,6 +580,9 @@ importers:
         specifier: ^5
         version: 5.0.14(@types/react@19.2.14)(immer@11.1.11)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
     devDependencies:
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../../packages/testkit
       '@tailwindcss/vite':
         specifier: 4.1.18
         version: 4.1.18(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1))
@@ -1274,6 +1277,9 @@ importers:
       '@moonshot-ai/kap-server':
         specifier: workspace:^
         version: link:../kap-server
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../testkit
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1
@@ -1334,6 +1340,9 @@ importers:
       '@moonshot-ai/klient':
         specifier: workspace:^
         version: link:../klient
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../testkit
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6
@@ -1353,6 +1362,9 @@ importers:
         specifier: 4.3.6
         version: 4.3.6
     devDependencies:
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../testkit
       '@types/proper-lockfile':
         specifier: ^4.1.4
         version: 4.1.4
@@ -1391,6 +1403,9 @@ importers:
         specifier: 4.3.6
         version: 4.3.6
     devDependencies:
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../testkit
       '@types/semver':
         specifier: ^7.7.0
         version: 7.7.1
@@ -1420,6 +1435,9 @@ importers:
 
   packages/testkit:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.3.6)
       smol-toml:
         specifier: ^1.6.1
         version: 1.6.1
@@ -1481,6 +1499,9 @@ importers:
       '@playwright/test':
         specifier: 1.63.0
         version: 1.63.0
+      node-pty:
+        specifier: ^1.1.0
+        version: 1.1.0
 
   tests/scenarios:
     devDependencies:

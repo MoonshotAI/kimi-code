@@ -50,10 +50,6 @@
   font: var(--weight-regular) var(--ui-b2) / var(--feedback-label-height) var(--font-ui);
 }
 
-.global-feedback-default-font {
-  --font-ui: 'PingFang SC', var(--user-font-ui, -apple-system), var(--font-ui-system);
-}
-
 .global-feedback-head,
 .global-feedback-label,
 .global-feedback-categories,

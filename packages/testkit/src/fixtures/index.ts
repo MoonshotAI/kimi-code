@@ -9,7 +9,14 @@ export {
   type TomlValue,
 } from '#/fixtures/config';
 export { CLI_BUILD_ENV, KIMI_SERVICE_URL, kimiCliBuild, kimiCliCommand, kimiCliEnv, kimiServiceStubs, type KimiCliBuild } from '#/fixtures/cli';
-export { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, type TestEnvOptions } from '#/fixtures/env';
+export { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, UNIT_TEST_SWITCHES, type TestEnvOptions } from '#/fixtures/env';
+export {
+  bashPathOf,
+  createGitRepository,
+  createGitWorktree,
+  type GitRepositoryOptions,
+  type GitWorktreeLayout,
+} from '#/fixtures/git';
 export {
   describeDifferences,
   expectGolden,
@@ -21,6 +28,16 @@ export {
   type JsonDifference,
 } from '#/fixtures/golden';
 export { createTestHome, osHomeEnv, removeDirectory, type TestHome } from '#/fixtures/home';
+export {
+  FAKE_MCP_SERVER,
+  fakeMcpServer,
+  readMcpCalls,
+  writeMcpConfig,
+  type FakeMcpServerOptions,
+  type FakeMcpTool,
+  type McpCall,
+  type McpServerEntry,
+} from '#/fixtures/mcp';
 export { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
 export {
   installNetworkGuard,

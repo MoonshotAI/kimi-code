@@ -1,48 +1,51 @@
 import {
-  Container,
   matchesKey,
   Key,
   truncateToWidth,
   visibleWidth,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 import { formatSessionLabel } from '#/migration/index';
+import { DockSection, type DockLayout, type DockPart } from '#/tui/components/chrome/dock-section';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import {
+  focusOnUnfocusedMouse,
+  handleSelectableListMouse,
+  type MouseRowRegion,
+} from '#/tui/utils/dialog-mouse';
 import { printableChar } from '#/tui/utils/printable-key';
+import { formatRelativeTime } from '#/tui/utils/relative-time';
 import { SearchableList } from '#/tui/utils/searchable-list';
 import { SpinnerTicker } from '#/tui/utils/spinner-ticker';
+import { layoutTabStrip, type TabStripHitRange } from '#/tui/utils/tab-strip';
+import { isSettlingClick } from '#/tui/utils/terminal-focus';
+import { abbreviateHome } from '#/utils/paths';
+
+export type SessionsScope = 'cwd' | 'project' | 'all';
 
 export interface SessionRow {
   readonly id: string;
   readonly title: string | null;
   readonly last_prompt?: string | null;
   readonly work_dir: string;
+  readonly project_work_dir?: string;
+  readonly worktree?: string;
+  readonly missing?: boolean;
   readonly updated_at: number;
   readonly metadata?: Readonly<Record<string, unknown>> | undefined;
 }
 
 const ELLIPSIS = '…';
+const SESSION_TABS: readonly { readonly scope: SessionsScope; readonly label: string }[] = [
+  { scope: 'cwd', label: 'Cwd' },
+  { scope: 'project', label: 'Project' },
+  { scope: 'all', label: 'All' },
+];
 
-function formatRelativeTime(ts: number): string {
-  if (!Number.isFinite(ts) || ts <= 0) return '';
-  const diffSec = Math.floor(Math.max(0, Date.now() - ts) / 1000);
-  if (diffSec < 60) return 'just now';
-  const minutes = Math.floor(diffSec / 60);
-  if (minutes < 60) return `${String(minutes)}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${String(hours)}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${String(days)}d ago`;
-}
-
-function homeAlias(path: string): string {
-  const home = process.env['HOME'] ?? '';
-  if (home && path.startsWith(home)) return '~' + path.slice(home.length);
-  return path;
-}
-
-function truncatePathLeft(path: string, maxWidth: number): string {
+export function truncatePathLeft(path: string, maxWidth: number): string {
   if (maxWidth <= 0) return '';
   if (visibleWidth(path) <= maxWidth) return path;
   if (maxWidth === 1) return ELLIPSIS;
@@ -70,23 +73,30 @@ function sessionSearchText(session: SessionRow): string {
   return singleLine((session.title ?? session.id).trim() || session.id);
 }
 
-export class SessionPickerComponent extends Container implements Focusable {
+export class SessionPickerComponent extends DockSection implements Focusable {
   private sessions: SessionRow[];
   private currentSessionId: string;
   private onSelect: (session: SessionRow) => void | Promise<void>;
   private onCancel: () => void;
   private onToggleScope?: (selectedSessionId: string) => void;
+  private onSelectScope?: (scope: SessionsScope, selectedSessionId: string) => void;
   private requestRender?: () => void;
   private maxVisibleSessions: number;
   private pageSize: number;
   private visibleCount: number;
-  private scope: 'cwd' | 'all';
+  private scope: SessionsScope;
+  private readonly showTabs: boolean;
   private loading: boolean;
   private hasMore: boolean;
   private loadingMore: boolean;
   private list: SearchableList<SessionRow>;
   private deleteState?: { session: SessionRow; phase: 'confirm' | 'deleting' };
   private selectInFlight = false;
+  private readonly shownAt = Date.now();
+  private cardRegions: readonly MouseRowRegion[] = [];
+  private tabStripRow: number | undefined;
+  private tabHitRanges: readonly TabStripHitRange[] = [];
+  private lastVisibleRange: { readonly start: number; readonly count: number } = { start: 0, count: 0 };
   private readonly spinner = new SpinnerTicker(() => {
     this.invalidate();
     this.requestRender?.();
@@ -98,7 +108,9 @@ export class SessionPickerComponent extends Container implements Focusable {
     sessions: SessionRow[];
     loading: boolean;
     currentSessionId: string;
-    scope?: 'cwd' | 'all';
+    scope?: SessionsScope;
+    showTabs?: boolean;
+    layout?: DockLayout;
     initialSelectedSessionId?: string;
     pageSize?: number;
     onSelect: (session: SessionRow) => void | Promise<void>;
@@ -106,6 +118,7 @@ export class SessionPickerComponent extends Container implements Focusable {
     onCtrlC?: () => void;
     onCtrlD?: () => void;
     onToggleScope?: (selectedSessionId: string) => void;
+    onSelectScope?: (scope: SessionsScope, selectedSessionId: string) => void;
     requestRender?: () => void;
     maxVisibleSessions?: number;
     hasMore?: boolean;
@@ -114,14 +127,16 @@ export class SessionPickerComponent extends Container implements Focusable {
     onSearchDrain?: () => void;
     onDeleteRequest?: (session: SessionRow) => Promise<void>;
   }) {
-    super();
+    super(opts.layout);
     this.sessions = opts.sessions;
     this.loading = opts.loading;
     this.currentSessionId = opts.currentSessionId;
     this.scope = opts.scope ?? 'cwd';
+    this.showTabs = opts.showTabs === true;
     this.onSelect = opts.onSelect;
     this.onCancel = opts.onCancel;
     this.onToggleScope = opts.onToggleScope;
+    this.onSelectScope = opts.onSelectScope;
     this.requestRender = opts.requestRender;
     this.maxVisibleSessions = opts.maxVisibleSessions ?? 4;
     this.pageSize = Math.max(1, opts.pageSize ?? 50);
@@ -153,10 +168,11 @@ export class SessionPickerComponent extends Container implements Focusable {
   appendSessions(rows: SessionRow[]): void {
     this.sessions = [...this.sessions, ...rows];
     this.list.setItems(this.sessions);
-    this.visibleCount = Math.max(
-      this.visibleCount,
-      Math.min(this.list.view().items.length, this.pageSize),
-    );
+    const filteredCount = this.list.view().items.length;
+    this.visibleCount =
+      this.layout === undefined
+        ? Math.max(this.visibleCount, Math.min(filteredCount, this.pageSize))
+        : filteredCount;
   }
 
   setPaging(hasMore: boolean, loadingMore: boolean): void {
@@ -182,6 +198,7 @@ export class SessionPickerComponent extends Container implements Focusable {
     const view = this.list.view();
     if (view.query !== previousQuery) {
       this.visibleCount = Math.min(view.items.length, this.pageSize);
+      this.scrollBodyToTop();
       if (view.query.length > 0 && previousQuery.length === 0 && this.hasMore) {
         this.onSearchDrain?.();
       }
@@ -202,12 +219,48 @@ export class SessionPickerComponent extends Container implements Focusable {
     }
   }
 
+  private pendingScope: SessionsScope | undefined;
+
+  clearPendingScope(): void {
+    this.pendingScope = undefined;
+  }
+
+  private activeScope(): SessionsScope {
+    return this.pendingScope ?? this.scope;
+  }
+
+  private switchScope(scope: SessionsScope): void {
+    if (scope === this.activeScope()) return;
+    this.pendingScope = scope;
+    const selectedId = this.list.selected()?.id ?? this.currentSessionId;
+    if (this.onSelectScope !== undefined) {
+      this.onSelectScope(scope, selectedId);
+    } else {
+      this.onToggleScope?.(selectedId);
+    }
+  }
+
+  private cycleTab(delta: -1 | 1): void {
+    const currentIndex = SESSION_TABS.findIndex((tab) => tab.scope === this.activeScope());
+    const nextIndex = (Math.max(0, currentIndex) + delta + SESSION_TABS.length) % SESSION_TABS.length;
+    const nextTab = SESSION_TABS[nextIndex];
+    if (nextTab !== undefined) this.switchScope(nextTab.scope);
+  }
+
   handleInput(data: string): void {
     if (this.deleteState !== undefined) {
       this.handleDeleteInput(data);
       return;
     }
     if (this.selectInFlight) return;
+    if (this.list.isPasting()) {
+      const previousQuery = this.list.view().query;
+      if (this.list.handleKey(data)) {
+        this.syncVisibleCount(previousQuery);
+        this.ensureSelectedVisible();
+      }
+      return;
+    }
     if (matchesKey(data, Key.ctrl('c'))) {
       this.onCtrlC?.();
       return;
@@ -216,8 +269,16 @@ export class SessionPickerComponent extends Container implements Focusable {
       this.onCtrlD?.();
       return;
     }
+    if (this.showTabs && matchesKey(data, Key.tab)) {
+      this.cycleTab(1);
+      return;
+    }
+    if (this.showTabs && matchesKey(data, Key.shift('tab'))) {
+      this.cycleTab(-1);
+      return;
+    }
     if (matchesKey(data, Key.ctrl('a'))) {
-      this.onToggleScope?.(this.list.selected()?.id ?? this.currentSessionId);
+      this.switchScope(this.activeScope() === 'all' ? 'cwd' : 'all');
       return;
     }
     if (matchesKey(data, Key.ctrl('x'))) {
@@ -231,6 +292,7 @@ export class SessionPickerComponent extends Container implements Focusable {
     if (matchesKey(data, Key.escape)) {
       if (this.list.clearQuery()) {
         this.visibleCount = Math.min(this.filteredSessions().length, this.pageSize);
+        this.scrollBodyToTop();
         return;
       }
       this.onCancel();
@@ -238,29 +300,31 @@ export class SessionPickerComponent extends Container implements Focusable {
     }
     if (matchesKey(data, Key.enter)) {
       const session = this.list.selected();
-      if (session) {
-        const selection = this.onSelect(session);
-        if (selection !== undefined) {
-          this.selectInFlight = true;
-          this.spinner.start();
-          this.invalidate();
-          this.requestRender?.();
-          const clear = (): void => {
-            this.selectInFlight = false;
-            this.spinner.stop();
-            this.invalidate();
-            this.requestRender?.();
-          };
-          void selection.then(clear, clear);
-        }
-      }
+      if (session !== undefined) this.triggerSelect(session);
       return;
     }
 
     const previousQuery = this.list.view().query;
     if (this.list.handleKey(data)) {
       this.syncVisibleCount(previousQuery);
+      this.ensureSelectedVisible();
     }
+  }
+
+  private triggerSelect(session: SessionRow): void {
+    const selection = this.onSelect(session);
+    if (selection === undefined) return;
+    this.selectInFlight = true;
+    this.spinner.start();
+    this.invalidate();
+    this.requestRender?.();
+    const clear = (): void => {
+      this.selectInFlight = false;
+      this.spinner.stop();
+      this.invalidate();
+      this.requestRender?.();
+    };
+    void selection.then(clear, clear);
   }
 
   private handleDeleteInput(data: string): void {
@@ -312,42 +376,109 @@ export class SessionPickerComponent extends Container implements Focusable {
     this.spinner.dispose();
   }
 
-  override render(width: number): string[] {
-    return this.renderLines(width).map((line) => truncateToWidth(line, width, ELLIPSIS));
+  protected override onBodyScrolled(): void {
+    if (!this.isBodyScrolledNearEnd()) return;
+    const filteredCount = this.list.view().items.length;
+    if (this.visibleCount < filteredCount) {
+      this.visibleCount = Math.min(filteredCount, this.visibleCount + this.pageSize);
+      this.invalidate();
+      this.requestRender?.();
+    }
+    if (this.hasMore && !this.loadingMore) {
+      this.onLoadMore?.();
+    }
   }
 
-  private renderLines(width: number): string[] {
+  protected override handlePartMouse(part: DockPart, event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (this.deleteState !== undefined || this.selectInFlight) return undefined;
+    if (!this.focused) return focusOnUnfocusedMouse(event);
+    if (part === 'head') {
+      if (!this.showTabs || this.tabStripRow === undefined || event.y !== this.tabStripRow) return undefined;
+      if (event.button !== 'left') return undefined;
+      const hit = this.tabHitRanges.find((range) => event.x >= range.start && event.x < range.end);
+      if (hit === undefined) return undefined;
+      if (event.type === 'press') return { handled: true };
+      if (event.type === 'click' && !isSettlingClick(this.shownAt)) {
+        const target = SESSION_TABS[hit.index];
+        if (target !== undefined) this.switchScope(target.scope);
+        return { handled: true, render: true };
+      }
+      return undefined;
+    }
+    if (part !== 'body') return undefined;
+    return handleSelectableListMouse({
+      event,
+      focused: this.focused,
+      shownAt: this.shownAt,
+      regions: this.cardRegions,
+      select: (index) => this.selectIndex(index),
+      activate: (index) => {
+        const session = this.list.view().items[index];
+        if (session !== undefined) this.triggerSelect(session);
+      },
+    });
+  }
+
+  private selectIndex(index: number): boolean {
+    const changed = this.list.view().selectedIndex !== index;
+    this.list.moveTo(index);
+    return changed;
+  }
+
+  private ensureSelectedVisible(): void {
+    if (this.layout === undefined) return;
+    const selected = this.list.view().selectedIndex;
+    const region = this.cardRegions.find((item) => item.index === selected);
+    if (region !== undefined) {
+      this.ensureBodyVisible(region.start, region.end);
+    }
+  }
+
+  private scopeTitle(): string {
+    if (this.scope === 'all') return 'All sessions';
+    if (this.scope === 'project') return 'Project sessions';
+    return 'Sessions';
+  }
+
+  private scopeHint(): string | undefined {
+    if (this.onSelectScope === undefined && this.onToggleScope === undefined) return undefined;
+    return this.scope === 'all' ? 'Ctrl+A current cwd' : 'Ctrl+A all';
+  }
+
+  protected override renderPart(part: DockPart, width: number): string[] {
+    switch (part) {
+      case 'head':
+        return this.renderHead(width).map((line) => truncateToWidth(line, width, ELLIPSIS));
+      case 'body':
+        return this.renderBody(width).map((line) => truncateToWidth(line, width, ELLIPSIS));
+      case 'foot':
+        return this.renderFoot(width).map((line) => truncateToWidth(line, width, ELLIPSIS));
+    }
+  }
+
+  private renderHead(width: number): string[] {
     const lines: string[] = [currentTheme.fg('primary', '─'.repeat(width))];
-    const title = this.scope === 'all' ? 'All sessions' : 'Sessions';
-    const scopeHint =
-      this.onToggleScope === undefined
-        ? undefined
-        : this.scope === 'all'
-          ? 'Ctrl+A current cwd'
-          : 'Ctrl+A all';
+    const title = this.scopeTitle();
+    const scopeHint = this.scopeHint();
+    this.tabStripRow = undefined;
+    this.tabHitRanges = [];
 
     if (this.loading) {
       lines.push(currentTheme.boldFg('primary', truncateToWidth(title, width, ELLIPSIS)));
-      lines.push(
-        currentTheme.fg('textMuted', truncateToWidth('Loading sessions…', width, ELLIPSIS)),
-      );
-      lines.push(currentTheme.fg('primary', '─'.repeat(width)));
+      if (this.showTabs) this.pushTabStrip(lines, width);
       return lines;
     }
 
     if (this.sessions.length === 0) {
-      const hintParts = [scopeHint, 'Esc cancel'].filter(
-        (item): item is string => item !== undefined,
-      );
+      const hintParts = [
+        this.showTabs ? 'Tab switch' : undefined,
+        scopeHint,
+        'Esc cancel',
+      ].filter((item): item is string => item !== undefined);
       lines.push(currentTheme.boldFg('primary', truncateToWidth(title, width, ELLIPSIS)));
-      lines.push(
-        currentTheme.fg('textMuted', truncateToWidth(hintParts.join(' · '), width, ELLIPSIS)),
-      );
+      if (this.showTabs) this.pushTabStrip(lines, width);
+      lines.push(currentTheme.fg('textMuted', truncateToWidth(hintParts.join(' · '), width, ELLIPSIS)));
       lines.push('');
-      lines.push(
-        currentTheme.fg('textMuted', truncateToWidth('No sessions found.', width, ELLIPSIS)),
-      );
-      lines.push(currentTheme.fg('primary', '─'.repeat(width)));
       return lines;
     }
 
@@ -357,6 +488,7 @@ export class SessionPickerComponent extends Container implements Focusable {
     const hintParts = [
       ...(view.query.length > 0 ? ['Backspace clear'] : []),
       '↑↓ navigate',
+      this.showTabs ? 'Tab switch' : undefined,
       scopeHint,
       ...(this.onDeleteRequest !== undefined ? ['Ctrl+X delete'] : []),
       'Enter select',
@@ -364,6 +496,7 @@ export class SessionPickerComponent extends Container implements Focusable {
     ].filter((item): item is string => item !== undefined);
 
     lines.push(currentTheme.boldFg('primary', title) + titleSuffix);
+    if (this.showTabs) this.pushTabStrip(lines, width);
     lines.push(currentTheme.fg('textMuted', hintParts.join(' · ')));
     if (this.selectInFlight) {
       lines.push(currentTheme.fg('textMuted', `${this.spinner.current} Resuming session…`));
@@ -373,38 +506,85 @@ export class SessionPickerComponent extends Container implements Focusable {
     if (view.query.length > 0) {
       lines.push(currentTheme.fg('primary', 'Search: ') + currentTheme.fg('text', view.query));
     }
+    return lines;
+  }
 
+  private pushTabStrip(lines: string[], width: number): void {
+    const activeIndex = Math.max(0, SESSION_TABS.findIndex((tab) => tab.scope === this.scope));
+    const strip = layoutTabStrip({
+      labels: SESSION_TABS.map((tab) => tab.label),
+      activeIndex,
+      width,
+      colors: currentTheme.palette,
+    });
+    this.tabStripRow = lines.length;
+    this.tabHitRanges = strip.hitRanges;
+    lines.push(strip.line);
+  }
+
+  private renderBody(width: number): string[] {
+    this.cardRegions = [];
+    if (this.loading) {
+      return [currentTheme.fg('textMuted', truncateToWidth('Loading sessions…', width, ELLIPSIS))];
+    }
+    if (this.sessions.length === 0) {
+      return [currentTheme.fg('textMuted', truncateToWidth('No sessions found.', width, ELLIPSIS))];
+    }
+
+    const view = this.list.view();
     const loadedSessions = this.loadedSessions(view.items);
     if (loadedSessions.length === 0) {
-      lines.push(currentTheme.fg('textMuted', truncateToWidth('No matches', width, ELLIPSIS)));
-      lines.push(currentTheme.fg('primary', '─'.repeat(width)));
-      return lines;
+      this.lastVisibleRange = { start: 0, count: 0 };
+      return [currentTheme.fg('textMuted', truncateToWidth('No matches', width, ELLIPSIS))];
     }
-    const selectedIndex = view.selectedIndex;
-    const visibleStart = Math.max(
-      0,
-      Math.min(
-        selectedIndex - Math.floor(this.maxVisibleSessions / 2),
-        Math.max(0, loadedSessions.length - this.maxVisibleSessions),
-      ),
-    );
-    const visibleSessions = loadedSessions.slice(
-      visibleStart,
-      visibleStart + this.maxVisibleSessions,
-    );
 
+    const selectedIndex = view.selectedIndex;
+    const visibleStart =
+      this.layout === undefined
+        ? Math.max(
+            0,
+            Math.min(
+              selectedIndex - Math.floor(this.maxVisibleSessions / 2),
+              Math.max(0, loadedSessions.length - this.maxVisibleSessions),
+            ),
+          )
+        : 0;
+    const visibleSessions =
+      this.layout === undefined
+        ? loadedSessions.slice(visibleStart, visibleStart + this.maxVisibleSessions)
+        : loadedSessions;
+    this.lastVisibleRange = { start: visibleStart, count: visibleSessions.length };
+
+    const lines: string[] = [];
+    const regions: MouseRowRegion[] = [];
     for (const [vi, session] of visibleSessions.entries()) {
       const index = visibleStart + vi;
       const isSelected = index === selectedIndex;
       const isCurrent = session.id === this.currentSessionId;
+      const start = lines.length;
       const card = this.renderSessionCard(width, session, isSelected, isCurrent);
       lines.push(...card);
+      regions.push({ start, end: lines.length, index });
       if (vi < visibleSessions.length - 1) lines.push('');
     }
+    this.cardRegions = regions;
+    return lines;
+  }
 
+  private renderFoot(width: number): string[] {
+    if (this.loading || this.sessions.length === 0) {
+      return [currentTheme.fg('primary', '─'.repeat(width))];
+    }
+    const view = this.list.view();
+    const loadedSessions = this.loadedSessions(view.items);
+    if (loadedSessions.length === 0) {
+      return [currentTheme.fg('primary', '─'.repeat(width))];
+    }
+    const lines: string[] = [];
     const filteredCount = view.items.length;
+    const { start: visibleStart, count: visibleCount } = this.lastVisibleRange;
     if (
-      loadedSessions.length > visibleSessions.length ||
+      loadedSessions.length > visibleCount ||
       view.query.length > 0 ||
       this.hasMore ||
       this.loadingMore
@@ -425,7 +605,10 @@ export class SessionPickerComponent extends Container implements Focusable {
             : loadedSessions.length === this.sessions.length
               ? `${String(loadedSessions.length)} sessions`
               : `${String(loadedSessions.length)} loaded / ${String(this.sessions.length)} sessions`;
-      const footer = `Showing ${String(visibleStart + 1)}-${String(visibleStart + visibleSessions.length)} of ${totalSuffix}${moreSuffix}`;
+      const footer =
+        this.layout !== undefined
+          ? `${totalSuffix}${moreSuffix}`
+          : `Showing ${String(visibleStart + 1)}-${String(visibleStart + visibleCount)} of ${totalSuffix}${moreSuffix}`;
       lines.push(currentTheme.fg('textMuted', truncateToWidth(footer, width, ELLIPSIS)));
     }
 
@@ -474,15 +657,22 @@ export class SessionPickerComponent extends Container implements Focusable {
     const metaGap = '   ';
     const metaGapWidth = visibleWidth(metaGap);
     const idLineWidth = indentWidth + idWidth;
-    const aliasedDir = homeAlias(session.work_dir);
+    const aliasedDir = abbreviateHome(session.work_dir);
     const dirWidth = visibleWidth(aliasedDir);
+    const tags = [
+      session.worktree === undefined ? '' : currentTheme.fg('accent', `worktree ${session.worktree}`),
+      session.missing === true ? currentTheme.fg('warning', 'missing') : '',
+    ].filter((tag) => tag.length > 0);
+    const tagText = tags.length === 0 ? '' : metaGap + tags.join(' ');
+    const tagWidth = visibleWidth(tagText);
 
-    if (idLineWidth + metaGapWidth + dirWidth <= width) {
+    if (idLineWidth + metaGapWidth + dirWidth + tagWidth <= width) {
       card.push(
         indent +
           currentTheme.fg('textMuted', fullId) +
           currentTheme.fg('textDim', metaGap) +
-          currentTheme.fg('textMuted', aliasedDir),
+          currentTheme.fg('textMuted', aliasedDir) +
+          tagText,
       );
     } else {
       card.push(
@@ -492,9 +682,9 @@ export class SessionPickerComponent extends Container implements Focusable {
             truncateToWidth(fullId, Math.max(idWidth, width - indentWidth), ELLIPSIS),
           ),
       );
-      const dirBudget = Math.max(8, width - indentWidth);
+      const dirBudget = Math.max(8, width - indentWidth - tagWidth);
       const dir = truncatePathLeft(aliasedDir, dirBudget);
-      card.push(indent + currentTheme.fg('textMuted', dir));
+      card.push(indent + currentTheme.fg('textMuted', dir) + tagText);
     }
 
     const rawPrompt = session.last_prompt?.trim();

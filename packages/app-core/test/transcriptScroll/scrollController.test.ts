@@ -145,6 +145,106 @@ describe('follow mode', () => {
     expect(s.controller.state.following).toBe(true);
     expect(s.distanceFromBottom()).toBe(0);
   });
+
+  function clampTransiently(s: LayoutSim): void {
+    s.setChildHeight('r10', 'md', 2, 5);
+    s.setChildHeight('r11', 'md', 2, 5);
+    s.userScroll(s.maxTop);
+    s.setChildHeight('r10', 'md', 2, 80);
+    s.setChildHeight('r11', 'md', 2, 80);
+    s.mutate();
+  }
+
+  it('keeps following when content is replaced and the browser clamps the position before it regrows', () => {
+    const s = setup();
+    const bottom = s.scrollTop;
+    clampTransiently(s);
+    expect(bottom - s.scrollTop).toBe(150);
+    s.frame();
+    expect(s.controller.state.following).toBe(true);
+    expect(s.scrollTop).toBe(bottom);
+    s.setChildHeight('r11', 'md', 3, 140);
+    s.frame();
+    expect(s.distanceFromBottom()).toBe(0);
+  });
+
+  it('leaves follow when the user scrolls up by touch while content is replaced', () => {
+    const s = setup();
+    s.controller.onInput(new Event('touchstart'));
+    s.controller.onInput(new Event('touchmove'));
+    clampTransiently(s);
+    s.frame();
+    expect(s.controller.state.mode.kind).toBe('anchored');
+  });
+
+  it('leaves follow when a pointer press drives the scroll while content is replaced', () => {
+    const s = setup();
+    s.controller.onInput(pointer('pointerdown', 10));
+    clampTransiently(s);
+    s.frame();
+    expect(s.controller.state.mode.kind).toBe('anchored');
+  });
+
+  it('keeps following when content is replaced by a frame callback that runs before the previous change expires', () => {
+    const s = setup();
+    const bottom = s.scrollTop;
+    s.requestFrame(() => clampTransiently(s));
+    s.mutate();
+    s.frame();
+    s.frame();
+    expect(s.controller.state.following).toBe(true);
+    expect(s.scrollTop).toBe(bottom);
+  });
+
+  it('keeps following when the frame layout after a content change clamps the position and the scroll event arrives a frame later', () => {
+    const s = setup();
+    const bottom = s.scrollTop;
+    s.mutate();
+    s.requestFrame(() => {
+      s.setChildHeight('r11', 'md', 2, 5);
+      s.userScroll(s.maxTop);
+      s.setChildHeight('r11', 'md', 2, 80);
+    });
+    s.frame();
+    s.frame();
+    expect(s.controller.state.following).toBe(true);
+    expect(s.scrollTop).toBe(bottom);
+  });
+
+  it('keeps following when content is replaced and clamped within the same task before the mutation callback runs', () => {
+    const s = setup();
+    const bottom = s.scrollTop;
+    s.mutate();
+    s.frame();
+    s.frame();
+    s.setChildHeight('r11', 'md', 2, 5);
+    s.userScroll(s.maxTop);
+    s.setChildHeight('r11', 'md', 2, 80);
+    s.queueMutation();
+    s.controller.sync();
+    expect(s.controller.state.following).toBe(true);
+    expect(s.scrollTop).toBe(bottom);
+  });
+
+  it('leaves follow when middle-click autoscroll moves up after the button is released', () => {
+    const s = setup();
+    const middle = new MouseEvent('pointerdown', { button: 1 });
+    Object.defineProperty(middle, 'pointerType', { value: 'mouse' });
+    s.controller.onInput(middle);
+    s.controller.onInput(pointer('pointerup'));
+    clampTransiently(s);
+    s.frame();
+    expect(s.controller.state.mode.kind).toBe('anchored');
+  });
+
+  it('leaves follow on an input-less scroll once the last content change is two frames old', () => {
+    const s = setup();
+    s.mutate();
+    s.frame();
+    s.frame();
+    scrollUserTo(s, s.maxTop - 150);
+    expect(s.controller.state.mode.kind).toBe('anchored');
+  });
 });
 
 describe('anchored mode', () => {
@@ -370,6 +470,19 @@ describe('scrollbar drags and touch', () => {
     expect(s.distanceFromBottom()).toBe(0);
   });
 
+  it('releases the touch when the touched element is replaced before the finger lifts', () => {
+    const s = setup();
+    for (const type of ['touchstart', 'touchend']) s.scroller.addEventListener(type, e => s.controller.onInput(e));
+    const touched = s.childEl('r11', 'md', 3);
+    touched.dispatchEvent(new Event('touchstart', { bubbles: true }));
+    touched.remove();
+    touched.dispatchEvent(new Event('touchend', { bubbles: true }));
+    s.setChildHeight('r11', 'md', 2, 300);
+    s.frame();
+    expect(s.controller.state.following).toBe(true);
+    expect(s.distanceFromBottom()).toBe(0);
+  });
+
   it('releases the touch on touchend when scrollend already arrived while the finger was down', () => {
     const s = setup();
     s.controller.onInput(new Event('touchstart'));
@@ -456,6 +569,23 @@ describe('hold', () => {
     s.insertRows(12, textRows(1, 300, 'n'));
     s.frame();
     expect(s.distanceFromBottom()).toBe(0);
+  });
+
+  it('keeps the clicked element still when content below it expands near the bottom', () => {
+    const s = setup();
+    const el = s.blockEl('r11', 'head');
+    const before = s.visualTop(el);
+    s.controller.hold(el);
+    s.setChildHeight('r11', 'md', 2, 100);
+    s.frame();
+    s.frame(HOLD_MS);
+    s.frame();
+    expect(s.visualTop(el)).toBe(before);
+    expect(s.distanceFromBottom()).toBe(20);
+    expect(s.controller.state.mode.kind).toBe('anchored');
+    s.userScroll(s.maxTop);
+    s.frame();
+    expect(s.controller.state.mode.kind).toBe('follow');
   });
 
   it('honors a longer hold and stays anchored away from the bottom', () => {

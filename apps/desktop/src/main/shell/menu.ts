@@ -78,6 +78,7 @@ interface MenuStrings {
   ok: string;
   help: string;
   documentation: string;
+  feedback: string;
   console: string;
   performanceTrace: string;
   stopPerformanceTrace: string;
@@ -142,6 +143,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     ok: '好',
     help: '帮助',
     documentation: '使用文档',
+    feedback: '反馈',
     console: '控制台',
     performanceTrace: '性能录制',
     stopPerformanceTrace: '停止性能录制',
@@ -204,6 +206,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     ok: 'OK',
     help: 'Help',
     documentation: 'Documentation',
+    feedback: 'Feedback',
     console: 'Console',
     performanceTrace: 'Performance Trace',
     stopPerformanceTrace: 'Stop Performance Trace',
@@ -661,6 +664,14 @@ export function menuTemplate(
               return shell.openExternal(url);
             })
             .catch((error: unknown) => reportExternalLinkFailure(url, error));
+        },
+      },
+      {
+        id: 'open-feedback',
+        label: strings.feedback,
+        click: () => {
+          showMainWindow();
+          sendToRenderer(IPC.menuAction, 'open-feedback');
         },
       },
       {

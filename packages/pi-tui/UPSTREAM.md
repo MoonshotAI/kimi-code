@@ -8,7 +8,7 @@ Update this section after every sync. Do not reuse the previous range.
 
 - **Repo:** `https://github.com/earendil-works/pi.git`
 - **Subtree:** `packages/tui`
-- **Commit:** `7c22a93d0ed02092142fa63823e63d76aa4e2406` (2026-10-22; v1.4.0 plus upstream main through this commit)
+- **Commit:** `b882d08f34f8a245c8d3ea8b057759e1b8b2054c` (2026-11-25; v1.6.1 plus upstream main through this commit)
 - **This commit is an upstream marker.** It may not exist in this repo's object database.
 
 ## Reconstruct the fork
@@ -114,6 +114,12 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** The host can filter history entries, decorate a recalled entry, and save/restore its own state next to the history draft.
 
 **Why not in the app:** History recall mutates editor state internally; the host is not on that path unless the editor calls out.
+
+### editor-clear-history — keep
+
+**Decision:** `Editor.clearHistory()` clears the editor's stored prompt history and resets any in-progress history recall index, so a host switching working directories can swap in the new directory's history cleanly.
+
+**Why not in the app:** Prompt history and its recall cursor are private fields on `Editor`; the host cannot clear or reset them without recreating the editor instance.
 
 ### unbracketed-paste-enter-is-newline — keep
 

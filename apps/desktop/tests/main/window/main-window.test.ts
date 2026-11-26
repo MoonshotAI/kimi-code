@@ -109,6 +109,7 @@ vi.mock('electron', () => {
     handlers = new Map<string, ((...args: unknown[]) => void)[]>();
     destroyed = false;
     crashed = false;
+    loadingMainFrame = false;
     on(event: string, cb: (...args: unknown[]) => void): void {
       this.handlers.set(event, [...(this.handlers.get(event) ?? []), cb]);
     }
@@ -125,7 +126,11 @@ vi.mock('electron', () => {
     isCrashed(): boolean {
       return this.crashed;
     }
+    isLoadingMainFrame(): boolean {
+      return this.loadingMainFrame;
+    }
     session = {};
+    mainFrame = { processId: 1, routingId: 1 };
     openDevTools = vi.fn();
     isDevToolsOpened(): boolean {
       return false;
@@ -607,6 +612,136 @@ describe('window lifecycle telemetry', () => {
     expect(phases()).toEqual(['window_shown', 'renderer_loaded', 'renderer_ready']);
   });
 
+  it.each(['did-fail-load', 'did-fail-provisional-load', 'did-finish-load'])(
+    'keeps startup actions queued until the renderer subscribes, even after %s',
+    async (event) => {
+      const { showMainWindow, sendLaunchAction, selectSessionInRenderer, markRendererUiMounted } = await import('../../../src/main/window/main-window');
+      showMainWindow();
+      const contents = (lastWindow() as unknown as { webContents: StartupContents }).webContents;
+      const startupUrl = 'data:text/html,startup';
+      const appUrl = 'app://renderer/index.html';
+      contents.getURL = () => startupUrl;
+      const project = { action: 'open-workspace', root: '/project' } as const;
+      sendLaunchAction(project);
+      sendLaunchAction({ action: 'new-chat' });
+      sendLaunchAction({ action: 'open-session', sessionId: 'linked-session' });
+      selectSessionInRenderer('tray-session');
+
+      contents.emit('did-start-navigation', { url: appUrl, isMainFrame: true, isSameDocument: false });
+      contents.getURL = () => appUrl;
+      contents.emit('did-navigate', {}, appUrl);
+      contents.emit(event, {}, -3, 'ERR_ABORTED', startupUrl, true);
+      markRendererUiMounted(startupUrl);
+
+      expect(contents.send).not.toHaveBeenCalledWith(IPC.launchAction, expect.anything());
+      expect(contents.send).not.toHaveBeenCalledWith(IPC.traySelectSession, expect.anything());
+
+      markRendererUiMounted(appUrl);
+      markRendererUiMounted(appUrl);
+      expect(contents.send.mock.calls).toEqual([
+        [IPC.traySelectSession, 'tray-session'],
+        [IPC.launchAction, project],
+        [IPC.launchAction, { action: 'new-chat' }],
+        [IPC.launchAction, { action: 'open-session', sessionId: 'linked-session' }],
+      ]);
+    },
+  );
+
+  it.each(['reload', 'crash'])('waits for the replacement renderer after %s', async (transition) => {
+    const { showMainWindow, sendLaunchAction, markRendererUiMounted } = await import('../../../src/main/window/main-window');
+    showMainWindow();
+    const contents = (lastWindow() as unknown as { webContents: StartupContents }).webContents;
+    const appUrl = contents.getURL();
+    contents.emit('did-finish-load');
+    markRendererUiMounted(appUrl);
+    sendLaunchAction({ action: 'new-chat' });
+    expect(contents.send).toHaveBeenCalledExactlyOnceWith(IPC.launchAction, { action: 'new-chat' });
+    contents.send.mockClear();
+
+    if (transition === 'crash') {
+      contents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: -1 });
+    }
+    contents.emit('did-start-navigation', { url: appUrl, isMainFrame: true, isSameDocument: false });
+    contents.emit('did-navigate', {}, appUrl);
+    const action = { action: 'open-session', sessionId: 'after-reload' } as const;
+    sendLaunchAction(action);
+    markRendererUiMounted(appUrl);
+    expect(contents.send).not.toHaveBeenCalled();
+    contents.emit('did-finish-load');
+    expect(contents.send).toHaveBeenCalledExactlyOnceWith(IPC.launchAction, action);
+  });
+
+  it('resumes delivery to an already mounted renderer when navigation is cancelled before commit', async () => {
+    const { showMainWindow, sendLaunchAction, markRendererUiMounted } = await import('../../../src/main/window/main-window');
+    showMainWindow();
+    const contents = (lastWindow() as unknown as { webContents: StartupContents }).webContents;
+    contents.emit('did-finish-load');
+    markRendererUiMounted(contents.getURL());
+    const target = 'app://renderer/other.html';
+    contents.loadingMainFrame = true;
+    contents.emit('did-start-navigation', { url: target, isMainFrame: true, isSameDocument: false });
+    const action = { action: 'new-chat' } as const;
+    sendLaunchAction(action);
+    expect(contents.send).not.toHaveBeenCalled();
+    contents.emit('did-fail-provisional-load', {}, -3, 'ERR_ABORTED', target, true);
+    expect(contents.send).not.toHaveBeenCalled();
+    contents.loadingMainFrame = false;
+    contents.emit('did-stop-loading');
+    expect(contents.send).toHaveBeenCalledExactlyOnceWith(IPC.launchAction, action);
+  });
+
+  it('does not dispatch to the old renderer while a replacement navigation is still loading', async () => {
+    const { showMainWindow, sendLaunchAction, markRendererUiMounted } = await import('../../../src/main/window/main-window');
+    showMainWindow();
+    const contents = (lastWindow() as unknown as { webContents: StartupContents }).webContents;
+    contents.emit('did-finish-load');
+    markRendererUiMounted(contents.getURL());
+
+    contents.loadingMainFrame = true;
+    const firstTarget = 'app://renderer/first.html';
+    const lastTarget = 'app://renderer/last.html';
+    contents.emit('did-start-navigation', { url: firstTarget, isMainFrame: true, isSameDocument: false });
+    contents.emit('did-start-navigation', { url: lastTarget, isMainFrame: true, isSameDocument: false });
+    const action = { action: 'open-session', sessionId: 'after-navigation' } as const;
+    sendLaunchAction(action);
+    contents.emit('did-fail-provisional-load', {}, -3, 'ERR_ABORTED', firstTarget, true);
+    expect(contents.send).not.toHaveBeenCalled();
+
+    contents.getURL = () => lastTarget;
+    contents.emit('did-navigate', {}, lastTarget);
+    markRendererUiMounted(lastTarget);
+    expect(contents.send).not.toHaveBeenCalled();
+    contents.loadingMainFrame = false;
+    contents.emit('did-stop-loading');
+    contents.emit('did-finish-load');
+    expect(contents.send).toHaveBeenCalledExactlyOnceWith(IPC.launchAction, action);
+  });
+
+  it('does not reuse the old mount when navigation commits an error page at the app URL', async () => {
+    const { showMainWindow, sendLaunchAction, markRendererUiMounted } = await import('../../../src/main/window/main-window');
+    showMainWindow();
+    const contents = (lastWindow() as unknown as { webContents: StartupContents }).webContents;
+    const appUrl = contents.getURL();
+    contents.emit('did-finish-load');
+    markRendererUiMounted(appUrl);
+    contents.loadingMainFrame = true;
+    contents.emit('did-start-navigation', { url: appUrl, isMainFrame: true, isSameDocument: false });
+    const action = { action: 'new-chat' } as const;
+    sendLaunchAction(action);
+
+    const frame = { processId: 2, routingId: 2 };
+    contents.mainFrame = frame;
+    contents.emit('did-fail-provisional-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', appUrl, true, frame.processId, frame.routingId);
+    contents.loadingMainFrame = false;
+    contents.emit('did-stop-loading');
+    expect(contents.send).not.toHaveBeenCalled();
+
+    contents.emit('did-navigate', {}, appUrl);
+    contents.emit('did-finish-load');
+    markRendererUiMounted(appUrl);
+    expect(contents.send).toHaveBeenCalledExactlyOnceWith(IPC.launchAction, action);
+  });
+
   it('clears transient startup history after the app renderer loads', async () => {
     const { showMainWindow } = await import('../../../src/main/window/main-window');
     showMainWindow();
@@ -646,6 +781,9 @@ describe('window lifecycle telemetry', () => {
   });
 
   interface StartupContents {
+    send: ReturnType<typeof vi.fn>;
+    loadingMainFrame: boolean;
+    mainFrame: { processId: number; routingId: number };
     loadURL: ReturnType<typeof vi.fn>;
     executeJavaScript: (...args: unknown[]) => Promise<unknown>;
     getURL: () => string;

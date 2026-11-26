@@ -169,6 +169,20 @@ describe('shouldNotifyCompletion', () => {
   it('returns false when pending question exists', () => {
     expect(shouldNotifyCompletion('idle', false, true)).toBe(false);
   });
+
+  it.each(['none', 'background'] as const)('returns true when continuation is %s', (continuation) => {
+    expect(shouldNotifyCompletion('idle', false, false, continuation)).toBe(true);
+  });
+
+  it('returns false while another turn follows', () => {
+    expect(shouldNotifyCompletion('idle', false, false, 'turn')).toBe(false);
+  });
+
+  it.each(['none', 'background'] as const)('still blocks aborted turns and pending interactions when continuation is %s', (continuation) => {
+    expect(shouldNotifyCompletion('aborted', false, false, continuation)).toBe(false);
+    expect(shouldNotifyCompletion('idle', true, false, continuation)).toBe(false);
+    expect(shouldNotifyCompletion('idle', false, true, continuation)).toBe(false);
+  });
 });
 
 describe('notification tags', () => {

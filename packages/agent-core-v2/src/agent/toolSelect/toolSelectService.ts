@@ -628,14 +628,10 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     let shaped: ContextMessage[] | undefined;
     for (let i = 0; i < messages.length; i += 1) {
       const message = messages[i]!;
-      if (isLoadableToolsAnnouncement(message)) {
-        for (const part of message.content) {
-          const lifecycle = readToolLifecycleMeta(part);
-          if (lifecycle === undefined) continue;
-          for (const name of lifecycle.removed) declaredDynamicTools.delete(name);
-        }
-      }
-      const next = this.shapeActiveMessage(message, inlineNames, declaredDynamicTools);
+      const announced = isLoadableToolsAnnouncement(message)
+        ? this.shapeLifecycleAnnouncement(message, declaredDynamicTools)
+        : message;
+      const next = this.shapeActiveMessage(announced, inlineNames, declaredDynamicTools);
       if (next === message) {
         if (shaped !== undefined) shaped.push(message);
         continue;
@@ -644,6 +640,33 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       if (next !== undefined) shaped.push(next);
     }
     return shaped ?? messages;
+  }
+
+  private shapeLifecycleAnnouncement(
+    message: ContextMessage,
+    declaredDynamicTools: Set<string>,
+  ): ContextMessage {
+    let content: ContextMessage['content'] | undefined;
+    for (let i = 0; i < message.content.length; i += 1) {
+      const part = message.content[i]!;
+      if (part.type !== 'text') {
+        content?.push(part);
+        continue;
+      }
+      const lifecycle = readToolLifecycleMeta(part);
+      if (lifecycle === undefined) {
+        content?.push(part);
+        continue;
+      }
+      const removed = lifecycle.removed.filter((name) => declaredDynamicTools.delete(name));
+      if (removed.length === lifecycle.removed.length) {
+        content?.push(part);
+        continue;
+      }
+      if (content === undefined) content = message.content.slice(0, i);
+      content.push({ ...part, meta: { ...lifecycle, removed } });
+    }
+    return content === undefined ? message : { ...message, content };
   }
 
   private shapeActiveMessage(

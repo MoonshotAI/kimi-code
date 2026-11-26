@@ -15,7 +15,7 @@ import { SessionMetadata } from '#/session/sessionMetadata/sessionMetadataServic
 import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
 import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
 import { ISessionStateService } from '#/session/state/sessionState';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -76,7 +76,7 @@ describe('SessionMetadata', () => {
     mirror = stubSessionIndexMirror();
     ix.stub(ILogService, stubLog());
     ix.stub(ISessionContext, makeContext());
-    ix.stub(ISessionWorkspaceInfo, {
+    ix.stub(ISessionProjectInfo, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       primaryByWorkspace: {},
@@ -118,7 +118,7 @@ describe('SessionMetadata', () => {
 
   it('exposes the live effective cwd while preserving explicit and remote bindings', async () => {
     const primaryByWorkspace: Record<string, string> = { wd_test: '/old' };
-    ix.stub(ISessionWorkspaceInfo, {
+    ix.stub(ISessionProjectInfo, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       primaryByWorkspace,

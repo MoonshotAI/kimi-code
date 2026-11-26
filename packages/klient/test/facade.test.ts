@@ -65,11 +65,11 @@ describe('facade routing', () => {
     const klient = createKlientFromChannel(channel);
 
     channel.result = { id: 'w1', root: '/x', name: 'n', kind: 'implicit', additionalDirs: [], createdAt: 1, lastOpenedAt: 2 };
-    await klient.global.workspaces.createOrTouch({ root: '/x', name: 'n' });
+    await klient.global.workspaces.resolveImplicit('/x');
     expect(channel.calls[0]).toMatchObject({
       service: 'workspaceService',
-      method: 'createOrTouch',
-      args: ['/x', 'n'],
+      method: 'resolveImplicit',
+      args: ['/x'],
     });
 
     channel.result = undefined;
@@ -109,6 +109,25 @@ describe('facade routing', () => {
         args: ['prediction-1', 'escape'],
       },
     ]);
+  });
+
+  it('lists pending approvals denied by Auto Review at low risk', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const approval = {
+      id: 'approval-low-risk',
+      toolName: 'Bash',
+      action: 'Run command',
+      display: { kind: 'command', command: 'echo hello' },
+      approvalDetail: {
+        outcome: 'denied',
+        risk: 'low',
+        reason: 'User boundary forbids this action.',
+      },
+    };
+    channel.results.set('sessionApprovalService.listPending', [approval]);
+
+    await expect(klient.session('s1').approvals.list()).resolves.toEqual([approval]);
   });
 
   it('forwards the login region option through the wire contract', async () => {

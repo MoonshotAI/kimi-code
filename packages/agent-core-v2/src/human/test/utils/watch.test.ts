@@ -55,6 +55,7 @@ function signalRig(options?: {
   readonly nativeCode?: string;
   readonly platform?: NodeJS.Platform;
   readonly resolvePath?: (path: string) => string;
+  readonly nativeStartSettleMs?: number;
 }): {
   readonly service: ReturnType<typeof createWatchService>;
   readonly attempts: TestNativeAttempt[];
@@ -105,6 +106,9 @@ function signalRig(options?: {
       };
     },
     reportError: () => undefined,
+    ...(options?.nativeStartSettleMs === undefined
+      ? {}
+      : { nativeStartSettleMs: options.nativeStartSettleMs }),
   };
   return {
     service: createWatchService(runtime),
@@ -280,6 +284,56 @@ describe('watch signal mode', () => {
     expect(rig.retry(0).active).toBe(false);
     expect(rig.attempt(0).watcher.closed).toBe(true);
     expect(rig.attempts).toHaveLength(1);
+  });
+
+  it.each([
+    { mode: 'an entry watch', options: { listing: false } },
+    { mode: 'a signal watch', options: { signal: true } },
+  ])('invalidates $mode once after the native start settle window', ({ options }) => {
+    const rig = signalRig({ nativeStartSettleMs: 100 });
+    const events: WatchChange[] = [];
+    handle = rig.service.watch('/repo', options);
+    handle.onDidChange((event) => events.push(event));
+
+    expect(rig.retries.map((retry) => retry.delayMs)).toEqual([100]);
+    expect(events).toEqual([]);
+
+    rig.retry(0).run();
+
+    expect(events).toEqual([{ path: '/repo', action: 'modified', kind: 'directory' }]);
+  });
+
+  it('settles a rearmed native watch again and drops the settle of the failed one', () => {
+    const rig = signalRig({ nativeStartSettleMs: 100 });
+    const events: WatchChange[] = [];
+    handle = rig.service.watch('/repo', { signal: true });
+    handle.onDidChange((event) => events.push(event));
+
+    rig.attempt(0).watcher.fail();
+    rig.retry(1).run();
+    rig.retry(2).run();
+
+    expect(rig.retries.map((retry) => retry.delayMs)).toEqual([100, 1000, 100]);
+    expect(rig.retry(0).active).toBe(false);
+    expect(events).toEqual([
+      { path: '/repo', action: 'modified', kind: 'directory' },
+      { path: '/repo', action: 'modified', kind: 'directory' },
+      { path: '/repo', action: 'modified', kind: 'directory' },
+    ]);
+  });
+
+  it('cancels a pending native start settle when the watch handle is disposed', () => {
+    const rig = signalRig({ nativeStartSettleMs: 100 });
+    const events: WatchChange[] = [];
+    handle = rig.service.watch('/repo', { listing: false });
+    handle.onDidChange((event) => events.push(event));
+
+    handle.dispose();
+    handle = undefined;
+    rig.retry(0).run();
+
+    expect(rig.retry(0).active).toBe(false);
+    expect(events).toEqual([]);
   });
 
   it('falls back to chokidar when native recursive watch is unavailable on the platform', async () => {

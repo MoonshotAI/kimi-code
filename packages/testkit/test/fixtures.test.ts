@@ -9,14 +9,18 @@ import { text } from 'node:stream/consumers';
 import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { describe, expect, it } from 'vitest';
 
 import { WaitTimeoutError } from '#/errors';
 import { CLI_BUILD_ENV, KIMI_SERVICE_URL, kimiCliBuild, kimiCliCommand, kimiCliEnv, kimiServiceStubs } from '#/fixtures/cli';
 import { kimiConfigToml, mergeKimiConfig } from '#/fixtures/config';
 import { expectGolden, jsonDifferences, REFRESH_ENV, stableJson } from '#/fixtures/golden';
-import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv } from '#/fixtures/env';
+import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, UNIT_TEST_SWITCHES } from '#/fixtures/env';
+import { bashPathOf, createGitWorktree } from '#/fixtures/git';
 import { createTestHome, osHomeEnv, type TestHome } from '#/fixtures/home';
+import { fakeMcpServer, readMcpCalls, writeMcpConfig } from '#/fixtures/mcp';
 import { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
 import { installNetworkGuard, isLoopback, tcpTargetOf } from '#/fixtures/network';
 import { createNormalizer, FIXED_TIME, normalize } from '#/fixtures/normalize';
@@ -34,6 +38,38 @@ async function startScript(home: TestHome, source: string, options: Partial<Star
   await writeFile(entry, `import { connect } from 'node:net';\n${source}\n`);
   return TestProcess.start({ label: 'probe', command: { entry }, cwd: home.workspace, env: testEnv(), logDir: home.root, ...options });
 }
+
+describe('bashPathOf', () => {
+  it('spells a Windows path the way Git Bash prints the working directory', () => {
+    expect(bashPathOf('C:\\Users\\me\\app', 'win32')).toBe('/c/Users/me/app');
+    expect(bashPathOf('D:/work/app', 'win32')).toBe('/d/work/app');
+  });
+
+  it('keeps a POSIX path as it is', () => {
+    expect(bashPathOf('/tmp/app', 'linux')).toBe('/tmp/app');
+    expect(bashPathOf('/private/var/app', 'darwin')).toBe('/private/var/app');
+  });
+});
+
+describe('createGitWorktree', () => {
+  it('commits the given files in the main checkout and checks them out in a linked worktree', async () => {
+    const home = await createTestHome('git-worktree');
+    try {
+      const layout = {
+        main: join(home.workspace, 'app'),
+        worktree: join(home.workspace, 'app-fix'),
+      };
+
+      expect(await createGitWorktree(layout, { files: { 'src/tracked.txt': 'one\n' } })).toEqual(layout);
+
+      expect(await readFile(join(layout.worktree, 'src', 'tracked.txt'), 'utf8')).toBe('one\n');
+      expect(await readFile(join(layout.worktree, '.git'), 'utf8')).toMatch(/^gitdir: .*worktrees[\\/]app-fix\s*$/);
+      expect(existsSync(join(layout.main, '.git', 'HEAD'))).toBe(true);
+    } finally {
+      await home.remove();
+    }
+  });
+});
 
 describe('TestProcess', () => {
   it('refuses to start an entry that does not exist', async () => {
@@ -285,6 +321,15 @@ describe('testEnv', () => {
     expect(env['KIMI_SHELL_PATH']).toBe('/bin/zsh');
     expect(env['KIMI_CODE_HOME']).toBe('/tmp/home');
     expect(env).not.toHaveProperty('KIMI_DISABLE_TELEMETRY');
+  });
+
+  it('applies the unit-test switches by default and drops them when each is set to undefined', () => {
+    const switches = Object.keys(UNIT_TEST_SWITCHES);
+    expect(switches.length).toBeGreaterThan(0);
+    expect(testEnv({ base: {} })).toMatchObject(UNIT_TEST_SWITCHES);
+    const productDefaults = testEnv({ base: {}, set: Object.fromEntries(switches.map((name) => [name, undefined])) });
+    for (const name of switches) expect(productDefaults).not.toHaveProperty(name);
+    expect(productDefaults['KIMI_DISABLE_TELEMETRY']).toBe('1');
   });
 
   it('isolates process.env and restores it exactly', () => {
@@ -630,6 +675,54 @@ describe('network guard', () => {
       guard.uninstall();
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+describe('fake MCP server', () => {
+  it('answers the official MCP client over stdio and logs every call', async () => {
+    const home = await createTestHome('fake-mcp');
+    try {
+      const callLog = join(home.root, 'mcp-calls.jsonl');
+      const entry = fakeMcpServer('docs', {
+        callLog,
+        tools: [
+          { name: 'search', description: 'Search the docs.', inputSchema: { properties: { query: { type: 'string' } }, required: ['query'] }, reply: 'found 2 pages' },
+          { name: 'ping' },
+        ],
+      });
+      const client = new Client({ name: 'testkit-test', version: '0.0.0' });
+      await client.connect(new StdioClientTransport({ command: entry.command, args: [...entry.args] }));
+      try {
+        expect((await client.listTools()).tools).toEqual([
+          { name: 'search', description: 'Search the docs.', inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+          { name: 'ping', inputSchema: { type: 'object', properties: {} } },
+        ]);
+        expect(await client.callTool({ name: 'search', arguments: { query: 'cache' } })).toMatchObject({ content: [{ type: 'text', text: 'found 2 pages' }] });
+        expect(await client.callTool({ name: 'ping', arguments: {} })).toMatchObject({ content: [{ type: 'text', text: 'ping done' }] });
+        expect(await client.callTool({ name: 'missing', arguments: {} })).toMatchObject({ isError: true });
+      } finally {
+        await client.close();
+      }
+      expect(await readMcpCalls(callLog)).toEqual([
+        { server: 'docs', tool: 'search', arguments: { query: 'cache' } },
+        { server: 'docs', tool: 'ping', arguments: {} },
+        { server: 'docs', tool: 'missing', arguments: {} },
+      ]);
+    } finally {
+      await home.remove();
+    }
+  });
+
+  it('writes the mcp.json that the product reads, and reads no calls before the first one', async () => {
+    const home = await createTestHome('fake-mcp-config');
+    try {
+      const entry = fakeMcpServer('docs', { tools: [{ name: 'ping' }] });
+      const path = await writeMcpConfig(join(home.dataDir, 'mcp.json'), { docs: entry });
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ mcpServers: { docs: { command: process.execPath, args: [...entry.args] } } });
+      expect(await readMcpCalls(join(home.root, 'never-written.jsonl'))).toEqual([]);
+    } finally {
+      await home.remove();
     }
   });
 });

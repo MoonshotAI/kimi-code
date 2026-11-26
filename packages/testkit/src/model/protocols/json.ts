@@ -1,3 +1,10 @@
+import type { ViewPart } from '#/model/types';
+
+export function contentPartsOf(content: unknown, partOf: (part: Record<string, unknown>, raw: unknown) => ViewPart): ViewPart[] {
+  if (typeof content === 'string') return [{ type: 'text', text: content }];
+  return asArray(content).map((raw) => partOf(asRecord(raw), raw));
+}
+
 export function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }

@@ -1,6 +1,6 @@
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
 import type { IAgentScopeHandle } from '@moonshot-ai/agent-core-v2/_base/di/scope';
-import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager } from '@moonshot-ai/agent-core-v2/project/projectInstance/projectInstanceManager';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
 import {
@@ -303,7 +303,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
   async function resolveScope(scope: ScopeRef): Promise<ResolvedScope> {
     if (scope.workspaceId !== undefined) {
       const lease = await root.accessor
-        .get(IWorkspaceInstanceManager)
+        .get(IProjectInstanceManager)
         .acquire({ workspaceId: scope.workspaceId });
       try {
         void lease.instance.program;
@@ -506,6 +506,9 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         }
         if (error instanceof Error2 && error.code === ErrorCodes.PROMPT_ID_CONFLICT) {
           throw new RPCError(PROMPT_ID_CONFLICT, error.message, error.details);
+        }
+        if (service === 'agentLoopService' && method === 'submit' && error instanceof Error2 && error.code === ErrorCodes.TURN_AGENT_BUSY) {
+          throw new RPCError(REQUEST_INVALID, error.message, { code: error.code });
         }
         throw error;
       }

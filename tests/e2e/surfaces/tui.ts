@@ -1,4 +1,3 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
@@ -8,7 +7,6 @@ import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import {
   killProcessTree,
   kimiCliCommand,
-  kimiCliEnv,
   NETWORK_GUARD_PRELOAD,
   networkGuardEnv,
   readNetworkViolations,
@@ -16,6 +14,7 @@ import {
   until,
 } from '@moonshot-ai/testkit/fixtures';
 import { FAKE_PROVIDER_DEFAULTS } from '@moonshot-ai/testkit/model';
+import type { IPty } from 'node-pty';
 
 import {
   APPROVAL_PENDING,
@@ -36,15 +35,39 @@ import {
   type SurfaceLaunch,
   type ToolExpectation,
   type ToolStatus,
+  type WindowSize,
 } from '../support/verbs';
+import { productEnv } from './environment';
 import { offlineStubs } from './offline';
+import { loadNodePty } from './terminal-process';
 
-const COLUMNS = 120;
-const ROWS = 40;
+const TERMINAL_NAME = 'xterm-256color';
+const TERMINAL_SIZES: Readonly<Record<WindowSize, { readonly columns: number; readonly rows: number }>> = {
+  normal: { columns: 120, rows: 40 },
+  narrow: { columns: 60, rows: 40 },
+};
+const COLUMNS = TERMINAL_SIZES.normal.columns;
+const ROWS = TERMINAL_SIZES.normal.rows;
 const SCROLLBACK_LINES = 1000;
 const OUTPUT_TAIL = 64 * 1024;
 const RECENT_INPUTS = 12;
+const RAW_OUTPUT_TAIL = 8 * 1024;
 
+const FULL_REDRAW = '\x1b[2J\x1b[H\x1b[3J';
+const KITTY_KEYBOARD = /\x1b\[([<=>?])(\d*)(?:;(\d*))?u/g;
+const MODIFY_OTHER_KEYS = /\x1b\[>4(?:;(\d*))?m/g;
+const KITTY_DISAMBIGUATE = 1;
+const KITTY_EVENT_TYPES = 2;
+const KITTY_EMULATED_FLAGS = 7;
+const KITTY_LEGACY_RELEASES: Readonly<Record<string, string>> = { '\x1b[A': '\x1b[1;1:3A', '\x1b[B': '\x1b[1;1:3B' };
+const KITTY_SEQUENCE_LONGEST = 16;
+const KITTY_KEYS: Readonly<Record<string, { readonly code: number; readonly modifiers: number }>> = {
+  '\x1b': { code: 27, modifiers: 1 },
+  '\x03': { code: 99, modifiers: 5 },
+  '\x0f': { code: 111, modifiers: 5 },
+  '\x11': { code: 113, modifiers: 5 },
+  '\x13': { code: 115, modifiers: 5 },
+};
 const BEGIN_FRAME = '\x1b[?2026h';
 const END_FRAME = '\x1b[?2026l';
 const TERMINAL_ESCAPE = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*\x07|[@-Z\\-_])/g;
@@ -119,6 +142,11 @@ const ASKED = 'Collected your answers';
 const ASKED_QUESTION = 'Q';
 const ASKED_ANSWER = '→';
 const DISMISSED_NOTE = 'User dismissed the question without answering.';
+const NEW_SESSION_COMMAND = '/new';
+const COMPACT_COMMAND = '/compact';
+const COMPACTION_DONE = 'Compaction complete';
+const COMPACTION_CANCELLED = 'Compaction cancelled';
+const NEW_SESSION_NOTICE = 'Started a new session (';
 
 interface Screen {
   readonly text: string;
@@ -128,6 +156,7 @@ interface Screen {
   readonly transcript: readonly string[];
   readonly status: readonly string[];
   readonly panel: readonly string[];
+  readonly startedSession: string | undefined;
 }
 
 interface ApprovalPanel {
@@ -179,16 +208,15 @@ interface Turn {
   readonly failed: number;
 }
 
+interface QueuedMessage {
+  readonly text: string;
+  readonly sentBefore: number;
+}
+
 type Settled<T> = { readonly found: T } | { readonly over: Screen };
 
 function quote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
-}
-
-function insidePseudoTerminal(launcher: string): string {
-  return process.platform === 'darwin'
-    ? `script -q /dev/null /bin/sh ${quote(launcher)}`
-    : `script -q -e -c ${quote(`/bin/sh ${quote(launcher)}`)} /dev/null`;
 }
 
 function unfinishedBeginning(text: string): number {
@@ -208,7 +236,8 @@ function squash(text: string): string {
 
 function screenOf(rows: readonly string[], viewport: readonly string[]): Screen {
   const lines = rows.map((row) => row.trim());
-  const frame = { text: rows.join('\n'), height: rows.length, viewport };
+  const startedSession = lines.findLast((line) => line.startsWith(NEW_SESSION_NOTICE));
+  const frame = { text: rows.join('\n'), height: rows.length, viewport, startedSession };
   const editor = lines.findLastIndex((line, index) => EDITOR_TOP.test(line) && lines[index + 1]?.startsWith(EDITOR_PROMPT) === true);
   const hint = lines.findLastIndex((line) => line.includes(APPROVAL_HINT));
   const rule = lines.findLastIndex((line, index) => index < hint && APPROVAL_RULE.test(line));
@@ -223,6 +252,15 @@ function screenOf(rows: readonly string[], viewport: readonly string[]): Screen 
   if (editor < 0) return { ...frame, input: 'none', transcript: rows, status: [], panel: [] };
   const gap = lines.findLastIndex((line, index) => index < editor && line === '');
   return { ...frame, input: 'editor', transcript: rows.slice(0, gap + 1), status: lines.slice(gap + 1, editor), panel: [] };
+}
+
+function compactionNotices(screen: Screen, notice: string): number {
+  return screen.transcript.filter((row) => row.includes(notice)).length;
+}
+
+function drawnWidth(screen: Screen): number | undefined {
+  const line = screen.viewport.map((row) => row.trim()).findLast((row) => EDITOR_TOP.test(row) || APPROVAL_RULE.test(row));
+  return line?.length;
 }
 
 function failureNoticeEnd(rows: readonly string[], start: number): number | undefined {
@@ -519,50 +557,88 @@ function latestTurnEntries(screen: Screen): string {
 }
 
 class TuiDriver implements SurfaceDriver<'tui'> {
-  private readonly child: ChildProcessWithoutNullStreams;
+  private readonly pty: IPty;
   private readonly networkLog: string;
-  private readonly exitStatus: RegExp;
+  private readonly exitStatus: RegExp | undefined;
+  private ptyExit: number | undefined;
   private readonly terminal = new VirtualTerminal(COLUMNS, ROWS);
   private readonly inputs: string[] = [];
   private output = '';
   private unshown = '';
-  private stderr = '';
+  private notes = '';
   private readonly lastPrompt: string | undefined;
   private readonly workspace: string;
   private released = false;
   private left = false;
+  private size: WindowSize;
+  private fullRedraws = 0;
+  private redrawTail = '';
+  private received = 0;
+  private readonly kitty: boolean;
+  private keyboardFlags = 0;
+  private readonly keyboardStack: number[] = [];
+  private keyboardTail = '';
+  private modifyOtherKeys = false;
+  private keyboardProblem: string | undefined;
   private turn: Turn | undefined;
+  private queued: QueuedMessage[] = [];
 
-  constructor(child: ChildProcessWithoutNullStreams, networkLog: string, exitMarker: string, { workspace, lastPrompt }: { readonly workspace: string; readonly lastPrompt: string | undefined }) {
-    this.child = child;
+  constructor(
+    pty: IPty,
+    networkLog: string,
+    exitMarker: string | undefined,
+    { workspace, lastPrompt, size, kitty }: { readonly workspace: string; readonly lastPrompt: string | undefined; readonly size: WindowSize; readonly kitty: boolean },
+  ) {
+    this.pty = pty;
+    this.kitty = kitty;
+    this.size = size;
+    this.terminal.resize(TERMINAL_SIZES[size].columns, TERMINAL_SIZES[size].rows);
     this.networkLog = networkLog;
     this.workspace = workspace;
     this.lastPrompt = lastPrompt;
-    this.exitStatus = new RegExp(`${exitMarker}(\\d+)`);
-    child.stdout.setEncoding('utf8').on('data', (text: string) => {
+    this.exitStatus = exitMarker === undefined ? undefined : new RegExp(`${exitMarker}(\\d+)`);
+    pty.onData((text) => {
+      this.received += text.length;
       this.output = (this.output + text).slice(-OUTPUT_TAIL);
+      this.countFullRedraws(text);
+      if (this.kitty) this.followKeyboard(text);
       this.show(text);
     });
-    child.stderr.setEncoding('utf8').on('data', (text: string) => {
-      this.stderr = (this.stderr + text).slice(-OUTPUT_TAIL);
-    });
-    child.stdin.on('error', (error) => {
-      this.stderr = `${this.stderr}stdin: ${error.message}\n`;
-    });
-    child.once('close', () => {
+    pty.onExit(({ exitCode }) => {
+      this.ptyExit = exitCode;
       this.terminal.write(this.unshown);
       this.unshown = '';
       this.released = true;
     });
     this.terminal.onReply((reply) => {
-      if (this.exitCode() === undefined && child.stdin.writable) child.stdin.write(reply);
+      if (this.exitCode() === undefined && !this.released) pty.write(reply);
     });
   }
 
-  async ready(): Promise<void> {
+  async ready(workspaceTrust?: SurfaceLaunch['workspaceTrust']): Promise<void> {
+    if (workspaceTrust !== undefined) {
+      await this.wait('the workspace trust prompt', (screen) =>
+        screen.viewport.some((line) => line.includes('Trust this project?')) &&
+        screen.viewport.some((line) => line.includes('Trust and continue'))
+          ? true
+          : undefined,
+      );
+      this.assertKeyboard();
+      if (workspaceTrust === 'exit') {
+        this.write(KEYS.escape);
+        await this.waitForExit('declining workspace trust');
+        return;
+      }
+      this.write(KEYS.up);
+      await this.wait('the Trust and continue option to be selected', (screen) =>
+        screen.viewport.some((line) => line.trim() === '❯ Trust and continue') ? true : undefined,
+      );
+      this.write(KEYS.enter);
+    }
     await this.wait('the TUI to show its editor and the configured model', (screen) =>
       screen.input === 'editor' && screen.viewport.some((line) => line.includes(FAKE_PROVIDER_DEFAULTS.modelName)) ? true : undefined,
     );
+    this.assertKeyboard();
     const { lastPrompt } = this;
     if (lastPrompt !== undefined) {
       await this.wait(`the resumed conversation to show ${JSON.stringify(lastPrompt)}`, (screen) => (userMessages(screen, lastPrompt) > 0 ? true : undefined));
@@ -574,7 +650,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   }
 
   reopenState(): ReopenState {
-    return {};
+    return { size: this.size };
   }
 
   async expectTranscript(text: string): Promise<void> {
@@ -591,18 +667,76 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     }
   }
 
-  async exit(): Promise<void> {
-    await this.leave('exit()');
-    this.left = true;
+  async compact(): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) throw this.failure('compact() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.queued = [];
+    const done = compactionNotices(before, COMPACTION_DONE);
+    const cancelled = compactionNotices(before, COMPACTION_CANCELLED);
+    this.write(paste(COMPACT_COMMAND));
+    this.write(KEYS.enter);
+    const outcome = await this.wait('the CLI to finish compacting the context', (screen) => {
+      if (compactionNotices(screen, COMPACTION_CANCELLED) > cancelled) return 'cancelled' as const;
+      return compactionNotices(screen, COMPACTION_DONE) > done && this.turnOver(screen) ? ('done' as const) : undefined;
+    });
+    if (outcome === 'cancelled') throw this.failure('compact() saw the compaction cancelled.', await this.read());
+  }
+
+  async newSession(): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) throw this.failure('newSession() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.queued = [];
+    this.write(paste(NEW_SESSION_COMMAND));
+    this.write(KEYS.enter);
+    await this.wait('the CLI to report a new session', (screen) =>
+      screen.startedSession !== undefined && screen.startedSession !== before.startedSession && screen.input === 'editor' ? true : undefined,
+    );
+    this.turn = undefined;
+  }
+
+  async resize(size: WindowSize): Promise<void> {
+    const from = TERMINAL_SIZES[this.size];
+    const to = TERMINAL_SIZES[size];
+    if (size === this.size) throw new Error(`resize() found the terminal already ${size} (${from.columns}×${from.rows}); resize it to the other size.`);
+    const screen = await this.read();
+    const drawn = drawnWidth(screen);
+    if (drawn === undefined) throw this.failure('resize() needs the input box or a panel on screen to tell when the CLI has redrawn.', screen);
+    const redraws = this.fullRedraws;
+    const received = this.received;
+    const redrawn = (): boolean => (process.platform === 'win32' ? this.received > received : this.fullRedraws > redraws);
+    this.terminal.resize(to.columns, to.rows);
+    this.pty.resize(to.columns, to.rows);
+    this.size = size;
+    const wanted = drawn - from.columns + to.columns;
+    let previous: string | undefined;
+    await this.wait(`the CLI to redraw its input box or panel ${wanted} columns wide after the resize and stay put`, (current) => {
+      if (!redrawn() || drawnWidth(current) !== wanted) {
+        previous = undefined;
+        return undefined;
+      }
+      const settled = current.text === previous;
+      previous = current.text;
+      return settled ? true : undefined;
+    });
+  }
+
+  exit(): Promise<void> {
+    return this.leave('exit()');
   }
 
   async expectTerminalRestored(): Promise<void> {
     if (!this.left) throw new Error('expectTerminalRestored() reads the shell after the CLI has left; call exit() first.');
+    const exitStatus = this.exitStatus;
+    if (exitStatus === undefined) throw new Error('expectTerminalRestored() reads stty from the launcher shell, which the Windows driver does not start.');
     let modes: readonly string[] | undefined;
     try {
-      modes = await until('the shell to print its terminal modes', () => terminalModes(this.output, this.exitStatus), { timeoutMs: TIMEOUTS.wait });
+      modes = await until('the shell to print its terminal modes', () => terminalModes(this.output, exitStatus), { timeoutMs: TIMEOUTS.wait });
     } catch (cause) {
       throw new Error(`expectTerminalRestored() found no terminal modes printed by the shell after the CLI exited.\n${await this.describe()}`, { cause });
+    }
+    if (this.kitty && this.keyboardProblem !== undefined) throw new Error(`${this.keyboardProblem}\n${await this.describe()}`);
+    if (this.kitty && (this.keyboardFlags !== 0 || this.keyboardStack.length > 0)) {
+      throw new Error(`The CLI left the Kitty keyboard protocol on after it exited: flags ${this.keyboardFlags}, ${this.keyboardStack.length} pushed level(s) not popped.\n${await this.describe()}`);
     }
     const off = RESTORED_MODES.filter((mode) => !modes.includes(mode) || modes.includes(`-${mode}`));
     if (off.length > 0) {
@@ -617,6 +751,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     }
     const shown = userMessages(screen, text);
     this.turn = { stopped: statusLines(screen, TURN_STOPPED), failed: statusLines(screen, TURN_FAILED) };
+    this.queued = [];
     this.write(paste(text));
     this.write(KEYS.enter);
     await this.wait(`the user message ${JSON.stringify(text)} to appear in the transcript`, (current) =>
@@ -630,6 +765,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     if (queuedMessages(screen).includes(text)) {
       throw this.failure(`queue() found ${JSON.stringify(text)} already in the queue; queue each message once.`, screen);
     }
+    const sentBefore = userMessages(screen, text);
     this.write(paste(text));
     this.write(KEYS.queue);
     const settled = await this.settle(`the message ${JSON.stringify(text)} to wait in the queue`, (current) => {
@@ -639,6 +775,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     if ('over' in settled) {
       throw this.failure(`queue() did not see ${JSON.stringify(text)} in the queue before the turn ended.`, settled.over);
     }
+    this.queued.push({ text, sentBefore });
     if (settled.found === 'cut') {
       throw this.failure(`queue() put ${JSON.stringify(text)} in the queue, but the queue cuts it short to fit one line; queue a shorter message.`, await this.read());
     }
@@ -884,24 +1021,27 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     this.write(KEYS.interrupt);
     this.write(paste('/exit'));
     this.write(KEYS.enter);
+    await this.waitForExit('/exit');
+  }
+
+  private async waitForExit(action: string): Promise<void> {
     try {
-      await until('the CLI to exit after /exit', () => this.exitCode() !== undefined, { timeoutMs: TIMEOUTS.wait });
-      this.child.stdin.end();
+      await until(`the CLI to exit after ${action}`, () => this.exitCode() !== undefined, { timeoutMs: TIMEOUTS.wait });
       await until('the pseudo-terminal to close', () => this.released, { timeoutMs: TIMEOUTS.wait });
     } catch (cause) {
-      throw new Error(`The CLI did not exit cleanly after /exit.\n${await this.describe()}`, { cause });
+      throw new Error(`The CLI did not exit cleanly after ${action}.\n${await this.describe()}`, { cause });
     }
     if (this.exitCode() !== 0) throw new Error(`The CLI exited with status ${String(this.exitCode())}.\n${await this.describe()}`);
+    this.left = true;
   }
 
   async kill(): Promise<void> {
     if (this.released) return;
-    if (this.child.exitCode === null && this.child.signalCode === null && this.child.pid !== undefined) killProcessTree(this.child.pid);
-    this.child.stdin.destroy();
+    killProcessTree(this.pty.pid);
     try {
       await until('the pseudo-terminal to close', () => this.released, { timeoutMs: TIMEOUTS.wait });
     } catch {
-      this.stderr = `${this.stderr}The pseudo-terminal did not close after it was killed.\n`;
+      this.notes = `${this.notes}The pseudo-terminal did not close after it was killed.\n`;
     }
   }
 
@@ -919,12 +1059,13 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const screen = await this.read();
     return [
       { name: 'tui-screen', body: screen.text },
+      { name: 'tui-output', body: JSON.stringify(this.output.slice(-RAW_OUTPUT_TAIL)).replaceAll('\\n', '\\n\n') },
       {
         name: 'tui-session',
         body: [
           `exit status: ${String(this.exitCode() ?? 'still running')}`,
           `recent input: ${JSON.stringify(this.inputs)}`,
-          `stderr:\n${this.stderr === '' ? '(empty)' : this.stderr}`,
+          `driver notes:\n${this.notes === '' ? '(none)' : this.notes}`,
         ].join('\n'),
       },
     ];
@@ -1002,12 +1143,17 @@ class TuiDriver implements SurfaceDriver<'tui'> {
 
   private turnOver(screen: Screen): boolean {
     if (screen.input !== 'editor' || showsActivity(screen) || queuedMessages(screen).length > 0) return false;
+    if (this.unsentQueued(screen).length > 0) return false;
     if (this.turn === undefined) return true;
     return (
       screen.status.some((line) => line.startsWith(TURN_COMPLETED)) ||
       statusLines(screen, TURN_STOPPED) > this.turn.stopped ||
       statusLines(screen, TURN_FAILED) > this.turn.failed
     );
+  }
+
+  private unsentQueued(screen: Screen): string[] {
+    return this.queued.filter((message) => userMessages(screen, message.text) <= message.sentBefore).map((message) => message.text);
   }
 
   private settle<T>(label: string, evidence: (screen: Screen) => T | undefined): Promise<Settled<T>> {
@@ -1054,6 +1200,67 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     return screenOf(this.terminal.getScrollBuffer(), this.terminal.getViewport());
   }
 
+  private assertKeyboard(): void {
+    if (!this.kitty) return;
+    if (this.keyboardProblem !== undefined) throw new Error(this.keyboardProblem);
+    if ((this.keyboardFlags & KITTY_DISAMBIGUATE) === 0 || this.modifyOtherKeys) {
+      const fallback = this.modifyOtherKeys ? ' and fell back to modifyOtherKeys' : '';
+      throw new Error(`The CLI did not use the Kitty keyboard protocol in a terminal that offers it (flags ${this.keyboardFlags})${fallback}.`);
+    }
+  }
+
+  private followKeyboard(text: string): void {
+    const scanned = this.keyboardTail + text;
+    let consumed = 0;
+    for (const match of scanned.matchAll(KITTY_KEYBOARD)) {
+      consumed = match.index + match[0].length;
+      const [, kind, first = '', second = ''] = match;
+      const value = first === '' ? undefined : Number(first);
+      if (kind === '?') {
+        if (this.exitCode() === undefined && !this.released) this.pty.write(`\x1b[?${this.keyboardFlags}u`);
+      } else if (kind === '>') {
+        this.keyboardStack.push(this.keyboardFlags);
+        this.keyboardFlags = value ?? 0;
+      } else if (kind === '<') {
+        for (let count = value ?? 1; count > 0; count -= 1) {
+          const popped = this.keyboardStack.pop();
+          if (popped === undefined) this.keyboardProblem ??= 'The CLI popped more Kitty keyboard levels than it had pushed.';
+          this.keyboardFlags = popped ?? 0;
+        }
+      } else {
+        const mode = second === '' ? 1 : Number(second);
+        const flags = value ?? 0;
+        this.keyboardFlags = mode === 1 ? flags : mode === 2 ? this.keyboardFlags | flags : this.keyboardFlags & ~flags;
+      }
+      if ((this.keyboardFlags & ~KITTY_EMULATED_FLAGS) !== 0) {
+        this.keyboardProblem ??= `The CLI asked for Kitty keyboard flags ${this.keyboardFlags}; the driver emulates only flags 1, 2 and 4.`;
+      }
+    }
+    for (const match of scanned.matchAll(MODIFY_OTHER_KEYS)) {
+      consumed = Math.max(consumed, match.index + match[0].length);
+      this.modifyOtherKeys = match[1] !== undefined && match[1] !== '' && match[1] !== '0';
+    }
+    const pending = scanned.lastIndexOf('\x1b');
+    this.keyboardTail = pending >= consumed && scanned.length - pending < KITTY_SEQUENCE_LONGEST ? scanned.slice(pending) : '';
+  }
+
+  private encode(input: string): string {
+    if (!this.kitty) return input;
+    if (this.keyboardProblem !== undefined) throw new Error(this.keyboardProblem);
+    const release = KITTY_LEGACY_RELEASES[input];
+    if (release !== undefined) return (this.keyboardFlags & KITTY_EVENT_TYPES) === 0 ? input : `${input}${release}`;
+    const key = KITTY_KEYS[input];
+    if (key === undefined || (this.keyboardFlags & KITTY_DISAMBIGUATE) === 0) return input;
+    const press = key.modifiers === 1 ? `\x1b[${key.code}u` : `\x1b[${key.code};${key.modifiers}u`;
+    return (this.keyboardFlags & KITTY_EVENT_TYPES) === 0 ? press : `${press}\x1b[${key.code};${key.modifiers}:3u`;
+  }
+
+  private countFullRedraws(text: string): void {
+    const scanned = this.redrawTail + text;
+    this.fullRedraws += scanned.split(FULL_REDRAW).length - 1;
+    this.redrawTail = scanned.slice(-(FULL_REDRAW.length - 1));
+  }
+
   private show(text: string): void {
     const arrived = this.unshown + text;
     const begin = arrived.lastIndexOf(BEGIN_FRAME);
@@ -1066,10 +1273,11 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private write(input: string): void {
     this.inputs.push(input.slice(-200));
     if (this.inputs.length > RECENT_INPUTS) this.inputs.shift();
-    this.child.stdin.write(input);
+    this.pty.write(this.encode(input));
   }
 
   private exitCode(): number | undefined {
+    if (this.exitStatus === undefined) return this.ptyExit;
     const match = this.exitStatus.exec(this.output);
     return match?.[1] === undefined ? undefined : Number(match[1]);
   }
@@ -1080,16 +1288,17 @@ class TuiDriver implements SurfaceDriver<'tui'> {
 
   private async describe(): Promise<string> {
     const screen = await this.read();
+    const unsent = this.unsentQueued(screen);
     return [
       `Screen:\n${screen.viewport.join('\n').trimEnd()}`,
       `Recent input: ${JSON.stringify(this.inputs)}`,
       `Exit status: ${String(this.exitCode() ?? 'still running')}`,
+      ...(unsent.length === 0 ? [] : [`Queued but not yet in the transcript as a user message: ${JSON.stringify(unsent)}`]),
     ].join('\n');
   }
 }
 
-export async function startTui({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'tui'>> {
-  if (process.platform === 'win32') throw new Error('The TUI surface needs the script command; Windows is not supported yet.');
+export async function startTui({ home, reopen, variant, workspaceTrust }: SurfaceLaunch): Promise<SurfaceDriver<'tui'>> {
   const command = kimiCliCommand();
   if (!existsSync(command.entry)) {
     throw new Error(`The CLI entry ${command.entry} does not exist; build the CLI before running against its bundle.`);
@@ -1098,18 +1307,32 @@ export async function startTui({ home, reopen }: SurfaceLaunch): Promise<Surface
   const networkLog = join(home.root, `tui-network-${launch}.log`);
   const launcher = join(home.root, `tui-launch-${launch}.sh`);
   const preloads = [...(command.imports ?? []), NETWORK_GUARD_PRELOAD.href].flatMap((specifier) => ['--import', specifier]);
-  const cli = [process.execPath, ...preloads, command.entry, ...(reopen === undefined ? [] : ['--continue'])].map(quote).join(' ');
-  const exitMarker = `E2E_CLI_EXIT_${randomUUID()}=`;
-  await writeFile(launcher, [`stty cols ${COLUMNS} rows ${ROWS}`, cli, `printf '\\n${exitMarker}%s\\n' "$?"`, 'stty -a', ''].join('\n'));
-  const child = spawn('/bin/sh', ['-c', `cat | ${insidePseudoTerminal(launcher)}`], {
-    cwd: home.workspace,
-    detached: true,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...kimiCliEnv(home, { TERM: 'xterm-256color' }), ...command.env, ...networkGuardEnv(networkLog, offlineStubs()) },
+  const args = [...preloads, command.entry, ...(reopen === undefined ? [] : ['--continue'])];
+  const { spawn } = await loadNodePty();
+  const size = reopen?.state.size ?? 'normal';
+  const env = productEnv(home, {
+    TERM: TERMINAL_NAME,
+    ...(workspaceTrust === undefined ? {} : { KIMI_CODE_TRUST_WORKSPACE: undefined }),
   });
-  const driver = new TuiDriver(child, networkLog, exitMarker, { workspace: home.workspace, lastPrompt: reopen?.lastPrompt });
+  const options = {
+    name: TERMINAL_NAME,
+    cols: TERMINAL_SIZES[size].columns,
+    rows: TERMINAL_SIZES[size].rows,
+    cwd: home.workspace,
+    env: { ...env, ...command.env, ...networkGuardEnv(networkLog, offlineStubs()) },
+  };
+  let exitMarker: string | undefined;
+  let pty: IPty;
+  if (process.platform === 'win32') {
+    pty = spawn(process.execPath, args, options);
+  } else {
+    exitMarker = `E2E_CLI_EXIT_${randomUUID()}=`;
+    await writeFile(launcher, [[process.execPath, ...args].map(quote).join(' '), `printf '\\n${exitMarker}%s\\n' "$?"`, 'stty -a', ''].join('\n'));
+    pty = spawn('/bin/sh', [launcher], options);
+  }
+  const driver = new TuiDriver(pty, networkLog, exitMarker, { workspace: home.workspace, lastPrompt: reopen?.lastPrompt, size, kitty: variant === 'kitty-keyboard' });
   try {
-    await driver.ready();
+    await driver.ready(reopen === undefined ? workspaceTrust : undefined);
   } catch (error) {
     await driver.kill();
     throw error;

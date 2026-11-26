@@ -23,6 +23,8 @@ export class Text implements Component {
 	}
 
 	setText(text: string): void {
+		// Renderers often set the same text on every update; keep the wrapped lines then.
+		if (text === this.text) return;
 		this.text = text;
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
@@ -47,7 +49,7 @@ export class Text implements Component {
 		this.cachedLines = undefined;
 	}
 
-	render(width: number): string[] {
+	render(width: number): readonly string[] {
 		// Check cache
 		if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width) {
 			return this.cachedLines;

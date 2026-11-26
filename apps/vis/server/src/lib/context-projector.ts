@@ -505,6 +505,8 @@ export function projectContext(
       case 'mcp.server_failure_resolved':
       case 'file_history.checkpoint':
       case 'file_history.tracked':
+      case 'auto_review.ancestry_recorded':
+      case 'auto_review.decision':
         break;
       default: {
         const _exhaustive: never = rec;

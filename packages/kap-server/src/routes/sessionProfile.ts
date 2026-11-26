@@ -65,7 +65,7 @@ export async function updateSessionProfile(
     workspaceRoot: await workspaceRootOf(core, ctx.workspaceId),
     environmentId: meta.environmentId,
     environmentCwd: meta.environmentCwd,
-    root: ctx.cwd,
+    root: metadata.effectiveCwd,
     title: meta.title,
     lastPrompt: meta.lastPrompt,
     createdAt: meta.createdAt,

@@ -2216,9 +2216,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .a-msg-meta:has(> .a-reply-actions > *) { gap: 2px; }
 .a-msg-meta:has(> .a-reply-actions > *) .a-time {
   margin-inline: 6px;
-  color: light-dark(rgb(0 0 0 / 45%), rgb(255 255 255 / 42%));
-  font-size: var(--ui-c1);
-  line-height: 1.5;
 }
 .chat > .sr-tailrow {
   margin-top: 6px;

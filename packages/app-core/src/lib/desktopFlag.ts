@@ -17,6 +17,12 @@ export function hasDesktopBridge(): boolean {
     (typeof window !== 'undefined' && (window as { kimiDesktop?: unknown }).kimiDesktop !== undefined);
 }
 
+export function sessionLinksSupported(): boolean {
+  type Bridge = { kimiDesktop?: { sessionLinksSupported?: unknown } };
+  const bridge = (globalThis as Bridge).kimiDesktop ?? (typeof window === 'undefined' ? undefined : (window as Bridge).kimiDesktop);
+  return bridge?.sessionLinksSupported === true;
+}
+
 function detect(): DesktopEnv {
   let desktop = typeof __KIMI_CODE_DESKTOP__ !== 'undefined' ? __KIMI_CODE_DESKTOP__ : false;
   let platform: string | null = null;

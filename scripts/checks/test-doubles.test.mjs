@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { compareCounts } from './ratchet.mjs';
-import { countLegacyDoubles, formatReport, isCheckedFile, stubTestNames } from './test-doubles.mjs';
+import { countLegacyDoubles, ENGINE_HARNESS_IMPORTERS, formatReport, isCheckedFile, stubTestNames } from './test-doubles.mjs';
 
 await test('isCheckedFile looks at test sources only and skips the shared kit and the legacy doubles themselves', () => {
   assert.equal(isCheckedFile('packages/kap-server/test/sessions.test.ts'), true);
@@ -12,7 +12,6 @@ await test('isCheckedFile looks at test sources only and skips the shared kit an
   assert.equal(isCheckedFile('packages/testkit/test/model.test.ts'), false);
   assert.equal(isCheckedFile('apps/desktop/e2e/fixtures/model.ts'), false);
   assert.equal(isCheckedFile('packages/agent-core-v2/test/harness/agent.ts'), false);
-  assert.equal(isCheckedFile('apps/vscode/test/fake-provider-harness.ts'), false);
   assert.equal(isCheckedFile('apps/desktop/e2e/README.md'), false);
   assert.equal(isCheckedFile('scripts/checks/test-doubles.test.mjs'), false);
 });
@@ -51,6 +50,66 @@ await test('countLegacyDoubles counts each legacy double per file', () => {
     'inline-openai-stream': { 'packages/klient/test/e2e/matrix.test.ts': 1 },
     'engine-harness-import': { 'packages/acp-server/test/helper.ts': 1 },
   });
+});
+
+await test('countLegacyDoubles counts direct calls to the engine harness provider helpers but not their imports or types', () => {
+  const counts = countLegacyDoubles([
+    {
+      file: 'packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts',
+      text: [
+        "import { createMockProvider, withMockProvider } from '../../harness/scripted-generate';",
+        'type Scripted = ReturnType<typeof createScriptedGenerate>;',
+        'const generate = createMockProvider(async () => ({ parts: [] }));',
+        'const wrapped = withMockProvider(initial, generate);',
+        'const backed = fetchBackedProvider(model.fetch);',
+        'const other = harness.createMockProvider(handler);',
+      ].join('\n'),
+    },
+  ]);
+  assert.deepEqual(counts, { 'engine-mock-provider': { 'packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts': 3 } });
+});
+
+await test('a loop-core unit test may keep the requester-level helper', () => {
+  const counts = countLegacyDoubles([
+    {
+      file: 'packages/agent-core-v2/test/agent/loop/toolAdapter.test.ts',
+      text: "const requester = createMockProviderRequester((_request, signal) => ({ parts: [] }));\nconst listed = createMockProviderRequester([{ parts: [] }]);",
+    },
+  ]);
+  assert.deepEqual(counts, {});
+});
+
+await test('a listed engine harness importer is exempt and names its reason', () => {
+  const file = 'packages/product/test/survey-turns.test.ts';
+  assert.match(ENGINE_HARNESS_IMPORTERS.get(file) ?? '', /testkit model/);
+  const counts = countLegacyDoubles([
+    { file, text: "import { testAgent } from '../../agent-core-v2/test/harness';" },
+    { file: 'packages/product/test/other.test.ts', text: "import { testAgent } from '../../agent-core-v2/test/harness';" },
+  ]);
+  assert.deepEqual(counts, { 'engine-harness-import': { 'packages/product/test/other.test.ts': 1 } });
+});
+
+await test('a new legacy Desktop journey is pointed at tests/e2e, not at the paused Desktop fixtures', () => {
+  const added = formatReport(compareCounts({}, { 'desktop-stub-model': { 'apps/desktop/e2e/new.spec.ts': 1 } })).join('\n');
+  assert.match(added, /instead: write the journey in tests\/e2e/);
+  assert.doesNotMatch(added, /fixtures\/app\.ts/);
+});
+
+await test('a hand-written Kimi service stub counts everywhere except the managed clients\' own protocol tests', () => {
+  const stub = [
+    "if (url.endsWith('/coding/v1/tools')) return Response.json({ title: 'x' });",
+    "expect(JSON.parse(body)).toEqual({ method: 'chat_title', params: {} });",
+    "if (path === '/coding/v1/feedback/upload_url') return uploadUrl();",
+    "if (path === '/coding/v1/feedback/upload_complete') return done();",
+  ].join('\n');
+  const counts = countLegacyDoubles([
+    { file: 'packages/kap-server/test/feedback.test.ts', text: stub },
+    { file: 'packages/oauth/test/managed-tools.test.ts', text: stub },
+    { file: 'packages/agent-core-v2/test/session/title.test.ts', text: "services.title('x');\nconst hold = services.holdNext('title');" },
+  ]);
+  assert.deepEqual(counts['kimi-service-stub'], { 'packages/kap-server/test/feedback.test.ts': 6 });
+  const added = formatReport(compareCounts({}, counts)).join('\n');
+  assert.match(added, /instead: script session titles and feedback with the testkit fake Kimi services/);
 });
 
 await test('a new legacy double fails with the testkit alternative, and a migrated one asks to lower the baseline', () => {

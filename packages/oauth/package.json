@@ -52,6 +52,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@moonshot-ai/testkit": "workspace:^",
     "@types/proper-lockfile": "^4.1.4"
   }
 }

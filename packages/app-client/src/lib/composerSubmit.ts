@@ -63,6 +63,24 @@ const COMMAND_CONTROLS: Record<string, readonly string[]> = { '/swarm': ['on', '
 
 const leaves = (cmdToken: string): boolean => cmdToken === '/new' || cmdToken === '/clear';
 
+export function commandNeedsProjectTrust(command: string): boolean {
+  const parsed = parseSlash(command);
+  if (parsed === null) return false;
+  return leaves(parsed.cmd) ||
+    parsed.cmd === '/compact' ||
+    (parsed.cmd === '/tower' && ['status', 'teardown'].includes(parsed.arg.trim()));
+}
+
+export function isSessionBoundSubmit(decision: SubmitDecision): boolean {
+  return decision.kind === 'submit' ||
+    decision.kind === 'multi-skill-activation' ||
+    decision.kind === 'skill-activation' ||
+    decision.kind === 'skill-command' ||
+    decision.kind === 'unresolved-skill-command' ||
+    decision.kind === 'prompt-command' ||
+    (decision.kind === 'builtin-command' && decision.leave);
+}
+
 export function decideSubmitKind(input: SubmitKindInput): SubmitKind {
   const { text: trimmed, blocked, assembly, skillMentions, skills, skillsLoaded, working, running, queueLength, goalMode } = input;
 

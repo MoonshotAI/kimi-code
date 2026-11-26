@@ -11,7 +11,7 @@ import { environmentIsReady, type EnvironmentGenerationSnapshot, type Environmen
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { IEnvironmentService } from '#/app/environment/environment';
 
@@ -124,7 +124,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     @IEnvironmentService private readonly resolver: IEnvironmentService,
     @ISessionEventBus private readonly eventBus: ISessionEventBus,
     @ISessionContext private readonly session: ISessionContext,
-    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
+    @ISessionProjectInfo private readonly projectInfo: ISessionProjectInfo,
     @IAgentEnvironmentOverlay private readonly overlay: IAgentEnvironmentOverlay,
   ) {
     this.bindingSubscription = this.binding.onDidChange(() => this.changeEmitter.fire());
@@ -150,7 +150,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
         host = undefined;
       }
     }
-    return resolveEffectiveWorkspaceRoots(this.session, binding, this.workspaceInfo, host);
+    return resolveEffectiveWorkspaceRoots(this.session, binding, this.projectInfo, host);
   }
 
   isAvailable(required: readonly EnvironmentCapability[] = []): boolean {

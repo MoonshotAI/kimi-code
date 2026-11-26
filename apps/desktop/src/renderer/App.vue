@@ -273,9 +273,7 @@ const terminalEverOpened = ref(terminalOpen.value);
 watch(terminalOpen, (isOpen) => {
   if (isOpen) terminalEverOpened.value = true;
 });
-const terminalCwd = computed(
-  () => client.visibleWorkspace.value?.root ?? client.status.value.cwd ?? null,
-);
+const terminalCwd = computed(() => workspaces.activePanelRoot);
 function terminalBucketKey(sessionId: string, workspaceId: string | null): string {
   return sessionId === '' ? nativeTerminalDraftKey(workspaceId) : sessionId;
 }
@@ -304,6 +302,8 @@ useJumpList(client, (payload) => {
     if (payload.action === 'new-chat') {
       setSessionIntent('jump_list');
       handleCreateSession();
+    } else if (payload.action === 'open-session') {
+      void client.openSessionLink(payload.sessionId, 'deep_link');
     } else {
       void openWorkspaceByRoot(payload.root, payload.newChat);
     }
@@ -406,6 +406,21 @@ onMounted(() => {
         track('action_invoked', { action: 'retry-connection', source: 'menu' });
         return;
       }
+      if (menuId === 'open-feedback') {
+        if (cancelPendingFeedbackMenu !== null) return;
+        const openFromMenu = (): void => {
+          cancelPendingFeedbackMenu = null;
+          if (anyOverlayOpen.value) return;
+          track('action_invoked', { action: 'open-feedback', source: 'menu' });
+          openGlobalFeedback('menu');
+        };
+        if (initialized.value) {
+          openFromMenu();
+        } else {
+          cancelPendingFeedbackMenu = runWhenInitialized(initialized, openFromMenu);
+        }
+        return;
+      }
       const actionId = MENU_ACTION_TO_SHORTCUT[menuId];
       if (actionId === undefined) return;
       if (
@@ -446,6 +461,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onShortcutKeydown);
+  if (cancelPendingFeedbackMenu !== null) {
+    cancelPendingFeedbackMenu();
+    cancelPendingFeedbackMenu = null;
+  }
   if (offMenuAction !== null) {
     offMenuAction();
     offMenuAction = null;
@@ -479,6 +498,7 @@ onUnmounted(() => {
 });
 
 let offMenuAction: (() => void) | null = null;
+let cancelPendingFeedbackMenu: (() => void) | null = null;
 let offBrowserAutomationUiRequest: (() => void) | null = null;
 let offScreenshotHotkey: (() => void) | null = null;
 let offScreenshotHotkeyResult: (() => void) | null = null;
@@ -517,7 +537,7 @@ const openInService: OpenInService = {
 provide(OpenInServiceKey, openInService);
 
 async function openWorkspaceInDefaultApp(): Promise<void> {
-  const root = client.visibleWorkspace.value?.root ?? client.status.value.cwd;
+  const root = workspaces.activePanelRoot;
   if (!root) return;
   const apps = await openInService.catalog();
   const target = resolveOpenInTarget(
@@ -2259,7 +2279,7 @@ async function handleSubmitDispatch(payload: SubmitPayload, owner: number): Prom
 
 type WorkspaceDialogState =
   | { mode: 'create'; dirs: string[]; hostId?: string }
-  | { mode: 'edit'; id: string; name: string; dirs: string[]; hostId?: string };
+  | { mode: 'edit'; id: string; name: string; dirs: string[]; hostId?: string; primaryImmutable: boolean };
 
 const workspaceDialog = ref<WorkspaceDialogState | null>(null);
 const workspaceDialogBusy = ref(false);
@@ -2284,6 +2304,7 @@ function openWorkspaceEditor(ws: WorkspaceView): void {
     name: full?.name ?? ws.name,
     dirs: [ws.root, ...(full?.additionalDirs ?? [])],
     hostId: ws.hostId,
+    primaryImmutable: full?.kind !== 'managed',
   };
 }
 
@@ -2734,6 +2755,7 @@ function openPr(url: string): void {
       :manage-hosts="() => openHostSettings(undefined, { addIfEmpty: true })"
       :import-project-config="importProjectConfigDirs"
       :busy="workspaceDialogBusy"
+      :primary-immutable="workspaceDialog.mode === 'edit' && workspaceDialog.primaryImmutable"
       @submit="onWorkspaceDialogSubmit"
       @cancel="closeWorkspaceDialog"
     />

@@ -10,6 +10,7 @@ import { toDisposable } from '#/_base/di/lifecycle';
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { drainSessionMetadataWrites } from '#/session/sessionMetadata/sessionMetadataService';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
@@ -22,7 +23,7 @@ import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
-import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
+import { ProjectStateService } from '#/project/state/projectStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import '#/features/reminder/reminderFeature';
@@ -34,7 +35,7 @@ import { IAgentGoalService } from '#/features/goal/goalService';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedulerService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
@@ -180,8 +181,8 @@ import {
   IAgentUserToolService,
   ISessionUsageService,
   ISessionWorkspaceContext,
-  IWorkspaceStateService,
-  IWorkspaceTrust,
+  IProjectStateService,
+  IProjectTrust,
   LifecycleScope,
   AgentMcpService,
   AgentPermissionGate,
@@ -202,7 +203,7 @@ import {
 import {
   type SessionCreatedEvent,
   type SessionWillCloseEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
+} from '#/project/sessionLifecycle/sessionLifecycle';
 import { stubSessionRunGate } from '../stubs';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
@@ -246,15 +247,17 @@ import { stubAgentIdentity } from '../app/agentIdentity/stubs';
 import { stubClientIdentity } from '../app/bootstrap/stubs';
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
-import { guardPromptCachePrefix, PromptCacheGuardedLoopRequester } from './prompt-cache-guard';
 import {
   createScriptedGenerate,
   createMockProvider,
   fetchBackedProvider,
   withMockProvider,
   type MockProvider,
+  type MockProviderOptions,
   type MockProviderResponse,
+  type ScriptedMockProvider,
 } from './scripted-generate';
+import type { CacheBreakOptions, PromptCacheEntry } from '@moonshot-ai/testkit/model';
 import { project as projectContext } from '#/agent/loop/projection';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
@@ -263,7 +266,7 @@ import {
   type WireSnapshotEntry,
 } from './snapshots';
 
-const TEST_HOME_DIR = '/home/test';
+const TEST_HOME_DIR = '/nonexistent';
 
 const MOCK_PROVIDER = {
   type: 'kimi',
@@ -481,6 +484,7 @@ export interface TestModelEndpoint {
 
 export interface TestAgentOptions {
   readonly generate?: MockProvider | undefined;
+  readonly scriptedModelChecks?: MockProviderOptions;
   readonly model?: TestModelEndpoint;
   readonly telemetry?: ITelemetryService | undefined;
   readonly persistence?: WireRecordPersistence | undefined;
@@ -1128,7 +1132,7 @@ class ConfigBackedModelCatalog extends ModelCatalog {
 export class AgentTestContext {
   private readonly serviceOverrides: readonly TestAgentScopedServiceOverride[];
   private readonly options: TestAgentOptions;
-  private readonly scriptedGenerate = createScriptedGenerate();
+  private readonly scriptedGenerate: ReturnType<typeof createScriptedGenerate>;
   private readonly root: Scope;
   private readonly session: Scope;
   private readonly agent: Scope;
@@ -1166,9 +1170,14 @@ export class AgentTestContext {
     this.requireScriptedModel('mockNextProviderResponse');
     this.scriptedGenerate.mockNextProviderResponse(input);
   };
+  readonly expectCacheBreak = (reason: string, options?: CacheBreakOptions): void => {
+    this.promptCacheProvider('expectCacheBreak').expectCacheBreak(reason, options);
+  };
+  readonly promptCache = (): readonly PromptCacheEntry[] => this.promptCacheProvider('promptCache').promptCache();
 
   constructor(overrides: readonly TestAgentServiceOverride[] = [], options: TestAgentOptions = {}) {
     this.options = options;
+    this.scriptedGenerate = createScriptedGenerate(options.scriptedModelChecks);
     if (options.cwd !== undefined) this.cwd = options.cwd;
     this.serviceOverrides = flattenServiceOverrides(overrides);
     this.emitter.on('error', () => { });
@@ -1225,9 +1234,7 @@ export class AgentTestContext {
           reg.defineInstance(
             IProtocolAdapterRegistry,
             createGenerateBackedGateway(
-              guardPromptCachePrefix(
-                options.generate ?? (options.model === undefined ? this.scriptedGenerate.provider : fetchBackedProvider(options.model.fetch)),
-              ),
+              options.generate ?? (options.model === undefined ? this.scriptedGenerate.provider : fetchBackedProvider(options.model.fetch)),
             ),
           );
           reg.defineInstance(
@@ -1347,25 +1354,25 @@ export class AgentTestContext {
               connectionManager: new McpConnectionManager(),
               isBaselineServer: () => true,
             } satisfies ISessionMcpHandle);
-            reg.defineInstance(ISessionWorkspaceInfo, {
+            reg.defineInstance(ISessionProjectInfo, {
               _serviceBrand: undefined,
               ready: Promise.resolve(),
               additionalDirs: [],
               primaryByWorkspace: {},
               onDidChange: Event.None as Event<void>,
-            } satisfies ISessionWorkspaceInfo);
+            } satisfies ISessionProjectInfo);
             reg.defineInstance(ISessionWorkdir, {
               _serviceBrand: undefined,
               environmentId: 'local',
               cwd: this.cwd,
               fs: undefined as never,
             });
-            reg.definePartialInstance(IWorkspaceTrust, {
+            reg.definePartialInstance(IProjectTrust, {
               get: async () => false,
             });
             reg.defineInstance(
-              IWorkspaceStateService,
-              new WorkspaceStateService(this.root.accessor.get(IAppStateService)),
+              IProjectStateService,
+              new ProjectStateService(this.root.accessor.get(IAppStateService)),
             );
             reg.defineDescriptor(
               ISessionWorkspaceContext,
@@ -1512,12 +1519,14 @@ export class AgentTestContext {
       await start();
       this.runtimeStarted = true;
     };
-    (loop as { requester: IAgentLoopService['requester'] }).requester = new PromptCacheGuardedLoopRequester(
-      loop.requester,
-      this.agent.accessor.get(IAgentLoopService),
-      this.agent.accessor.get(IWireService),
-      () => this.restorePersisted(),
-    );
+    const requester = loop.requester;
+    (loop as { requester: IAgentLoopService['requester'] }).requester = {
+      coreRequester: (requesterOptions) => requester.coreRequester(requesterOptions),
+      prepareOperation: async (operationOptions, signal) => {
+        await this.restorePersisted();
+        return requester.prepareOperation(operationOptions, signal);
+      },
+    };
     adoptAgent!();
     this.installInteractionBridge();
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
@@ -2108,11 +2117,11 @@ export class AgentTestContext {
     }
   }
 
-  appendRichToolExchange(): void {
+  appendRichToolExchange(text = 'inspect this image'): void {
     this.appendMessage({
       role: 'user',
       content: [
-        { type: 'text', text: 'inspect this image' },
+        { type: 'text', text },
         {
           type: 'image_url',
           imageUrl: { url: 'ms://image-1', id: 'image-1' },
@@ -2260,10 +2269,28 @@ export class AgentTestContext {
     }
     await this.closeWire();
     this.root.dispose();
+    this.scriptedGenerate.retire();
+    await Promise.all([
+      this.agent.instantiation.disposeAsync(),
+      this.session.instantiation.disposeAsync(),
+      this.root.instantiation.disposeAsync(),
+    ]);
+    await drainSessionMetadataWrites();
   }
 
   async dispose(): Promise<void> {
     await this.close();
+  }
+
+  private promptCacheProvider(api: string): ScriptedMockProvider {
+    if (this.options.model !== undefined) {
+      throw new Error(`${api} belongs to the built-in harness model, but this agent uses the testkit model; call model.${api}(...) instead`);
+    }
+    const provider = this.options.generate ?? this.scriptedGenerate.provider;
+    if (!isScriptedProvider(provider)) {
+      throw new Error(`${api} needs the built-in harness model or a provider from createMockProvider(); this provider does not record the prompt cache`);
+    }
+    return provider;
   }
 
   private requireScriptedModel(api: string): void {
@@ -3053,4 +3080,8 @@ function drainPrompts(loop: IAgentLoopService): void {
   if (snapshot.activePromptId !== undefined) {
     loop.cancel({ promptId: snapshot.activePromptId });
   }
+}
+
+function isScriptedProvider(provider: MockProvider): provider is ScriptedMockProvider {
+  return 'expectCacheBreak' in provider;
 }

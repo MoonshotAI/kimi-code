@@ -9,6 +9,7 @@ export interface ActivitySummaryTool {
   name: string;
   arg: string;
   status: 'ok' | 'running' | 'error' | 'cancelled';
+  autoReviewing?: boolean;
   id?: string;
   output?: readonly string[];
 }
@@ -150,9 +151,13 @@ function currentClause(
   current: ActivitySummaryItem,
   providers: readonly ActivityClauseProvider[],
   finished: Map<string, KindAcc>,
+  autoReviewHint: boolean,
 ): SummaryClause {
   if (current.kind === 'thinking') {
     return { fragments: [{ text: t('thinking.streaming'), tone: 'normal' }] };
+  }
+  if (autoReviewHint && current.tool.autoReviewing) {
+    return { fragments: [{ text: t('tools.activity.autoReviewing'), tone: 'normal' }] };
   }
   const kind = clauseKind(current.tool.name);
   const provided = providerFor(providers, kind)?.doing?.(current.tool, finished.get(kind)?.tools ?? []);
@@ -178,6 +183,7 @@ export function summarizeLive(
   items: ActivitySummaryItem[],
   current: ActivitySummaryItem | null,
   providers: readonly ActivityClauseProvider[] = [],
+  autoReviewHint = true,
 ): LiveSummary {
   const rest = items.filter(
     (item) => item !== current && !(item.kind === 'tool' && item.tool.status === 'running'),
@@ -201,7 +207,7 @@ export function summarizeLive(
     const tail = providerFor(providers, kind)?.tail?.(byKind.get(kind)?.tools ?? [], true);
     if (tail) done.push(tail);
   }
-  const currentC = current === null ? null : currentClause(t, current, providers, byKind);
+  const currentC = current === null ? null : currentClause(t, current, providers, byKind, autoReviewHint);
   const all = currentC ? [currentC, ...done] : done;
   const everything = aggregate(items, providers);
   return { current: currentC, done, plain: plainText(all), detail: detailText(providers, everything.order, everything.byKind) };

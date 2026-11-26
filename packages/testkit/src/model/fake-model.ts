@@ -7,14 +7,16 @@ import { resolveUsage } from '#/model/emission';
 import { createFetchTransport } from '#/model/fetch-transport';
 import { HoldRegistry, type Hold } from '#/model/holds';
 import { serveHttp, type HttpEndpoint } from '#/model/http-transport';
-import { builtInLaneOf, LaneState, type Lane, type LaneMatcher } from '#/model/lanes';
+import { builtInLaneOf, LaneState, promptCacheRoleOf, type Lane, type LaneMatcher } from '#/model/lanes';
 import { play, type Playback, type PlaybackSink } from '#/model/playback';
+import { PromptCacheLedger, type CacheBreakOptions, type PromptCacheEntry } from '#/model/prompt-cache';
 import type { EncodeContext, ProtocolCodec } from '#/model/protocols/codec';
 import { codecForPath } from '#/model/protocols/registry';
 import { factsOf, RecordedRequest, type RequestFacts } from '#/model/record';
 import { held, say } from '#/model/steps';
 import type { IncomingRequest } from '#/model/transport';
-import type { ErrorSpec, ModelRequest, ScriptedStep, Step, WaitOptions } from '#/model/types';
+import { fileObjectOf, uploadFactsOf, type FileUpload } from '#/model/uploads';
+import type { ErrorSpec, ModelRequest, ReplyStep, ScriptedStep, Step, WaitOptions } from '#/model/types';
 import { waitForModelEvent } from '#/model/wait';
 
 export interface FakeModelOptions {
@@ -24,6 +26,8 @@ export interface FakeModelOptions {
   readonly intervalMs?: number;
   readonly checkMessages?: boolean;
   readonly checkCalls?: boolean;
+  readonly checkPromptCache?: boolean;
+  readonly reportCachedTokens?: boolean;
   readonly sideReply?: string;
 }
 
@@ -46,6 +50,11 @@ export interface FakeModel {
   waitForHeldTurn(options?: WaitOptions): Promise<void>;
   releaseHeld(): void;
   callId(requestIndex: number, callIndex: number): string;
+  uploads(): readonly FileUpload[];
+  holdUploads(): void;
+  promptCache(): readonly PromptCacheEntry[];
+  expectCacheBreak(reason: string, options?: CacheBreakOptions): void;
+  promptCacheProblems(): readonly string[];
   problems(): readonly string[];
   verify(): void;
   close(): Promise<void>;
@@ -71,9 +80,12 @@ class FakeModelImpl implements FakeModel {
   private readonly routes: LaneState[] = [];
   private readonly records: RecordedRequest[] = [];
   private readonly recordedProblems: string[] = [];
+  private readonly cache = new PromptCacheLedger();
   private readonly arrivalListeners = new Set<() => void>();
   private readonly stateListeners = new Set<() => void>();
   private readonly activeSinks = new Set<PlaybackSink>();
+  private readonly fileUploads: { -readonly [K in keyof FileUpload]: FileUpload[K] }[] = [];
+  private uploadsHeld = false;
   private endpoint: HttpEndpoint | undefined;
   private starting: Promise<HttpEndpoint> | undefined;
 
@@ -181,6 +193,29 @@ class FakeModelImpl implements FakeModel {
     return `call_${requestIndex}_${callIndex}`;
   }
 
+  uploads(): readonly FileUpload[] {
+    return this.fileUploads.map((upload) => ({ ...upload }));
+  }
+
+  holdUploads(): void {
+    this.uploadsHeld = true;
+  }
+
+  promptCache(): readonly PromptCacheEntry[] {
+    return this.cache.entries();
+  }
+
+  expectCacheBreak(reason: string, options: CacheBreakOptions = {}): void {
+    if (this.options.checkPromptCache === false) {
+      throw new TestkitError('expectCacheBreak() declares a break for the prompt cache check, which this model was created without (checkPromptCache: false)');
+    }
+    this.cache.expect(reason, options);
+  }
+
+  promptCacheProblems(): readonly string[] {
+    return this.options.checkPromptCache === false ? [] : this.cache.problems();
+  }
+
   problems(): readonly string[] {
     return [...this.recordedProblems];
   }
@@ -195,6 +230,7 @@ class FakeModelImpl implements FakeModel {
     for (const { name, request } of this.holds.unsettled()) {
       problems.push(`hold ${JSON.stringify(name)} was reached by request #${request.index} but never released, failed, or cut`);
     }
+    problems.push(...this.promptCacheProblems());
     if (problems.length > 0) throw new FakeModelVerificationError(problems);
   }
 
@@ -224,6 +260,15 @@ class FakeModelImpl implements FakeModel {
     const path = incoming.path.split('?')[0] ?? incoming.path;
     if (incoming.method === 'GET' && path.endsWith('/models')) {
       this.respondModels(incoming, sink);
+      return;
+    }
+    if (incoming.method === 'POST' && path.endsWith('/files')) {
+      await this.respondUpload(incoming, sink);
+      return;
+    }
+    const fileId = incoming.method === 'GET' ? /\/files\/([^/]+)$/.exec(path)?.[1] : undefined;
+    if (fileId !== undefined) {
+      this.respondFile(incoming, fileId, sink);
       return;
     }
     const codec = codecForPath(path);
@@ -266,12 +311,20 @@ class FakeModelImpl implements FakeModel {
     const record = new RecordedRequest(this.records.length, lane.name, lane.nextIndex, facts, () => this.notify(this.stateListeners));
     this.records.push(record);
     lane.record(record);
+    this.cache.observe(
+      { request: record.index, lane: lane.name, role: promptCacheRoleOf(facts), protocol: codec.name },
+      codec.promptPrefix(body, path),
+    );
     this.notify(this.arrivalListeners);
     if (this.options.checkMessages !== false) {
       for (const problem of messageProblems(view.messages)) this.problem(`request #${record.index} (${lane.name}): ${problem}`);
     }
     const step = await this.resolveStep(lane, record, codec, sink);
-    if (step === undefined) return;
+    if (step === undefined) {
+      if (record.state === 'failed') this.cache.reject(record.index);
+      return;
+    }
+    if (step.kind === 'error' || step.kind === 'network-error' || (step.kind === 'raw' && step.status >= 400)) this.cache.reject(record.index);
     if (step.kind === 'reply' && this.options.checkCalls !== false) {
       for (const problem of callProblems(step, record.view.tools)) this.problem(`request #${record.index} (${lane.name}): ${problem}`);
     }
@@ -284,6 +337,7 @@ class FakeModelImpl implements FakeModel {
       throw error;
     }
     if (sink.gone && !record.settled) record.transition('aborted');
+    if (record.state === 'failed' || (record.state === 'cut' && !sink.headSent)) this.cache.reject(record.index);
   }
 
   private async resolveStep(lane: LaneState, record: RecordedRequest, codec: ProtocolCodec, sink: PlaybackSink): Promise<ScriptedStep | undefined> {
@@ -344,9 +398,9 @@ class FakeModelImpl implements FakeModel {
 
   private playbackOf(step: ScriptedStep, record: RecordedRequest, codec: ProtocolCodec, sink: PlaybackSink): Playback {
     const context: EncodeContext = {
-      responseId: `testkit-${record.index}`,
+      responseId: (step.kind === 'reply' ? step.responseId : undefined) ?? `testkit-${record.index}`,
       model: record.view.model ?? DEFAULT_MODELS[0] ?? 'testkit-model',
-      usage: step.kind === 'reply' ? resolveUsage(step, record.rawBody) : null,
+      usage: step.kind === 'reply' ? resolveUsage(step, record.rawBody, this.cachedTokensOf(step, record)) : null,
       callId: (callIndex, call) => call.id ?? this.callId(record.index, callIndex),
     };
     return {
@@ -359,6 +413,11 @@ class FakeModelImpl implements FakeModel {
       split: this.options.chunking === undefined ? undefined : byteSplitter(this.options.chunking, record.lane, record.laneIndex),
       problem: (message) => this.problem(`request #${record.index}: ${message}`),
     };
+  }
+
+  private cachedTokensOf(step: ReplyStep, record: RecordedRequest): number {
+    if (this.options.reportCachedTokens !== true || step.usage !== undefined) return 0;
+    return this.cache.reusedTokens(record.index);
   }
 
   private classify(facts: RequestFacts): LaneState {
@@ -389,6 +448,52 @@ class FakeModelImpl implements FakeModel {
     }
     const models = this.options.models ?? DEFAULT_MODELS;
     respondPlain(sink, 200, { object: 'list', data: models.map((id) => ({ id, object: 'model', created: 0, owned_by: 'testkit' })) });
+  }
+
+  private async respondUpload(incoming: IncomingRequest, sink: PlaybackSink): Promise<void> {
+    if (!this.authorized(incoming)) {
+      this.problem(`request POST ${incoming.path} used the wrong API key`);
+      respondPlain(sink, 401, { error: { message: 'Invalid API key', type: 'invalid_request_error', code: 'invalid_api_key' } });
+      return;
+    }
+    const index = this.fileUploads.length;
+    const upload = {
+      index,
+      id: `file-${index}`,
+      ...uploadFactsOf(incoming),
+      contentType: incoming.headers['content-type'] ?? '',
+      rawBody: incoming.body,
+      state: this.uploadsHeld ? ('held' as const) : ('stored' as const),
+    };
+    this.fileUploads.push(upload);
+    if (upload.state === 'held') {
+      await new Promise<void>((resolve) => {
+        sink.goneSignal.addEventListener('abort', () => resolve(), { once: true });
+        this.closing.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      if (sink.gone) {
+        this.fileUploads[index] = { ...upload, state: 'aborted' };
+        return;
+      }
+      sink.resetConnection();
+      return;
+    }
+    respondPlain(sink, 200, fileObjectOf(upload));
+  }
+
+  private respondFile(incoming: IncomingRequest, id: string, sink: PlaybackSink): void {
+    if (!this.authorized(incoming)) {
+      this.problem(`request GET ${incoming.path} used the wrong API key`);
+      respondPlain(sink, 401, { error: { message: 'Invalid API key', type: 'invalid_request_error', code: 'invalid_api_key' } });
+      return;
+    }
+    const upload = this.fileUploads.find((candidate) => candidate.id === id);
+    if (upload === undefined) {
+      this.problem(`request GET ${incoming.path} asked for a file that was never uploaded`);
+      respondPlain(sink, 404, { error: { message: `No file ${id}`, type: 'not_found' } });
+      return;
+    }
+    respondPlain(sink, 200, fileObjectOf(upload));
   }
 
   private claimHold(step: Step): void {

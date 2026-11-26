@@ -282,6 +282,22 @@ describe('main entry command handling', () => {
     expect(runShell).not.toHaveBeenCalled();
   });
 
+  it('prints an option error raised after startup checks and exits 1', async () => {
+    const { OptionConflictError } = await vi.importActual<typeof OptionsModule>('../../src/cli/options.js');
+    const opts: CLIOptions = { ...defaultOpts(), worktree: 'fix-login' };
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'shell' });
+    mocks.runUpdatePreflight.mockResolvedValue('continue');
+    mocks.runShell.mockRejectedValueOnce(new OptionConflictError('-w/--worktree is experimental.'));
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    try {
+      expect(await runHandleMainCommand(opts)).toBe(1);
+      expect(stderr).toHaveBeenCalledWith('error: -w/--worktree is experimental.\n');
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
   it('does not force-exit from the reusable handler in print mode', async () => {
     const opts: CLIOptions = { ...defaultOpts(), prompt: 'explain the repo' };
     mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'print' });
