@@ -768,14 +768,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.flashes.flash(message, durationMs);
 	}
 
-	private isNonSearchOverlayFocused(): boolean {
-		return this.isOverlayFocused() && this.activeSearch?.overlay?.isFocused() !== true;
-	}
-
 	/** Focused overlays and components that capture viewport input receive viewport keys instead of the transcript. */
 	private shouldDeferViewportInput(): boolean {
 		if (this.getFocusedComponent()?.capturesViewportInput) return true;
-		return this.isNonSearchOverlayFocused();
+		return this.isOverlayFocused() && this.activeSearch?.overlay?.isFocused() !== true;
 	}
 
 	private clearComponentMouseGesture(): void {
@@ -844,7 +840,6 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		const keybindings = getKeybindings();
 		const isRelease = isKeyRelease(data);
-		if (this.isNonSearchOverlayFocused()) return undefined;
 		// When the primary scroll view has nothing to scroll (short content, or a
 		// full-screen component mounted as the layout root), let navigation keys
 		// fall through to the focused component instead of consuming them.
@@ -976,7 +971,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private applyMouseDispatchResult(event: TuiMouseEvent, result: TuiMouseDispatchResult): boolean {
 		const focusTarget = this.resolveMouseFocusTarget(result.focusTarget ?? result.target.component);
-		const shouldFocus = result.focus === true && event.type !== "wheel";
+		const shouldFocus = result.focus === true && !(this.activeSearch && event.type === "wheel");
 		const focusChanged = shouldFocus && this.getFocusedComponent() !== focusTarget;
 		if (shouldFocus) {
 			if (this.activeSearch && focusTarget !== this.activeSearch.component) {

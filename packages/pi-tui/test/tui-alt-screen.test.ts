@@ -2987,31 +2987,6 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("defers search shortcut to a focused non-search overlay", async () => {
-		const terminal = new VirtualTerminal(60, 8);
-		const tui = new TuiAltScreen(terminal);
-		tui.addChild(new Text("alpha\nbeta\ngamma", 0, 0));
-		const overlay = new InputOverlay();
-		tui.start();
-		await terminal.waitForRender();
-
-		const handle = tui.showOverlay(overlay);
-		await terminal.waitForRender();
-		assert.strictEqual(overlay.focused, true);
-
-		terminal.sendInput("\x06");
-		await terminal.waitForRender();
-		assert.deepStrictEqual(overlay.inputs, ["\x06"]);
-		assert.ok(!terminal.getViewport().some((line) => line.includes("Find in transcript")));
-
-		handle.hide();
-		await terminal.waitForRender();
-		terminal.sendInput("\x06");
-		await terminal.waitForRender();
-		assert.ok(terminal.getViewport().some((line) => line.includes("Find in transcript")));
-		tui.stop();
-	});
-
 	it("defers search shortcut and ignores openSearch when layoutRoot has no scroll view, but keeps search for short scrollable layouts", async () => {
 		const terminal = new VirtualTerminal(60, 8);
 		const tui = new TuiAltScreen(terminal);
@@ -3113,6 +3088,10 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 		assert.strictEqual(editor.getText(), "hello");
 		assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+
+		terminal.sendInput(`\x1b[<64;3;${wheelStripRow + 1}M`);
+		await terminal.waitForRender();
+		assert.strictEqual(tui.getFocusedComponent(), wheelFocusRegion);
 		tui.stop();
 	});
 });
