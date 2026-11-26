@@ -154,6 +154,26 @@ describe('worktree setup engine', () => {
     expect(existsSync(creation.target.path)).toBe(false);
   });
 
+  it('stops and removes the worktree when cancelled while the included files are copied', async () => {
+    const root = await createRepo('include-cancel');
+    await writeFile(join(root, '.worktreeinclude'), '.env\n');
+    const controller = new AbortController();
+    const creation = await WorktreeCreation.plan({
+      repoRoot: root,
+      projectDir: join(scratch, 'include-cancel-worktrees'),
+      osHomeDir: scratch,
+      request: { source_branch: 'main' },
+      copyIncludedFiles: async () => {
+        controller.abort();
+        return [];
+      },
+    });
+
+    expect(await creation.run(progressOf(creation), controller.signal)).toEqual({ kind: 'stopped', step: 'include' });
+    expect(existsSync(creation.target.path)).toBe(false);
+    expect(git(root, 'branch', '--list', creation.target.branch)).toBe('');
+  });
+
   it('fails with a timeout and creates nothing when the fetch hangs', async () => {
     const root = await createRepo('fetch-timeout');
     hangingRemote(root);

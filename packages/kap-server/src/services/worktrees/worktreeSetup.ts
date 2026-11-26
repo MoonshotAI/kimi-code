@@ -319,15 +319,18 @@ export class WorktreeCreation {
     const copy = this.copyIncludes;
     if (copy === undefined) return { kind: 'done', value: undefined };
     setStep(progress, 'include', { state: 'running', output: undefined });
+    let failure: string | undefined;
     try {
       await copy({ sourceRoot: this.options.repoRoot, worktreePath: this.target.path }, { signal });
     } catch (error) {
-      if (signal.aborted) {
-        setStep(progress, 'include', { state: 'stopped' });
-        return { kind: 'stopped', step: 'include' };
-      }
-      const output = error instanceof Error ? error.message : String(error);
-      setStep(progress, 'include', { state: 'failed', output });
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    if (signal.aborted) {
+      setStep(progress, 'include', { state: 'stopped' });
+      return { kind: 'stopped', step: 'include' };
+    }
+    if (failure !== undefined) {
+      setStep(progress, 'include', { state: 'failed', output: failure });
       return { kind: 'failed', step: 'include', failure: { kind: 'create_failed' } };
     }
     setStep(progress, 'include', { state: 'done', output: undefined });
