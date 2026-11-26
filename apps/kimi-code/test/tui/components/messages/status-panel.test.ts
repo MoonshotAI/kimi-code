@@ -246,4 +246,35 @@ describe('status panel report lines', () => {
     expect(personalOutput).not.toContain('Workspace');
     expect(personalOutput).not.toMatch(/^\s*Plan\s{2,}/m);
   });
+
+  it('surfaces a live workspace lookup error instead of displaying stale cached workspace rows', () => {
+    const output = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinkingEffort: 'max',
+      permissionMode: 'manual',
+      planMode: false,
+      towerMode: false,
+      towerAvailable: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+      managedWorkspace: {
+        hasBusinessWorkspace: true,
+        statusWorkspaceLine: 'Alice · Stale Corp',
+        planLabel: 'Premium',
+      },
+      managedWorkspaceError: 'Failed to fetch workspaces: HTTP 503',
+    })
+      .map(strip)
+      .join('\n');
+
+    expect(output).toContain('Workspace    Failed to fetch workspaces: HTTP 503');
+    expect(output).not.toContain('Stale Corp');
+    expect(output).not.toMatch(/^\s*Plan\s{2,}/m);
+  });
 });

@@ -114,7 +114,8 @@ export class KimiForCodingProvider implements ModelProvider {
         } catch (error) {
           const is401 = error instanceof APIStatusError && error.statusCode === 401;
           if (!is401) throw error;
-          const providerCode = (error as { readonly providerErrorCode?: unknown }).providerErrorCode ?? error.code;
+          const providerCode =
+            error.providerErrorCode ?? error.details?.['providerErrorCode'] ?? error.code;
           if (isBusinessMembershipRevokedCode(providerCode)) {
             throw new KimiError(
               ErrorCodes.PROVIDER_AUTH_ERROR,

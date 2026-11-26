@@ -112,6 +112,7 @@ export class APIStatusError extends ChatProviderError {
   readonly requestId: string | null;
   readonly retryAfterMs: number | null;
   readonly traceId: string | null;
+  readonly providerErrorCode?: string;
   override readonly retryable: boolean;
 
   constructor(
@@ -123,6 +124,7 @@ export class APIStatusError extends ChatProviderError {
     diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     codeOrTraceId?: string | null,
     traceId?: string | null,
+    providerErrorCode?: string,
   ) {
     const diagnostics =
       diagnosticsOrTraceId !== null && typeof diagnosticsOrTraceId === 'object'
@@ -148,6 +150,7 @@ export class APIStatusError extends ChatProviderError {
           requestId: requestId ?? null,
           traceId: resolvedTraceId ?? null,
           diagnostics: diagnostics ?? {},
+          ...(providerErrorCode !== undefined ? { providerErrorCode } : {}),
         },
       },
       diagnostics,
@@ -158,6 +161,9 @@ export class APIStatusError extends ChatProviderError {
     this.requestId = requestId ?? null;
     this.retryAfterMs = retryAfterMs ?? null;
     this.traceId = resolvedTraceId ?? null;
+    if (providerErrorCode !== undefined) {
+      this.providerErrorCode = providerErrorCode;
+    }
     this.retryable = retryable;
   }
 }
@@ -627,7 +633,11 @@ export function errorFromLlmMessage(
     case 'request_structure':
     case 'image_format':
     case 'auth':
-    case 'status':
+    case 'status': {
+      const upstreamCode =
+        typeof error.code === 'string' && error.code.length > 0 && !isProviderErrorCode(error.code)
+          ? error.code
+          : undefined;
       return new APIStatusError(
         error.statusCode,
         error.message,
@@ -637,7 +647,9 @@ export function errorFromLlmMessage(
         diagnostics,
         undefined,
         traceIdFromHeadersRecord(error.headers),
+        upstreamCode,
       );
+    }
     case 'empty_response':
       return new APIEmptyResponseError(error.message, {
         finishReason: error.finishReason,

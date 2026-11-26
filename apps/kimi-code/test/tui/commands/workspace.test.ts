@@ -209,4 +209,32 @@ describe('handleWorkspaceCommand', () => {
     expect(host.authFlow.handleBusinessMembershipRevoked).toHaveBeenCalledTimes(1);
     expect(host.showError).toHaveBeenCalledWith(BUSINESS_MEMBERSHIP_REVOKED_MESSAGE);
   });
+
+  it('defers mounting the selector when a tool approval arrives while workspaces are loading', async () => {
+    const state = {
+      editorReplacementMounted: false,
+      activeDialog: null as string | null,
+      livePane: {
+        pendingApproval: null as object | null,
+        pendingQuestion: null as object | null,
+      },
+    };
+    const { host } = createHostStub({});
+    (host as unknown as { state: typeof state }).state = state;
+    host.harness.auth.listWorkspaces = vi.fn(async () => {
+      state.livePane.pendingApproval = { id: 'approval-1' };
+      return {
+        kind: 'ok' as const,
+        workspaces: makeWorkspaces(),
+      };
+    });
+
+    await handleWorkspaceCommand(host);
+
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+    expect(host.showStatus).toHaveBeenCalledWith(
+      'Finish or dismiss the active prompt before switching workspaces.',
+      'warning',
+    );
+  });
 });

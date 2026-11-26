@@ -969,4 +969,38 @@ describe('OAuthManager.switchWorkspace', () => {
       refreshToken: 'rt-personal-next',
     });
   });
+
+  it('retains the rotated token in memory and marks committed=true when storage.save fails after switch', async () => {
+    const storage = new InMemoryStorage();
+    await storage.save(
+      'kimi-code',
+      makeToken({
+        accessToken: 'at-before',
+        refreshToken: 'rt-before',
+        expiresAt: currentNow + 7200,
+      }),
+    );
+    vi.spyOn(storage, 'save').mockRejectedValueOnce(new Error('ENOSPC: no space left on device'));
+    const switchedToken = makeToken({
+      accessToken: 'at-committed',
+      refreshToken: 'rt-committed',
+      expiresAt: currentNow + 7200,
+    });
+    const mgr = new OAuthManager({
+      config,
+      storage,
+      now,
+      switchWorkspaceImpl: vi.fn(async () => switchedToken),
+    });
+
+    const caught = await mgr
+      .switchWorkspace({ kind: 'business', businessId: 'biz-1' })
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(OAuthWorkspaceSwitchError);
+    expect((caught as OAuthWorkspaceSwitchError).committed).toBe(true);
+    expect((caught as OAuthWorkspaceSwitchError).token?.accessToken).toBe('at-committed');
+    await expect(mgr.ensureFresh()).resolves.toBe('at-committed');
+    await expect(mgr.getCachedAccessToken()).resolves.toBe('at-committed');
+  });
 });

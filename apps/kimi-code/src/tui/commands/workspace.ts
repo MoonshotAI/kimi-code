@@ -11,6 +11,19 @@ import type { SlashCommandHost } from './dispatch';
 
 const NOT_LOGGED_IN_MESSAGE = 'Not logged in to Kimi Code. Send /login to authenticate.';
 const NO_BUSINESS_WORKSPACES_MESSAGE = 'No business workspaces available for this account.';
+const ACTIVE_PROMPT_DEFER_MESSAGE =
+  'Finish or dismiss the active prompt before switching workspaces.';
+
+function hasBlockingPrompt(host: SlashCommandHost): boolean {
+  const state = host.state as SlashCommandHost['state'] | undefined;
+  if (state === undefined) return false;
+  return (
+    state.editorReplacementMounted ||
+    state.activeDialog !== null ||
+    state.livePane.pendingApproval !== null ||
+    state.livePane.pendingQuestion !== null
+  );
+}
 
 function workspaceSelectionLabel(workspace: ManagedWorkspace): string {
   if (workspace.kind === 'business') return workspace.name;
@@ -51,6 +64,11 @@ export async function handleWorkspaceCommand(host: SlashCommandHost): Promise<vo
     return;
   }
 
+  if (hasBlockingPrompt(host)) {
+    host.showStatus(ACTIVE_PROMPT_DEFER_MESSAGE, 'warning');
+    return;
+  }
+
   const listResult = await host.harness.auth.listWorkspaces(DEFAULT_OAUTH_PROVIDER_NAME);
   if (listResult.kind === 'error') {
     if (isBusinessMembershipRevokedCode(listResult.errorCode)) {
@@ -64,6 +82,11 @@ export async function handleWorkspaceCommand(host: SlashCommandHost): Promise<vo
   if (!hasBusinessWorkspace) {
     host.setAppState({ managedWorkspace: { hasBusinessWorkspace: false } });
     host.showStatus(NO_BUSINESS_WORKSPACES_MESSAGE);
+    return;
+  }
+
+  if (hasBlockingPrompt(host)) {
+    host.showStatus(ACTIVE_PROMPT_DEFER_MESSAGE, 'warning');
     return;
   }
 

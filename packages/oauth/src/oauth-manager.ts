@@ -4,7 +4,13 @@ import { dirname } from 'node:path';
 
 import lockfile from 'proper-lockfile';
 
-import { DeviceCodeTimeoutError, OAuthAccessDeniedError, OAuthError, OAuthUnauthorizedError } from './errors';
+import {
+  DeviceCodeTimeoutError,
+  OAuthAccessDeniedError,
+  OAuthError,
+  OAuthUnauthorizedError,
+  OAuthWorkspaceSwitchError,
+} from './errors';
 import type { WorkspaceTarget } from './managed-workspaces';
 import {
   pollDeviceToken,
@@ -94,6 +100,7 @@ export class OAuthManager {
 
   private inFlightRefresh: { promise: Promise<string>; force: boolean } | undefined;
   private inFlightSwitch: Promise<TokenInfo> | undefined;
+  private volatileToken: TokenInfo | undefined;
 
   constructor(options: OAuthManagerOptions) {
     this.config = options.config;
@@ -140,6 +147,9 @@ export class OAuthManager {
   }
 
   private async loadState(): Promise<TokenState> {
+    if (this.volatileToken !== undefined) {
+      return classifyToken(this.volatileToken);
+    }
     return classifyToken(await this.storage.load(this.config.name));
   }
 
@@ -202,6 +212,7 @@ export class OAuthManager {
   }
 
   async logout(): Promise<void> {
+    this.volatileToken = undefined;
     await this.storage.remove(this.config.name);
   }
 
@@ -262,7 +273,19 @@ export class OAuthManager {
         );
       }
       const switched = await this.switchImpl(this.config, state.token.refreshToken, target);
-      await this.storage.save(this.config.name, switched);
+      try {
+        await this.storage.save(this.config.name, switched);
+        this.volatileToken = undefined;
+      } catch (saveError) {
+        this.volatileToken = switched;
+        this.notifyRefresh({ success: true });
+        throw new OAuthWorkspaceSwitchError(
+          `Workspace switched, but failed to persist credentials: ${
+            saveError instanceof Error ? saveError.message : String(saveError)
+          }`,
+          { committed: true, token: switched, cause: saveError },
+        );
+      }
       this.notifyRefresh({ success: true });
       return switched;
     } finally {
@@ -332,6 +355,7 @@ export class OAuthManager {
       try {
         const refreshed = await this.refreshImpl(this.config, activeToken.refreshToken);
         await this.storage.save(this.config.name, refreshed);
+        this.volatileToken = undefined;
         this.notifyRefresh({ success: true });
         return refreshed.accessToken;
       } catch (error) {
@@ -378,6 +402,7 @@ export class OAuthManager {
         const result = await this.pollImpl(this.config, auth.deviceCode);
         if (result.kind === 'success') {
           await this.storage.save(this.config.name, result.token);
+          this.volatileToken = undefined;
           return result.token;
         }
         if (result.kind === 'denied') {

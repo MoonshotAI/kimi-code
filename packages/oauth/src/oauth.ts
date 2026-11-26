@@ -282,6 +282,12 @@ export async function switchWorkspaceToken(
   target: WorkspaceTarget,
   options: RefreshOptions = {},
 ): Promise<TokenInfo> {
+  if (target.kind === 'business' && target.businessId.trim().length === 0) {
+    throw new OAuthWorkspaceSwitchError(
+      'Business workspace target requires a non-empty businessId.',
+      { committed: false },
+    );
+  }
   const businessId = target.kind === 'business' ? target.businessId : '';
   return postTokenGrantWithRetry(
     config,

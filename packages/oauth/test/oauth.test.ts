@@ -728,4 +728,15 @@ describe('switchWorkspaceToken', () => {
     expect((err as OAuthWorkspaceSwitchError).oauthError).toBe('invalid_grant');
     expect(server.recorded).toHaveLength(1);
   });
+
+  it('rejects business workspace targets with an empty businessId before sending a request', async () => {
+    const err = await switchWorkspaceToken(flowConfig(), 'rt-valid', {
+      kind: 'business',
+      businessId: '   ',
+    }).catch((error: unknown) => error);
+
+    expect(err).toBeInstanceOf(OAuthWorkspaceSwitchError);
+    expect((err as OAuthWorkspaceSwitchError).committed).toBe(false);
+    expect(server.recorded).toHaveLength(0);
+  });
 });

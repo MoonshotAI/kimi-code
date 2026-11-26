@@ -464,4 +464,97 @@ describe('managed workspace state sync', () => {
     });
     expect(appState.managedWorkspace).toBeNull();
   });
+
+  it('activates the new default model during a streaming workspace switch when the current alias was removed', async () => {
+    const { host, session, appState } = makeHost({ withSession: true, defaultModel: 'k2-next' });
+    (appState as Record<string, unknown>)['streamingPhase'] = 'streaming';
+    appState.model = 'enterprise-only-model';
+    host.harness.getConfig = vi.fn(async () => ({
+      defaultModel: 'k2-next',
+      models: {
+        'k2-next': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-for-coding',
+          maxContextSize: 256_000,
+        },
+      },
+      providers: {},
+    }));
+    host.harness.auth['switchWorkspace'] = vi.fn(async () => ({
+      providerName: 'managed:kimi-code',
+      ok: true as const,
+      target: { kind: 'personal' as const },
+    }));
+
+    await new AuthFlowController(host).switchWorkspace(
+      { kind: 'personal' },
+      {
+        kind: 'personal',
+        key: 'personal',
+        target: { kind: 'personal' },
+        name: 'Alice',
+        kindLabel: 'Personal workspace',
+        current: false,
+        disabled: false,
+        switchable: true,
+        roles: ['owner'],
+      },
+    );
+
+    expect(session!.setModel).toHaveBeenCalledWith('k2-next');
+    expect(appState.model).toBe('k2-next');
+  });
+
+  it('clears stale workspace without setting authRequired when active model uses a custom provider', async () => {
+    const { host, appState } = makeHost({ defaultModel: 'custom-gpt' });
+    appState.model = 'custom-gpt';
+    (appState as Record<string, unknown>)['availableModels'] = {
+      'custom-gpt': {
+        provider: 'custom-openai',
+        model: 'gpt-4o',
+        maxContextSize: 128_000,
+      },
+    };
+    appState.managedWorkspace = {
+      hasBusinessWorkspace: true,
+      statusWorkspaceLine: 'Alice · Old Corp',
+    };
+    host.harness.auth['status'] = vi.fn(async () => ({
+      providers: [{ providerName: 'managed:kimi-code', hasToken: true }],
+    }));
+    host.harness.auth['getAccountProfile'] = vi.fn(async () => ({
+      kind: 'error' as const,
+      status: 401,
+      errorCode: 'REASON_BUSINESS_MEMBER_REMOVED',
+      message: 'Removed',
+    }));
+
+    await new AuthFlowController(host).refreshManagedWorkspaceInBackground();
+
+    expect(appState.managedWorkspace).toBeNull();
+    expect(host.setAuthRequired).not.toHaveBeenCalled();
+  });
+
+  it('ignores stale applyAccountProfile calls when generation has advanced', () => {
+    const { host, appState } = makeHost();
+    const authFlow = new AuthFlowController(host);
+    const beforeLogoutGen = authFlow.captureWorkspaceGeneration();
+    authFlow.clearManagedWorkspace();
+
+    authFlow.applyAccountProfile(
+      {
+        userId: 'u1',
+        nickname: 'Alice',
+        userLevelName: 'Premium',
+        workspaces: [],
+        hasBusinessWorkspace: true,
+        activeWorkspaceName: 'Acme Corp',
+        statusWorkspaceLine: 'Alice · Acme Corp',
+        planLabel: 'Premium',
+      },
+      beforeLogoutGen,
+    );
+
+    expect(appState.managedWorkspace).toBeNull();
+  });
 });

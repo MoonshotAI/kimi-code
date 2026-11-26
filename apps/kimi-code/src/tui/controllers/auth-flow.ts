@@ -99,9 +99,22 @@ export class AuthFlowController {
     this.host.setStartupReady();
   }
 
-  applyAccountProfile(profile: ManagedAccountProfile): ManagedWorkspaceSummary {
-    this.workspaceRefreshGeneration += 1;
+  captureWorkspaceGeneration(): number {
+    return this.workspaceRefreshGeneration;
+  }
+
+  applyAccountProfile(
+    profile: ManagedAccountProfile,
+    expectedGeneration?: number,
+  ): ManagedWorkspaceSummary {
     const summary = toManagedWorkspaceSummary(profile);
+    if (
+      expectedGeneration !== undefined &&
+      expectedGeneration !== this.workspaceRefreshGeneration
+    ) {
+      return summary;
+    }
+    this.workspaceRefreshGeneration += 1;
     this.host.setAppState({ managedWorkspace: summary });
     return summary;
   }
@@ -114,6 +127,15 @@ export class AuthFlowController {
   handleBusinessMembershipRevoked(): void {
     this.clearManagedWorkspace();
     this.host.setAuthRequired(true);
+  }
+
+  private activeModelUsesManagedOAuth(): boolean {
+    const appState = this.host.state?.appState;
+    if (appState === undefined) return true;
+    const model = appState.model.trim();
+    if (model.length === 0) return true;
+    const alias = (appState.availableModels as AppState['availableModels'] | undefined)?.[model];
+    return alias === undefined || alias.provider === DEFAULT_OAUTH_PROVIDER_NAME;
   }
 
   async refreshManagedWorkspaceInBackground(): Promise<void> {
@@ -137,7 +159,11 @@ export class AuthFlowController {
     if (generation !== this.workspaceRefreshGeneration) return;
     if (res.kind === 'error') {
       if (isBusinessMembershipRevokedCode(res.errorCode)) {
-        this.handleBusinessMembershipRevoked();
+        if (this.activeModelUsesManagedOAuth()) {
+          this.handleBusinessMembershipRevoked();
+        } else {
+          this.clearManagedWorkspace();
+        }
       }
       return;
     }
@@ -166,7 +192,31 @@ export class AuthFlowController {
 
     try {
       if (isStreaming) {
-        await this.refreshAvailableModels();
+        const config = await this.host.harness.getConfig({ reload: true });
+        const availableModels = config.models ?? {};
+        const availableProviders = config.providers ?? {};
+        const currentModel = this.host.state?.appState.model.trim() ?? '';
+        const defaultModel = this.host.options.startup.model ?? config.defaultModel;
+        const fallback = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
+        if (
+          currentModel.length > 0 &&
+          availableModels[currentModel] === undefined &&
+          defaultModel !== undefined &&
+          fallback !== undefined
+        ) {
+          await this.activateModelAfterLogin(
+            defaultModel,
+            thinkingEffortFromConfig(config.thinking),
+          );
+          this.host.setAppState({
+            availableModels,
+            availableProviders,
+            model: defaultModel,
+            maxContextTokens: fallback.maxContextSize,
+          });
+        } else {
+          this.host.setAppState({ availableModels, availableProviders });
+        }
       } else {
         await this.refreshConfigAfterLogin(undefined, {
           skipWorkspaceRefresh: result.profile !== undefined,

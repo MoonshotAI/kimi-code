@@ -111,7 +111,9 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
     { label: 'Model', value: formatModelStatus(options) },
     { label: 'Directory', value: options.workDir },
   ];
-  if (options.managedWorkspace?.hasBusinessWorkspace === true) {
+  if (options.managedWorkspaceError !== undefined) {
+    rows.push({ label: 'Workspace', value: options.managedWorkspaceError, severity: 'error' });
+  } else if (options.managedWorkspace?.hasBusinessWorkspace === true) {
     if (
       options.managedWorkspace.statusWorkspaceLine !== undefined &&
       options.managedWorkspace.statusWorkspaceLine.length > 0
@@ -124,8 +126,6 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
     ) {
       rows.push({ label: 'Plan', value: options.managedWorkspace.planLabel });
     }
-  } else if (options.managedWorkspaceError !== undefined) {
-    rows.push({ label: 'Workspace', value: options.managedWorkspaceError, severity: 'error' });
   }
   rows.push(
     { label: 'Permissions', value: PERMISSION_MODE_DISPLAY_NAMES[permission] },

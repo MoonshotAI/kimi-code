@@ -279,21 +279,27 @@ async function loadManagedWorkspaceReport(
   if (!isManagedUsageProvider(providerKey)) return undefined;
   if (typeof host.harness.auth.getAccountProfile !== 'function') return undefined;
 
+  const generation = host.authFlow?.captureWorkspaceGeneration();
   let res;
   try {
     res = await host.harness.auth.getAccountProfile(providerKey);
   } catch (error) {
     return { error: formatErrorMessage(error) };
   }
+  const stale =
+    generation !== undefined &&
+    host.authFlow !== undefined &&
+    generation !== host.authFlow.captureWorkspaceGeneration();
   if (res.kind === 'error') {
-    if (isBusinessMembershipRevokedCode(res.errorCode)) {
+    if (!stale && isBusinessMembershipRevokedCode(res.errorCode)) {
       host.authFlow?.handleBusinessMembershipRevoked();
     }
-    return { error: res.message };
+    return stale ? undefined : { error: res.message };
   }
+  if (stale) return undefined;
   const summary =
     host.authFlow !== undefined
-      ? host.authFlow.applyAccountProfile(res.profile)
+      ? host.authFlow.applyAccountProfile(res.profile, generation)
       : {
           hasBusinessWorkspace: res.profile.hasBusinessWorkspace,
           ...(res.profile.statusWorkspaceLine !== undefined

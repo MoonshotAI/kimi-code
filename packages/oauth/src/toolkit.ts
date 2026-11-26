@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { isBusinessMembershipRevokedCode } from './business-membership';
 import { KIMI_CODE_FLOW_CONFIG } from './constants';
-import { OAuthUnauthorizedError } from './errors';
+import { OAuthUnauthorizedError, OAuthWorkspaceSwitchError } from './errors';
 import {
   assertKimiHostIdentity,
   createKimiDefaultHeaders,
@@ -336,16 +336,31 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     const oauthHost = this.oauthHostFor(options.oauthRef, options.oauthHost);
     const oauthKey = options.oauthRef?.key ?? this.defaultOAuthKey(options.baseUrl, oauthHost);
     const manager = this.managerFor(name, oauthKey, oauthHost);
-    const switched = await manager.switchWorkspace(target);
+    const warnings: string[] = [];
+    let switchedAccessToken: string;
+    try {
+      const switched = await manager.switchWorkspace(target);
+      switchedAccessToken = switched.accessToken;
+    } catch (error) {
+      if (
+        error instanceof OAuthWorkspaceSwitchError &&
+        error.committed &&
+        error.token !== undefined
+      ) {
+        switchedAccessToken = error.token.accessToken;
+        warnings.push(error.message);
+      } else {
+        throw error;
+      }
+    }
 
     const shouldProvision = options.provisionConfig ?? this.configAdapter !== undefined;
     const configAdapter = this.configAdapter;
-    const warnings: string[] = [];
     let provision: ManagedKimiCodeProvisionResult | undefined;
     if (shouldProvision && configAdapter !== undefined) {
       try {
         provision = await provisionManagedKimiCodeConfig({
-          accessToken: switched.accessToken,
+          accessToken: switchedAccessToken,
           adapter: configAdapter,
           baseUrl: options.baseUrl,
           oauthKey,
@@ -364,7 +379,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     const profileRes = await fetchManagedAccountProfile({
       userInfoUrl: managedUserInfoUrl(options.baseUrl),
       workspacesUrl: managedWorkspacesUrl(options.baseUrl),
-      accessToken: switched.accessToken,
+      accessToken: switchedAccessToken,
       ...this.managedRequestInit(),
     });
     const profile = profileRes.kind === 'ok' ? profileRes.profile : undefined;
