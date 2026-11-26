@@ -1,23 +1,13 @@
-import type { ThinkingEffort, LlmRequestAttributes } from '@moonshot-ai/core/llm/request';
-import type { InitializedLlmRequester, InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
+import type { LlmRequestAttributes } from '@moonshot-ai/core/llm/request';
+import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { AgentLLMRequestLogFields, AgentLLMRequestSource } from '#/agent/usage/usage';
-import type { Model } from '#/provider-catalog/model/catalog';
 
 export interface RequestConfigSnapshot {
   readonly resolved: ProfileModelContext;
   readonly params: InitializedLlmRequestPart;
   readonly systemPrompt: string;
   readonly maxCompletionTokensCap?: number;
-}
-
-export interface AgentRequesterBinding {
-  readonly request: InitializedLlmRequester;
-  readonly model: Model;
-  readonly modelAlias: string;
-  readonly thinkingEffort: ThinkingEffort;
-  readonly systemPrompt: string;
-  readonly requestMetadata: boolean;
 }
 
 export function requestSourceOf(attributes: LlmRequestAttributes | undefined): AgentLLMRequestSource {

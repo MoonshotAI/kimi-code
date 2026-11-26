@@ -801,6 +801,7 @@ export class ProviderCatalogService extends Disposable implements IProviderCatal
     };
     const initialized = createCoreRequester(execution).with(route.requester).with({
       protocol: {
+        name: model.protocol,
         options,
         stream: true,
         recoveryKey: JSON.stringify([
@@ -814,6 +815,10 @@ export class ProviderCatalogService extends Disposable implements IProviderCatal
       endpoint,
       model: {
         spec: { ...model.spec, provider: route.providerId },
+      },
+      attributes: {
+        modelAlias: model.id,
+        providerType: model.providerType,
       },
     });
     const resolved = initialized.with(part ?? {});

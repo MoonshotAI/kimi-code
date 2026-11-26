@@ -1,4 +1,5 @@
 import { getMaxListeners } from 'node:events';
+import { Readable } from 'node:stream';
 
 import { createUserMessage, type ToolCall } from '@moonshot-ai/core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/core/llm/request';
@@ -20,7 +21,7 @@ import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
-import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { IAgentScopeContext, agentContextOf } from '#/agent/scopeContext/scopeContext';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import {
   IAgentLifecycleService,
@@ -44,6 +45,9 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { abortedToolOutput, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { IConfigService } from '#/app/config/config';
+import { IFileService } from '#/app/file/fileService';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { ProviderConfig } from '#/provider-catalog/provider/provider';
 
 import {
@@ -56,6 +60,7 @@ import {
   createMockProvider,
   providerHttpError,
   sessionService,
+  telemetryServices,
   testkitAgentFixtures,
   wireRecordPersistenceServices,
   type TestAgentContext,
@@ -156,6 +161,17 @@ describe('Agent loop', () => {
 
   it('freezes request config for the turn and refreshes model, thinking, and params on the next turn', async () => {
     const requests: LlmRequest[] = [];
+    const telemetryRecords: TelemetryRecord[] = [];
+    const endedTurns: TurnEnded[] = [];
+    const pngBytes = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const usageByCall = [
+      { inputOther: 100, output: 10, inputCacheRead: 10_000, inputCacheCreation: 0 },
+      { inputOther: 150, output: 20, inputCacheRead: 1_000, inputCacheCreation: 0 },
+      { inputOther: 300, output: 30, inputCacheRead: 10_000, inputCacheCreation: 0 },
+    ] as const;
     const overrides = { temperature: 0.2, topP: 0.7 };
     let localLoop!: IAgentLoopService;
     let localConfig!: IConfigService;
@@ -170,6 +186,7 @@ describe('Agent loop', () => {
             { type: 'text', text: 'working' },
             { type: 'function', id: 'call-work', name: 'Work', arguments: '{}' },
           ],
+          usage: usageByCall[0],
         };
       }
       if (
@@ -194,6 +211,7 @@ describe('Agent loop', () => {
       return {
         ...(requests.length > 3 ? { id: 'comparison', requestId: 'comparison' } : {}),
         parts: [{ type: 'text', text: 'done' }],
+        usage: usageByCall[requests.length - 1],
       };
     });
     const firstProvider: ProviderConfig & { readonly type: string } = {
@@ -219,7 +237,7 @@ describe('Agent loop', () => {
             model: 'first-wire-model',
             maxContextSize: 128_000,
             maxOutputSize: 4_096,
-            capabilities: ['thinking', 'tool_use'],
+            capabilities: ['thinking', 'tool_use', 'image_in'],
             supportEfforts: ['low', 'high'],
             defaultEffort: 'low',
           },
@@ -236,10 +254,33 @@ describe('Agent loop', () => {
         modelOverrides: overrides,
         loopControl: { maxAttemptsPerStep: 2 },
       })),
+      appService(IFileService, {
+        _serviceBrand: undefined,
+        get: async () => ({
+          meta: {
+            id: 'f_pixel',
+            name: 'pixel.png',
+            media_type: 'image/png',
+            size: pngBytes.length,
+            created_at: '2026-01-01T00:00:00.000Z',
+          },
+          stream: () => Readable.from(pngBytes),
+        }),
+      } as unknown as IFileService),
+      sessionService(ISessionMediaStore, {
+        _serviceBrand: undefined,
+        open: async () => undefined,
+        resolveDisplayPath: async () => undefined,
+        materialize: async () => undefined,
+      } as unknown as ISessionMediaStore),
+      telemetryServices(recordingTelemetry(telemetryRecords)),
       permissionModeServices('yolo'),
     );
     try {
       await local.restorePersisted();
+      local.get(IEventBus).subscribe(TurnEnded, (event) => {
+        endedTurns.push(event);
+      });
       localLoop = local.get(IAgentLoopService);
       localConfig = local.get(IConfigService);
       await localLoop.setModel('first-model');
@@ -266,7 +307,12 @@ describe('Agent loop', () => {
       if (coreLoop === undefined) throw new Error('Loop is not started');
       const setRequester = vi.spyOn(coreLoop, 'setRequester');
 
-      await local.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
+      await local.rpc.prompt({
+        input: [
+          { type: 'text', text: 'first turn' },
+          { type: 'image_url', imageUrl: { url: 'kimi-file://f_pixel', name: 'pixel.png' } },
+        ],
+      });
       await local.untilTurnEnd();
       expect(setRequester).toHaveBeenCalledTimes(3);
       await local.rpc.prompt({ input: [{ type: 'text', text: 'second turn' }] });
@@ -319,6 +365,33 @@ describe('Agent loop', () => {
         step_reason: 'turn_start',
       });
       expect(JSON.parse(secondMetadata!)).toMatchObject({ step_reason: 'tool_results' });
+      expect(requests[2]?.endpoint?.headers?.['X-Msh-Client-Metadata']).toBeUndefined();
+      const firstPromptImages = (request: LlmRequest | undefined) =>
+        request?.content.messages[0]?.content.filter((part) => part.type === 'image_url') ?? [];
+      expect(firstPromptImages(requests[0])).toHaveLength(1);
+      expect(firstPromptImages(requests[1])).toHaveLength(1);
+      expect(firstPromptImages(requests[2])).toHaveLength(0);
+      expect(endedTurns[0]?.modelSteps?.map(({ model, step }) => ({ model, step }))).toEqual([
+        { model: 'first-wire-model', step: 1 },
+        { model: 'first-wire-model', step: 2 },
+      ]);
+      expect(endedTurns[1]?.modelSteps?.map(({ model, step }) => ({ model, step }))).toEqual([
+        { model: 'second-wire-model', step: 1 },
+      ]);
+      const usage = local.get(ISessionUsageService).status(local.get(IAgentScopeContext).agentContext);
+      expect(usage.byModel).toMatchObject({
+        'first-model': { inputOther: 250, output: 30 },
+        'second-model': { inputOther: 300, output: 30 },
+      });
+      const cacheBreaks = telemetryRecords.filter((record) => record.event === 'cache_break_detected');
+      expect(cacheBreaks[0]?.properties).toMatchObject({
+        turn_id: 0,
+        step_no: 2,
+        prev_model: 'first-model',
+        curr_model: 'first-model',
+        prev_effort: 'low',
+        curr_effort: 'low',
+      });
       const resolvers = requests[0]?.policy?.resolvers;
       const resolved = typeof resolvers === 'function' ? resolvers() : resolvers;
       expect(resolved?.slice(0, 4).map((resolver) => resolver.id)).toEqual([
@@ -1180,12 +1253,15 @@ describe('Agent loop', () => {
       providerHttpError(429, 'retry', { retryAfterMs: 1 }),
       providerHttpError(400, 'text content blocks must be non-empty'),
     ]) {
+      const records: TelemetryRecord[] = [];
       const local = createTestAgent({
         initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } },
+        telemetry: recordingTelemetry(records),
       });
       try {
         local.mockNextProviderResponse({
           parts: [{ type: 'text', text: 'partial before retry' }],
+          requestId: 'req-failed-attempt',
           ...failure,
         });
         local.mockNextResponse({ type: 'text', text: 'completed after retry' });
@@ -1201,6 +1277,15 @@ describe('Agent loop', () => {
         );
         expect(JSON.stringify(local.contextData().history)).not.toContain('partial before retry');
         expect(JSON.stringify(local.contextData().history)).toContain('completed after retry');
+        const ended = local.allEvents.find(
+          (event) => event.type === '[rpc]' && event.event === 'turn.ended',
+        )?.args as TurnEnded | undefined;
+        expect(ended).toMatchObject({ reason: 'completed', requestId: undefined });
+        const record = (await local.persistedWireRecords()).find((entry) => entry.type === 'turn.ended');
+        expect(record).not.toHaveProperty('requestId');
+        const endedTelemetry = records.find((entry) => entry.event === 'turn_ended');
+        expect(endedTelemetry?.properties).toMatchObject({ turn_id: 0, reason: 'completed' });
+        expect(endedTelemetry?.properties).not.toHaveProperty('request_id');
       } finally {
         await local.dispose();
       }

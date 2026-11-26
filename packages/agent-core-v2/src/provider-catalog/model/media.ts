@@ -8,10 +8,8 @@ import {
   type MediaKindSupport,
   type MediaPosition,
 } from '@moonshot-ai/core/llm/protocol/rules/media';
-import type { LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
-import type { Model } from '#/provider-catalog/model/catalog';
-import { contentsOf } from '@moonshot-ai/core/llm/requester';
-import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
+import type { LlmCredentialProvider, LlmRequest } from '@moonshot-ai/core/llm/request';
+import { requestModelOf } from '#/provider-catalog/requester';
 import { ImageUploadUnsupportedError, VideoUploadUnsupportedError } from '#/provider-catalog/errors';
 
 export type ImageUploader = (
@@ -25,24 +23,23 @@ export type VideoUploader = (
 ) => Promise<VideoURLPart>;
 
 export function supportsLlmUpload(
-  request: InitializedLlmRequester,
+  request: LlmRequest,
   kind: MediaKind,
 ): boolean {
-  return contentsOf(request).endpoint?.files?.kinds.has(kind) === true;
+  return request.endpoint?.files?.kinds.has(kind) === true;
 }
 
 export function imageUploaderFor(
-  model: Model,
-  request: InitializedLlmRequester,
+  request: LlmRequest,
 ): ImageUploader | undefined {
   if (!supportsLlmUpload(request, 'image')) return undefined;
-  return (input, options) => uploadImage(model, request, input, options?.signal);
+  return (input, options) => uploadImage(request, input, options?.signal);
 }
 
 export function uploadFailureCheckFor(
-  request: InitializedLlmRequester,
+  request: LlmRequest,
 ): ((id: string, signal: AbortSignal) => Promise<boolean>) | undefined {
-  const endpoint = contentsOf(request).endpoint;
+  const endpoint = request.endpoint;
   const hasFailed = endpoint?.files?.hasFailed;
   if (hasFailed === undefined) return undefined;
   let resolvedEndpoint: ReturnType<typeof resolveEndpoint> | undefined;
@@ -54,47 +51,46 @@ export function uploadFailureCheckFor(
 }
 
 export function videoUploaderFor(
-  model: Model,
-  request: InitializedLlmRequester,
+  request: LlmRequest,
 ): VideoUploader | undefined {
   if (!supportsLlmUpload(request, 'video')) return undefined;
-  return (input, options) => uploadVideo(model, request, input, options?.signal);
+  return (input, options) => uploadVideo(request, input, options?.signal);
 }
 
 export async function uploadImage(
-  model: Model,
-  request: InitializedLlmRequester,
+  request: LlmRequest,
   input: ImageUploadInput,
   signal?: AbortSignal,
 ): Promise<ImageURLPart> {
-  const files = contentsOf(request).endpoint?.files;
+  const files = request.endpoint?.files;
   if (!supportsLlmUpload(request, 'image') || files === undefined) {
+    const model = requestModelOf(request);
     throw new ImageUploadUnsupportedError(
       `Model "${model.id}" (protocol=${model.protocol}) does not support image upload`,
     );
   }
   const uploaded = await files.upload(
     { ...input, kind: 'image' },
-    { endpoint: await resolveEndpoint(contentsOf(request).endpoint), signal: signal ?? new AbortController().signal },
+    { endpoint: await resolveEndpoint(request.endpoint), signal: signal ?? new AbortController().signal },
   );
   return { type: 'image_url', imageUrl: { url: uploaded.url, id: uploaded.id } };
 }
 
 export async function uploadVideo(
-  model: Model,
-  request: InitializedLlmRequester,
+  request: LlmRequest,
   input: VideoUploadInput,
   signal?: AbortSignal,
 ): Promise<VideoURLPart> {
-  const files = contentsOf(request).endpoint?.files;
+  const files = request.endpoint?.files;
   if (!supportsLlmUpload(request, 'video') || files === undefined) {
+    const model = requestModelOf(request);
     throw new VideoUploadUnsupportedError(
       `Model "${model.id}" (protocol=${model.protocol}) does not support video upload`,
     );
   }
   const uploaded = await files.upload(
     { ...input, kind: 'video' },
-    { endpoint: await resolveEndpoint(contentsOf(request).endpoint), signal: signal ?? new AbortController().signal },
+    { endpoint: await resolveEndpoint(request.endpoint), signal: signal ?? new AbortController().signal },
   );
   return { type: 'video_url', videoUrl: { url: uploaded.url, id: uploaded.id } };
 }
@@ -103,12 +99,11 @@ export async function uploadVideo(
 export type { MediaKindSupport, MediaPosition } from '@moonshot-ai/core/llm/protocol/rules/media';
 
 export function mediaSupportForRequest(
-  request: InitializedLlmRequester,
+  request: LlmRequest,
   kind: MediaKind,
   position: MediaPosition,
 ): MediaKindSupport | undefined {
-  const protocol = contentsOf(request).protocol?.base;
-  return protocol === undefined ? undefined : mediaSupportAt(protocol.media, kind, position);
+  return mediaSupportAt(request.protocol.base.media, kind, position);
 }
 
 export function mediaAcceptsMime(support: MediaKindSupport, mimeType: string): boolean {
@@ -124,7 +119,7 @@ export function mediaAcceptsSource(
 }
 
 export function mediaCredentialProvider(
-  request: InitializedLlmRequester,
+  request: LlmRequest,
 ): LlmCredentialProvider | undefined {
-  return contentsOf(request).endpoint?.credentials;
+  return request.endpoint?.credentials;
 }

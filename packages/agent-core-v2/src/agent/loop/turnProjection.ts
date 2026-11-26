@@ -517,7 +517,9 @@ export class AgentTurnProjection {
       }
       case 'llm.requested': {
         const turn = this.active;
-        if (turn === undefined || (turn.retry === undefined && turn.current !== undefined)) return;
+        if (turn === undefined) return;
+        this.activeRequestId = undefined;
+        if (turn.retry === undefined && turn.current !== undefined) return;
         const stepNumber = turn.current?.number ?? turn.gatedSteps;
         const step = createStepState(stepNumber, turn.controller.signal, turn.stepIds.get(stepNumber));
         turn.current = step;

@@ -11,7 +11,7 @@ import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { AgentLoopRequestObserver } from './requestObservation';
 import { registerAgentMediaPolicy, registerAgentMediaTools } from './mediaPolicy';
-import type { AgentRequesterBinding, RequestConfigSnapshot } from './requesterContract';
+import type { RequestConfigSnapshot } from './requesterContract';
 import { AgentLoopProjector } from './projector';
 import { createStructureRecovery, createStructureResolver } from './projectionPolicy';
 import { createToolSelectResolver } from './toolSelectPolicy';
@@ -70,6 +70,7 @@ import type {
 import type { ModelCapability } from '#/provider-catalog/capability';
 import {
   requesterContents,
+  type InitializedLlmRequester,
   type InitializedLlmRequestPart,
 } from '@moonshot-ai/core/llm/requester';
 import { createLlmRequesterExecution } from '@moonshot-ai/core/llm/policy/policy';
@@ -136,6 +137,7 @@ import { AgentTurnProjection, loopLastRequestIdKey } from './turnProjection';
 import { AgentNotificationProjection } from './notificationProjection';
 import { AgentLoopProfileAdapter } from './profileAdapter';
 import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
+import { requestModelOf } from '#/provider-catalog/requester';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error' | 'steered';
 
@@ -156,7 +158,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly observer: AgentLoopRequestObserver;
   private readonly projector: AgentLoopProjector;
   private readonly requestMetadata: RequestMetadataTracker;
-  private currentBinding: AgentRequesterBinding | undefined;
   readonly hooks: IAgentLoopService['hooks'] = {
     onWillBeginStep: new OrderedHookSlot(),
     onDidFinishStep: new OrderedHookSlot(),
@@ -216,7 +217,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (space instanceof AgentSpaceImpl) this._register(space._setHistoryProvider(() => this.history()));
     this.observer = instantiation.createInstance(AgentLoopRequestObserver);
     this.observer.bindLoop(() => ({
-      binding: this.currentBinding,
       historyRevision: this.loop?.historyRevision ?? 0,
       infiniteRetry: this.infiniteRetryEnabled,
     }));
@@ -399,14 +399,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
   }
 
-  private bindRequester(config: RequestConfigSnapshot): AgentRequesterBinding {
+  private bindRequester(config: RequestConfigSnapshot): InitializedLlmRequester {
     const resolved = config.resolved;
     const model = this.providerCatalog.get(resolved.modelAlias);
     const maxOutputTokens = this.resolveMaxOutputTokens(resolved.maxOutputSize);
-    const provider = model.providerType === undefined
-      ? undefined
-      : getProviderDefinition(model.providerType, model.protocol);
-    const requestMetadata = provider?.requestMetadata === true;
     const spec = {
       ...model.spec,
       maxContextSize: resolved.model.maxContextSize,
@@ -420,12 +416,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
       },
     };
-    const request = this.providerCatalog.createRequester(
+    return this.providerCatalog.createRequester(
       model,
       params,
       this.requesterExecution,
     ).with({
-      attributes: { modelAlias: resolved.modelAlias },
+      profile: { systemPrompt: config.systemPrompt },
+      attributes: { modelAlias: resolved.modelAlias, providerType: model.providerType },
       policy: {
         retry: {
           maxAttemptsPerStep: this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxAttemptsPerStep,
@@ -433,26 +430,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         },
       },
     });
-    return {
-      request,
-      model,
-      modelAlias: resolved.modelAlias,
-      thinkingEffort: resolved.thinkingLevel,
-      systemPrompt: config.systemPrompt,
-      requestMetadata,
-    };
   }
 
   private wantsRequestMetadata(request: LlmRequest): boolean {
-    const alias = request.attributes?.modelAlias;
-    if (alias === undefined) return false;
-    try {
-      const model = this.providerCatalog.get(alias);
-      return model.providerType !== undefined &&
-        getProviderDefinition(model.providerType, model.protocol)?.requestMetadata === true;
-    } catch {
-      return false;
-    }
+    const providerType = request.attributes?.providerType;
+    if (providerType === undefined) return false;
+    return getProviderDefinition(providerType, requestModelOf(request).protocol)?.requestMetadata === true;
   }
 
   private syncRequester(): void {
@@ -460,12 +443,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (loop === undefined) return;
     try {
       const config = this.requestConfigSnapshot();
-      const binding = this.bindRequester(config);
-      this.currentBinding = binding;
+      const requester = this.bindRequester(config);
       this.turns.thinkingEffort = config.resolved.thinkingLevel;
-      loop.setRequester(binding.request as FullLoopLlmRequester);
+      loop.setRequester(requester as FullLoopLlmRequester);
     } catch (error) {
-      this.currentBinding = undefined;
       const requester: FullLoopLlmRequester = {
         [requesterContents]: {},
         with: (() => requester) as FullLoopLlmRequester['with'],
@@ -665,7 +646,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     loop.policy.addResolver(createToolSelectResolver(this.toolSelect));
     registerAgentMediaTools(loop.policy);
     loop.policy.addResolver(createStructureResolver(this.projector));
-    registerAgentMediaPolicy(loop.policy, this.mediaResolver, () => this.currentBinding);
+    registerAgentMediaPolicy(loop.policy, this.mediaResolver);
     loop.policy.addResolver(createRequestMetadataResolver(
       this.requestMetadata,
       (request) => this.wantsRequestMetadata(request),

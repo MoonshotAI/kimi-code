@@ -177,15 +177,15 @@ describe('ProviderCatalogService routes', () => {
     const resolved = requesterFactory.createRequester(modelWith({ protocol: 'openai', providerType: 'kimi' }));
     expect(contentsOf(resolved).model?.spec?.provider).toBe('openai');
     expect(contentsOf(resolved).model?.spec?.name).toBe('wire-model');
-    expect(supportsLlmUpload(resolved, 'video')).toBe(true);
-    expect(supportsLlmUpload(resolved, 'image')).toBe(true);
+    expect(supportsLlmUpload(resolved.request({ content: { messages: [] } }), 'video')).toBe(true);
+    expect(supportsLlmUpload(resolved.request({ content: { messages: [] } }), 'image')).toBe(true);
   });
 
   it('routes plain openai without the upload media', () => {
     const resolved = requesterFactory.createRequester(modelWith({ protocol: 'openai' }));
     expect(contentsOf(resolved).model?.spec?.provider).toBe('openai');
-    expect(supportsLlmUpload(resolved, 'video')).toBe(false);
-    expect(supportsLlmUpload(resolved, 'image')).toBe(false);
+    expect(supportsLlmUpload(resolved.request({ content: { messages: [] } }), 'video')).toBe(false);
+    expect(supportsLlmUpload(resolved.request({ content: { messages: [] } }), 'image')).toBe(false);
     const options = contentsOf(resolved).protocol?.options as {
       detectedReasoningKey?: () => string | undefined;
       onReasoningKey?: (key: string) => void;
@@ -247,8 +247,8 @@ describe('ProviderCatalogService routes', () => {
   it('routes kimi+anthropic with media and explicit beta opt-in', async () => {
     const resolved = requesterFactory.createRequester(modelWith({ protocol: 'anthropic', providerType: 'kimi' }));
     expect(contentsOf(resolved).model?.spec?.provider).toBe('anthropic');
-    expect(supportsLlmUpload(resolved, 'video')).toBe(true);
-    expect(supportsLlmUpload(resolved, 'image')).toBe(true);
+    expect(supportsLlmUpload(resolved.request({ content: { messages: [] } }), 'video')).toBe(true);
+    expect(supportsLlmUpload(resolved.request({ content: { messages: [] } }), 'image')).toBe(true);
 
     const urls: string[] = [];
     const terminal: string[] = [];

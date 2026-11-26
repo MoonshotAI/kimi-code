@@ -34,11 +34,10 @@ import { hasStrictStructureRecovery } from './projectionPolicy';
 import { llmRequestTraceKey, LlmToolsSnapshot, llmToolsSnapshotPayload } from './llmRequestOps';
 import type { AgentLLMRequestLogFields, AgentLLMRequestSource } from '#/agent/usage/usage';
 import type { LoopLlmRunObservation, LoopLlmRunObserver, LoopRequestRuntime } from '@moonshot-ai/core/loop/index';
-import type { Model } from '#/provider-catalog/model/catalog';
+import { requestModelOf, type RequestModel } from '#/provider-catalog/requester';
 import {
   agentLLMRequestLogFields,
   requestSourceOf,
-  type AgentRequesterBinding,
 } from './requesterContract';
 
 export interface LLMRequestTrace {
@@ -46,7 +45,7 @@ export interface LLMRequestTrace {
 }
 
 export interface ResolvedRequestContext {
-  readonly model: Model;
+  readonly model: RequestModel;
   readonly modelAlias: string;
   readonly thinkingEffort: ThinkingEffort;
   readonly systemPrompt: string;
@@ -61,7 +60,6 @@ export interface ResolvedRequestContext {
 }
 
 interface ObserverLoopContext {
-  readonly binding: AgentRequesterBinding | undefined;
   readonly historyRevision: number;
   readonly infiniteRetry: boolean;
 }
@@ -124,7 +122,6 @@ export const llmRequesterEmittedThinkingEffortWarningsKey = defineState<Set<stri
 
 export class AgentLoopRequestObserver implements LoopLlmRunObserver {
   private loopContext: () => ObserverLoopContext = () => ({
-    binding: undefined,
     historyRevision: 0,
     infiniteRetry: false,
   });
@@ -151,14 +148,15 @@ export class AgentLoopRequestObserver implements LoopLlmRunObserver {
   }
 
   start(request: LlmRequest): AgentRequestObservation {
-    const { binding, historyRevision, infiniteRetry } = this.loopContext();
+    const { historyRevision, infiniteRetry } = this.loopContext();
     const source = requestSourceOf(request.attributes);
-    if (binding === undefined) throw new Error('llm request has no bound model');
+    const modelAlias = request.attributes?.modelAlias;
+    if (modelAlias === undefined) throw new Error('llm request has no bound model');
     const context: ResolvedRequestContext = {
-      model: binding.model,
-      modelAlias: binding.modelAlias,
-      thinkingEffort: binding.thinkingEffort,
-      systemPrompt: request.profile?.systemPrompt ?? binding.systemPrompt,
+      model: requestModelOf(request),
+      modelAlias,
+      thinkingEffort: request.model.thinking?.effort ?? 'off',
+      systemPrompt: request.profile?.systemPrompt ?? '',
       tools: request.profile?.tools === undefined ? undefined : [...request.profile.tools],
       messages: [...request.content.messages],
       usedContextTokens: request.content.usedTokens,

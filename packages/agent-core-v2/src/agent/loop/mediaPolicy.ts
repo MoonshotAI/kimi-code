@@ -5,7 +5,6 @@ import type { LlmErrorMessage } from '@moonshot-ai/core/llm/response';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { buildMediaPathTag, matchMediaPathTags, type MediaPathTag } from '#/agent/media/mediaRef';
 import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
-import type { AgentRequesterBinding } from './requesterContract';
 
 function mediaTagOf(message: ToolMessage): MediaPathTag | undefined {
   const text = message.content
@@ -96,19 +95,15 @@ function isUploadedMediaRequestError(error: LlmErrorMessage, rawError: unknown):
 export function registerAgentMediaPolicy(
   policy: PolicyRegistry,
   service: IAgentMediaResolverService,
-  binding: () => AgentRequesterBinding | undefined,
 ): () => void {
   const degradeRecovery = createMediaDegradeRecovery();
   const checkedUploadRuns = new WeakSet<AbortSignal>();
   const removeResolver = policy.addResolver({
     id: 'agent-media',
     resolve: async (current, control) => {
-      const bound = binding();
-      if (bound === undefined) return current;
       const messages = await service.resolve(
         current.content.messages,
-        bound.model,
-        bound.request,
+        current,
         control.signal,
       );
       return messages === current.content.messages
@@ -118,17 +113,15 @@ export function registerAgentMediaPolicy(
   });
   const removeRecovery = policy.addRecovery({
     propose: async (ctx) => {
-      const bound = binding();
       const alreadyChecked = ctx.signal !== undefined && checkedUploadRuns.has(ctx.signal);
       if (
-        bound !== undefined &&
         !alreadyChecked &&
         !ctx.appliedRecoveries.some(({ strategy }) => strategy === MEDIA_UPLOAD_FAILED) &&
         ctx.resolvedRequest !== undefined &&
         isUploadedMediaRequestError(ctx.error, ctx.rawError)
       ) {
         if (ctx.signal !== undefined) checkedUploadRuns.add(ctx.signal);
-        if (await service.recoverFailedUploads(ctx.resolvedRequest.content.messages, bound.request, ctx.signal)) {
+        if (await service.recoverFailedUploads(ctx.resolvedRequest.content.messages, ctx.resolvedRequest, ctx.signal)) {
           return { strategy: MEDIA_UPLOAD_FAILED, action: 'retry' };
         }
       }

@@ -1,6 +1,33 @@
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import type { LlmRequester } from '@moonshot-ai/core/llm/requester';
 import type { Model } from '#/provider-catalog/model/catalog';
+import type { Protocol } from '#/provider-catalog/protocol/protocol';
 import { getProviderDefinition } from '#/provider-catalog/provider/provider-definition';
+
+export type RequestModel = Pick<Model, 'id' | 'providerType' | 'protocol' | 'spec' | 'endpoint'>;
+
+export function requestModelOf(request: LlmRequest): RequestModel {
+  return {
+    id: request.attributes?.modelAlias ?? request.model.spec.name,
+    providerType: request.attributes?.providerType,
+    protocol: request.protocol.name ?? protocolOfProviderId(request.model.spec.provider),
+    spec: request.model.spec,
+    endpoint: request.endpoint ?? {},
+  };
+}
+
+function protocolOfProviderId(providerId: string): Protocol {
+  switch (providerId) {
+    case 'openai-responses':
+      return 'openai_responses';
+    case 'anthropic':
+      return 'anthropic';
+    case 'google_genai':
+      return 'google-genai';
+    default:
+      return 'openai';
+  }
+}
 
 interface AdapterRoute {
   readonly requester: LlmRequester<'protocol'>;

@@ -805,8 +805,7 @@ describe('ReadMediaFileTool', () => {
     );
     const resolved = await resolver.resolve(
       [{ role: 'tool', toolCallId: 'call_media', content: outputParts(result) }],
-      model,
-      new ProviderCatalogService().createRequester(model).with({ endpoint: { files } }),
+      new ProviderCatalogService().createRequester(model).with({ endpoint: { files } }).request({ content: { messages: [] } }),
     );
 
     expect(upload).toHaveBeenCalledOnce();

@@ -283,7 +283,7 @@ function resolveMedia(
   resolution: TestMediaResolution,
   signal?: AbortSignal,
 ): Promise<readonly Message[]> {
-  return service.resolve(messages, resolution.model, resolution.requester, signal);
+  return service.resolve(messages, resolution.requester.request({ content: { messages: [] } }), signal);
 }
 
 function msPart(id: string): VideoURLPart {
@@ -322,14 +322,7 @@ async function generateKimiMediaRequest(
     });
   const policy = createPolicyRegistry();
   registerAgentMediaTools(policy);
-  registerAgentMediaPolicy(policy, service, () => ({
-    request: routed,
-    model,
-    modelAlias: model.id,
-    thinkingEffort: 'off',
-    systemPrompt: '',
-    requestMetadata: false,
-  }));
+  registerAgentMediaPolicy(policy, service);
   const events: LlmRunEvent[] = [];
   for await (const event of streamLlmRequest(
     routed.request({
@@ -1093,14 +1086,7 @@ describe('AgentMediaResolverService image upload', () => {
       .with({ endpoint: { fetch: mockFetch } });
     const policy = createPolicyRegistry();
     registerAgentMediaTools(policy);
-    registerAgentMediaPolicy(policy, resolver(new Map(), sessionDir, mediaStore), () => ({
-      request: routed,
-      model,
-      modelAlias: model.id,
-      thinkingEffort: 'off',
-      systemPrompt: '',
-      requestMetadata: false,
-    }));
+    registerAgentMediaPolicy(policy, resolver(new Map(), sessionDir, mediaStore));
     for (const history of [
       messages,
       [...messages, { role: 'assistant', content: [{ type: 'text', text: 'Done.' }], toolCalls: [] }] satisfies Message[],
@@ -1845,10 +1831,10 @@ describe('AgentMediaResolverService media labels', () => {
       [],
       environmentId,
     );
-    const { model, requester: request } = requester({});
+    const { requester: request } = requester({});
     const [message] = await service.resolve(
       [imageMessage(url, { type: 'image_url', imageUrl: { url, name: 'alias.png' } })],
-      model, request,
+      request.request({ content: { messages: [] } }),
     );
     const path = includeUserPaths ? ` path="${join(sessionDir, 'session', 'media', `${fileId}.png`)}"` : '';
     expect(message!.content).toEqual([
@@ -1894,7 +1880,7 @@ describe('AgentMediaResolverService media labels', () => {
       [],
       environmentId,
     );
-    const { model, requester: base } = requester({ providerType: 'openai', baseUrl: 'https://example.test/v1' });
+    const { requester: base } = requester({ providerType: 'openai', baseUrl: 'https://example.test/v1' });
     const reject = Response.json({
       error: { message: status === 400 ? 'Unsupported image format' : 'Request Entity Too Large' },
     }, { status });
@@ -1907,14 +1893,7 @@ describe('AgentMediaResolverService media labels', () => {
     const request = base.with({ protocol: { stream: false }, endpoint: { fetch: mockFetch } });
     const policy = createPolicyRegistry();
     registerAgentMediaTools(policy);
-    registerAgentMediaPolicy(policy, service, () => ({
-      request,
-      model,
-      modelAlias: model.id,
-      thinkingEffort: 'off',
-      systemPrompt: '',
-      requestMetadata: false,
-    }));
+    registerAgentMediaPolicy(policy, service);
     const contents: (readonly ContentPart[])[] = [];
     const generate = (first: string) => request.generate({
       content: { messages: [{ role: 'user', content: [
@@ -1959,7 +1938,7 @@ describe('AgentMediaResolverService media labels', () => {
       [],
       environmentId,
     );
-    const { model, requester: base } = requester({ providerType: 'openai', baseUrl: 'https://example.test/v1' });
+    const { requester: base } = requester({ providerType: 'openai', baseUrl: 'https://example.test/v1' });
     const mockFetch = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ error: { message: 'Request Entity Too Large' } }, { status: 413 }))
       .mockImplementation(async () =>
@@ -1972,14 +1951,7 @@ describe('AgentMediaResolverService media labels', () => {
     const policy = createPolicyRegistry();
     registerAgentMediaTools(policy);
     policy.addResolver(createStructureResolver(new AgentLoopProjector(() => {})));
-    registerAgentMediaPolicy(policy, service, () => ({
-      request,
-      model,
-      modelAlias: model.id,
-      thinkingEffort: 'off',
-      systemPrompt: '',
-      requestMetadata: false,
-    }));
+    registerAgentMediaPolicy(policy, service);
     const attempts: (readonly Message[])[] = [];
     const outcome = await request.generate({
       content: { messages: [
