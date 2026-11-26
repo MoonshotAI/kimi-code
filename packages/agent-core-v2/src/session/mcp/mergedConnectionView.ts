@@ -20,9 +20,11 @@ export interface McpConnectionLayer {
 export class MergedMcpConnectionView implements McpConnectionView, IDisposable {
   private layers: readonly McpConnectionLayer[] = [];
   private effectiveEntries: Readonly<Record<string, McpServerConfig>> | undefined;
+  private activatingNames: ReadonlySet<string> = new Set();
   private readonly subscriptions = new Map<string, IDisposable>();
   private readonly listeners = new Set<McpStatusListener>();
   private readonly published = new Map<string, string>();
+  private readonly publishedTransports = new Map<string, McpServerEntry['transport']>();
   private disposed = false;
 
   get oauthService(): McpOAuthService | undefined {
@@ -47,8 +49,7 @@ export class MergedMcpConnectionView implements McpConnectionView, IDisposable {
         if (this.owner(entry.name)?.id !== layer.id) return;
         const projected = this.projectedEntry(entry.name);
         if (projected === undefined) return;
-        this.published.set(entry.name, JSON.stringify(projected));
-        for (const listener of Array.from(this.listeners)) listener(projected);
+        this.emitProjected(projected);
       }),
     );
     this.subscriptions.set(layer.id, subscription);
@@ -66,8 +67,12 @@ export class MergedMcpConnectionView implements McpConnectionView, IDisposable {
     }
   }
 
-  setEffectiveEntries(entries: Readonly<Record<string, McpServerConfig>>): void {
+  setEffectiveEntries(
+    entries: Readonly<Record<string, McpServerConfig>>,
+    activatingNames: ReadonlySet<string> = new Set(),
+  ): void {
     this.effectiveEntries = entries;
+    this.activatingNames = new Set(activatingNames);
     this.reconcileNames(this.allKnownNames());
   }
 
@@ -84,13 +89,15 @@ export class MergedMcpConnectionView implements McpConnectionView, IDisposable {
     this.subscriptions.clear();
     this.layers = [];
     this.effectiveEntries = undefined;
+    this.activatingNames = new Set();
     this.listeners.clear();
     this.published.clear();
+    this.publishedTransports.clear();
   }
 
   list(): readonly McpServerEntry[] {
     if (this.effectiveEntries !== undefined) {
-      return Object.keys(this.effectiveEntries).flatMap((name) => {
+      return this.allKnownNames().flatMap((name) => {
         const entry = this.projectedEntry(name);
         return entry === undefined ? [] : [entry];
       });
@@ -196,24 +203,47 @@ export class MergedMcpConnectionView implements McpConnectionView, IDisposable {
   private publishName(name: string): void {
     if (this.disposed) return;
     const entry = this.projectedEntry(name);
-    const signature = entry === undefined ? '' : JSON.stringify(entry);
+    const signature = entry === undefined ? '' : this.signature(entry);
     if (this.published.get(name) === signature) return;
     if (entry === undefined) {
       this.published.delete(name);
       return;
     }
-    this.published.set(name, signature);
+    this.emitProjected(entry);
+  }
+
+  private emitProjected(entry: McpServerEntry): void {
+    this.published.set(entry.name, this.signature(entry));
+    this.publishedTransports.set(entry.name, entry.transport);
     for (const listener of Array.from(this.listeners)) listener(entry);
+  }
+
+  private signature(entry: McpServerEntry): string {
+    const deferred = this.deferredOf(entry.name);
+    if (entry.status !== 'connected') return JSON.stringify({ entry, deferred });
+    const enabledNames = [...(this.resolved(entry.name)?.enabledNames ?? [])].toSorted();
+    return JSON.stringify({ entry, deferred, enabledNames });
   }
 
   private projectedEntry(name: string): McpServerEntry | undefined {
     const effective = this.effectiveEntries?.[name];
-    const layer = this.owner(name);
-    if (this.effectiveEntries !== undefined && effective === undefined) return undefined;
+    if (this.effectiveEntries !== undefined && effective === undefined) {
+      const transport = this.publishedTransports.get(name);
+      if (transport === undefined) return undefined;
+      return { name, transport, status: 'removed', toolCount: 0 };
+    }
     if (effective?.enabled === false) {
       return { name, transport: effective.transport, status: 'disabled', toolCount: 0 };
     }
-    return layer?.view.get(name);
+    const existing = this.owner(name)?.view.get(name);
+    if (existing !== undefined) {
+      if (effective === undefined) return existing;
+      const enabledCount = this.resolved(name)?.enabledNames.size;
+      if (enabledCount === undefined || enabledCount === existing.toolCount) return existing;
+      return { ...existing, toolCount: enabledCount };
+    }
+    if (effective === undefined || !this.activatingNames.has(name)) return undefined;
+    return { name, transport: effective.transport, status: 'pending', toolCount: 0 };
   }
 
   private owner(name: string): McpConnectionLayer | undefined {

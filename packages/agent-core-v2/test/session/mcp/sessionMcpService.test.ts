@@ -20,6 +20,7 @@ import {
   type McpConnectionView,
 } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
+import { RefCountedMcpServerPool } from '#/mcpCore/refCountedPool';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IProjectContext } from '#/project/projectContext/projectContext';
 import { IProjectDirs } from '#/project/projectDirs/projectDirs';
@@ -165,7 +166,9 @@ describe('SessionMcpService', () => {
       },
     });
     projectService = ix.get(IProjectMcpService);
-    manager = projectService.sourceManager('workspace');
+    manager = projectService.sources().find((source) => source.id === 'workspace')?.view as
+      | McpConnectionManager
+      | undefined;
     return projectService;
   }
 
@@ -196,38 +199,34 @@ describe('SessionMcpService', () => {
     return session;
   }
 
-  it('admits servers connecting before ready settles and freezes the baseline after', async () => {
+  it('freezes the baseline from startup configs even while initial connections are still pending', async () => {
     current = { alpha: stdioServer() };
-    let settleConnectAll: () => void = () => undefined;
-    vi.spyOn(McpConnectionManager.prototype, 'connectAll').mockImplementation(function (
-      this: McpConnectionManager,
-      servers: Readonly<Record<string, McpServerConfig>>,
-    ) {
-      for (const [name, config] of Object.entries(servers)) {
-        void this.connect(name, config);
-      }
-      return new Promise<void>((resolve) => {
-        settleConnectAll = resolve;
+    let settleConnect: () => void = () => undefined;
+    let signalConnectStarted: () => void = () => undefined;
+    const connectStarted = new Promise<void>((resolve) => {
+      signalConnectStarted = resolve;
+    });
+    vi.spyOn(McpConnectionManager.prototype, 'connect').mockImplementation(async () => {
+      signalConnectStarted();
+      await new Promise<void>((resolve) => {
+        settleConnect = resolve;
       });
     });
 
     const project = createProject();
     const session = createSession(project.sources());
+    try {
+      await connectStarted;
 
-    await vi.waitFor(() => {
-      expect(manager?.get('alpha')).toBeDefined();
-    });
+      expect(session.isBaselineServer('alpha')).toBe(true);
+      expect(session.isBaselineServer('ghost')).toBe(false);
+      expect(session.isBaselineServer('late')).toBe(false);
+    } finally {
+      settleConnect();
+    }
+    await session.ready;
     expect(session.isBaselineServer('alpha')).toBe(true);
-    expect(session.isBaselineServer('ghost')).toBe(false);
-
-    settleConnectAll();
-    await project.ready;
-
-    await manager?.connect('late', stdioServer());
     expect(session.isBaselineServer('late')).toBe(false);
-    expect(session.isBaselineServer('alpha')).toBe(true);
-
-    expect(createSession(project.sources()).isBaselineServer('late')).toBe(true);
   }, 20000);
 
   it('admits servers that finished the initial load before the first baseline read', async () => {
@@ -235,7 +234,7 @@ describe('SessionMcpService', () => {
     const project = createProject();
     const session = createSession(project.sources());
 
-    await project.ready;
+    await session.ready;
     expect(manager?.get('alpha')?.status).toBe('connected');
 
     expect(session.isBaselineServer('alpha')).toBe(true);
@@ -248,13 +247,31 @@ describe('SessionMcpService', () => {
       const project = createProject();
       const session = createSession(project.sources());
 
-      await project.ready;
+      await session.ready;
       expect(manager?.get('remote')?.status).toBe('needs-auth');
 
       expect(session.isBaselineServer('remote')).toBe(true);
     } finally {
       await server.close();
     }
+  }, 20000);
+
+  it('upserts runtime servers for this session only without entering the baseline', async () => {
+    current = { alpha: stdioServer() };
+    const project = createProject();
+    const first = createSession(project.sources());
+    const second = createSession(project.sources());
+    await first.ready;
+    await second.ready;
+
+    await first.upsertServer('alpha', { transport: 'http', url: 'https://127.0.0.1:9/mcp' });
+    await first.upsertServer('extra', { transport: 'http', url: 'https://127.0.0.1:9/mcp' });
+
+    expect(first.connectionManager.get('alpha')?.transport).toBe('http');
+    expect(first.connectionManager.get('extra')?.transport).toBe('http');
+    expect(first.isBaselineServer('extra')).toBe(false);
+    expect(second.connectionManager.get('alpha')?.transport).toBe('stdio');
+    expect(second.connectionManager.get('extra')).toBeUndefined();
   }, 20000);
 
   it('marks the ephemeral server names as baseline by construction', async () => {
@@ -269,40 +286,6 @@ describe('SessionMcpService', () => {
     await session.ready;
     expect(session.isBaselineServer('eph')).toBe(true);
     expect(session.isBaselineServer('late')).toBe(false);
-  }, 20000);
-
-  it('freezes the project baseline on project ready even while the overlay connect is pending', async () => {
-    current = { base: stdioServer() };
-    let settleOverlay: () => void = () => undefined;
-    vi.spyOn(McpConnectionManager.prototype, 'connectAll').mockImplementation(function (
-      this: McpConnectionManager,
-      servers: Readonly<Record<string, McpServerConfig>>,
-    ) {
-      if ('eph' in servers) {
-        return new Promise<void>((resolve) => {
-          settleOverlay = resolve;
-        });
-      }
-      for (const [name, config] of Object.entries(servers)) {
-        void this.connect(name, config);
-      }
-      return Promise.resolve();
-    });
-
-    const project = createProject();
-    await project.ready;
-
-    const session = createSession(project.sources(), { eph: stdioServer() });
-    expect(session.isBaselineServer('eph')).toBe(true);
-    expect(session.isBaselineServer('base')).toBe(true);
-
-    await manager?.connect('late', stdioServer());
-    expect(session.isBaselineServer('late')).toBe(false);
-
-    settleOverlay();
-    await session.ready;
-    expect(session.isBaselineServer('late')).toBe(false);
-    expect(session.isBaselineServer('eph')).toBe(true);
   }, 20000);
 
   it('connects ephemeral servers on a session-owned manager, released by session disposal', async () => {
@@ -321,7 +304,7 @@ describe('SessionMcpService', () => {
 
     await session.disposeAsync();
     expect(view.get('eph')).toBeUndefined();
-    expect(manager?.get('base')?.status).toBe('connected');
+    expect(manager?.get('base')).toBeUndefined();
   }, 20000);
 
   it('starts no ephemeral server once disposed before its first load', async () => {
@@ -354,14 +337,14 @@ describe('SessionMcpService', () => {
     try {
       const empty = createSession(project.sources(), {}, { sessionCwd });
       await empty.ready;
-      const connectAll = vi.spyOn(McpConnectionManager.prototype, 'connectAll');
+      const connect = vi.spyOn(McpConnectionManager.prototype, 'connect');
       const session = createSession(
         project.sources().map((source) => ({ ...source, stdioCwd: () => cwd })),
         { eph: stdioServer() },
         { sessionCwd },
       );
       await session.ready;
-      expect(connectAll).toHaveBeenCalledTimes(1);
+      expect(connect).toHaveBeenCalledTimes(1);
       expect(session.connectionManager.get('eph')?.status).toBe('connected');
     } finally {
       await rm(sessionCwd, { recursive: true, force: true });
@@ -383,7 +366,7 @@ describe('SessionMcpService', () => {
 
     expect(session.connectionManager.get('shared')?.name).toBe('shared');
     registration.dispose();
-    expect(session.connectionManager.get('shared')).toBeUndefined();
+    expect(session.connectionManager.get('shared')?.status).toBe('removed');
     expect(sharedManager.get('shared')?.name).toBe('shared');
     await sharedManager.shutdown();
   });
@@ -560,6 +543,284 @@ describe('SessionMcpService', () => {
     expect(session.connectionManager.deferredOf('tuned')).toBe(true);
     await userManager.shutdown();
     await workspaceManager.shutdown();
+  }, 20000);
+
+  it('reconnects a shared server when its config changes and marks it removed when deleted', async () => {
+    current = { alpha: stdioServer() };
+    const project = createProject();
+    const session = createSession(project.sources());
+    const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+    await session.ready;
+    expect(session.connectionManager.get('alpha')?.status).toBe('connected');
+    expect(spawn).toHaveBeenCalledTimes(1);
+    const [firstChild] = await Promise.all(spawn.mock.results.map((result) => result.value));
+
+    const updated: McpServerConfig = {
+      transport: 'stdio',
+      ...mockStdioServer(),
+      environment_id: 'local',
+      env: { KIMI_TEST_TAG: 'v2' },
+    };
+    current = { alpha: updated };
+    const signal = new AbortController().signal;
+    await Promise.all([
+      configChanges.fireAsync({ upsert: current, remove: [] }, signal),
+      sourceChanges.fireAsync({ sourceId: 'workspace', upsert: current, remove: [] }, signal),
+    ]);
+    await vi.waitFor(() => {
+      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(firstChild.exitCode).not.toBeNull();
+      expect(session.connectionManager.get('alpha')?.status).toBe('connected');
+    });
+
+    const statuses: string[] = [];
+    const unsubscribe = session.connectionManager.onStatusChange((entry) => {
+      if (entry.name === 'alpha') statuses.push(entry.status);
+    });
+    current = {};
+    await Promise.all([
+      configChanges.fireAsync({ upsert: {}, remove: ['alpha'] }, signal),
+      sourceChanges.fireAsync({ sourceId: 'workspace', upsert: {}, remove: ['alpha'] }, signal),
+    ]);
+    await vi.waitFor(() => {
+      expect(manager?.get('alpha')).toBeUndefined();
+    });
+    unsubscribe();
+
+    expect(statuses).toContain('removed');
+    expect(session.connectionManager.get('alpha')?.status).toBe('removed');
+    expect(session.connectionManager.list().find((entry) => entry.name === 'alpha')?.status).toBe('removed');
+  }, 20000);
+
+  it('emits status changes when disclosure overrides change without respawning the process', async () => {
+    const userManager = new McpConnectionManager({
+      environmentResolver: environmentServices,
+      environmentId: 'local',
+      stdioCwd: () => cwd,
+    });
+    const userPool = new RefCountedMcpServerPool(userManager);
+    let overrideEntries: Record<string, { deferred?: boolean; disabledTools?: string[] }> = {};
+    const overrideChanges = new Emitter<void>();
+    const workspaceManager = new McpConnectionManager();
+    const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+    const session = createSession([
+      {
+        id: 'user',
+        priority: MCP_SOURCE_PRIORITY.user,
+        ready: Promise.resolve(),
+        view: userManager,
+        entries: () => ({ tuned: { ...stdioServer(), deferred: true } }),
+        acquire: (ownerId, servers) => userPool.acquire(ownerId, servers),
+        release: (ownerId) => userPool.release(ownerId),
+      },
+      {
+        id: 'workspace',
+        priority: MCP_SOURCE_PRIORITY.workspace,
+        ready: Promise.resolve(),
+        view: workspaceManager,
+        entries: () => overrideEntries,
+        onDidChangeEntries: overrideChanges.event,
+      },
+    ]);
+    await session.ready;
+    expect(session.connectionManager.get('tuned')?.status).toBe('connected');
+    expect(session.connectionManager.get('tuned')?.toolCount).toBe(4);
+    expect(spawn).toHaveBeenCalledTimes(1);
+
+    const seen: Array<{ status: string; toolCount: number; deferred: boolean }> = [];
+    const unsubscribe = session.connectionManager.onStatusChange((entry) => {
+      if (entry.name !== 'tuned') return;
+      seen.push({
+        status: entry.status,
+        toolCount: entry.toolCount,
+        deferred: session.connectionManager.deferredOf('tuned'),
+      });
+    });
+
+    overrideEntries = { tuned: { disabledTools: ['echo'] } };
+    overrideChanges.fire();
+    await vi.waitFor(() => {
+      expect(session.connectionManager.get('tuned')?.toolCount).toBe(3);
+    });
+    expect([...(session.connectionManager.resolved('tuned')?.enabledNames ?? [])].toSorted()).toEqual(['boom', 'read_env', 'whoami']);
+
+    overrideEntries = { tuned: { disabledTools: ['boom'] } };
+    overrideChanges.fire();
+    await vi.waitFor(() => {
+      expect([...(session.connectionManager.resolved('tuned')?.enabledNames ?? [])].toSorted()).toEqual(['echo', 'read_env', 'whoami']);
+    });
+
+    overrideEntries = { tuned: { deferred: false } };
+    overrideChanges.fire();
+    await vi.waitFor(() => {
+      expect(seen.some((entry) => !entry.deferred)).toBe(true);
+    });
+    unsubscribe();
+
+    expect(seen.map((entry) => entry.status)).toEqual(['connected', 'connected', 'connected']);
+    expect(seen[0]).toMatchObject({ toolCount: 3, deferred: true });
+    expect(spawn).toHaveBeenCalledTimes(1);
+    await userManager.shutdown();
+    await workspaceManager.shutdown();
+  }, 20000);
+});
+
+describe('SessionMcpService pre-connect arbitration', () => {
+  let cwd: string;
+  let disposables: DisposableStore;
+  let sessions: SessionMcpService[];
+  let managers: McpConnectionManager[];
+  let oauthService: McpOAuthService;
+  let environmentServices: IEnvironmentService;
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'kimi-session-arb-cwd-'));
+    disposables = new DisposableStore();
+    sessions = [];
+    managers = [];
+    oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const environment = Object.assign(
+      new FakeEnvironment({ environmentId: 'local', generation: 'test' }, { capabilities: ['process'] }),
+      { process: new HostProcessService() },
+    );
+    environmentServices = {
+      _serviceBrand: undefined,
+      inspect: () => environment,
+      acquire: () => ({ environment, track: <T,>(resource: T): T => resource, dispose: () => {} }),
+      acquireWhenReady: async () => ({ environment, track: <T,>(resource: T): T => resource, dispose: () => {} }),
+    } as unknown as IEnvironmentService;
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await Promise.all(sessions.map((session) => session.disposeAsync()));
+    await Promise.all(managers.map((manager) => manager.shutdown()));
+    await oauthService.dispose();
+    disposables.dispose();
+    await rm(cwd, { recursive: true, force: true });
+  });
+
+  function leasedSource(id: string, priority: number, entries: Record<string, McpServerConfig>): McpSource {
+    const manager = new McpConnectionManager({
+      environmentResolver: environmentServices,
+      environmentId: 'local',
+      stdioCwd: () => cwd,
+      log: stubLog(),
+    });
+    managers.push(manager);
+    const pool = new RefCountedMcpServerPool(manager);
+    return {
+      id,
+      priority,
+      ready: Promise.resolve(),
+      view: manager,
+      entries: () => entries,
+      acquire: (ownerId, servers) => pool.acquire(ownerId, servers),
+      release: (ownerId) => pool.release(ownerId),
+    };
+  }
+
+  function openSession(sources: readonly McpSource[], ephemeral: Record<string, McpServerConfig> = {}): SessionMcpService {
+    const sessionId = `arb-${sessions.length}`;
+    const session = new SessionMcpService(
+      makeSessionContext({ sessionId, workspaceId: 'ws', sessionDir: cwd, sessionScope: 'ws', cwd }),
+      ephemeral,
+      sources,
+      [],
+      { ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService,
+      oauthService,
+      environmentServices,
+      stubAgentIdentity(),
+      stubLog(),
+    );
+    sessions.push(session);
+    return session;
+  }
+
+  it('never spawns a shadowed lower-priority server and fails over when the winner source is disabled', async () => {
+    const user = leasedSource('user', MCP_SOURCE_PRIORITY.user, { shared: stdioServer() });
+    const workspace = leasedSource('workspace', MCP_SOURCE_PRIORITY.workspace, { shared: stdioServer() });
+    const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+
+    const session = openSession([user, workspace]);
+    await session.ready;
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(user.view.get('shared')).toBeUndefined();
+    expect(workspace.view.get('shared')?.status).toBe('connected');
+
+    session.setSourceEnabled('workspace', false);
+    await vi.waitFor(() => {
+      expect(user.view.get('shared')?.status).toBe('connected');
+    });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(workspace.view.get('shared')).toBeUndefined();
+    expect(session.connectionManager.get('shared')?.status).toBe('connected');
+  }, 20000);
+
+  it('shares one child process across sessions of the same source until the last session releases it', async () => {
+    const shared = leasedSource('workspace', MCP_SOURCE_PRIORITY.workspace, { shared: stdioServer() });
+    const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+
+    const first = openSession([shared]);
+    const second = openSession([shared]);
+    await Promise.all([first.ready, second.ready]);
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    const [child] = await Promise.all(spawn.mock.results.map((result) => result.value));
+    expect(child.exitCode).toBeNull();
+
+    await first.disposeAsync();
+    expect(child.exitCode).toBeNull();
+    expect(second.connectionManager.get('shared')?.status).toBe('connected');
+
+    await second.disposeAsync();
+    await vi.waitFor(() => {
+      expect(child.exitCode).not.toBeNull();
+    });
+    expect(shared.view.get('shared')).toBeUndefined();
+  }, 20000);
+
+  it('closes ephemeral caller processes immediately when the caller source is disabled', async () => {
+    const shared = leasedSource('workspace', MCP_SOURCE_PRIORITY.workspace, {});
+    const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+    const session = openSession([shared], { eph: stdioServer() });
+    await session.ready;
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    const [child] = await Promise.all(spawn.mock.results.map((result) => result.value));
+    expect(session.connectionManager.get('eph')?.status).toBe('connected');
+
+    session.setSourceEnabled('caller', false);
+    await vi.waitFor(() => {
+      expect(child.exitCode).not.toBeNull();
+    });
+    expect(session.connectionManager.get('eph')?.status).toBe('removed');
+    expect(spawn).toHaveBeenCalledTimes(1);
+  }, 20000);
+
+  it('fails over to a lower-priority source when a dynamic source registration is disposed', async () => {
+    const workspace = leasedSource('workspace', MCP_SOURCE_PRIORITY.workspace, { shared: stdioServer() });
+    const feature = leasedSource('feature', MCP_SOURCE_PRIORITY.workspace + 10, { shared: stdioServer() });
+    const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+    const session = openSession([workspace]);
+    await session.ready;
+    expect(spawn).toHaveBeenCalledTimes(1);
+
+    const registration = session.registerSource(feature);
+    await vi.waitFor(() => {
+      expect(feature.view.get('shared')?.status).toBe('connected');
+      expect(workspace.view.get('shared')).toBeUndefined();
+    });
+    expect(spawn).toHaveBeenCalledTimes(2);
+
+    registration.dispose();
+    await vi.waitFor(() => {
+      expect(workspace.view.get('shared')?.status).toBe('connected');
+      expect(feature.view.get('shared')).toBeUndefined();
+    });
+    expect(spawn).toHaveBeenCalledTimes(3);
+    expect(session.connectionManager.get('shared')?.status).toBe('connected');
   }, 20000);
 });
 

@@ -76,6 +76,8 @@ describe('ProgramMcpSets', () => {
   let storeWrites: AsyncEmitter<McpConfigWriteEvent>;
   let oauth: McpOAuthService;
   let created: ProgramMcpSets[];
+  let sessions: SessionMcpService[];
+  let environmentServices: IEnvironmentService;
   let spawn: MockInstance<HostProcessService['spawn']>;
 
   beforeEach(() => {
@@ -93,10 +95,12 @@ describe('ProgramMcpSets', () => {
     storeWrites = disposables.add(new AsyncEmitter<McpConfigWriteEvent>());
     oauth = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     created = [];
+    sessions = [];
     spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
   });
 
   afterEach(async () => {
+    await Promise.all(sessions.map((session) => session.disposeAsync()));
     await Promise.all(created.map((sets) => sets.dispose()));
     await oauth.dispose();
     vi.restoreAllMocks();
@@ -131,6 +135,12 @@ describe('ProgramMcpSets', () => {
       { process: new HostProcessService() },
     );
     const lease = { environment, track: <T,>(resource: T): T => resource, dispose: () => {} };
+    environmentServices = {
+      _serviceBrand: undefined,
+      inspect: () => environment,
+      acquire: () => lease,
+      acquireWhenReady: async () => lease,
+    } as unknown as IEnvironmentService;
     const dependencies = {
       bootstrap: { homeDir },
       config: { ready: Promise.resolve(), onDidSectionChange: Event.None, get: () => undefined },
@@ -184,8 +194,29 @@ describe('ProgramMcpSets', () => {
   }
 
   async function settled(lease: ProgramMcpLease): Promise<McpConnectionView> {
-    await lease.service.ready;
-    return lease.service.connectionManager();
+    const sessionId = `settled-${sessions.length}`;
+    const session = new SessionMcpService(
+      makeSessionContext({ sessionId, workspaceId: 'workspace', sessionDir: checkout, sessionScope: 'ws', cwd: checkout }),
+      {},
+      lease.service.sources(),
+      [],
+      { ready: Promise.resolve(), get: () => undefined } as never,
+      oauth,
+      environmentServices,
+      stubAgentIdentity(),
+      stubLog(),
+    );
+    sessions.push(session);
+    const disposeLease = lease.dispose;
+    let released = false;
+    lease.dispose = () => {
+      if (released) return;
+      released = true;
+      void session.disposeAsync();
+      disposeLease();
+    };
+    await session.ready;
+    return session.connectionManager;
   }
 
   function startedTags(): string[] {
@@ -596,7 +627,9 @@ describe('ProgramMcpSets', () => {
         expect(reconnect.mock.calls).toEqual([['remote'], ['remote']]);
       });
       expect(new Set(reconnect.mock.contexts)).toEqual(
-        new Set(leases.map((lease) => lease.service.sourceManager('user'))),
+        new Set(
+          leases.map((lease) => lease.service.sources().find((source) => source.id === 'user')?.view),
+        ),
       );
     } finally {
       await remote.close();
@@ -635,6 +668,7 @@ describe('ProgramMcpSets', () => {
     const view = await settled(lease);
     expect(names(view)).toEqual(['remote']);
 
+    await Promise.all(sessions.map((session) => session.disposeAsync()));
     lease.dispose();
     await sets.dispose();
 

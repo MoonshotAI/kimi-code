@@ -1,5 +1,4 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { McpConnectionManager } from '#/mcpCore/connection-manager';
 import type { McpSource } from '#/session/mcp/mcpSource';
 import type { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 
@@ -10,7 +9,7 @@ export interface IProjectMcpService {
 
   connectionManager(): MergedMcpConnectionView;
 
-  sourceManager(sourceId: string): McpConnectionManager | undefined;
+  acquire(): Promise<() => Promise<void>>;
 
   sources(): readonly McpSource[];
 }

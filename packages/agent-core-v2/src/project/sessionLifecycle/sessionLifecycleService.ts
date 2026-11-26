@@ -62,6 +62,7 @@ import {
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
+import { SyncDescriptor } from '#/_base/di/descriptors';
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import {
@@ -72,7 +73,6 @@ import {
 } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { sessionDisabledMcpSourcesSeed, sessionMcpSourcesSeed } from '#/session/mcp/mcpSource';
 import { ISessionMcpService, SessionMcpService } from '#/session/mcp/sessionMcpService';
 import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
@@ -346,6 +346,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
           ],
           configureContainer: (container) => {
+            container.invokeFunction((accessor) => {
+              accessor.get(ISessionMcpService);
+            });
             container.anchorKernelEntry(
               () => telemetryBinding.dispose(),
               'telemetry:session-context',
