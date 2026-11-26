@@ -1673,6 +1673,53 @@ describe('WorkspaceFsService.suggest', () => {
     });
   });
 
+  function rgSpawnFailureSession(): { readonly fs: IProjectFsService; activeLeases(): number } {
+    const runner: IHostProcessService = {
+      _serviceBrand: undefined,
+      spawn: async (_command, args) => {
+        if (args?.[0] === '--version') return fakeProcess('ripgrep 15.0.0', '', 0);
+        throw new Error('spawn EAGAIN');
+      },
+    };
+    const fs = makeSession({ 'src/foo.ts': 'hello\n' }, emptyHandler, [], defaultGitStub(), [], runner);
+    let active = 0;
+    Object.defineProperty(fs, 'resolver', {
+      value: {
+        acquire: () => {
+          active += 1;
+          let released = false;
+          return {
+            environment: { process: runner },
+            track: (resource: unknown) => resource,
+            dispose: () => {
+              if (released) return;
+              released = true;
+              active -= 1;
+            },
+          };
+        },
+      },
+    });
+    Object.defineProperty(fs, 'rgResolution', { value: { path: 'rg' } });
+    return { fs, activeLeases: () => active };
+  }
+
+  it('releases the environment lease when rg fails to spawn for suggest', async () => {
+    const session = rgSpawnFailureSession();
+
+    const result = await session.fs.suggest({ query: 'foo', limit: 50, follow_gitignore: true, show_hidden: false });
+
+    expect(result.items.map((item) => item.path)).toContain('src/foo.ts');
+    expect(session.activeLeases()).toBe(0);
+  });
+
+  it('releases the environment lease when rg fails to spawn for grep', async () => {
+    const session = rgSpawnFailureSession();
+
+    await expect(session.fs.grep(WALK_GREP_REQUEST)).rejects.toThrow('spawn EAGAIN');
+    expect(session.activeLeases()).toBe(0);
+  });
+
   it('falls back to the node walk when rg exits with an error status', async () => {
     const events: Array<{ event: string; properties: Record<string, unknown> }> = [];
     const runner: IHostProcessService = {
