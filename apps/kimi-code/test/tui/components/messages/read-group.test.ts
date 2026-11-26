@@ -30,6 +30,30 @@ function rows(group: ReadGroupComponent, width: number): string[] {
   return group.render(width).map(strip).filter((line) => line.trim().length > 0);
 }
 
+function mediaReadCall(
+  id: string,
+  path: string,
+  kind: 'image' | 'video',
+  url = 'kimi-file://f_media_1',
+): ToolCallComponent {
+  const part =
+    kind === 'image'
+      ? { type: 'image_url', imageUrl: { url } }
+      : { type: 'video_url', videoUrl: { url } };
+  return new ToolCallComponent(
+    { id, name: 'Read', args: { path } },
+    {
+      tool_call_id: id,
+      output: JSON.stringify([
+        { type: 'text', text: `<${kind} path="${path}">` },
+        part,
+        { type: 'text', text: `</${kind}>` },
+      ]),
+      is_error: false,
+    },
+  );
+}
+
 describe('ReadGroupComponent', () => {
   it('collapses to a single header row and hides the per-file body until expanded', () => {
     const group = makeGroup();
@@ -47,6 +71,31 @@ describe('ReadGroupComponent', () => {
 
     group.setExpanded(false);
     expect(rows(group, 100)).toHaveLength(1);
+  });
+
+  it('describes parallel media and mixed text/media Read calls instead of counting JSON as 1 line', () => {
+    const mediaGroup = new ReadGroupComponent(undefined);
+    mediaGroup.attach('m1', mediaReadCall('m1', 'shots/before.png', 'image'));
+    mediaGroup.attach('m2', mediaReadCall('m2', 'shots/after.png', 'image'));
+
+    expect(rows(mediaGroup, 100)[0]).toContain('Read 2 files · 2 images');
+    expect(rows(mediaGroup, 100)[0]).not.toContain('lines');
+    mediaGroup.setExpanded(true);
+    const mediaBody = rows(mediaGroup, 100).join('\n');
+    expect(mediaBody).toContain('shots/before.png · image · uploaded');
+    expect(mediaBody).toContain('shots/after.png · image · uploaded');
+
+    const mixedGroup = new ReadGroupComponent(undefined);
+    mixedGroup.attach('t1', readCall('t1', 'src/Card.tsx', 120));
+    mixedGroup.attach('m3', mediaReadCall('m3', 'shots/design.png', 'image'));
+    mixedGroup.attach('v1', mediaReadCall('v1', 'shots/demo.mp4', 'video'));
+    mixedGroup.setExpanded(true);
+
+    const mixedRows = rows(mixedGroup, 100);
+    expect(mixedRows[0]).toContain('Read 3 files · 120 lines, 1 image, 1 video');
+    expect(mixedRows.join('\n')).toContain('src/Card.tsx · 120 lines');
+    expect(mixedRows.join('\n')).toContain('shots/design.png · image · uploaded');
+    expect(mixedRows.join('\n')).toContain('shots/demo.mp4 · video · uploaded');
   });
 
   it('truncates the header to the terminal width instead of wrapping', () => {

@@ -61,7 +61,7 @@ import { ShellExecutionComponent } from './shell-execution';
 import { chipText, countNonEmptyLines } from './tool-renderers/chip';
 import { buildGoalToolHeader, isGoalToolName, parseGoalToolOutput } from './tool-renderers/goal';
 import { searchNoticeOnly } from './tool-renderers/grep-output';
-import { parseReadMediaOutput } from './tool-renderers/media';
+import { formatReadMediaChip, parseReadMediaOutput } from './tool-renderers/media';
 import { nonEmptyLines, outcomeLine, outcomeRows } from './tool-renderers/outcome';
 import { TruncatedOutputComponent, trimTrailingEmptyLines } from './tool-renderers/truncated';
 import { CardOnly, isSpilledToolOutput } from './tool-renderers/types';
@@ -134,6 +134,8 @@ export interface ToolCallReadSnapshot {
   readonly filePath: string | undefined;
   readonly phase: 'pending' | 'done' | 'failed';
   readonly lines: number;
+  readonly mediaKind?: 'image' | 'video';
+  readonly mediaChip?: string;
 }
 
 function backgroundFailureMessage(
@@ -1219,6 +1221,17 @@ export class ToolCallComponent extends Container {
     }
     if (this.result.is_error === true) {
       return { toolCallId: this.toolCall.id, filePath, phase: 'failed', lines: 0 };
+    }
+    const media = parseReadMediaOutput(this.result.output);
+    if (media !== null) {
+      return {
+        toolCallId: this.toolCall.id,
+        filePath,
+        phase: 'done',
+        lines: 0,
+        mediaKind: media.kind,
+        mediaChip: formatReadMediaChip(media),
+      };
     }
     return {
       toolCallId: this.toolCall.id,

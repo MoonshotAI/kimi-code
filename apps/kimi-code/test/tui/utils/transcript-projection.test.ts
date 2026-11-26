@@ -1205,4 +1205,26 @@ describe('fold rules', () => {
 
     expect(project(components, compact).map((item) => item.kind)).toEqual(['group', 'row']);
   });
+
+  it('preserves the media chip stat for media Read items while suppressing text Read line counts', () => {
+    const textRead = tool('Read', { path: '/work/a.ts' }, result('1\thello\n2\tworld'));
+    const imageRead = tool(
+      'Read',
+      { path: '/work/a.png' },
+      result(
+        JSON.stringify([
+          { type: 'text', text: '<image path="/work/a.png">' },
+          { type: 'image_url', imageUrl: { url: 'kimi-file://f_img_1' } },
+          { type: 'text', text: '</image>' },
+        ]),
+      ),
+    );
+
+    const items = inspect([textRead, imageRead], options({ toolCallDensity: 'compact' }));
+    expect(items[0]).toMatchObject({ kind: 'logical', status: { kind: 'done', stat: undefined } });
+    expect(items[1]).toMatchObject({
+      kind: 'logical',
+      status: { kind: 'done', stat: { kind: 'note', text: 'image · uploaded' } },
+    });
+  });
 });

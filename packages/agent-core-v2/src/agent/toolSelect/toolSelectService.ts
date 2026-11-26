@@ -113,8 +113,13 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       this.reminder.register(LEGACY_READ_MEDIA_MERGED_VARIANT, ({ injectedPositions, lastInjectedAt }) => {
         if (
           this.modelState().initial?.some((tool) => tool.name === LEGACY_READ_MEDIA_FILE_TOOL_NAME) !== true ||
-          this.toolRegistry.resolve(LEGACY_READ_MEDIA_FILE_TOOL_NAME) !== undefined
+          this.toolRegistry.resolve(LEGACY_READ_MEDIA_FILE_TOOL_NAME) !== undefined ||
+          !this.toolPolicy.isToolActive('Read')
         ) {
+          return undefined;
+        }
+        const capabilities = this.profile.getModelCapabilities();
+        if (!capabilities.image_in && !capabilities.video_in) {
           return undefined;
         }
         if (
@@ -387,17 +392,21 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return this.states.get(toolSelectKey);
   }
 
+  private withoutRetiredReadMedia(tools: readonly ToolSelectTool[]): readonly ToolSelectTool[] {
+    if (this.toolRegistry.resolve(LEGACY_READ_MEDIA_FILE_TOOL_NAME) !== undefined) return tools;
+    return tools.filter((tool) => tool.name !== LEGACY_READ_MEDIA_FILE_TOOL_NAME);
+  }
+
   private currentTools(): readonly ToolSelectTool[] {
     const state = this.modelState();
-    if (state.initial !== undefined) return state.current;
+    if (state.initial !== undefined) return this.withoutRetiredReadMedia(state.current);
     return this.activeTools('initial');
   }
 
   private initialToolInfos(): readonly ToolSelectTool[] {
     const initial = this.modelState().initial;
     if (initial === undefined) return this.activeTools('initial');
-    if (this.toolRegistry.resolve(LEGACY_READ_MEDIA_FILE_TOOL_NAME) !== undefined) return initial;
-    return initial.filter((tool) => tool.name !== LEGACY_READ_MEDIA_FILE_TOOL_NAME);
+    return this.withoutRetiredReadMedia(initial);
   }
 
   private activeTools(origin: ToolSelectTool['origin']): readonly ToolSelectTool[] {
@@ -443,7 +452,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       this.notifyUpdatedTools(live, signal);
       return;
     }
-    const current = state.current;
+    const current = this.currentTools();
     const currentByName = new Map(current.map((tool) => [tool.name, tool]));
     const active = this.activeTools('initial');
     const activeNames = new Set(active.map((tool) => tool.name));

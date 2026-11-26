@@ -102,13 +102,23 @@ export class ReadGroupComponent extends Container {
     const snapshots = this.entries.map((e) => e.tc.getReadSnapshot());
     let pending = 0;
     let failed = 0;
+    let textFiles = 0;
     let totalLines = 0;
+    let images = 0;
+    let videos = 0;
     for (const snap of snapshots) {
       if (snap.phase === 'pending') pending += 1;
       else if (snap.phase === 'failed') failed += 1;
-      else totalLines += snap.lines;
+      else if (snap.mediaKind === 'image') images += 1;
+      else if (snap.mediaKind === 'video') videos += 1;
+      else {
+        textFiles += 1;
+        totalLines += snap.lines;
+      }
     }
-    this.headerText.setText(this.buildHeader(snapshots.length, pending, failed, totalLines));
+    this.headerText.setText(
+      this.buildHeader(snapshots.length, pending, failed, textFiles, totalLines, images, videos),
+    );
 
     this.bodyContainer.clear();
     if (this.expanded) {
@@ -135,7 +145,10 @@ export class ReadGroupComponent extends Container {
     total: number,
     pending: number,
     failed: number,
+    textFiles: number,
     totalLines: number,
+    images: number,
+    videos: number,
   ): HeaderContent {
     if (pending > 0) {
       const bullet = currentTheme.fg('text', STATUS_BULLET);
@@ -151,14 +164,28 @@ export class ReadGroupComponent extends Container {
 
     const bullet = currentTheme.fg('success', STATUS_BULLET);
     const label = currentTheme.boldFg('primary', `Read ${String(total)} files`);
+    const summaryParts: string[] = [];
+    if (textFiles > 0) {
+      summaryParts.push(`${String(totalLines)} ${totalLines === 1 ? 'line' : 'lines'}`);
+    }
+    if (images > 0) {
+      summaryParts.push(`${String(images)} ${images === 1 ? 'image' : 'images'}`);
+    }
+    if (videos > 0) {
+      summaryParts.push(`${String(videos)} ${videos === 1 ? 'video' : 'videos'}`);
+    }
+    const tail = failed > 0 ? currentTheme.fg('error', ` · ${String(failed)} failed`) : '';
+    if (summaryParts.length === 0) {
+      return `${bullet}${label}${tail}`;
+    }
     return {
       head: `${bullet}${label}`,
       flex: {
-        text: ` · ${String(totalLines)} ${totalLines === 1 ? 'line' : 'lines'}`,
+        text: ` · ${summaryParts.join(', ')}`,
         style: dimHeaderStyle,
         keep: 'head',
       },
-      tail: failed > 0 ? currentTheme.fg('error', ` · ${String(failed)} failed`) : '',
+      tail,
     };
   }
 
@@ -173,6 +200,8 @@ export class ReadGroupComponent extends Container {
       tail = dim(' · reading…');
     } else if (snap.phase === 'failed') {
       tail = currentTheme.fg('error', ' · failed');
+    } else if (snap.mediaChip !== undefined) {
+      tail = dim(` · ${snap.mediaChip}`);
     } else {
       tail = dim(` · ${String(snap.lines)} ${snap.lines === 1 ? 'line' : 'lines'}`);
     }

@@ -504,6 +504,10 @@ function toolStat(component: ToolCallComponent, event: SummaryEvent): ItemStat |
       : { kind: 'diff', added: event.added, removed: event.removed };
   }
   const toolCall = component.toolCallView;
+  if (toolCall.name === 'Read') {
+    const mediaChip = component.getReadSnapshot().mediaChip;
+    return mediaChip === undefined ? undefined : { kind: 'note', text: mediaChip };
+  }
   if (LINE_COUNT_CHIP_TOOLS.has(toolCall.name)) return undefined;
   const text = chipText(toolCall, result);
   return text.length === 0 ? undefined : { kind: 'note', text };
