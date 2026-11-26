@@ -53,7 +53,7 @@ export class TabbedModelSelectorComponent extends DockSection implements Focusab
   private tabStripRow = -1;
   private tabHitRanges: readonly TabStripHitRange[] = [];
 
-  constructor(opts: TabbedModelSelectorOptions) {
+  constructor(readonly opts: TabbedModelSelectorOptions) {
     super(opts.layout);
     this.tabs = buildTabs(opts);
 
