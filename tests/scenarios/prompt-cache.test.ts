@@ -114,7 +114,7 @@ async function runPastTheCompactionTrigger(kap: Kap, model: FakeModel, sessionId
   const summary = say('Summary: four commands ran.');
   if (roleMetadata) model.lane('compaction').script(summary);
   else model.expectCacheBreak('without role metadata the request after compaction cannot be told apart from a rewritten history', { at: 'history' });
-  model.script(bash('echo four'), withUsage(PAST_THE_TRIGGER, answer('fourth answer')), ...(roleMetadata ? [] : [summary]), answer('continued after compacting'));
+  model.script(withUsage(PAST_THE_TRIGGER, bash('echo four')), ...(roleMetadata ? [] : [summary]), answer('fourth answer'), answer('continued after compacting'));
   await turn(kap, sessionId, 'Run one more command.');
   await turn(kap, sessionId, 'Carry on.');
   expect(model.requests('main').at(-1)?.texts('user').join('\n')).toContain('Summary: four commands ran.');
