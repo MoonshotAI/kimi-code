@@ -110,6 +110,53 @@ describe('HighlightedCode copy serialization with string code prop', () => {
     expect(copied.plain).toBe(source);
   });
 
+  it('preserves mixed CRLF and LF separators byte-for-byte on select-all', () => {
+    for (const source of ['a\r\nb\nc\n', 'a\nb\r\nc', 'a\r\n\nb\nc\r\n']) {
+      const wrapper = mountCode(source);
+      const copied = selectAllAndCopy(wrapper);
+      expect(copied.defaultPrevented).toBe(true);
+      expect(copied.plain).toBe(source);
+      app!.unmount();
+      wrapper.remove();
+    }
+  });
+
+  it('preserves per-row separators in partial mixed-EOL selections without adding trailing EOL on clamped rows', () => {
+    const wrapper = mountCode('aa\r\nbb\ncc\r\ndd\n');
+    const texts = [...wrapper.querySelectorAll('.hl-text')];
+    const firstText = [...texts[0]!.childNodes].find(n => (n.nodeValue ?? '').length > 0)!;
+    const thirdText = [...texts[2]!.childNodes].find(n => (n.nodeValue ?? '').length > 0)!;
+    const range = document.createRange();
+    range.setStart(firstText, 1);
+    range.setEnd(thirdText, 1);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    const copied = dispatchCopy(texts[0]!);
+
+    expect(copied.defaultPrevented).toBe(true);
+    expect(copied.plain).toBe('a\r\nbb\nc');
+  });
+
+  it('does not append a trailing separator when a mixed-EOL partial selection ends at a middle row end', () => {
+    const wrapper = mountCode('aa\r\nbb\ncc\r\n');
+    const texts = [...wrapper.querySelectorAll('.hl-text')];
+    const firstText = [...texts[0]!.childNodes].find(n => (n.nodeValue ?? '').length > 0)!;
+    const secondText = [...texts[1]!.childNodes].find(n => (n.nodeValue ?? '').length > 0)!;
+    const range = document.createRange();
+    range.setStart(firstText, 1);
+    range.setEnd(secondText, secondText.nodeValue!.length);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    const copied = dispatchCopy(texts[0]!);
+
+    expect(copied.defaultPrevented).toBe(true);
+    expect(copied.plain).toBe('a\r\nbb');
+  });
+
   it('uses CRLF inside a partial selection across blank rows without appending a trailing CRLF', () => {
     const wrapper = mountCode('alpha\r\n\r\nbeta\r\n');
     const texts = [...wrapper.querySelectorAll('.hl-text')];

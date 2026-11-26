@@ -193,6 +193,15 @@ function comparePoints(aNode: Node, aOffset: number, bNode: Node, bOffset: numbe
   return 0;
 }
 
+const lineEols = computed<string[] | null>(() => {
+  if (typeof props.code !== 'string') return null;
+  const segments = props.code.split(/(\r\n|\n)/);
+  const eols: string[] = [];
+  for (let i = 1; i < segments.length; i += 2) eols.push(segments[i]!);
+  if (props.code !== '' && !props.code.endsWith('\n')) eols.push('');
+  return eols;
+});
+
 function onCopy(event: ClipboardEvent): void {
   const sel = window.getSelection();
   const root = rootRef.value;
@@ -219,10 +228,14 @@ function onCopy(event: ClipboardEvent): void {
   if (comparePoints(selected.endContainer, selected.endOffset, full.endContainer, full.endOffset) > 0) selected.setEnd(full.endContainer, full.endOffset);
 
   const parts: string[] = [];
+  const partEols: string[] = [];
   const textEls = root.querySelectorAll('.hl-row .hl-text');
+  const eols = lineEols.value;
   let startClamped = false;
   let endClamped = false;
+  let rowIndex = -1;
   for (const row of root.querySelectorAll('.hl-row')) {
+    rowIndex++;
     const textEl = row.querySelector('.hl-text');
     if (!textEl) continue;
     if (comparePoints(selected.endContainer, selected.endOffset, textEl, 0) <= 0) {
@@ -240,7 +253,10 @@ function onCopy(event: ClipboardEvent): void {
       rowRange.setEnd(selected.endContainer, selected.endOffset);
       endClamped = true;
     }
-    parts.push(rowRange.toString());
+    const eol = eols?.[rowIndex] ?? '';
+    const text = eol === '\r\n' ? rowRange.toString().replace(/\r$/, '') : rowRange.toString();
+    parts.push(text);
+    partEols.push(eol);
   }
   if (parts.length === 0) return;
 
@@ -252,13 +268,13 @@ function onCopy(event: ClipboardEvent): void {
   const htmlHost = doc.createElement('div');
   htmlHost.appendChild(fragment);
 
-  const source = typeof props.code === 'string' ? props.code : null;
   let plain = parts.join('\n');
-  if (source !== null) {
-    const eol = source.includes('\r\n') ? '\r\n' : '\n';
-    plain = parts.map((part) => part.replace(/\r$/, '')).join(eol);
-    if (parts.length === textEls.length && !startClamped && !endClamped && /\r?\n$/.test(source)) {
-      plain += eol;
+  if (eols !== null) {
+    const coversAll = parts.length === textEls.length && !startClamped && !endClamped;
+    plain = '';
+    for (let k = 0; k < parts.length; k++) {
+      plain += parts[k];
+      if (k < parts.length - 1 || coversAll) plain += partEols[k];
     }
   }
 
