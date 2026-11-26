@@ -372,4 +372,92 @@ describe('KimiTUI signal handlers', () => {
     expect(process.stdout.listenerCount('error')).toBe(beforeStdout);
     expect(process.stderr.listenerCount('error')).toBe(beforeStderr);
   });
+
+  it('clears OSC 7577 on normal stop(), preserves it on SIGTERM and SIGHUP, and force-clears on second Ctrl+C', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+
+    const makeReportedDriver = (harnessOverrides: Record<string, unknown> = {}) => {
+      const harness = { ...makeHarness(), ...harnessOverrides };
+      const tui = new KimiTUI(harness as never, {
+        ...makeStartupInput(),
+        programResumeToken: 'sig-token',
+      });
+      const driver = tui as unknown as SignalDriver;
+      const writes: string[] = [];
+      vi.spyOn(driver.state.terminal, 'write').mockImplementation((chunk: string) => {
+        writes.push(chunk);
+      });
+      vi.spyOn(driver.state.terminal, 'drainInput').mockResolvedValue(undefined);
+      vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
+      vi.spyOn(driver.state.ui, 'requestRender').mockImplementation(() => {});
+      tui.setAppState({ sessionId: 'ses-sig' });
+      tui.appendTranscriptEntry({
+        id: 'entry-1',
+        kind: 'user',
+        renderMode: 'plain',
+        content: 'hello',
+      });
+      const oscWrites = () => writes.filter((item) => item.startsWith('\u001B]7577;'));
+      expect(oscWrites()).toHaveLength(1);
+      expect(oscWrites()[0]).toContain(':argv=');
+      return { tui, driver, oscWrites };
+    };
+
+    const normal = makeReportedDriver();
+    await normal.tui.stop();
+    expect(normal.oscWrites()).toHaveLength(2);
+    expect(normal.oscWrites()[1]).toContain(':clear=1:mac=');
+
+    const sigterm = makeReportedDriver();
+    const sigtermCaptured = captureHandlers(sigterm.driver);
+    sigtermCaptured.signalHandlers.get('SIGTERM')?.();
+    await vi.waitFor(() => {
+      expect(exitSpy).toHaveBeenCalledWith(143);
+    });
+    expect(sigterm.oscWrites()).toHaveLength(1);
+    expect(sigterm.oscWrites()[0]).toContain(':argv=');
+    sigtermCaptured.restore();
+    sigterm.driver.unregisterSignalHandlers();
+
+    exitSpy.mockClear();
+    const sighup = makeReportedDriver();
+    const sighupCaptured = captureHandlers(sighup.driver);
+    sighupCaptured.signalHandlers.get('SIGHUP')?.();
+    expect(exitSpy).toHaveBeenCalledWith(129);
+    expect(sighup.oscWrites()).toHaveLength(1);
+    expect(sighup.oscWrites()[0]).toContain(':argv=');
+    sighupCaptured.restore();
+    sighup.driver.unregisterSignalHandlers();
+
+    exitSpy.mockClear();
+    let finishClose!: () => void;
+    const forceQuit = makeReportedDriver({
+      close: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishClose = resolve;
+          }),
+      ),
+    });
+    const inputListeners: Array<(data: string) => unknown> = [];
+    vi.spyOn(forceQuit.driver.state.ui, 'addInputListener').mockImplementation((listener) => {
+      inputListeners.push(listener);
+      return () => {};
+    });
+    const forceCaptured = captureHandlers(forceQuit.driver);
+    forceCaptured.signalHandlers.get('SIGTERM')?.();
+    await vi.waitFor(() => {
+      expect(finishClose).toBeDefined();
+    });
+    expect(forceQuit.oscWrites()).toHaveLength(1);
+
+    inputListeners.at(-1)?.('\u0003');
+    expect(forceQuit.oscWrites()).toHaveLength(2);
+    expect(forceQuit.oscWrites()[1]).toContain(':clear=1:mac=');
+    expect(exitSpy).toHaveBeenCalledWith(130);
+
+    finishClose();
+    forceCaptured.restore();
+    forceQuit.driver.unregisterSignalHandlers();
+  });
 });

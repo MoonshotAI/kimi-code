@@ -41,7 +41,7 @@ import { createKimiCodeHostIdentity } from './host-identity';
 export async function runShell(
   opts: CLIOptions,
   version: string,
-  runOptions: { readonly migrateOnly?: boolean } = {},
+  runOptions: { readonly migrateOnly?: boolean; readonly programResumeToken?: string } = {},
 ): Promise<void> {
   const startedAt = Date.now();
   const configStartedAt = startedAt;
@@ -164,6 +164,9 @@ export async function runShell(
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
     telemetryDisabled: config.telemetry === false,
+    ...(runOptions.programResumeToken === undefined
+      ? {}
+      : { programResumeToken: runOptions.programResumeToken }),
   });
 
   initializeCliTelemetry({

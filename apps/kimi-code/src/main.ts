@@ -3,10 +3,12 @@ import { isSshAskpassEnvironment, runSshAskpass } from '@moonshot-ai/kimi-code-s
 import { isExecServerArgv, runExecServerCommand } from './cli/exec-server';
 
 if (isSshAskpassEnvironment()) {
+  delete process.env['OSC7577_TOKEN'];
   void runSshAskpass().then((code) => {
     process.exitCode = code;
   });
 } else if (isExecServerArgv(process.argv)) {
+  delete process.env['OSC7577_TOKEN'];
   void runExecServerCommand('stdio').then((code) => {
     process.exitCode = code;
   });
