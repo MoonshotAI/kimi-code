@@ -16,7 +16,6 @@ import {
   IFlagService,
   IOAuthToolkit,
   IProjectAliases,
-  IProjectInstanceManager,
   IProjectService,
   ISessionIndex,
   ISessionManager,
@@ -76,7 +75,7 @@ import type {
   ToolResultEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
-import { isAbsolute, relative } from 'pathe';
+import { relative } from 'pathe';
 
 import {
   CLI_SHUTDOWN_TIMEOUT_MS,
@@ -235,9 +234,8 @@ export async function runV2Print(
     }
 
     if (opts.worktree !== undefined) {
-      const prepared = await preparePrintWorktree(client, services, opts, workDir, stderr);
-      worktree = prepared.created;
-      if (!prepared.ready) {
+      worktree = await preparePrintWorktree(client, opts, workDir, stderr);
+      if (worktree === undefined) {
         process.exitCode = 1;
         return;
       }
@@ -336,31 +334,16 @@ export async function runV2Print(
 
 async function preparePrintWorktree(
   client: SDKRpcClientV2,
-  services: ServicesAccessor,
   opts: CLIOptions,
   cwd: string,
   stderr: PromptOutput,
-): Promise<{ readonly created?: CreatedWorktree; readonly ready: boolean }> {
-  let trusted: boolean;
-  try {
-    trusted = await isProjectTrusted(services, cwd);
-  } catch (error) {
-    stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
-    return { ready: false };
-  }
-  if (!trusted) {
-    stderr.write(
-      'error: This project is not trusted; cannot create a worktree with -w/--worktree.\n' +
-        '  Run `kimi` here and choose "Trust and continue", or set KIMI_CODE_TRUST_WORKSPACE=1, to trust it first.\n',
-    );
-    return { ready: false };
-  }
+): Promise<CreatedWorktree | undefined> {
   let created: CreatedWorktree;
   try {
     created = await client.createWorktree({ cwd, name: opts.worktree, base: opts.worktreeBase });
   } catch (error) {
     stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
-    return { ready: false };
+    return undefined;
   }
   const copied = created.copiedFiles;
   if (copied.length > 0) {
@@ -377,31 +360,7 @@ async function preparePrintWorktree(
     const subdir = relative(created.sourceRoot, cwd);
     stderr.write(`${subdir} doesn't exist at this commit, so the session starts at the worktree root.\n`);
   }
-  if (created.setupScript === undefined) return { created, ready: true };
-  const fromWorktree = relative(created.worktree.path, created.setupScript);
-  const inWorktree =
-    fromWorktree !== '' && !/^\.\.(?:[\\/]|$)/.test(fromWorktree) && !isAbsolute(fromWorktree);
-  const script = inWorktree ? fromWorktree : relative(created.sourceRoot, created.setupScript);
-  try {
-    const { exitCode } = await client.runWorktreeSetupScript(
-      { worktreePath: created.worktree.path, sourceRoot: created.sourceRoot },
-      { onOutput: (text) => stderr.write(text) },
-    );
-    if (exitCode === 0) return { created, ready: true };
-    stderr.write(`error: The worktree setup script ${script} exited with code ${String(exitCode)}.\n`);
-  } catch (error) {
-    stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
-  }
-  return { created, ready: false };
-}
-
-async function isProjectTrusted(services: ServicesAccessor, workDir: string): Promise<boolean> {
-  const lease = await services.get(IProjectInstanceManager).acquire({ cwd: workDir });
-  try {
-    return await lease.instance.program.trust.get();
-  } finally {
-    lease.dispose();
-  }
+  return created;
 }
 
 async function reportPrintWorktree(

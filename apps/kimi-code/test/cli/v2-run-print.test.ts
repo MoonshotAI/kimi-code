@@ -30,7 +30,6 @@ import {
   IModelService,
   IOAuthToolkit,
   IProjectAliases,
-  IProjectInstanceManager,
   IProjectService,
   IProviderService,
   IRegionService,
@@ -368,15 +367,6 @@ function makeFakeHarness(toolUpdates = false) {
     [IFlagService, { enabled: vi.fn(() => false) }],
     [IProjectService, { peekImplicit: vi.fn(async () => ({ id: 'wd_v2', root: process.cwd() })) }],
     [IProjectAliases, { resolveAliasIds: vi.fn(async (id: string) => [id]) }],
-    [
-      IProjectInstanceManager,
-      {
-        acquire: vi.fn(async () => ({
-          instance: { program: { trust: { get: vi.fn(async () => true) } } },
-          dispose: vi.fn(),
-        })),
-      },
-    ],
     [IEnvironmentService, { addProvider: vi.fn(async () => ({ dispose: vi.fn() })) }],
     [
       ITelemetryService,
@@ -1553,7 +1543,6 @@ describe('runV2Print', () => {
         cwdFallback: false,
         copiedFiles: ['.env'],
         sourceDirty: true,
-        setupScript: undefined,
         ...overrides,
       };
     }
@@ -1567,19 +1556,13 @@ describe('runV2Print', () => {
       ).rejects.toThrow(OptionConflictError);
     });
 
-    it('creates a worktree, runs trusted setup script, runs session in worktree cwd, and reports it', async () => {
+    it('creates a worktree, runs session in worktree cwd, and reports it', async () => {
       const stdout = writer();
       const stderr = writer();
       const { app, appServices } = makeFakeHarness();
       (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
-      const created = sampleCreated({ setupScript: '/tmp/repo/.kimi-code/worktree-setup.sh' });
+      const created = sampleCreated();
       const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree').mockResolvedValueOnce(created);
-      const runSetup = vi
-        .spyOn(SDKRpcClientV2.prototype, 'runWorktreeSetupScript')
-        .mockImplementationOnce(async (_input, options) => {
-          options?.onOutput?.('setup ok\n');
-          return { exitCode: 0 };
-        });
       const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
         repoRoot: created.repoRoot,
         currentCheckoutRoot: created.repoRoot,
@@ -1593,47 +1576,65 @@ describe('runV2Print', () => {
         await runV2Print(opts({ worktree: 'fix-login', worktreeBase: 'v1' }) as never, '1.2.3-test', { stdout, stderr });
 
         expect(createWt).toHaveBeenCalledWith({ cwd: process.cwd(), name: 'fix-login', base: 'v1' });
-        expect(runSetup).toHaveBeenCalledTimes(1);
         const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
         expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({ workDir: created.cwd }));
         expect(stderr.text()).toContain('Copied 1 file from .worktreeinclude: .env');
         expect(stderr.text()).toContain('Uncommitted changes in /tmp/repo stay there.');
         expect(stderr.text()).not.toContain('git stash');
-        expect(stderr.text()).toContain('setup ok\n');
         expect(stderr.text()).toContain('Worktree: /tmp/home/worktrees/wd_repo/fix-login (detached at 1234567)');
       } finally {
         createWt.mockRestore();
-        runSetup.mockRestore();
         listWt.mockRestore();
       }
     });
 
-    it('refuses to create a worktree when the project is untrusted', async () => {
+    it('creates a worktree in an untrusted project and warns about skipped project-level MCP servers', async () => {
       const stdout = writer();
       const stderr = writer();
       const { app, appServices } = makeFakeHarness();
       (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
-      (appServices.get(IProjectInstanceManager) as { acquire: ReturnType<typeof vi.fn> }).acquire.mockResolvedValueOnce({
-        instance: { program: { trust: { get: vi.fn(async () => false) } } },
-        dispose: vi.fn(),
+      const created = sampleCreated({ copiedFiles: [], sourceDirty: false });
+      const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree').mockResolvedValueOnce(created);
+      const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
+        repoRoot: created.repoRoot,
+        currentCheckoutRoot: created.repoRoot,
+        bare: false,
+        worktrees: [created.worktree],
       });
-      const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree');
-      const runSetup = vi.spyOn(SDKRpcClientV2.prototype, 'runWorktreeSetupScript');
+      trustInfo.mockResolvedValueOnce(
+        gated({
+          name: 'proj-mcp',
+          transport: 'stdio',
+          command: 'node',
+          args: ['server.js'],
+          origin: '/tmp/repo/.mcp.json',
+        }),
+      );
       mocks.bootstrap.mockReturnValue({ app });
+      mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
       const previousExitCode = process.exitCode;
 
       try {
         await runV2Print(opts({ worktree: 'fix-login' }) as never, '1.2.3-test', { stdout, stderr });
 
-        expect(process.exitCode).toBe(1);
-        expect(createWt).not.toHaveBeenCalled();
-        expect(runSetup).not.toHaveBeenCalled();
-        expect(stderr.text()).toContain('This project is not trusted; cannot create a worktree with -w/--worktree.');
-        expect(stdout.text()).toBe('');
+        expect(process.exitCode).toBe(previousExitCode);
+        expect(createWt).toHaveBeenCalledOnce();
+        expect(trustInfo).toHaveBeenCalledWith(created.cwd, {
+          sessionId: undefined,
+          environmentId: 'local',
+          environmentCwd: undefined,
+        });
+        const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+        expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({ workDir: created.cwd }));
+        expect(stderr.text()).toContain(
+          'Warning: this project is not trusted; skipped 1 project-level MCP server: proj-mcp (stdio: node server.js).',
+        );
+        expect(stderr.text()).toContain('Worktree: /tmp/home/worktrees/wd_repo/fix-login (detached at 1234567)');
+        expect(stdout.text()).toContain('hello world');
       } finally {
         process.exitCode = previousExitCode;
         createWt.mockRestore();
-        runSetup.mockRestore();
+        listWt.mockRestore();
       }
     });
 
@@ -1740,57 +1741,34 @@ describe('runV2Print', () => {
       }
     });
 
-    it('aborts without creating a worktree when the trust lookup throws', async () => {
+    it('exits with code 1 and skips session creation when createWorktree fails', async () => {
+      const stdout = writer();
+      const stderr = writer();
       const { app, appServices } = makeFakeHarness();
       (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
-      (appServices.get(IProjectInstanceManager) as { acquire: ReturnType<typeof vi.fn> }).acquire.mockRejectedValueOnce(
-        new Error('trust store unreadable'),
-      );
-      const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree');
+      const createWt = vi
+        .spyOn(SDKRpcClientV2.prototype, 'createWorktree')
+        .mockRejectedValueOnce(new Error('A worktree already exists at /tmp/home/worktrees/wd_repo/fix-login.'));
+      const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees');
       mocks.bootstrap.mockReturnValue({ app });
-      const stderr = writer();
       const previousExitCode = process.exitCode;
-      try {
-        await runV2Print(opts({ worktree: 'fix-login' }) as never, '1.2.3-test', { stdout: writer(), stderr });
-        expect(process.exitCode).toBe(1);
-        expect(createWt).not.toHaveBeenCalled();
-        expect(stderr.text()).toContain('error: trust store unreadable');
-      } finally {
-        process.exitCode = previousExitCode;
-        createWt.mockRestore();
-      }
-    });
 
-    it('reports the retained worktree path when the setup script fails', async () => {
-      const { app, appServices } = makeFakeHarness();
-      (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
-      const created = sampleCreated({
-        setupScript: '/tmp/home/worktrees/wd_repo/fix-login/.kimi-code/worktree-setup.sh',
-        copiedFiles: [],
-        sourceDirty: false,
-      });
-      const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree').mockResolvedValueOnce(created);
-      const runSetup = vi
-        .spyOn(SDKRpcClientV2.prototype, 'runWorktreeSetupScript')
-        .mockResolvedValueOnce({ exitCode: 2 });
-      const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
-        repoRoot: '/tmp/repo',
-        currentCheckoutRoot: '/tmp/repo',
-        bare: false,
-        worktrees: [created.worktree],
-      });
-      mocks.bootstrap.mockReturnValue({ app });
-      const stderr = writer();
-      const previousExitCode = process.exitCode;
       try {
-        await runV2Print(opts({ worktree: 'fix-login' }) as never, '1.2.3-test', { stdout: writer(), stderr });
+        await runV2Print(opts({ worktree: 'fix-login' }) as never, '1.2.3-test', { stdout, stderr });
+
         expect(process.exitCode).toBe(1);
-        expect(stderr.text()).toContain('error: The worktree setup script .kimi-code/worktree-setup.sh exited with code 2.');
-        expect(stderr.text()).toContain('Worktree: /tmp/home/worktrees/wd_repo/fix-login');
+        expect(stderr.text()).toContain(
+          'error: A worktree already exists at /tmp/home/worktrees/wd_repo/fix-login.',
+        );
+        expect(stderr.text()).not.toContain('Worktree:');
+        expect(stdout.text()).toBe('');
+        const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+        expect(sessions.create).not.toHaveBeenCalled();
+        expect(listWt).not.toHaveBeenCalled();
+        expect(trustInfo).not.toHaveBeenCalled();
       } finally {
         process.exitCode = previousExitCode;
         createWt.mockRestore();
-        runSetup.mockRestore();
         listWt.mockRestore();
       }
     });

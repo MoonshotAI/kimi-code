@@ -397,8 +397,6 @@ import type {
   CreateWorktreeOptions,
   InspectWorktreeRemovalInput,
   RemoveWorktreeInput,
-  RunSetupScriptInput,
-  RunSetupScriptOptions,
   WorkLocation,
   WorktreeListing,
   WorktreeRemovalCheck,
@@ -872,14 +870,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const cwd = normalizeRequiredWorkDir('createWorktree', input.cwd);
     await this.configReady;
     return withKimiErrors(this.engineAccessor.get(IWorktreeService).create({ ...input, cwd }, options));
-  }
-
-  override async runWorktreeSetupScript(
-    input: RunSetupScriptInput,
-    options?: RunSetupScriptOptions,
-  ): Promise<{ readonly exitCode: number }> {
-    await this.configReady;
-    return withKimiErrors(this.engineAccessor.get(IWorktreeService).runSetupScript(input, options));
   }
 
   override async inspectWorktreeRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck> {
