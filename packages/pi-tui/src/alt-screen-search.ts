@@ -250,7 +250,7 @@ export class AltScreenSearchComponent implements Component, Focusable {
 
 	setQuery(query: string): void {
 		this.input.setValue(query);
-		this.input.moveCursorToEnd();
+		this.input.setCursor(query.length);
 	}
 
 	setResult(index: number, count: number): void {
