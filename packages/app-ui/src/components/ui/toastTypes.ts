@@ -1,5 +1,5 @@
 import type { Component } from 'vue';
-import type { AppNoticeCopyLink, AppNoticeDetail, AppNoticePosition } from '@moonshot-ai/app-core/api';
+import type { AppNoticeCopyLink, AppNoticeDetail, AppNoticePosition } from '@moonshot-ai/app-core/contracts';
 
 export type ToastVariant = 'info' | 'success' | 'warning' | 'danger';
 export type ToastPosition = AppNoticePosition;

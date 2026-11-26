@@ -227,7 +227,7 @@ async function mountComposer(viewportWidth: number, viewportHeight: number): Pro
 }
 
 async function setContextInspectorEnabled(enabled: boolean): Promise<void> {
-  const { useContextInspector } = await import('@moonshot-ai/app-core');
+  const { useContextInspector } = await import('@moonshot-ai/app-core/composables');
   useContextInspector().setContextInspectorEnabled(enabled);
 }
 

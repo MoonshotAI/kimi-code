@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useIsDark } from '@moonshot-ai/app-core';
+import { useIsDark } from '@moonshot-ai/app-core/composables';
 import rivUrl from './assets/mascot/kimi_avatar_default.riv?inline';
 import { bindRivePlayback, fireTrigger, setInputValue, type RiveLike } from '@moonshot-ai/app-core/lib';
 

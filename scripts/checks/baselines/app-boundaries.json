@@ -44,9 +44,6 @@
     "packages/app-client/src/stores/warnings.ts": 2,
     "packages/app-client/src/stores/workspaces.ts": 6
   },
-  "upward-package-import": {
-    "packages/app-ui/src/components/ui/toastTypes.ts": 1
-  },
   "view-direct-api": {
     "apps/desktop/src/renderer/App.vue": 4,
     "apps/desktop/src/renderer/components/ForcedUpgradeDialog.vue": 1,

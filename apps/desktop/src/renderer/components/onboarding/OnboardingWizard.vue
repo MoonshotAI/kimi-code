@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useAppearance, type ColorScheme } from '@moonshot-ai/app-core';
+import { useAppearance, type ColorScheme } from '@moonshot-ai/app-core/composables';
 import { Button } from '@moonshot-ai/app-ui';
 import { availableLocales, setLocale, type LocaleCode } from '../../i18n';
 import { type OAuthLoginFlowCallbacks, type OAuthRegion } from '@moonshot-ai/app-client/composables';
