@@ -875,15 +875,19 @@ onUpdated(updateScrollSeams);
     min-height: 44px;
     padding: var(--space-3);
   }
-
-  .abtns > :deep(.asession) {
-    margin-right: 0;
-  }
 }
 
-@container (max-width: 480px) {
-  .abtns > :deep(.asession) {
-    grid-column: 1 / -1;
+@media (pointer: coarse) {
+  @container (max-width: 640px) {
+    .abtns > :deep(.asession) {
+      margin-right: 0;
+    }
+  }
+
+  @container (max-width: 480px) {
+    .abtns > :deep(.asession) {
+      grid-column: 1 / -1;
+    }
   }
 }
 </style>
