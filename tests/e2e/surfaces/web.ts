@@ -9,7 +9,7 @@ import { productEnv } from './environment';
 import { offlineStubs } from './offline';
 import { OFFLINE_NAMES, PageDriver, reasonOf, WELCOME_DIALOG } from './page-driver';
 import { TerminalProcess } from './terminal-process';
-import { dynamicPorts, firstWebPort } from './web-port';
+import { dynamicPorts, workerWebPorts } from './web-port';
 
 const ADDRESS = /^\s*Local:\s+(http:\/\/127\.0\.0\.1:(\d+)\/#token=\S+)\s*$/;
 const SERVER_TERMINAL = { columns: 400, rows: 50 };
@@ -173,10 +173,11 @@ class WebDriver extends PageDriver {
 export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'web'>> {
   const assets = repoPath('apps', 'kimi-code', 'dist-web', 'index.html');
   if (!existsSync(assets)) throw new Error(`${assets} does not exist; build the web assets first with "pnpm sync:web".`);
+  const ownPorts = workerWebPorts(test.info().parallelIndex);
   const server = await TerminalProcess.start({
     label: 'kimi web',
     command: kimiCliCommand(),
-    args: ['web', '--port', reopen?.state.port ?? String(firstWebPort(test.info().parallelIndex)), '--no-open'],
+    args: ['web', '--port', reopen?.state.port ?? String(ownPorts.low), '--no-open'],
     cwd: home.workspace,
     env: productEnv(home, { FORCE_COLOR: '0' }),
     logDir: home.root,
@@ -193,6 +194,11 @@ export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<Surface
     if (wanted !== undefined && port !== wanted) {
       throw new Error(
         `The restarted web server listens on port ${port} instead of ${wanted}, so the page would open on a different origin and lose the browser state a returning user keeps. Another process probably took the port.`,
+      );
+    }
+    if (Number(port) < ownPorts.low || Number(port) > ownPorts.high) {
+      throw new Error(
+        `The web server listens on port ${port}, outside ports ${ownPorts.low}–${ownPorts.high} that this worker keeps: other programs hold all of them, and a port past them belongs to another worker, which could take it while this one restarts.`,
       );
     }
     const size = reopen?.state.size ?? 'normal';

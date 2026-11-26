@@ -20,10 +20,11 @@ export function chooseWebPortBase(workers: number): void {
   process.env[BASE_VARIABLE] = String(WEB_PORTS.low + randomInt(blocks - workers + 1) * PORTS_PER_WORKER);
 }
 
-export function firstWebPort(parallelIndex: number): number {
+export function workerWebPorts(parallelIndex: number): PortRange {
   const base = Number(process.env[BASE_VARIABLE]);
   if (!Number.isInteger(base)) throw new Error(`${BASE_VARIABLE} is not set; the global setup in playwright.config.ts chooses where the web ports of a run start.`);
-  return base + parallelIndex * PORTS_PER_WORKER;
+  const low = base + parallelIndex * PORTS_PER_WORKER;
+  return { low, high: low + PORTS_PER_WORKER - 1 };
 }
 
 export function dynamicPorts(): PortRange {
