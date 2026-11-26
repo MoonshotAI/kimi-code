@@ -217,7 +217,7 @@ export class AcpServer {
       params.sessionId,
       acpMcpServersToConfigRecord(params.mcpServers),
     );
-    await acpSession.replayHistory();
+    await acpSession.replayHistory(params.cwd);
     this.scheduleAvailableCommandsUpdate(acpSession);
     return { configOptions: await acpSession.configOptions(), modes: acpSession.modeState() };
   }

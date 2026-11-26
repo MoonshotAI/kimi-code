@@ -1,4 +1,4 @@
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 
 import {
   type AvailableCommand,
@@ -136,12 +136,16 @@ export function toolCallLocations(
   name: string,
   args: unknown,
   display: ToolInputDisplay | undefined,
+  cwd?: string,
 ): ToolCallLocation[] | undefined {
   const displayPath =
     display !== undefined && (display.kind === 'diff' || display.kind === 'file_io')
       ? display.path
       : undefined;
-  const path = [displayPath, argsPath(name, args)].find(
+  const requested = argsPath(name, args);
+  const argsLocation =
+    requested === undefined || cwd === undefined || isAbsolute(requested) ? requested : resolve(cwd, requested);
+  const path = [displayPath, argsLocation].find(
     (candidate): candidate is string => candidate !== undefined && isAbsolute(candidate),
   );
   if (path === undefined) return undefined;

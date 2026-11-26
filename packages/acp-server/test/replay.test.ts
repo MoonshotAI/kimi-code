@@ -1,9 +1,12 @@
+import { resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { projectHistoryToSessionUpdates } from '../src/replay';
 
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { userPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
 
 const SESSION_ID = 'session_test';
 
@@ -122,5 +125,129 @@ describe('projectHistoryToSessionUpdates', () => {
       .filter((u) => u.update.sessionUpdate === 'tool_call')
       .map((u) => (u.update as { toolCallId: string }).toolCallId);
     expect(ids).toEqual(['1:a', '2:b']);
+  });
+});
+
+describe('projectHistoryToSessionUpdates replays what the user saw', () => {
+  function userTexts(messages: readonly ContextMessage[]): string[] {
+    return projectHistoryToSessionUpdates(SESSION_ID, messages).flatMap((u) =>
+      u.update.sessionUpdate === 'user_message_chunk' && u.update.content.type === 'text'
+        ? [u.update.content.text]
+        : [],
+    );
+  }
+
+  function toolCall(messages: readonly ContextMessage[]): Record<string, unknown> {
+    const update = projectHistoryToSessionUpdates(SESSION_ID, messages).find(
+      (u) => u.update.sessionUpdate === 'tool_call',
+    );
+    if (update === undefined) throw new Error('no tool_call replayed');
+    return update.update as unknown as Record<string, unknown>;
+  }
+
+  it('leaves out the reminders, summaries and notices the product put in the context', () => {
+    const messages: ContextMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Summarise the plan.' }], origin: { kind: 'user' } },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<system-reminder>Today is 2026-01-01.</system-reminder>' }],
+        origin: { kind: 'injection', variant: 'date' },
+      },
+      { role: 'user', content: [{ type: 'text', text: 'Earlier turns, summarised.' }], origin: { kind: 'compaction_summary' } },
+      { role: 'user', content: [{ type: 'text', text: 'A hook said hello.' }], origin: { kind: 'hook_result', event: 'Stop' } },
+      { role: 'user', content: [{ type: 'text', text: 'Read the notes first.' }] },
+    ];
+
+    expect(userTexts(messages)).toEqual(['Summarise the plan.', 'Read the notes first.']);
+  });
+
+  it('keeps only the typed text of a prompt that carried hook output and a bundled skill', () => {
+    const messages: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Full text of the review skill.' },
+          { type: 'text', text: 'Fix the failing test.' },
+          userPromptSubmitHookPart('<hook>extra context</hook>'),
+        ],
+        origin: { kind: 'user', skillActivations: [{ activationId: 'a1', skillName: 'review' }] },
+      },
+    ];
+
+    expect(userTexts(messages)).toEqual(['Fix the failing test.']);
+  });
+
+  it('shows a slash skill or plugin command as the command the user typed', () => {
+    const messages: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Full text of the review skill.' }],
+        origin: { kind: 'skill_activation', activationId: 's1', skillName: 'review', skillArgs: 'src/a.ts', skillSource: 'project', trigger: 'user-slash' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Full text of the init skill.' }],
+        origin: { kind: 'skill_activation', activationId: 's2', skillName: 'init', skillSource: 'builtin', trigger: 'user-slash' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Full text of a skill the model chose.' }],
+        origin: { kind: 'skill_activation', activationId: 's3', skillName: 'lint', trigger: 'model-tool' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Full text of the deploy command.' }],
+        origin: { kind: 'plugin_command', activationId: 'p1', pluginId: 'acme', commandName: 'deploy', commandArgs: 'prod', trigger: 'user-slash' },
+      },
+    ];
+
+    expect(userTexts(messages)).toEqual(['/skill:review src/a.ts', '/init', '/acme:deploy prod']);
+  });
+
+  it('locates a file tool call by resolving its recorded path against the session directory', () => {
+    const messages: ContextMessage[] = [
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          { type: 'function', id: 'r1', name: 'Read', arguments: '{"path":"notes/a.txt"}' },
+          { type: 'function', id: 'r2', name: 'Read', arguments: '{"path":"/elsewhere/b.txt"}' },
+          { type: 'function', id: 'b1', name: 'Bash', arguments: '{"command":"cat notes/a.txt"}' },
+        ],
+      },
+    ];
+    const locations = (cwd?: string) =>
+      projectHistoryToSessionUpdates(SESSION_ID, messages, cwd)
+        .filter((u) => u.update.sessionUpdate === 'tool_call')
+        .map((u) => (u.update as { locations?: unknown }).locations);
+
+    const cwd = resolve('/work');
+    expect(locations(cwd)).toEqual([[{ path: resolve(cwd, 'notes/a.txt') }], [{ path: '/elsewhere/b.txt' }], undefined]);
+    expect(locations()).toEqual([undefined, [{ path: '/elsewhere/b.txt' }], undefined]);
+  });
+
+  it('locates a file tool call from the display it recorded, as the live card does', () => {
+    const read: ContextMessage[] = [
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: 'r1', name: 'Read', arguments: '{"path":"a.txt"}' }],
+        toolCallDisplays: { r1: { kind: 'file_io', operation: 'read', path: '/work/a.txt' } },
+      },
+    ];
+    const edit: ContextMessage[] = [
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: 'e1', name: 'Edit', arguments: '{"path":"a.txt","old_string":"a","new_string":"b"}' }],
+        toolCallDisplays: { e1: { kind: 'diff', path: '/work/a.txt', before: 'a', after: 'b' } },
+      },
+    ];
+
+    expect(toolCall(read)).toMatchObject({ locations: [{ path: '/work/a.txt' }] });
+    expect(toolCall(edit)).toMatchObject({
+      locations: [{ path: '/work/a.txt' }],
+      content: expect.arrayContaining([expect.objectContaining({ type: 'diff', path: '/work/a.txt', oldText: 'a', newText: 'b' })]),
+    });
   });
 });

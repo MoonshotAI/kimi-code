@@ -20,18 +20,23 @@
  */
 
 import type { SessionNotification } from '@agentclientprotocol/sdk';
-import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { isRealUserInput, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
+import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 import type { ContentPart, ToolCall } from '@moonshot-ai/core/llm/message';
+import { stripBundledSkillBlocks } from '@moonshot-ai/core/llm/origin';
 
 import {
   assistantDeltaToSessionUpdate,
   thinkingDeltaToSessionUpdate,
+  toolCallLocations,
   toolCallStartToSessionUpdate,
 } from './events-map';
 
 export function projectHistoryToSessionUpdates(
   sessionId: string,
   messages: readonly ContextMessage[],
+  cwd?: string,
 ): SessionNotification[] {
   const out: SessionNotification[] = [];
   let turnId = 0;
@@ -40,10 +45,8 @@ export function projectHistoryToSessionUpdates(
   for (const message of messages) {
     switch (message.role) {
       case 'user':
-        for (const part of message.content) {
-          if (part.type === 'text' && part.text) {
-            out.push(userMessageChunk(sessionId, part.text));
-          }
+        for (const text of typedTexts(message)) {
+          out.push(userMessageChunk(sessionId, text));
         }
         break;
       case 'assistant': {
@@ -54,7 +57,7 @@ export function projectHistoryToSessionUpdates(
         }
         for (const toolCall of message.toolCalls ?? []) {
           toolCallTurnIds.set(toolCall.id, turnId);
-          out.push(syntheticToolCall(sessionId, turnId, toolCall));
+          out.push(syntheticToolCall(sessionId, turnId, toolCall, message.toolCallDisplays?.[toolCall.id], cwd));
         }
         break;
       }
@@ -68,6 +71,26 @@ export function projectHistoryToSessionUpdates(
     }
   }
   return out;
+}
+
+function typedTexts(message: Extract<ContextMessage, { role: 'user' }>): string[] {
+  if (!isRealUserInput(message)) return [];
+  const origin = message.origin;
+  if (origin?.kind === 'skill_activation') {
+    const name = origin.skillSource === 'builtin' ? origin.skillName : `skill:${origin.skillName}`;
+    return [slashCommandText(name, origin.skillArgs)];
+  }
+  if (origin?.kind === 'plugin_command') {
+    return [slashCommandText(`${origin.pluginId}:${origin.commandName}`, origin.commandArgs)];
+  }
+  return stripBundledSkillBlocks(message).flatMap((part) =>
+    part.type === 'text' && part.text && !isUserPromptSubmitHookPart(part) ? [part.text] : [],
+  );
+}
+
+function slashCommandText(name: string, args: string | undefined): string {
+  const trimmed = args?.trim() ?? '';
+  return trimmed.length > 0 ? `/${name} ${trimmed}` : `/${name}`;
 }
 
 function userMessageChunk(sessionId: string, text: string): SessionNotification {
@@ -106,15 +129,22 @@ function syntheticToolCall(
   sessionId: string,
   turnId: number,
   toolCall: ToolCall,
+  display: ToolInputDisplay | undefined,
+  cwd: string | undefined,
 ): SessionNotification {
-  return toolCallStartToSessionUpdate(sessionId, {
+  const args = parseToolCallArguments(toolCall.arguments);
+  const notification = toolCallStartToSessionUpdate(sessionId, {
     type: 'tool.call.started',
     origin: 'loop',
     turnId,
     toolCallId: toolCall.id,
     name: toolCall.name,
-    args: parseToolCallArguments(toolCall.arguments),
+    args,
+    display,
   });
+  if (notification.update.sessionUpdate !== 'tool_call') return notification;
+  const locations = toolCallLocations(toolCall.name, args, display, cwd);
+  return { ...notification, update: { ...notification.update, locations } };
 }
 
 function toolMessageToUpdate(
