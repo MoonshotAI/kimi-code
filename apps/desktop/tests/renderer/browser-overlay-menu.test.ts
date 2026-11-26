@@ -122,6 +122,7 @@ describe('browser overlay menu renderer adapter', () => {
     closedListener?.({ menuId: openMenu.mock.lastCall![0].menuId, reason: 'dismiss' });
     expect(onDismiss).toHaveBeenCalledOnce();
     expect(openMenu).toHaveBeenLastCalledWith(expect.objectContaining({ submitOnCtrlEnter: true }));
+    expect(openMenu.mock.lastCall![0]).not.toHaveProperty('width');
     scope.stop();
   });
 

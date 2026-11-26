@@ -36,7 +36,7 @@ import CronNotice from './CronNotice.vue';
 import GoalNotice from './GoalNotice.vue';
 import MessageTime from './MessageTime.vue';
 import MediaLightbox from './MediaLightbox.vue';
-import { openFileContextMenu } from './fileContextMenu';
+import { hasFileContextMenuTarget, openFileContextMenu } from './fileContextMenu';
 import { createChatFilePathResolver } from './turnFilePathIndex';
 import MediaRail from './MediaRail.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
@@ -543,6 +543,18 @@ function onChatMouseup(e: MouseEvent): void {
 function onChatPointerdown(): void {
   selectionPointerDown = true;
   selectionKeyboard.value = false;
+}
+
+function onChatKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+  const target = event.target;
+  if (!(target instanceof Element) || hasFileContextMenuTarget(target)) return;
+  const wrapper = target.closest<HTMLElement>('.table-node-wrapper');
+  if (!wrapper || tableSelectionContextText(target) === null) return;
+  event.preventDefault();
+  if (selectionBubble.value !== null) onSelectionBubbleClose();
+  const rect = wrapper.getBoundingClientRect();
+  void tableSelectionMenuRef.value?.show(wrapper, rect.x, rect.bottom, true);
 }
 
 function onChatContextMenu(event: MouseEvent): void {
@@ -1354,7 +1366,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 </script>
 
 <template>
-  <div class="chat" :class="{ 'chat-unwindowed': !windowHistory }" :data-first-kind="turns[0]?.role" ref="chatRootRef" tabindex="-1" @mouseup="onChatMouseup" @keyup="onChatKeyup" @pointerdown="onChatPointerdown" @contextmenu="onChatContextMenu">
+  <div class="chat" :class="{ 'chat-unwindowed': !windowHistory }" :data-first-kind="turns[0]?.role" ref="chatRootRef" tabindex="-1" @mouseup="onChatMouseup" @keydown="onChatKeydown" @keyup="onChatKeyup" @pointerdown="onChatPointerdown" @contextmenu="onChatContextMenu">
     <BrowserReferenceDetails :state="browserDetails.state.value" @resolve="browserDetails.finish" />
     <div v-if="sessionLoadingVisible" :ref="transcriptAux('loading')" class="chat-loading">
       <Spinner size="sm" />

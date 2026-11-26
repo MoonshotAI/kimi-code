@@ -2,7 +2,7 @@
 import { isApplePlatform } from '@moonshot-ai/app-core/lib';
 import { revealBrowserMenuSelection } from '../../lib/browserMenuNavigation';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { menuNavigationIndex, Badge, Button, Checkbox, Icon, IconButton, Input, Kbd, Menu, Switch, Textarea, Tooltip } from '@moonshot-ai/app-ui';
+import { menuNavigationIndex, Badge, Button, Checkbox, Icon, IconButton, Input, Kbd, Menu, MenuItem, Switch, Textarea, Tooltip } from '@moonshot-ai/app-ui';
 import {
   BROWSER_OVERLAY_GUTTER,
   type BrowserOverlayConfig,
@@ -13,6 +13,7 @@ import {
   type BrowserOverlayPlacement,
   type BrowserOverlayRendered,
   type BrowserOverlayShown,
+  type BrowserOverlaySubmenuPlacement,
   type BrowserOverlayVisibilityRequest,
 } from '../../../shared/browser-overlay';
 import AnnotationDetails from './AnnotationDetails.vue';
@@ -35,9 +36,31 @@ interface BrowserOverlayRendererBridge {
 const bridge = (
   window as unknown as { kimiBrowserOverlay?: BrowserOverlayRendererBridge }
 ).kimiBrowserOverlay;
+const SUBMENU_GAP = 4;
+const VIEWPORT_MARGIN = 8;
+
+interface CompositeLayout {
+  width: number;
+  height: number;
+  parentLeft: number;
+  parentTop: number;
+  parentWidth: number;
+  parentHeight: number;
+  submenuLeft: number;
+  submenuTop: number;
+  submenuMaxWidth: number;
+  submenuMaxHeight: number;
+  side: BrowserOverlaySubmenuPlacement;
+}
+
 const config = ref<BrowserOverlayConfig | null>(null);
 const stageRef = ref<HTMLElement | null>(null);
+const compositeRef = ref<HTMLElement | null>(null);
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
+const subMenuRef = ref<InstanceType<typeof Menu> | null>(null);
+const openSubmenuId = ref<string | null>(null);
+const compositeLayout = ref<CompositeLayout | null>(null);
+const parentHostPos = ref<{ x: number; y: number } | null>(null);
 const dialogRef = ref<HTMLElement | null>(null);
 const inputValue = ref('');
 const annotationInput = ref<InstanceType<typeof Textarea>>();
@@ -78,17 +101,61 @@ const menuUsesIconGutter = computed(
     ),
 );
 
-const menuStyle = computed<Record<string, string>>(() => {
+const activeSubmenu = computed(() => {
+  const current = config.value;
+  if (current?.kind !== 'menu' || openSubmenuId.value === null) return null;
+  const owner = current.items.find(
+    (item): item is Extract<BrowserOverlayMenuItem, { kind: 'item' }> =>
+      item.kind === 'item' && item.id === openSubmenuId.value && item.submenu !== undefined,
+  );
+  return owner?.submenu ?? null;
+});
+
+const menuStyle = computed((): Record<string, string> => {
   const placement = resolvedPlacement.value;
   const opensUp = placement.startsWith('top-');
   const alignEnd = placement.endsWith('-end');
+  const current = config.value?.kind === 'menu' ? config.value : null;
+  const layout = compositeLayout.value;
+  if (layout !== null) {
+    return {
+      position: 'absolute',
+      left: `${layout.parentLeft}px`,
+      top: `${layout.parentTop}px`,
+      width: `${layout.parentWidth}px`,
+      minWidth: '0px',
+      maxWidth: 'none',
+      maxHeight: `${layout.parentHeight}px`,
+      transformOrigin: `${opensUp ? 'bottom' : 'top'} ${alignEnd ? 'right' : 'left'}`,
+      '--browser-overlay-pop-shift': opensUp ? '2px' : '-2px',
+    };
+  }
+  const auto = current?.autoWidth === true;
   return {
-    width: config.value?.kind === 'menu' && config.value.autoWidth ? 'max-content' : `${config.value?.kind === 'menu' ? config.value.width ?? 220 : 220}px`,
-    maxWidth: config.value?.kind === 'menu' ? `${config.value.width ?? 220}px` : '',
-    minWidth: config.value?.kind === 'menu' ? `${config.value.minWidth ?? 180}px` : '',
-    maxHeight: config.value?.kind === 'menu' && config.value.maxHeight !== undefined ? `${config.value.maxHeight}px` : '',
+    width: auto ? 'max-content' : `${current?.width ?? 220}px`,
+    maxWidth: current?.width !== undefined ? `${current.width}px` : '',
+    minWidth: auto ? (current?.minWidth === undefined ? '0px' : `${current.minWidth}px`) : `${current?.minWidth ?? 180}px`,
+    maxHeight: current?.maxHeight !== undefined ? `${current.maxHeight}px` : '',
     transformOrigin: `${opensUp ? 'bottom' : 'top'} ${alignEnd ? 'right' : 'left'}`,
     '--browser-overlay-pop-shift': opensUp ? '2px' : '-2px',
+  };
+});
+
+const compositeStyle = computed((): Record<string, string> => {
+  const layout = compositeLayout.value;
+  return layout === null ? {} : { width: `${layout.width}px`, height: `${layout.height}px`, maxWidth: 'none' };
+});
+
+const submenuStyle = computed((): Record<string, string> => {
+  const layout = compositeLayout.value;
+  if (layout === null) return { width: 'max-content', minWidth: '0px' };
+  return {
+    left: `${layout.submenuLeft}px`,
+    top: `${layout.submenuTop}px`,
+    width: 'max-content',
+    minWidth: '0px',
+    maxWidth: `${layout.submenuMaxWidth}px`,
+    maxHeight: `${layout.submenuMaxHeight}px`,
   };
 });
 
@@ -124,7 +191,130 @@ function surfaceElement(): HTMLElement | null {
 
 function measuredCard(): HTMLElement | null {
   if (config.value?.kind === 'dialog') return dialogRef.value;
+  if (compositeLayout.value !== null) return compositeRef.value;
   return menuRef.value?.el ?? null;
+}
+
+function enabledSubmenuItems(): HTMLElement[] {
+  return Array.from(subMenuRef.value?.el?.querySelectorAll<HTMLElement>('.ui-menu-item:not(:disabled)') ?? []);
+}
+
+function focusHoveredItem(row: HTMLElement): void {
+  const current = config.value;
+  if (current?.kind !== 'menu' || current.preserveFocus) return;
+  const item = row.matches('.ui-menu-item')
+    ? row
+    : row.querySelector<HTMLElement>('.ui-menu-item');
+  if (item === null || item.matches(':disabled') || item === document.activeElement) return;
+  item.focus({ preventScroll: true, focusVisible: false });
+}
+
+function focusSubmenuItem(index: number): void {
+  enabledSubmenuItems()[index]?.focus();
+}
+
+function submenuAnchorEl(id: string): HTMLElement | null {
+  const parent = menuRef.value?.el;
+  if (!parent) return null;
+  return [...parent.querySelectorAll<HTMLElement>('[data-submenu-anchor]')].find(
+    (el) => el.dataset['submenuAnchor'] === id,
+  ) ?? null;
+}
+
+function focusParentAnchor(id: string): void {
+  submenuAnchorEl(id)?.querySelector<HTMLElement>('.ui-menu-item:not(:disabled)')?.focus();
+}
+
+function parentAnchorId(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  return target.closest<HTMLElement>('[data-submenu-anchor]')?.dataset['submenuAnchor'] ?? null;
+}
+
+function placeSubmenu(id: string): void {
+  const current = config.value;
+  const parent = menuRef.value?.el;
+  const submenu = subMenuRef.value?.el;
+  if (current?.kind !== 'menu' || !parent || !submenu) return;
+  const anchor = submenuAnchorEl(id);
+  if (!anchor) return;
+  const parentRect = parent.getBoundingClientRect();
+  const anchorRect = anchor.getBoundingClientRect();
+  const parentWidth = Math.ceil(parentRect.width);
+  const parentHeight = Math.ceil(parentRect.height);
+  if (parentWidth <= 0 || parentHeight <= 0) return;
+  const viewportWidth = current.viewportWidth ?? window.innerWidth;
+  const viewportHeight = current.viewportHeight ?? window.innerHeight;
+  const maxSubmenuWidth = Math.max(1, viewportWidth - VIEWPORT_MARGIN * 2);
+  const maxSubmenuHeight = Math.max(1, viewportHeight - VIEWPORT_MARGIN * 2);
+  const submenuWidth = Math.min(maxSubmenuWidth, Math.ceil(submenu.offsetWidth));
+  const submenuHeight = Math.min(maxSubmenuHeight, Math.ceil(submenu.offsetHeight));
+  const hostX = parentHostPos.value?.x ?? current.anchor.x;
+  const hostY = parentHostPos.value?.y ?? current.anchor.y + current.anchor.height + (current.offset ?? SUBMENU_GAP);
+  const parentStyle = getComputedStyle(parent);
+  const frameTop = (Number.parseFloat(parentStyle.borderTopWidth) || 0) + (Number.parseFloat(parentStyle.paddingTop) || 0);
+  const anchorHostLeft = hostX + (anchorRect.left - parentRect.left);
+  const anchorHostRight = hostX + (anchorRect.right - parentRect.left);
+  const anchorHostTop = hostY + (anchorRect.top - parentRect.top);
+  const side: BrowserOverlaySubmenuPlacement =
+    anchorHostRight + SUBMENU_GAP + submenuWidth <= viewportWidth - VIEWPORT_MARGIN
+      ? 'right'
+      : anchorHostLeft - SUBMENU_GAP - submenuWidth >= VIEWPORT_MARGIN
+        ? 'left'
+        : 'right';
+  const submenuHostLeft = side === 'left'
+    ? Math.max(VIEWPORT_MARGIN, anchorHostLeft - SUBMENU_GAP - submenuWidth)
+    : Math.min(anchorHostRight + SUBMENU_GAP, Math.max(VIEWPORT_MARGIN, viewportWidth - VIEWPORT_MARGIN - submenuWidth));
+  const submenuHostTop = Math.min(
+    Math.max(VIEWPORT_MARGIN, anchorHostTop - frameTop),
+    Math.max(VIEWPORT_MARGIN, viewportHeight - VIEWPORT_MARGIN - submenuHeight),
+  );
+  const left = Math.min(hostX, submenuHostLeft);
+  const top = Math.min(hostY, submenuHostTop);
+  const right = Math.max(hostX + parentWidth, submenuHostLeft + submenuWidth);
+  const bottom = Math.max(hostY + parentHeight, submenuHostTop + submenuHeight);
+  compositeLayout.value = {
+    width: Math.ceil(right - left),
+    height: Math.ceil(bottom - top),
+    parentLeft: Math.round(hostX - left),
+    parentTop: Math.round(hostY - top),
+    parentWidth,
+    parentHeight,
+    submenuLeft: Math.round(submenuHostLeft - left),
+    submenuTop: Math.round(submenuHostTop - top),
+    submenuMaxWidth: maxSubmenuWidth,
+    submenuMaxHeight: maxSubmenuHeight,
+    side,
+  };
+}
+
+async function openSubmenu(id: string, focusFirst: boolean): Promise<void> {
+  const current = config.value;
+  if (current?.kind !== 'menu') return;
+  const owner = current.items.find(
+    (item): item is Extract<BrowserOverlayMenuItem, { kind: 'item' }> =>
+      item.kind === 'item' && item.id === id && item.submenu !== undefined,
+  );
+  if (owner?.submenu === undefined || owner.disabled === true) return;
+  if (openSubmenuId.value !== id) {
+    compositeLayout.value = null;
+    openSubmenuId.value = id;
+    await nextTick();
+    placeSubmenu(id);
+    await nextTick();
+    reportSize();
+  }
+  if (focusFirst) focusSubmenuItem(0);
+}
+
+function closeSubmenu(id?: string, refocusParent = false): void {
+  const closingId = openSubmenuId.value;
+  if (closingId === null || (id !== undefined && closingId !== id)) return;
+  openSubmenuId.value = null;
+  compositeLayout.value = null;
+  void nextTick(() => {
+    reportSize();
+    if (refocusParent) focusParentAnchor(closingId);
+  });
 }
 
 function cancelShownFrame(): void {
@@ -154,6 +344,9 @@ function applyConfig(next: BrowserOverlayConfig): void {
     shownPayload = null;
     presented.value = false;
     closing.value = false;
+    openSubmenuId.value = null;
+    compositeLayout.value = null;
+    parentHostPos.value = null;
   }
   if (next.kind === 'menu') resolvedPlacement.value = next.placement ?? 'bottom-end';
   reducedMotion.value = next.kind === 'dialog' && next.agent !== undefined && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -173,21 +366,44 @@ function reportSize(): void {
   const card = measuredCard();
   if (current === null || card === null || closing.value) return;
   const { width, height } = measureBrowserOverlayCard(card);
+  const layout = current.kind === 'menu' ? compositeLayout.value : null;
   const anchor = current.anchor === undefined ? '' : [current.anchor.x, current.anchor.y, current.anchor.width, current.anchor.height].join(':');
-  const sizeKey = current.kind === 'dialog' && current.annotation ? 'annotation' : `${width}:${height}`;
+  const sizeKey = current.kind === 'dialog' && current.annotation
+    ? 'annotation'
+    : `${width}:${height}:${layout?.parentWidth ?? ''}:${layout?.parentHeight ?? ''}:${layout?.parentLeft ?? ''}:${layout?.parentTop ?? ''}:${layout?.side ?? ''}`;
   const key = `${current.requestId}:${sizeKey}:${anchor}:${current.kind === 'dialog' ? JSON.stringify(current.boundary) : ''}`;
   if (width <= 0 || height <= 0 || lastSize === key) return;
   lastSize = key;
-  bridge?.rendered({ requestId: current.requestId, width, height });
+  bridge?.rendered({
+    requestId: current.requestId,
+    width,
+    height,
+    ...(layout === null ? {} : {
+      anchorWidth: layout.parentWidth,
+      anchorHeight: layout.parentHeight,
+      offsetX: layout.parentLeft,
+      offsetY: layout.parentTop,
+      placement: layout.side,
+    }),
+  });
 }
 
-watch([menuRef, dialogRef], () => {
+watch([menuRef, dialogRef, compositeRef, subMenuRef], () => {
   sizeObserver?.disconnect();
-  const card = measuredCard();
-  if (card !== null) {
+  const targets = [menuRef.value?.el, dialogRef.value, compositeRef.value, subMenuRef.value?.el].filter(
+    (el): el is HTMLElement => el !== null && el !== undefined,
+  );
+  if (targets.length > 0) {
     sizeObserver = new ResizeObserver(reportSize);
-    sizeObserver.observe(card);
-    void document.fonts?.ready.then(reportSize);
+    for (const el of targets) sizeObserver.observe(el);
+    void document.fonts?.ready.then(() => {
+      if (openSubmenuId.value !== null) {
+        placeSubmenu(openSubmenuId.value);
+        void nextTick(reportSize);
+      } else {
+        reportSize();
+      }
+    });
   }
 }, { flush: 'post' });
 
@@ -196,6 +412,9 @@ function show(payload: BrowserOverlayShown): void {
   if (current === null || current.requestId !== payload.requestId) return;
   if (current.kind === 'menu' && payload.placement !== undefined) {
     resolvedPlacement.value = payload.placement;
+  }
+  if (current.kind === 'menu' && payload.x !== undefined && payload.y !== undefined) {
+    parentHostPos.value = { x: payload.x, y: payload.y };
   }
   const entering = !presented.value;
   closing.value = false;
@@ -231,6 +450,9 @@ function completeHide(requestId: number): void {
   config.value = null;
   presented.value = false;
   closing.value = false;
+  openSubmenuId.value = null;
+  compositeLayout.value = null;
+  parentHostPos.value = null;
   bridge?.hidden({ requestId });
 }
 
@@ -287,6 +509,34 @@ function onKeydown(event: KeyboardEvent): void {
     event.preventDefault();
     dismiss('dismiss');
     return;
+  }
+  if (current.kind === 'menu') {
+    const inSubmenu = openSubmenuId.value !== null && subMenuRef.value?.el?.contains(document.activeElement) === true;
+    if (openSubmenuId.value !== null && (event.key === 'Escape' || (event.key === 'ArrowLeft' && inSubmenu))) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeSubmenu(undefined, true);
+      return;
+    }
+    if (inSubmenu) {
+      const subItems = enabledSubmenuItems();
+      const subNext = menuNavigationIndex(event.key, event.shiftKey, subItems.indexOf(document.activeElement as HTMLElement), subItems.length);
+      if (subNext !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (subNext >= 0) subItems[subNext]?.focus();
+        return;
+      }
+    }
+    if (event.key === 'ArrowRight') {
+      const anchorId = parentAnchorId(document.activeElement);
+      if (anchorId !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        void openSubmenu(anchorId, true);
+        return;
+      }
+    }
   }
   if (event.key === 'Escape') {
     if (current.kind === 'dialog' && current.loading === true) return;
@@ -365,25 +615,56 @@ onUnmounted(() => {
     :style="stageStyle"
     @mousedown.self="dismiss('dismiss')"
   >
-    <Menu
+    <div
       v-if="config?.kind === 'menu'"
-      ref="menuRef"
-      :role="config.preserveFocus ? 'listbox' : 'menu'"
-      class="browser-overlay-menu"
-      :class="{
-        'is-presented': presented,
-        'is-closing': closing,
-        'has-icon-gutter': menuUsesIconGutter,
-      }"
-      :style="menuStyle"
+      ref="compositeRef"
+      class="browser-overlay-menu-composite"
+      :style="compositeStyle"
     >
-      <div class="browser-overlay-list">
-        <BrowserOverlayMenuEntry v-for="(item, index) in config.items.slice(0, config.footerStart ?? config.items.length)" :key="menuItemKey(item, index)" :item="item" :listbox="config.preserveFocus" :icon-gutter="menuUsesIconGutter" :highlight-query="config.query" @action="activate" />
-      </div>
-      <div v-if="config.footerStart !== undefined" class="browser-overlay-footer">
-        <BrowserOverlayMenuEntry v-for="(item, index) in config.items.slice(config.footerStart)" :key="menuItemKey(item, index)" :item="item" :listbox="config.preserveFocus" :icon-gutter="menuUsesIconGutter" :highlight-query="config.query" @action="activate" />
-      </div>
-    </Menu>
+      <Menu
+        ref="menuRef"
+        :role="config.preserveFocus ? 'listbox' : 'menu'"
+        class="browser-overlay-menu"
+        :class="{
+          'is-presented': presented,
+          'is-closing': closing,
+          'has-icon-gutter': menuUsesIconGutter,
+        }"
+        :style="menuStyle"
+      >
+        <div class="browser-overlay-list">
+          <BrowserOverlayMenuEntry v-for="(item, index) in config.items.slice(0, config.footerStart ?? config.items.length)" :key="menuItemKey(item, index)" :item="item" :listbox="config.preserveFocus" :icon-gutter="menuUsesIconGutter" :highlight-query="config.query" :submenu-open="item.kind === 'item' && item.id === openSubmenuId" @action="activate" @open-submenu="openSubmenu" @close-submenu="closeSubmenu()" @hover-item="focusHoveredItem" />
+        </div>
+        <div v-if="config.footerStart !== undefined" class="browser-overlay-footer">
+          <BrowserOverlayMenuEntry v-for="(item, index) in config.items.slice(config.footerStart)" :key="menuItemKey(item, index)" :item="item" :listbox="config.preserveFocus" :icon-gutter="menuUsesIconGutter" :highlight-query="config.query" :submenu-open="item.kind === 'item' && item.id === openSubmenuId" @action="activate" @open-submenu="openSubmenu" @close-submenu="closeSubmenu()" @hover-item="focusHoveredItem" />
+        </div>
+      </Menu>
+      <Menu
+        v-if="activeSubmenu"
+        ref="subMenuRef"
+        :register="false"
+        role="menu"
+        aria-label="submenu"
+        class="browser-overlay-menu browser-overlay-submenu"
+        :class="{ 'is-presented': presented && compositeLayout !== null, 'is-closing': closing }"
+        :style="submenuStyle"
+        @click.stop
+        @contextmenu.prevent
+      >
+        <MenuItem
+          v-for="child in activeSubmenu"
+          :key="child.id"
+          class="browser-overlay-submenu-item"
+          :disabled="child.disabled"
+          :danger="child.danger"
+          @mouseenter="focusHoveredItem($event.currentTarget as HTMLElement)"
+          @click="activate(child.id)"
+        >
+          <Icon v-if="child.icon" :name="child.icon" size="sm" />
+          <span class="browser-overlay-submenu-label">{{ child.label }}</span>
+        </MenuItem>
+      </Menu>
+    </div>
 
     <section
       v-else-if="config?.kind === 'dialog'"
@@ -481,6 +762,31 @@ onUnmounted(() => {
 .browser-overlay-list { min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .browser-overlay-footer { flex: none; }
 .browser-overlay-list :deep(.ui-menu-item:focus-visible) { box-shadow: inset var(--p-focus-ring); }
+
+.browser-overlay-menu-composite {
+  position: relative;
+  width: max-content;
+  max-width: 100%;
+}
+
+.browser-overlay-submenu {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.browser-overlay-submenu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-overlay-submenu :deep(.ui-menu-item:focus-visible) {
+  box-shadow: inset var(--p-focus-ring);
+}
 
 .browser-overlay-menu {
   user-select: none;

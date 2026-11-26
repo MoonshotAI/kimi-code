@@ -18,6 +18,7 @@ import {
   type BrowserOverlayDialogClosed,
   type BrowserOverlayDialogRequest,
   type BrowserOverlayMenuConfig,
+  type BrowserOverlayMenuItem,
   type BrowserOverlayMenuRequest,
   type BrowserOverlayRendered,
   type BrowserOverlayShown,
@@ -182,8 +183,16 @@ function flushConfig(entry: BrowserOverlayEntry): void {
   } else {
     const [contentWidth, contentHeight] = hostContentSize(entry.host).map(size => size / entry.zoom) as [number, number];
     const maxWidth = Math.max(1, contentWidth - BROWSER_OVERLAY_GUTTER * 2);
-    current.minWidth = Math.min(current.minWidth ?? current.width ?? 220, maxWidth);
-    current.width = current.autoWidth === true ? maxWidth : current.minWidth;
+    current.viewportWidth = Math.min(16384, Math.max(1, Math.floor(contentWidth)));
+    current.viewportHeight = Math.min(16384, Math.max(1, Math.floor(contentHeight)));
+    if (current.autoWidth === true) {
+      if (current.width !== undefined) current.minWidth = Math.min(current.minWidth ?? current.width, maxWidth);
+      else if (current.minWidth !== undefined) current.minWidth = Math.min(current.minWidth, maxWidth);
+      current.width = maxWidth;
+    } else {
+      current.minWidth = Math.min(current.minWidth ?? current.width ?? 220, maxWidth);
+      current.width = current.minWidth;
+    }
     current.maxHeight = Math.max(1, Math.min(PROVISIONAL_HEIGHT, contentHeight - BROWSER_OVERLAY_GUTTER * 2));
     const width = current.width + BROWSER_OVERLAY_GUTTER * 2;
     if (!entry.visible) entry.view.setBounds({ x: 0, y: 0, width: Math.ceil(width * entry.zoom), height: Math.ceil((current.maxHeight + BROWSER_OVERLAY_GUTTER * 2) * entry.zoom) });
@@ -351,11 +360,17 @@ export interface BrowserOverlayPositionInput {
   cardWidth: number;
   cardHeight: number;
   allowFlip?: boolean;
+  anchorWidth?: number;
+  anchorHeight?: number;
+  offsetX?: number;
+  offsetY?: number;
 }
 
 interface BrowserOverlayLayout {
   bounds: Rectangle;
   placement: BrowserOverlayMenuConfig['placement'];
+  cardX: number;
+  cardY: number;
 }
 
 
@@ -368,26 +383,34 @@ function browserOverlayLayout({
   cardWidth,
   cardHeight,
   allowFlip = true,
+  anchorWidth,
+  anchorHeight,
+  offsetX = 0,
+  offsetY = 0,
 }: BrowserOverlayPositionInput): BrowserOverlayLayout {
   const margin = Math.max(VIEWPORT_MARGIN, BROWSER_OVERLAY_GUTTER);
   const placement = config.placement ?? 'bottom-end';
   const offset = config.offset ?? 4;
   const endAligned = placement.endsWith('-end');
   const prefersBottom = placement.startsWith('bottom-');
+  const anchorW = Math.min(cardWidth, Math.max(1, anchorWidth ?? cardWidth));
+  const anchorH = Math.min(cardHeight, Math.max(1, anchorHeight ?? cardHeight));
+  const shiftX = Math.min(Math.max(0, offsetX), Math.max(0, cardWidth - anchorW));
+  const shiftY = Math.min(Math.max(0, offsetY), Math.max(0, cardHeight - anchorH));
   let resolvedPlacement = placement;
   let cardX = endAligned
-    ? config.anchor.x + config.anchor.width - cardWidth
+    ? config.anchor.x + config.anchor.width - anchorW
     : config.anchor.x;
   const belowY = config.anchor.y + config.anchor.height + offset;
-  const aboveY = config.anchor.y - cardHeight - offset;
+  const aboveY = config.anchor.y - anchorH - offset;
   let cardY = prefersBottom ? belowY : aboveY;
   const preferredFits =
-    cardY >= margin && cardY + cardHeight <= contentHeight - margin;
+    cardY >= margin && cardY + anchorH <= contentHeight - margin;
   if (allowFlip && !preferredFits) {
     const alternateY = prefersBottom ? aboveY : belowY;
     const alternateFits =
       alternateY >= margin &&
-      alternateY + cardHeight <= contentHeight - margin;
+      alternateY + anchorH <= contentHeight - margin;
     if (alternateFits) {
       cardY = alternateY;
       resolvedPlacement = `${prefersBottom ? 'top' : 'bottom'}-${endAligned ? 'end' : 'start'}`;
@@ -395,16 +418,20 @@ function browserOverlayLayout({
   }
   cardX = Math.min(
     Math.max(margin, cardX),
-    Math.max(margin, contentWidth - margin - cardWidth),
+    Math.max(margin, contentWidth - margin - anchorW),
   );
   cardY = Math.min(
     Math.max(margin, cardY),
-    Math.max(margin, contentHeight - margin - cardHeight),
+    Math.max(margin, contentHeight - margin - anchorH),
   );
-  const x = Math.max(0, cardX - BROWSER_OVERLAY_GUTTER);
-  const y = Math.max(0, cardY - BROWSER_OVERLAY_GUTTER);
+  const compositeX = Math.min(Math.max(0, cardX - shiftX), Math.max(0, contentWidth - cardWidth));
+  const compositeY = Math.min(Math.max(0, cardY - shiftY), Math.max(0, contentHeight - cardHeight));
+  const x = Math.max(0, compositeX - BROWSER_OVERLAY_GUTTER);
+  const y = Math.max(0, compositeY - BROWSER_OVERLAY_GUTTER);
   return {
     placement: resolvedPlacement,
+    cardX,
+    cardY,
     bounds: {
       x,
       y,
@@ -462,6 +489,10 @@ export function showBrowserOverlayRendered(
     allowFlip: current.kind !== 'dialog' || !current.annotation,
     cardWidth: rendered.width,
     cardHeight: rendered.height,
+    anchorWidth: rendered.anchorWidth,
+    anchorHeight: rendered.anchorHeight,
+    offsetX: rendered.offsetX,
+    offsetY: rendered.offsetY,
   });
   if (!wasVisible || (current.kind === 'menu' ? !current.preserveFocus : !current.annotation)) {
     entry.host.contentView.removeChildView(entry.view);
@@ -476,6 +507,8 @@ export function showBrowserOverlayRendered(
   entry.view.webContents.send(IPC.browserOverlayShown, {
     requestId: current.requestId,
     placement: layout.placement ?? 'bottom-end',
+    x: layout.cardX,
+    y: layout.cardY,
   } satisfies BrowserOverlayShown);
 }
 
@@ -505,12 +538,17 @@ export function activateBrowserOverlayItem(contents: WebContents, request: Brows
     liveHost()?.webContents.send(IPC.browserOverlayDialogAction, payload);
     return;
   }
-  const item = current.items.find(
-    (candidate) => candidate.kind === 'item' && candidate.id === itemId,
+  const owner = current.items.find(
+    (candidate): candidate is Extract<BrowserOverlayMenuItem, { kind: 'item' }> =>
+      candidate.kind === 'item' &&
+      (candidate.id === itemId ||
+        candidate.actions?.some((action) => action.id === itemId) === true ||
+        candidate.submenu?.some((child) => child.id === itemId) === true),
   );
-  const owner = item ?? current.items.find((candidate) => candidate.kind === 'item' && candidate.actions?.some((action) => action.id === itemId));
-  if (owner !== undefined && owner.kind === 'item') {
+  if (owner !== undefined) {
     if (owner.disabled === true) return;
+    if (owner.id === itemId && owner.submenu !== undefined) return;
+    if (owner.submenu?.some((child) => child.id === itemId && child.disabled === true)) return;
     const menuId = current.menuId;
     const keepOpen = owner.id === itemId ? owner.keepOpen : owner.actions?.find((action) => action.id === itemId)?.keepOpen;
     if (keepOpen === true) {

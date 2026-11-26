@@ -135,7 +135,7 @@ it('validates the agent download preferences through the AOT browser data valida
 });
 
 it('bundles every preload without the schema builder, interpreter or runtime compiler', () => {
-  const limits = { preload: 157_000, 'browser-overlay-preload': 50_000, 'browser-control-preload': 22_000 };
+  const limits = { preload: 159_000, 'browser-overlay-preload': 50_000, 'browser-control-preload': 22_000 };
   for (const [name, limit] of Object.entries(limits)) {
     const code = outputs.get(name)!;
     expect(code).not.toMatch(/typebox\/build\/(?:type|value|compile|schema)\//);

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { createApp, h, type App } from 'vue';
+import { createApp, h, ref, type App } from 'vue';
 import { afterEach, assert, beforeEach, expect, it, vi } from 'vitest';
 
 const lib = vi.hoisted(() => ({
@@ -17,11 +17,13 @@ vi.mock('@moonshot-ai/app-client/stores', () => ({
 vi.mock('@moonshot-ai/app-markdown', async () => await import('../../app-markdown/src/lib/tableSelection'));
 
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
+import type { NativeMenuItem } from '@moonshot-ai/app-core/native-menu';
 import { destroyTableSelections, ensureTableSelection } from '../../app-markdown/src/lib/tableSelection';
 import TableSelectionContextMenu from '../src/chat/TableSelectionContextMenu.vue';
+import { NativeMenuHostKey, type NativeMenuAnchor, type NativeMenuShowOptions } from '../src/composer/nativeMenus';
 
 let app: App | null = null;
-let vm: { $refs: { menu: { show: (wrapper: HTMLElement, x: number, y: number) => Promise<void> } } } | null = null;
+let vm: { $refs: { menu: { show: (wrapper: HTMLElement, x: number, y: number, keyboard?: boolean) => Promise<void> } } } | null = null;
 let wrapper: HTMLElement;
 let table: HTMLTableElement;
 const quote = vi.fn<(markdown: string) => void>();
@@ -155,9 +157,11 @@ it('quotes the selection as Markdown through the existing quote action', async (
   expect(document.activeElement).toBe(editor);
 });
 
-it('supports keyboard navigation and closes the submenu before the parent', async () => {
+it('supports pointer and keyboard open, keyboard navigation, and closes the submenu before the parent', async () => {
   await openMenu();
   const parent = menuEl()!;
+  expect(parent.contains(document.activeElement)).toBe(false);
+  parent.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
   expect(document.activeElement?.textContent?.trim()).toBe('Copy');
   parent.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
   expect(document.activeElement?.textContent?.trim()).toBe('Copy as');
@@ -174,6 +178,10 @@ it('supports keyboard navigation and closes the submenu before the parent', asyn
   await flush();
   expect(menuEl()).toBeNull();
   expect(document.activeElement).toBe(wrapper);
+
+  await vm!.$refs.menu.show(wrapper, 120, 160, true);
+  await flush();
+  expect(document.activeElement?.textContent?.trim()).toBe('Copy');
 });
 
 it('keeps the format submenu within the viewport', async () => {
@@ -214,4 +222,88 @@ it('hides quote action when selection actions are unavailable but keeps copy and
   menuItem(menuEl()!, 'Copy').click();
   await flush();
   expect(lib.copy).toHaveBeenCalledWith('Name\tDepartment\tNote\nAlice\tProduct\ta,b\nBob\tR&D\tx|y\nCarol\tDesign\tplain');
+});
+
+interface NativeRegistration {
+  id: string;
+  width?: number;
+  autoWidth?: boolean;
+  placement?: string;
+  items(): NativeMenuItem[];
+  onSelect(id: string): void;
+  onClose?(payload: { menuId: string; reason: string }): void;
+}
+
+function mountWithNativeHost(allowQuote = true) {
+  app?.unmount();
+  let registration: NativeRegistration | undefined;
+  const showAt = vi.fn<(anchor: NativeMenuAnchor, options?: NativeMenuShowOptions & { focusReturn?: HTMLElement }) => void>();
+  const close = vi.fn();
+  app = createApp({ render: () => h(TableSelectionContextMenu, { ref: 'menu', allowQuote, onQuote: quote }) });
+  app.use(createKimiI18n({ locale: 'en' }));
+  app.provide(NativeMenuHostKey, {
+    register(options) {
+      registration = options;
+      return { available: true, open: ref(false), showAt, toggle: vi.fn(), close, refresh: vi.fn() };
+    },
+  });
+  vm = app.mount(document.createElement('div')) as unknown as NonNullable<typeof vm>;
+  return { registration: () => registration!, showAt, close };
+}
+
+it('opens the native overlay menu with content width, pointer/keyboard focus, and nested copy formats', async () => {
+  const { registration, showAt } = mountWithNativeHost();
+  await openMenu();
+  expect(menuEl()).toBeNull();
+  expect(registration().autoWidth).toBe(true);
+  expect(registration().width).toBeUndefined();
+  expect(showAt).toHaveBeenLastCalledWith(
+    { x: 120, y: 160, width: 0, height: 0 },
+    { placement: 'bottom-start', offset: 0, initialFocus: 'none', focusReturn: wrapper },
+  );
+  await vm!.$refs.menu.show(wrapper, 120, 160, true);
+  expect(showAt).toHaveBeenLastCalledWith(
+    { x: 120, y: 160, width: 0, height: 0 },
+    { placement: 'bottom-start', offset: 0, initialFocus: 'first-item', focusReturn: wrapper },
+  );
+  expect(registration().items()).toEqual([
+    { kind: 'item', id: 'copy', label: 'Copy', icon: 'copy' },
+    {
+      kind: 'item',
+      id: 'copy-as',
+      label: 'Copy as',
+      icon: 'copy',
+      keepOpen: true,
+      submenu: [
+        { id: 'copy-as-tsv', label: 'TSV' },
+        { id: 'copy-as-markdown', label: 'Markdown' },
+        { id: 'copy-as-csv', label: 'CSV' },
+        { id: 'copy-as-json', label: 'JSON' },
+      ],
+    },
+    { kind: 'item', id: 'select-all', label: 'Select entire table', icon: 'grid-dots' },
+    { kind: 'item', id: 'add-to-chat', label: 'Add to chat', icon: 'plus' },
+  ]);
+
+  const { registration: withoutQuote } = mountWithNativeHost(false);
+  expect(withoutQuote().items().map(item => item.kind === 'separator' ? 'separator' : item.id)).toEqual(['copy', 'copy-as', 'select-all']);
+});
+
+it('routes native format and quote actions without stealing editor focus', async () => {
+  const { registration, close } = mountWithNativeHost();
+  await openMenu();
+  registration().onSelect('copy-as-csv');
+  await flush();
+  expect(lib.copy).toHaveBeenCalledWith('Alice,Product\nBob,R&D');
+  expect(close).toHaveBeenCalled();
+  expect(selectedCount()).toBe(4);
+
+  const editor = document.createElement('input');
+  document.body.appendChild(editor);
+  quote.mockImplementation(() => editor.focus());
+  await openMenu();
+  registration().onSelect('add-to-chat');
+  await flush();
+  expect(quote).toHaveBeenCalledWith('| Name | Department |\n| --- | --- |\n| Alice | Product |\n| Bob | R&amp;D |');
+  expect(document.activeElement).toBe(editor);
 });

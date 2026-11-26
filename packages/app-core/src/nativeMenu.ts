@@ -1,3 +1,11 @@
+export interface NativeMenuSubmenuItem {
+  id: string;
+  label: string;
+  icon?: string;
+  disabled?: boolean;
+  danger?: boolean;
+}
+
 export type NativeMenuItem =
   | { kind: 'separator' }
   | { kind: 'section'; id: string; label: string }
@@ -34,4 +42,5 @@ export type NativeMenuItem =
       selected?: boolean;
       danger?: boolean;
       keepOpen?: boolean;
+      submenu?: NativeMenuSubmenuItem[];
     };
