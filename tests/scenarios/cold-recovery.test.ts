@@ -1,4 +1,5 @@
-import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, readdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { bashPathOf, createTestHome, until, writeKimiConfig, type TestHome } from '@moonshot-ai/testkit/fixtures';
@@ -132,6 +133,32 @@ async function toolOutputOf(model: FakeModel, request: number): Promise<string |
   return model.request(request).view.messages.find((message) => message.role === 'tool')?.text.replace(/^Wall time: \d+\.\d{3} seconds\n/, '');
 }
 
+interface MainWireRecord {
+  readonly type: string;
+  readonly promptId?: string;
+  readonly turnId?: number;
+  readonly message?: { readonly id?: string };
+  readonly event?: { readonly type?: string; readonly turnId?: string };
+}
+
+async function mainWireOf(home: TestHome, sessionId: string): Promise<readonly MainWireRecord[]> {
+  const sessions = join(home.dataDir, 'sessions');
+  for (const workspace of await readdir(sessions)) {
+    const wire = join(sessions, workspace, sessionId, 'agents', 'main', 'wire.jsonl');
+    if (!existsSync(wire)) continue;
+    return (await readFile(wire, 'utf8')).trimEnd().split('\n').map((line) => JSON.parse(line) as MainWireRecord);
+  }
+  return [];
+}
+
+async function promptRequestOnDisk(home: TestHome, sessionId: string, promptId: string): Promise<boolean> {
+  const records = await mainWireOf(home, sessionId);
+  const turnId = records.find((record) => record.type === 'turn.prompt' && record.promptId === promptId)?.turnId;
+  return turnId !== undefined &&
+    records.some((record) => record.type === 'context.append_message' && record.message?.id === promptId) &&
+    records.some((record) => record.type === 'context.append_loop_event' && record.event?.type === 'step.begin' && record.event.turnId === String(turnId));
+}
+
 test('keeps a released session without an environment cwd following the current root of its workspace', { timeout: CORPUS_TIMEOUT_MS }, async ({ model }) => {
   const corpus = corpora.at(-1)!;
   await model.listen();
@@ -213,7 +240,7 @@ test('continues a session at the root of a managed project in the new folder aft
   }
 });
 
-test('keeps a pinned session in its directory after the server crashes mid-turn and restarts', { timeout: CORPUS_TIMEOUT_MS }, async ({ model }) => {
+test('keeps a pinned session in its directory and its interrupted prompt after the server crashes mid-turn and restarts', { timeout: CORPUS_TIMEOUT_MS }, async ({ model }) => {
   await model.listen();
   const home = await createTestHome('cold-recovery-pinned');
   try {
@@ -227,8 +254,10 @@ test('keeps a pinned session in its directory after the server crashes mid-turn 
       created = await first.createSession({ cwd: pinnedDir });
       expect(created).toMatchObject({ workspace_id: atMain.workspace_id, cwd: pinnedDir });
       model.script(held('mid-turn', say('never finished')));
-      await first.prompt(created.id, 'Start something long.');
+      const prompt = await first.prompt(created.id, 'Start something long.');
       await model.hold('mid-turn').reached();
+      await until('the interrupted prompt and its request are on disk before the process is killed', () =>
+        promptRequestOnDisk(home, created.id, prompt.user_message_id));
     } finally {
       await first.crash();
     }
@@ -237,10 +266,18 @@ test('keeps a pinned session in its directory after the server crashes mid-turn 
     try {
       expect(second.pid).not.toBe(first.pid);
       expect(await second.session(created.id)).toMatchObject({ workspace_id: created.workspace_id, cwd: pinnedDir });
+      expect(await second.turns(created.id), 'turns after the crash').toMatchObject([{
+        status: 'ended',
+        outcome: 'interrupted',
+        end_reason: 'aborted',
+        items: [{ type: 'user_message', text: 'Start something long.' }],
+      }]);
+      const interrupted = model.requests('main').at(-1)!.view.messages;
       model.script(bash('pwd -P'), say('Still pinned.'));
       const before = model.requests('main').length;
       await second.prompt(created.id, 'Where are you?');
       await second.waitIdle(created.id);
+      expect(model.requests('main')[before]!.view.messages.slice(0, interrupted.length), 'context after the crash').toEqual(interrupted);
       expect(await toolOutputOf(model, before + 1)).toBe(`${bashPathOf(await realpath(pinnedDir))}\n`);
       expect(await second.session(created.id)).toMatchObject({ cwd: pinnedDir });
     } finally {

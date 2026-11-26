@@ -37,6 +37,7 @@ export function useWorkspaceTrust() {
   const trustDenied = computed(() =>
     client.activeWorkspaceTrust.value === false || trustError.value !== undefined,
   );
+  const trustReadPending = computed(() => showTrustCard.value && !trustDenied.value);
   const trustRejected = computed(() => {
     const id = client.activeWorkspaceId.value;
     return id !== null && rejectedIds.value.includes(id);
@@ -101,6 +102,7 @@ export function useWorkspaceTrust() {
   return {
     showTrustCard,
     trustDenied,
+    trustReadPending,
     trustRejected,
     trustGateOpen,
     busy,

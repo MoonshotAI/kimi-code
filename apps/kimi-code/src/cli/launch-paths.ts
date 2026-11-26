@@ -16,6 +16,14 @@ export function resolveLaunchPaths(
   };
 }
 
+export function resolveAdditionalDirs(
+  addDirs: readonly string[] | undefined,
+  launchDir: string,
+): string[] | undefined {
+  if (addDirs === undefined || addDirs.length === 0) return undefined;
+  return addDirs.map((dir) => resolveFrom(launchDir, dir));
+}
+
 function resolveFrom(base: string, path: string): string {
   return path === '~' || path.startsWith('~/') ? path : resolve(base, path);
 }

@@ -4,7 +4,7 @@
 // Regenerate with: pnpm --filter @moonshot-ai/agent-core-v2 gen:state-manifest
 //
 // Every state key registered into the App-scope IAppStateService, the
-// Workspace-scope IWorkspaceStateService, the Session-scope
+// Workspace-scope IProjectStateService, the Session-scope
 // ISessionStateService, or the Agent-scope IAgentStateService (see
 // src/_base/state/stateRegistry.ts), collected statically from the
 // `states.contributeState(...)` call sites and the replayable key chains — a
@@ -27,17 +27,17 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 62 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 64 keys)
 //   App
 //   Workspace
-//     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
-//     workspaceDirs.fileDirs               src/workspace/workspaceDirs/workspaceDirsService.ts
-//     workspaceDirs.primaryByWorkspace     src/workspace/workspaceDirs/workspaceDirsService.ts
-//     workspaceDirs.registryDirs           src/workspace/workspaceDirs/workspaceDirsService.ts
-//     workspaceInstructions.current        src/workspace/workspaceInstructions/workspaceInstructionsService.ts
-//     workspaceSkillCatalog.contributions  src/features/skill/workspace/workspaceSkillCatalogService.ts
-//     workspaceSkillCatalog.merged         src/features/skill/workspace/workspaceSkillCatalogService.ts
-//     workspaceTrust.trusted               src/workspace/workspaceTrust/workspaceTrustService.ts
+//     workspaceDirs.ephemeralDirs          src/project/projectDirs/projectDirsService.ts
+//     workspaceDirs.fileDirs               src/project/projectDirs/projectDirsService.ts
+//     workspaceDirs.primaryByWorkspace     src/project/projectDirs/projectDirsService.ts
+//     workspaceDirs.registryDirs           src/project/projectDirs/projectDirsService.ts
+//     workspaceInstructions.current        src/project/projectInstructions/projectInstructionsService.ts
+//     workspaceSkillCatalog.contributions  src/features/skill/project/projectSkillCatalogService.ts
+//     workspaceSkillCatalog.merged         src/features/skill/project/projectSkillCatalogService.ts
+//     workspaceTrust.trusted               src/project/projectTrust/projectTrustService.ts
 //   Session
 //     sessionActivity.current            src/session/sessionActivity/sessionActivityService.ts
 //     sessionActivity.folds              src/session/sessionActivity/sessionActivityService.ts
@@ -53,6 +53,8 @@
 //     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
+//     autoReview.ancestry                             src/features/autoReview/autoReviewEvents.ts
+//     autoReview.approvedToolCallIds                  src/features/autoReview/autoReviewEvents.ts
 //     changeNotifier.snapshot                         src/agent/changeNotifier/changeNotifierOps.ts
 //     contextProjector.lastRepairSignature            src/agent/loop/requestObservation.ts
 //     environmentBinding                              src/agent/environmentBinding/environmentBindingOps.ts
@@ -118,9 +120,9 @@ export interface AppStateSnapshot {
 
 export type AppStateKey = keyof AppStateSnapshot;
 
-/** Workspace-scope keys registered into IWorkspaceStateService. */
+/** Workspace-scope keys registered into IProjectStateService. */
 export interface WorkspaceStateSnapshot {
-  // src/features/skill/workspace/workspaceSkillCatalogService.ts
+  // src/features/skill/project/projectSkillCatalogService.ts
   'workspaceSkillCatalog.contributions': Map<string, {
     readonly c: /* SkillContribution — packages/agent-core-v2/src/features/skill/catalog/skillSource.ts */ {
       readonly skills: readonly /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
@@ -473,18 +475,18 @@ export interface WorkspaceStateSnapshot {
     getKimiSkillsDescription: () => string;
     getModelSkillListing: () => string;
   };
-  // src/workspace/workspaceDirs/workspaceDirsService.ts
+  // src/project/projectDirs/projectDirsService.ts
   'workspaceDirs.ephemeralDirs': readonly string[];
   'workspaceDirs.fileDirs': readonly string[];
   'workspaceDirs.primaryByWorkspace': Readonly<Record<string, string>>;
   'workspaceDirs.registryDirs': readonly string[];
-  // src/workspace/workspaceInstructions/workspaceInstructionsService.ts
-  'workspaceInstructions.current': /* WorkspaceInstructionsSnapshot — packages/agent-core-v2/src/workspace/workspaceInstructions/workspaceInstructions.ts */ {
+  // src/project/projectInstructions/projectInstructionsService.ts
+  'workspaceInstructions.current': /* ProjectInstructionsSnapshot — packages/agent-core-v2/src/project/projectInstructions/projectInstructions.ts */ {
     readonly agentsMd: string | undefined;
     readonly agentsMdWarning: string | undefined;
     readonly agentsMdPaths: readonly string[] | undefined;
   };
-  // src/workspace/workspaceTrust/workspaceTrustService.ts
+  // src/project/projectTrust/projectTrustService.ts
   'workspaceTrust.trusted': boolean;
 }
 
@@ -1210,6 +1212,26 @@ export interface AgentStateSnapshot {
     readonly parameters: Record<string, unknown>;
     readonly disclosure?: 'inline' | 'deferred';
   }>;
+  // src/features/autoReview/autoReviewEvents.ts
+  // replayable · durable — folds: AutoReviewAncestryRecorded
+  'autoReview.ancestry': /* AutoReviewAncestry — packages/agent-core-v2/src/features/autoReview/autoReviewEvents.ts */ {
+    readonly authorization: readonly /* ReviewText — packages/agent-core-v2/src/features/autoReview/context.ts */ {
+      readonly role: 'human-instruction' | 'direct-parent-instruction' | 'constraint' | 'fact';
+      readonly replyTo?: string;
+      readonly content: readonly /* TextPart — packages/core/src/llm/message.ts */ {
+        type: 'text';
+        text: string;
+        contentType?: string;
+        meta?: /* ContentPartMeta — packages/core/src/llm/message.ts */ {
+          readonly kind?: string;
+          [key: string]: unknown;
+        };
+      }[];
+    }[];
+    readonly approvedToolCallIds: readonly string[];
+  } | undefined;
+  // replayable · durable · undoable — folds: ContextClear, PermissionRecordApprovalResult
+  'autoReview.approvedToolCallIds': readonly string[];
   // src/features/externalHooks/agent/agentExternalHooksService.ts
   'externalHooks.stopHookContinuationUsed': boolean;
   // src/features/fileHistory/fileHistoryOps.ts

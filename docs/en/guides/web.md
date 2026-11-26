@@ -73,6 +73,8 @@ The Remote Control link grants access to your machine upon signing into the same
 
 The web UI and the CLI share the same login state, configuration (`config.toml`), and session data.
 
+When Web shows **Checking project trust…**, your draft and attachments stay in the composer. You can send the message once the project is trusted.
+
 ### Common slash commands
 
 | Slash command | Description |

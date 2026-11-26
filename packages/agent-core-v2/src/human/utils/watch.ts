@@ -56,6 +56,7 @@ export interface WatchRuntime {
   ): NativeFsWatcher;
   scheduleRetry(callback: () => void, delayMs: number): WatchSubscription;
   reportError(error: unknown): void;
+  readonly nativeStartSettleMs?: number;
 }
 
 const DEFAULT_IGNORED = (p: string): boolean => /(?:^|[/\\])\.git(?:$|[/\\])/.test(p);
@@ -71,6 +72,7 @@ const CHOKIDAR_EVENTS: Record<string, { action: WatchChangeAction; kind: WatchCh
 const NATIVE_RETRY_BASE_MS = 1000;
 const NATIVE_RETRY_MAX_MS = 30000;
 const LISTING_MISSING_RETRY_MS = 250;
+const DARWIN_NATIVE_START_SETTLE_MS = 100;
 
 const NODE_WATCH_RUNTIME: WatchRuntime = {
   platform: process.platform,
@@ -88,6 +90,7 @@ const NODE_WATCH_RUNTIME: WatchRuntime = {
     };
   },
   reportError: (error) => console.error(error),
+  ...(process.platform === 'darwin' ? { nativeStartSettleMs: DARWIN_NATIVE_START_SETTLE_MS } : {}),
 };
 
 interface WatchMachineInput {
@@ -113,6 +116,7 @@ type WatchEvent =
   | { type: 'leg.error'; error: unknown }
   | { type: 'leg.change'; change: WatchChange }
   | { type: 'leg.nativeStarted' }
+  | { type: 'leg.nativeSettled' }
   | { type: 'leg.nativeEvent'; filename: string | null }
   | { type: 'leg.nativeError'; error: NodeJS.ErrnoException }
   | { type: 'leg.retryFired' };
@@ -167,7 +171,13 @@ const nativeLeg = fromCallback<WatchEvent, NativeLegInput>(({ input, sendBack })
   }
   watcher.on('error', (error) => sendBack({ type: 'leg.nativeError', error }));
   sendBack({ type: 'leg.nativeStarted' });
+  const settleMs = input.runtime.nativeStartSettleMs;
+  const settle =
+    settleMs === undefined
+      ? undefined
+      : input.runtime.scheduleRetry(() => sendBack({ type: 'leg.nativeSettled' }), settleMs);
   return () => {
+    settle?.dispose();
     watcher.close();
   };
 });
@@ -278,6 +288,9 @@ const watchMachine = setup({
             actions: assign({ ready: true }),
           },
         ],
+        'leg.nativeSettled': {
+          actions: emit(({ context }) => invalidation(context.input.path)),
+        },
         'leg.nativeEvent': [
           {
             guard: ({ context, event }) => {

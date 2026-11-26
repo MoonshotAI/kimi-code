@@ -1,22 +1,17 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { RequestError, type NewSessionResponse, type RequestPermissionRequest } from '@agentclientprotocol/sdk';
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
 import { ToolUpdated } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { call, createFakeModel, exitPlanMode, say, write, type FakeModel } from '@moonshot-ai/testkit/model';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { mapPromptLaunchError } from '../src/session';
+import { AcpSession, mapPromptLaunchError } from '../src/session';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { writeFakeModelConfig, type FakeModelConfigOptions } from './_helpers/fakeModelConfig';
 import { solidPngBase64 } from './_helpers/png';
-
-const STDIO_MCP_FIXTURE = fileURLToPath(
-  new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url),
-);
 
 describe('acp-server real prompt turn (scripted LLM)', () => {
   let homeDir: string | undefined;
@@ -777,7 +772,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
           type: 'http',
           name: 'mock',
           url: 'http://127.0.0.1:1/mcp',
-          headers: [{ name: 'X-Test-Fixture', value: STDIO_MCP_FIXTURE }],
+          headers: [{ name: 'X-Test-Fixture', value: 'example' }],
         },
       ],
     })) as { sessionId: string };
@@ -951,11 +946,14 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     return terminals;
   }
 
-  async function boot(clientCapabilities: Record<string, unknown>): Promise<TestClient> {
+  async function boot(
+    clientCapabilities: Record<string, unknown>,
+    defaults?: Pick<FakeModelConfigOptions, 'defaultPermissionMode'>,
+  ): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-terminal-'));
     model = createFakeModel();
     await model.listen();
-    await writeFakeModelConfig(homeDir, { baseUrl: model.origin });
+    await writeFakeModelConfig(homeDir, { baseUrl: model.origin, ...defaults });
     client = await createTestClient({ homeDir });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities });
     return client;
@@ -1020,6 +1018,57 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     expect(completed?.content).toEqual([{ type: 'terminal', terminalId: t.id }]);
 
     expect(model!.requests()[1]?.rawBody).toContain('hello_from_terminal');
+  }, 30_000);
+
+  it('attaches the terminal to a command that runs before the editor learns which turn it belongs to', async () => {
+    let releaseLaunch!: () => void;
+    const launchHeld = new Promise<void>((resolve) => {
+      releaseLaunch = resolve;
+    });
+    const sessions = AcpSession.prototype as unknown as {
+      driveLaunch(this: AcpSession, launch: Promise<unknown>): Promise<unknown>;
+    };
+    const driveLaunch = sessions.driveLaunch;
+    const heldLaunch = vi.spyOn(sessions, 'driveLaunch').mockImplementation(function (this: AcpSession, launch) {
+      return driveLaunch.call(
+        this,
+        launch.then(async (launched) => {
+          await launchHeld;
+          return launched;
+        }),
+      );
+    });
+    try {
+      const c = await boot({ terminal: true }, { defaultPermissionMode: 'yolo' });
+      const terminals = fakeTerminalClient(c, 'hello_from_terminal\n');
+      c.onRequest('terminal/wait_for_exit', async () => {
+        releaseLaunch();
+        await c.waitForSessionUpdate('tool_call', 10_000);
+        return { exitCode: 0, signal: null };
+      });
+      scriptBashTurn('echo hello_from_terminal');
+
+      const { stopReason } = await runPrompt(c);
+      expect(stopReason).toBe('end_turn');
+
+      const created = c.received.findIndex((m) => m.method === 'terminal/create');
+      const announced = c.received.findIndex(
+        (m) =>
+          m.method === 'session/update' &&
+          (m.params as { update?: { sessionUpdate?: string } }).update?.sessionUpdate === 'tool_call',
+      );
+      expect(created).toBeGreaterThanOrEqual(0);
+      expect(announced).toBeGreaterThan(created);
+
+      const t = terminals[0]!;
+      const updates = toolCallUpdates(c);
+      const attached = updates.find((u) => u.content?.[0]?.type === 'terminal');
+      expect(attached?.content?.[0]?.terminalId).toBe(t.id);
+      const completed = updates.find((u) => u.status === 'completed');
+      expect(completed?.content).toEqual([{ type: 'terminal', terminalId: t.id }]);
+    } finally {
+      heldLaunch.mockRestore();
+    }
   }, 30_000);
 
   it('falls back to local execution when the client does not advertise the capability', async () => {

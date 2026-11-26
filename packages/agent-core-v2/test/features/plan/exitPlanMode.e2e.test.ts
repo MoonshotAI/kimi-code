@@ -20,7 +20,6 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -166,7 +165,6 @@ describe('ExitPlanMode approval branches end to end', () => {
         reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
         reg.defineInstance(IAgentReminderService, createReminderStub());
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
-        reg.definePartialInstance(IAgentToolPolicyService, { isToolActive: () => true });
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => 'manual'));
         reg.defineInstance(IAgentStateService, new AgentStateService());
         reg.define(IAgentPlanService, AgentPlanService);

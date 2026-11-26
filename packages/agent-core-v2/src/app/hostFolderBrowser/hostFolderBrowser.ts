@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
-import { FsErrors } from '#/workspace/workspaceFs/internal/errors';
+import { FsErrors } from '#/project/projectFs/internal/errors';
 
 export const fsBrowseQuerySchema = z.object({
   path: z.string().min(1).optional(),

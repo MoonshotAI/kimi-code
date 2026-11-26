@@ -4,7 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
 
 import { ISessionWorkspaceContext, type PathAccessOperation } from './workspaceContext';
@@ -28,21 +28,21 @@ export class SessionWorkspaceContextService extends Service implements ISessionW
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
     @ISessionContext private readonly ctx: ISessionContext,
-    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
+    @ISessionProjectInfo private readonly projectInfo: ISessionProjectInfo,
     @ISessionWorkdir private readonly workdir: ISessionWorkdir,
   ) {
     super();
     this.states.contributeState(workspaceContextWorkDirKey);
     this.states.contributeState(workspaceContextAdditionalDirsKey);
     this.syncRoots();
-    this._register(this.workspaceInfo.onDidChange(() => this.syncRoots()));
+    this._register(this.projectInfo.onDidChange(() => this.syncRoots()));
   }
 
   private syncRoots(): void {
     const roots = resolveEffectiveWorkspaceRoots(
       this.ctx,
       { environmentId: this.workdir.environmentId, cwd: this.workdir.cwd },
-      this.workspaceInfo,
+      this.projectInfo,
     );
     this.states.set(workspaceContextWorkDirKey, roots.workDir);
     this.states.set(workspaceContextAdditionalDirsKey, [...roots.additionalDirs]);

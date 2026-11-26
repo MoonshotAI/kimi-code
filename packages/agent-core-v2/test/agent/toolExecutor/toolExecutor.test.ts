@@ -78,6 +78,7 @@ import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import type { RgResolution } from '#/os/backends/node-local/tools/rgLocator';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
@@ -94,13 +95,27 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
+import type { PermissionPolicyResolution } from '#/agent/permissionPolicy/types';
+import type { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { registerLogServices, stubLog } from '../../_base/log/stubs';
+import { stubPermissionModeService } from '../permissionMode/stubs';
+import { stubPermissionPolicyService } from '../permissionPolicy/stubs';
+import { stubPermissionRulesService } from '../permissionRules/stubs';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
+
+vi.mock('#/os/backends/node-local/tools/rgLocator', async (importOriginal) => {
+  const original = await importOriginal<typeof import('#/os/backends/node-local/tools/rgLocator')>();
+  return {
+    ...original,
+    ensureRgPath: vi.fn(async (): Promise<RgResolution> => ({ path: 'rg', source: 'system-path' })),
+  };
+});
 
 type ToolExecutorEvent =
   | { readonly type: 'tool.result'; readonly toolCallId: string; readonly result: ToolResult };
@@ -161,6 +176,46 @@ afterEach(() => {
 });
 
 describe('AgentToolExecutorService', () => {
+  it('starts every deferred permission review in a batch before waiting for the first decision', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const release = deferred<{ readonly policyName: string; readonly result: { readonly kind: 'deny'; readonly message: string } }>();
+    const gate = disposables.add(new AgentPermissionGate(
+      stubPermissionModeService(() => 'auto'),
+      stubPermissionRulesService(() => []),
+      stubPermissionPolicyService(() => ({ policyName: 'auto-mode-approve', result: { kind: 'approve' } })),
+      {
+        resolvePermissionResolution: async (res: PermissionPolicyResolution) =>
+          res.kind === 'deny' ? { veto: { output: res.message, isError: true } } : undefined,
+      } as unknown as IAgentToolApprovalService,
+      noopTelemetryService,
+      executor,
+    ));
+    disposables.add(gate.registerReviewer(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        return await release.promise;
+      } finally {
+        inFlight -= 1;
+      }
+    }));
+    const tool = new TestTool('Bash');
+    registry.register(tool);
+
+    const pending = execute([
+      toolCall('call_a', 'Bash', { command: 'rm -rf dist-a' }),
+      toolCall('call_b', 'Bash', { command: 'rm -rf dist-b' }),
+    ]);
+    await vi.waitFor(() => {
+      expect(maxInFlight).toBe(2);
+    });
+    release.resolve({ policyName: 'auto-review', result: { kind: 'deny', message: 'not executed' } });
+
+    await expect(pending).resolves.toHaveLength(2);
+    expect(tool.calls).toHaveLength(0);
+  });
+
   it('resolves by interface and routes a successful tool call through execute', async () => {
     vi.useFakeTimers();
     try {
@@ -846,7 +901,7 @@ describe('AgentToolExecutorService', () => {
         expect.objectContaining({ output: 'Tool "first" was aborted', isError: true }),
         expect.objectContaining({ output: 'Tool "second" was aborted', isError: true }),
       ]);
-      expect([...durations].sort((a, b) => a - b)).toEqual([0, 25]);
+      expect([...durations].toSorted((a, b) => a - b)).toEqual([0, 25]);
     } finally {
       vi.useRealTimers();
     }
@@ -1213,6 +1268,20 @@ describe('truncation pipeline', () => {
     await rm(homeDir, { recursive: true, force: true });
   });
 
+  function stubGlobStdout(stdout: string): void {
+    vi.spyOn(globProcess, 'spawn').mockImplementation(async () => ({
+      _serviceBrand: undefined,
+      pid: 123,
+      exitCode: 0,
+      stdin: new PassThrough(),
+      stdout: Readable.from([stdout]),
+      stderr: Readable.from([]),
+      wait: async () => 0,
+      kill: async () => {},
+      dispose: () => {},
+    }));
+  }
+
   it('spills oversized output to disk and renders a pointer for the model', async () => {
     const line = `${'x'.repeat(100)}\n`;
     const fullOutput = `HEAD_MARKER\n${line.repeat(300)}MIDDLE_MARKER\n${line.repeat(
@@ -1253,7 +1322,7 @@ describe('truncation pipeline', () => {
     const expected = Array.from({ length: 500 }, (_, index) =>
       `file-${String(index).padStart(3, '0')}-${'x'.repeat(100)}.ts`,
     );
-    await Promise.all(expected.map((name) => writeFile(join(homeDir, name), '')));
+    stubGlobStdout(expected.map((name) => `./${name}`).join('\n') + '\n');
 
     const [result] = await execute([toolCall('glob_all', 'Glob', { pattern: '*.ts', head_limit: 0 })]);
 
@@ -1283,18 +1352,7 @@ describe('truncation pipeline', () => {
     const root = await mkdtemp(join(tmpdir(), 'r'.repeat(180)));
     try {
       const names = Array.from({ length: 60_000 }, (_, i) => `file-${String(i).padStart(6, '0')}.ts`);
-      const stdout = names.map((name) => `./${name}`).join('\n') + '\n';
-      vi.spyOn(globProcess, 'spawn').mockImplementation(async () => ({
-        _serviceBrand: undefined,
-        pid: 123,
-        exitCode: 0,
-        stdin: new PassThrough(),
-        stdout: Readable.from([stdout]),
-        stderr: Readable.from([]),
-        wait: async () => 0,
-        kill: async () => {},
-        dispose: () => {},
-      }));
+      stubGlobStdout(names.map((name) => `./${name}`).join('\n') + '\n');
       const recovered: string[] = [];
       let offset = 0;
       let globPages = 0;

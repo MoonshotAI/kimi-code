@@ -56,6 +56,18 @@ class FakeResizeObserver implements ResizeObserverLike {
   }
 }
 
+class FakeMutationObserver {
+  pending = 0;
+  constructor(readonly callback: () => void) {}
+  observe(): void {}
+  takeRecords(): readonly unknown[] {
+    const records = Array.from({ length: this.pending });
+    this.pending = 0;
+    return records;
+  }
+  disconnect(): void {}
+}
+
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -102,7 +114,9 @@ export class LayoutSim {
   private dispatchedTop = 0;
   private bottomPadding = DOCK_GAP;
   private ro!: FakeResizeObserver;
+  private mo!: FakeMutationObserver;
   private frames = new Map<number, () => void>();
+  private running = new Set<number>();
   private nextFrame = 1;
   private readonly rowEls = new Map<string, HTMLElement>();
   private spacers = new Map<string, number>();
@@ -138,6 +152,7 @@ export class LayoutSim {
     });
     this.controller = createScrollController(adapter, {
       createResizeObserver: callback => (this.ro = new FakeResizeObserver(callback)),
+      createMutationObserver: callback => (this.mo = new FakeMutationObserver(callback)),
       requestFrame: callback => {
         const id = this.nextFrame++;
         this.frames.set(id, callback);
@@ -145,6 +160,7 @@ export class LayoutSim {
       },
       cancelFrame: id => {
         this.frames.delete(id);
+        this.running.delete(id);
       },
       now: () => this.clock,
       reducedMotion: () => this.reducedMotion,
@@ -220,12 +236,26 @@ export class LayoutSim {
     this.dispatchScroll();
     const pending = [...this.frames.entries()];
     this.frames.clear();
-    for (const [, callback] of pending) callback();
+    this.running = new Set(pending.map(([id]) => id));
+    for (const [id, callback] of pending) if (this.running.delete(id)) callback();
     this.flushResize();
   }
 
   hasPendingFrame(): boolean {
     return this.frames.size > 0;
+  }
+
+  requestFrame(callback: () => void): void {
+    this.frames.set(this.nextFrame++, callback);
+  }
+
+  mutate(): void {
+    this.mo.pending = 0;
+    this.mo.callback();
+  }
+
+  queueMutation(): void {
+    this.mo.pending++;
   }
 
   dispatchScroll(): void {

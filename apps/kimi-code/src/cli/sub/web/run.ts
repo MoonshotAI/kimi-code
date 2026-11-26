@@ -14,6 +14,7 @@ import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command, Option } from 'commander';
 
+import { drainStdio } from '#/cli/headless-exit';
 import { CLI_MSH_PLATFORM, CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
@@ -610,24 +611,26 @@ async function runServerInProcess(
     if (stopping) return;
     stopping = true;
     running?.logger.info({ reason }, 'server shutting down');
-    try {
-      await hooks.onShutdown?.(reason);
-    } catch (error) {
-      running?.logger.error(
-        { err: error instanceof Error ? error : new Error(String(error)) },
-        'foreground shutdown hook error',
-      );
+    const failures: string[] = [];
+    const cleanupSteps = [
+      ['foreground shutdown hook', () => hooks.onShutdown?.(reason)],
+      ['server shutdown', () => running?.close()],
+    ] as const;
+    for (const [stage, cleanup] of cleanupSteps) {
+      try {
+        await cleanup();
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        running?.logger.error({ err }, `${stage} error`);
+        failures.push(`Kimi web: ${stage} failed: ${err.message}\n`);
+      }
     }
-    try {
-      await running?.close();
-      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
-    } catch (error) {
-      running?.logger.error(
-        { err: error instanceof Error ? error : new Error(String(error)) },
-        'server shutdown error',
-      );
+    await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+    if (failures.length > 0) {
+      process.stderr.write(failures.join(''));
+      await drainStdio([process.stderr]);
     }
-    process.exit(0);
+    process.exit(failures.length === 0 ? 0 : 1);
   }
 
   const logger = createServerLogger({

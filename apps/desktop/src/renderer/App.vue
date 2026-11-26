@@ -408,6 +408,21 @@ onMounted(() => {
         track('action_invoked', { action: 'retry-connection', source: 'menu' });
         return;
       }
+      if (menuId === 'open-feedback') {
+        if (cancelPendingFeedbackMenu !== null) return;
+        const openFromMenu = (): void => {
+          cancelPendingFeedbackMenu = null;
+          if (anyOverlayOpen.value) return;
+          track('action_invoked', { action: 'open-feedback', source: 'menu' });
+          openGlobalFeedback('menu');
+        };
+        if (initialized.value) {
+          openFromMenu();
+        } else {
+          cancelPendingFeedbackMenu = runWhenInitialized(initialized, openFromMenu);
+        }
+        return;
+      }
       const actionId = MENU_ACTION_TO_SHORTCUT[menuId];
       if (actionId === undefined) return;
       if (
@@ -448,6 +463,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onShortcutKeydown);
+  if (cancelPendingFeedbackMenu !== null) {
+    cancelPendingFeedbackMenu();
+    cancelPendingFeedbackMenu = null;
+  }
   if (offMenuAction !== null) {
     offMenuAction();
     offMenuAction = null;
@@ -481,6 +500,7 @@ onUnmounted(() => {
 });
 
 let offMenuAction: (() => void) | null = null;
+let cancelPendingFeedbackMenu: (() => void) | null = null;
 let offBrowserAutomationUiRequest: (() => void) | null = null;
 let offScreenshotHotkey: (() => void) | null = null;
 let offScreenshotHotkeyResult: (() => void) | null = null;
@@ -1933,10 +1953,6 @@ let sendGeneration = 0;
 // command, stale row) fails the enable write server-side and toasts the
 // daemon's own error.
 const towerEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
-const towerEntryEnabled = computed(() => towerEnabled.value && client.towerModeAvailable.value);
-const planEntryEnabled = computed(() => client.planModeAvailable.value);
-const swarmEntryEnabled = computed(() => client.swarmModeAvailable.value);
-const goalEntryEnabled = computed(() => client.goalModeAvailable.value);
 
 // Mobile settings sheet's tower toggle: the sheet hides the row while the
 // flag is off, so this only forwards.
@@ -2854,10 +2870,7 @@ function openPr(url: string): void {
       :goal-active="mobileGoalActive"
       :swarm-mode="swarmMode"
       :tower-mode="client.towerMode.value"
-      :tower-enabled="towerEntryEnabled"
-      :plan-enabled="planEntryEnabled"
-      :swarm-enabled="swarmEntryEnabled"
-      :goal-enabled="goalEntryEnabled"
+      :tower-enabled="towerEnabled"
       :color-scheme="colorScheme"
       :font-scale="fontScale"
       :managed-provider-status="managedProviderStatus"

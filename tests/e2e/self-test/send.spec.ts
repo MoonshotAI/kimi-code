@@ -13,6 +13,16 @@ selfTest('send', {
         await product.expectReply('Received.');
       },
     },
+    'shows a prompt typed in Chinese and delivers the same text to the model': {
+      run: async ({ product, model }) => {
+        model.script(say('收到了。'));
+        await product.send('请确认你收到了这条消息。');
+        await product.waitIdle();
+        expect(model.requests('main').map((request) => request.firstUserText)).toEqual(['请确认你收到了这条消息。']);
+        await product.expectTranscript('请确认你收到了这条消息。');
+        await product.expectReply('收到了。');
+      },
+    },
     'tells a repeated prompt from the earlier one after a long answer': {
       run: async ({ product, model }) => {
         const long = Array.from({ length: 80 }, (_, index) => `Paragraph number ${index + 1}.`).join('\n\n');
@@ -33,7 +43,7 @@ selfTest('send', {
         await expect(product.send('/help')).rejects.toThrow('cannot take a prompt that starts with');
         await expect(product.send('!ls')).rejects.toThrow('cannot take a prompt that starts with');
         await expect(product.send('@a.txt')).rejects.toThrow('cannot take a prompt that starts with');
-        await expect(product.send('two\nlines')).rejects.toThrow('one line of printable ASCII');
+        await expect(product.send('two\nlines')).rejects.toThrow('one line of printable text');
         await expect(product.send('Ends with a backslash \\')).rejects.toThrow('cannot end with a backslash');
         model.script(say('Still here.'));
         await product.send('Are you still there?');

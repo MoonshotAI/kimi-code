@@ -1,17 +1,19 @@
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import {
   createGitWorktree,
+  fakeMcpServer,
   kimiCliCommand,
   kimiCliEnv,
   kimiServiceStubs,
   mergeKimiConfig,
+  readMcpStarts,
   TestProcess,
   TIMEOUTS,
   until,
   writeKimiConfig,
+  type McpServerEntry,
   type TestHome,
 } from '@moonshot-ai/testkit/fixtures';
 import { fakeModelConfig, held, say, type FakeModel } from '@moonshot-ai/testkit/model';
@@ -20,7 +22,11 @@ import { expect, test as base } from 'vitest';
 
 const test = base.extend<HomeFixtures & ModelFixtures>({ ...homeFixtures(), ...modelFixtures() });
 
-const SERVER = fileURLToPath(new URL('../../../../packages/agent-core-v2/test/mcpCore/fixtures/cwd-stdio-server.mjs', import.meta.url));
+const CWD_TOOL = { name: 'get_cwd', description: 'Returns the server process cwd', reply: { text: { cwd: true } } } as const;
+
+function cwdServer(name: string, startLog: string): McpServerEntry {
+  return fakeMcpServer(name, { tools: [CWD_TOOL], startLog });
+}
 
 type Checkout = 'main' | 'worktree';
 type Place = Checkout | 'src' | 'worktreeSrc';
@@ -71,12 +77,11 @@ async function preparePrint(model: FakeModel, testHome: TestHome) {
     },
   }));
   await createGitWorktree({ main: dirs.main, worktree: dirs.worktree });
-  const startLog = join(testHome.root, 'mcp-starts.log');
-  await writeFile(startLog, '');
+  const startLog = join(testHome.root, 'mcp-starts.jsonl');
   const writeMcpJson = async (file: string, name: string) => {
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, JSON.stringify({
-      mcpServers: { [name]: { command: process.execPath, args: [SERVER, name], env: { KIMI_TEST_MCP_START_LOG: startLog } } },
+      mcpServers: { [name]: cwdServer(name, startLog) },
     }));
   };
   await writeMcpJson(join(testHome.dataDir, 'mcp.json'), 'user');
@@ -86,7 +91,8 @@ async function preparePrint(model: FakeModel, testHome: TestHome) {
   for (const subdir of [dirs.src, dirs.worktreeSrc]) await writeMcpJson(join(subdir, '.kimi-code', 'mcp.json'), 'planted');
   return {
     dirs,
-    started: async () => (await readFile(startLog, 'utf8')).split('\n').filter(Boolean).toSorted(),
+    startLog,
+    started: async () => (await readMcpStarts(startLog)).map((start) => `${start.server} ${start.cwd}`).toSorted(),
     start: ({ cwd, environment, environmentCwd, relativePath }: PrintSession, set: Readonly<Record<string, string | undefined>> = {}) =>
       TestProcess.start({
         label: 'kimi -p',
@@ -127,8 +133,11 @@ test.for(SESSIONS)('kimi -p starts the MCP servers of a session $session once an
 
 test.for(SESSIONS)('kimi -p names the project MCP servers it skips for a session $session of an untrusted project', { timeout: 90_000 }, async (session, { model, testHome }) => {
   model.script(say('done'));
-  const { started, start } = await preparePrint(model, testHome);
-  const skipped = PROJECT_SERVERS[session.servers].map((name) => `${name} (stdio: ${process.execPath} ${SERVER} ${name})`);
+  const { started, start, startLog } = await preparePrint(model, testHome);
+  const skipped = PROJECT_SERVERS[session.servers].map((name) => {
+    const server = cwdServer(name, startLog);
+    return `${name} (stdio: ${[server.command, ...server.args].join(' ')})`;
+  });
 
   const cli = start(session, { KIMI_CODE_TRUST_WORKSPACE: undefined });
   const exit = await cli.closed;

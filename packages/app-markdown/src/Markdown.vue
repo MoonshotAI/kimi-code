@@ -1084,6 +1084,10 @@ watch([() => numberedDiffs.size, segments], async () => {
   border-radius: var(--markdown-inline-code-radius);
   box-decoration-break: clone;
 }
+.md :deep(:is(h1, h2, h3, h4, h5, h6) :not(pre) > code),
+.md :deep(:is(h1, h2, h3, h4, h5, h6) .inline-code) {
+  font-size: inherit;
+}
 .md :deep(:is(strong, b) code) { font-weight: var(--markdown-font-weight-emphasis); }
 
 .md :deep(.code-block-container) {

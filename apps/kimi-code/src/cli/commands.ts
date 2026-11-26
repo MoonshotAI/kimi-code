@@ -139,6 +139,14 @@ export function createProgram(
         'Set the working directory on the environment selected by --environment.',
       ).hideHelp(),
     )
+    .addOption(
+      new Option('-w, --worktree [name]', 'Start a new session in a new git worktree, optionally named <name>.')
+        .hideHelp()
+        .argParser((val: string | boolean) => (val === true ? '' : (val as string))),
+    )
+    .addOption(
+      new Option('--worktree-base <ref>', 'Create the -w worktree from <ref> instead of HEAD.').hideHelp(),
+    )
     .option('--plan', 'Start in plan mode.', false);
 
   registerExportCommand(program);
@@ -223,6 +231,8 @@ export function createProgram(
       addDirs: raw['addDir'] as string[],
       environment: raw['environment'] as string | undefined,
       environmentCwd: raw['environmentCwd'] as string | undefined,
+      worktree: raw['worktree'] === true ? '' : (raw['worktree'] as string | undefined),
+      worktreeBase: raw['worktreeBase'] as string | undefined,
     };
 
     onMain(opts);

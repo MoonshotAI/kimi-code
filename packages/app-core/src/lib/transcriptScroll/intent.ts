@@ -7,6 +7,7 @@ export type ScrollInputSource = 'wheel' | 'key' | 'touch';
 
 export type ScrollIntent =
   | { kind: 'scroll'; source: ScrollInputSource; direction: -1 | 0 | 1 }
+  | { kind: 'press'; sticky: boolean }
   | { kind: 'drag-start' }
   | { kind: 'drag-end' }
   | { kind: 'touch-start' }
@@ -47,8 +48,10 @@ export function readScrollIntent(event: Event, scroller: HTMLElement): ScrollInt
     }
     case 'pointerdown': {
       const pointer = event as PointerEvent;
-      if (pointer.defaultPrevented || pointer.button !== 0 || pointer.pointerType === 'touch') return null;
-      return isScrollbarPointer(pointer, scroller) ? { kind: 'drag-start' } : null;
+      if (pointer.defaultPrevented || pointer.pointerType === 'touch') return null;
+      if (pointer.button === 0 && isScrollbarPointer(pointer, scroller)) return { kind: 'drag-start' };
+      if (pointer.button === 0) return { kind: 'press', sticky: false };
+      return pointer.button === 1 ? { kind: 'press', sticky: true } : null;
     }
     case 'pointerup':
     case 'pointercancel':

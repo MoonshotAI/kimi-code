@@ -119,6 +119,8 @@ import {
   pillSubmitBlockers,
   decideComposerSubmit,
   decideSubmitKind,
+  commandNeedsProjectTrust,
+  isSessionBoundSubmit,
   planFileAttachment,
   planFolderAttachment,
   resetComposerAfterDispatch,
@@ -160,6 +162,7 @@ const props = defineProps<{
   interruptArmed?: boolean;
   hideContext?: boolean;
   submitDisabled?: boolean;
+  sessionSubmitBlockedReason?: string;
   statusNote?: string;
   beforeSubmit?: () => boolean;
   deferSubmitReset?: boolean;
@@ -174,6 +177,7 @@ const props = defineProps<{
 }>();
 
 const isSideChat = computed(() => props.variant === 'side-chat');
+const composerStatusNote = computed(() => props.sessionSubmitBlockedReason ?? props.statusNote);
 
 const { t, locale } = useI18n();
 const panelApi = inject(panelApiKey, undefined);
@@ -245,12 +249,7 @@ const browserDetails = useBrowserReferenceDetails(() => JSON.stringify([sessionI
 const browserReferences = ref<BrowserReference[]>([]);
 const browserCaptures = ref<BrowserCapture[]>([]);
 
-const towerExperimentEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
-const towerAvailable = computed(() => client.towerModeAvailable.value);
-const towerEntryEnabled = computed(() => towerExperimentEnabled.value && towerAvailable.value);
-const planEnabled = computed(() => client.planModeAvailable.value);
-const swarmEnabled = computed(() => client.swarmModeAvailable.value);
-const goalEnabled = computed(() => client.goalModeAvailable.value);
+const towerEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
 
 const attachmentEntries = ref<AttachmentEntry[]>([]);
 const attachmentInventoryState = shallowRef<AttachmentInventoryState>({
@@ -312,13 +311,7 @@ watch(promptPredictionSuggestion, (suggestion) => {
   handleInput();
 });
 
-const highlightCommands = computed(() => buildSlashItems([], {
-  towerEnabled: towerExperimentEnabled.value,
-  planEnabled: planEnabled.value,
-  swarmEnabled: swarmEnabled.value,
-  goalEnabled: goalEnabled.value,
-  extraBuiltins: props.extraBuiltinCommands,
-}));
+const highlightCommands = computed(() => buildSlashItems([], { towerEnabled: towerEnabled.value, extraBuiltins: props.extraBuiltinCommands }));
 
 const pendingCommandArgument = computed(() => {
   if (isSideChat.value || !mayStartWithSlashCommand(text.value)) return null;
@@ -946,6 +939,7 @@ const {
   editorRef,
   skills: () => skills.value,
   insertSkillMention: insertMentionEntry,
+  beforeExecute: (cmd) => props.sessionSubmitBlockedReason === undefined || !commandNeedsProjectTrust(cmd),
   emitCommand: (cmd) => {
     if (cmd === '/plan') {
       armPlanMode();
@@ -967,11 +961,8 @@ const {
   },
   historyPush: (entry) => history.push(entry),
   clearDraft,
-  towerEnabled: () => towerEntryEnabled.value,
+  towerEnabled: () => towerEnabled.value,
   extraBuiltins: () => props.extraBuiltinCommands,
-  planEnabled: () => planEnabled.value,
-  swarmEnabled: () => swarmEnabled.value,
-  goalEnabled: () => goalEnabled.value,
   resolveDesc: (item) => (item.isSkill ? item.desc : t(item.desc)),
 });
 
@@ -1791,13 +1782,8 @@ function submitCommandContext() {
     running: running.value,
     queueLength: queued.value.length,
     goalMode: goalMode.value,
-    towerEnabled: towerExperimentEnabled.value,
-    towerAvailable: towerAvailable.value,
-    towerActive: towerOn.value,
+    towerEnabled: towerEnabled.value,
     extraBuiltins: props.extraBuiltinCommands,
-    planEnabled: planEnabled.value,
-    swarmEnabled: swarmEnabled.value,
-    goalEnabled: goalEnabled.value,
   };
 }
 
@@ -1821,8 +1807,18 @@ function currentSubmitDecision(): SubmitDecision {
   });
 }
 
+function isBlockedByProjectTrust(decision: SubmitDecision): boolean {
+  return props.sessionSubmitBlockedReason !== undefined &&
+    (isSessionBoundSubmit(decision) ||
+      (decision.kind === 'builtin-command' && commandNeedsProjectTrust(decision.cmd)));
+}
+
 const canSend = computed(() => {
   if (props.submitDisabled === true) return false;
+  if (props.sessionSubmitBlockedReason !== undefined) {
+    const decision = currentSubmitDecision();
+    return decision.kind !== 'noop' && !isBlockedByProjectTrust(decision);
+  }
   const trimmed = text.value.trim();
   const assembly = submitAssembly();
   const blocked = pillGate.value.uploading || pillGate.value.errored || pillGate.value.missing;
@@ -1876,6 +1872,7 @@ function clearAfterDispatch(expectedSnapshot?: ComposerDocumentSnapshot): void {
 }
 
 function passSubmitGate(): boolean {
+  if (props.sessionSubmitBlockedReason !== undefined) return false;
   if (props.beforeSubmit !== undefined && props.beforeSubmit() === false) return false;
   if (hostSetupId.value !== undefined) {
     openHostSetup();
@@ -1920,24 +1917,12 @@ function handleQueue(): void {
 
 function handleSubmit(): void {
   const decision = currentSubmitDecision();
-  if (decision.kind === 'noop') return;
-  if (decision.kind === 'disabled-command') {
-    client.notify({ severity: 'warning', title: t('composer.disabledCommand', { cmd: decision.cmd }) });
-    return;
-  }
+  if (decision.kind === 'noop' || isBlockedByProjectTrust(decision)) return;
   if (decision.kind === 'invalid-command') {
     client.notify({ severity: 'warning', title: t('composer.noArgCommand', { cmd: decision.cmd }) });
     return;
   }
-  const sessionBound =
-    decision.kind === 'submit' ||
-    decision.kind === 'multi-skill-activation' ||
-    decision.kind === 'skill-activation' ||
-    decision.kind === 'skill-command' ||
-    decision.kind === 'unresolved-skill-command' ||
-    decision.kind === 'prompt-command' ||
-    (decision.kind === 'builtin-command' && decision.leave === true);
-  if (sessionBound && !passSubmitGate()) return;
+  if (isSessionBoundSubmit(decision) && !passSubmitGate()) return;
   if (!isSideChat.value) client.handlePromptPredictionSubmit(text.value);
   const snapshot = editor?.getSnapshot();
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
@@ -2532,16 +2517,10 @@ const addItems = computed(() => {
     items.push({ id: 'slash', icon: 'terminal', nameKey: 'composer.addSlash', descKey: 'composer.addSlashDesc', action: onAddSlashMenu });
     items.push({ id: 'mention', icon: 'at', nameKey: 'composer.addMention', descKey: 'composer.addMentionDesc', action: onAddMentionMenu });
   }
-  if (goalEnabled.value) {
-    items.push({ id: 'goal', icon: 'target', nameKey: 'status.goalLabel', descKey: 'composer.addGoalDesc', action: onAddGoalMode });
-  }
-  if (planEnabled.value) {
-    items.push({ id: 'plan', icon: 'file-edit', nameKey: 'status.planLabel', descKey: 'composer.addPlanDesc', action: onAddPlanMode });
-  }
-  if (swarmEnabled.value) {
-    items.push({ id: 'swarm', icon: 'sparkles', nameKey: 'status.swarmLabel', descKey: 'composer.addSwarmDesc', action: onAddSwarmMode });
-  }
-  if (towerEntryEnabled.value) {
+  items.push({ id: 'goal', icon: 'target', nameKey: 'status.goalLabel', descKey: 'composer.addGoalDesc', action: onAddGoalMode });
+  items.push({ id: 'plan', icon: 'file-edit', nameKey: 'status.planLabel', descKey: 'composer.addPlanDesc', action: onAddPlanMode });
+  items.push({ id: 'swarm', icon: 'sparkles', nameKey: 'status.swarmLabel', descKey: 'composer.addSwarmDesc', action: onAddSwarmMode });
+  if (towerEnabled.value) {
     items.push({ id: 'tower', icon: 'tower', nameKey: 'status.towerLabel', descKey: 'composer.addTowerDesc', action: onAddTowerMode });
   }
   if (isSideChat.value) {
@@ -3666,7 +3645,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             </IconButton>
           </span>
 
-          <span v-if="towerOn && towerExperimentEnabled && !isSideChat" class="tower-chip">
+          <span v-if="towerOn && towerEnabled && !isSideChat" class="tower-chip">
             <Icon class="tower-ic" name="tower" size="md" />
             <span class="tower-label">{{ t('status.towerLabel') }}</span>
             <IconButton
@@ -3799,7 +3778,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             </template>
           </button>
           </Tooltip>
-          <span v-if="statusNote" class="status-note">{{ statusNote }}</span>
+          <span v-if="composerStatusNote" class="status-note" role="status">{{ composerStatusNote }}</span>
           <Tooltip v-if="stopButtonVisible" :text="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interruptTitle')">
             <button
               class="stop"

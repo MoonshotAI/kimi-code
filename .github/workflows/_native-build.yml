@@ -14,7 +14,7 @@ on:
         type: number
         default: 3
       web-ci-run-id:
-        description: 'Verified release push CI run that built CLI Web assets for this commit'
+        description: 'Optional workflow run containing prebuilt CLI Web assets for this commit'
         type: string
         default: ''
       sign-macos:
@@ -55,8 +55,8 @@ on:
       AZURE_CLIENT_SECRET:
         required: false
 
-# Callers grant contents: read; only the stable release also grants actions: read
-# to download the Web assets from its verified push CI run.
+# Callers grant contents: read; callers that provide prebuilt Web assets also
+# grant actions: read to download them.
 jobs:
   native-bundle:
     name: Native bundle (${{ matrix.target }})
@@ -121,13 +121,13 @@ jobs:
           node apps/kimi-code/scripts/update-catalog.mjs --out "$CATALOG_FILE"
           echo "KIMI_CODE_BUILT_IN_CATALOG_FILE=$CATALOG_FILE" >> "$GITHUB_ENV"
 
-      - name: Download CLI Web assets from the verified push CI
+      - name: Download prebuilt CLI Web assets
         if: inputs.web-ci-run-id != ''
         uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.web-ci-run-id }}
-          name: cli-web-${{ github.sha }}
+          name: cli-web-${{ inputs.sha || github.sha }}
           path: apps/kimi-code/dist-web
 
       - name: Build Kimi web assets

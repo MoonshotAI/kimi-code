@@ -97,9 +97,9 @@ export type {
 } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
 export type { Page } from '@moonshot-ai/agent-core-v2/persistence/interface/queryStore';
 export type {
-  Workspace,
-  WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
+  Project as Workspace,
+  ProjectUpdate as WorkspaceUpdate,
+} from '@moonshot-ai/agent-core-v2/app/project/project';
 export type {
   ConfigDiagnostic,
   ConfigInspectValue,

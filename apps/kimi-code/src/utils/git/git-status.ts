@@ -187,16 +187,16 @@ export function createGitStatusCache(
 
   function currentStatus(): GitStatus | null {
     const summary = status.summary;
+    if (summary === null) return null;
     const branch = currentBranch();
-    if (summary === null || branch === null) return null;
     return {
-      branch,
+      branch: branch ?? '',
       dirty: summary.dirty,
       ahead: summary.ahead,
       behind: summary.behind,
       diffAdded: summary.additions,
       diffDeleted: summary.deletions,
-      pullRequest: pullRequest.branch === branch ? pullRequest.value : null,
+      pullRequest: branch !== null && pullRequest.branch === branch ? pullRequest.value : null,
     };
   }
 

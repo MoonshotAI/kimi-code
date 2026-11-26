@@ -17,18 +17,18 @@ import { HostProcessService } from '#/os/backends/node-local/hostProcessService'
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import type { ProgramDependencies } from '#/program/programDependencies';
 import { ProgramMcp, type ProgramMcpLease } from '#/program/programMcp';
-import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import type { WorkspaceTrustChange } from '#/workspace/workspaceTrust/workspaceTrust';
+import type { IProjectContext } from '#/project/projectContext/projectContext';
+import type { IProjectDirs } from '#/project/projectDirs/projectDirs';
+import type { ProjectTrustChange } from '#/project/projectTrust/projectTrust';
 
 import { stubLog } from '../_base/log/stubs';
 import { deferredAgentIdentityStub, stubAgentIdentity } from '../app/agentIdentity/stubs';
-import { createMemoryMcpOAuthStore, cwdStdioFixture, stdioFixture } from '../mcpCore/stubs';
+import { createMemoryMcpOAuthStore, cwdStdioServer, mockStdioServer } from '../mcpCore/stubs';
 
 const PROCESS_TIMEOUT_MS = 20_000;
 
 function stdioServer(config: Partial<McpServerConfig> = {}): McpServerConfig {
-  return { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture], ...config } as McpServerConfig;
+  return { transport: 'stdio', ...cwdStdioServer(), ...config } as McpServerConfig;
 }
 
 async function cwdOf(view: McpConnectionView, name: string): Promise<string> {
@@ -79,7 +79,7 @@ describe('ProgramMcp', () => {
         acquire: () => lease,
         acquireWhenReady: async () => lease,
       } as unknown as IEnvironmentService,
-      { workspaceId: 'workspace' } as IWorkspaceContext,
+      { workspaceId: 'workspace' } as IProjectContext,
       {
         bootstrap: { homeDir },
         config: { ready: Promise.resolve(), onDidSectionChange: Event.None, get: () => undefined },
@@ -103,7 +103,7 @@ describe('ProgramMcp', () => {
           return primary;
         },
         onDidChange: Event.None,
-      } as unknown as IWorkspaceDirs,
+      } as unknown as IProjectDirs,
       {
         _serviceBrand: undefined,
         ready: Promise.resolve(),
@@ -111,7 +111,7 @@ describe('ProgramMcp', () => {
         isTrusted: () => trusted,
         trust: async () => undefined,
         untrust: async () => undefined,
-        onDidChange: Event.None as Event<WorkspaceTrustChange>,
+        onDidChange: Event.None as Event<ProjectTrustChange>,
       },
     );
   }
@@ -178,7 +178,7 @@ describe('ProgramMcp', () => {
 
   it('starts again, once for everyone waiting, only after the previous servers have exited', async () => {
     await writeServers({
-      stubborn: stdioServer({ args: [stdioFixture], env: { KIMI_TEST_MCP_IGNORE_SIGTERM: '1' } }),
+      stubborn: stdioServer(mockStdioServer({ ignoreSigterm: true })),
     });
     const first = await mcp.acquire();
     await connected(first);

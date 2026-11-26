@@ -20,7 +20,7 @@ import {
   SESSION_INDEX_MANIFEST,
   sessionCollection,
   sessionCountersCollection,
-  type SessionWorkspaceCounts,
+  type SessionProjectCounts,
 } from '#/app/sessionIndex/sessionIndexModel';
 import {
   drainSessionIndexMirror,
@@ -126,7 +126,7 @@ describe('SessionIndexMirror', () => {
     expect(stored.get('a')).toMatchObject({ title: 'latest', archived: false });
     expect(stored.get('b')).toMatchObject({ archived: true });
 
-    const counters = await queryStore.getMany<SessionWorkspaceCounts>(
+    const counters = await queryStore.getMany<SessionProjectCounts>(
       sessionCountersCollection(GENERATION),
       [WORKSPACE],
     );
@@ -142,12 +142,12 @@ describe('SessionIndexMirror', () => {
     await queryStore.put(sessionCountersCollection(GENERATION), WORKSPACE, {
       active: 1,
       archived: 0,
-    } satisfies SessionWorkspaceCounts);
+    } satisfies SessionProjectCounts);
 
     mirror.record(summary('a', { archived: true, updatedAt: 9 }));
     await mirror.drain();
 
-    const counters = await queryStore.getMany<SessionWorkspaceCounts>(
+    const counters = await queryStore.getMany<SessionProjectCounts>(
       sessionCountersCollection(GENERATION),
       [WORKSPACE],
     );

@@ -6,6 +6,18 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.8.0 (2026-11-25)
+
+### Polish
+
+- Improve prompt prediction; enable it in `/experiments`.
+- In the TUI, consecutive queued turns skip intermediate completion alerts; background tasks still notify.
+
+### Bug Fixes
+
+- Fix sessions that could not be restored after their model became unavailable.
+- Fix several known issues and make refinements. See [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for technical entries.
+
 ## 2.7.3 (2026-11-24)
 
 ### Bug Fixes

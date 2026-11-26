@@ -1,7 +1,7 @@
 import { Disposable, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { ref, type LiveRef } from '#/_base/di/instantiation';
-import { IWorkspaceService } from '#/app/workspace/workspace';
-import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
+import { IProjectService } from '#/app/project/project';
+import { IProjectPersistence } from '#/app/project/projectPersistence';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
@@ -14,7 +14,7 @@ import {
   SESSION_INDEX_KEY,
   SESSION_INDEX_SCOPE,
   readSessionIndexEntries,
-} from '#/app/workspace/workspaceAlias';
+} from '#/app/project/projectAlias';
 import { isError2 } from '#/errors';
 import { databaseBaseEnabled } from '#/persistence/configSection';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -48,12 +48,12 @@ import {
   sessionCollection,
   sessionCountersCollection,
   stripRecencyField,
-  type SessionWorkspaceCounts,
+  type SessionProjectCounts,
 } from './sessionIndexModel';
-import { SessionIndexProjector } from './sessionIndexProjector';
+import { SessionIndexProjector, type ReconcileResult } from './sessionIndexProjector';
 import {
   listSessionIds,
-  listWorkspaceIds,
+  listProjectIds,
   readSessionSummary,
   summaryMatchesChildOf,
 } from './sessionIndexSource';
@@ -92,6 +92,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   private lastDegradedKey: string | undefined;
   private prepareFlight: Promise<SessionIndexStatus> | undefined;
   private projectFlight: Promise<void> | undefined;
+  private reconcileFlight: Promise<ReconcileResult> | undefined;
   private readonly reconcileTimer = this._register(new IntervalTimer({ unref: true }));
   private readonly projector: SessionIndexProjector;
   private primarySnapshot?: Readonly<Record<string, string>>;
@@ -109,8 +110,8 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
-    @ref(IWorkspaceService) private readonly workspaces: LiveRef<IWorkspaceService>,
-    @ref(IWorkspacePersistence) private readonly workspaceStore: LiveRef<IWorkspacePersistence>,
+    @ref(IProjectService) private readonly workspaces: LiveRef<IProjectService>,
+    @ref(IProjectPersistence) private readonly workspaceStore: LiveRef<IProjectPersistence>,
   ) {
     super();
     this.projector = new SessionIndexProjector({
@@ -204,7 +205,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
           }
         } else if (!(await this.manifestFresh(manifest))) {
           try {
-            const reconciliation = this.projector.reconcile(manifest.seq);
+            const reconciliation = this.reconcile(manifest.seq);
             if (deadlineMs === undefined) {
               await reconciliation;
             } else {
@@ -238,7 +239,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private async manifestPrimariesFresh(manifest: Checkpoint): Promise<boolean> {
-    return samePrimaryByWorkspace(manifest.workspacePrimaries, await this.primaryByWorkspace());
+    return samePrimaryByProject(manifest.workspacePrimaries, await this.primaryByWorkspace());
   }
 
   private async manifestFresh(manifest: Checkpoint): Promise<boolean> {
@@ -247,10 +248,10 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     try {
       const [marks, workspaceIds, primaries] = await Promise.all([
         listDirtyMarks(this.storage, this.sessionsScope),
-        listWorkspaceIds(this.storage, this.sessionsScope),
+        listProjectIds(this.storage, this.sessionsScope),
         this.primaryByWorkspace(),
       ]);
-      if (!samePrimaryByWorkspace(manifest.workspacePrimaries, primaries)) return false;
+      if (!samePrimaryByProject(manifest.workspacePrimaries, primaries)) return false;
       if (marks.length > 0) return false;
       if (workspaceIds.length !== Object.keys(signals).length) return false;
       for (const workspaceId of workspaceIds) {
@@ -310,7 +311,18 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
     if (manifest === undefined) return;
     this.generation = manifest.seq;
-    await this.projector.reconcile(manifest.seq);
+    await this.reconcile(manifest.seq);
+  }
+
+  private async reconcile(generation: number): Promise<void> {
+    const run = () => this.projector.reconcile(generation);
+    const flight = this.reconcileFlight?.then(run, run) ?? run();
+    this.reconcileFlight = flight;
+    try {
+      await flight;
+    } finally {
+      if (this.reconcileFlight === flight) this.reconcileFlight = undefined;
+    }
   }
 
   async reprojectNow(): Promise<void> {
@@ -342,7 +354,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       if (!(await this.manifestPrimariesFresh(manifest))) {
         await this.ensureProjection();
       } else {
-        await this.projector.reconcile(manifest.seq);
+        await this.reconcile(manifest.seq);
       }
     } catch (error) {
       this.log.warn('session index reconciliation failed', { error: String(error) });
@@ -425,11 +437,15 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   async remove(id: string): Promise<void> {
+    const indexWriteInProgress = this.projectFlight !== undefined || this.reconcileFlight !== undefined;
+    this.projector.invalidateScan();
     await this.mirror.evict(id);
+    await Promise.allSettled([this.prepareFlight, this.projectFlight, this.reconcileFlight]);
     await this.withReadModel(
-      async (generation) => {
-        await this.queryStore.delete(sessionCollection(generation), id);
-      },
+      (generation) =>
+        indexWriteInProgress
+          ? this.reconcile(generation)
+          : this.queryStore.delete(sessionCollection(generation), id),
       () => Promise.resolve(),
     );
     try {
@@ -568,7 +584,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     const counters = sessionCountersCollection(generation);
     const restricted = query.workspaceIds;
     const workspaceIds = restricted ?? (await this.queryStore.listKeys(counters));
-    const counts = await this.queryStore.getMany<SessionWorkspaceCounts>(counters, workspaceIds);
+    const counts = await this.queryStore.getMany<SessionProjectCounts>(counters, workspaceIds);
     let total = 0;
     for (const entry of counts.values()) {
       total += query.includeArchived === true ? entry.active + entry.archived : entry.active;
@@ -738,7 +754,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     const next = await this.primaryByWorkspace();
     const previous = this.primarySnapshot;
     this.primarySnapshot = next;
-    if (previous !== undefined && samePrimaryByWorkspace(previous, next)) return;
+    if (previous !== undefined && samePrimaryByProject(previous, next)) return;
     if (!this.readModelEnabled() || this.state === 'uninitialized' || this.state === 'preparing') return;
     await this.ensureProjection();
   }
@@ -762,7 +778,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       );
       if (summary !== undefined) return summary;
     }
-    for (const workspaceId of await listWorkspaceIds(this.storage, this.sessionsScope)) {
+    for (const workspaceId of await listProjectIds(this.storage, this.sessionsScope)) {
       if (workspaceId === hinted) continue;
       const summary = await readSessionSummary(
         this.docs,
@@ -837,7 +853,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
           ? summaries
           : summaries.filter((summary) => workspaceIds.includes(summary.workspaceId));
     } else {
-      const ids = workspaceIds ?? (await listWorkspaceIds(this.storage, this.sessionsScope));
+      const ids = workspaceIds ?? (await listProjectIds(this.storage, this.sessionsScope));
       collected = [];
       for (const workspaceId of ids) {
         for (const sessionId of await listSessionIds(this.storage, this.sessionsScope, workspaceId)) {
@@ -867,7 +883,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 }
 
-function samePrimaryByWorkspace(
+function samePrimaryByProject(
   left: Readonly<Record<string, string>> | undefined,
   right: Readonly<Record<string, string>>,
 ): boolean {

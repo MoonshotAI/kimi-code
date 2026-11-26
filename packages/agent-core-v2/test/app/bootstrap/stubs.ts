@@ -16,7 +16,7 @@ export function stubBootstrap(
   homeDir = '/tmp/kimi-home',
   env: NodeJS.ProcessEnv = {},
   args: HostArgsInput = {},
-  osHomeDir = '/home/test',
+  osHomeDir = '/nonexistent',
 ): IBootstrapService {
   const scopes: Record<PersistenceScopeName, string> = {
     config: '',

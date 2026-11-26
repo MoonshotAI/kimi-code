@@ -45,7 +45,7 @@ import {
 import { writeExportZip } from '#/app/sessionExport/zip';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionManager/sessionManager';
-import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { ISessionLifecycleService } from '#/project/sessionLifecycle/sessionLifecycle';
 import { Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
@@ -895,6 +895,40 @@ describe('sessionExport', () => {
       'export agent wire flush failed',
       'export global log flush failed',
     ]);
+  });
+
+  it('excludes session presence markers from both preview and exported archives', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_live', 'ses_presence');
+    await mkdir(join(sessionDir, 'presence'), { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+    await writeFile(
+      join(sessionDir, 'presence', '1234-marker.json'),
+      JSON.stringify({ version: 1, pid: 1234, hostname: 'secret-host.example.test', startedAt: 1 }),
+      'utf-8',
+    );
+    const outputPath = join(tmp, 'presence.zip');
+    ix = createTestServices(tmp, {
+      summary: {
+        id: 'ses_presence',
+        workspaceId: 'ws_live',
+        title: 'Presence test',
+        createdAt: 1,
+        updatedAt: 1,
+        archived: false,
+      },
+      lifecycleHandle: undefined,
+    });
+
+    const preview = await ix.get(ISessionExportService).preview?.('ses_presence');
+    const result = await ix.get(ISessionExportService).export({
+      sessionId: 'ses_presence',
+      outputPath,
+      version: '1.0.0-test',
+    });
+
+    expect(preview?.files).toEqual(['state.json']);
+    expect(result.entries).toEqual(['manifest.json', 'state.json']);
   });
 
   function createTestServices(

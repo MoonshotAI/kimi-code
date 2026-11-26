@@ -479,23 +479,38 @@ describe('menuTemplate', () => {
     }
   });
 
-  it('Help menu carries working Documentation / Console links, bilingually', () => {
+  it('Help menu carries working Documentation / Feedback / Console entries, bilingually', () => {
     const zhTemplate = menuTemplate(true, 'zh');
     const helpMenu = zhTemplate[zhTemplate.length - 1] as MenuItemConstructorOptions;
     expect(helpMenu.label).toBe('帮助');
     const zhItems = submenuItems(helpMenu);
-    const docs = zhItems.find((item) => item.id === 'help-docs');
-    const consoleItem = zhItems.find((item) => item.id === 'help-console');
+    const docsIndex = zhItems.findIndex((item) => item.id === 'help-docs');
+    const feedbackIndex = zhItems.findIndex((item) => item.id === 'open-feedback');
+    const consoleIndex = zhItems.findIndex((item) => item.id === 'help-console');
+    expect(feedbackIndex).toBe(docsIndex + 1);
+    expect(consoleIndex).toBe(feedbackIndex + 1);
+    const docs = zhItems[docsIndex];
+    const feedback = zhItems[feedbackIndex];
+    const consoleItem = zhItems[consoleIndex];
     expect(docs?.label).toBe('使用文档');
+    expect(feedback?.label).toBe('反馈');
     expect(consoleItem?.label).toBe('控制台');
     expect(typeof docs?.click).toBe('function');
+    expect(typeof feedback?.click).toBe('function');
     expect(typeof consoleItem?.click).toBe('function');
+
+    mocks.showMainWindow.mockClear();
+    mocks.sendToRenderer.mockClear();
+    (feedback?.click as (() => void) | undefined)?.();
+    expect(mocks.showMainWindow).toHaveBeenCalledOnce();
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith(IPC.menuAction, 'open-feedback');
 
     const enTemplate = menuTemplate(true, 'en');
     const enHelp = enTemplate[enTemplate.length - 1] as MenuItemConstructorOptions;
     expect(enHelp.label).toBe('Help');
     const enItems = submenuItems(enHelp);
     expect(enItems.find((item) => item.id === 'help-docs')?.label).toBe('Documentation');
+    expect(enItems.find((item) => item.id === 'open-feedback')?.label).toBe('Feedback');
     expect(enItems.find((item) => item.id === 'help-console')?.label).toBe('Console');
   });
 
@@ -645,7 +660,7 @@ describe('menu telemetry', () => {
 
   it('does not track renderer-forwarded items (renderer-side action_invoked covers them)', () => {
     const all = walkItems(menuTemplate(true, 'en'));
-    for (const id of ['open-settings', 'new-chat', 'open-folder', 'select-all', 'retry-connection']) {
+    for (const id of ['open-settings', 'open-feedback', 'new-chat', 'open-folder', 'select-all', 'retry-connection']) {
       clickItem(all.find((item) => item.id === id));
     }
     expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
@@ -676,10 +691,14 @@ describe('windowsMenuTemplate', () => {
     expect(items.some((item) => item.id === 'toggle-dev-tools')).toBe(true);
   });
 
-  it('keeps diagnostics export reachable from the custom title bar Help menu', () => {
+  it('keeps feedback and diagnostics export reachable from the custom title bar Help menu', () => {
     const help = submenuItems(
       windowsMenuTemplate('zh', {}, false, false).find((item) => item.id === 'help-menu') as MenuItemConstructorOptions,
     );
+    const docsIndex = help.findIndex((item) => item.id === 'help-docs');
+    const feedbackIndex = help.findIndex((item) => item.id === 'open-feedback');
+    expect(feedbackIndex).toBe(docsIndex + 1);
+    expect(help[feedbackIndex]?.label).toBe('反馈');
     expect(help.find((item) => item.id === 'export-diagnostics')?.label).toBe('导出诊断信息…');
     expect(help.find((item) => item.id === 'open-logs-folder')?.label).toBe('打开日志文件夹');
   });

@@ -43,20 +43,20 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { IWorkspaceService } from '#/app/workspace/workspace';
+import type { ProjectInstance } from '#/project/projectInstance/projectInstance';
+import { IProjectInstanceManager } from '#/project/projectInstance/projectInstanceManager';
+import { IProjectService } from '#/app/project/project';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
-  IWorkspaceTrustStore,
-  WorkspaceTrustStore,
-} from '#/workspace/workspaceTrust/workspaceTrustStore';
+  IProjectTrustStore,
+  ProjectTrustStore,
+} from '#/project/projectTrust/projectTrustStore';
 
 import { stubLog } from '../../_base/log/stubs';
 import {
   createMemoryMcpOAuthStore,
-  startInProcessHttpMcpServer,
-  stdioFixture,
+  startEchoHttpMcpServer,
+  mockStdioServer,
 } from '../../mcpCore/stubs';
 import { stubAgentIdentity } from '../agentIdentity/stubs';
 
@@ -83,8 +83,8 @@ describe('McpManagementService', () => {
   let identityReady: Promise<AgentIdentitySnapshot>;
   let identitySnapshot: AgentIdentitySnapshot;
   let trusted: boolean;
-  let acquire: Mock<IWorkspaceInstanceManager['acquire']>;
-  let findContaining: Mock<IWorkspaceInstanceManager['findContaining']>;
+  let acquire: Mock<IProjectInstanceManager['acquire']>;
+  let findContaining: Mock<IProjectInstanceManager['findContaining']>;
   let management: IMcpManagementService;
 
   beforeEach(() => {
@@ -101,11 +101,11 @@ describe('McpManagementService', () => {
     identitySnapshot = stubAgentIdentity({ slug: 'test-agent' }).current();
     identityReady = Promise.resolve(identitySnapshot);
     trusted = true;
-    acquire = vi.fn<IWorkspaceInstanceManager['acquire']>(async () => ({
-      instance: { id: 'test-workspace' } as unknown as WorkspaceInstance,
+    acquire = vi.fn<IProjectInstanceManager['acquire']>(async () => ({
+      instance: { id: 'test-workspace' } as unknown as ProjectInstance,
       dispose: () => {},
     }));
-    findContaining = vi.fn<IWorkspaceInstanceManager['findContaining']>(() => undefined);
+    findContaining = vi.fn<IProjectInstanceManager['findContaining']>(() => undefined);
     const hostProcess = new HostProcessService();
     const environment = Object.assign(
       new FakeEnvironment(
@@ -146,8 +146,8 @@ describe('McpManagementService', () => {
           list: async () => [],
         });
         reg.defineInstance(ITelemetryService, noopTelemetryService);
-        reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
-        reg.definePartialInstance(IWorkspaceService, {
+        reg.define(IProjectTrustStore, ProjectTrustStore);
+        reg.definePartialInstance(IProjectService, {
           peekImplicit: async (dir: string) => ({ id: 'test-workspace', root: dir }),
           projectDirAt: async ({ root }) => root,
         });
@@ -171,7 +171,7 @@ describe('McpManagementService', () => {
           acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
           acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
         });
-        reg.definePartialInstance(IWorkspaceInstanceManager, { findContaining, acquire });
+        reg.definePartialInstance(IProjectInstanceManager, { findContaining, acquire });
         reg.defineInstance(ILogService, stubLog());
         reg.define(IMcpManagementService, McpManagementService);
       },
@@ -189,7 +189,7 @@ describe('McpManagementService', () => {
   });
 
   async function startHttpServer(): Promise<{ url: string }> {
-    const server = await startInProcessHttpMcpServer();
+    const server = await startEchoHttpMcpServer();
     httpServers.push(server);
     return server;
   }
@@ -763,8 +763,7 @@ describe('McpManagementService', () => {
         server: {
           name: 'stdio-probe',
           transport: 'stdio',
-          command: process.execPath,
-          args: [stdioFixture],
+          ...mockStdioServer(),
         },
         cwd,
       });
@@ -804,7 +803,7 @@ describe('McpManagementService', () => {
         join(project, '.kimi-code', 'mcp.json'),
         JSON.stringify({
           mcpServers: {
-            local: { command: process.execPath, args: [stdioFixture] },
+            local: mockStdioServer(),
           },
         }),
         'utf8',
@@ -832,8 +831,7 @@ describe('McpManagementService', () => {
         server: {
           name: 'stdio-probe',
           transport: 'stdio',
-          command: process.execPath,
-          args: [stdioFixture],
+          ...mockStdioServer(),
         },
         cwd,
       });
