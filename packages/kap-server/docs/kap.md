@@ -136,6 +136,12 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 
 `model.not_configured` reports that the main session's saved model alias is no longer configured; `title` contains the removed alias. History and read endpoints remain read-only, and the server does not rebind or clear the model. First-party UI may use this event to let the user choose another model through the existing model picker.
 
+### Agent state
+
+`agent` frames and the `agent` object returned by `POST /api/v1/sessions/{session_id}/profile` carry the same agent state. While the main agent's saved model is no longer configured, `model` is omitted and `missing_model` holds the removed alias.
+
+`profile_revision` orders the agent's settings (`model`, `missing_model`, `thinking`, `permission_mode`, `plan_mode`, `swarm_mode`, `tower_mode`) across the HTTP response and the WebSocket frames, which can arrive in either order. Within one server process it increases whenever those settings change and stays the same otherwise. Apply settings from a state only when its `profile_revision` is not lower than the one already applied; take `status`, `compacting`, and the `*_available` flags from the latest state. Revisions are not persisted, so a restarted server whose clock was set back can issue lower values: when the WebSocket connection closes, forget the revisions already applied, and take the state that follows the next `subscribe` as the new baseline. Older servers omit `profile_revision`; apply their states in arrival order.
+
 | Method & Path | Gate | Summary |
 | --- | --- | --- |
 | `GET /api/v1/healthz` / `GET /api/v1/meta` | `baseline` | Liveness probe (`{ ok: true }`) and server metadata / `product` / `capabilities` / `home_dir` (the Kimi Code data directory) |
@@ -154,7 +160,7 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 | `POST /api/v1/sessions/{session_id}:archive` / `:restore` / `:delete` / `:reload` / `:takeover` | `baseline` | Single-session lifecycle actions (plus batch `POST /api/v1/sessions:archive` & `:restore` by `ids`) |
 | `POST /api/v1/sessions/{session_id}/profile` & `/title/generate` | `baseline` | Update `title`, `metadata`, or `agent_config`, or generate a session title |
 | `GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns` | `baseline` | Read turns (`before_ordinal?`, `page_size` <= 200; flushes live streaming items on read) |
-| `GET` / `POST /api/v1/sessions/{session_id}/prompts` | `baseline` | Read active/queued prompts or submit a prompt (`prompt_id`, `content`, setting overrides, `skills?`) |
+| `GET` / `POST /api/v1/sessions/{session_id}/prompts` | `baseline` | Read active/queued prompts or submit a prompt (`prompt_id`, `content`, `skills?`). The setting fields on a prompt are deprecated: change settings with `agent_config` on `POST /api/v1/sessions/{session_id}/profile`. `model`, `thinking`, `permission_mode`, and `swarm_mode` still update the session when the prompt is submitted; `plan_mode`, `goal_objective`, and `goal_control` are ignored |
 | `POST /api/v1/sessions/{session_id}/steer` & `/prompts:steer` & `/prompts/{prompt_id}:abort` | `baseline` | Steer mid-turn, promote queued prompts to steers, or abort a prompt |
 | `GET /api/v1/sessions/{session_id}/interactions` | `interactions_list` | List pending `approval` and `question` interactions (`{ items }`) |
 | `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}` | `baseline` | Answer a pending `approval` or `question` interaction |

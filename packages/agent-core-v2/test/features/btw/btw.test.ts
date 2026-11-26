@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -38,6 +39,7 @@ describe('SessionBtwService', () => {
   let onDidCreateScope: Emitter<AgentScopeCreatedEvent>;
   let childContext: AgentContext;
   let child: AgentScopeCreatedEvent['handle'];
+  let setChildPermissionMode: ReturnType<typeof vi.fn>;
 
   function fireScopeCreated(
     handle: AgentScopeCreatedEvent['handle'],
@@ -70,6 +72,7 @@ describe('SessionBtwService', () => {
     executorEvents = stubToolExecutorEvents();
     onDidCreateScope = disposables.add(new Emitter<AgentScopeCreatedEvent>());
     childContext = stubAgentContext('agent-btw-1', 2);
+    setChildPermissionMode = vi.fn();
 
     child = {
       id: 'agent-btw-1',
@@ -78,6 +81,7 @@ describe('SessionBtwService', () => {
           if (id === IAgentToolApprovalService) return { formatDenyMessage };
           if (id === IAgentToolExecutorService) return executorEvents.executor;
           if (id === IAgentReminderService) return { notify: appendReminder };
+          if (id === IAgentPermissionModeService) return { mode: 'manual', setMode: setChildPermissionMode };
           return undefined;
         },
       },
@@ -94,6 +98,7 @@ describe('SessionBtwService', () => {
               scope: (subKey?: string) => subKey ?? '',
             };
           }
+          if (id === IAgentPermissionModeService) return { mode: 'yolo' };
           return undefined;
         },
       },
@@ -134,6 +139,13 @@ describe('SessionBtwService', () => {
     expect(appendReminder).toHaveBeenCalledWith(SIDE_QUESTION_SYSTEM_REMINDER, {
       variant: 'btw',
     });
+  });
+
+  it('starts the side-question child in the permission mode main is using', async () => {
+    const svc = ix.get(ISessionBtwService);
+    await svc.start();
+
+    expect(setChildPermissionMode).toHaveBeenCalledWith('yolo');
   });
 
   it('vetoes non-read-only tool calls on the child through the btw deny listener', async () => {

@@ -2386,6 +2386,30 @@ describe('SessionEventBroadcaster', () => {
       expect(agentFrames[1]).toMatchObject({ tower_mode_available: false });
     });
 
+    it('pushes updated agent state when the model catalog changes', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      let goalActive = true;
+      main.set(IAgentToolPolicyService, { isToolActive: () => goalActive });
+      sessions.set('s1', lc);
+      bc = makeBroadcasterForAgents();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, ['main']);
+      expect(stateFramesOf(view)).toContainEqual(expect.objectContaining({ type: 'agent', goal_mode_available: true }));
+
+      goalActive = false;
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed: [{ provider_id: 'openai-main', provider_name: 'OpenAI', added: 0, removed: 1 }], unchanged: [], failed: [] },
+      });
+      await settle();
+
+      const agentFrames = stateFramesOf(view).filter((frame) => frame.type === 'agent');
+      expect(agentFrames).toHaveLength(2);
+      expect(agentFrames[1]).toMatchObject({ goal_mode_available: false });
+    });
+
     it('pushes todo, goal and permission changes and stays quiet when nothing changed', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
