@@ -12,6 +12,7 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
+import type { TodoItem } from './components/messages/tool-renderers/todo';
 import type { FollowUpBehavior, MarkdownConfig, NotificationsConfig, StatusLineConfig, TranscriptConfig, TuiMode, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
@@ -81,6 +82,7 @@ export interface AppState {
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;
   goal?: GoalSnapshot | null;
+  todos?: readonly TodoItem[] | null;
   mcpServersSummary: string | null;
   banner?: BannerState | null;
   environment?: EnvironmentSlotState;

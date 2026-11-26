@@ -16957,3 +16957,73 @@ describe('transcript fold block clicks', () => {
     expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
   });
 });
+
+describe('todo status line slot', () => {
+  function emitTodoListResult(
+    driver: MessageDriver,
+    toolCallId: string,
+    args: Record<string, unknown>,
+    output: string,
+  ): void {
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId,
+        name: 'TodoList',
+        args,
+      } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.result',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId,
+        output,
+        isError: undefined,
+      } as Event,
+      vi.fn(),
+    );
+  }
+
+  function renderFooterLine1(driver: MessageDriver): string {
+    return stripSgr(driver.state.footer.render(160)[0] ?? '');
+  }
+
+  it('surfaces the live todo list in the footer once the slot is configured', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.statusLine = { items: ['todos', 'model'], command: null };
+    expect(renderFooterLine1(driver)).not.toContain('[todo');
+
+    emitTodoListResult(
+      driver,
+      'call_todo',
+      { todos: [{ title: 'Fix the footer', status: 'in_progress' }] },
+      ['Todo list updated.', 'Current todo list:', '  [in_progress] Fix the footer', ''].join('\n'),
+    );
+
+    expect(renderFooterLine1(driver)).toContain('[todo 0/1 · Fix the footer]');
+  });
+
+  it('drops the badge when the session runtime resets', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.statusLine = { items: ['todos', 'model'], command: null };
+    emitTodoListResult(
+      driver,
+      'call_todo',
+      { todos: [{ title: 'Fix the footer', status: 'in_progress' }] },
+      ['Todo list updated.', 'Current todo list:', '  [in_progress] Fix the footer', ''].join('\n'),
+    );
+    expect(renderFooterLine1(driver)).toContain('[todo');
+
+    (driver as unknown as { resetSessionRuntime(): void }).resetSessionRuntime();
+
+    expect(driver.state.appState.todos).toBeNull();
+    expect(renderFooterLine1(driver)).not.toContain('[todo');
+  });
+});

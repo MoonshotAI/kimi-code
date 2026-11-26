@@ -688,7 +688,7 @@ defaultCwd = "/workspace"
 | `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
 | `[transcript].tool_call_density` | `string` | `compact` | `fullscreen` 模式下的工具调用密度：`compact`、`balanced` 或 `detailed` |
 | `[transcript].thinking` | `string` | `grouped` | `fullscreen` 模式下的思考折叠：`grouped` 或 `ungrouped` |
-| `[status_line].items` | `string[]` | `[]` | 底部状态栏第一行的内置槽位及顺序：`mode`、`goal`、`model`、`tasks`、`cwd`、`git`、`tips`，未知 id 跳过并告警 |
+| `[status_line].items` | `string[]` | `[]` | 底部状态栏第一行的内置槽位及顺序：`mode`、`goal`、`model`、`tasks`、`todos`、`cwd`、`git`、`tips`，未知 id 跳过并告警 |
 | `[status_line].command` | `string` | `""` | 自定义状态栏命令：stdout 首行替换状态栏，stdin 收 JSON 快照；上限 300ms、每秒一次，失败回退内置布局 |
 
 <details>
@@ -724,7 +724,7 @@ tool_call_density = "compact" # "compact" | "balanced" | "detailed"
 thinking = "grouped" # "grouped" | "ungrouped"
 
 # [status_line]
-# items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]
+# items = ["mode", "goal", "model", "tasks", "todos", "cwd", "git", "tips"]
 # command = "~/.kimi-code/statusline.sh"
 ```
 

@@ -20,6 +20,8 @@ import type {
 } from '#/tui/types';
 
 import { modelDisplayName } from '../components/dialogs/model-selector';
+import type { TodoItem } from '../components/messages/tool-renderers/todo';
+import { isTodoItemShape } from './event-payload';
 import { mediaUrlPartToText } from './media-url';
 import { nextTranscriptId } from './transcript-id';
 
@@ -77,7 +79,20 @@ export function appStateFromResumeAgent(agent: ResumedAgentState): Partial<AppSt
     planMode: agent.plan !== null,
     swarmMode: agent.swarmMode ?? false,
     permissionMode: agent.permission.mode,
+    todos: todoListFromToolStore(agent.toolStore),
   };
+}
+
+function todoListFromToolStore(
+  toolStore: Readonly<Record<string, unknown>> | undefined,
+): TodoItem[] | null {
+  const rawTodos = toolStore?.['todo'];
+  if (!Array.isArray(rawTodos)) return null;
+  const todos = rawTodos
+    .filter((todo): todo is TodoItem => isTodoItemShape(todo))
+    .map((todo) => ({ title: todo.title, status: todo.status }));
+  if (todos.every((todo) => todo.status === 'done')) return null;
+  return todos;
 }
 
 export function isTerminalBackgroundTask(info: BackgroundTaskInfo): boolean {

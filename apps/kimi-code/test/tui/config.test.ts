@@ -448,6 +448,20 @@ items = ["model", "wat", "git"]
     expect(config.statusLine?.items).toEqual(['model', 'git']);
   });
 
+  it('accepts todos as a known item without warnings', () => {
+    const warnings: string[] = [];
+    const config = parseTuiConfig(
+      `
+[status_line]
+items = ["todos", "model"]
+`,
+      (message) => warnings.push(message),
+    );
+
+    expect(config.statusLine?.items).toEqual(['todos', 'model']);
+    expect(warnings).toEqual([]);
+  });
+
   it('routes unknown-item warnings through the provided callback instead of stderr', () => {
     const warnings: string[] = [];
     const config = parseTuiConfig(

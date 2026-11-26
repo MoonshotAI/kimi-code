@@ -35,6 +35,7 @@ import type {
 import { MoonLoader } from '../components/chrome/moon-loader';
 import { buildGoalMarker } from '../components/messages/goal-markers';
 import { StatusMessageComponent } from '../components/messages/status-message';
+import { todoListFromResult, type TodoItem } from '../components/messages/tool-renderers/todo';
 import {
   SwarmModeMarkerComponent,
   type SwarmModeMarkerState,
@@ -48,6 +49,7 @@ import {
   argsRecord,
   formatErrorPayload,
   formatErrorMessage,
+  isTodoItemShape,
   serializeToolResultOutput,
   stringValue,
 } from '../utils/event-payload';
@@ -449,6 +451,10 @@ export class SessionEventHandler {
     if (event.reason === 'blocked') {
       this.host.showStatus('Turn stopped: prompt hook blocked the request.', 'error');
     }
+    const todos = this.host.state.appState.todos;
+    if (todos !== undefined && todos !== null && todos.length > 0 && isTodoListComplete(todos)) {
+      this.host.setAppState({ todos: null });
+    }
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeTurn(sendQueued);
     this.host.handlePromptPredictionTurnEnded?.(event);
@@ -772,6 +778,10 @@ export class SessionEventHandler {
     const matchedCall = streamingUI.completeToolResult(event.toolCallId, resultData);
     if (matchedCall !== undefined && isPluginMcpToolName(matchedCall.name)) {
       this.pluginMcpToolsUsedInTurn.add(matchedCall.name);
+    }
+    if (matchedCall !== undefined && matchedCall.name === 'TodoList' && event.isError !== true) {
+      const todos = todoListFromToolResult(matchedCall.args, resultData.output);
+      if (todos !== undefined) this.host.setAppState({ todos });
     }
     this.subAgentEventHandler.handleAgentSwarmToolResult(
       event.toolCallId,
@@ -1390,4 +1400,22 @@ export class SessionEventHandler {
     state.footer.setBackgroundCounts({ bashTasks, agentTasks });
     state.ui.requestRender();
   }
+}
+
+function todoListFromToolResult(
+  args: Record<string, unknown>,
+  output: string,
+): TodoItem[] | undefined {
+  const rawTodos = args['todos'];
+  if (Array.isArray(rawTodos)) {
+    return rawTodos
+      .filter((todo): todo is TodoItem => isTodoItemShape(todo))
+      .map((todo) => ({ title: todo.title, status: todo.status }));
+  }
+  const parsed = todoListFromResult(output);
+  return parsed.length > 0 ? parsed : undefined;
+}
+
+function isTodoListComplete(todos: readonly TodoItem[]): boolean {
+  return todos.every((todo) => todo.status === 'done');
 }

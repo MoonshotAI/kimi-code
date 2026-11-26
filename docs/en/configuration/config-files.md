@@ -689,7 +689,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
 | `[transcript].tool_call_density` | `string` | `compact` | Tool call density in `fullscreen` mode: `compact`, `balanced`, or `detailed` |
 | `[transcript].thinking` | `string` | `grouped` | Thinking folding in `fullscreen` mode: `grouped` or `ungrouped` |
-| `[status_line].items` | `string[]` | `[]` | Built-in slots on the first footer line and their order: `mode`, `goal`, `model`, `tasks`, `cwd`, `git`, `tips`; unknown ids are skipped with a warning |
+| `[status_line].items` | `string[]` | `[]` | Built-in slots on the first footer line and their order: `mode`, `goal`, `model`, `tasks`, `todos`, `cwd`, `git`, `tips`; unknown ids are skipped with a warning |
 | `[status_line].command` | `string` | `""` | Custom status line command: its first stdout line replaces the footer, and a JSON snapshot is passed on stdin; capped at 300ms, throttled to once per second, failures fall back to the built-in layout |
 
 <details>
@@ -725,7 +725,7 @@ tool_call_density = "compact" # "compact" | "balanced" | "detailed"
 thinking = "grouped" # "grouped" | "ungrouped"
 
 # [status_line]
-# items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]
+# items = ["mode", "goal", "model", "tasks", "todos", "cwd", "git", "tips"]
 # command = "~/.kimi-code/statusline.sh"
 ```
 

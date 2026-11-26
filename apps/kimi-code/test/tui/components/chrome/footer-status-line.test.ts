@@ -134,6 +134,100 @@ describe('FooterComponent status_line items', () => {
   });
 });
 
+describe('FooterComponent status_line todos slot', () => {
+  it('shows done/total plus the in-progress title when configured', () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: ['todos', 'model'], command: null },
+      todos: [
+        { title: 'Read the code', status: 'done' },
+        { title: 'Fix the footer', status: 'in_progress' },
+        { title: 'Write tests', status: 'pending' },
+      ],
+    };
+    const footer = new FooterComponent(state);
+
+    const line1 = plain(footer.render(160)[0]!);
+    expect(line1).toContain('[todo 1/3 · Fix the footer]');
+    expect(line1.indexOf('[todo')).toBeLessThan(line1.indexOf('kimi-k2'));
+  });
+
+  it('falls back to the next pending title when nothing is in progress', () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: ['todos'], command: null },
+      todos: [
+        { title: 'Write tests', status: 'pending' },
+        { title: 'Ship it', status: 'pending' },
+      ],
+    };
+    const footer = new FooterComponent(state);
+
+    expect(plain(footer.render(160)[0]!)).toContain('[todo 0/2 · Write tests]');
+  });
+
+  it('shows bare counts once every item is done', () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: ['todos'], command: null },
+      todos: [
+        { title: 'Write tests', status: 'done' },
+        { title: 'Ship it', status: 'done' },
+      ],
+    };
+    const footer = new FooterComponent(state);
+
+    expect(plain(footer.render(160)[0]!)).toContain('[todo 2/2]');
+  });
+
+  it('truncates a long current title', () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: ['todos'], command: null },
+      todos: [{ title: `Refactor ${'very '.repeat(20)}long module name`, status: 'in_progress' }],
+    };
+    const footer = new FooterComponent(state);
+
+    const line1 = plain(footer.render(160)[0]!);
+    expect(line1).toContain('[todo 0/1 · ');
+    expect(line1).toContain('…]');
+    expect(line1).not.toContain('long module name');
+  });
+
+  it('renders no badge for an empty list even when configured', () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: ['todos', 'model'], command: null },
+      todos: [],
+    };
+    const footer = new FooterComponent(state);
+
+    const line1 = plain(footer.render(160)[0]!);
+    expect(line1).not.toContain('[todo');
+    expect(line1).toContain('kimi-k2');
+  });
+
+  it('renders no badge without a todo list even when configured', () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: ['todos', 'model'], command: null },
+    };
+    const footer = new FooterComponent(state);
+
+    expect(plain(footer.render(160)[0]!)).not.toContain('[todo');
+  });
+
+  it('stays hidden by default when todos exist but the slot is not configured', () => {
+    const state: AppState = {
+      ...baseState,
+      todos: [{ title: 'Fix the footer', status: 'in_progress' }],
+    };
+    const footer = new FooterComponent(state);
+
+    expect(plain(footer.render(160)[0]!)).not.toContain('[todo');
+  });
+});
+
 describe('runStatusLineCommand', () => {
   it('passes the payload as JSON on stdin and returns the first stdout line', async () => {
     const line = await runStatusLineCommand('cat', payload);
