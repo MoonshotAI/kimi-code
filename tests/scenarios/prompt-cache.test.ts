@@ -185,7 +185,10 @@ const CHANGES: readonly Change[] = [
   {
     name: 'turning swarm mode on',
     apply: agentConfig({ swarm_mode: true }),
-    takesEffect: (_applied, next) => expect(next.remindersSinceReply.join('\n')).toContain('Swarm Mode'),
+    takesEffect: (applied, next) => {
+      expect(applied).toMatchObject({ agent: { swarm_mode: true } });
+      expect(next.remindersSinceReply.join('\n')).not.toContain('Swarm Mode');
+    },
   },
   {
     name: 'turning tower mode on',
