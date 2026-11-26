@@ -234,7 +234,7 @@ jobs:
       - run: node --test scripts/check-comments.test.mjs
       - name: Release workflow tests
         if: ${{ !cancelled() }}
-        run: node --test scripts/release.test.mjs scripts/canary-release.test.mjs scripts/desktop-nightly-guard.test.mjs
+        run: node --test scripts/release.test.mjs scripts/release-trigger.test.mjs scripts/canary-release.test.mjs scripts/desktop-nightly-guard.test.mjs
       - run: node --test scripts/select-vitest-targets.test.mjs scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs scripts/mutation-diff.test.mjs apps/desktop/scripts/ci/select-e2e-specs.test.mjs apps/desktop/scripts/ci/report-main-journeys.test.mjs
       - run: pnpm run sherif
       - name: Check new code duplication

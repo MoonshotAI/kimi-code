@@ -168,6 +168,7 @@ jobs:
   publish-desktop-assets:
     name: Publish desktop release assets
     needs:
+      - candidate
       - desktop-release
       - desktop-artifacts
     if: needs.desktop-release.outputs.build == 'true'
