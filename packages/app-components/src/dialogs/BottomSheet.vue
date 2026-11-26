@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, openSheetCount } from '@moonshot-ai/app-ui';
+import { settleDraggedElement, usePointerDragSession } from '@moonshot-ai/app-client/composables';
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const FLING_VELOCITY_THRESHOLD = 0.5;
+const FLING_IDLE_DECAY_MS = 80;
 
 const props = withDefaults(
   defineProps<{
@@ -29,20 +35,44 @@ const viewportStyle = ref<Record<string, string>>({});
 const panelMaxHeight = ref('');
 const dragOffset = ref(0);
 const dragging = ref(false);
-let dragPointerId: number | null = null;
+let previouslyFocused: HTMLElement | null = null;
 let dragStartY = 0;
 let dragLastY = 0;
 let dragLastTime = 0;
 let dragVelocity = 0;
-let suppressGrabClick = false;
 
 function close(): void {
   emit('update:modelValue', false);
   emit('close');
 }
 
+function sheetFocusables(): HTMLElement[] {
+  return panelEl.value ? Array.from(panelEl.value.querySelectorAll<HTMLElement>(FOCUSABLE)) : [];
+}
+
 function onKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape' && props.closeOnEsc) close();
+  if (e.key === 'Escape' && props.closeOnEsc) {
+    close();
+    return;
+  }
+  if (e.key !== 'Tab') return;
+  const list = sheetFocusables();
+  const first = list[0];
+  const last = list[list.length - 1];
+  if (!first || !last) {
+    e.preventDefault();
+    panelEl.value?.focus();
+    return;
+  }
+  const active = document.activeElement;
+  const inside = panelEl.value?.contains(active) ?? false;
+  if (e.shiftKey && (!inside || active === first)) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && (!inside || active === last)) {
+    e.preventDefault();
+    first.focus();
+  }
 }
 
 function onBodyScroll(e: Event): void {
@@ -70,47 +100,44 @@ function syncViewport(): void {
   panelMaxHeight.value = `${Math.max(160, Math.floor(Math.min(window.innerHeight * props.maxHeightRatio, vv.height)))}px`;
 }
 
-function onGrabPointerDown(e: PointerEvent): void {
-  if (e.pointerType === 'mouse' && e.button !== 0) return;
-  panelEl.value?.getAnimations?.().forEach((animation) => animation.cancel());
-  dragPointerId = e.pointerId;
-  dragStartY = e.clientY;
-  dragLastY = e.clientY;
-  dragLastTime = performance.now();
-  dragVelocity = 0;
-  dragOffset.value = 0;
-  dragging.value = true;
-  (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-}
-
-function onGrabPointerMove(e: PointerEvent): void {
-  if (dragPointerId !== e.pointerId) return;
-  const now = performance.now();
-  const dt = now - dragLastTime;
-  if (dt > 0) dragVelocity = (e.clientY - dragLastY) / dt;
-  dragLastY = e.clientY;
-  dragLastTime = now;
-  dragOffset.value = Math.max(0, e.clientY - dragStartY);
-}
-
-function onGrabPointerEnd(e: PointerEvent): void {
-  if (dragPointerId !== e.pointerId) return;
-  dragPointerId = null;
-  dragging.value = false;
-  const offset = dragOffset.value;
-  dragOffset.value = 0;
-  if (offset < 4) return;
-  suppressGrabClick = true;
-  e.preventDefault();
-  const threshold = Math.min(120, (panelEl.value?.offsetHeight ?? 320) * 0.25);
-  if (offset > threshold || dragVelocity > 0.5) close();
-}
+const grabDrag = usePointerDragSession<void>({
+  threshold: 4,
+  allowTouch: true,
+  begin: ({ origin, point }) => {
+    panelEl.value?.getAnimations?.().forEach((animation) => animation.cancel());
+    dragStartY = origin.y;
+    dragLastY = point.y;
+    dragLastTime = performance.now();
+    dragVelocity = 0;
+    dragOffset.value = Math.max(0, point.y - dragStartY);
+    dragging.value = true;
+    return true;
+  },
+  move: (point) => {
+    const now = performance.now();
+    const dt = now - dragLastTime;
+    if (dt > 0) dragVelocity = (point.y - dragLastY) / dt;
+    dragLastY = point.y;
+    dragLastTime = now;
+    dragOffset.value = Math.max(0, point.y - dragStartY);
+  },
+  end: (dropped, point) => {
+    dragging.value = false;
+    const offset = Math.max(0, point.y - dragStartY);
+    dragOffset.value = 0;
+    const idleMs = performance.now() - dragLastTime;
+    const releaseVelocity = idleMs >= FLING_IDLE_DECAY_MS ? 0 : dragVelocity * (1 - idleMs / FLING_IDLE_DECAY_MS);
+    const threshold = Math.min(120, (panelEl.value?.offsetHeight || 320) * 0.25);
+    if (dropped && (offset > threshold || releaseVelocity > FLING_VELOCITY_THRESHOLD)) {
+      close();
+      return;
+    }
+    if (panelEl.value) settleDraggedElement(panelEl.value, 0, offset);
+  },
+});
 
 function onGrabClick(): void {
-  if (suppressGrabClick) {
-    suppressGrabClick = false;
-    return;
-  }
+  if (grabDrag.consumeClick()) return;
   close();
 }
 
@@ -124,21 +151,33 @@ const panelStyle = computed(() => {
 
 watch(
   () => props.modelValue,
-  (open) => {
+  async (open) => {
     if (open) openSheetCount.value += 1;
     else openSheetCount.value = Math.max(0, openSheetCount.value - 1);
     if (typeof document === 'undefined') return;
     if (open) {
+      previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       bodyScrolled.value = false;
       dragOffset.value = 0;
       document.addEventListener('keydown', onKeydown);
       syncViewport();
       window.visualViewport?.addEventListener('resize', syncViewport);
       window.visualViewport?.addEventListener('scroll', syncViewport);
+      await nextTick();
+      if (props.modelValue && panelEl.value && !panelEl.value.contains(document.activeElement)) {
+        panelEl.value.focus();
+      }
     } else {
+      grabDrag.cancel();
       document.removeEventListener('keydown', onKeydown);
       window.visualViewport?.removeEventListener('resize', syncViewport);
       window.visualViewport?.removeEventListener('scroll', syncViewport);
+      const restoreTo = previouslyFocused;
+      previouslyFocused = null;
+      if (restoreTo?.isConnected) {
+        await nextTick();
+        restoreTo.focus();
+      }
     }
   },
   { immediate: true },
@@ -151,7 +190,10 @@ watch([() => props.title, () => props.showBack], () => {
 defineExpose({ panelEl, bodyEl });
 
 onUnmounted(() => {
-  if (props.modelValue) openSheetCount.value = Math.max(0, openSheetCount.value - 1);
+  if (props.modelValue) {
+    openSheetCount.value = Math.max(0, openSheetCount.value - 1);
+    if (previouslyFocused?.isConnected) previouslyFocused.focus();
+  }
   if (typeof document !== 'undefined') document.removeEventListener('keydown', onKeydown);
   if (typeof window !== 'undefined') {
     window.visualViewport?.removeEventListener('resize', syncViewport);
@@ -168,21 +210,17 @@ onUnmounted(() => {
         ref="panelEl"
         class="sheet-panel"
         role="dialog"
+        aria-modal="true"
+        tabindex="-1"
         :aria-label="title || t('mobile.sheetLabel')"
         :style="panelStyle"
       >
-        <div
+        <button
+          type="button"
           class="sheet-grab"
-          role="button"
-          tabindex="0"
           :aria-label="t('mobile.closeSheet')"
+          @pointerdown="grabDrag.onPointerDown($event, undefined)"
           @click="onGrabClick"
-          @keydown.enter.prevent="close"
-          @keydown.space.prevent="close"
-          @pointerdown="onGrabPointerDown"
-          @pointermove="onGrabPointerMove"
-          @pointerup="onGrabPointerEnd"
-          @pointercancel="onGrabPointerEnd"
         />
         <div v-if="title || showBack" class="sheet-head" :class="{ 'has-back': showBack, 'is-scrolled': bodyScrolled }">
           <template v-if="showBack">
@@ -248,6 +286,9 @@ onUnmounted(() => {
   cursor: grab;
   touch-action: none;
   box-sizing: border-box;
+}
+.sheet-panel:focus {
+  outline: none;
 }
 .sheet-grab:active {
   cursor: grabbing;

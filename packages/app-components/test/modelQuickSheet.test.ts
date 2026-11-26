@@ -62,13 +62,24 @@ function mountSheet(overrides: Partial<QuickModelMenuPayload> = {}): void {
   app.mount(host);
 }
 
-function pointer(el: HTMLElement, type: string, coords: { clientX?: number; clientY?: number } = {}): void {
-  el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, ...coords }));
+function pointer(target: EventTarget, type: string, coords: { clientX?: number; clientY?: number } = {}): void {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, ...coords });
+  Object.assign(event, { pointerId: 1, isPrimary: true, pointerType: 'touch' });
+  target.dispatchEvent(event);
 }
 
 beforeEach(() => {
   vi.useFakeTimers();
   HTMLElement.prototype.scrollIntoView = vi.fn();
+  HTMLElement.prototype.setPointerCapture = vi.fn();
+  HTMLElement.prototype.releasePointerCapture = vi.fn();
+  HTMLElement.prototype.hasPointerCapture = () => false;
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    matches: false,
+    media,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
   actions = [];
   dismissed = 0;
   host = document.createElement('div');
@@ -88,7 +99,7 @@ afterEach(() => {
 });
 
 describe('ModelQuickSheet main page', () => {
-  it('renders title, top search, five recent rows with provider names, provider rows, and action rows', () => {
+  it('renders title, top search, up to three recent rows with provider names, provider rows, and action rows', () => {
     mountSheet();
     expect(host.querySelector('.sheet-title')?.textContent).toBe('切换模型');
     expect(host.querySelector('.sheet-back')).toBeNull();
@@ -97,7 +108,7 @@ describe('ModelQuickSheet main page', () => {
     const labels = [...host.querySelectorAll('.mqs-label')].map((el) => el.textContent?.trim());
     expect(labels).toEqual(['最近使用', 'Kimi 订阅']);
     const recentRows = [...host.querySelectorAll<HTMLElement>('[data-row-key^="recent:"]')];
-    expect(recentRows).toHaveLength(5);
+    expect(recentRows).toHaveLength(3);
     expect(recentRows[0]?.querySelector('.mqs-provider')?.textContent).toBe('Kimi 订阅');
     expect(recentRows[0]?.getAttribute('aria-checked')).toBe('true');
     expect(host.querySelector('.mqs-recent-scroll [data-row-key^="recent:"]')).not.toBeNull();
@@ -118,7 +129,7 @@ describe('ModelQuickSheet main page', () => {
     await nextTick();
     const body = host.querySelector<HTMLElement>('.mqs-body.is-fluid')!;
     expect(body).not.toBeNull();
-    expect(body.querySelectorAll('[data-row-key^="recent:"]')).toHaveLength(5);
+    expect(body.querySelectorAll('[data-row-key^="recent:"]')).toHaveLength(3);
     expect(body.querySelectorAll('[data-row-key^="provider:"]')).toHaveLength(3);
     expect(host.querySelector('.mqs-fixed [data-row-key="action:provider"]')).not.toBeNull();
 
@@ -261,7 +272,7 @@ describe('ModelQuickSheet subpages', () => {
     await vi.waitFor(() => expect(activeRowKey()).toBe('provider:kimi/k2.5'));
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }));
-    await vi.waitFor(() => expect(activeRowKey()).toBe('recent:openrouter/haiku'));
+    await vi.waitFor(() => expect(activeRowKey()).toBe('recent:openrouter/gpt'));
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(activeRowKey()).toBe('provider:kimi/k2.5'));
@@ -376,7 +387,7 @@ describe('ModelQuickSheet search and detail', () => {
   });
 });
 
-describe('BottomSheet gestures and software keyboard', () => {
+describe('BottomSheet gestures, focus, and accessibility', () => {
   it('closes on scrim tap and on pull-down gesture past the threshold', async () => {
     mountSheet();
     host.querySelector<HTMLElement>('.sheet-scrim')!.click();
@@ -387,10 +398,103 @@ describe('BottomSheet gestures and software keyboard', () => {
     await nextTick();
     const grab = host.querySelector<HTMLElement>('.sheet-grab')!;
     pointer(grab, 'pointerdown', { clientX: 100, clientY: 700 });
-    pointer(grab, 'pointermove', { clientX: 100, clientY: 760 });
-    pointer(grab, 'pointerup', { clientX: 100, clientY: 830 });
+    pointer(window, 'pointermove', { clientX: 100, clientY: 760 });
+    pointer(window, 'pointerup', { clientX: 100, clientY: 830 });
     await nextTick();
     expect(state.open).toBe(false);
+  });
+
+  it('cancels an interrupted pull-down on pointercancel without closing or staging a model', async () => {
+    mountSheet();
+    const grab = host.querySelector<HTMLElement>('.sheet-grab')!;
+    pointer(grab, 'pointerdown', { clientX: 100, clientY: 700 });
+    pointer(window, 'pointermove', { clientX: 100, clientY: 840 });
+    pointer(window, 'pointercancel', { clientX: 100, clientY: 840 });
+    await nextTick();
+    expect(state.open).toBe(true);
+    expect(actions).toEqual([]);
+  });
+
+  it('does not fling-close when the user pauses before releasing below the distance threshold', async () => {
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    mountSheet();
+    const grab = host.querySelector<HTMLElement>('.sheet-grab')!;
+    pointer(grab, 'pointerdown', { clientX: 100, clientY: 700 });
+    now += 10;
+    pointer(window, 'pointermove', { clientX: 100, clientY: 740 });
+    now += 250;
+    pointer(window, 'pointerup', { clientX: 100, clientY: 740 });
+    await nextTick();
+    expect(state.open).toBe(true);
+  });
+
+  it('closes from the grab button on Enter without activating the highlighted model row', async () => {
+    mountSheet();
+    await nextTick();
+    await nextTick();
+    const grab = host.querySelector<HTMLButtonElement>('.sheet-grab')!;
+    expect(grab.tagName).toBe('BUTTON');
+    grab.focus();
+    grab.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await nextTick();
+    expect(actions).toEqual([]);
+
+    grab.click();
+    await nextTick();
+    expect(state.open).toBe(false);
+    expect(actions).toEqual([]);
+  });
+
+  it('moves focus into the dialog without opening search, traps Tab, and restores focus on close', async () => {
+    const trigger = document.createElement('button');
+    document.body.append(trigger);
+    trigger.focus();
+    mountSheet();
+    await nextTick();
+    await nextTick();
+
+    const panel = host.querySelector<HTMLElement>('.sheet-panel')!;
+    expect(panel.getAttribute('aria-modal')).toBe('true');
+    expect(document.activeElement).toBe(panel);
+    expect(panel.contains(document.activeElement)).toBe(true);
+
+    const focusables = [...panel.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])')];
+    const first = focusables[0]!;
+    const last = focusables[focusables.length - 1]!;
+    last.focus();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(first);
+
+    first.focus();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(last);
+
+    state.open = false;
+    await nextTick();
+    await nextTick();
+    expect(document.activeElement).toBe(trigger);
+    trigger.remove();
+  });
+
+  it('gives every selectable radio row a labelled radiogroup owner', async () => {
+    mountSheet();
+    const radios = [...host.querySelectorAll<HTMLElement>('[role="radio"]')];
+    expect(radios.length).toBeGreaterThan(0);
+    expect(host.querySelectorAll('[role="menuitemradio"]')).toHaveLength(0);
+    for (const radio of radios) {
+      const group = radio.closest('[role="radiogroup"]');
+      expect(group).not.toBeNull();
+      expect(group?.getAttribute('aria-label')).toBeTruthy();
+    }
+
+    host.querySelector<HTMLElement>('[data-row-key="action:provider"]')!.click();
+    await nextTick();
+    const subRadios = [...host.querySelectorAll<HTMLElement>('[role="radio"]')];
+    expect(subRadios).toHaveLength(2);
+    for (const radio of subRadios) {
+      expect(radio.closest('[role="radiogroup"]')?.getAttribute('aria-label')).toBe('切换供应商');
+    }
   });
 
   it('animates subpage height exactly once and ignores ResizeObserver callbacks during the transition', async () => {

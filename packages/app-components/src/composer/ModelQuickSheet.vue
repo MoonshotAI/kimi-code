@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import type { AppModel } from '@moonshot-ai/app-core/api';
 import type { QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
 import { commitLevel, effectiveThinkingLevel, effortLabel, modelThinkingAvailability, providerDisplayName, segmentsFor } from '@moonshot-ai/app-core/lib';
-import { modelCapabilityItems, searchModelsForMenu } from '@moonshot-ai/app-client/lib';
+import { MOBILE_RECENT_MODELS_MENU_LIMIT, modelCapabilityItems, searchModelsForMenu } from '@moonshot-ai/app-client/lib';
 import { Icon, useImeComposition } from '@moonshot-ai/app-ui';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import ModelMenuScrollThumb from './ModelMenuScrollThumb.vue';
@@ -58,6 +58,7 @@ let pendingRevealModelId: string | undefined;
 let heightMedia: MediaQueryList | undefined;
 
 const menu = computed(() => props.payload());
+const recentModels = computed(() => menu.value.recentModels.slice(0, MOBILE_RECENT_MODELS_MENU_LIMIT));
 const searching = computed(() => query.value.trim().length > 0);
 const fluidBody = computed(() => searching.value || searchFocused.value || isShortViewport.value);
 const activeScrollEl = computed(() =>
@@ -122,7 +123,7 @@ const navItems = computed<NavItem[]>(() => {
       run: () => onModelRowClick(entry.model, true),
     }));
   }
-  const items: NavItem[] = menu.value.recentModels.map((model) => ({
+  const items: NavItem[] = recentModels.value.map((model) => ({
     key: `recent:${model.id}`,
     run: () => onModelRowClick(model, false),
   }));
@@ -299,7 +300,7 @@ function clearSearch(): void {
 }
 
 function onKeydown(e: KeyboardEvent): void {
-  if (!props.modelValue || isComposingKeyEvent(e)) return;
+  if (!props.modelValue || e.defaultPrevented || isComposingKeyEvent(e)) return;
   if (e.key === 'Escape') {
     e.preventDefault();
     e.stopPropagation();
@@ -512,7 +513,7 @@ onUnmounted(() => {
           </template>
 
           <template v-else>
-            <template v-if="menu.recentModels.length > 0">
+            <template v-if="recentModels.length > 0">
               <div class="mqs-label">{{ t('status.recentModels') }}</div>
               <div
                 ref="recentScrollEl"
@@ -522,15 +523,15 @@ onUnmounted(() => {
                 @mouseenter="recentScrollbar.onListMouseEnter"
                 @mouseleave="recentScrollbar.onListMouseLeave"
               >
-                <div class="mqs-list">
+                <div class="mqs-list" role="radiogroup" :aria-label="t('status.recentModels')">
                   <button
-                    v-for="model in menu.recentModels"
+                    v-for="model in recentModels"
                     :key="`recent:${model.id}`"
                     :ref="setRowElement(`recent:${model.id}`)"
                     type="button"
                     class="mqs-row"
                     :class="{ 'is-active': activeKey === `recent:${model.id}` }"
-                    role="menuitemradio"
+                    role="radio"
                     :aria-checked="model.id === menu.currentModelId"
                     :data-row-key="`recent:${model.id}`"
                     @pointerdown="onRowPointerDown($event, model, false)"
@@ -560,7 +561,7 @@ onUnmounted(() => {
               @mouseenter="!fluidBody ? listScrollbar.onListMouseEnter() : undefined"
               @mouseleave="!fluidBody ? listScrollbar.onListMouseLeave() : undefined"
             >
-              <div class="mqs-list">
+              <div class="mqs-list" role="radiogroup" :aria-label="menu.activeProviderLabel">
                 <button
                   v-for="model in menu.providerModels"
                   :key="`provider:${model.id}`"
@@ -568,7 +569,7 @@ onUnmounted(() => {
                   type="button"
                   class="mqs-row"
                   :class="{ 'is-active': activeKey === `provider:${model.id}` }"
-                  role="menuitemradio"
+                  role="radio"
                   :aria-checked="model.id === menu.currentModelId"
                   :data-row-key="`provider:${model.id}`"
                   @pointerdown="onRowPointerDown($event, model, false)"
@@ -629,7 +630,7 @@ onUnmounted(() => {
         @mouseenter="listScrollbar.onListMouseEnter"
         @mouseleave="listScrollbar.onListMouseLeave"
       >
-        <div class="mqs-list">
+        <div class="mqs-list" role="radiogroup" :aria-label="t('status.switchProvider')">
           <button
             v-for="provider in menu.providers"
             :key="provider.id"
@@ -640,7 +641,7 @@ onUnmounted(() => {
             type="button"
             class="mqs-row"
             :class="{ 'is-active': activeKey === `subprovider:${provider.id}` }"
-            role="menuitemradio"
+            role="radio"
             :aria-checked="provider.id === menu.activeProvider"
             :data-provider-id="provider.id"
             @click="chooseProvider(provider.id)"
@@ -661,7 +662,7 @@ onUnmounted(() => {
           @mouseenter="listScrollbar.onListMouseEnter"
           @mouseleave="listScrollbar.onListMouseLeave"
         >
-          <div class="mqs-list">
+          <div class="mqs-list" role="radiogroup" :aria-label="t('status.statusThinking')">
             <button
               v-for="segment in currentSegments"
               :key="segment"
@@ -669,7 +670,7 @@ onUnmounted(() => {
               type="button"
               class="mqs-row"
               :class="{ 'is-active': activeKey === `effort:${segment}` }"
-              role="menuitemradio"
+              role="radio"
               :aria-checked="segment === currentEffortValue"
               :data-effort="segment"
               @click="chooseEffort(segment)"
@@ -706,7 +707,7 @@ onUnmounted(() => {
           @mouseenter="listScrollbar.onListMouseEnter"
           @mouseleave="listScrollbar.onListMouseLeave"
         >
-          <div class="mqs-list">
+          <div class="mqs-list" role="radiogroup" :aria-label="t('status.statusThinking')">
             <button
               v-for="segment in detailSegments"
               :key="segment"
@@ -714,7 +715,7 @@ onUnmounted(() => {
               type="button"
               class="mqs-row"
               :class="{ 'is-active': activeKey === `detail:${segment}` }"
-              role="menuitemradio"
+              role="radio"
               :aria-checked="detailModel.id === menu.currentModelId && segment === currentEffortValue"
               :data-detail-effort="segment"
               @click="chooseDetailEffort(segment)"
