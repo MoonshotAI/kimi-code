@@ -1,4 +1,4 @@
-import { PERMISSION_MODE_NAMES, wantedOutput, type Actions, type ToolExpectation, type ToolStatus, type Verb } from './verbs';
+import { PERMISSION_MODE_NAMES, wantedChanges, wantedOutput, type Actions, type ApprovalExpectation, type ToolExpectation, type ToolStatus, type Verb } from './verbs';
 
 const LONGEST_QUOTE = 60;
 
@@ -11,6 +11,12 @@ export const TOOL_STATUS_WORDS: Readonly<Record<ToolStatus, string>> = {
 
 export function quote(text: string): string {
   return `「${text.length > LONGEST_QUOTE ? `${text.slice(0, LONGEST_QUOTE)}…` : text}」`;
+}
+
+function approvalCheck(expectation: ApprovalExpectation): string {
+  const { added, removed } = wantedChanges(expectation);
+  const changes = [...added.map((line) => `新增${quote(line)}`), ...removed.map((line) => `删除${quote(line)}`)];
+  return `检查审批：${expectation.name}${quote(expectation.target)}${changes.length === 0 ? '' : `，改动里${changes.join('、')}`}`;
 }
 
 function toolCheck(expectation: ToolExpectation): string {
@@ -26,7 +32,7 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   approve: (options) => (options?.for === 'session' ? '用户批准，本会话内同样的操作不再询问' : '用户批准'),
   reject: () => '用户拒绝',
   rejectWithFeedback: (feedback) => `用户拒绝，并说明理由${quote(feedback)}`,
-  expectApproval: ({ name, target }) => `检查审批：${name}${quote(target)}`,
+  expectApproval: approvalCheck,
   answer: (option) => `用户回答问题，选${quote(option)}`,
   answerOther: (text) => `用户回答问题，自己填${quote(text)}`,
   dismissQuestion: () => '用户关掉问题，不回答',

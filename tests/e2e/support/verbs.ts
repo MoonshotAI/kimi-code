@@ -162,13 +162,46 @@ export const QUESTION_PENDING = 'a question is pending; answer it with answer() 
 
 export const APPROVAL_PENDING = 'an approval is pending; answer it with approve() or reject() first';
 
-export interface ApprovalExpectation {
-  readonly name: ApprovalToolName;
+export interface ChangedLines {
+  readonly added: readonly string[];
+  readonly removed: readonly string[];
+}
+
+interface CommandOrWriteApproval {
+  readonly name: Exclude<ApprovalToolName, 'Edit'>;
   readonly target: string;
 }
 
-export function describeApproval({ name, target }: ApprovalExpectation): string {
-  return `${name} on ${JSON.stringify(target)}`;
+interface EditApproval {
+  readonly name: 'Edit';
+  readonly target: string;
+  readonly added?: readonly string[];
+  readonly removed?: readonly string[];
+}
+
+export type ApprovalExpectation = CommandOrWriteApproval | EditApproval;
+
+export function wantedChanges(expectation: ApprovalExpectation): ChangedLines {
+  return expectation.name === 'Edit' ? { added: expectation.added ?? [], removed: expectation.removed ?? [] } : { added: [], removed: [] };
+}
+
+export function describeApproval(expectation: ApprovalExpectation): string {
+  const { added, removed } = wantedChanges(expectation);
+  const lines = [...added.map((line) => `+${JSON.stringify(line)}`), ...removed.map((line) => `-${JSON.stringify(line)}`)];
+  return `${expectation.name} on ${JSON.stringify(expectation.target)}${lines.length === 0 ? '' : ` changing ${lines.join(' ')}`}`;
+}
+
+export function missingChanges(expectation: ApprovalExpectation, shown: ChangedLines): string[] {
+  const { added, removed } = wantedChanges(expectation);
+  return [
+    ...added.filter((line) => !shown.added.includes(line)).map((line) => `${JSON.stringify(line)} as an added line`),
+    ...removed.filter((line) => !shown.removed.includes(line)).map((line) => `${JSON.stringify(line)} as a removed line`),
+  ];
+}
+
+export function describeChanges({ added, removed }: ChangedLines): string {
+  const lines = [...removed.map((line) => `- ${line}`), ...added.map((line) => `+ ${line}`)];
+  return lines.length === 0 ? '(no changed lines)' : lines.join('\n');
 }
 
 function slashed(path: string): string {

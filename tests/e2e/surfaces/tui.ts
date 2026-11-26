@@ -25,7 +25,10 @@ import {
   PERMISSION_MODE_NAMES,
   QUESTION_PENDING,
   wantedOutput,
+  describeChanges,
+  missingChanges,
   type ApprovalExpectation,
+  type ChangedLines,
   type ApprovalToolName,
   type ApproveOptions,
   type Diagnostic,
@@ -114,6 +117,7 @@ const READ_GROUP_PENDING = 'reading…';
 const READ_GROUP_FAILED = 'failed';
 const TURN_COMPLETED = 'Worked for ';
 const TURN_STOPPED = 'Interrupted by user';
+const DIFF_ROW = /^\d+ ([+-]) (.*)$/;
 const TURN_FAILED = 'Error: [';
 const FAILURE_CODE_END = '] ';
 const FAILURE_HINT = 'If this persists, run `/export-debug-zip`';
@@ -447,6 +451,17 @@ function panelShows(panel: ApprovalPanel, { name, target }: ApprovalExpectation,
   if (name !== 'Bash') return panel.rows.some((row) => namesFile(row.trim(), target, workspace));
   const command = panelCommand(panel);
   return command !== undefined && squash(command) === squash(target);
+}
+
+function panelChanges(panel: ApprovalPanel): ChangedLines {
+  const lines = panel.rows.flatMap((row) => {
+    const match = DIFF_ROW.exec(row.trim());
+    return match === null ? [] : [{ sign: match[1], text: match[2] ?? '' }];
+  });
+  return {
+    added: lines.filter((line) => line.sign === '+').map((line) => line.text),
+    removed: lines.filter((line) => line.sign === '-').map((line) => line.text),
+  };
 }
 
 function permissionPicker(screen: Screen): PermissionPicker | undefined {
@@ -942,11 +957,17 @@ class TuiDriver implements SurfaceDriver<'tui'> {
       throw this.failure(`expectApproval() found no approval for ${wanted}: the turn ended without asking for one. It shows:\n${latestTurnEntries(settled.over)}`, settled.over);
     }
     if (settled.found === QUESTION_TITLE) throw this.failure(`expectApproval() found no approval for ${wanted}: ${QUESTION_PENDING}.`, await this.read());
-    if (panelShows(settled.found, expectation, this.workspace)) return;
-    throw this.failure(
-      `expectApproval() found an approval, but it does not show ${wanted}. The approval shows:\n${settled.found.rows.join('\n').trimEnd()}`,
-      await this.read(),
-    );
+    if (!panelShows(settled.found, expectation, this.workspace)) {
+      throw this.failure(
+        `expectApproval() found an approval, but it does not show ${wanted}. The approval shows:\n${settled.found.rows.join('\n').trimEnd()}`,
+        await this.read(),
+      );
+    }
+    const shown = panelChanges(settled.found);
+    const missing = missingChanges(expectation, shown);
+    if (missing.length > 0) {
+      throw this.failure(`expectApproval() found the approval, but its change does not show ${missing.join(', ')}. The change shows:\n${describeChanges(shown)}`, await this.read());
+    }
   }
 
   async answer(option: string): Promise<void> {

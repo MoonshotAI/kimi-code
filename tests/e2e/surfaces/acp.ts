@@ -34,7 +34,10 @@ import {
   PERMISSION_MODE_NAMES,
   QUESTION_PENDING,
   wantedOutput,
+  describeChanges,
+  missingChanges,
   type ApprovalExpectation,
+  type ChangedLines,
   type ApproveOptions,
   type Diagnostic,
   type Frame,
@@ -253,6 +256,14 @@ function approvalShows(toolCall: ToolCallUpdate, { name, target }: ApprovalExpec
   return property(toolCall.rawInput, 'command') === target || texts.some((text) => text === target || text.endsWith(`: ${target}`));
 }
 
+function approvalChanges(toolCall: ToolCallUpdate): ChangedLines {
+  const diffs = (toolCall.content ?? []).flatMap((part) => (part.type === 'diff' ? [part] : []));
+  const linesOf = (text: string | null | undefined): string[] => (text ?? '').split('\n').map((line) => line.trim()).filter((line) => line !== '');
+  const before = diffs.flatMap((diff) => linesOf(diff.oldText));
+  const after = diffs.flatMap((diff) => linesOf(diff.newText));
+  return { added: after.filter((line) => !before.includes(line)), removed: before.filter((line) => !after.includes(line)) };
+}
+
 function clipLine(line: string): string {
   return line.length > LONGEST_FRAME_LINE ? `${line.slice(0, LONGEST_FRAME_LINE)}…` : line;
 }
@@ -434,9 +445,15 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     }
     if (asksQuestion(pending)) throw new Error(`expectApproval() found no approval for ${wanted}: ${QUESTION_PENDING}.\n${this.describe()}`);
     const { toolCall } = pending.params;
-    if (approvalShows(toolCall, expectation, this.home.workspace)) return;
-    const shown = { title: toolCall.title, content: toolCall.content, rawInput: toolCall.rawInput, locations: toolCall.locations };
-    throw new Error(`expectApproval() found an approval, but it does not show ${wanted}. The approval request shows:\n${JSON.stringify(shown, null, 2)}\n${this.describe()}`);
+    if (!approvalShows(toolCall, expectation, this.home.workspace)) {
+      const shown = { title: toolCall.title, content: toolCall.content, rawInput: toolCall.rawInput, locations: toolCall.locations };
+      throw new Error(`expectApproval() found an approval, but it does not show ${wanted}. The approval request shows:\n${JSON.stringify(shown, null, 2)}\n${this.describe()}`);
+    }
+    const changes = approvalChanges(toolCall);
+    const missing = missingChanges(expectation, changes);
+    if (missing.length > 0) {
+      throw new Error(`expectApproval() found the approval, but its change does not show ${missing.join(', ')}. The change shows:\n${describeChanges(changes)}\n${this.describe()}`);
+    }
   }
 
   async answer(option: string): Promise<void> {

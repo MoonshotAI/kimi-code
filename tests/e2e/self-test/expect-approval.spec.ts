@@ -32,8 +32,34 @@ selfTest('expectApproval', {
         await workspace.expectFile('docs/c.md', '# C\n');
       },
     },
+    'finds the lines an edit adds and removes before the user approves it': {
+      workspace: { 'notes.txt': 'alpha\nold line\nomega\n' },
+      run: async ({ product, model, workspace }) => {
+        model.script(edit({ path: 'notes.txt', old_string: 'old line', new_string: 'new line one\nnew line two' }), say('Updated notes.txt.'));
+        await product.send('Update notes.txt.');
+        await product.expectApproval({ name: 'Edit', target: 'notes.txt', added: ['new line one', 'new line two'], removed: ['old line'] });
+        await workspace.expectFile('notes.txt', 'alpha\nold line\nomega\n');
+        await product.approve();
+        await product.waitIdle();
+        await product.expectReply('Updated notes.txt.');
+        await workspace.expectFile('notes.txt', 'alpha\nnew line one\nnew line two\nomega\n');
+      },
+    },
   },
   negative: {
+    'fails when an edit removes the line instead of adding it': {
+      workspace: { 'notes.txt': 'alpha\nold line\nomega\n' },
+      run: async ({ product, model }) => {
+        model.script(edit({ path: 'notes.txt', old_string: 'old line', new_string: 'new line one' }), say('Left notes.txt alone.'));
+        await product.send('Update notes.txt.');
+        await expect(product.expectApproval({ name: 'Edit', target: 'notes.txt', added: ['old line'] })).rejects.toThrow('"old line" as an added line');
+        await expect(product.expectApproval({ name: 'Edit', target: 'notes.txt', removed: ['new line one'] })).rejects.toThrow('"new line one" as a removed line');
+        await expect(product.expectApproval({ name: 'Edit', target: 'notes.txt', added: ['alpha'] })).rejects.toThrow('"alpha" as an added line');
+        await product.reject();
+        await product.waitIdle();
+        await product.expectReply('Left notes.txt alone.');
+      },
+    },
     'fails when the turn ends without asking for approval': {
       workspace: { 'a.txt': 'hello\n' },
       run: async ({ product, model }) => {

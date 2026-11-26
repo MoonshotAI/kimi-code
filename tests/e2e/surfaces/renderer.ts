@@ -9,7 +9,10 @@ import {
   PERMISSION_MODE_NAMES,
   QUESTION_PENDING,
   wantedOutput,
+  describeChanges,
+  missingChanges,
   type ApprovalExpectation,
+  type ChangedLines,
   type ApprovalToolName,
   type ApproveOptions,
   type DriverActionsOn,
@@ -87,6 +90,11 @@ function cardShows(lines: readonly string[], { name, target }: ApprovalExpectati
   if (titles.length !== 1 || titles[0] !== name) return false;
   if (name === 'Bash') return lines.includes(`${COMMAND_PROMPT}${target}`);
   return lines.some((line) => namesFile(line, target, workspace));
+}
+
+function cardChanges(lines: readonly string[]): ChangedLines {
+  const changed = (sign: string): string[] => lines.flatMap((line, index) => (line === sign && index + 1 < lines.length ? [lines[index + 1] ?? ''] : []));
+  return { added: changed('+'), removed: changed('-') };
 }
 
 export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
@@ -263,8 +271,14 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line !== '');
-    if (cardShows(lines, expectation, this.workspace)) return;
-    throw new Error(`expectApproval() found an approval, but it does not show ${wanted}. The approval shows:\n${lines.join('\n')}\n${await this.describe()}`);
+    if (!cardShows(lines, expectation, this.workspace)) {
+      throw new Error(`expectApproval() found an approval, but it does not show ${wanted}. The approval shows:\n${lines.join('\n')}\n${await this.describe()}`);
+    }
+    const shown = cardChanges(lines);
+    const missing = missingChanges(expectation, shown);
+    if (missing.length > 0) {
+      throw new Error(`expectApproval() found the approval, but its change does not show ${missing.join(', ')}. The change shows:\n${describeChanges(shown)}\n${await this.describe()}`);
+    }
   }
 
   async answer(option: string): Promise<void> {

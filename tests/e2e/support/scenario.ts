@@ -38,6 +38,7 @@ import {
   VERB_NAMES,
   verbOn,
   verbSpec,
+  wantedChanges,
   wantedOutput,
   type Actions,
   type Platform,
@@ -240,12 +241,19 @@ function lineCheck(verb: 'expectError' | 'expectAbsent' | 'rejectWithFeedback' |
   };
 }
 
-function assertApprovalExpectation({ name, target }: ApprovalExpectation): void {
+function assertApprovalExpectation(expectation: ApprovalExpectation): void {
+  const { name, target } = expectation;
   if (!/^[ -~]+$/.test(target) || target !== target.trim()) {
     throw new Error(`expectApproval() takes the target as one line of printable ASCII without surrounding spaces, got ${JSON.stringify(target)}`);
   }
   if (name !== 'Bash' && workspaceKey(target) !== target) {
     throw new Error(`expectApproval() takes the file as a normalized path relative to the workspace, like "notes/a.txt", got ${JSON.stringify(target)}`);
+  }
+  const { added, removed } = wantedChanges(expectation);
+  for (const line of [...added, ...removed]) {
+    if (!/^[ -~]+$/.test(line) || line !== line.trim()) {
+      throw new Error(`expectApproval() takes each changed line as one line of printable ASCII without surrounding spaces, got ${JSON.stringify(line)}`);
+    }
   }
 }
 
