@@ -156,6 +156,7 @@ export const useModeStore = defineStore('kimi.mode', () => {
   function setTowerMode(on: boolean, base?: string): Promise<boolean> {
     const sid = sessionsStore().activeSessionId;
     if (sid) {
+      const armedGoal = on && (goalModeBySession.value[sid] ?? false);
       if (on) {
         swarmModeBySession.value = { ...swarmModeBySession.value, [sid]: false };
         saveSwarmModeToStorage();
@@ -166,7 +167,7 @@ export const useModeStore = defineStore('kimi.mode', () => {
         planModeBySession.value = { ...planModeBySession.value, [sid]: false };
         savePlanModeToStorage();
         markPlanPending({ pendingPlanBySession: pendingPlanBySession.value }, sid);
-        if (goalModeBySession.value[sid] ?? false) {
+        if (armedGoal) {
           goalModeBySession.value = { ...goalModeBySession.value, [sid]: false };
           saveGoalModeToStorage();
         }
@@ -174,7 +175,7 @@ export const useModeStore = defineStore('kimi.mode', () => {
       towerModeBySession.value = { ...towerModeBySession.value, [sid]: on };
       saveTowerModeToStorage();
       markTowerPending({ pendingTowerBySession: pendingTowerBySession.value }, sid);
-      return (
+      const persisted =
         modeHooks?.persistSessionProfile(
           {
             towerMode: on,
@@ -183,7 +184,21 @@ export const useModeStore = defineStore('kimi.mode', () => {
             planMode: on ? false : undefined,
           },
           sid,
-        ) ?? Promise.resolve(true)
+        ) ?? Promise.resolve(true);
+      if (!armedGoal) return persisted;
+      const restoreArmedGoal = (): void => {
+        goalModeBySession.value = { ...goalModeBySession.value, [sid]: true };
+        saveGoalModeToStorage();
+      };
+      return persisted.then(
+        (ok) => {
+          if (!ok) restoreArmedGoal();
+          return ok;
+        },
+        (error: unknown) => {
+          restoreArmedGoal();
+          throw error;
+        },
       );
     }
     if (on && draftModes.swarmMode) draftModes.swarmMode = false;

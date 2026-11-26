@@ -19,6 +19,7 @@ export class AgentModeMutexService extends Disposable implements IAgentModeMutex
   declare readonly _serviceBrand: undefined;
 
   constructor(
+    @IAgentTowerService private readonly tower: IAgentTowerService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentStateService private readonly agentState: IAgentStateService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
@@ -28,10 +29,7 @@ export class AgentModeMutexService extends Disposable implements IAgentModeMutex
     this._register(
       eventBus.subscribe(GoalUpdated, (event) => {
         if (event.snapshot?.status !== 'active') return;
-        const tower = this.instantiation.invokeFunction((accessor) =>
-          accessor.get(IAgentTowerService),
-        );
-        if (!tower.isActive) return;
+        if (!this.tower.isActive) return;
         void this.dispatcher.dispatch(
           new AgentStatusUpdated({
             agentId: event.agentId,
@@ -39,32 +37,23 @@ export class AgentModeMutexService extends Disposable implements IAgentModeMutex
             towerExitReason: 'mode-mutex',
           }),
         );
-        void tower.exit('mode-mutex');
+        void this.tower.exit('mode-mutex');
       }),
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('modeMutex', async (_ctx, next) => {
-        const tower = this.instantiation.invokeFunction((accessor) =>
-          accessor.get(IAgentTowerService),
-        );
-        if (tower.isActive) await this.beforeTowerEnter();
+        if (this.tower.isActive) await this.beforeTowerEnter();
         await next();
       }),
     );
   }
 
   async beforePlanEnter(): Promise<void> {
-    const tower = this.instantiation.invokeFunction((accessor) =>
-      accessor.get(IAgentTowerService),
-    );
-    if (tower.isActive) await tower.exit('mode-mutex');
+    if (this.tower.isActive) await this.tower.exit('mode-mutex');
   }
 
   beforeSwarmEnter(): void {
-    const tower = this.instantiation.invokeFunction((accessor) =>
-      accessor.get(IAgentTowerService),
-    );
-    if (tower.isActive) void tower.exit('mode-mutex');
+    if (this.tower.isActive) void this.tower.exit('mode-mutex');
   }
 
   async beforeTowerEnter(): Promise<void> {

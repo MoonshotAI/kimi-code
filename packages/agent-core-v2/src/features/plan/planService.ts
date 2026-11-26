@@ -192,14 +192,13 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     if (this.isActive) {
       throw new Error2(ErrorCodes.SESSION_PLAN_MODE_INVALID, 'Already in plan mode');
     }
-    await this.modeMutex.current?.beforePlanEnter();
-
     const target = this.planFileTarget(id);
     let enterRecorded = false;
     try {
       if (target !== undefined) {
         await this.ensurePlanDirectory(target);
       }
+      await this.modeMutex.current?.beforePlanEnter();
       await this.dispatcher.dispatch(new PlanModeEnter({ agentId: this.agentCtx.agentId, id }));
       this.telemetry.setContext({ mode: 'plan' });
       enterRecorded = true;

@@ -2,9 +2,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, type TestContext } from 'vitest';
+import { describe, expect, it, vi, type TestContext } from 'vitest';
 
+import type { ISessionScopeHandle } from '#/_base/di/scope';
+import { Event } from '#/_base/event';
 import { IAgentModeMutexService } from '#/agent/modeMutex/modeMutex';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import { GoalUpdated } from '#/features/goal/goalOps';
@@ -13,12 +16,14 @@ import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
 import { _setTowerFeatureAssembledForTests } from '#/features/tower/towerFeature';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { WireRecord } from '#/wire/record';
 
 import { stubFlag } from '../../app/flag/stubs';
 import {
   appService,
   InMemoryWireRecordPersistence,
+  sessionService,
   testkitAgentFixtures,
   wireRecordPersistenceServices,
   type TestAgentContext,
@@ -161,5 +166,55 @@ describe('AgentModeMutexService integration', () => {
       { autoStart: false },
       wireRecordPersistenceServices(new InMemoryWireRecordPersistence(records)),
     );
+  });
+
+  it('reconciles a live foreign tower owner before applying mutex on restore', async (context) => {
+    const records: WireRecord[] = [
+      { type: 'tower_mode.enter', agentId: 'main', sessionId: 'session-original', time: 1 },
+      { type: 'plan_mode.enter', agentId: 'main', id: 'fork-plan', time: 2 },
+      { type: 'swarm_mode.enter', agentId: 'main', trigger: 'manual', time: 3 },
+      { type: 'goal.create', agentId: 'main', goalId: 'g1', objective: 'keep me intact', time: 4 },
+    ];
+    const persistence = new InMemoryWireRecordPersistence(records);
+    await withAgent(
+      context,
+      async (agent) => {
+        expect(agent.get(IAgentTowerService).isActive).toBe(false);
+        expect(await agent.get(IAgentPlanService).status()).toMatchObject({ id: 'fork-plan' });
+        expect(agent.get(IAgentSwarmService).isActive).toBe(true);
+        expect(agent.get(IAgentGoalService).getGoal().goal?.status).toBe('paused');
+        const goalUpdates = persistence.records.filter(
+          (record) => record.type === 'goal.update',
+        );
+        expect(goalUpdates).toEqual([
+          expect.objectContaining({ reason: 'Paused after agent resume', actor: 'runtime' }),
+        ]);
+      },
+      { autoStart: false },
+      wireRecordPersistenceServices(persistence),
+      sessionService(ISessionManager, {
+        get: (id: string) =>
+          id === 'session-original' ? ({} as ISessionScopeHandle) : undefined,
+        list: () => [],
+        onDidCreateSession: Event.None,
+        onWillCloseSession: Event.None,
+      } as unknown as ISessionManager),
+    );
+  });
+
+  it('keeps tower active when plan directory creation fails', async (context) => {
+    await withAgent(context, async (agent) => {
+      await agent.get(IAgentTowerService).enter();
+      const mkdir = vi
+        .spyOn(agent.get(IHostFileSystem), 'mkdir')
+        .mockRejectedValueOnce(new Error('EACCES: read-only file system'));
+      try {
+        await expect(agent.get(IAgentPlanService).enter()).rejects.toThrow('EACCES');
+        expect(await agent.get(IAgentPlanService).status()).toBeNull();
+        expect(agent.get(IAgentTowerService).isActive).toBe(true);
+      } finally {
+        mkdir.mockRestore();
+      }
+    });
   });
 });
