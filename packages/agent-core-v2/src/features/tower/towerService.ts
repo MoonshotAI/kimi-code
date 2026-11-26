@@ -456,8 +456,13 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       return { entered: true };
     }
     await this.adoptTowerRoster();
-    await this.modeMutex.current?.beforeTowerEnter();
     this.registerTowerTools();
+    try {
+      await this.modeMutex.current?.beforeTowerEnter();
+    } catch (error) {
+      this.unregisterTowerTools();
+      throw error;
+    }
     this.lastPublished = true;
     this.dispatchEnter();
     return { entered: true };

@@ -7,6 +7,7 @@ import { describe, expect, it, vi, type TestContext } from 'vitest';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { Event } from '#/_base/event';
 import { IAgentModeMutexService } from '#/agent/modeMutex/modeMutex';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
@@ -200,6 +201,26 @@ describe('AgentModeMutexService integration', () => {
         onWillCloseSession: Event.None,
       } as unknown as ISessionManager),
     );
+  });
+
+  it('leaves existing modes intact when tower tool registration fails', async (context) => {
+    await withAgent(context, async (agent) => {
+      await agent.get(IAgentPlanService).enter();
+      await agent.get(IAgentGoalService).createGoal({ objective: 'keep it' });
+      const register = vi
+        .spyOn(agent.get(IAgentToolRegistryService), 'register')
+        .mockImplementationOnce(() => {
+          throw new Error('Tool "TowerStatus" is already registered');
+        });
+      try {
+        await expect(agent.get(IAgentTowerService).enter()).rejects.toThrow('already registered');
+        expect(agent.get(IAgentTowerService).isActive).toBe(false);
+        expect(await agent.get(IAgentPlanService).status()).not.toBeNull();
+        expect(agent.get(IAgentGoalService).getGoal().goal?.status).toBe('active');
+      } finally {
+        register.mockRestore();
+      }
+    });
   });
 
   it('keeps tower active when plan directory creation fails', async (context) => {

@@ -192,11 +192,11 @@ export const useModeStore = defineStore('kimi.mode', () => {
       };
       return persisted.then(
         (ok) => {
-          if (!ok) restoreArmedGoal();
+          if (!ok && !(towerModeBySession.value[sid] ?? false)) restoreArmedGoal();
           return ok;
         },
         (error: unknown) => {
-          restoreArmedGoal();
+          if (!(towerModeBySession.value[sid] ?? false)) restoreArmedGoal();
           throw error;
         },
       );

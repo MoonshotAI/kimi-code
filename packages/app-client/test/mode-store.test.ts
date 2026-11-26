@@ -266,7 +266,10 @@ describe('mode store setTowerMode', () => {
 
   it('restores armed goal mode when enabling tower mode fails for a session', async () => {
     sessionsStore().setActiveSessionId('sess_1');
-    const persist = vi.fn().mockResolvedValue(false);
+    const persist = vi.fn().mockImplementation(async () => {
+      modeStore().towerModeBySession = { sess_1: false };
+      return false;
+    });
     setModeHooks({ persistSessionProfile: persist });
     modeStore().goalModeBySession = { sess_1: true };
     modeStore().saveGoalModeToStorage();
@@ -280,7 +283,10 @@ describe('mode store setTowerMode', () => {
 
   it('restores armed goal mode when enabling tower mode rejects for a session', async () => {
     sessionsStore().setActiveSessionId('sess_1');
-    const persist = vi.fn().mockRejectedValue(new Error('network down'));
+    const persist = vi.fn().mockImplementation(async () => {
+      modeStore().towerModeBySession = { sess_1: false };
+      throw new Error('network down');
+    });
     setModeHooks({ persistSessionProfile: persist });
     modeStore().goalModeBySession = { sess_1: true };
     modeStore().saveGoalModeToStorage();
@@ -289,6 +295,21 @@ describe('mode store setTowerMode', () => {
 
     expect(modeStore().goalModeBySession.sess_1).toBe(true);
     expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.goalMode)!)).toEqual({ sess_1: true });
+  });
+
+  it('does not re-arm goal when tower is active but an earlier profile write failed', async () => {
+    sessionsStore().setActiveSessionId('sess_1');
+    const persist = vi.fn().mockResolvedValue(false);
+    setModeHooks({ persistSessionProfile: persist });
+    modeStore().goalModeBySession = { sess_1: true };
+    modeStore().saveGoalModeToStorage();
+
+    const ok = await modeStore().setTowerMode(true);
+
+    expect(ok).toBe(false);
+    expect(modeStore().towerModeBySession.sess_1).toBe(true);
+    expect(modeStore().goalModeBySession.sess_1).toBe(false);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.goalMode)!)).toEqual({});
   });
 
   it('disarms draft plan, swarm, and goal modes when enabling draft tower mode', async () => {
