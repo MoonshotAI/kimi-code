@@ -4249,6 +4249,14 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
 
+  async function settleSessionIndexProjection(): Promise<void> {
+    const projected = await postJson<null>('/api/v1/debug/sessionIndex/reprojectNow');
+    expect(projected.body.code).toBe(0);
+    const reconciled = await postJson<null>('/api/v1/debug/sessionIndex/reconcileNow');
+    expect(reconciled.body.code).toBe(0);
+    await (server as RunningServer).core.accessor.get(ISessionIndexMirror).drain();
+  }
+
   it('prepares the read model at boot and serves immediate reads', async () => {
     const status = await getJson<{ state: string; generation?: number }>(
       '/api/v1/debug/sessionIndex/status',
@@ -4277,6 +4285,8 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
       },
       { timeout: 10_000 },
     );
+
+    await settleSessionIndexProjection();
 
     await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
     const archivedOnly = await getJson<PageWire>('/api/v1/sessions?archived=true');
