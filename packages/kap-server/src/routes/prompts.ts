@@ -205,31 +205,31 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         sendMappedError(reply, req, error);
         return;
       }
-      if (!directSteer) {
-        try {
-          const held = await holdSubmissionForWorktree(core, session_id, attempt.id, req.body);
-          if (held !== undefined) {
-            attempt.enqueued();
-            attempt.succeed(held);
-            reply.send(okEnvelope(held, req.id));
-            return;
-          }
-        } catch (error) {
-          attempt.fail(error);
-          sendMappedError(reply, req, error);
-          return;
-        }
-      }
       try {
-        const response = await runPromptSubmission(core, session_id, req.body, attempt.id, directSteer, () => {
-          attempt.enqueued();
-        });
+        const held = directSteer ? undefined : await holdSubmissionForWorktree(core, session_id, attempt.id, req.body);
+        if (held !== undefined) attempt.enqueued();
+        const response =
+          held ??
+          (await runPromptSubmission(core, session_id, req.body, attempt.id, directSteer, () => {
+            attempt.enqueued();
+          }));
         attempt.succeed(response);
         reply.send(okEnvelope(response, req.id));
       } catch (error) {
         attempt.fail(error);
         sendMappedError(reply, req, error);
       }
+  };
+  const promptSubmissionErrors = {
+    [ErrorCode.VALIDATION_FAILED]: { detailsSchema: validationDetailsSchema },
+    [ErrorCode.SKILL_NOT_FOUND]: {},
+    [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
+    [ErrorCode.SESSION_NOT_FOUND]: {},
+    [ErrorCode.FILE_NOT_FOUND]: {},
+    [ErrorCode.PROMPT_ID_CONFLICT]: {},
+    [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: {},
+    [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+    [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
   };
   const submitRoute = defineRoute(
     {
@@ -238,19 +238,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       body: promptSubmissionSchema,
       params: sessionIdParamSchema,
       success: { data: promptSubmitResultSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema: validationDetailsSchema },
-        [ErrorCode.SKILL_NOT_FOUND]: {},
-        [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.FILE_NOT_FOUND]: {},
-        [ErrorCode.PROMPT_ID_CONFLICT]: {},
-        [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: {},
-        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
-        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
-        [ErrorCode.WORKTREE_STATE_INVALID]: {},
-        ...sessionConflictErrors,
-      },
+      errors: { ...promptSubmissionErrors, [ErrorCode.WORKTREE_STATE_INVALID]: {}, ...sessionConflictErrors },
       description: 'Submit a prompt to a session',
       tags: ['prompts'],
       operationId: 'submitPrompt',
@@ -266,18 +254,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       body: promptSubmissionSchema,
       params: sessionIdParamSchema,
       success: { data: promptSubmitResultSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema: validationDetailsSchema },
-        [ErrorCode.SKILL_NOT_FOUND]: {},
-        [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.FILE_NOT_FOUND]: {},
-        [ErrorCode.PROMPT_ID_CONFLICT]: {},
-        [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: {},
-        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
-        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
-        ...sessionConflictErrors,
-      },
+      errors: { ...promptSubmissionErrors, ...sessionConflictErrors },
       description: 'Steer a message into the active turn',
       tags: ['prompts'],
       operationId: 'steerPromptContent',

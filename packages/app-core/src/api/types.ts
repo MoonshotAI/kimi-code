@@ -172,10 +172,16 @@ export interface AppWorktreeHeldPrompt {
   kind: 'prompt' | 'skill';
   createdAt: string;
   content: AppMessageContent[];
-  skill?: { name: string; path?: string; args?: string };
-  skills?: { name: string; path?: string; args?: string }[];
+  skill?: AppSkillRef;
+  skills?: AppSkillRef[];
   metadata?: Record<string, unknown>;
   failure?: { code: number; msg: string };
+}
+
+export interface AppSkillRef {
+  name: string;
+  path?: string;
+  args?: string;
 }
 
 export interface AppWorktreeSessionRef {
@@ -528,7 +534,7 @@ export interface PromptSubmission {
   swarmMode?: boolean;
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel' | 'edit';
-  skills?: { name: string; path?: string; args?: string }[];
+  skills?: AppSkillRef[];
 }
 
 export interface PromptSubmitResult {

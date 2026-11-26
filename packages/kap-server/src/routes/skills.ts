@@ -248,27 +248,18 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
 
       try {
         const held = await holdSkillActivationForWorktree(core, session_id, attempt.id, parsed.id, req.body);
-        if (held !== undefined) {
-          attempt.enqueued();
-          attempt.succeed(held);
-          reply.send(okEnvelope(held, req.id));
-          return;
-        }
-      } catch (error) {
-        attempt.fail(error);
-        sendMappedError(reply, req, error);
-        return;
-      }
-      try {
-        const response = await runSkillActivation(core, session_id, parsed.id, req.body, attempt.id, {
-          requestId: req.id,
-          onEnqueued: () => {
-            attempt.enqueued();
-          },
-          onActivated: () => {
-            requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
-          },
-        });
+        if (held !== undefined) attempt.enqueued();
+        const response =
+          held ??
+          (await runSkillActivation(core, session_id, parsed.id, req.body, attempt.id, {
+            requestId: req.id,
+            onEnqueued: () => {
+              attempt.enqueued();
+            },
+            onActivated: () => {
+              requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
+            },
+          }));
         attempt.succeed(response);
         reply.send(okEnvelope(response, req.id));
       } catch (error) {

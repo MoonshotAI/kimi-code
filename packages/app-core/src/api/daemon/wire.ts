@@ -149,10 +149,16 @@ export interface WireWorktreeHeldPrompt {
   kind: 'prompt' | 'skill';
   created_at: string;
   content: WireMessageContent[];
-  skill?: { name: string; path?: string; args?: string };
-  skills?: { name: string; path?: string; args?: string }[];
+  skill?: WireSkillRef;
+  skills?: WireSkillRef[];
   metadata?: Record<string, unknown>;
   failure?: { code: number; msg: string };
+}
+
+export interface WireSkillRef {
+  name: string;
+  path?: string;
+  args?: string;
 }
 
 export interface WireWorktreeSessionRef {
