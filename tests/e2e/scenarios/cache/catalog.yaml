@@ -43,7 +43,7 @@ entries:
     break:
       at: history
       reason: the user withdrew the last prompt, so the history ends before it
-    gap: Needs an undo action on every surface.
+    gap: The undo action exists on TUI, Desktop and Web (an ACP editor cannot undo); the scenario is not written yet.
 
   - id: A6
     operation: Quit the product while a turn is running, open it again and continue
@@ -131,7 +131,9 @@ entries:
   - id: C2
     operation: An MCP server drops the connection and the product connects again
     promise: keeps
-    gap: The MCP server handle needs a way to drop its connections.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/mcp-reconnect-keeps-the-prefix.spec.ts
 
   - id: C3
     operation: Load a deferred tool with select_tools while on-demand tool loading is on
@@ -154,7 +156,9 @@ entries:
   - id: C6
     operation: An ACP editor passes MCP servers in session/new or session/load
     promise: keeps
-    gap: The ACP driver needs to pass MCP servers the way an editor does.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/editor-mcp-server-on-session-load-keeps-the-prefix.spec.ts
 
   - id: C7
     operation: Enable a plugin with /plugins in the middle of a session
@@ -255,6 +259,7 @@ entries:
       - kind: kap
         test: tests/scenarios/prompt-cache.test.ts
         case: writing AGENTS.md into the workspace
+    gap: The product notices the new file only once its file watch fires, which can come after the next request or be lost across a restart, so no scenario can show yet that the product took the file in before comparing prefixes. Add the E2E scenario once the product checks for changed instruction files before each request.
 
   - id: E2
     operation: Change and add workspace files outside the product between two turns

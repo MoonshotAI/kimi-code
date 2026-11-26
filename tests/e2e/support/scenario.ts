@@ -47,6 +47,7 @@ import {
   type ProductOn,
   type Surface,
   type SurfaceDriver,
+  type EditorMcpServer,
   type SurfaceLaunch,
   type SurfacesOf,
   type ToolExpectation,
@@ -65,12 +66,14 @@ export type ScenarioProvider = Pick<FakeProviderOptions, 'type' | 'capabilities'
 export interface ScenarioMcpServer {
   readonly tools: readonly FakeMcpTool[];
   readonly deferred?: boolean;
+  readonly from?: 'config' | 'editor';
 }
 
 export interface McpServerHandle {
   addTool(tool: FakeMcpTool): Promise<void>;
   updateTool(name: string, change: Partial<Omit<FakeMcpTool, 'name'>>): Promise<void>;
   removeTool(name: string): Promise<void>;
+  disconnect(): Promise<void>;
 }
 
 export interface ScenarioOptions {
@@ -273,6 +276,7 @@ class ScenarioSession {
   private home: TestHome | undefined;
   private model: FakeModel | undefined;
   private readonly mcpServers = new Map<string, FakeMcpHttpServer>();
+  private readonly editorMcpServers: EditorMcpServer[] = [];
   private driver: SurfaceDriver<Surface> | undefined;
   private baseline: DirectorySnapshot | undefined;
   private interfaceChecks = 0;
@@ -308,7 +312,7 @@ class ScenarioSession {
     await this.startMcpServers(home, options.mcp);
     const startupStep = this.workspaceTrust === undefined ? '启动产品，等到可以输入' : '启动产品，处理工作区信任提示';
     await base.step(startupStep, async () => {
-      this.driver = await this.launch({ home, model, workspaceTrust: this.workspaceTrust, ...this.variantLaunch() });
+      this.driver = await this.launch({ home, model, workspaceTrust: this.workspaceTrust, ...this.launchOptions() });
       this.baseline = await snapshotDirectory(home.workspace);
       if (frames === 'every-step') await this.show('00 启动完成');
     });
@@ -318,12 +322,13 @@ class ScenarioSession {
   private async startMcpServers(home: TestHome, servers: ScenarioOptions['mcp']): Promise<void> {
     if (servers === undefined) return;
     const entries: Record<string, McpRemoteServerEntry> = {};
-    for (const [name, { tools, deferred }] of Object.entries(servers)) {
+    for (const [name, { tools, deferred, from }] of Object.entries(servers)) {
       const server = await startFakeMcpHttpServer({ name, tools });
       this.mcpServers.set(name, server);
-      entries[name] = deferred === undefined ? { transport: 'http', url: server.url } : { transport: 'http', url: server.url, deferred };
+      if (from === 'editor') this.editorMcpServers.push({ name, url: server.url });
+      else entries[name] = deferred === undefined ? { transport: 'http', url: server.url } : { transport: 'http', url: server.url, deferred };
     }
-    await writeMcpConfig(join(home.dataDir, 'mcp.json'), entries);
+    if (Object.keys(entries).length > 0) await writeMcpConfig(join(home.dataDir, 'mcp.json'), entries);
   }
 
   private mcpServer(name: string): McpServerHandle {
@@ -346,6 +351,16 @@ class ScenarioSession {
       addTool: (tool) => relisted(MCP_TITLES.addTool(name, tool.name), () => server.addTool(tool)),
       updateTool: (tool, change) => relisted(MCP_TITLES.updateTool(name, tool), () => server.updateTool(tool, change)),
       removeTool: (tool) => relisted(MCP_TITLES.removeTool(name, tool), () => server.removeTool(tool)),
+      disconnect: () =>
+        base.step(MCP_TITLES.disconnect(name), async () => {
+          const before = server.requests.length;
+          await server.disconnect();
+          await until(`the product to connect to MCP server ${JSON.stringify(name)} again and list its tools`, () => {
+            const since = server.answered.filter((request) => server.requests.indexOf(request) >= before);
+            const initialized = since.findIndex((request) => request.rpcMethods.includes('initialize'));
+            return initialized !== -1 && since.slice(initialized).some((request) => request.rpcMethods.includes('tools/list'));
+          });
+        }),
     };
   }
 
@@ -433,8 +448,11 @@ class ScenarioSession {
     }
   }
 
-  private variantLaunch(): { readonly variant?: Variant } {
-    return this.variant === undefined ? {} : { variant: this.variant };
+  private launchOptions(): Pick<SurfaceLaunch, 'variant' | 'editorMcpServers'> {
+    return {
+      ...(this.variant === undefined ? {} : { variant: this.variant }),
+      ...(this.editorMcpServers.length === 0 ? {} : { editorMcpServers: this.editorMcpServers }),
+    };
   }
 
   private async restart(): Promise<void> {
@@ -474,7 +492,7 @@ class ScenarioSession {
       model,
       workspaceTrust: this.workspaceTrust,
       reopen: { launch: this.launches, lastPrompt: this.lastPrompt, state },
-      ...this.variantLaunch(),
+      ...this.launchOptions(),
     });
   }
 
@@ -631,6 +649,13 @@ const test = base.extend<SurfaceOptions & { session: ScenarioSession }>({
 });
 
 function assertScenarioOptions(title: string, options: ScenarioOptions): void {
+  const fromEditor = Object.entries(options.mcp ?? {}).filter(([, server]) => server.from === 'editor');
+  if (fromEditor.length > 0 && (options.onlyOn?.length !== 1 || options.onlyOn[0] !== 'acp')) {
+    throw new Error(`Scenario "${title}" lets the editor pass MCP server(s) ${fromEditor.map(([name]) => name).join(', ')}, which only an ACP editor does; limit the scenario to ACP.`);
+  }
+  if (fromEditor.some(([, server]) => server.deferred !== undefined)) {
+    throw new Error(`Scenario "${title}" sets deferred on an MCP server the editor passes; an ACP editor cannot mark a server as deferred.`);
+  }
   if (options.workspaceTrust !== undefined && (options.onlyOn?.length !== 1 || options.onlyOn[0] !== 'tui')) {
     throw new Error(`Scenario "${title}" sets workspaceTrust without limiting the scenario to TUI.`);
   }

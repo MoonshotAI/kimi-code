@@ -837,6 +837,22 @@ describe('fake MCP server', () => {
     }
   });
 
+  it('drops every MCP session on disconnect, so a client has to initialize again', async () => {
+    const server = await startFakeMcpHttpServer({ tools: [{ name: 'ping' }] });
+    const clients: Client[] = [];
+    try {
+      clients.push(await connectHttp(server.url));
+      await server.disconnect();
+      await expect(clients[0]!.listTools()).rejects.toMatchObject({ code: 404 });
+      clients.push(await connectHttp(server.url));
+      expect((await clients[1]!.listTools()).tools.map((tool) => tool.name)).toEqual(['ping']);
+      expect(server.requests.filter((request) => request.rpcMethods.includes('initialize'))).toHaveLength(2);
+    } finally {
+      await Promise.all(clients.map((client) => client.close()));
+      await server.close();
+    }
+  });
+
   it('turns away requests without the bearer token and lets the test answer a request itself', async () => {
     let failures = 1;
     const server = await startFakeMcpHttpServer({

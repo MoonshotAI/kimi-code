@@ -12,6 +12,7 @@ import {
   type ClientConnection,
   type CreateTerminalRequest,
   type JsonRpcId,
+  type McpServer,
   type ReadTextFileRequest,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
@@ -41,6 +42,7 @@ import {
   type ReopenState,
   type SurfaceDriver,
   StartupFailure,
+  type EditorMcpServer,
   type SurfaceLaunch,
   type ToolExpectation,
   type ToolStatus,
@@ -265,6 +267,7 @@ function tailOf(bytes: Buffer, limit: number | undefined): { text: string; trunc
 class AcpDriver implements SurfaceDriver<'acp'> {
   private readonly proc: TestProcess;
   private readonly home: TestHome;
+  private readonly mcpServers: McpServer[];
   private readonly bare: boolean;
   private readonly handled: ReadonlySet<string>;
   private readonly connection: ClientConnection;
@@ -293,10 +296,11 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private leftSessionUpdates = 0;
   private turn: Turn | undefined;
 
-  constructor(proc: TestProcess, home: TestHome, bare: boolean) {
+  constructor(proc: TestProcess, home: TestHome, bare: boolean, mcpServers: readonly EditorMcpServer[]) {
     this.proc = proc;
     this.home = home;
     this.bare = bare;
+    this.mcpServers = mcpServers.map(({ name, url }) => ({ type: 'http', name, url, headers: [] }));
     this.handled = new Set(bare ? SESSION_METHODS : [...SESSION_METHODS, ...EDITOR_CAPABILITY_METHODS]);
     const session = client({ name: EDITOR_NAME })
       .onNotification(methods.client.session.update, ({ params }) => {
@@ -345,7 +349,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     if (resume === undefined) {
       const session = await this.response(
         'the agent to create a session',
-        this.connection.agent.request(methods.agent.session.new, { cwd: this.home.workspace, mcpServers: [] }),
+        this.connection.agent.request(methods.agent.session.new, { cwd: this.home.workspace, mcpServers: this.mcpServers }),
       );
       this.sessionId = session.sessionId;
       this.openedMode = session.modes?.currentModeId;
@@ -356,7 +360,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     }
     const loaded = await this.response(
       `the agent to load session ${resume}`,
-      this.connection.agent.request(methods.agent.session.load, { sessionId: resume, cwd: this.home.workspace, mcpServers: [] }),
+      this.connection.agent.request(methods.agent.session.load, { sessionId: resume, cwd: this.home.workspace, mcpServers: this.mcpServers }),
     );
     this.sessionId = resume;
     this.restored = true;
@@ -495,7 +499,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     await this.wait('the agent to send every session/update it announced', () => (this.handledUpdates() >= this.receivedUpdates ? true : undefined));
     const session = await this.response(
       'the agent to create a new session',
-      this.connection.agent.request(methods.agent.session.new, { cwd: this.home.workspace, mcpServers: [] }),
+      this.connection.agent.request(methods.agent.session.new, { cwd: this.home.workspace, mcpServers: this.mcpServers }),
     );
     if (session.sessionId === this.sessionId) {
       throw new Error(`newSession() asked for a new session, but the agent answered with the current one, ${session.sessionId}.\n${this.describe()}`);
@@ -1095,7 +1099,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 }
 
-export async function startAcp({ home, reopen, variant }: SurfaceLaunch): Promise<SurfaceDriver<'acp'>> {
+export async function startAcp({ home, reopen, variant, editorMcpServers }: SurfaceLaunch): Promise<SurfaceDriver<'acp'>> {
   const proc = TestProcess.start({
     label: 'kimi acp',
     command: kimiCliCommand(),
@@ -1106,7 +1110,7 @@ export async function startAcp({ home, reopen, variant }: SurfaceLaunch): Promis
     stdin: true,
     fetchStubs: offlineStubs(),
   });
-  const driver = new AcpDriver(proc, home, variant === 'bare-editor');
+  const driver = new AcpDriver(proc, home, variant === 'bare-editor', editorMcpServers ?? []);
   try {
     await driver.open(reopen?.state.sessionId);
   } catch (error) {
