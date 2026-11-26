@@ -90,7 +90,7 @@ export function sessionWorkingDirectory(session: Pick<AppSession, 'cwd' | 'workt
 
 export type NewSessionEnvironment = 'local' | 'worktree';
 
-export type WorktreeAvailability = 'available' | 'loading' | 'notGitRepo' | 'remoteHost' | 'failed';
+export type WorktreeAvailability = 'available' | 'loading' | 'disabled' | 'notGitRepo' | 'remoteHost' | 'failed';
 
 export interface WorktreeSourcePreference {
   branch: string;

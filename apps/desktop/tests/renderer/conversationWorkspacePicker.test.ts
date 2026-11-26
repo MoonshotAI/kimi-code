@@ -6,7 +6,7 @@ import { IconResolverKey } from '@moonshot-ai/app-ui';
 import type { AppHost, AppWorkspace, WorkspaceGitBranches } from '@moonshot-ai/app-core/api';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import { ModelDisplayKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
-import { hostsStore, newSessionEnvironmentStore, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { configStore, hostsStore, newSessionEnvironmentStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 
 const mockWorkspacesView = ref<WorkspaceView[]>([]);
 const mockActiveWorkspaceId = ref<string | null>(null);
@@ -110,6 +110,7 @@ beforeEach(() => {
   mockVisibleWorkspace.value = null;
   mockEnvironment.value = 'local';
   mockTrustReadPending.value = false;
+  configStore().experimentalFlags = { worktree: true };
   workspacesStore().workspaces = [];
   newSessionEnvironmentStore().reset();
   hostsStore().byId = {};

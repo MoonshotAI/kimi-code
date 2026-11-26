@@ -20,6 +20,7 @@ import {
   type WorktreeSourceSelection,
 } from '@moonshot-ai/app-core/lib';
 import { getKimiWebApi } from '../client/deps';
+import { configStore } from './config';
 import { clientPinia } from './pinia';
 import { workspacesStore } from './workspaces';
 
@@ -78,9 +79,13 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
     return workspacesStore().mergedWorkspaces.find((workspace) => workspace.id === workspaceId);
   }
 
+  function worktreeEnabled(): boolean {
+    return configStore().experimentalFlags?.['worktree'] === true;
+  }
+
   function supportsWorktree(workspaceId: string): boolean {
     const workspace = workspaceOf(workspaceId);
-    return workspace !== undefined && workspace.hostId === undefined;
+    return worktreeEnabled() && workspace !== undefined && workspace.hostId === undefined;
   }
 
   function selectEnvironment(environment: NewSessionEnvironment): void {
@@ -129,6 +134,7 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
   }
 
   function availability(workspaceId: string | null | undefined): WorktreeAvailability {
+    if (!worktreeEnabled()) return 'disabled';
     if (workspaceId === null || workspaceId === undefined) return 'loading';
     const workspace = workspaceOf(workspaceId);
     if (workspace === undefined) return 'loading';

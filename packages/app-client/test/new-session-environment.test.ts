@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppWorkspace, WorkspaceGitBranches } from '@moonshot-ai/app-core/api';
 import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import { configStore } from '../src/stores/config';
 import { useNewSessionEnvironmentStore } from '../src/stores/newSessionEnvironment';
 import { workspacesStore } from '../src/stores/workspaces';
 import { memoryStorage } from '../src/testing/worktreeFixtures';
@@ -43,6 +44,7 @@ beforeEach(() => {
     api: () => ({ getWorkspaceGitBranches }) as never,
     t: (key) => key,
   });
+  configStore().experimentalFlags = { worktree: true };
   const store = workspacesStore();
   store.workspaces = [workspace('git'), workspace('plain'), workspace('remote', { hostId: 'dev' })];
   store.hiddenWorkspaceIds = [];
@@ -50,6 +52,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  configStore().experimentalFlags = {};
   workspacesStore().workspaces = [];
   workspacesStore().storedActiveWorkspaceId = null;
   resetKimiClientDeps();
@@ -68,6 +71,19 @@ describe('new session environment', () => {
     expect(restarted.preferred).toBe('local');
     expect(restarted.effectiveEnvironment('git')).toBe('local');
     expect(restarted.worktreeRequest('git')).toBeUndefined();
+  });
+
+  it('stays Local without asking for branches while the server has worktrees turned off', async () => {
+    configStore().experimentalFlags = {};
+    const store = freshStore();
+    store.selectEnvironment('worktree');
+
+    await store.ensureBranches('git');
+
+    expect(store.availability('git')).toBe('disabled');
+    expect(store.effectiveEnvironment('git')).toBe('local');
+    expect(store.worktreeRequest('git')).toBeUndefined();
+    expect(getWorkspaceGitBranches).not.toHaveBeenCalled();
   });
 
   it('is temporarily unavailable while the git check is loading', async () => {

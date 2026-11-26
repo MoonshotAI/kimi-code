@@ -75,7 +75,7 @@ describe('useKimiWebClient worktree session', () => {
         capabilities: {},
         openInApps: [],
         dangerousBypassAuth: false,
-        experimentalFlags: {},
+        experimentalFlags: { worktree: true },
         backend: 'v2' as const,
         webTitle: '',
       })),

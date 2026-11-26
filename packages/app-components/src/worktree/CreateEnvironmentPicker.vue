@@ -133,6 +133,7 @@ function onPanelKeydown(event: KeyboardEvent): void {
 
 <template>
   <CreatePicker
+    v-if="view.availability !== 'disabled'"
     ref="picker"
     v-model:open="open"
     class="wce"
