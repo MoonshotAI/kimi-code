@@ -174,7 +174,7 @@ class WebDriver extends PageDriver {
 }
 
 export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'web'>> {
-  const assets = repoPath('apps', 'kimi-code', 'dist-web', 'index.html');
+  const assets = repoPath('apps', 'kimi-code', 'web-dist', 'index.html');
   if (!existsSync(assets)) throw new Error(`${assets} does not exist; build the web assets first with "pnpm sync:web".`);
   const ownPorts = workerWebPorts(test.info().parallelIndex);
   const server = await TerminalProcess.start({
