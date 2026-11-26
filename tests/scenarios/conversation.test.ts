@@ -178,6 +178,7 @@ describe('conversation over KAP', () => {
     );
     const session = await kap.createSession();
 
+    model.expectCacheBreak('the argument correction is dropped once the retry succeeds', { at: 'history' });
     await kap.prompt(session.id, 'run it');
     await kap.waitIdle(session.id);
 
@@ -545,6 +546,7 @@ describe('conversation over KAP', () => {
     expect(socket.turns(session.id)).toEqual(before);
 
     const snapshots = socket.conversation(session.id).filter((frame) => frame.type === 'turns').length;
+    model.expectCacheBreak('undo rewrites the history', { at: 'history' });
     expect((await kap.undo(session.id, before[0]!.turn_id)).removed_turn_ids).toEqual(turnIds);
     expect(await kap.turns(session.id)).toEqual([]);
     const removed = await socket.waitFor((frame) => frame.type === 'turns.removed' && frame['session_id'] === session.id);
@@ -643,6 +645,7 @@ describe('conversation over KAP', () => {
     const afterFailure = await lastTurnAfter(resume);
     expect(afterFailure.result).toEqual({ continued: true });
     expect(afterFailure.turn).toMatchObject({ status: 'ended', outcome: 'completed' });
+    model.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await kap.undo(session.id, socket.turns(session.id)[0]!.turn_id);
     await expect(resume()).rejects.toMatchObject({ code: 40940 });
 

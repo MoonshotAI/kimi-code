@@ -2247,6 +2247,8 @@ describe('FullCompaction', () => {
     'compacts again instead of cancelling the turn when the compaction it waits for is discarded',
     async ({ agent: ctx, model }) => {
       ctx.appendExchange(1, 'old user one', 'old assistant one', 100_000);
+      model.expectCacheBreak('the stale compaction drops the oldest exchange to fit the window', { at: 'history' });
+      model.expectCacheBreak('the fresh compaction drops the same exchange', { at: 'history' });
       model.lane('compaction').script(held('stale-summary', say('Stale summary.')), say('Fresh summary.'));
       model.script(withUsage({ input: 900_000, output: 1 }, say('First turn answer.')), say('Continued the goal.'));
       const firstTurnEnded = ctx.untilTurnEnd();
@@ -4522,6 +4524,7 @@ describe('FullCompaction cache probe', () => {
     await ctx.untilTurnEnd();
     const completed = ctx.once('compaction.completed');
 
+    ctx.expectCacheBreak('a truncated summary is retried without the oldest message', { at: 'history' });
     await ctx.rpc.beginCompaction({});
     await completed;
 

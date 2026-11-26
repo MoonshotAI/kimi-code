@@ -39,6 +39,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "smol-toml": "^1.6.1",
     "ws": "^8.18.0"
   },

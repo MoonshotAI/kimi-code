@@ -1,5 +1,6 @@
 import { emissionsOf, type Emission } from '#/model/emission';
 import { jsonResponse, objectArguments, SSE_HEADERS, type ProtocolCodec, type ResolvedUsage } from '#/model/protocols/codec';
+import { pickedFields, promptSegment, type PromptPrefix } from '#/model/prompt-cache';
 import { asArray, asRecord, optionalString, stringOf } from '#/model/protocols/json';
 import type { ReplyStep, RequestView, ViewCall, ViewMessage, ViewPart } from '#/model/types';
 import { textOfParts } from '#/model/view';
@@ -8,6 +9,7 @@ export const anthropicCodec: ProtocolCodec = {
   name: 'anthropic',
   matches: (path) => path.endsWith('/messages') && !path.endsWith('/chat/completions'),
   parseRequest,
+  promptPrefix,
   encodeStream(step, context) {
     const emissions = emissionsOf({ ...step, interleaveCalls: false }, (callIndex, call) => context.callId(callIndex, call));
     const start = event('message_start', {
@@ -160,6 +162,43 @@ function errorTypeOf(status: number): string {
     default:
       return 'api_error';
   }
+}
+
+function promptPrefix(body: unknown): PromptPrefix {
+  const record = asRecord(body);
+  return {
+    cacheKey: optionalString(asRecord(record['metadata'])['user_id']),
+    model: optionalString(record['model']),
+    segments: [
+      promptSegment('params', 'params', pickedFields(record, ['model', 'thinking', 'output_config'])),
+      ...asArray(record['tools']).map((tool, index) => promptSegment('tools', `tools[${index}] ${stringOf(asRecord(tool)['name'])}`, withoutCacheMarker(tool))),
+      ...contentBlocks(record['system']).map((block, index) => promptSegment('system', `system[${index}]`, withoutCacheMarker(block))),
+      ...asArray(record['messages']).flatMap((raw, index) => {
+        const message = asRecord(raw);
+        const label = `messages[${index}] ${stringOf(message['role'])}`;
+        return [
+          promptSegment('messages', label, { ...message, content: undefined }),
+          ...contentBlocks(message['content']).map((block, position) => promptSegment('messages', `${label} content[${position}]`, blockWithoutCacheMarkers(block))),
+        ];
+      }),
+    ],
+  };
+}
+
+function withoutCacheMarker(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
+  const { cache_control: _marker, ...rest } = value as Record<string, unknown>;
+  return rest;
+}
+
+function blockWithoutCacheMarkers(block: unknown): unknown {
+  const rest = asRecord(withoutCacheMarker(block));
+  if (rest['type'] !== 'tool_result' || !Array.isArray(rest['content'])) return withoutCacheMarker(block);
+  return { ...rest, content: rest['content'].map(withoutCacheMarker) };
+}
+
+function contentBlocks(content: unknown): readonly unknown[] {
+  return typeof content === 'string' ? [{ type: 'text', text: content }] : asArray(content);
 }
 
 function parseRequest(body: unknown): RequestView {

@@ -314,6 +314,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'second prompt' }] });
     await ctx.untilTurnEnd();
 
+    ctx.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await ctx.undoHistory(1);
     ctx.mockNextResponse({ type: 'text', text: 'third answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'third prompt' }] });

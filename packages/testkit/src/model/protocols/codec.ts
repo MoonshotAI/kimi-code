@@ -1,4 +1,5 @@
 import { TestkitError } from '#/errors';
+import type { PromptPrefix } from '#/model/prompt-cache';
 import type { ErrorSpec, ProtocolName, ReplyStep, RequestView, ToolCallSpec } from '#/model/types';
 
 export interface ResolvedUsage {
@@ -37,6 +38,7 @@ export interface ProtocolCodec {
   readonly name: ProtocolName;
   matches(path: string): boolean;
   parseRequest(body: unknown, path: string): RequestView;
+  promptPrefix(body: unknown, path: string): PromptPrefix;
   encodeStream(step: ReplyStep, context: EncodeContext): StreamEncoding;
   encodeStreamError(error: ErrorSpec): string;
   encodeJson(step: ReplyStep, context: EncodeContext): EncodedResponse;

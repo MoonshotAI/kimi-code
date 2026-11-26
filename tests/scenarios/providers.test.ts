@@ -84,3 +84,28 @@ describe.each(PROVIDERS)('the engine reading a $type stream split at random byte
     expect(items.filter((item) => item.type === 'assistant_message').map((item) => item['text'])).toEqual(['先检查一下。', '完成了 ✅']);
   });
 });
+
+describe.each(PROVIDERS)('the engine keeping one prompt cache prefix with a $type provider', ({ type }) => {
+  const test = base.extend<ScenarioFixtures>(scenarioFixtures({ provider: type, modelOptions: { checkPromptCache: true, reportCachedTokens: true } }));
+
+  test('extends the previous request on every step and turn and records the cached tokens', async ({ kap, model }) => {
+    model.script(bash(`echo cache-${type}`), say('first answer'), say('second answer'));
+    const session = await kap.createSession();
+
+    await kap.prompt(session.id, 'run it');
+    await kap.waitIdle(session.id);
+    await kap.prompt(session.id, 'run it again');
+    await kap.waitIdle(session.id);
+
+    const main = model.promptCache().filter((entry) => entry.role === 'main');
+    expect(main.map(({ request, baseline, reusedFrom }) => ({ request, baseline, reusedFrom }))).toEqual([
+      { request: main[0]?.request, baseline: undefined, reusedFrom: undefined },
+      { request: main[1]?.request, baseline: main[0]?.request, reusedFrom: main[0]?.request },
+      { request: main[2]?.request, baseline: main[1]?.request, reusedFrom: main[1]?.request },
+    ]);
+    expect(main.map((entry) => entry.break)).toEqual([undefined, undefined, undefined]);
+    const [, second] = await kap.turns(session.id);
+    expect(second?.['steps']).toEqual([expect.objectContaining({ usage: expect.objectContaining({ input_cache_read: main[2]?.reusedTokens }) })]);
+    expect(main[2]?.reusedTokens).toBeGreaterThan(0);
+  });
+});

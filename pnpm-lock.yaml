@@ -1432,6 +1432,9 @@ importers:
 
   packages/testkit:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.3.6)
       smol-toml:
         specifier: ^1.6.1
         version: 1.6.1
