@@ -446,6 +446,7 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
         statusCode,
         message,
         retryable: isTransientHttpStatus(statusCode),
+        code,
         ...statusInfo,
       });
     }
@@ -457,6 +458,7 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
         businessCode: error.status,
         message,
         retryable: error.status === undefined || isTransientHttpStatus(error.status),
+        code,
         ...statusInfo,
       });
     }

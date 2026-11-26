@@ -1,4 +1,7 @@
-import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
+import {
+  isBusinessMembershipRevokedCode,
+  parseKimiCodeCustomHeaders,
+} from '@moonshot-ai/kimi-code-oauth';
 import {
   apiKeyEnvMissingMessage,
   declaredProviderCredential,
@@ -717,8 +720,9 @@ export class ProviderCatalogService extends Disposable implements IProviderCatal
       const oauthRef = auth.oauth;
       const providerKey = auth.oauthProviderKey ?? providerName;
       const tokens = this.oauth;
-      return createOAuthCredentialProvider((options) =>
-        tokens.getAccessToken(providerKey, oauthRef, { force: options?.force === true }),
+      return createOAuthCredentialProvider(
+        (options) => tokens.getAccessToken(providerKey, oauthRef, { force: options?.force === true }),
+        { isNonRecoverableCode: isBusinessMembershipRevokedCode },
       );
     }
     if (auth.aws !== undefined) {

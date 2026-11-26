@@ -14,6 +14,12 @@ export function errorStatusCode(error: unknown): number | undefined {
   return typeof status === 'number' ? status : undefined;
 }
 
+export function errorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const code = (error as { readonly code?: unknown }).code;
+  return typeof code === 'string' && code.length > 0 ? code : undefined;
+}
+
 export class SyntaxRequestFormatError extends Error {
   toLlmErrorMessage(): LlmErrorMessage<'syntax'> {
     return { kind: 'syntax', code: 'request_format', message: this.message };

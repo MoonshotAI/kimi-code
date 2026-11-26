@@ -163,7 +163,21 @@ function llmErrorName(error: LlmErrorMessage): string | undefined {
 }
 
 function llmErrorDetails(error: LlmErrorMessage): Readonly<Record<string, unknown>> | undefined {
-  if (!('statusCode' in error) && !('requestId' in error) && !('headers' in error)) return undefined;
+  const providerErrorCode =
+    'code' in error &&
+    typeof error.code === 'string' &&
+    error.code.length > 0 &&
+    !isErrorCode(error.code)
+      ? error.code
+      : undefined;
+  if (
+    !('statusCode' in error) &&
+    !('requestId' in error) &&
+    !('headers' in error) &&
+    providerErrorCode === undefined
+  ) {
+    return undefined;
+  }
   const headers = 'headers' in error ? error.headers : null;
   const traceId =
     headers === null || headers === undefined
@@ -173,6 +187,7 @@ function llmErrorDetails(error: LlmErrorMessage): Readonly<Record<string, unknow
     requestId: 'requestId' in error ? error.requestId : undefined,
     statusCode: 'statusCode' in error ? error.statusCode : undefined,
     traceId,
+    ...(providerErrorCode !== undefined ? { providerErrorCode } : {}),
   };
 }
 

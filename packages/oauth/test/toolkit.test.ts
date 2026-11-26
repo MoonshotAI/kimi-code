@@ -749,4 +749,80 @@ describe('KimiOAuthToolkit', () => {
     expect(write).toHaveBeenCalledWith(config);
     await expect(storage.load('kimi-code')).resolves.toBeUndefined();
   });
+
+  it('skips force refresh and goes straight to device login when /models returns 401 REASON_BUSINESS_MEMBER_REMOVED', async () => {
+    const storage = new MemoryTokenStorage();
+    storage.tokens.set('kimi-code', token('removed-access'));
+    const tokenCalls: string[] = [];
+    const fetchImpl = vi.fn(
+      async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith('/api/oauth/device_authorization')) {
+        return new Response(
+          JSON.stringify({
+            user_code: 'ABCD-1234',
+            device_code: 'dev-code-1',
+            verification_uri_complete: 'https://auth.example/verify',
+            interval: 1,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.endsWith('/api/oauth/token')) {
+        const body = new URLSearchParams(typeof init?.body === 'string' ? init.body : '');
+        tokenCalls.push(body.get('grant_type') ?? '');
+        return new Response(
+          JSON.stringify({
+            access_token: 'device-fresh-access',
+            refresh_token: 'device-fresh-refresh',
+            expires_in: 3600,
+            scope: 'kimi-code',
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.endsWith('/models')) {
+        const auth = new Headers(init?.headers).get('Authorization');
+        if (auth === 'Bearer removed-access') {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 'REASON_BUSINESS_MEMBER_REMOVED',
+                message: 'removed',
+                type: 'invalid_authentication_error',
+              },
+            }),
+            { status: 401, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            data: [{ id: 'kimi-for-coding', limit: { context: 200000 } }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const config = { providers: {} };
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      fetchImpl,
+      now: () => 100,
+      sleep: async () => {},
+      configAdapter: {
+        read: () => config,
+        write: () => {},
+        apply: () => ({ defaultModel: 'kimi-code/kimi-for-coding', defaultThinking: true }),
+      },
+    });
+
+    await expect(toolkit.login()).resolves.toMatchObject({ ok: true });
+    expect(tokenCalls).toEqual(['urn:ietf:params:oauth:grant-type:device_code']);
+  });
 });

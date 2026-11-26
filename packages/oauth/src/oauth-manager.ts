@@ -5,7 +5,13 @@ import { dirname } from 'node:path';
 import lockfile from 'proper-lockfile';
 
 import { DeviceCodeTimeoutError, OAuthAccessDeniedError, OAuthError, OAuthUnauthorizedError } from './errors';
-import { pollDeviceToken, refreshAccessToken, requestDeviceAuthorization } from './oauth';
+import type { WorkspaceTarget } from './managed-workspaces';
+import {
+  pollDeviceToken,
+  refreshAccessToken,
+  requestDeviceAuthorization,
+  switchWorkspaceToken,
+} from './oauth';
 import type { DevicePollResult, RefreshOptions } from './oauth';
 import type { TokenStorage } from './storage';
 import { classifyToken, revokedTombstone, type TokenState } from './token-state';
@@ -48,6 +54,14 @@ export interface OAuthManagerOptions {
         options?: ManagerRefreshOptions,
       ) => Promise<TokenInfo>)
     | undefined;
+  readonly switchWorkspaceImpl?:
+    | ((
+        config: OAuthFlowConfig,
+        refreshToken: string,
+        target: WorkspaceTarget,
+        options?: ManagerRefreshOptions,
+      ) => Promise<TokenInfo>)
+    | undefined;
   readonly requestDeviceImpl?:
     | ((config: OAuthFlowConfig) => Promise<DeviceAuthorization>)
     | undefined;
@@ -71,6 +85,7 @@ export class OAuthManager {
   private readonly now: () => number;
   private readonly sleep: Sleep;
   private readonly refreshImpl: NonNullable<OAuthManagerOptions['refreshTokenImpl']>;
+  private readonly switchImpl: NonNullable<OAuthManagerOptions['switchWorkspaceImpl']>;
   private readonly requestImpl: NonNullable<OAuthManagerOptions['requestDeviceImpl']>;
   private readonly pollImpl: NonNullable<OAuthManagerOptions['pollDeviceImpl']>;
   private readonly deviceHeaders: (() => OAuthRequestHeaders | undefined) | undefined;
@@ -78,6 +93,7 @@ export class OAuthManager {
   private readonly onRefresh: ((outcome: OAuthRefreshOutcome) => void) | undefined;
 
   private inFlightRefresh: { promise: Promise<string>; force: boolean } | undefined;
+  private inFlightSwitch: Promise<TokenInfo> | undefined;
 
   constructor(options: OAuthManagerOptions) {
     this.config = options.config;
@@ -92,6 +108,13 @@ export class OAuthManager {
       options.refreshTokenImpl ??
       ((config, refreshToken, refreshOptions) =>
         refreshAccessToken(config, refreshToken, {
+          ...refreshOptions,
+          deviceHeaders: this.resolveDeviceHeaders(),
+        }));
+    this.switchImpl =
+      options.switchWorkspaceImpl ??
+      ((config, refreshToken, target, refreshOptions) =>
+        switchWorkspaceToken(config, refreshToken, target, {
           ...refreshOptions,
           deviceHeaders: this.resolveDeviceHeaders(),
         }));
@@ -183,6 +206,9 @@ export class OAuthManager {
   }
 
   async ensureFresh(options: { force?: boolean } = {}): Promise<string> {
+    if (this.inFlightSwitch !== undefined) {
+      return this.inFlightSwitch.catch(() => undefined).then(() => this.ensureFresh(options));
+    }
     const force = options.force === true;
     const current = this.inFlightRefresh;
     if (current !== undefined) {
@@ -199,6 +225,49 @@ export class OAuthManager {
     });
     this.inFlightRefresh = { promise, force };
     return promise;
+  }
+
+  async switchWorkspace(target: WorkspaceTarget): Promise<TokenInfo> {
+    const prior = this.inFlightSwitch ?? this.inFlightRefresh?.promise;
+    const run = (
+      prior === undefined ? this.doSwitchWorkspace(target) : prior.catch(() => undefined).then(() => this.doSwitchWorkspace(target))
+    ).finally(() => {
+      if (this.inFlightSwitch === run) {
+        this.inFlightSwitch = undefined;
+      }
+    });
+    this.inFlightSwitch = run;
+    return run;
+  }
+
+  private async doSwitchWorkspace(target: WorkspaceTarget): Promise<TokenInfo> {
+    const release = await this.acquireRefreshLock();
+    try {
+      const state = await this.loadState();
+      switch (state.kind) {
+        case 'missing':
+          throw new OAuthUnauthorizedError(
+            `No token for "${this.config.name}". Run /login to authenticate.`,
+          );
+        case 'revoked':
+          throw new OAuthUnauthorizedError(
+            `Stored token for "${this.config.name}" was rejected; re-login required.`,
+          );
+        case 'valid':
+          break;
+      }
+      if (state.token.refreshToken.length === 0) {
+        throw new OAuthUnauthorizedError(
+          `Token for "${this.config.name}" has no refresh_token; re-login required.`,
+        );
+      }
+      const switched = await this.switchImpl(this.config, state.token.refreshToken, target);
+      await this.storage.save(this.config.name, switched);
+      this.notifyRefresh({ success: true });
+      return switched;
+    } finally {
+      await release();
+    }
   }
 
   private async doEnsureFresh(force: boolean): Promise<string> {

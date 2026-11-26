@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { readApiErrorMessage } from './api-error';
+import { readApiErrorDetails } from './api-error';
 import { DEFAULT_KIMI_CODE_OAUTH_HOST } from './constants';
 import { OAuthUnauthorizedError } from './errors';
 import { parseKimiCodeCustomHeaders } from './identity';
@@ -99,11 +99,13 @@ export interface ManagedKimiEnv {
 export class ManagedKimiCodeModelsAuthError extends OAuthUnauthorizedError {
   readonly status: number;
   readonly baseUrl: string;
+  readonly errorCode?: string;
 
   constructor(options: {
     readonly status: number;
     readonly baseUrl: string;
     readonly message: string;
+    readonly errorCode?: string;
     readonly credentialKind?: 'oauth' | 'apiKey' | undefined;
   }) {
     super(
@@ -114,6 +116,7 @@ export class ManagedKimiCodeModelsAuthError extends OAuthUnauthorizedError {
     this.name = 'ManagedKimiCodeModelsAuthError';
     this.status = options.status;
     this.baseUrl = options.baseUrl;
+    if (options.errorCode !== undefined) this.errorCode = options.errorCode;
   }
 }
 
@@ -514,7 +517,7 @@ export async function fetchManagedKimiCodeModels(
     },
   });
   if (!response.ok) {
-    const message = await readApiErrorMessage(
+    const details = await readApiErrorDetails(
       response,
       `Failed to list Kimi Code models (HTTP ${response.status}).`,
     );
@@ -522,11 +525,12 @@ export async function fetchManagedKimiCodeModels(
       throw new ManagedKimiCodeModelsAuthError({
         status: response.status,
         baseUrl,
-        message,
+        message: details.message,
+        ...(details.code !== undefined ? { errorCode: details.code } : {}),
         credentialKind: options.credentialKind,
       });
     }
-    throw new Error(message);
+    throw new Error(details.message);
   }
   const payload: unknown = await response.json();
   if (!isRecord(payload) || !Array.isArray(payload['data'])) {

@@ -242,9 +242,13 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
   }
   if (error instanceof RawAnthropicSDKAPIError) {
     const body = error.error as
-      | { error?: { type?: unknown; message?: unknown } }
+      | { error?: { type?: unknown; message?: unknown; code?: unknown } }
       | undefined;
     const message = typeof body?.error?.message === 'string' ? body.error.message : '';
+    const code =
+      typeof body?.error?.code === 'string' && body.error.code.length > 0
+        ? body.error.code
+        : undefined;
     const type =
       (typeof body?.error?.type === 'string' ? body.error.type : undefined) ?? error.type;
     const statusCode = source === 'stream' ? undefined : error.status;
@@ -274,22 +278,16 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
         statusCode,
         message,
         retryable: isTransientHttpStatus(statusCode),
+        code,
         ...statusInfo,
       });
     }
-    if (body !== undefined) {
+    if (body !== undefined || source === 'stream') {
       return toLlmStreamErrorMessage({
         businessCode: error.status,
         message,
         retryable: error.status === undefined || isTransientHttpStatus(error.status),
-        ...statusInfo,
-      });
-    }
-    if (source === 'stream') {
-      return toLlmStreamErrorMessage({
-        businessCode: error.status,
-        message: '',
-        retryable: error.status === undefined || isTransientHttpStatus(error.status),
+        code,
         ...statusInfo,
       });
     }

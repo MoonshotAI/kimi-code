@@ -79,10 +79,29 @@ describe('createOAuthCredentialProvider', () => {
     await expect(provider.resolve()).resolves.toEqual({ apiKey: 'tok' });
   });
 
-  it('recovers only from 401 errors', () => {
-    const provider = createOAuthCredentialProvider(() => Promise.resolve('tok'));
+  it('recovers only from 401 errors and skips non-recoverable error codes', () => {
+    const provider = createOAuthCredentialProvider(() => Promise.resolve('tok'), {
+      isNonRecoverableCode: (code) =>
+        code === 'REASON_BUSINESS_MEMBER_REMOVED' || code === 'REASON_BUSINESS_MEMBER_DISABLED',
+    });
     expect(provider.canRecover?.(Object.assign(new Error('x'), { status: 401 }))).toBe(true);
     expect(provider.canRecover?.(Object.assign(new Error('x'), { statusCode: 401 }))).toBe(true);
+    expect(
+      provider.canRecover?.({
+        kind: 'auth',
+        statusCode: 401,
+        code: 'REASON_BUSINESS_MEMBER_REMOVED',
+        message: 'removed',
+      }),
+    ).toBe(false);
+    expect(
+      provider.canRecover?.({
+        kind: 'auth',
+        statusCode: 401,
+        code: 'REASON_BUSINESS_MEMBER_DISABLED',
+        message: 'disabled',
+      }),
+    ).toBe(false);
     expect(provider.canRecover?.(Object.assign(new Error('x'), { statusCode: 403 }))).toBe(false);
     expect(provider.canRecover?.(new Error('boom'))).toBe(false);
   });

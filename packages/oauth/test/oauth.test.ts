@@ -6,12 +6,15 @@ import {
   OAuthConnectionError,
   OAuthError,
   OAuthUnauthorizedError,
+  OAuthWorkspaceSwitchError,
   RetryableRefreshError,
 } from '../src/errors';
 import {
   pollDeviceToken,
   refreshAccessToken,
   requestDeviceAuthorization,
+  switchWorkspaceToken,
+  WORKSPACE_SWITCH_GRANT_TYPE,
   type RefreshOptions,
 } from '../src/oauth';
 import { KIMI_CODE_PLATFORM } from '../src/identity';
@@ -639,5 +642,90 @@ describe('refreshAccessToken', () => {
     expect(err).not.toBeInstanceOf(RetryableRefreshError);
     expect(err).not.toBeInstanceOf(OAuthUnauthorizedError);
     expect(server.recorded.length).toBe(1);
+  });
+});
+
+describe('switchWorkspaceToken', () => {
+  let server: FakeOAuthServer;
+
+  beforeEach(async () => {
+    server = new FakeOAuthServer();
+    await server.start();
+  });
+
+  afterEach(async () => {
+    await server.stop();
+  });
+
+  function flowConfig(): OAuthFlowConfig {
+    return { name: 'kimi-code', oauthHost: server.host, clientId: 'cid-123' };
+  }
+
+  it('sends workspace_switch grant with explicit empty business_id for personal and id for business', async () => {
+    server.enqueue('/api/oauth/token', {
+      status: 200,
+      body: {
+        access_token: 'personal-at',
+        refresh_token: 'personal-rt',
+        expires_in: 3600,
+        scope: 'kimi-code',
+        token_type: 'Bearer',
+      },
+    });
+    server.enqueue('/api/oauth/token', {
+      status: 200,
+      body: {
+        access_token: 'biz-at',
+        refresh_token: 'biz-rt',
+        expires_in: 3600,
+        scope: 'kimi-code',
+        token_type: 'Bearer',
+      },
+    });
+
+    const personal = await switchWorkspaceToken(flowConfig(), 'rt-1', { kind: 'personal' });
+    expect(personal.accessToken).toBe('personal-at');
+    const firstParams = new URLSearchParams(server.recorded[0]!.body);
+    expect(firstParams.get('grant_type')).toBe(WORKSPACE_SWITCH_GRANT_TYPE);
+    expect(firstParams.has('business_id')).toBe(true);
+    expect(firstParams.get('business_id')).toBe('');
+
+    const biz = await switchWorkspaceToken(flowConfig(), 'personal-rt', {
+      kind: 'business',
+      businessId: 'biz-uuid-1',
+    });
+    expect(biz.accessToken).toBe('biz-at');
+    const secondParams = new URLSearchParams(server.recorded[1]!.body);
+    expect(secondParams.get('business_id')).toBe('biz-uuid-1');
+  });
+
+  it('fails fast without retrying on invalid_grant and throws OAuthWorkspaceSwitchError', async () => {
+    server.enqueue('/api/oauth/token', {
+      status: 400,
+      body: { error: 'invalid_grant', error_description: 'SSO cannot switch to personal' },
+    });
+    server.enqueue('/api/oauth/token', {
+      status: 200,
+      body: {
+        access_token: 'unreachable',
+        refresh_token: 'r',
+        expires_in: 60,
+        scope: '',
+        token_type: 'Bearer',
+      },
+    });
+
+    const err = await switchWorkspaceToken(
+      flowConfig(),
+      'rt-valid',
+      { kind: 'personal' },
+      { maxRetries: 3, backoffMs: () => 0 },
+    ).catch((error: unknown) => error);
+
+    expect(err).toBeInstanceOf(OAuthWorkspaceSwitchError);
+    expect(err).not.toBeInstanceOf(OAuthUnauthorizedError);
+    expect((err as OAuthWorkspaceSwitchError).committed).toBe(false);
+    expect((err as OAuthWorkspaceSwitchError).oauthError).toBe('invalid_grant');
+    expect(server.recorded).toHaveLength(1);
   });
 });

@@ -4,7 +4,12 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DeviceCodeTimeoutError, OAuthAccessDeniedError, OAuthUnauthorizedError } from '../src/errors';
+import {
+  DeviceCodeTimeoutError,
+  OAuthAccessDeniedError,
+  OAuthUnauthorizedError,
+  OAuthWorkspaceSwitchError,
+} from '../src/errors';
 import type { DevicePollResult } from '../src/oauth';
 import { OAuthManager } from '../src/oauth-manager';
 import { FileTokenStorage } from '../src/storage';
@@ -832,5 +837,136 @@ describe('OAuthManager + FileTokenStorage integration', () => {
     const persisted = await storage.load('kimi-code');
     expect(persisted?.accessToken).toBe('rotated-access');
     expect(persisted?.refreshToken).toBe('rotated-refresh');
+  });
+});
+
+describe('OAuthManager.switchWorkspace', () => {
+  it('waits for an in-flight refresh, uses the newly rotated refresh token, and blocks subsequent ensureFresh until committed', async () => {
+    const storage = new InMemoryStorage();
+    await storage.save(
+      'kimi-code',
+      makeToken({ accessToken: 'at-initial', refreshToken: 'rt-initial', expiresAt: currentNow + 100 }),
+    );
+
+    let resolveRefresh!: (token: TokenInfo) => void;
+    const refreshImpl = vi.fn(
+      () =>
+        new Promise<TokenInfo>((resolve) => {
+          resolveRefresh = resolve;
+        }),
+    );
+
+    let resolveSwitch!: (token: TokenInfo) => void;
+    const switchImpl = vi.fn(
+      () =>
+        new Promise<TokenInfo>((resolve) => {
+          resolveSwitch = resolve;
+        }),
+    );
+
+    const mgr = new OAuthManager({
+      config,
+      storage,
+      now,
+      refreshTokenImpl: refreshImpl,
+      switchWorkspaceImpl: switchImpl,
+    });
+
+    const pRefresh = mgr.ensureFresh();
+    await vi.waitFor(() => {
+      expect(refreshImpl).toHaveBeenCalledTimes(1);
+    });
+    const pSwitch = mgr.switchWorkspace({ kind: 'business', businessId: 'biz-1' });
+    const pAfterSwitch = mgr.ensureFresh();
+
+    resolveRefresh(
+      makeToken({
+        accessToken: 'at-refreshed',
+        refreshToken: 'rt-refreshed',
+        expiresAt: currentNow + 7200,
+      }),
+    );
+    await expect(pRefresh).resolves.toBe('at-refreshed');
+    await vi.waitFor(() => {
+      expect(switchImpl).toHaveBeenCalledWith(config, 'rt-refreshed', {
+        kind: 'business',
+        businessId: 'biz-1',
+      });
+    });
+
+    resolveSwitch(
+      makeToken({
+        accessToken: 'at-biz-1',
+        refreshToken: 'rt-biz-1',
+        expiresAt: currentNow + 7200,
+      }),
+    );
+    await expect(pSwitch).resolves.toMatchObject({ accessToken: 'at-biz-1' });
+    await expect(pAfterSwitch).resolves.toBe('at-biz-1');
+    expect((await storage.load('kimi-code'))?.refreshToken).toBe('rt-biz-1');
+  });
+
+  it('preserves the active token without writing a revoked tombstone when switchWorkspace fails with invalid_grant', async () => {
+    const storage = new InMemoryStorage();
+    const valid = makeToken({
+      accessToken: 'at-still-valid',
+      refreshToken: 'rt-still-valid',
+      expiresAt: currentNow + 7200,
+    });
+    await storage.save('kimi-code', valid);
+
+    const mgr = new OAuthManager({
+      config,
+      storage,
+      now,
+      switchWorkspaceImpl: vi
+        .fn()
+        .mockRejectedValue(
+          new OAuthWorkspaceSwitchError('target disabled', {
+            status: 400,
+            oauthError: 'invalid_grant',
+          }),
+        ),
+    });
+
+    await expect(mgr.switchWorkspace({ kind: 'business', businessId: 'disabled-biz' })).rejects.toThrow(
+      OAuthWorkspaceSwitchError,
+    );
+    await expect(storage.load('kimi-code')).resolves.toEqual(valid);
+    await expect(mgr.ensureFresh()).resolves.toBe('at-still-valid');
+  });
+
+  it('switches from a business workspace back to personal workspace and persists the rotated token', async () => {
+    const storage = new InMemoryStorage();
+    await storage.save(
+      'kimi-code',
+      makeToken({
+        accessToken: 'at-biz-current',
+        refreshToken: 'rt-biz-current',
+        expiresAt: currentNow + 7200,
+      }),
+    );
+    const switchImpl = vi.fn(async () =>
+      makeToken({
+        accessToken: 'at-personal-next',
+        refreshToken: 'rt-personal-next',
+        expiresAt: currentNow + 7200,
+      }),
+    );
+    const mgr = new OAuthManager({
+      config,
+      storage,
+      now,
+      switchWorkspaceImpl: switchImpl,
+    });
+
+    const next = await mgr.switchWorkspace({ kind: 'personal' });
+
+    expect(switchImpl).toHaveBeenCalledWith(config, 'rt-biz-current', { kind: 'personal' });
+    expect(next.accessToken).toBe('at-personal-next');
+    await expect(storage.load('kimi-code')).resolves.toMatchObject({
+      accessToken: 'at-personal-next',
+      refreshToken: 'rt-personal-next',
+    });
   });
 });

@@ -3,10 +3,14 @@ import {
   OAuthConnectionError,
   OAuthError,
   OAuthUnauthorizedError,
+  OAuthWorkspaceSwitchError,
   RetryableRefreshError,
 } from './errors';
+import type { WorkspaceTarget } from './managed-workspaces';
 import type { DeviceAuthorization, DeviceHeaders, OAuthFlowConfig, OAuthRequestHeaders, TokenInfo } from './types';
 import { isRecord } from './utils';
+
+export const WORKSPACE_SWITCH_GRANT_TYPE = 'urn:kimi:params:oauth:grant-type:workspace_switch';
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 
@@ -187,10 +191,15 @@ export interface RefreshOptions {
   readonly sleep?: ((ms: number) => Promise<void>) | undefined;
 }
 
-export async function refreshAccessToken(
+async function postTokenGrantWithRetry(
   config: OAuthFlowConfig,
-  refreshToken: string,
+  params: Record<string, string>,
   options: RefreshOptions,
+  classifyHttpError: (
+    status: number,
+    data: Record<string, unknown>,
+  ) => { readonly error: Error; readonly retryable: boolean },
+  exhaustedError: () => Error,
 ): Promise<TokenInfo> {
   const maxRetries = options.maxRetries ?? 3;
   const backoff = options.backoffMs ?? ((attempt) => 2 ** attempt * 1000);
@@ -207,47 +216,98 @@ export async function refreshAccessToken(
     let status: number;
     let data: Record<string, unknown>;
     try {
-      ({ status, data } = await postForm(
-        url,
-        {
-          client_id: config.clientId,
-          grant_type: 'refresh_token',
-          refresh_token: refreshToken,
-        },
-        options.deviceHeaders,
-      ));
+      ({ status, data } = await postForm(url, params, options.deviceHeaders));
     } catch (error) {
       lastError = error instanceof Error ? error : new OAuthError(String(error));
       if (attempt < maxRetries - 1) {
         await sleep(backoff(attempt));
         continue;
       }
-      throw lastError instanceof Error ? lastError : new OAuthError(String(lastError));
+      throw lastError;
     }
 
     if (status === 200 && typeof data['access_token'] === 'string') {
       return tokenFromResponse(data);
     }
 
-    const errorCode = typeof data['error'] === 'string' ? data['error'] : '';
-    const detail = extractApiErrorMessage(data);
-    if (status === 401 || status === 403 || errorCode === 'invalid_grant') {
-      throw new OAuthUnauthorizedError(detail ?? 'Token refresh unauthorized.');
+    const classified = classifyHttpError(status, data);
+    if (!classified.retryable) {
+      throw classified.error;
     }
-
-    const desc = detail ?? `Token refresh failed (HTTP ${status}).`;
-    if (RETRYABLE_STATUSES.has(status)) {
-      lastError = new RetryableRefreshError(desc);
-      if (attempt < maxRetries - 1) {
-        await sleep(backoff(attempt));
-        continue;
-      }
-    } else {
-      throw new OAuthError(desc);
+    lastError = classified.error;
+    if (attempt < maxRetries - 1) {
+      await sleep(backoff(attempt));
+      continue;
     }
   }
 
-  throw lastError ?? new OAuthError('Token refresh failed after retries.');
+  throw lastError ?? exhaustedError();
+}
+
+export async function refreshAccessToken(
+  config: OAuthFlowConfig,
+  refreshToken: string,
+  options: RefreshOptions,
+): Promise<TokenInfo> {
+  return postTokenGrantWithRetry(
+    config,
+    {
+      client_id: config.clientId,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    },
+    options,
+    (status, data) => {
+      const errorCode = typeof data['error'] === 'string' ? data['error'] : '';
+      const detail = extractApiErrorMessage(data);
+      if (status === 401 || status === 403 || errorCode === 'invalid_grant') {
+        return {
+          error: new OAuthUnauthorizedError(detail ?? 'Token refresh unauthorized.'),
+          retryable: false,
+        };
+      }
+      const desc = detail ?? `Token refresh failed (HTTP ${status}).`;
+      if (RETRYABLE_STATUSES.has(status)) {
+        return { error: new RetryableRefreshError(desc), retryable: true };
+      }
+      return { error: new OAuthError(desc), retryable: false };
+    },
+    () => new OAuthError('Token refresh failed after retries.'),
+  );
+}
+
+export async function switchWorkspaceToken(
+  config: OAuthFlowConfig,
+  refreshToken: string,
+  target: WorkspaceTarget,
+  options: RefreshOptions = {},
+): Promise<TokenInfo> {
+  const businessId = target.kind === 'business' ? target.businessId : '';
+  return postTokenGrantWithRetry(
+    config,
+    {
+      client_id: config.clientId,
+      grant_type: WORKSPACE_SWITCH_GRANT_TYPE,
+      refresh_token: refreshToken,
+      business_id: businessId,
+    },
+    options,
+    (status, data) => {
+      const errorCode =
+        typeof data['error'] === 'string' && data['error'].length > 0 ? data['error'] : undefined;
+      const detail = extractApiErrorMessage(data);
+      const desc = detail ?? `Workspace switch failed (HTTP ${status}).`;
+      return {
+        error: new OAuthWorkspaceSwitchError(desc, {
+          status,
+          ...(errorCode !== undefined ? { oauthError: errorCode } : {}),
+          committed: false,
+        }),
+        retryable: RETRYABLE_STATUSES.has(status),
+      };
+    },
+    () => new OAuthWorkspaceSwitchError('Workspace switch failed after retries.'),
+  );
 }
 
 export type { DeviceHeaders, OAuthRequestHeaders };

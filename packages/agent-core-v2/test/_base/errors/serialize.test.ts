@@ -156,4 +156,26 @@ describe('fromErrorPayload', () => {
     });
     expect(revived).not.toHaveProperty('statusCode');
   });
+
+  it('preserves upstream providerErrorCode on LLM auth errors', () => {
+    const payload = toErrorPayload({
+      kind: 'auth',
+      message: 'removed from workspace',
+      statusCode: 401,
+      code: 'REASON_BUSINESS_MEMBER_REMOVED',
+      requestId: 'req-401',
+      retryAfterMs: null,
+      headers: null,
+      retryable: false,
+    });
+    expect(payload).toMatchObject({
+      code: 'provider.auth_error',
+      retryable: false,
+      details: {
+        statusCode: 401,
+        requestId: 'req-401',
+        providerErrorCode: 'REASON_BUSINESS_MEMBER_REMOVED',
+      },
+    });
+  });
 });
