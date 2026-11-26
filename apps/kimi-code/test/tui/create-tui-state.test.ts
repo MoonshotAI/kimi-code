@@ -100,6 +100,7 @@ describe('createTUIState', () => {
 
     expect(state.ui).toBeInstanceOf(TuiMainScreen);
     expect(state.ui.mode).toBe('regular');
+    expect(state.ui.getShowHardwareCursor()).toBe(process.platform === 'win32');
     expect(state.dockContainer).toBeUndefined();
   });
 
@@ -117,6 +118,7 @@ describe('createTUIState', () => {
 
     expect(state.ui).toBeInstanceOf(TuiAltScreen);
     expect(state.ui.mode).toBe('fullscreen');
+    expect(state.ui.getShowHardwareCursor()).toBe(process.platform === 'win32');
     expect(state.appState.tuiMode).toBeUndefined();
   });
 

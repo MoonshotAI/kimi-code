@@ -1839,7 +1839,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				? this.prepareKittyScreen(screen)
 				: { lines: screen, evictedImageDeletion: "" };
 
-		let buffer = BEGIN_SYNCHRONIZED_OUTPUT;
+		const hideHardwareCursor =
+			cursorPos !== null && this.getShowHardwareCursor() && (fullRedraw || changedRows.some(Boolean));
+		let buffer = `${hideHardwareCursor ? "\x1b[?25l" : ""}${BEGIN_SYNCHRONIZED_OUTPUT}`;
 		if (fullRedraw) {
 			this.fullRedrawCount += 1;
 			const clearImages =
