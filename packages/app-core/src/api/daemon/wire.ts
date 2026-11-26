@@ -150,6 +150,7 @@ export interface WireWorktreeHeldPrompt {
   created_at: string;
   content: WireMessageContent[];
   skill?: { name: string; path?: string; args?: string };
+  skills?: { name: string; path?: string; args?: string }[];
   metadata?: Record<string, unknown>;
   failure?: { code: number; msg: string };
 }

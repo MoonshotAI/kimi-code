@@ -173,6 +173,7 @@ export interface AppWorktreeHeldPrompt {
   createdAt: string;
   content: AppMessageContent[];
   skill?: { name: string; path?: string; args?: string };
+  skills?: { name: string; path?: string; args?: string }[];
   metadata?: Record<string, unknown>;
   failure?: { code: number; msg: string };
 }

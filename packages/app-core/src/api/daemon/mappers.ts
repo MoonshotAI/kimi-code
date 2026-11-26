@@ -400,6 +400,7 @@ export function toAppWorktreeHeldPrompt(wire: WireWorktreeHeldPrompt): AppWorktr
     createdAt: wire.created_at,
     content: wire.content.map(toAppPromptContent),
     ...(wire.skill === undefined ? {} : { skill: wire.skill }),
+    ...(wire.skills === undefined ? {} : { skills: wire.skills }),
     ...(wire.metadata === undefined ? {} : { metadata: wire.metadata }),
     ...(wire.failure === undefined ? {} : { failure: wire.failure }),
   };

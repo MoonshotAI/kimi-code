@@ -22,6 +22,7 @@ import {
 import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
 import { offsetAttachmentLinkIndices } from '@moonshot-ai/app-composer/model';
 import { buildPromptContent, buildPromptMetadata } from '../lib/browserReferenceSubmission';
+import { contentToAttachments } from './attachmentsToContent';
 import { prepareMergedPromptSnapshots } from '../lib/composerMessageSnapshot';
 import { consumeSessionIntent, getKimiWebApi, t, type SessionCreatedSource } from './deps';
 import { markDraftPromotion } from './draftPromotion';
@@ -115,6 +116,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   });
   const pendingSubmitBySession = new Map<string, { promise: Promise<void>; resolve: () => void }>();
   const importedHeldFailures = new Set<string>();
+  const sentToWorktreeHold = new Map<string, { promptId: string; prompt: PromptEnvelope }>();
   const worktreeWaitersBySession = new Map<string, Array<(ready: boolean) => void>>();
 
   function sessionOf(sid: string): AppSession | undefined {
@@ -156,7 +158,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       'kimiWeb.promptId': held.promptId,
       ...(snapshot === undefined ? {} : { 'kimiWeb.composerSnapshot': snapshot }),
     };
-    if (held.kind === 'prompt') return buildOptimisticUserMessage(sid, nextOptimisticMsgId(), held.content, [], metadata);
+    if (held.kind === 'prompt') return buildOptimisticUserMessage(sid, nextOptimisticMsgId(), held.content, held.skills ?? [], metadata);
     const skill = held.skill ?? { name: '' };
     return buildOptimisticUserMessage(
       sid,
@@ -176,6 +178,17 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     promptStore().holdFirstPrompt(sid, takeOptimisticMessage(sid, held.promptId) ?? heldPromptMessage(sid, held));
   }
 
+  function heldPromptEnvelope(sid: string, held: AppWorktreeHeldPrompt): PromptEnvelope {
+    const sent = sentToWorktreeHold.get(sid);
+    if (sent?.promptId === held.promptId) return sent.prompt;
+    return {
+      text: held.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n'),
+      snapshot: heldPromptSnapshot(held),
+      attachments: contentToAttachments(held.content, sid),
+      skills: held.skills ?? [],
+    };
+  }
+
   function importFailedHeldPrompt(sid: string, held: AppWorktreeHeldPrompt): void {
     if (importedHeldFailures.has(held.promptId)) return;
     importedHeldFailures.add(held.promptId);
@@ -186,17 +199,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       return;
     }
     if (!(promptStore().queuedBySession[sid] ?? []).some((entry) => entry.id === held.promptId)) {
-      const text = held.content
-        .flatMap((part) => (part.type === 'text' ? [part.text] : []))
-        .join('\n');
-      promptStore().restoreQueueEntry(sid, {
-        text,
-        snapshot: heldPromptSnapshot(held),
-        attachments: [],
-        skills: [],
-        enqueuedAt: Date.now(),
-        id: held.promptId,
-      });
+      promptStore().restoreQueueEntry(sid, { ...heldPromptEnvelope(sid, held), enqueuedAt: Date.now(), id: held.promptId });
       promptStore().noteQueueFlushFailure(sid, held.promptId, MAX_QUEUE_FLUSH_FAILURES);
     }
     pushSendFailure('sendPrompt', failure, sid);
@@ -217,6 +220,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   function syncWorktreeHold(sid: string): void {
     const session = sessionOf(sid);
     if (session === undefined) {
+      sentToWorktreeHold.delete(sid);
       promptStore().releaseHeldFirstPrompt(sid);
       settleWorktreeWaiters(sid, false);
       return;
@@ -229,6 +233,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     const shown = promptStore().releaseHeldFirstPrompt(sid);
     if (held !== undefined) importFailedHeldPrompt(sid, held);
     else if (shown !== undefined) promptStore().addOptimisticMessage(sid, shown);
+    sentToWorktreeHold.delete(sid);
     if (worktreeHoldsPrompts(sid) || worktreeBlocksSend(sid)) return;
     if (held === undefined) resumeQueueIfIdle(sid);
     settleWorktreeWaiters(sid, true);
@@ -609,6 +614,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
         : await attempt();
       if (result === null) return rollBackSubmit(sid, tempId);
       if (result.status === 'failed') throw new PromptFailedError(promptId);
+      if (opts?.throughWorktreeHold === true) sentToWorktreeHold.set(sid, { promptId, prompt });
 
       outcome = 'ok';
       return outcome;

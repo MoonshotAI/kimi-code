@@ -254,6 +254,39 @@ describe('worktree first-prompt hold', () => {
     ]);
   });
 
+  it('restores the attachments and skills of a failed held prompt after the client reloads', async () => {
+    const { ws } = await createRig({ worktree: false });
+    openExisting({
+      ...worktree('ready', { path: '/wt/a' }),
+      heldPrompt: {
+        promptId: 'held-1',
+        kind: 'prompt',
+        createdAt: '2026-11-18T00:00:00.000Z',
+        content: [
+          { type: 'text', text: 'look' },
+          { type: 'image', source: { kind: 'file', fileId: 'f-1' }, name: 'shot.png' },
+          { type: 'file', fileId: 'f-2', name: 'notes.txt', mediaType: 'text/plain', size: 3 },
+        ],
+        skills: [{ name: 'review', args: 'now' }],
+        failure: { code: 50001, msg: 'boom' },
+      },
+    });
+
+    ws.syncWorktreeHold(SID);
+
+    expect(promptStore().queuedBySession[SID]).toEqual([
+      expect.objectContaining({
+        id: 'held-1',
+        text: 'look',
+        attachments: [
+          { kind: 'image', fileId: 'f-1', name: 'shot.png' },
+          { kind: 'file', fileId: 'f-2', name: 'notes.txt', mediaType: 'text/plain', size: 3 },
+        ],
+        skills: [{ name: 'review', args: 'now' }],
+      }),
+    ]);
+  });
+
   it('shows a prompt the server holds after the client reloads', async () => {
     const { ws } = await createRig({ worktree: false });
     openExisting({
@@ -382,7 +415,9 @@ describe('worktree first-prompt hold', () => {
 
   it('puts a held prompt the server could not send at the head of the queue, once', async () => {
     const { api, ws } = await createRig();
-    await start(ws, 'first');
+    const attachments = [{ kind: 'image' as const, fileId: 'f-1', name: 'shot.png' }];
+    const skills = [{ name: 'review' }];
+    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'first', attachments, skills }));
     ws.syncWorktreeHold(SID);
     await send(ws, 'second');
     const promptId = heldPrompt()!.promptId;
@@ -397,6 +432,7 @@ describe('worktree first-prompt hold', () => {
       [promptId, 'first'],
       [expect.any(String), 'second'],
     ]);
+    expect(promptStore().queuedBySession[SID]?.[0]).toMatchObject({ attachments, skills });
     expect(warningsStore().warnings).toHaveLength(1);
 
     ws.resumeQueueIfIdle(SID);
