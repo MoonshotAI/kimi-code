@@ -290,7 +290,9 @@ entries:
   - id: E3
     operation: Switch the git branch in a terminal between two turns
     promise: keeps
-    gap: Needs a workspace.git action; a workspace that is a git work tree also changes what asks for approval.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/git-branch-switch-keeps-the-prefix.spec.ts
 
   - id: E4
     operation: Trust a new folder, then hold a conversation across a restart

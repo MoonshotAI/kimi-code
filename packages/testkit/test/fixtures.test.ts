@@ -21,7 +21,7 @@ import { CLI_BUILD_ENV, KIMI_SERVICE_URL, kimiCliBuild, kimiCliCommand, kimiCliE
 import { kimiConfigToml, mergeKimiConfig } from '#/fixtures/config';
 import { expectGolden, jsonDifferences, REFRESH_ENV, stableJson } from '#/fixtures/golden';
 import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, UNIT_TEST_SWITCHES } from '#/fixtures/env';
-import { bashPathOf, createGitWorktree } from '#/fixtures/git';
+import { bashPathOf, createGitRepository, createGitWorktree, runGit } from '#/fixtures/git';
 import { createTestHome, osHomeEnv, type TestHome } from '#/fixtures/home';
 import { fakeMcpServer, readMcpCalls, readMcpStarts, writeMcpConfig, type McpServerEntry } from '#/fixtures/mcp';
 import { startFakeMcpHttpServer } from '#/fixtures/mcp-http';
@@ -69,6 +69,24 @@ describe('createGitWorktree', () => {
       expect(await readFile(join(layout.worktree, 'src', 'tracked.txt'), 'utf8')).toBe('one\n');
       expect(await readFile(join(layout.worktree, '.git'), 'utf8')).toMatch(/^gitdir: .*worktrees[\\/]app-fix\s*$/);
       expect(existsSync(join(layout.main, '.git', 'HEAD'))).toBe(true);
+    } finally {
+      await home.remove();
+    }
+  });
+});
+
+describe('createGitRepository', () => {
+  it('commits each branch on top of main and leaves main checked out, so runGit can switch to a branch like a user', async () => {
+    const home = await createTestHome('git-branches');
+    try {
+      const dir = join(home.workspace, 'app');
+      await createGitRepository(dir, { files: { 'notes.txt': 'alpha\n' }, branches: { feature: { 'notes.txt': 'beta\n' } } });
+
+      expect((await runGit(dir, ['symbolic-ref', '--short', 'HEAD'])).trim()).toBe('main');
+      expect(await readFile(join(dir, 'notes.txt'), 'utf8')).toBe('alpha\n');
+      await runGit(dir, ['checkout', '-q', 'feature']);
+      expect(await readFile(join(dir, 'notes.txt'), 'utf8')).toBe('beta\n');
+      expect((await runGit(dir, ['status', '--porcelain'])).trim()).toBe('');
     } finally {
       await home.remove();
     }

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   contentDigest,
+  createGitRepository,
   createTestHome,
   directoryChanges,
   mergeKimiConfig,
@@ -17,6 +18,7 @@ import {
   type FakeMcpTool,
   type KimiConfig,
   type McpRemoteServerEntry,
+  runGit,
   type TestHome,
   until,
 } from '@moonshot-ai/testkit/fixtures';
@@ -28,7 +30,7 @@ import { startDesktop } from '../surfaces/desktop';
 import { clockFileOf } from '../surfaces/environment';
 import { startTui } from '../surfaces/tui';
 import { startWeb } from '../surfaces/web';
-import { CLOCK_TITLE, DISK_TITLES, MCP_TITLES, STEP_TITLES } from './steps';
+import { CLOCK_TITLE, DISK_TITLES, GIT_TITLE, MCP_TITLES, STEP_TITLES } from './steps';
 import {
   absenceReason,
   StartupFailure,
@@ -77,8 +79,13 @@ export interface McpServerHandle {
   disconnect(): Promise<void>;
 }
 
+export interface ScenarioGit {
+  readonly branches?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+}
+
 export interface ScenarioOptions {
   readonly workspace?: Readonly<Record<string, string>>;
+  readonly git?: ScenarioGit;
   readonly clock?: string;
   readonly provider?: ScenarioProvider;
   readonly config?: KimiConfig;
@@ -96,6 +103,7 @@ export interface Workspace {
   write(path: string, content: string): Promise<void>;
   expectFile(path: string, content: string): Promise<void>;
   expectMissing(path: string): Promise<void>;
+  git(args: readonly string[]): Promise<void>;
 }
 
 export interface ScenarioContext<S extends Surface> {
@@ -288,6 +296,7 @@ class ScenarioSession {
   private readonly editorMcpServers: EditorMcpServer[] = [];
   private driver: SurfaceDriver<Surface> | undefined;
   private baseline: DirectorySnapshot | undefined;
+  private gitWorkspace = false;
   private interfaceChecks = 0;
   private frames: FramePolicy = 'on-failure';
   private testInfo: TestInfo | undefined;
@@ -315,6 +324,8 @@ class ScenarioSession {
     this.home = home;
     assertOutsideGitWorkTree(home.workspace);
     await seedWorkspace(home.workspace, options.workspace ?? {});
+    if (options.git !== undefined) await createGitRepository(home.workspace, { branches: options.git.branches });
+    this.gitWorkspace = options.git !== undefined;
     const model = await startFakeModel();
     this.model = model;
     await writeKimiConfig(home.dataDir, mergeKimiConfig(fakeModelConfig(model, options.provider), options.config ?? {}));
@@ -323,7 +334,7 @@ class ScenarioSession {
     const startupStep = this.workspaceTrust === undefined ? '启动产品，等到可以输入' : '启动产品，处理工作区信任提示';
     await base.step(startupStep, async () => {
       this.driver = await this.launch({ home, model, workspaceTrust: this.workspaceTrust, ...this.launchOptions() });
-      this.baseline = await snapshotDirectory(home.workspace);
+      this.baseline = await this.workTreeSnapshot(home.workspace);
       if (frames === 'every-step') await this.show('00 启动完成');
     });
     return {
@@ -575,7 +586,21 @@ class ScenarioSession {
           this.declared.set(key, undefined);
           expect(await readIfPresent(join(root, key)), `workspace file ${key} should not exist`).toBeUndefined();
         }),
+      git: (args) =>
+        base.step(GIT_TITLE(args), async () => {
+          if (!this.gitWorkspace) throw new Error('workspace.git() runs git in the workspace like the user in a terminal; make the workspace a repository with the git option.');
+          const before = await this.workTreeSnapshot(root);
+          await runGit(root, args);
+          const after = await this.workTreeSnapshot(root);
+          for (const { path } of directoryChanges(before, after)) this.declared.set(path, Object.hasOwn(after, path) ? after[path] : undefined);
+        }),
     };
+  }
+
+  private async workTreeSnapshot(root: string): Promise<DirectorySnapshot> {
+    const snapshot = await snapshotDirectory(root);
+    if (!this.gitWorkspace) return snapshot;
+    return Object.fromEntries(Object.entries(snapshot).filter(([path]) => !path.startsWith('.git/')));
   }
 
   private async closingProblems(): Promise<string[]> {
@@ -604,7 +629,7 @@ class ScenarioSession {
           'A provider reuses a cached prefix only under the same key, so every request of a session must keep its key, also after a restart.',
       );
     }
-    const changes = directoryChanges(this.expectedWorkspace(baseline), await snapshotDirectory(home.workspace));
+    const changes = directoryChanges(this.expectedWorkspace(baseline), await this.workTreeSnapshot(home.workspace));
     if (changes.length > 0) {
       problems.push(
         [
