@@ -145,6 +145,22 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().expectTranscript(text);
   }
 
+  undo(): Promise<void> {
+    return this.window().undo();
+  }
+
+  recallPrevious(): Promise<void> {
+    return this.window().recallPrevious();
+  }
+
+  submit(text: string): Promise<void> {
+    return this.window().submit(text);
+  }
+
+  expectComposer(text: string): Promise<void> {
+    return this.window().expectComposer(text);
+  }
+
   newSession(): Promise<void> {
     return this.window().newSession();
   }

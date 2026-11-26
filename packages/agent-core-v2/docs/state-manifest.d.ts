@@ -58,7 +58,6 @@
 //     changeNotifier.snapshot                         src/agent/changeNotifier/changeNotifierOps.ts
 //     contextProjector.lastRepairSignature            src/agent/loop/requestObservation.ts
 //     environmentBinding                              src/agent/environmentBinding/environmentBindingOps.ts
-//     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
 //     fileHistory                                     src/features/fileHistory/fileHistoryOps.ts
 //     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
 //     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
@@ -1229,8 +1228,6 @@ export interface AgentStateSnapshot {
   } | undefined;
   // replayable · durable · undoable — folds: ContextClear, PermissionRecordApprovalResult
   'autoReview.approvedToolCallIds': readonly string[];
-  // src/features/externalHooks/agent/agentExternalHooksService.ts
-  'externalHooks.stopHookContinuationUsed': boolean;
   // src/features/fileHistory/fileHistoryOps.ts
   // replayable · durable — folds: FileHistoryCheckpointed, FileHistoryTracked
   'fileHistory': /* FileHistoryState — packages/agent-core-v2/src/features/fileHistory/fileHistory.ts */ {

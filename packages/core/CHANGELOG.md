@@ -1,5 +1,11 @@
 # @moonshot-ai/core
 
+## 0.2.1
+
+### Patch Changes
+
+- [#5515](https://github.com/MoonshotAI/kimi-code/pull/5515) [`4849d86`](https://github.com/MoonshotAI/kimi-code/commit/4849d86dcf1adddacef67b3fd539a0f22c44c246) Thanks [@sailist](https://github.com/sailist)! - Forward request cancellation to the Google GenAI SDK so aborting closes the underlying HTTP connection, and report streamed usage metadata as soon as it arrives instead of waiting for a finish reason.
+
 ## 0.2.0
 
 ### Minor Changes

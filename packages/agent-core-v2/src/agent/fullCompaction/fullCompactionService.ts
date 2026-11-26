@@ -686,14 +686,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         this.requestTokens([]),
         (message) => this.tokenCounting.estimateMessage(message),
       );
-      const preShrunkHistory = this.preShrinkHistoryToWindowBudget(
-        historyForModel,
-        instructionMessage,
-        compactionMaxOutputSize,
-        tokenProfile,
-      );
-      droppedCount += historyForModel.length - preShrunkHistory.length;
-      historyForModel = preShrunkHistory;
       while (true) {
         const messagesToCompact = historyForModel;
         const messages: Message[] = [...messagesToCompact, instructionMessage];
@@ -708,6 +700,11 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             ? estimatedCompactionRequestTokens +
               Math.ceil(effectiveMaxTokens * COMPLETION_BUDGET_ESTIMATE_MARGIN_RATIO)
             : undefined;
+        const outputSqueezedByWindow =
+          maxContextTokens > 0 &&
+          usedContextTokens !== undefined &&
+          compactionMaxOutputSize !== undefined &&
+          maxContextTokens - usedContextTokens < compactionMaxOutputSize;
         requestAttempts += 1;
 
         try {
@@ -742,8 +739,10 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             error,
             estimatedCompactionRequestTokens,
           );
-          if (isContextOverflow) {
-            this.observeContextOverflow(estimatedCompactionRequestTokens);
+          const truncatedForLackOfRoom =
+            error instanceof CompactionTruncatedError && outputSqueezedByWindow;
+          if (isContextOverflow || truncatedForLackOfRoom) {
+            if (isContextOverflow) this.observeContextOverflow(estimatedCompactionRequestTokens);
             overflowShrinkCount += 1;
             if (
               overflowShrinkCount > MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS ||
@@ -764,21 +763,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             continue;
           }
           const unwrappedError = unwrapErrorCause(error);
-          if (
-            (error instanceof CompactionTruncatedError ||
-              (unwrappedError instanceof APIEmptyResponseError &&
-                unwrappedError.finishReason !== 'filtered')) &&
-            messagesToCompact.length > 1
-          ) {
-            if (requestAttempts >= maxAttempts) {
-              throw error;
-            }
-            const reduced = dropOldestMessageAndLeadingToolResults(messagesToCompact);
-            droppedCount += messagesToCompact.length - reduced.length;
-            historyForModel = reduced;
-            retryCount = 0;
-            continue;
-          }
           if (!isRetryableGenerateError(unwrappedError)) {
             throw error;
           }
@@ -904,33 +888,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     }
   }
 
-  private preShrinkHistoryToWindowBudget(
-    history: readonly ContextMessage[],
-    instructionMessage: Message,
-    compactionMaxOutputSize: number | undefined,
-    tokenProfile: HistoryTokenProfile,
-  ): readonly ContextMessage[] {
-    const effectiveMaxTokens = this.getEffectiveMaxContextTokens();
-    if (effectiveMaxTokens <= 0) return history;
-    const outputReserve =
-      compactionMaxOutputSize === undefined
-        ? Math.floor(effectiveMaxTokens / 8)
-        : Math.min(compactionMaxOutputSize, Math.floor(effectiveMaxTokens / 8));
-    const inputLimit = effectiveMaxTokens - outputReserve;
-    const totalInputTokens =
-      this.historyRequestTokens(history) + this.tokenCounting.estimateMessage(instructionMessage);
-    if (totalInputTokens <= inputLimit) return history;
-    const messageBudget =
-      Math.floor(inputLimit * OVERFLOW_CONTEXT_SAFETY_RATIO) - tokenProfile.overheadTokens;
-    if (messageBudget <= 0) return history;
-    const preShrunk = takeRecentMessagesWithinTokenBudget(
-      history,
-      messageBudget,
-      tokenProfile.estimateMessage,
-    );
-    return preShrunk.length === 0 ? history : preShrunk;
-  }
-
   private async postProcessSummary(summary: string): Promise<string> {
     const todos = this.todo.get();
     if (todos.length === 0) {
@@ -969,7 +926,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 }
 
 interface HistoryTokenProfile {
-  readonly overheadTokens: number;
   readonly estimateMessage: (message: Message) => number;
   readonly estimateRequest: (messages: readonly Message[]) => number;
 }
@@ -997,7 +953,6 @@ function buildHistoryTokenProfile(
   }
   if (anchors.length === 0) {
     return {
-      overheadTokens: baseOverheadTokens,
       estimateMessage: estimateBase,
       estimateRequest: (messages) => {
         let total = baseOverheadTokens;
@@ -1042,7 +997,6 @@ function buildHistoryTokenProfile(
   const estimateMessage = (message: Message): number =>
     byMessage.get(message) ?? estimateBase(message);
   return {
-    overheadTokens: baseOverheadTokens,
     estimateMessage,
     estimateRequest: (messages) => {
       let total = baseOverheadTokens;
@@ -1157,13 +1111,6 @@ function takeRecentMessagesWithinTokenBudget<T extends Message>(
   }
   if (start === 0) start = 1;
   return dropLeadingToolResults(messages.slice(start));
-}
-
-function dropOldestMessageAndLeadingToolResults<T extends { readonly role: string }>(
-  messages: readonly T[],
-): T[] {
-  if (messages.length <= 1) return messages.slice();
-  return dropLeadingToolResults(messages.slice(1));
 }
 
 function dropLeadingToolResults<T extends { readonly role: string }>(messages: readonly T[]): T[] {

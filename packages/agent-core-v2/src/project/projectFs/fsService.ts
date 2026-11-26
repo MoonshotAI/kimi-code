@@ -1528,7 +1528,10 @@ export class ProjectFsService implements IProjectFsService {
     onLine: (line: string, stop: () => void) => void,
   ): Promise<{ readonly exitCode: number; readonly killed: boolean }> {
     const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
-    const proc = await lease.environment.process!.spawn(binary, args, { cwd: this.workDir });
+    const proc = await lease.environment.process!.spawn(binary, args, { cwd: this.workDir }).catch((error: unknown) => {
+      lease.dispose();
+      throw error;
+    });
     let killed = false;
     const kill = (): void => {
       if (killed) return;

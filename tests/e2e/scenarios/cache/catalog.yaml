@@ -1,0 +1,301 @@
+entries:
+  - id: A1
+    operation: Restart the product and continue the conversation, after the workspace changed before the restart
+    promise: keeps
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/restart-keeps-the-prefix.spec.ts
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: keeps every main request on the prompt cache prefix through a retry, compaction, a restart, an automatic compaction and a subagent
+
+  - id: A2
+    operation: Start a new session, then go back to the earlier session and continue it
+    promise: keeps
+    coverage:
+      - kind: implicit
+        test: tests/e2e/scenarios/approval/new-session-asks-again.spec.ts
+    gap: Going back to the earlier session needs an openSession action on every surface.
+
+  - id: A3
+    operation: Compact the context by hand, then send the next message
+    promise: keeps
+    coverage:
+      - kind: implicit
+        test: tests/e2e/scenarios/conversation/compact-builds-the-next-turn-from-the-summary.spec.ts
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: keeps every main request on the prompt cache prefix through a retry, compaction, a restart, an automatic compaction and a subagent
+
+  - id: A4
+    operation: The context grows past the compaction trigger in the middle of a turn
+    promise: keeps
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/automatic-compaction-keeps-the-prefix.spec.ts
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: keeps every main request on the prompt cache prefix through a retry, compaction, a restart, an automatic compaction and a subagent
+
+  - id: A5
+    operation: Withdraw the last prompt with /undo, then send another message
+    promise: breaks
+    break:
+      at: history
+      reason: the user withdrew the last prompt, so the history ends before it
+    gap: Needs an undo action on every surface.
+
+  - id: A6
+    operation: Quit the product while a turn is running, open it again and continue
+    promise: keeps
+    coverage:
+      - kind: implicit
+        test: tests/e2e/scenarios/conversation/quit-during-turn-keeps-the-prompt.spec.ts
+
+  - id: B1
+    operation: Switch the permission mode between two turns
+    promise: keeps
+    coverage:
+      - kind: implicit
+        test: tests/e2e/scenarios/approval/permission-mode-changes-what-asks.spec.ts
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: switching to manual approvals
+
+  - id: B2
+    operation: Turn plan mode on or off between two turns
+    promise: keeps
+    coverage:
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: turning plan mode on
+    gap: Needs a plan mode action on every surface.
+
+  - id: B3
+    operation: Switch to another model with /model, then switch back
+    promise: keeps
+    gap: Needs a second model in the scenario config and a model switch action. Each model keeps its own cache, so switching back continues the first model's prefix.
+
+  - id: B4
+    operation: Change the thinking effort with /effort
+    promise: breaks
+    break:
+      at: header
+      reason: the user changed the thinking effort, which is part of the model settings
+    gap: Needs the thinking capability in the scenario config and an effort action. Only the model settings may change; the history must stay as it was.
+
+  - id: B5
+    operation: Hold a whole conversation with every experimental feature on
+    promise: keeps
+    coverage:
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: every experimental feature on
+
+  - id: B6
+    operation: Turn swarm, tower or goal mode on between two turns
+    promise: keeps
+    coverage:
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: turning swarm mode on
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: turning tower mode on
+    gap: Goal mode is not covered yet; check first whether it runs in the main conversation.
+
+  - id: B7
+    operation: Add a workspace directory with /add-dir between two turns
+    promise: unknown
+    gap: Find out whether the product changes the system prompt or tells the model in a reminder, then add an add-dir action.
+
+  - id: B8
+    operation: Run /reload without changing the configuration
+    promise: keeps
+    gap: Needs a reload action.
+
+  - id: B9
+    operation: Turn an experimental feature on or off with /experiments in the middle of a session
+    promise: unknown
+    gap: Find out what the product promises, then add an experiments action.
+
+  - id: C1
+    operation: An MCP server adds a tool in the middle of a session
+    promise: keeps
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/mcp-tool-change-keeps-the-tool-list.spec.ts
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/mcp-tool-change-with-on-demand-loading-keeps-the-prefix.spec.ts
+
+  - id: C2
+    operation: An MCP server drops the connection and the product connects again
+    promise: keeps
+    gap: The MCP server handle needs a way to drop its connections.
+
+  - id: C3
+    operation: Load a deferred tool with select_tools while on-demand tool loading is on
+    promise: keeps
+    coverage:
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: a deferred MCP server behind progressive tool loading
+
+  - id: C4
+    operation: Use a skill or a slash command between two turns
+    promise: keeps
+    gap: Needs a slash command action.
+
+  - id: C5
+    operation: Turn the Desktop built-in browser control off and on again
+    promise: unknown
+    gap: Desktop sends mcp__desktop_browser__run by default. Find out whether turning the control off changes the tool list or only adds a reminder, and let the Desktop driver use the settings page.
+
+  - id: C6
+    operation: An ACP editor passes MCP servers in session/new or session/load
+    promise: keeps
+    gap: The ACP driver needs to pass MCP servers the way an editor does.
+
+  - id: C7
+    operation: Enable a plugin with /plugins in the middle of a session
+    promise: unknown
+    gap: Find out what the product promises, then add a plugins action.
+
+  - id: D1
+    operation: Approve, approve for the session, reject or reject with feedback, then continue
+    promise: keeps
+    coverage:
+      - kind: implicit
+        test: tests/e2e/scenarios/approval/approve-for-session-skips-the-next-ask.spec.ts
+      - kind: implicit
+        test: tests/e2e/scenarios/approval/reject-keeps-file.spec.ts
+      - kind: implicit
+        test: tests/e2e/scenarios/approval/reject-with-feedback-tells-the-model.spec.ts
+      - kind: implicit
+        test: tests/e2e/scenarios/shell/reject-command.spec.ts
+
+  - id: D2
+    operation: Answer a question, answer it in your own words or dismiss it, then continue
+    promise: keeps
+    coverage:
+      - kind: implicit
+        test: tests/e2e/scenarios/question/chosen-option-reaches-the-model.spec.ts
+      - kind: implicit
+        test: tests/e2e/scenarios/question/other-answer-reaches-the-model.spec.ts
+      - kind: implicit
+        test: tests/e2e/scenarios/question/dismissed-question-tells-the-model.spec.ts
+
+  - id: D3
+    operation: Queue messages while a turn is running
+    promise: keeps
+    coverage:
+      - kind: implicit
+        test: tests/e2e/scenarios/turn/queued-messages-run-in-order.spec.ts
+
+  - id: D4
+    operation: Steer a running turn while the model writes or a command runs
+    promise: keeps
+    coverage:
+      - kind: implicit
+        test: tests/e2e/scenarios/turn/steer-reaches-the-running-turn.spec.ts
+      - kind: implicit
+        test: tests/e2e/scenarios/turn/steer-twice-while-thinking.spec.ts
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: resends the interrupted request on the same prompt cache prefix
+
+  - id: D5
+    operation: Stop a turn, then send the next message
+    promise: keeps
+    coverage:
+      - kind: implicit
+        test: tests/e2e/scenarios/turn/stop-mid-turn.spec.ts
+      - kind: implicit
+        test: tests/e2e/scenarios/turn/stop-running-command.spec.ts
+      - kind: implicit
+        test: tests/e2e/scenarios/approval/stop-while-waiting-drops-the-command.spec.ts
+
+  - id: D6
+    operation: The model service fails once after a finished turn, the product retries, and the conversation goes on
+    promise: keeps
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/retry-after-a-finished-turn-keeps-the-prefix.spec.ts
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: keeps every main request on the prompt cache prefix through a retry, compaction, a restart, an automatic compaction and a subagent
+
+  - id: D7
+    operation: A subagent runs, then the main agent continues
+    promise: keeps
+    coverage:
+      - kind: implicit
+        test: tests/e2e/scenarios/turn/background-task-reply-reaches-acp-editor.spec.ts
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: keeps every main request on the prompt cache prefix through a retry, compaction, a restart, an automatic compaction and a subagent
+    gap: The prompt cache ledger does not compare a subagent's requests with each other yet, so only the main agent is checked.
+
+  - id: D8
+    operation: A background task finishes while the editor waits between prompts
+    promise: keeps
+    coverage:
+      - kind: implicit
+        test: tests/e2e/scenarios/turn/background-task-reply-reaches-acp-editor.spec.ts
+
+  - id: D9
+    operation: Ask a side question with /btw, then go back to the main conversation
+    promise: keeps
+    gap: Needs a btw action, and an explicit check that the side request reuses the main conversation's prefix, because the ledger does not check side requests.
+
+  - id: E1
+    operation: Write or change AGENTS.md in the middle of a session
+    promise: keeps
+    coverage:
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: writing AGENTS.md into the workspace
+
+  - id: E2
+    operation: Change and add workspace files outside the product between two turns
+    promise: keeps
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/files-changed-outside-the-product-keep-the-prefix.spec.ts
+
+  - id: E3
+    operation: Switch the git branch in a terminal between two turns
+    promise: keeps
+    gap: Needs a workspace.git action; a workspace that is a git work tree also changes what asks for approval.
+
+  - id: E4
+    operation: Trust a new folder, then hold a conversation across a restart
+    promise: keeps
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/trusting-a-new-folder-keeps-the-prefix.spec.ts
+
+  - id: E5
+    operation: The local date changes in the middle of a session
+    promise: keeps
+    coverage:
+      - kind: engine
+        test: packages/agent-core-v2/test/features/dateChange/dateChangeInjection.test.ts
+    gap: Needs a test clock that the product reads through IHostClock.
+
+  - id: E6
+    operation: Generate AGENTS.md with /init, then continue
+    promise: keeps
+    gap: Needs a slash command action.
+
+  - id: F1
+    operation: Two clients follow the same session
+    promise: keeps
+    gap: A scenario drives one surface at a time; two WebSocket clients in a KAP scenario cover this more cheaply.
+
+  - id: F2
+    operation: Resize the window between two turns
+    promise: keeps
+    coverage:
+      - kind: implicit
+        test: tests/e2e/scenarios/layout/narrow-window-keeps-the-reply-whole.spec.ts

@@ -40,7 +40,26 @@ describe('WorktreeProgressComponent', () => {
     ).toBe(['', '● Creating worktree', '  ✓ Checked ~/code/repo'].join('\n'));
   });
 
-  it('renders every finished step with its details and the running setup output', () => {
+  it('renders finished steps with their details and a running step spinner', () => {
+    expect(
+      rendered({
+        phase: 'creating',
+        name: 'fix-login',
+        rows: [
+          { step: 'check', status: 'done', sourceDir: '/home/me/code/repo' },
+          { step: 'add', status: 'done', path: PATH, head: HEAD },
+          { step: 'include', status: 'running', copiedFiles: [] },
+        ],
+      }),
+    ).toBe(
+      [
+        '',
+        '● Creating worktree fix-login',
+        '  ✓ Checked ~/code/repo',
+        '  ✓ Created ~/.kimi-code/worktrees/wd_repo/fix-login  detached at abcdef1',
+        `  ${BRAILLE_SPINNER_FRAMES[0]!} Copying files from .worktreeinclude`,
+      ].join('\n'),
+    );
     expect(
       rendered({
         phase: 'creating',
@@ -49,12 +68,6 @@ describe('WorktreeProgressComponent', () => {
           { step: 'check', status: 'done', sourceDir: '/home/me/code/repo' },
           { step: 'add', status: 'done', path: PATH, head: HEAD },
           { step: 'include', status: 'done', copiedFiles: ['.env', 'apps/web/.env.local', 'b', 'c', 'd'] },
-          {
-            step: 'setup',
-            status: 'running',
-            script: '.kimi-code/worktree-setup.sh',
-            output: ['one', 'two', 'three', 'four', 'five', 'six'],
-          },
         ],
       }),
     ).toBe(
@@ -64,12 +77,6 @@ describe('WorktreeProgressComponent', () => {
         '  ✓ Checked ~/code/repo',
         '  ✓ Created ~/.kimi-code/worktrees/wd_repo/fix-login  detached at abcdef1',
         '  ✓ Copied 5 files from .worktreeinclude  .env, apps/web/.env.local, b +2 more',
-        `  ${BRAILLE_SPINNER_FRAMES[0]!} Running .kimi-code/worktree-setup.sh`,
-        '    │ two',
-        '    │ three',
-        '    │ four',
-        '    │ five',
-        '    │ six',
       ].join('\n'),
     );
   });
@@ -107,21 +114,6 @@ describe('WorktreeProgressComponent', () => {
         "  ✗ Couldn't create ~/.kimi-code/worktrees/wd_repo/fix-login",
         ...output.slice(2).map((line) => `    ${line}`),
       ].join('\n'),
-    );
-  });
-
-  it('names how the setup script failed', () => {
-    const setup = {
-      step: 'setup',
-      status: 'failed',
-      script: '.kimi-code/worktree-setup.sh',
-      output: ['npm ERR! boom'],
-    } as const;
-    expect(rendered({ phase: 'stopped', name: 'x', rows: [{ ...setup, exitCode: 3 }] })).toContain(
-      ['  ✗ Setup script exited with code 3', '    │ npm ERR! boom'].join('\n'),
-    );
-    expect(rendered({ phase: 'stopped', name: 'x', rows: [setup] })).toContain(
-      '  ✗ Setup script was interrupted',
     );
   });
 

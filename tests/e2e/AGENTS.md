@@ -8,6 +8,7 @@
 
 ```text
 scenarios/<业务>/<行为>.spec.ts   场景，各个面共用
+scenarios/cache/                   prompt 缓存专题的场景，和登记它们的 catalog.yaml
 self-test/<动作>.spec.ts          驱动自测：每个动作的正例和反例
 surfaces/                          各个面的驱动
 support/                           scenario()、selfTest()、VERBS、收尾检查、步骤标题、CI 运行页摘要
@@ -30,7 +31,7 @@ playwright.config.ts               一个面一个 project，另有两个跑法�
 
 ## 写场景
 
-场景文件长这样，`scenario(标题, 选项, 本体)` 的本体只拿得到 `product`、`model`、`workspace`：
+场景文件长这样，`scenario(标题, 选项, 本体)` 的本体只拿得到 `product`、`model`、`workspace` 和 `mcp`：
 
 ```ts
 scenario('reads one file and edits another after approval', { workspace: { 'a.txt': 'hello\n' } }, async ({ product, model, workspace }) => {
@@ -52,11 +53,19 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | 场景里不出现面名，也拿不到 `page`、终端、`process.env`、`test.info()`。面和面的差异在驱动里处理 | `scenario()` 不提供这些东西；`scripts/checks/e2e-boundary.mjs` |
 | `restart()` 关掉产品再打开，回到原来的会话：产品必须空闲；先走产品自己的退出，查这个进程的网络记录，把它的诊断留到失败时一起附上，再用同一个 home、工作区和假模型起新进程。重启之后、下一次发消息之前，`expectReply`、`expectTool`、`expectError`、`expectAbsent` 读的「最近一回合」是恢复出来的最后一回合，也就是对话里最后一条用户消息之后的内容；整段对话用 `expectTranscript` 查。ACP 上恢复出来的最后一回合取自 `session/load` 回放里最后一条用户消息之后：重启前的编辑器和它开的终端都已经不在，所以命令的输出从工具调用内容的文字里读，也不再要求编辑器那一侧的证据（读写文件、终端的退出码）；回放里没有「这一回合失败了」这种消息，重启后查失败的场景要排除 ACP。重启前一次消息都没发过时，驱动只能证明产品重新可用，证明不了回到的是原来的会话。`expectTranscript` 在整段对话的用户消息和回复里找（工具卡不算），要求恰好出现一次 | 场景会话；`restart`、`expect-transcript` 的自测 |
 | `restartDuringTurn()` 在回合进行中关掉产品再打开，回到原来的会话：回合必须在跑，产品空闲时直接报错，空闲时用 `restart()`。各面按用户在回合中途退出的方式退出：TUI 连按两次 Ctrl+D，看到 `Press Ctrl+D again to exit` 再按第二次（`/exit` 要等产品空闲，Ctrl+C 会先停掉回合），挂着审批或提问时报错，因为那时 Ctrl+D 会回答它；ACP 由编辑器关掉连接；Web 先关浏览器，再在 `kimi web` 的终端里按 Ctrl+C；Desktop 走应用的退出，E2E 模式下跳过退出确认框，所以确认框本身测不到。证据是产品进程以 0 退出。之后和 `restart()` 一样：查网络记录，把诊断留到失败时附上，用同一个 home、工作区和假模型起新进程。被打断的那次模型请求在假模型里记为 `aborted` | 场景会话；`restart-during-turn` 的自测 |
+| `expectComposer(文字)` 查输入框里恰好是这段文字，`''` 表示空。TUI 从屏幕上读输入框：上边线 `╭─…─╮` 和下边线 `╰─…─╯` 之间的各行，去掉两侧边框和第一行开头的 `> `；Desktop 和 Web 读 `Message input` 里各段落的文本内容，段落之间用换行连起来。内容稳定之后才下结论。ACP 没有：输入框归编辑器 | `expect-composer` 的自测 |
+| `undo()` 撤销最近一条用户消息：产品必须空闲，输入框必须为空。TUI 粘贴 `/undo` 回车，等出现可撤销的提示列表（`Enter select · Esc cancel`），在默认选中的最新一条上回车；不用 `/undo 1`，因为它不把提示退回输入框。Desktop 和 Web 悬停在最后一条用户消息上，点 `Undo message`，在 `Undo` 确认框里点 `Confirm`。证据是这条消息离开了对话，而且输入框里有了文字。撤销之后的第一次模型请求，和撤销前的最后一次请求比，少了或改了消息（比如撤销掉的回合调用过工具，或者重发的是另一句提示），就接不上之前的缓存前缀，重发之前要写 `model.expectCacheBreak('undo rewrites the history', { at: 'history' })`；撤销掉的回合只有一次模型请求、又原样重发同一句时，请求和之前一样，不要声明。不要撤销对话的第一个回合：它带着第一条日期提醒，撤销后这条提醒留不留在上下文里，各平台不一样，缓存断不断开也跟着不一样；先发一条开场提示。ACP 没有撤销消息的请求 | `undo` 的自测 |
+| `recallPrevious()` 在输入框里按一次上键，调回上一条提示：输入框必须为空，或者正好是上一次 `recallPrevious()` 调回的内容，否则上键只移动光标。证据是输入框的内容变了而且不为空；没变就报错「没有更早的提示」。Desktop 和 Web 上新对话的第一条提示不进输入历史（产品现状），要调回的提示前面先发一条开场提示。TUI 启动后在后台加载输入历史，刚打开就按上键可能还调不到；TUI 的历史也记下了 `restart()` 用来退出的 `/exit`，所以重启之后的调回只在 Desktop 和 Web 上查。ACP 没有：输入框和输入历史归编辑器 | `recall-previous` 的自测 |
+| `submit(文字)` 把输入框里已有的内容发出去，比如撤销退回的、上键调回的：产品必须空闲，输入框里必须恰好是这段文字。按回车，证据和 `send()` 一样是对话里多了这条用户消息。`send()`、`queue()`、`steer()` 要求输入框为空，否则报错，不会把新文字接在已有内容后面。ACP 没有 | `submit`、`send` 的自测 |
 | 某个面不适用，写 `except: { 面: '理由' }`；只在某些面跑，写 `onlyOn` 加 `reason`。理由不能为空，不适用的面在报告里显示为跳过并带着理由 | `scenario()` 登记用例时检查，理由为空时列用例那一步就失败 |
 | 跑法（`tui-kitty`、`acp-bare`）下某个用例不适用，写 `exceptVariants: { 'bare-editor': '理由' }`。只用在两种情形：协议或终端本来就提供不了这项能力；或者是已经记录的产品缺口，负责人在 PR 里同意先排除，理由开头写明 `Product gap` | `scenario()` 登记时检查理由不为空 |
 | 某个动作在某个平台上暂时查不了（动作表里的 `unavailableOn`，例如 Windows 上的 `expectTerminalRestored`），用到它的场景写 `exceptPlatforms: { win32: '理由' }`，这个平台上整条场景显示为不适用。没写就跑到这个动作时报错。自测按动作表自动带上。`unavailableOn` 只用于驱动还做不到的检查，不能用来绕开产品在某个平台上的 bug | 场景会话的分发；`scenario()` 登记时检查理由不为空；在其他平台上跑时，收尾检查要求场景确实用到了一个在被排除平台上不可用的动作 |
 | 常规场景预先信任工作区。首次打开工作区的 TUI 场景可设 `workspaceTrust: 'trust'` 或 `workspaceTrust: 'exit'`。驱动通过终端选择信任并继续，或按 Esc 返回 shell。重启沿用同一个 home，由产品读取已记录的信任状态 | 信任场景检查模型收到的项目指令和重启后的会话。退出场景检查终端模式和模型请求 |
 | 场景结束时产品必须空闲，产品要能正常退出，除了假模型和本机不能连别的地址 | 收尾检查 |
+| 假模型的缓存账本默认开着：主请求和压缩请求都要延续上一个主请求，有意的断点用 `model.expectCacheBreak(原因, { at })` 声明。主请求用到的缓存键个数不能超过「1 + `newSession()` 的次数」：同一个会话的请求必须一直用同一个键，重启之后也一样，否则供应商那边的缓存用不上 | `model.verify()` 和收尾检查 |
+| 选项 `provider` 设假模型服务的类型、模型能力和窗口大小（`type`、`capabilities`、`maxContextSize`），`config` 合并进测试 home 的 `config.toml`（例如 `loopControl`、第二个模型）。只写用户自己也能写进配置文件的内容 | 评审 |
+| 选项 `mcp` 声明用户配置的 MCP 服务：每个服务是本机的一个 testkit HTTP 假服务，写进测试 home 的 `mcp.json`，`deferred` 照写。本体里 `mcp(名字)` 拿到它，`addTool`、`updateTool`、`removeTool` 相当于 MCP 服务自己改了工具：改完通知产品，等到这个服务答复了产品重新要的工具清单才返回。产品收到答复之后是异步更新的，没有承诺紧接着的下一次请求就反映这次变化，所以场景只断言「变化之前的请求里没有、之后的请求里恰好有一次」，不断言是哪一次。没声明的名字直接报错 | `mcp()` 的运行时检查 |
+| `scenarios/cache/` 下的场景各自对应 `scenarios/cache/catalog.yaml` 里的一项：清单列出会改变产品发给模型服务的请求的用户操作，写明承诺保持前缀还是有意断开、哪些测试覆盖它，没覆盖的写明缺什么。缓存场景先证明操作生效了（用户看得见的效果，或者模型收到的内容），再断言前后的主请求在账本里的延续关系。别的场景只有在这个操作前后都发了主请求时，才能记成 `implicit` 覆盖，否则账本什么也没比较 | `scripts/checks/e2e-cache-catalog.mjs`：每项都有测试或写明的缺口，每个缓存场景都登记了，承诺保持的场景不声明断点，承诺断开的场景用清单里的原因声明 |
 | 改场景断言就是改产品行为，PR 里要写明为什么改 | CODEOWNERS 评审 |
 | 提示词用一行文字，可以是中文，不含控制字符，不以 `/`、`!`、`@` 开头，不以反斜杠结尾 | `send()`、`queue()`、`steer()` 的运行时检查 |
 | 回合进行中再发消息用 `queue(文字)`（排到回合结束后，按顺序作为新回合发出）或 `steer(文字)`（插进正在跑的回合）。两者都要求回合正在跑，剧本里先用 `held` 或门控把回合挂住再调用。ACP 上没有这两个动作，场景用 `except: { acp: '理由' }` 排除它。插话时模型正在输出，这次请求会被中止、立刻带着插话重发；命令正在跑时不中止，插话排在工具结果之后随下一次请求送出。被中止的思考不进上下文，被中止的正文会留下，所以插话之后的请求断言写 `userTextsSinceReply.at(-1)` | 类型（`product` 按场景跑的面收窄）；评审 |
@@ -71,7 +80,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 
 ## 写驱动
 
-动作清单是 `support/verbs.ts` 里的 `VERBS`，它是一张表：每个动作写明存在于哪些面（`on`）、不在某个面上的理由（`absentBecause`）、算不算「查过界面」（`checksInterface`），以及是不是由场景会话而不是驱动来做（`bySession`，目前只有 `restart` 和 `restartDuringTurn`）。动作有 `send`、`queue`、`steer`、`approve`、`reject`、`rejectWithFeedback`、`expectApproval`、`answer`、`answerOther`、`dismissQuestion`、`setPermissionMode`、`stop`、`waitIdle`、`expectTool`、`expectReply`、`expectError`、`expectAbsent`、`continue`、`restart`、`restartDuringTurn`、`newSession`、`compact`、`expectTranscript`，只在 TUI 和 Web 上有的 `resize`，只在 TUI 上有的 `exit`、`expectTerminalRestored`，以及只在 ACP 上有的 `waitForUsageUpdates`。场景拿到的 `product` 由这张表按场景跑的面推导：用了只在部分面上有的动作，场景必须用 `except` 或 `onlyOn` 排除其他面，否则类型检查报错；驱动漏实现自己面上的动作，类型检查也会报错。
+动作清单是 `support/verbs.ts` 里的 `VERBS`，它是一张表：每个动作写明存在于哪些面（`on`）、不在某个面上的理由（`absentBecause`）、算不算「查过界面」（`checksInterface`），以及是不是由场景会话而不是驱动来做（`bySession`，目前只有 `restart` 和 `restartDuringTurn`）。动作有 `send`、`queue`、`steer`、`approve`、`reject`、`rejectWithFeedback`、`expectApproval`、`answer`、`answerOther`、`dismissQuestion`、`setPermissionMode`、`stop`、`waitIdle`、`expectTool`、`expectReply`、`expectError`、`expectAbsent`、`continue`、`restart`、`restartDuringTurn`、`newSession`、`compact`、`expectTranscript`，只在 TUI、Desktop、Web 上有的 `undo`、`recallPrevious`、`submit`、`expectComposer`，只在 TUI 和 Web 上有的 `resize`，只在 TUI 上有的 `exit`、`expectTerminalRestored`，以及只在 ACP 上有的 `waitForUsageUpdates`。场景拿到的 `product` 由这张表按场景跑的面推导：用了只在部分面上有的动作，场景必须用 `except` 或 `onlyOn` 排除其他面，否则类型检查报错；驱动漏实现自己面上的动作，类型检查也会报错。
 
 | 规矩 | 由什么守 |
 |---|---|
@@ -102,7 +111,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | `expectAbsent(文字)` 查最近一回合的回复里没有这段文字，范围和 `expectReply` 一样：工具卡片、用户消息、更早的回合都不算。调用时产品必须已经空闲，否则直接报错、不等待，因为回合还在跑时「还没出现」和「不会出现」分不开。它不算查过界面，场景里还要有一个通过的 `expectReply` 一类的检查 | 驱动自测；收尾检查 |
 | `continue()` 只在 Desktop 和 Web 上有：先等到失败的回合或回合结束，点失败卡片（`alert`）里的 `Continue`，证据是这张卡片消失。没有失败卡片时报错；用户停止的回合也没有，那里只有 `Manually stopped`。模型收到的下一次请求里没有新的用户消息，`remindersSinceReply` 末尾多一条 `No new user message was sent. Continue the interrupted work…`。TUI 和 ACP 上没有这个动作，用户在那里再发一条消息 | 驱动自测 |
 | `tui-kitty`：驱动扮演支持 Kitty 键盘协议的终端。它读 CLI 输出里的协议序列（`CSI > n u` 推入、`CSI < n u` 弹出、`CSI = n ; m u` 设置），对查询（`CSI ? u`）回答当前的标志位；协议开着时，Esc 和 Ctrl+C、Ctrl+O、Ctrl+Q、Ctrl+S 按 Kitty 编码发送；标志位要求松开事件时，这几个键和方向键另发松开事件（方向键按下仍是旧编码）；数字、回车和粘贴不变。驱动只模拟标志位 1、2、4，CLI 要了别的位、或者弹出的层比推入的多，都报错。启动后 CLI 必须开着协议、没有退回 modifyOtherKeys，否则启动失败；`expectTerminalRestored()` 另要求 CLI 退出后把协议关掉、推入的层都弹出 | 驱动自测在这个 project 里全部再跑一遍；破坏性检查：不回答查询时启动失败，Ctrl+S 编错时插话的正例变红 |
-| `acp-bare`：编辑器在 `initialize` 里不声明任何能力，也不处理 fs 和终端请求，产品调用了就按「调用了编辑器没实现的方法」在收尾时报错。产品自己读写文件、自己跑命令，所以不要求编辑器那一侧的证据，命令的输出从工具调用内容的文字里读。编辑器不提供终端时产品要等命令结束才给出输出，这是产品缺口，「运行中的输出」相关的 3 条用例在这个跑法下先排除，等负责人定 | 驱动自测在这个 project 里全部再跑一遍 |
+| `acp-bare`：编辑器在 `initialize` 里不声明任何能力，也不处理 fs 和终端请求，产品调用了就按「调用了编辑器没实现的方法」在收尾时报错。产品自己读写文件、自己跑命令，所以不要求编辑器那一侧的证据，命令的输出从工具调用内容的文字里读，运行中的命令也一样 | 驱动自测在这个 project 里全部再跑一遍 |
 | `compact()` 照用户的做法手动压缩上下文，产品必须空闲，压缩完才返回。TUI 输入 `/compact` 回车，证据是转录里多一条 `Compaction complete`（出现 `Compaction cancelled` 就报错）；Desktop 和 Web 在输入框里输入 `/compact`，回车选中命令、再回车发送，证据是对话里多一条 `Context compacted`（对话里多出一条 `Context compaction failed` 分隔线就报错）；ACP 像编辑器那样把 `/compact` 作为提示词发出，产品先回答压缩已开始，压缩在后台跑完后另发一段 `Compaction completed.`，证据就是这一段（取消或被挡住时报错）。压缩请求走假模型的 `compaction` 通道，剧本用 `model.lane('compaction').script(...)`。压缩被拒绝时 TUI 显示 `Compaction cancelled`、ACP 补发 `Compaction cancelled.`，Desktop 和 Web 在对话里显示一条 `Context compaction failed` 加失败原因的压缩分隔线，驱动都立即报错。压缩之后、下一次发消息之前，各面的「最近一回合」不一样（TUI 是压缩前的最后一回合，Desktop 和 Web 是分隔线之后、是空的，ACP 是 `/compact` 那一回合），所以压缩后先发消息再查 | `compact` 的自测；破坏性检查：TUI 不等压缩完成时正例变红 |
 | `newSession()` 新建一个会话，产品必须空闲。TUI 输入 `/new`，证据是屏幕上最后一条 `Started a new session (…)` 里的会话 ID 变了（`/new` 会清掉滚动区，所以不能数这一行出现了几次）；Desktop 和 Web 点侧栏的 `New Session`，证据是对话变空、消息输入框可用（对话本来就是空的时候，这个证据分不出按钮有没有生效）；ACP 像编辑器新开一个对话那样发 `session/new`，要求拿到另一个会话 ID，之后对话、模式和最近一回合都只看新会话的消息，离开的会话晚到的通知丢掉。新建会话之后、发消息之前重启，驱动只等产品重新可用，不再等之前会话的提示词。新会话的第一条请求里不应有之前会话的内容，这一点由自测固定 | `newSession` 的自测 |
 | 重启：TUI 用同一个 home 和工作区跑 `kimi --continue`，等转录里出现上一条提示词；ACP 新起 `kimi acp`，要求 `initialize` 公布 `loadSession`，再对原会话 ID 发 `session/load`，回放在答复之前到齐；Desktop 用同一个 `--user-data-dir` 再启动，不再传 `--workspace`；Web 用原来的端口重新起 `kimi web`，浏览器从第一次启动就用持久的配置目录（`<测试目录>/web-profile`），重新打开它打印的地址。Desktop 和 Web 重启后不点引导向导，向导如果又出现就报错；它们都要自动回到原来的会话，等对话里出现上一条提示词 | `restart` 的自测 |
@@ -147,7 +156,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 
 - **先分清是产品坏了还是驱动坏了。** 自测也红，多半是驱动或产品的界面变了；只有场景红，先看场景断言的那条产品行为。
 - **不许靠重试、加等待、跳过让它变绿。** flaky 用例照根 `AGENTS.md` 的规则处理：先找根因。实在找不到根因可以删，PR 里写明删掉的用例原来覆盖什么、现在由谁覆盖。
-- **看失败附件。** 先看报告里这个用例的步骤：红在哪一步，最后一帧「失败时的画面」是什么样。每个失败的用例还附上假模型的请求摘要、网络守卫的记录和产品日志；TUI 另有完整的屏幕内容、最近的输入和退出码；ACP 另有按顺序记下的 JSON-RPC 消息（最近 4000 条）、不是 JSON-RPC 的 stdout 行和 stderr 末尾；Desktop 和 Web 另有 Playwright trace（用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <trace.zip>` 打开）、页面内容的末尾、应用或服务端的输出和页面里的未捕获错误。产品没能启动（包括 `restart()` 之后没能重新启动）时，驱动在关掉进程之前收集同样的诊断，附件名前加上第几次启动，例如 `launch-1-desktop-trace`、`launch-2-tui-screen`；Web 在打开页面之前就失败时，附上 `kimi web` 终端里的内容（`launch-1-web-server`）。隔离目录在失败时保留，路径记在用例的 `test home` 标注里。
+- **看失败附件。** 先看报告里这个用例的步骤：红在哪一步，最后一帧「失败时的画面」是什么样。每个失败的用例还附上假模型的请求摘要、缓存账本（附件 `prompt-cache`：每个请求的通道、缓存键、基线、断点和复用量，以及账本报出的问题）、网络守卫的记录和产品日志；TUI 另有完整的屏幕内容、最近的输入和退出码；ACP 另有按顺序记下的 JSON-RPC 消息（最近 4000 条）、不是 JSON-RPC 的 stdout 行和 stderr 末尾；Desktop 和 Web 另有 Playwright trace（用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <trace.zip>` 打开）、页面内容的末尾、应用或服务端的输出和页面里的未捕获错误。产品没能启动（包括 `restart()` 之后没能重新启动）时，驱动在关掉进程之前收集同样的诊断，附件名前加上第几次启动，例如 `launch-1-desktop-trace`、`launch-2-tui-screen`；Web 在打开页面之前就失败时，附上 `kimi web` 终端里的内容（`launch-1-web-server`）。隔离目录在失败时保留，路径记在用例的 `test home` 标注里。
 
 ## 不在这里做的事
 

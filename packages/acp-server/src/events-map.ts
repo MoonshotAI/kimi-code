@@ -286,6 +286,21 @@ export function toolUpdatedToSessionUpdate(
   return null;
 }
 
+export function liveToolOutputToSessionUpdate(
+  sessionId: string,
+  toolCallId: string,
+  text: string,
+): SessionNotification {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      content: [{ type: 'content', content: { type: 'text', text } }],
+    },
+  };
+}
+
 export function thinkingDeltaToSessionUpdate(
   sessionId: string,
   event: ThinkingDeltaEvent,

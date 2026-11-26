@@ -25,8 +25,6 @@ import {
   type InspectWorktreeRemovalInput,
   type KimiWorktree,
   type RemoveWorktreeInput,
-  type RunSetupScriptInput,
-  type RunSetupScriptOptions,
   type WorktreeCheckout,
   type WorktreeCreateEvent,
   type WorktreeListing,
@@ -51,7 +49,6 @@ const KILL_GRACE_MS = 2_000;
 const OUTPUT_GRACE_MS = 1_000;
 const MAX_NAME_ATTEMPTS = 20;
 const INCLUDE_FILE = '.worktreeinclude';
-const SETUP_SCRIPT = '.kimi-code/worktree-setup.sh';
 
 interface Repository {
   readonly root: string;
@@ -77,12 +74,10 @@ interface CreationPlan {
 
 interface RunOptions {
   readonly cwd: string;
-  readonly env?: Record<string, string>;
   readonly stdin?: string;
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
   readonly onOutput?: (text: string) => void;
-  readonly captureOutput?: boolean;
 }
 
 interface GitOptions {
@@ -198,7 +193,6 @@ export class WorktreeService implements IWorktreeService {
     const relativeCwd = relative(plan.sourceRoot, plan.cwd);
     const mappedCwd = isOutsideRoot(relativeCwd) ? plan.path : join(plan.path, relativeCwd);
     const cwdFallback = !(await this.isDirectory(mappedCwd));
-    const setupScript = await this.resolveSetupScript(plan.path, plan.sourceRoot);
     return {
       worktree: { path: plan.path, name: plan.name, head: plan.commit, branch: plan.branch, missing: false, managed: true },
       repoRoot: plan.repoRoot,
@@ -207,55 +201,7 @@ export class WorktreeService implements IWorktreeService {
       cwdFallback,
       copiedFiles,
       sourceDirty: plan.sourceDirty,
-      setupScript,
     };
-  }
-
-  async runSetupScript(
-    input: RunSetupScriptInput,
-    options: RunSetupScriptOptions = {},
-  ): Promise<{ readonly exitCode: number }> {
-    this.requireEnabled();
-    throwIfCancelled(options.signal);
-    const scriptPath =
-      (await this.resolveSetupScript(input.worktreePath, input.sourceRoot)) ??
-      join(input.worktreePath, SETUP_SCRIPT);
-    await this.environments.ready;
-    const lease = this.environments.acquire({ environmentId: LOCAL_ENVIRONMENT_ID }, ['process']);
-    try {
-      const shell =
-        nonEmpty(lease.environment.host?.shellPath) ??
-        localProgram('bash', input.worktreePath) ??
-        localProgram('sh', input.worktreePath);
-      if (shell === undefined) {
-        throw new Error2(
-          ErrorCodes.SHELL_GIT_BASH_NOT_FOUND,
-          'Running the worktree setup script needs bash or sh on PATH, or Git Bash (KIMI_SHELL_PATH) on Windows.',
-        );
-      }
-      const scriptArg = lease.environment.shellPathBridge?.toShellPath(scriptPath) ?? scriptPath;
-      const result = await this.runWithLease(lease, shell, [scriptArg], {
-        cwd: input.worktreePath,
-        env: {
-          KIMI_CODE_WORKTREE_SOURCE_DIR: input.sourceRoot,
-          KIMI_CODE_WORKTREE_DIR: input.worktreePath,
-        },
-        signal: options.signal,
-        onOutput: options.onOutput,
-        captureOutput: false,
-      });
-      return { exitCode: result.exitCode };
-    } finally {
-      lease.dispose();
-    }
-  }
-
-  private async resolveSetupScript(worktreePath: string, sourceRoot: string): Promise<string | undefined> {
-    const worktreeScript = join(worktreePath, SETUP_SCRIPT);
-    if (await this.isFile(worktreeScript)) return worktreeScript;
-    const sourceScript = join(sourceRoot, SETUP_SCRIPT);
-    if (await this.isFile(sourceScript)) return sourceScript;
-    return undefined;
   }
 
   async inspectRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck> {
@@ -743,33 +689,24 @@ export class WorktreeService implements IWorktreeService {
     await this.environments.ready;
     const lease = this.environments.acquire({ environmentId: LOCAL_ENVIRONMENT_ID }, ['process']);
     try {
-      return await this.runWithLease(lease, program, args, options);
+      throwIfCancelled(options.signal);
+      const spawned = await lease.environment.process!
+        .spawn(program, args, { cwd: options.cwd })
+        .then(
+          (proc) => ({ ok: true as const, proc }),
+          (error: unknown) => ({ ok: false as const, message: error instanceof Error ? error.message : String(error) }),
+        );
+      if (!spawned.ok) {
+        options.onOutput?.(`${spawned.message}\n`);
+        return { exitCode: -1, stdout: '', stderr: spawned.message };
+      }
+      try {
+        return await waitForProcess(spawned.proc, options);
+      } finally {
+        void spawned.proc.dispose();
+      }
     } finally {
       lease.dispose();
-    }
-  }
-
-  private async runWithLease(
-    lease: ReturnType<IEnvironmentService['acquire']>,
-    program: string,
-    args: readonly string[],
-    options: RunOptions,
-  ): Promise<RunResult> {
-    throwIfCancelled(options.signal);
-    const spawned = await lease.environment.process!
-      .spawn(program, args, { cwd: options.cwd, env: options.env })
-      .then(
-        (proc) => ({ ok: true as const, proc }),
-        (error: unknown) => ({ ok: false as const, message: error instanceof Error ? error.message : String(error) }),
-      );
-    if (!spawned.ok) {
-      options.onOutput?.(`${spawned.message}\n`);
-      return { exitCode: -1, stdout: '', stderr: spawned.message };
-    }
-    try {
-      return await waitForProcess(spawned.proc, options);
-    } finally {
-      void spawned.proc.dispose();
     }
   }
 
@@ -804,15 +741,14 @@ async function waitForProcess(proc: IHostProcess, options: RunOptions): Promise<
       options.onOutput?.(text);
     } catch {}
   };
-  const capture = options.captureOutput !== false;
   let streamError: unknown;
   const output = Promise.all([
     drain(proc.stdout, (text) => {
-      if (capture) stdout += text;
+      stdout += text;
       emitOutput(text);
     }),
     drain(proc.stderr, (text) => {
-      if (capture) stderr += text;
+      stderr += text;
       emitOutput(text);
     }),
   ]).catch((error: unknown) => {
@@ -825,7 +761,7 @@ async function waitForProcess(proc: IHostProcess, options: RunOptions): Promise<
   const outcome = await firstOutcome(exit, options.timeoutMs, options.signal);
   if (outcome !== 'exit') await terminate(proc, exit);
   const exitCode = await exit;
-  if (outcome === 'exit' && capture) {
+  if (outcome === 'exit') {
     const drainMs =
       options.timeoutMs === undefined
         ? undefined
@@ -849,11 +785,8 @@ async function waitForProcess(proc: IHostProcess, options: RunOptions): Promise<
   }
   await settlesWithin(output, OUTPUT_GRACE_MS);
   if (outcome === 'abort') throw cancelledError();
-  if (outcome === 'timeout') {
-    const note = `timed out after ${(options.timeoutMs ?? 0) / 1000}s`;
-    return { exitCode: -1, stdout, stderr: stderr === '' ? note : `${stderr.trimEnd()}\n${note}` };
-  }
-  return { exitCode, stdout, stderr };
+  const note = `timed out after ${(options.timeoutMs ?? 0) / 1000}s`;
+  return { exitCode: -1, stdout, stderr: stderr === '' ? note : `${stderr.trimEnd()}\n${note}` };
 }
 
 async function firstOutcome(
