@@ -414,6 +414,7 @@ describe('ModelQuickMenu states', () => {
     };
     menuTop = 562;
     await nextTick();
+    expect(flyout.style.top).toBe('38px');
     for (const cb of observerCallbacks) cb();
     await nextTick();
 

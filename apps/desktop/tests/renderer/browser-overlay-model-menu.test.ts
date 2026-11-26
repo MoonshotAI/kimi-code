@@ -112,7 +112,7 @@ describe('browser overlay model menu anchoring', () => {
     emitConfig(menuConfig([models[0]!]));
     await nextTick();
     const menu = host.querySelector<HTMLElement>('.browser-overlay-model-menu')!;
-    let offsetTop = 272;
+    let offsetTop = 278;
     let offsetHeight = 474;
     Object.defineProperties(menu, {
       offsetLeft: { configurable: true, value: 256 },
@@ -128,7 +128,7 @@ describe('browser overlay model menu anchoring', () => {
     emitShown({
       requestId: 1,
       placement: 'top-end',
-      menuOffset: { x: 256, y: 272 },
+      menuOffset: { x: 256, y: 278 },
       menuBottom: 68,
       menuFrame: { x: 600, y: 358, viewportWidth: 1440, viewportHeight: 900 },
     });
@@ -137,7 +137,7 @@ describe('browser overlay model menu anchoring', () => {
     expect(menu.style.top).toBe('auto');
     expect(modelMenuProps[0]?.hostFrame?.y).toBe(358);
 
-    offsetTop = 400;
+    offsetTop = 406;
     offsetHeight = 346;
     emitConfig(menuConfig([models[1]!], 'openrouter'));
     await nextTick();
@@ -146,5 +146,15 @@ describe('browser overlay model menu anchoring', () => {
     expect(menu.style.bottom).toBe('68px');
     expect(modelMenuProps[0]?.hostFrame?.y).toBe(486);
     expect(rendered).toHaveBeenLastCalledWith({ requestId: 1, width: 240, height: 346 });
+
+    offsetTop = 438;
+    offsetHeight = 314;
+    emitConfig(menuConfig([models[0]!, models[1]!], 'managed:kimi-code'));
+    await nextTick();
+    await nextTick();
+
+    expect(menu.style.bottom).toBe('68px');
+    expect(modelMenuProps[0]?.hostFrame?.y).toBe(518);
+    expect(rendered).toHaveBeenLastCalledWith({ requestId: 1, width: 240, height: 314 });
   });
 });

@@ -415,7 +415,7 @@ watch(
   [() => props.hostFrame, () => props.providerModels, () => props.recentModels, () => props.maxHeight, searchResults],
   () => {
     if (submenu.value === null && hoverModel.value === null) return;
-    void nextTick(syncFlyoutPosition);
+    syncFlyoutPosition();
   },
   { flush: 'post' },
 );

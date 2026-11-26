@@ -43,6 +43,7 @@ const menuRef = ref<InstanceType<typeof Menu> | null>(null);
 const modelMenuRef = ref<InstanceType<typeof ModelQuickMenu> | null>(null);
 const modelMenuOffset = ref<{ x: number; y: number } | null>(null);
 const modelMenuBottom = ref<number | null>(null);
+const modelViewOrigin = ref<{ x: number; y: number } | null>(null);
 const modelMenuFrame = ref<{ x: number; y: number; viewportWidth: number; viewportHeight: number } | null>(null);
 const dialogRef = ref<HTMLElement | null>(null);
 const inputValue = ref('');
@@ -173,6 +174,7 @@ function applyConfig(next: BrowserOverlayConfig): void {
     closing.value = false;
     modelMenuOffset.value = null;
     modelMenuBottom.value = null;
+    modelViewOrigin.value = null;
     modelMenuFrame.value = null;
   }
   if (next.kind === 'menu') resolvedPlacement.value = next.placement ?? 'bottom-end';
@@ -193,10 +195,10 @@ function reportSize(): void {
   const card = measuredCard();
   if (current === null || card === null || closing.value) return;
   const frame = modelMenuFrame.value;
-  const offset = modelMenuOffset.value;
-  if (current.kind === 'menu' && current.modelMenu !== undefined && frame !== null && offset !== null) {
-    const x = frame.x - offset.x + card.offsetLeft;
-    const y = frame.y - offset.y + card.offsetTop;
+  const origin = modelViewOrigin.value;
+  if (current.kind === 'menu' && current.modelMenu !== undefined && frame !== null && origin !== null) {
+    const x = origin.x + card.offsetLeft;
+    const y = origin.y + card.offsetTop;
     if (x !== frame.x || y !== frame.y) modelMenuFrame.value = { ...frame, x, y };
   }
   const { width, height } = measureBrowserOverlayCard(card);
@@ -225,8 +227,10 @@ function show(payload: BrowserOverlayShown): void {
     resolvedPlacement.value = payload.placement;
   }
   if (current.kind === 'menu' && payload.menuFrame !== undefined) {
-    modelMenuOffset.value = payload.menuOffset ?? null;
+    const offset = payload.menuOffset ?? null;
+    modelMenuOffset.value = offset;
     modelMenuBottom.value = payload.menuBottom ?? null;
+    modelViewOrigin.value = offset === null ? null : { x: payload.menuFrame.x - offset.x, y: payload.menuFrame.y - offset.y };
     modelMenuFrame.value = payload.menuFrame;
   }
   const entering = !presented.value;
