@@ -4155,8 +4155,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   display: none;
 }
 
-.ph :deep(.mention-pill.ProseMirror-selectednode) {
-  color: var(--color-text);
+.ph :deep(.mention-pill:not(.mention-missing).ProseMirror-selectednode),
+.ph :deep(.attachment-pill:not(.attachment-missing):not(.attachment-error).ProseMirror-selectednode),
+.ph :deep(.quote-pill.ProseMirror-selectednode) {
+  color: var(--color-link-hover);
 }
 
 .composer-sr-only {
@@ -4172,8 +4174,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 }
 
 .ph :deep(.composer-command-token) {
-  color: var(--color-text-muted);
-  font-weight: var(--weight-ui-strong);
+  color: var(--p-pill-fg);
 }
 
 .ph :deep(.composer-placeholder-overlay[data-command-argument='true']) {
