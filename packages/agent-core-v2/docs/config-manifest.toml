@@ -258,6 +258,7 @@ extra_skill_dirs = []
 #   hooks: stripEnv
 #   env:
 #     startup_timeout_ms <- KIMI_MCP_STARTUP_TIMEOUT_MS (custom parse)
+#     startup_wait_ms <- KIMI_MCP_STARTUP_WAIT_MS (custom parse)
 #     tool_timeout_ms <- KIMI_MCP_TOOL_TIMEOUT_MS (custom parse)
 #     reconnect_initial_delay_ms <- KIMI_MCP_RECONNECT_INITIAL_DELAY_MS (custom parse)
 #     reconnect_max_delay_ms <- KIMI_MCP_RECONNECT_MAX_DELAY_MS (custom parse)
@@ -265,6 +266,7 @@ extra_skill_dirs = []
 
 [mcp]
 # startup_timeout_ms: integer
+# startup_wait_ms: integer
 # tool_timeout_ms: integer
 # default_deferred: boolean
 # reconnect_initial_delay_ms: integer
