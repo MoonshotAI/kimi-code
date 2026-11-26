@@ -220,7 +220,7 @@ const metaLabel = computed(() => {
 
 <template>
   <div class="agent-panel">
-    <div ref="scroller" class="agent-transcript" @scroll.passive="onTranscriptScroll">
+    <div ref="scroller" class="agent-transcript" data-panel-content @scroll.passive="onTranscriptScroll">
       <div class="agent-transcript-inner">
         <div v-if="metaLabel" class="agent-meta" data-row-key="meta">
           <span class="agent-meta-text">{{ metaLabel }}</span>

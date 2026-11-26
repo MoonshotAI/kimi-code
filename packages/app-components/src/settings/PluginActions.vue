@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   Button,
@@ -44,6 +44,7 @@ const rowBusy = computed(() =>
   installBusy.value || removeBusy.value || toggleBusy.value || running.value,
 );
 const showInstall = computed(() => pluginRowShowsInstall(props.row));
+const installing = computed(() => showInstall.value && (installBusy.value || running.value));
 const installDisabled = computed(() =>
   rowBusy.value ||
   props.row.capabilityUnavailable ||
@@ -59,6 +60,10 @@ const installLabel = computed(() => {
 function isBusy(id: string, action: PluginRowAction): boolean {
   return state.busy[busyKey(id, action)] === true;
 }
+
+watch(installing, (isInstalling) => {
+  if (isInstalling) close();
+});
 
 async function install(): Promise<void> {
   const firstInstall = props.row.installedPlugin === undefined;
@@ -178,7 +183,7 @@ async function removePlugin(): Promise<void> {
     >
       {{ installLabel }}
     </Button>
-    <template v-if="row.installedPlugin">
+    <template v-if="row.installedPlugin && !installing">
       <Switch
         :model-value="row.installedPlugin.enabled"
         :disabled="rowBusy"
