@@ -4756,7 +4756,7 @@ command = "vim"
       type: 'video_url', videoUrl: { url: 'kimi-file://file-expiring-video' },
     });
     const args = (skills as Array<{ args: string }>)[0]!.args;
-    const path = args.match(/Attached video file: (.+?) \(open it with ReadMediaFile\)/)?.[1];
+    const path = args.match(/Attached video file: (.+?) \(open it with Read\)/)?.[1];
     expect(path).toBeDefined();
     expect(await readFile(path!)).toEqual(Buffer.from('example video'));
     expect(driver.state.transcriptEntries).toContainEqual(expect.objectContaining({
@@ -4830,7 +4830,7 @@ command = "vim"
       expect(skills).toEqual([{ name: 'review', args: expect.stringContaining(`Attached ${kind} file:`) }]);
       const args = (skills as Array<{ args: string }>)[0]!.args;
       expect(args).not.toContain(attachment.placeholder);
-      const path = args.match(/Attached (?:image|video) file: (.+?) \(open it with ReadMediaFile\)/)?.[1];
+      const path = args.match(/Attached (?:image|video) file: (.+?) \(open it with Read\)/)?.[1];
       expect(path).toBeDefined();
       expect(await readFile(path!)).toEqual(kind === 'image' ? Buffer.from([0xaa, 0xbb]) : Buffer.from('example video'));
       expect(driver.state.transcriptEntries).toContainEqual(expect.objectContaining({
@@ -6158,7 +6158,7 @@ command = "vim"
       { type: 'image_url', imageUrl: { url: 'kimi-file://file-skill-media' } },
     ]);
     expect(skills[0]?.name).toBe('review');
-    expect(skills[0]?.args).toMatch(/^look Attached image file: .+\.png \(open it with ReadMediaFile\)$/);
+    expect(skills[0]?.args).toMatch(/^look Attached image file: .+\.png \(open it with Read\)$/);
     expect(skills[0]?.args).not.toContain(attachment.placeholder);
     expect(driver.state.transcriptEntries).toContainEqual(
       expect.objectContaining({ kind: 'user', content: text, skillNames: ['review'] }),
@@ -8670,7 +8670,7 @@ command = "vim"
     model.holdUploads();
     model
       .route('video-upload', () => true)
-      .script(call('ReadMediaFile', { path: 'clip.mp4' }, { id: 'call_video_1' }));
+      .script(call('Read', { path: 'clip.mp4' }, { id: 'call_video_1' }));
     const baseUrl = model.baseUrl;
     await writeFile(
       join(homeDir, 'config.toml'),

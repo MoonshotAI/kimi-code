@@ -98,21 +98,25 @@ function metaSegments(summary: ReadMediaSummary): string[] {
   return segs;
 }
 
-export const readMediaChip: ChipProvider = (_toolCall, result) => {
-  if (result.is_error) return '';
-  const summary = parseReadMediaOutput(result.output);
-  if (summary === null) return '';
+export function formatReadMediaChip(summary: ReadMediaSummary): string {
   const meta = metaSegments(summary);
   if (meta.length === 0) {
     return summary.url !== undefined ? `${summary.kind} · uploaded` : summary.kind;
   }
   return `${summary.kind} (${meta.join(', ')})`;
+}
+
+export const readMediaChip: ChipProvider = (_toolCall, result) => {
+  if (result.is_error) return '';
+  const summary = parseReadMediaOutput(result.output);
+  if (summary === null) return '';
+  return formatReadMediaChip(summary);
 };
 
-export const readMediaSummary: ResultRenderer = (toolCall, result, ctx) => {
-  if (result.is_error) return renderTruncated(toolCall, result, ctx);
-  const summary = parseReadMediaOutput(result.output);
-  if (summary === null) return renderTruncated(toolCall, result, ctx);
+export function renderReadMediaSummary(
+  summary: ReadMediaSummary,
+  ctx: Parameters<ResultRenderer>[2],
+): Component[] {
   if (!ctx.expanded) return [];
 
   const dim = (text: string): string => currentTheme.dim(text);
@@ -126,4 +130,11 @@ export const readMediaSummary: ResultRenderer = (toolCall, result, ctx) => {
   if (summary.url !== undefined) tail.push(summary.url);
   out.push(new Text(`  ${dim(tail.join(' · '))}`, 0, 0));
   return out;
+}
+
+export const readMediaSummary: ResultRenderer = (toolCall, result, ctx) => {
+  if (result.is_error) return renderTruncated(toolCall, result, ctx);
+  const summary = parseReadMediaOutput(result.output);
+  if (summary === null) return renderTruncated(toolCall, result, ctx);
+  return renderReadMediaSummary(summary, ctx);
 };

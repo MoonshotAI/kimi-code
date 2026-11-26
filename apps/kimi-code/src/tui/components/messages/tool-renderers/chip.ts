@@ -4,7 +4,7 @@ import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
 import { goalStatusChip } from './goal';
 import { parseGlobOutput, parseGrepOutput, searchNoticeOnly } from './grep-output';
-import { readMediaChip } from './media';
+import { formatReadMediaChip, parseReadMediaOutput, readMediaChip } from './media';
 import { nonEmptyLines } from './outcome';
 import { isSpilledToolOutput, strArg, stripSpillPointer } from './types';
 import { waitForChip } from './wait-for';
@@ -77,8 +77,13 @@ const editChip: ChipProvider = (toolCall) => {
 
 const writeChip: ChipProvider = (toolCall) => formatWriteChip(computeWriteStats(toolCall.args));
 
-const readChip: ChipProvider = (_toolCall, result) =>
-  pluralize(nonEmptyLines(result.output).length, 'line');
+const readChip: ChipProvider = (_toolCall, result) => {
+  if (!result.is_error) {
+    const media = parseReadMediaOutput(result.output);
+    if (media !== null) return formatReadMediaChip(media);
+  }
+  return pluralize(nonEmptyLines(result.output).length, 'line');
+};
 
 const bashChip: ChipProvider = (_toolCall, result) => {
   if (result.is_error === true) return '';

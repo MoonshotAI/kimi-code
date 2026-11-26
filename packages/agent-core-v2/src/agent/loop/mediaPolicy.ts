@@ -7,7 +7,8 @@ import type { Model } from '#/llm-adapter/model/catalog';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { buildMediaPathTag, matchMediaPathTags, type MediaPathTag } from '#/agent/media/mediaRef';
-import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
+
+export const LEGACY_READ_MEDIA_FILE_TOOL_NAME = 'ReadMediaFile';
 
 function mediaTagOf(message: ToolMessage): MediaPathTag | undefined {
   const text = message.content
@@ -31,7 +32,7 @@ export function hideReadMediaFile(messages: readonly Message[]): readonly Messag
   for (const message of messages) {
     if (message.role !== 'assistant') continue;
     for (const call of message.toolCalls) {
-      if (call.name === READ_MEDIA_FILE_TOOL_NAME) readMediaCallIds.add(call.id);
+      if (call.name === LEGACY_READ_MEDIA_FILE_TOOL_NAME) readMediaCallIds.add(call.id);
     }
   }
   if (readMediaCallIds.size === 0) return messages;
@@ -56,7 +57,7 @@ export function hideReadMediaFile(messages: readonly Message[]): readonly Messag
       out.push(message);
       continue;
     }
-    const toolCalls = message.toolCalls.filter((call) => call.name !== READ_MEDIA_FILE_TOOL_NAME);
+    const toolCalls = message.toolCalls.filter((call) => call.name !== LEGACY_READ_MEDIA_FILE_TOOL_NAME);
     if (toolCalls.length === message.toolCalls.length) {
       out.push(message);
       continue;
@@ -115,7 +116,7 @@ export function createAgentMediaPolicy(
               ? undefined
               : {
                   ...current.profile,
-                  tools: current.profile.tools?.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME),
+                  tools: current.profile.tools?.filter((tool) => tool.name !== LEGACY_READ_MEDIA_FILE_TOOL_NAME),
                 },
           content: { ...current.content, messages },
         };

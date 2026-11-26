@@ -16,8 +16,6 @@ import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import type { WorkspaceConfig } from '#/tool/path-access';
 import { ToolAccesses, type ExecutableToolContext, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { EditTool } from '#/agent/tools/edit/editTool';
@@ -26,7 +24,6 @@ import { GlobTool } from '#/agent/tools/os/glob/globTool';
 import { GrepTool } from '#/agent/tools/os/grep/grepTool';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
 import { WriteTool } from '#/agent/tools/os/write/writeTool';
-import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
 import { stubConfigService } from '../../../app/config/stubs';
 import { stubToolResultTruncationService } from '../../toolResultTruncation/stubs';
@@ -42,14 +39,12 @@ const ensureRgPathMock = vi.mocked(ensureRgPath);
 
 const ENVIRONMENT_CHANGED_OUTPUT = 'Environment changed before execution. Retry the tool call.';
 const BINDING: EnvironmentBinding = { environmentId: 'remote' };
-const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
 
 const skillCatalog = { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog;
 const profile = {
   getModelCapabilities: () => ({ image_in: true, video_in: true }),
 } as unknown as IAgentLoopService;
 const toolPolicy = { isToolActive: () => true } as unknown as IAgentToolPolicyService;
-const toolRegistry = { resolve: () => ({}) } as unknown as IAgentToolRegistryService;
 
 const attachmentStore = { put: async () => 'kimi-file://a' } as unknown as ISessionMediaStore;
 
@@ -191,8 +186,6 @@ function toolCases(): readonly ToolCase[] {
           stubToolResultTruncationService(),
           stubConfigService(),
           profile,
-          toolPolicy,
-          toolRegistry,
         ).resolveExecution({ path }),
       expectOutcome: (result) => {
         expect(result.isError).not.toBe(true);
@@ -242,10 +235,24 @@ function toolCases(): readonly ToolCase[] {
       },
     },
     {
-      name: 'ReadMediaFile',
+      name: 'Read (media)',
       fs: pngFs(),
       resolve: (service) =>
-        new ReadMediaFileTool(service, WORKSPACE, attachmentStore, noopTelemetryService).resolveExecution({
+        new ReadTool(
+          service,
+          workspace,
+          skillCatalog,
+          stubToolResultTruncationService(),
+          stubConfigService(),
+          profile,
+          attachmentStore,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          noopTelemetryService,
+        ).resolveExecution({
           path: '/workspace/a.png',
         }),
       expectOutcome: () => {},

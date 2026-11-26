@@ -1,5 +1,4 @@
 import * as posixPath from 'node:path/posix';
-import { Readable } from 'node:stream';
 
 import type { ModelCapability, LlmFiles } from '@moonshot-ai/core/llm/request';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
@@ -7,8 +6,7 @@ import { mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { Emitter, Event } from '#/_base/event';
-import { OrderedHookSlot } from '#/hooks';
+import { Event } from '#/_base/event';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -17,18 +15,14 @@ import { LOCAL_ENVIRONMENT_ID, type Environment } from '#/environment/environmen
 import type { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { stubAgentEnvironment } from '../../../environment/stubs';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
-import {
-  ReadMediaFileInputSchema,
-  type ReadMediaFileInput,
-} from '#/agent/tools/read-media-file/read-media-file';
-import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
+import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
+import { ReadTool } from '#/agent/tools/os/read/readTool';
 import type { VideoUploader } from '#/llm-adapter/model/media';
 import {
   MAX_IMAGE_DECODE_BYTES,
   setConfiguredReadImageByteBudget,
 } from '#/agent/media/image-compress';
-import { createVideoUploader, registerMediaTools } from '#/agent/media/registerMediaTools';
-import { AgentMediaToolsRegistrar } from '#/agent/media/mediaToolsRegistrar';
+import { createVideoUploader } from '#/agent/media/videoUpload';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
 import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
@@ -40,22 +34,19 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import {
   ToolAccesses,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { EventBusService } from '#/app/event/eventBusService';
-import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import type { Model } from '#/llm-adapter/model/catalog';
-import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { WorkspaceConfig } from '#/tool/path-access';
+import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
+import type { IAgentLoopService } from '#/agent/loop/loop';
 import { sniffImageDimensions } from '#/agent/media/file-type';
-import { stubAgentContext } from '../../agentContext/stubs';
-
-const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
+import { stubWorkspaceContext } from '../../../session/workspaceContext/stub-workspace-context';
+import { stubToolResultTruncationService } from '../../toolResultTruncation/stubs';
+import { stubConfigService } from '../../../app/config/stubs';
 
 const PNG_WIDTH = 1920;
 const PNG_HEIGHT = 1080;
@@ -151,19 +142,34 @@ interface FakeFile {
 
 function createTestFs(files: Record<string, FakeFile>): IHostFileSystem {
   const lookup = (path: string): FakeFile | undefined => files[path];
+  const stat = vi.fn(async (path: string) => {
+    const file = lookup(path);
+    if (file === undefined) {
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    }
+    return {
+      isFile: true,
+      isDirectory: false,
+      size: file.size ?? file.data.length,
+    };
+  });
+  const readBytes = vi.fn(async (path: string, n?: number) => {
+    const data = lookup(path)?.data ?? Buffer.alloc(0);
+    return n === undefined ? data : data.subarray(0, n);
+  });
+  const readFileHead = vi.fn(async (path: string, maxBytes: number) => {
+    const fileStat = await stat(path);
+    return { stat: fileStat, bytes: await readBytes(path, maxBytes) };
+  });
+  const readLines = vi.fn(async function* (path: string) {
+    const text = (lookup(path)?.data ?? Buffer.alloc(0)).toString('utf8');
+    if (text.length > 0) yield text;
+  });
   return {
-    readBytes: vi.fn(async (path: string, n?: number) => {
-      const data = lookup(path)?.data ?? Buffer.alloc(0);
-      return n === undefined ? data : data.subarray(0, n);
-    }),
-    stat: vi.fn(async (path: string) => {
-      const file = lookup(path);
-      return {
-        isFile: true,
-        isDirectory: false,
-        size: file?.size ?? file?.data.length ?? 0,
-      };
-    }),
+    readBytes,
+    readFileHead,
+    readLines,
+    stat,
   } as unknown as IHostFileSystem;
 }
 
@@ -213,22 +219,41 @@ function testMediaStore(): ISessionMediaStore {
   );
 }
 
-function makeTool(
-  files: Record<string, FakeFile>,
+function makeToolFromFs(
+  fs: IHostFileSystem,
   telemetry?: ITelemetryService,
   attachmentStore: ISessionMediaStore = testMediaStore(),
-): ReadMediaFileTool {
-  return new ReadMediaFileTool(
-    environmentFor(createTestFs(files)),
-    WORKSPACE,
+  modelCaps: ModelCapability = capabilities(),
+): ReadTool {
+  return new ReadTool(
+    environmentFor(fs),
+    stubWorkspaceContext('/workspace'),
+    { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
+    stubToolResultTruncationService(),
+    stubConfigService(),
+    { getModelCapabilities: () => modelCaps } as unknown as IAgentLoopService,
     attachmentStore,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
     telemetry,
   );
 }
 
+function makeTool(
+  files: Record<string, FakeFile>,
+  telemetry?: ITelemetryService,
+  attachmentStore: ISessionMediaStore = testMediaStore(),
+  modelCaps: ModelCapability = capabilities(),
+): ReadTool {
+  return makeToolFromFs(createTestFs(files), telemetry, attachmentStore, modelCaps);
+}
+
 async function execute(
-  tool: ReadMediaFileTool,
-  args: ReadMediaFileInput,
+  tool: ReadTool,
+  args: ReadInput,
 ): Promise<ExecutableToolResult> {
   const execution = await tool.resolveExecution(args);
   if (!('execute' in execution)) {
@@ -260,53 +285,31 @@ function noteText(result: ExecutableToolResult): string {
   return result.note as string;
 }
 
-describe('ReadMediaFileTool', () => {
-  it('has name, parameters, and a path-scoped read access', async () => {
+describe('ReadTool — media files', () => {
+  it('exposes Read without crop or full_resolution parameters and scopes read access by path', async () => {
     const tool = makeTool({ '/workspace/sample.png': { data: pngBuffer() } });
 
-    expect(tool.name).toBe('ReadMediaFile');
-    expect(ReadMediaFileInputSchema.safeParse({ path: '/workspace/sample.png' }).success).toBe(true);
-    expect(
-      ReadMediaFileInputSchema.safeParse({
-        path: '/workspace/sample.png',
-        region: { x: 0, y: 0, width: 10, height: 10 },
-      }).success,
-    ).toBe(true);
-    expect(
-      ReadMediaFileInputSchema.safeParse({
-        path: '/workspace/sample.png',
-        region: { x: -1, y: 0, width: 10, height: 10 },
-      }).success,
-    ).toBe(false);
-    expect(
-      ReadMediaFileInputSchema.safeParse({
-        path: '/workspace/sample.png',
-        region: { x: 0, y: 0, width: 0, height: 10 },
-      }).success,
-    ).toBe(false);
-    expect(
-      ReadMediaFileInputSchema.safeParse({
-        path: '/workspace/sample.png',
-        full_resolution: true,
-      }).success,
-    ).toBe(true);
+    expect(tool.name).toBe('Read');
+    expect(ReadInputSchema.safeParse({ path: '/workspace/sample.png' }).success).toBe(true);
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: { path: { type: 'string' } },
     });
+    expect(tool.parameters['properties']).not.toHaveProperty('region');
+    expect(tool.parameters['properties']).not.toHaveProperty('full_resolution');
 
     const execution = (await tool.resolveExecution({ path: '/workspace/sample.png' })) as Extract<
       ToolExecution,
       { execute: unknown }
     >;
     expect(execution.accesses).toEqual(ToolAccesses.readFile('/workspace/sample.png'));
-    expect(execution.approvalRule).toBe('ReadMediaFile(/workspace/sample.png)');
+    expect(execution.approvalRule).toBe('Read(/workspace/sample.png)');
   });
 
-  it('describes media support without model capability claims', () => {
+  it('describes text, image, and video support', () => {
     const description = makeTool({}).description;
-    expect(description).toContain('image and video files');
-    expect(description).not.toContain('current model');
+    expect(description).toContain('image');
+    expect(description).toContain('video');
   });
 
   it('rejects empty paths', async () => {
@@ -315,13 +318,27 @@ describe('ReadMediaFileTool', () => {
     expect(result.output).toContain('File path cannot be empty');
   });
 
-  it('redirects text files to the Read tool', async () => {
+  it('reads text files directly instead of rejecting them', async () => {
     const result = await execute(
-      makeTool({ '/workspace/note.txt': { data: Buffer.from('hello world') } }),
+      makeTool({ '/workspace/note.txt': { data: Buffer.from('hello world\n') } }),
       { path: '/workspace/note.txt' },
     );
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain('Use Read');
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toBe('1\thello world');
+  });
+
+  it('rejects text pagination parameters on image and video files', async () => {
+    const tool = makeTool({
+      '/workspace/sample.png': { data: pngBuffer() },
+      '/workspace/clip.mp4': { data: mp4Buffer() },
+    });
+    const imageWithLines = await execute(tool, { path: '/workspace/sample.png', n_lines: 10 });
+    expect(imageWithLines.isError).toBe(true);
+    expect(imageWithLines.output).toContain('text files');
+
+    const videoWithOffset = await execute(tool, { path: '/workspace/clip.mp4', line_offset: 2 });
+    expect(videoWithOffset.isError).toBe(true);
+    expect(videoWithOffset.output).toContain('text files');
   });
 
   it('rejects unsupported binary formats', async () => {
@@ -330,7 +347,7 @@ describe('ReadMediaFileTool', () => {
       { path: '/workspace/archive.zip' },
     );
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('not a supported image or video file');
+    expect(result.output).toContain('not readable as UTF-8 text');
   });
 
   it('returns a text/image/text wrap plus a <system> note for PNG files', async () => {
@@ -353,7 +370,7 @@ describe('ReadMediaFileTool', () => {
     expect(parts[2]).toEqual({ type: 'text', text: '</image>' });
   });
 
-  it('downsamples large images and points the model to region readback', async () => {
+  it('downsamples large images without advertising region readback', async () => {
     const big = Buffer.from(
       await new Jimp({ width: 2200, height: 2200, color: 0x3366ccff }).getBuffer('image/png'),
     );
@@ -370,7 +387,7 @@ describe('ReadMediaFileTool', () => {
     expect(systemText).toContain(`${String(big.length)} bytes`);
     expect(systemText).toMatch(/The attached image was downsampled to 2000x2000/);
     expect(systemText).toMatch(/fine detail/i);
-    expect(systemText).toContain('region');
+    expect(systemText).not.toContain('region parameter');
 
     const stored = await store.get(mediaUrl(outputParts(result)[1]));
     expect(stored?.mimeType).toMatch(/^image\//);
@@ -386,13 +403,13 @@ describe('ReadMediaFileTool', () => {
       { path: '/workspace/oversized.png' },
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       isError: true,
       output:
         'Image is too large to send safely after compression (262168 bytes; limit 262144 bytes and 2000px on the longest edge). ' +
         'The original image was not sent to the model. Do not retry the same file unchanged. ' +
         'Use Bash or an available image-processing tool to create a smaller copy within both limits, ' +
-        'then call ReadMediaFile on the smaller copy.',
+        'then call Read on the smaller copy.',
     });
   });
 
@@ -402,31 +419,31 @@ describe('ReadMediaFileTool', () => {
       { path: '/workspace/wide.png' },
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       isError: true,
       output:
         'Image is too large to send safely after compression (24 bytes; limit 262144 bytes and 2000px on the longest edge). ' +
         'The original image was not sent to the model. Do not retry the same file unchanged. ' +
         'Use Bash or an available image-processing tool to create a smaller copy within both limits, ' +
-        'then call ReadMediaFile on the smaller copy.',
+        'then call Read on the smaller copy.',
     });
   });
 
-  it('reads only the sniff header when the default image exceeds the safe decode allocation', async () => {
+  it('reads only the sniff header when the image exceeds the safe decode allocation', async () => {
     const fs = createTestFs({
       '/workspace/huge.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
     });
-    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, testMediaStore());
+    const tool = makeToolFromFs(fs);
 
     const result = await execute(tool, { path: '/workspace/huge.png' });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       isError: true,
       output:
         'Image is too large to send safely after compression (67108865 bytes; limit 262144 bytes and 2000px on the longest edge). ' +
         'The original image was not sent to the model. Do not retry the same file unchanged. ' +
         'Use Bash or an available image-processing tool to create a smaller copy within both limits, ' +
-        'then call ReadMediaFile on the smaller copy.',
+        'then call Read on the smaller copy.',
     });
     expect(vi.mocked(fs.readBytes)).toHaveBeenCalledOnce();
     expect(vi.mocked(fs.readBytes)).toHaveBeenCalledWith('/workspace/huge.png', 512);
@@ -437,36 +454,13 @@ describe('ReadMediaFileTool', () => {
     const fs = createTestFs({
       '/workspace/large.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
     });
-    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, testMediaStore());
+    const tool = makeToolFromFs(fs);
 
     const result = await execute(tool, { path: '/workspace/large.png' });
 
     expect(result.isError).toBe(false);
     expect(vi.mocked(fs.readBytes)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(fs.readBytes)).toHaveBeenLastCalledWith('/workspace/large.png', undefined);
-  });
-
-  it('returns external preprocessing guidance before loading an oversized region source', async () => {
-    const fs = createTestFs({
-      '/workspace/huge.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
-    });
-    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, testMediaStore());
-
-    const result = await execute(tool, {
-      path: '/workspace/huge.png',
-      region: { x: 0, y: 0, width: 100, height: 100 },
-    });
-
-    expect(result).toEqual({
-      isError: true,
-      output:
-        'Image is too large to process safely for region or full_resolution (67108865 bytes; safe decode limit 67108864 bytes). ' +
-        'The original image was not sent to the model. Do not retry the same file unchanged. ' +
-        'Use Bash or an available image-processing tool to create a smaller copy or crop the needed ' +
-        'region into a separate image, then call ReadMediaFile on the resulting file.',
-    });
-    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledOnce();
-    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledWith('/workspace/huge.png', 512);
   });
 
   it('does not claim downsampling for an image sent untouched', async () => {
@@ -480,97 +474,6 @@ describe('ReadMediaFileTool', () => {
       path: '/workspace/small.png',
     });
     expect(noteText(result)).not.toMatch(/downsampled/i);
-  });
-
-  it('reads image regions at native resolution', async () => {
-    const big = Buffer.from(
-      await new Jimp({ width: 2100, height: 2100, color: 0x3366ccff }).getBuffer('image/png'),
-    );
-    const store = testMediaStore();
-    const result = await execute(
-      makeTool({ '/workspace/big.png': { data: big } }, undefined, store),
-      { path: '/workspace/big.png', region: { x: 100, y: 50, width: 400, height: 300 } },
-    );
-    const stored = await store.get(mediaUrl(outputParts(result)[1]));
-    expect(sniffImageDimensions(Buffer.from(stored!.bytes))).toEqual({
-      width: 400,
-      height: 300,
-    });
-    const systemText = noteText(result);
-    expect(systemText).toContain('2100x2100');
-    expect(systemText).toMatch(/region \(x=100, y=50, width=400, height=300\)/);
-    expect(systemText).toMatch(/native resolution/);
-    expect(systemText).toContain('offset');
-  });
-
-  it('rejects a region outside the image with the original size in the error', async () => {
-    const big = Buffer.from(
-      await new Jimp({ width: 2100, height: 2100, color: 0x3366ccff }).getBuffer('image/png'),
-    );
-    const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
-      path: '/workspace/big.png',
-      region: { x: 5000, y: 0, width: 100, height: 100 },
-    });
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain('2100x2100');
-  });
-
-  it('serves full_resolution when the bytes fit the per-image budget', async () => {
-    const big = Buffer.from(
-      await new Jimp({ width: 2100, height: 1050, color: 0x3366ccff }).getBuffer('image/png'),
-    );
-    const store = testMediaStore();
-    const result = await execute(
-      makeTool({ '/workspace/big.png': { data: big } }, undefined, store),
-      { path: '/workspace/big.png', full_resolution: true },
-    );
-
-    const stored = await store.get(mediaUrl(outputParts(result)[1]));
-    expect(Buffer.from(stored!.bytes)).toEqual(big);
-    expect(noteText(result)).toMatch(/native resolution/);
-  });
-
-  it('returns the configured full_resolution limit error before loading an over-budget image', async () => {
-    const data = Buffer.concat([pngBuffer(), Buffer.alloc(4 * 1024 * 1024, 1)]);
-    const fs = createTestFs({ '/workspace/huge.png': { data } });
-    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, testMediaStore());
-
-    const result = await execute(tool, {
-      path: '/workspace/huge.png',
-      full_resolution: true,
-    });
-    expect(result).toEqual({
-      isError: true,
-      output:
-        '"/workspace/huge.png" is 4194328 bytes (4.0 MB), over the 262144-byte (256 KB) ' +
-        'per-image limit, so full_resolution cannot be honored. ' +
-        'Use region to view a crop at full fidelity instead.',
-    });
-    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledOnce();
-    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledWith('/workspace/huge.png', 512);
-  });
-
-  it('prioritizes external preprocessing guidance for full_resolution above the decode cap', async () => {
-    const fs = createTestFs({
-      '/workspace/huge.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
-    });
-    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, testMediaStore());
-
-    const result = await execute(tool, {
-      path: '/workspace/huge.png',
-      full_resolution: true,
-    });
-
-    expect(result).toEqual({
-      isError: true,
-      output:
-        'Image is too large to process safely for region or full_resolution (67108865 bytes; safe decode limit 67108864 bytes). ' +
-        'The original image was not sent to the model. Do not retry the same file unchanged. ' +
-        'Use Bash or an available image-processing tool to create a smaller copy or crop the needed ' +
-        'region into a separate image, then call ReadMediaFile on the resulting file.',
-    });
-    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledOnce();
-    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledWith('/workspace/huge.png', 512);
   });
 
   it('reports an EXIF-rotated original in the decoded coordinate space', async () => {
@@ -591,23 +494,6 @@ describe('ReadMediaFileTool', () => {
     expect(systemText).toMatch(/downsampled to 1000x2000/);
   }, 15000);
 
-  it('reports the decoded size for a region read of an EXIF-rotated image', async () => {
-    const portrait = withExifOrientation(
-      new Uint8Array(
-        await new Jimp({ width: 120, height: 80, color: 0x3366ccff }).getBuffer('image/jpeg', {
-          quality: 90,
-        }),
-      ),
-      6,
-    );
-    const result = await execute(makeTool({ '/workspace/portrait.jpg': { data: portrait } }), {
-      path: '/workspace/portrait.jpg',
-      region: { x: 0, y: 0, width: 40, height: 40 },
-    });
-
-    expect(noteText(result)).toContain('Original dimensions: 80x120');
-  });
-
   it('reports display-space dimensions for an EXIF-rotated image sent untouched', async () => {
     const portrait = withExifOrientation(
       new Uint8Array(
@@ -626,7 +512,7 @@ describe('ReadMediaFileTool', () => {
     expect(systemText).not.toMatch(/downsampled/i);
   });
 
-  it('emits image_compress and image_crop telemetry tagged read_media', async () => {
+  it('emits image_compress telemetry tagged read_media', async () => {
     const records: TelemetryRecord[] = [];
     const big = Buffer.from(
       await new Jimp({ width: 2200, height: 1100, color: 0x3366ccff }).getBuffer('image/png'),
@@ -641,24 +527,6 @@ describe('ReadMediaFileTool', () => {
     expect(records[0]!.event).toBe('image_compress');
     expect(records[0]!.properties?.['source']).toBe('read_media');
     expect(records[0]!.properties?.['outcome']).toBe('compressed');
-
-    await execute(tool, {
-      path: '/workspace/big.png',
-      region: { x: 0, y: 0, width: 100, height: 100 },
-    });
-    expect(records).toHaveLength(2);
-    expect(records[1]!.event).toBe('image_crop');
-    expect(records[1]!.properties?.['source']).toBe('read_media');
-    expect(records[1]!.properties?.['ok']).toBe(true);
-  });
-
-  it('puts an image without checking model capabilities during execution', async () => {
-    const result = await execute(
-      makeTool({ '/workspace/sample.png': { data: pngBuffer() } }),
-      { path: '/workspace/sample.png' },
-    );
-    expect(result.isError).not.toBe(true);
-    expect(mediaUrl(outputParts(result)[1])).toContain('kimi-file://');
   });
 
   it('wraps a video as a kimi-file reference', async () => {
@@ -676,23 +544,6 @@ describe('ReadMediaFileTool', () => {
     expect(parts[1]?.type).toBe('video_url');
     expect(mediaUrl(parts[1])).toContain('kimi-file://');
     expect(parts[2]).toEqual({ type: 'text', text: '</video>' });
-  });
-
-  it('rejects region and full_resolution for videos', async () => {
-    const tool = makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } });
-    const withRegion = await execute(tool, {
-      path: '/workspace/clip.mp4',
-      region: { x: 0, y: 0, width: 10, height: 10 },
-    });
-    expect(withRegion.isError).toBe(true);
-    expect(withRegion.output).toMatch(/image files/i);
-
-    const withFullResolution = await execute(tool, {
-      path: '/workspace/clip.mp4',
-      full_resolution: true,
-    });
-    expect(withFullResolution.isError).toBe(true);
-    expect(withFullResolution.output).toMatch(/image files/i);
   });
 
   it('stores a video as a kimi-file part without uploading during execution', async () => {
@@ -748,15 +599,6 @@ describe('ReadMediaFileTool', () => {
     expect(stored?.mimeType).toBe('video/mp4');
     expect(stored?.filename).toBe('clip.mp4');
     expect(Buffer.from(stored!.bytes)).toEqual(mp4Buffer());
-  });
-
-  it('does not perform an auth-bearing upload during execution', async () => {
-    const result = await execute(makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } }), {
-      path: '/workspace/clip.mp4',
-    });
-
-    expect(result.isError).not.toBe(true);
-    expect(mediaUrl(outputParts(result)[1])).toMatch(/^kimi-file:\/\//);
   });
 
   it('defers video upload and video_upload telemetry to the next LLM request', async () => {
@@ -822,17 +664,6 @@ describe('ReadMediaFileTool', () => {
     ]);
   });
 
-  it('preserves video bytes for providers that inline on a later request', async () => {
-    const store = testMediaStore();
-    const result = await execute(
-      makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } }, undefined, store),
-      { path: '/workspace/clip.mp4' },
-    );
-
-    const stored = await store.get(mediaUrl(outputParts(result)[1]));
-    expect(Buffer.from(stored!.bytes)).toEqual(mp4Buffer());
-  });
-
   it('rejects empty files', async () => {
     const result = await execute(
       makeTool({ '/workspace/sample.png': { data: pngBuffer(), size: 0 } }),
@@ -853,256 +684,6 @@ describe('ReadMediaFileTool', () => {
   });
 });
 
-describe('registerMediaTools', () => {
-  const fs = createTestFs({});
-  const env = createTestEnv();
-
-  it('registers ReadMediaFile by default and unregisters on dispose', () => {
-    const registry = new AgentToolRegistryService();
-    const disposable = registerMediaTools(registry, {
-      environment: environmentFor(fs, env),
-      workspace: WORKSPACE,
-      attachmentStore: testMediaStore(),
-    });
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
-    disposable.dispose();
-    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
-  });
-
-  it('puts a video through the default-registered tool', async () => {
-    const registry = new AgentToolRegistryService();
-    registerMediaTools(registry, {
-      environment: environmentFor(createTestFs({ '/workspace/clip.mp4': { data: mp4Buffer() } }), env),
-      workspace: WORKSPACE,
-      attachmentStore: testMediaStore(),
-    });
-    const result = await execute(registry.resolve('ReadMediaFile') as ReadMediaFileTool, { path: '/workspace/clip.mp4' });
-    expect(result.isError).not.toBe(true);
-    expect(mediaUrl(outputParts(result)[1])).toContain('kimi-file://');
-  });
-
-  it('registers without requiring media capability metadata', () => {
-    const registry = new AgentToolRegistryService();
-    const disposable = registerMediaTools(registry, {
-      environment: environmentFor(fs, env),
-      workspace: WORKSPACE,
-      attachmentStore: testMediaStore(),
-    });
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
-    expect(() => disposable.dispose()).not.toThrow();
-  });
-
-  it('keeps attachment reads available when the environment lacks filesystem availability', () => {
-    const registry = new AgentToolRegistryService();
-    const availableEnvironment = environmentFor(fs, env);
-    registerMediaTools(registry, {
-      environment: { ...availableEnvironment, isAvailable: () => false },
-      workspace: WORKSPACE,
-      attachmentStore: testMediaStore(),
-    });
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
-  });
-});
-
-describe('AgentMediaToolsRegistrar', () => {
-  interface ProfileState {
-    alias: string;
-    capabilities: ModelCapability;
-  }
-
-  function createRegistrarHarness(
-    files: Record<string, FakeFile> = {},
-    attachmentStore?: ISessionMediaStore,
-  ) {
-    const registry = new AgentToolRegistryService();
-    const eventBus = new EventBusService();
-    const onDidRestore = new OrderedHookSlot();
-    const dispatcher = { hooks: { onDidRestore } } as unknown as IEventDispatcher;
-    const agentContext = stubAgentContext('main', 1);
-    eventBus.activateAgent(agentContext);
-    const state: ProfileState = {
-      alias: '',
-      capabilities: capabilities({ image_in: false, video_in: false }),
-    };
-    const workspaceCtx = {
-      workDir: '/workspace',
-      additionalDirs: [],
-    } as unknown as ISessionWorkspaceContext;
-    const baseEnvironment = environmentFor(createTestFs(files));
-    const environmentChanges = new Emitter<void>();
-    let environmentAvailable = true;
-    const environment: IAgentEnvironmentService = {
-      _serviceBrand: undefined,
-      onDidChange: environmentChanges.event,
-      isAvailable: (required = []) => environmentAvailable && baseEnvironment.isAvailable(required),
-      inspect: () => {
-        if (!environmentAvailable) throw new Error('environment unavailable');
-        return baseEnvironment.inspect();
-      },
-      acquire: (required = []) => baseEnvironment.acquire(required),
-      acquireWhenReady: async (required = []) => baseEnvironment.acquire(required),
-      workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
-    };
-    const registrar = new AgentMediaToolsRegistrar(
-      registry,
-      eventBus,
-      dispatcher,
-      environment,
-      workspaceCtx,
-      recordingTelemetry([]),
-      new AgentStateService(),
-      attachmentStore ?? testMediaStore(),
-      undefined,
-    );
-    const bindModel = (alias: string, caps: ModelCapability | undefined): void => {
-      state.alias = alias;
-      state.capabilities = caps ?? {};
-      eventBus.publish(
-        new AgentStatusUpdated({
-          agentId: 'main',
-          model: alias,
-          maxContextTokens: 0,
-        }),
-        agentContext,
-      );
-    };
-    const setEnvironmentAvailable = (available: boolean): void => {
-      environmentAvailable = available;
-      environmentChanges.fire();
-    };
-    return { registry, registrar, state, onDidRestore, bindModel, setEnvironmentAvailable };
-  }
-
-  it('registers before model binding and keeps the same tool across model updates', () => {
-    const { registry, bindModel } = createRegistrarHarness();
-    const first = registry.resolve('ReadMediaFile');
-    expect(first).toBeInstanceOf(ReadMediaFileTool);
-
-    bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
-    const second = registry.resolve('ReadMediaFile');
-    expect(second).toBe(first);
-    expect((second as ReadMediaFileTool).description).not.toContain('current model');
-  });
-
-  it('keeps ReadMediaFile registered after a silent profile restore', async () => {
-    const { registry, state, onDidRestore } = createRegistrarHarness();
-    state.alias = 'vision-model';
-    state.capabilities = capabilities({ image_in: true, video_in: false });
-    const first = registry.resolve('ReadMediaFile');
-    expect(first).toBeInstanceOf(ReadMediaFileTool);
-
-    await onDidRestore.run({});
-
-    expect(registry.resolve('ReadMediaFile')).toBe(first);
-  });
-
-  it('puts HEIC independently of the bound provider', async () => {
-    const heic = Buffer.from([
-      0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00,
-      0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00,
-    ]);
-    const { registry, bindModel } = createRegistrarHarness({ '/workspace/photo.heic': { data: heic } });
-    const readWith = async (alias: string) => {
-      bindModel(alias, capabilities({ image_in: true, video_in: false }));
-      const tool = registry.resolve('ReadMediaFile') as ReadMediaFileTool;
-      return execute(tool, { path: '/workspace/photo.heic' });
-    };
-
-    expect((await readWith('kimi-vision')).isError).toBeFalsy();
-    expect((await readWith('other-vision')).isError).toBeFalsy();
-  });
-
-  it('keeps the same ReadMediaFile instance when the model alias changes', () => {
-    const { registry, bindModel } = createRegistrarHarness();
-    bindModel('vision', capabilities({ image_in: true, video_in: false }));
-    const first = registry.resolve('ReadMediaFile');
-
-    bindModel('other-vision', capabilities({ image_in: true, video_in: false }));
-    expect(registry.resolve('ReadMediaFile')).toBe(first);
-  });
-
-  it('keeps the tool registered when the model loses media input', () => {
-    const { registry, bindModel } = createRegistrarHarness();
-    bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
-    const first = registry.resolve('ReadMediaFile');
-    expect(first).toBeInstanceOf(ReadMediaFileTool);
-
-    bindModel('text-model', capabilities({ image_in: false, video_in: false }));
-    expect(registry.resolve('ReadMediaFile')).toBe(first);
-  });
-
-  it('keeps attachment reads available across environment filesystem changes', () => {
-    const { registry, bindModel, setEnvironmentAvailable } = createRegistrarHarness();
-    bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
-
-    setEnvironmentAvailable(false);
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
-
-    setEnvironmentAvailable(true);
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
-  });
-
-  it.each([undefined, { x: 0, y: 0, width: 16, height: 16 }])('keeps session-image reads available while the workspace environment is unavailable (region=%j)', async (region) => {
-    const storage = new InMemoryStorageService();
-    const store = new SessionMediaStoreService(makeSessionContext({
-      sessionId: 'session', workspaceId: 'workspace', cwd: '/workspace',
-      sessionDir: '/session', sessionScope: 'session',
-    }), storage, new JsonAtomicDocumentStore(storage));
-    const bytes = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
-    await store.materialize({ fileId: 'f_picture', name: 'picture.png', mimeType: 'image/png', size: bytes.length, stream: () => Readable.from([bytes]) });
-    const { registry, bindModel, setEnvironmentAvailable } = createRegistrarHarness({}, store);
-    bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
-    setEnvironmentAvailable(false);
-    const tool = registry.resolve('ReadMediaFile');
-    expect(tool).toBeDefined();
-    const execution = await tool!.resolveExecution({ path: 'kimi-file://f_picture', region });
-    if (execution.isError === true) throw new Error('expected runnable attachment read');
-    const result = await execution.execute({ turnId: 1, toolCallId: 'image', signal: new AbortController().signal });
-    expect(result.isError).not.toBe(true);
-    expect(outputParts(result).some((part) => part.type === 'image_url')).toBe(true);
-  });
-
-  it('keeps the same tool instance across media capability changes', () => {
-    const { registry, bindModel } = createRegistrarHarness();
-    bindModel('vision-a', capabilities({ image_in: true, video_in: true }));
-    const first = registry.resolve('ReadMediaFile');
-
-    bindModel('text-only', capabilities({ image_in: false, video_in: false }));
-    expect(registry.resolve('ReadMediaFile')).toBe(first);
-  });
-
-  it('keeps the same instance across unrelated status updates', () => {
-    const { registry, bindModel } = createRegistrarHarness();
-    bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
-    const first = registry.resolve('ReadMediaFile');
-
-    bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
-    expect(registry.resolve('ReadMediaFile')).toBe(first);
-  });
-
-  it('stays registered for unknown model capabilities', () => {
-    const { registry, bindModel } = createRegistrarHarness();
-    bindModel('unconfigured-model', undefined);
-    const first = registry.resolve('ReadMediaFile');
-    expect(first).toBeInstanceOf(ReadMediaFileTool);
-
-    bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
-    expect(registry.resolve('ReadMediaFile')).toBe(first);
-  });
-
-  it('unregisters on dispose', () => {
-    const { registry, registrar, bindModel } = createRegistrarHarness();
-    bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
-
-    registrar.dispose();
-    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
-    bindModel('vision-model-2', capabilities({ image_in: true, video_in: true }));
-    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
-  });
-});
-
 describe('createVideoUploader', () => {
   const uploadResult = {
     type: 'video_url' as const,
@@ -1115,7 +696,6 @@ describe('createVideoUploader', () => {
   }
 
   it('returns undefined when the model does not support video upload', () => {
-    expect(createVideoUploader(undefined)).toBeUndefined();
     expect(createVideoUploader(undefined)).toBeUndefined();
   });
 
@@ -1182,18 +762,6 @@ describe('createVideoUploader', () => {
     ]);
   }
 
-  it('puts HEIC for format negotiation during resolution', async () => {
-    const store = testMediaStore();
-    const result = await execute(makeTool({ '/workspace/photo.heic': { data: heicBytes() } }, undefined, store), {
-      path: '/workspace/photo.heic',
-    });
-
-    expect(result.isError).toBeFalsy();
-    const stored = await store.get(mediaUrl(outputParts(result)[1]));
-    expect(stored?.mimeType).toBe('image/heic');
-    expect(Buffer.from(stored!.bytes)).toEqual(heicBytes());
-  });
-
   function ftypBytes(brand: string): Buffer {
     const buf = Buffer.alloc(24);
     buf.writeUInt32BE(24, 0);
@@ -1203,27 +771,9 @@ describe('createVideoUploader', () => {
     return buf;
   }
 
-  it('puts AVIF without consulting a provider-accepted set during execution', async () => {
+  it('stores HEIC untouched during execution for deferred resolution', async () => {
     const store = testMediaStore();
-    const result = await execute(makeTool({ '/workspace/photo.avif': { data: ftypBytes('avif') } }, undefined, store), {
-      path: '/workspace/photo.avif',
-    });
-
-    expect(result.isError).toBeFalsy();
-    const stored = await store.get(mediaUrl(outputParts(result)[1]));
-    expect(stored?.mimeType).toBe('image/avif');
-  });
-
-  function mediaTool(
-    files: Record<string, FakeFile>,
-    store: ISessionMediaStore = testMediaStore(),
-  ): ReadMediaFileTool {
-    return makeTool(files, undefined, store);
-  }
-
-  it('stores HEIC untouched during execution', async () => {
-    const store = testMediaStore();
-    const result = await execute(mediaTool({ '/workspace/photo.heic': { data: heicBytes() } }, store), {
+    const result = await execute(makeTool({ '/workspace/photo.heic': { data: heicBytes() } }, undefined, store), {
       path: '/workspace/photo.heic',
     });
 
@@ -1235,22 +785,9 @@ describe('createVideoUploader', () => {
   });
 
   it('preserves a HEIC above the read budget for deferred inline resolution', async () => {
-    const heic = Buffer.concat([heicBytes(), Buffer.alloc(4 * 1024 * 1024, 1)]);
-    const store = testMediaStore();
-    const result = await execute(mediaTool({ '/workspace/photo.heic': { data: heic } }, store), {
-      path: '/workspace/photo.heic',
-    });
-
-    expect(result.isError).toBeFalsy();
-    const stored = await store.get(mediaUrl(outputParts(result)[1]));
-    expect(stored!.bytes.byteLength).toBe(heic.byteLength);
-    expect(Buffer.compare(Buffer.from(stored!.bytes), heic)).toBe(0);
-  });
-
-  it('preserves a HEIC above the former provider inline budget', async () => {
     const heic = Buffer.concat([heicBytes(), Buffer.alloc(5 * 1024 * 1024, 1)]);
     const store = testMediaStore();
-    const result = await execute(mediaTool({ '/workspace/photo.heic': { data: heic } }, store), {
+    const result = await execute(makeTool({ '/workspace/photo.heic': { data: heic } }, undefined, store), {
       path: '/workspace/photo.heic',
     });
 
@@ -1260,12 +797,14 @@ describe('createVideoUploader', () => {
     expect(Buffer.compare(Buffer.from(stored!.bytes), heic)).toBe(0);
   });
 
-  it('puts AVIF for capability and format handling during resolution', async () => {
-    const result = await execute(mediaTool({ '/workspace/photo.avif': { data: ftypBytes('avif') } }), {
+  it('puts AVIF without consulting a provider-accepted set during execution', async () => {
+    const store = testMediaStore();
+    const result = await execute(makeTool({ '/workspace/photo.avif': { data: ftypBytes('avif') } }, undefined, store), {
       path: '/workspace/photo.avif',
     });
 
     expect(result.isError).toBeFalsy();
-    expect(mediaUrl(outputParts(result)[1])).toContain('kimi-file://');
+    const stored = await store.get(mediaUrl(outputParts(result)[1]));
+    expect(stored?.mimeType).toBe('image/avif');
   });
 });

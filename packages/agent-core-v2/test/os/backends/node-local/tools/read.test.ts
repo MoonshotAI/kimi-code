@@ -90,8 +90,8 @@ function createReadTool(
   } as unknown as ISessionSkillCatalog,
   truncation: IAgentToolResultTruncationService = stubToolResultTruncationService(),
   profile: IAgentLoopService = stubProfileService({ image_in: true, video_in: true }),
-  toolPolicy: IAgentToolPolicyService = { isToolActive: () => true } as unknown as IAgentToolPolicyService,
-  toolRegistry: IAgentToolRegistryService = { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
+  _toolPolicy?: IAgentToolPolicyService,
+  _toolRegistry?: IAgentToolRegistryService,
   config: IConfigService = stubConfigService(),
 ): ReadTool {
   const environment = Object.assign(
@@ -102,7 +102,7 @@ function createReadTool(
     { host: env, fs },
   );
   const resolver = stubAgentEnvironment(environment);
-  return new ReadTool(resolver, workspace, skillCatalog, truncation, config, profile, toolPolicy, toolRegistry);
+  return new ReadTool(resolver, workspace, skillCatalog, truncation, config, profile);
 }
 
 function createSpiedFs(content: string) {
@@ -248,8 +248,6 @@ function createRegistryBackedTool(environmentValue: FakeEnvironment) {
     stubToolResultTruncationService(),
     stubConfigService(),
     stubProfileService({ image_in: true, video_in: true }),
-    { isToolActive: () => true } as unknown as IAgentToolPolicyService,
-    { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
   );
   return { registry, tool };
 }
@@ -789,20 +787,23 @@ describe('ReadTool', () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
-  it('rejects image files before text decoding', async () => {
-    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  it('reads image files as multimodal parts without text decoding', async () => {
+    const pngHeader = Buffer.alloc(24);
+    pngHeader.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    pngHeader.writeUInt32BE(13, 8);
+    pngHeader.write('IHDR', 12, 'latin1');
+    pngHeader.writeUInt32BE(16, 16);
+    pngHeader.writeUInt32BE(16, 20);
     const { fs, readText } = createSpiedMapFs({
       '/tmp/sample.png': { bytes: pngHeader },
     });
     const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/sample.png' });
-    const output = toolContentString(result);
 
-    expect(result.isError).toBe(true);
-    expect(output).toBe(
-      '"/tmp/sample.png" is an image file. Only text files can be read; use ReadMediaFile for image and video files.',
-    );
+    expect(result.isError).toBe(false);
+    expect(Array.isArray(result.output)).toBe(true);
+    expect(result.output).toContainEqual({ type: 'text', text: '<image path="/tmp/sample.png">' });
     expect(readText).not.toHaveBeenCalled();
   });
 
@@ -829,53 +830,6 @@ describe('ReadTool', () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
-  it('does not recommend ReadMediaFile for images when the tool policy disables it', async () => {
-    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    const { fs, readText } = createSpiedMapFs({
-      '/tmp/sample.png': { bytes: pngHeader },
-    });
-    const tool = createReadTool(
-      fs,
-      createTestEnv(),
-      PERMISSIVE_WORKSPACE,
-      undefined,
-      undefined,
-      stubProfileService({ image_in: true, video_in: true }),
-      { isToolActive: () => false } as unknown as IAgentToolPolicyService,
-    );
-
-    const result = await execute(tool, { path: '/tmp/sample.png' });
-    const output = toolContentString(result);
-
-    expect(result.isError).toBe(true);
-    expect(output).toBe('"/tmp/sample.png" is an image file. Only text files can be read.');
-    expect(readText).not.toHaveBeenCalled();
-  });
-
-  it('does not recommend ReadMediaFile for images when it is not registered', async () => {
-    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    const { fs, readText } = createSpiedMapFs({
-      '/tmp/sample.png': { bytes: pngHeader },
-    });
-    const tool = createReadTool(
-      fs,
-      createTestEnv(),
-      PERMISSIVE_WORKSPACE,
-      undefined,
-      undefined,
-      stubProfileService({ image_in: true, video_in: true }),
-      { isToolActive: () => true } as unknown as IAgentToolPolicyService,
-      { resolve: () => undefined } as unknown as IAgentToolRegistryService,
-    );
-
-    const result = await execute(tool, { path: '/tmp/sample.png' });
-    const output = toolContentString(result);
-
-    expect(result.isError).toBe(true);
-    expect(output).toBe('"/tmp/sample.png" is an image file. Only text files can be read.');
-    expect(readText).not.toHaveBeenCalled();
-  });
-
   it('rejects an image-extension file whose bytes are not an image as not readable', async () => {
     const plainText = Buffer.from('this is plain ascii text, not a png');
     const { fs, readText } = createSpiedMapFs({
@@ -888,27 +842,31 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/fake.png" is not readable as UTF-8 text. Only text files can be read.',
+      '"/tmp/fake.png" is not readable as UTF-8 text. Only text, image, and video files can be read.',
     );
     expect(readText).not.toHaveBeenCalled();
   });
 
-  it('rejects extensionless image files using magic-byte sniffing', async () => {
-    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  it('reads extensionless image files using magic-byte sniffing', async () => {
+    const pngHeader = Buffer.alloc(24);
+    pngHeader.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    pngHeader.writeUInt32BE(13, 8);
+    pngHeader.write('IHDR', 12, 'latin1');
+    pngHeader.writeUInt32BE(16, 16);
+    pngHeader.writeUInt32BE(16, 20);
     const { fs, readText } = createSpiedMapFs({
       '/tmp/sample': { bytes: pngHeader },
     });
     const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/sample' });
-    const output = toolContentString(result);
 
-    expect(result.isError).toBe(true);
-    expect(output).toMatch(/image file/i);
+    expect(result.isError).toBe(false);
+    expect(result.output).toContainEqual({ type: 'text', text: '<image path="/tmp/sample">' });
     expect(readText).not.toHaveBeenCalled();
   });
 
-  it('rejects video files before text decoding', async () => {
+  it('reads video files as multimodal parts without text decoding', async () => {
     const mp4Header = Buffer.concat([
       Buffer.from([0x00, 0x00, 0x00, 0x18]),
       Buffer.from('ftyp'),
@@ -922,12 +880,9 @@ describe('ReadTool', () => {
     const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/sample.mp4' });
-    const output = toolContentString(result);
 
-    expect(result.isError).toBe(true);
-    expect(output).toBe(
-      '"/tmp/sample.mp4" is a video file. Only text files can be read; use ReadMediaFile for image and video files.',
-    );
+    expect(result.isError).toBe(false);
+    expect(result.output).toContainEqual({ type: 'text', text: '<video path="/tmp/sample.mp4">' });
     expect(readText).not.toHaveBeenCalled();
   });
 
@@ -957,6 +912,7 @@ describe('ReadTool', () => {
     expect(result.isError).toBe(true);
     expect(output).toContain('does not support video input');
     expect(output).toContain('this agent cannot view it');
+    expect(output).toContain('Only text and image files can be read.');
     expect(readText).not.toHaveBeenCalled();
   });
 
@@ -972,7 +928,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/blob.bin" is not readable as UTF-8 text. Only text files can be read.',
+      '"/tmp/blob.bin" is not readable as UTF-8 text. Only text, image, and video files can be read.',
     );
     expect(output).not.toContain('Python tools');
     expect(readText).not.toHaveBeenCalled();
@@ -996,7 +952,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/blob-with-late-nul" is not readable as UTF-8 text. Only text files can be read.',
+      '"/tmp/blob-with-late-nul" is not readable as UTF-8 text. Only text, image, and video files can be read.',
     );
     expect(output).not.toContain('Python tools');
   });

@@ -8,7 +8,6 @@ import {
   compressBase64ForModel,
   compressImageContentParts,
   compressImageForModel,
-  cropImageForModel,
   extractImageCompressionCaptions,
   gateImageFormatParts,
   IMAGE_BYTE_BUDGET,
@@ -392,39 +391,6 @@ describe('compressImageForModel — webp', () => {
     const result = await compressImageForModel(animated, 'image/webp');
     expect(result.changed).toBe(false);
     expect(result.data).toBe(animated);
-  });
-
-  it(
-    'crops a region out of a WebP',
-    async () => {
-      const source = new Jimp({ width: 800, height: 400, color: 0x3366ccff });
-      const webp = await encodeWebp(source);
-      const result = await cropImageForModel(webp, 'image/webp', {
-        x: 10,
-        y: 20,
-        width: 300,
-        height: 200,
-      });
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.width).toBe(300);
-      expect(result.height).toBe(200);
-      expect(result.originalWidth).toBe(800);
-      expect(result.originalHeight).toBe(400);
-    },
-    15_000,
-  );
-
-  it('refuses to crop an animated WebP', async () => {
-    const result = await cropImageForModel(animatedWebpHeader(), 'image/webp', {
-      x: 0,
-      y: 0,
-      width: 10,
-      height: 10,
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toContain('animated WebP');
   });
 });
 
@@ -872,170 +838,6 @@ describe('compressImageForModel — original dimensions metadata', () => {
   });
 });
 
-describe('cropImageForModel', () => {
-  it('crops a region out of a PNG at native resolution', async () => {
-    const png = await solidPng(3000, 1500);
-    const result = await cropImageForModel(png, 'image/png', {
-      x: 100,
-      y: 200,
-      width: 500,
-      height: 400,
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.width).toBe(500);
-    expect(result.height).toBe(400);
-    expect(result.originalWidth).toBe(3000);
-    expect(result.originalHeight).toBe(1500);
-    expect(result.region).toEqual({ x: 100, y: 200, width: 500, height: 400 });
-    expect(result.resized).toBe(false);
-    expect(result.mimeType).toBe('image/png');
-    expect(sniffImageDimensions(result.data)).toEqual({ width: 500, height: 400 });
-  });
-
-  it('preserves the JPEG format when cropping a JPEG', async () => {
-    const jpeg = await solidJpeg(800, 400);
-    const result = await cropImageForModel(jpeg, 'image/jpeg', {
-      x: 0,
-      y: 0,
-      width: 300,
-      height: 300,
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.mimeType).toBe('image/jpeg');
-    expect(result.width).toBe(300);
-    expect(result.height).toBe(300);
-  });
-
-  it('clamps a region that overflows the image bounds', async () => {
-    const png = await solidPng(3000, 1500);
-    const result = await cropImageForModel(png, 'image/png', {
-      x: 2500,
-      y: 1000,
-      width: 1000,
-      height: 1000,
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.region).toEqual({ x: 2500, y: 1000, width: 500, height: 500 });
-    expect(result.width).toBe(500);
-    expect(result.height).toBe(500);
-  });
-
-  it('rejects a region fully outside the image, naming the original size', async () => {
-    const png = await solidPng(2100, 1050);
-    const result = await cropImageForModel(png, 'image/png', {
-      x: 2100,
-      y: 0,
-      width: 100,
-      height: 100,
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toContain('2100x1050');
-  });
-
-  it('downscales an oversized crop to the edge cap by default', async () => {
-    const png = await solidPng(2500, 1250);
-    const result = await cropImageForModel(png, 'image/png', {
-      x: 0,
-      y: 0,
-      width: 2400,
-      height: 1200,
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.resized).toBe(true);
-    expect(Math.max(result.width, result.height)).toBeLessThanOrEqual(MAX_IMAGE_EDGE_PX);
-    expect(result.region).toEqual({ x: 0, y: 0, width: 2400, height: 1200 });
-  });
-
-  it('keeps native resolution with skipResize', async () => {
-    const png = await solidPng(3000, 1500);
-    const result = await cropImageForModel(
-      png,
-      'image/png',
-      { x: 0, y: 0, width: 2500, height: 1200 },
-      { skipResize: true },
-    );
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.resized).toBe(false);
-    expect(result.width).toBe(2500);
-    expect(result.height).toBe(1200);
-  });
-
-  it('fails explicitly when a skipResize crop exceeds the byte budget', async () => {
-    const png = await noisePng(400, 400);
-    const result = await cropImageForModel(
-      png,
-      'image/png',
-      { x: 0, y: 0, width: 400, height: 400 },
-      { skipResize: true, byteBudget: 8 * 1024 },
-    );
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatch(/smaller region/i);
-  });
-
-  it('rejects non-recodable formats explicitly', async () => {
-    const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0]);
-    const result = await cropImageForModel(gif, 'image/gif', {
-      x: 0,
-      y: 0,
-      width: 1,
-      height: 1,
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatch(/PNG, JPEG, and WebP/);
-  });
-
-  it('rejects corrupt bytes without throwing', async () => {
-    const corrupt = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
-    const result = await cropImageForModel(corrupt, 'image/png', {
-      x: 0,
-      y: 0,
-      width: 10,
-      height: 10,
-    });
-    expect(result.ok).toBe(false);
-  });
-
-  it('rejects non-finite region coordinates with a clean error', async () => {
-    const png = await solidPng(300, 200);
-    for (const region of [
-      { x: Number.NaN, y: 0, width: 10, height: 10 },
-      { x: 0, y: Number.NaN, width: 10, height: 10 },
-      { x: 0, y: 0, width: Number.NaN, height: 10 },
-      { x: 0, y: 0, width: 10, height: Number.NaN },
-    ]) {
-      const result = await cropImageForModel(png, 'image/png', region);
-      expect(result.ok).toBe(false);
-      if (result.ok) continue;
-      expect(result.error).toMatch(/finite/i);
-      expect(result.error).not.toMatch(/Failed to decode/);
-    }
-  });
-
-  it('refuses to decode a decompression bomb', async () => {
-    const header = Buffer.alloc(24);
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
-    header.writeUInt32BE(13, 8);
-    header.write('IHDR', 12, 'latin1');
-    header.writeUInt32BE(30000, 16);
-    header.writeUInt32BE(30000, 20);
-    const result = await cropImageForModel(new Uint8Array(header), 'image/png', {
-      x: 0,
-      y: 0,
-      width: 10,
-      height: 10,
-    });
-    expect(result.ok).toBe(false);
-  });
-});
-
 describe('buildImageCompressionCaption', () => {
   it('describes the original and sent variants with a readback path', () => {
     const caption = buildImageCompressionCaption({
@@ -1047,7 +849,9 @@ describe('buildImageCompressionCaption', () => {
     expect(caption).toContain('5184x3456 image/png (12.4 MB)');
     expect(caption).toContain('2000x1333 image/jpeg (1.1 MB)');
     expect(caption).toContain('/tmp/originals/ab.png');
-    expect(caption).toContain('region');
+    expect(caption).toContain('Read');
+    expect(caption).not.toContain('ReadMediaFile');
+    expect(caption).not.toContain('region parameter');
   });
 
   it('omits dimensions when unknown and notes a missing original', () => {
@@ -1447,62 +1251,6 @@ describe('compressImageForModel — telemetry', () => {
       telemetrySource: 'read_media',
     });
     expect(result.changed).toBe(true);
-  });
-});
-
-describe('cropImageForModel — telemetry', () => {
-  it('reports a successful crop with the region share of the original', async () => {
-    const { telemetry, events } = captureTelemetry();
-    const png = await solidPng(1000, 500);
-    const outcome = await cropImageForModel(
-      png,
-      'image/png',
-      { x: 0, y: 0, width: 500, height: 250 },
-      { telemetry, telemetrySource: 'read_media' },
-    );
-    expect(outcome.ok).toBe(true);
-
-    expect(events).toHaveLength(1);
-    const { event, props } = events[0]!;
-    expect(event).toBe('image_crop');
-    expect(props['source']).toBe('read_media');
-    expect(props['ok']).toBe(true);
-    expect(props['resized']).toBe(false);
-    expect(props['original_width']).toBe(1000);
-    expect(props['original_height']).toBe(500);
-    expect(props['region_area_ratio']).toBeCloseTo(0.25, 5);
-    expect(typeof props['duration_ms']).toBe('number');
-    expect(typeof props['final_bytes']).toBe('number');
-  });
-
-  it('classifies failures by kind', async () => {
-    const oob = captureTelemetry();
-    await cropImageForModel(
-      await solidPng(100, 100),
-      'image/png',
-      { x: 200, y: 0, width: 10, height: 10 },
-      { telemetry: oob.telemetry, telemetrySource: 'read_media' },
-    );
-    expect(oob.events[0]!.props['ok']).toBe(false);
-    expect(oob.events[0]!.props['error_kind']).toBe('out_of_bounds');
-
-    const format = captureTelemetry();
-    await cropImageForModel(
-      new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0]),
-      'image/gif',
-      { x: 0, y: 0, width: 1, height: 1 },
-      { telemetry: format.telemetry, telemetrySource: 'read_media' },
-    );
-    expect(format.events[0]!.props['error_kind']).toBe('unsupported_format');
-
-    const budget = captureTelemetry();
-    await cropImageForModel(
-      await noisePng(400, 400),
-      'image/png',
-      { x: 0, y: 0, width: 400, height: 400 },
-      { skipResize: true, byteBudget: 8 * 1024, telemetry: budget.telemetry, telemetrySource: 'read_media' },
-    );
-    expect(budget.events[0]!.props['error_kind']).toBe('budget');
   });
 });
 

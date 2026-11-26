@@ -8,7 +8,6 @@ export const DEFAULT_APPROVE_TOOLS: ReadonlySet<string> = new Set([
   'Read',
   'Grep',
   'Glob',
-  'ReadMediaFile',
   'SetTodoList',
   'TodoList',
   'TaskList',

@@ -142,7 +142,7 @@ describe('core LoopService integration', () => {
       expect(preview.systemPrompt).toBe(loop.getSystemPrompt());
       expect(preview.tools).toBe(loop.baselineTools());
       expect(preview.tools.find((tool) => tool.name === 'DeferredPreview')?.deferred).toBe(true);
-      expect(preview.tools.some((tool) => tool.name === 'ReadMediaFile')).toBe(true);
+      expect(preview.tools.some((tool) => tool.name === 'Read')).toBe(true);
       expect(preview.messages[0]).toMatchObject({
         role: 'user',
         content: [{ type: 'text', text: 'run it' }],

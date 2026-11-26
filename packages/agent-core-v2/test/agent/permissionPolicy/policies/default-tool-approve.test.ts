@@ -43,7 +43,6 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     ['Read', { path: '/workspace/notes.md' }],
     ['Grep', { pattern: 'TODO', path: '/workspace' }],
     ['Glob', { pattern: '**/*.ts', path: '/workspace' }],
-    ['ReadMediaFile', { path: '/workspace/image.png' }],
     ['SetTodoList', { items: [] }],
     ['TodoList', {}],
     ['NotifyUser', { message: 'Reading the parser first.' }],

@@ -1,11 +1,13 @@
 import type { Component } from '@moonshot-ai/pi-tui';
 import { describe, expect, it } from 'vitest';
 
+import { chipText } from '#/tui/components/messages/tool-renderers/chip';
 import {
   parseReadMediaOutput,
   readMediaChip,
   readMediaSummary,
 } from '#/tui/components/messages/tool-renderers/media';
+import { pickResultRenderer } from '#/tui/components/messages/tool-renderers/registry';
 import { darkColors } from '#/tui/theme/colors';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
@@ -151,5 +153,22 @@ describe('readMediaSummary renderer', () => {
       ),
     );
     expect(out).toContain('some plain string output');
+  });
+
+  it('routes Read media outputs through media chip and summary while keeping text Read line counts', () => {
+    const mediaChip = strip(chipText(call('Read', { path: '/tmp/a.png' }), result(imageOutput('/tmp/a.png'))));
+    expect(mediaChip).toContain('image');
+    expect(mediaChip).toContain('image/png');
+
+    const textChip = strip(chipText(call('Read', { path: '/tmp/a.txt' }), result('1\thello\n2\tworld')));
+    expect(textChip).toBe('2 lines');
+
+    const expandedMedia = strip(
+      joinRender(
+        pickResultRenderer('Read')(call('Read', { path: '/tmp/a.png' }), result(imageOutput('/tmp/a.png')), expandedCtx),
+      ),
+    );
+    expect(expandedMedia).toContain('/tmp/a.png');
+    expect(expandedMedia).not.toContain(PNG_B64);
   });
 });

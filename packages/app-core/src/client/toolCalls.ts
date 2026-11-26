@@ -5,7 +5,7 @@ import { buildDiffLines, buildVerbatimDiffLines, buildWholeFileDiffLines } from 
 import { normalizeToolName } from '../lib/normalizeToolName';
 import { BROWSER_TOOL_NAME } from '../lib/browserToolName';
 
-const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
+const READ_MEDIA_TOOL_RE = /^(?:read(?:file)?|read[_-]?media(?:file)?)$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
 const MEDIA_PATH_TAG_RE = /^<(image|video|audio)\s+path="([^"]+)">$/;
 const MEDIA_PATH_IN_TEXT_RE = /<(?:image|video|audio)\s+path="([^"]+)">/;

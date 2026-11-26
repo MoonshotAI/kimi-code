@@ -22,6 +22,7 @@ import { AssistantMessageComponent } from '../messages/assistant-message';
 import { ThinkingComponent } from '../messages/thinking';
 import { extractKeyArgument } from '../messages/tool-call';
 import { pickChip } from '../messages/tool-renderers/chip';
+import { parseReadMediaOutput } from '../messages/tool-renderers/media';
 import { pickResultRenderer } from '../messages/tool-renderers/registry';
 import { STATUS_LABEL, statusColor } from './task-output-viewer';
 
@@ -234,7 +235,11 @@ export class AgentActivityViewer extends Container implements Focusable {
         ? []
         : [currentTheme.dim(`${MESSAGE_INDENT}│ ${call.liveOutputTail}`)];
     }
-    if (call.name === 'ReadMediaFile' && call.result.is_error !== true) {
+    if (
+      call.result.is_error !== true &&
+      (call.name === 'ReadMediaFile' ||
+        (call.name === 'Read' && parseReadMediaOutput(call.result.output) !== null))
+    ) {
       return [currentTheme.dim(`${MESSAGE_INDENT}[media output omitted]`)];
     }
     const components = pickResultRenderer(call.name)(

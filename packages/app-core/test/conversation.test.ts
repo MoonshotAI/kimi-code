@@ -255,6 +255,37 @@ describe('conversationToTurns', () => {
     });
   });
 
+  it('describes a Read image with its path, size and dimensions while leaving text Read plain', () => {
+    const media = { kind: 'image' as const, file_id: 'f_2', media_type: 'image/png' };
+    const [imageRead, textRead] = toolsOf(project([
+      turn(0, [
+        opener('p0', 'Inspect files'),
+        tool('read-img', {
+          name: 'Read',
+          input: { path: '/tmp/diagram.png' },
+          output: '<image path="/tmp/diagram.png"></image>',
+          note: 'Read image file. Mime type: image/png. Size: 65432 bytes. Original dimensions: 800x600 pixels.',
+          media: [media],
+        }),
+        tool('read-txt', {
+          name: 'Read',
+          input: { path: '/tmp/notes.md' },
+          output: '1\thello world',
+        }),
+      ]),
+    ]));
+
+    expect(imageRead?.media).toEqual(expect.objectContaining({
+      kind: 'image',
+      url: '/sessions/session-1/media/f_2',
+      path: '/tmp/diagram.png',
+      mimeType: 'image/png',
+      bytes: 65432,
+      dimensions: '800x600',
+    }));
+    expect(textRead?.media).toBeUndefined();
+  });
+
   it('projects openers, reasoning, tools and answers with the engine turn number', () => {
     const turns = project([
       turn(0, [

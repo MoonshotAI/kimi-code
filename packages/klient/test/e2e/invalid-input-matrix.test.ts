@@ -560,10 +560,10 @@ describe('video blocks', () => {
     }
   }, 60_000);
 
-  it('kimi (composed): ReadMediaFile on a video uploads via the files API (uploadVideo trait)', async () => {
+  it('kimi (composed): Read on a video uploads via the files API (uploadVideo trait)', async () => {
     const ctx = await newCase('kimi', 'kimi-video-upload');
     await writeFile(join(ctx.workDir, 'clip.mp4'), Buffer.from(MP4_FTYP_HEX, 'hex'));
-    ctx.lane.script(call('ReadMediaFile', { path: 'clip.mp4' }), say('OK'));
+    ctx.lane.script(call('Read', { path: 'clip.mp4' }), say('OK'));
 
     await promptAndWait(ctx, [{ type: 'text', text: 'watch clip.mp4' }]);
 
@@ -579,14 +579,14 @@ describe('video blocks', () => {
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 
-  it('kimi (composed): cancelling ReadMediaFile aborts the in-flight video upload', async () => {
+  it('kimi (composed): cancelling Read aborts the in-flight video upload', async () => {
     const ctx = await newCase('kimi', 'kimi-video-upload-cancel');
     await writeFile(
       join(ctx.workDir, 'clip.mp4'),
       Buffer.concat([Buffer.from(MP4_FTYP_HEX, 'hex'), Buffer.from([0])]),
     );
     ctx.model.holdUploads();
-    ctx.lane.script(call('ReadMediaFile', { path: 'clip.mp4' }));
+    ctx.lane.script(call('Read', { path: 'clip.mp4' }));
 
     const promptAborted = onceEvent(ctx.agent.events, 'prompt.aborted', 10_000);
     await ctx.agent.prompt({ input: [{ type: 'text', text: 'watch clip.mp4' }] });
@@ -602,7 +602,7 @@ describe('video blocks', () => {
   it('openai: no uploadVideo capability — the tool result is a path placeholder, no files call', async () => {
     const ctx = await newCase('openai-vision', 'openai-video-upload');
     await writeFile(join(ctx.workDir, 'clip.mp4'), Buffer.from(MP4_FTYP_HEX, 'hex'));
-    ctx.lane.script(call('ReadMediaFile', { path: 'clip.mp4' }), say('OK'));
+    ctx.lane.script(call('Read', { path: 'clip.mp4' }), say('OK'));
 
     await promptAndWait(ctx, [{ type: 'text', text: 'watch clip.mp4' }]);
 
@@ -677,7 +677,7 @@ describe('tool exchange structure', () => {
     ): Promise<Record<string, unknown>[]> => {
       const ctx = await newCase(kind, label);
       await writeFile(join(ctx.workDir, 'pixel.png'), Buffer.from(PNG_1X1_BASE64, 'base64'));
-      ctx.lane.script(call('ReadMediaFile', { path: 'pixel.png' }), say('OK'));
+      ctx.lane.script(call('Read', { path: 'pixel.png' }), say('OK'));
       await promptAndWait(ctx, [{ type: 'text', text: 'look at pixel.png' }]);
       expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
       return openAiMessages(ctx, 1);

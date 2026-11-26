@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { deferred } from '@moonshot-ai/testkit/fixtures';
+import { call, say } from '@moonshot-ai/testkit/model';
 import { describe, expect, it, vi } from 'vitest';
 
 import { IInstantiationService } from '#/_base/di/instantiation';
@@ -33,6 +34,7 @@ import {
   execEnvServices,
   homeDirServices,
   testAgent,
+  testkitAgentFixtures,
 } from '../harness';
 
 const MOCK_PROVIDER = {
@@ -402,7 +404,8 @@ describe('Agent resume', () => {
     await live.rpc.prompt({ input: [{ type: 'text', text: 'Prompt before resume' }] });
     await live.untilTurnEnd();
     const liveTools = live.llmCalls.at(-1)!.tools.map((tool) => tool.name);
-    expect(liveTools).toContain('ReadMediaFile');
+    expect(liveTools).toContain('Read');
+    expect(liveTools).not.toContain('ReadMediaFile');
 
     const resumed = testAgent({
       persistence: new RecordingAgentPersistence(persistence.records as unknown as WireRecord[]),
@@ -415,6 +418,408 @@ describe('Agent resume', () => {
     await resumed.untilTurnEnd();
 
     expect(resumed.llmCalls[0]!.tools.map((tool) => tool.name)).toEqual(liveTools);
+    expect(
+      resumed.context
+        .history()
+        .some(
+          (message) =>
+            message.origin?.kind === 'injection' &&
+            message.origin.variant === 'legacy_read_media_merged',
+        ),
+    ).toBe(false);
+    await live.dispose();
+    await resumed.dispose();
+  });
+
+  it('refreshes Read schema, filters retired ReadMediaFile, and guides stray calls when resuming a legacy session', async (context) => {
+    const legacyRecords: WireRecord[] = [
+      resumeProfileRecord(),
+      {
+        type: 'tool_select.initialized',
+        agentId: 'main',
+        tools: [
+          {
+            name: 'Read',
+            description: 'Read a UTF-8 text file only. Use ReadMediaFile for images.',
+            parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+            source: 'builtin',
+            origin: 'initial',
+          },
+          {
+            name: 'ReadMediaFile',
+            description: 'Read media content from a file.',
+            parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+            source: 'builtin',
+            origin: 'initial',
+          },
+        ],
+      } as unknown as WireRecord,
+    ];
+    const persistence = new RecordingAgentPersistence(legacyRecords);
+    const fixtures = testkitAgentFixtures({
+      persistence,
+      autoConfigure: false,
+    });
+    await fixtures.model(context, async (model) => {
+      await fixtures.agent({ model }, async (ctx) => {
+        ctx.configure({
+          modelCapabilities: {
+            image_in: true,
+            video_in: true,
+            audio_in: false,
+            thinking: false,
+            tool_use: true,
+            dynamically_loaded_tools: true,
+            maxContextSize: 0,
+          },
+        });
+        await ctx.restorePersisted();
+        model.script(
+          call('ReadMediaFile', { path: '/tmp/a.png' }, { id: 'call_legacy_media', invalid: true }),
+          say('Switched to Read.'),
+        );
+
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Open the image' }] });
+        await ctx.untilTurnEnd();
+
+        const firstCallTools = model.requests('main')[0]!.view.tools;
+        const firstCallToolNames = firstCallTools.map((tool) => tool.name);
+        expect(firstCallToolNames).toContain('Read');
+        expect(firstCallToolNames).not.toContain('ReadMediaFile');
+        const readTool = firstCallTools.find((tool) => tool.name === 'Read');
+        expect(readTool?.description).toContain('image');
+        expect(readTool?.description).not.toContain('Use ReadMediaFile');
+        expect(
+          persistence.records.some(
+            (record) =>
+              record.type === 'tool_select.tools_changed' &&
+              JSON.stringify(record).includes('ReadMediaFile'),
+          ),
+        ).toBe(false);
+        expect(
+          ctx.context
+            .history()
+            .some(
+              (message) =>
+                message.origin?.kind === 'injection' &&
+                message.origin.variant === 'loadable-tools' &&
+                JSON.stringify(message).includes('ReadMediaFile'),
+            ),
+        ).toBe(false);
+        expect(
+          ctx.context
+            .history()
+            .some(
+              (message) =>
+                message.origin?.kind === 'injection' &&
+                message.origin.variant === 'tool_update_pending' &&
+                JSON.stringify(message).includes('\\"Read\\"'),
+            ),
+        ).toBe(false);
+        const secondCallText = JSON.stringify(model.requests('main')[1]!.view.messages);
+        expect(secondCallText).toContain('Tool \\"ReadMediaFile\\" has been merged into \\"Read\\"');
+      });
+    });
+  });
+
+  it('refreshes legacy Read schema even when ReadMediaFile was absent from initial tools', async (context) => {
+    const legacyRecords: WireRecord[] = [
+      resumeProfileRecord(),
+      {
+        type: 'tool_select.initialized',
+        agentId: 'main',
+        tools: [
+          {
+            name: 'Read',
+            description: 'Read a UTF-8 text file only. Use ReadMediaFile for images.',
+            parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+            source: 'builtin',
+            origin: 'initial',
+          },
+        ],
+      } as unknown as WireRecord,
+    ];
+    const fixtures = testkitAgentFixtures({
+      persistence: new RecordingAgentPersistence(legacyRecords),
+      autoConfigure: false,
+    });
+    await fixtures.model(context, async (model) => {
+      await fixtures.agent({ model }, async (ctx) => {
+        ctx.configure({
+          modelCapabilities: {
+            image_in: true,
+            video_in: false,
+            audio_in: false,
+            thinking: false,
+            tool_use: true,
+            maxContextSize: 0,
+          },
+        });
+        await ctx.restorePersisted();
+        model.script(say('Ready to inspect images.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Inspect the screenshot' }] });
+        await ctx.untilTurnEnd();
+
+        const readTool = model.requests('main')[0]!.view.tools.find((tool) => tool.name === 'Read');
+        expect(readTool?.description).toContain('image');
+        expect(readTool?.description).not.toContain('Use ReadMediaFile');
+        expect(
+          ctx.context
+            .history()
+            .some(
+              (message) =>
+                message.origin?.kind === 'injection' &&
+                message.origin.variant === 'tool_update_pending' &&
+                JSON.stringify(message).includes('\\"Read\\"'),
+            ),
+        ).toBe(false);
+        expect(
+          ctx.context
+            .history()
+            .some(
+              (message) =>
+                message.origin?.kind === 'injection' &&
+                message.origin.variant === 'legacy_read_media_merged',
+            ),
+        ).toBe(false);
+      });
+    });
+  });
+
+  it('explains retired ReadMediaFile once when resuming a legacy session with ReadMediaFile history', async (context) => {
+    const fixtures = testkitAgentFixtures({
+      persistence: new RecordingAgentPersistence(legacyReadMediaHistory()),
+      autoConfigure: false,
+    });
+    await fixtures.model(context, async (model) => {
+      await fixtures.agent({ model }, async (ctx) => {
+        ctx.configure({
+          modelCapabilities: {
+            image_in: true,
+            video_in: true,
+            audio_in: false,
+            thinking: false,
+            tool_use: true,
+            dynamically_loaded_tools: true,
+            maxContextSize: 0,
+          },
+        });
+        await ctx.restorePersisted();
+        const mergeReminders = () =>
+          ctx.context
+            .history()
+            .filter(
+              (message) =>
+                message.origin?.kind === 'injection' &&
+                message.origin.variant === 'legacy_read_media_merged',
+            );
+
+        model.script(say('Viewed with Read.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'What about this image?' }] });
+        await ctx.untilTurnEnd();
+
+        expect(mergeReminders()).toHaveLength(1);
+        const firstRequestText = JSON.stringify(model.requests('main')[0]!.view.messages);
+        expect(firstRequestText).toContain('Tool \\"ReadMediaFile\\" has been retired and merged into \\"Read\\"');
+        expect(firstRequestText).toContain('do not call \\"ReadMediaFile\\" again');
+
+        model.script(say('Done.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Thanks' }] });
+        await ctx.untilTurnEnd();
+
+        expect(mergeReminders()).toHaveLength(1);
+      });
+    });
+  });
+
+  it('re-injects the legacy merge reminder only while ReadMediaFile calls survive compaction', async (context) => {
+    const partialCompaction: WireRecord = {
+      type: 'context.apply_compaction',
+      agentId: 'main',
+      summary: 'Earlier turns summarized.',
+      compactedCount: 1,
+      tokensBefore: 100,
+      tokensAfter: 50,
+    } as unknown as WireRecord;
+    const fixtures = testkitAgentFixtures({
+      persistence: new RecordingAgentPersistence([...legacyReadMediaHistory(), partialCompaction]),
+      autoConfigure: false,
+    });
+    await fixtures.model(context, async (model) => {
+      await fixtures.agent({ model }, async (ctx) => {
+        ctx.configure({
+          modelCapabilities: {
+            image_in: true,
+            video_in: true,
+            audio_in: false,
+            thinking: false,
+            tool_use: true,
+            dynamically_loaded_tools: true,
+            maxContextSize: 0,
+          },
+        });
+        await ctx.restorePersisted();
+        const mergeReminderCount = () =>
+          ctx.context
+            .history()
+            .filter(
+              (message) =>
+                message.origin?.kind === 'injection' &&
+                message.origin.variant === 'legacy_read_media_merged',
+            ).length;
+
+        model.script(say('First turn after resume.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue' }] });
+        await ctx.untilTurnEnd();
+        expect(mergeReminderCount()).toBe(1);
+
+        model.lane('compaction').script(say('Compacted summary.'));
+        const compacted = ctx.once('full_compaction.complete');
+        const completed = ctx.once('compaction.completed');
+        await ctx.rpc.beginCompaction({});
+        await compacted;
+        await completed;
+        expect(mergeReminderCount()).toBe(0);
+
+        model.script(say('Second turn after compaction.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue again' }] });
+        await ctx.untilTurnEnd();
+        expect(mergeReminderCount()).toBe(0);
+      });
+    });
+  });
+
+  it('emits a media capability reminder when switching between vision and text-only models', async (context) => {
+    const fixtures = testkitAgentFixtures({
+      autoConfigure: false,
+      initialConfig: {
+        defaultModel: 'vision',
+        providers: {
+          'test-provider': {
+            type: 'kimi',
+            baseUrl: 'https://api.example.com/v1',
+            apiKey: 'YOUR_API_KEY',
+          },
+        },
+        models: {
+          vision: {
+            provider: 'test-provider',
+            model: 'vision-model',
+            maxContextSize: 128_000,
+            capabilities: ['image_in', 'video_in'],
+          },
+          textOnly: {
+            provider: 'test-provider',
+            model: 'text-model',
+            maxContextSize: 128_000,
+            capabilities: [],
+          },
+        },
+      },
+    });
+    await fixtures.model(context, async (model) => {
+      await fixtures.agent({ model }, async (ctx) => {
+        await ctx.get(IAgentLoopService).setModel('vision');
+        model.script(say('Vision turn.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'First turn' }] });
+        await ctx.untilTurnEnd();
+        expect(
+          ctx.context
+            .history()
+            .some((m) => m.origin?.kind === 'injection' && m.origin.variant === 'media_capability'),
+        ).toBe(false);
+
+        await ctx.get(IAgentLoopService).setModel('textOnly');
+        model.script(say('Text-only turn.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Second turn' }] });
+        await ctx.untilTurnEnd();
+
+        const afterDowngrade = ctx.context
+          .history()
+          .filter((m) => m.origin?.kind === 'injection' && m.origin.variant === 'media_capability');
+        expect(afterDowngrade).toHaveLength(1);
+        expect(JSON.stringify(afterDowngrade[0])).toContain('does not support image or video input');
+
+        await ctx.get(IAgentLoopService).setModel('vision');
+        model.script(say('Back to vision.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Third turn' }] });
+        await ctx.untilTurnEnd();
+
+        const afterUpgrade = ctx.context
+          .history()
+          .filter((m) => m.origin?.kind === 'injection' && m.origin.variant === 'media_capability');
+        expect(afterUpgrade).toHaveLength(2);
+        expect(JSON.stringify(afterUpgrade[1])).toContain('supports both image and video input');
+      });
+    });
+  });
+
+  it('emits a media capability reminder when restoring prior media under a text-only model', async (context) => {
+    const legacyRecords: WireRecord[] = [
+      {
+        ...resumeProfileRecord(),
+        modelAlias: 'textOnly',
+        profileName: 'agent',
+      } as unknown as WireRecord,
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Look at this image' },
+            { type: 'image_url', imageUrl: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+          ],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      } as unknown as WireRecord,
+      contextAppendRecord(1, [{ role: 'assistant', text: 'I see the image.' }]),
+    ];
+    const fixtures = testkitAgentFixtures({
+      persistence: new RecordingAgentPersistence(legacyRecords),
+      autoConfigure: false,
+      initialConfig: {
+        defaultModel: 'textOnly',
+        providers: {
+          'test-provider': {
+            type: 'kimi',
+            baseUrl: 'https://api.example.com/v1',
+            apiKey: 'YOUR_API_KEY',
+          },
+        },
+        models: {
+          textOnly: {
+            provider: 'test-provider',
+            model: 'text-model',
+            maxContextSize: 128_000,
+            capabilities: [],
+          },
+        },
+      },
+    });
+    await fixtures.model(context, async (model) => {
+      await fixtures.agent({ model }, async (ctx) => {
+        await ctx.restorePersisted();
+        const capabilityReminders = () =>
+          ctx.context
+            .history()
+            .filter((m) => m.origin?.kind === 'injection' && m.origin.variant === 'media_capability');
+
+        model.script(say('Resumed text-only turn.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue' }] });
+        await ctx.untilTurnEnd();
+
+        expect(capabilityReminders()).toHaveLength(1);
+        expect(JSON.stringify(capabilityReminders()[0])).toContain(
+          'does not support image or video input',
+        );
+
+        model.script(say('Second text-only turn.'));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue again' }] });
+        await ctx.untilTurnEnd();
+        expect(capabilityReminders()).toHaveLength(1);
+      });
+    });
   });
 
   it('restores a cancelled queued-turn gap before allocating the next turn', async () => {
@@ -1448,6 +1853,68 @@ function resumeProfileRecord(): WireRecord {
     thinkingEffort: 'off',
     disallowedTools: [],
   } as unknown as WireRecord;
+}
+
+function legacyReadMediaHistory(): WireRecord[] {
+  return [
+    resumeProfileRecord(),
+    {
+      type: 'tool_select.initialized',
+      agentId: 'main',
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read a UTF-8 text file only. Use ReadMediaFile for images.',
+          parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+          source: 'builtin',
+          origin: 'initial',
+        },
+        {
+          name: 'ReadMediaFile',
+          description: 'Read media content from a file.',
+          parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+          source: 'builtin',
+          origin: 'initial',
+        },
+      ],
+    },
+    {
+      type: 'context.append_message',
+      agentId: 'main',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'What is in this image?' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    },
+    {
+      type: 'context.append_message',
+      agentId: 'main',
+      message: {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          {
+            type: 'function',
+            id: 'call_old_media',
+            name: 'ReadMediaFile',
+            arguments: '{"path":"/tmp/old.png"}',
+          },
+        ],
+      },
+    },
+    {
+      type: 'context.append_message',
+      agentId: 'main',
+      message: {
+        role: 'tool',
+        toolCallId: 'call_old_media',
+        content: [{ type: 'text', text: '<image path="/tmp/old.png">' }],
+        toolCalls: [],
+      },
+    },
+  ] as unknown as WireRecord[];
 }
 
 function contextAppendRecord(

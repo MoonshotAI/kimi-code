@@ -509,7 +509,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const mediaPath = join(homeDir!, 'picture.png');
     await writeFile(mediaPath, Buffer.from(solidPngBase64(1, 1), 'base64'));
     const args = JSON.stringify({ path: mediaPath });
-    model!.script(call('ReadMediaFile', { path: mediaPath }, { id: 'call_media', argumentChunks: 2 }));
+    model!.script(call('Read', { path: mediaPath }, { id: 'call_media', argumentChunks: 2 }));
     model!.script(say('done'));
 
     const mediaResult = (await c.send('session/prompt', {
@@ -524,8 +524,8 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       .filter((u) => u?.toolCallId?.endsWith(':call_media'));
     expect(mediaUpdates[0]?.sessionUpdate).toBe('tool_call');
     expect(mediaUpdates[0]?.status).toBe('pending');
-    expect(mediaUpdates[0]?.title).toBe('ReadMediaFile');
-    expect(mediaUpdates[0]?.kind).toBe('other');
+    expect(mediaUpdates[0]?.title).toBe('Read');
+    expect(mediaUpdates[0]?.kind).toBe('read');
     expect(mediaUpdates[0]?.rawInput).toBeUndefined();
     expect(textOf(mediaUpdates[0])).toBe('');
     const mediaPartial = textOf(mediaUpdates[1]);
@@ -539,7 +539,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(textOf(mediaUpdates[2])).toBe(args);
     expect(mediaUpdates[3]?.sessionUpdate).toBe('tool_call_update');
     expect(mediaUpdates[3]?.status).toBe('in_progress');
-    expect(mediaUpdates[3]?.kind).toBe('other');
+    expect(mediaUpdates[3]?.kind).toBe('read');
     expect(mediaUpdates[3]?.rawInput).toEqual({ path: mediaPath });
 
     const terminal = mediaUpdates.at(-1);

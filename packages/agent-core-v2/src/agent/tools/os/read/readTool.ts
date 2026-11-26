@@ -1,18 +1,17 @@
 import * as posixPath from 'node:path/posix';
 import * as win32Path from 'node:path/win32';
 
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { isTaskOutputFilePath } from '#/agent/task/persist';
-import { type HostFileHead, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { type HostFileHead, type HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPlanService, type PlanFileTarget } from '#/features/plan/plan';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { isDaemonFileUrl } from '#/agent/media/mediaRef';
 import { attachmentFileSource, environmentFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
@@ -20,6 +19,7 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { countTokenChars, tokensForCharCounts, type TokenCharCounts } from '#/llm-adapter/contract/tokens';
 import {
@@ -32,7 +32,15 @@ import {
   resolvePathAccessPath,
   type WorkspaceConfig,
 } from '#/tool/path-access';
-import { MEDIA_SNIFF_BYTES, detectFileType } from '#/agent/media/file-type';
+import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions, sniffMediaFromMagic } from '#/agent/media/file-type';
+import {
+  MAX_IMAGE_DECODE_BYTES,
+  compressImageForModel,
+  formatByteSize,
+  isRecodableImage,
+  resolveMaxImageEdgePx,
+  resolveReadImageByteBudget,
+} from '#/agent/media/image-compress';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject, matchesPathRuleSubject } from '#/tool/rule-match';
 import { makeCarriageReturnsVisible, splitLinesKeepingTerminator, type LineEndingStyle } from '#/_base/text/line-endings';
@@ -42,6 +50,8 @@ import {
   DEFAULT_MAX_CHARS,
   DEFAULT_MAX_CHARS_LIMIT,
   IReadTool,
+  MAX_MEDIA_BYTES,
+  MAX_MEDIA_MEGABYTES,
   ReadInputSchema,
   TRANSCODE_MAX_BYTES,
   type ReadInput,
@@ -194,10 +204,68 @@ async function* decodedLines(lines: readonly string[]): AsyncGenerator<string> {
   yield* lines;
 }
 
-const READ_MEDIA_FILE_TOOL_NAME = 'ReadMediaFile';
+interface ImageDelivery {
+  readonly kind: 'untouched' | 'downsampled';
+  readonly width: number;
+  readonly height: number;
+  readonly byteLength: number;
+  readonly mimeType: string;
+}
+
+function buildMediaNote(input: {
+  readonly kind: 'image' | 'video';
+  readonly mimeType: string;
+  readonly byteSize: number;
+  readonly dimensions: { readonly width: number; readonly height: number } | null;
+  readonly delivery?: ImageDelivery;
+}): string {
+  const parts: string[] = [
+    `Read ${input.kind} file.`,
+    `Mime type: ${input.mimeType}.`,
+    `Size: ${String(input.byteSize)} bytes.`,
+  ];
+  if (input.kind === 'image' && input.dimensions) {
+    parts.push(
+      `Original dimensions: ${String(input.dimensions.width)}x${String(input.dimensions.height)} pixels.`,
+    );
+  }
+  const delivery = input.delivery;
+  if (delivery?.kind === 'downsampled') {
+    parts.push(
+      `The attached image was downsampled to ${String(delivery.width)}x${String(delivery.height)} pixels ` +
+        `(${delivery.mimeType}, ${formatByteSize(delivery.byteLength)}) to fit model limits; ` +
+        'fine detail may be lost.',
+    );
+  }
+  if (input.kind === 'image' && input.dimensions) {
+    parts.push(
+      'If you need to output coordinates, output relative coordinates first ' +
+        'and compute absolute coordinates using the original image size.',
+    );
+  }
+  parts.push(
+    'If you generate or edit images or videos via commands or scripts, ' +
+      'read the result back immediately before continuing.',
+  );
+  return `<system>${parts.join(' ')}</system>`;
+}
+
+function buildImageDeliveryLimitError(input: {
+  readonly finalBytes: number;
+  readonly readByteBudget: number;
+  readonly maxEdge: number;
+}): string {
+  return (
+    `Image is too large to send safely after compression (${String(input.finalBytes)} bytes; ` +
+    `limit ${String(input.readByteBudget)} bytes and ${String(input.maxEdge)}px on the longest edge). ` +
+    'The original image was not sent to the model. Do not retry the same file unchanged. ' +
+    'Use Bash or an available image-processing tool to create a smaller copy within both limits, ' +
+    'then call Read on the smaller copy.'
+  );
+}
 
 function notReadableFileOutput(path: string): string {
-  return `"${path}" is not readable as UTF-8 text. Only text files can be read.`;
+  return `"${path}" is not readable as UTF-8 text. Only text, image, and video files can be read.`;
 }
 
 function notUtf8DecodableFileOutput(path: string): string {
@@ -216,6 +284,7 @@ export class ReadTool implements IReadTool {
     return renderPrompt(readDescriptionTemplate, {
       DEFAULT_MAX_CHARS: limits.defaultMaxChars,
       MAX_CHARS: limits.maxChars,
+      MAX_MEDIA_MEGABYTES,
     });
   }
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
@@ -226,14 +295,13 @@ export class ReadTool implements IReadTool {
     @IAgentToolResultTruncationService private readonly resultTruncation: IAgentToolResultTruncationService,
     @IConfigService private readonly config: IConfigService,
     @IAgentLoopService private readonly profile: IAgentLoopService,
-    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
-    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @ISessionMediaStore private readonly attachmentStore?: ISessionMediaStore,
     @IAgentPlanService private readonly planService?: IAgentPlanService,
     @IHostFileSystem private readonly hostFs?: IHostFileSystem,
     @IHostEnvironment private readonly hostEnvironment?: IHostEnvironment,
     @ISessionContext private readonly session?: ISessionContext,
     @IAgentScopeContext private readonly agent?: IAgentScopeContext,
+    @ITelemetryService private readonly telemetry?: ITelemetryService,
   ) {}
 
   private limits(): { defaultMaxChars: number; maxChars: number } {
@@ -250,6 +318,9 @@ export class ReadTool implements IReadTool {
   }
 
   async resolveExecution(args: ReadInput): Promise<ToolExecution> {
+    if (!args.path) {
+      return { isError: true, output: 'File path cannot be empty.' };
+    }
     if (args.column_offset !== undefined && (args.line_offset ?? 1) < 0) {
       return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
     }
@@ -285,14 +356,14 @@ export class ReadTool implements IReadTool {
             pathClass: env.pathClass,
             homeDir: env.homeDir,
           }),
-        execute: async () => {
+        execute: async ({ signal }) => {
           const lease = await acquireOrWhenReady(this.environment, ['fs']);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
             }
             const eventLog = this.resultTruncation.isWireJournalPath(path);
-            const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog);
+            const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog, signal);
             return { ...result, spillExempt: true };
           } finally {
             lease.dispose();
@@ -327,11 +398,11 @@ export class ReadTool implements IReadTool {
       matchesRule: (ruleArgs) => matchesPathRuleSubject(ruleArgs, path, {
         cwd: target.environmentPath.dirname(path), pathClass: target.pathClass,
       }),
-      execute: async () => {
+      execute: async ({ signal }) => {
         if (planFile && (await this.planService?.resolveFile(path, 'read'))?.path !== path) {
           return { isError: true, output: 'The active plan changed before execution. Retry the tool call.' };
         }
-        return { ...await this.execution(environmentFileSource(target.fs, path), args, false), spillExempt: true };
+        return { ...await this.execution(environmentFileSource(target.fs, path), args, false, signal), spillExempt: true };
       },
     };
   }
@@ -344,8 +415,8 @@ export class ReadTool implements IReadTool {
       display: { kind: 'file_io', operation: 'read', path: source.localPath ?? args.path },
       approvalRule: literalRulePattern(this.name, args.path),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.path),
-      execute: async () => ({
-        ...withAttachmentLocation(await this.execution(source, args, false), source),
+      execute: async ({ signal }) => ({
+        ...withAttachmentLocation(await this.execution(source, args, false, signal), source),
         spillExempt: true,
       }),
     };
@@ -355,8 +426,10 @@ export class ReadTool implements IReadTool {
     source: FileReadSource,
     args: ReadInput,
     eventLog: boolean,
+    signal?: AbortSignal,
   ): Promise<ExecutableToolResult> {
     try {
+      signal?.throwIfAborted();
       let head: HostFileHead;
       try {
         head = await source.readHead(MEDIA_SNIFF_BYTES);
@@ -371,34 +444,26 @@ export class ReadTool implements IReadTool {
         return { isError: true, output: `"${args.path}" is not a file.` };
       }
 
-      const fileType = detectFileType(source.name, header);
-      if (fileType.kind === 'image' || fileType.kind === 'video') {
-        const kind = fileType.kind;
-        const article = kind === 'image' ? 'an' : 'a';
-        const capabilities = this.profile.getModelCapabilities();
-        const supported = kind === 'image' ? capabilities?.image_in === true : capabilities?.video_in === true;
-        if (!supported) {
-          return {
-            isError: true,
-            output: `"${args.path}" is ${article} ${kind} file. The current model does not support ${kind} input (missing ${kind}_in capability), so this agent cannot view it. Only text files can be read.`,
-          };
-        }
-        const mediaToolAvailable =
-          this.toolRegistry.resolve(READ_MEDIA_FILE_TOOL_NAME) !== undefined &&
-          this.toolPolicy.isToolActive(READ_MEDIA_FILE_TOOL_NAME);
-        return {
-          isError: true,
-          output: mediaToolAvailable
-            ? `"${args.path}" is ${article} ${kind} file. Only text files can be read; use ReadMediaFile for image and video files.`
-            : `"${args.path}" is ${article} ${kind} file. Only text files can be read.`,
-        };
+      const fileType = detectFileType(source.name, header, 'media');
+      const detection = detectTextEncoding(header);
+      const isUtf16Text = !detection.seemsBinary && detection.encoding !== 'utf-8';
+      if (
+        fileType.kind === 'image' ||
+        (fileType.kind === 'video' && (!isUtf16Text || sniffMediaFromMagic(header) !== null))
+      ) {
+        return await this.readMedia(
+          source,
+          args,
+          stat,
+          { kind: fileType.kind, mimeType: fileType.mimeType },
+          signal,
+        );
       }
 
-      const detection = detectTextEncoding(header);
       let readLines: () => AsyncIterable<string>;
       let detectedEncoding: UtfTextEncoding | undefined;
       let lossyDecoding = false;
-      if (!detection.seemsBinary && detection.encoding !== 'utf-8') {
+      if (isUtf16Text) {
         if (stat.size > TRANSCODE_MAX_BYTES) {
           return {
             isError: true,
@@ -452,6 +517,7 @@ export class ReadTool implements IReadTool {
       }
       return result;
     } catch (error) {
+      if (signal?.aborted) throw error;
       if (isTextDecodeError(error)) {
         return { isError: true, output: notUtf8DecodableFileOutput(args.path) };
       }
@@ -460,6 +526,142 @@ export class ReadTool implements IReadTool {
         output: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  private async readMedia(
+    source: FileReadSource,
+    args: ReadInput,
+    stat: HostFileStat,
+    fileType: { readonly kind: 'image' | 'video'; readonly mimeType: string },
+    signal?: AbortSignal,
+  ): Promise<ExecutableToolResult> {
+    const kind = fileType.kind;
+    const article = kind === 'image' ? 'an' : 'a';
+    const capabilities = this.profile.getModelCapabilities();
+    const hasImageIn = capabilities.image_in;
+    const hasVideoIn = capabilities.video_in;
+    const supported = kind === 'image' ? hasImageIn : hasVideoIn;
+    if (!supported) {
+      const allowed =
+        kind === 'video' && hasImageIn
+          ? 'text and image files'
+          : kind === 'image' && hasVideoIn
+            ? 'text and video files'
+            : 'text files';
+      return {
+        isError: true,
+        output: `"${args.path}" is ${article} ${kind} file. The current model does not support ${kind} input (missing ${kind}_in capability), so this agent cannot view it. Only ${allowed} can be read.`,
+      };
+    }
+    if (
+      args.line_offset !== undefined ||
+      args.column_offset !== undefined ||
+      args.n_lines !== undefined ||
+      args.max_chars !== undefined
+    ) {
+      return {
+        isError: true,
+        output: 'line_offset, column_offset, n_lines, and max_chars apply only to text files.',
+      };
+    }
+    if (stat.size === 0) {
+      return { isError: true, output: `"${args.path}" is empty.` };
+    }
+    if (stat.size > MAX_MEDIA_BYTES) {
+      return {
+        isError: true,
+        output:
+          `"${args.path}" is ${String(stat.size)} bytes, which exceeds the ` +
+          `maximum ${String(MAX_MEDIA_MEGABYTES)}MB for media files.`,
+      };
+    }
+
+    const readByteBudget = resolveReadImageByteBudget();
+    const maxEdge = resolveMaxImageEdgePx();
+    if (kind === 'image' && stat.size > MAX_IMAGE_DECODE_BYTES && stat.size > readByteBudget) {
+      return {
+        isError: true,
+        output: buildImageDeliveryLimitError({
+          finalBytes: stat.size,
+          readByteBudget,
+          maxEdge,
+        }),
+      };
+    }
+
+    const data = Buffer.from(await source.readBytes());
+    let dimensions = kind === 'image' ? sniffImageDimensions(data) : null;
+    let mediaBytes: Uint8Array;
+    let mediaMimeType: string;
+    let delivery: ImageDelivery | undefined;
+    if (kind === 'image') {
+      const inlineOnly = !isRecodableImage(data, fileType.mimeType);
+      const compressed = await compressImageForModel(data, fileType.mimeType, {
+        byteBudget: readByteBudget,
+        maxEdge,
+        telemetry: this.telemetry,
+        telemetrySource: 'read_media',
+      });
+      if (
+        !inlineOnly &&
+        (compressed.finalByteLength > readByteBudget ||
+          Math.max(compressed.width, compressed.height) > maxEdge)
+      ) {
+        return {
+          isError: true,
+          output: buildImageDeliveryLimitError({
+            finalBytes: compressed.finalByteLength,
+            readByteBudget,
+            maxEdge,
+          }),
+        };
+      }
+      mediaBytes = compressed.data;
+      mediaMimeType = compressed.mimeType;
+      delivery = {
+        kind: compressed.changed ? 'downsampled' : 'untouched',
+        width: compressed.width,
+        height: compressed.height,
+        byteLength: compressed.finalByteLength,
+        mimeType: compressed.mimeType,
+      };
+      if (compressed.changed) {
+        dimensions = { width: compressed.originalWidth, height: compressed.originalHeight };
+      }
+    } else {
+      mediaBytes = data;
+      mediaMimeType = fileType.mimeType;
+    }
+
+    const safePath = source.name;
+    const reference = this.attachmentStore !== undefined
+      ? await this.attachmentStore.put({
+          bytes: mediaBytes,
+          mimeType: mediaMimeType,
+          filename: safePath.split(/[\\/]/).at(-1) ?? safePath,
+          signal,
+        })
+      : `data:${mediaMimeType};base64,${Buffer.from(mediaBytes).toString('base64')}`;
+    const mediaPart: ContentPart =
+      kind === 'image'
+        ? { type: 'image_url', imageUrl: { url: reference } }
+        : { type: 'video_url', videoUrl: { url: reference } };
+    const tag = kind === 'image' ? 'image' : 'video';
+    const tagPath = isDaemonFileUrl(args.path) ? args.path : safePath;
+    const note = buildMediaNote({
+      kind,
+      mimeType: fileType.mimeType,
+      byteSize: stat.size,
+      dimensions,
+      delivery,
+    });
+    const output: ContentPart[] = [
+      { type: 'text', text: `<${tag} path="${tagPath}">` },
+      mediaPart,
+      { type: 'text', text: `</${tag}>` },
+    ];
+    signal?.throwIfAborted();
+    return { output, note, isError: false };
   }
 
   private async readForward(
