@@ -242,3 +242,27 @@ describe('a message steered into a running reply', () => {
     expect(model.promptCacheProblems()).toEqual([]);
   });
 });
+
+describe('two clients following the same session', () => {
+  const test = base.extend<ScenarioFixtures>(scenarioFixtures({ modelOptions: { reportCachedTokens: true } }));
+
+  test('keeps the next request on the same prompt cache prefix when a second client subscribes in the middle of the session', async ({ kap, model }) => {
+    model.script(answer('first answer'), answer('second answer'));
+    const session = await kap.createSession();
+    const first = await kap.connect();
+    await first.subscribe(session.id);
+    await turn(kap, session.id, 'First question.');
+    const second = await kap.connect();
+    await second.subscribe(session.id);
+    await turn(kap, session.id, 'Second question.');
+
+    const lastAnswer = (socket: typeof first): unknown => socket.turns(session.id).at(-1)?.items.find((item) => item.type === 'assistant_message')?.['text'];
+    await expect.poll(() => lastAnswer(first)).toBe('second answer');
+    await expect.poll(() => lastAnswer(second)).toBe('second answer');
+    expect(model.promptCache().filter((entry) => entry.role === 'main').map(({ baseline, reusedFrom }) => ({ baseline, reusedFrom }))).toEqual([
+      { baseline: undefined, reusedFrom: undefined },
+      { baseline: 0, reusedFrom: 0 },
+    ]);
+    expect(model.promptCacheProblems()).toEqual([]);
+  });
+});

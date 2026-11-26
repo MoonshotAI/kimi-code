@@ -320,7 +320,10 @@ entries:
   - id: F1
     operation: Two clients follow the same session
     promise: keeps
-    gap: A scenario drives one surface at a time; two WebSocket clients in a KAP scenario cover this more cheaply.
+    coverage:
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: keeps the next request on the same prompt cache prefix when a second client subscribes in the middle of the session
 
   - id: F2
     operation: Resize the window between two turns
