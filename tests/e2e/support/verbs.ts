@@ -57,6 +57,7 @@ export const VERBS = {
   expectAbsent: { on: SURFACES, checksInterface: false },
   continue: { on: ['desktop', 'web'], absentBecause: NO_CONTINUE, checksInterface: false },
   restart: { on: SURFACES, checksInterface: false, bySession: true },
+  restartDuringTurn: { on: SURFACES, checksInterface: false, bySession: true },
   newSession: { on: SURFACES, checksInterface: false },
   compact: { on: SURFACES, checksInterface: false },
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
@@ -206,6 +207,7 @@ interface VerbSignatures {
   expectAbsent(text: string): Promise<void>;
   continue(): Promise<void>;
   restart(): Promise<void>;
+  restartDuringTurn(): Promise<void>;
   newSession(): Promise<void>;
   compact(): Promise<void>;
   resize(size: WindowSize): Promise<void>;
@@ -243,6 +245,7 @@ export interface SurfaceControls {
   reopenState(): ReopenState;
   frame(): Promise<Frame>;
   close(): Promise<void>;
+  quitDuringTurn(): Promise<void>;
   kill(): Promise<void>;
   networkViolations(): Promise<readonly string[]>;
   diagnostics(): Promise<readonly Diagnostic[]>;

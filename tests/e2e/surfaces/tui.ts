@@ -64,6 +64,7 @@ const KITTY_SEQUENCE_LONGEST = 16;
 const KITTY_KEYS: Readonly<Record<string, { readonly code: number; readonly modifiers: number }>> = {
   '\x1b': { code: 27, modifiers: 1 },
   '\x03': { code: 99, modifiers: 5 },
+  '\x04': { code: 100, modifiers: 5 },
   '\x0f': { code: 111, modifiers: 5 },
   '\x11': { code: 113, modifiers: 5 },
   '\x13': { code: 115, modifiers: 5 },
@@ -77,6 +78,7 @@ const KEYS = {
   enter: '\r',
   escape: '\x1b',
   interrupt: '\x03',
+  quit: '\x04',
   up: '\x1b[A',
   down: '\x1b[B',
   approveOnce: '1',
@@ -135,6 +137,7 @@ const QUESTION_OPTION = /^(?:→ )?\[(\d+)\] (.*)$/;
 const QUESTION_FOCUSED = 'esc cancel';
 const QUESTION_SEVERAL_CHOICES = '↵ toggle';
 const QUESTION_TYPING = 'type answer';
+const QUIT_AGAIN = 'Press Ctrl+D again to exit';
 const QUESTION_REVIEW = 'Ready to submit your answers?';
 const QUESTION_SUBMIT = '→ [1] Submit';
 const QUESTION_SCROLLS = /^showing \d+-\d+ of \d+$/;
@@ -1008,6 +1011,21 @@ class TuiDriver implements SurfaceDriver<'tui'> {
 
   async close(): Promise<void> {
     if (!this.left) await this.leave('The scenario');
+  }
+
+  async quitDuringTurn(): Promise<void> {
+    if (this.exitCode() !== undefined) throw new Error(`The CLI exited before the user quit it.\n${await this.describe()}`);
+    const screen = await this.read();
+    if (showsQuestion(screen) || showsApproval(screen)) {
+      throw this.failure(
+        'restartDuringTurn() cannot quit the terminal UI while an approval or a question is pending: Ctrl+D there answers it instead of arming the exit, and /exit waits for an idle product. Answer it first.',
+        screen,
+      );
+    }
+    this.write(KEYS.quit);
+    await until('the terminal UI to ask for Ctrl+D again', async () => ((await this.read()).text.includes(QUIT_AGAIN) ? true : undefined), { timeoutMs: TIMEOUTS.wait });
+    this.write(KEYS.quit);
+    await this.waitForExit('Ctrl+D was pressed twice');
   }
 
   private async leave(who: string): Promise<void> {
