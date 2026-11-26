@@ -116,6 +116,9 @@
             "goal_mode_available": {
               "type": "boolean"
             },
+            "missing_model": {
+              "type": "string"
+            },
             "model": {
               "type": "string"
             },
@@ -132,6 +135,11 @@
             },
             "plan_mode_available": {
               "type": "boolean"
+            },
+            "profile_revision": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
             },
             "session_id": {
               "minLength": 1,
