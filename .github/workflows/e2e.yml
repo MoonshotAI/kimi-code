@@ -378,6 +378,7 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Download the failed cases each job wrote
+        id: results
         uses: actions/download-artifact@v8
         with:
           pattern: e2e-results-*
@@ -385,15 +386,16 @@ jobs:
           run-id: ${{ inputs.notify_run_id || github.run_id }}
           github-token: ${{ inputs.notify_run_id != '' && github.token || '' }}
       - name: Post the jobs and cases that did not pass to Feishu
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           FEISHU_E2E_WEBHOOK: ${{ secrets.FEISHU_E2E_WEBHOOK }}
           FEISHU_E2E_SECRET: ${{ secrets.FEISHU_E2E_SECRET }}
           FEISHU_E2E_TRIAGE_USER: ${{ secrets.FEISHU_E2E_TRIAGE_USER }}
           NOTIFY_RUN_ID: ${{ inputs.notify_run_id }}
+          RESULTS_DOWNLOAD: ${{ steps.results.outcome }}
         run: |
-          if [[ -n "$NOTIFY_RUN_ID" ]]; then
-            node scripts/e2e-nightly-notify.mjs --results-dir "$RUNNER_TEMP/e2e-results" --run-id "$NOTIFY_RUN_ID" --rehearsal
-          else
-            node scripts/e2e-nightly-notify.mjs --results-dir "$RUNNER_TEMP/e2e-results"
-          fi
+          args=(--results-dir "$RUNNER_TEMP/e2e-results")
+          if [[ "$RESULTS_DOWNLOAD" != success ]]; then args+=(--results-download-failed); fi
+          if [[ -n "$NOTIFY_RUN_ID" ]]; then args+=(--run-id "$NOTIFY_RUN_ID" --rehearsal); fi
+          node scripts/e2e-nightly-notify.mjs "${args[@]}"

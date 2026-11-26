@@ -178,7 +178,7 @@ await test('lists a results file it cannot read or that has another shape instea
     assert.match(read[1].unreadable, /^e2e-results-tui[\\/]e2e-results\.json：不是 run-summary 写出的结果格式$/);
     const card = failureCard({ run, jobs: greenJobs, results: read });
     assert.equal(texts(card)[1], '**用例以外的错误**');
-    assert.match(texts(card)[2], /^读不了的结果文件，这个作业的用例没有列出\n· e2e-results-acp/);
+    assert.match(texts(card)[2], /^结果文件没读全，有些用例没有列出\n· e2e-results-acp/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -279,4 +279,17 @@ await test('marks a test card about an earlier run so nobody takes it for tonigh
   assert.match(posted[0].elements.at(-1).text.content, /^@triage-bot 看到这条消息后/);
   assert.equal(unknownOutcomeCard({ runUrl: run.html_url, reason: 'x', rehearsal: true }).header.title.content, '【测试】每晚 E2E：没能读到结果');
   assert.equal(failureCard({ run, jobs: [job('Build (optional)', 'failure')], results: [] }).header.title.content, '每晚 E2E 没通过 · 2026-11-27');
+});
+
+await test('still lists the failed jobs, and says the cases are missing, when downloading the results failed', async () => {
+  const posted = [];
+  const red = { run: async () => run, jobs: async () => [job('Web (optional, 1/2)', 'failure', [['Run the scenarios', 'failure']]), notifyJob] };
+  const missing = join(tmpdir(), 'e2e-nightly-notify-missing-folder');
+  assert.equal(await notify({ runId: '42', resultsDir: missing, resultsDownloadFailed: true, github: red, post: async card => posted.push(card) }), 'posted');
+  assert.deepEqual(texts(posted[0]).slice(1, 5), [
+    '**没通过的作业（1 个）**',
+    '· Web (optional, 1/2)：失败，在「Run the scenarios」这一步',
+    '**用例以外的错误**',
+    '结果文件没读全，有些用例没有列出\n· 下载 e2e-results-* artifact 失败',
+  ]);
 });

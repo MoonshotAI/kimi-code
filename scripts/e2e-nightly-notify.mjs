@@ -79,7 +79,7 @@ function groupedCases(results) {
   const add = (place, line) => groups.set(place, [...(groups.get(place) ?? []), line]);
   for (const result of results) {
     if (result.unreadable !== undefined) {
-      add('读不了的结果文件，这个作业的用例没有列出', `· ${shortened(result.unreadable)}`);
+      add('结果文件没读全，有些用例没有列出', `· ${shortened(result.unreadable)}`);
       continue;
     }
     for (const error of result.errors) add(placeOf(result, '用例以外的错误'), `· ${shortened(error)}`);
@@ -203,12 +203,13 @@ export function unknownOutcomeCard({ runUrl, reason, triage, rehearsal = false }
   return { config: { wide_screen_mode: true }, header: { template: 'orange', title: { tag: 'plain_text', content: `${rehearsal ? REHEARSAL : ''}每晚 E2E：没能读到结果` } }, elements };
 }
 
-export async function notify({ runId, runUrl, resultsDir, triage, rehearsal = false, github, post }) {
+export async function notify({ runId, runUrl, resultsDir, resultsDownloadFailed = false, triage, rehearsal = false, github, post }) {
   let card;
   try {
     const run = await github.run(runId);
     const jobs = await github.jobs(runId, run.run_attempt);
-    card = failureCard({ run, jobs, results: readResults(resultsDir), triage, rehearsal });
+    const results = [...readResults(resultsDir), ...(resultsDownloadFailed ? [{ unreadable: '下载 e2e-results-* artifact 失败' }] : [])];
+    card = failureCard({ run, jobs, results, triage, rehearsal });
   } catch (error) {
     await post(unknownOutcomeCard({ runUrl, reason: error.message, triage, rehearsal }));
     throw error;
@@ -225,6 +226,7 @@ async function main() {
       'run-id': { type: 'string' },
       repo: { type: 'string' },
       rehearsal: { type: 'boolean', default: false },
+      'results-download-failed': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
     },
   });
@@ -256,7 +258,8 @@ async function main() {
     : card => send({ webhook: settings.FEISHU_E2E_WEBHOOK, secret: settings.FEISHU_E2E_SECRET, card });
   const runUrl = `${process.env.GITHUB_SERVER_URL ?? 'https://github.com'}/${settings.GITHUB_REPOSITORY}/actions/runs/${settings.GITHUB_RUN_ID}`;
   const rehearsal = values.rehearsal;
-  const outcome = await notify({ runId: settings.GITHUB_RUN_ID, runUrl, resultsDir: settings['--results-dir'], triage, rehearsal, github, post });
+  const resultsDownloadFailed = values['results-download-failed'];
+  const outcome = await notify({ runId: settings.GITHUB_RUN_ID, runUrl, resultsDir: settings['--results-dir'], resultsDownloadFailed, triage, rehearsal, github, post });
   if (outcome === 'passed') console.log(`Every job of run ${settings.GITHUB_RUN_ID} passed; nothing was sent to Feishu.`);
   else console.log(dryRun ? 'Printed the Feishu card above instead of sending it (--dry-run).' : 'Posted the failed jobs and cases to Feishu.');
 }
