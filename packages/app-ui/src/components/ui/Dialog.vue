@@ -69,6 +69,15 @@ function resolveInitialFocus(): HTMLElement | null {
   return panel.value?.contains(initialFocus) ? initialFocus : null;
 }
 
+function defaultFocusTarget(): HTMLElement | null {
+  if (!panel.value) return null;
+  for (const region of panel.value.querySelectorAll<HTMLElement>('.ui-dialog__body, .ui-dialog__foot')) {
+    const first = region.querySelector<HTMLElement>(FOCUSABLE);
+    if (first) return first;
+  }
+  return panel.value;
+}
+
 function onKeydown(event: KeyboardEvent) {
   if (!props.open || !isTop.value) return;
   if (event.key === 'Escape') {
@@ -110,8 +119,10 @@ watch(
       if (props.focusOnOpen) {
         await nextTick();
         const initial = resolveInitialFocus();
-        const list = focusables();
-        (initial ?? list[0] ?? panel.value)?.focus();
+        const fallback = props.initialFocus
+          ? (focusables()[0] ?? panel.value)
+          : defaultFocusTarget();
+        (initial ?? fallback)?.focus();
       }
     } else {
       removeDialog(dialogId);
