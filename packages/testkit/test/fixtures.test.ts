@@ -725,6 +725,10 @@ describe('fake MCP server', () => {
       const path = await writeMcpConfig(join(home.dataDir, 'mcp.json'), { docs: entry });
       expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ mcpServers: { docs: { command: process.execPath, args: [...entry.args] } } });
       expect(await readMcpCalls(join(home.root, 'never-written.jsonl'))).toEqual([]);
+      await writeMcpConfig(path, { docs: entry, wiki: { transport: 'http', url: 'http://127.0.0.1:9/mcp', deferred: true } });
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+        mcpServers: { docs: { command: process.execPath, args: [...entry.args] }, wiki: { transport: 'http', url: 'http://127.0.0.1:9/mcp', deferred: true } },
+      });
     } finally {
       await home.remove();
     }
