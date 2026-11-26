@@ -375,7 +375,7 @@ describe('Composer recent model menu', () => {
     expect(clientState.setThinking).not.toHaveBeenCalled();
   });
 
-  it('repairs a background session model on blur without switching the active session', async () => {
+  it('repairs a background session model on blur without switching the active session or choosing its thinking level', async () => {
     await mountComposer(1200, 820);
     const { sessionsStore } = await import('@moonshot-ai/app-client/stores');
     sessionsStore().sessions = [
@@ -398,7 +398,7 @@ describe('Composer recent model menu', () => {
     await nextTick();
     expect(clientState.activeSessionId!.value).toBe('sess-1');
     expect(clientState.selectModel).not.toHaveBeenCalled();
-    expect(clientState.setSessionModel).toHaveBeenCalledWith('sess-bg', 'gpt-6-astra', 'high');
+    expect(clientState.setSessionModel).toHaveBeenCalledWith('sess-bg', 'gpt-6-astra', undefined);
   });
 });
 

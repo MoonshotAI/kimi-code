@@ -14,6 +14,7 @@ import {
   markThinkingPending,
   thinkingLevelForModelSwitch,
   thinkingLevelFromConfig,
+  thinkingLevelKeptAcrossModelSwitch,
 } from '@moonshot-ai/app-core/lib';
 import type { ActivityState } from '@moonshot-ai/app-core/client/types';
 import type { ExtendedState, PromptAttachment } from './types';
@@ -124,33 +125,8 @@ export function useModelProviderState(
       sessionId === null || sessionId === undefined
         ? undefined
         : rawState.thinkingBySession[sessionId];
-    if (sessionLevel !== undefined) {
-      return levelDeclaredBy(model, sessionLevel) ? sessionLevel : defaultThinkingLevelFor(model);
-    }
+    if (sessionLevel !== undefined) return thinkingLevelKeptAcrossModelSwitch(model, sessionLevel);
     return thinkingLevelFromConfig(rawState.config?.thinking, model) ?? defaultThinkingLevelFor(model);
-  }
-
-  function thinkingLevelForSessionId(
-    sessionId: string | null | undefined,
-    modelId: string | undefined,
-  ): ThinkingLevel | undefined {
-    if (modelId === undefined) return undefined;
-    const model = modelById(modelId);
-    return model === undefined ? undefined : thinkingLevelForSession(sessionId, model);
-  }
-
-  function resolveThinkingForPrompt(
-    sessionId: string | null | undefined,
-    modelId: string | undefined,
-  ): ThinkingLevel | undefined {
-    if (
-      sessionId !== null &&
-      sessionId !== undefined &&
-      rawState.thinkingBySession[sessionId] === undefined
-    ) {
-      return undefined;
-    }
-    return thinkingLevelForSessionId(sessionId, modelId) ?? rawState.thinking;
   }
 
   function applyThinkingLevel(level: ThinkingLevel | undefined): ThinkingLevel | undefined {
@@ -218,7 +194,6 @@ export function useModelProviderState(
     sid: string,
     modelId: string,
     nextThinking: ThinkingLevel | undefined,
-    preserveDraftThinking = false,
   ): Promise<boolean> {
     updateSession(sid, (s) => ({ ...s, model: modelId }));
     sessionRuntimeStore().markModelPending(sid);
@@ -226,9 +201,7 @@ export function useModelProviderState(
       rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: nextThinking };
       markThinkingPending(rawState, sid);
     }
-    const persisted = preserveDraftThinking
-      ? persistSessionProfile({ model: modelId, thinking: nextThinking }, sid, true)
-      : persistSessionProfile({ model: modelId, thinking: nextThinking }, sid);
+    const persisted = persistSessionProfile({ model: modelId, thinking: nextThinking }, sid);
     void persisted.then((ok) => {
       if (!ok) return;
       const nextUnavailable = { ...rawState.unavailableModelBySession };
@@ -243,23 +216,15 @@ export function useModelProviderState(
     const targetModel = modelById(modelId);
     const targetModelId = canonicalModelId(modelId) ?? modelId;
     const previousModelId = currentModelId();
-    const prevThinking = rawState.thinking;
-    const isSwitch = previousModelId !== targetModelId;
-    const nextThinking = thinkingLevelForModelSwitch(
-      targetModel,
-      prevThinking,
-      isSwitch,
-      sid ? undefined : rawState.config?.thinking,
-    );
     if (!sid) {
+      const isSwitch = previousModelId !== targetModelId;
       store.setDraftModel(modelId);
-      rawState.thinking = nextThinking;
+      rawState.thinking = thinkingLevelForModelSwitch(targetModel, rawState.thinking, isSwitch, rawState.config?.thinking);
       if (isSwitch) rawState.draftThinkingExplicit = false;
       store.noteRecentModel(targetModelId, previousModelId);
       return true;
     }
-    if (nextThinking !== prevThinking) rawState.thinking = nextThinking;
-    const switched = await writeSessionModel(sid, modelId, nextThinking === prevThinking ? undefined : nextThinking);
+    const switched = await writeSessionModel(sid, modelId, undefined);
     if (switched) store.noteRecentModel(targetModelId, previousModelId);
     return switched;
   }
@@ -267,23 +232,15 @@ export function useModelProviderState(
   async function setSessionModel(sessionId: string, modelId: string, thinking?: ThinkingLevel): Promise<boolean> {
     const sessionEntry = rawState.sessions.find((s) => s.id === sessionId);
     if (sessionEntry === undefined) return false;
-    const targetModel = modelById(modelId);
     const targetModelId = canonicalModelId(modelId) ?? modelId;
     const previousModelId = canonicalModelId(sessionEntry.model || store.activeDefaultModel);
-    const prevThinking = rawState.thinkingBySession[sessionId];
-    const isSwitch = previousModelId !== targetModelId;
-    const nextThinking = thinking ?? thinkingLevelForModelSwitch(targetModel, prevThinking, isSwitch, undefined);
     const switched = await writeSessionModel(
       sessionId,
       modelId,
-      nextThinking === prevThinking ? undefined : nextThinking,
+      thinking === rawState.thinkingBySession[sessionId] ? undefined : thinking,
     );
     if (switched) store.noteRecentModel(targetModelId, previousModelId);
     return switched;
-  }
-
-  function normalizeDraftSessionModel(sessionId: string, modelId: string): Promise<boolean> {
-    return writeSessionModel(sessionId, modelId, rawState.thinkingBySession[sessionId], true);
   }
 
   async function activateSkill(
@@ -595,10 +552,7 @@ export function useModelProviderState(
     loadProviders,
     setModel,
     setSessionModel,
-    normalizeDraftSessionModel,
     thinkingLevelForModelId,
-    thinkingLevelForSessionId,
-    resolveThinkingForPrompt,
     activateSkill,
     addProvider,
     updateProvider,

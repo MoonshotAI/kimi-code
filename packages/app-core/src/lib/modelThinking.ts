@@ -108,6 +108,15 @@ export function thinkingLevelForModelSwitch(
   return thinkingLevelFromConfig(configThinking, model) ?? defaultThinkingLevelFor(model);
 }
 
+export function thinkingLevelKeptAcrossModelSwitch(
+  model: ModelThinkingInfo | undefined,
+  currentLevel: ThinkingLevel | undefined,
+): ThinkingLevel {
+  return currentLevel !== undefined && levelDeclaredBy(model, currentLevel)
+    ? currentLevel
+    : defaultThinkingLevelFor(model);
+}
+
 let thinkingWriteSeq = 0;
 
 export function markThinkingPending(

@@ -1712,8 +1712,6 @@ const sideChat = useSideChat(rawState, {
   conversations: auxiliaryConversations,
   pushOperationFailure: warningsStore().pushOperationFailure,
   nextOptimisticMsgId,
-  resolveThinkingForPrompt: (sessionId, modelId) =>
-    modelProvider.resolveThinkingForPrompt(sessionId, modelId),
   mapSendAuthFailure,
   ensureSideChatReady,
   onSideChatClosed: (sessionId, agentId) => {

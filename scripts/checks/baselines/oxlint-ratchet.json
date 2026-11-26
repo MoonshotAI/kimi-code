@@ -21,7 +21,6 @@
     "packages/app-client/src/client/useKimiWebClient.ts": 1,
     "packages/app-client/src/composables/usePanelTabs.ts": 1,
     "packages/app-client/src/stores/files.ts": 4,
-    "packages/app-client/test/startSessionAndActivateSkill.test.ts": 1,
     "packages/app-components/src/AppToasts.vue": 1,
     "packages/app-components/src/FilePreview.vue": 1,
     "packages/app-components/src/composer/Composer.vue": 1,

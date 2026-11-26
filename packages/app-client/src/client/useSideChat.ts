@@ -6,7 +6,6 @@ import {
   type AppMessage,
   type AppMessageContent,
   type KimiWebApi,
-  type ThinkingLevel,
 } from '@moonshot-ai/app-core/api';
 import {
   conversationTurnError,
@@ -26,7 +25,6 @@ import { sideChatDrafts } from './sideChatDrafts';
 import { createSendFailureNotifier, PromptFailedError } from './sendFailure';
 import { newPromptId } from './promptId';
 import { submitWithNetworkRetry } from './submitRetry';
-import { modelsStore } from '../stores/models';
 import type { PromptAttachment } from './types';
 import { persistComposerDraftSnapshot } from '../lib/composerDraftLifecycle';
 import { forgetInputHistory } from '../composables/useInputHistory';
@@ -92,10 +90,6 @@ export interface UseSideChatDeps {
     opts?: { title?: string; message?: string; sessionId?: string },
   ) => void;
   nextOptimisticMsgId: () => string;
-  resolveThinkingForPrompt: (
-    sessionId: string | null,
-    modelId: string | undefined,
-  ) => ThinkingLevel | undefined;
   mapSendAuthFailure?: (err: unknown, sid?: string) => Promise<ChatGateVerdict | null>;
   ensureSideChatReady?: (sid: string) => Promise<ChatGateVerdict | 'server-auth-required'>;
   onSideChatClosed?: (sessionId: string, agentId: string) => void;
@@ -107,7 +101,6 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     conversations,
     pushOperationFailure,
     nextOptimisticMsgId,
-    resolveThinkingForPrompt,
     mapSendAuthFailure,
     ensureSideChatReady,
     onSideChatClosed,
@@ -400,19 +393,12 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     ]);
     adjustSubmitting(sid, agentId, 1);
     try {
-      const promptSession = rawState.sessions.find((s) => s.id === sid);
-      const model = modelsStore().resolveSendModel(promptSession?.model) ?? undefined;
-      const thinking = resolveThinkingForPrompt(sid, model);
       const result = await submitWithNetworkRetry(() => api.submitPrompt(sid, {
         promptId,
         content,
         ...(metadata === undefined ? {} : { metadata }),
         agentId,
-        model,
-        thinking,
         permissionMode,
-        planMode: rawState.planModeBySession[sid] ?? false,
-        swarmMode: rawState.swarmModeBySession[sid] ?? false,
       }));
       if (result.status === 'failed') throw new PromptFailedError(promptId);
       return true;

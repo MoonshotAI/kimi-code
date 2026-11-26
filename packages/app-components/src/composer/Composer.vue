@@ -81,6 +81,7 @@ import {
   isThinkingOn,
   resolveEffortDescription,
   thinkingLevelForModelSwitch,
+  thinkingLevelKeptAcrossModelSwitch,
 } from '@moonshot-ai/app-core/lib';
 import { openAgentSettings, openHostSettings, useInputHistory, useIsMobile, useRunningSendMode } from '@moonshot-ai/app-client/composables';
 import { slashMenuQuery, useSlashMenu } from '@moonshot-ai/app-client/composables';
@@ -88,7 +89,7 @@ import { useMentionMenu, type MentionEntry } from '@moonshot-ai/app-client/compo
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, usePasteImageAutoMention } from '@moonshot-ai/app-client/composables';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { effortSwitchStore, hostsStore, sessionsStore } from '@moonshot-ai/app-client/stores';
+import { effortSwitchStore, hostsStore, modeStore, sessionsStore } from '@moonshot-ai/app-client/stores';
 import {
   createComposerEditor,
   discardStashedEditorState,
@@ -3015,17 +3016,23 @@ let discardMenuDraftOnClose = false;
 const menuModel = computed(() =>
   models.value?.find((model) => model.id === menuDraftModelId.value) ?? currentModel.value,
 );
-const menuDefaultThinkingLevel = computed(() =>
-  effectiveThinkingLevel(
-    menuModel.value,
-    thinkingLevelForModelSwitch(
+const menuDefaultThinkingLevel = computed(() => {
+  const sid = sessionId.value;
+  if (sid === null || sid === undefined) {
+    return effectiveThinkingLevel(
       menuModel.value,
-      menuTargetSessionId === sessionId.value ? thinking.value : undefined,
-      menuTargetSessionId !== sessionId.value || menuModel.value?.id !== currentModel.value?.id,
-      sessionId.value === null || sessionId.value === undefined ? client.config.value?.thinking : undefined,
-    ),
-  ),
-);
+      thinkingLevelForModelSwitch(
+        menuModel.value,
+        thinking.value,
+        menuModel.value?.id !== currentModel.value?.id,
+        client.config.value?.thinking,
+      ),
+    );
+  }
+  const target = menuTargetSessionId ?? sid;
+  const current = target === sid ? thinking.value : modeStore().thinkingBySession[target];
+  return thinkingLevelKeptAcrossModelSwitch(menuModel.value, current);
+});
 const menuThinkingLevel = computed(() =>
   menuDraftEffortSegment.value === undefined
     ? menuDefaultThinkingLevel.value
@@ -3112,7 +3119,11 @@ function commitModelMenuDraft(): void {
   const targetSid = menuTargetSessionId;
   if (modelId === undefined || sessionId.value !== menuOpenedSessionId) return;
   if (targetSid !== null && targetSid !== undefined && targetSid !== sessionId.value) {
-    if (menuThinkingLevel.value !== undefined) void client.setSessionModel(targetSid, modelId, menuThinkingLevel.value);
+    void client.setSessionModel(
+      targetSid,
+      modelId,
+      menuDraftEffortSegment.value === undefined ? undefined : menuThinkingLevel.value,
+    );
     return;
   }
   const effort =
