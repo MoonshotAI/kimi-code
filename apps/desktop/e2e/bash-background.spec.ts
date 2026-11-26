@@ -16,7 +16,7 @@ const MOVED = 'Moved it to the background.';
 const FINISHED = 'The long job finished.';
 const FULL_OUTPUT = 'bg-line-1\nbg-line-2\nbg-line-3\nbg-done';
 
-test('a running command moved to the background finishes and its output stays viewable', { tag: '@quarantine' }, async ({ app, model }) => {
+test('a running command moved to the background finishes and its output stays viewable', async ({ app, model }) => {
   const window = app.window;
   const transcript = window.getByRole('list').first();
   const card = toolCard(transcript, LONG);
