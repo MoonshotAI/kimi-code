@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { IWorkspaceService } from "#/app/workspace/workspace";
+import type { IProjectService } from "#/app/project/project";
 import { HostFolderBrowser } from "#/app/hostFolderBrowser/hostFolderBrowserService";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -19,7 +19,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 const fakeRegistry = {
   list: async () => [],
-} as unknown as IWorkspaceService;
+} as unknown as IProjectService;
 
 describe("HostFolderBrowser", () => {
   const dirs: string[] = [];
