@@ -115,6 +115,49 @@ export function blockDecision(
   };
 }
 
+export interface HookMutationDecision<T> {
+  readonly value?: T;
+  readonly invalid?: string;
+}
+
+export function updatedInputDecision(
+  results: readonly HookResult[],
+): HookMutationDecision<Record<string, unknown>> {
+  let value: Record<string, unknown> | undefined;
+  let invalid: string | undefined;
+  for (const result of results) {
+    if (result.invalidUpdatedInput !== undefined) invalid ??= result.invalidUpdatedInput;
+    if (result.updatedInput !== undefined) value = result.updatedInput;
+  }
+  return { value, invalid };
+}
+
+export function updatedToolOutputDecision(
+  results: readonly HookResult[],
+): HookMutationDecision<string | readonly unknown[]> {
+  let value: string | readonly unknown[] | undefined;
+  let invalid: string | undefined;
+  for (const result of results) {
+    if (result.invalidUpdatedToolOutput !== undefined) invalid ??= result.invalidUpdatedToolOutput;
+    if (result.updatedToolOutput !== undefined) value = result.updatedToolOutput;
+  }
+  return { value, invalid };
+}
+
+export function collectAdditionalContext(results: readonly HookResult[]): string | undefined {
+  const contexts = results
+    .filter(
+      (result) =>
+        result.action !== 'block' &&
+        result.timedOut !== true &&
+        result.errored !== true &&
+        (result.exitCode === undefined || result.exitCode === 0),
+    )
+    .map((result) => result.additionalContext)
+    .filter((context): context is string => context !== undefined);
+  return contexts.length === 0 ? undefined : contexts.join('\n');
+}
+
 export function hookExecutionError(hook: HookDef, result: HookResult): string | undefined {
   if (result.error !== undefined) return result.error;
   if (result.timedOut === true) {

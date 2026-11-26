@@ -103,8 +103,21 @@ You can also return a JSON object via stdout to block:
 }
 ```
 
+### Structured output fields
+
+When the script exits with code `0`, it can print a JSON object on stdout and use `hookSpecificOutput` to carry structured instructions:
+
+| Field | Applies to | Effect |
+| --- | --- | --- |
+| `permissionDecision` / `permissionDecisionReason` | Blockable events | `"deny"` blocks, equivalent to exit code `2` |
+| `additionalContext` | `SessionStart` | Injects a piece of text into the model context; visible to the model but never shown as a message in the UI |
+| `updatedInput` | `PreToolUse` | Replaces the tool call's input object entirely (not merged); schema validation, path/plan guards, and permission approval all see the replaced input |
+| `updatedToolOutput` | `PostToolUse` | Replaces the tool result, as a string or an array of content parts; both the model and the UI see the replaced content |
+
+When multiple hooks match the same event, results merge in configuration order: blocking wins; `updatedInput` / `updatedToolOutput` take the last valid rewrite; `additionalContext` values are concatenated in order. Malformed rewrites (such as a non-object `updatedInput`) are never silently ignored: `PreToolUse` blocks the call with an explanation, and `PostToolUse` keeps the original result and shows a one-time hook warning.
+
 ::: info Which events support blocking?
-Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return values that affect the main flow. All other events are **observation-only events**: they fire and forget, and the main flow is unaffected regardless of what the script returns.
+Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) can block the main flow. `PostToolUse` cannot block, but it can replace the tool result via `updatedToolOutput`, so the CLI waits for it to finish. All other events are **observation-only events**: they fire and forget, and the main flow is unaffected regardless of what the script returns.
 :::
 
 ## Event Reference
@@ -113,14 +126,14 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | --- | --- | --- | --- |
 | `UserPromptSubmit` | The text submitted by the user | ✓ | Triggered when the user sends a message; returned text is appended to context; blocking skips the model call this turn |
 | `UserPromptQueued` | The queued prompt text | — | Triggered when a message is queued while a turn is still running; payload includes `prompt_id`, `prompt`, `queue_length` |
-| `PreToolUse` | Tool name | ✓ | Triggered before a tool call (before permission checks); the tool will not execute if blocked |
-| `Stop` | Empty string | ✓ | Triggered after a turn completes; payload includes `turn_id`, `step`, `first_step_of_turn`, `finish_reason`, and `usage` (token usage for the final step); if blocked, a message starts a new continuation turn |
+| `PreToolUse` | Tool name | ✓ | Triggered before a tool call (before permission checks); the tool will not execute if blocked; `updatedInput` can replace the tool input |
+| `Stop` | Empty string | ✓ | Triggered after a turn completes; payload includes `turn_id`, `step`, `first_step_of_turn`, `finish_reason`, `usage` (token usage for the final step), `response_text` (the turn's final answer text, `null` when there is none), `transcript_path` (the session transcript file path), and `stop_hook_active` (whether this is a Stop continuation turn); if blocked, a message starts a new continuation turn; the continuation turn also triggers Stop (with `stop_hook_active` set to `true`), but its block is ignored to prevent loops |
 | `TurnStarted` | Turn origin kind (e.g. `user`, `task`, `system_trigger`) | — | Triggered when a new turn begins; payload includes `turn_id`, `origin_kind`, `origin_name`, `prompt` |
-| `PostToolUse` | Tool name | — | Triggered after a tool executes successfully |
+| `PostToolUse` | Tool name | — | Triggered after a tool executes successfully; `updatedToolOutput` can replace the tool result, and the CLI waits for the script to finish |
 | `PostToolUseFailure` | Tool name | — | Triggered after a tool fails or is blocked |
 | `PermissionRequest` | Tool name | — | Triggered just before waiting for user approval |
 | `PermissionResult` | Tool name | — | Triggered after approval completes |
-| `SessionStart` | `startup` or `resume` | — | Triggered after a session starts or resumes; payload includes `source`, `model`, `profile` |
+| `SessionStart` | `startup` or `resume` | — | Triggered after a session starts or resumes; payload includes `source`, `model`, `profile`; returning `additionalContext` injects session background into the model (not shown to the user) |
 | `SessionEnd` | `exit` or `archive` | — | Triggered after a session closes; `archive` means the session was archived rather than exited; not triggered when `kimi web` unloads an idle session from memory, nor when such an unloaded session is later archived or deleted; the transparent reload does not trigger `SessionStart` |
 | `SessionHeartbeat` | Empty string | — | Triggered every 60 seconds while the session is alive; the timer runs only when this event is configured; payload includes `uptime_ms`; pauses while `kimi web` has the session unloaded, and `uptime_ms` restarts after reload |
 | `SubagentStart` | Sub-agent name | — | Triggered before a sub-agent starts running |
