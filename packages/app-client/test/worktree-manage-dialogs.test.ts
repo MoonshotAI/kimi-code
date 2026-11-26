@@ -295,6 +295,26 @@ describe('worktree session deletion', () => {
     await expect(pending).resolves.toEqual({ confirmed: true, value: { deleteBranch: false } });
   });
 
+  it('names the branch the checkout is on now instead of the one the session last recorded', async () => {
+    api.inspectWorktrees.mockResolvedValueOnce({ items: [worktreeRisk('a', { branch: 'kimi/renamed' })], errors: {} });
+
+    void dialogs.requestSessionDeletion({ sessionId: 's1', title: 'One', path: '/wt/a', branch: 'kimi/a' }, vi.fn());
+    await waitFor(() => expect(dialogs.deleteDialog.value).not.toBeNull());
+
+    expect(dialogs.deleteDialog.value).toMatchObject({ kind: 'session', branch: 'kimi/renamed' });
+    dialogs.closeDeleteDialog();
+  });
+
+  it('names no branch when the checkout is detached, even if the session recorded one', async () => {
+    api.inspectWorktrees.mockResolvedValueOnce({ items: [worktreeRisk('a', { branch: undefined })], errors: {} });
+
+    void dialogs.requestSessionDeletion({ sessionId: 's1', title: 'One', path: '/wt/a', branch: 'kimi/a' }, vi.fn());
+    await waitFor(() => expect(dialogs.deleteDialog.value).not.toBeNull());
+
+    expect(dialogs.deleteDialog.value).not.toHaveProperty('branch');
+    dialogs.closeDeleteDialog();
+  });
+
   it('resolves unconfirmed when the dialog is cancelled', async () => {
     const run = vi.fn(async () => true);
     const pending = dialogs.requestSessionDeletion({ sessionId: 's1', title: 'One', path: '/wt/a' }, run);

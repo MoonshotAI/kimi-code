@@ -321,7 +321,7 @@ async function requestSessionDeletion<T>(
   sessionCancel?.();
   const fresh = inspection?.items.find((item) => item.path === request.path);
   const sessions = fresh?.sessions ?? store.items.find((item) => item.path === request.path)?.sessions ?? [];
-  const branch = request.branch ?? fresh?.branch;
+  const branch = fresh === undefined ? request.branch : fresh.branch;
   return new Promise<WorktreeSessionDeleteResult<T>>((resolve, reject) => {
     const finish = (): void => {
       sessionRun = null;
