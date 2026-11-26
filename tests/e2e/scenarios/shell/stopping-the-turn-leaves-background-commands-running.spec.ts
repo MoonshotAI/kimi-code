@@ -4,7 +4,7 @@ import { expect, scenario } from '../../support/scenario';
 
 scenario(
   'keeps a background command running when the user stops the turn, and tells the model when the user stops the command itself',
-  { except: { acp: 'ACP has no background tasks an editor can list or stop: the agent reports only tool calls.' } },
+  { except: { acp: 'An editor cannot stop one background task over ACP; it can only cancel the whole turn.' } },
   async ({ product, model }) => {
     const command = "while true; do printf 'tick\\n'; sleep 1; done";
     const description = 'Watch the logs';

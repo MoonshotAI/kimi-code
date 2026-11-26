@@ -4,7 +4,7 @@ import { expect, scenario } from '../../support/scenario';
 
 scenario(
   'moves a running command to the background, lets the turn go on, and reports back when the command finishes',
-  { except: { acp: 'ACP has no background tasks an editor can move, list or stop: the agent reports only tool calls.' } },
+  { except: { acp: 'An editor cannot move a running command to the background over ACP.' } },
   async ({ product, model, workspace }) => {
     const command = "printf 'rea%s\\n' dy; while [ ! -f gate.txt ]; do sleep 0.1; done; printf 'don%s\\n' e";
     const description = 'Run the slow build';

@@ -39,7 +39,9 @@ const NO_WINDOW_TO_RESIZE = {
   acp: 'An editor shows the conversation in its own window; the agent behind ACP has no window to resize.',
   desktop: "The Desktop window cannot be made narrower than 900 pixels, so a user cannot give it a phone width, and Playwright can only resize it by running code in Electron's main process.",
 };
-const NO_TASKS_OVER_ACP = 'ACP has no background tasks an editor can move, list or stop: the agent reports only tool calls.';
+const NO_BACKGROUNDING_OVER_ACP = 'An editor cannot move a running command to the background over ACP.';
+const TASK_LIST_OVER_ACP = 'ACP lists background tasks only in the text reply of the /tasks command, without their output; the driver does not read it yet.';
+const NO_TASK_STOP_OVER_ACP = 'An editor cannot stop one background task over ACP; it can only cancel the whole turn.';
 const NO_PAGE_TO_RELOAD = {
   tui: 'A terminal shows the CLI itself; there is no page to reload.',
   acp: 'An editor shows the conversation in its own interface; there is no page of the agent to reload.',
@@ -55,9 +57,9 @@ export const VERBS = {
   queue: { on: ['tui', 'desktop', 'web'], absentBecause: ONE_PROMPT_AT_A_TIME_OVER_ACP, checksInterface: false },
   steer: { on: ['tui', 'desktop', 'web'], absentBecause: ONE_PROMPT_AT_A_TIME_OVER_ACP, checksInterface: false },
   steerQueued: { on: ['tui', 'desktop', 'web'], absentBecause: ONE_PROMPT_AT_A_TIME_OVER_ACP, checksInterface: false },
-  background: { on: ['tui', 'desktop', 'web'], absentBecause: NO_TASKS_OVER_ACP, checksInterface: false },
-  expectTask: { on: ['tui', 'desktop', 'web'], absentBecause: NO_TASKS_OVER_ACP, checksInterface: true },
-  stopTask: { on: ['tui', 'desktop', 'web'], absentBecause: NO_TASKS_OVER_ACP, checksInterface: false },
+  background: { on: ['tui', 'desktop', 'web'], absentBecause: NO_BACKGROUNDING_OVER_ACP, checksInterface: false },
+  expectTask: { on: ['tui', 'desktop', 'web'], absentBecause: TASK_LIST_OVER_ACP, checksInterface: true },
+  stopTask: { on: ['tui', 'desktop', 'web'], absentBecause: NO_TASK_STOP_OVER_ACP, checksInterface: false },
   approve: { on: SURFACES, checksInterface: false },
   reject: { on: SURFACES, checksInterface: false },
   rejectWithFeedback: { on: ['tui', 'desktop', 'web'], absentBecause: NO_REASON_OVER_ACP, checksInterface: false },
