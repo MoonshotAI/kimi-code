@@ -116,7 +116,7 @@ describe('worktree deletion from the management page', () => {
           branch: 'kimi/a',
           projectName: 'Repo',
           sessionCount: 2,
-          risk: { uncommittedFiles: 3, unpushedCommits: 2 },
+          risk: { uncommittedFiles: 3, unpushedCommits: 2, detached: false },
         },
       ],
     });

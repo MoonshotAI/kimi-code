@@ -63,6 +63,12 @@ describe('risk wording', () => {
       '3 files are uncommitted and 2 commits have not been pushed; these cannot be recovered after deletion.',
     ],
     [{ uncommittedFiles: 0, unpushedCommits: 2 }, false, 'safe', 'There are no uncommitted files.'],
+    [
+      { uncommittedFiles: 0, unpushedCommits: 2, detached: true },
+      false,
+      'risk',
+      '2 commits have not been pushed and cannot be recovered after deletion.',
+    ],
     [{ uncommittedFiles: 0, unpushedCommits: 0 }, false, 'safe', 'There are no uncommitted files.'],
     [{ uncommittedFiles: 0, unpushedCommits: 0 }, true, 'safe', 'There are no uncommitted or unpushed changes.'],
   ] as const)('%j with branch deletion %s reads as %s', (risk, deleteBranch, kind, text) => {

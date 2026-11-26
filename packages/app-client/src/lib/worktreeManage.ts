@@ -14,6 +14,7 @@ export function formatWorktreeSize(bytes: number | null | undefined): string {
 export interface WorktreeDeleteRisk {
   uncommittedFiles: number;
   unpushedCommits: number;
+  detached?: boolean;
 }
 
 export interface WorktreeDeleteTarget {
@@ -56,7 +57,7 @@ interface EffectiveRisk {
 function effectiveRisk(risk: WorktreeDeleteRisk, deleteBranch: boolean): EffectiveRisk {
   return {
     files: Math.max(0, risk.uncommittedFiles),
-    commits: deleteBranch ? Math.max(0, risk.unpushedCommits) : 0,
+    commits: deleteBranch || risk.detached === true ? Math.max(0, risk.unpushedCommits) : 0,
   };
 }
 

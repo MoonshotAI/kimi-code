@@ -98,7 +98,11 @@ export function openWorktreeSettings(): void {
 function riskFrom(inspection: WorktreeInspection | null, path: string): WorktreeDeleteRisk | null {
   const risk = inspection?.items.find((item) => item.path === path);
   if (risk === undefined) return null;
-  return { uncommittedFiles: risk.uncommittedFiles, unpushedCommits: risk.unpushedCommits };
+  return {
+    uncommittedFiles: risk.uncommittedFiles,
+    unpushedCommits: risk.unpushedCommits,
+    detached: risk.branch === undefined,
+  };
 }
 
 function isGone(inspection: WorktreeInspection | null, path: string): boolean {
