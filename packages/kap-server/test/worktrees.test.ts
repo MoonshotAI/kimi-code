@@ -115,7 +115,7 @@ describe('server-v2 session worktrees', () => {
         kind: 'create',
         state: 'done',
         ref: 'main',
-        command: `git worktree add --no-track -b ${worktree.branch} ${worktree.path} main`,
+        command: `git worktree add --no-track -b ${worktree.branch} ${worktree.path} refs/heads/main`,
       },
     ]);
     expect(ready.cwd).toBe(worktree.path);
@@ -247,7 +247,7 @@ describe('server-v2 session worktrees', () => {
       { kind: 'fetch', state: 'skipped' },
       { kind: 'create', state: 'done', ref: 'feature' },
     ]);
-    expect(ready.worktree?.setup.steps[1]?.command).toMatch(/ feature$/);
+    expect(ready.worktree?.setup.steps[1]?.command).toMatch(/ refs\/heads\/feature$/);
     expect(ready.worktree?.base).toMatchObject({ ref: 'feature', remote: false });
   });
 

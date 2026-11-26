@@ -186,6 +186,12 @@ export class WorktreeCreation {
     return ['fetch', '--no-tags', remote.remote, `+${remote.remoteRef}:${remote.trackingRef}`];
   }
 
+  private gitStart(remote: boolean): string {
+    return remote && this.remote !== undefined
+      ? this.remote.trackingRef
+      : `refs/heads/${this.options.request.source_branch}`;
+  }
+
   private createArgs(start: string, path = this.target.path): string[] {
     return ['worktree', 'add', '--no-track', '-b', this.target.branch, path, start];
   }
@@ -208,7 +214,12 @@ export class WorktreeCreation {
       });
     }
     const start = this.remote?.ref ?? this.options.request.source_branch;
-    steps.push({ kind: 'create', state: 'pending', ref: start, command: this.createCommand(start) });
+    steps.push({
+      kind: 'create',
+      state: 'pending',
+      ref: start,
+      command: this.createCommand(this.gitStart(this.remote !== undefined)),
+    });
     if (this.includeChanges) steps.push({ kind: 'changes', state: 'pending' });
     if (this.copyIncludes !== undefined) steps.push({ kind: 'include', state: 'pending' });
     return steps;
@@ -270,7 +281,7 @@ export class WorktreeCreation {
     }
     if (/couldn't find remote ref/i.test(result.output)) {
       setStep(progress, 'fetch', { state: 'skipped', output: result.output });
-      setStep(progress, 'create', { ref: local.ref, command: this.createCommand(local.ref) });
+      setStep(progress, 'create', { ref: local.ref, command: this.createCommand(this.gitStart(false)) });
       return { kind: 'done', value: local };
     }
     setStep(progress, 'fetch', { state: 'failed', output: result.output });
@@ -294,7 +305,7 @@ export class WorktreeCreation {
         throw new Error(`a branch named '${this.target.branch}' already exists`);
       }
       branchCreated = true;
-      return runGit(repoRoot, this.createArgs(base.ref), {
+      return runGit(repoRoot, this.createArgs(this.gitStart(base.remote)), {
         signal,
         timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
         onOutput,

@@ -77,7 +77,7 @@ describe('worktree setup engine', () => {
         kind: 'create',
         state: 'pending',
         ref: 'main',
-        command: 'git worktree add --no-track -b kimi/0102-beef-4 ~/collide-worktrees/0102-beef-4 main',
+        command: 'git worktree add --no-track -b kimi/0102-beef-4 ~/collide-worktrees/0102-beef-4 refs/heads/main',
       },
     ]);
 
@@ -172,6 +172,20 @@ describe('worktree setup engine', () => {
     expect(await creation.run(progressOf(creation), controller.signal)).toEqual({ kind: 'stopped', step: 'include' });
     expect(existsSync(creation.target.path)).toBe(false);
     expect(git(root, 'branch', '--list', creation.target.branch)).toBe('');
+  });
+
+  it('starts from the branch when a tag has the same name', async () => {
+    const root = await createRepo('ambiguous');
+    git(root, 'tag', 'main', git(root, 'commit-tree', '-m', 'tagged', git(root, 'rev-parse', 'HEAD^{tree}')));
+    const creation = await WorktreeCreation.plan({
+      repoRoot: root,
+      projectDir: join(scratch, 'ambiguous-worktrees'),
+      osHomeDir: scratch,
+      request: { source_branch: 'main' },
+    });
+
+    expect(await creation.run(progressOf(creation), new AbortController().signal)).toMatchObject({ kind: 'done' });
+    expect(git(creation.target.path, 'rev-parse', 'HEAD')).toBe(git(root, 'rev-parse', 'refs/heads/main'));
   });
 
   it('fails with a timeout and creates nothing when the fetch hangs', async () => {
