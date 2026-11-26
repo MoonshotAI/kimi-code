@@ -477,6 +477,53 @@ describe('BottomSheet gestures, focus, and accessibility', () => {
     trigger.remove();
   });
 
+  it('suspends sheet Tab trapping while a modal dialog is open above it and resumes after it closes', async () => {
+    const { Dialog, openDialogCount } = await import('@moonshot-ai/app-ui');
+    mountSheet();
+    await nextTick();
+    await nextTick();
+    const panel = host.querySelector<HTMLElement>('.sheet-panel')!;
+    expect(panel.contains(document.activeElement)).toBe(true);
+
+    const dialogApp = createApp({
+      render: () =>
+        h(Dialog, { open: true, title: '确认操作', hideClose: true }, {
+          default: () => [
+            h('button', { type: 'button', class: 'dialog-cancel' }, '取消'),
+            h('button', { type: 'button', class: 'dialog-confirm' }, '确认'),
+          ],
+        }),
+    });
+    dialogApp.use(createKimiI18n({ locale: 'zh' }));
+    dialogApp.mount(document.createElement('div'));
+    await nextTick();
+    await nextTick();
+
+    try {
+      expect(openDialogCount.value).toBe(1);
+      const cancelButton = document.querySelector<HTMLElement>('.dialog-cancel')!;
+      cancelButton.focus();
+      cancelButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+      expect(panel.contains(document.activeElement)).toBe(false);
+      expect(document.activeElement).toBe(cancelButton);
+
+      cancelButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+      expect(panel.contains(document.activeElement)).toBe(false);
+      expect(document.activeElement).toBe(document.querySelector('.dialog-confirm'));
+    } finally {
+      dialogApp.unmount();
+      document.querySelector('.ui-dialog__overlay')?.remove();
+      await nextTick();
+    }
+
+    expect(openDialogCount.value).toBe(0);
+    const focusables = [...panel.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])')];
+    const last = focusables[focusables.length - 1]!;
+    last.focus();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(focusables[0]);
+  });
+
   it('gives every selectable radio row a labelled radiogroup owner', async () => {
     mountSheet();
     const radios = [...host.querySelectorAll<HTMLElement>('[role="radio"]')];

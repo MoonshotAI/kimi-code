@@ -5,7 +5,7 @@ import type { AppModel } from '@moonshot-ai/app-core/api';
 import type { QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
 import { commitLevel, effectiveThinkingLevel, effortLabel, modelThinkingAvailability, providerDisplayName, segmentsFor } from '@moonshot-ai/app-core/lib';
 import { MOBILE_RECENT_MODELS_MENU_LIMIT, modelCapabilityItems, searchModelsForMenu } from '@moonshot-ai/app-client/lib';
-import { Icon, useImeComposition } from '@moonshot-ai/app-ui';
+import { Icon, openDialogCount, useImeComposition } from '@moonshot-ai/app-ui';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import ModelMenuScrollThumb from './ModelMenuScrollThumb.vue';
 import { SEARCH_MENU_MAX_ITEMS } from './modelMenuLayout';
@@ -300,7 +300,7 @@ function clearSearch(): void {
 }
 
 function onKeydown(e: KeyboardEvent): void {
-  if (!props.modelValue || e.defaultPrevented || isComposingKeyEvent(e)) return;
+  if (!props.modelValue || e.defaultPrevented || openDialogCount.value > 0 || isComposingKeyEvent(e)) return;
   if (e.key === 'Escape') {
     e.preventDefault();
     e.stopPropagation();

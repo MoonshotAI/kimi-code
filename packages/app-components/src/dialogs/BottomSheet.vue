@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, openSheetCount } from '@moonshot-ai/app-ui';
+import { Icon, openDialogCount, openSheetCount } from '@moonshot-ai/app-ui';
 import { settleDraggedElement, usePointerDragSession } from '@moonshot-ai/app-client/composables';
 
 const FOCUSABLE =
@@ -51,6 +51,7 @@ function sheetFocusables(): HTMLElement[] {
 }
 
 function onKeydown(e: KeyboardEvent): void {
+  if (openDialogCount.value > 0) return;
   if (e.key === 'Escape' && props.closeOnEsc) {
     close();
     return;

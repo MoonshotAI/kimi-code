@@ -426,6 +426,7 @@ describe('Composer toolbar popup viewport clamping', () => {
     await mountComposer(360, 740);
 
     const modelPill = host.querySelector<HTMLElement>('.model-pill')!;
+    expect(modelPill.getAttribute('aria-haspopup')).toBe('dialog');
     modelPill.click();
     await nextTick();
     await nextTick();
@@ -444,6 +445,7 @@ describe('Composer toolbar popup viewport clamping', () => {
 
     const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
     const modelPill = host.querySelector<HTMLElement>('.model-pill')!;
+    expect(modelPill.getAttribute('aria-haspopup')).toBe('menu');
     mockRect(toolbar, { left: 368, right: 1094, width: 726, top: 761, bottom: 805, height: 44 });
     mockRect(modelPill, { left: 857, right: 1014, width: 157, top: 765, bottom: 797, height: 32 });
 
