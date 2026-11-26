@@ -32,6 +32,7 @@ import {
   type PermissionMode,
   type ReopenState,
   type SurfaceDriver,
+  StartupFailure,
   type SurfaceLaunch,
   type ToolExpectation,
   type ToolStatus,
@@ -1352,8 +1353,9 @@ export async function startTui({ home, reopen, variant, workspaceTrust }: Surfac
   try {
     await driver.ready(reopen === undefined ? workspaceTrust : undefined);
   } catch (error) {
+    const diagnostics = await driver.diagnostics();
     await driver.kill();
-    throw error;
+    throw new StartupFailure(error, diagnostics);
   }
   return driver;
 }
