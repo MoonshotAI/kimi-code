@@ -171,7 +171,6 @@ beforeEach(async () => {
         get isActive() {
           return towerActive;
         },
-        toolsAvailable: true,
         enter: () => {
           towerActive = true;
           return Promise.resolve({ entered: true as const });

@@ -50,6 +50,7 @@ function makeHost() {
     session,
     refreshSlashCommandAutocomplete: vi.fn(),
     reloadCurrentSessionView: vi.fn(async () => {}),
+    refreshWorkLocation: vi.fn(async () => {}),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
     showStatus: vi.fn(),
@@ -65,6 +66,7 @@ function makeHost() {
     };
     refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
     reloadCurrentSessionView: ReturnType<typeof vi.fn>;
+    refreshWorkLocation: ReturnType<typeof vi.fn>;
     mountEditorReplacement: ReturnType<typeof vi.fn>;
     restoreEditor: ReturnType<typeof vi.fn>;
     showStatus: ReturnType<typeof vi.fn>;
@@ -199,5 +201,25 @@ describe('experimental feature command handlers', () => {
 
     expect(isExperimentalFlagEnabled('tower')).toBe(false);
     expect(host.showNotice).not.toHaveBeenCalled();
+  });
+
+  it('re-resolves the working directory when worktree changes directly or via the beta master switch', async () => {
+    const host = makeHost();
+
+    await applyExperimentalFeatureChanges(host, [{ id: 'micro_compaction', enabled: false }]);
+    expect(host.refreshWorkLocation).not.toHaveBeenCalled();
+
+    await applyExperimentalFeatureChanges(host, [{ id: 'worktree', enabled: true }]);
+    expect(host.refreshWorkLocation).toHaveBeenCalledOnce();
+
+    host.refreshWorkLocation.mockClear();
+    setExperimentalFeatures([
+      feature({ id: 'worktree', stage: 'beta', enabled: false, active: false }),
+    ]);
+    host.harness.getExperimentalFeatures.mockResolvedValue([
+      feature({ id: 'worktree', stage: 'beta', enabled: true, active: true, source: 'beta-config' }),
+    ]);
+    await applyExperimentalFeatureChanges(host, [{ id: 'beta', enabled: true }]);
+    expect(host.refreshWorkLocation).toHaveBeenCalledOnce();
   });
 });

@@ -107,7 +107,7 @@ Plan 模式是一种受约束的工作状态，只能由用户打开（`Shift-Ta
 
 在桌面端和 Web UI（`kimi web`）中，每条更新以进展行的形式出现在对话里，显示其标题，点击可展开阅读正文。
 
-该功能在 TUI 中默认开启；在桌面端和 Web UI 中处于 Beta 阶段，默认关闭。如需在桌面端或 Web UI 开启，可在设置 > 实验室中打开 **进展更新**（或 **开启全部 Beta 功能**）、在 `config.toml` 中写入 `[experimental] notify_user = true`，或设置 `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`；仅对之后新建的会话生效。关闭状态下创建的会话不会提供该工具，也不会包含相关提示词指导。
+该功能在各端均为实验性功能且默认关闭，并按客户端分开保存开关状态，互不覆盖：在 TUI 中，可在 `/lab` 中打开 **NotifyUser tool**、在 `config.toml` 中写入 `[experimental] notify_user = true`，或设置 `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`；在桌面端和 Web UI 中，可在设置 > 实验室中打开 **进展更新**、在 `config.toml` 中写入 `[experimental] notify_user_app = true`，或设置 `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER_APP=1`（也兼容 `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`）。更改仅对之后新建的会话生效；关闭状态下创建的会话不会提供该工具，也不会包含相关提示词指导。
 
 已有会话的通知工具可用性和提示词保持不变，重新打开会话后也一样。关闭功能会隐藏进展展示；已有的 `NotifyUser` 调用仍正常结束，并返回更新未展示的说明。重新开启后，已具有该工具的会话恢复展示；如果会话是在关闭状态下创建的，需要新建会话才能使用进展更新。
 

@@ -507,6 +507,9 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         if (error instanceof Error2 && error.code === ErrorCodes.PROMPT_ID_CONFLICT) {
           throw new RPCError(PROMPT_ID_CONFLICT, error.message, error.details);
         }
+        if (service === 'agentLoopService' && method === 'submit' && error instanceof Error2 && error.code === ErrorCodes.TURN_AGENT_BUSY) {
+          throw new RPCError(REQUEST_INVALID, error.message, { code: error.code });
+        }
         throw error;
       }
     },

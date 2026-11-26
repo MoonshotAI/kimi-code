@@ -93,6 +93,10 @@ export function useModelProviderState(
     );
   }
 
+  function canonicalModelId(modelId: string | null | undefined): string | undefined {
+    return modelById(modelId)?.id ?? modelId ?? undefined;
+  }
+
   function currentModelId(): string | undefined {
     const activeSession = rawState.activeSessionId
       ? rawState.sessions.find((s) => s.id === rawState.activeSessionId)
@@ -103,7 +107,7 @@ export function useModelProviderState(
         : rawState.unavailableModelBySession?.[activeSession.id] !== undefined
           ? null
           : activeSession.model || store.activeDefaultModel;
-    return modelById(rawModel)?.id ?? rawModel ?? undefined;
+    return canonicalModelId(rawModel);
   }
 
   function thinkingLevelForModelId(modelId: string | undefined): ThinkingLevel | undefined {
@@ -237,8 +241,10 @@ export function useModelProviderState(
   async function setModel(modelId: string): Promise<boolean> {
     const sid = rawState.activeSessionId;
     const targetModel = modelById(modelId);
+    const targetModelId = canonicalModelId(modelId) ?? modelId;
+    const previousModelId = currentModelId();
     const prevThinking = rawState.thinking;
-    const isSwitch = currentModelId() !== (targetModel?.id ?? modelId);
+    const isSwitch = previousModelId !== targetModelId;
     const nextThinking = thinkingLevelForModelSwitch(
       targetModel,
       prevThinking,
@@ -249,24 +255,31 @@ export function useModelProviderState(
       store.setDraftModel(modelId);
       rawState.thinking = nextThinking;
       if (isSwitch) rawState.draftThinkingExplicit = false;
+      store.noteRecentModel(targetModelId, previousModelId);
       return true;
     }
     if (nextThinking !== prevThinking) rawState.thinking = nextThinking;
-    return writeSessionModel(sid, modelId, nextThinking === prevThinking ? undefined : nextThinking);
+    const switched = await writeSessionModel(sid, modelId, nextThinking === prevThinking ? undefined : nextThinking);
+    if (switched) store.noteRecentModel(targetModelId, previousModelId);
+    return switched;
   }
 
-  async function setSessionModel(sessionId: string, modelId: string): Promise<boolean> {
+  async function setSessionModel(sessionId: string, modelId: string, thinking?: ThinkingLevel): Promise<boolean> {
     const sessionEntry = rawState.sessions.find((s) => s.id === sessionId);
     if (sessionEntry === undefined) return false;
     const targetModel = modelById(modelId);
+    const targetModelId = canonicalModelId(modelId) ?? modelId;
+    const previousModelId = canonicalModelId(sessionEntry.model || store.activeDefaultModel);
     const prevThinking = rawState.thinkingBySession[sessionId];
-    const isSwitch = (sessionEntry.model ?? '') !== (targetModel?.id ?? modelId);
-    const nextThinking = thinkingLevelForModelSwitch(targetModel, prevThinking, isSwitch, undefined);
-    return writeSessionModel(
+    const isSwitch = previousModelId !== targetModelId;
+    const nextThinking = thinking ?? thinkingLevelForModelSwitch(targetModel, prevThinking, isSwitch, undefined);
+    const switched = await writeSessionModel(
       sessionId,
       modelId,
       nextThinking === prevThinking ? undefined : nextThinking,
     );
+    if (switched) store.noteRecentModel(targetModelId, previousModelId);
+    return switched;
   }
 
   function normalizeDraftSessionModel(sessionId: string, modelId: string): Promise<boolean> {
@@ -567,7 +580,7 @@ export function useModelProviderState(
 
   return {
     models: computed(() => store.activeModels),
-    starredModelIds: computed(() => store.starredModelIds),
+    recentModelIds: computed(() => store.recentModelIds),
     providers: computed(() => store.providers),
     draftModel: computed(() => store.draftModel),
     skillsBySession: computed(() => store.skillsBySession),
@@ -586,7 +599,6 @@ export function useModelProviderState(
     thinkingLevelForModelId,
     thinkingLevelForSessionId,
     resolveThinkingForPrompt,
-    toggleStarModel: store.toggleStarModel,
     activateSkill,
     addProvider,
     updateProvider,

@@ -49,16 +49,17 @@ import { stubLog } from '../../_base/log/stubs';
 import { registerAgentIdentityStub } from '../../app/agentIdentity/stubs';
 import {
   createMemoryMcpOAuthStore,
+  hostPathClass,
   ManualMcpOAuthScheduler,
-  startInProcessHttpMcpServer,
-  stdioFixture,
+  startEchoHttpMcpServer,
+  mockStdioServer,
+  UNREACHABLE_SERVER_ORIGIN,
 } from '../../mcpCore/stubs';
 
 function stdioServer(): McpServerConfig {
   return {
     transport: 'stdio',
-    command: process.execPath,
-    args: [stdioFixture],
+    ...mockStdioServer(),
     environment_id: 'local',
   };
 }
@@ -136,7 +137,7 @@ describe('WorkspaceMcpService', () => {
         const environment = Object.assign(
           new FakeEnvironment(
             { environmentId: 'local', generation: 'test-generation' },
-            { capabilities: ['process'] },
+            { capabilities: ['process'], pathClass: hostPathClass },
           ),
           { process: new HostProcessService() },
         );
@@ -342,7 +343,7 @@ describe('WorkspaceMcpService', () => {
   }, 20000);
 
   it('sessionHandle admits a needs-auth server that settled before the first baseline read', async () => {
-    const server = await startInProcessHttpMcpServer({ authToken: 'secret' });
+    const server = await startEchoHttpMcpServer({ bearerToken: 'secret' });
     try {
       current = { remote: { transport: 'http', url: server.url } };
       const service = createService();
@@ -554,7 +555,7 @@ describe('WorkspaceMcpService', () => {
   });
 
   describe('credential events', () => {
-    const SERVER_URL = 'https://mcp.example.test/mcp';
+    const SERVER_URL = `${UNREACHABLE_SERVER_ORIGIN}/mcp`;
     let httpServers: HttpServer[] = [];
 
     afterEach(async () => {

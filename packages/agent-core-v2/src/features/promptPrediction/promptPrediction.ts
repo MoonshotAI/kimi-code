@@ -64,9 +64,9 @@ export const promptPredictionFlag: FlagDefinitionInput = {
   description: 'Predict the next prompt after a completed main-agent turn while the session is idle.',
   env: PROMPT_PREDICTION_FLAG_ENV,
   stages: {
-    tui: 'experimental',
-    desktop: 'experimental',
-    web: 'experimental',
+    tui: 'beta',
+    desktop: 'beta',
+    web: 'beta',
   },
   effectTiming: 'immediate',
 };

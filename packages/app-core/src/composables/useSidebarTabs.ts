@@ -1,16 +1,15 @@
-import { ref } from 'vue';
-import { STORAGE_KEYS, safeGetString, safeSetString } from '../lib/storage';
+import { readonly, ref } from 'vue';
+import { STORAGE_KEYS, safeGetString } from '../lib/storage';
 
-const sidebarTabs = ref<boolean>(safeGetString(STORAGE_KEYS.sidebarMultiTab) === '1');
+const sidebarTabsState = ref<boolean>(safeGetString(STORAGE_KEYS.sidebarMultiTab) === '1');
 
-function setSidebarTabs(on: boolean): void {
-  sidebarTabs.value = on;
-  safeSetString(STORAGE_KEYS.sidebarMultiTab, on ? '1' : '0');
+export function setSidebarTabs(on: boolean): void {
+  sidebarTabsState.value = on;
 }
 
 export function useSidebarTabs() {
   return {
-    sidebarTabs,
+    sidebarTabs: readonly(sidebarTabsState),
     setSidebarTabs,
   };
 }

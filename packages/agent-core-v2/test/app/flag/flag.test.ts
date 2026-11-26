@@ -234,6 +234,47 @@ describe('FlagService', () => {
     });
   });
 
+  it('resolves fallbackEnv when primary env is unset and lets primary env take precedence', () => {
+    const { flagRegistry: fallbackRegistry, flags: fallbackFlags } = makeFlags(
+      { KIMI_CODE_EXPERIMENTAL_FALLBACK: '1' },
+      'desktop',
+    );
+    fallbackRegistry.register({
+      id: 'split_app',
+      title: 'Split app flag',
+      description: 'Uses fallback env when primary is unset.',
+      env: 'KIMI_CODE_EXPERIMENTAL_SPLIT_APP',
+      fallbackEnv: 'KIMI_CODE_EXPERIMENTAL_FALLBACK',
+      stages: { desktop: 'experimental' },
+    });
+    expect(fallbackFlags.explain('split_app')).toMatchObject({
+      enabled: true,
+      source: 'env',
+      env: 'KIMI_CODE_EXPERIMENTAL_FALLBACK',
+    });
+
+    const { flagRegistry: primaryRegistry, flags: primaryFlags } = makeFlags(
+      {
+        KIMI_CODE_EXPERIMENTAL_SPLIT_APP: '0',
+        KIMI_CODE_EXPERIMENTAL_FALLBACK: '1',
+      },
+      'desktop',
+    );
+    primaryRegistry.register({
+      id: 'split_app',
+      title: 'Split app flag',
+      description: 'Uses fallback env when primary is unset.',
+      env: 'KIMI_CODE_EXPERIMENTAL_SPLIT_APP',
+      fallbackEnv: 'KIMI_CODE_EXPERIMENTAL_FALLBACK',
+      stages: { desktop: 'experimental' },
+    });
+    expect(primaryFlags.explain('split_app')).toMatchObject({
+      enabled: false,
+      source: 'env',
+      env: 'KIMI_CODE_EXPERIMENTAL_SPLIT_APP',
+    });
+  });
+
   it('evaluates ga stage per surface, ignores false in shared config.toml, and excludes ga from exposedIds', async () => {
     const { flagRegistry, config, flags: tuiFlags } = makeFlags({}, 'tui');
     flagRegistry.register({

@@ -21,7 +21,6 @@ export interface AgentToolContributionOptions {
   readonly reconcileOnFlagChange?: boolean;
   readonly requiredEnvironmentCapabilities?: readonly EnvironmentCapability[];
   readonly domain?: string;
-  readonly userConfigurable?: boolean;
 }
 
 export interface AgentToolContribution<T extends AnyAgentTool = AnyAgentTool> {

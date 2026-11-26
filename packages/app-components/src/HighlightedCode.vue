@@ -169,13 +169,92 @@ function tokenStyle(token: ThemedToken): Record<string, string> {
   return style;
 }
 
+const rootRef = ref<HTMLElement | null>(null);
+
+function comparePoints(aNode: Node, aOffset: number, bNode: Node, bOffset: number): -1 | 0 | 1 {
+  if (aNode === bNode) return aOffset < bOffset ? -1 : aOffset > bOffset ? 1 : 0;
+  const pos = aNode.compareDocumentPosition(bNode);
+  if (pos & Node.DOCUMENT_POSITION_CONTAINS) {
+    let child: Node = aNode;
+    while (child.parentNode !== bNode) child = child.parentNode!;
+    let index = 0;
+    for (let n = bNode.firstChild; n && n !== child; n = n.nextSibling) index++;
+    return index < bOffset ? -1 : 1;
+  }
+  if (pos & Node.DOCUMENT_POSITION_CONTAINED_BY) {
+    let child: Node = bNode;
+    while (child.parentNode !== aNode) child = child.parentNode!;
+    let index = 0;
+    for (let n = aNode.firstChild; n && n !== child; n = n.nextSibling) index++;
+    return aOffset <= index ? -1 : 1;
+  }
+  if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+  if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+  return 0;
+}
+
+function onCopy(event: ClipboardEvent): void {
+  const sel = window.getSelection();
+  const root = rootRef.value;
+  const clip = event.clipboardData;
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !root || !clip) return;
+  const doc = root.ownerDocument;
+  const range = sel.getRangeAt(0);
+  const full = doc.createRange();
+  full.selectNodeContents(root);
+  const before = doc.createRange();
+  if (comparePoints(range.startContainer, range.startOffset, full.startContainer, full.startOffset) < 0) {
+    before.setStart(range.startContainer, range.startOffset);
+    before.setEnd(full.startContainer, full.startOffset);
+  }
+  const after = doc.createRange();
+  if (comparePoints(range.endContainer, range.endOffset, full.endContainer, full.endOffset) > 0) {
+    after.setStart(full.endContainer, full.endOffset);
+    after.setEnd(range.endContainer, range.endOffset);
+  }
+  if (before.toString().trim().length > 0 || after.toString().trim().length > 0) return;
+
+  const selected = range.cloneRange();
+  if (comparePoints(selected.startContainer, selected.startOffset, full.startContainer, full.startOffset) < 0) selected.setStart(full.startContainer, full.startOffset);
+  if (comparePoints(selected.endContainer, selected.endOffset, full.endContainer, full.endOffset) > 0) selected.setEnd(full.endContainer, full.endOffset);
+
+  const parts: string[] = [];
+  for (const row of root.querySelectorAll('.hl-row')) {
+    const textEl = row.querySelector('.hl-text');
+    if (!textEl) continue;
+    if (comparePoints(selected.endContainer, selected.endOffset, textEl, 0) <= 0) {
+      if (parts.length > 0) break;
+      continue;
+    }
+    if (comparePoints(selected.startContainer, selected.startOffset, textEl, textEl.childNodes.length) > 0) continue;
+    const rowRange = doc.createRange();
+    rowRange.selectNodeContents(textEl);
+    if (comparePoints(selected.startContainer, selected.startOffset, rowRange.startContainer, rowRange.startOffset) > 0) rowRange.setStart(selected.startContainer, selected.startOffset);
+    if (comparePoints(selected.endContainer, selected.endOffset, rowRange.endContainer, rowRange.endOffset) < 0) rowRange.setEnd(selected.endContainer, selected.endOffset);
+    parts.push(rowRange.toString());
+  }
+  if (parts.length === 0) return;
+
+  const fragment = selected.cloneContents();
+  for (const el of fragment.querySelectorAll('.hl-gutter, .hl-sign')) el.remove();
+  for (const textEl of fragment.querySelectorAll('.hl-text')) {
+    if (textEl.textContent === '') textEl.appendChild(doc.createElement('br'));
+  }
+  const htmlHost = doc.createElement('div');
+  htmlHost.appendChild(fragment);
+
+  clip.setData('text/plain', parts.join('\n'));
+  clip.setData('text/html', htmlHost.innerHTML);
+  event.preventDefault();
+}
+
 function sign(line: DiffViewLine): string {
   return line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ';
 }
 </script>
 
 <template>
-  <div class="hl-code" :class="{ gutter: showDiffGutter, 'plain-pad': !isDiff && !plainGutter, framed, wrap }" :style="{ '--gutter-ch': `${gutterCh}ch` }">
+  <div ref="rootRef" class="hl-code" :class="{ gutter: showDiffGutter, 'plain-pad': !isDiff && !plainGutter, framed, wrap }" :style="{ '--gutter-ch': `${gutterCh}ch` }" @copy="onCopy">
     <div class="hl-body">
       <template v-if="isDiff">
         <div v-for="(line, i) in lines ?? []" :key="i" class="hl-row" :class="`row-${line.type}`">

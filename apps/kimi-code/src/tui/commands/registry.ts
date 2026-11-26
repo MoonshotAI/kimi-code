@@ -249,6 +249,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 80,
   },
   {
+    name: 'worktree',
+    aliases: [],
+    description: 'Open, create, or delete worktrees of this repository',
+    priority: 80,
+    experimentalFlag: 'worktree',
+  },
+  {
     name: 'tasks',
     aliases: ['task'],
     description: 'Browse background tasks and running foreground agents',

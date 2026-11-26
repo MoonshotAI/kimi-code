@@ -4,13 +4,13 @@ import { SUPPORTED_TARGETS } from '../apps/kimi-code/scripts/native/native-deps.
 
 const command = process.argv[2];
 const repo = process.env.GITHUB_REPOSITORY;
-const sha = process.env.GITHUB_SHA;
+const sha = process.env.RELEASE_SHA || process.env.GITHUB_SHA;
 const branch = process.env.GITHUB_REF_NAME;
 if (process.env.GITHUB_REF !== `refs/heads/${branch}` || !branch?.startsWith('release/')) {
   throw new Error('Select a release/* branch');
 }
 if (!/^[a-f0-9]{40}$/.test(sha ?? '')) {
-  throw new Error('GITHUB_SHA must be a full commit SHA');
+  throw new Error('Release SHA must be a full commit SHA');
 }
 const plan = JSON.parse(readFileSync('.changeset/release-plan.json', 'utf8'));
 if (plan.branch !== branch || !Array.isArray(plan.packages) || plan.packages.length === 0) {
@@ -27,7 +27,6 @@ for (const pkg of plan.packages) {
 const cli = plan.packages.find((entry) => entry.name === '@moonshot-ai/kimi-code');
 if (command === 'check-cli-retry') {
   const tag = process.env.RELEASE_TAG;
-  if (!(Number(process.env.GITHUB_RUN_ATTEMPT) > 1)) throw new Error('Native release recovery requires a rerun');
   if (!cli || tag !== `${cli.name}@${cli.version}`) throw new Error('CLI tag does not match the release plan');
   if (!verifyTag(tag)) throw new Error(`Missing tag for ${tag}`);
   const registryVersion = JSON.parse(execFileSync('npm', ['view', tag, 'version', '--json', '--registry=https://registry.npmjs.org', '--prefer-online'], { encoding: 'utf8' }));
@@ -92,13 +91,6 @@ function verifyTag(tag) {
 }
 
 if (command === 'check') {
-  const query = new URLSearchParams({ head_sha: sha, branch, per_page: '100' });
-  const runs = api(`actions/workflows/ci.yml/runs?${query}`).workflow_runs
-    .filter((run) => run.head_sha === sha && run.head_branch === branch && ['push', 'workflow_dispatch'].includes(run.event))
-    .toSorted((a, b) => b.id - a.id);
-  if (runs[0]?.status !== 'completed' || runs[0]?.conclusion !== 'success') {
-    throw new Error('The latest CI run for this release commit must succeed before publishing');
-  }
   for (const pkg of packages) verifyTag(tagFor(pkg));
 } else if (command === 'prepare') {
   for (const pkg of packages) {

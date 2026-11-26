@@ -102,6 +102,8 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     const before = await this.conversationSize();
     await this.press('send()', 'the message input', this.composer());
     await this.page.keyboard.type(text);
+    const send = this.page.getByRole('button', { name: 'Send ↵', exact: true, disabled: false });
+    await this.wait('the Send button to become enabled', async () => (await send.isVisible()) || undefined);
     await this.page.keyboard.press('Enter');
     await this.wait(`the user message ${JSON.stringify(text)} to appear in the conversation`, () => this.messageAfter(before, text));
   }
@@ -273,7 +275,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
       throw new Error(`expectReply() did not find ${JSON.stringify(text)} in an assistant reply. The turn ended and it shows:\n${await this.describe()}`);
     }
     const flat = (value: string): string => value.replaceAll(/\s+/g, ' ').trim();
-    const times = (await this.replies().allInnerTexts()).reduce((sum, reply) => sum + flat(reply).split(flat(text)).length - 1, 0);
+    const times = (await this.replies().allTextContents()).reduce((sum, reply) => sum + flat(reply).split(flat(text)).length - 1, 0);
     if (times > 1) {
       throw new Error(`expectReply() found ${JSON.stringify(text)} ${times} times in the replies of this turn; it must appear exactly once.\n${await this.describe()}`);
     }
@@ -549,8 +551,8 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
         throw new Error(`expectTranscript() can read only the ${rendered} of ${size} messages the conversation has rendered; keep the scenario's conversation short enough to fit.`);
       }
     }
-    const users = await rows.filter({ hasNot: this.page.locator(LIST) }).allInnerTexts();
-    const replies = await this.conversation().locator(`${ROW} ${BLOCK}${REPLY}`).allInnerTexts();
+    const users = await rows.filter({ hasNot: this.page.locator(LIST) }).allTextContents();
+    const replies = await this.conversation().locator(`${ROW} ${BLOCK}${REPLY}`).allTextContents();
     const flat = (value: string): string => value.replaceAll(/\s+/g, ' ').trim();
     return [...users, ...replies].reduce((sum, shown) => sum + flat(shown).split(flat(text)).length - 1, 0);
   }

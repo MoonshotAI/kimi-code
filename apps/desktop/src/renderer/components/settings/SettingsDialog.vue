@@ -7,7 +7,7 @@ import { serverEndpointLabel } from '../../api/config';
 import { useDialogFocus } from '@moonshot-ai/app-components';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import LanguageSwitcher from './LanguageSwitcher.vue';
-import { BrowserTabTitleSetting, DefaultToolsSetting, FontSettingsPage, FontSettingsRow, GlobalAgentsMdSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
+import { BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, GlobalAgentsMdSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
 import type { FontTarget } from '@moonshot-ai/app-core';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import type { ShortcutActionId } from '../../../shared/action-ids';
@@ -63,7 +63,7 @@ const { t } = useI18n();
 const { vibrancy, setVibrancy } = useVibrancy();
 const { preventSleepState, lidSleepStopped, setPreventSystemSleep, setPreventLidSleep } = usePreventSystemSleep();
 
-const { sidebarTabs, setSidebarTabs } = useSidebarTabs();
+const { sidebarTabs } = useSidebarTabs();
 const { contextInspectorEnabled } = useContextInspector();
 
 const { turnFolding, setTurnFolding } = useTurnFolding();
@@ -75,11 +75,6 @@ const { terminalScreenReader, setTerminalScreenReader } = useTerminalScreenReade
 function onRunningSendModeChange(mode: RunningSendMode): void {
   setRunningSendMode(mode);
   track('settings_changed', { key: 'running-send-mode', value: mode, source_panel: 'settings' });
-}
-
-function onSidebarTabsChange(on: boolean): void {
-  setSidebarTabs(on);
-  track('settings_changed', { key: 'sidebar-multi-tab', value: on ? 'on' : 'off', source_panel: 'settings' });
 }
 
 const { sessionMentions } = useSessionMentions();
@@ -103,12 +98,40 @@ const contextInspectorLocked = computed(
   () => contextInspectorLockedByEnv.value || betaMasterEnabled.value,
 );
 
-const notifyUserFeature = computed(() => findExperimentalFeature('notify_user'));
-const notifyUserEnabled = computed(
-  () => notifyUserFeature.value?.enabled ?? configStore().experimentalFlags['notify_user'] === true,
+const promptPredictionFeature = computed(() => findExperimentalFeature('prompt_prediction'));
+const promptPredictionEnabled = computed(
+  () =>
+    promptPredictionFeature.value?.enabled ??
+    (betaMasterEnabled.value || configStore().experimentalFlags['prompt_prediction'] === true),
 );
+const promptPredictionLockedByEnv = computed(
+  () => promptPredictionFeature.value?.source === 'env',
+);
+const promptPredictionLocked = computed(
+  () => promptPredictionLockedByEnv.value || betaMasterEnabled.value,
+);
+
+const autoReviewFeature = computed(() => findExperimentalFeature('auto_review'));
+const autoReviewEnabled = computed(
+  () =>
+    autoReviewFeature.value?.enabled ??
+    (betaMasterEnabled.value || configStore().experimentalFlags['auto_review'] === true),
+);
+const autoReviewLockedByEnv = computed(() => autoReviewFeature.value?.source === 'env');
+const autoReviewLocked = computed(
+  () => autoReviewLockedByEnv.value || betaMasterEnabled.value,
+);
+
+const notifyUserFeature = computed(
+  () => findExperimentalFeature('notify_user_app') ?? findExperimentalFeature('notify_user'),
+);
+const notifyUserEnabled = computed(() => {
+  if (notifyUserFeature.value !== undefined) return notifyUserFeature.value.enabled;
+  return 'notify_user_app' in configStore().experimentalFlags
+    ? configStore().experimentalFlags['notify_user_app'] === true
+    : configStore().experimentalFlags['notify_user'] === true;
+});
 const notifyUserLockedByEnv = computed(() => notifyUserFeature.value?.source === 'env');
-const notifyUserLocked = computed(() => notifyUserLockedByEnv.value || betaMasterEnabled.value);
 
 const sessionMentionsFeature = computed(() => findExperimentalFeature('session_mentions'));
 const sessionMentionsToggleEnabled = computed(
@@ -118,14 +141,12 @@ const sessionMentionsLockedByEnv = computed(
   () => sessionMentionsFeature.value?.source === 'env',
 );
 
-const promptPredictionFeature = computed(() => findExperimentalFeature('prompt_prediction'));
-const promptPredictionEnabled = computed(
-  () =>
-    promptPredictionFeature.value?.enabled ??
-    configStore().experimentalFlags['prompt_prediction'] === true,
+const sidebarTabsFeature = computed(() => findExperimentalFeature('sidebar_multi_tab'));
+const sidebarTabsToggleEnabled = computed(
+  () => sidebarTabsFeature.value?.enabled ?? sidebarTabs.value,
 );
-const promptPredictionLockedByEnv = computed(
-  () => promptPredictionFeature.value?.source === 'env',
+const sidebarTabsLockedByEnv = computed(
+  () => sidebarTabsFeature.value?.source === 'env',
 );
 
 const towerFeature = computed(() => findExperimentalFeature('tower'));
@@ -149,6 +170,18 @@ async function onContextInspectorChange(on: boolean): Promise<void> {
   }
 }
 
+async function onPromptPredictionChange(on: boolean): Promise<void> {
+  if (await configStore().setPromptPredictionEnabled(on)) {
+    track('settings_changed', { key: 'prompt-prediction', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
+}
+
+async function onAutoReviewChange(on: boolean): Promise<void> {
+  if (await configStore().setExperimentalFlag('auto_review', on)) {
+    track('settings_changed', { key: 'auto-review', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
+}
+
 async function onNotifyUserChange(on: boolean): Promise<void> {
   if (await configStore().setNotifyUserEnabled(on)) {
     track('settings_changed', { key: 'notify-user', value: on ? 'on' : 'off', source_panel: 'settings' });
@@ -161,9 +194,9 @@ async function onSessionMentionsChange(on: boolean): Promise<void> {
   }
 }
 
-async function onPromptPredictionChange(on: boolean): Promise<void> {
-  if (await configStore().setPromptPredictionEnabled(on)) {
-    track('settings_changed', { key: 'prompt-prediction', value: on ? 'on' : 'off', source_panel: 'settings' });
+async function onSidebarTabsChange(on: boolean): Promise<void> {
+  if (await configStore().setExperimentalFlag('sidebar_multi_tab', on)) {
+    track('settings_changed', { key: 'sidebar-multi-tab', value: on ? 'on' : 'off', source_panel: 'settings' });
   }
 }
 
@@ -739,13 +772,10 @@ function toggleAutoSessionTitle(): void {
 
 const globalAgentsMdSettingRef = ref<InstanceType<typeof GlobalAgentsMdSetting> | null>(null);
 const globalAgentsMdOpen = ref(false);
-const defaultToolsSettingRef = ref<InstanceType<typeof DefaultToolsSetting> | null>(null);
-const defaultToolsOpen = ref(false);
 
 async function setTab(tab: SettingsTab): Promise<void> {
   if (tab !== activeTab.value) {
     if (globalAgentsMdOpen.value && !(await globalAgentsMdSettingRef.value?.confirmDiscard())) return;
-    if (defaultToolsOpen.value && !(await defaultToolsSettingRef.value?.confirmDiscard())) return;
     clearHighlightTimer();
     highlightedSetting.value = null;
   }
@@ -754,7 +784,6 @@ async function setTab(tab: SettingsTab): Promise<void> {
 
 async function confirmDiscard(): Promise<boolean> {
   if (globalAgentsMdOpen.value && !(await globalAgentsMdSettingRef.value?.confirmDiscard())) return false;
-  if (defaultToolsOpen.value && !(await defaultToolsSettingRef.value?.confirmDiscard())) return false;
   return true;
 }
 
@@ -769,7 +798,6 @@ const fontPageTarget = fontPage.page;
 watch(activeTab, () => {
   fontPage.reset();
   globalAgentsMdSettingRef.value?.reset();
-  defaultToolsSettingRef.value?.reset();
 });
 
 const client = useKimiWebClient();
@@ -967,17 +995,6 @@ defineExpose({ confirmDiscard });
                 <span class="hint">{{ t('settings.appIconHint') }}</span>
               </span>
               <DockIconPicker :model-value="dockIconChoice" @update:model-value="onDockIconChange" />
-            </div>
-            <div class="row">
-              <span class="rlabel">
-                {{ t('settings.sidebarTabs') }}
-                <span class="hint">{{ t('settings.sidebarTabsHint') }}</span>
-              </span>
-              <Switch
-                :model-value="sidebarTabs"
-                :label="t('settings.sidebarTabs')"
-                @update:model-value="onSidebarTabsChange"
-              />
             </div>
             </div>
           </section>
@@ -1186,7 +1203,7 @@ defineExpose({ confirmDiscard });
         </section>
 
         <section v-show="activeTab === 'agent'" class="panel">
-          <div v-show="!defaultToolsOpen && !globalAgentsMdOpen" class="panel-sections">
+          <div v-show="!globalAgentsMdOpen">
           <section class="sec">
             <div class="sec-head">
               <h3 class="sec-title">{{ t('settings.agentDefaults') }}</h3>
@@ -1265,9 +1282,9 @@ defineExpose({ confirmDiscard });
           </section>
           </div>
 
-          <GlobalAgentsMdSetting v-show="!defaultToolsOpen" ref="globalAgentsMdSettingRef" @open-change="globalAgentsMdOpen = $event" />
+          <GlobalAgentsMdSetting ref="globalAgentsMdSettingRef" @open-change="globalAgentsMdOpen = $event" />
 
-          <div v-show="!defaultToolsOpen && !globalAgentsMdOpen" class="panel-sections">
+          <div v-show="!globalAgentsMdOpen">
           <section v-if="config" class="sec">
             <div class="sec-head">
               <h3 class="sec-title">{{ t('settings.secondaryModelSection') }}</h3>
@@ -1378,8 +1395,6 @@ defineExpose({ confirmDiscard });
             </div>
           </section>
           </div>
-
-          <DefaultToolsSetting v-show="!globalAgentsMdOpen" ref="defaultToolsSettingRef" @open-change="defaultToolsOpen = $event" />
         </section>
 
         <section v-show="activeTab === 'advanced'" class="panel">
@@ -1570,20 +1585,38 @@ defineExpose({ confirmDiscard });
             </div>
             <div class="row">
               <span class="rlabel">
-                {{ t('settings.lab.notifyUser') }}
-                <span class="hint">{{ t('settings.lab.notifyUserHint') }}</span>
-                <span v-if="notifyUserLockedByEnv && notifyUserFeature" class="hint">
-                  {{ t('settings.lab.lockedByEnv', { env: notifyUserFeature.env }) }}
+                {{ t('settings.lab.promptPrediction') }}
+                <span class="hint">{{ t('settings.lab.promptPredictionHint') }}</span>
+                <span v-if="promptPredictionLockedByEnv && promptPredictionFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: promptPredictionFeature.env }) }}
                 </span>
                 <span v-else-if="betaMasterEnabled" class="hint">
                   {{ t('settings.lab.lockedByBetaMaster') }}
                 </span>
               </span>
               <Switch
-                :model-value="notifyUserEnabled"
-                :disabled="notifyUserLocked"
-                :label="t('settings.lab.notifyUser')"
-                @update:model-value="onNotifyUserChange"
+                :model-value="promptPredictionEnabled"
+                :disabled="promptPredictionLocked"
+                :label="t('settings.lab.promptPrediction')"
+                @update:model-value="onPromptPredictionChange"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.lab.autoReview') }}
+                <span class="hint">{{ t('settings.lab.autoReviewHint') }}</span>
+                <span v-if="autoReviewLockedByEnv && autoReviewFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: autoReviewFeature.env }) }}
+                </span>
+                <span v-else-if="betaMasterEnabled" class="hint">
+                  {{ t('settings.lab.lockedByBetaMaster') }}
+                </span>
+              </span>
+              <Switch
+                :model-value="autoReviewEnabled"
+                :disabled="autoReviewLocked"
+                :label="t('settings.lab.autoReview')"
+                @update:model-value="onAutoReviewChange"
               />
             </div>
             </div>
@@ -1592,6 +1625,21 @@ defineExpose({ confirmDiscard });
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.lab.experimentalGroup') }}</h3>
             <div class="settings-group">
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.lab.notifyUser') }}
+                <span class="hint">{{ t('settings.lab.notifyUserHint') }}</span>
+                <span v-if="notifyUserLockedByEnv && notifyUserFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: notifyUserFeature.env }) }}
+                </span>
+              </span>
+              <Switch
+                :model-value="notifyUserEnabled"
+                :disabled="notifyUserLockedByEnv"
+                :label="t('settings.lab.notifyUser')"
+                @update:model-value="onNotifyUserChange"
+              />
+            </div>
             <div class="row">
               <span class="rlabel">
                 {{ t('settings.lab.sessionMentions') }}
@@ -1609,17 +1657,17 @@ defineExpose({ confirmDiscard });
             </div>
             <div class="row">
               <span class="rlabel">
-                {{ t('settings.lab.promptPrediction') }}
-                <span class="hint">{{ t('settings.lab.promptPredictionHint') }}</span>
-                <span v-if="promptPredictionLockedByEnv && promptPredictionFeature" class="hint">
-                  {{ t('settings.lab.lockedByEnv', { env: promptPredictionFeature.env }) }}
+                {{ t('settings.sidebarTabs') }}
+                <span class="hint">{{ t('settings.sidebarTabsHint') }}</span>
+                <span v-if="sidebarTabsLockedByEnv && sidebarTabsFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: sidebarTabsFeature.env }) }}
                 </span>
               </span>
               <Switch
-                :model-value="promptPredictionEnabled"
-                :disabled="promptPredictionLockedByEnv"
-                :label="t('settings.lab.promptPrediction')"
-                @update:model-value="onPromptPredictionChange"
+                :model-value="sidebarTabsToggleEnabled"
+                :disabled="sidebarTabsLockedByEnv"
+                :label="t('settings.sidebarTabs')"
+                @update:model-value="onSidebarTabsChange"
               />
             </div>
             <div class="row">

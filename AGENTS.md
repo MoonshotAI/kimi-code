@@ -121,8 +121,7 @@
 ## 实验特性
 
 - 还没公开的功能放在实验开关后面，未配置时一律默认关闭，注册结构不设 `default` 字段；全量转正时直接移除开关（某端先行转正时可在 `stages` 中将该端设为 `'ga'`，不再出现在该端实验列表中，也不受其他端在共享 `config.toml` 里写入的关闭值影响）。
-- 实验功能只分两级：`beta`（确定上正式版、正在打磨）与 `experimental`（探索验证阶段）。不默认开启，不乱上 `beta`；正式功能不得依赖未转正的实验开关，依赖实验能力的功能必须继承实验性身份。
-- `KIMI_CODE_EXPERIMENTAL_<NAME>` 控制单个开关；`KIMI_CODE_EXPERIMENTAL_FLAG` 与 `config.toml` 的 `[experimental].beta` 只开启全部 `beta` 功能，不开启 `experimental` 功能。优先级：`beta` 为单项环境变量 > Beta 总开关（`KIMI_CODE_EXPERIMENTAL_FLAG` 或 `[experimental].beta`）> `[experimental].<id>` > `false`；`experimental` 为单项环境变量 > `[experimental].<id>` > `false`。
+- 实验开关分 `beta` 与 `experimental` 两档：`KIMI_CODE_EXPERIMENTAL_<NAME>` 控制单个开关；`KIMI_CODE_EXPERIMENTAL_FLAG` 与 `config.toml` 的 `[experimental].beta` 只开启全部 `beta` 功能，不开启 `experimental` 功能。优先级：`beta` 为单项环境变量 > Beta 总开关（`KIMI_CODE_EXPERIMENTAL_FLAG` 或 `[experimental].beta`）> `[experimental].<id>` > `false`；`experimental` 为单项环境变量 > `[experimental].<id>` > `false`。
   - `packages/agent-core-v2` 和 kap-server 的模块：没有集中的开关目录。在所属领域里用 `registerFlagDefinition` 声明各端 `stages` 与 `effectTiming`，再用 `IFlagService.enabled(id)` 检查。
 
 ## 技能
@@ -154,7 +153,7 @@
 
 ## 发布流程
 
-- `main` 上累积 changeset；`release/*` 分支维护 `ci: release packages` PR。合并版本 PR 即授权正式发布，在合并提交的 CI 通过后发布对应版本。普通推送不会发布正式版。
+- `main` 上累积 changeset；`release/*` 分支维护 `ci: release packages` PR。合并版本 PR 即授权正式发布，发版 workflow 在同一 release commit 上运行单元测试，测试通过后发布对应版本。普通推送不会发布正式版。
 - CLI 发布到 npm 和 GitHub，桌面安装包发布到 GitHub Release，VS Code 扩展发布到扩展市场。CDN 上传和路由需另行审批。迁移和回同步见 `.changeset/README.md`。
 
 ## 工作流要求

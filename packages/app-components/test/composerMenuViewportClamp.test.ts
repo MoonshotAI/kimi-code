@@ -10,6 +10,12 @@ const clientState = vi.hoisted(() => ({
   status: null as null | { value: ConversationStatus | null },
   thinking: null as null | { value: string },
   models: null as null | { value: AppModel[] },
+  recentModelIds: null as null | { value: string[] },
+  selectModel: vi.fn(async (id: string) => {
+    if (clientState.status!.value) clientState.status!.value = { ...clientState.status!.value, modelId: id, model: id };
+  }),
+  setSessionModel: vi.fn(),
+  setThinking: vi.fn(),
 }));
 
 vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
@@ -26,6 +32,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
     ctxMax: 262144,
   });
   clientState.thinking = vue.ref('max');
+  clientState.recentModelIds = vue.ref<string[]>([]);
   clientState.models = vue.ref<AppModel[]>([
     {
       id: 'gpt-6-astra',
@@ -65,15 +72,11 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       planArmed: vue.ref(false),
       swarmMode: vue.ref(false),
       towerMode: vue.ref(false),
-      planModeAvailable: vue.ref(true),
-      swarmModeAvailable: vue.ref(true),
-      towerModeAvailable: vue.ref(true),
-      goalModeAvailable: vue.ref(true),
       goalMode: vue.ref(false),
       goal: vue.ref(null),
       activationBadges: vue.ref([]),
       models: clientState.models!,
-      starredModelIds: vue.ref([]),
+      recentModelIds: clientState.recentModelIds!,
       skills: vue.ref([]),
       skillsLoaded: vue.ref(true),
       chatGateVerdict: vue.ref('ok'),
@@ -87,9 +90,10 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       togglePlanMode: vi.fn(),
       toggleSwarmMode: vi.fn(),
       toggleTowerMode: vi.fn(),
-      setThinking: vi.fn(),
+      setThinking: clientState.setThinking,
       setPermission: vi.fn(),
-      selectModel: vi.fn(),
+      selectModel: clientState.selectModel,
+      setSessionModel: clientState.setSessionModel,
     }),
     getKimiWebApi: () => ({
       getSessionContextSummary: vi.fn(async () => ({
@@ -143,6 +147,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   isMobileViewport = true;
+  clientState.recentModelIds!.value = [];
   menuDimensions = { modelWidth: 360, modelHeight: 305, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
   Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
     configurable: true,
@@ -206,12 +211,15 @@ afterEach(() => {
   vi.resetModules();
 });
 
+let composerInstance: { openModelMenu?: (targetSid?: string) => void } | undefined;
+
 async function mountComposer(viewportWidth: number, viewportHeight: number): Promise<void> {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: viewportWidth });
   Object.defineProperty(window, 'innerHeight', { configurable: true, value: viewportHeight });
   const { default: Composer } = await import('../src/composer/Composer.vue');
+  composerInstance = undefined;
   app = createApp({
-    render: () => h(Composer),
+    render: () => h(Composer, { ref: (el) => { composerInstance = el as typeof composerInstance; } }),
   });
   app.use(createKimiI18n({ locale: 'zh' }));
   app.mount(host);
@@ -259,16 +267,150 @@ describe('Composer context ring', () => {
   });
 });
 
+describe('Composer recent model menu', () => {
+  beforeEach(() => {
+    isMobileViewport = false;
+    clientState.activeSessionId!.value = 'sess-1';
+    clientState.thinking!.value = 'max';
+    clientState.status!.value = {
+      connected: true,
+      model: 'GPT-6.1 Sol',
+      modelId: 'gpt-6.1-sol',
+      permission: 'yolo',
+      ctxUsed: 76200,
+      ctxMax: 262144,
+    };
+    clientState.selectModel.mockClear();
+    clientState.setSessionModel.mockClear();
+    clientState.setThinking.mockClear();
+  });
+
+  it('stages model and effort clicks without applying them, freezes row order, and commits on outside click', async () => {
+    await mountComposer(1200, 820);
+
+    const modelPill = host.querySelector<HTMLButtonElement>('.model-pill')!;
+    modelPill.click();
+    await nextTick();
+    await nextTick();
+
+    const labels = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section > .mqm-label')].map(
+      (section) => section.textContent?.trim(),
+    );
+    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')];
+    const names = rows.map((row) => row.querySelector('.mqm-name')?.textContent?.trim());
+
+    expect(labels).toEqual(['最近使用', 'openai']);
+    expect(names).toEqual(['GPT-6.1 Sol', 'GPT-6.1 Sol', 'GPT-6 Astra']);
+    expect(rows[0]?.querySelector('.mqm-provider')?.textContent?.trim()).toBe('openai');
+    expect(rows.filter((row) => row.getAttribute('aria-checked') === 'true')).toHaveLength(2);
+
+    rows[2]?.click();
+    await nextTick();
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+    expect(clientState.setThinking).not.toHaveBeenCalled();
+    expect(clientState.status!.value?.modelId).toBe('gpt-6.1-sol');
+
+    const reorderedRows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')];
+    expect(
+      reorderedRows.map((row) => row.querySelector('.mqm-name')?.textContent?.trim()),
+    ).toEqual(['GPT-6.1 Sol', 'GPT-6.1 Sol', 'GPT-6 Astra']);
+    expect(reorderedRows[2]?.getAttribute('aria-checked')).toBe('true');
+    expect(host.querySelector('.model-dropdown')).not.toBeNull();
+
+    host.querySelector<HTMLElement>('[data-row-key="action:effort"]')!.click();
+    await nextTick();
+    const lowOption = [...host.querySelectorAll<HTMLElement>('.mqm-flyout .mqm-row')].find(
+      (row) => row.textContent?.trim() === 'Low',
+    )!;
+    lowOption.click();
+    await nextTick();
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+    expect(clientState.setThinking).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-row-key="action:effort"] .mqm-action-value')?.textContent?.trim()).toBe('Low');
+
+    document.body.click();
+    await nextTick();
+    await vi.waitFor(() => expect(clientState.selectModel).toHaveBeenCalledWith('gpt-6-astra'));
+    expect(clientState.setThinking).toHaveBeenCalledWith('low');
+    expect(host.querySelector('.model-dropdown')?.classList.contains('ui-menu-pop-leave-active')).toBe(true);
+  });
+
+  it('discards staged changes when dismissed with Escape', async () => {
+    await mountComposer(1200, 820);
+
+    host.querySelector<HTMLButtonElement>('.model-pill')!.click();
+    await nextTick();
+    await nextTick();
+
+    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')];
+    rows[2]?.click();
+    await nextTick();
+    expect(rows[2]?.getAttribute('aria-checked')).toBe('true');
+
+    host.querySelector<HTMLElement>('.mqm')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await nextTick();
+
+    expect(host.querySelector('.model-dropdown')?.classList.contains('ui-menu-pop-leave-active')).toBe(true);
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+    expect(clientState.setThinking).not.toHaveBeenCalled();
+    expect(clientState.status!.value?.modelId).toBe('gpt-6.1-sol');
+  });
+
+  it('does not apply staged changes after switching to another session', async () => {
+    await mountComposer(1200, 820);
+
+    host.querySelector<HTMLButtonElement>('.model-pill')!.click();
+    await nextTick();
+    await nextTick();
+
+    host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')[2]?.click();
+    await nextTick();
+
+    clientState.activeSessionId!.value = 'sess-2';
+    await nextTick();
+    await nextTick();
+
+    expect(host.querySelector('.model-dropdown')?.classList.contains('ui-menu-pop-leave-active')).toBe(true);
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+    expect(clientState.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('repairs a background session model on blur without switching the active session', async () => {
+    await mountComposer(1200, 820);
+    const { sessionsStore } = await import('@moonshot-ai/app-client/stores');
+    sessionsStore().sessions = [
+      { id: 'sess-1', model: 'gpt-6.1-sol', cwd: '/project' },
+      { id: 'sess-bg', model: 'missing/model', cwd: '/project' },
+    ] as ReturnType<typeof sessionsStore>['sessions'];
+
+    composerInstance?.openModelMenu?.('sess-bg');
+    await nextTick();
+    await nextTick();
+
+    expect(clientState.activeSessionId!.value).toBe('sess-1');
+    const providerRows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')];
+    providerRows[0]!.click();
+    await nextTick();
+    expect(clientState.setSessionModel).not.toHaveBeenCalled();
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+
+    document.body.click();
+    await nextTick();
+    expect(clientState.activeSessionId!.value).toBe('sess-1');
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+    expect(clientState.setSessionModel).toHaveBeenCalledWith('sess-bg', 'gpt-6-astra', 'high');
+  });
+});
+
 describe('Composer toolbar popup viewport clamping', () => {
-  it('clamps the model dropdown inside a narrow mobile toolbar instead of overflowing off the left edge', async () => {
+  it('caps the model dropdown height to the space above the model pill on short mobile viewports', async () => {
     isMobileViewport = true;
-    menuDimensions = { modelWidth: 360, modelHeight: 305, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
     await mountComposer(360, 740);
 
     const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
     const modelPill = host.querySelector<HTMLElement>('.model-pill')!;
-    mockRect(toolbar, { left: 13, right: 347, width: 334, top: 659, bottom: 715, height: 56 });
-    mockRect(modelPill, { left: 223, right: 259, width: 36, top: 667, bottom: 703, height: 36 });
+    mockRect(toolbar, { left: 13, right: 347, width: 334, top: 290, bottom: 346, height: 56 });
+    mockRect(modelPill, { left: 223, right: 259, width: 36, top: 298, bottom: 334, height: 36 });
 
     modelPill.click();
     await nextTick();
@@ -276,15 +418,12 @@ describe('Composer toolbar popup viewport clamping', () => {
     await nextTick();
 
     const menu = host.querySelector<HTMLElement>('.model-dropdown')!;
-    expect(menu.style.maxWidth).toBe('334px');
-    expect(menu.style.right).toBe('0px');
-    expect(menu.classList.contains('flip-down')).toBe(false);
-    expect(menu.style.maxHeight).toBe('647px');
+    expect(menu.style.right).toBe('88px');
+    expect(menu.style.maxHeight).toBe('282px');
   });
 
-  it('keeps the model dropdown aligned to the model pill right edge on wide viewports', async () => {
+  it('keeps the model dropdown aligned to the model pill right edge and capped at 480px on wide viewports', async () => {
     isMobileViewport = false;
-    menuDimensions = { modelWidth: 392, modelHeight: 274, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
     await mountComposer(1200, 820);
 
     const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
@@ -298,9 +437,8 @@ describe('Composer toolbar popup viewport clamping', () => {
     await nextTick();
 
     const menu = host.querySelector<HTMLElement>('.model-dropdown')!;
-    expect(menu.style.maxWidth).toBe('726px');
     expect(menu.style.right).toBe('80px');
-    expect(menu.classList.contains('flip-down')).toBe(false);
+    expect(menu.style.maxHeight).toBe('480px');
   });
 
   it('clamps the permission dropdown inside a narrow mobile toolbar, flips downward when needed, and closes on resize', async () => {
@@ -330,16 +468,15 @@ describe('Composer toolbar popup viewport clamping', () => {
     expect(menu.classList.contains('ui-menu-pop-leave-active')).toBe(true);
   });
 
-  it('respects narrowed visualViewport bounds when clamping horizontally', async () => {
+  it('respects narrowed visualViewport top offset when clamping model menu height', async () => {
     isMobileViewport = true;
-    menuDimensions = { modelWidth: 320, modelHeight: 260, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
     Object.defineProperty(window, 'visualViewport', {
       configurable: true,
       value: {
         offsetLeft: 40,
-        offsetTop: 0,
+        offsetTop: 120,
         width: 260,
-        height: 700,
+        height: 580,
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
       },
@@ -357,8 +494,8 @@ describe('Composer toolbar popup viewport clamping', () => {
     await nextTick();
 
     const menu = host.querySelector<HTMLElement>('.model-dropdown')!;
-    expect(menu.style.maxWidth).toBe('244px');
-    expect(menu.style.right).toBe('55px');
+    expect(menu.style.maxHeight).toBe('480px');
+    expect(menu.style.right).toBe('88px');
   });
 
   it('centers the context ring card above the ring and clamps it within toolbar bounds', async () => {

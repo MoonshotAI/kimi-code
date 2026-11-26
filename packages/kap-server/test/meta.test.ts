@@ -134,7 +134,7 @@ describe('/api/v1/meta experimental_flags', () => {
   });
 
   it('publishes surface-scoped experimental_beta and experimental_features and applies beta master non-destructively', async () => {
-    const base = await boot('[experimental]\nnotify_user = false\n');
+    const base = await boot('[experimental]\nprompt_prediction = false\n');
     const initialRes = await authedFetch(server as RunningServer, base, '/api/v1/meta');
     const initialBody = (await initialRes.json()) as MetaBody;
     expect(initialBody.data.experimental_beta).toEqual({
@@ -144,16 +144,20 @@ describe('/api/v1/meta experimental_flags', () => {
     });
     const initialIds = (initialBody.data.experimental_features ?? []).map((f) => f.id);
     expect(initialIds).toContain('context_inspector');
-    expect(initialIds).toContain('notify_user');
-    expect(initialIds).toContain('session_mentions');
     expect(initialIds).toContain('prompt_prediction');
+    expect(initialIds).toContain('auto_review');
+    expect(initialIds).toContain('notify_user_app');
+    expect(initialIds).toContain('session_mentions');
+    expect(initialIds).toContain('sidebar_multi_tab');
     expect(initialIds).toContain('tower');
+    expect(initialIds).not.toContain('notify_user');
     expect(initialIds).not.toContain('wait_for');
+    expect(initialIds).not.toContain('worktree');
 
     const enableBetaRes = await authedFetch(server as RunningServer, base, '/api/v1/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ experimental: { beta: true, notify_user: false } }),
+      body: JSON.stringify({ experimental: { beta: true, prompt_prediction: false } }),
     });
     expect(enableBetaRes.status).toBe(200);
 
@@ -164,15 +168,37 @@ describe('/api/v1/meta experimental_flags', () => {
       source: 'config',
       config_value: true,
     });
-    const notifyFeature = betaBody.data.experimental_features?.find((f) => f.id === 'notify_user');
+    const promptPredictionFeature = betaBody.data.experimental_features?.find(
+      (f) => f.id === 'prompt_prediction',
+    );
+    const autoReviewFeature = betaBody.data.experimental_features?.find(
+      (f) => f.id === 'auto_review',
+    );
+    const notifyAppFeature = betaBody.data.experimental_features?.find(
+      (f) => f.id === 'notify_user_app',
+    );
     const towerFeature = betaBody.data.experimental_features?.find((f) => f.id === 'tower');
-    expect(notifyFeature).toMatchObject({
+    expect(promptPredictionFeature).toMatchObject({
       stage: 'beta',
-      effect_timing: 'next-session',
+      effect_timing: 'immediate',
       enabled: true,
       active: true,
       source: 'beta-config',
       config_value: false,
+    });
+    expect(autoReviewFeature).toMatchObject({
+      stage: 'beta',
+      effect_timing: 'immediate',
+      enabled: true,
+      active: true,
+      source: 'beta-config',
+    });
+    expect(notifyAppFeature).toMatchObject({
+      stage: 'experimental',
+      effect_timing: 'next-session',
+      enabled: false,
+      active: false,
+      source: 'default',
     });
     expect(towerFeature).toMatchObject({
       stage: 'experimental',

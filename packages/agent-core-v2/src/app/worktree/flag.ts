@@ -11,7 +11,7 @@ export const worktreeFlag: FlagDefinitionInput = {
     'Start sessions in new git worktrees with kimi -w, and list, enter and remove them from the /worktree panel.',
   env: WORKTREE_FLAG_ENV,
   stages: {
-    tui: 'experimental',
+    tui: 'beta',
   },
   effectTiming: 'immediate',
 };

@@ -25,6 +25,8 @@ import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import {
   CopyOnSelectSelectorComponent,
+  formatWheelScrollSpeedLabel,
+  ScrollSpeedSelectorComponent,
   SettingsSelectorComponent,
   ThinkingDisplaySelectorComponent,
   ToolCallDensitySelectorComponent,
@@ -39,12 +41,14 @@ import {
   DEFAULT_TUI_CONFIG,
   resolveFollowUpBehavior,
   resolveTuiMode,
+  resolveWheelScrollLines,
   saveTuiConfig,
   type FollowUpBehavior,
   type MarkdownConfig,
   type TranscriptConfig,
   type TuiConfig,
   type TuiMode,
+  type WheelScrollLines,
 } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
@@ -80,7 +84,7 @@ import {
 } from '../utils/model-switch';
 import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { showUsage } from './info';
-import { setExperimentalFeatures } from './experimental-flags';
+import { isExperimentalFlagEnabled, setExperimentalFeatures } from './experimental-flags';
 import type { SlashCommandHost } from './dispatch';
 
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
@@ -98,6 +102,7 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     copyOnSelect:
       host.state.appState.copyOnSelect ?? DEFAULT_TUI_CONFIG.copyOnSelect,
+    wheelScrollLines: host.state.appState.wheelScrollLines,
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
     cacheExpiryHint: host.state.appState.cacheExpiryHint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
     autoSessionTitle: host.state.appState.autoSessionTitle ?? DEFAULT_TUI_CONFIG.autoSessionTitle,
@@ -836,6 +841,7 @@ export async function applyExperimentalFeatureChanges(
   }
 
   try {
+    const worktreeWasEnabled = isExperimentalFlagEnabled('worktree');
     await host.harness.setConfig({ experimental });
     const features = await host.harness.getExperimentalFeatures();
     setExperimentalFeatures(features);
@@ -863,6 +869,13 @@ export async function applyExperimentalFeatureChanges(
       );
     } else {
       host.showStatus('Experimental features updated.', 'success');
+    }
+
+    if (
+      isExperimentalFlagEnabled('worktree') !== worktreeWasEnabled ||
+      changes.some((change) => change.id === 'worktree')
+    ) {
+      await host.refreshWorkLocation();
     }
 
     const noticedIds = new Set<string>();
@@ -1133,6 +1146,43 @@ export async function applyCopyOnSelectChoice(
   host.showStatus(`Copy on select ${enabled ? 'enabled' : 'disabled'}.`);
 }
 
+function showScrollSpeedPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new ScrollSpeedSelectorComponent({
+      currentValue: resolveWheelScrollLines(host.state.appState.wheelScrollLines),
+      onSelect: (lines) => {
+        host.restoreEditor();
+        void applyScrollSpeedChoice(host, lines);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+export async function applyScrollSpeedChoice(
+  host: Pick<SlashCommandHost, 'state' | 'setAppState' | 'showStatus'>,
+  lines: WheelScrollLines,
+): Promise<void> {
+  const label = formatWheelScrollSpeedLabel(lines);
+  if (lines === resolveWheelScrollLines(host.state.appState.wheelScrollLines)) {
+    host.showStatus(`Scroll speed already ${label}.`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({ ...currentTuiConfig(host), wheelScrollLines: lines });
+  } catch (error) {
+    host.showStatus(`Failed to save scroll speed setting: ${formatErrorMessage(error)}`, 'error');
+    return;
+  }
+
+  host.setAppState({ wheelScrollLines: lines });
+  if (host.state.ui instanceof TuiAltScreen) host.state.ui.setWheelScrollLines(lines);
+  host.showStatus(`Scroll speed set to ${label}.`, 'success');
+}
+
 function showToolCallDensityPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new ToolCallDensitySelectorComponent({
@@ -1334,6 +1384,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'toolCallDensity': showToolCallDensityPicker(host); return;
     case 'thinking': showThinkingDisplayPicker(host); return;
     case 'copyOnSelect': showCopyOnSelectPicker(host); return;
+    case 'scrollSpeed': showScrollSpeedPicker(host); return;
     case 'mermaid': showMermaidPreferencePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'followUpBehavior': showFollowUpBehaviorPicker(host); return;

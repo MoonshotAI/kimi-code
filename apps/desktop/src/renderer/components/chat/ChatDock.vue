@@ -44,6 +44,8 @@ const props = defineProps<{
   approvalBusy?: boolean;
   mobile?: boolean;
   statusNote?: string;
+  sessionSubmitBlockedReason?: string;
+  sessionSubmitBlockedTooltip?: string;
   beforeSubmit?: () => boolean;
   deferSubmitReset?: boolean;
   extraBuiltinCommands?: readonly SlashCommand[];
@@ -160,6 +162,7 @@ const composerRef = ref<{
   restoreDraftEntries: (entries: AttachmentEntry[]) => void;
   focus: () => void;
   clearAfterDispatch: (expectedSnapshot?: ComposerDocumentSnapshot) => void;
+  openModelMenu?: (targetSid?: string) => void;
   closeOverlays?: () => void;
   anyPopupOpen?: boolean;
   isEmpty?: () => boolean;
@@ -415,7 +418,7 @@ onUnmounted(() => {
   workBodyResizeObserver = null;
 });
 
-defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, hasInsertableComposer, loadAttachmentsForEdit, restoreDraftEntries, focus, anyPopupOpen, isEmpty, clearAfterDispatch });
+defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, hasInsertableComposer, loadAttachmentsForEdit, restoreDraftEntries, focus, openModelMenu: (targetSid?: string) => composerRef.value?.openModelMenu?.(targetSid), anyPopupOpen, isEmpty, clearAfterDispatch });
 </script>
 
 <template>
@@ -488,7 +491,6 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
                   size="sm"
                   :label="t('status.goalResume')"
                   :tooltip="t('status.goalResume')"
-                  :disabled="!client.goalModeAvailable.value"
                   @click.stop="client.controlGoal('resume')"
                 >
                   <Icon name="play" size="md" />
@@ -683,6 +685,8 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
       <Composer
         :style="hasPendingCard ? { display: 'none' } : undefined"
         :status-note="props.statusNote"
+        :session-submit-blocked-reason="props.sessionSubmitBlockedReason"
+        :session-submit-blocked-tooltip="props.sessionSubmitBlockedTooltip"
         :before-submit="props.beforeSubmit"
         :defer-submit-reset="props.deferSubmitReset"
         :extra-builtin-commands="props.extraBuiltinCommands"
@@ -699,7 +703,6 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
         @command="emit('command', $event)"
         @interrupt="emit('interrupt')"
         @focus-goal="emit('focusGoal')"
-        @pick-model="emit('pickModel')"
         @login="emit('login')"
         @configure-model="emit('configureModel')"
       />

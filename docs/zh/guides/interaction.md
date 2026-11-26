@@ -8,11 +8,11 @@ Kimi Code CLI 以交互式 TUI 运行，核心由输入框、对话视图和状�
 
 **退出 CLI**：输入框为空时按 `Ctrl-D`，或空闲状态下连按 `Ctrl-C` 两次，或输入 `/exit`。流式输出期间按 `Ctrl-C` 或 `Esc` 是中断当前轮次，不会退出程序。
 
-## 提示词预测（实验）
+## 提示词预测（Beta）
 
 主 Agent 正常完成轮次后，Kimi Code CLI 可以在空输入框中显示下一条提示词建议。建议通过旁路请求生成，不会自动提交。
 
-启动前设置 `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1`、在 `config.toml` 中写入 `[experimental] prompt_prediction = true`，或在 TUI 的 `/lab` 或桌面端和 Web UI 的设置 > 实验室中开启**提示词预测**即可启用。按 `Tab` 或 `→` 填入完整建议，编辑后按 `Enter` 提交。输入其他内容时建议暂时隐藏，清空输入后重新显示，可再次填入；开始新轮次或切换会话会清除建议。已取消、失败或阻塞的轮次不会生成建议。
+启动前设置 `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1`、在 `config.toml` 中写入 `[experimental] prompt_prediction = true`，或在 TUI 的 `/lab` 或桌面端和 Web UI 的设置 > 实验室中开启**提示词预测**（或**开启全部 Beta 功能**）即可启用。按 `Tab` 或 `→` 填入完整建议，编辑后按 `Enter` 提交。输入其他内容时建议暂时隐藏，清空输入后重新显示，可再次填入；开始新轮次或切换会话会清除建议。已取消、失败或阻塞的轮次不会生成建议。
 
 ## 粘贴图片与视频
 
@@ -78,7 +78,7 @@ Agent 调用会产生副作用的工具（修改文件、执行命令等）时�
 
 **"Ask When Needed"**（必要时询问，原 YOLO）用 `/yolo` 开启，自动批准普通工具调用，适合已知安全的批处理任务。敏感操作仍会询问——例如访问 `.env`、SSH 私钥等敏感文件、执行 `shutdown`、`rm -rf` 这类危险命令，或退出 Plan 模式——Agent 也仍可能向你提问。
 
-**"Never Ask"**（完全自动，原 Auto）用 `/auto` 开启，是完全无人值守模式：所有工具审批自动处理，包括敏感文件，且 Agent 不会向你提问，完全由它自己做决定。唯一的例外是 Plan 模式：计划仍会等你审阅后才执行。内置的危险命令拦截会在 "Always Ask" 和 "Ask When Needed" 模式下要求你确认 `shutdown`、`reboot`、`rm -rf` 这类命令；在 "Never Ask" 模式下这些命令直接执行，不再拦截。
+**"Never Ask"**（完全自动，原 Auto）用 `/auto` 开启，是完全无人值守模式：所有工具审批自动处理，包括敏感文件，且 Agent 不会向你提问，完全由它自己做决定。唯一的例外是 Plan 模式：计划仍会等你审阅后才执行。内置的危险命令拦截会在 "Always Ask" 和 "Ask When Needed" 模式下要求你确认 `shutdown`、`reboot`、`rm -rf` 这类命令；在 "Never Ask" 模式下这些命令直接执行，不再拦截。开启 Beta 阶段的 Auto Review 后，"Ask When Needed" 和 "Never Ask" 模式会先把 `Bash` 和 MCP 工具调用（包括这类危险命令）交给独立模型复核："Ask When Needed" 模式下只有复核拒绝或失败时才请你确认，"Never Ask" 模式下复核拒绝或失败则直接返回错误、不执行。`Edit`、`Write` 等其他内置工具不参与复核，沿用各模式原有的审批规则。
 
 
 ## 模式切换

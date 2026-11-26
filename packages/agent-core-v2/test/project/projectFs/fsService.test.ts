@@ -1,4 +1,4 @@
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path/posix';
 import { Readable, Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -82,6 +82,10 @@ function workspaceGitStub(git: IGitService): IProjectGitService {
   };
 }
 
+function posixPathOf(path: string): string {
+  return path.replaceAll('\\', '/');
+}
+
 function fakeFs(
   files: Record<string, string | Buffer>,
   symlinks: readonly string[] = [],
@@ -130,7 +134,7 @@ function fakeFs(
     return err;
   };
   const resolveSymlinks = (p: string): string => {
-    let cur = p;
+    let cur = posixPathOf(p);
     for (let hops = 0; hops < 10; hops += 1) {
       let longest: string | undefined;
       for (const linkPath of symlinkTargetMap.keys()) {
@@ -154,7 +158,7 @@ function fakeFs(
     return `${resolveSymlinks(p.slice(0, slash))}${p.slice(slash)}`;
   };
   const lstatImpl = async (rawPath: string) => {
-    const p = resolveParentSymlinks(rawPath);
+    const p = resolveParentSymlinks(posixPathOf(rawPath));
     if (fileMap.has(p)) {
       const c = fileMap.get(p)!;
       return {
@@ -235,8 +239,9 @@ function fakeFs(
       for (const s of symlinkSet) visit(s, 'symlink');
       return [...children.values()];
     },
-    walk: (path, options, visit) => walkDirectoryTree(fs, path, options, visit),
-    mkdir: async (p, options) => {
+    walk: (path, options, visit) => walkDirectoryTree(fs, posixPathOf(path), options, visit),
+    mkdir: async (rawPath, options) => {
+      const p = posixPathOf(rawPath);
       const recursive = options?.recursive ?? false;
       const exists = isDir(p) || fileMap.has(p);
       if (recursive) {
@@ -264,7 +269,8 @@ function fakeFs(
       dirSet.add(p);
     },
     remove: async () => {},
-    realpath: async (p) => {
+    realpath: async (rawPath) => {
+      const p = posixPathOf(rawPath);
       let current = p;
       for (let i = 0; i < 40; i++) {
         let longest: string | undefined;
@@ -1192,6 +1198,43 @@ describe('WorkspaceFsService.suggest', () => {
     expect(partial.truncated).toBe(true);
   });
 
+  it('asks fd to honor .gitignore files outside a git repository', async () => {
+    const captured: string[][] = [];
+    const fs = makeSession({}, fdLinesHandler(['src/app.ts'], captured));
+    Object.defineProperty(fs, 'fdResolution', { value: undefined });
+
+    await fs.suggest({ query: 'app', limit: 50, follow_gitignore: true, show_hidden: false });
+
+    expect(captured).not.toHaveLength(0);
+    for (const args of captured) expect(args).toContain('--no-require-git');
+  });
+
+  it('falls back from an fd that rejects its arguments and stops asking it', async () => {
+    const fdSearches: string[][] = [];
+    const fs = makeSession(
+      { 'src/app.ts': '', '.gitignore': 'ignored-app.ts\n', 'ignored-app.ts': '' },
+      (args) => {
+        if (args[0] === 'fd' && args[1] === '--version') return { stdout: 'fd 8.6.0', exitCode: 0 };
+        if (args[0] === 'fd') {
+          fdSearches.push([...args]);
+          return { stdout: '', stderr: "error: unexpected argument '--no-require-git' found", exitCode: 2 };
+        }
+        return rgMissingHandler(args);
+      },
+    );
+    Object.defineProperty(fs, 'fdResolution', { value: undefined });
+    const request = { query: 'app', limit: 50, follow_gitignore: true, show_hidden: false };
+
+    const first = await fs.suggest(request);
+    const searchesAfterFirst = fdSearches.length;
+    const second = await fs.suggest(request);
+
+    expect(first.items.map((item) => item.path)).toEqual(['src/app.ts']);
+    expect(second.items.map((item) => item.path)).toEqual(['src/app.ts']);
+    expect(searchesAfterFirst).toBeGreaterThan(0);
+    expect(fdSearches).toHaveLength(searchesAfterFirst);
+  });
+
   it('applies fd matching, hidden, and bounded result semantics', async () => {
     const fs = makeSession({}, fdLinesHandler(['docs/README.md', 'src/app.ts']));
     Object.defineProperty(fs, 'fdResolution', { value: undefined });
@@ -1361,7 +1404,7 @@ describe('WorkspaceFsService.suggest', () => {
     const readdir = backend.readdir.bind(backend);
     const reads: string[] = [];
     backend.readdir = async (path) => {
-      reads.push(path);
+      reads.push(posixPathOf(path));
       return readdir(path);
     };
     const nodeFs = makeRemoteWalkSession(backend);
@@ -1566,7 +1609,7 @@ describe('WorkspaceFsService.suggest', () => {
     const readdir = backend.readdir.bind(backend);
     const reads: string[] = [];
     backend.readdir = async (path) => {
-      reads.push(path);
+      reads.push(posixPathOf(path));
       return readdir(path);
     };
     const fs = makeRemoteWalkSession(backend);
@@ -2366,7 +2409,7 @@ describe('WorkspaceFsService.list', () => {
     const backend = fakeFs({ 'huge/hidden.txt': '', 'visible.txt': '' });
     const readdir = backend.readdir;
     backend.readdir = async (path) => {
-      if (path === '/repo/huge') {
+      if (posixPathOf(path) === '/repo/huge') {
         throw new HostFsError('os.fs.directory_too_large', 'Directory /repo/huge exceeds 50000 entries');
       }
       return readdir(path);

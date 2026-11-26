@@ -41,8 +41,10 @@ import {
   unitsOf,
   withResponseId,
   withUsage,
+  type CacheBreakOptions,
   type FakeModel,
   type Hold,
+  type PromptCacheEntry,
   type HttpErrorOptions,
   type Lane,
   type ReplyStep,
@@ -52,7 +54,7 @@ import { afterEach } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import { ChatProviderError, errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
+import { errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
 
 import {
   generateInputSnapshot,
@@ -91,6 +93,7 @@ export type MockProviderHandler = (
 export interface MockProviderOptions {
   readonly checkMessages?: boolean;
   readonly checkCalls?: boolean;
+  readonly checkPromptCache?: boolean;
 }
 
 interface PreparedAttempt {
@@ -107,6 +110,8 @@ export interface MockProvider {
 
 export interface ScriptedMockProvider extends MockProvider {
   hold(name: string): Hold;
+  expectCacheBreak(reason: string, options?: CacheBreakOptions): void;
+  promptCache(): readonly PromptCacheEntry[];
 }
 
 const UNSCRIPTED = Symbol('unscripted');
@@ -164,22 +169,31 @@ interface CheckedProvider extends ScriptedMockProvider {
 }
 
 function createModelProvider(handler: ScriptedHandler, options: MockProviderOptions): CheckedProvider {
-  const model = createFakeModel({ checkMessages: options.checkMessages ?? true, checkCalls: options.checkCalls ?? false });
+  const model = createFakeModel({
+    checkMessages: options.checkMessages ?? true,
+    checkCalls: options.checkCalls ?? false,
+    checkPromptCache: options.checkPromptCache,
+  });
   const lane = model.route('scripted', () => true);
   const handlerProblems: string[] = [];
   const pending: Promise<PreparedAttempt>[] = [];
+  const reportedCacheProblems = new Set<string>();
   let index = 0;
   let reported = 0;
   const check = (): readonly string[] => {
     const all = [...handlerProblems, ...model.problems()];
     const fresh = all.slice(reported);
     reported = all.length;
-    return fresh;
+    const cacheProblems = model.promptCacheProblems().filter((problem) => !reportedCacheProblems.has(problem));
+    for (const problem of cacheProblems) reportedCacheProblems.add(problem);
+    return [...fresh, ...cacheProblems];
   };
   scriptedChecks.add(check);
   return {
     check,
     hold: (name) => model.hold(name),
+    expectCacheBreak: (reason, breakOptions) => model.expectCacheBreak(reason, breakOptions),
+    promptCache: () => model.promptCache(),
     respond: (request, signal) => {
       const attempt = (async (): Promise<PreparedAttempt> => {
         const current = index++;
@@ -342,7 +356,7 @@ export function withMockProvider(
         try {
           return await provider.fetch(input, init);
         } catch (error) {
-          if (isError2(error) && !(error instanceof ChatProviderError)) {
+          if (isError2(error)) {
             directError = error;
             directAbort.abort(error);
           }

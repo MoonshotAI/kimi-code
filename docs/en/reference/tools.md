@@ -107,7 +107,7 @@ In the TUI, updates appear in the `Updates` panel above the input box, grouped b
 
 In the desktop app and the web UI (`kimi web`), each update appears in the conversation as a progress row showing its title; click it to read the message.
 
-The feature is enabled by default in the TUI. In the desktop app and the web UI, it is in Beta and off by default: enable **Progress updates** (or **Enable all Beta features**) in Settings > Lab, set `[experimental] notify_user = true` in `config.toml`, or set `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`; this applies to sessions created afterwards. Sessions created while it is disabled have neither the tool nor its prompt guidance.
+The feature is experimental and off by default across surfaces, with separate toggles so enabling one client does not turn on the other: in the TUI, enable **NotifyUser tool** in `/lab`, set `[experimental] notify_user = true` in `config.toml`, or set `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`; in the desktop app and the web UI, enable **Progress updates** in Settings > Lab, set `[experimental] notify_user_app = true` in `config.toml`, or set `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER_APP=1` (or `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`). Changes apply to sessions created afterwards; sessions created while it is disabled have neither the tool nor its prompt guidance.
 
 Existing sessions keep their notification tool availability and prompt unchanged, including after reopening. Turning the feature off hides the progress UI; any existing `NotifyUser` calls finish normally and report that the update was not displayed. Turning it back on restores display for sessions that already have the tool. If a session was created with the feature disabled, start a new session to use updates.
 

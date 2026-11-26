@@ -17,6 +17,7 @@ import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/cata
 import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
+import { deferred } from '@moonshot-ai/testkit/fixtures';
 import { createFakeModel, say } from '@moonshot-ai/testkit/model';
 import {
   resetModelsDevUpstreamForTest,
@@ -835,6 +836,42 @@ export function defineKlientConformance(
       } finally {
         await handle.dispose();
         await target.klient.session(created.id).close();
+      }
+    });
+
+    it('returns the same busy error on every transport when a prompt opts out of queueing', async () => {
+      const created = await target.klient.global.sessions.create({ workDir: process.cwd() });
+      const session = target.klient.session(created.id);
+      const agent = session.agent('main');
+      const sessionHandle = getLiveSessionById(target.app.accessor, created.id)!;
+      const lifecycle = sessionHandle.accessor.get(IAgentLifecycleService);
+      const { agentId } = await lifecycle.create({ agentId: 'main' });
+      const loop = lifecycle.handleOf(agentId)!.accessor.get(IAgentLoopService);
+      const entered = deferred();
+      const release = deferred();
+      const hold = loop.hooks.onBeforeSubmitPrompt.register('hold-test-prompt', async (_context, next) => {
+        entered.resolve();
+        await release.promise;
+        await next();
+      });
+      const first = agent.prompt({ input: [{ type: 'text', text: 'Start a turn.' }] });
+      try {
+        await entered.promise;
+        await expect(agent.prompt({
+          input: [{ type: 'text', text: 'Reject this while active.' }],
+          rejectIfBusy: true,
+        })).rejects.toMatchObject({ code: 40001, details: { code: 'turn.agent_busy' } });
+        expect(loop.snapshot().queue).toMatchObject([
+          { role: 'user', content: [{ type: 'text', text: 'Start a turn.' }] },
+        ]);
+      } finally {
+        hold.dispose();
+        release.resolve();
+        try {
+          await first;
+        } finally {
+          await session.close();
+        }
       }
     });
 

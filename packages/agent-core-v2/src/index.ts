@@ -527,6 +527,7 @@ export * from '#/session/sessionContext/sessionContext';
 
 export * from '#/agent/interaction/question';
 export {
+  formatApprovalReviewTitle,
   type ApprovalDecision,
   type ApprovalRequest as SessionApprovalRequest,
   type ApprovalResponse as SessionApprovalResponse,
@@ -760,6 +761,9 @@ export * from '#/features/todo/todoListReminder';
 export * from '#/features/todo/todoService';
 export * from '#/features/todo/tools/todo-list/todo-list';
 import '#/features/todo/todoFeature';
+export * from '#/features/autoReview/flag';
+export * from '#/features/autoReview/autoReviewEvents';
+import '#/features/autoReview/autoReviewFeature';
 export * from '#/features/notify/flag';
 export * from '#/features/notify/notifyUserAvailability';
 export * from '#/features/notify/tools/notify-user/notify-user';

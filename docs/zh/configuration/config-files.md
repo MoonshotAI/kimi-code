@@ -108,6 +108,7 @@ timeout = 5
 | [`models`](#models) | `table` | — | 模型别名表 |
 | [`thinking`](#thinking) | `table` | — | Thinking 模式默认参数 |
 | [`loop_control`](#loop-control) | `table` | — | Agent 循环控制参数 |
+| [`auto_review`](#auto-review) | `table` | — | "Ask When Needed" 和 "Never Ask" 模式下的实验性 LLM 复核 |
 | [`task`](#task) | `table` | — | 后台任务与 Tower Agent 运行参数；`background` 为 legacy 配置节名称 |
 | [`tools`](#tools) | `table` | — | 全局工具开关 |
 | [`image`](#image) | `table` | — | 图片压缩参数 |
@@ -323,6 +324,28 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 `max_steps_per_turn` 可被环境变量 `KIMI_LOOP_MAX_STEPS_PER_TURN` 覆盖，`max_attempts_per_step` 可被 `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` 覆盖，优先级均高于配置文件。旧的 `KIMI_LOOP_MAX_RETRIES_PER_STEP` 已废弃，但在新变量未设置时仍生效（启动时会给出警告）。
 
 重试仅针对瞬时故障：连接错误、超时、HTTP 429 限流和 5xx 服务端错误。账户额度耗尽或余额不足导致的 429 不会重试，会立即失败：在充值之前重试不可能成功。
+
+## `auto_review`
+
+`auto_review` 配置 "Ask When Needed" 和 "Never Ask" 模式下对 `Bash` 和 MCP 工具调用的 Beta 阶段 LLM 复核，默认关闭。可在 `/lab` 或设置 > 实验室中开启 **Auto Review** / **自动复核**（或**开启全部 Beta 功能**），也可设置 `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` 或 `[experimental] auto_review = true` 开启。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | `[secondary_model]` 默认模型，未配置时为主模型 | 独立复核请求使用的模型别名 |
+| `effort` | `string` | — | 复核请求的 Thinking 档位，必须是复核模型支持的档位，否则报配置错误 |
+| `timeout_ms` | `integer` | `30000` | 复核截止时间（毫秒），范围 `1000` 到 `120000` |
+
+只复核 `Bash` 和 MCP 工具调用中、"Always Ask" 模式下会请你审批的调用；`Edit`、`Write` 等其他内置工具不参与复核，沿用当前权限模式的静态结果。`Bash` 和 MCP 调用中，已被更具体的规则放行的调用——静态可确认只读的 `Bash` 命令、你配置的 `allow` 规则、本会话已批准过的调用——不复核。在 "Ask When Needed" 模式下，你显式配置的 `ask` 规则不交给复核模型处理，仍会直接请你确认；在不弹窗的 "Never Ask" 模式下，命中这类 `ask` 规则的调用仍会交给复核模型审查。识别出的危险命令在两种模式下（包括 `kimi -p`）即使命中 `allow` 规则或本会话已批准，也仍会复核，因为 "Always Ask" 模式会就它们请你审批。复核结果为 `allow` 时直接执行；为 `deny` 或复核失败时，"Ask When Needed" 模式转人工审批，"Never Ask" 模式不执行工具并返回错误，主 Agent 可继续处理。
+
+复核模型会收到当前工作目录、当前的 AGENTS.md 快照（首次复核时读取，工作区指令变化时刷新）、压缩后仍在上下文里的用户和父级指令（每条用户指令附带它所回复的上一条 Agent 回复，最多取末尾 2000 个字符）、压缩摘要（仅用于保留显式边界，不作为放行授权）、已完成的历史工具调用（含用户人工批准标记），以及待审工具的完整参数与目标目录的 Git 工作树状态（仅探测工作区和已批准附加目录内的路径）。工具输出文本和媒体不会发送。请求超出模型窗口时，这次复核失败。复核期间若保留的授权指令或工作目录发生变化，不会使用旧结果执行动作。
+
+复核请求的 Thinking 档位不沿用主循环当前的档位。设置了 `effort` 时按它请求；未设置 `effort` 而复核借用了 `[secondary_model]` 的默认模型时，连同该节的 `default_effort` 一起沿用。这两种档位都不受 `[thinking].enabled = false` 影响。都没有时，`[thinking].enabled = false` 关闭复核的 thinking（模型不能关闭时除外）；开启 thinking 时依次取复核模型条目的 `default_effort`、全局 `[thinking].effort`、模型默认档。档位越高复核越慢，频繁超时时可调低 `effort` 或调大 `timeout_ms`。
+
+```toml
+[auto_review]
+model = "kimi-code/kimi-for-coding-highspeed"
+timeout_ms = 30000
+```
 
 ## `token_counting`
 
@@ -654,6 +677,7 @@ defaultCwd = "/workspace"
 | `theme` | `string` | `auto` | 配色主题：`auto`、`dark`、`light` 或[自定义主题](../customization/themes.md)名 |
 | `tui_mode` | `string` | `regular` | 界面布局：`regular` 渲染进终端滚动缓冲区；`fullscreen`（实验性）部分组件支持鼠标交互，交互更顺手 |
 | `copy_on_select` | `boolean` | `true` | 仅全屏模式：选中文本即复制；也可以按 `Ctrl-C` 复制 |
+| `wheel_scroll_lines` | `"auto" \| integer` | `"auto"` | 仅全屏模式：每次鼠标滚轮事件滚动的行数（`"auto"` 或正整数）；`"auto"` 会在快速滚动时自动提速 |
 | `render_latex` | `boolean` | `true` | 将 Markdown 中的 LaTeX 公式渲染为 Unicode 文本；`false` 保留原始源码 |
 | `disable_paste_burst` | `boolean` | `false` | 禁用非 bracketed paste 的粘贴突发兜底；默认开启，避免快速多行粘贴被逐行提交 |
 | `cache_expiry_hint` | `boolean` | `true` | resume 或长时间空闲后发消息时，若上下文缓存可能过期则提醒，可先压缩或新建会话（仅 v2 引擎） |
@@ -680,6 +704,7 @@ model、cwd、git 分支、permission 模式、plan 模式、上下文用量、s
 theme = "auto" # "auto" | "dark" | "light" | 自定义主题名
 # tui_mode = "regular" # "regular" | "fullscreen"（"fullscreen" 为实验性）
 copy_on_select = true # 仅全屏模式：false 表示按 Ctrl-C 才复制
+# wheel_scroll_lines = "auto" # 仅全屏模式："auto" 或每次滚轮事件滚动的行数（如 1、2、3、5、10）
 render_latex = true # false 表示消息中的 LaTeX 公式保留原始源码
 disable_paste_burst = false # true 表示禁用非 bracketed paste 的粘贴突发兜底
 cache_expiry_hint = true # false 表示关闭 resume / 空闲提交时的"缓存已过期"提醒弹窗

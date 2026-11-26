@@ -8,6 +8,7 @@ export interface SlashMenuDeps {
   editorRef: Ref<TextFieldLike | null>;
   skills: () => AppSkill[];
   emitCommand: (cmd: string) => void;
+  beforeExecute?: (cmd: string) => boolean;
   historyPush: (entry: string) => void;
   clearDraft?: () => void;
   insertSkillMention?: (
@@ -17,9 +18,6 @@ export interface SlashMenuDeps {
   resolveDesc?: (item: SlashCommand) => string;
   towerEnabled?: () => boolean;
   extraBuiltins?: () => readonly SlashCommand[] | undefined;
-  planEnabled?: () => boolean;
-  swarmEnabled?: () => boolean;
-  goalEnabled?: () => boolean;
 }
 
 const SLASH_MENU_TOKEN = /^[/、](\S*)$/;
@@ -29,7 +27,7 @@ export function slashMenuQuery(text: string): string | null {
 }
 
 export function useSlashMenu(deps: SlashMenuDeps) {
-  const { text, editorRef, skills, emitCommand, historyPush, clearDraft, insertSkillMention, resolveDesc, towerEnabled, extraBuiltins, planEnabled, swarmEnabled, goalEnabled } = deps;
+  const { text, editorRef, skills, emitCommand, historyPush, clearDraft, insertSkillMention, resolveDesc, towerEnabled, extraBuiltins } = deps;
 
   const open = ref(false);
   const items = ref<SlashCommand[]>([]);
@@ -55,13 +53,7 @@ export function useSlashMenu(deps: SlashMenuDeps) {
       open.value = false;
       return;
     }
-    const matches = filterCommandMatches(`/${query}`, buildSlashItems(skills(), {
-      towerEnabled: towerEnabled?.() === true,
-      planEnabled: planEnabled?.() !== false,
-      swarmEnabled: swarmEnabled?.() !== false,
-      goalEnabled: goalEnabled?.() !== false,
-      extraBuiltins: extraBuiltins?.(),
-    }), resolveDesc);
+    const matches = filterCommandMatches(`/${query}`, buildSlashItems(skills(), { towerEnabled: towerEnabled?.() === true, extraBuiltins: extraBuiltins?.() }), resolveDesc);
     items.value = matches.map((match) => match.item);
     ranges.value = matches.map((match) => match.ranges);
     const kept = completed;
@@ -119,6 +111,7 @@ export function useSlashMenu(deps: SlashMenuDeps) {
       });
       return;
     }
+    if (deps.beforeExecute?.(item.name) === false) return;
     text.value = '';
     clearDraft?.();
     historyPush(item.name);

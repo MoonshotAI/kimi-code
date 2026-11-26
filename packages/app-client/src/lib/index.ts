@@ -8,6 +8,8 @@ export * from './composerSubmit';
 export * from './composerMessageSnapshot';
 export * from './chatGate';
 export * from './imeComposition';
+export * from './modelCapabilities';
+export * from './modelMenuSearch';
 export * from './modelQuickSwitch';
 export * from './openFileAttachment';
 export * from './mediaPreview';

@@ -147,6 +147,8 @@ describe('WorktreeService', () => {
   let presence: ISessionPresence;
   let indexed: SessionSummary[];
   let peekImplicitError: Error | undefined;
+  let hostShellPath: string | undefined;
+  let shellPathBridge: { toShellPath: (p: string) => string; fromShellPath: (p: string) => string } | undefined;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'worktree-service-'));
@@ -158,9 +160,20 @@ describe('WorktreeService', () => {
     flagEnabled = true;
     indexed = [];
     peekImplicitError = undefined;
+    hostShellPath = undefined;
+    shellPathBridge = undefined;
 
     disposables = new DisposableStore();
-    const environment = { process: new HostProcessService() } as unknown as Environment;
+    const processService = new HostProcessService();
+    const environment = {
+      get host() {
+        return hostShellPath === undefined ? undefined : { shellPath: hostShellPath };
+      },
+      get shellPathBridge() {
+        return shellPathBridge;
+      },
+      process: processService,
+    } as unknown as Environment;
     const lease = { environment, track: <T>(resource: T): T => resource, dispose: () => {} };
     const hostFs = new HostFileSystem();
     const ix = createServices(disposables, {
@@ -500,7 +513,16 @@ describe('WorktreeService', () => {
       expect(existsSync(join(created.worktree.path, 'new.txt'))).toBe(false);
     });
 
-    it('points at the setup script of the source checkout without running it', async () => {
+    it('prefers the setup script checked out in the new worktree without running it', async () => {
+      commitFile(repo, '.kimi-code/worktree-setup.sh', 'touch ran\n');
+
+      const created = await create({ name: 'scripted-committed' });
+
+      expect(created.setupScript).toBe(join(created.worktree.path, '.kimi-code', 'worktree-setup.sh'));
+      expect(existsSync(join(created.worktree.path, 'ran'))).toBe(false);
+    });
+
+    it('falls back to the source checkout setup script when the new worktree does not have one', async () => {
       mkdirSync(join(repo, '.kimi-code'));
       writeFileSync(join(repo, '.kimi-code', 'worktree-setup.sh'), 'touch ran\n');
 
@@ -1253,6 +1275,57 @@ describe('WorktreeService', () => {
       expect(output).toContain(`dir=${created.worktree.path}\n`);
       expect(output).toContain(`pwd=${created.worktree.path}\n`);
       expect(output).toContain('oops\n');
+    });
+
+    it.skipIf(isWindows)('runs the setup script from the new worktree when checked out there', async () => {
+      const initial = git(repo, 'rev-parse', 'HEAD');
+      commitFile(repo, '.kimi-code/worktree-setup.sh', 'echo "variant=committed"\necho "self=$0"\n');
+      writeScript('echo "variant=local-uncommitted"\necho "self=$0"\n');
+
+      const fromHead = await create({ name: 'from-head' });
+      let headOutput = '';
+      const headResult = await service.runSetupScript(
+        { worktreePath: fromHead.worktree.path, sourceRoot: fromHead.sourceRoot },
+        { onOutput: (text) => (headOutput += text) },
+      );
+
+      expect(headResult.exitCode).toBe(0);
+      expect(headOutput).toContain('variant=committed\n');
+      expect(headOutput).toContain(`self=${join(fromHead.worktree.path, '.kimi-code', 'worktree-setup.sh')}\n`);
+
+      const fromOlder = await create({ name: 'from-older', base: initial });
+      let olderOutput = '';
+      const olderResult = await service.runSetupScript(
+        { worktreePath: fromOlder.worktree.path, sourceRoot: fromOlder.sourceRoot },
+        { onOutput: (text) => (olderOutput += text) },
+      );
+
+      expect(olderResult.exitCode).toBe(0);
+      expect(olderOutput).toContain('variant=local-uncommitted\n');
+      expect(olderOutput).toContain(`self=${join(realRepo, '.kimi-code', 'worktree-setup.sh')}\n`);
+    });
+
+    it.skipIf(isWindows)('uses the local environment shellPath and shellPathBridge when available', async () => {
+      commitFile(repo, '.kimi-code/worktree-setup.sh', 'echo "unused"\n');
+      const fakeShell = join(root, 'fake-bash.sh');
+      writeFileSync(fakeShell, '#!/bin/sh\necho "runner=host-shell"\necho "arg=$1"\n');
+      chmodSync(fakeShell, 0o755);
+      hostShellPath = fakeShell;
+      shellPathBridge = {
+        toShellPath: (nativePath) => `/bridged${nativePath}`,
+        fromShellPath: (shellPath) => shellPath,
+      };
+
+      const created = await create({ name: 'host-shell' });
+      let output = '';
+      const result = await service.runSetupScript(
+        { worktreePath: created.worktree.path, sourceRoot: created.sourceRoot },
+        { onOutput: (text) => (output += text) },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(output).toContain('runner=host-shell\n');
+      expect(output).toContain(`arg=/bridged${join(created.worktree.path, '.kimi-code', 'worktree-setup.sh')}\n`);
     });
 
     it.skipIf(isWindows)('returns once the script exits even if a background child holds its output', async () => {

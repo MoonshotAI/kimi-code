@@ -70,6 +70,7 @@ describe('survey history attachment', () => {
     };
     const counter = mountSurveyTurnCounter(ctx.dispatcher);
     await lateEntered.promise;
+    modelOf(ctx).expectCacheBreak('undo rewrites the history', { at: 'history' });
     const undo = ctx.rpc.undoHistory({ count: 1 });
     try {
       await vi.waitFor(() => {
@@ -326,6 +327,7 @@ describe('survey counts across journal transformations', () => {
   it('keeps turns from before a context clear', async () => {
     const { ctx, counter } = await freshAgent();
     await runUserTurn(ctx, 'one');
+    modelOf(ctx).expectCacheBreak('clearing the context starts a new history', { at: 'history' });
     await ctx.rpc.clearContext({});
     await runUserTurn(ctx, 'two');
 

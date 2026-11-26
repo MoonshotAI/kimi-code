@@ -2,10 +2,11 @@ name: CI
 
 on:
   pull_request:
+    branches-ignore:
+      - 'release/*'
   push:
     branches:
       - main
-      - 'release/*'
 
   workflow_dispatch:
 

@@ -247,7 +247,6 @@ import { stubAgentIdentity } from '../app/agentIdentity/stubs';
 import { stubClientIdentity } from '../app/bootstrap/stubs';
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
-import { guardPromptCachePrefix, PromptCacheGuardedLoopRequester } from './prompt-cache-guard';
 import {
   createScriptedGenerate,
   createMockProvider,
@@ -256,7 +255,9 @@ import {
   type MockProvider,
   type MockProviderOptions,
   type MockProviderResponse,
+  type ScriptedMockProvider,
 } from './scripted-generate';
+import type { CacheBreakOptions, PromptCacheEntry } from '@moonshot-ai/testkit/model';
 import { project as projectContext } from '#/agent/loop/projection';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
@@ -265,7 +266,7 @@ import {
   type WireSnapshotEntry,
 } from './snapshots';
 
-const TEST_HOME_DIR = '/home/test';
+const TEST_HOME_DIR = '/nonexistent';
 
 const MOCK_PROVIDER = {
   type: 'kimi',
@@ -1169,6 +1170,10 @@ export class AgentTestContext {
     this.requireScriptedModel('mockNextProviderResponse');
     this.scriptedGenerate.mockNextProviderResponse(input);
   };
+  readonly expectCacheBreak = (reason: string, options?: CacheBreakOptions): void => {
+    this.promptCacheProvider('expectCacheBreak').expectCacheBreak(reason, options);
+  };
+  readonly promptCache = (): readonly PromptCacheEntry[] => this.promptCacheProvider('promptCache').promptCache();
 
   constructor(overrides: readonly TestAgentServiceOverride[] = [], options: TestAgentOptions = {}) {
     this.options = options;
@@ -1229,9 +1234,7 @@ export class AgentTestContext {
           reg.defineInstance(
             IProtocolAdapterRegistry,
             createGenerateBackedGateway(
-              guardPromptCachePrefix(
-                options.generate ?? (options.model === undefined ? this.scriptedGenerate.provider : fetchBackedProvider(options.model.fetch)),
-              ),
+              options.generate ?? (options.model === undefined ? this.scriptedGenerate.provider : fetchBackedProvider(options.model.fetch)),
             ),
           );
           reg.defineInstance(
@@ -1516,12 +1519,14 @@ export class AgentTestContext {
       await start();
       this.runtimeStarted = true;
     };
-    (loop as { requester: IAgentLoopService['requester'] }).requester = new PromptCacheGuardedLoopRequester(
-      loop.requester,
-      this.agent.accessor.get(IAgentLoopService),
-      this.agent.accessor.get(IWireService),
-      () => this.restorePersisted(),
-    );
+    const requester = loop.requester;
+    (loop as { requester: IAgentLoopService['requester'] }).requester = {
+      coreRequester: (requesterOptions) => requester.coreRequester(requesterOptions),
+      prepareOperation: async (operationOptions, signal) => {
+        await this.restorePersisted();
+        return requester.prepareOperation(operationOptions, signal);
+      },
+    };
     adoptAgent!();
     this.installInteractionBridge();
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
@@ -2275,6 +2280,17 @@ export class AgentTestContext {
 
   async dispose(): Promise<void> {
     await this.close();
+  }
+
+  private promptCacheProvider(api: string): ScriptedMockProvider {
+    if (this.options.model !== undefined) {
+      throw new Error(`${api} belongs to the built-in harness model, but this agent uses the testkit model; call model.${api}(...) instead`);
+    }
+    const provider = this.options.generate ?? this.scriptedGenerate.provider;
+    if (!isScriptedProvider(provider)) {
+      throw new Error(`${api} needs the built-in harness model or a provider from createMockProvider(); this provider does not record the prompt cache`);
+    }
+    return provider;
   }
 
   private requireScriptedModel(api: string): void {
@@ -3064,4 +3080,8 @@ function drainPrompts(loop: IAgentLoopService): void {
   if (snapshot.activePromptId !== undefined) {
     loop.cancel({ promptId: snapshot.activePromptId });
   }
+}
+
+function isScriptedProvider(provider: MockProvider): provider is ScriptedMockProvider {
+  return 'expectCacheBreak' in provider;
 }

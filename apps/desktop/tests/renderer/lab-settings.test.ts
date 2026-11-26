@@ -25,8 +25,8 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 6; i++) await nextTick();
 }
 
-describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
-  it('places Tabbed session list in General -> Appearance and splits Lab into Beta and Experimental', async () => {
+describe('SettingsDialog Lab two-tier layout', () => {
+  it('renders Beta (context_inspector, prompt_prediction, auto_review) and Experimental (notify_user_app, session_mentions, sidebar_multi_tab, tower)', async () => {
     vi.stubGlobal('kimiDesktop', undefined);
     const setConfig = vi.fn().mockResolvedValue({ providers: {} });
     const getMeta = vi.fn().mockResolvedValue(null);
@@ -69,11 +69,33 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
         configValue: false,
       },
       {
-        id: 'notify_user',
-        title: 'NotifyUser tool',
-        description: 'Progress updates',
-        env: 'KIMI_CODE_EXPERIMENTAL_NOTIFY_USER',
+        id: 'prompt_prediction',
+        title: 'Prompt prediction',
+        description: 'Next prompt placeholder',
+        env: 'KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION',
         stage: 'beta',
+        effectTiming: 'immediate',
+        enabled: false,
+        active: false,
+        source: 'default',
+      },
+      {
+        id: 'auto_review',
+        title: 'Auto Review',
+        description: 'LLM tool call review',
+        env: 'KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW',
+        stage: 'beta',
+        effectTiming: 'immediate',
+        enabled: false,
+        active: false,
+        source: 'default',
+      },
+      {
+        id: 'notify_user_app',
+        title: 'Progress updates',
+        description: 'Progress updates',
+        env: 'KIMI_CODE_EXPERIMENTAL_NOTIFY_USER_APP',
+        stage: 'experimental',
         effectTiming: 'next-session',
         enabled: false,
         active: false,
@@ -92,10 +114,10 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
         source: 'default',
       },
       {
-        id: 'prompt_prediction',
-        title: 'Prompt prediction',
-        description: 'Next prompt placeholder',
-        env: 'KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION',
+        id: 'sidebar_multi_tab',
+        title: 'Tabbed session list',
+        description: 'Open / Done / Projects tabs',
+        env: 'KIMI_CODE_EXPERIMENTAL_SIDEBAR_MULTI_TAB',
         stage: 'experimental',
         effectTiming: 'immediate',
         enabled: false,
@@ -117,9 +139,11 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
     ];
     configStore().experimentalFlags = {
       context_inspector: false,
-      notify_user: false,
-      session_mentions: false,
       prompt_prediction: false,
+      auto_review: false,
+      notify_user_app: false,
+      session_mentions: false,
+      sidebar_multi_tab: false,
       tower: false,
     };
 
@@ -142,13 +166,10 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
     app.mount(host);
     await flush();
 
-    const generalSwitch = document.querySelector<HTMLButtonElement>(
-      'button[role="switch"][aria-label="多标签页的会话列表"]',
-    );
-    expect(generalSwitch).not.toBeNull();
-    generalSwitch!.click();
-    await flush();
-    expect(localStorage.getItem(STORAGE_KEYS.sidebarMultiTab)).toBe('1');
+    const generalPanel = document.querySelectorAll('section.panel')[0]!;
+    expect(
+      generalPanel.querySelector('button[role="switch"][aria-label="多标签页的会话列表"]'),
+    ).toBeNull();
 
     const labTabButton = [...document.querySelectorAll<HTMLButtonElement>('button.tab')].find((btn) =>
       btn.textContent?.includes('实验室'),
@@ -170,23 +191,31 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
     const contextSwitch = document.querySelector<HTMLButtonElement>(
       'button[role="switch"][aria-label="上下文用量"]',
     )!;
+    const promptPredictionSwitch = document.querySelector<HTMLButtonElement>(
+      'button[role="switch"][aria-label="提示词预测"]',
+    )!;
+    const autoReviewSwitch = document.querySelector<HTMLButtonElement>(
+      'button[role="switch"][aria-label="自动复核"]',
+    )!;
     const notifySwitch = document.querySelector<HTMLButtonElement>(
       'button[role="switch"][aria-label="进展更新"]',
     )!;
     const sessionMentionsSwitch = document.querySelector<HTMLButtonElement>(
       'button[role="switch"][aria-label="引用会话"]',
     )!;
-    const promptPredictionSwitch = document.querySelector<HTMLButtonElement>(
-      'button[role="switch"][aria-label="提示词预测"]',
+    const sidebarTabsSwitch = document.querySelector<HTMLButtonElement>(
+      'button[role="switch"][aria-label="多标签页的会话列表"]',
     )!;
     const towerSwitch = document.querySelector<HTMLButtonElement>(
       'button[role="switch"][aria-label="Tower 多 Agent 协作模式"]',
     )!;
 
     expect(contextSwitch.getAttribute('aria-checked')).toBe('false');
+    expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('false');
+    expect(autoReviewSwitch.getAttribute('aria-checked')).toBe('false');
     expect(notifySwitch.getAttribute('aria-checked')).toBe('false');
     expect(sessionMentionsSwitch.getAttribute('aria-checked')).toBe('false');
-    expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('false');
+    expect(sidebarTabsSwitch.getAttribute('aria-checked')).toBe('false');
     expect(towerSwitch.getAttribute('aria-checked')).toBe('true');
 
     betaMasterSwitch.click();
@@ -195,12 +224,16 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
     expect(setConfig).toHaveBeenCalledWith({ experimental: { beta: true } });
     expect(contextSwitch.getAttribute('aria-checked')).toBe('true');
     expect(contextSwitch.disabled).toBe(true);
-    expect(notifySwitch.getAttribute('aria-checked')).toBe('true');
-    expect(notifySwitch.disabled).toBe(true);
+    expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('true');
+    expect(promptPredictionSwitch.disabled).toBe(true);
+    expect(autoReviewSwitch.getAttribute('aria-checked')).toBe('true');
+    expect(autoReviewSwitch.disabled).toBe(true);
+    expect(notifySwitch.getAttribute('aria-checked')).toBe('false');
+    expect(notifySwitch.disabled).toBe(false);
     expect(sessionMentionsSwitch.getAttribute('aria-checked')).toBe('false');
     expect(sessionMentionsSwitch.disabled).toBe(false);
-    expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('false');
-    expect(promptPredictionSwitch.disabled).toBe(false);
+    expect(sidebarTabsSwitch.getAttribute('aria-checked')).toBe('false');
+    expect(sidebarTabsSwitch.disabled).toBe(false);
     expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
 
     betaMasterSwitch.click();
@@ -208,8 +241,10 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
 
     expect(contextSwitch.getAttribute('aria-checked')).toBe('false');
     expect(contextSwitch.disabled).toBe(false);
-    expect(notifySwitch.getAttribute('aria-checked')).toBe('false');
-    expect(notifySwitch.disabled).toBe(false);
+    expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('false');
+    expect(promptPredictionSwitch.disabled).toBe(false);
+    expect(autoReviewSwitch.getAttribute('aria-checked')).toBe('false');
+    expect(autoReviewSwitch.disabled).toBe(false);
 
     contextSwitch.click();
     await flush();
@@ -217,11 +252,28 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
     expect(contextSwitch.getAttribute('aria-checked')).toBe('true');
     expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
 
+    autoReviewSwitch.click();
+    await flush();
+    expect(setConfig).toHaveBeenCalledWith({ experimental: { auto_review: true } });
+    expect(autoReviewSwitch.getAttribute('aria-checked')).toBe('true');
+
+    notifySwitch.click();
+    await flush();
+    expect(setConfig).toHaveBeenCalledWith({ experimental: { notify_user_app: true } });
+    expect(notifySwitch.getAttribute('aria-checked')).toBe('true');
+
     sessionMentionsSwitch.click();
     await flush();
     expect(setConfig).toHaveBeenCalledWith({ experimental: { session_mentions: true } });
     expect(sessionMentionsSwitch.getAttribute('aria-checked')).toBe('true');
     expect(localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBeNull();
+
+    sidebarTabsSwitch.click();
+    await flush();
+    expect(setConfig).toHaveBeenCalledWith({ experimental: { sidebar_multi_tab: true } });
+    expect(sidebarTabsSwitch.getAttribute('aria-checked')).toBe('true');
+    expect(useSidebarTabs().sidebarTabs.value).toBe(true);
+    expect(localStorage.getItem(STORAGE_KEYS.sidebarMultiTab)).toBeNull();
 
     promptPredictionSwitch.click();
     await flush();

@@ -86,7 +86,7 @@ export class FlagService extends Disposable implements IFlagService {
     if (def === undefined) return undefined;
     const stage = def.stages[this.surface] ?? 'experimental';
     const resolved = this.evaluate(def, stage);
-    return this.state(def, stage, resolved.enabled, resolved.source, resolved.configValue);
+    return this.state(def, stage, resolved.enabled, resolved.source, resolved.env, resolved.configValue);
   }
 
   snapshot(): ExperimentalFlagMap {
@@ -122,21 +122,34 @@ export class FlagService extends Disposable implements IFlagService {
       .filter((state): state is ExperimentalFeatureState => state !== undefined);
   }
 
+  private resolveEnvOverride(
+    def: FlagDefinitionInput,
+  ): { readonly enabled: boolean; readonly env: string } | undefined {
+    const primary = parseBooleanEnv(this.bootstrap.getEnv(def.env));
+    if (primary !== undefined) return { enabled: primary, env: def.env };
+    if (def.fallbackEnv !== undefined) {
+      const fallback = parseBooleanEnv(this.bootstrap.getEnv(def.fallbackEnv));
+      if (fallback !== undefined) return { enabled: fallback, env: def.fallbackEnv };
+    }
+    return undefined;
+  }
+
   private evaluate(
     def: FlagDefinitionInput,
     stage: ExperimentalStage,
   ): {
     readonly enabled: boolean;
     readonly source: ExperimentalFlagSource;
+    readonly env: string;
     readonly configValue: boolean | undefined;
   } {
     const configValue = this.configOverrides[def.id];
-    const override = parseBooleanEnv(this.bootstrap.getEnv(def.env));
+    const override = this.resolveEnvOverride(def);
     if (override !== undefined) {
-      return { enabled: override, source: 'env', configValue };
+      return { enabled: override.enabled, source: 'env', env: override.env, configValue };
     }
     if (stage === 'ga') {
-      return { enabled: true, source: 'default', configValue };
+      return { enabled: true, source: 'default', env: def.env, configValue };
     }
     if (stage === 'beta') {
       const beta = this.betaState();
@@ -144,14 +157,15 @@ export class FlagService extends Disposable implements IFlagService {
         return {
           enabled: true,
           source: beta.source === 'env' ? 'master-env' : 'beta-config',
+          env: def.env,
           configValue,
         };
       }
     }
     if (configValue !== undefined) {
-      return { enabled: configValue, source: 'config', configValue };
+      return { enabled: configValue, source: 'config', env: def.env, configValue };
     }
-    return { enabled: false, source: 'default', configValue: undefined };
+    return { enabled: false, source: 'default', env: def.env, configValue: undefined };
   }
 
   private state(
@@ -159,6 +173,7 @@ export class FlagService extends Disposable implements IFlagService {
     stage: ExperimentalStage,
     enabled: boolean,
     source: ExperimentalFlagSource,
+    env: string,
     configValue: boolean | undefined,
   ): ExperimentalFeatureState {
     const active = def.isExposed !== undefined ? def.isExposed(this) && enabled : enabled;
@@ -168,7 +183,7 @@ export class FlagService extends Disposable implements IFlagService {
       description: def.description,
       stage,
       effectTiming: def.effectTiming ?? 'immediate',
-      env: def.env,
+      env,
       enabled,
       active,
       source,

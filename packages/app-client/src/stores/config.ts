@@ -1,6 +1,10 @@
 import { nextTick, ref } from 'vue';
 import { defineStore } from 'pinia';
-import { setContextInspectorEnabled, setSessionMentions } from '@moonshot-ai/app-core';
+import {
+  setContextInspectorEnabled,
+  setSessionMentions,
+  setSidebarTabs,
+} from '@moonshot-ai/app-core';
 import type {
   AppConfig,
   ServerExperimentalBeta,
@@ -44,6 +48,11 @@ const LEGACY_LOCAL_EXPERIMENTAL_ENTRIES = [
   {
     id: 'session_mentions',
     storageKey: STORAGE_KEYS.sessionMentions,
+    trueLiteral: '1',
+  },
+  {
+    id: 'sidebar_multi_tab',
+    storageKey: STORAGE_KEYS.sidebarMultiTab,
     trueLiteral: '1',
   },
 ] as const;
@@ -155,6 +164,16 @@ export const useConfigStore = defineStore('kimi.config', () => {
         : experimentalFlags.value['session_mentions'] === true ||
           safeGetString(STORAGE_KEYS.sessionMentions) === '1';
     setSessionMentions(mentionsEnabled);
+
+    const sidebarTabsFeature = experimentalFeatures.value.find(
+      (feature) => feature.id === 'sidebar_multi_tab',
+    );
+    const sidebarTabsEnabled =
+      sidebarTabsFeature !== undefined
+        ? sidebarTabsFeature.enabled
+        : experimentalFlags.value['sidebar_multi_tab'] === true ||
+          safeGetString(STORAGE_KEYS.sidebarMultiTab) === '1';
+    setSidebarTabs(sidebarTabsEnabled);
   }
 
   function noteConfigWrite(): void {
@@ -420,8 +439,22 @@ export const useConfigStore = defineStore('kimi.config', () => {
     return true;
   }
 
+  function resolveNotifyUserFlagId(): string {
+    if (experimentalFeatures.value.some((feature) => feature.id === 'notify_user_app')) {
+      return 'notify_user_app';
+    }
+    if (
+      experimentalFeatures.value.length === 0 &&
+      !('notify_user_app' in experimentalFlags.value) &&
+      'notify_user' in experimentalFlags.value
+    ) {
+      return 'notify_user';
+    }
+    return 'notify_user_app';
+  }
+
   async function setNotifyUserEnabled(on: boolean): Promise<boolean> {
-    return setExperimentalFlag('notify_user', on);
+    return setExperimentalFlag(resolveNotifyUserFlagId(), on);
   }
 
   async function setPromptPredictionEnabled(on: boolean): Promise<boolean> {

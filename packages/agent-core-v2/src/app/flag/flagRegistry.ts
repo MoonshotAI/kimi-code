@@ -20,6 +20,7 @@ export interface FlagDefinitionInput {
   readonly title: string;
   readonly description: string;
   readonly env: string;
+  readonly fallbackEnv?: string;
   readonly stages: Partial<Record<ExperimentalSurface, ExperimentalStage>>;
   readonly effectTiming?: ExperimentalEffectTiming;
   readonly isExposed?: (flags: IFlagService) => boolean;

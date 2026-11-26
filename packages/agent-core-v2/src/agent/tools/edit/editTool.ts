@@ -144,6 +144,5 @@ export class EditTool implements IEditTool {
 registerAgentToolService(IEditTool, EditTool, {
   name: 'Edit',
   domain: 'edit',
-  userConfigurable: true,
   requiredEnvironmentCapabilities: ['fs'],
 });

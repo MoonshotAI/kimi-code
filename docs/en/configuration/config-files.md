@@ -108,6 +108,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`models`](#models) | `table` | — | Model alias table |
 | [`thinking`](#thinking) | `table` | — | Default parameters for Thinking mode |
 | [`loop_control`](#loop-control) | `table` | — | Agent loop control parameters |
+| [`auto_review`](#auto-review) | `table` | — | Experimental LLM review in Ask When Needed and Never Ask modes |
 | [`task`](#task) | `table` | — | Background task and Tower agent runtime parameters; `background` is the legacy section name |
 | [`tools`](#tools) | `table` | — | Global tool switch |
 | [`image`](#image) | `table` | — | Image compression parameters |
@@ -324,6 +325,28 @@ Configuration errors fail loudly instead of falling back silently. Session creat
 `max_steps_per_turn` can be overridden by the `KIMI_LOOP_MAX_STEPS_PER_TURN` environment variable, and `max_attempts_per_step` by `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP`; both take higher priority than the config file. The former `KIMI_LOOP_MAX_RETRIES_PER_STEP` variable is deprecated but still honored (with a startup warning) when the new one is unset.
 
 Retries only apply to transient failures: connection errors, timeouts, HTTP 429 rate limits, and 5xx server errors. A 429 caused by an exhausted quota or insufficient account balance is not retried and fails immediately, since it cannot succeed until the account is recharged.
+
+## `auto_review`
+
+`auto_review` configures the Beta LLM reviewer for `Bash` and MCP tool calls in Ask When Needed and Never Ask modes. It is disabled by default. Enable **Auto Review** (or **Enable all Beta features**) in `/lab` or Settings > Lab, or set `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` or `[experimental] auto_review = true`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `model` | `string` | `[secondary_model]` default model, or main model | Model alias used for independent review requests |
+| `effort` | `string` | — | Thinking effort for review requests; must be an effort the review model supports, or a configuration error is reported |
+| `timeout_ms` | `integer` | `30000` | Review deadline in milliseconds, from `1000` to `120000` |
+
+Only `Bash` and MCP tool calls that Always Ask mode would ask you to approve are reviewed; other built-in tools such as `Edit` and `Write` skip review and keep the current permission mode's static result. Among `Bash` and MCP calls, those that a more specific rule already approves — statically read-only `Bash` commands, your `allow` rules, and calls approved for this session — skip review. In Ask When Needed mode, your explicit `ask` rules are not delegated to the reviewer and still prompt you directly; in Never Ask mode, where prompts are suppressed, calls matching those `ask` rules are still sent to the reviewer. Dangerous commands are still reviewed in both modes (including `kimi -p`) even when an `allow` rule or a session approval matches them, because Always Ask mode would ask about them. A reviewer `allow` lets the call run. A `deny` or a review failure asks for your approval in Ask When Needed mode; in Never Ask mode the tool returns an error without running and the main agent can continue.
+
+The reviewer receives the current working directory, the current AGENTS.md snapshot (loaded on first review and refreshed when workspace instructions change), the user and parent instructions still in context after compaction (each user instruction carries up to the last 2,000 characters of the agent reply it answers), compaction summaries (used only to retain explicit boundaries, never to grant authorization), completed prior tool calls (including whether you approved them), and the pending tool's complete arguments and target Git working-tree status (probed only within the workspace and approved additional directories). Tool output text and media are not sent. A request that exceeds the model window fails that review. If retained authorization instructions or the working directory change during review, the result is not used to execute the action.
+
+Review requests do not follow the main loop's current thinking effort. When `effort` is set, reviews use it. When `effort` is unset and the review borrows the `[secondary_model]` default model, it also borrows that section's `default_effort`. Neither of these is affected by `[thinking].enabled = false`. Otherwise, `[thinking].enabled = false` turns review thinking off unless the model cannot disable it; with thinking on, resolution continues with the review model entry's `default_effort`, then the global `[thinking].effort`, then the model's default. Higher efforts take longer; lower `effort` or raise `timeout_ms` if reviews time out.
+
+```toml
+[auto_review]
+model = "kimi-code/kimi-for-coding-highspeed"
+timeout_ms = 30000
+```
 
 ## `token_counting`
 
@@ -655,6 +678,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `theme` | `string` | `auto` | Color theme: `auto`, `dark`, `light`, or the name of a [custom theme](../customization/themes.md) |
 | `tui_mode` | `string` | `regular` | UI layout: `regular` renders into the terminal scrollback; `fullscreen` (experimental) makes parts of the UI mouse-interactive for a smoother experience |
 | `copy_on_select` | `boolean` | `true` | Fullscreen mode only: copy text as soon as you select it; you can also press `Ctrl-C` to copy |
+| `wheel_scroll_lines` | `"auto" \| integer` | `"auto"` | Fullscreen mode only: lines scrolled per mouse-wheel event (`"auto"` or a positive integer); `"auto"` speeds up automatically when scrolling fast |
 | `render_latex` | `boolean` | `true` | Render LaTeX math expressions in Markdown messages as Unicode text; `false` keeps the raw source |
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `cache_expiry_hint` | `boolean` | `true` | On resume or when submitting after a long idle stretch, warn that the context cache may have expired and offer to compact or start a new session (v2 engine only) |
@@ -681,6 +705,7 @@ Model, cwd, git branch, permission mode, plan mode, context usage, session id, v
 theme = "auto" # "auto" | "dark" | "light" | custom theme name
 # tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)
 copy_on_select = true # fullscreen only: false copies only when you press Ctrl-C
+# wheel_scroll_lines = "auto" # fullscreen only: "auto" or lines per wheel event (e.g. 1, 2, 3, 5, 10)
 render_latex = true # false keeps LaTeX math in messages as raw source
 disable_paste_burst = false # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = true # false disables the "cache expired" dialog on resume / idle submit

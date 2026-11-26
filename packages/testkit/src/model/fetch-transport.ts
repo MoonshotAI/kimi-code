@@ -2,6 +2,7 @@ import type { PlaybackSink } from '#/model/playback';
 import { connectionReset, CRASH_STATUS, crashBody, type RequestHandler } from '#/model/transport';
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 const nativeFetch = globalThis.fetch;
 
 export function createFetchTransport(handler: RequestHandler): typeof fetch {
@@ -9,12 +10,12 @@ export function createFetchTransport(handler: RequestHandler): typeof fetch {
     const request = new Request(input, init);
     const url = new URL(request.url);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return nativeFetch(input, init);
-    const body = await request.text();
+    const bytes = new Uint8Array(await request.arrayBuffer());
     request.signal.throwIfAborted();
     return new Promise<Response>((resolve, reject) => {
       const sink = new FetchSink(resolve, reject, request.signal);
       void handler(
-        { method: request.method, path: `${url.pathname}${url.search}`, headers: Object.fromEntries(request.headers), body },
+        { method: request.method, path: `${url.pathname}${url.search}`, headers: Object.fromEntries(request.headers), body: decoder.decode(bytes), bytes },
         sink,
       ).catch((error: unknown) => sink.crash(error));
     });

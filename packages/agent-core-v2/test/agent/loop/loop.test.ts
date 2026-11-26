@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { Event } from '#/_base/event';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { LoopRequester } from '#/agent/loop/requesterContract';
 import type { AgentLoopRequestObserver } from '#/agent/loop/requestObservation';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
@@ -22,6 +21,7 @@ import {
   IAgentLifecycleService,
   type AgentScopeCreatedEvent,
 } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   AssistantDelta,
   ThinkingDelta,
@@ -583,6 +583,34 @@ describe('Agent loop', () => {
       release.resolve();
       hook.dispose();
     }
+  });
+
+  testWithProvider('rejects a prompt before admission when a client opts out of queueing', async ({ agent, model }) => {
+    const agentLoop = agent.get(IAgentLoopService);
+    const metadata = agent.get(ISessionMetadata);
+    const first = 'Start the first turn.';
+    const queued = 'Run the queued turn.';
+    model.script(held('first', say('The first turn finished.')), say('The queued turn finished.'));
+
+    await expect(agentLoop.submit({ input: [{ type: 'text', text: first }], rejectIfBusy: true })).resolves.toMatchObject({ turn_id: 0 });
+    await model.hold('first').reached();
+    await expect(agentLoop.submit({
+      input: [{ type: 'text', text: 'Reject this prompt.' }],
+      rejectIfBusy: true,
+    })).rejects.toMatchObject({ code: 'turn.agent_busy' });
+    await expect(metadata.read()).resolves.toMatchObject({ lastPrompt: first });
+    expect(agentLoop.snapshot().queue).toEqual([]);
+
+    await expect(agentLoop.submit({
+      input: [{ type: 'text', text: queued }],
+      promptId: 'queued-prompt',
+    })).resolves.toBeUndefined();
+    const queuedPrompt = agentLoop.promptHandle('queued-prompt');
+    expect(queuedPrompt).toBeDefined();
+    model.hold('first').release();
+    await expect(queuedPrompt?.completion).resolves.toMatchObject({ state: 'completed' });
+    expect(model.requests('main')[1]?.texts('user')).toContain(queued);
+    await expect(metadata.read()).resolves.toMatchObject({ lastPrompt: queued });
   });
 
   it('fails with the error handler error when recovery throws', async () => {
@@ -2525,6 +2553,7 @@ describe('interruption reminder', () => {
     subscription.dispose();
     expect(interruptionReminders()).toHaveLength(1);
 
+    ctx.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await ctx.undoHistory(1);
 
     expect(ctx.contextData().history).toEqual([]);
@@ -2799,10 +2828,6 @@ describe('aborted step tool execution', () => {
     await ctx.restorePersisted();
     try {
       const slowToolStarted = registerAbortableWorkTool(ctx);
-      ctx.get(IAgentLoopService).update({ activeToolNames: ['Work', 'UpdateGoal'] });
-      await vi.waitFor(() => {
-        expect(ctx.get(IAgentToolPolicyService).isToolActive('UpdateGoal')).toBe(true);
-      });
       const goals = ctx.get(IAgentGoalService);
       await goals.createGoal({ objective: 'finish the task' });
       await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 60 } });

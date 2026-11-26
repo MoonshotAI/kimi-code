@@ -5918,16 +5918,24 @@ describe('setNotifyUserEnabled', () => {
     configStore().resetConfig();
   });
 
-  it('does not update notify_user flag when the config write fails', async () => {
+  it('does not update notify_user_app flag when the config write fails', async () => {
     apiMock.setConfig.mockRejectedValueOnce(new Error('write conflict'));
     expect(await configStore().setNotifyUserEnabled(true)).toBe(false);
-    expect(configStore().experimentalFlags['notify_user']).toBeUndefined();
+    expect(configStore().experimentalFlags['notify_user_app']).toBeUndefined();
   });
 
-  it('updates notify_user flag only after a successful write', async () => {
+  it('updates notify_user_app flag only after a successful write and falls back to notify_user against legacy servers', async () => {
     apiMock.setConfig.mockResolvedValue({ providers: {}, defaultModel: 'model-new' });
     apiMock.getMeta.mockResolvedValue(null);
     expect(await configStore().setNotifyUserEnabled(true)).toBe(true);
+    expect(apiMock.setConfig).toHaveBeenCalledWith({ experimental: { notify_user_app: true } });
+    expect(configStore().experimentalFlags['notify_user_app']).toBe(true);
+
+    configStore().resetConfig();
+    configStore().experimentalFlags = { notify_user: false };
+    apiMock.setConfig.mockClear();
+    expect(await configStore().setNotifyUserEnabled(true)).toBe(true);
+    expect(apiMock.setConfig).toHaveBeenCalledWith({ experimental: { notify_user: true } });
     expect(configStore().experimentalFlags['notify_user']).toBe(true);
   });
 
@@ -5995,21 +6003,25 @@ describe('setNotifyUserEnabled', () => {
     expect(configStore().experimentalFlags['notify_user']).toBe(false);
   });
 
-  it('migrates legacy localStorage context_inspector and session_mentions into config.toml once without overriding existing configValue', async () => {
-    const { useContextInspector, useSessionMentions } = await import('@moonshot-ai/app-core');
+  it('migrates legacy localStorage context_inspector, session_mentions, and sidebar_multi_tab into config.toml once without overriding existing configValue', async () => {
+    const { useContextInspector, useSessionMentions, useSidebarTabs } = await import('@moonshot-ai/app-core');
     localStorage.setItem(STORAGE_KEYS.contextInspector, 'true');
     localStorage.setItem(STORAGE_KEYS.sessionMentions, '1');
+    localStorage.setItem(STORAGE_KEYS.sidebarMultiTab, '1');
     configStore().resetConfig();
 
     expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
     expect(useSessionMentions().sessionMentions.value).toBe(true);
+    expect(useSidebarTabs().sidebarTabs.value).toBe(true);
 
     apiMock.getMeta.mockRejectedValueOnce(new Error('transient offline'));
     await configStore().refreshServerMeta();
     expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
     expect(useSessionMentions().sessionMentions.value).toBe(true);
+    expect(useSidebarTabs().sidebarTabs.value).toBe(true);
     expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBe('true');
     expect(localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBe('1');
+    expect(localStorage.getItem(STORAGE_KEYS.sidebarMultiTab)).toBe('1');
 
     apiMock.getMeta.mockResolvedValueOnce({
       serverVersion: '1.0.0',
@@ -6023,8 +6035,10 @@ describe('setNotifyUserEnabled', () => {
     await configStore().refreshServerMeta();
     expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
     expect(useSessionMentions().sessionMentions.value).toBe(true);
+    expect(useSidebarTabs().sidebarTabs.value).toBe(true);
     expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBe('true');
     expect(localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBe('1');
+    expect(localStorage.getItem(STORAGE_KEYS.sidebarMultiTab)).toBe('1');
 
     apiMock.setConfig.mockResolvedValue({ providers: {} });
     apiMock.getMeta
@@ -6032,7 +6046,11 @@ describe('setNotifyUserEnabled', () => {
         serverVersion: '1.0.0',
         openInApps: [],
         dangerousBypassAuth: false,
-        experimentalFlags: { context_inspector: false, session_mentions: false },
+        experimentalFlags: {
+          context_inspector: false,
+          session_mentions: false,
+          sidebar_multi_tab: false,
+        },
         experimentalBeta: {
           enabled: false,
           source: 'default',
@@ -6061,6 +6079,17 @@ describe('setNotifyUserEnabled', () => {
             active: false,
             source: 'default',
           },
+          {
+            id: 'sidebar_multi_tab',
+            title: 'Tabbed session list',
+            description: 'Open / Done / Projects tabs',
+            env: 'KIMI_CODE_EXPERIMENTAL_SIDEBAR_MULTI_TAB',
+            stage: 'experimental',
+            effectTiming: 'immediate',
+            enabled: false,
+            active: false,
+            source: 'default',
+          },
         ],
         backend: 'v2',
         webTitle: '',
@@ -6070,7 +6099,11 @@ describe('setNotifyUserEnabled', () => {
         serverVersion: '1.0.0',
         openInApps: [],
         dangerousBypassAuth: false,
-        experimentalFlags: { context_inspector: true, session_mentions: true },
+        experimentalFlags: {
+          context_inspector: true,
+          session_mentions: true,
+          sidebar_multi_tab: true,
+        },
         experimentalBeta: {
           enabled: false,
           source: 'default',
@@ -6094,6 +6127,18 @@ describe('setNotifyUserEnabled', () => {
             title: 'Session mentions',
             description: 'Reference sessions',
             env: 'KIMI_CODE_EXPERIMENTAL_SESSION_MENTIONS',
+            stage: 'experimental',
+            effectTiming: 'immediate',
+            enabled: true,
+            active: true,
+            source: 'config',
+            configValue: true,
+          },
+          {
+            id: 'sidebar_multi_tab',
+            title: 'Tabbed session list',
+            description: 'Open / Done / Projects tabs',
+            env: 'KIMI_CODE_EXPERIMENTAL_SIDEBAR_MULTI_TAB',
             stage: 'experimental',
             effectTiming: 'immediate',
             enabled: true,
@@ -6112,12 +6157,15 @@ describe('setNotifyUserEnabled', () => {
       experimental: {
         context_inspector: true,
         session_mentions: true,
+        sidebar_multi_tab: true,
       },
     });
     expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
     expect(localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBeNull();
+    expect(localStorage.getItem(STORAGE_KEYS.sidebarMultiTab)).toBeNull();
     expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
     expect(useSessionMentions().sessionMentions.value).toBe(true);
+    expect(useSidebarTabs().sidebarTabs.value).toBe(true);
 
     apiMock.setConfig.mockClear();
     localStorage.setItem(STORAGE_KEYS.contextInspector, 'true');

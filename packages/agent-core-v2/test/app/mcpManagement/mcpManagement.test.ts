@@ -55,8 +55,8 @@ import {
 import { stubLog } from '../../_base/log/stubs';
 import {
   createMemoryMcpOAuthStore,
-  startInProcessHttpMcpServer,
-  stdioFixture,
+  startEchoHttpMcpServer,
+  mockStdioServer,
 } from '../../mcpCore/stubs';
 import { stubAgentIdentity } from '../agentIdentity/stubs';
 
@@ -189,7 +189,7 @@ describe('McpManagementService', () => {
   });
 
   async function startHttpServer(): Promise<{ url: string }> {
-    const server = await startInProcessHttpMcpServer();
+    const server = await startEchoHttpMcpServer();
     httpServers.push(server);
     return server;
   }
@@ -763,8 +763,7 @@ describe('McpManagementService', () => {
         server: {
           name: 'stdio-probe',
           transport: 'stdio',
-          command: process.execPath,
-          args: [stdioFixture],
+          ...mockStdioServer(),
         },
         cwd,
       });
@@ -804,7 +803,7 @@ describe('McpManagementService', () => {
         join(project, '.kimi-code', 'mcp.json'),
         JSON.stringify({
           mcpServers: {
-            local: { command: process.execPath, args: [stdioFixture] },
+            local: mockStdioServer(),
           },
         }),
         'utf8',
@@ -832,8 +831,7 @@ describe('McpManagementService', () => {
         server: {
           name: 'stdio-probe',
           transport: 'stdio',
-          command: process.execPath,
-          args: [stdioFixture],
+          ...mockStdioServer(),
         },
         cwd,
       });

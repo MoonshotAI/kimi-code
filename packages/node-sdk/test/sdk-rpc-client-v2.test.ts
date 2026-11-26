@@ -9,8 +9,9 @@ import {
   resolveKimiCodeOAuthRef,
   resolveKimiTokenStorageName,
 } from '@moonshot-ai/kimi-code-oauth';
-import { createGitRepository, createGitWorktree, type GitWorktreeLayout } from '@moonshot-ai/testkit/fixtures';
+import { createGitRepository, createGitWorktree, fakeMcpServer, type GitWorktreeLayout } from '@moonshot-ai/testkit/fixtures';
 import { createFakeModel, say } from '@moonshot-ai/testkit/model';
+import { createKimiServices } from '@moonshot-ai/testkit/services';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -1391,7 +1392,8 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     tempDirs.push(homeDir);
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
-    const titleBaseUrl = 'https://api.example.test/coding/v1';
+    const kimi = createKimiServices({ accessToken: 'test-access-token' });
+    const titleBaseUrl = kimi.baseUrl;
     const titleOAuthRef = resolveKimiCodeOAuthRef({ baseUrl: titleBaseUrl });
     await new FileTokenStorage(join(homeDir, 'credentials')).save(
       resolveKimiTokenStorageName({ oauthKey: titleOAuthRef.key }),
@@ -1429,16 +1431,8 @@ key = "${titleOAuthRef.key}"
 `,
       'utf-8',
     );
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url === 'https://api.example.test/coding/v1/tools') {
-        return new Response(JSON.stringify({ title: 'Generated title' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+    kimi.title('Generated title');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(kimi.fetch);
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
@@ -1482,6 +1476,7 @@ key = "${titleOAuthRef.key}"
           patch: { title: 'Generated title', isCustomTitle: false },
         }),
       ]);
+      kimi.verify();
     } finally {
       await harness.close();
       fetchSpy.mockRestore();
@@ -1493,7 +1488,8 @@ key = "${titleOAuthRef.key}"
     tempDirs.push(homeDir);
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
-    const titleBaseUrl = 'https://api.example.test/coding/v1';
+    const kimi = createKimiServices({ accessToken: 'test-access-token' });
+    const titleBaseUrl = kimi.baseUrl;
     const titleOAuthRef = resolveKimiCodeOAuthRef({ baseUrl: titleBaseUrl });
     await new FileTokenStorage(join(homeDir, 'credentials')).save(
       resolveKimiTokenStorageName({ oauthKey: titleOAuthRef.key }),
@@ -1531,22 +1527,9 @@ key = "${titleOAuthRef.key}"
 `,
       'utf-8',
     );
-    let markFetchStarted!: () => void;
-    let resolveFetch!: (response: Response) => void;
-    const fetchStarted = new Promise<void>((resolve) => {
-      markFetchStarted = resolve;
-    });
-    const fetchResponse = new Promise<Response>((resolve) => {
-      resolveFetch = resolve;
-    });
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url === 'https://api.example.test/coding/v1/tools') {
-        markFetchStarted();
-        return fetchResponse;
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+    kimi.title('Generated title');
+    const titleRequest = kimi.holdNext('title');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(kimi.fetch);
     const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
 
     try {
@@ -1559,7 +1542,7 @@ key = "${titleOAuthRef.key}"
       await client.closeSession({ sessionId: 'ses_title_race' });
 
       const titlePromise = client.generateSessionTitle({ id: 'ses_title_race' });
-      await fetchStarted;
+      await titleRequest.reached();
       const sessionManager = client.engineAccessor.get(ISessionManager);
       const tempHandle = sessionManager.get('ses_title_race');
       expect(tempHandle).toBeDefined();
@@ -1577,12 +1560,7 @@ key = "${titleOAuthRef.key}"
         event.waitUntil(closeGate);
       });
 
-      resolveFetch(
-        new Response(JSON.stringify({ title: 'Generated title' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      );
+      titleRequest.release();
       await closeStarted;
 
       const order: string[] = [];
@@ -1608,6 +1586,7 @@ key = "${titleOAuthRef.key}"
           { interval: 50, timeout: 4000 },
         )
         .toBe('Resumed title');
+      kimi.verify();
     } finally {
       await client.close();
       fetchSpy.mockRestore();
@@ -2646,7 +2625,7 @@ key = "${titleOAuthRef.key}"
       tempDirs.push(homeDir, workDir);
       const client = new SDKRpcClientV2({
         homeDir,
-        identity: { ...TEST_IDENTITY, platform: 'kimi_code_desktop' },
+        identity: TEST_IDENTITY,
         uiCapabilities: panel ? ['update_panel'] : [],
       });
       try {
@@ -2794,19 +2773,20 @@ key = "${titleOAuthRef.key}"
     30_000,
   );
 
-  it('enables NotifyUser by default on CLI unless disabled by env', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+  it('isolates CLI notify_user and desktop notify_user_app in shared config.toml', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER_APP', '');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-notify-cli-home-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-notify-cli-work-'));
     tempDirs.push(homeDir, workDir);
-    const client = new SDKRpcClientV2({
+    const cliClient = new SDKRpcClientV2({
       homeDir,
       identity: TEST_IDENTITY,
       uiCapabilities: ['update_panel'],
     });
     try {
-      await client.setConfig({
+      await cliClient.setConfig({
         providers: {
           stub: {
             type: 'openai',
@@ -2816,10 +2796,10 @@ key = "${titleOAuthRef.key}"
         },
         models: { stub: { provider: 'stub', model: 'stub', maxContextSize: 32000 } },
         defaultModel: 'stub',
-        experimental: { notify_user: false },
+        experimental: { notify_user: true, notify_user_app: false },
       });
-      await client.createSession({ id: 'ses_notify_cli', workDir });
-      const lifecycle = getLiveSessionById(client.engineAccessor, 'ses_notify_cli')!.accessor.get(
+      await cliClient.createSession({ id: 'ses_notify_cli', workDir });
+      const lifecycle = getLiveSessionById(cliClient.engineAccessor, 'ses_notify_cli')!.accessor.get(
         IAgentLifecycleService,
       );
       await lifecycle.create({ agentId: 'main', binding: { profile: 'agent', model: 'stub' } });
@@ -2832,20 +2812,19 @@ key = "${titleOAuthRef.key}"
           .some((tool) => tool.name === 'NotifyUser'),
       ).toBe(true);
     } finally {
-      await client.close();
+      await cliClient.close();
     }
 
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '0');
-    const disabledClient = new SDKRpcClientV2({
+    const desktopClient = new SDKRpcClientV2({
       homeDir,
-      identity: TEST_IDENTITY,
+      identity: { ...TEST_IDENTITY, platform: 'kimi_code_desktop' },
       uiCapabilities: ['update_panel'],
     });
     try {
-      await disabledClient.createSession({ id: 'ses_notify_cli_off', workDir });
+      await desktopClient.createSession({ id: 'ses_notify_desktop_off', workDir });
       const lifecycle = getLiveSessionById(
-        disabledClient.engineAccessor,
-        'ses_notify_cli_off',
+        desktopClient.engineAccessor,
+        'ses_notify_desktop_off',
       )!.accessor.get(IAgentLifecycleService);
       await lifecycle.create({ agentId: 'main', binding: { profile: 'agent', model: 'stub' } });
       const main = lifecycle.handleOf('main')!;
@@ -2857,7 +2836,7 @@ key = "${titleOAuthRef.key}"
           .some((tool) => tool.name === 'NotifyUser'),
       ).toBe(false);
     } finally {
-      await disabledClient.close();
+      await desktopClient.close();
       vi.unstubAllEnvs();
     }
   });
@@ -4049,10 +4028,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
 });
 
 describe('SDKRpcClientV2 workspace MCP servers', () => {
-  const server = {
-    command: process.execPath,
-    args: [new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url).pathname],
-  };
+  const server = fakeMcpServer('project', { tools: [{ name: 'echo', description: 'Echoes input text', inputSchema: { properties: { text: { type: 'string' } }, required: ['text'] }, reply: { text: { argument: 'text' } } }] });
 
   async function setup() {
     vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
@@ -4189,7 +4165,7 @@ describe('SDKRpcClientV2 workspace MCP servers', () => {
     try {
       const session = await client.engineAccessor.get(ISessionManager).create({
         workDir,
-        mcpServers: { own: { transport: 'stdio', ...server, environment_id: 'local' } },
+        mcpServers: { own: { transport: 'stdio', command: server.command, args: [...server.args], environment_id: 'local' } },
       });
       const mcp = session.accessor.get(ISessionMcpHandle);
       await mcp.ready;
@@ -4205,10 +4181,7 @@ describe('SDKRpcClientV2 workspace MCP servers', () => {
 });
 
 describe('SDKRpcClientV2 MCP servers of a working directory', () => {
-  const cwdServer = {
-    command: process.execPath,
-    args: [new URL('../../agent-core-v2/test/mcpCore/fixtures/cwd-stdio-server.mjs', import.meta.url).pathname],
-  };
+  const cwdServer = fakeMcpServer('cwd', { tools: [{ name: 'get_cwd', reply: { text: { cwd: true } } }] });
 
   async function repository(): Promise<GitWorktreeLayout> {
     const base = await realpath(await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-repo-')));
@@ -4336,7 +4309,7 @@ describe('SDKRpcClientV2 MCP servers of a working directory', () => {
     const src = join(main, 'src');
     await mkdir(src);
     const client = await makeClient();
-    const mcpServers = { eph: { transport: 'stdio', ...cwdServer, environment_id: 'local' } } as const;
+    const mcpServers = { eph: { transport: 'stdio' as const, command: cwdServer.command, args: [...cwdServer.args], environment_id: 'local' } };
     try {
       for (const [start, dir] of [
         [{ workDir: main }, main],

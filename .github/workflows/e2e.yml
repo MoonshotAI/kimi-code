@@ -3,6 +3,8 @@ name: E2E
 # Every push to main runs the suite. A pull request runs it only when it is
 # ready for review and either carries the e2e label or changes the suite
 # itself, so the shared runner pool is not spent on every push of every PR.
+# The Windows jobs run on those pull requests and on manual runs, not on
+# pushes to main, so each merge does not take another six runners.
 on:
   workflow_dispatch:
   push:
@@ -239,15 +241,21 @@ jobs:
           retention-days: 7
 
   windows:
-    name: Windows ${{ matrix.surface }} (manual)
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    name: Windows ${{ matrix.surface }} (optional${{ matrix.shards > 1 && format(', {0}/{1}', matrix.shard, matrix.shards) || '' }})
+    if: ${{ github.event_name != 'push' }}
     needs: build
     runs-on: windows-latest
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        surface: [tui, acp, desktop, web]
+        include:
+          - { surface: tui, shard: 1, shards: 1 }
+          - { surface: acp, shard: 1, shards: 1 }
+          - { surface: desktop, shard: 1, shards: 2 }
+          - { surface: desktop, shard: 2, shards: 2 }
+          - { surface: web, shard: 1, shards: 2 }
+          - { surface: web, shard: 2, shards: 2 }
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -272,18 +280,18 @@ jobs:
         if: ${{ matrix.surface == 'web' }}
         run: pnpm --filter @moonshot-ai/e2e exec playwright install chromium
       - name: Run the scenarios and driver self-tests on Windows
-        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=${{ matrix.surface }}
+        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=${{ matrix.surface }} --shard=${{ matrix.shard }}/${{ matrix.shards }}
         env:
           TESTKIT_CLI_BUILD: dist
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
-          name: e2e-windows-${{ matrix.surface }}-report
+          name: e2e-windows-${{ matrix.surface }}-report${{ matrix.shards > 1 && format('-{0}', matrix.shard) || '' }}
           path: tests/e2e/playwright-report/
           retention-days: 7
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: e2e-windows-${{ matrix.surface }}-failure
+          name: e2e-windows-${{ matrix.surface }}-failure${{ matrix.shards > 1 && format('-{0}', matrix.shard) || '' }}
           path: tests/e2e/test-results/
           retention-days: 7
