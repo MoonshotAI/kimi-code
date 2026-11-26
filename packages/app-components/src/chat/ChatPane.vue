@@ -36,7 +36,7 @@ import CronNotice from './CronNotice.vue';
 import GoalNotice from './GoalNotice.vue';
 import MessageTime from './MessageTime.vue';
 import MediaLightbox from './MediaLightbox.vue';
-import { openFileContextMenu } from './fileContextMenu';
+import { hasFileContextMenuTarget, openFileContextMenu } from './fileContextMenu';
 import { createChatFilePathResolver } from './turnFilePathIndex';
 import MediaRail from './MediaRail.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
@@ -548,7 +548,7 @@ function onChatPointerdown(): void {
 function onChatKeydown(event: KeyboardEvent): void {
   if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
   const target = event.target;
-  if (!(target instanceof Element)) return;
+  if (!(target instanceof Element) || hasFileContextMenuTarget(target)) return;
   const wrapper = target.closest<HTMLElement>('.table-node-wrapper');
   if (!wrapper || tableSelectionContextText(target) === null) return;
   event.preventDefault();

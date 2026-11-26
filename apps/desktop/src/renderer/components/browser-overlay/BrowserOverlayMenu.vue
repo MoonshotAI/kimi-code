@@ -148,7 +148,7 @@ const compositeStyle = computed((): Record<string, string> => {
 
 const submenuStyle = computed((): Record<string, string> => {
   const layout = compositeLayout.value;
-  if (layout === null) return { width: 'max-content', minWidth: '0px', opacity: '0', pointerEvents: 'none' };
+  if (layout === null) return { width: 'max-content', minWidth: '0px' };
   return {
     left: `${layout.submenuLeft}px`,
     top: `${layout.submenuTop}px`,
@@ -645,7 +645,8 @@ onUnmounted(() => {
         :register="false"
         role="menu"
         aria-label="submenu"
-        class="browser-overlay-menu browser-overlay-submenu is-presented"
+        class="browser-overlay-menu browser-overlay-submenu"
+        :class="{ 'is-presented': presented && compositeLayout !== null, 'is-closing': closing }"
         :style="submenuStyle"
         @click.stop
         @contextmenu.prevent

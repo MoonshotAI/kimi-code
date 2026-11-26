@@ -49,6 +49,10 @@ function fileMenuTarget(el: Element): { path: string; kind: 'file' | 'folder'; s
   return null;
 }
 
+export function hasFileContextMenuTarget(el: Element): boolean {
+  return fileMenuTarget(el) !== null;
+}
+
 export function openFileContextMenu(event: MouseEvent, cwd?: string): void {
   const target = event.target;
   if (!(target instanceof Element)) return;

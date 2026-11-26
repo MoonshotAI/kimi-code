@@ -98,8 +98,8 @@ const MenuConfig = Type.Object({
 const Shown = Type.Object({
   requestId: BrowserRequestIdSchema,
   placement: Type.Optional(Placement),
-  x: Type.Optional(Type.Number({ minimum: -16384, maximum: 16384 })),
-  y: Type.Optional(Type.Number({ minimum: -16384, maximum: 16384 })),
+  x: Type.Optional(Type.Number()),
+  y: Type.Optional(Type.Number()),
 });
 const Action = Type.Object({ menuId: Id, itemId: Id, keepOpen: OptionalFlag });
 const CloseReason = Type.Enum(['action', 'dismiss', 'escape', 'replaced', 'window-blur', 'window-move', 'window-resize', 'host-closed', 'programmatic']);
