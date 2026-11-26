@@ -89,6 +89,51 @@ describe('worktree setup engine', () => {
     );
   });
 
+  it('leaves the worktree of a setup that picked the same name first untouched', async () => {
+    const root = await createRepo('same-name');
+    const plan = (): Promise<WorktreeCreation> =>
+      WorktreeCreation.plan({
+        repoRoot: root,
+        projectDir: join(scratch, 'same-name-worktrees'),
+        osHomeDir: scratch,
+        request: { source_branch: 'main' },
+        now: () => new Date(2026, 0, 2),
+        randomSuffix: () => 'cafe',
+      });
+    const [first, second] = [await plan(), await plan()];
+    expect(second.target).toEqual(first.target);
+
+    expect(await first.run(progressOf(first), new AbortController().signal)).toMatchObject({ kind: 'done' });
+    const progress = progressOf(second);
+    expect(await second.run(progress, new AbortController().signal)).toMatchObject({
+      kind: 'failed',
+      step: 'create',
+    });
+
+    expect(progress.steps[0]?.output).toMatch(/EEXIST|already exists/);
+    expect(git(first.target.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(first.target.branch);
+    expect(git(root, 'branch', '--list', first.target.branch)).toContain(first.target.branch);
+  });
+
+  it('keeps a branch of the same name that appeared after planning', async () => {
+    const root = await createRepo('late-branch');
+    const creation = await WorktreeCreation.plan({
+      repoRoot: root,
+      projectDir: join(scratch, 'late-branch-worktrees'),
+      osHomeDir: scratch,
+      request: { source_branch: 'main' },
+    });
+    git(root, 'branch', creation.target.branch);
+
+    expect(await creation.run(progressOf(creation), new AbortController().signal)).toMatchObject({
+      kind: 'failed',
+      step: 'create',
+    });
+
+    expect(git(root, 'branch', '--list', creation.target.branch)).toContain(creation.target.branch);
+    expect(existsSync(creation.target.path)).toBe(false);
+  });
+
   it('fails with a timeout and creates nothing when the fetch hangs', async () => {
     const root = await createRepo('fetch-timeout');
     hangingRemote(root);

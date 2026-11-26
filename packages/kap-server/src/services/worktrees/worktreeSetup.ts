@@ -13,6 +13,7 @@ import type {
 } from '../../protocol/worktree';
 import { gitText, runGit, type CommandResult } from './command';
 import {
+  branchExists,
   isDirty,
   resolveRemoteRef,
   takenBranchNames,
@@ -281,8 +282,16 @@ export class WorktreeCreation {
     base: WorktreeBase,
   ): Promise<StepOutcome<string | undefined>> {
     const { repoRoot } = this.options;
+    let reserved = false;
+    let branchCreated = false;
     const result = await runStepCommand(progress, 'create', async (onOutput) => {
       await mkdir(dirname(this.target.path), { recursive: true });
+      await mkdir(this.target.path);
+      reserved = true;
+      if (await branchExists(repoRoot, this.target.branch)) {
+        throw new Error(`a branch named '${this.target.branch}' already exists`);
+      }
+      branchCreated = true;
       return runGit(repoRoot, this.createArgs(base.ref), {
         signal,
         timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
@@ -305,7 +314,7 @@ export class WorktreeCreation {
       setStep(progress, 'create', { state: 'done', output: undefined });
       return { kind: 'done', value: await gitText(this.target.path, ['rev-parse', 'HEAD']) };
     }
-    await removeWorktreeArtifacts(repoRoot, this.target, true);
+    if (reserved) await removeWorktreeArtifacts(repoRoot, this.target, branchCreated);
     if (result.aborted) {
       setStep(progress, 'create', { state: 'stopped' });
       return { kind: 'stopped', step: 'create' };
