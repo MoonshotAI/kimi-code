@@ -455,26 +455,13 @@ export class TowerStore {
   }
 
   private async reapStaleStateLock(lockPath: string): Promise<boolean> {
+    if ((await this.readDeadStateLockHolder(lockPath)) === undefined) return false;
     const guard = await this.acquireStateLockReaper(lockPath);
     if (guard === undefined) return false;
     try {
-      let content: string;
-      try {
-        content = await readFile(lockPath, 'utf8');
-      } catch {
-        return false;
-      }
-      const pid = Number(/^pid=(\d+)\b/.exec(content)?.[1]);
-      if (!Number.isSafeInteger(pid) || pid <= 0 || !(await this.stateLockHolderIsDead(pid))) {
-        return false;
-      }
-      let confirmed: string;
-      try {
-        confirmed = await readFile(lockPath, 'utf8');
-      } catch {
-        return false;
-      }
-      if (confirmed !== content || !(await this.stateLockHolderIsDead(pid))) return false;
+      const content = await this.readDeadStateLockHolder(lockPath);
+      if (content === undefined) return false;
+      if ((await this.readDeadStateLockHolder(lockPath)) !== content) return false;
       try {
         await rm(lockPath);
         return true;
@@ -485,6 +472,20 @@ export class TowerStore {
     } finally {
       await this.releaseStateLockReaper(guard);
     }
+  }
+
+  private async readDeadStateLockHolder(lockPath: string): Promise<string | undefined> {
+    let content: string;
+    try {
+      content = await readFile(lockPath, 'utf8');
+    } catch {
+      return undefined;
+    }
+    const pid = Number(/^pid=(\d+)\b/.exec(content)?.[1]);
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !(await this.stateLockHolderIsDead(pid))) {
+      return undefined;
+    }
+    return content;
   }
 
   private async stateLockReaperRef(lockPath: string): Promise<string> {
