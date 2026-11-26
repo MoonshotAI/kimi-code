@@ -264,7 +264,7 @@ export function useModelProviderState(
     return switched;
   }
 
-  async function setSessionModel(sessionId: string, modelId: string): Promise<boolean> {
+  async function setSessionModel(sessionId: string, modelId: string, thinking?: ThinkingLevel): Promise<boolean> {
     const sessionEntry = rawState.sessions.find((s) => s.id === sessionId);
     if (sessionEntry === undefined) return false;
     const targetModel = modelById(modelId);
@@ -272,7 +272,7 @@ export function useModelProviderState(
     const previousModelId = canonicalModelId(sessionEntry.model || store.activeDefaultModel);
     const prevThinking = rawState.thinkingBySession[sessionId];
     const isSwitch = previousModelId !== targetModelId;
-    const nextThinking = thinkingLevelForModelSwitch(targetModel, prevThinking, isSwitch, undefined);
+    const nextThinking = thinking ?? thinkingLevelForModelSwitch(targetModel, prevThinking, isSwitch, undefined);
     const switched = await writeSessionModel(
       sessionId,
       modelId,

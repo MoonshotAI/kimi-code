@@ -19,7 +19,7 @@ export type AppDialogsDeps = {
   restorePendingComposer: (pending: PendingWorkspaceSubmit, sessionId?: string) => void;
   beforePendingPromptSend?: (pending: PendingWorkspaceSubmit) => void;
   onWorkspaceAdded?: () => void;
-  openQuickModelMenu?: () => void;
+  openQuickModelMenu?: (targetSid?: string) => void;
 };
 
 const showOnboarding = ref(false);
@@ -147,11 +147,9 @@ export function useAppDialogs(dialogDeps?: AppDialogsDeps) {
   }
 
   async function openModelPicker(targetSid?: string): Promise<void> {
-    if (targetSid !== undefined && targetSid !== (client.activeSessionId.value ?? undefined)) {
-      await client.selectSession(targetSid);
-    }
+    await client.refreshAllProviders();
     await nextTick();
-    deps?.openQuickModelMenu?.();
+    deps?.openQuickModelMenu?.(targetSid);
   }
 
   registerModelPickerOpener(openModelPicker);

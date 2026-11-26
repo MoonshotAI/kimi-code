@@ -88,7 +88,7 @@ import { useMentionMenu, type MentionEntry } from '@moonshot-ai/app-client/compo
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, usePasteImageAutoMention } from '@moonshot-ai/app-client/composables';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { effortSwitchStore, hostsStore } from '@moonshot-ai/app-client/stores';
+import { effortSwitchStore, hostsStore, sessionsStore } from '@moonshot-ai/app-client/stores';
 import {
   createComposerEditor,
   discardStashedEditorState,
@@ -2404,23 +2404,23 @@ function closeOverlays(): void {
 
 const isEmpty = () => text.value.trim().length === 0 && activeAttachmentEntries.value.length === 0;
 
-defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, loadAttachmentsForEdit, restoreDraftEntries, focus, openModelMenu: () => { if (!dropdownOpen.value) toggleDropdown(); }, closeOverlays, anyPopupOpen, isEmpty, clearAfterDispatch });
+defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, loadAttachmentsForEdit, restoreDraftEntries, focus, openModelMenu: (targetSid?: string) => { if (!dropdownOpen.value) toggleDropdown(targetSid); }, closeOverlays, anyPopupOpen, isEmpty, clearAfterDispatch });
 
 function hasAnyToolbarMenuOpen(): boolean {
   return dropdownOpen.value || permDropdownOpen.value || ctxCardOpen.value || addMenuOpen.value;
 }
 
-function toggleDropdown(): void {
+function toggleDropdown(targetSid?: string): void {
   const opening = !dropdownOpen.value;
   if (nativeModelMenu?.available && !isMobile.value && modelPillRef.value !== null) {
     closePermDropdown();
     closeCtxCard();
     closeAddMenu();
-    if (opening) prepareModelMenu();
+    if (opening) prepareModelMenu(targetSid);
     nativeModelMenu.toggle(modelPillRef.value, { initialFocus: 'first-item' });
     return;
   }
-  if (opening) prepareModelMenu();
+  if (opening) prepareModelMenu(targetSid);
   dropdownOpen.value = opening;
   if (opening) {
     updateModelMenuPosition();
@@ -3034,9 +3034,10 @@ const recentModelsSnapshot = ref<AppModel[]>([]);
 const providerModelsSnapshot = ref<AppModel[]>([]);
 const webModelMenuMaxHeight = ref(480);
 const modelDropdownRef = ref<InstanceType<typeof ModelQuickMenu> | null>(null);
-const menuDraftModelId = ref(status.value?.modelId);
+const menuDraftModelId = ref<string | undefined>(status.value?.modelId);
 const menuDraftEffortSegment = ref<string>();
 let menuOpenedSessionId: string | null | undefined;
+let menuTargetSessionId: string | null | undefined;
 let discardMenuDraftOnClose = false;
 
 const menuModel = computed(() =>
@@ -3047,8 +3048,8 @@ const menuDefaultThinkingLevel = computed(() =>
     menuModel.value,
     thinkingLevelForModelSwitch(
       menuModel.value,
-      thinking.value,
-      menuModel.value?.id !== currentModel.value?.id,
+      menuTargetSessionId === sessionId.value ? thinking.value : undefined,
+      menuTargetSessionId !== sessionId.value || menuModel.value?.id !== currentModel.value?.id,
       sessionId.value === null || sessionId.value === undefined ? client.config.value?.thinking : undefined,
     ),
   ),
@@ -3063,16 +3064,23 @@ const menuProviders = computed(() =>
   orderedModelProviders(models.value ?? []).map((id) => ({ id, label: providerDisplayName(id, t) })),
 );
 
-function prepareModelMenu(): void {
+function prepareModelMenu(targetSid?: string): void {
   const catalog = models.value ?? [];
   menuOpenedSessionId = sessionId.value;
+  menuTargetSessionId = typeof targetSid === 'string' ? targetSid : sessionId.value;
   discardMenuDraftOnClose = false;
-  menuDraftModelId.value = status.value?.modelId;
+  const isBackgroundTarget =
+    menuTargetSessionId !== null && menuTargetSessionId !== undefined && menuTargetSessionId !== sessionId.value;
+  const initialModelId = isBackgroundTarget
+    ? sessionsStore().sessions.find((session) => session.id === menuTargetSessionId)?.model
+    : status.value?.modelId;
+  const initialModel = catalog.find((model) => model.id === initialModelId);
+  menuDraftModelId.value = initialModelId;
   menuDraftEffortSegment.value = undefined;
-  menuProvider.value = currentProvider.value || orderedModelProviders(catalog)[0] || '';
-  recentModelsSnapshot.value = recentModelsForMenu(catalog, recentIds.value ?? [], currentModel.value?.id);
+  menuProvider.value = initialModel?.provider || currentProvider.value || orderedModelProviders(catalog)[0] || '';
+  recentModelsSnapshot.value = recentModelsForMenu(catalog, recentIds.value ?? [], initialModelId);
   providerModelsSnapshot.value = menuProvider.value
-    ? providerModelsForMenu(catalog, menuProvider.value, currentModel.value?.id)
+    ? providerModelsForMenu(catalog, menuProvider.value, initialModelId)
     : [];
 }
 
@@ -3129,7 +3137,12 @@ function commitModelMenuDraft(): void {
     return;
   }
   const modelId = menuDraftModelId.value;
+  const targetSid = menuTargetSessionId;
   if (modelId === undefined || sessionId.value !== menuOpenedSessionId) return;
+  if (targetSid !== null && targetSid !== undefined && targetSid !== sessionId.value) {
+    if (menuThinkingLevel.value !== undefined) void client.setSessionModel(targetSid, modelId, menuThinkingLevel.value);
+    return;
+  }
   const effort =
     menuDraftEffortSegment.value !== undefined && menuThinkingLevel.value !== menuDefaultThinkingLevel.value
       ? menuThinkingLevel.value
@@ -3651,7 +3664,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             aria-haspopup="menu"
             :aria-expanded="dropdownOpen"
             :aria-label="modelPillCollapsed ? modelIconLabel : undefined"
-            @click.stop="toggleDropdown"
+            @click.stop="toggleDropdown()"
           >
             <Icon v-if="modelPillCollapsed" name="model" size="md" />
             <template v-else>
@@ -3670,7 +3683,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             aria-haspopup="menu"
             :aria-expanded="dropdownOpen"
             :aria-label="modelPillCollapsed ? t('login.pickModelAction') : undefined"
-            @click.stop="toggleDropdown"
+            @click.stop="toggleDropdown()"
           >
             <Icon v-if="modelPillCollapsed" name="model" size="md" />
             <template v-else>

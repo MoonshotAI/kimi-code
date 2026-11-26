@@ -1232,7 +1232,7 @@ describe('browser overlay model menu', () => {
     expect(isBrowserOverlayConfig({ ...parsed, kind: 'menu', requestId: 1 })).toBe(true);
     expect(asBrowserOverlayMenuRequest({ ...request, items: [] })).toBeNull();
     expect(asBrowserOverlayMenuRequest({ ...request, items: [], modelMenu: { ...modelMenu, extra: 1 } })).toBeNull();
-    expect(asBrowserOverlayMenuRequest({ ...request, items: [], modelMenu: { ...modelMenu, recentModels: [model, model, model, model] } })).toBeNull();
+    expect(asBrowserOverlayMenuRequest({ ...request, items: [], modelMenu: { ...modelMenu, recentModels: [model, model, model, model, model, model] } })).toBeNull();
   });
 
   it('reserves horizontal flyout space around the 240px menu and clamps height to min(480, anchor.y - 16)', () => {

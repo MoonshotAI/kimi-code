@@ -161,7 +161,7 @@ const composerRef = ref<{
   restoreDraftEntries: (entries: AttachmentEntry[]) => void;
   focus: () => void;
   clearAfterDispatch: (expectedSnapshot?: ComposerDocumentSnapshot) => void;
-  openModelMenu?: () => void;
+  openModelMenu?: (targetSid?: string) => void;
   closeOverlays?: () => void;
   anyPopupOpen?: boolean;
   isEmpty?: () => boolean;
@@ -417,7 +417,7 @@ onUnmounted(() => {
   workBodyResizeObserver = null;
 });
 
-defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, hasInsertableComposer, loadAttachmentsForEdit, restoreDraftEntries, focus, openModelMenu: () => composerRef.value?.openModelMenu?.(), anyPopupOpen, isEmpty, clearAfterDispatch });
+defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, hasInsertableComposer, loadAttachmentsForEdit, restoreDraftEntries, focus, openModelMenu: (targetSid?: string) => composerRef.value?.openModelMenu?.(targetSid), anyPopupOpen, isEmpty, clearAfterDispatch });
 </script>
 
 <template>

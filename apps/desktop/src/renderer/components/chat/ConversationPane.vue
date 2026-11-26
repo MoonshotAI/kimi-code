@@ -574,7 +574,7 @@ type ComposerHandle = {
   loadAttachmentsForEdit: (atts: TurnAttachment[]) => void;
   restoreDraftEntries?: (entries: AttachmentEntry[]) => void;
   focus: () => void;
-  openModelMenu?: () => void;
+  openModelMenu?: (targetSid?: string) => void;
   clearAfterDispatch: (expectedSnapshot?: ComposerDocumentSnapshot) => void;
   anyPopupOpen?: boolean;
   isEmpty?: () => boolean;
@@ -835,7 +835,7 @@ const showEmptyToggles = computed(
   () => !props.mobile && turns.value.length === 0 && !sessionLoading.value,
 );
 
-defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMention, insertScreenshotAnnotation, addComposerFiles, hasInsertableComposer, isComposerEmpty, clearComposerAfterDispatch, focusComposer, openModelMenu: () => (dockedComposerRef.value ?? emptyComposerRef.value)?.openModelMenu?.(), notifyUndone, selectAllRegion, focusGoal, closeDockPanel, composerPopupOpen });
+defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMention, insertScreenshotAnnotation, addComposerFiles, hasInsertableComposer, isComposerEmpty, clearComposerAfterDispatch, focusComposer, openModelMenu: (targetSid?: string) => (dockedComposerRef.value ?? emptyComposerRef.value)?.openModelMenu?.(targetSid), notifyUndone, selectAllRegion, focusGoal, closeDockPanel, composerPopupOpen });
 </script>
 
 <template>

@@ -3722,9 +3722,9 @@ export function useKimiWebClient() {
     skillsLoaded,
     activateSkill: modelProvider.activateSkill,
     selectModel,
-    setSessionModel: (sessionId: string, modelId: string) => {
+    setSessionModel: (sessionId: string, modelId: string, thinking?: ThinkingLevel) => {
       beginModelSelect(sessionId);
-      return modelProvider.setSessionModel(sessionId, modelId);
+      return modelProvider.setSessionModel(sessionId, modelId, thinking);
     },
     addProvider: modelProvider.addProvider,
     updateProvider: modelProvider.updateProvider,

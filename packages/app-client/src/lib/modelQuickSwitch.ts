@@ -1,6 +1,6 @@
 import { MANAGED_KIMI_CODE_PROVIDER_ID, type AppModel } from '@moonshot-ai/app-core/api';
 
-export const RECENT_MODELS_MENU_LIMIT = 3;
+export const RECENT_MODELS_MENU_LIMIT = 5;
 
 export function recentModelsForMenu(
   models: readonly AppModel[],

@@ -3,10 +3,10 @@ import { defineBrowserValidator } from './browser-validator';
 import { Type, type Static } from 'typebox';
 import { BrowserZoomFactorSchema } from './browser-zoom';
 import { BrowserDeviceStateSchema } from './browser-device';
-import { BrowserIdSchema, BrowserNonnegativeNumberSchema } from './browser-schema';
+import { BrowserIdSchema } from './browser-schema';
+import { asBrowserBounds, BrowserBoundsSchema, type BrowserBounds } from './browser-bounds';
 
-export const BrowserBoundsSchema = Type.Object({ x: BrowserNonnegativeNumberSchema, y: BrowserNonnegativeNumberSchema, width: BrowserNonnegativeNumberSchema, height: BrowserNonnegativeNumberSchema });
-export type BrowserBounds = Static<typeof BrowserBoundsSchema>;
+export { asBrowserBounds, BrowserBoundsSchema, type BrowserBounds } from './browser-bounds';
 export type BrowserId = Static<typeof BrowserIdSchema>;
 
 export function createBrowserId(): BrowserId {
@@ -57,11 +57,6 @@ export function asBrowserId(value: unknown): BrowserId | null {
 
 export function isBrowserStateEvent(value: unknown): value is BrowserStateEvent {
   return browserValidators.BrowserStateEventSchema.Check(value) && isBrowserState(value.state);
-}
-
-export function asBrowserBounds(value: unknown): BrowserBounds | null {
-  const bounds = browserValidators.BrowserBoundsSchema.Parse(value);
-  return bounds === null ? null : { x: Math.round(bounds.x), y: Math.round(bounds.y), width: Math.round(bounds.width), height: Math.round(bounds.height) };
 }
 
 export const BrowserTabCommandSchema = Type.Object({ browserId: BrowserIdSchema, action: Type.Enum(['copy-url', 'open-external', 'mute', 'unmute']) }, { additionalProperties: false });

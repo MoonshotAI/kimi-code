@@ -1,56 +1,15 @@
 export const MODEL_MENU_WIDTH = 240;
 export const MODEL_MENU_MAX_HEIGHT = 480;
 export const MODEL_MENU_ROW_HEIGHT = 32;
-export const MODEL_MENU_LABEL_HEIGHT = 28;
-export const MODEL_MENU_DIVIDER_HEIGHT = 8.5;
-export const MODEL_MENU_PADDING_BLOCK = 8;
-export const PROVIDER_MENU_MAX_ROWS = 6;
-export const PROVIDER_MENU_MIN_ROWS = 3;
-export const PROVIDER_SUBMENU_MAX_ITEMS = 8;
 export const SEARCH_MENU_MAX_ITEMS = 8;
 export const VIEWPORT_EDGE_GAP = 8;
 export const SUBMENU_GAP = 4;
-
-export interface ProviderRowsInput {
-  recentCount: number;
-  providerCount: number;
-  maxHeight: number;
-  rowHeight?: number;
-  labelHeight?: number;
-}
 
 export function clampModelMenuMaxHeight(availableAboveAnchor: number): number {
   return Math.max(
     MODEL_MENU_ROW_HEIGHT * 2,
     Math.min(MODEL_MENU_MAX_HEIGHT, Math.floor(availableAboveAnchor - VIEWPORT_EDGE_GAP * 2)),
   );
-}
-
-export function providerVisibleRows(input: ProviderRowsInput): number {
-  const {
-    recentCount,
-    providerCount,
-    maxHeight,
-    rowHeight = MODEL_MENU_ROW_HEIGHT,
-    labelHeight = MODEL_MENU_LABEL_HEIGHT,
-  } = input;
-  if (providerCount <= 0) return 0;
-  const recentHeight =
-    recentCount > 0
-      ? labelHeight + recentCount * rowHeight + MODEL_MENU_DIVIDER_HEIGHT
-      : 0;
-  const fixedHeight =
-    MODEL_MENU_PADDING_BLOCK +
-    recentHeight +
-    labelHeight +
-    MODEL_MENU_DIVIDER_HEIGHT +
-    rowHeight * 2 +
-    MODEL_MENU_DIVIDER_HEIGHT +
-    rowHeight;
-  const availableRows = Math.floor((maxHeight - fixedHeight) / rowHeight);
-  if (availableRows >= PROVIDER_MENU_MAX_ROWS) return Math.min(providerCount, PROVIDER_MENU_MAX_ROWS);
-  const preferredMin = Math.min(providerCount, PROVIDER_MENU_MIN_ROWS);
-  return Math.max(1, Math.min(providerCount, Math.max(preferredMin, availableRows)));
 }
 
 export interface AnchoredFlyoutInput {

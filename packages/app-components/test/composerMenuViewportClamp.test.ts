@@ -14,6 +14,7 @@ const clientState = vi.hoisted(() => ({
   selectModel: vi.fn(async (id: string) => {
     if (clientState.status!.value) clientState.status!.value = { ...clientState.status!.value, modelId: id, model: id };
   }),
+  setSessionModel: vi.fn(),
   setThinking: vi.fn(),
 }));
 
@@ -96,6 +97,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       setThinking: clientState.setThinking,
       setPermission: vi.fn(),
       selectModel: clientState.selectModel,
+      setSessionModel: clientState.setSessionModel,
     }),
     getKimiWebApi: () => ({
       getSessionContextSummary: vi.fn(async () => ({
@@ -213,12 +215,15 @@ afterEach(() => {
   vi.resetModules();
 });
 
+let composerInstance: { openModelMenu?: (targetSid?: string) => void } | undefined;
+
 async function mountComposer(viewportWidth: number, viewportHeight: number): Promise<void> {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: viewportWidth });
   Object.defineProperty(window, 'innerHeight', { configurable: true, value: viewportHeight });
   const { default: Composer } = await import('../src/composer/Composer.vue');
+  composerInstance = undefined;
   app = createApp({
-    render: () => h(Composer),
+    render: () => h(Composer, { ref: (el) => { composerInstance = el as typeof composerInstance; } }),
   });
   app.use(createKimiI18n({ locale: 'zh' }));
   app.mount(host);
@@ -280,6 +285,7 @@ describe('Composer recent model menu', () => {
       ctxMax: 262144,
     };
     clientState.selectModel.mockClear();
+    clientState.setSessionModel.mockClear();
     clientState.setThinking.mockClear();
   });
 
@@ -291,10 +297,10 @@ describe('Composer recent model menu', () => {
     await nextTick();
     await nextTick();
 
-    const labels = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section > .mqm-label')].map(
+    const labels = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section > .mqm-label')].map(
       (section) => section.textContent?.trim(),
     );
-    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row')];
+    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')];
     const names = rows.map((row) => row.querySelector('.mqm-name')?.textContent?.trim());
 
     expect(labels).toEqual(['最近使用', 'openai']);
@@ -308,7 +314,7 @@ describe('Composer recent model menu', () => {
     expect(clientState.setThinking).not.toHaveBeenCalled();
     expect(clientState.status!.value?.modelId).toBe('gpt-6.1-sol');
 
-    const reorderedRows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row')];
+    const reorderedRows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')];
     expect(
       reorderedRows.map((row) => row.querySelector('.mqm-name')?.textContent?.trim()),
     ).toEqual(['GPT-6.1 Sol', 'GPT-6.1 Sol', 'GPT-6 Astra']);
@@ -340,7 +346,7 @@ describe('Composer recent model menu', () => {
     await nextTick();
     await nextTick();
 
-    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row')];
+    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')];
     rows[2]?.click();
     await nextTick();
     expect(rows[2]?.getAttribute('aria-checked')).toBe('true');
@@ -361,7 +367,7 @@ describe('Composer recent model menu', () => {
     await nextTick();
     await nextTick();
 
-    host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row')[2]?.click();
+    host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')[2]?.click();
     await nextTick();
 
     clientState.activeSessionId!.value = 'sess-2';
@@ -371,6 +377,32 @@ describe('Composer recent model menu', () => {
     expect(host.querySelector('.model-dropdown')?.classList.contains('ui-menu-pop-leave-active')).toBe(true);
     expect(clientState.selectModel).not.toHaveBeenCalled();
     expect(clientState.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('repairs a background session model on blur without switching the active session', async () => {
+    await mountComposer(1200, 820);
+    const { sessionsStore } = await import('@moonshot-ai/app-client/stores');
+    sessionsStore().sessions = [
+      { id: 'sess-1', model: 'gpt-6.1-sol', cwd: '/project' },
+      { id: 'sess-bg', model: 'missing/model', cwd: '/project' },
+    ] as ReturnType<typeof sessionsStore>['sessions'];
+
+    composerInstance?.openModelMenu?.('sess-bg');
+    await nextTick();
+    await nextTick();
+
+    expect(clientState.activeSessionId!.value).toBe('sess-1');
+    const providerRows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')];
+    providerRows[0]!.click();
+    await nextTick();
+    expect(clientState.setSessionModel).not.toHaveBeenCalled();
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+
+    document.body.click();
+    await nextTick();
+    expect(clientState.activeSessionId!.value).toBe('sess-1');
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+    expect(clientState.setSessionModel).toHaveBeenCalledWith('sess-bg', 'gpt-6-astra', 'high');
   });
 });
 

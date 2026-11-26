@@ -37,9 +37,9 @@ describe('providerModelsForMenu', () => {
 });
 
 describe('recentModelsForMenu', () => {
-  it('puts the current model first, filters missing ids, removes duplicate history, and caps the menu at three', () => {
+  it('puts the current model first, filters missing ids, removes duplicate history, and caps the menu at five', () => {
     const recent = recentModelsForMenu(
-      catalog,
+      [...catalog, model('google/gemini', 'google')],
       [
         'anthropic/claude-sonnet',
         'missing/model',
@@ -47,6 +47,7 @@ describe('recentModelsForMenu', () => {
         'anthropic/claude-sonnet',
         'managed:kimi-code/kimi-k3',
         'openai/gpt-4o',
+        'google/gemini',
       ],
       'managed:kimi-code/kimi-k2',
     );
@@ -55,6 +56,8 @@ describe('recentModelsForMenu', () => {
       'managed:kimi-code/kimi-k2',
       'anthropic/claude-sonnet',
       'openai/gpt-4o-mini',
+      'managed:kimi-code/kimi-k3',
+      'openai/gpt-4o',
     ]);
   });
 

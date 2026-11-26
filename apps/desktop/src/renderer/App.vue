@@ -1425,7 +1425,7 @@ const {
     track('workspace_added', { workspace_count: client.workspacesView.value.length });
     terminalStore.destroySession(terminalBucketKey('', null));
   },
-  openQuickModelMenu: () => conversationPaneRef.value?.openModelMenu(),
+  openQuickModelMenu: (targetSid?: string) => conversationPaneRef.value?.openModelMenu(targetSid),
 });
 
 const offQuitConfirm = useQuitConfirm({

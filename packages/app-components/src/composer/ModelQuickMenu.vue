@@ -1,20 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useAppearance } from '@moonshot-ai/app-core';
 import type { AppModel } from '@moonshot-ai/app-core/api';
 import { commitLevel, effectiveThinkingLevel, effortLabel, modelThinkingAvailability, providerDisplayName, segmentsFor } from '@moonshot-ai/app-core/lib';
 import { searchModelsForMenu, type ModelSearchTextRange } from '@moonshot-ai/app-client/lib';
 import { Icon, useImeComposition } from '@moonshot-ai/app-ui';
 import ModelCapabilityInfo from './ModelCapabilityInfo.vue';
 import {
-  MODEL_MENU_LABEL_HEIGHT,
   MODEL_MENU_ROW_HEIGHT,
   MODEL_MENU_WIDTH,
-  PROVIDER_SUBMENU_MAX_ITEMS,
   SEARCH_MENU_MAX_ITEMS,
   computeAnchoredFlyoutPosition,
-  providerVisibleRows,
 } from './modelMenuLayout';
 
 interface ProviderOption {
@@ -57,7 +53,6 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { fontScale } = useAppearance();
 const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
 
 const rootEl = ref<HTMLElement>();
@@ -70,8 +65,6 @@ const submenu = ref<SubmenuState | null>(null);
 const submenuIndex = ref(0);
 const hoverModel = ref<{ key: string; model: AppModel } | null>(null);
 const flyoutStyle = ref<Record<string, string>>({});
-const rowHeight = ref(MODEL_MENU_ROW_HEIGHT);
-const labelHeight = ref(MODEL_MENU_LABEL_HEIGHT);
 let hoverTimer: ReturnType<typeof setTimeout> | undefined;
 let submenuTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -91,18 +84,6 @@ const effortValueLabel = computed(() => {
 const searchResults = computed(() =>
   searchModelsForMenu(props.models, query.value, (provider) => providerDisplayName(provider, t)).slice(0, SEARCH_MENU_MAX_ITEMS),
 );
-const visibleProviderRows = computed(() =>
-  providerVisibleRows({
-    recentCount: props.recentModels.length,
-    providerCount: props.providerModels.length,
-    maxHeight: props.maxHeight,
-    rowHeight: rowHeight.value,
-    labelHeight: labelHeight.value,
-  }),
-);
-const providerListStyle = computed(() => ({
-  maxHeight: `${visibleProviderRows.value * rowHeight.value}px`,
-}));
 
 function supportsThinkingSubmenu(model: AppModel): boolean {
   return modelThinkingAvailability(model) !== 'unsupported' && segmentsFor(model).length > 0;
@@ -138,7 +119,6 @@ const navRows = computed<NavRow[]>(() => {
   return rows;
 });
 
-const visibleProviders = computed(() => props.providers.slice(0, PROVIDER_SUBMENU_MAX_ITEMS));
 const activeSubmenuModel = computed(() => (submenu.value?.kind === 'search-effort' ? submenu.value.model : undefined));
 const activeSubmenuSegments = computed(() => {
   if (submenu.value?.kind === 'effort') return currentSegments.value;
@@ -146,7 +126,7 @@ const activeSubmenuSegments = computed(() => {
   return [];
 });
 const submenuOptionsCount = computed(() => {
-  if (submenu.value?.kind === 'provider') return visibleProviders.value.length;
+  if (submenu.value?.kind === 'provider') return props.providers.length;
   return activeSubmenuSegments.value.length;
 });
 const thinkingDescription = computed(() => {
@@ -276,7 +256,9 @@ function selectSearchedModel(model: AppModel, effort?: string): void {
     const providerKey = `provider:${model.id}`;
     const recentKey = `recent:${model.id}`;
     const nextKey = rowElements.has(providerKey) ? providerKey : rowElements.has(recentKey) ? recentKey : undefined;
-    if (nextKey !== undefined) activeKey.value = nextKey;
+    if (nextKey === undefined) return;
+    activeKey.value = nextKey;
+    rowElements.get(nextKey)?.scrollIntoView({ block: 'nearest' });
   });
   emit('selectModel', model.id, effort, true);
 }
@@ -341,7 +323,7 @@ function onKeydown(event: KeyboardEvent): void {
       event.preventDefault();
       const current = submenu.value;
       if (current.kind === 'provider') {
-        const provider = visibleProviders.value[submenuIndex.value];
+        const provider = props.providers[submenuIndex.value];
         if (provider !== undefined) chooseProvider(provider.id);
       } else {
         const segment = activeSubmenuSegments.value[submenuIndex.value];
@@ -411,7 +393,7 @@ function syncFlyoutPosition(): void {
     menuTop: frame?.y ?? menuRect.top,
     menuWidth: menuRect.width || MODEL_MENU_WIDTH,
     triggerTop: triggerRect.top - menuRect.top,
-    triggerHeight: triggerRect.height || rowHeight.value,
+    triggerHeight: triggerRect.height || MODEL_MENU_ROW_HEIGHT,
     flyoutWidth: flyoutRect.width || MODEL_MENU_WIDTH,
     flyoutHeight: flyoutRect.height,
     firstOptionOffset,
@@ -422,16 +404,6 @@ function syncFlyoutPosition(): void {
     top: `${Math.round(position.top * 100) / 100}px`,
     ...(position.side === 'right' ? { left: 'calc(100% + 4px)', right: 'auto' } : { right: 'calc(100% + 4px)', left: 'auto' }),
   };
-}
-
-function syncMenuMetrics(): void {
-  const menu = rootEl.value;
-  if (menu === undefined) return;
-  const shift = Number.parseFloat(getComputedStyle(menu).fontSize) - 14;
-  const delta = Number.isFinite(shift) ? shift * 2 : 0;
-  rowHeight.value = MODEL_MENU_ROW_HEIGHT + delta;
-  labelHeight.value = MODEL_MENU_LABEL_HEIGHT + delta;
-  if (submenu.value !== null || hoverModel.value !== null) syncFlyoutPosition();
 }
 
 watch([submenu, hoverModel], () => {
@@ -445,14 +417,11 @@ watch(query, () => {
   activeKey.value = navRows.value[0]?.key ?? '';
 });
 
-watch([rootEl, fontScale], syncMenuMetrics, { flush: 'post' });
-
 onMounted(() => {
   const current = navRows.value.find(
     (row) => row.key === `provider:${props.currentModelId}` || row.key === `recent:${props.currentModelId}`,
   );
   activeKey.value = (current ?? navRows.value.find((row) => !row.disabled))?.key ?? '';
-  syncMenuMetrics();
 });
 
 onUnmounted(() => {
@@ -477,8 +446,8 @@ defineExpose({
     @keydown="onKeydown"
     @scroll="hideHoverCard"
   >
-    <template v-if="searching">
-      <div class="mqm-scroll">
+    <div class="mqm-scroll">
+      <template v-if="searching">
         <div v-if="searchResults.length > 0" class="mqm-label">{{ t('status.searchResults') }}</div>
         <template v-if="searchResults.length > 0">
           <div
@@ -506,36 +475,34 @@ defineExpose({
           </div>
         </template>
         <div v-else class="mqm-row mqm-empty" role="note">{{ t('status.noMatchingModels') }}</div>
-      </div>
-    </template>
+      </template>
 
-    <template v-else>
-      <div v-if="props.recentModels.length > 0" class="mqm-section">
-        <div class="mqm-label">{{ t('status.recentModels') }}</div>
-        <div
-          v-for="model in props.recentModels"
-          :key="`recent:${model.id}`"
-          :ref="setRowElement(`recent:${model.id}`)"
-          class="mqm-row"
-          :class="{ 'is-active': activeKey === `recent:${model.id}` }"
-          role="menuitemradio"
-          :aria-checked="model.id === props.currentModelId"
-          :data-row-key="`recent:${model.id}`"
-          @mouseenter="onRowEnter({ key: `recent:${model.id}`, kind: 'model', model, hasSubmenu: false })"
-          @mouseleave="onRowLeave"
-          @click="onRowClick({ key: `recent:${model.id}`, kind: 'model', model, hasSubmenu: false })"
-        >
-          <span class="mqm-name">{{ model.displayName ?? model.model }}</span>
-          <span class="mqm-provider">{{ providerDisplayName(model.provider, t) }}</span>
-          <Icon v-if="model.id === props.currentModelId" name="check" size="sm" class="mqm-trailing-icon" />
+      <template v-else>
+        <div v-if="props.recentModels.length > 0" class="mqm-section">
+          <div class="mqm-label">{{ t('status.recentModels') }}</div>
+          <div
+            v-for="model in props.recentModels"
+            :key="`recent:${model.id}`"
+            :ref="setRowElement(`recent:${model.id}`)"
+            class="mqm-row"
+            :class="{ 'is-active': activeKey === `recent:${model.id}` }"
+            role="menuitemradio"
+            :aria-checked="model.id === props.currentModelId"
+            :data-row-key="`recent:${model.id}`"
+            @mouseenter="onRowEnter({ key: `recent:${model.id}`, kind: 'model', model, hasSubmenu: false })"
+            @mouseleave="onRowLeave"
+            @click="onRowClick({ key: `recent:${model.id}`, kind: 'model', model, hasSubmenu: false })"
+          >
+            <span class="mqm-name">{{ model.displayName ?? model.model }}</span>
+            <span class="mqm-provider">{{ providerDisplayName(model.provider, t) }}</span>
+            <Icon v-if="model.id === props.currentModelId" name="check" size="sm" class="mqm-trailing-icon" />
+          </div>
         </div>
-      </div>
 
-      <div v-if="props.recentModels.length > 0" class="mqm-divider" />
+        <div v-if="props.recentModels.length > 0" class="mqm-divider" />
 
-      <div v-if="props.providerModels.length > 0 || props.activeProvider" class="mqm-section mqm-provider-section">
-        <div class="mqm-label">{{ props.activeProviderLabel }}</div>
-        <div class="mqm-provider-scroll" :style="providerListStyle">
+        <div v-if="props.providerModels.length > 0 || props.activeProvider" class="mqm-section">
+          <div class="mqm-label">{{ props.activeProviderLabel }}</div>
           <div
             v-for="model in props.providerModels"
             :key="`provider:${model.id}`"
@@ -553,8 +520,10 @@ defineExpose({
             <Icon v-if="model.id === props.currentModelId" name="check" size="sm" class="mqm-trailing-icon" />
           </div>
         </div>
-      </div>
+      </template>
+    </div>
 
+    <template v-if="!searching">
       <div class="mqm-divider" />
 
       <div class="mqm-actions">
@@ -625,7 +594,7 @@ defineExpose({
         <div class="mqm-label">{{ t('status.providerLabel') }}</div>
         <div class="mqm-submenu-scroll">
           <div
-            v-for="(provider, index) in visibleProviders"
+            v-for="(provider, index) in props.providers"
             :key="provider.id"
             class="mqm-row"
             :class="{ 'is-active': submenuIndex === index }"
@@ -727,21 +696,10 @@ defineExpose({
   flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-width: thin;
 }
 .mqm-section {
   flex: none;
-}
-.mqm-provider-section {
-  display: flex;
-  flex: 0 1 auto;
-  flex-direction: column;
-  min-height: 0;
-}
-.mqm-provider-scroll {
-  flex: 0 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
 }
 .mqm-actions {
   flex: none;

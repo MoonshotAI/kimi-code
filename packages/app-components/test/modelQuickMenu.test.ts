@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { createApp, h, nextTick, reactive, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useAppearance } from '@moonshot-ai/app-core';
 import type { AppModel } from '@moonshot-ai/app-core/api';
 import type { QuickModelMenuAction, QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
@@ -69,13 +68,13 @@ function mountMenu(state: QuickModelMenuPayload): void {
   app.mount(host);
 }
 
-function rows(selector = '.mqm > .mqm-section .mqm-row, .mqm > .mqm-actions .mqm-row, .mqm > .mqm-scroll .mqm-row'): HTMLElement[] {
+function rows(selector = '.mqm > .mqm-scroll .mqm-row, .mqm > .mqm-actions .mqm-row'): HTMLElement[] {
   return [...host.querySelectorAll<HTMLElement>(selector)];
 }
 
 beforeEach(() => {
   vi.useFakeTimers();
-  useAppearance().setFontScale('medium');
+  HTMLElement.prototype.scrollIntoView = vi.fn();
   actions = [];
   dismissed = 0;
   host = document.createElement('div');
@@ -86,7 +85,6 @@ afterEach(() => {
   app?.unmount();
   app = undefined;
   host.remove();
-  useAppearance().setFontScale('medium');
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -94,9 +92,9 @@ afterEach(() => {
 describe('ModelQuickMenu states', () => {
   it('renders recent models with provider names and additively repeats the current provider group', () => {
     mountMenu(initialState());
-    const labels = [...host.querySelectorAll('.mqm > .mqm-section > .mqm-label')].map((el) => el.textContent?.trim());
+    const labels = [...host.querySelectorAll('.mqm > .mqm-scroll > .mqm-section > .mqm-label')].map((el) => el.textContent?.trim());
     expect(labels).toEqual(['最近使用', 'Kimi 订阅']);
-    const recentRows = rows('.mqm > .mqm-section:first-child .mqm-row');
+    const recentRows = rows('.mqm > .mqm-scroll > .mqm-section:first-child .mqm-row');
     expect(recentRows).toHaveLength(3);
     expect(recentRows[0]?.querySelector('.mqm-name')?.textContent).toBe('Kimi K2.5');
     expect(recentRows[0]?.querySelector('.mqm-provider')?.textContent).toBe('Kimi 订阅');
@@ -107,7 +105,7 @@ describe('ModelQuickMenu states', () => {
   it('hides the recent section entirely when empty', () => {
     mountMenu(initialState({ recentModels: [] }));
     expect(host.textContent).not.toContain('最近使用');
-    expect(host.querySelector('.mqm > .mqm-section > .mqm-label')?.textContent?.trim()).toBe('Kimi 订阅');
+    expect(host.querySelector('.mqm > .mqm-scroll > .mqm-section > .mqm-label')?.textContent?.trim()).toBe('Kimi 订阅');
   });
 
   it('shows a 500ms hover capability card on model rows', async () => {
@@ -261,28 +259,26 @@ describe('ModelQuickMenu states', () => {
     expect(dismissed).toBe(1);
   });
 
-  it('scales row metrics with the appearance font scale', async () => {
-    const realGetComputedStyle = window.getComputedStyle.bind(window);
-    let baseFontSize = '14px';
-    vi.spyOn(window, 'getComputedStyle').mockImplementation((elt, pseudo) => {
-      if (elt.classList.contains('mqm')) return { fontSize: baseFontSize } as CSSStyleDeclaration;
-      return realGetComputedStyle(elt, pseudo);
-    });
+  it('keeps every configured provider reachable in the scrolling provider submenu', async () => {
+    const providers = Array.from({ length: 12 }, (_, index) => ({ id: `provider-${index + 1}`, label: `Provider ${index + 1}` }));
+    mountMenu(initialState({ providers }));
+    host.querySelector<HTMLElement>('[data-row-key="action:provider"]')!.click();
+    await nextTick();
 
-    mountMenu(initialState({ providerModels: kimiModels.slice(0, 2) }));
-    const scroll = () => host.querySelector<HTMLElement>('.mqm-provider-scroll')!;
-    expect(scroll().style.maxHeight).toBe('64px');
+    const options = [...host.querySelectorAll<HTMLElement>('.mqm-flyout .mqm-submenu-scroll .mqm-row')];
+    expect(options).toHaveLength(12);
+    expect(options.at(-1)?.textContent?.trim()).toBe('Provider 12');
+    options.at(-1)!.click();
+    await nextTick();
+    expect(actions).toEqual([{ type: 'select-provider', providerId: 'provider-12' }]);
+  });
 
-    baseFontSize = '18px';
-    useAppearance().setFontScale('xlarge');
-    await nextTick();
-    await nextTick();
-    expect(scroll().style.maxHeight).toBe('80px');
-
-    baseFontSize = '12px';
-    useAppearance().setFontScale('small');
-    await nextTick();
-    await nextTick();
-    expect(scroll().style.maxHeight).toBe('56px');
+  it('keeps actions and search fixed below a single scrolling list on short viewports', async () => {
+    mountMenu(initialState());
+    const menu = host.querySelector<HTMLElement>('.mqm')!;
+    expect(menu.style.maxHeight).toBe('480px');
+    expect(menu.querySelector(':scope > .mqm-scroll > .mqm-section .mqm-provider-scroll')).toBeNull();
+    expect(menu.querySelector(':scope > .mqm-actions')).not.toBeNull();
+    expect(menu.querySelector(':scope > .mqm-search')).not.toBeNull();
   });
 });
