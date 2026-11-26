@@ -23,6 +23,7 @@ function stubDocument(): {
 }
 
 function escapeKey(init: { isComposing?: boolean; keyCode?: number } = {}): KeyboardEvent {
+  // oxlint-disable-next-line typescript/no-deprecated -- exercises the legacy keyCode 229 IME fallback
   return { isComposing: false, keyCode: 27, ...init } as KeyboardEvent;
 }
 

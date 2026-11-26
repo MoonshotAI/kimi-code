@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import './lib/anchored-menu.css';
 import type { PinnedEntry, Session } from '@moonshot-ai/app-core/client/types';
 import type {
   DropPosition,
@@ -893,7 +894,5 @@ const {
   box-shadow: inset 0 0 0 1px var(--color-accent);
 }
 </style>
-
-<style src="./lib/anchored-menu.css"></style>
 
 <style scoped src="./lib/locate-flash.css"></style>

@@ -33,6 +33,7 @@ export function isImeKeyEvent(event: KeyboardEvent): boolean {
   return (
     composing ||
     event.isComposing ||
+    // oxlint-disable-next-line typescript/no-deprecated -- Chromium/Safari IME composition still reports keyCode 229
     event.keyCode === 229 ||
     Date.now() - compositionEndedAt < COMPOSITION_END_GUARD_MS
   );
