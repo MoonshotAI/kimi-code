@@ -1,6 +1,6 @@
-# 人群与 surface 清单
+# 人群与触发线索
 
-`review-pr` 列行为变化清单时用的仓库专属清单：谁在依赖现有行为，diff 里碰到什么就必须列行为变化。它会过时：每次线上回归复盘后，把新发现的人群或触发线索补进来，并在「历史案例」里加一行。
+列行为变化清单时用：谁在依赖现有行为，diff 里碰到什么就必须列行为变化。每次线上回归复盘后，把新发现的人群或触发线索补进来，并在「历史案例」里加一行。
 
 ## 一、人群：谁在依赖现有行为
 
@@ -17,7 +17,7 @@
 | SDK 调用方 | `@moonshot-ai/kimi-code-sdk` 的导出面；其中 `KimiForCodingProvider` 使用 node-sdk 本地 provider 契约，错误类来自 agent-core-v2 | `packages/node-sdk/src/index.ts`、`packages/node-sdk/package.json` 的 `exports`、`packages/node-sdk/src/model-provider.ts` |
 | 远程控制用户 | `kimi web --remote-control`，凭据槽位与 relay 按登录区域选择（#3969） | `packages/remote-control/` |
 
-### provider 方言
+### 模型服务的接口格式
 
 | 人群 | 说明 |
 |---|---|
@@ -26,7 +26,7 @@
 | `anthropic`、`openai_responses`、`google-genai`、`vertexai` | 各自的 thinking、工具调用、usage 字段形态 |
 | 自定义模型配置 | `api_key_env`、models.dev catalog 导入、手动配置的 thinking 参数（#3448）、`[secondary_model]` 与 subagent model pool（#3192、#3903） |
 
-代码位置：`packages/agent-core-v2/src/human/llm/requester/bases/`。
+代码位置：`packages/core/src/llm/builtin/protocol/`（各家接口格式的编解码）和 `packages/core/src/llm/builtin/provider/`。
 
 ### 平台与环境
 
@@ -54,7 +54,6 @@
 |---|---|---|
 | 默认配置用户 | 任何默认值翻转对他们都是行为变更 | `packages/agent-core-v2/docs/config-manifest.toml` |
 | experimental flag 用户 | `[experimental]` 与 `KIMI_CODE_EXPERIMENTAL_*`；flag 的 `default` 翻成 true 等于面向全体发布 | `packages/agent-core-v2/src/app/flag/flagRegistry.ts`、各域的 `flag.ts` |
-| legacy flag 用户 | `KIMI_CODE_LEGACY_FLAG`（#3820：TUI 与 print 模式静默忽略） | |
 | 自定义 agent 用户 | `--agent` 的 `disallowedTools` 等策略（#3417） | |
 | 配了 hooks 的用户 | 事件名与载荷是外部脚本的契约；配了 hook 时审批面板不渲染并被静默批准（#3888）、v2 不触发 PreToolUse（#3431） | `packages/agent-core-v2/src/features/externalHooks/internal/types.ts`、`docs/en/customization/hooks.md` |
 | skills、plugins、MCP 用户 | 含 stdio MCP、用户级 skill 根目录、`[watch]` 热加载（#3931 关掉默认，#4015 翻回；关掉时连带 AGENTS.md 变更提醒失效，`/reload` 只覆盖 config 与 skills） | `docs/en/customization/` |
@@ -92,7 +91,7 @@ prompt 文本改动影响全体用户，且没有测试能证明"无影响"。�
 
 ## 二、触发线索：diff 里碰到就必须列行为变化
 
-| diff 里出现 | 代表的 surface | 必做的检查 |
+| diff 里出现 | 涉及什么 | 必做的检查 |
 |---|---|---|
 | `packages/agent-core-v2/src/app/agentProfileCatalog/system.md`，以及 `packages/agent-core-v2/src/**/*.md`（工具描述、提醒、overlay、内置 skill） | 模型行为 | 每删或改一句单独成行：这句改动前约束了什么行为，谁依赖，现在由什么来约束 |
 | `packages/agent-core-v2/docs/config-manifest.toml`（由 `src/app/config/configSectionContributions.ts` 生成，`test/app/config/configManifest.test.ts` 守护同步） | 配置键、默认值、校验 | 默认翻转与校验收紧必列；改了 manifest 没改 `docs/en/configuration/config-files.md` 视为文档过时 |
@@ -106,26 +105,25 @@ prompt 文本改动影响全体用户，且没有测试能证明"无影响"。�
 | `packages/acp-server/` | ACP 客户端 | 对照 `docs/en/reference/kimi-acp.md` 的能力矩阵逐项核对 |
 | `apps/kimi-code/src/cli/` | 命令行参数、子命令、`--output-format` | 对照 `docs/en/reference/kimi-command.md` |
 | `packages/agent-core-v2/src/features/externalHooks/` | hook 事件与载荷 | 对照 `docs/en/customization/hooks.md` 的事件参考 |
-| `packages/agent-core-v2/src/human/llm/requester/bases/` | provider 方言分支 | 枚举每种上游载荷形态改动前后各走哪条分支，尤其是多个字段并存的网关 |
+| `packages/core/src/llm/builtin/protocol/`、`packages/core/src/llm/builtin/provider/` | 各模型服务接口格式的兼容分支 | 枚举每种上游载荷形态改动前后各走哪条分支，尤其是多个字段并存的网关 |
 | `packages/agent-core-v2/src/app/git/`、`apps/kimi-code/src/utils/git/` | 后台 git 的调用方式、config 覆盖、超时 | 对照"git 仓库形态"人群逐行核：前置探针失败是否让整个后台 git 静默不可用；覆盖的 config 键是否有 `required`、`gpgSign`、`hooksPath` 这类会把"禁用"变成"失败"的键；Windows 用例是否全部 skip |
 | `packages/migration-legacy/`、`packages/minidb/`、任何读写 `~/.kimi-code/` 布局的代码 | 数据年代 | 老数据是否仍可读、可迁移 |
 | 任何环境变量读取点的新增、删除或语义变化，不限写法（`process.env.X`、`process.env['X']`、动态键、helper）也不限 `KIMI_` 前缀 | 环境变量 | 对照 `docs/en/configuration/env-vars.md` 的全部条目；TUI、print 模式、kap-server 三个入口是否一致 |
 | `packages/agent-core-v2/src/app/scopes.ts`、`packages/agent-core-v2/src/features/featureAssemblyService.ts`、config ready 相关 | 启动顺序与生命周期 | 谁依赖原来的顺序；#3471 在合入 34 分钟后被 #3486 整体 revert |
 | `docs/en/**`、`docs/zh/**` 的 reference、configuration、customization 页 | 公开承诺 | 改了行为没改文档，或改了文档没改行为，都要指出 |
-| 测试里把旧断言改成新行为 | 行为变化的直接证据 | 逐条对应到行为变化清单 |
 
-## 三、历史案例：用来校准等级
+## 三、历史案例
 
-「事后等级」一栏用的是旧的影响等级：L3 是数据丢失、安全边界放宽或功能整体不可用，L2 是用户可感知且没有退路，L1 是可感知但有退路；没有信号的静默变化再升一级。新加的案例写 P 等级。
+用来判断一个改动像不像过去出过事的那几类。
 
-| 类型 | 案例 | 当时漏掉的问题 | 事后等级 |
+| 类型 | 案例 | 当时漏掉的问题 | 事后评估 |
 |---|---|---|---|
-| 方言分支收窄 | #3492 引入，#3900 用户报告，#3910 修复 | PR 正文写明"只有没有数组时才读字符串"，没人问谁会两个字段同时发 | L2 无退路，输入被静默丢弃升 L3，openai 兼容网关人群 |
-| 默认值翻转 | #3931，五天后 #4015 翻回默认开 | changeset 只写新默认，没写运行中编辑 config、skills、AGENTS.md、agent 文件、mcp.json 不再自动生效；AGENTS.md 变更提醒随之失效，`/reload` 与 `/new` 不重读 AGENTS.md；review 未覆盖行为变化 | L1 有退路，但改了文件不生效也无任何信号，静默升 L2；changeset 没点明失去的行为，config 路径的退路无 guard 测试 |
-| prompt 删句子 | #3879、#3929 | "没有测试引用这句"被当成无影响证据 | L2 无退路，全体用户；行为公开可见，不算静默 |
-| 重构丢功能 | #2961 引入，#3081、#3167 用户报告，#3183 修复 | 重构删掉了 ACP 本地执行兜底与 stdio MCP 接受，文档承诺仍在 | L3，功能整体不可用，ACP 人群，报错响亮但无退路 |
-| 移植漏项 | #3498、#3098、#3250、#3431、#3820 | v1 路径有、v2 路径没有：env 变量、上下文用量、卡片字段、hook、legacy flag；没人列过旧路径功能清单 | L2 无退路，配置被静默忽略升 L3 |
+| 兼容分支收窄 | #3492 引入，#3900 用户报告，#3910 修复 | PR 正文写明"只有没有数组时才读字符串"，没人问谁会两个字段同时发 | 无退路，输入被静默丢弃；openai 兼容网关人群 |
+| 默认值翻转 | #3931，五天后 #4015 翻回默认开 | changeset 只写新默认，没写运行中编辑 config、skills、AGENTS.md、agent 文件、mcp.json 不再自动生效；AGENTS.md 变更提醒随之失效，`/reload` 与 `/new` 不重读 AGENTS.md；review 未覆盖行为变化 | 有退路，但改了文件不生效也没有任何信号；changeset 没写失去的行为，config 路径的退路没有 guard 测试 |
+| prompt 删句子 | #3879、#3929 | "没有测试引用这句"被当成无影响证据 | 无退路，全体用户；行为变化看得见，不算静默 |
+| 重构丢功能 | #2961 引入，#3081、#3167 用户报告，#3183 修复 | 重构删掉了 ACP 本地执行兜底与 stdio MCP 接受，文档承诺仍在 | 功能整体不可用，ACP 人群；报错明显，但没有退路 |
+| 移植漏项 | #3498、#3098、#3250、#3431、#3820 | v1 路径有、v2 路径没有：env 变量、上下文用量、卡片字段、hook、legacy flag；没人列过旧路径功能清单 | 无退路，配置被静默忽略 |
 | 修复引入时序变化 | #3471 合入后 34 分钟被 #3486 revert | 延迟装配改变了启动顺序 | 全体用户 |
-| 输出契约无声变化 | #3146 | headless 事件输出变了，没有 changelog | L2，脚本解析者 |
-| 静默批准 | #3888 | 配了 hook 时审批面板不渲染，待审调用被静默批准 | L3，安全边界 |
-| 安全收紧连带 | #3964（2.1.0），两天后 #4013 整体回滚 | 盲审列出四条：后台 git 探针在子模块 + 符号链接路径下整体失败；filter 驱动 `required = true` 仓库 `git status` fatal；print、ACP、SDK 无信任入口导致 `additional_dir` 静默为空；`~` 条目让 local.toml 整文件失效并静默退出。PR 正文未列任何人群 | L3 候选，四条均无退路、changeset 未提；回滚后代码已不在 main |
+| 输出契约无声变化 | #3146 | headless 事件输出变了，没有 changelog | 无退路，脚本解析者 |
+| 静默批准 | #3888 | 配了 hook 时审批面板不渲染，待审调用被静默批准 | 安全边界被静默放宽 |
+| 安全收紧连带 | #3964（2.1.0），两天后 #4013 整体回滚 | 盲审列出四条：后台 git 探针在子模块 + 符号链接路径下整体失败；filter 驱动 `required = true` 仓库 `git status` fatal；print、ACP、SDK 无信任入口导致 `additional_dir` 静默为空；`~` 条目让 local.toml 整文件失效并静默退出。PR 正文未列任何人群 | 四条都没有退路，changeset 也没提；已回滚，代码不在 main 上 |
