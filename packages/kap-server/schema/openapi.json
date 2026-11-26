@@ -35789,6 +35789,38 @@
                         "request_id"
                       ],
                       "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40942
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
                     }
                   ]
                 }
@@ -36270,6 +36302,38 @@
                         "code": {
                           "enum": [
                             40940
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40942
                           ],
                           "type": "number"
                         },
@@ -36819,6 +36883,38 @@
                         "request_id"
                       ],
                       "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40942
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
                     }
                   ]
                 }
@@ -37332,6 +37428,38 @@
                         "request_id"
                       ],
                       "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40942
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
                     }
                   ]
                 }
@@ -37815,6 +37943,38 @@
                         "code": {
                           "enum": [
                             40940
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40942
                           ],
                           "type": "number"
                         },
@@ -38370,6 +38530,38 @@
                         "code": {
                           "enum": [
                             40940
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40942
                           ],
                           "type": "number"
                         },
@@ -39221,6 +39413,38 @@
                         "request_id"
                       ],
                       "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40942
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
                     }
                   ]
                 }
@@ -39997,6 +40221,38 @@
                         "code": {
                           "enum": [
                             40940
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40942
                           ],
                           "type": "number"
                         },
@@ -40823,6 +41079,38 @@
                         "request_id"
                       ],
                       "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40942
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
                     }
                   ]
                 }
@@ -41306,6 +41594,38 @@
                         "code": {
                           "enum": [
                             40940
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40942
                           ],
                           "type": "number"
                         },
@@ -41875,6 +42195,38 @@
                         "code": {
                           "enum": [
                             40940
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40942
                           ],
                           "type": "number"
                         },
@@ -42913,6 +43265,38 @@
                         "code": {
                           "enum": [
                             40940
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40942
                           ],
                           "type": "number"
                         },

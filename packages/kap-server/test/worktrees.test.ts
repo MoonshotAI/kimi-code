@@ -334,6 +334,8 @@ describe('server-v2 session worktrees', () => {
 
     const created = await createWorktreeSession(workspaceId, { use_remote: true });
     await untilStep(created.id, 'fetch', 'running');
+    const fork = await post<Session>(`/sessions/${created.id}:fork`, {});
+    expect(fork.code).toBe(ErrorCode.WORKTREE_STATE_INVALID);
     const cancelled = await post<Session>(`/sessions/${created.id}/worktree:cancel`);
 
     expect(cancelled.code).toBe(0);

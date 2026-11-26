@@ -119,6 +119,7 @@ import {
 } from './sessionAgentConfig';
 import { customSessionMetadata, updateSessionProfile } from './sessionProfile';
 import type { SessionWorktreeService } from '../services/worktrees/sessionWorktreeService';
+import { stateInvalid } from '../services/worktrees/worktreeError';
 import {
   SESSION_WORKTREE_METADATA_KEY,
   sessionWorktreeWire,
@@ -534,6 +535,7 @@ export function registerSessionsRoutes(
         [ErrorCode.SESSION_UNDO_UNAVAILABLE]: {},
         [ErrorCode.TURN_NOT_FOUND]: {},
         [ErrorCode.TURN_NOT_CONTINUABLE]: {},
+        [ErrorCode.WORKTREE_STATE_INVALID]: {},
       },
       description: 'Run a session action',
       tags: ['sessions'],
@@ -838,12 +840,15 @@ async function waitSessionAction(
 async function forkSessionAction(
   ctx: SessionActionCtx<z.infer<typeof forkSessionRequestSchema>>,
 ): Promise<void> {
-  const { core, req, reply, id, body } = ctx;
+  const { core, req, reply, id, body, worktrees } = ctx;
   const lease = await programForSession(core.accessor, id);
   if (lease === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
   try {
+    if ((await worktrees.read(id))?.setup.status === 'running') {
+      throw stateInvalid('wait for worktree setup to finish before forking this session');
+    }
     const meta = await core.accessor.get(ISessionManager).fork({
       sourceSessionId: id,
       title: body.title,
