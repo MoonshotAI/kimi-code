@@ -63,4 +63,5 @@ export const MCP_TITLES = {
   addTool: (server: string, tool: string): string => `MCP 服务${quote(server)}新增工具${quote(tool)}，等产品重新读取工具清单`,
   updateTool: (server: string, tool: string): string => `MCP 服务${quote(server)}修改工具${quote(tool)}，等产品重新读取工具清单`,
   removeTool: (server: string, tool: string): string => `MCP 服务${quote(server)}删除工具${quote(tool)}，等产品重新读取工具清单`,
+  disconnect: (server: string): string => `MCP 服务${quote(server)}断开所有连接，等产品重新连上并读取工具清单`,
 };

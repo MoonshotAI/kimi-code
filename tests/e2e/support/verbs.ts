@@ -274,10 +274,16 @@ export type DriverActionsOn<S extends Surface> = Omit<ProductOn<S>, SessionVerb>
 
 export type SurfaceDriver<S extends Surface> = DriverActionsOn<S> & SurfaceControls;
 
+export interface EditorMcpServer {
+  readonly name: string;
+  readonly url: string;
+}
+
 export interface SurfaceLaunch {
   readonly home: TestHome;
   readonly model: FakeModel;
   readonly workspaceTrust?: 'trust' | 'exit';
   readonly reopen?: Reopen;
   readonly variant?: Variant;
+  readonly editorMcpServers?: readonly EditorMcpServer[];
 }
