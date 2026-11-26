@@ -62,7 +62,7 @@ function cacheControl(assetsDir: string, filePath: string): string {
   if (assetPath.startsWith(`assets${sep}`) && /[-.][A-Za-z0-9_-]{8}\.[^.]+$/.test(fileName)) {
     return 'public, max-age=31536000, immutable';
   }
-  return 'no-cache';
+  return 'no-store';
 }
 
 async function resolveStaticFile(
