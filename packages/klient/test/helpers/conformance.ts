@@ -14,7 +14,7 @@ import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
-import { deferred } from '@moonshot-ai/testkit/fixtures';
+import { deferred, slashPathOf } from '@moonshot-ai/testkit/fixtures';
 import { createFakeModel, say } from '@moonshot-ai/testkit/model';
 import {
   resetModelsDevUpstreamForTest,
@@ -120,7 +120,7 @@ export function defineKlientConformance(
       try {
         expect(created).toMatchObject({
           title: 'conformance session',
-          cwd: process.cwd(),
+          cwd: slashPathOf(process.cwd()),
           archived: false,
         });
         expect(created.id.length).toBeGreaterThan(0);
