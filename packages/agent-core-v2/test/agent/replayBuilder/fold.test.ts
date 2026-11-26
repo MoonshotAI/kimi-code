@@ -5,7 +5,7 @@ import type { AgentReplayRecord } from '#/agent/replayBuilder/types';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { WireRecord } from '#/wire/record';
 import { fromCoreMessage } from '#human/message';
-import { fromLlmMessage } from '#/llm-adapter/contract/message';
+import { fromLlmMessage } from '#/wire/message';
 
 const METADATA: WireRecord = {
   type: 'metadata',

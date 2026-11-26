@@ -13,9 +13,6 @@ import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManage
 import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
-import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { deferred } from '@moonshot-ai/testkit/fixtures';
 import { createFakeModel, say } from '@moonshot-ai/testkit/model';
@@ -25,11 +22,15 @@ import {
 } from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevUpstream';
 
 import type { Klient } from '../../src/index.js';
+import type { KlientChannel } from '../../src/core/channel.js';
 import type { TestEngine } from './engine.js';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 export interface KlientConformanceTarget {
   readonly klient: Klient;
   readonly app: TestEngine['app'];
+  readonly call: KlientChannel['call'];
+  readonly stream: KlientChannel['stream'];
   cleanup(): Promise<void>;
 }
 
@@ -269,11 +270,22 @@ export function defineKlientConformance(
 
       const name = '__klient_conformance__';
       try {
-        await target.klient.global.kosong.addProvider(name, {
+        await target.call({}, 'providerService', 'set', [
+          name,
+          { type: 'openai', apiKey: 'conf-key' },
+        ]);
+        await expect(target.call({}, 'providerService', 'get', [name])).resolves.toMatchObject({
           type: 'openai',
-          auth: { method: 'api-key', apiKey: 'conf-key' },
+          apiKey: 'conf-key',
         });
-        const got = await target.klient.global.kosong.getProvider(name);
+        const configured = (await target.call({}, 'providerService', 'list', [])) as Record<
+          string,
+          unknown
+        >;
+        expect(configured[name]).toMatchObject({ type: 'openai', apiKey: 'conf-key' });
+        const got = (await target.call({}, 'modelResolver', 'getProvider', [name])) as {
+          has_api_key: boolean;
+        };
         expect(got.has_api_key).toBe(true);
 
         await waitFor(
@@ -281,9 +293,10 @@ export function defineKlientConformance(
           5_000,
         );
       } finally {
-        await target.klient.global.kosong.removeProvider(name);
+        await target.call({}, 'providerService', 'delete', [name]);
         sub.dispose();
       }
+      await expect(target.call({}, 'providerService', 'get', [name])).resolves.toBeUndefined();
       expect(errors).toEqual([]);
     });
 
@@ -407,8 +420,8 @@ export function defineKlientConformance(
 
     it('kosong lists models/providers and preserves generation contracts', async () => {
       const kosong = target.klient.global.kosong;
-      expect(Array.isArray(await kosong.listModels())).toBe(true);
-      expect(Array.isArray(await kosong.listProviders())).toBe(true);
+      expect(Array.isArray(await target.call({}, 'modelResolver', 'listModels', []))).toBe(true);
+      expect(Array.isArray(await target.call({}, 'modelResolver', 'listProviders', []))).toBe(true);
 
       const events: Array<{
         added: readonly string[];
@@ -448,14 +461,31 @@ export function defineKlientConformance(
         baseUrl: 'https://example.test/v1',
         auth: { method: 'api-key', apiKey: 'conf-key' },
       });
-      await target.app.accessor.get(IModelService).set(kimiId, {
+      const catalog = target.app.accessor.get(IProviderCatalogService);
+      const previousDefaultModel = catalog.getDefaultModelId();
+      await target.call({}, 'modelService', 'set', [
+        kimiId,
+        {
+          provider: kimiProviderId,
+          model: 'conf-kimi',
+          maxContextSize: 4096,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
+          defaultEffort: 'high',
+        },
+      ]);
+      await expect(target.call({}, 'modelService', 'get', [kimiId])).resolves.toMatchObject({
         provider: kimiProviderId,
         model: 'conf-kimi',
-        maxContextSize: 4096,
-        capabilities: ['thinking'],
-        supportEfforts: ['low', 'high'],
-        defaultEffort: 'high',
       });
+      const configuredModels = (await target.call({}, 'modelService', 'list', [])) as Record<
+        string,
+        unknown
+      >;
+      expect(configuredModels[kimiId]).toMatchObject({ provider: kimiProviderId, model: 'conf-kimi' });
+      await expect(
+        target.call({}, 'modelResolver', 'setDefaultModel', [kimiId]),
+      ).resolves.toMatchObject({ default_model: kimiId });
       const model = createFakeModel();
       model.route('kosong', () => true).script(say('ok'), say('ok'), say('ok'), say('ok'));
       vi.stubGlobal('fetch', model.fetch);
@@ -501,11 +531,14 @@ export function defineKlientConformance(
         const responseEvents = await consume(
           kosong.generate(kimiId, publicInput, { model: { thinking: { effort: 'on' } } }),
         );
-        await consume(kosong.generate(kimiId, publicInput, { model: { thinking: { effort: 'max' } } }));
-        const catalog = target.app.accessor.get(IModelCatalog);
-        const registry = target.app.accessor.get(IProtocolAdapterRegistry);
+        await consume(target.stream({}, 'modelResolver', 'generate', [
+          kimiId,
+          publicInput,
+          { model: { thinking: { effort: 'max' } } },
+        ]));
+        const registry = target.app.accessor.get(IProviderCatalogService);
         const directGenerate = (effort: string) => {
-          const requester = registry.request(catalog.get(kimiId), {
+          const requester = registry.createRequester(catalog.get(kimiId), {
             model: { thinking: { effort } },
           });
           return streamLlmRequest(
@@ -563,9 +596,11 @@ export function defineKlientConformance(
       } finally {
         vi.unstubAllGlobals();
         await model.close();
-        await kosong.removeProvider(kimiId);
+        await catalog.setDefaultModelId(previousDefaultModel);
+        await target.call({}, 'modelService', 'delete', [kimiId]);
         await kosong.removeProvider(kimiProviderId);
       }
+      await expect(target.call({}, 'modelService', 'get', [kimiId])).resolves.toBeUndefined();
     });
 
     it('flags / plugins / auth read models respond', async () => {

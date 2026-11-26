@@ -50,8 +50,6 @@ import {
   IEnvironmentService,
   IConfigService,
   IFileSystemStorageService,
-  IModelCatalog,
-  IModelService,
   ISessionActivityView,
   ISessionIndexMirror,
   ISessionManager,
@@ -92,6 +90,7 @@ import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 import { ensureMainAgent } from '../src/transport/mainAgent';
 import { readAgentState, readContextState, readGoalState } from '../src/transport/ws/v1/agentState';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 function historyEntries(messages: readonly ContextMessage[]) {
   return messages.map(historyEntryFromContext);
@@ -1712,13 +1711,13 @@ describe('server-v2 /api/v1/sessions', () => {
 
   it('waits for the model configuration before choosing the creation model', async () => {
     await restartWithModels();
-    const models = (server as RunningServer).core.accessor.get(IModelService);
+    const models = (server as RunningServer).core.accessor.get(IProviderCatalogService);
     let loaded = false;
     let release!: () => void;
     (models as { ready: Promise<void> }).ready = new Promise<void>((resolve) => {
       release = resolve;
     });
-    vi.spyOn(models, 'getDefaultModel').mockImplementation(() => (loaded ? 'stub' : undefined));
+    vi.spyOn(models, 'getDefaultModelId').mockImplementation(() => (loaded ? 'stub' : undefined));
 
     const pending = postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -1796,7 +1795,7 @@ describe('server-v2 /api/v1/sessions', () => {
       metadata: { cwd: home as string },
     });
 
-    await (server as RunningServer).core.accessor.get(IModelCatalog).setDefaultModel('other');
+    await (server as RunningServer).core.accessor.get(IProviderCatalogService).setDefaultModel('other');
     const second = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },
     });

@@ -10,7 +10,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { type Model } from '#/provider-catalog/model/catalog';
 import { stubLog } from '../../_base/log/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import type { ContextInjectionProvider, ContextInjectionResult } from '#/features/reminder/types';
@@ -71,6 +71,7 @@ import {
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { createTestAgent } from '../../harness';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const signal = new AbortController().signal;
 
@@ -256,7 +257,7 @@ function realSubagents(
       }
       return { id: alias } as Model;
     },
-  } as unknown as IModelCatalog;
+  } as unknown as IProviderCatalogService;
   const sessionContext = { _serviceBrand: undefined, cwd: '/repo' } as unknown as ISessionContext;
   return new SessionSubagentService(
     agentLifecycle,

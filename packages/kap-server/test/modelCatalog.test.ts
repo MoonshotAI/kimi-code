@@ -4,10 +4,9 @@ import { join } from 'node:path';
 
 import {
   IConfigService,
-  IModelCatalog,
   IOAuthService,
   IProviderDiscoveryService,
-  type IModelCatalog as IModelCatalogType,
+  type IProviderCatalogService as IProviderCatalogServiceType,
   type IOAuthService as IOAuthServiceType,
   type IProviderDiscoveryService as IProviderDiscoveryServiceType,
   type ModelCatalogConfig,
@@ -18,6 +17,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 interface Envelope<T> {
   code: number;
@@ -195,7 +195,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       failed: [],
     }));
     const seeds = [
-      [IModelCatalog, catalogStub()],
+      [IProviderCatalogService, catalogStub()],
       [IProviderDiscoveryService, discoveryStub(refreshProviderModels)],
     ] as unknown as ScopeSeed;
     await boot(CATALOG_TOML, seeds);
@@ -300,9 +300,22 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
     expect(body.data).toEqual({ changed: [], unchanged: [], failed: [] });
   });
 
-  function catalogStub(): IModelCatalogType {
+  function catalogStub(): IProviderCatalogServiceType {
     return {
       _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChangeProviders: () => ({ dispose: () => {} }),
+      onDidChangeDefaultProvider: () => ({ dispose: () => {} }),
+      onDidChangeModels: () => ({ dispose: () => {} }),
+      onDidChangeDefaultModel: () => ({ dispose: () => {} }),
+      loadProviderConfigs: () => {},
+      loadModelRecords: () => {},
+      listProviderConfigs: () => ({}),
+      listModelRecords: () => ({}),
+      getProviderConfig: () => undefined,
+      getModelRecord: () => undefined,
+      getDefaultProviderId: () => undefined,
+      getDefaultModelId: () => undefined,
       get: () => {
         throw new Error('unused');
       },
@@ -315,7 +328,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       setDefaultModel: async () => {
         throw new Error('unused');
       },
-    };
+    } as unknown as IProviderCatalogServiceType;
   }
 
   function discoveryStub(

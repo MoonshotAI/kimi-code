@@ -19,7 +19,7 @@ import {
   type TokenCountingState,
 } from '#/agent/tokenCounting/tokenCountingOps';
 import { TokenCountingAgentModelDefinition } from '#/session/tokenCounting/tokenCountingAgentModel';
-import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import { estimateTokensForMessages } from '#/session/tokenCounting/tokens';
 import { grandTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { IWireService } from '#/wire/wire';
 

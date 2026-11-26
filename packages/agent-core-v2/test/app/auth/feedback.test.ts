@@ -11,8 +11,9 @@ import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
 import type { IOAuthService } from '#/app/auth/auth';
 import type { ISessionExportService } from '#/app/sessionExport/sessionExport';
-import type { IModelService, ModelRecord } from '#/llm-adapter/model/model';
-import type { IProviderService, ProviderConfig } from '#/llm-adapter/provider/provider';
+import type { ModelRecord } from '#/provider-catalog/model/model';
+import type { ProviderConfig } from '#/provider-catalog/provider/provider';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const SUBMIT = {
   content: 'test',
@@ -35,13 +36,11 @@ function service(options: {
   const models = options.models ?? {};
   return new FeedbackService(
     {
-      get: (name: string) => providers[name],
-      getDefaultProvider: () => options.defaultProvider,
-    } as IProviderService,
-    {
-      get: (id: string) => models[id],
-      getDefaultModel: () => options.defaultModel,
-    } as IModelService,
+      getProviderConfig: (name: string) => providers[name],
+      getDefaultProviderId: () => options.defaultProvider,
+      getModelRecord: (id: string) => models[id],
+      getDefaultModelId: () => options.defaultModel,
+    } as unknown as IProviderCatalogService,
     { get: () => undefined } as unknown as IConfigService,
     {
       status: async () => ({ loggedIn: false }),

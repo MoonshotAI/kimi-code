@@ -1,4 +1,4 @@
-import { APIProviderRateLimitError, isProviderRateLimitError } from '#/llm-adapter/contract/errors';
+import { APIProviderRateLimitError, isProviderRateLimitError } from '#/provider-catalog/errors';
 
 import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
 import type { IDisposable } from '#/_base/di/lifecycle';

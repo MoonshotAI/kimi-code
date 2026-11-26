@@ -7,7 +7,7 @@ import {
   toLoopRecord,
   type Loop,
   type LoopEmitted,
-  type LoopLlmRequester,
+  type FullLoopLlmRequester,
   type LoopRecord,
 } from '@moonshot-ai/core/loop/index';
 import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
@@ -15,7 +15,7 @@ import { createTestLoop as createLoop } from './factory';
 import { textToolContent, type ToolReturn } from '#/tool/executor';
 import { executorFrom, successfulExecutor } from './executor';
 
-function requester(responses: MockProviderResponse[]): LoopLlmRequester {
+function requester(responses: MockProviderResponse[]): FullLoopLlmRequester {
   return createMockProviderRequester(() => {
     const next = responses.shift();
     if (next === undefined) throw new Error('boom');

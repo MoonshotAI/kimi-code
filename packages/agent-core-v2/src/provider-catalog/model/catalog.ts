@@ -1,0 +1,165 @@
+import { z } from 'zod';
+
+import type { LlmEndpoint, LlmModelSpec } from '@moonshot-ai/core/llm/request';
+import type { Protocol, ProtocolProviderOptions } from '#/provider-catalog/protocol/protocol';
+import type { ProviderConfig } from '../provider/provider';
+
+import type { ModelRecord, ModelUpgrade } from './model';
+import { effectiveModelConfig } from './model-auth';
+
+export interface Model {
+  readonly id: string;
+  readonly aliases: readonly string[];
+  readonly protocol: Protocol;
+  readonly spec: LlmModelSpec;
+  readonly endpoint: LlmEndpoint;
+  readonly maxOutputSize?: number;
+  readonly displayName?: string;
+  readonly reasoningKey?: string;
+  readonly providerType?: string;
+  readonly providerName: string;
+  readonly providerOptions?: ProtocolProviderOptions;
+}
+
+export const modelCatalogItemSchema = z.object({
+  provider: z.string().min(1),
+  model: z.string().min(1),
+  display_name: z.string().min(1).optional(),
+  max_context_size: z.number().int().min(1),
+  capabilities: z.array(z.string()).optional(),
+  support_efforts: z.array(z.string()).optional(),
+  default_effort: z.string().optional(),
+  upgrade: z
+    .object({
+      model: z.string().min(1),
+      migration_markdown: z.string(),
+      retirement_at: z.string().optional(),
+    })
+    .optional(),
+});
+export type ModelCatalogItem = z.infer<typeof modelCatalogItemSchema>;
+
+export const providerCatalogStatusSchema = z.enum([
+  'connected',
+  'error',
+  'unconfigured',
+]);
+export type ProviderCatalogStatus = z.infer<typeof providerCatalogStatusSchema>;
+
+export const providerCatalogItemSchema = z.object({
+  id: z.string().min(1),
+  type: z.string().min(1),
+  base_url: z.string().min(1).optional(),
+  default_model: z.string().min(1).optional(),
+  api_key_env: z.string().optional(),
+  has_api_key: z.boolean(),
+  status: providerCatalogStatusSchema,
+  models: z.array(z.string().min(1)).optional(),
+});
+export type ProviderCatalogItem = z.infer<typeof providerCatalogItemSchema>;
+
+export const setDefaultModelResponseSchema = z.object({
+  default_model: z.string().min(1),
+  model: modelCatalogItemSchema,
+});
+export type SetDefaultModelResponse = z.infer<typeof setDefaultModelResponseSchema>;
+
+export interface ProviderCredentialState {
+  readonly hasApiKey: boolean;
+  readonly hasOAuthToken: boolean;
+  readonly supportsAmbientCredential: boolean;
+  readonly hasCredentialConflict: boolean;
+}
+
+function toProtocolModelUpgrade(upgrade: ModelUpgrade | undefined) {
+  if (upgrade === undefined) return undefined;
+  return {
+    model: upgrade.model,
+    migration_markdown: upgrade.migrationMarkdown,
+    retirement_at: upgrade.retirementAt,
+  };
+}
+
+export function toProtocolModel(
+  model: Model,
+  record: ModelRecord,
+  providerType?: string,
+): ModelCatalogItem {
+  return {
+    provider: model.providerName,
+    model: model.id,
+    display_name: model.displayName ?? model.spec.name,
+    max_context_size: model.spec.maxContextSize ?? 0,
+    capabilities: effectiveModelConfig(record, providerType ?? model.providerType).capabilities,
+    support_efforts:
+      model.spec.thinking?.supportEfforts === undefined
+        ? undefined
+        : [...model.spec.thinking.supportEfforts],
+    default_effort: model.spec.thinking?.defaultEffort,
+    upgrade: toProtocolModelUpgrade(record.upgrade),
+  };
+}
+
+export function toProtocolModelFallback(
+  modelId: string,
+  record: ModelRecord,
+  providerType?: string,
+): ModelCatalogItem {
+  const effective = effectiveModelConfig(record, providerType);
+  return {
+    provider: effective.provider ?? '',
+    model: modelId,
+    display_name: effective.displayName ?? effective.model ?? modelId,
+    max_context_size: effective.maxContextSize ?? 0,
+    capabilities: effective.capabilities,
+    support_efforts: effective.supportEfforts,
+    default_effort: effective.defaultEffort,
+    upgrade: toProtocolModelUpgrade(record.upgrade),
+  };
+}
+
+export function toProtocolProvider(
+  providerId: string,
+  provider: ProviderConfig,
+  models: Readonly<Record<string, ModelRecord>>,
+  globalDefaultModel: string | undefined,
+  credential: ProviderCredentialState,
+): ProviderCatalogItem {
+  const providerModels = modelIdsForProvider(models, providerId);
+  const defaultModel =
+    provider.defaultModel ?? globalDefaultForProvider(models, globalDefaultModel, providerId);
+  return {
+    id: providerId,
+    type: provider.type ?? 'openai',
+    base_url: provider.baseUrl,
+    default_model: defaultModel,
+    api_key_env: provider.apiKeyEnv,
+    has_api_key: credential.hasApiKey,
+    status: credential.hasCredentialConflict
+      ? 'error'
+      : credential.hasApiKey || credential.hasOAuthToken || credential.supportsAmbientCredential
+        ? 'connected'
+        : 'unconfigured',
+    models: providerModels,
+  };
+}
+
+export function modelIdsForProvider(
+  models: Readonly<Record<string, ModelRecord>>,
+  providerId: string,
+): string[] {
+  return Object.entries(models)
+    .filter(([, record]) => record.provider === providerId)
+    .map(([modelId]) => modelId);
+}
+
+export function globalDefaultForProvider(
+  models: Readonly<Record<string, ModelRecord>>,
+  globalDefaultModel: string | undefined,
+  providerId: string,
+): string | undefined {
+  if (globalDefaultModel === undefined) return undefined;
+  const record = models[globalDefaultModel];
+  return record?.provider === providerId ? globalDefaultModel : undefined;
+}
+
