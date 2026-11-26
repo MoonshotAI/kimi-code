@@ -1377,18 +1377,29 @@ export class KimiTUI {
     }
     this.reverseRpcDisposers.length = 0;
     this.disposeTerminalTracking();
-    this.state.footer.setTransientHint(SHUTTING_DOWN_HINT);
-    this.state.ui.requestRender();
+    this.setShutdownHint(SHUTTING_DOWN_HINT);
     try {
       await this.closeSession('shutting down');
       this.clearQueuedMessages();
       this.staging.releaseAll();
       this.staging.deleteStaged(this.imageStore.clear());
       await this.staging.drain();
+      const panelDeleteLabel = this.worktreePanel.pendingDeleteLabel;
+      if (panelDeleteLabel !== undefined) {
+        this.setShutdownHint(`${panelDeleteLabel} (Ctrl+C to force quit)`);
+      }
       await this.worktreePanel.waitForPendingDeletes();
+      const exitDeleteName = this.worktreeExit.pendingDeleteName;
+      if (exitDeleteName !== undefined) {
+        this.setShutdownHint(`Deleting worktree ${exitDeleteName}… (Ctrl+C to force quit)`);
+      }
       await this.worktreeExit.finishShutdown();
+      if (panelDeleteLabel !== undefined || exitDeleteName !== undefined) {
+        this.setShutdownHint('Shutting down…');
+      }
       await this.harness.close();
     } finally {
+      this.state.footer.setTransientHint(null);
       removeForceExitListener();
       this.sessionEventHandler.stopAllMcpServerStatusSpinners();
       this.sessionEventHandler.clearStepRetryAttemptTimer();
@@ -1405,7 +1416,13 @@ export class KimiTUI {
     }
   }
 
+  private setShutdownHint(hint: string): void {
+    this.state.footer.setTransientHint(hint, { spinning: true });
+    this.state.ui.requestRender();
+  }
+
   private forceExitDuringShutdown(): void {
+    this.state.footer.setTransientHint(null);
     try {
       this.stopUiForExit();
     } catch {

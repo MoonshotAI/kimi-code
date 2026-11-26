@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 
 import { buildWeightedTips, FooterComponent } from '#/tui/components/chrome/footer';
 import { ALL_TIPS, TRANSCRIPT_GROUPING_TIP } from '#/tui/constant/tips';
-import { BRAILLE_SPINNER_INTERVAL_MS } from '#/tui/constant/rendering';
+import { BRAILLE_SPINNER_FRAMES, BRAILLE_SPINNER_INTERVAL_MS } from '#/tui/constant/rendering';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
@@ -627,5 +627,62 @@ describe('FooterComponent worktree location', () => {
     const rendered = stripVTControlCharacters(footer.render(160)[0] ?? '');
     expect(rendered).toContain('/remote/work');
     expect(rendered).not.toContain('worktree fix-login');
+  });
+});
+
+describe('FooterComponent spinning transient hints', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('animates a spinning transient hint and stops ticking when cleared or replaced', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(appState, onRefresh);
+    onTestFinished(() => {
+      footer.dispose();
+    });
+
+    footer.setTransientHint('Shutting down… (running shutdown hooks)', { spinning: true });
+    expect(footer.getTransientHint()).toBe('Shutting down… (running shutdown hooks)');
+    expect(stripVTControlCharacters(footer.render(140)[1] ?? '')).toContain(
+      `${BRAILLE_SPINNER_FRAMES[0]} Shutting down… (running shutdown hooks)`,
+    );
+
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(stripVTControlCharacters(footer.render(140)[1] ?? '')).toContain(
+      `${BRAILLE_SPINNER_FRAMES[1]} Shutting down… (running shutdown hooks)`,
+    );
+
+    footer.setTransientHint('Deleting worktree wt… (Ctrl+C to force quit)', { spinning: true });
+    expect(stripVTControlCharacters(footer.render(140)[1] ?? '')).toContain(
+      `${BRAILLE_SPINNER_FRAMES[1]} Deleting worktree wt… (Ctrl+C to force quit)`,
+    );
+
+    footer.setTransientHint('Press Ctrl+C again to exit');
+    onRefresh.mockClear();
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 3);
+    expect(onRefresh).not.toHaveBeenCalled();
+    const staticLine = stripVTControlCharacters(footer.render(140)[1] ?? '');
+    expect(staticLine).toContain('Press Ctrl+C again to exit');
+    expect(staticLine).not.toContain(BRAILLE_SPINNER_FRAMES[0]);
+
+    footer.setTransientHint('Shutting down…', { spinning: true });
+    footer.setTransientHint(null);
+    onRefresh.mockClear();
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 3);
+    expect(onRefresh).not.toHaveBeenCalled();
+    expect(footer.getTransientHint()).toBeNull();
+  });
+
+  it('stops the transient hint spinner timer on dispose', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(appState, onRefresh);
+    footer.setTransientHint('Deleting worktree wt… (Ctrl+C to force quit)', { spinning: true });
+    footer.dispose();
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+    expect(onRefresh).not.toHaveBeenCalled();
   });
 });

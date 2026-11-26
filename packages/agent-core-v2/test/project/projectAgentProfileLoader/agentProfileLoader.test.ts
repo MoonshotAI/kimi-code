@@ -791,8 +791,10 @@ describe('agent profile loaders + session catalog', () => {
         const refreshed = new Promise<string>((resolvePromise) => {
           const d = stack.catalog.onDidChange((sourceId) => {
             if (sourceId !== 'workspace') return;
+            const description = stack.catalog.get('watched-agent')?.description;
+            if (description === undefined) return;
             d.dispose();
-            resolvePromise(sourceId);
+            resolvePromise(description);
           });
         });
         const timedOut = new Promise<never>((_resolve, reject) => {
@@ -805,8 +807,7 @@ describe('agent profile loaders + session catalog', () => {
           agentMd('watched-agent', 'from watch'),
         );
 
-        await expect(Promise.race([refreshed, timedOut])).resolves.toBe('workspace');
-        expect(stack.catalog.get('watched-agent')?.description).toBe('from watch');
+        await expect(Promise.race([refreshed, timedOut])).resolves.toBe('from watch');
       });
     });
   }, 15000);
