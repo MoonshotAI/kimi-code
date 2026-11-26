@@ -178,12 +178,12 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   }
 
   async function activateSkill(
-    ...args: Parameters<UseModelProviderState['activateSkill']>
+    ...[skillName, args, attachments, sessionId, opts]: Parameters<UseModelProviderState['activateSkill']>
   ): Promise<boolean> {
-    const sid = args[3] ?? sessionsStore().activeSessionId;
+    const sid = sessionId ?? sessionsStore().activeSessionId;
     if (sid !== undefined && worktreeBlocksSend(sid)) return false;
     if (sid !== undefined && worktreeGated(sid) && !(await whenWorktreeSettles(sid))) return false;
-    return modelProvider.activateSkill(...args);
+    return modelProvider.activateSkill(skillName, args, attachments, sid, opts);
   }
 
   function applyWorktreeSession(session: AppSession): void {

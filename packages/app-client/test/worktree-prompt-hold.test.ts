@@ -439,7 +439,21 @@ describe('worktree first-prompt hold', () => {
 
     await moveTo(ws, worktree('ready', { path: '/wt/a' }), '/wt/a');
     expect(await activation).toBe(true);
-    expect(modelProvider.activateSkill).toHaveBeenCalledExactlyOnceWith('review', undefined, undefined, SID);
+    expect(modelProvider.activateSkill).toHaveBeenCalledExactlyOnceWith('review', undefined, undefined, SID, undefined);
+  });
+
+  it('activates a held skill in its own session after the user switched to another one', async () => {
+    const { modelProvider, ws } = await createRig();
+    await start(ws);
+    sessionsStore().setActiveSessionId(SID);
+
+    const activation = ws.activateSkill('review');
+    sessionsStore().appendSession(session({ id: 'other', title: 'other', worktree: undefined }));
+    sessionsStore().setActiveSessionId('other');
+    await moveTo(ws, worktree('ready', { path: '/wt/a' }), '/wt/a');
+
+    expect(await activation).toBe(true);
+    expect(modelProvider.activateSkill).toHaveBeenCalledExactlyOnceWith('review', undefined, undefined, SID, undefined);
   });
 
   it('refuses a skill activation while the worktree is missing', async () => {
