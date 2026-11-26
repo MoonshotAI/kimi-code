@@ -84,17 +84,19 @@ vi.mock('../../../src/main/server/connect', () => ({
 vi.mock('../../../src/main/server/session-continue', () => ({
   prepareSessionContinue: mocks.prepareSessionContinue,
 }));
-vi.mock('../../../src/main/window/main-window', () => ({
-  createWindow: mocks.createWindow,
+vi.mock('../../../src/main/window/window-registry', () => ({
   cancelQuitting: mocks.cancelQuitting,
   getMainWindow: mocks.getMainWindow,
   isMarkedQuitting: mocks.isMarkedQuitting,
   isQuitConfirmSkipped: mocks.isQuitConfirmSkipped,
   markQuitting: mocks.markQuitting,
+  sendToRenderer: mocks.sendToRenderer,
+}));
+vi.mock('../../../src/main/window/main-window', () => ({
+  createWindow: mocks.createWindow,
   reportIfStillRunning: mocks.reportIfStillRunning,
   selectSessionInRenderer: vi.fn(),
   sendLaunchAction: mocks.sendLaunchAction,
-  sendToRenderer: mocks.sendToRenderer,
   showMainWindow: mocks.showMainWindow,
   setScreenActionHandler: mocks.setScreenActionHandler,
   showStartupScreen: mocks.showStartupScreen,

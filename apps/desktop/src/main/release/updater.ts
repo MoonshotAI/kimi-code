@@ -7,7 +7,7 @@ import { log } from '../diagnostics/log';
 import { isPreviewVersion } from './release-channel';
 import { refreshServerRegion, serverRegionProfile, whenServerRegionSource } from '../server/region';
 import { isUpdateAutoDownloadEnabled, setUpdateAutoDownloadEnabled } from '../app/ui-state';
-import { markQuitting, sendToRenderer } from '../window/main-window';
+import { markQuitting, sendToRenderer } from '../window/window-registry';
 import { trackDesktopEvent } from '../diagnostics/track';
 import { isUpdateRolloutEligible, type UpdateRolloutInfo } from './update-rollout';
 

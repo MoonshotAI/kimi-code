@@ -1,8 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, win32 as win32path } from 'node:path';
 
-import { app, BaseWindow, BrowserWindow, dialog, nativeImage, nativeTheme, screen, shell, webContents as electronWebContents, WebContentsView } from 'electron';
-import type { AppDetailsOptions, BaseWindowConstructorOptions, WebContents, WebPreferences } from 'electron';
+import { app, BaseWindow, dialog, nativeImage, nativeTheme, screen, shell, webContents as electronWebContents, WebContentsView } from 'electron';
+import type { AppDetailsOptions, BaseWindowConstructorOptions, WebPreferences } from 'electron';
 
 import { DESKTOP_DISPLAY_NAME } from '../../shared/identity';
 import { connect } from '../server/connect';
@@ -15,7 +15,7 @@ import { installPermissionHandler } from '../app/permissions';
 import { setFailureToastSender } from '../app/failure-dialog';
 import { serverRequestTarget } from '../server/region';
 import { installEmbeddedServerAuthInjection, registerAppWebContents } from '../server/server-auth';
-import { IPC, type LaunchActionPayload, type RendererEventChannel } from '../ipc/ipc-channels';
+import { IPC, type LaunchActionPayload } from '../ipc/ipc-channels';
 import { quoteWindowsCommandLineArg } from '../shell/jump-list';
 import { log, logStartup, onStartupStep, redactUrlForLog } from '../diagnostics/log';
 import { markCleanExit } from '../app/launch-state';
@@ -34,7 +34,18 @@ import {
   type StartupStage,
 } from '../app/screens';
 import { trackDesktopEvent } from '../diagnostics/track';
-import { setTerminalMenuFocus, getTerminalMenuFocus } from '../shell/menu';
+import { setTerminalMenuFocus, getTerminalMenuFocus } from '../shell/terminal-menu-focus';
+import {
+  getMainWindow,
+  installQuitWatch,
+  isMarkedQuitting,
+  markQuitting,
+  notifyMainWindowGone,
+  sendToRenderer,
+  setMainWindow,
+  shouldInterceptMainWindowClose,
+  type MainWindow,
+} from './window-registry';
 import { bumpTerminalGeneration, killAllTerminals, killStaleTerminals } from '../terminal/manager';
 import { isVibrancyEnabled, isLinuxNativeTitleBar } from '../app/ui-state';
 import { recordWindowLifecycle } from './window-lifecycle';
@@ -44,13 +55,9 @@ import { attachBrowserAutomationWindow } from '../browser/browser-automation';
 import { attachBrowserOverlayWindow } from '../browser/browser-overlay';
 import { isPreviewVersion, windowsAppId } from '../release/release-channel';
 
-const HOST_VIEW_RESIZE_EVENTS = ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'restore'] as const;
+export * from './window-registry';
 
-export interface MainWindow extends BaseWindow {
-  readonly hostView: WebContentsView;
-  readonly webContents: WebContents;
-  loadURL(url: string): Promise<void>;
-}
+const HOST_VIEW_RESIZE_EVENTS = ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'restore'] as const;
 
 function fitHostView(win: MainWindow): void {
   if (win.isDestroyed()) return;
@@ -75,24 +82,6 @@ export function createMainWindow(options: BaseWindowConstructorOptions, webPrefe
     if (!hostView.webContents.isDestroyed()) hostView.webContents.close();
   });
   return win;
-}
-
-let mainWindow: MainWindow | null = null;
-
-export function getMainWindow(): MainWindow | null {
-  return mainWindow;
-}
-
-export function windowForWebContents(contents: WebContents): BaseWindow | null {
-  if (mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.webContents === contents) return mainWindow;
-  return BrowserWindow.fromWebContents(contents);
-}
-
-export function focusedWindowWebContents(): WebContents | undefined {
-  const focused = BaseWindow.getFocusedWindow();
-  if (focused === null || focused.isDestroyed()) return undefined;
-  if (focused === mainWindow) return mainWindow.webContents;
-  return focused instanceof BrowserWindow ? focused.webContents : undefined;
 }
 
 export function focusMainRendererOnWindowFocus(win: MainWindow, occluded: () => boolean): void {
@@ -129,53 +118,25 @@ function showQuietWindow(win: MainWindow): void {
 export function showMainWindow(): void {
   pendingFullscreenHide = false;
   pendingHideReason = undefined;
-  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+  const current = getMainWindow();
+  if (current !== null && !current.isDestroyed()) {
     if (e2eWindowMode() === 'quiet') {
-      showQuietWindow(mainWindow);
+      showQuietWindow(current);
       return;
     }
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+    if (current.isMinimized()) current.restore();
+    current.show();
+    current.focus();
   } else {
     createWindow();
   }
 }
 
-let isQuitting = false;
-let quitConfirmSkipped = false;
-let quitWatchInstalled = false;
-
-function installQuitWatch(): void {
-  if (quitWatchInstalled) return;
-  quitWatchInstalled = true;
-  app.on('before-quit', () => {
-    isQuitting = true;
-  });
-}
-
-export function markQuitting(): void {
-  isQuitting = true;
-  quitConfirmSkipped = true;
-}
-
-export function isMarkedQuitting(): boolean {
-  return isQuitting;
-}
-
 export function reportIfStillRunning(report: () => void): void {
   const timer = setTimeout(() => {
-    if (!isQuitting) report();
+    if (!isMarkedQuitting()) report();
   }, RENDERER_GONE_GRACE_MS);
   timer.unref?.();
-}
-
-export function isQuitConfirmSkipped(): boolean {
-  return quitConfirmSkipped || e2eWindowMode() !== null;
-}
-
-export function cancelQuitting(): void {
-  isQuitting = false;
 }
 
 let pendingFullscreenHide = false;
@@ -207,22 +168,6 @@ export function isRendererReady(): boolean {
   return rendererReady;
 }
 
-const mainWindowGoneListeners = new Set<() => void>();
-
-export function onMainWindowGone(listener: () => void): void {
-  mainWindowGoneListeners.add(listener);
-}
-
-function notifyMainWindowGone(): void {
-  for (const listener of mainWindowGoneListeners) listener();
-}
-
-const mainWindowCloseInterceptors = new Set<() => boolean>();
-
-export function addMainWindowCloseInterceptor(interceptor: () => boolean): void {
-  mainWindowCloseInterceptors.add(interceptor);
-}
-
 export function isAppRendererUrl(url: string): boolean {
   return url.startsWith('app://') || url.startsWith('http://') || url.startsWith('https://');
 }
@@ -250,8 +195,9 @@ export function markRendererUiMounted(url: string): void {
 }
 
 function flushRendererLaunchActions(): void {
-  if (!rendererReady || !rendererLaunchActionsReady || mainWindow === null || mainWindow.isDestroyed()) return;
-  const contents = mainWindow.webContents;
+  const current = getMainWindow();
+  if (!rendererReady || !rendererLaunchActionsReady || current === null || current.isDestroyed()) return;
+  const contents = current.webContents;
   if (contents.isDestroyed() || contents.isCrashed() || contents.isLoadingMainFrame()) return;
   if (pendingTraySessionSelect !== null) {
     sendToRenderer(IPC.traySelectSession, pendingTraySessionSelect);
@@ -262,20 +208,10 @@ function flushRendererLaunchActions(): void {
   }
 }
 
-export function sendToRenderer(channel: RendererEventChannel, ...args: unknown[]): void {
-  if (mainWindow === null || mainWindow.isDestroyed()) return;
-  const contents = mainWindow.webContents;
-  if (contents.isDestroyed() || contents.isCrashed()) return;
-  try {
-    contents.send(channel, ...args);
-  } catch {
-    return;
-  }
-}
-
 setFailureToastSender((kind, url) => {
-  if (!rendererReady || mainWindow === null || mainWindow.isDestroyed() || !mainWindow.isVisible() || mainWindow.isMinimized()) return false;
-  const contents = mainWindow.webContents;
+  const current = getMainWindow();
+  if (!rendererReady || current === null || current.isDestroyed() || !current.isVisible() || current.isMinimized()) return false;
+  const contents = current.webContents;
   if (contents.isDestroyed() || contents.isCrashed()) return false;
   try {
     contents.send(IPC.failureToast, kind, url);
@@ -468,9 +404,10 @@ export function windowsAppDetails(
 
 export function applyWindowVibrancy(enabled: boolean): void {
   if (process.platform !== 'darwin') return;
-  if (mainWindow === null || mainWindow.isDestroyed()) return;
-  mainWindow.setVibrancy(enabled ? 'menu' : null);
-  mainWindow.setBackgroundColor(enabled ? '#00000000' : screenBackgroundColor());
+  const current = getMainWindow();
+  if (current === null || current.isDestroyed()) return;
+  current.setVibrancy(enabled ? 'menu' : null);
+  current.setBackgroundColor(enabled ? '#00000000' : screenBackgroundColor());
 }
 
 let screenActionHandler: ((action: ScreenAction, win: MainWindow) => void) | null = null;
@@ -560,7 +497,7 @@ export function createWindow(): void {
     sandbox: true,
     ...(quiet ? { backgroundThrottling: false } : {}),
   });
-  mainWindow = win;
+  setMainWindow(win);
   logStartup('window-created');
   if (quiet) showQuietWindow(win);
   focusMainRendererOnWindowFocus(win, isBrowserOccluded);
@@ -657,12 +594,11 @@ export function createWindow(): void {
   });
   win.on('close', (event) => {
     saveBounds(win);
-    for (const interceptor of mainWindowCloseInterceptors) {
-      if (!interceptor()) continue;
+    if (shouldInterceptMainWindowClose()) {
       event.preventDefault();
       return;
     }
-    if (shouldHideOnClose(process.platform, isQuitting)) {
+    if (shouldHideOnClose(process.platform, isMarkedQuitting())) {
       event.preventDefault();
       if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
       pendingHideReason = 'close_to_tray';
@@ -680,8 +616,8 @@ export function createWindow(): void {
   });
   win.on('closed', () => {
     recordWindowLifecycle('closed');
-    if (mainWindow === win) {
-      mainWindow = null;
+    if (getMainWindow() === win) {
+      setMainWindow(null);
       rendererLaunchActionsReady = false;
     }
     notifyMainWindowGone();
