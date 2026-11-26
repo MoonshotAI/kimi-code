@@ -50,7 +50,7 @@ export class ImageThumbnail extends Container {
     this.lastBuiltInline = true;
   }
 
-  override render(width: number): string[] {
+  override render(width: number): readonly string[] {
     const safeWidth = Math.max(0, width);
     this.lastRenderWidth = safeWidth;
 

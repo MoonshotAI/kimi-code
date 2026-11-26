@@ -126,7 +126,8 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 
 - **`Session`**: `{ id, workspace_id, workspace_root?, environment_id?, environment_cwd?, title, created_at, updated_at, archived, archived_at?, activity: "idle" | "turn" | "background", pending_interaction?: "none" | "approval" | "question", last_turn_outcome?: "completed" | "interrupted" | "failed", last_prompt?, metadata?, git? }`. `workspace_root` is the project directory the session belongs to; `environment_id` (`"local"` when absent) and `environment_cwd` tell where the agent reads files and runs commands, and `environment_cwd` is omitted while a local session works in the project root.
 - **`Turn`**: `{ turn_id, ordinal, turn_number?, kind: "agent" | "system", status: "running" | "ended", outcome?: "completed" | "interrupted" | "failed", continuation?: "turn" | "background" | "none", started_at, ended_at?, duration_ms?, usage?, steps: Step[], items: Item[] }` (0-based `ordinal`; pass `before_ordinal` to page backward). On an ended turn, `continuation` reports what follows: `"turn"` (another foreground turn is queued or pending), `"background"` (foreground work is drained but background tasks are still running), or `"none"` (all work is finished); it is omitted on running turns, turns ended while the loop is closing, and older records.
-- **`Item` union** (`type`): `user_message` (`{ prompt_ids, placement, text, ... }`), `assistant_message` (`{ text }`), `reasoning` (`{ text }`), `tool_call` (`{ name, stage?, input?, output?, error?, fields?, display?, interaction_id?, agent_refs? }`), `notification`, `system`.
+- **`Item` union** (`type`): `user_message` (`{ prompt_ids, placement, text, ... }`), `assistant_message` (`{ text }`), `reasoning` (`{ text }`), `tool_call` (`{ name, stage?: "input" | "awaiting_approval" | "executing", auto_review?, input?, output?, error?, fields?, display?, interaction_id?, agent_refs? }`), `notification`, `system`. Optional `auto_review` is `true` while a running tool call is under experimental Auto Review (`stage` stays `"input"`).
+- **Approval requests**: read `tool_name`, `action`, and `tool_input_display` to present the pending operation; optional `approval_detail` adds a review `{ outcome, risk?, reason }` on both WebSocket `interaction` frames and pending approvals returned by `/interactions` and `:wait`. The approval response schema is unchanged.
 - **Attachments & skills**: Upload via `POST /api/v1/files` (`multipart/form-data` field `file`) and reference `id` in `/prompts` `content`; list/invoke skills via `GET /api/v1/sessions/{session_id}/skills` and `POST .../skills/{name}:activate`.
 
 ### WebSocket notices
@@ -134,6 +135,12 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 `notice` frames are live warning or error events from an agent. They are not part of the turns and are not replayed on reconnect. On subscribe, the initial `turns` or `turns.failed` frame precedes turn, item, and notice frames.
 
 `model.not_configured` reports that the main session's saved model alias is no longer configured; `title` contains the removed alias. History and read endpoints remain read-only, and the server does not rebind or clear the model. First-party UI may use this event to let the user choose another model through the existing model picker.
+
+### Agent state
+
+`agent` frames and the `agent` object returned by `POST /api/v1/sessions/{session_id}/profile` carry the same agent state. While the main agent's saved model is no longer configured, `model` is omitted and `missing_model` holds the removed alias.
+
+`profile_revision` orders the agent's settings (`model`, `missing_model`, `thinking`, `permission_mode`, `plan_mode`, `swarm_mode`, `tower_mode`) across the HTTP response and the WebSocket frames, which can arrive in either order. Within one server process it increases whenever those settings change and stays the same otherwise. Apply settings from a state only when its `profile_revision` is not lower than the one already applied; take `status`, `compacting`, and the `*_available` flags from the latest state. Revisions are not persisted, so a restarted server whose clock was set back can issue lower values: when the WebSocket connection closes, forget the revisions already applied, and take the state that follows the next `subscribe` as the new baseline. Older servers omit `profile_revision`; apply their states in arrival order.
 
 | Method & Path | Gate | Summary |
 | --- | --- | --- |
@@ -153,7 +160,7 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 | `POST /api/v1/sessions/{session_id}:archive` / `:restore` / `:delete` / `:reload` / `:takeover` | `baseline` | Single-session lifecycle actions (plus batch `POST /api/v1/sessions:archive` & `:restore` by `ids`) |
 | `POST /api/v1/sessions/{session_id}/profile` & `/title/generate` | `baseline` | Update `title`, `metadata`, or `agent_config`, or generate a session title |
 | `GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns` | `baseline` | Read turns (`before_ordinal?`, `page_size` <= 200; flushes live streaming items on read) |
-| `GET` / `POST /api/v1/sessions/{session_id}/prompts` | `baseline` | Read active/queued prompts or submit a prompt (`prompt_id`, `content`, setting overrides, `skills?`) |
+| `GET` / `POST /api/v1/sessions/{session_id}/prompts` | `baseline` | Read active/queued prompts or submit a prompt (`prompt_id`, `content`, `skills?`). The setting fields on a prompt are deprecated: change settings with `agent_config` on `POST /api/v1/sessions/{session_id}/profile`. `model`, `thinking`, `permission_mode`, and `swarm_mode` still update the session when the prompt is submitted; `plan_mode`, `goal_objective`, and `goal_control` are ignored |
 | `POST /api/v1/sessions/{session_id}/steer` & `/prompts:steer` & `/prompts/{prompt_id}:abort` | `baseline` | Steer mid-turn, promote queued prompts to steers, or abort a prompt |
 | `GET /api/v1/sessions/{session_id}/interactions` | `interactions_list` | List pending `approval` and `question` interactions (`{ items }`) |
 | `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}` | `baseline` | Answer a pending `approval` or `question` interaction |

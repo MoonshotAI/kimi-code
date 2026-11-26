@@ -37,7 +37,6 @@ import { IProjectInstanceManager } from '#/project/projectInstance/projectInstan
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   BeforeExecuteDecision,
@@ -277,7 +276,6 @@ describe('AgentSwarmService', () => {
   let permissionGateRan: boolean;
   let formatDenyMessage: Mock<(message: string) => string>;
   let telemetryTrack2: Mock<(event: string, properties?: unknown) => void>;
-  let agentSwarmActive: boolean;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -352,10 +350,6 @@ describe('AgentSwarmService', () => {
     executorEvents = stubToolExecutorEvents();
     permissionGateRan = false;
     ix.stub(IAgentToolExecutorService, executorEvents.executor);
-    agentSwarmActive = true;
-    ix.stub(IAgentToolPolicyService, {
-      isToolActive: (name: string) => name !== 'AgentSwarm' || agentSwarmActive,
-    } as unknown as IAgentToolPolicyService);
     formatDenyMessage = vi.fn((message: string) => message);
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
     telemetryTrack2 = vi.fn();
@@ -394,16 +388,6 @@ describe('AgentSwarmService', () => {
     }
     return executorEvents.fireBeforeExecute(ctx);
   }
-
-  it('rejects entry when AgentSwarm is unavailable', () => {
-    agentSwarmActive = false;
-    const swarm = ix.get(IAgentSwarmService);
-
-    expect(() => {
-      swarm.enter('manual');
-    }).toThrow('Swarm mode requires the AgentSwarm tool');
-    expect(swarm.isActive).toBe(false);
-  });
 
   it('enter / exit toggle isActive and emit agent.status.updated via wire', () => {
     const swarm = ix.get(IAgentSwarmService);

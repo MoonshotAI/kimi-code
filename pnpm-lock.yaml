@@ -94,7 +94,7 @@ importers:
         version: 1.11.1
       tsdown:
         specifier: 0.23.1
-        version: 0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2))(vue-tsc@3.2.9(typescript@7.0.2))
+        version: 0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0))(vue-tsc@3.2.9(typescript@7.0.2))
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
@@ -875,6 +875,9 @@ importers:
       typescript:
         specifier: 6.0.2
         version: 6.0.2
+      unplugin-icons:
+        specifier: ^23.0.0
+        version: 23.0.1(@vue/compiler-sfc@3.5.35)
       vitest:
         specifier: 4.1.4
         version: 4.1.4(@types/node@24.19.2)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@24.19.2)(typescript@6.0.2))(vite@8.0.8(@types/node@24.19.2)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.9.1))
@@ -1432,6 +1435,9 @@ importers:
 
   packages/testkit:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.3.6)
       smol-toml:
         specifier: ^1.6.1
         version: 1.6.1
@@ -15271,14 +15277,6 @@ snapshots:
       - '@emnapi/runtime'
     optional: true
 
-  '@rolldown/binding-wasm32-wasi@1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)':
-    dependencies:
-      '@napi-rs/wasm-runtime': 1.1.4(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
-    transitivePeerDependencies:
-      - '@emnapi/core'
-      - '@emnapi/runtime'
-    optional: true
-
   '@rolldown/binding-wasm32-wasi@1.0.0-rc.15':
     dependencies:
       '@emnapi/core': 1.9.2
@@ -16425,7 +16423,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.0.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@26.1.0)(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.9.1))
+      vitest: 4.1.4(@types/node@24.19.2)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@24.19.2)(typescript@6.0.2))(vite@6.4.2(@types/node@24.19.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1))
 
   '@vitest/expect@4.1.4':
     dependencies:
@@ -21470,31 +21468,6 @@ snapshots:
       - '@emnapi/runtime'
     optional: true
 
-  rolldown@1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2):
-    dependencies:
-      '@oxc-project/types': 0.122.0
-      '@rolldown/pluginutils': 1.0.0-rc.12
-    optionalDependencies:
-      '@rolldown/binding-android-arm64': 1.0.0-rc.12
-      '@rolldown/binding-darwin-arm64': 1.0.0-rc.12
-      '@rolldown/binding-darwin-x64': 1.0.0-rc.12
-      '@rolldown/binding-freebsd-x64': 1.0.0-rc.12
-      '@rolldown/binding-linux-arm-gnueabihf': 1.0.0-rc.12
-      '@rolldown/binding-linux-arm64-gnu': 1.0.0-rc.12
-      '@rolldown/binding-linux-arm64-musl': 1.0.0-rc.12
-      '@rolldown/binding-linux-ppc64-gnu': 1.0.0-rc.12
-      '@rolldown/binding-linux-s390x-gnu': 1.0.0-rc.12
-      '@rolldown/binding-linux-x64-gnu': 1.0.0-rc.12
-      '@rolldown/binding-linux-x64-musl': 1.0.0-rc.12
-      '@rolldown/binding-openharmony-arm64': 1.0.0-rc.12
-      '@rolldown/binding-wasm32-wasi': 1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
-      '@rolldown/binding-win32-arm64-msvc': 1.0.0-rc.12
-      '@rolldown/binding-win32-x64-msvc': 1.0.0-rc.12
-    transitivePeerDependencies:
-      - '@emnapi/core'
-      - '@emnapi/runtime'
-    optional: true
-
   rolldown@1.0.0-rc.15:
     dependencies:
       '@oxc-project/types': 0.124.0
@@ -22356,7 +22329,7 @@ snapshots:
       - oxc-resolver
       - vue-tsc
 
-  tsdown@0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2))(vue-tsc@3.2.9(typescript@7.0.2)):
+  tsdown@0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0))(vue-tsc@3.2.9(typescript@7.0.2)):
     dependencies:
       cac: 7.1.0
       defu: 6.1.7
@@ -22377,7 +22350,7 @@ snapshots:
       publint: 0.3.18
       tsx: 4.21.0
       typescript: 7.0.2
-      unrun: 0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
+      unrun: 0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
     transitivePeerDependencies:
       - '@typescript/native-preview'
       - '@volar/typescript'
@@ -22579,14 +22552,6 @@ snapshots:
   unrun@0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0):
     dependencies:
       rolldown: 1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
-    transitivePeerDependencies:
-      - '@emnapi/core'
-      - '@emnapi/runtime'
-    optional: true
-
-  unrun@0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2):
-    dependencies:
-      rolldown: 1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
     transitivePeerDependencies:
       - '@emnapi/core'
       - '@emnapi/runtime'

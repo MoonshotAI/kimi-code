@@ -105,16 +105,40 @@ export interface DesktopBrowserAccess {
 
 export const DESKTOP_BROWSER_UNAVAILABLE_NOTICE = 'tell the user (or your parent agent) that the built-in browser is unavailable and why.';
 
-export const DESKTOP_BROWSER_BLOCKED_GUIDANCE = `Use WebSearch, FetchURL, or other available tools if they fit the task. If the task specifically requires the built-in browser or no suitable tool is available, ${DESKTOP_BROWSER_UNAVAILABLE_NOTICE}`;
+export const DESKTOP_BROWSER_BLOCKED_GUIDANCE = `Do not load or call \`mcp__desktop_browser__run\`, and do not use shell or another path to bypass its unavailability. Follow the user's requested browser, profile, or tool; if it is unavailable, stop and ask before switching paths.
+- When the user has not requested a specific browser, profile, or tool: for a one-off lookup of public information, prefer WebSearch or FetchURL; to view or operate a page, use Kimi Web Extension (formerly known as Kimi WebBridge) when its skill is available and both its daemon and browser extension are connected. If Kimi Web Extension is unavailable, verify that Computer Use (if available) has its local service connected (and Accessibility and Screen Recording granted on macOS), then tell the user and use it.
+- Lightweight, low-risk tasks may proceed directly. For batch or high-frequency work, test-account activity, sign-out, account switching, or storage clearing, get user consent before using a real browser, or ask the user to re-enable the built-in browser.
+- If an operation's result is unclear, inspect the page and relevant tabs first; do not repeat the submission or switch tools. If no browser path is available, ${DESKTOP_BROWSER_UNAVAILABLE_NOTICE} Offer the options of re-enabling the built-in browser or configuring Kimi Web Extension.`;
+
+export const DESKTOP_BROWSER_TOOL_POLICY_GUIDANCE = `\`mcp__desktop_browser__run\` is disabled by the active tool policy. Do not retry it or bypass this restriction through shell. For web tasks, use WebSearch, FetchURL, Kimi Web Extension (formerly known as Kimi WebBridge), or Computer Use (if available) only when they are permitted by the active tool policy; if no permitted tool can finish the task, tell the user that the built-in browser is disabled by the active tool policy.`;
+
+export const DESKTOP_BROWSER_RESTRICTED_GUIDANCE = `For public, one-off, read-only lookups, use WebSearch or FetchURL only when they are available and permitted by the active agent restrictions. Otherwise, ${DESKTOP_BROWSER_UNAVAILABLE_NOTICE} Do not switch to Kimi Web Extension (formerly known as Kimi WebBridge), Computer Use, shell, or another browser-control path to bypass the active agent restrictions.`;
+
+export const DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE = 'The user rejected this built-in browser operation. Stop and ask how to proceed. Without the user\'s explicit consent, do not retry or switch to Kimi Web Extension (formerly known as Kimi WebBridge), Computer Use, shell, or any other browser-control path.';
+
+export const DESKTOP_BROWSER_APPROVAL_FEEDBACK_GUIDANCE = 'The user rejected this built-in browser operation with the feedback above. Follow the stated Reason (for example, use the alternative browser path they requested) instead of repeating the rejected operation unchanged; if the Reason does not say how to proceed, stop and ask.';
 
 export function describeBlockedDesktopBrowser(reason: string): string {
   return `${reason} ${DESKTOP_BROWSER_BLOCKED_GUIDANCE}`;
 }
 
+export function describeRestrictedDesktopBrowser(reason: string): string {
+  return `${reason} ${DESKTOP_BROWSER_RESTRICTED_GUIDANCE}`;
+}
+
+export function describeToolPolicyDesktopBrowser(reason: string): string {
+  return `${reason} ${DESKTOP_BROWSER_TOOL_POLICY_GUIDANCE}`;
+}
+
+export function describeRejectedDesktopBrowserApproval(reason: string): string {
+  const guidance = reason.includes(' Reason: ') ? DESKTOP_BROWSER_APPROVAL_FEEDBACK_GUIDANCE : DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE;
+  return `${reason} ${guidance}`;
+}
+
 export const DESKTOP_BROWSER_CONTROL_OFF_REASON = 'Agent control of the built-in browser is turned off in Kimi Code Settings > Browser, so `mcp__desktop_browser__run` is unavailable. The user can turn it back on there.';
 
 export const DESKTOP_BROWSER_DISABLED_ERROR = describeBlockedDesktopBrowser(DESKTOP_BROWSER_CONTROL_OFF_REASON);
-export const DESKTOP_BROWSER_SUBAGENT_RUN_ERROR = describeBlockedDesktopBrowser(DESKTOP_BROWSER_SUBAGENT_RUN_REASON);
+export const DESKTOP_BROWSER_SUBAGENT_RUN_ERROR = describeRestrictedDesktopBrowser(DESKTOP_BROWSER_SUBAGENT_RUN_REASON);
 
 const ALWAYS_ALLOWED: DesktopBrowserAccess = { allows: () => true };
 

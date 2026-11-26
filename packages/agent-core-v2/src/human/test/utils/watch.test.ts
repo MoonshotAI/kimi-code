@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createWatchService,
@@ -19,6 +19,24 @@ import {
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const longTempDir = (prefix: string): Promise<string> =>
   mkdtemp(join(realpathSync.native(tmpdir()), prefix));
+
+async function untilWatching(
+  events: readonly WatchChange[],
+  writeDir: string,
+  reportedDir = writeDir,
+): Promise<void> {
+  const reported = join(reportedDir, 'watch-probe.txt');
+  let writes = 0;
+  await vi.waitFor(
+    async () => {
+      if (events.some((event) => event.path === reported)) return;
+      writes += 1;
+      await writeFile(join(writeDir, 'watch-probe.txt'), String(writes));
+      throw new Error('the watcher has not reported the probe file yet');
+    },
+    { timeout: 5000, interval: 100 },
+  );
+}
 
 class TestNativeWatcher {
   private errorListener: ((error: NodeJS.ErrnoException) => void) | undefined;
@@ -55,6 +73,7 @@ function signalRig(options?: {
   readonly nativeCode?: string;
   readonly platform?: NodeJS.Platform;
   readonly resolvePath?: (path: string) => string;
+  readonly nativeStartSettleMs?: number;
 }): {
   readonly service: ReturnType<typeof createWatchService>;
   readonly attempts: TestNativeAttempt[];
@@ -105,6 +124,9 @@ function signalRig(options?: {
       };
     },
     reportError: () => undefined,
+    ...(options?.nativeStartSettleMs === undefined
+      ? {}
+      : { nativeStartSettleMs: options.nativeStartSettleMs }),
   };
   return {
     service: createWatchService(runtime),
@@ -282,6 +304,56 @@ describe('watch signal mode', () => {
     expect(rig.attempts).toHaveLength(1);
   });
 
+  it.each([
+    { mode: 'an entry watch', options: { listing: false } },
+    { mode: 'a signal watch', options: { signal: true } },
+  ])('invalidates $mode once after the native start settle window', ({ options }) => {
+    const rig = signalRig({ nativeStartSettleMs: 100 });
+    const events: WatchChange[] = [];
+    handle = rig.service.watch('/repo', options);
+    handle.onDidChange((event) => events.push(event));
+
+    expect(rig.retries.map((retry) => retry.delayMs)).toEqual([100]);
+    expect(events).toEqual([]);
+
+    rig.retry(0).run();
+
+    expect(events).toEqual([{ path: '/repo', action: 'modified', kind: 'directory' }]);
+  });
+
+  it('settles a rearmed native watch again and drops the settle of the failed one', () => {
+    const rig = signalRig({ nativeStartSettleMs: 100 });
+    const events: WatchChange[] = [];
+    handle = rig.service.watch('/repo', { signal: true });
+    handle.onDidChange((event) => events.push(event));
+
+    rig.attempt(0).watcher.fail();
+    rig.retry(1).run();
+    rig.retry(2).run();
+
+    expect(rig.retries.map((retry) => retry.delayMs)).toEqual([100, 1000, 100]);
+    expect(rig.retry(0).active).toBe(false);
+    expect(events).toEqual([
+      { path: '/repo', action: 'modified', kind: 'directory' },
+      { path: '/repo', action: 'modified', kind: 'directory' },
+      { path: '/repo', action: 'modified', kind: 'directory' },
+    ]);
+  });
+
+  it('cancels a pending native start settle when the watch handle is disposed', () => {
+    const rig = signalRig({ nativeStartSettleMs: 100 });
+    const events: WatchChange[] = [];
+    handle = rig.service.watch('/repo', { listing: false });
+    handle.onDidChange((event) => events.push(event));
+
+    handle.dispose();
+    handle = undefined;
+    rig.retry(0).run();
+
+    expect(rig.retry(0).active).toBe(false);
+    expect(events).toEqual([]);
+  });
+
   it('falls back to chokidar when native recursive watch is unavailable on the platform', async () => {
     const root = await longTempDir('watch-fallback-');
     const rig = signalRig();
@@ -333,6 +405,7 @@ describe('watch signal mode', () => {
       });
       handle.onDidChange((event) => events.push(event));
       await handle.ready;
+      await untilWatching(events, target, requested);
 
       await writeFile(join(target, 'config.toml'), 'x');
 
@@ -363,6 +436,7 @@ describe('watch signal mode', () => {
       handle = service.watch(root, { signal: true });
       handle.onDidChange((event) => events.push(event));
       await handle.ready;
+      await untilWatching(events, root);
 
       const file = join(root, 'a.txt');
       await writeFile(file, 'v1');
@@ -400,6 +474,7 @@ describe('watch chokidar mode', () => {
     const preexisting = join(root, 'pre.txt');
     await writeFile(preexisting, 'v0');
     const events = await start();
+    await untilWatching(events, root);
 
     const file = join(root, 'a.txt');
     const actions = () => events.filter((e) => e.path === file).map((e) => e.action);
@@ -442,6 +517,7 @@ describe('watch chokidar mode', () => {
   it('prunes events matching a custom ignored predicate', async () => {
     root = await mkdtemp(join(tmpdir(), 'watch-'));
     const events = await start({ ignored: (path) => path.includes('node_modules') });
+    await untilWatching(events, root);
 
     await mkdir(join(root, 'node_modules', 'pkg'), { recursive: true });
     await writeFile(join(root, 'node_modules', 'pkg', 'index.js'), 'x');
@@ -455,6 +531,7 @@ describe('watch chokidar mode', () => {
   it('does not report changes below the configured depth', async () => {
     root = await mkdtemp(join(tmpdir(), 'watch-'));
     const events = await start({ depth: 0 });
+    await untilWatching(events, root);
 
     await mkdir(join(root, 'sub'));
     await writeFile(join(root, 'top.txt'), 'x');

@@ -113,8 +113,8 @@
             "event_created_at": {
               "type": "string"
             },
-            "goal_mode_available": {
-              "type": "boolean"
+            "missing_model": {
+              "type": "string"
             },
             "model": {
               "type": "string"
@@ -130,8 +130,10 @@
             "plan_mode": {
               "type": "boolean"
             },
-            "plan_mode_available": {
-              "type": "boolean"
+            "profile_revision": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
             },
             "session_id": {
               "minLength": 1,
@@ -148,16 +150,10 @@
             "swarm_mode": {
               "type": "boolean"
             },
-            "swarm_mode_available": {
-              "type": "boolean"
-            },
             "thinking": {
               "type": "string"
             },
             "tower_mode": {
-              "type": "boolean"
-            },
-            "tower_mode_available": {
               "type": "boolean"
             },
             "type": {
@@ -171,10 +167,6 @@
             "plan_mode",
             "swarm_mode",
             "tower_mode",
-            "plan_mode_available",
-            "swarm_mode_available",
-            "tower_mode_available",
-            "goal_mode_available",
             "type",
             "session_id",
             "agent_id",
@@ -340,6 +332,33 @@
                   "properties": {
                     "action": {
                       "type": "string"
+                    },
+                    "approval_detail": {
+                      "properties": {
+                        "outcome": {
+                          "enum": [
+                            "denied",
+                            "failed"
+                          ],
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "risk": {
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "outcome",
+                        "reason"
+                      ],
+                      "type": "object"
                     },
                     "expires_at": {
                       "type": "string"
@@ -1205,6 +1224,9 @@
                       },
                       "type": "array"
                     },
+                    "auto_review": {
+                      "type": "boolean"
+                    },
                     "created_at": {
                       "type": "string"
                     },
@@ -2051,6 +2073,9 @@
                   },
                   "type": "array"
                 },
+                "auto_review": {
+                  "type": "boolean"
+                },
                 "created_at": {
                   "type": "string"
                 },
@@ -2774,23 +2799,6 @@
                       "type": "boolean"
                     },
                     "thinking": {},
-                    "tools": {
-                      "properties": {
-                        "disabled": {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        "enabled": {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        }
-                      },
-                      "type": "object"
-                    },
                     "yolo": {
                       "type": "boolean"
                     }
@@ -4612,6 +4620,9 @@
                                 "type": "object"
                               },
                               "type": "array"
+                            },
+                            "auto_review": {
+                              "type": "boolean"
                             },
                             "created_at": {
                               "type": "string"

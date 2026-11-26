@@ -575,6 +575,7 @@ function toolCallOf(item: ToolCallItem, options: ConversationProjectionOptions):
     arg: typeof input === 'string' ? input : JSON.stringify(input),
     mcpAuth: mcpAuthCardOf(item),
     status: !ended ? 'running' : item.outcome === 'failed' ? 'error' : item.outcome === 'interrupted' ? 'cancelled' : 'ok',
+    autoReviewing: !ended && item.auto_review === true ? true : undefined,
     agentId:
       (normalizeToolName(item.name) === 'task' ? (refs?.find((ref) => ref.role !== 'member') ?? refs?.[0])?.agent_id : undefined) ??
       agentIdFromOutput(item.name, output),

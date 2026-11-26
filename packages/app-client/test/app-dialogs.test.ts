@@ -14,6 +14,8 @@ const client = vi.hoisted(() => ({
   addWorkspaceByPath: vi.fn(),
   ensureWorkspaceTrust: vi.fn(),
   startSessionAndSendPrompt: vi.fn(),
+  refreshAllProviders: vi.fn(),
+  selectSession: vi.fn(),
 }));
 
 vi.mock('../src/client', () => ({ useKimiWebClient: () => client }));
@@ -153,6 +155,19 @@ it('returns an empty path list when the workspace folder picker is cancelled', a
 
   await expect(pending).resolves.toEqual([]);
   expect(picker.folderPickerResolve.value).toBeNull();
+});
+
+it('refreshes provider catalogs before opening the quick model menu without navigating to a background session', async () => {
+  client.activeSessionId.value = 'active-session';
+  const openQuickModelMenu = vi.fn();
+  const dialogs = useAppDialogs({ restorePendingComposer: vi.fn(), openQuickModelMenu });
+
+  await dialogs.openModelPicker('background-session');
+
+  expect(client.refreshAllProviders).toHaveBeenCalledOnce();
+  expect(client.selectSession).not.toHaveBeenCalled();
+  expect(client.activeSessionId.value).toBe('active-session');
+  expect(openQuickModelMenu).toHaveBeenCalledWith('background-session');
 });
 
 it('sets and clears settingsHighlightKey across desktop and mobile agent settings deep links', async () => {

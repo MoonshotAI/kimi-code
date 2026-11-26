@@ -2,13 +2,14 @@ import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 import { kimiCliCommand, repoPath, TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
-import { chromium, type BrowserContext, type Page } from '@playwright/test';
+import { chromium, test, type BrowserContext, type Page } from '@playwright/test';
 
 import type { Diagnostic, ReopenState, SurfaceDriver, SurfaceLaunch, WindowSize } from '../support/verbs';
 import { productEnv } from './environment';
 import { offlineStubs } from './offline';
 import { OFFLINE_NAMES, PageDriver, reasonOf, WELCOME_DIALOG } from './page-driver';
 import { TerminalProcess } from './terminal-process';
+import { dynamicPorts, workerWebPorts } from './web-port';
 
 const ADDRESS = /^\s*Local:\s+(http:\/\/127\.0\.0\.1:(\d+)\/#token=\S+)\s*$/;
 const SERVER_TERMINAL = { columns: 400, rows: 50 };
@@ -46,6 +47,13 @@ class WebDriver extends PageDriver {
   }
 
   reopenState(): ReopenState {
+    const { low, high } = dynamicPorts();
+    const port = Number(this.port);
+    if (port >= low && port <= high) {
+      throw new Error(
+        `restart() would reopen the web UI on port ${this.port}, inside the range ${low}–${high} this machine hands to any process that asks for a free port, so another process can take it while the product is closed and the page could not come back on the same origin.`,
+      );
+    }
     return { port: this.port, size: this.size };
   }
 
@@ -165,10 +173,11 @@ class WebDriver extends PageDriver {
 export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'web'>> {
   const assets = repoPath('apps', 'kimi-code', 'dist-web', 'index.html');
   if (!existsSync(assets)) throw new Error(`${assets} does not exist; build the web assets first with "pnpm sync:web".`);
+  const ownPorts = workerWebPorts(test.info().parallelIndex);
   const server = await TerminalProcess.start({
     label: 'kimi web',
     command: kimiCliCommand(),
-    args: ['web', '--port', reopen?.state.port ?? '0', '--no-open'],
+    args: ['web', '--port', reopen?.state.port ?? String(ownPorts.low), '--no-open'],
     cwd: home.workspace,
     env: productEnv(home, { FORCE_COLOR: '0' }),
     logDir: home.root,
@@ -185,6 +194,11 @@ export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<Surface
     if (wanted !== undefined && port !== wanted) {
       throw new Error(
         `The restarted web server listens on port ${port} instead of ${wanted}, so the page would open on a different origin and lose the browser state a returning user keeps. Another process probably took the port.`,
+      );
+    }
+    if (Number(port) < ownPorts.low || Number(port) > ownPorts.high) {
+      throw new Error(
+        `The web server listens on port ${port}, outside ports ${ownPorts.low}–${ownPorts.high} that this worker keeps: other programs hold all of them, and a port past them belongs to another worker, which could take it while this one restarts.`,
       );
     }
     const size = reopen?.state.size ?? 'normal';

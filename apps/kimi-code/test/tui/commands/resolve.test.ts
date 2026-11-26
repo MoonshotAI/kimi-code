@@ -449,6 +449,14 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
+  it('resolves /worktree to the builtin command only when the worktree flag is enabled', () => {
+    expect(resolve('/worktree')).toEqual({ kind: 'message', input: '/worktree' });
+
+    setExperimentalFeatures([{ id: 'worktree', enabled: true }]);
+
+    expect(resolve('/worktree')).toMatchObject({ kind: 'builtin', name: 'worktree' });
+  });
+
 });
 
 describe('goal command resolution', () => {

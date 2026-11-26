@@ -10,7 +10,7 @@ import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mc
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
-import { bashPathOf, createGitWorktree } from '@moonshot-ai/testkit/fixtures';
+import { bashPathOf, createGitWorktree, FAKE_MCP_SERVER, fakeMcpServer } from '@moonshot-ai/testkit/fixtures';
 import type { KapHarness } from '@moonshot-ai/testkit/kap';
 import { startKimiServices } from '@moonshot-ai/testkit/services';
 import {
@@ -2015,14 +2015,13 @@ describe('server-v2 /api/v1/sessions', () => {
 
   it('archives a session, force-kills a SIGTERM-ignoring baseline MCP, and reacquires the workspace', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-archive-mcp-'));
-    const fixture = new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
     const spawned: IHostProcess[] = [];
     let disposeReplacement: (() => void) | undefined;
     const hostProcesses = (server as RunningServer).core.accessor.get(IHostProcessService);
     const spawn = hostProcesses.spawn.bind(hostProcesses);
     const spawnSpy = vi.spyOn(hostProcesses, 'spawn').mockImplementation(async (command, args, options) => {
       const child = await spawn(command, args, options);
-      if (command === process.execPath && args?.[0] === fixture) spawned.push(child);
+      if (command === process.execPath && args?.[0] === FAKE_MCP_SERVER) spawned.push(child);
       return child;
     });
     try {
@@ -2032,11 +2031,7 @@ describe('server-v2 /api/v1/sessions', () => {
         join(cwd, '.kimi-code', 'mcp.json'),
         JSON.stringify({
           mcpServers: {
-            fixture: {
-              command: process.execPath,
-              args: [fixture],
-              env: { KIMI_TEST_MCP_IGNORE_SIGTERM: '1' },
-            },
+            fixture: fakeMcpServer('fixture', { tools: [{ name: 'echo', description: 'Echoes input text', inputSchema: { properties: { text: { type: 'string' } }, required: ['text'] }, reply: { text: { argument: 'text' } } }], ignoreSigterm: true }),
           },
         }),
       );
@@ -2122,7 +2117,7 @@ describe('server-v2 /api/v1/sessions', () => {
   }, 30_000);
 
   describe('MCP servers of a workspace', () => {
-    const fixture = new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
+    const fixture = fakeMcpServer('fixture', { tools: [{ name: 'echo', description: 'Echoes input text', inputSchema: { properties: { text: { type: 'string' } }, required: ['text'] }, reply: { text: { argument: 'text' } } }] });
     let root: string;
     let opened: string[];
     let spawned: IHostProcess[];
@@ -2131,7 +2126,7 @@ describe('server-v2 /api/v1/sessions', () => {
       await mkdir(join(dir, '.kimi-code'), { recursive: true });
       await writeFile(
         join(dir, '.kimi-code', 'mcp.json'),
-        JSON.stringify({ mcpServers: { [name]: { command: process.execPath, args: [fixture] } } }),
+        JSON.stringify({ mcpServers: { [name]: fixture } }),
       );
     }
 
@@ -2161,7 +2156,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const spawn = hostProcesses.spawn.bind(hostProcesses);
       vi.spyOn(hostProcesses, 'spawn').mockImplementation(async (command, args, options) => {
         const child = await spawn(command, args, options);
-        if (command === process.execPath && args?.[0] === fixture) spawned.push(child);
+        if (command === process.execPath && args?.[0] === FAKE_MCP_SERVER) spawned.push(child);
         return child;
       });
     });
@@ -4605,18 +4600,28 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
         toolName: 'Bash',
         action: 'run',
         display: { command: 'echo ok' },
+        approvalDetail: { outcome: 'denied', risk: 'high', reason: 'Not authorized.' },
       },
       tags: { agentId: 'main', sessionId: sid, toolCallId: 'tc_wait_1' },
     });
 
     const approvalWait = (await (await approvalWaitPromise).json()) as Envelope<{
       session: SessionWire;
-      pending_interactions: Array<{ interaction_id: string; kind: string }>;
+      pending_interactions: Array<{
+        interaction_id: string;
+        kind: string;
+        request?: { approval_detail?: unknown };
+      }>;
       timed_out: boolean;
     }>;
     expect(approvalWait.code).toBe(0);
     expect(approvalWait.data.timed_out).toBe(false);
     expect(approvalWait.data.pending_interactions.map((i) => i.interaction_id)).toEqual([parked.id]);
+    expect(approvalWait.data.pending_interactions[0]?.request?.approval_detail).toEqual({
+      outcome: 'denied',
+      risk: 'high',
+      reason: 'Not authorized.',
+    });
 
     await fetch(`${base}/api/v1/sessions/${sid}/interactions/${parked.id}`, {
       method: 'POST',
@@ -4739,6 +4744,10 @@ kapTest('a session whose saved model was removed opens with history and a model 
   const session = await kap.createSession({ agentConfig: { model: 'old' } });
   await kap.prompt(session.id, 'history from removed model', { model: 'old' });
   await kap.waitIdle(session.id);
+  const live = await ensureMainAgent((await resumeSessionById(kap.server.core.accessor, session.id))!);
+  const liveState = readAgentState(live, false);
+  expect(liveState).toMatchObject({ model: 'old', profile_revision: expect.any(Number) });
+  expect(liveState.missing_model).toBeUndefined();
 
   await kap.writeConfig(baseConfig);
   modelFrames.length = 0;
@@ -4746,7 +4755,10 @@ kapTest('a session whose saved model was removed opens with history and a model 
   expect(JSON.stringify(await kap.turns(session.id))).toContain('history from removed model');
   const resumed = await resumeSessionById(kap.server.core.accessor, session.id);
   const main = await ensureMainAgent(resumed!);
-  expect(readAgentState(main, false).model).toBeUndefined();
+  const resumedState = readAgentState(main, false);
+  expect(resumedState.model).toBeUndefined();
+  expect(resumedState.missing_model).toBe('old');
+  expect(resumedState.profile_revision).toBeGreaterThan(liveState.profile_revision!);
   expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
 
   const first = await kap.connect();
@@ -4772,6 +4784,32 @@ kapTest('a session whose saved model was removed opens with history and a model 
   await kap.prompt(session.id, 'after fallback', { model: 'testkit' });
   await kap.waitIdle(session.id);
   expect(JSON.parse(model.requests().at(-1)!.rawBody).model).toBe('testkit-model');
+});
+
+kapTest('pushes missing_model to a connected client when the saved model is removed from the config', { timeout: 30_000 }, async ({ kap, model }) => {
+  const baseConfig = fakeModelConfig(model);
+  await kap.writeConfig({
+    ...baseConfig,
+    models: {
+      ...baseConfig.models,
+      old: { provider: 'testkit', model: 'old-model', maxContextSize: 100000 },
+    },
+  });
+  await kap.server.core.accessor.get(IConfigService).reload();
+  const session = await kap.createSession({ agentConfig: { model: 'old' } });
+  const isMainAgentFrame = (frame: Record<string, unknown>): boolean =>
+    frame['type'] === 'agent' && frame['session_id'] === session.id && frame['agent_id'] === 'main';
+  const socket = await kap.connect();
+  await socket.subscribe(session.id);
+  const live = await socket.waitFor((frame) => isMainAgentFrame(frame) && frame['model'] === 'old');
+
+  await kap.writeConfig(baseConfig);
+  await kap.server.core.accessor.get(IConfigService).reload();
+
+  const removed = await socket.waitFor((frame) => isMainAgentFrame(frame) && frame['missing_model'] === 'old');
+  expect(removed['model']).toBeUndefined();
+  expect(removed['profile_revision']).toBeGreaterThan(live['profile_revision'] as number);
+  await socket.close();
 });
 
 kapTest('a session with no default model opens with no displayed model and a model error notice', { timeout: 30_000 }, async ({ kap, model }) => {

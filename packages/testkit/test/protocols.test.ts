@@ -27,6 +27,10 @@ const ANTHROPIC_TOOLS = [{ name: 'Bash', input_schema: { type: 'object' as const
 
 const GOOGLE_TOOLS = [{ functionDeclarations: [{ name: 'Bash' }] }];
 
+function functionResponse(id: string): Record<string, unknown> {
+  return { functionResponse: { id, name: 'Bash', response: { output: id } } };
+}
+
 it.each([
   {
     protocol: 'Anthropic',
@@ -397,7 +401,51 @@ describe('google genai', () => {
     model.verify();
   });
 
-  it('checks intervening Google user parts before and between parallel tool results in wire order', async () => {
+  it.each([
+    {
+      shape: 'one result',
+      calls: ['f1'],
+      parts: [{ text: 'summarize' }, functionResponse('f1')],
+      roles: ['user', 'assistant', 'tool', 'user'],
+      userTexts: ['run', 'summarize'],
+    },
+    {
+      shape: 'parallel results',
+      calls: ['f1', 'f2'],
+      parts: [{ text: 'summarize' }, functionResponse('f1'), functionResponse('f2')],
+      roles: ['user', 'assistant', 'tool', 'tool', 'user'],
+      userTexts: ['run', 'summarize'],
+    },
+    {
+      shape: 'a result followed by more text',
+      calls: ['f1'],
+      parts: [{ text: 'summarize' }, functionResponse('f1'), { text: '<system>reminder</system>' }],
+      roles: ['user', 'assistant', 'tool', 'user', 'user'],
+      userTexts: ['run', 'summarize', '<system>reminder</system>'],
+    },
+  ])('accepts Google user parts that open the content carrying the function responses ($shape)', async ({ calls, parts, roles, userTexts }) => {
+    const model = fakeModel();
+    model.script(say('ok'));
+    const response = await model.fetch('http://testkit.invalid/v1beta/models/testkit-model:generateContent', {
+      method: 'POST',
+      body: JSON.stringify({
+        tools: GOOGLE_TOOLS,
+        contents: [
+          { role: 'user', parts: [{ text: 'run' }] },
+          { role: 'model', parts: calls.map((id) => ({ functionCall: { id, name: 'Bash', args: {} } })) },
+          { role: 'user', parts },
+        ],
+      }),
+    });
+    expect(response.status).toBe(200);
+    model.verify();
+    const view = model.request(0).view;
+    expect(view.messages.map((message) => message.role)).toEqual(roles);
+    expect(view.messages.filter((message) => message.role === 'tool').map((message) => message.callId)).toEqual(calls);
+    expect(model.request(0).texts('user')).toEqual(userTexts);
+  });
+
+  it('checks Google user parts outside the opening position against the pending tool results', async () => {
     const model = fakeModel();
     model.script(say('ok'));
     const response = await model.fetch('http://testkit.invalid/v1beta/models/testkit-model:generateContent', {
@@ -421,8 +469,9 @@ describe('google genai', () => {
       }),
     });
     expect(response.status).toBe(200);
+    expect(model.request(0).view.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool', 'user', 'user', 'tool', 'user']);
     expect(model.problems()).toEqual([
-      'request #0 (main): messages[2] (user) arrives before the results of tool calls f1, f2',
+      'request #0 (main): messages[3] (user) arrives before the results of tool calls f2',
       'request #0 (main): messages[4] (user) arrives before the results of tool calls f2',
     ]);
     expect(() => model.verify()).toThrow(/arrives before the results/);

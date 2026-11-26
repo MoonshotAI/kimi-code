@@ -20,7 +20,9 @@
     "@moonshot-ai/app-i18n",
     "@moonshot-ai/app-markdown",
     "@moonshot-ai/app-ui",
-    "@moonshot-ai/app-client"
+    "@moonshot-ai/app-client",
+    "@moonshot-ai/app-components",
+    "@moonshot-ai/app-composer"
   ],
   "snapshot": {
     "useCalculatedVersion": true,

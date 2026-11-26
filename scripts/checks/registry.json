@@ -33,7 +33,7 @@
     {
       "run": "node scripts/checks/test-doubles.mjs",
       "in": "package.json#scripts.lint",
-      "why": "New tests must script models through the shared testkit; this check freezes the legacy model doubles at their current use per file so new cases cannot add to them."
+      "why": "New tests must script models and fake MCP servers through the shared testkit; this check freezes the legacy doubles at their current use per file so new cases cannot add to them."
     },
     {
       "run": "node scripts/checks/fixed-waits.mjs",

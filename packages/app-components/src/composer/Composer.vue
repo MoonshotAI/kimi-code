@@ -44,7 +44,6 @@ export type ComposerEmits = {
   command: [payload: ComposerCommandPayload];
   interrupt: [];
   focusGoal: [];
-  pickModel: [];
   login: [];
   configureModel: [];
 };
@@ -68,7 +67,8 @@ import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
 import { v4 as randomUUID } from 'uuid';
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, shallowRef, useId, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { MANAGED_KIMI_CODE_PROVIDER_ID, type ReadRequestOptions, type SessionContextSummary } from '@moonshot-ai/app-core/api';
+import { MANAGED_KIMI_CODE_PROVIDER_ID, type AppModel, type ReadRequestOptions, type SessionContextSummary, type ThinkingLevel } from '@moonshot-ai/app-core/api';
+import type { QuickModelMenuAction, QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
 import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, providerDisplayName, type SlashCommand } from '@moonshot-ai/app-core/lib';
 import { placeholderText } from '@moonshot-ai/app-core/lib';
 import { useAppearance, useContextInspector } from '@moonshot-ai/app-core';
@@ -79,9 +79,7 @@ import {
   effectiveThinkingLevel,
   effortLabel,
   isThinkingOn,
-  modelThinkingAvailability,
   resolveEffortDescription,
-  segmentsFor,
   thinkingLevelForModelSwitch,
 } from '@moonshot-ai/app-core/lib';
 import { openAgentSettings, openHostSettings, useInputHistory, useIsMobile, useRunningSendMode } from '@moonshot-ai/app-client/composables';
@@ -90,7 +88,7 @@ import { useMentionMenu, type MentionEntry } from '@moonshot-ai/app-client/compo
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, usePasteImageAutoMention } from '@moonshot-ai/app-client/composables';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { effortSwitchStore, hostsStore } from '@moonshot-ai/app-client/stores';
+import { effortSwitchStore, hostsStore, sessionsStore } from '@moonshot-ai/app-client/stores';
 import {
   createComposerEditor,
   discardStashedEditorState,
@@ -112,7 +110,9 @@ import {
   buildSubmitPayload,
   composerAttachmentStore,
   createVideoThumbnail,
-  groupUnstarredModelsByProvider,
+  orderedModelProviders,
+  providerModelsForMenu,
+  recentModelsForMenu,
   insertsAttachmentReference,
   mediaReorderTargetIndex,
   mergePatchedDraftEntries,
@@ -142,7 +142,6 @@ import {
   Kbd,
   Menu,
   MenuItem,
-  SegmentedControl,
   Spinner,
   Tooltip,
   trackMenuSurface,
@@ -155,6 +154,8 @@ import ComposerMediaRail from './ComposerMediaRail.vue';
 import ComposerScreenshotShortcut from './ComposerScreenshotShortcut.vue';
 import MentionMenu from './MentionMenu.vue';
 import SlashMenu from './SlashMenu.vue';
+import ModelQuickMenu from './ModelQuickMenu.vue';
+import { clampModelMenuMaxHeight } from './modelMenuLayout';
 
 const props = defineProps<{
   variant?: 'full' | 'side-chat';
@@ -163,6 +164,7 @@ const props = defineProps<{
   hideContext?: boolean;
   submitDisabled?: boolean;
   sessionSubmitBlockedReason?: string;
+  sessionSubmitBlockedTooltip?: string;
   statusNote?: string;
   beforeSubmit?: () => boolean;
   deferSubmitReset?: boolean;
@@ -204,7 +206,7 @@ const goalMode = client.goalMode;
 const goal = client.goal;
 const activationBadges = client.activationBadges;
 const models = client.models;
-const starredIds = client.starredModelIds;
+const recentIds = client.recentModelIds;
 const skills = client.skills;
 const skillsLoaded = client.skillsLoaded;
 const gateVerdict = client.chatGateVerdict;
@@ -249,12 +251,7 @@ const browserDetails = useBrowserReferenceDetails(() => JSON.stringify([sessionI
 const browserReferences = ref<BrowserReference[]>([]);
 const browserCaptures = ref<BrowserCapture[]>([]);
 
-const towerExperimentEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
-const towerAvailable = computed(() => client.towerModeAvailable.value);
-const towerEntryEnabled = computed(() => towerExperimentEnabled.value && towerAvailable.value);
-const planEnabled = computed(() => client.planModeAvailable.value);
-const swarmEnabled = computed(() => client.swarmModeAvailable.value);
-const goalEnabled = computed(() => client.goalModeAvailable.value);
+const towerEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
 
 const attachmentEntries = ref<AttachmentEntry[]>([]);
 const attachmentInventoryState = shallowRef<AttachmentInventoryState>({
@@ -316,13 +313,7 @@ watch(promptPredictionSuggestion, (suggestion) => {
   handleInput();
 });
 
-const highlightCommands = computed(() => buildSlashItems([], {
-  towerEnabled: towerExperimentEnabled.value,
-  planEnabled: planEnabled.value,
-  swarmEnabled: swarmEnabled.value,
-  goalEnabled: goalEnabled.value,
-  extraBuiltins: props.extraBuiltinCommands,
-}));
+const highlightCommands = computed(() => buildSlashItems([], { towerEnabled: towerEnabled.value, extraBuiltins: props.extraBuiltinCommands }));
 
 const pendingCommandArgument = computed(() => {
   if (isSideChat.value || !mayStartWithSlashCommand(text.value)) return null;
@@ -972,11 +963,8 @@ const {
   },
   historyPush: (entry) => history.push(entry),
   clearDraft,
-  towerEnabled: () => towerEntryEnabled.value,
+  towerEnabled: () => towerEnabled.value,
   extraBuiltins: () => props.extraBuiltinCommands,
-  planEnabled: () => planEnabled.value,
-  swarmEnabled: () => swarmEnabled.value,
-  goalEnabled: () => goalEnabled.value,
   resolveDesc: (item) => (item.isSkill ? item.desc : t(item.desc)),
 });
 
@@ -1796,13 +1784,8 @@ function submitCommandContext() {
     running: running.value,
     queueLength: queued.value.length,
     goalMode: goalMode.value,
-    towerEnabled: towerExperimentEnabled.value,
-    towerAvailable: towerAvailable.value,
-    towerActive: towerOn.value,
+    towerEnabled: towerEnabled.value,
     extraBuiltins: props.extraBuiltinCommands,
-    planEnabled: planEnabled.value,
-    swarmEnabled: swarmEnabled.value,
-    goalEnabled: goalEnabled.value,
   };
 }
 
@@ -1937,10 +1920,6 @@ function handleQueue(): void {
 function handleSubmit(): void {
   const decision = currentSubmitDecision();
   if (decision.kind === 'noop' || isBlockedByProjectTrust(decision)) return;
-  if (decision.kind === 'disabled-command') {
-    client.notify({ severity: 'warning', title: t('composer.disabledCommand', { cmd: decision.cmd }) });
-    return;
-  }
   if (decision.kind === 'invalid-command') {
     client.notify({ severity: 'warning', title: t('composer.noArgCommand', { cmd: decision.cmd }) });
     return;
@@ -2090,18 +2069,6 @@ function handleKeydown(e: KeyboardEvent): boolean {
       clearWorkMode();
       return true;
     }
-  }
-
-  if (
-    dropdownOpen.value &&
-    (!nativeModelMenu?.available || isMobile.value) &&
-    e.key === 'Enter' &&
-    (e.ctrlKey || e.metaKey)
-  ) {
-    e.preventDefault();
-    commitModelMenuDraft();
-    closeDropdown();
-    return true;
   }
 
   if (e.key === 'Escape') {
@@ -2386,14 +2353,9 @@ onUnmounted(() => {
   addScrollObserver = null;
 });
 const modelMenuRight = ref('');
-const modelMenuMaxWidth = ref('');
-const modelMenuMaxHeight = ref('');
-const modelMenuDropDown = ref(false);
 const modelMenuStyle = computed<Record<string, string>>(() => {
   const style: Record<string, string> = {};
   if (modelMenuRight.value) style.right = modelMenuRight.value;
-  if (modelMenuMaxWidth.value) style.maxWidth = modelMenuMaxWidth.value;
-  if (modelMenuMaxHeight.value) style.maxHeight = modelMenuMaxHeight.value;
   return style;
 });
 
@@ -2420,22 +2382,25 @@ function closeOverlays(): void {
 
 const isEmpty = () => text.value.trim().length === 0 && activeAttachmentEntries.value.length === 0;
 
-defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, loadAttachmentsForEdit, restoreDraftEntries, focus, closeOverlays, anyPopupOpen, isEmpty, clearAfterDispatch });
+defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, loadAttachmentsForEdit, restoreDraftEntries, focus, openModelMenu: (targetSid?: string) => { if (!dropdownOpen.value) toggleDropdown(targetSid); }, closeOverlays, anyPopupOpen, isEmpty, clearAfterDispatch });
 
 function hasAnyToolbarMenuOpen(): boolean {
   return dropdownOpen.value || permDropdownOpen.value || ctxCardOpen.value || addMenuOpen.value;
 }
 
-function toggleDropdown(): void {
+function toggleDropdown(targetSid?: string): void {
+  const opening = !dropdownOpen.value;
   if (nativeModelMenu?.available && !isMobile.value && modelPillRef.value !== null) {
     closePermDropdown();
     closeCtxCard();
     closeAddMenu();
+    if (opening) prepareModelMenu(targetSid);
     nativeModelMenu.toggle(modelPillRef.value, { initialFocus: 'first-item' });
     return;
   }
-  dropdownOpen.value = !dropdownOpen.value;
-  if (dropdownOpen.value) {
+  if (opening) prepareModelMenu(targetSid);
+  dropdownOpen.value = opening;
+  if (opening) {
     updateModelMenuPosition();
     permDropdownOpen.value = false;
     ctxCardOpen.value = false;
@@ -2540,16 +2505,10 @@ const addItems = computed(() => {
     items.push({ id: 'slash', icon: 'terminal', nameKey: 'composer.addSlash', descKey: 'composer.addSlashDesc', action: onAddSlashMenu });
     items.push({ id: 'mention', icon: 'at', nameKey: 'composer.addMention', descKey: 'composer.addMentionDesc', action: onAddMentionMenu });
   }
-  if (goalEnabled.value) {
-    items.push({ id: 'goal', icon: 'target', nameKey: 'status.goalLabel', descKey: 'composer.addGoalDesc', action: onAddGoalMode });
-  }
-  if (planEnabled.value) {
-    items.push({ id: 'plan', icon: 'file-edit', nameKey: 'status.planLabel', descKey: 'composer.addPlanDesc', action: onAddPlanMode });
-  }
-  if (swarmEnabled.value) {
-    items.push({ id: 'swarm', icon: 'sparkles', nameKey: 'status.swarmLabel', descKey: 'composer.addSwarmDesc', action: onAddSwarmMode });
-  }
-  if (towerEntryEnabled.value) {
+  items.push({ id: 'goal', icon: 'target', nameKey: 'status.goalLabel', descKey: 'composer.addGoalDesc', action: onAddGoalMode });
+  items.push({ id: 'plan', icon: 'file-edit', nameKey: 'status.planLabel', descKey: 'composer.addPlanDesc', action: onAddPlanMode });
+  items.push({ id: 'swarm', icon: 'sparkles', nameKey: 'status.swarmLabel', descKey: 'composer.addSwarmDesc', action: onAddSwarmMode });
+  if (towerEnabled.value) {
     items.push({ id: 'tower', icon: 'tower', nameKey: 'status.towerLabel', descKey: 'composer.addTowerDesc', action: onAddTowerMode });
   }
   if (isSideChat.value) {
@@ -2643,9 +2602,6 @@ function onDocClick(e: MouseEvent): void {
   const insideToolbar = toolbarRef.value?.contains(target) ?? false;
   const insideAddMenu = addMenuRef.value?.contains(target) ?? false;
   if (!insideToolbar && !insideAddMenu) {
-    if (dropdownOpen.value && (!nativeModelMenu?.available || isMobile.value)) {
-      commitModelMenuDraft();
-    }
     closeDropdown();
     closePermDropdown();
     closeCtxCard();
@@ -2758,36 +2714,8 @@ function onCtxCardKeydown(event: KeyboardEvent): void {
 const currentModel = computed(() =>
   models.value?.find((m) => m.id === status.value?.modelId),
 );
-const draftModelId = ref(status.value?.modelId);
-const draftEffortSegment = ref<string>();
-const menuModel = computed(() =>
-  models.value?.find((model) => model.id === draftModelId.value) ?? currentModel.value,
-);
-const thinkingAvailability = computed(() => modelThinkingAvailability(menuModel.value));
-const thinkingSegments = computed(() => segmentsFor(menuModel.value));
 const thinkingLevel = computed(() => effectiveThinkingLevel(currentModel.value, thinking.value));
-const menuDefaultThinkingLevel = computed(() => effectiveThinkingLevel(
-  menuModel.value,
-  thinkingLevelForModelSwitch(
-    menuModel.value,
-    thinking.value,
-    menuModel.value?.id !== currentModel.value?.id,
-    sessionId.value === null || sessionId.value === undefined ? client.config.value?.thinking : undefined,
-  ),
-));
-const menuThinkingLevel = computed(() =>
-  draftEffortSegment.value === undefined
-    ? menuDefaultThinkingLevel.value
-    : commitLevel(menuModel.value, draftEffortSegment.value),
-);
-const activeThinkingSegment = computed(() => {
-  const segs = thinkingSegments.value;
-  return segs.includes(menuThinkingLevel.value) ? menuThinkingLevel.value : '';
-});
 const thinkingOn = computed(() => isThinkingOn(thinkingLevel.value));
-const thinkingReadonly = computed(
-  () => thinkingAvailability.value === 'unsupported' || thinkingSegments.value.length <= 1,
-);
 const thinkingSuffix = computed(() => {
   if (!thinkingOn.value) return '';
   const hasEfforts = (currentModel.value?.supportEfforts?.length ?? 0) > 0;
@@ -2795,36 +2723,6 @@ const thinkingSuffix = computed(() => {
   if (hasEfforts && level !== 'on') return t('composer.thinkingSuffixEffort', { level: effortLabel(level) });
   return t('composer.thinkingSuffix');
 });
-function setThinkingSegment(draft: string): void {
-  if (thinkingReadonly.value) return;
-  draftEffortSegment.value = draft;
-}
-const thinkingOptions = computed(() =>
-  thinkingSegments.value.map((seg) => ({ value: seg, label: effortLabel(seg) })),
-);
-const effortDescription = computed(() => {
-  if (menuModel.value?.provider !== MANAGED_KIMI_CODE_PROVIDER_ID) return undefined;
-  const effort = activeThinkingSegment.value || menuThinkingLevel.value;
-  return resolveEffortDescription(effortSwitchStore().config, effort, locale.value === 'zh' ? 'zh' : 'en');
-});
-function commitModelMenuDraft(): void {
-  const modelId = draftModelId.value;
-  if (modelId === undefined) return;
-  const effort = draftEffortSegment.value !== undefined && menuThinkingLevel.value !== menuDefaultThinkingLevel.value
-    ? menuThinkingLevel.value
-    : undefined;
-  void applyModelMenuDraft(
-    { modelId, effort },
-    {
-      currentModelId: status.value?.modelId,
-      currentSessionId: sessionId.value,
-      getCurrentModelId: () => status.value?.modelId,
-      getCurrentSessionId: () => sessionId.value,
-      selectModel: (id) => client.selectModel(id),
-      setThinking: (level) => client.setThinking(level),
-    },
-  );
-}
 
 const planOn = computed(() => planArmed.value === true || planMode.value === true);
 const swarmOn = computed(() => swarmMode.value === true);
@@ -2881,7 +2779,10 @@ function updateModelMenuPosition(): void {
     modelMenuRight.value = '';
     return;
   }
-  modelMenuRight.value = `${Math.max(0, Math.round(toolbar.getBoundingClientRect().right - anchor.getBoundingClientRect().right))}px`;
+  const anchorRect = anchor.getBoundingClientRect();
+  modelMenuRight.value = `${Math.max(0, Math.round(toolbar.getBoundingClientRect().right - anchorRect.right))}px`;
+  const viewportTop = window.visualViewport?.offsetTop ?? 0;
+  webModelMenuMaxHeight.value = clampModelMenuMaxHeight(anchorRect.top - viewportTop);
 }
 let menuMeasureFrame: number | null = null;
 
@@ -3099,76 +3000,147 @@ onMounted(() => {
 
 const modelIconLabel = computed(() => `${status.value?.model ?? ''}${thinkingSuffix.value}`);
 
-const currentProvider = computed(() => {
-  return currentModel.value?.provider ?? '';
+const currentProvider = computed(() => currentModel.value?.provider ?? '');
+const menuProvider = ref('');
+const recentModelsSnapshot = ref<AppModel[]>([]);
+const providerModelsSnapshot = ref<AppModel[]>([]);
+const webModelMenuMaxHeight = ref(480);
+const modelDropdownRef = ref<InstanceType<typeof ModelQuickMenu> | null>(null);
+const menuDraftModelId = ref<string | undefined>(status.value?.modelId);
+const menuDraftEffortSegment = ref<string>();
+let menuOpenedSessionId: string | null | undefined;
+let menuTargetSessionId: string | null | undefined;
+let discardMenuDraftOnClose = false;
+
+const menuModel = computed(() =>
+  models.value?.find((model) => model.id === menuDraftModelId.value) ?? currentModel.value,
+);
+const menuDefaultThinkingLevel = computed(() =>
+  effectiveThinkingLevel(
+    menuModel.value,
+    thinkingLevelForModelSwitch(
+      menuModel.value,
+      menuTargetSessionId === sessionId.value ? thinking.value : undefined,
+      menuTargetSessionId !== sessionId.value || menuModel.value?.id !== currentModel.value?.id,
+      sessionId.value === null || sessionId.value === undefined ? client.config.value?.thinking : undefined,
+    ),
+  ),
+);
+const menuThinkingLevel = computed(() =>
+  menuDraftEffortSegment.value === undefined
+    ? menuDefaultThinkingLevel.value
+    : commitLevel(menuModel.value, menuDraftEffortSegment.value),
+);
+
+const menuProviders = computed(() =>
+  orderedModelProviders(models.value ?? []).map((id) => ({ id, label: providerDisplayName(id, t) })),
+);
+
+function prepareModelMenu(targetSid?: string): void {
+  const catalog = models.value ?? [];
+  menuOpenedSessionId = sessionId.value;
+  menuTargetSessionId = typeof targetSid === 'string' ? targetSid : sessionId.value;
+  discardMenuDraftOnClose = false;
+  const isBackgroundTarget =
+    menuTargetSessionId !== null && menuTargetSessionId !== undefined && menuTargetSessionId !== sessionId.value;
+  const initialModelId = isBackgroundTarget
+    ? sessionsStore().sessions.find((session) => session.id === menuTargetSessionId)?.model
+    : status.value?.modelId;
+  const initialModel = catalog.find((model) => model.id === initialModelId);
+  menuDraftModelId.value = initialModelId;
+  menuDraftEffortSegment.value = undefined;
+  menuProvider.value = initialModel?.provider || currentProvider.value || orderedModelProviders(catalog)[0] || '';
+  recentModelsSnapshot.value = recentModelsForMenu(catalog, recentIds.value ?? [], initialModelId);
+  providerModelsSnapshot.value = menuProvider.value
+    ? providerModelsForMenu(catalog, menuProvider.value, initialModelId)
+    : [];
+}
+
+const menuEffortDescriptions = computed<Record<string, string>>(() => {
+  if (menuModel.value?.provider !== MANAGED_KIMI_CODE_PROVIDER_ID) return {};
+  const config = effortSwitchStore().config;
+  if (config?.descriptions?.enable !== true) return {};
+  const lang = locale.value === 'zh' ? 'zh' : 'en';
+  const descriptions: Record<string, string> = {};
+  for (const effort of Object.keys(config.descriptions.items)) {
+    const text = resolveEffortDescription(config, effort, lang);
+    if (text !== undefined) descriptions[effort] = text;
+  }
+  return descriptions;
 });
 
-const providerModels = computed(() => {
-  if (!currentProvider.value || !models.value?.length) return [];
-  return models.value.filter((m) => m.provider === currentProvider.value);
-});
+const quickModelMenuPayload = computed<QuickModelMenuPayload>(() => ({
+  models: models.value ?? [],
+  recentModels: recentModelsSnapshot.value,
+  providerModels: providerModelsSnapshot.value,
+  providers: menuProviders.value,
+  activeProvider: menuProvider.value,
+  activeProviderLabel: providerDisplayName(menuProvider.value, t),
+  ...(menuModel.value?.id === undefined ? {} : { currentModelId: menuModel.value.id }),
+  ...(menuThinkingLevel.value === undefined ? {} : { currentEffort: menuThinkingLevel.value }),
+  effortDescriptions: menuEffortDescriptions.value,
+}));
+
+function onQuickModelAction(action: QuickModelMenuAction): void {
+  if (action.type === 'select-provider') {
+    menuProvider.value = action.providerId;
+    providerModelsSnapshot.value = providerModelsForMenu(models.value ?? [], action.providerId, menuDraftModelId.value);
+    return;
+  }
+  if (action.type === 'select-effort') {
+    menuDraftEffortSegment.value = action.effort;
+    return;
+  }
+  if (action.modelId !== menuDraftModelId.value) menuDraftEffortSegment.value = undefined;
+  menuDraftModelId.value = action.modelId;
+  if (action.effort !== undefined) menuDraftEffortSegment.value = action.effort;
+  if (action.fromSearch === true) {
+    const selected = models.value?.find((model) => model.id === action.modelId);
+    if (selected !== undefined) {
+      menuProvider.value = selected.provider;
+      providerModelsSnapshot.value = providerModelsForMenu(models.value ?? [], selected.provider, selected.id);
+    }
+  }
+}
+
+function commitModelMenuDraft(): void {
+  if (discardMenuDraftOnClose) {
+    discardMenuDraftOnClose = false;
+    return;
+  }
+  const modelId = menuDraftModelId.value;
+  const targetSid = menuTargetSessionId;
+  if (modelId === undefined || sessionId.value !== menuOpenedSessionId) return;
+  if (targetSid !== null && targetSid !== undefined && targetSid !== sessionId.value) {
+    if (menuThinkingLevel.value !== undefined) void client.setSessionModel(targetSid, modelId, menuThinkingLevel.value);
+    return;
+  }
+  const effort =
+    menuDraftEffortSegment.value !== undefined && menuThinkingLevel.value !== menuDefaultThinkingLevel.value
+      ? menuThinkingLevel.value
+      : undefined;
+  void applyModelMenuDraft(
+    { modelId, ...(effort === undefined ? {} : { effort }) },
+    {
+      currentModelId: status.value?.modelId,
+      currentSessionId: sessionId.value,
+      getCurrentModelId: () => status.value?.modelId,
+      getCurrentSessionId: () => sessionId.value,
+      selectModel: (id) => client.selectModel(id),
+      setThinking: (level) => client.setThinking(level),
+    },
+  );
+}
+
+function dismissModelMenu(): void {
+  discardMenuDraftOnClose = true;
+  closeDropdown();
+}
 
 const showSignIn = computed(() => gateVerdict.value === 'login');
 const showPickModel = computed(() => gateVerdict.value === 'pick-model');
 const showConfigureModel = computed(() => gateVerdict.value === 'configure-model');
 
-const starredSet = computed(() => new Set(starredIds.value ?? []));
-function isStarred(modelId: string): boolean {
-  return starredSet.value.has(modelId);
-}
-const starredOtherModels = computed(() => {
-  if (!models.value?.length) return [];
-  return models.value.filter(
-    (m) => isStarred(m.id) && m.provider !== currentProvider.value,
-  );
-});
-
-const showAllModels = computed(() => showPickModel.value || currentProvider.value === '');
-const unstarredGroups = computed(() =>
-  showAllModels.value ? groupUnstarredModelsByProvider(models.value ?? [], starredIds.value ?? []) : [],
-);
-const fallbackModelEntries = computed(() => {
-  const entries: (
-    | { kind: 'section'; key: string; label: string }
-    | { kind: 'divider'; key: string }
-    | {
-        kind: 'model';
-        key: string;
-        model: NonNullable<typeof models.value>[number];
-        showProvider: boolean;
-        starred: boolean;
-      }
-  )[] = [];
-  if (starredOtherModels.value.length > 0) {
-    entries.push({ kind: 'section', key: 'starred', label: t('status.starredModels') });
-    for (const model of starredOtherModels.value) {
-      entries.push({ kind: 'model', key: `model:${model.id}`, model, showProvider: true, starred: true });
-    }
-    entries.push({ kind: 'divider', key: 'starred-divider' });
-  }
-  if (showAllModels.value) {
-    unstarredGroups.value.forEach((group, index) => {
-      entries.push({ kind: 'section', key: `provider:${index}`, label: providerDisplayName(group.provider, t) });
-      for (const model of group.models) {
-        entries.push({ kind: 'model', key: `model:${model.id}`, model, showProvider: false, starred: false });
-      }
-    });
-  } else if (providerModels.value.length > 0) {
-    entries.push({ kind: 'section', key: 'provider', label: providerDisplayName(currentProvider.value, t) });
-    for (const model of providerModels.value) {
-      entries.push({
-        kind: 'model',
-        key: `model:${model.id}`,
-        model,
-        showProvider: false,
-        starred: isStarred(model.id),
-      });
-    }
-  }
-  return entries;
-});
-
-const modelDropdownRef = ref<MenuHandle | null>(null);
 const permDropdownRef = ref<MenuHandle | null>(null);
 
 function clampToolbarPopupToViewport(options: {
@@ -3243,15 +3215,7 @@ function clampToolbarPopupToViewport(options: {
 }
 
 function clampModelMenuToViewport(): void {
-  clampToolbarPopupToViewport({
-    menu: menuElement(modelDropdownRef.value),
-    anchor: modelPillRef.value,
-    align: 'right',
-    setOffset: (value) => { modelMenuRight.value = value; },
-    setMaxWidth: (value) => { modelMenuMaxWidth.value = value; },
-    setMaxHeight: (value) => { modelMenuMaxHeight.value = value; },
-    setDropDown: (value) => { modelMenuDropDown.value = value; },
-  });
+  updateModelMenuPosition();
 }
 
 function clampPermissionMenuToViewport(): void {
@@ -3311,18 +3275,9 @@ watch(ctxCardOpen, async (open) => {
 
 watch(dropdownOpen, async (open) => {
   if (!open) return;
-  draftModelId.value = status.value?.modelId;
-  draftEffortSegment.value = undefined;
-  modelMenuDropDown.value = false;
-  modelMenuMaxWidth.value = '';
-  modelMenuMaxHeight.value = '';
+  updateModelMenuPosition();
   await nextTick();
-  clampModelMenuToViewport();
-  const menu = menuElement(modelDropdownRef.value);
-  const current =
-    menu?.querySelector<HTMLElement>('.md-row.is-current') ??
-    menu?.querySelector<HTMLElement>('.md-row');
-  current?.focus();
+  modelDropdownRef.value?.el?.focus();
 });
 
 watch(permDropdownOpen, async (open) => {
@@ -3340,7 +3295,7 @@ watch(
     permissionDescriptionWidth,
     () => status.value?.model,
     () => models.value?.length,
-    () => starredIds.value?.length,
+    () => recentModelsSnapshot.value.length,
     locale,
     fontScale,
   ],
@@ -3354,34 +3309,6 @@ onUnmounted(() => {
   removeModelMenuViewportListeners();
 });
 
-function onModelDropdownKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-    event.preventDefault();
-    commitModelMenuDraft();
-    closeDropdown();
-    return;
-  }
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    closeDropdown();
-    return;
-  }
-  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-  const rows = Array.from(
-    menuElement(modelDropdownRef.value)?.querySelectorAll<HTMLElement>('.md-row:not(:disabled)') ?? [],
-  );
-  if (!rows.length) return;
-  event.preventDefault();
-  const index = rows.indexOf(document.activeElement as HTMLElement);
-  const next =
-    event.key === 'ArrowDown' ? (index + 1) % rows.length : (index - 1 + rows.length) % rows.length;
-  rows[next]?.focus();
-}
-
-function selectModel(modelId: string): void {
-  if (modelId !== draftModelId.value) draftEffortSegment.value = undefined;
-  draftModelId.value = modelId;
-}
 const nativeMenuHost = useComposerNativeMenuHost();
 const nativeMenuId = `composer-${++composerMenuSequence}`;
 const nativePermissionItems = computed<NativeMenuItem[]>(() => PERM_MODES.map(option => ({
@@ -3394,60 +3321,25 @@ const nativePermissionMenu = nativeMenuHost?.register({
   items: () => nativePermissionItems.value,
   onSelect: id => { if (PERM_MODES.some(option => option.mode === id)) choosePermission(id as PermissionMode); },
 });
-const nativeModelIds = new Map<string, string>();
-function nativeModelItem(model: NonNullable<typeof models.value>[number], detail = false): NativeMenuItem {
-  let id = nativeModelIds.get(model.id);
-  if (id === undefined) { id = `model-${nativeModelIds.size}`; nativeModelIds.set(model.id, id); }
-  return { kind: 'item', id, label: model.displayName ?? model.model, selected: model.id === draftModelId.value, starred: isStarred(model.id), keepOpen: true, ...(detail ? { detail: model.provider } : {}) };
-}
-const nativeModelList = computed<NativeMenuItem[]>(() => {
-  const items: NativeMenuItem[] = [];
-  if (starredOtherModels.value.length > 0) {
-    items.push({ kind: 'section', id: 'starred', label: t('status.starredModels') });
-    items.push(...starredOtherModels.value.map(model => nativeModelItem(model, true)), { kind: 'separator' });
-  }
-  if (showAllModels.value) {
-    unstarredGroups.value.forEach((group, index) => {
-      items.push({ kind: 'section', id: `provider-${index}`, label: group.provider });
-      items.push(...group.models.map(model => nativeModelItem(model)));
-    });
-  } else {
-    if (providerModels.value.length > 0) items.push({ kind: 'section', id: 'provider', label: currentProvider.value });
-    items.push(...providerModels.value.map(model => nativeModelItem(model)));
-  }
-  return items;
-});
-const nativeModelItems = computed<NativeMenuItem[]>(() => [
-  ...nativeModelList.value,
-  { kind: 'separator' },
-  ...(thinkingSegments.value.length > 1 && thinkingAvailability.value !== 'unsupported' ? [{
-    kind: 'choices' as const, id: 'thinking', label: t('status.thinkingLabel'), value: activeThinkingSegment.value ? `thinking-${activeThinkingSegment.value}` : '',
-    options: thinkingOptions.value.map(option => ({ id: `thinking-${option.value}`, label: option.label })),
-  }] : [{ kind: 'note' as const, id: 'thinking-note', label: `${t('status.thinkingLabel')} · ${thinkingAvailability.value === 'unsupported' ? t('status.modeNotSupported') : effortLabel(thinkingSegments.value[0] ?? menuThinkingLevel.value)}` }]),
-  ...(effortDescription.value === undefined ? [] : [
-    { kind: 'note' as const, id: 'effort-description', label: effortDescription.value, size: 'xs' as const },
-  ]),
-  { kind: 'separator' },
-  { kind: 'item', id: 'more-models', label: t('status.moreModels'), icon: 'list' },
-]);
 const nativeModelMenu = nativeMenuHost?.register({
-  id: `${nativeMenuId}-models`, width: 200, autoWidth: true, placement: 'top-end', submitOnCtrlEnter: true,
-  items: () => nativeModelItems.value,
-  footerStart: () => nativeModelList.value.length,
-  onSelect: id => {
-    if (id === 'more-models') { closeDropdown(); emit('pickModel'); }
-    else if (id.startsWith('thinking-')) setThinkingSegment(id.slice('thinking-'.length));
-    else {
-      const model = [...nativeModelIds].find(([, action]) => action === id)?.[0];
-      if (model !== undefined) selectModel(model);
-    }
-  },
-  onDismiss: commitModelMenuDraft,
+  id: `${nativeMenuId}-models`, width: 240, maxHeight: 480, placement: 'top-end',
+  items: () => [],
+  modelMenu: () => quickModelMenuPayload.value,
+  onSelect: () => {},
+  onModelAction: onQuickModelAction,
+  onClose: (payload) => { if (payload.reason !== 'escape') commitModelMenuDraft(); },
 });
 if (nativePermissionMenu !== undefined) watch(nativePermissionMenu.open, open => { permDropdownOpen.value = open; });
 if (nativeModelMenu !== undefined) watch(nativeModelMenu.open, open => { dropdownOpen.value = open; });
 watch(permDropdownOpen, open => { if (!open) nativePermissionMenu?.close(); });
-watch(dropdownOpen, open => { if (!open) nativeModelMenu?.close(); });
+watch(dropdownOpen, (open, wasOpen) => {
+  if (open) return;
+  nativeModelMenu?.close();
+  if (wasOpen && (!nativeModelMenu?.available || isMobile.value)) commitModelMenuDraft();
+});
+watch(() => status.value?.modelId, (modelId) => {
+  if (!dropdownOpen.value) menuDraftModelId.value = modelId;
+});
 watchEffect(() => { if (nativePermissionMenu?.open.value) nativePermissionMenu.refresh(); });
 watchEffect(() => { if (nativeModelMenu?.open.value) nativeModelMenu.refresh(); });
 watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDropdown(); });
@@ -3580,7 +3472,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
         @change="handleFileInputChange"
       />
 
-      <div ref="toolbarRef" class="toolbar">
+      <div ref="toolbarRef" class="toolbar" :inert="composerStatusNote !== undefined || undefined">
         <div ref="menuMeasureRef" class="menu-measure" aria-hidden="true">
           <span class="pd-desc" />
         </div>
@@ -3674,7 +3566,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             </IconButton>
           </span>
 
-          <span v-if="towerOn && towerExperimentEnabled && !isSideChat" class="tower-chip">
+          <span v-if="towerOn && towerEnabled && !isSideChat" class="tower-chip">
             <Icon class="tower-ic" name="tower" size="md" />
             <span class="tower-label">{{ t('status.towerLabel') }}</span>
             <IconButton
@@ -3744,7 +3636,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             aria-haspopup="menu"
             :aria-expanded="dropdownOpen"
             :aria-label="modelPillCollapsed ? modelIconLabel : undefined"
-            @click.stop="toggleDropdown"
+            @click.stop="toggleDropdown()"
           >
             <Icon v-if="modelPillCollapsed" name="model" size="md" />
             <template v-else>
@@ -3763,7 +3655,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             aria-haspopup="menu"
             :aria-expanded="dropdownOpen"
             :aria-label="modelPillCollapsed ? t('login.pickModelAction') : undefined"
-            @click.stop="toggleDropdown"
+            @click.stop="toggleDropdown()"
           >
             <Icon v-if="modelPillCollapsed" name="model" size="md" />
             <template v-else>
@@ -3807,7 +3699,6 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             </template>
           </button>
           </Tooltip>
-          <span v-if="composerStatusNote" class="status-note" role="status">{{ composerStatusNote }}</span>
           <Tooltip v-if="stopButtonVisible" :text="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interruptTitle')">
             <button
               class="stop"
@@ -3833,70 +3724,28 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           </Tooltip>
         </div>
 
-        <!-- Model dropdown — current provider models + controls + more -->
         <Transition name="ui-menu-pop">
-        <Menu
-          v-if="dropdownOpen && status && (!nativeModelMenu?.available || isMobile)"
-          ref="modelDropdownRef"
-          class="model-dropdown"
-          :class="{ 'flip-down': modelMenuDropDown }"
-          :style="modelMenuStyle"
-          @click.stop
-          @keydown="onModelDropdownKeydown"
-        >
-          <!-- Scrollable model list — capped so a large provider catalog
-               can't push the controls below out of the viewport. -->
-          <div class="md-list">
-            <template v-for="entry in fallbackModelEntries" :key="entry.key">
-              <div v-if="entry.kind === 'section'" class="md-section">{{ entry.label }}</div>
-              <div v-else-if="entry.kind === 'divider'" class="md-divider" />
-              <MenuItem
-                v-else
-                class="md-row"
-                :class="{ 'is-current': entry.model.id === draftModelId }"
-                :active="entry.model.id === draftModelId"
-                @click="selectModel(entry.model.id)"
-              >
-                <span class="md-check"><Icon v-if="entry.model.id === draftModelId" name="check" size="sm" style="color: var(--color-accent)" /></span>
-                <span class="md-name">{{ entry.model.displayName ?? entry.model.model }}</span>
-                <span v-if="entry.showProvider" class="md-provider">{{ providerDisplayName(entry.model.provider, t) }}</span>
-                <Icon v-if="entry.starred" class="md-star" name="star" size="sm" style="color: var(--star)" />
-              </MenuItem>
-            </template>
-          </div>
-
-          <div v-if="providerModels.length > 0 || unstarredGroups.length > 0" class="md-divider" />
-
-          <!-- Thinking level — the shared segmented control (same as settings
-               and the mobile sheet). Unsupported shows a note; a single fixed
-               segment degrades to a static value instead of a dead control. -->
-          <div class="md-thinking">
-            <span class="md-name">{{ t('status.thinkingLabel') }}</span>
-            <span
-              v-if="thinkingAvailability === 'unsupported'"
-              class="md-note"
-            >{{ t('status.modeNotSupported') }}</span>
-            <SegmentedControl
-              v-else-if="thinkingSegments.length > 1"
-              :model-value="activeThinkingSegment"
-              :options="thinkingOptions"
-              size="xs"
-              @update:model-value="setThinkingSegment"
-            />
-            <span v-else class="md-note">{{ effortLabel(thinkingSegments[0] ?? menuThinkingLevel) }}</span>
-          </div>
-
-          <div v-if="effortDescription" class="md-effort-description">{{ effortDescription }}</div>
-
-          <div class="md-divider" />
-
-          <!-- More models → open full picker -->
-          <MenuItem class="md-row md-row-more" @click="closeDropdown(); emit('pickModel');">
-            <span class="md-check md-more-icon"><Icon name="list" size="sm" style="color: var(--color-text-muted)" /></span>
-            <span class="md-name">{{ t('status.moreModels') }}</span>
-            <Icon class="md-more-arrow" name="chevron-right" size="sm" style="color: var(--md-more-arrow-color)" />
-          </MenuItem>
-        </Menu>
+          <ModelQuickMenu
+            v-if="dropdownOpen && status && (!nativeModelMenu?.available || isMobile)"
+            ref="modelDropdownRef"
+            class="model-dropdown"
+            :style="modelMenuStyle"
+            :models="quickModelMenuPayload.models"
+            :recent-models="quickModelMenuPayload.recentModels"
+            :provider-models="quickModelMenuPayload.providerModels"
+            :providers="quickModelMenuPayload.providers"
+            :active-provider="quickModelMenuPayload.activeProvider"
+            :active-provider-label="quickModelMenuPayload.activeProviderLabel"
+            :current-model-id="quickModelMenuPayload.currentModelId"
+            :current-effort="quickModelMenuPayload.currentEffort"
+            :effort-descriptions="quickModelMenuPayload.effortDescriptions"
+            :max-height="webModelMenuMaxHeight"
+            @click.stop
+            @select-model="(modelId, effort, fromSearch) => onQuickModelAction({ type: 'select-model', modelId, ...(effort === undefined ? {} : { effort }), ...(fromSearch === true ? { fromSearch: true } : {}) })"
+            @select-effort="(effort) => onQuickModelAction({ type: 'select-effort', effort })"
+            @select-provider="(providerId) => onQuickModelAction({ type: 'select-provider', providerId })"
+            @dismiss="dismissModelMenu"
+          />
         </Transition>
 
         <Transition name="ui-menu-pop">
@@ -3931,6 +3780,20 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           </Menu>
         </Transition>
       </div>
+
+      <Transition name="trust-overlay">
+        <div
+          v-if="composerStatusNote"
+          class="trust-overlay"
+          role="status"
+          :aria-label="sessionSubmitBlockedTooltip ?? composerStatusNote"
+        >
+          <div class="trust-overlay-pill">
+            <Spinner size="sm" class="trust-overlay-spinner" />
+            <span class="trust-overlay-text">{{ composerStatusNote }}</span>
+          </div>
+        </div>
+      </Transition>
   </div>
 
   <!-- Optional footer (empty-session workspace picker) — a sibling of the
@@ -4549,14 +4412,61 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   color: var(--color-text-muted);
 }
 
-.status-note {
+.trust-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3);
+  border-radius: inherit;
+  corner-shape: inherit;
+  background: color-mix(in srgb, var(--color-composer-bg) 60%, transparent);
+  pointer-events: none;
+  user-select: none;
+}
+.trust-overlay-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-height: var(--composer-control-size);
+  padding: var(--space-1-5) var(--space-4);
+  border: var(--p-hairline) solid var(--color-line);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-xs);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+.trust-overlay-spinner {
   flex: none;
-  max-width: 40%;
+  color: var(--color-accent);
+}
+.trust-overlay-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-xs);
-  color: var(--color-text-faint);
+}
+.trust-overlay-enter-active {
+  transition: opacity var(--duration-base) var(--ease-out) 150ms;
+}
+.trust-overlay-leave-active {
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.trust-overlay-enter-from,
+.trust-overlay-leave-to {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .trust-overlay-enter-active,
+  .trust-overlay-leave-active {
+    transition: none;
+  }
 }
 
 .send {
@@ -5004,24 +4914,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 
 .model-dropdown {
   position: absolute;
-  bottom: calc(100% + var(--space-1));
+  bottom: calc(100% + var(--space-2));
   right: calc(var(--composer-control-inset) + var(--composer-send-size) + var(--space-1));
   z-index: var(--z-dropdown);
-  min-width: min(200px, 100%);
-  max-width: 100%;
-  box-sizing: border-box;
-  padding: var(--space-1);
-  gap: 1px;
   transform-origin: bottom right;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.model-dropdown.flip-down {
-  top: calc(100% + var(--space-1));
-  bottom: auto;
-  transform-origin: top right;
 }
 
 .add-menu,
@@ -5030,127 +4926,9 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 .ctx-card {
   --menu-pop-shift: 2px;
 }
-.model-dropdown.flip-down,
 .perm-dropdown.flip-down,
 .ctx-card.flip-down {
   --menu-pop-shift: -2px;
-}
-
-.md-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  max-height: min(320px, 40vh);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.md-section {
-  padding: 4px 9px 2px;
-  font-size: var(--text-xs);
-  color: var(--color-text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-weight: var(--weight-semibold);
-}
-
-.md-row {
-  gap: 7px;
-  font-size: var(--text-base);
-  padding: 5px 9px;
-  border-radius: var(--radius-dropdown-row);
-}
-.md-row:hover .md-name { color: var(--color-text-strong); }
-.md-row:disabled {
-  cursor: default;
-  opacity: 0.58;
-}
-.md-row.is-current { background: var(--color-selected); }
-.md-note {
-  margin-left: auto;
-  color: var(--color-text-faint);
-  font-size: var(--text-xs);
-}
-
-.md-row-more { --md-more-arrow-color: var(--color-text-quaternary); }
-.md-row-more:hover { --md-more-arrow-color: var(--color-text-muted); }
-.md-row-more .md-more-arrow {
-  width: var(--p-ic-sm);
-  height: var(--p-ic-sm);
-  flex: none;
-  transition: color var(--duration-base) var(--ease-out);
-}
-
-.md-check {
-  width: 14px;
-  flex: none;
-  color: var(--color-accent);
-  font-weight: 500;
-  display: flex;
-  justify-content: center;
-}
-.md-row .md-check :deep(svg) {
-  width: var(--p-ic-sm);
-  height: var(--p-ic-sm);
-  color: inherit;
-}
-
-.md-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: color var(--duration-base) var(--ease-out);
-}
-.md-provider {
-  color: var(--color-text-faint);
-  font-size: var(--text-xs);
-  flex: none;
-}
-.md-star {
-  color: var(--star);
-  flex: none;
-  margin-left: auto;
-}
-.md-row .md-star {
-  width: var(--p-ic-sm);
-  height: var(--p-ic-sm);
-  color: var(--star);
-}
-
-.md-divider {
-  height: 1px;
-  background: var(--color-line);
-  margin: 3px 0;
-}
-
-.md-thinking {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 6px 8px;
-  padding: 6px 9px;
-  border-radius: var(--radius-dropdown-row);
-}
-.md-thinking .md-name {
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
-  color: var(--color-text);
-  flex: none;
-}
-.md-thinking .md-note {
-  margin-left: auto;
-}
-
-.md-effort-description {
-  width: 0;
-  min-width: 100%;
-  padding: 2px 7px 4px;
-  color: var(--color-text-faint);
-  font-size: var(--text-2xs);
-  line-height: 1.4;
 }
 
 .perm-dropdown {
@@ -5293,10 +5071,8 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   }
 
   .model-dropdown {
-    right: calc(var(--composer-control-inset) + var(--composer-send-size) + var(--space-1));
+    right: var(--composer-control-inset);
     left: auto;
-    min-width: min(180px, 100%);
-    max-width: 100%;
   }
 
   .ph {
@@ -5319,15 +5095,6 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   }
   .model-pill .mp-name {
     max-width: min(40vw, 170px);
-  }
-  .md-row {
-    font-size: var(--text-base);
-  }
-  .md-section {
-    font-size: var(--text-base);
-  }
-  .md-thinking :deep(.ui-seg--xs .ui-seg__item) {
-    padding: 0 var(--space-1-5);
   }
   .pd-name {
     font-size: var(--text-base);

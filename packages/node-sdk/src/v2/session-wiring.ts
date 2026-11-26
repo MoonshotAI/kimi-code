@@ -87,6 +87,7 @@ interface ApprovalInteractionPayload {
   readonly toolName: string;
   readonly action: string;
   readonly display: ToolInputDisplay;
+  readonly approvalDetail?: ApprovalRequest['approvalDetail'];
 }
 
 /** The v2 question payload (`agent-core-v2/src/agent/interaction/question.ts`). */
@@ -217,6 +218,7 @@ export class SessionEventWiring {
         toolName: payload.toolName,
         action: payload.action,
         display: payload.display,
+        approvalDetail: payload.approvalDetail,
         sessionId: this.session.id,
         agentId: payload.agentId ?? interactionAgentId(interaction) ?? MAIN_AGENT_ID,
       });

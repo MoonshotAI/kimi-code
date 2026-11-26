@@ -22,7 +22,7 @@ export interface ShellExecutionOptions {
 
 export class ShellExecutionComponent extends Container {
   private renderCache:
-    | { width: number; lines: string[]; childRefs: Component[]; childLines: string[][] }
+    | { width: number; lines: string[]; childRefs: Component[]; childLines: (readonly string[])[] }
     | undefined;
 
   constructor(options: ShellExecutionOptions) {

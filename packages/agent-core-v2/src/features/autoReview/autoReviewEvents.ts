@@ -1,0 +1,98 @@
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+import { z } from 'zod';
+
+import { ContextClear } from '#/agent/contextMemory/contextEvents';
+import { PermissionRecordApprovalResult } from '#/agent/permissionRules/permissionRulesOps';
+import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
+import { defineState } from '#/state/state';
+
+import type { ReviewText } from './context';
+
+export interface AutoReviewStartedPayload {
+  readonly agentId: string;
+  readonly turnId: number;
+  readonly toolCallId: string;
+  readonly toolName: string;
+}
+
+export class AutoReviewStarted extends AgentEvent2<AutoReviewStartedPayload> {
+  static override readonly type = 'auto_review.started';
+  static override readonly observable = true;
+}
+export interface AutoReviewStarted extends AutoReviewStartedPayload {}
+
+export interface AutoReviewStartedEvent extends Omit<AutoReviewStartedPayload, 'agentId'> {
+  readonly type: 'auto_review.started';
+}
+
+const autoReviewCompletedSchema = z.object({
+  agentId: z.string(),
+  turnId: z.number().int().nonnegative(),
+  toolCallId: z.string(),
+  toolName: z.string(),
+  triggerPolicy: z.string(),
+  model: z.string(),
+  decision: z.enum(['allow', 'deny', 'failed']),
+  risk: z.enum(['low', 'medium', 'high']).optional(),
+  reason: z.string().optional(),
+  durationMs: z.number().nonnegative(),
+});
+
+export class AutoReviewCompleted extends AgentEvent2<z.infer<typeof autoReviewCompletedSchema>> {
+  static override readonly type = 'auto_review.decision';
+  static override readonly durable = true;
+  static override readonly observable = true;
+  static override readonly schema = autoReviewCompletedSchema;
+}
+export interface AutoReviewCompleted extends Readonly<z.infer<typeof autoReviewCompletedSchema>> {}
+
+export interface AutoReviewCompletedEvent extends Omit<z.infer<typeof autoReviewCompletedSchema>, 'agentId'> {
+  readonly type: 'auto_review.decision';
+}
+
+export interface AutoReviewAncestry {
+  readonly authorization: readonly ReviewText[];
+  readonly approvedToolCallIds: readonly string[];
+}
+
+const autoReviewAncestryRecordedSchema = z.object({
+  agentId: z.string(),
+  authorization: z.custom<readonly ReviewText[]>(),
+  approvedToolCallIds: z.array(z.string()).readonly(),
+});
+
+export class AutoReviewAncestryRecorded extends AgentEvent2<z.infer<typeof autoReviewAncestryRecordedSchema>> {
+  static override readonly type = 'auto_review.ancestry_recorded';
+  static override readonly durable = true;
+  static override readonly schema = autoReviewAncestryRecordedSchema;
+}
+export interface AutoReviewAncestryRecorded extends AutoReviewAncestry {
+  readonly agentId: string;
+}
+
+registerEvent2Class(AutoReviewStarted);
+registerEvent2Class(AutoReviewCompleted);
+registerEvent2Class(AutoReviewAncestryRecorded);
+
+export const autoReviewApprovedCallsKey = defineState(
+  'autoReview.approvedToolCallIds',
+  (): readonly string[] => [],
+)
+  .replayable({ schema: z.custom<readonly string[]>() })
+  .undoable()
+  .on(ContextClear, () => [])
+  .on(PermissionRecordApprovalResult, (s, e) => {
+    if (e.result.decision === 'approved' && !s.includes(e.toolCallId)) {
+      s.push(e.toolCallId);
+    }
+  });
+
+export const autoReviewAncestryKey = defineState(
+  'autoReview.ancestry',
+  (): AutoReviewAncestry | undefined => undefined,
+)
+  .replayable({ schema: z.custom<AutoReviewAncestry | undefined>() })
+  .on(AutoReviewAncestryRecorded, (_s, e) => ({
+    authorization: e.authorization,
+    approvedToolCallIds: e.approvedToolCallIds,
+  }));
