@@ -6,7 +6,9 @@ import { useTaskList, type TaskListEmits, type TaskListProps } from './useTaskLi
 
 const props = defineProps<TaskListProps>();
 
-const emit = defineEmits<TaskListEmits>();
+function num(task: TaskItem, i: number): string {
+  return String((task.swarmIndex ?? i) + 1).padStart(2, '0');
+}
 
 function modelEffortLabel(task: TaskItem): string | undefined {
   const parts = [modelDisplay?.(task.model), subagentEffort?.(task.thinkingEffort)].filter(
@@ -15,16 +17,13 @@ function modelEffortLabel(task: TaskItem): string | undefined {
   return parts.length > 0 ? parts.join(' · ') : undefined;
 }
 
-const { t } = useI18n();
-function num(task: TaskItem, i: number): string {
-  return String((task.swarmIndex ?? i) + 1).padStart(2, '0');
-}
-
 function canOpen(task: TaskItem): boolean {
   return Boolean(task.agentId) || Boolean(task.output && task.output.length > 0);
 }
 
+const { t } = useI18n();
 const { panelApi, modelDisplay, subagentEffort, isCancelling, stateLabel, durationLabel } = useTaskList(props, t);
+const emit = defineEmits<TaskListEmits>();
 </script>
 
 <template>

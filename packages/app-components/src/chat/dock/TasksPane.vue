@@ -6,13 +6,10 @@ import { useTaskList, type TaskListEmits, type TaskListProps } from './useTaskLi
 
 const props = defineProps<TaskListProps>();
 
-const emit = defineEmits<TaskListEmits>();
-
 function hasDetail(task: TaskItem): boolean {
   return Boolean((task.output && task.output.length > 0) || task.meta);
 }
 
-const { t } = useI18n();
 function handleClick(task: TaskItem): void {
   if (!isClickable(task)) return;
   panelApi?.openAgent(task.agentId ?? task.id);
@@ -31,7 +28,9 @@ function taskEffort(task: TaskItem): string | undefined {
   return subagentEffort?.(task.thinkingEffort);
 }
 
+const { t } = useI18n();
 const { panelApi, modelDisplay, subagentEffort, isCancelling, stateLabel, durationLabel } = useTaskList(props, t);
+const emit = defineEmits<TaskListEmits>();
 </script>
 
 <template>
