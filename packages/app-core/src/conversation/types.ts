@@ -4,6 +4,8 @@ export type ConversationOutcome = 'completed' | 'interrupted' | 'failed';
 
 export type ConversationEndReason = 'user_cancelled' | 'aborted' | 'max_steps' | 'error' | 'filtered' | 'blocked';
 
+export type ConversationContinuation = 'turn' | 'background' | 'none';
+
 export interface ConversationError {
   readonly code: string;
   readonly message: string;
@@ -159,6 +161,7 @@ export interface ToolCallItem extends ConversationItemBase {
   readonly type: 'tool_call';
   readonly name: string;
   readonly stage?: 'input' | 'awaiting_approval' | 'executing';
+  readonly auto_review?: boolean;
   readonly input?: unknown;
   readonly input_text?: string;
   readonly fields?: Readonly<Record<string, unknown>>;
@@ -206,6 +209,7 @@ export interface CompactionItem extends ConversationItemBase {
   readonly tokens_after?: number;
   readonly compacted_count?: number;
   readonly summary?: string;
+  readonly error?: ConversationError;
 }
 
 export interface ForkBoundaryItem extends ConversationItemBase {
@@ -232,6 +236,7 @@ export interface ConversationTurnHeader {
   readonly status: ConversationItemStatus;
   readonly outcome?: ConversationOutcome;
   readonly end_reason?: ConversationEndReason;
+  readonly continuation?: ConversationContinuation;
   readonly error?: ConversationError;
   readonly retry?: ConversationRetry;
   readonly turn_number?: number;

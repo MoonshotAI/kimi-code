@@ -68,6 +68,11 @@ const AGENT_ERROR_TITLE_KEYS: Readonly<Record<string, string>> = {
   'context.overflow': 'contextOverflow',
 };
 
+const NOTICE_TITLE_KEYS: Readonly<Record<string, string>> = {
+  ...AGENT_ERROR_TITLE_KEYS,
+  'compaction.failed': 'compactionFailed',
+};
+
 export function isModelTurnErrorNotice(notice: ConversationNotice): boolean {
   return notice.code !== undefined && Object.hasOwn(AGENT_ERROR_TITLE_KEYS, notice.code);
 }
@@ -76,7 +81,7 @@ export function buildAgentErrorNotice(notice: ConversationNotice, t: ReduceConte
   const details: AppNoticeDetail[] = [];
   if (notice.code !== undefined) details.push({ label: t('warnings.details.code'), value: notice.code });
   if (notice.detail !== undefined) details.push({ label: t('warnings.details.details'), value: notice.detail });
-  const titleKey = (notice.code !== undefined ? AGENT_ERROR_TITLE_KEYS[notice.code] : undefined) ?? 'title';
+  const titleKey = (notice.code !== undefined ? NOTICE_TITLE_KEYS[notice.code] : undefined) ?? 'title';
   return {
     severity: 'error',
     title: t(`warnings.agentError.${titleKey}`),

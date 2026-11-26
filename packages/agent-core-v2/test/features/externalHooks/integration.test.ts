@@ -64,7 +64,7 @@ import {
   type SessionCreatedEvent,
   type SessionCreateSource,
   type SessionWillCloseEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
+} from '#/project/sessionLifecycle/sessionLifecycle';
 import { createHooks, OrderedHookSlot } from '#/hooks';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -261,7 +261,7 @@ function registerHookTestServices(reg: ServiceRegistration, cwd = '/tmp'): void 
   reg.defineInstance(IAgentLoopService, stubContextMemory());
   registerAgentEventBus(reg);
   reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
-  reg.definePartialInstance(IAgentPermissionGate, {});
+  reg.definePartialInstance(IAgentPermissionGate, { registerReviewer: () => Disposable.None });
   reg.definePartialInstance(IAgentTaskService, {});
 }
 
@@ -486,7 +486,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
-          reg.definePartialInstance(IAgentPermissionGate, {});
+          reg.definePartialInstance(IAgentPermissionGate, { registerReviewer: () => Disposable.None });
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });
@@ -691,7 +691,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentLoopService, loop);
           registerAgentEventBus(reg);
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
-          reg.definePartialInstance(IAgentPermissionGate, {});
+          reg.definePartialInstance(IAgentPermissionGate, { registerReviewer: () => Disposable.None });
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });
@@ -1255,7 +1255,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
-          reg.definePartialInstance(IAgentPermissionGate, {});
+          reg.definePartialInstance(IAgentPermissionGate, { registerReviewer: () => Disposable.None });
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });

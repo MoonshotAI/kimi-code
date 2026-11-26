@@ -188,7 +188,12 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[]; promptP
   const agentStatus = (sid: string, status: AppAgentState['status'] | 'compacting', extra: Partial<AppAgentState> = {}) =>
     handlers!.onAgentState?.(sid, 'main', status === 'compacting' ? agentState('idle', { ...extra, compacting: true }) : agentState(status, extra));
   const turnId = (ordinal: number): string => opts.promptPrediction === true ? `t_${ordinal}` : `t${ordinal}`;
-  const header = (ordinal: number, outcome?: ConversationOutcome, id = turnId(ordinal)): ConversationTurnHeader => ({
+  const header = (
+    ordinal: number,
+    outcome?: ConversationOutcome,
+    id = turnId(ordinal),
+    extra: Partial<ConversationTurnHeader> = {},
+  ): ConversationTurnHeader => ({
     turn_id: id,
     ordinal,
     turn_number: ordinal + 1,
@@ -197,14 +202,21 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[]; promptP
     outcome,
     started_at: AT,
     steps: [],
+    ...extra,
   });
   const startTurn = (sid: string, ordinal: number, promptId: string, text: string, id = turnId(ordinal)) => {
     agentStatus(sid, 'running');
     frame(sid, { type: 'turn.started', turn: header(ordinal, undefined, id) });
     frame(sid, { type: 'item.ended', turn_id: id, item: opener(promptId, text) });
   };
-  const endTurn = (sid: string, ordinal: number, outcome: ConversationOutcome = 'completed', id = turnId(ordinal)) => {
-    frame(sid, { type: 'turn.ended', turn: header(ordinal, outcome, id) });
+  const endTurn = (
+    sid: string,
+    ordinal: number,
+    outcome: ConversationOutcome = 'completed',
+    id = turnId(ordinal),
+    continuation?: ConversationTurnHeader['continuation'],
+  ) => {
+    frame(sid, { type: 'turn.ended', turn: header(ordinal, outcome, id, { continuation }) });
     agentStatus(sid, 'idle');
   };
   const sentPromptId = (index: number) => submitPrompt.mock.calls[index]![1].promptId!;
@@ -287,6 +299,36 @@ describe('conversation events in the client', () => {
     expect(h.turnEndReads.getGitStatus).toHaveBeenCalled();
     expect(h.turnEndReads.getSessionWarnings).toHaveBeenCalled();
     expect(h.turnEndReads.listSkills).toHaveBeenCalled();
+  });
+
+  it('suppresses completion while another turn follows, notifying on background, none, and legacy frames', async () => {
+    const h = await boot();
+    const { notificationsStore } = await import('../src/stores/notifications');
+    const notifyCompletion = vi.spyOn(notificationsStore(), 'maybeNotifyCompletion');
+
+    h.startTurn('s1', 0, 'msg_0', 'first');
+    h.endTurn('s1', 0, 'completed', 't0', 'turn');
+    expect(notifyCompletion).not.toHaveBeenCalled();
+    expect(h.turnEndReads.generateSessionTitle).toHaveBeenCalledTimes(1);
+
+    h.startTurn('s1', 1, 'msg_1', 'second');
+    h.endTurn('s1', 1, 'completed', 't1', 'background');
+    expect(notifyCompletion).toHaveBeenCalledTimes(1);
+    expect(notifyCompletion).toHaveBeenLastCalledWith('s1', expect.objectContaining({ promptId: 'msg_1' }));
+
+    h.startTurn('s1', 2, 'msg_2', 'task notification');
+    h.endTurn('s1', 2, 'completed', 't2', 'none');
+    expect(notifyCompletion).toHaveBeenCalledTimes(2);
+    expect(notifyCompletion).toHaveBeenLastCalledWith('s1', expect.objectContaining({ promptId: 'msg_2' }));
+
+    h.startTurn('s1', 3, 'msg_3', 'legacy server');
+    h.endTurn('s1', 3, 'completed', 't3');
+    expect(notifyCompletion).toHaveBeenCalledTimes(3);
+    expect(notifyCompletion).toHaveBeenLastCalledWith('s1', expect.objectContaining({ promptId: 'msg_3' }));
+
+    h.startTurn('s1', 4, 'msg_4', 'cancelled');
+    h.endTurn('s1', 4, 'interrupted', 't4', 'none');
+    expect(notifyCompletion).toHaveBeenCalledTimes(3);
   });
 
   it('drops a sent prompt the server lost while disconnected and sends the next queued one', async () => {
@@ -708,6 +750,117 @@ describe('model turn error notices', () => {
         message: 'boom',
       }),
     ]);
+  });
+});
+
+describe('compaction failures', () => {
+  const REFUSED = 'APIStatusError: The example service refused to summarize.';
+  const cancelled = { type: 'notice', level: 'warning', title: 'Context compaction did not finish', code: 'compaction.cancelled' } as const;
+  const failed = { type: 'notice', level: 'error', title: REFUSED, code: 'compaction.failed' } as const;
+  const failure = expect.objectContaining({ severity: 'error', title: 'warnings.agentError.compactionFailed', message: REFUSED });
+  const failedItem = {
+    type: 'system',
+    kind: 'compaction',
+    item_id: 'c0',
+    status: 'ended',
+    outcome: 'failed',
+    created_at: AT,
+    trigger: 'manual',
+    error: { code: 'compaction.failed', message: REFUSED, status_code: 400, request_id: 'req-1' },
+  } as const;
+  const deliverFailure = (h: Awaited<ReturnType<typeof boot>>, sessionId: string) => {
+    h.frame(sessionId, { type: 'turn.started', turn: { turn_id: 'tc', ordinal: 5, kind: 'system', status: 'running', started_at: AT, steps: [] } });
+    h.frame(sessionId, { type: 'item.ended', turn_id: 'tc', item: failedItem });
+    h.frame(sessionId, cancelled);
+    h.frame(sessionId, failed);
+  };
+
+  it('shows why a compaction failed in the transcript of the open session, without a toast', async () => {
+    const h = await boot();
+    const { modelSwitchConfirmStore } = await import('../src/stores/modelSwitchConfirm');
+    const { promptStore } = await import('../src/stores/prompt');
+    h.agentStatus('s1', 'compacting');
+    const settled = modelSwitchConfirmStore().waitCompactionSettled('s1', 60_000);
+    h.agentStatus('s1', 'idle');
+    h.warningsStore().resetWarnings();
+
+    deliverFailure(h, 's1');
+
+    await expect(settled).resolves.toBe('cancelled');
+    expect(promptStore().hasUnsettledCompaction('s1')).toBe(false);
+    await vi.waitFor(() => expect(h.client.turns.value.at(-1)).toMatchObject({
+      role: 'compaction',
+      compaction: {
+        trigger: 'manual',
+        error: { code: 'compaction.failed', message: REFUSED, statusCode: 400, requestId: 'req-1' },
+      },
+    }));
+    expect(h.warningsStore().warnings).toEqual([]);
+  });
+
+  it('keeps the did-not-finish note when nothing failed', async () => {
+    const h = await boot();
+    h.warningsStore().resetWarnings();
+
+    h.frame('s1', cancelled);
+
+    expect(h.warningsStore().warnings).toEqual([
+      expect.objectContaining({ severity: 'warning', title: 'warnings.noteLabel', message: 'Context compaction did not finish' }),
+    ]);
+  });
+
+  it('keeps the did-not-finish note of the next cancelled compaction after a failure', async () => {
+    const h = await boot();
+    deliverFailure(h, 's1');
+    h.agentStatus('s1', 'compacting');
+    h.agentStatus('s1', 'idle');
+    h.warningsStore().resetWarnings();
+
+    h.frame('s1', cancelled);
+
+    expect(h.warningsStore().warnings).toEqual([
+      expect.objectContaining({ severity: 'warning', title: 'warnings.noteLabel', message: 'Context compaction did not finish' }),
+    ]);
+  });
+
+  it('names a failed compaction in another session as a compaction failure, in one toast', async () => {
+    const h = await boot({ sessionIds: ['s1', 's2'] });
+    await h.client.selectSession('s2');
+    await h.client.selectSession('s1');
+    h.warningsStore().resetWarnings();
+
+    deliverFailure(h, 's2');
+
+    expect(h.warningsStore().warnings).toEqual([failure]);
+  });
+
+  it('still raises one toast when a compaction in another session fails on authentication', async () => {
+    const h = await boot({ sessionIds: ['s1', 's2'] });
+    await h.client.selectSession('s2');
+    await h.client.selectSession('s1');
+    h.warningsStore().resetWarnings();
+    const DENIED = 'Unauthorized: the example key was rejected.';
+
+    h.frame('s2', { type: 'turn.started', turn: { turn_id: 'tc', ordinal: 5, kind: 'system', status: 'running', started_at: AT, steps: [] } });
+    h.frame('s2', { type: 'item.ended', turn_id: 'tc', item: { ...failedItem, error: { code: 'provider.auth_error', message: DENIED, status_code: 401 } } });
+    h.frame('s2', cancelled);
+    h.frame('s2', { type: 'notice', level: 'error', title: DENIED, code: 'provider.auth_error' });
+
+    expect(h.warningsStore().warnings).toEqual([
+      expect.objectContaining({ severity: 'error', title: 'warnings.agentError.compactionFailed', message: DENIED }),
+    ]);
+  });
+
+  it('keeps hiding an authentication error of another session that no compaction failure announced', async () => {
+    const h = await boot({ sessionIds: ['s1', 's2'] });
+    await h.client.selectSession('s2');
+    await h.client.selectSession('s1');
+    deliverFailure(h, 's2');
+    h.warningsStore().resetWarnings();
+
+    h.frame('s2', { type: 'notice', level: 'error', title: 'Unauthorized', code: 'provider.auth_error' });
+
+    expect(h.warningsStore().warnings).toEqual([]);
   });
 });
 

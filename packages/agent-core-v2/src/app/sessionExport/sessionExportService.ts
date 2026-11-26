@@ -8,11 +8,10 @@ import { IWireService } from '#/wire/wire';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IWorkspaceService } from '#/app/workspace/workspace';
 import {
   sessionDirOf,
-  workspacePersistenceScope,
-} from '#/workspace/sessionLifecycle/internal/addressing';
+  projectPersistenceScope,
+} from '#/project/sessionLifecycle/internal/addressing';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
@@ -34,8 +33,13 @@ import {
   writeExportZip,
 } from './zip';
 import { openZipSource, type ZipSource } from './file-source';
+import { SESSION_PRESENCE_DIR } from '#/app/sessionPresence/sessionPresence';
 import { FILE_HISTORY_BLOB_PREFIX } from '#/features/fileHistory/fileHistoryService';
 
+const EXCLUDED_SESSION_DIRS: ReadonlySet<string> = new Set([
+  FILE_HISTORY_BLOB_PREFIX,
+  SESSION_PRESENCE_DIR,
+]);
 const SESSION_LOG_REL = 'logs/kimi-code.log';
 const GLOBAL_LOG_REL = 'logs/global/kimi-code.log';
 const WEB_LOG_REL = 'logs/kimi-web.jsonl';
@@ -48,7 +52,6 @@ export class SessionExportService implements ISessionExportService {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionIndex private readonly index: ISessionIndex,
     @ISessionManager private readonly sessions: ISessionManager,
-    @IWorkspaceService private readonly workspaces: IWorkspaceService,
     @ILogService private readonly log: ILogService,
   ) {}
 
@@ -108,7 +111,7 @@ export class SessionExportService implements ISessionExportService {
     const summary = await this.index.get(id);
     if (summary === undefined) return undefined;
     const liveSummary = await this.flushLiveSession(summary);
-    const files = await collectFilesRecursive(liveSummary.sessionDir, FILE_HISTORY_BLOB_PREFIX);
+    const files = await collectFilesRecursive(liveSummary.sessionDir, EXCLUDED_SESSION_DIRS);
     return {
       sessionId: liveSummary.id,
       sessionDir: liveSummary.sessionDir,
@@ -118,16 +121,15 @@ export class SessionExportService implements ISessionExportService {
   }
 
   private async flushLiveSession(summary: SessionSummary): Promise<ExportSessionDirectorySummary> {
-    const workspace = await this.workspaces.get(summary.workspaceId);
     const sessionDir = sessionDirOf(
       this.bootstrap.homeDir,
-      workspacePersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
+      projectPersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
       summary.id,
     );
     let exportSummary: ExportSessionDirectorySummary = {
       id: summary.id,
       title: summary.title,
-      workspaceDir: workspace?.root,
+      workspaceDir: summary.cwd,
       sessionDir,
     };
     const handle = this.liveSession(summary.id);
@@ -142,7 +144,7 @@ export class SessionExportService implements ISessionExportService {
       exportSummary = {
         id: meta.id,
         title: meta.title,
-        workspaceDir: workspace?.root,
+        workspaceDir: summary.cwd,
         sessionDir,
       };
     } catch (error) {
@@ -225,7 +227,7 @@ export async function exportSessionDirectory(input: {
     if (input.desktopLogPath !== undefined) {
       desktopSource = await openOptionalZipSource(input.desktopLogPath, input.signal);
     }
-    const sessionFiles = await collectFilesRecursive(sessionDir, FILE_HISTORY_BLOB_PREFIX);
+    const sessionFiles = await collectFilesRecursive(sessionDir, EXCLUDED_SESSION_DIRS);
     if (
       !input.request.includeGlobalLog &&
       sessionFiles.length === 0 &&
@@ -242,7 +244,10 @@ export async function exportSessionDirectory(input: {
     const stableSessionLog = sessionLogSource;
     const selectedSessionFiles: SessionZipEntry[] = sessionFiles.filter(
       (file) =>
-        file !== sessionLogPath && !file.split(/[\\/]/).includes(FILE_HISTORY_BLOB_PREFIX),
+        file !== sessionLogPath &&
+        !relative(sessionDir, file)
+          .split(/[\\/]/)
+          .some((part) => EXCLUDED_SESSION_DIRS.has(part)),
     );
     if (stableSessionLog !== undefined) {
       selectedSessionFiles.push({ path: sessionLogPath, source: stableSessionLog });

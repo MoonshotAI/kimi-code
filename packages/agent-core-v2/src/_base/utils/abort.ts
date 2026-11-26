@@ -68,6 +68,7 @@ function isDefaultAbortReason(reason: Error): boolean {
 export interface DeadlineAbortSignal {
   readonly signal: AbortSignal;
   readonly timedOut: () => boolean;
+  readonly remainingMs: () => number;
   readonly clear: () => void;
 }
 
@@ -77,6 +78,7 @@ export function createDeadlineAbortSignal(
 ): DeadlineAbortSignal {
   const controller = new AbortController();
   const unlinkAbortSignal = linkAbortSignal(source, controller);
+  const deadlineAt = Date.now() + timeoutMs;
   let didTimeout = false;
   let timeout: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
     didTimeout = true;
@@ -86,6 +88,7 @@ export function createDeadlineAbortSignal(
   return {
     signal: controller.signal,
     timedOut: () => didTimeout,
+    remainingMs: () => Math.max(0, deadlineAt - Date.now()),
     clear: () => {
       if (timeout !== undefined) clearTimeout(timeout);
       timeout = undefined;

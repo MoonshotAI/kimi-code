@@ -22,6 +22,7 @@ import { detectPendingMigration, resolveLegacySourceHome, sameLegacyPath } from 
 import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, resolveAnimationFrameRate, resolveTuiMode, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
+import { formatWorktreeExit } from '#/tui/controllers/worktree-exit';
 import { KimiTUI } from '#/tui/index';
 import { startupTrace } from '#/utils/startup-trace';
 import { currentTheme, getColorPalette } from '#/tui/theme';
@@ -30,8 +31,9 @@ import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 import { resolveCommandPath } from '#/utils/process/resolve-command';
 
-import type { CLIOptions } from './options';
+import { worktreeFlagOffError, type CLIOptions } from './options';
 import { resolveAgentProfileSelection } from './agent-selection';
+import { resolveAdditionalDirs, resolveLaunchPaths } from './launch-paths';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { detectNativeInstall } from './update/source';
 import { createKimiCodeHostIdentity } from './host-identity';
@@ -43,10 +45,14 @@ export async function runShell(
 ): Promise<void> {
   const startedAt = Date.now();
   const configStartedAt = startedAt;
+  const configWarnings: string[] = [];
   let tuiConfig: TuiConfig;
   let configWarning: string | undefined;
   try {
-    tuiConfig = await loadTuiConfig();
+    tuiConfig = await loadTuiConfig(undefined, (message) => {
+      configWarnings.push(message);
+    });
+    configWarning = configWarnings.length > 0 ? configWarnings.join('\n') : undefined;
   } catch (error) {
     if (!(error instanceof TuiConfigParseError)) throw error;
     tuiConfig = error.fallback;
@@ -57,6 +63,7 @@ export async function runShell(
   currentTheme.setPalette(palette);
 
   const workDir = process.cwd();
+  const launchPaths = resolveLaunchPaths(opts, workDir);
   const telemetryBootstrap = createCliTelemetryBootstrap();
   const telemetryClient: TelemetryClient = {
     track,
@@ -67,7 +74,7 @@ export async function runShell(
   const harnessOptions: KimiHarnessOptions = {
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
-    skillDirs: opts.skillsDirs,
+    skillDirs: launchPaths.skillDirs,
     uiCapabilities: TUI_HOST_UI_CAPABILITIES,
     telemetry: telemetryClient,
     onOAuthRefresh: (outcome) => {
@@ -123,19 +130,36 @@ export async function runShell(
   }
   const config = await harness.getConfig();
   startupTrace('config:loaded');
+  if (
+    opts.worktree !== undefined &&
+    !(await harness.getExperimentalFeatures()).some((feature) => feature.id === 'worktree' && feature.enabled)
+  ) {
+    await harness.close();
+    throw worktreeFlagOffError();
+  }
+  const workLocation = await harness.resolveWorkLocation(workDir);
   const configMs = Date.now() - configStartedAt;
   const agentProfile = await resolveAgentProfileSelection(opts, workDir);
   const tuiModeResolution = resolveTuiMode(tuiConfig.tuiMode);
   const animationFrameRateResolution = resolveAnimationFrameRate();
   tui = new KimiTUI(harness, {
-    cliOptions: opts,
+    cliOptions:
+      opts.worktree !== undefined ? { ...opts, agentFiles: launchPaths.agentFiles } : opts,
     agentProfile,
-    additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
+    additionalDirs:
+      opts.worktree !== undefined
+        ? resolveAdditionalDirs(opts.addDirs, workDir)
+        : opts.addDirs?.length
+          ? opts.addDirs
+          : undefined,
     tuiConfig,
     resolvedTuiMode: tuiModeResolution.mode,
     animationFrameRate: animationFrameRateResolution.fps,
     version,
-    workDir,
+    workDir: workLocation.cwd,
+    projectRoot: workLocation.projectRoot,
+    isGitRepo: workLocation.isGitRepo,
+    worktree: workLocation.worktree,
     startupNotice: combineStartupNotice(configWarning, animationFrameRateResolution.warning),
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
@@ -226,7 +250,12 @@ export async function runShell(
       await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     } catch {}
     const gutter = ' '.repeat(CHROME_GUTTER);
-    process.stdout.write(`${gutter}Bye!\n`);
+    const worktreeExit = tui.worktreeExit.outcome;
+    if (worktreeExit !== undefined) {
+      process.stderr.write(formatWorktreeExit(worktreeExit).map((line) => `${gutter}${line}\n`).join(''));
+    }
+    if (tui.exitError === undefined) process.stdout.write(`${gutter}Bye!\n`);
+    else process.stderr.write(`${tui.exitError}\n`);
     const hints: string[] = [];
     if (sessionId !== '' && hasContent) {
       hints.push(`${gutter}To resume this session: kimi -r ${sessionId}`);

@@ -23,10 +23,10 @@ import {
 } from '#/mcpCore/oauth/service';
 import { mcpOAuthStoreKey, type McpOAuthStore } from '#/mcpCore/oauth/store';
 
-import { createMemoryMcpOAuthStore, executeTool, ManualMcpOAuthScheduler } from '../stubs';
+import { createMemoryMcpOAuthStore, executeTool, ManualMcpOAuthScheduler, UNREACHABLE_SERVER_ORIGIN } from '../stubs';
 
 const SERVER_NAME = 'notion';
-const SERVER_URL = 'https://mcp.example.test/mcp';
+const SERVER_URL = `${UNREACHABLE_SERVER_ORIGIN}/mcp`;
 
 interface Fixture {
   readonly service: McpOAuthService;

@@ -1,4 +1,6 @@
 import {
+  AutoReviewCompleted,
+  AutoReviewStarted,
   IAgentBlobService,
   IAgentLoopService,
   IEventBus,
@@ -194,6 +196,17 @@ describe('conversation fold', () => {
     });
     expect(turn?.items.map((item) => item.item_id)).toEqual(['p1', 's1:0', 's1:2', 'call-1']);
     expect(turn?.items[3]).toMatchObject({ name: 'Bash', input: { command: 'ls' }, output: 'a\nb', outcome: 'completed', step_index: 1 });
+  });
+
+  it('folds turn.ended continuation onto the turn header and omits it for legacy records', () => {
+    const state = fold([
+      turnPrompt(0, 'p0'), userMessage('p0', 'first'), turnEnded(0, 'completed', { continuation: 'turn' }),
+      turnPrompt(1, 'p1'), userMessage('p1', 'second'), turnEnded(1, 'completed', { continuation: 'background' }),
+      turnPrompt(2, 'p2'), userMessage('p2', 'third'), turnEnded(2, 'completed', { continuation: 'none' }),
+      turnPrompt(3, 'p3'), userMessage('p3', 'legacy'), turnEnded(3, 'completed'),
+    ]);
+
+    expect(state.turns.map((turn) => turn.continuation)).toEqual(['turn', 'background', 'none', undefined]);
   });
 
   it('appends the parts of a step without rescanning the items already in its turn', () => {
@@ -637,6 +650,61 @@ describe('conversation fold', () => {
     expect(turns[2]?.items[0]).toMatchObject({ kind: 'compaction', trigger: 'auto', summary: 'legacy' });
   });
 
+  it('shows a failed compaction with its reason and keeps a later summary out of it', () => {
+    const error = {
+      code: 'compaction.failed',
+      message: 'APIStatusError: 400 Bad Request',
+      retryable: false,
+      cause: {
+        code: 'provider.api_error',
+        message: '400 Bad Request',
+        retryable: false,
+        details: { statusCode: 400, requestId: 'req-1' },
+      },
+    };
+    const state = fold([
+      record('full_compaction.begin', { source: 'manual' }),
+      record('full_compaction.cancel', { error }),
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'go'),
+      stepBegin(0, 1, 's1'),
+      record('full_compaction.begin', { source: 'auto' }),
+      record('full_compaction.cancel', { error: { ...error, message: 'mid-turn refusal' } }),
+      turnEnded(0, 'completed'),
+      record('context.apply_compaction', { summary: 'legacy', compactedCount: 2 }),
+    ]);
+
+    const turns = state.turns;
+    expect(turns.map((turn) => `${turn.kind}:${turn.status}:${turn.outcome}`)).toEqual([
+      'system:ended:completed',
+      'agent:ended:completed',
+      'system:ended:completed',
+    ]);
+    expect(turns[0]?.items).toEqual([{
+      type: 'system',
+      item_id: `${turns[0]!.turn_id}#0`,
+      status: 'ended',
+      outcome: 'failed',
+      created_at: expect.any(String),
+      kind: 'compaction',
+      trigger: 'manual',
+      error: {
+        code: 'compaction.failed',
+        message: 'APIStatusError: 400 Bad Request',
+        status_code: 400,
+        request_id: 'req-1',
+        retryable: false,
+      },
+    }]);
+    expect(turns[1]?.items[1]).toMatchObject({
+      kind: 'compaction',
+      trigger: 'auto',
+      outcome: 'failed',
+      error: { message: 'mid-turn refusal' },
+    });
+    expect(turns[2]?.items[0]).toMatchObject({ kind: 'compaction', outcome: 'completed', summary: 'legacy' });
+  });
+
   it('opens a forked conversation with a boundary turn and hides what it inherited', () => {
     const state = fold([
       userMessage('m1', 'inherited question'),
@@ -1056,6 +1124,32 @@ async function runningTurn(h: FeedHarness): Promise<void> {
 }
 
 describe('conversation feed', () => {
+  it('publishes turn continuation on live turn.ended frames, REST pages, and replay', async () => {
+    const h = feedHarness([]);
+    await runningTurn(h);
+    await h.dispatcher.dispatch(new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed', continuation: 'turn' }));
+    await flushed();
+    expect(h.events).toEqual([
+      expect.objectContaining({ type: 'turn.ended', turn: expect.objectContaining({ status: 'ended', continuation: 'turn' }) }),
+    ]);
+    expect((await h.feed.page(undefined, 20)).turns[0]?.continuation).toBe('turn');
+
+    h.events.length = 0;
+    await h.dispatcher.dispatch(prompt(1, 'p2'));
+    await h.dispatcher.dispatch(userPrompt('p2', 'after background'));
+    await h.dispatcher.dispatch(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'completed', continuation: 'none' }));
+    await flushed();
+    expect(h.events.filter((event) => event.type === 'turn.ended')).toEqual([
+      expect.objectContaining({ turn: expect.objectContaining({ continuation: 'none' }) }),
+    ]);
+
+    h.events.length = 0;
+    await h.dispatcher.restore();
+    expect(h.events).toEqual([]);
+    expect((await h.feed.page(undefined, 20)).turns.map((turn) => turn.continuation)).toEqual(['turn', 'none']);
+    h.dispatcher.dispose();
+  });
+
   it('only reuses the historical request ID when its step produced the rated reply', async () => {
     const h = feedHarness([
       turnPrompt(0, 'p0'), userMessage('p0', 'First question'),
@@ -1300,6 +1394,19 @@ describe('conversation feed', () => {
     const display = { kind: 'command', command: 'ls' } as const;
     await h.dispatcher.dispatch(new ToolCallDelta({ agentId: 'main', turnId: 0, toolCallId: 'call-1', name: 'Bash', argumentsPart: '{"command":' }));
     await h.dispatcher.dispatch(new ToolCallDelta({ agentId: 'main', turnId: 0, toolCallId: 'call-1', argumentsPart: '"ls"}' }));
+    await h.dispatcher.dispatch(new AutoReviewStarted({ agentId: 'main', turnId: 0, toolCallId: 'call-1', toolName: 'Bash' }));
+    await h.dispatcher.dispatch(new AutoReviewCompleted({
+      agentId: 'main',
+      turnId: 0,
+      toolCallId: 'call-1',
+      toolName: 'Bash',
+      triggerPolicy: 'fallback-ask',
+      model: 'k2',
+      decision: 'deny',
+      risk: 'medium',
+      reason: 'Needs confirmation.',
+      durationMs: 12,
+    }));
     await h.dispatcher.dispatch(new InteractionRequestEvent({
       agentId: 'main',
       id: 'i1',
@@ -1324,6 +1431,8 @@ describe('conversation feed', () => {
     expect(h.events).toMatchObject([
       { type: 'item.started', item: { item_id: 'call-1', type: 'tool_call', status: 'running', stage: 'input', name: 'Bash', input_text: '{"command":' } },
       { type: 'item.delta', ...tool, field: 'input_text', delta: '"ls"}' },
+      { type: 'item.updated', ...tool, set: { auto_review: true } },
+      { type: 'item.updated', ...tool, set: { auto_review: false } },
       { type: 'item.updated', ...tool, set: { stage: 'awaiting_approval', interaction_id: 'i1', display } },
       { type: 'item.updated', ...tool, set: { stage: 'executing' } },
       { type: 'item.updated', ...tool, set: { input: { command: 'ls' } } },
@@ -1334,8 +1443,8 @@ describe('conversation feed', () => {
       { type: 'item.updated', ...tool, set: { fields: { progress: { percent: 40, text: 'copying' }, status: 'verifying' } } },
       { type: 'item.updated', ...tool, set: { fields: { progress: { percent: 40, text: 'copying' }, status: 'verifying', 'example.kind': { url: 'https://example.com/auth' } } } },
     ]);
-    expect(Object.keys((h.events[3] as { set: object }).set)).toEqual(['stage']);
-    expect(Object.keys((h.events[4] as { set: object }).set)).toEqual(['input']);
+    expect(Object.keys((h.events[5] as { set: object }).set)).toEqual(['stage']);
+    expect(Object.keys((h.events[6] as { set: object }).set)).toEqual(['input']);
     expect(midway).toMatchObject({
       stage: 'executing',
       output: 'a\nb\n',

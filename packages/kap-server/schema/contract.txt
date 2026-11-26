@@ -182,11 +182,6 @@ GET /api/v1/config response 200.data.services: any optional
 GET /api/v1/config response 200.data.subagent: any optional
 GET /api/v1/config response 200.data.telemetry: boolean optional
 GET /api/v1/config response 200.data.thinking: any optional
-GET /api/v1/config response 200.data.tools.disabled: array optional
-GET /api/v1/config response 200.data.tools.disabled[]: string
-GET /api/v1/config response 200.data.tools.enabled: array optional
-GET /api/v1/config response 200.data.tools.enabled[]: string
-GET /api/v1/config response 200.data.tools: object closed optional
 GET /api/v1/config response 200.data.yolo: boolean optional
 GET /api/v1/config response 200.data: object
 GET /api/v1/config response 200.data{*}: any optional
@@ -781,6 +776,7 @@ GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200: oneOf
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.code: enum 0
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.has_more: boolean
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns: array
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].continuation: enum "background"|"none"|"turn" optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].duration_ms: number minimum=0 optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].end_reason: enum "aborted"|"blocked"|"error"|"filtered"|"max_steps"|"user_cancelled" optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].ended_at: any optional
@@ -845,6 +841,13 @@ GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.d
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.compacted_count: integer minimum=0 maximum=9007199254740991 optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.created_at: any
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.debug: shape e56d743c optional
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error.code: string
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error.message: string
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error.name: string optional
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error.request_id: string optional
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error.retryable: boolean optional
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error.status_code: integer minimum=-9007199254740991 maximum=9007199254740991 optional
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error: object closed optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.instruction: string optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.item_id: string minLength=1
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.kind: enum "compaction"
@@ -875,6 +878,7 @@ GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.d
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.agent_refs[].swarm_index: integer minimum=0 maximum=9007199254740991 optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.agent_refs[].task_id: string optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.agent_refs[]: object closed
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.auto_review: boolean optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.created_at: any
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.debug: shape e56d743c optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.display: any optional
@@ -1212,6 +1216,10 @@ GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]
 GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.interaction_id: string minLength=1
 GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.kind: enum "approval"
 GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.action: string
+GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.approval_detail.outcome: enum "denied"|"failed"
+GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.approval_detail.reason: string
+GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.approval_detail.risk: enum "high"|"low"|"medium" optional
+GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.approval_detail: object closed optional
 GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.expires_at: any
 GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.tool_input_display: any optional
 GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.tool_name: string minLength=1
@@ -1341,17 +1349,6 @@ GET /api/v1/tools response 200.details: any optional
 GET /api/v1/tools response 200.msg: string
 GET /api/v1/tools response 200.request_id: string
 GET /api/v1/tools response 200: object closed
-GET /api/v1/tools/catalog response 200.code: enum 0
-GET /api/v1/tools/catalog response 200.data.tools: array
-GET /api/v1/tools/catalog response 200.data.tools[].name: string minLength=1
-GET /api/v1/tools/catalog response 200.data.tools[].source: enum "builtin"|"mcp"|"skill"
-GET /api/v1/tools/catalog response 200.data.tools[]: object closed
-GET /api/v1/tools/catalog response 200.data: object closed
-GET /api/v1/tools/catalog response 200.details: any optional
-GET /api/v1/tools/catalog response 200.msg: string
-GET /api/v1/tools/catalog response 200.request_id: string
-GET /api/v1/tools/catalog response 200: object closed
-GET /api/v1/tools/catalog: operation
 GET /api/v1/tools: operation
 GET /api/v1/workspaces param query:hosts: enum "include" optional
 GET /api/v1/workspaces response 200.code: enum 0
@@ -1535,11 +1532,6 @@ POST /api/v1/config request.services: any optional
 POST /api/v1/config request.subagent: any optional
 POST /api/v1/config request.telemetry: boolean optional
 POST /api/v1/config request.thinking: any optional
-POST /api/v1/config request.tools.disabled: array optional
-POST /api/v1/config request.tools.disabled[]: string
-POST /api/v1/config request.tools.enabled: array optional
-POST /api/v1/config request.tools.enabled[]: string
-POST /api/v1/config request.tools: object optional
 POST /api/v1/config request.yolo: boolean optional
 POST /api/v1/config request: object
 POST /api/v1/config response 200: oneOf
@@ -1577,11 +1569,6 @@ POST /api/v1/config response 200<code=0>.data.services: any optional
 POST /api/v1/config response 200<code=0>.data.subagent: any optional
 POST /api/v1/config response 200<code=0>.data.telemetry: boolean optional
 POST /api/v1/config response 200<code=0>.data.thinking: any optional
-POST /api/v1/config response 200<code=0>.data.tools.disabled: array optional
-POST /api/v1/config response 200<code=0>.data.tools.disabled[]: string
-POST /api/v1/config response 200<code=0>.data.tools.enabled: array optional
-POST /api/v1/config response 200<code=0>.data.tools.enabled[]: string
-POST /api/v1/config response 200<code=0>.data.tools: object closed optional
 POST /api/v1/config response 200<code=0>.data.yolo: boolean optional
 POST /api/v1/config response 200<code=0>.data: object
 POST /api/v1/config response 200<code=0>.data{*}: any optional
@@ -1597,7 +1584,7 @@ POST /api/v1/feedback request<#0>.client: enum "desktop"|"web" optional
 POST /api/v1/feedback request<#0>.content: string minLength=1 maxLength=2000
 POST /api/v1/feedback request<#0>.kind: enum "global"
 POST /api/v1/feedback request<#0>.session_id: string minLength=1 maxLength=200 optional
-POST /api/v1/feedback request<#0>.source: enum "command"|"sidebar"
+POST /api/v1/feedback request<#0>.source: enum "command"|"menu"|"sidebar"
 POST /api/v1/feedback request<#0>.upload_logs: boolean optional
 POST /api/v1/feedback request<#0>.upload_session: boolean optional
 POST /api/v1/feedback request<#0>: object
@@ -2567,17 +2554,15 @@ POST /api/v1/sessions/{session_id}/profile request: object
 POST /api/v1/sessions/{session_id}/profile response 200: oneOf
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.code: enum 0
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.compacting: boolean
-POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.goal_mode_available: boolean
+POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.missing_model: string optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.model: string optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.permission_mode: enum "auto"|"manual"|"yolo" optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.plan_mode: boolean
-POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.plan_mode_available: boolean
+POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.profile_revision: integer minimum=0 maximum=9007199254740991 optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.status: enum "ended"|"idle"|"running"
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.swarm_mode: boolean
-POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.swarm_mode_available: boolean
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.thinking: string optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.tower_mode: boolean
-POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.tower_mode_available: boolean
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent: object closed
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.session: shape 9bf1012b
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data: object closed
@@ -3383,6 +3368,10 @@ POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_intera
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.interaction_id: string minLength=1
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.kind: enum "approval"
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.action: string
+POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.approval_detail.outcome: enum "denied"|"failed"
+POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.approval_detail.reason: string
+POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.approval_detail.risk: enum "high"|"low"|"medium" optional
+POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.approval_detail: object closed optional
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.expires_at: any
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.tool_input_display: any optional
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.tool_name: string minLength=1
@@ -3597,6 +3586,12 @@ POST /api/v1/workspaces/{workspace_id}/primary response 200<code=0>: shape 7d1f9
 POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40001>: shape d4845858
 POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40409>: shape 197643f0
 POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40410>: shape 3fb7704d
+POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40941>.code: enum 40941
+POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40941>.data: enum null nullable
+POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40941>.details: any optional
+POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40941>.msg: string
+POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40941>.request_id: string
+POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40941>: object closed
 POST /api/v1/workspaces/{workspace_id}/primary: operation
 POST /api/v1/workspaces/{workspace_id}/trust param path:workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 POST /api/v1/workspaces/{workspace_id}/trust response 200: oneOf
@@ -3807,18 +3802,16 @@ ws client message unsubscribe: object
 ws server message agent.agent_id: string minLength=1
 ws server message agent.compacting: boolean
 ws server message agent.event_created_at: string
-ws server message agent.goal_mode_available: boolean
+ws server message agent.missing_model: string optional
 ws server message agent.model: string optional
 ws server message agent.permission_mode: enum "auto"|"manual"|"yolo" optional
 ws server message agent.plan_mode: boolean
-ws server message agent.plan_mode_available: boolean
+ws server message agent.profile_revision: integer minimum=0 maximum=9007199254740991 optional
 ws server message agent.session_id: string minLength=1
 ws server message agent.status: enum "ended"|"idle"|"running"
 ws server message agent.swarm_mode: boolean
-ws server message agent.swarm_mode_available: boolean
 ws server message agent.thinking: string optional
 ws server message agent.tower_mode: boolean
-ws server message agent.tower_mode_available: boolean
 ws server message agent.type: const "agent"
 ws server message agent: object
 ws server message context.agent_id: string minLength=1
@@ -3848,6 +3841,10 @@ ws server message interaction<interaction#0>.interaction_id: string minLength=1
 ws server message interaction<interaction#0>.kind: const "approval"
 ws server message interaction<interaction#0>.outcome: enum "answered"|"approved"|"cancelled"|"dismissed"|"rejected" optional
 ws server message interaction<interaction#0>.request.action: string
+ws server message interaction<interaction#0>.request.approval_detail.outcome: enum "denied"|"failed"
+ws server message interaction<interaction#0>.request.approval_detail.reason: string
+ws server message interaction<interaction#0>.request.approval_detail.risk: enum "high"|"low"|"medium" optional
+ws server message interaction<interaction#0>.request.approval_detail: object optional
 ws server message interaction<interaction#0>.request.expires_at: string
 ws server message interaction<interaction#0>.request.tool_input_display: any optional
 ws server message interaction<interaction#0>.request.tool_name: string minLength=1
@@ -3950,6 +3947,7 @@ ws server message item.item<reasoning>: object
 ws server message item.item<system#5>.compacted_count: integer minimum=0 maximum=9007199254740991 optional
 ws server message item.item<system#5>.created_at: string
 ws server message item.item<system#5>.debug: shape e7fbf47b optional
+ws server message item.item<system#5>.error: shape a7e385b8 optional
 ws server message item.item<system#5>.instruction: string optional
 ws server message item.item<system#5>.item_id: string minLength=1
 ws server message item.item<system#5>.kind: const "compaction"
@@ -3976,6 +3974,7 @@ ws server message item.item<system#6>.type: const "system"
 ws server message item.item<system#6>: object
 ws server message item.item<tool_call>.agent_refs: array optional
 ws server message item.item<tool_call>.agent_refs[]: shape b8eb6785
+ws server message item.item<tool_call>.auto_review: boolean optional
 ws server message item.item<tool_call>.created_at: string
 ws server message item.item<tool_call>.debug: shape e7fbf47b optional
 ws server message item.item<tool_call>.display: any optional
@@ -4083,6 +4082,7 @@ ws server message item_updated.item_id: string minLength=1
 ws server message item_updated.session_id: string minLength=1
 ws server message item_updated.set.agent_refs: array optional
 ws server message item_updated.set.agent_refs[]: shape b8eb6785
+ws server message item_updated.set.auto_review: boolean optional
 ws server message item_updated.set.created_at: string optional
 ws server message item_updated.set.debug: shape e7fbf47b optional
 ws server message item_updated.set.display: any optional
@@ -4177,11 +4177,6 @@ ws server message session_event<config>.config.services: any optional
 ws server message session_event<config>.config.subagent: any optional
 ws server message session_event<config>.config.telemetry: boolean optional
 ws server message session_event<config>.config.thinking: any optional
-ws server message session_event<config>.config.tools.disabled: array optional
-ws server message session_event<config>.config.tools.disabled[]: string
-ws server message session_event<config>.config.tools.enabled: array optional
-ws server message session_event<config>.config.tools.enabled[]: string
-ws server message session_event<config>.config.tools: object optional
 ws server message session_event<config>.config.yolo: boolean optional
 ws server message session_event<config>.config: object
 ws server message session_event<config>.config{*}: any optional
@@ -4331,16 +4326,11 @@ ws server message todo: object
 ws server message turn.agent_id: string minLength=1
 ws server message turn.event_created_at: string
 ws server message turn.session_id: string minLength=1
+ws server message turn.turn.continuation: enum "background"|"none"|"turn" optional
 ws server message turn.turn.duration_ms: number minimum=0 optional
 ws server message turn.turn.end_reason: enum "aborted"|"blocked"|"error"|"filtered"|"max_steps"|"user_cancelled" optional
 ws server message turn.turn.ended_at: string optional
-ws server message turn.turn.error.code: string
-ws server message turn.turn.error.message: string
-ws server message turn.turn.error.name: string optional
-ws server message turn.turn.error.request_id: string optional
-ws server message turn.turn.error.retryable: boolean optional
-ws server message turn.turn.error.status_code: integer minimum=-9007199254740991 maximum=9007199254740991 optional
-ws server message turn.turn.error: object optional
+ws server message turn.turn.error: shape a7e385b8 optional
 ws server message turn.turn.kind: enum "agent"|"system"
 ws server message turn.turn.ordinal: integer minimum=0 maximum=9007199254740991
 ws server message turn.turn.outcome: enum "completed"|"failed"|"interrupted" optional
@@ -4368,16 +4358,11 @@ ws server message turns.event_created_at: string
 ws server message turns.has_more: boolean
 ws server message turns.session_id: string minLength=1
 ws server message turns.turns: array
+ws server message turns.turns[].continuation: enum "background"|"none"|"turn" optional
 ws server message turns.turns[].duration_ms: number minimum=0 optional
 ws server message turns.turns[].end_reason: enum "aborted"|"blocked"|"error"|"filtered"|"max_steps"|"user_cancelled" optional
 ws server message turns.turns[].ended_at: string optional
-ws server message turns.turns[].error.code: string
-ws server message turns.turns[].error.message: string
-ws server message turns.turns[].error.name: string optional
-ws server message turns.turns[].error.request_id: string optional
-ws server message turns.turns[].error.retryable: boolean optional
-ws server message turns.turns[].error.status_code: integer minimum=-9007199254740991 maximum=9007199254740991 optional
-ws server message turns.turns[].error: object optional
+ws server message turns.turns[].error: shape a7e385b8 optional
 ws server message turns.turns[].items: array
 ws server message turns.turns[].items[]: anyOf
 ws server message turns.turns[].items[]<assistant_message>.created_at: string
@@ -4432,6 +4417,7 @@ ws server message turns.turns[].items[]<reasoning>: object
 ws server message turns.turns[].items[]<system#5>.compacted_count: integer minimum=0 maximum=9007199254740991 optional
 ws server message turns.turns[].items[]<system#5>.created_at: string
 ws server message turns.turns[].items[]<system#5>.debug: shape e7fbf47b optional
+ws server message turns.turns[].items[]<system#5>.error: shape a7e385b8 optional
 ws server message turns.turns[].items[]<system#5>.instruction: string optional
 ws server message turns.turns[].items[]<system#5>.item_id: string minLength=1
 ws server message turns.turns[].items[]<system#5>.kind: const "compaction"
@@ -4458,6 +4444,7 @@ ws server message turns.turns[].items[]<system#6>.type: const "system"
 ws server message turns.turns[].items[]<system#6>: object
 ws server message turns.turns[].items[]<tool_call>.agent_refs: array optional
 ws server message turns.turns[].items[]<tool_call>.agent_refs[]: shape b8eb6785
+ws server message turns.turns[].items[]<tool_call>.auto_review: boolean optional
 ws server message turns.turns[].items[]<tool_call>.created_at: string
 ws server message turns.turns[].items[]<tool_call>.debug: shape e7fbf47b optional
 ws server message turns.turns[].items[]<tool_call>.display: any optional
@@ -4899,6 +4886,12 @@ shape a642160a.data: enum null nullable
 shape a642160a.details: any optional
 shape a642160a.msg: string
 shape a642160a.request_id: string
+shape a7e385b8.code: string
+shape a7e385b8.message: string
+shape a7e385b8.name: string optional
+shape a7e385b8.request_id: string optional
+shape a7e385b8.retryable: boolean optional
+shape a7e385b8.status_code: integer minimum=-9007199254740991 maximum=9007199254740991 optional
 shape aaa33e5e.client_blocked_ms: number optional
 shape aaa33e5e.client_consume_ms: number optional
 shape aaa33e5e.first_token_ms: number optional

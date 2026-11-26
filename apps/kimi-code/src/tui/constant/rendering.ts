@@ -14,6 +14,7 @@ export const COMMAND_PREVIEW_LINES = 10;
 export const DOCK_QUEUE_ROWS = 3;
 export const DOCK_UPDATES_ROWS = 6;
 export const DOCK_APPROVAL_ROWS = 6;
+export const DOCK_SESSION_PICKER_ROWS = 18;
 export const DOCK_PREVIEW_ROWS = Number.POSITIVE_INFINITY;
 export const UPDATES_PROMPT_FOLD_SCREEN_ROWS = 32;
 
@@ -55,6 +56,7 @@ export const TRANSCRIPT_TAIL_MIN_NAME_COLUMNS = 12;
 export const TRANSCRIPT_TAIL_TIMER_COLUMNS = ' · 99s'.length;
 export const TRANSCRIPT_TAIL_THINKING_THROTTLE_MS = 150;
 export const FOREGROUND_BASH_HINT_DELAY_MS = 10_000;
+export const AUTO_REVIEW_HINT_DELAY_MS = 3_000;
 export const DETACH_HINT_TEXT = 'Press Ctrl+B to run in background';
 
 export const MOON_SPINNER_FRAMES = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'];

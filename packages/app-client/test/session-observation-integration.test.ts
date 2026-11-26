@@ -275,6 +275,35 @@ it('lists the projects and sessions of a host again once it is reachable', async
   await vi.waitFor(() => expect(h.hostApi.listModels).toHaveBeenCalledTimes(1));
 });
 
+it('reads trust for the active project when its failed SSH host becomes reachable', async () => {
+  const h = await setup();
+  const { workspacesStore } = await import('../src/stores/workspaces');
+  await h.client.selectSession('a');
+  const store = workspacesStore();
+  const [local] = store.workspaces;
+  const remote = { id: 'remote-ws', root: '/srv/project', name: 'remote', sessionCount: 0, hostId: 'dev' };
+  const trust = vi.fn(async () => ({ trusted: true }));
+  Object.assign(h.api, {
+    getWorkspaceTrust: trust,
+    listWorkspaces: vi.fn(async () => [local!, remote]),
+    getFsHome: vi.fn(async () => ({ home: '/home', recentRoots: [] })),
+    listSessions: vi.fn(async () => ({ items: [], hasMore: false })),
+  });
+
+  h.event('', { type: 'hostsChanged', hosts: [{ id: 'dev', host: 'dev', status: 'disconnected', connectError: 'SSH unavailable' }] });
+  store.workspaces = [local!, remote];
+  store.storedActiveWorkspaceId = remote.id;
+  await nextTick();
+  expect(h.client.activeWorkspaceId.value).toBe(remote.id);
+  expect(h.client.activeWorkspaceTrust.value).toBeUndefined();
+  expect(trust).not.toHaveBeenCalled();
+
+  h.event('', { type: 'hostsChanged', hosts: [{ id: 'dev', host: 'dev', status: 'ready' }] });
+  await vi.waitFor(() => expect(h.client.activeWorkspaceTrust.value).toBe(true));
+  expect(h.client.activeWorkspaceId.value).toBe(remote.id);
+  expect(trust).toHaveBeenCalledExactlyOnceWith(remote.id, expect.anything());
+});
+
 it('cascades cleanup when an SSH host is removed and restores sessions when re-added with a new host id', async () => {
   const h = await setup();
   const { workspacesStore } = await import('../src/stores/workspaces');

@@ -13,16 +13,17 @@ import { stripBundledSkillBlocks } from '@moonshot-ai/core/llm/origin';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 
-import type {
-  CompactionItem,
-  ConversationItem,
-  ConversationOutcome,
-  ConversationTurn,
-  ErrorInfo,
-  NotificationItem,
-  ToolCallItem,
-  TurnEndReason,
-  UserMessageItem,
+import {
+  conversationContinuationSchema,
+  type CompactionItem,
+  type ConversationItem,
+  type ConversationOutcome,
+  type ConversationTurn,
+  type ErrorInfo,
+  type NotificationItem,
+  type ToolCallItem,
+  type TurnEndReason,
+  type UserMessageItem,
 } from '../../protocol/conversation';
 import {
   agentRefOf,
@@ -248,7 +249,7 @@ export function applyConversationRecord(state: ConversationState, record: WireRe
       completeCompaction(state, time);
       return;
     case 'full_compaction.cancel':
-      state.compaction = undefined;
+      cancelCompaction(state, record, time);
       return;
     case 'context.clear':
       clearConversation(state);
@@ -598,6 +599,7 @@ function applyTurnEnded(state: ConversationState, record: WireRecord, time: numb
   }
   const error = errorInfoOf(record['error'], requestId);
   endTurn(state, turn, turnEndOf(record['reason'], error, state.provisionalEnds[turn.turn_id]), time);
+  turn.continuation = conversationContinuationSchema.safeParse(record['continuation']).data;
   delete state.implicitlyEnded[turn.turn_id];
   const durationMs = numberField(record['durationMs']);
   if (durationMs !== undefined) turn.duration_ms = durationMs;
@@ -728,7 +730,8 @@ function applyCompactionSummary(state: ConversationState, record: WireRecord, ti
   }
   const last = state.turns.at(-1);
   const completed = last?.items.at(-1);
-  if (last !== undefined && completed?.type === 'system' && completed.kind === 'compaction' && completed.summary === undefined) {
+  if (last !== undefined && completed?.type === 'system' && completed.kind === 'compaction' &&
+    completed.summary === undefined && completed.error === undefined) {
     upsertItem(last, { ...completed, ...details });
     return;
   }
@@ -742,7 +745,38 @@ function completeCompaction(state: ConversationState, time: number): void {
   appendCompaction(state, compaction, time);
 }
 
-function appendCompaction(state: ConversationState, compaction: CompactionDetails, time: number): void {
+function cancelCompaction(state: ConversationState, record: WireRecord, time: number): void {
+  const compaction = state.compaction;
+  state.compaction = undefined;
+  const error = errorInfoOf(record['error'], undefined);
+  if (compaction === undefined || error === undefined) return;
+  appendCompaction(state, { trigger: compaction.trigger, instruction: compaction.instruction }, time, withCauseDiagnostics(error, record['error']));
+}
+
+function withCauseDiagnostics(error: ErrorInfo, payload: unknown): ErrorInfo {
+  let statusCode = error.status_code;
+  let requestId = error.request_id;
+  let cause = causeOf(payload);
+  while (cause !== undefined && (statusCode === undefined || requestId === undefined)) {
+    const info = errorInfoOf(cause, undefined);
+    statusCode ??= info?.status_code;
+    requestId ??= info?.request_id;
+    cause = causeOf(cause);
+  }
+  return { ...error, status_code: statusCode, request_id: requestId };
+}
+
+function causeOf(payload: unknown): unknown {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  return (payload as { cause?: unknown }).cause;
+}
+
+function appendCompaction(
+  state: ConversationState,
+  compaction: CompactionDetails,
+  time: number,
+  error?: ErrorInfo,
+): void {
   const open = openTurn(state);
   const turn = open ?? addTurn(state, time, 'system');
   turn.items.push({
@@ -750,9 +784,10 @@ function appendCompaction(state: ConversationState, compaction: CompactionDetail
     kind: 'compaction',
     item_id: nextItemId(turn),
     status: 'ended',
-    outcome: 'completed',
+    outcome: error === undefined ? 'completed' : 'failed',
     created_at: isoTime(time),
     ...compaction,
+    ...(error === undefined ? {} : { error }),
   });
   if (open === undefined) endTurn(state, turn, COMPLETED, time);
 }
@@ -874,6 +909,7 @@ function turnForNumber(state: ConversationState, turnNumber: number | undefined,
       known.status = 'running';
       known.outcome = undefined;
       known.end_reason = undefined;
+      known.continuation = undefined;
       known.error = undefined;
       known.ended_at = undefined;
       known.duration_ms = undefined;

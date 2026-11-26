@@ -400,16 +400,6 @@ describe('buildSlashItems /tower listing gate', () => {
     expect(matchSlashItem(buildSlashItems([], { towerEnabled: true }), '/tower')?.name).toBe('/tower');
     expect(matchSlashItem(buildSlashItems(), '/tower')).toBeUndefined();
   });
-
-  it.each([
-    { command: '/plan', option: { planEnabled: false } },
-    { command: '/swarm', option: { swarmEnabled: false } },
-    { command: '/goal', option: { goalEnabled: false } },
-  ])('hides $command from listing and typed-command resolution when disabled', ({ command, option }) => {
-    expect(buildSlashItems([], option).some((item) => item.name === command)).toBe(false);
-    expect(matchSlashItem(buildSlashItems([], option), command)).toBeUndefined();
-    expect(buildSlashItems().some((item) => item.name === command)).toBe(true);
-  });
 });
 
 describe('skillCommandArgs', () => {

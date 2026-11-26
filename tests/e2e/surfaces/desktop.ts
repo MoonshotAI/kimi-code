@@ -1,11 +1,13 @@
 import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { killProcessTree, kimiCliEnv, NETWORK_GUARD_PRELOAD, networkGuardEnv, readNetworkViolations, repoPath, TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
+import { killProcessTree, NETWORK_GUARD_PRELOAD, networkGuardEnv, readNetworkViolations, repoPath, TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
 import { _electron, type ElectronApplication } from '@playwright/test';
 
-import type { Diagnostic, ReopenState, SurfaceDriver, SurfaceLaunch } from '../support/verbs';
+import { StartupFailure, type Diagnostic, type ReopenState, type SurfaceDriver, type SurfaceLaunch } from '../support/verbs';
+import { productEnv } from './environment';
 import { offlineStubs } from './offline';
 import { OFFLINE_NAMES, PageDriver, reasonOf, WELCOME_DIALOG } from './page-driver';
 
@@ -67,22 +69,25 @@ class DesktopDriver extends PageDriver {
 
   async startupFailure(error: unknown): Promise<Error> {
     const page = await this.readPage();
-    await this.saveTrace();
+    const diagnostics = await this.diagnostics();
+    const state = this.describe();
     await this.kill();
-    return new Error(
-      [
-        `The Desktop app did not become ready: ${reasonOf(error)}`,
-        page,
-        this.describe(),
-        ...(existsSync(this.trace) ? [`A trace of the start-up is at ${this.trace}`] : []),
-      ].join('\n'),
-      { cause: error },
-    );
+    return new StartupFailure(error, diagnostics, [`The Desktop app did not become ready: ${reasonOf(error)}`, page, state].join('\n'));
   }
 
   async close(): Promise<void> {
     if (this.exit !== undefined) throw new Error(`The Desktop app exited before the scenario closed it.\n${this.describe()}`);
     await this.leave();
+    await this.quit();
+  }
+
+  async quitDuringTurn(): Promise<void> {
+    if (this.exit !== undefined) throw new Error(`The Desktop app exited before the user quit it.\n${this.describe()}`);
+    await this.leaveDuringTurn();
+    await this.quit();
+  }
+
+  private async quit(): Promise<void> {
     let closed: { readonly refused: string | undefined } | undefined;
     void this.app.close().then(
       () => {
@@ -155,7 +160,7 @@ class DesktopDriver extends PageDriver {
     const pid = this.child.pid;
     if (pid === undefined) return false;
     try {
-      process.kill(-pid, 0);
+      process.kill(process.platform === 'win32' ? pid : -pid, 0);
       return true;
     } catch {
       return false;
@@ -201,13 +206,14 @@ export async function startDesktop({ home, reopen }: SurfaceLaunch): Promise<Sur
     if (!existsSync(built)) throw new Error(`${built} does not exist; build the Desktop app first with "pnpm --filter kimi-code-app run build".`);
   }
   const launch = reopen?.launch ?? 1;
+  await mkdir(join(home.home, 'Downloads'), { recursive: true });
   const networkLog = join(home.root, `desktop-network-${launch}.log`);
   const workspace = reopen === undefined ? [`--workspace=${home.workspace}`] : [];
   const app = await _electron.launch({
     args: ['-r', fileURLToPath(NETWORK_GUARD_PRELOAD), desktop, `--user-data-dir=${join(home.root, 'user-data')}`, '--lang=en-US', ...workspace, OFFLINE_NAMES],
     cwd: home.workspace,
     env: {
-      ...kimiCliEnv(home, {
+      ...productEnv(home, {
         ELECTRON_RUN_AS_NODE: undefined,
         LANG: 'en_US.UTF-8',
         KIMI_DESKTOP_E2E: process.env['E2E_HEADED'] === '1' ? '1' : 'quiet',

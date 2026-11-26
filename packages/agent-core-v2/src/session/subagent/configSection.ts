@@ -174,55 +174,52 @@ function assertValidSubagentDefaultEffort(
   pool: SubagentModelPool | undefined,
   modelCatalog: IModelCatalog,
 ): void {
-  const effort =
-    section?.defaultEffort === undefined
-      ? undefined
-      : normalizeRequestedThinkingEffort(section.defaultEffort);
-  if (effort === undefined || pool === undefined) return;
+  if (section?.defaultEffort === undefined || pool === undefined) return;
   for (const alias of Object.keys(pool.models)) {
-    const model = modelCatalog.get(alias);
-    if (effort === 'off' && model.spec.thinking?.alwaysThinking === true) {
-      throw new Error2(
-        ErrorCodes.CONFIG_INVALID,
-        `[secondary_model].default_effort "off" cannot disable thinking for model "${alias}", which always reasons. Choose a concrete thinking effort instead of "off".`,
-        {
-          details: {
-            section: SECONDARY_MODEL_SECTION,
-            field: 'defaultEffort',
-            model: alias,
-            effort,
-          },
-        },
-      );
-    }
-    if (modelSupportsThinkingEffort(effort, model.spec, true)) continue;
-    if (!modelSupportsThinking(model.spec)) {
-      throw new Error2(
-        ErrorCodes.CONFIG_INVALID,
-        `[secondary_model].default_effort "${effort}" is set but model "${alias}" does not support thinking.`,
-        {
-          details: {
-            section: SECONDARY_MODEL_SECTION,
-            field: 'defaultEffort',
-            model: alias,
-            effort,
-          },
-        },
-      );
-    }
-    throw new Error2(
-      ErrorCodes.CONFIG_INVALID,
-      `[secondary_model].default_effort "${effort}" is not supported by model "${alias}". Supported efforts: ${model.spec.thinking?.supportEfforts?.join(', ')}.`,
-      {
-        details: {
-          section: SECONDARY_MODEL_SECTION,
-          field: 'defaultEffort',
-          model: alias,
-          effort,
-        },
-      },
+    assertModelSupportsConfiguredEffort(
+      { section: SECONDARY_MODEL_SECTION, field: 'defaultEffort', key: '[secondary_model].default_effort' },
+      section.defaultEffort,
+      alias,
+      modelCatalog.get(alias),
     );
   }
+}
+
+export interface ConfiguredEffortSetting {
+  readonly section: string;
+  readonly field: string;
+  readonly key: string;
+}
+
+export function assertModelSupportsConfiguredEffort(
+  setting: ConfiguredEffortSetting,
+  configured: string,
+  alias: string,
+  model: Model,
+): void {
+  const effort = normalizeRequestedThinkingEffort(configured);
+  if (effort === undefined) return;
+  const details = { section: setting.section, field: setting.field, model: alias, effort };
+  if (effort === 'off' && model.spec.thinking?.alwaysThinking === true) {
+    throw new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      `${setting.key} "off" cannot disable thinking for model "${alias}", which always reasons. Choose a concrete thinking effort instead of "off".`,
+      { details },
+    );
+  }
+  if (modelSupportsThinkingEffort(effort, model.spec, true)) return;
+  if (!modelSupportsThinking(model.spec)) {
+    throw new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      `${setting.key} "${effort}" is set but model "${alias}" does not support thinking.`,
+      { details },
+    );
+  }
+  throw new Error2(
+    ErrorCodes.CONFIG_INVALID,
+    `${setting.key} "${effort}" is not supported by model "${alias}". Supported efforts: ${model.spec.thinking?.supportEfforts?.join(', ')}.`,
+    { details },
+  );
 }
 
 export type SubagentModelSource = 'inherited' | 'secondary_pool';

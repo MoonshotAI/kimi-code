@@ -23,7 +23,7 @@ Kimi Code CLI supports three MCP server connection methods:
 MCP server configuration is written in `mcp.json`, at two levels:
 
 - **User level**: `~/.kimi-code/mcp.json` (or `$KIMI_CODE_HOME/mcp.json`), shared across projects
-- **Project level**: `.kimi-code/mcp.json` in the working directory, effective only for the current repository
+- **Project level**: `.kimi-code/mcp.json` at the project root, effective only for the current repository. In a subdirectory of a Git repository this is the file at the repository root, and each worktree uses its own
 
 Entries with the same name: the project-level entry takes precedence and overrides the user-level entry.
 
@@ -31,7 +31,7 @@ Run `/mcp-config` in the TUI to interactively add, edit, or delete servers witho
 
 Deleting a server from the configuration does not interrupt open sessions: the server stays listed in `/mcp` as `removed`, its tools remain visible there, and calls to them fail with a removal notice, while new sessions do not register the tools at all. Conversely, a server added mid-session by editing `mcp.json` or installing a plugin is not registered in already-open sessions; it only joins sessions created later.
 
-When Kimi Code finds project-level MCP servers in an untrusted folder, it shows each server's transport and launch target in the workspace trust prompt. The prompt defaults to `Trust this folder`; review the listed command and arguments or remote URL before confirming. Trusting the folder enables the project-level MCP servers for that workspace.
+When Kimi Code finds project-level MCP servers in an untrusted project, it shows each server's transport and launch target in the trust prompt. Review the listed command and arguments or remote URL, then choose `Trust and continue` to enable them, or `Exit` to quit without enabling them.
 
 Headless runs (for example `kimi -p` in CI) cannot show the trust prompt, so project-level MCP servers stay disabled there unless the workspace is already trusted. Set [`KIMI_CODE_TRUST_WORKSPACE`](../configuration/env-vars.md#runtime-switches) to `1` to trust the workspace for that process. To disable workspace trust globally and load project-level MCP servers without confirmation, set [`[workspace] require_trust = false`](../configuration/config-files.md#workspace-trust) in `config.toml`; use that setting only when every workspace is already trusted.
 

@@ -8,6 +8,7 @@ import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
   IAgentProfileRegistry,
+  isVisibleAgentProfileSource,
   type AgentProfileRegistration,
 } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
@@ -45,10 +46,7 @@ export class SessionAgentProfileCatalogService
     this.reproject();
     this._register(
       this.registry.onDidChange((change) => {
-        if (change.workspaceKey !== undefined && change.workspaceKey !== this.seed.workspaceKey) {
-          return;
-        }
-        if (change.contextKey !== undefined && change.contextKey !== this.seed.contextKey) return;
+        if (!isVisibleAgentProfileSource(change, this.seed)) return;
         this.reproject();
         this.onDidChangeEmitter.fire(change.sourceId);
       }),
@@ -92,13 +90,7 @@ export class SessionAgentProfileCatalogService
   }
 
   private relevantEntries(): AgentProfileRegistration[] {
-    const key = this.seed.workspaceKey;
-    return this.registry
-      .entries()
-      .filter((e) =>
-        (e.workspaceKey === undefined || e.workspaceKey === key) &&
-        (e.contextKey === undefined || e.contextKey === this.seed.contextKey),
-      );
+    return this.registry.entries().filter((entry) => isVisibleAgentProfileSource(entry, this.seed));
   }
 
   private reproject(): void {

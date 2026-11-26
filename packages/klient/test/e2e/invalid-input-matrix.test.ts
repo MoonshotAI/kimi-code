@@ -1,12 +1,19 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
+import {
+  call,
+  httpError,
+  say,
+  startFakeModel,
+  type FakeModel,
+  type Lane,
+  type ModelRequest,
+} from '@moonshot-ai/testkit/model';
 
 import { TEST_CLIENT_IDENTITY } from '../helpers/engine.js';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/message';
@@ -51,13 +58,7 @@ function onceEvent<TPayloadMap extends object, E extends keyof TPayloadMap & str
   });
 }
 
-const M_OPENAI = 'matrix-openai';
-const M_OPENAI_VISION = 'matrix-openai-vision';
-const M_KIMI = 'matrix-kimi';
-const M_ANTHROPIC = 'matrix-anthropic';
-const M_GOOGLE = 'matrix-google';
-
-const KIMI_PROVIDER = 'matrix-kimi-provider';
+type ProviderKind = 'openai' | 'openai-vision' | 'kimi' | 'anthropic' | 'google';
 
 const IMAGE_BAD_MIME_URL = 'data:image/tiff;base64,QUJD';
 const IMAGE_KIMI_ONLY_MIME_URL = 'data:image/bmp;base64,QUJD';
@@ -69,182 +70,13 @@ const PNG_1X1_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const MP4_FTYP_HEX = '00000020667479706d703432000000006d70343269736f6d';
 
-interface CapturedRequest {
-  readonly method: string;
-  readonly url: string;
-  readonly contentType: string;
-  readonly json: unknown;
-  readonly raw: Buffer;
-}
-
-type MockReply =
-  | { readonly kind: 'sse'; readonly lines: readonly string[] }
-  | { readonly kind: 'json'; readonly status: number; readonly body: unknown }
-  | { readonly kind: 'hang' };
-
-type MockHandler = (request: CapturedRequest, callIndex: number) => MockReply;
-
-const requests: CapturedRequest[] = [];
-const abortedRequests: string[] = [];
-let handler: MockHandler = () => {
-  throw new Error('mock handler not installed for this case');
-};
-
-function resetMock(next: MockHandler): void {
-  requests.length = 0;
-  abortedRequests.length = 0;
-  handler = next;
-}
-
-function queueScript(...replies: readonly (MockReply | undefined)[]): MockHandler {
-  const queue = [...replies];
-  return () => {
-    const next = queue.shift();
-    if (next === undefined) throw new Error('mock script exhausted');
-    return next;
-  };
-}
-
-function jsonError(status: number, message: string): MockReply {
-  return { kind: 'json', status, body: { error: { message } } };
-}
-
-const OK_OPENAI: MockReply = { kind: 'sse', lines: openAiSse('OK') };
-const OK_ANTHROPIC: MockReply = { kind: 'sse', lines: anthropicSse('OK') };
-const OK_GOOGLE: MockReply = { kind: 'sse', lines: googleSse('OK') };
-
-function sseLines(...events: readonly string[]): string[] {
-  const lines: string[] = [];
-  for (const event of events) {
-    lines.push(`data: ${event}`, '');
-  }
-  return lines;
-}
-
-function openAiSse(text: string): string[] {
-  return [
-    ...sseLines(
-      JSON.stringify({
-        id: 'chatcmpl-mock',
-        object: 'chat.completion.chunk',
-        created: 1,
-        model: 'mock',
-        choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }],
-      }),
-      JSON.stringify({
-        id: 'chatcmpl-mock',
-        object: 'chat.completion.chunk',
-        created: 1,
-        model: 'mock',
-        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-        usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
-      }),
-    ),
-    'data: [DONE]',
-    '',
-  ];
-}
-
-function openAiToolCallSse(id: string, name: string, args: string): string[] {
-  return [
-    ...sseLines(
-      JSON.stringify({
-        id: 'chatcmpl-mock',
-        object: 'chat.completion.chunk',
-        created: 1,
-        model: 'mock',
-        choices: [
-          {
-            index: 0,
-            delta: {
-              role: 'assistant',
-              tool_calls: [
-                { index: 0, id, type: 'function', function: { name, arguments: args } },
-              ],
-            },
-            finish_reason: null,
-          },
-        ],
-      }),
-      JSON.stringify({
-        id: 'chatcmpl-mock',
-        object: 'chat.completion.chunk',
-        created: 1,
-        model: 'mock',
-        choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
-        usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
-      }),
-    ),
-    'data: [DONE]',
-    '',
-  ];
-}
-
-function anthropicSse(text: string): string[] {
-  return [
-    'event: message_start',
-    `data: ${JSON.stringify({
-      type: 'message_start',
-      message: {
-        id: 'msg_mock',
-        type: 'message',
-        role: 'assistant',
-        model: 'mock',
-        content: [],
-        stop_reason: null,
-        usage: { input_tokens: 10, output_tokens: 1 },
-      },
-    })}`,
-    '',
-    'event: content_block_start',
-    `data: ${JSON.stringify({
-      type: 'content_block_start',
-      index: 0,
-      content_block: { type: 'text', text: '' },
-    })}`,
-    '',
-    'event: content_block_delta',
-    `data: ${JSON.stringify({
-      type: 'content_block_delta',
-      index: 0,
-      delta: { type: 'text_delta', text },
-    })}`,
-    '',
-    'event: content_block_stop',
-    `data: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}`,
-    '',
-    'event: message_delta',
-    `data: ${JSON.stringify({
-      type: 'message_delta',
-      delta: { stop_reason: 'end_turn' },
-      usage: { output_tokens: 2 },
-    })}`,
-    '',
-    'event: message_stop',
-    `data: ${JSON.stringify({ type: 'message_stop' })}`,
-    '',
-  ];
-}
-
-function googleSse(text: string): string[] {
-  return sseLines(
-    JSON.stringify({
-      candidates: [
-        { content: { role: 'model', parts: [{ text }] }, finishReason: 'STOP' },
-      ],
-      usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 2 },
-      responseId: 'resp-mock',
-    }),
-  );
-}
+const API_AUTH = { method: 'api-key', apiKey: 'test-key' } as const;
 
 let klient: Klient;
 let app: ReturnType<typeof bootstrap>['app'] | undefined;
-let server: Server;
-let baseUrl: string;
 let homeDir: string;
 let workRoot: string;
-const sockets = new Set<import('node:net').Socket>();
+const openModels: FakeModel[] = [];
 
 beforeAll(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'klient-matrix-home-'));
@@ -253,122 +85,73 @@ beforeAll(async () => {
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]));
   klient = createMemoryKlient({ scope: app });
-
-  server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    void (async () => {
-      const chunks: Buffer[] = [];
-      for await (const chunk of req) chunks.push(chunk as Buffer);
-      const raw = Buffer.concat(chunks);
-      const contentType = String(req.headers['content-type'] ?? '');
-      let json: unknown;
-      if (contentType.includes('json')) {
-        try {
-          json = JSON.parse(raw.toString('utf8'));
-        } catch {
-          json = undefined;
-        }
-      }
-      const captured: CapturedRequest = {
-        method: req.method ?? '',
-        url: req.url ?? '',
-        contentType,
-        json,
-        raw,
-      };
-      requests.push(captured);
-      let reply: MockReply;
-      try {
-        reply = handler(captured, requests.length - 1);
-      } catch (error) {
-        res.writeHead(500, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: { message: `mock handler: ${String(error)}` } }));
-        return;
-      }
-      if (reply.kind === 'hang') {
-        res.on('close', () => {
-          if (!res.writableEnded) abortedRequests.push(req.url ?? '');
-        });
-        return;
-      }
-      if (reply.kind === 'json') {
-        res.writeHead(reply.status, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(reply.body));
-        return;
-      }
-      res.writeHead(200, {
-        'content-type': 'text/event-stream',
-        'cache-control': 'no-cache',
-        connection: 'keep-alive',
-      });
-      res.end(`${reply.lines.join('\n')}\n`);
-    })().catch(() => {
-      res.destroy();
-    });
-  });
-  server.on('connection', (socket) => {
-    sockets.add(socket);
-    socket.on('close', () => sockets.delete(socket));
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-
-  await klient.global.kosong.addProvider(KIMI_PROVIDER, {
-    type: 'kimi',
-    auth: { method: 'api-key', apiKey: 'test-key' },
-    baseUrl: `${baseUrl}/v1`,
-  });
-  await klient.global.kosong.addProvider({
-    id: M_OPENAI,
-    model: 'gpt-4o-mini',
-    protocol: 'openai',
-    baseUrl: `${baseUrl}/v1`,
-    auth: { method: 'api-key', apiKey: 'test-key' },
-    maxContextSize: 262_144,
-  });
-  await klient.global.kosong.addProvider({
-    id: M_OPENAI_VISION,
-    model: 'gpt-4o-mini',
-    protocol: 'openai',
-    baseUrl: `${baseUrl}/v1`,
-    auth: { method: 'api-key', apiKey: 'test-key' },
-    maxContextSize: 262_144,
-    capabilities: { image_in: true, video_in: true },
-  });
-  await app!.accessor.get(IModelService).set(M_KIMI, {
-    model: 'kimi-k2-matrix',
-    provider: KIMI_PROVIDER,
-    protocol: 'openai',
-    maxContextSize: 262_144,
-    capabilities: ['image_in', 'video_in'],
-  });
-  await klient.global.kosong.addProvider({
-    id: M_ANTHROPIC,
-    model: 'claude-sonnet-4-5',
-    protocol: 'anthropic',
-    baseUrl: `${baseUrl}/v1`,
-    auth: { method: 'api-key', apiKey: 'test-key' },
-    maxContextSize: 262_144,
-  });
-  await klient.global.kosong.addProvider({
-    id: M_GOOGLE,
-    model: 'gemini-2.5-flash',
-    protocol: 'google-genai',
-    baseUrl,
-    auth: { method: 'api-key', apiKey: 'test-key' },
-    maxContextSize: 262_144,
-  });
 }, 60_000);
+
+afterEach(async () => {
+  const models = openModels.splice(0);
+  try {
+    for (const model of models) model.verify();
+  } finally {
+    await Promise.all(models.map((model) => model.close()));
+  }
+});
 
 afterAll(async () => {
   await klient.close();
   app?.dispose();
-  for (const socket of sockets) socket.destroy();
-  await new Promise<void>((resolve) => {
-    server.close(() => resolve());
-  });
   await rm(homeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
   await rm(workRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
 });
+
+async function registerModel(kind: ProviderKind, id: string, origin: string): Promise<void> {
+  const kosong = klient.global.kosong;
+  switch (kind) {
+    case 'kimi': {
+      const provider = `${id}-provider`;
+      await kosong.addProvider(provider, { type: 'kimi', auth: API_AUTH, baseUrl: `${origin}/v1` });
+      await app!.accessor.get(IModelService).set(id, {
+        model: 'kimi-k2-matrix',
+        provider,
+        protocol: 'openai',
+        maxContextSize: 262_144,
+        capabilities: ['image_in', 'video_in'],
+      });
+      return;
+    }
+    case 'openai':
+    case 'openai-vision':
+      await kosong.addProvider({
+        id,
+        model: 'gpt-4o-mini',
+        protocol: 'openai',
+        baseUrl: `${origin}/v1`,
+        auth: API_AUTH,
+        maxContextSize: 262_144,
+        ...(kind === 'openai-vision' ? { capabilities: { image_in: true, video_in: true } } : {}),
+      });
+      return;
+    case 'anthropic':
+      await kosong.addProvider({
+        id,
+        model: 'claude-sonnet-4-5',
+        protocol: 'anthropic',
+        baseUrl: `${origin}/v1`,
+        auth: API_AUTH,
+        maxContextSize: 262_144,
+      });
+      return;
+    case 'google':
+      await kosong.addProvider({
+        id,
+        model: 'gemini-2.5-flash',
+        protocol: 'google-genai',
+        baseUrl: origin,
+        auth: API_AUTH,
+        maxContextSize: 262_144,
+      });
+      return;
+  }
+}
 
 interface CollectedEvent {
   readonly name: string;
@@ -377,13 +160,20 @@ interface CollectedEvent {
 
 interface CaseContext {
   readonly agent: AgentHandle;
+  readonly model: FakeModel;
+  readonly lane: Lane;
   readonly events: CollectedEvent[];
   readonly workDir: string;
   eventNames(): readonly string[];
   payloads(name: string): Record<string, unknown>[];
+  body(callIndex: number): unknown;
 }
 
-async function newCase(modelId: string, label: string): Promise<CaseContext> {
+async function newCase(kind: ProviderKind, label: string): Promise<CaseContext> {
+  const model = await startFakeModel();
+  openModels.push(model);
+  const modelId = `matrix-${label}`;
+  await registerModel(kind, modelId, model.origin);
   const workDir = join(workRoot, label);
   await mkdir(workDir, { recursive: true });
   const session = await klient.global.sessions.create({ workDir });
@@ -404,11 +194,20 @@ async function newCase(modelId: string, label: string): Promise<CaseContext> {
 
   return {
     agent,
+    model,
+    lane: model.route(label, () => true),
     events,
     workDir,
     eventNames: () => events.map((event) => event.name),
     payloads: (name) => events.filter((event) => event.name === name).map((event) => event.payload),
+    body: (callIndex) => requestAt(model, callIndex).body,
   };
+}
+
+function requestAt(model: FakeModel, callIndex: number): ModelRequest {
+  const request = model.requests()[callIndex];
+  expect(request, `request #${callIndex} should have reached the model`).toBeDefined();
+  return request!;
 }
 
 async function promptAndWait(ctx: CaseContext, input: readonly ContentPart[]): Promise<void> {
@@ -420,12 +219,10 @@ async function promptAndWait(ctx: CaseContext, input: readonly ContentPart[]): P
   await settled;
 }
 
-function openAiMessages(callIndex: number): Record<string, unknown>[] {
-  const body = requests.filter((request) => request.url === '/v1/chat/completions')[callIndex]?.json as
-    | { messages?: Record<string, unknown>[] }
-    | undefined;
-  expect(body?.messages, `request #${callIndex} should carry a messages array`).toBeDefined();
-  return body!.messages!.filter((message) => !isDateReminderMessage(message));
+function openAiMessages(ctx: CaseContext, callIndex: number): Record<string, unknown>[] {
+  const body = ctx.body(callIndex) as { messages?: Record<string, unknown>[] };
+  expect(body.messages, `request #${callIndex} should carry a messages array`).toBeDefined();
+  return body.messages!.filter((message) => !isDateReminderMessage(message));
 }
 
 const DATE_REMINDER_MARKERS = [
@@ -440,8 +237,7 @@ function isDateReminderMessage(message: Record<string, unknown>): boolean {
 
 describe('l1: klient input validation', () => {
   it('rejects an image_url part missing `url` before any engine work (l1)', async () => {
-    const ctx = await newCase(M_OPENAI, 'l1-image-missing-url');
-    resetMock(queueScript(OK_OPENAI));
+    const ctx = await newCase('openai', 'l1-image-missing-url');
 
     const badInput = [
       { type: 'image_url', imageUrl: {} },
@@ -450,13 +246,12 @@ describe('l1: klient input validation', () => {
     expect(failure).toBeInstanceOf(KlientValidationError);
     expect((failure as KlientValidationError).phase).toBe('input');
 
-    expect(requests).toHaveLength(0);
+    expect(ctx.model.requests()).toHaveLength(0);
     expect(ctx.events).toHaveLength(0);
   }, 30_000);
 
   it('rejects an audio_url prompt part (not in the PromptPart union) (l1)', async () => {
-    const ctx = await newCase(M_OPENAI, 'l1-audio-part');
-    resetMock(queueScript(OK_OPENAI));
+    const ctx = await newCase('openai', 'l1-audio-part');
 
     const badInput = [
       { type: 'audio_url', audioUrl: { url: 'https://example.com/a.mp3' } },
@@ -464,17 +259,17 @@ describe('l1: klient input validation', () => {
     const failure = await ctx.agent.prompt({ input: badInput }).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(KlientValidationError);
     expect((failure as KlientValidationError).phase).toBe('input');
-    expect(requests).toHaveLength(0);
+    expect(ctx.model.requests()).toHaveLength(0);
   }, 30_000);
 
   it('accepts an empty input array; the empty user message is dropped by the engine (l2 toleration)', async () => {
-    const ctx = await newCase(M_OPENAI, 'l2-empty-input');
-    resetMock(queueScript(OK_OPENAI));
+    const ctx = await newCase('openai', 'l2-empty-input');
+    ctx.lane.script(say('OK'));
 
     await promptAndWait(ctx, []);
 
-    expect(requests).toHaveLength(1);
-    const messages = openAiMessages(0);
+    expect(ctx.model.requests()).toHaveLength(1);
+    const messages = openAiMessages(ctx, 0);
     expect(messages.every((message) => message['role'] === 'system')).toBe(true);
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
@@ -483,20 +278,20 @@ describe('l1: klient input validation', () => {
 describe('image blocks with invalid data', () => {
   it('a data-URL image with an unaccepted mime is replaced at prompt ingestion on EVERY provider (l2)', async () => {
     const cases = [
-      { label: 'tiff-openai', model: M_OPENAI, reply: OK_OPENAI },
-      { label: 'tiff-kimi', model: M_KIMI, reply: OK_OPENAI },
-      { label: 'tiff-anthropic', model: M_ANTHROPIC, reply: OK_ANTHROPIC },
-      { label: 'tiff-google', model: M_GOOGLE, reply: OK_GOOGLE },
+      { label: 'tiff-openai', kind: 'openai' },
+      { label: 'tiff-kimi', kind: 'kimi' },
+      { label: 'tiff-anthropic', kind: 'anthropic' },
+      { label: 'tiff-google', kind: 'google' },
     ] as const;
-    for (const { label, model, reply } of cases) {
-      const ctx = await newCase(model, label);
-      resetMock(queueScript(reply));
+    for (const { label, kind } of cases) {
+      const ctx = await newCase(kind, label);
+      ctx.lane.script(say('OK'));
       await promptAndWait(ctx, [
         { type: 'text', text: 'what is this?' },
         { type: 'image_url', imageUrl: { url: IMAGE_BAD_MIME_URL } },
       ]);
-      expect(requests, label).toHaveLength(1);
-      const wireText = JSON.stringify(requests[0]?.json);
+      expect(ctx.model.requests(), label).toHaveLength(1);
+      const wireText = JSON.stringify(ctx.body(0));
       expect(wireText, label).toContain('unsupported image format image/tiff');
       expect(wireText, label).not.toContain('image/tiff;base64');
       expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
@@ -505,19 +300,19 @@ describe('image blocks with invalid data', () => {
 
   it('a data-URL image in a Kimi-only format reaches a Kimi model but is replaced elsewhere (l2)', async () => {
     const cases = [
-      { label: 'bmp-kimi', model: M_KIMI, reply: OK_OPENAI, accepted: true },
-      { label: 'bmp-openai', model: M_OPENAI, reply: OK_OPENAI, accepted: false },
-      { label: 'bmp-anthropic', model: M_ANTHROPIC, reply: OK_ANTHROPIC, accepted: false },
+      { label: 'bmp-kimi', kind: 'kimi', accepted: true },
+      { label: 'bmp-openai', kind: 'openai', accepted: false },
+      { label: 'bmp-anthropic', kind: 'anthropic', accepted: false },
     ] as const;
-    for (const { label, model, reply, accepted } of cases) {
-      const ctx = await newCase(model, label);
-      resetMock(queueScript(reply));
+    for (const { label, kind, accepted } of cases) {
+      const ctx = await newCase(kind, label);
+      ctx.lane.script(say('OK'));
       await promptAndWait(ctx, [
         { type: 'text', text: 'what is this?' },
         { type: 'image_url', imageUrl: { url: IMAGE_KIMI_ONLY_MIME_URL } },
       ]);
-      expect(requests, label).toHaveLength(1);
-      const wireText = JSON.stringify(requests[0]?.json);
+      expect(ctx.model.requests(), label).toHaveLength(1);
+      const wireText = JSON.stringify(ctx.body(0));
       expect(wireText.includes('image/bmp;base64'), label).toBe(accepted);
       expect(wireText.includes('unsupported image format image/bmp'), label).toBe(!accepted);
       expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
@@ -525,36 +320,36 @@ describe('image blocks with invalid data', () => {
   }, 60_000);
 
   it('a malformed data URL is replaced with a notice at prompt ingestion (l2)', async () => {
-    const ctx = await newCase(M_OPENAI, 'malformed-data-url');
-    resetMock(queueScript(OK_OPENAI));
+    const ctx = await newCase('openai', 'malformed-data-url');
+    ctx.lane.script(say('OK'));
 
     await promptAndWait(ctx, [
       { type: 'text', text: 'what is this?' },
       { type: 'image_url', imageUrl: { url: 'data:definitely-not-a-data-url' } },
     ]);
 
-    expect(requests).toHaveLength(1);
-    const wireText = JSON.stringify(requests[0]?.json);
+    expect(ctx.model.requests()).toHaveLength(1);
+    const wireText = JSON.stringify(ctx.body(0));
     expect(wireText).toContain('is not a valid data URL');
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 
   it('openai: corrupt base64 with an accepted mime passes conversion; a 400 triggers media-stripped resend (l3 + engine fallback)', async () => {
-    const ctx = await newCase(M_OPENAI, 'openai-image-base64');
-    resetMock(queueScript(jsonError(400, 'Invalid image data'), OK_OPENAI));
+    const ctx = await newCase('openai', 'openai-image-base64');
+    ctx.lane.script(httpError(400, { message: 'Invalid image data' }), say('OK'));
 
     await promptAndWait(ctx, [
       { type: 'text', text: 'what is this?' },
       { type: 'image_url', imageUrl: { url: IMAGE_BAD_BASE64_URL } },
     ]);
 
-    expect(requests).toHaveLength(2);
-    const firstContent = openAiMessages(0).at(-1)?.['content'] as unknown[];
+    expect(ctx.model.requests()).toHaveLength(2);
+    const firstContent = openAiMessages(ctx, 0).at(-1)?.['content'] as unknown[];
     expect(firstContent).toContainEqual({
       type: 'image_url',
       image_url: { url: IMAGE_BAD_BASE64_URL },
     });
-    const secondContent = openAiMessages(1).at(-1)?.['content'] as unknown[];
+    const secondContent = openAiMessages(ctx, 1).at(-1)?.['content'] as unknown[];
     expect(secondContent.some((part) => (part as { type?: string }).type === 'image_url')).toBe(
       false,
     );
@@ -563,21 +358,21 @@ describe('image blocks with invalid data', () => {
   }, 30_000);
 
   it('kimi (composed): same media-strip fallback as plain openai (l3 + engine fallback)', async () => {
-    const ctx = await newCase(M_KIMI, 'kimi-image-base64');
-    resetMock(queueScript(jsonError(400, 'Invalid image data'), OK_OPENAI));
+    const ctx = await newCase('kimi', 'kimi-image-base64');
+    ctx.lane.script(httpError(400, { message: 'Invalid image data' }), say('OK'));
 
     await promptAndWait(ctx, [
       { type: 'text', text: 'what is this?' },
       { type: 'image_url', imageUrl: { url: IMAGE_BAD_BASE64_URL } },
     ]);
 
-    expect(requests).toHaveLength(2);
-    const firstContent = openAiMessages(0).at(-1)?.['content'] as unknown[];
+    expect(ctx.model.requests()).toHaveLength(2);
+    const firstContent = openAiMessages(ctx, 0).at(-1)?.['content'] as unknown[];
     expect(firstContent).toContainEqual({
       type: 'image_url',
       image_url: { url: IMAGE_BAD_BASE64_URL },
     });
-    const secondContent = openAiMessages(1).at(-1)?.['content'] as unknown[];
+    const secondContent = openAiMessages(ctx, 1).at(-1)?.['content'] as unknown[];
     expect(secondContent.some((part) => (part as { type?: string }).type === 'image_url')).toBe(
       false,
     );
@@ -585,40 +380,40 @@ describe('image blocks with invalid data', () => {
   }, 30_000);
 
   it('google-genai: corrupt base64 rides inlineData; a 400 triggers media-stripped resend (l3 + engine fallback)', async () => {
-    const ctx = await newCase(M_GOOGLE, 'google-image-base64');
-    resetMock(queueScript(jsonError(400, 'Invalid image data'), OK_GOOGLE));
+    const ctx = await newCase('google', 'google-image-base64');
+    ctx.lane.script(httpError(400, { message: 'Invalid image data' }), say('OK'));
 
     await promptAndWait(ctx, [
       { type: 'text', text: 'what is this?' },
       { type: 'image_url', imageUrl: { url: IMAGE_BAD_BASE64_URL } },
     ]);
 
-    expect(requests).toHaveLength(2);
+    expect(ctx.model.requests()).toHaveLength(2);
     const firstParts = (
-      (requests[0]?.json as { contents?: { parts?: unknown[] }[] }).contents ?? []
+      (ctx.body(0) as { contents?: { parts?: unknown[] }[] }).contents ?? []
     ).flatMap((content) => content.parts ?? []);
     expect(firstParts).toContainEqual({
       inlineData: { mimeType: 'image/png', data: '%%%not-base64%%%' },
     });
     const secondParts = (
-      (requests[1]?.json as { contents?: { parts?: unknown[] }[] }).contents ?? []
+      (ctx.body(1) as { contents?: { parts?: unknown[] }[] }).contents ?? []
     ).flatMap((content) => content.parts ?? []);
     expect(secondParts.some((part) => (part as { inlineData?: unknown }).inlineData)).toBe(false);
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 
   it('anthropic: corrupt base64 with a legal mime passes conversion, then gets stripped after a 400', async () => {
-    const ctx = await newCase(M_ANTHROPIC, 'anthropic-image-base64');
-    resetMock(queueScript(jsonError(400, 'could not process the image'), OK_ANTHROPIC));
+    const ctx = await newCase('anthropic', 'anthropic-image-base64');
+    ctx.lane.script(httpError(400, { message: 'could not process the image' }), say('OK'));
 
     await promptAndWait(ctx, [
       { type: 'text', text: 'what is this?' },
       { type: 'image_url', imageUrl: { url: IMAGE_BAD_BASE64_URL } },
     ]);
 
-    expect(requests).toHaveLength(2);
+    expect(ctx.model.requests()).toHaveLength(2);
     const firstBlocks = (
-      (requests[0]?.json as { messages?: { content?: unknown[] }[] }).messages ?? []
+      (ctx.body(0) as { messages?: { content?: unknown[] }[] }).messages ?? []
     ).flatMap((message) => (Array.isArray(message.content) ? message.content : []));
     const imageBlock = firstBlocks.find(
       (block): block is { type: 'image'; source: Record<string, unknown> } =>
@@ -630,7 +425,7 @@ describe('image blocks with invalid data', () => {
       media_type: 'image/png',
     });
     const secondBlocks = (
-      (requests[1]?.json as { messages?: { content?: unknown[] }[] }).messages ?? []
+      (ctx.body(1) as { messages?: { content?: unknown[] }[] }).messages ?? []
     ).flatMap((message) => (Array.isArray(message.content) ? message.content : []));
     expect(secondBlocks.some((block) => (block as { type?: string }).type === 'image')).toBe(false);
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
@@ -645,19 +440,20 @@ describe('daemon file references (kimi-file://)', () => {
       mimeType: 'image/png',
       expiresInSec: 3600,
     });
-    const ctx = await newCase(M_OPENAI_VISION, 'kimifile-image-openai');
-    resetMock(queueScript(OK_OPENAI));
+    const ctx = await newCase('openai-vision', 'kimifile-image-openai');
+    ctx.lane.script(say('OK'));
     await promptAndWait(ctx, [
       { type: 'image_url', imageUrl: { url: `kimi-file://${meta.id}` } },
       { type: 'text', text: 'what is this?' },
     ]);
-    expect(requests).toHaveLength(1);
-    expect(JSON.stringify(requests[0]?.json)).not.toContain(`kimi-file://${meta.id}`);
-    const content = openAiMessages(0).at(-1)?.['content'] as unknown[];
+    expect(ctx.model.requests()).toHaveLength(1);
+    expect(JSON.stringify(ctx.body(0))).not.toContain(`kimi-file://${meta.id}`);
+    const content = openAiMessages(ctx, 0).at(-1)?.['content'] as unknown[];
     const imagePart = content.find(
       (part) => (part as { type?: string }).type === 'image_url',
     ) as { image_url?: { url?: string } } | undefined;
     expect(imagePart?.image_url?.url ?? '').toMatch(/^data:image\/png;base64,/);
+    expect(ctx.model.uploads()).toEqual([]);
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 60_000);
 
@@ -668,46 +464,25 @@ describe('daemon file references (kimi-file://)', () => {
       mimeType: 'image/png',
       expiresInSec: 3600,
     });
-    const ctx = await newCase(M_KIMI, 'kimifile-image-kimi');
-    resetMock((req) => {
-      if (req.url === '/v1/files') {
-        return {
-          kind: 'json',
-          status: 200,
-          body: {
-            id: 'file-mock-image',
-            object: 'file',
-            bytes: 68,
-            created_at: 1,
-            filename: 'pasted-image.png',
-            purpose: 'image',
-          },
-        };
-      }
-      return OK_OPENAI;
-    });
+    const ctx = await newCase('kimi', 'kimifile-image-kimi');
+    ctx.lane.script(say('OK'));
     await promptAndWait(ctx, [
       { type: 'image_url', imageUrl: { url: `kimi-file://${meta.id}` } },
       { type: 'text', text: 'what is this?' },
     ]);
 
-    const fileUpload = requests.find((request) => request.url === '/v1/files');
-    expect(fileUpload).toBeDefined();
-    expect(fileUpload?.contentType).toContain('multipart/form-data');
-    const formText = fileUpload!.raw.toString('latin1');
-    expect(formText).toContain('name="purpose"');
-    expect(formText).toContain('image');
+    const uploads = ctx.model.uploads();
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]).toMatchObject({ purpose: 'image', state: 'stored' });
+    expect(uploads[0]?.contentType).toContain('multipart/form-data');
 
-    const chatCalls = requests.filter((request) => request.url === '/v1/chat/completions');
-    expect(chatCalls).toHaveLength(1);
-    expect(JSON.stringify(chatCalls[0]?.json)).not.toContain(`kimi-file://${meta.id}`);
-    const content = (chatCalls[0]?.json as { messages?: Record<string, unknown>[] })
-      .messages?.filter((message) => !isDateReminderMessage(message))
-      .at(-1)?.['content'] as unknown[];
+    expect(ctx.model.requests()).toHaveLength(1);
+    expect(JSON.stringify(ctx.body(0))).not.toContain(`kimi-file://${meta.id}`);
+    const content = openAiMessages(ctx, 0).at(-1)?.['content'] as unknown[];
     const imagePart = content.find(
       (part) => (part as { type?: string }).type === 'image_url',
     ) as { image_url?: { url?: string } } | undefined;
-    expect(imagePart?.image_url?.url ?? '').toBe('ms://file-mock-image');
+    expect(imagePart?.image_url?.url ?? '').toBe(`ms://${uploads[0]!.id}`);
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 60_000);
 });
@@ -716,14 +491,12 @@ describe('video blocks', () => {
   it('video_url with an http URL passes through verbatim on every provider', async () => {
     const cases: Array<{
       label: string;
-      model: string;
-      reply: MockReply;
+      kind: ProviderKind;
       assertBody: (body: unknown) => void;
     }> = [
       {
         label: 'video-url-openai',
-        model: M_OPENAI,
-        reply: OK_OPENAI,
+        kind: 'openai',
         assertBody: (body) => {
           const parts = (body as { messages: { content?: unknown }[] }).messages.flatMap(
             (message) => (Array.isArray(message.content) ? message.content : []),
@@ -736,8 +509,7 @@ describe('video blocks', () => {
       },
       {
         label: 'video-url-kimi',
-        model: M_KIMI,
-        reply: OK_OPENAI,
+        kind: 'kimi',
         assertBody: (body) => {
           const parts = (body as { messages: { content?: unknown }[] }).messages.flatMap(
             (message) => (Array.isArray(message.content) ? message.content : []),
@@ -750,8 +522,7 @@ describe('video blocks', () => {
       },
       {
         label: 'video-url-anthropic',
-        model: M_ANTHROPIC,
-        reply: OK_ANTHROPIC,
+        kind: 'anthropic',
         assertBody: (body) => {
           const blocks = (body as { messages: { content?: unknown }[] }).messages.flatMap(
             (message) => (Array.isArray(message.content) ? message.content : []),
@@ -764,8 +535,7 @@ describe('video blocks', () => {
       },
       {
         label: 'video-url-google',
-        model: M_GOOGLE,
-        reply: OK_GOOGLE,
+        kind: 'google',
         assertBody: (body) => {
           const parts = (body as { contents: { parts?: unknown[] }[] }).contents.flatMap(
             (content) => content.parts ?? [],
@@ -777,106 +547,68 @@ describe('video blocks', () => {
       },
     ];
 
-    for (const { label, model, reply, assertBody } of cases) {
-      const ctx = await newCase(model, label);
-      resetMock(queueScript(reply));
+    for (const { label, kind, assertBody } of cases) {
+      const ctx = await newCase(kind, label);
+      ctx.lane.script(say('OK'));
       await promptAndWait(ctx, [
         { type: 'text', text: 'describe this clip' },
         { type: 'video_url', videoUrl: { url: VIDEO_HTTP_URL } },
       ]);
-      expect(requests, label).toHaveLength(1);
-      assertBody(requests[0]?.json);
+      expect(ctx.model.requests(), label).toHaveLength(1);
+      assertBody(ctx.body(0));
       expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
     }
   }, 60_000);
 
   it('kimi (composed): Read on a video uploads via the files API (uploadVideo trait)', async () => {
-    const ctx = await newCase(M_KIMI, 'kimi-video-upload');
+    const ctx = await newCase('kimi', 'kimi-video-upload');
     await writeFile(join(ctx.workDir, 'clip.mp4'), Buffer.from(MP4_FTYP_HEX, 'hex'));
+    ctx.lane.script(call('Read', { path: 'clip.mp4' }), say('OK'));
 
-    let chatCallCount = 0;
-    resetMock((req) => {
-      if (req.url === '/v1/files') {
-        return {
-          kind: 'json',
-          status: 200,
-          body: {
-            id: 'file-mock-video',
-            object: 'file',
-            bytes: 32,
-            created_at: 1,
-            filename: 'clip.mp4',
-            purpose: 'video',
-          },
-        };
-      }
-      chatCallCount += 1;
-      return chatCallCount === 1
-        ? {
-            kind: 'sse',
-            lines: openAiToolCallSse('call_video_1', 'Read', '{"path":"clip.mp4"}'),
-          }
-        : OK_OPENAI;
-    });
     await promptAndWait(ctx, [{ type: 'text', text: 'watch clip.mp4' }]);
 
-    const fileUpload = requests.find((request) => request.url === '/v1/files');
-    expect(fileUpload).toBeDefined();
-    expect(fileUpload?.contentType).toContain('multipart/form-data');
-    const formText = fileUpload!.raw.toString('latin1');
-    expect(formText).toContain('name="purpose"');
-    expect(formText).toContain('video');
-    expect(formText).toContain('clip.mp4');
+    const uploads = ctx.model.uploads();
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]).toMatchObject({ purpose: 'video', filename: 'clip.mp4', state: 'stored' });
+    expect(uploads[0]?.contentType).toContain('multipart/form-data');
 
-    const chatCalls = requests.filter((request) => request.url === '/v1/chat/completions');
-    expect(chatCalls).toHaveLength(2);
-    const secondBody = chatCalls[1]?.json as { messages: Record<string, unknown>[] };
+    expect(ctx.model.requests()).toHaveLength(2);
+    const secondBody = ctx.body(1) as { messages: Record<string, unknown>[] };
     const toolMessage = secondBody.messages.find((message) => message['role'] === 'tool');
-    expect(JSON.stringify(toolMessage)).toContain('ms://file-mock-video');
+    expect(JSON.stringify(toolMessage)).toContain(`ms://${uploads[0]!.id}`);
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 
   it('kimi (composed): cancelling Read aborts the in-flight video upload', async () => {
-    const ctx = await newCase(M_KIMI, 'kimi-video-upload-cancel');
+    const ctx = await newCase('kimi', 'kimi-video-upload-cancel');
     await writeFile(
       join(ctx.workDir, 'clip.mp4'),
       Buffer.concat([Buffer.from(MP4_FTYP_HEX, 'hex'), Buffer.from([0])]),
     );
+    ctx.model.holdUploads();
+    ctx.lane.script(call('Read', { path: 'clip.mp4' }));
 
-    resetMock((req) => {
-      if (req.url === '/v1/files') return { kind: 'hang' };
-      return {
-        kind: 'sse',
-        lines: openAiToolCallSse('call_video_1', 'Read', '{"path":"clip.mp4"}'),
-      };
-    });
     const promptAborted = onceEvent(ctx.agent.events, 'prompt.aborted', 10_000);
     await ctx.agent.prompt({ input: [{ type: 'text', text: 'watch clip.mp4' }] });
-    await waitFor(() => requests.some((request) => request.url === '/v1/files'), 10_000);
+    await waitFor(() => ctx.model.uploads().length === 1, 10_000);
 
     await ctx.agent.cancel();
     await promptAborted;
 
-    await waitFor(() => abortedRequests.includes('/v1/files'), 2_000);
+    await waitFor(() => ctx.model.uploads()[0]?.state === 'aborted', 2_000);
     expect(ctx.payloads('turn.ended')[0]?.['reason']).toBe('cancelled');
   }, 15_000);
 
   it('openai: no uploadVideo capability — the tool result is a path placeholder, no files call', async () => {
-    const ctx = await newCase(M_OPENAI_VISION, 'openai-video-upload');
+    const ctx = await newCase('openai-vision', 'openai-video-upload');
     await writeFile(join(ctx.workDir, 'clip.mp4'), Buffer.from(MP4_FTYP_HEX, 'hex'));
+    ctx.lane.script(call('Read', { path: 'clip.mp4' }), say('OK'));
 
-    resetMock(
-      queueScript(
-        { kind: 'sse', lines: openAiToolCallSse('call_video_1', 'Read', '{"path":"clip.mp4"}') },
-        OK_OPENAI,
-      ),
-    );
     await promptAndWait(ctx, [{ type: 'text', text: 'watch clip.mp4' }]);
 
-    expect(requests.find((request) => request.url === '/v1/files')).toBeUndefined();
-    const chatCalls = requests.filter((request) => request.url === '/v1/chat/completions');
-    expect(chatCalls).toHaveLength(2);
-    const secondBody = chatCalls[1]?.json as { messages: Record<string, unknown>[] };
+    expect(ctx.model.uploads()).toEqual([]);
+    expect(ctx.model.requests()).toHaveLength(2);
+    const secondBody = ctx.body(1) as { messages: Record<string, unknown>[] };
     const toolMessage = secondBody.messages.find((message) => message['role'] === 'tool');
     expect(String(toolMessage?.['content'])).toContain('<video path=');
     expect(String(toolMessage?.['content'])).toContain('.mp4');
@@ -886,15 +618,14 @@ describe('video blocks', () => {
   it('anthropic: illegal base64 video mime throws in conversion; retryable, so stepRetry re-runs (l2)', async () => {
     await klient.global.config.set({ domain: 'loopControl', patch: { maxAttemptsPerStep: 2 } });
     try {
-      const ctx = await newCase(M_ANTHROPIC, 'anthropic-video-mime');
-      resetMock(queueScript(OK_ANTHROPIC));
+      const ctx = await newCase('anthropic', 'anthropic-video-mime');
 
       await promptAndWait(ctx, [
         { type: 'text', text: 'watch this' },
         { type: 'video_url', videoUrl: { url: VIDEO_BAD_MIME_URL } },
       ]);
 
-      expect(requests).toHaveLength(0);
+      expect(ctx.model.requests()).toHaveLength(0);
       const turnEnded = ctx.payloads('turn.ended');
       expect(turnEnded).toHaveLength(1);
       expect(turnEnded[0]?.['reason']).toBe('failed');
@@ -916,25 +647,20 @@ describe('video blocks', () => {
 
 describe('tool exchange structure', () => {
   it('openai: an unknown tool call still gets a paired (error) result on the wire', async () => {
-    const ctx = await newCase(M_OPENAI, 'openai-unknown-tool');
-    resetMock(
-      queueScript(
-        {
-          kind: 'sse',
-          lines: openAiToolCallSse('call_unknown_1', 'definitely_not_a_real_tool', '{}'),
-        },
-        OK_OPENAI,
-      ),
+    const ctx = await newCase('openai', 'openai-unknown-tool');
+    ctx.lane.script(
+      call('definitely_not_a_real_tool', {}, { id: 'call_unknown_1', invalid: true }),
+      say('OK'),
     );
     await promptAndWait(ctx, [{ type: 'text', text: 'use the tool' }]);
 
-    expect(requests).toHaveLength(2);
-    const messages = openAiMessages(1);
+    expect(ctx.model.requests()).toHaveLength(2);
+    const messages = openAiMessages(ctx, 1);
     const assistant = messages.find(
       (message) => message['role'] === 'assistant' && message['tool_calls'] !== undefined,
     );
     expect(
-      (assistant?.['tool_calls'] as { id: string }[]).map((call) => call.id),
+      (assistant?.['tool_calls'] as { id: string }[]).map((toolCall) => toolCall.id),
     ).toContain('call_unknown_1');
     const toolMessage = messages.find(
       (message) => message['role'] === 'tool' && message['tool_call_id'] === 'call_unknown_1',
@@ -946,41 +672,18 @@ describe('tool exchange structure', () => {
 
   it('media tool result: plain openai extracts text + appends a media user message; kimi keeps parts in place', async () => {
     const runMediaToolResultCase = async (
-      model: string,
+      kind: ProviderKind,
       label: string,
     ): Promise<Record<string, unknown>[]> => {
-      const ctx = await newCase(model, label);
+      const ctx = await newCase(kind, label);
       await writeFile(join(ctx.workDir, 'pixel.png'), Buffer.from(PNG_1X1_BASE64, 'base64'));
-      const replies = queueScript(
-        {
-          kind: 'sse',
-          lines: openAiToolCallSse('call_media_1', 'Read', '{"path":"pixel.png"}'),
-        },
-        OK_OPENAI,
-      );
-      resetMock((req) => {
-        if (req.url === '/v1/files') {
-          return {
-            kind: 'json',
-            status: 200,
-            body: {
-              id: 'file-mock-media',
-              object: 'file',
-              bytes: 32,
-              created_at: 1,
-              filename: 'pixel.png',
-              purpose: 'image',
-            },
-          };
-        }
-        return replies(req, 0);
-      });
+      ctx.lane.script(call('Read', { path: 'pixel.png' }), say('OK'));
       await promptAndWait(ctx, [{ type: 'text', text: 'look at pixel.png' }]);
       expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
-      return openAiMessages(1);
+      return openAiMessages(ctx, 1);
     };
 
-    const openAiWire = await runMediaToolResultCase(M_OPENAI_VISION, 'media-result-openai');
+    const openAiWire = await runMediaToolResultCase('openai-vision', 'media-result-openai');
     const openAiTool = openAiWire.find((message) => message['role'] === 'tool');
     expect(typeof openAiTool?.['content']).toBe('string');
     expect(String(openAiTool?.['content'])).toContain('<image path=');
@@ -993,7 +696,7 @@ describe('tool exchange structure', () => {
     });
     expect(trailingContent.some((part) => part.type === 'image_url')).toBe(true);
 
-    const kimiWire = await runMediaToolResultCase(M_KIMI, 'media-result-kimi');
+    const kimiWire = await runMediaToolResultCase('kimi', 'media-result-kimi');
     const kimiTool = kimiWire.find((message) => message['role'] === 'tool');
     const kimiContent = kimiTool?.['content'] as { type: string }[];
     expect(Array.isArray(kimiContent)).toBe(true);
@@ -1003,27 +706,22 @@ describe('tool exchange structure', () => {
 
   it('tool call ids are sanitized (64-char, safe charset) consistently across call and result', async () => {
     const nastyId = `call/bad id#${'x'.repeat(80)}`;
-    const runIdCase = async (model: string, label: string): Promise<Record<string, unknown>[]> => {
-      const ctx = await newCase(model, label);
-      resetMock(
-        queueScript(
-          {
-            kind: 'sse',
-            lines: openAiToolCallSse(nastyId, 'definitely_not_a_real_tool', '{}'),
-          },
-          OK_OPENAI,
-        ),
+    const runIdCase = async (kind: ProviderKind, label: string): Promise<Record<string, unknown>[]> => {
+      const ctx = await newCase(kind, label);
+      ctx.lane.script(
+        call('definitely_not_a_real_tool', {}, { id: nastyId, invalid: true }),
+        say('OK'),
       );
       await promptAndWait(ctx, [{ type: 'text', text: 'use the tool' }]);
       expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
-      return openAiMessages(1);
+      return openAiMessages(ctx, 1);
     };
 
-    for (const [model, label] of [
-      [M_OPENAI, 'tool-id-openai'],
-      [M_KIMI, 'tool-id-kimi'],
+    for (const [kind, label] of [
+      ['openai', 'tool-id-openai'],
+      ['kimi', 'tool-id-kimi'],
     ] as const) {
-      const messages = await runIdCase(model, label);
+      const messages = await runIdCase(kind, label);
       const assistant = messages.find((message) => message['tool_calls'] !== undefined);
       const wireId = (assistant?.['tool_calls'] as { id: string }[])[0]?.id;
       expect(wireId, label).toBeDefined();
@@ -1035,19 +733,20 @@ describe('tool exchange structure', () => {
   }, 60_000);
 
   it('after a user abort, an interruption reminder is on the wire before the next user message', async () => {
-    const ctx = await newCase(M_OPENAI, 'abort-merge');
-    resetMock((_req, callIndex) => (callIndex === 0 ? { kind: 'hang' } : OK_OPENAI));
+    const ctx = await newCase('openai', 'abort-merge');
+    ctx.lane.unscripted('hang');
 
     const firstSettled = onceEvent(ctx.agent.events, 'prompt.aborted', 30_000);
     await ctx.agent.prompt({ input: [{ type: 'text', text: 'first message' }] });
-    await waitFor(() => requests.length === 1, 10_000);
+    await waitFor(() => ctx.model.requests().length === 1, 10_000);
     await ctx.agent.cancel();
     await firstSettled;
 
+    ctx.lane.script(say('OK'));
     await promptAndWait(ctx, [{ type: 'text', text: 'second message' }]);
 
-    expect(requests).toHaveLength(2);
-    const userMessages = openAiMessages(1).filter((message) => message['role'] === 'user');
+    expect(ctx.model.requests()).toHaveLength(2);
+    const userMessages = openAiMessages(ctx, 1).filter((message) => message['role'] === 'user');
     expect(userMessages).toHaveLength(3);
     expect(String(userMessages[0]?.['content'])).toContain('first message');
     expect(String(userMessages[1]?.['content'])).toContain('<system-reminder>');
@@ -1059,12 +758,12 @@ describe('tool exchange structure', () => {
 
 describe('provider HTTP errors', () => {
   it('a non-recoverable 422 fails the turn with provider.api_error + statusCode on the wire (l3)', async () => {
-    const ctx = await newCase(M_OPENAI, 'openai-422');
-    resetMock(queueScript(jsonError(422, 'validation exploded on field messages')));
+    const ctx = await newCase('openai', 'openai-422');
+    ctx.lane.script(httpError(422, { message: 'validation exploded on field messages' }));
 
     await promptAndWait(ctx, [{ type: 'text', text: 'hello' }]);
 
-    expect(requests).toHaveLength(1);
+    expect(ctx.model.requests()).toHaveLength(1);
     const turnEnded = ctx.payloads('turn.ended');
     expect(turnEnded).toHaveLength(1);
     expect(turnEnded[0]?.['reason']).toBe('failed');
@@ -1083,14 +782,12 @@ describe('provider HTTP errors', () => {
   }, 30_000);
 
   it('a 400 structure error is retried once with the strict projection, then succeeds (l3 + engine fallback)', async () => {
-    const ctx = await newCase(M_OPENAI, 'openai-400-strict');
-    resetMock(
-      queueScript(jsonError(400, "tool_call_id 'call_x' not found"), OK_OPENAI),
-    );
+    const ctx = await newCase('openai', 'openai-400-strict');
+    ctx.lane.script(httpError(400, { message: "tool_call_id 'call_x' not found" }), say('OK'));
 
     await promptAndWait(ctx, [{ type: 'text', text: 'hello' }]);
 
-    expect(requests).toHaveLength(2);
+    expect(ctx.model.requests()).toHaveLength(2);
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
     expect(ctx.payloads('error')).toHaveLength(0);
   }, 30_000);

@@ -2,17 +2,20 @@ import type { PlaybackSink } from '#/model/playback';
 import { connectionReset, CRASH_STATUS, crashBody, type RequestHandler } from '#/model/transport';
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+const nativeFetch = globalThis.fetch;
 
 export function createFetchTransport(handler: RequestHandler): typeof fetch {
   return async (input, init) => {
     const request = new Request(input, init);
-    const body = await request.text();
-    request.signal.throwIfAborted();
     const url = new URL(request.url);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return nativeFetch(input, init);
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    request.signal.throwIfAborted();
     return new Promise<Response>((resolve, reject) => {
       const sink = new FetchSink(resolve, reject, request.signal);
       void handler(
-        { method: request.method, path: `${url.pathname}${url.search}`, headers: Object.fromEntries(request.headers), body },
+        { method: request.method, path: `${url.pathname}${url.search}`, headers: Object.fromEntries(request.headers), body: decoder.decode(bytes), bytes },
         sink,
       ).catch((error: unknown) => sink.crash(error));
     });
@@ -25,6 +28,7 @@ class FetchSink implements PlaybackSink {
   private controller: ReadableStreamDefaultController<Uint8Array> | undefined;
   private responded = false;
   private finished = false;
+  private pendingFailure: { readonly reason: unknown } | undefined;
   private readonly goneController = new AbortController();
   private readonly onAbort = (): void => this.stop(this.signal.reason);
 
@@ -56,6 +60,9 @@ class FetchSink implements PlaybackSink {
           start: (controller) => {
             this.controller = controller;
           },
+          pull: (controller) => {
+            if (this.pendingFailure !== undefined) controller.error(this.pendingFailure.reason);
+          },
           cancel: (reason: unknown) => this.stop(reason),
         });
     const response = new Response(body, { status, headers });
@@ -76,7 +83,16 @@ class FetchSink implements PlaybackSink {
   }
 
   disconnect(): void {
-    this.stop(new TypeError(this.responded ? 'terminated' : 'fetch failed', { cause: connectionReset() }));
+    const reason = new TypeError(this.responded ? 'terminated' : 'fetch failed', { cause: connectionReset() });
+    const controller = this.controller;
+    if (!this.responded || this.finished || controller === undefined || (controller.desiredSize ?? 1) > 0) {
+      this.stop(reason);
+      return;
+    }
+    this.finished = true;
+    this.signal.removeEventListener('abort', this.onAbort);
+    this.goneController.abort(reason);
+    this.pendingFailure = { reason };
   }
 
   resetConnection(): void {

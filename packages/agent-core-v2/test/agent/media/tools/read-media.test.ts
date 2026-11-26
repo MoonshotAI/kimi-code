@@ -785,7 +785,7 @@ describe('createVideoUploader', () => {
   });
 
   it('preserves a HEIC above the read budget for deferred inline resolution', async () => {
-    const heic = Buffer.concat([heicBytes(), Buffer.alloc(4 * 1024 * 1024, 1)]);
+    const heic = Buffer.concat([heicBytes(), Buffer.alloc(5 * 1024 * 1024, 1)]);
     const store = testMediaStore();
     const result = await execute(makeTool({ '/workspace/photo.heic': { data: heic } }, undefined, store), {
       path: '/workspace/photo.heic',
@@ -793,7 +793,8 @@ describe('createVideoUploader', () => {
 
     expect(result.isError).toBeFalsy();
     const stored = await store.get(mediaUrl(outputParts(result)[1]));
-    expect(Buffer.from(stored!.bytes)).toEqual(heic);
+    expect(stored!.bytes.byteLength).toBe(heic.byteLength);
+    expect(Buffer.compare(Buffer.from(stored!.bytes), heic)).toBe(0);
   });
 
   it('puts AVIF without consulting a provider-accepted set during execution', async () => {

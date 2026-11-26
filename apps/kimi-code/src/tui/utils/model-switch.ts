@@ -50,6 +50,18 @@ export function lazyModelSelection(
 
 export type { ModelSwitchPersistence } from '../types';
 
+export function hasUnavailableSessionModel(
+  host: Pick<SlashCommandHost, 'session' | 'state' | 'showError'>,
+): boolean {
+  if (host.session === undefined) return false;
+  const { model, availableModels } = host.state.appState;
+  if (model.trim().length === 0 || availableModels[model] !== undefined) return false;
+  host.showError(
+    `Model "${model}" is not configured in config.toml. Use /model to select an available model.`,
+  );
+  return true;
+}
+
 function currentTurnSentRequest(host: SlashCommandHost): boolean {
   const { turnId, step } = host.streamingUI.getTurnContext();
   return turnId !== undefined && step > 0;

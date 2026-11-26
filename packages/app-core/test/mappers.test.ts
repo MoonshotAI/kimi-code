@@ -220,10 +220,6 @@ describe('agent feed frames', () => {
         plan_mode: true,
         swarm_mode: false,
         tower_mode: false,
-        plan_mode_available: false,
-        swarm_mode_available: true,
-        tower_mode_available: false,
-        goal_mode_available: false,
       }),
     ).toEqual({
       status: 'running',
@@ -233,10 +229,6 @@ describe('agent feed frames', () => {
       planMode: true,
       swarmMode: false,
       towerMode: false,
-      planModeAvailable: false,
-      swarmModeAvailable: true,
-      towerModeAvailable: false,
-      goalModeAvailable: false,
     });
   });
 
@@ -252,10 +244,6 @@ describe('agent feed frames', () => {
         plan_mode: false,
         swarm_mode: false,
         tower_mode: false,
-        plan_mode_available: true,
-        swarm_mode_available: true,
-        tower_mode_available: true,
-        goal_mode_available: true,
       }),
     ).toMatchObject({ status: 'running', compacting: true });
   });

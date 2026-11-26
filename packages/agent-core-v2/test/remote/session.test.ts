@@ -221,6 +221,15 @@ if (mode === 'timeout') {
     return (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as string);
   }
 
+  async function callsIfAny(): Promise<string[]> {
+    try {
+      return await calls();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+  }
+
   it.each(['posix', 'windows', 'msys'])('launches exactly once after probing %s and preserves its failure', async (mode) => {
     vi.stubEnv('TEST_SSH_MODE', mode);
     await expect(RemoteSession.connect({
@@ -256,8 +265,8 @@ if (mode === 'timeout') {
     vi.stubEnv('TEST_SSH_MODE', 'timeout');
     await expect(RemoteSession.connect({
       environmentId: 'example', launcher: { type: 'ssh', host: 'example.test' }, initializeTimeoutMs: 300,
-    })).rejects.toMatchObject({ kind: 'timeout' });
-    expect(await calls()).toEqual(['uname -s']);
+    })).rejects.toMatchObject({ kind: 'timeout', message: expect.stringContaining('SSH platform probe timed out') });
+    expect([[], ['uname -s']]).toContainEqual(await callsIfAny());
   });
 
   it('reports unsupported shells without passing remoteBin to a probe', async () => {

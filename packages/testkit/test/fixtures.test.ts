@@ -1,22 +1,30 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
 import { join, resolve } from 'node:path';
+import type { Readable } from 'node:stream';
 import { text } from 'node:stream/consumers';
 import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it } from 'vitest';
 
 import { WaitTimeoutError } from '#/errors';
 import { CLI_BUILD_ENV, KIMI_SERVICE_URL, kimiCliBuild, kimiCliCommand, kimiCliEnv, kimiServiceStubs } from '#/fixtures/cli';
 import { kimiConfigToml, mergeKimiConfig } from '#/fixtures/config';
 import { expectGolden, jsonDifferences, REFRESH_ENV, stableJson } from '#/fixtures/golden';
-import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv } from '#/fixtures/env';
+import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, UNIT_TEST_SWITCHES } from '#/fixtures/env';
+import { bashPathOf, createGitWorktree } from '#/fixtures/git';
 import { createTestHome, osHomeEnv, type TestHome } from '#/fixtures/home';
+import { fakeMcpServer, readMcpCalls, readMcpStarts, writeMcpConfig, type McpServerEntry } from '#/fixtures/mcp';
+import { startFakeMcpHttpServer } from '#/fixtures/mcp-http';
 import { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
 import { installNetworkGuard, isLoopback, tcpTargetOf } from '#/fixtures/network';
 import { createNormalizer, FIXED_TIME, normalize } from '#/fixtures/normalize';
@@ -34,6 +42,38 @@ async function startScript(home: TestHome, source: string, options: Partial<Star
   await writeFile(entry, `import { connect } from 'node:net';\n${source}\n`);
   return TestProcess.start({ label: 'probe', command: { entry }, cwd: home.workspace, env: testEnv(), logDir: home.root, ...options });
 }
+
+describe('bashPathOf', () => {
+  it('spells a Windows path the way Git Bash prints the working directory', () => {
+    expect(bashPathOf('C:\\Users\\me\\app', 'win32')).toBe('/c/Users/me/app');
+    expect(bashPathOf('D:/work/app', 'win32')).toBe('/d/work/app');
+  });
+
+  it('keeps a POSIX path as it is', () => {
+    expect(bashPathOf('/tmp/app', 'linux')).toBe('/tmp/app');
+    expect(bashPathOf('/private/var/app', 'darwin')).toBe('/private/var/app');
+  });
+});
+
+describe('createGitWorktree', () => {
+  it('commits the given files in the main checkout and checks them out in a linked worktree', async () => {
+    const home = await createTestHome('git-worktree');
+    try {
+      const layout = {
+        main: join(home.workspace, 'app'),
+        worktree: join(home.workspace, 'app-fix'),
+      };
+
+      expect(await createGitWorktree(layout, { files: { 'src/tracked.txt': 'one\n' } })).toEqual(layout);
+
+      expect(await readFile(join(layout.worktree, 'src', 'tracked.txt'), 'utf8')).toBe('one\n');
+      expect(await readFile(join(layout.worktree, '.git'), 'utf8')).toMatch(/^gitdir: .*worktrees[\\/]app-fix\s*$/);
+      expect(existsSync(join(layout.main, '.git', 'HEAD'))).toBe(true);
+    } finally {
+      await home.remove();
+    }
+  });
+});
 
 describe('TestProcess', () => {
   it('refuses to start an entry that does not exist', async () => {
@@ -285,6 +325,15 @@ describe('testEnv', () => {
     expect(env['KIMI_SHELL_PATH']).toBe('/bin/zsh');
     expect(env['KIMI_CODE_HOME']).toBe('/tmp/home');
     expect(env).not.toHaveProperty('KIMI_DISABLE_TELEMETRY');
+  });
+
+  it('applies the unit-test switches by default and drops them when each is set to undefined', () => {
+    const switches = Object.keys(UNIT_TEST_SWITCHES);
+    expect(switches.length).toBeGreaterThan(0);
+    expect(testEnv({ base: {} })).toMatchObject(UNIT_TEST_SWITCHES);
+    const productDefaults = testEnv({ base: {}, set: Object.fromEntries(switches.map((name) => [name, undefined])) });
+    for (const name of switches) expect(productDefaults).not.toHaveProperty(name);
+    expect(productDefaults['KIMI_DISABLE_TELEMETRY']).toBe('1');
   });
 
   it('isolates process.env and restores it exactly', () => {
@@ -633,6 +682,199 @@ describe('network guard', () => {
     }
   });
 });
+
+describe('fake MCP server', () => {
+  it('answers the official MCP client over stdio and logs every call', async () => {
+    const home = await createTestHome('fake-mcp');
+    try {
+      const callLog = join(home.root, 'mcp-calls.jsonl');
+      const entry = fakeMcpServer('docs', {
+        callLog,
+        tools: [
+          { name: 'search', description: 'Search the docs.', inputSchema: { properties: { query: { type: 'string' } }, required: ['query'] }, reply: 'found 2 pages' },
+          { name: 'ping' },
+        ],
+      });
+      const client = new Client({ name: 'testkit-test', version: '0.0.0' });
+      await client.connect(new StdioClientTransport({ command: entry.command, args: [...entry.args] }));
+      try {
+        expect((await client.listTools()).tools).toEqual([
+          { name: 'search', description: 'Search the docs.', inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+          { name: 'ping', inputSchema: { type: 'object', properties: {} } },
+        ]);
+        expect(await client.callTool({ name: 'search', arguments: { query: 'cache' } })).toMatchObject({ content: [{ type: 'text', text: 'found 2 pages' }] });
+        expect(await client.callTool({ name: 'ping', arguments: {} })).toMatchObject({ content: [{ type: 'text', text: 'ping done' }] });
+        expect(await client.callTool({ name: 'missing', arguments: {} })).toMatchObject({ isError: true });
+      } finally {
+        await client.close();
+      }
+      expect(await readMcpCalls(callLog)).toEqual([
+        { server: 'docs', tool: 'search', arguments: { query: 'cache' } },
+        { server: 'docs', tool: 'ping', arguments: {} },
+        { server: 'docs', tool: 'missing', arguments: {} },
+      ]);
+    } finally {
+      await home.remove();
+    }
+  });
+
+  it('writes the mcp.json that the product reads, and reads no calls before the first one', async () => {
+    const home = await createTestHome('fake-mcp-config');
+    try {
+      const entry = fakeMcpServer('docs', { tools: [{ name: 'ping' }] });
+      const path = await writeMcpConfig(join(home.dataDir, 'mcp.json'), { docs: entry });
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ mcpServers: { docs: { command: process.execPath, args: [...entry.args] } } });
+      expect(await readMcpCalls(join(home.root, 'never-written.jsonl'))).toEqual([]);
+    } finally {
+      await home.remove();
+    }
+  });
+
+  it('renders replies from the call arguments, its environment, its cwd and the client name', async () => {
+    const home = await createTestHome('fake-mcp-replies');
+    try {
+      const structured = { rows: [{ id: 1 }], total: 1 };
+      const entry = fakeMcpServer('replies', {
+        tools: [
+          { name: 'echo', reply: { text: { argument: 'text' } } },
+          { name: 'read_env', reply: { text: { envNamedBy: 'name' } } },
+          { name: 'get_cwd', reply: { text: { cwd: true } } },
+          { name: 'whoami', reply: { text: { clientName: true } } },
+          { name: 'boom', reply: { text: 'boom!', isError: true } },
+          { name: 'structured', reply: { structuredContent: structured, meta: { 'example.com/trace': 'abc123' } } },
+        ],
+      });
+      const client = await connectStdio(entry, { cwd: home.workspace, env: { ...testEnv(), EXAMPLE_VALUE: 'from-env' } });
+      try {
+        const call = (name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args });
+        expect(await call('echo', { text: 'hello' })).toEqual({ content: [{ type: 'text', text: 'hello' }] });
+        expect(await call('read_env', { name: 'EXAMPLE_VALUE' })).toEqual({ content: [{ type: 'text', text: 'from-env' }] });
+        expect(await call('read_env', { name: 'EXAMPLE_MISSING' })).toEqual({ content: [{ type: 'text', text: '' }] });
+        expect(await call('whoami')).toEqual({ content: [{ type: 'text', text: 'testkit-test' }] });
+        expect(await call('boom')).toEqual({ content: [{ type: 'text', text: 'boom!' }], isError: true });
+        expect(await call('structured')).toEqual({ content: [], structuredContent: structured, _meta: { 'example.com/trace': 'abc123' } });
+        const cwd = await call('get_cwd');
+        expect(cwd.content).toEqual([{ type: 'text', text: expect.any(String) }]);
+        expect(realpathSync((cwd.content as Array<{ text: string }>)[0]!.text)).toBe(realpathSync(home.workspace));
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await home.remove();
+    }
+  });
+
+  it('logs where it started, then fails or exits on cue', async () => {
+    const home = await createTestHome('fake-mcp-lifecycle');
+    try {
+      const startLog = join(home.root, 'mcp-starts.jsonl');
+      const failing = new StdioClientTransport({ ...stdioParams(fakeMcpServer('broken', { tools: [], startLog, exitBeforeConnect: { code: 2, stderr: 'fatal: missing API token' } })), stderr: 'pipe' });
+      const stderr = failing.stderr === null ? Promise.resolve('') : text(failing.stderr as Readable);
+      await expect(new Client({ name: 'testkit-test', version: '0.0.0' }).connect(failing)).rejects.toThrow();
+      expect(await stderr).toContain('fatal: missing API token');
+
+      const replying = await connectStdio(fakeMcpServer('replying', { tools: [{ name: 'exit_after_reply', reply: 'bye', exitAfterReply: { code: 0 } }] }));
+      const repliedThenClosed = closed(replying);
+      expect(await replying.callTool({ name: 'exit_after_reply', arguments: {} })).toEqual({ content: [{ type: 'text', text: 'bye' }] });
+      await repliedThenClosed;
+
+      const exitSignal = join(home.root, 'exit');
+      const crashing = await connectStdio(fakeMcpServer('crashing', { tools: [{ name: 'ping' }], exitAfterConnect: { whenFile: exitSignal } }));
+      const crashed = closed(crashing);
+      expect(await crashing.callTool({ name: 'ping', arguments: {} })).toEqual({ content: [{ type: 'text', text: 'ping done' }] });
+      await writeFile(exitSignal, '');
+      await crashed;
+
+      expect((await readMcpStarts(startLog)).map((start) => start.server)).toEqual(['broken']);
+      expect(realpathSync((await readMcpStarts(startLog))[0]!.cwd)).toBe(realpathSync(process.cwd()));
+    } finally {
+      await home.remove();
+    }
+  });
+
+  it('can leave tools/list unanswered so the client times out', async () => {
+    const client = await connectStdio(fakeMcpServer('hanging', { tools: [{ name: 'ping' }], hangListTools: true }));
+    try {
+      await expect(client.listTools(undefined, { timeout: 200 })).rejects.toThrow(/timed out/i);
+      expect(await client.callTool({ name: 'ping', arguments: {} })).toEqual({ content: [{ type: 'text', text: 'ping done' }] });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('serves every streamable HTTP client its own session and announces tool changes to each', async () => {
+    const server = await startFakeMcpHttpServer({ tools: [{ name: 'echo', reply: { text: { argument: 'text' } } }] });
+    const clients = [await connectHttp(server.url), await connectHttp(server.url)];
+    try {
+      const announced = clients.map(() => 0);
+      clients.forEach((client, index) => {
+        client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+          announced[index] = (announced[index] ?? 0) + 1;
+        });
+      });
+      expect(await clients[1]!.callTool({ name: 'echo', arguments: { text: 'second session' } })).toEqual({ content: [{ type: 'text', text: 'second session' }] });
+
+      server.addTool({ name: 'added', description: 'Initial description' });
+      await until('both clients hear about the added tool', () => announced.every((count) => count === 1));
+      expect((await clients[0]!.listTools()).tools.map((tool) => tool.name)).toEqual(['echo', 'added']);
+      server.updateTool('added', { description: 'Updated description' });
+      await until('both clients hear about the updated tool', () => announced.every((count) => count === 2));
+      expect((await clients[0]!.listTools()).tools.find((tool) => tool.name === 'added')?.description).toBe('Updated description');
+      server.removeTool('added');
+      await until('both clients hear about the removed tool', () => announced.every((count) => count === 3));
+      expect((await clients[1]!.listTools()).tools.map((tool) => tool.name)).toEqual(['echo']);
+      expect(server.requests.filter((request) => request.rpcMethods.includes('initialize'))).toHaveLength(2);
+    } finally {
+      await Promise.all(clients.map((client) => client.close()));
+      await server.close();
+    }
+  });
+
+  it('turns away requests without the bearer token and lets the test answer a request itself', async () => {
+    let failures = 1;
+    const server = await startFakeMcpHttpServer({
+      tools: [{ name: 'ping' }],
+      bearerToken: 'good-token',
+      intercept: () => (failures-- > 0 ? { status: 503, text: 'Temporarily unavailable' } : undefined),
+    });
+    try {
+      await expect(connectHttp(server.url, 'good-token')).rejects.toMatchObject({ code: 503 });
+      await expect(connectHttp(server.url)).rejects.toMatchObject({ code: 401 });
+      const client = await connectHttp(server.url, 'good-token');
+      try {
+        expect(await client.callTool({ name: 'ping', arguments: {} })).toEqual({ content: [{ type: 'text', text: 'ping done' }] });
+      } finally {
+        await client.close();
+      }
+      expect(server.requests[0]).toMatchObject({ method: 'POST', path: '/mcp', rpcMethods: ['initialize'] });
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+function stdioParams(entry: McpServerEntry): { command: string; args: string[] } {
+  return { command: entry.command, args: [...entry.args] };
+}
+
+async function connectStdio(entry: McpServerEntry, options: { cwd?: string; env?: Record<string, string> } = {}): Promise<Client> {
+  const client = new Client({ name: 'testkit-test', version: '0.0.0' });
+  await client.connect(new StdioClientTransport({ ...stdioParams(entry), ...options }));
+  return client;
+}
+
+async function connectHttp(url: string, bearerToken?: string): Promise<Client> {
+  const client = new Client({ name: 'testkit-test', version: '0.0.0' });
+  const headers = bearerToken === undefined ? undefined : { authorization: `Bearer ${bearerToken}` };
+  await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers } }));
+  return client;
+}
+
+function closed(client: Client): Promise<void> {
+  return new Promise((resolve) => {
+    client.onclose = resolve;
+  });
+}
 
 function get(url: string): Promise<string> {
   return new Promise((resolve, reject) => {

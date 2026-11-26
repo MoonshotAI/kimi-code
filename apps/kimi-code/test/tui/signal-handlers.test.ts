@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 
 interface SignalDriver {
@@ -52,6 +53,7 @@ function makeHarness() {
     setTelemetryContext: vi.fn(),
     getWorkspaceTrustInfo: vi.fn(async () => ({
       trusted: true,
+      projectRoot: '/tmp/proj-signals',
       gatedMcpServers: [],
       gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
       instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
@@ -229,6 +231,36 @@ describe('KimiTUI signal handlers', () => {
     expect(exitSpy).toHaveBeenCalledWith(143);
     expect(exitSpy).not.toHaveBeenCalledWith(0);
 
+    stopSpy.mockRestore();
+    captured.restore();
+    driver.unregisterSignalHandlers();
+  });
+
+  it('SIGTERM stops without asking about the Kimi worktree it runs in', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    setExperimentalFeatures([{ id: 'worktree', enabled: true }]);
+    const harness = { ...makeHarness(), inspectWorktreeRemoval: vi.fn(), removeWorktree: vi.fn() };
+    const tui = new KimiTUI(harness as never, {
+      ...makeStartupInput(),
+      workDir: '/tmp/wt-signals',
+      projectRoot: '/tmp/proj-signals',
+      isGitRepo: true,
+      worktree: { root: '/tmp/wt-signals', name: 'wt', repoRoot: '/tmp/proj-signals' },
+    });
+    const driver = tui as unknown as SignalDriver;
+    const stopSpy = vi.spyOn(tui, 'stop').mockResolvedValue(undefined);
+    const captured = captureHandlers(driver);
+
+    captured.signalHandlers.get('SIGTERM')?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(stopSpy).toHaveBeenCalledWith(143);
+    expect(harness.inspectWorktreeRemoval).not.toHaveBeenCalled();
+    expect(harness.removeWorktree).not.toHaveBeenCalled();
+    expect(tui.worktreeExit.outcome).toBeUndefined();
+
+    setExperimentalFeatures([]);
     stopSpy.mockRestore();
     captured.restore();
     driver.unregisterSignalHandlers();

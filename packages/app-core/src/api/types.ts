@@ -348,6 +348,12 @@ export interface ApprovalResponse {
   selectedLabel?: string;
 }
 
+export interface ApprovalReviewDetail {
+  outcome: 'denied' | 'failed';
+  risk?: 'low' | 'medium' | 'high';
+  reason: string;
+}
+
 export interface AppApprovalRequest {
   approvalId: string;
   sessionId: string;
@@ -357,6 +363,7 @@ export interface AppApprovalRequest {
   toolName: string;
   action: string;
   display: unknown;
+  approvalDetail?: ApprovalReviewDetail;
 }
 
 export interface QuestionOption {
@@ -471,10 +478,6 @@ export interface AppAgentState {
   planMode: boolean;
   swarmMode: boolean;
   towerMode: boolean;
-  planModeAvailable?: boolean;
-  swarmModeAvailable?: boolean;
-  towerModeAvailable?: boolean;
-  goalModeAvailable?: boolean;
 }
 
 export interface AppAgentUsage {
@@ -758,11 +761,6 @@ export interface AppConfigProvider {
   hasApiKey: boolean;
 }
 
-export interface AppToolsConfig {
-  enabled?: string[];
-  disabled?: string[];
-}
-
 export interface AppHostDefinition {
   host: string;
   identityFile?: string;
@@ -827,7 +825,6 @@ export interface AppConfig {
     force?: boolean;
     defaultEffort?: string;
   } | null;
-  tools?: AppToolsConfig;
   models?: Record<string, unknown>;
   thinking?: { enabled?: boolean; effort?: string };
   planMode?: boolean;
@@ -846,11 +843,6 @@ export interface AppConfig {
   telemetry?: boolean;
   disableFeedbackSurvey?: boolean;
   raw?: Record<string, unknown>;
-}
-
-export interface AppToolCatalogEntry {
-  name: string;
-  source: 'builtin' | 'skill' | 'mcp';
 }
 
 export interface EditableTextFile {
@@ -1029,7 +1021,7 @@ export interface ReadRequestOptions {
 export type CreateFeedbackInput =
   | {
     kind: 'global';
-    source: 'sidebar' | 'command';
+    source: 'sidebar' | 'command' | 'menu';
     category: 'bug' | 'suggestion' | 'other';
     content: string;
     session_id?: string;
@@ -1148,7 +1140,6 @@ export interface KimiWebApi {
   respondApproval(sessionId: string, approvalId: string, response: ApprovalResponse): Promise<InteractionRespondResult>;
   respondQuestion(sessionId: string, questionId: string, response: QuestionResponse): Promise<InteractionRespondResult>;
   dismissQuestion(sessionId: string, questionId: string): Promise<InteractionRespondResult>;
-  listToolCatalog(): Promise<AppToolCatalogEntry[]>;
   listSkills(sessionId: string, options?: ReadRequestOptions): Promise<AppSkill[]>;
   listSkillsForWorkspace(workspaceId: string, options?: ReadRequestOptions): Promise<AppSkill[]>;
   activateSkill(sessionId: string, skillName: string, args?: string, attachments?: AppSkillAttachment[], options?: AppSkillActivationOptions): Promise<{ activated: true; skillName: string }>;

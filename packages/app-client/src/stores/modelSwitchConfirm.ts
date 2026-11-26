@@ -32,11 +32,13 @@ export const useModelSwitchConfirmStore = defineStore('kimi.modelSwitchConfirm',
   );
   const pending = ref<ModelSwitchConfirmRequest | null>(null);
 
-  let compactionWait: {
-    sessionId: string;
-    promise: Promise<ModelSwitchCompactionOutcome>;
-    resolve: (outcome: ModelSwitchCompactionOutcome) => void;
-  } | null = null;
+  const compactionWaits = new Map<
+    string,
+    {
+      promise: Promise<ModelSwitchCompactionOutcome>;
+      resolve: (outcome: ModelSwitchCompactionOutcome) => void;
+    }
+  >();
 
   function peek(): ModelSwitchConfirmConfig | undefined {
     return config.value;
@@ -57,25 +59,24 @@ export const useModelSwitchConfirmStore = defineStore('kimi.modelSwitchConfirm',
   }
 
   function waitCompactionSettled(sessionId: string, timeoutMs: number): Promise<ModelSwitchCompactionOutcome> {
-    if (compactionWait?.sessionId === sessionId) return compactionWait.promise;
-    compactionWait?.resolve('cancelled');
+    const existing = compactionWaits.get(sessionId);
+    if (existing !== undefined) return existing.promise;
     let resolveWait!: (outcome: ModelSwitchCompactionOutcome) => void;
     const promise = new Promise<ModelSwitchCompactionOutcome>((resolve) => {
       resolveWait = resolve;
     });
     const timer = setTimeout(() => {
-      if (compactionWait?.sessionId === sessionId) compactionWait = null;
+      if (compactionWaits.get(sessionId)?.promise === promise) compactionWaits.delete(sessionId);
       resolveWait('timeout');
     }, timeoutMs);
-    compactionWait = {
-      sessionId,
+    compactionWaits.set(sessionId, {
       promise,
       resolve: (outcome) => {
         clearTimeout(timer);
-        compactionWait = null;
+        if (compactionWaits.get(sessionId)?.promise === promise) compactionWaits.delete(sessionId);
         resolveWait(outcome);
       },
-    };
+    });
     return promise;
   }
 
@@ -83,18 +84,17 @@ export const useModelSwitchConfirmStore = defineStore('kimi.modelSwitchConfirm',
     sessionId: string,
     outcome: 'completed' | 'cancelled' | 'request-failed',
   ): void {
-    if (compactionWait?.sessionId !== sessionId) return;
-    compactionWait.resolve(outcome);
+    compactionWaits.get(sessionId)?.resolve(outcome);
   }
 
   function hasCompactionWait(sessionId: string): boolean {
-    return compactionWait?.sessionId === sessionId;
+    return compactionWaits.has(sessionId);
   }
 
   function resetForTest(): void {
     resetConfig();
     pending.value = null;
-    compactionWait = null;
+    compactionWaits.clear();
   }
 
   return {

@@ -36,6 +36,7 @@ export function summarizeLive(
   items: ActivitySummaryItem[],
   current: ActivitySummaryItem | null,
   browser?: ActivityBrowserOptions,
+  autoReviewHint = true,
 ): LiveSummary {
-  return summarizeLiveBase(t, items, current, [browserClauseProvider(t, browser)]);
+  return summarizeLiveBase(t, items, current, [browserClauseProvider(t, browser)], autoReviewHint);
 }

@@ -8,7 +8,8 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (32 sections · 2 overlay(s))
+# Index (33 sections · 2 overlay(s))
+#   autoReview               src/features/autoReview/configSection.ts
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
@@ -17,7 +18,7 @@
 #   defaultPlanMode          src/features/plan/configSection.ts
 #   environments             src/remote/declaration/configSection.ts
 #   experimental             src/app/flag/flag.ts
-#   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
+#   extraAgentDirs           src/project/projectAgentProfileLoader/configSection.ts
 #   extraSkillDirs           src/features/skill/catalog/configSection.ts
 #   hooks                    src/features/externalHooks/configSection.ts
 #   hosts                    src/app/hostsConfig/configSection.ts
@@ -40,9 +41,20 @@
 #   tokenCounting            src/agent/tokenCounting/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
 #   watch                    src/app/watch/configSection.ts
-#   workspace                src/workspace/workspaceTrust/configSection.ts
+#   workspace                src/project/projectTrust/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
+
+# ##########################################################################
+# autoReview (config.toml: auto_review)
+#   owner: src/features/autoReview/configSection.ts
+#   scope: core
+# ##########################################################################
+
+[auto_review]
+# model: string
+# effort: string
+# timeout_ms: integer (default: 30000)
 
 # ##########################################################################
 # background
@@ -157,7 +169,7 @@ default_plan_mode = false
 
 # ##########################################################################
 # extraAgentDirs (config.toml: extra_agent_dirs)
-#   owner: src/workspace/workspaceAgentProfileLoader/configSection.ts
+#   owner: src/project/projectAgentProfileLoader/configSection.ts
 #   scope: core
 # ##########################################################################
 
@@ -537,7 +549,7 @@ strategy = "measured+estimated"
 
 # ##########################################################################
 # workspace
-#   owner: src/workspace/workspaceTrust/configSection.ts
+#   owner: src/project/projectTrust/configSection.ts
 #   scope: core
 # ##########################################################################
 

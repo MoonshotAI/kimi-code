@@ -4,6 +4,7 @@ import {
   createTerminalManager,
   defaultShellEnv,
   resolveDefaultShell,
+  resolveSshExecutable,
   type PtyProcess,
   type SpawnPty,
   type TerminalManagerDeps,
@@ -354,5 +355,57 @@ describe('createTerminalManager', () => {
     const second = await manager.create({});
     void second;
     expect(() => manager.killAll()).not.toThrow();
+  });
+});
+
+
+describe('resolveSshExecutable', () => {
+  const exists = (paths: string[]) => (p: string) => paths.includes(p);
+
+  it('keeps bare ssh on POSIX platforms', () => {
+    expect(resolveSshExecutable('darwin', {}, () => false)).toBe('ssh');
+    expect(resolveSshExecutable('linux', {}, () => false)).toBe('ssh');
+  });
+
+  it('resolves ssh.exe from Windows PATH including quoted and final entries, falling back to OpenSSH and Git', () => {
+    const custom = 'C:\\Tools\\bin\\ssh.exe';
+    const openSsh = 'C:\\Windows\\System32\\OpenSSH\\ssh.exe';
+    const gitSsh = 'C:\\Program Files\\Git\\usr\\bin\\ssh.exe';
+
+    expect(
+      resolveSshExecutable(
+        'win32',
+        { PATH: 'C:\\Other;"C:\\Tools\\bin"' },
+        exists([custom, openSsh]),
+      ),
+    ).toBe(custom);
+
+    expect(
+      resolveSshExecutable('win32', { SystemRoot: 'C:\\Windows', PATH: '' }, exists([openSsh])),
+    ).toBe(openSsh);
+
+    expect(
+      resolveSshExecutable(
+        'win32',
+        { SystemRoot: 'C:\\Windows', ProgramFiles: 'C:\\Program Files' },
+        exists([gitSsh]),
+      ),
+    ).toBe(gitSsh);
+
+    expect(resolveSshExecutable('win32', {}, () => false)).toBe('ssh.exe');
+  });
+
+  it('passes an absolute ssh.exe path to spawnPty for remote Windows terminals', async () => {
+    const openSsh = 'C:\\Windows\\System32\\OpenSSH\\ssh.exe';
+    const { deps, spawns } = makeDeps({
+      platform: 'win32',
+      env: { SystemRoot: 'C:\\Windows', USERPROFILE: 'C:\\Users\\u' },
+      homeDir: 'C:\\Users\\u',
+      pathExists: exists([openSsh]),
+    });
+    const manager = createTerminalManager(deps);
+    const info = await manager.create({ ssh: { host: 'dev@example.com' } });
+    expect(info.shell).toBe('ssh');
+    expect(spawns[0]?.file).toBe(openSsh);
   });
 });

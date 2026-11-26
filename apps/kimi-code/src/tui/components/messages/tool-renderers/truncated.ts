@@ -28,7 +28,7 @@ export class TruncatedOutputComponent implements Component {
   private readonly expandHint: boolean;
   private readonly tail: boolean;
   private truncatedAtLastRender = false;
-  private renderCache: { width: number; source: string[]; lines: string[] } | undefined;
+  private renderCache: { width: number; source: readonly string[]; lines: string[] } | undefined;
 
   constructor(
     output: string,
@@ -71,7 +71,7 @@ export class TruncatedOutputComponent implements Component {
     return this.truncatedAtLastRender;
   }
 
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     const contentLines = this.textComponent.render(width);
     this.truncatedAtLastRender = contentLines.length > this.maxLines + 1;
 
@@ -88,7 +88,7 @@ export class TruncatedOutputComponent implements Component {
     return lines;
   }
 
-  private collapse(width: number, contentLines: string[]): string[] {
+  private collapse(width: number, contentLines: readonly string[]): string[] {
     const remaining = contentLines.length - this.maxLines;
     if (this.tail) {
       const shown = contentLines.slice(contentLines.length - this.maxLines);

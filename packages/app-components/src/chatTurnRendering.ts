@@ -349,7 +349,9 @@ export function turnToMarkdown(turn: ChatTurn): string {
 }
 
 export function turnTocTitle(turn: ChatTurn, t: (key: string) => string): string {
-  if (turn.role === 'compaction') return t('conversation.compactedPlain');
+  if (turn.role === 'compaction') {
+    return t(turn.compaction?.error === undefined ? 'conversation.compactedPlain' : 'conversation.compactionFailed');
+  }
   if (turn.role === 'user') {
     if (turn.skillActivation) return `/${turn.skillActivation.name}`;
     if (turn.skillActivations && turn.skillActivations.length > 0)

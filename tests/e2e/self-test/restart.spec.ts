@@ -1,6 +1,8 @@
-import { held, say } from '@moonshot-ai/testkit/model';
+import { bash, held, say } from '@moonshot-ai/testkit/model';
 
 import { expect, selfTest } from '../support/scenario';
+
+const COMMAND = 'echo $((40 + 2))';
 
 selfTest('restart', {
   positive: {
@@ -17,6 +19,18 @@ selfTest('restart', {
         await product.waitIdle();
         await product.expectReply('The second answer.');
         expect(model.requests('main')[1]?.texts('user')).toContain('Ask the first question.');
+      },
+    },
+    'lets the latest-turn checks read the last turn restored from before the restart': {
+      run: async ({ product, model }) => {
+        model.script(bash(COMMAND), say('It printed forty-two.'));
+        await product.send('Print forty-two.');
+        await product.approve();
+        await product.waitIdle();
+        await product.restart();
+        await product.expectTool({ name: 'Bash', target: COMMAND, status: 'done', output: '42' });
+        await product.expectReply('It printed forty-two.');
+        await product.expectAbsent('It printed forty-three.');
       },
     },
     'reopens a product that has not had a turn yet': {
@@ -41,15 +55,17 @@ selfTest('restart', {
         await product.expectReply('Finished after all.');
       },
     },
-    'does not let the latest-turn checks read the restored conversation': {
+    'does not take a reply of an earlier restored turn for the latest one': {
       run: async ({ product, model }) => {
-        model.script(say('Before the restart.'));
-        await product.send('Say something.');
+        model.script(say('The earlier answer.'), say('The later answer.'));
+        await product.send('Ask the earlier question.');
+        await product.waitIdle();
+        await product.send('Ask the later question.');
         await product.waitIdle();
         await product.restart();
-        await expect(product.expectReply('Before the restart.')).rejects.toThrow('expectTranscript()');
-        await expect(product.expectTool({ name: 'Read', target: 'a.txt', status: 'done' })).rejects.toThrow('expectTranscript()');
-        await product.expectTranscript('Before the restart.');
+        await expect(product.expectReply('The earlier answer.')).rejects.toThrow('The earlier answer.');
+        await product.expectReply('The later answer.');
+        await product.expectTranscript('The earlier answer.');
       },
     },
   },

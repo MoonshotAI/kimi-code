@@ -897,7 +897,6 @@ describe('AgentToolDedupeService', () => {
       for (let i = 0; i < 12; i += 1) {
         ctx.mockNextResponse(rejectedBashCallWithId(`call_bad_${String(i)}`));
       }
-      ctx.mockNextResponse({ type: 'text', text: 'must never be generated' });
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }], promptId: 'repeat-breaker' });
       const turn = await ctx.get(IAgentLoopService).promptHandle('repeat-breaker')!.launched;
@@ -918,7 +917,6 @@ describe('AgentToolDedupeService', () => {
       for (let i = 0; i < 13; i += 1) {
         ctx.mockNextResponse(rejectedBashCallWithId(`call_bad_${String(i)}`));
       }
-      ctx.mockNextResponse({ type: 'text', text: 'must never be generated' });
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }], promptId: 'repeat-breaker' });
       const turn = await ctx.get(IAgentLoopService).promptHandle('repeat-breaker')!.launched;

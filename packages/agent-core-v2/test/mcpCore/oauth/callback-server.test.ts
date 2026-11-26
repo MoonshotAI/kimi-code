@@ -11,7 +11,7 @@ import {
 } from '#/mcpCore/oauth/callback-server';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 
-import { createMemoryMcpOAuthStore } from '../stubs';
+import { createMemoryMcpOAuthStore, UNREACHABLE_SERVER_ORIGIN } from '../stubs';
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -165,7 +165,7 @@ describe('McpOAuthService cancellation', () => {
     const service = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     cleanups.push(() => service.dispose());
     const registrationServer = await startRegistrationServer();
-    const provider = service.getProvider('example', 'https://mcp.example.test/rpc');
+    const provider = service.getProvider('example', `${UNREACHABLE_SERVER_ORIGIN}/rpc`);
     await provider.ready;
     await provider.saveDiscoveryState({
       authorizationServerUrl: registrationServer.url,
@@ -180,7 +180,7 @@ describe('McpOAuthService cancellation', () => {
       },
     });
 
-    const flow = await service.beginAuthorization('example', 'https://mcp.example.test/rpc');
+    const flow = await service.beginAuthorization('example', `${UNREACHABLE_SERVER_ORIGIN}/rpc`);
     const completion = flow.complete({ timeoutMs: 10_000 });
     const rejection = expect(completion).rejects.toThrow('OAuth authorization wait cancelled');
 

@@ -3,6 +3,7 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { useFakeTimers } from 'sinon';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { RemoteExecConnection } from '#/remote/client/connection';
@@ -540,7 +541,7 @@ describe('shutdown of a process that is still starting', () => {
 
 describe('finished process-group ownership', () => {
   it('does not evict live groups at the former cache limit and reaps missing groups', async () => {
-    vi.useFakeTimers();
+    const clock = useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     const manager = new ProcessManager(() => {}, new HostProcessService());
     const internals = manager as unknown as {
@@ -555,12 +556,12 @@ describe('finished process-group ownership', () => {
         internals.maybeClose(entry);
       }
       expect(internals.exitedGroups.size).toBe(4097);
-      await vi.advanceTimersByTimeAsync(5_000);
+      clock.tick(5_000);
       expect(internals.exitedGroups.size).toBe(4097);
       kill.mockImplementation(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }); });
-      await vi.advanceTimersByTimeAsync(5_000);
+      clock.tick(5_000);
       expect(internals.exitedGroups.size).toBe(0);
-    } finally { manager.dispose(); kill.mockRestore(); vi.useRealTimers(); }
+    } finally { manager.dispose(); kill.mockRestore(); clock.restore(); }
   });
 
   it('does not retain POSIX process groups for a Windows executor', async () => {

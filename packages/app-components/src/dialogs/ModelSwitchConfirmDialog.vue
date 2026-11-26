@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import { Button, Dialog, Icon } from '@moonshot-ai/app-ui';
+import { Button, Dialog } from '@moonshot-ai/app-ui';
 import type { ModelSwitchAction } from '@moonshot-ai/app-core/lib';
 
 const props = defineProps<{
   open: boolean;
   sessionType: 'old' | 'new';
   kind?: 'model' | 'effort';
+  toModel?: string;
   fromEffort?: string;
   toEffort?: string;
   hint?: string;
@@ -32,59 +33,86 @@ function choose(action: ModelSwitchAction): void {
 <template>
   <Dialog
     :open="open"
+    size="sm"
     :title="props.kind === 'effort'
       ? t('model.switchEffortConfirmTitle', { from: props.fromEffort, to: props.toEffort })
       : t('model.switchConfirmTitle')"
     height="auto"
-    :padded="false"
-    :initial-focus="props.kind === 'effort' || props.sessionType === 'new' ? '.model-switch-confirm__confirm' : undefined"
+    panel-class="model-switch-confirm-dialog"
+    :initial-focus="props.kind === 'effort' || props.sessionType === 'new' ? '.model-switch-confirm__confirm' : '.model-switch-confirm__cancel'"
     @close="choose('cancel')"
   >
     <div class="model-switch-confirm">
+      <p v-if="props.kind !== 'effort' && props.sessionType === 'old' && props.toModel" class="model-switch-confirm__prompt">
+        {{ t('model.switchConfirmPrompt', { model: props.toModel }) }}
+      </p>
       <p v-if="hint" class="model-switch-confirm__hint">{{ hint }}</p>
       <p v-if="warning" class="model-switch-confirm__warning">{{ warning }}</p>
       <div v-if="props.kind !== 'effort' && props.sessionType === 'old'" class="model-switch-confirm__options">
-        <template v-for="(option, index) in OLD_SESSION_OPTIONS" :key="option.action">
-          <div v-if="index > 0" class="model-switch-confirm__separator" role="separator" />
-          <button class="model-switch-confirm__option" type="button" @click="choose(option.action)">
-            <span class="model-switch-confirm__option-copy">
-              <span class="model-switch-confirm__option-title">{{ t(option.titleKey) }}</span>
-              <span class="model-switch-confirm__option-desc">{{ t(option.descriptionKey) }}</span>
-            </span>
-            <Icon name="chevron-right" size="md" class="model-switch-confirm__option-chevron" />
-          </button>
-        </template>
-        <div class="model-switch-confirm__separator" role="separator" />
-        <button class="model-switch-confirm__option" type="button" @click="choose('cancel')">
-          <span class="model-switch-confirm__option-copy">
-            <span class="model-switch-confirm__option-title">{{ t('model.switchConfirmCancel') }}</span>
-            <span class="model-switch-confirm__option-desc">{{ t('model.switchConfirmCancelDesc') }}</span>
-          </span>
-          <Icon name="chevron-right" size="md" class="model-switch-confirm__option-chevron" />
+        <button
+          v-for="option in OLD_SESSION_OPTIONS"
+          :key="option.action"
+          class="model-switch-confirm__option"
+          type="button"
+          @click="choose(option.action)"
+        >
+          <span class="model-switch-confirm__option-title">{{ t(option.titleKey) }}</span>
+          <span class="model-switch-confirm__option-desc">{{ t(option.descriptionKey) }}</span>
         </button>
       </div>
     </div>
-    <template v-if="props.kind === 'effort' || props.sessionType === 'new'" #foot>
-      <Button variant="secondary" @click="choose('cancel')">{{ t('model.switchConfirmCancel') }}</Button>
-      <Button class="model-switch-confirm__confirm" variant="primary" @click="choose('continue')">
-        {{ t('model.switchConfirmConfirm') }}
-      </Button>
+    <template #foot>
+      <div class="model-switch-confirm__foot">
+        <Button
+          variant="secondary"
+          :class="props.kind === 'effort' || props.sessionType === 'new' ? undefined : 'model-switch-confirm__cancel'"
+          @click="choose('cancel')"
+        >
+          {{ t('model.switchConfirmCancel') }}
+        </Button>
+        <Button
+          v-if="props.kind === 'effort' || props.sessionType === 'new'"
+          class="model-switch-confirm__confirm"
+          variant="primary"
+          @click="choose('continue')"
+        >
+          {{ t('model.switchConfirmConfirm') }}
+        </Button>
+      </div>
     </template>
   </Dialog>
 </template>
 
 <style scoped>
+:global(.model-switch-confirm-dialog) {
+  border-radius: 16px;
+}
+:global(.model-switch-confirm-dialog .ui-dialog__head) {
+  padding: 24px 24px 0;
+}
+:global(.model-switch-confirm-dialog .ui-dialog__body) {
+  padding: 16px 24px 0;
+}
+:global(.model-switch-confirm-dialog .ui-dialog__foot) {
+  padding: 16px 24px 24px;
+  border-top: none;
+}
 .model-switch-confirm {
   display: flex;
   flex-direction: column;
+  gap: 16px;
 }
+.model-switch-confirm__prompt,
 .model-switch-confirm__hint,
 .model-switch-confirm__warning {
-  margin: 0 var(--dialog-pad-x) var(--space-2);
+  margin: 0;
   font-size: var(--text-base);
-  line-height: var(--leading-normal);
+  line-height: calc(20px + var(--ui-shift));
   white-space: pre-line;
   overflow-wrap: anywhere;
+}
+.model-switch-confirm__prompt {
+  color: var(--color-text);
 }
 .model-switch-confirm__hint {
   color: var(--color-text-muted);
@@ -93,17 +121,23 @@ function choose(action: ModelSwitchAction): void {
   color: var(--color-warning);
   font-weight: var(--weight-medium);
 }
+.model-switch-confirm__prompt + .model-switch-confirm__hint,
+.model-switch-confirm__prompt + .model-switch-confirm__warning {
+  margin-top: -8px;
+}
 .model-switch-confirm__options {
-  padding: 0 var(--space-3) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .model-switch-confirm__option {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: 2px;
   width: 100%;
-  padding: calc(var(--space-2) + var(--space-05));
-  border: none;
-  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  border: var(--p-hairline) solid var(--color-line-strong);
+  border-radius: 8px;
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -111,35 +145,21 @@ function choose(action: ModelSwitchAction): void {
 .model-switch-confirm__option:hover {
   background: var(--color-hover);
 }
-.model-switch-confirm__option-copy {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--space-05);
-  min-width: 0;
-}
 .model-switch-confirm__option-title {
   font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  line-height: var(--leading-caption);
+  font-weight: var(--weight-regular);
+  line-height: calc(20px + var(--ui-shift));
   color: var(--color-text);
 }
 .model-switch-confirm__option-desc {
-  font-size: var(--text-sm);
-  line-height: var(--leading-caption);
-  color: var(--color-text-muted);
-}
-.model-switch-confirm__option-chevron {
-  flex: none;
-  margin-top: var(--space-05);
+  font-size: var(--text-xs);
+  line-height: calc(18px + var(--ui-shift));
   color: var(--color-text-faint);
 }
-.model-switch-confirm__option:hover .model-switch-confirm__option-chevron {
-  color: var(--color-text);
-}
-.model-switch-confirm__separator {
-  height: var(--p-hairline);
-  margin: 0 calc(var(--space-2) + var(--space-05));
-  background: var(--color-line);
+.model-switch-confirm__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
 }
 </style>

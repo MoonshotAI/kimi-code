@@ -103,11 +103,33 @@ export function selectionHitByPointer(sel: Selection | null, event: MouseEvent):
 }
 
 function endsAtContainerBoundary(range: Range, container: Node): boolean {
-  if (range.endOffset !== 0 && range.endContainer.nodeType !== 1) return false;
-  if (container.getRootNode() !== range.endContainer.getRootNode()) return false;
+  if (typeof container.getRootNode !== 'function' || container.getRootNode() !== range.endContainer.getRootNode()) return false;
   const trailing = range.cloneRange();
   trailing.setStart(container, container.childNodes.length);
-  return trailing.toString().trim().length === 0;
+  return !hasSelectableText(trailing);
+}
+
+function hasSelectableText(range: Range): boolean {
+  const root = range.commonAncestorContainer;
+  const walker = (root.ownerDocument ?? document).createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node: Node | null = root.nodeType === 3 ? root : walker.nextNode(); node !== null; node = walker.nextNode()) {
+    if (range.comparePoint(node, 0) > 0) break;
+    if (!range.intersectsNode(node)) continue;
+    const data = node.nodeValue ?? '';
+    const from = node === range.startContainer ? range.startOffset : 0;
+    const to = node === range.endContainer ? range.endOffset : data.length;
+    if (data.slice(from, to).trim().length > 0 && !unselectable(node.parentElement, root)) return true;
+  }
+  return false;
+}
+
+function unselectable(el: Element | null, stop: Node): boolean {
+  for (let current = el; current !== null; current = current.parentElement) {
+    const style = getComputedStyle(current);
+    if (style.display === 'none' || style.userSelect === 'none' || style.getPropertyValue('-webkit-user-select') === 'none') return true;
+    if (current === stop) break;
+  }
+  return false;
 }
 
 export function selectionQuoteAnchor(sel: Selection | null, containerSelector = TRANSCRIPT_QUOTE_CONTAINER): SelectionQuoteAnchor | null {

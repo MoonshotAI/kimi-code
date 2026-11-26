@@ -43,6 +43,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, fromErrorPayload, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
+import type { KimiErrorPayload } from "#/_base/errors/serialize";
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
@@ -92,6 +93,7 @@ interface ActiveCompaction extends FullCompactionTask {
   readonly quiescence?: IDisposable;
   trace?: LLMRequestTrace;
   blockedByTurn: boolean;
+  historyChanged: boolean;
 }
 
 interface CompactionAttemptResult {
@@ -435,6 +437,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           return this.trace?.requestId;
         },
         blockedByTurn: false,
+        historyChanged: false,
       },
       resolve,
       reject,
@@ -448,15 +451,21 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     super.dispose();
   }
 
-  private cancelActive(active: ActiveCompaction): boolean {
+  private cancelActive(active: ActiveCompaction, error?: KimiErrorPayload): boolean {
     if (this._compacting !== active) return false;
-    void this.dispatcher.dispatch(new FullCompactionCancel({ agentId: this.agent.agentId }));
+    void this.dispatcher.dispatch(new FullCompactionCancel({ agentId: this.agent.agentId, error }));
     this._compacting = null;
     if (!active.abortController.signal.aborted) {
       active.abortController.abort();
     }
     void this.dispatcher.dispatch(new CompactionCancelled({ agentId: this.agent.agentId }));
     return true;
+  }
+
+  private discardForChangedHistory(active: ActiveCompaction): Error {
+    active.historyChanged = true;
+    this.cancelActive(active);
+    return compactionCancelledReason(active);
   }
 
   private markCompleted(active: ActiveCompaction): boolean {
@@ -509,9 +518,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   private async beforeStep(signal: AbortSignal, turnId?: number): Promise<void> {
     this.activeTurnId = turnId;
     this.checkAutoCompaction();
-    if (this.strategy.shouldBlock(this.tokenCountWithPending())) {
-      await this.block(signal, turnId);
-    }
+    await this.block(signal, turnId);
   }
 
   private async afterStep(): Promise<void> {
@@ -549,8 +556,18 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private async block(signal?: AbortSignal, turnId?: number): Promise<void> {
+    const discarded = await this.waitForActiveCompaction(signal, turnId);
+    if (discarded && this.beginAutoCompaction()) {
+      await this.waitForActiveCompaction(signal, turnId);
+    }
+  }
+
+  private async waitForActiveCompaction(
+    signal: AbortSignal | undefined,
+    turnId: number | undefined,
+  ): Promise<boolean> {
     const active = this._compacting;
-    if (active === null) return;
+    if (active === null) return false;
     active.blockedByTurn = true;
     this.propagateBlockingAbort(active, signal);
     void this.dispatcher.dispatch(
@@ -558,8 +575,10 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     );
     try {
       await active.promise;
+      return false;
     } catch (error) {
-      if (this.wasBlockingWaitAborted(active, signal, error)) return;
+      if (this.wasBlockingWaitAborted(active, signal, error)) return false;
+      if (active.historyChanged) return true;
       throw error;
     }
   }
@@ -608,15 +627,13 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         throw error;
       }
       const blockedByTurn = this._compacting === active && active.blockedByTurn;
-      if (this._compacting === active) {
-        this.cancelActive(active);
-      }
       if (blockedByTurn) {
+        this.cancelActive(active);
         throw error;
       }
-      void this.dispatcher.dispatch(
-        new AgentErrorEvent({ ...toKimiErrorPayload(error), agentId: this.agent.agentId }),
-      );
+      const payload = toKimiErrorPayload(error);
+      this.cancelActive(active, payload);
+      void this.dispatcher.dispatch(new AgentErrorEvent({ ...payload, agentId: this.agent.agentId }));
       throw error;
     } finally {
       try {
@@ -780,11 +797,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       }
 
       if (!historySafeToCompact(this.loopService.rawHistory(), originalRaw)) {
-        const active = this._compacting;
-        if (active !== null) {
-          this.cancelActive(active);
-        }
-        throw compactionCancelledReason(active);
+        throw this.discardForChangedHistory(active);
       }
 
       const summary = await this.postProcessSummary(attempt.summary);
@@ -801,9 +814,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       this.loopService.flushReminders();
       const currentRaw = this.loopService.rawHistory();
       if (!historySafeToCompact(currentRaw, originalRaw)) {
-        const active = this._compacting;
-        if (active !== null) this.cancelActive(active);
-        throw compactionCancelledReason(active);
+        throw this.discardForChangedHistory(active);
       }
       const currentHistory = currentRaw.map((entry) => contextFromHistoryEntry(entry));
       const compacted = buildContextCompactionShape(currentHistory, {

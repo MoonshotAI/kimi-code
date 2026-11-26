@@ -43,7 +43,7 @@ export class ActivityPaneComponent extends Container {
     }
   }
 
-  override render(width: number): string[] {
+  override render(width: number): readonly string[] {
     if (this.spinnerRef && 'setAvailableWidth' in this.spinnerRef) {
       this.spinnerRef.setAvailableWidth(width);
     }

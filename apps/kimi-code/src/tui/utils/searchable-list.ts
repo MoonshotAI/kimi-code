@@ -1,9 +1,36 @@
 import { fuzzyFilter, Key, matchesKey } from '@moonshot-ai/pi-tui';
 
 import { pageView, type PageView } from './paging';
-import { isPrintableChar, printableChar } from './printable-key';
+import { printableChar } from './printable-key';
 
 const DEFAULT_PAGE_SIZE = 8;
+const BRACKET_PASTE_START = '\u001B[200~';
+const BRACKET_PASTE_END = '\u001B[201~';
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+function removeLastGrapheme(text: string): string {
+  const segments = Array.from(GRAPHEME_SEGMENTER.segment(text), (entry) => entry.segment);
+  return segments.slice(0, -1).join('');
+}
+
+function isPrintableText(text: string): boolean {
+  if (text.length === 0) return false;
+  for (const ch of text) {
+    const code = ch.codePointAt(0)!;
+    if (code < 0x20 || code === 0x7f) return false;
+  }
+  return true;
+}
+
+function cleanPastedText(text: string): string {
+  const normalized = text.replace(/\r\n|\r|\n/g, '').replace(/\t/g, ' ');
+  let out = '';
+  for (const ch of normalized) {
+    const code = ch.codePointAt(0)!;
+    if (code >= 0x20 && code !== 0x7f) out += ch;
+  }
+  return out;
+}
 
 export interface SearchableListOptions<T> {
   readonly items: readonly T[];
@@ -27,6 +54,8 @@ export class SearchableList<T> {
   private readonly searchable: boolean;
   private query = '';
   private cursor: number;
+  private inPaste = false;
+  private pasteBuffer = '';
 
   constructor(opts: SearchableListOptions<T>) {
     this.items = opts.items;
@@ -34,6 +63,10 @@ export class SearchableList<T> {
     this.pageSize = opts.pageSize ?? DEFAULT_PAGE_SIZE;
     this.searchable = opts.searchable ?? false;
     this.cursor = Math.max(opts.initialIndex ?? 0, 0);
+  }
+
+  isPasting(): boolean {
+    return this.inPaste;
   }
 
   setItems(items: readonly T[]): void {
@@ -90,6 +123,9 @@ export class SearchableList<T> {
   }
 
   handleKey(data: string): boolean {
+    if (this.searchable && (this.inPaste || data.includes(BRACKET_PASTE_START))) {
+      return this.handleBracketedPaste(data);
+    }
     if (matchesKey(data, Key.up)) {
       this.moveUp();
       return true;
@@ -109,17 +145,42 @@ export class SearchableList<T> {
     if (!this.searchable) return false;
     if (matchesKey(data, Key.backspace)) {
       if (this.query.length > 0) {
-        this.query = this.query.slice(0, -1);
+        this.query = removeLastGrapheme(this.query);
         this.cursor = 0;
       }
       return true;
     }
-    const ch = printableChar(data);
-    if (isPrintableChar(ch)) {
-      this.query += ch;
+    const text = printableChar(data);
+    if (isPrintableText(text)) {
+      this.query += text;
       this.cursor = 0;
       return true;
     }
     return false;
+  }
+
+  private handleBracketedPaste(data: string): boolean {
+    let chunk = data;
+    if (!this.inPaste) {
+      const startIndex = chunk.indexOf(BRACKET_PASTE_START);
+      const prefix = chunk.slice(0, startIndex);
+      if (prefix.length > 0) this.handleKey(prefix);
+      this.inPaste = true;
+      this.pasteBuffer = '';
+      chunk = chunk.slice(startIndex + BRACKET_PASTE_START.length);
+    }
+    this.pasteBuffer += chunk;
+    const endIndex = this.pasteBuffer.indexOf(BRACKET_PASTE_END);
+    if (endIndex === -1) return true;
+    const pasted = cleanPastedText(this.pasteBuffer.slice(0, endIndex));
+    const remaining = this.pasteBuffer.slice(endIndex + BRACKET_PASTE_END.length);
+    this.inPaste = false;
+    this.pasteBuffer = '';
+    if (pasted.length > 0) {
+      this.query += pasted;
+      this.cursor = 0;
+    }
+    if (remaining.length > 0) this.handleKey(remaining);
+    return true;
   }
 }

@@ -100,7 +100,7 @@ const HUMAN_VOCABULARY = new Set([
 const V2_ONLY_FIRST_SEGMENTS = new Set([
   'llm-adapter',
   'app',
-  'workspace',
+  'project',
   'features',
   'state',
   'wire',

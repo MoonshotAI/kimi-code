@@ -6,15 +6,17 @@ import {
   type ProtocolCodec,
   type ResolvedUsage,
 } from '#/model/protocols/codec';
-import { asArray, asRecord, optionalString, stringOf } from '#/model/protocols/json';
+import { pickedFields, promptSegment, type PromptPrefix } from '#/model/prompt-cache';
+import { asArray, asRecord, contentPartsOf, optionalString, stringOf } from '#/model/protocols/json';
 import { argumentsText } from '#/model/steps';
-import type { ErrorSpec, FinishSpec, ReplyStep, RequestView, ViewCall, ViewMessage, ViewPart } from '#/model/types';
+import type { ErrorSpec, FinishSpec, ReplyStep, RequestView, ToolCallSpec, ViewCall, ViewMessage, ViewPart } from '#/model/types';
 import { textOfParts } from '#/model/view';
 
 export const openaiCodec: ProtocolCodec = {
   name: 'openai',
   matches: (path) => path.endsWith('/chat/completions'),
   parseRequest,
+  promptPrefix,
   encodeStream(step, context) {
     const emissions = emissionsOf(step, (callIndex, call) => context.callId(callIndex, call));
     const chunk = (delta: Record<string, unknown>, finishReason: string | null, usage?: Record<string, unknown>): string =>
@@ -36,6 +38,7 @@ export const openaiCodec: ProtocolCodec = {
         chunk(emissions.length === 0 ? { role: 'assistant' } : {}, finishReasonOf(step), usageOf(context.usage)),
         'data: [DONE]\n\n',
       ],
+      usageOnly: context.usage === null ? undefined : chunk({}, null, usageOf(context.usage)),
     };
   },
   encodeStreamError(error) {
@@ -68,6 +71,7 @@ export const openaiCodec: ProtocolCodec = {
                     id: context.callId(callIndex, call),
                     type: 'function',
                     function: { name: call.name, arguments: argumentsText(call) },
+                    ...extrasOf(call),
                   })),
           },
         },
@@ -89,7 +93,7 @@ function deltaOf(emission: Emission): Record<string, unknown> {
       return { reasoning_details: signedDetails(emission.text, emission.signature, 0) };
     case 'call-start':
       return {
-        tool_calls: [{ index: emission.callIndex, id: emission.id, type: 'function', function: { name: emission.call.name, arguments: '' } }],
+        tool_calls: [{ index: emission.callIndex, id: emission.id, type: 'function', function: { name: emission.call.name, arguments: '' }, ...extrasOf(emission.call) }],
       };
     case 'call-arguments':
       return { tool_calls: [{ index: emission.callIndex, function: { arguments: emission.piece } }] };
@@ -136,6 +140,28 @@ function usageOf(usage: ResolvedUsage | null): Record<string, unknown> | undefin
 
 function errorBody(error: ErrorSpec): Record<string, unknown> {
   return { message: error.message, type: error.type ?? 'testkit_error', code: error.code ?? error.status };
+}
+
+const SYSTEM_ROLES: ReadonlySet<unknown> = new Set(['system', 'developer']);
+
+function promptPrefix(body: unknown): PromptPrefix {
+  const record = asRecord(body);
+  const messages = asArray(record['messages']);
+  const firstConversational = messages.findIndex((message) => !SYSTEM_ROLES.has(asRecord(message)['role']));
+  const systemCount = firstConversational === -1 ? messages.length : firstConversational;
+  const labelOf = (message: unknown, index: number): string => `messages[${index}] ${stringOf(asRecord(message)['role'])}`;
+  return {
+    cacheKey: optionalString(record['prompt_cache_key']),
+    model: optionalString(record['model']),
+    segments: [
+      promptSegment('params', 'params', pickedFields(record, ['model', 'reasoning_effort', 'thinking', 'response_format'])),
+      ...messages.slice(0, systemCount).map((message, index) => promptSegment('system', labelOf(message, index), message)),
+      ...asArray(record['tools']).map((tool, index) =>
+        promptSegment('tools', `tools[${index}] ${stringOf(asRecord(asRecord(tool)['function'])['name'])}`, tool),
+      ),
+      ...messages.slice(systemCount).map((message, offset) => promptSegment('messages', labelOf(message, systemCount + offset), message)),
+    ],
+  };
 }
 
 function parseRequest(body: unknown): RequestView {
@@ -187,9 +213,7 @@ function callOf(raw: unknown): ViewCall {
 }
 
 function contentParts(content: unknown): ViewPart[] {
-  if (typeof content === 'string') return [{ type: 'text', text: content }];
-  return asArray(content).map((raw): ViewPart => {
-    const part = asRecord(raw);
+  return contentPartsOf(content, (part, raw) => {
     switch (part['type']) {
       case 'text':
         return { type: 'text', text: stringOf(part['text']) };
@@ -201,4 +225,8 @@ function contentParts(content: unknown): ViewPart[] {
         return { type: 'other', raw };
     }
   });
+}
+
+function extrasOf(call: ToolCallSpec): { readonly extras?: Readonly<Record<string, unknown>> } {
+  return call.extras === undefined ? {} : { extras: call.extras };
 }

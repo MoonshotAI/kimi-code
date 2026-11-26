@@ -11,7 +11,7 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/environment';
 
@@ -32,6 +32,16 @@ const pendingWrites = new Set<Promise<void>>();
 
 export async function drainSessionMetadataWrites(): Promise<void> {
   await Promise.all(pendingWrites);
+}
+
+function trackPendingWrite(write: Promise<unknown>): Promise<void> {
+  const tracked = write.then(
+    () => undefined,
+    () => undefined,
+  );
+  pendingWrites.add(tracked);
+  void tracked.finally(() => pendingWrites.delete(tracked));
+  return tracked;
 }
 
 export const sessionMetadataDataKey = defineState<SessionMeta | undefined>(
@@ -60,7 +70,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     @ILogService private readonly log: ILogService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
-    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
+    @ISessionProjectInfo private readonly projectInfo: ISessionProjectInfo,
   ) {
     super();
     this._register({
@@ -75,13 +85,14 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     );
     this.states.contributeState(sessionMetadataDataKey);
     this._register(
-      this.workspaceInfo.onDidChange(() => {
+      this.projectInfo.onDidChange(() => {
         if (this.states.get(sessionMetadataDataKey) !== undefined) this.mirrorToReadModel();
       }),
     );
     this.scope = ctx.metaScope;
     this.onDidChangeMetadata = this._onDidChangeMetadata.event;
     this.ready = this.load();
+    void trackPendingWrite(this.ready);
   }
 
   private get data(): SessionMeta {
@@ -216,13 +227,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
 
   private enqueueUpdate<T>(work: () => Promise<T>): Promise<T> {
     const run = this.updateQueue.then(work, work);
-    const tracked: Promise<void> = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    this.updateQueue = tracked;
-    pendingWrites.add(tracked);
-    void tracked.finally(() => pendingWrites.delete(tracked));
+    this.updateQueue = trackPendingWrite(run);
     return run;
   }
 
@@ -234,7 +239,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       environmentId: this.data.environmentId ?? LOCAL_ENVIRONMENT_ID,
       cwd: this.data.environmentCwd,
     };
-    return resolveEffectiveWorkspaceRoots(this.ctx, binding, this.workspaceInfo).workDir;
+    return resolveEffectiveWorkspaceRoots(this.ctx, binding, this.projectInfo).workDir;
   }
 
   private mirrorToReadModel(): void {

@@ -31,9 +31,19 @@
       "why": "It freezes rules that already have findings at their current count per file and reports suppressions that no longer suppress anything; without it new code could add to that debt unnoticed."
     },
     {
+      "run": "node scripts/checks/app-boundaries.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "Desktop and Web UI must compose business hooks instead of calling API or IPC directly, Pinia stores must stay isolated, and app-* packages must not self-import barrels or create new runtime cycles; this check freezes existing violations per file so refactoring only ratchets them down."
+    },
+    {
       "run": "node scripts/checks/test-doubles.mjs",
       "in": "package.json#scripts.lint",
-      "why": "New tests must script models through the shared testkit; this check freezes the legacy model doubles at their current use per file so new cases cannot add to them."
+      "why": "New tests must script models and fake MCP servers through the shared testkit; this check freezes the legacy doubles at their current use per file so new cases cannot add to them."
+    },
+    {
+      "run": "node scripts/checks/fixed-waits.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "AGENTS.md rules out sleep- and timeout-based synchronization in tests; this check freezes the existing fixed waits per test file so new code waits for a signal instead."
     },
     {
       "run": "node scripts/checks/legacy-e2e.mjs",

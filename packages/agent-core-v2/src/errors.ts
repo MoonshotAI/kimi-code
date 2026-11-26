@@ -10,7 +10,7 @@ import { CronErrors } from '#/features/cron/errors';
 import { DebugErrors } from '#/debug/errors';
 import { EventErrors } from '#/app/event/errors';
 import { FileErrors } from '#/app/file/fileService';
-import { FsErrors } from '#/workspace/workspaceFs/internal/errors';
+import { FsErrors } from '#/project/projectFs/internal/errors';
 import { FullCompactionErrors } from '#/agent/fullCompaction/errors';
 import { GoalErrors } from '#/features/goal/errors';
 import { LoopErrors } from '#/agent/loop/errors';
@@ -30,7 +30,8 @@ import { StorageErrors } from '#/persistence/interface/storage';
 import { UsageErrors } from '#/agent/usage/errors';
 import { WebErrors } from '#/app/web/errors';
 import { WireErrors } from '#/wire/errors';
-import { WorkspaceErrors } from '#/app/workspace/errors';
+import { ProjectErrors } from '#/app/project/errors';
+import { WorktreeErrors } from '#/app/worktree/errors';
 
 export * from '#/_base/errors/codes';
 export * from '#/_base/errors/errorMessage';
@@ -46,7 +47,7 @@ export { CapabilityErrors } from '#/app/capability/errors';
 export { CronErrors } from '#/features/cron/errors';
 export { DebugErrors } from '#/debug/errors';
 export { FileErrors } from '#/app/file/fileService';
-export { FsErrors } from '#/workspace/workspaceFs/internal/errors';
+export { FsErrors } from '#/project/projectFs/internal/errors';
 export { FullCompactionErrors } from '#/agent/fullCompaction/errors';
 export { GoalErrors } from '#/features/goal/errors';
 export { LoopErrors } from '#/agent/loop/errors';
@@ -65,7 +66,8 @@ export { StorageErrors } from '#/persistence/interface/storage';
 export { UsageErrors } from '#/agent/usage/errors';
 export { WebErrors } from '#/app/web/errors';
 export { WireErrors } from '#/wire/errors';
-export { WorkspaceErrors } from '#/app/workspace/errors';
+export { ProjectErrors } from '#/app/project/errors';
+export { WorktreeErrors } from '#/app/worktree/errors';
 export { EventErrors } from '#/app/event/errors';
 export { StateErrors } from '#/state/errors';
 
@@ -99,7 +101,8 @@ export const ErrorCodes = {
   ...UsageErrors.codes,
   ...WebErrors.codes,
   ...WireErrors.codes,
-  ...WorkspaceErrors.codes,
+  ...ProjectErrors.codes,
+  ...WorktreeErrors.codes,
   ...EventErrors.codes,
   ...StateErrors.codes,
 } as const;
@@ -200,6 +203,19 @@ export type KimiErrorCode =
   | 'session.busy'
   | 'shell.git_bash_not_found'
   | 'workspace.not_found'
+  | 'worktree.disabled'
+  | 'worktree.not_git_repo'
+  | 'worktree.no_commits'
+  | 'worktree.base_not_found'
+  | 'worktree.invalid_name'
+  | 'worktree.already_exists'
+  | 'worktree.git_failed'
+  | 'worktree.include_failed'
+  | 'worktree.cancelled'
+  | 'worktree.not_found'
+  | 'worktree.has_uncommitted'
+  | 'worktree.has_unique_commits'
+  | 'worktree.in_use'
   | 'file.not_found'
   | 'file.too_large'
   | 'fs.path_not_found'

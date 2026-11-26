@@ -1,21 +1,17 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
+import { RequestError, type NewSessionResponse, type RequestPermissionRequest } from '@agentclientprotocol/sdk';
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
 import { ToolUpdated } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { call, createFakeModel, say, type FakeModel } from '@moonshot-ai/testkit/model';
-import { afterEach, describe, expect, it } from 'vitest';
+import { call, createFakeModel, exitPlanMode, say, write, type FakeModel } from '@moonshot-ai/testkit/model';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { mapPromptLaunchError } from '../src/session';
+import { AcpSession, mapPromptLaunchError } from '../src/session';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
-import { writeFakeModelConfig } from './_helpers/fakeModelConfig';
+import { writeFakeModelConfig, type FakeModelConfigOptions } from './_helpers/fakeModelConfig';
 import { solidPngBase64 } from './_helpers/png';
-
-const STDIO_MCP_FIXTURE = fileURLToPath(
-  new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url),
-);
 
 describe('acp-server real prompt turn (scripted LLM)', () => {
   let homeDir: string | undefined;
@@ -57,11 +53,12 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
   async function boot(
     clientCapabilities: Record<string, unknown> = {},
     imageInput = false,
+    defaults?: Pick<FakeModelConfigOptions, 'defaultPlanMode' | 'defaultPermissionMode'>,
   ): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-e2e-turn-'));
     model = createFakeModel();
     await model.listen();
-    await writeFakeModelConfig(homeDir, { image: imageInput, baseUrl: model.origin });
+    await writeFakeModelConfig(homeDir, { image: imageInput, baseUrl: model.origin, ...defaults });
     client = await createTestClient({ homeDir });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities });
     if (clientCapabilities['terminal'] === true) installTerminalClient(client);
@@ -98,6 +95,92 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(usageUpdate?.size).toBe(262144);
     expect(usageUpdate?.used).toBeGreaterThan(0);
     expect(usageUpdate?.cost).toBeUndefined();
+  }, 30_000);
+
+  it('replays a file tool card at the session directory, even when the editor loads the session from another one', async () => {
+    const c = await boot();
+    const project = join(homeDir!, 'project');
+    const elsewhere = join(homeDir!, 'elsewhere');
+    await mkdir(project);
+    await mkdir(elsewhere);
+    await writeFile(join(project, 'notes.txt'), 'hello\n');
+    model!.script(call('Read', { path: 'notes.txt' }, { id: 'call_read' }), say('read it'));
+
+    const created = (await c.send('session/new', { cwd: project, mcpServers: [] })) as { sessionId: string };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+    await c.send('session/prompt', { sessionId: created.sessionId, prompt: [{ type: 'text', text: 'read the notes' }] });
+
+    const beforeLoad = c.sessionUpdates().length;
+    await c.send('session/load', { sessionId: created.sessionId, cwd: elsewhere, mcpServers: [] });
+    type ToolCallWire = { sessionUpdate?: string; toolCallId?: string; locations?: Array<{ path: string }> };
+    const replayed = c
+      .sessionUpdates()
+      .slice(beforeLoad)
+      .map((m) => (m.params as { update?: ToolCallWire }).update)
+      .find((u) => u?.sessionUpdate === 'tool_call' && u.toolCallId?.endsWith(':call_read'));
+    const located = replayed?.locations?.[0]?.path;
+
+    expect(located).toBeDefined();
+    expect(await realpath(located!)).toBe(await realpath(join(project, 'notes.txt')));
+  }, 30_000);
+
+  it.each([
+    { optionId: 'plan_approve', expectedMode: 'default' },
+    { optionId: 'plan_reject_and_exit', expectedMode: 'default' },
+    { optionId: 'plan_approve', expectedMode: 'yolo', defaults: { defaultPlanMode: true, defaultPermissionMode: 'yolo' as const } },
+  ])('uses editor files for plan review and reports $expectedMode after $optionId', async ({ optionId, expectedMode, defaults }) => {
+    const c = await boot({ fs: { readTextFile: true, writeTextFile: true } }, false, defaults);
+    const plan = '# Proposed plan\n\nUpdate the example documentation.\n';
+    const permissions: RequestPermissionRequest[] = [];
+    let planPath: string | undefined;
+    c.onRequest('fs/read_text_file', async (params) => {
+      const { path } = params as { path: string };
+      try {
+        return { content: await readFile(path, 'utf8') };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw RequestError.resourceNotFound(path);
+        throw error;
+      }
+    });
+    c.onRequest('fs/write_text_file', async (params) => {
+      const { path, content } = params as { path: string; content: string };
+      await writeFile(path, content);
+      return {};
+    });
+    c.onRequest('session/request_permission', (params) => {
+      permissions.push(params as RequestPermissionRequest);
+      return { outcome: { outcome: 'selected', optionId } };
+    });
+
+    model!.script(
+      (request) => {
+        planPath = /^Plan file: (.+)$/m.exec(request.remindersSinceReply.join('\n'))?.[1];
+        if (planPath === undefined) throw new Error('The model did not receive the plan file in its plan mode reminder.');
+        return write({ path: planPath, content: plan });
+      },
+      exitPlanMode(),
+      ...(optionId === 'plan_approve' ? [say('The plan was approved.')] : []),
+    );
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as NewSessionResponse;
+    const { sessionId } = created;
+    if (defaults === undefined) {
+      await c.send('session/set_mode', { sessionId, modeId: 'plan' });
+    }
+    const start = c.sessionUpdates().length;
+    const result = await c.send('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Prepare a plan.' }] });
+    expect(result).toMatchObject({ stopReason: 'end_turn' });
+    expect(permissions).toHaveLength(1);
+    expect(permissions[0]?.toolCall.content).toContainEqual({
+      type: 'content',
+      content: { type: 'text', text: expect.stringContaining(plan.trim()) },
+    });
+    expect(await readFile(planPath!, 'utf8')).toBe(plan);
+    const updates = () => c.sessionUpdates().slice(start).map(({ params }) => (params as { update: unknown }).update);
+    await expect.poll(updates).toContainEqual({ sessionUpdate: 'current_mode_update', currentModeId: expectedMode });
+    await expect.poll(updates, { timeout: 5_000 }).toContainEqual({
+      sessionUpdate: 'config_option_update',
+      configOptions: expect.arrayContaining([expect.objectContaining({ id: 'mode', currentValue: expectedMode })]),
+    });
   }, 30_000);
 
   it('runs a tool call and bridges the approval request to the client', async () => {
@@ -716,7 +799,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
           type: 'http',
           name: 'mock',
           url: 'http://127.0.0.1:1/mcp',
-          headers: [{ name: 'X-Test-Fixture', value: STDIO_MCP_FIXTURE }],
+          headers: [{ name: 'X-Test-Fixture', value: 'example' }],
         },
       ],
     })) as { sessionId: string };
@@ -890,11 +973,14 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     return terminals;
   }
 
-  async function boot(clientCapabilities: Record<string, unknown>): Promise<TestClient> {
+  async function boot(
+    clientCapabilities: Record<string, unknown>,
+    defaults?: Pick<FakeModelConfigOptions, 'defaultPermissionMode'>,
+  ): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-terminal-'));
     model = createFakeModel();
     await model.listen();
-    await writeFakeModelConfig(homeDir, { baseUrl: model.origin });
+    await writeFakeModelConfig(homeDir, { baseUrl: model.origin, ...defaults });
     client = await createTestClient({ homeDir });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities });
     return client;
@@ -959,6 +1045,57 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     expect(completed?.content).toEqual([{ type: 'terminal', terminalId: t.id }]);
 
     expect(model!.requests()[1]?.rawBody).toContain('hello_from_terminal');
+  }, 30_000);
+
+  it('attaches the terminal to a command that runs before the editor learns which turn it belongs to', async () => {
+    let releaseLaunch!: () => void;
+    const launchHeld = new Promise<void>((resolve) => {
+      releaseLaunch = resolve;
+    });
+    const sessions = AcpSession.prototype as unknown as {
+      driveLaunch(this: AcpSession, launch: Promise<unknown>): Promise<unknown>;
+    };
+    const driveLaunch = sessions.driveLaunch;
+    const heldLaunch = vi.spyOn(sessions, 'driveLaunch').mockImplementation(function (this: AcpSession, launch) {
+      return driveLaunch.call(
+        this,
+        launch.then(async (launched) => {
+          await launchHeld;
+          return launched;
+        }),
+      );
+    });
+    try {
+      const c = await boot({ terminal: true }, { defaultPermissionMode: 'yolo' });
+      const terminals = fakeTerminalClient(c, 'hello_from_terminal\n');
+      c.onRequest('terminal/wait_for_exit', async () => {
+        releaseLaunch();
+        await c.waitForSessionUpdate('tool_call', 10_000);
+        return { exitCode: 0, signal: null };
+      });
+      scriptBashTurn('echo hello_from_terminal');
+
+      const { stopReason } = await runPrompt(c);
+      expect(stopReason).toBe('end_turn');
+
+      const created = c.received.findIndex((m) => m.method === 'terminal/create');
+      const announced = c.received.findIndex(
+        (m) =>
+          m.method === 'session/update' &&
+          (m.params as { update?: { sessionUpdate?: string } }).update?.sessionUpdate === 'tool_call',
+      );
+      expect(created).toBeGreaterThanOrEqual(0);
+      expect(announced).toBeGreaterThan(created);
+
+      const t = terminals[0]!;
+      const updates = toolCallUpdates(c);
+      const attached = updates.find((u) => u.content?.[0]?.type === 'terminal');
+      expect(attached?.content?.[0]?.terminalId).toBe(t.id);
+      const completed = updates.find((u) => u.status === 'completed');
+      expect(completed?.content).toEqual([{ type: 'terminal', terminalId: t.id }]);
+    } finally {
+      heldLaunch.mockRestore();
+    }
   }, 30_000);
 
   it('falls back to local execution when the client does not advertise the capability', async () => {

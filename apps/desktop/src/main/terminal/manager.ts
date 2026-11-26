@@ -75,6 +75,30 @@ export function resolveDefaultShell(
   return platform === 'darwin' ? '/bin/zsh' : '/bin/sh';
 }
 
+export function resolveSshExecutable(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+  pathExists: (path: string) => boolean,
+): string {
+  if (platform !== 'win32') {
+    return 'ssh';
+  }
+  const pathValue = env['PATH'] ?? env['Path'] ?? '';
+  for (const rawDir of pathValue.split(';')) {
+    const dir = rawDir.trim().replace(/^"+|"+$/g, '');
+    if (dir === '') continue;
+    const candidate = joinWin32(dir, 'ssh.exe');
+    if (pathExists(candidate)) return candidate;
+  }
+  const systemRoot = env['SystemRoot'] ?? 'C:\\Windows';
+  const openSsh = joinWin32(systemRoot, 'System32', 'OpenSSH', 'ssh.exe');
+  if (pathExists(openSsh)) return openSsh;
+  const programFiles = env['ProgramFiles'] ?? 'C:\\Program Files';
+  const gitSsh = joinWin32(programFiles, 'Git', 'usr', 'bin', 'ssh.exe');
+  if (pathExists(gitSsh)) return gitSsh;
+  return 'ssh.exe';
+}
+
 export function defaultShellEnv(
   platform: NodeJS.Platform,
   locale: string,
@@ -198,7 +222,7 @@ export function createTerminalManager(deps: TerminalManagerDeps = {}): TerminalM
       const gen = currentGeneration;
       const spawn = await loadSpawn();
       const ssh = normalizeTerminalSshTarget(options.ssh);
-      const file = ssh !== undefined ? 'ssh' : resolveDefaultShell(platform, env, pathExists);
+      const file = ssh !== undefined ? resolveSshExecutable(platform, env, pathExists) : resolveDefaultShell(platform, env, pathExists);
       const args = ssh !== undefined ? buildSshTerminalArgs(ssh, options.cwd) : [];
       const spawnCwd = ssh !== undefined ? homeDir : resolveCwd(options.cwd);
       const reportedCwd = ssh !== undefined ? (options.cwd && options.cwd !== '' ? options.cwd : '~') : spawnCwd;
