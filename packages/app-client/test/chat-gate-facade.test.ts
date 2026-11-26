@@ -432,6 +432,32 @@ describe('ensureChatReady — the §2.3 decision flow', () => {
     await expect(ready).resolves.toBe('upgrade');
   });
 
+  it('rejects switchManagedWorkspace while a local managed session turn is busy', async () => {
+    const { client, auth, models, sessions } = await freshFacade();
+    auth.managedProviderStatus = 'authenticated';
+    auth.managedMembership = 'member';
+    models.setModels([MANAGED_MODEL]);
+    models.setDefaultModel('managed:kimi-code/kimi-k2');
+    sessions.setSessions([
+      {
+        ...session('s-busy', 'managed:kimi-code/kimi-k2'),
+        busy: true,
+      },
+    ]);
+    clientApiMock.switchManagedWorkspace = vi.fn();
+
+    const outcome = await client.switchManagedWorkspace(
+      { kind: 'business', businessId: 'biz_1' },
+      'Acme AI',
+    );
+
+    expect(outcome).toEqual({
+      ok: false,
+      message: 'account.switchBusyMessage',
+    });
+    expect(clientApiMock.switchManagedWorkspace).not.toHaveBeenCalled();
+  });
+
   it('configure-model when the OAuth refresh lands but the auth convergence probe retries (ok:false, no stale-cache recovery)', async () => {
     const { client, auth } = await freshFacade();
     auth.managedProviderStatus = 'authenticated';

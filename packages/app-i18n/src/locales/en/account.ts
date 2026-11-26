@@ -18,6 +18,7 @@ export default {
   switchingTo: 'Switching to {name}',
   switchSuccessToast: 'Switched to {name}. Usage will be billed accordingly.',
   switchFailedTitle: 'Unable to switch workspace',
+  switchBusyMessage: 'Finish or stop the active response before switching workspaces.',
   workspaceDisabledTitle: 'Business workspace disabled',
   workspaceDisabledHint: 'Disabled. Contact your workspace administrator.',
   membershipRevokedTitle: 'Removed from Business Workspace',

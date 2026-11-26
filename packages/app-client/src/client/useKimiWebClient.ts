@@ -1994,6 +1994,24 @@ function isLocalManagedSession(sessionId: string): boolean {
   return entry?.provider === MANAGED_KIMI_CODE_PROVIDER_ID;
 }
 
+function hasActiveLocalManagedWork(): boolean {
+  if (!authStore().signedIn) return false;
+  if (promptStore().isStartingFirstPrompt) {
+    const defaultModel = modelsStore().defaultModel;
+    const entry = defaultModel
+      ? modelsStore().models.find((m) => m.id === defaultModel || m.model === defaultModel)
+      : undefined;
+    if (entry?.provider === MANAGED_KIMI_CODE_PROVIDER_ID) return true;
+  }
+  for (const session of rawState.sessions) {
+    if (!isLocalManagedSession(session.id)) continue;
+    if (session.busy || mainTurnRunning(session.id) || hasPendingLocalWork(session.id)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function extractNoticeProviderErrorCode(detail: string | undefined): string | undefined {
   if (!detail) return undefined;
   try {
@@ -3843,8 +3861,12 @@ export function useKimiWebClient() {
     checkAuth: () => authStore().checkAuth(),
     probeManagedMembership: () => authStore().probeMembership(),
     reloadManagedWorkspaces: () => authStore().reloadManagedWorkspaces(),
-    switchManagedWorkspace: (target: ManagedWorkspaceTarget, displayName?: string) =>
-      authStore().switchManagedWorkspace(target, displayName),
+    switchManagedWorkspace: async (target: ManagedWorkspaceTarget, displayName?: string) => {
+      if (hasActiveLocalManagedWork()) {
+        return { ok: false as const, message: t('account.switchBusyMessage') };
+      }
+      return authStore().switchManagedWorkspace(target, displayName);
+    },
     acknowledgeBusinessMembershipRevoked: () => authStore().acknowledgeBusinessMembershipRevoked(),
     startOAuthLogin: modelProvider.startOAuthLogin,
     pollOAuthLogin: modelProvider.pollOAuthLogin,

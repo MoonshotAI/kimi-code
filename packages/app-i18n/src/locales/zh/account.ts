@@ -18,6 +18,7 @@ export default {
   switchingTo: '正在切换到「{name}」',
   switchSuccessToast: '当前身份已切换为「{name}」，后续用量计入对应空间',
   switchFailedTitle: '切换工作空间失败',
+  switchBusyMessage: '请先等待或停止当前正在进行的对话，再切换工作空间',
   workspaceDisabledTitle: '企业空间已停用',
   workspaceDisabledHint: '请联系企业管理员恢复使用',
   membershipRevokedTitle: '已被移出企业空间',
