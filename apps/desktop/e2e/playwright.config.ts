@@ -17,19 +17,16 @@ const approvalsStateSpecs = [
   'agents-tasks-todos.spec.ts',
   'agents-goal.spec.ts',
   'composer-drafts-models.spec.ts',
-  'lifecycle-quit.spec.ts',
   'lifecycle-connection.spec.ts',
 ];
 const turnEngineGateSpecs = ['lifecycle-model-errors.spec.ts'];
 const turnsTranscriptSpecs = [
   ...specsWithPrefix('transcript-', 'turn-'),
   'bash-background.spec.ts',
-  'bash-tool-card.spec.ts',
   'agents-subagents.spec.ts',
   'agents-side-chat-compaction.spec.ts',
   'composer-writing.spec.ts',
   'files-turn-changes.spec.ts',
-  'selection-comment.spec.ts',
 ];
 
 const tieredSpecs = [

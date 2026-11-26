@@ -217,7 +217,6 @@
   },
   "timers-promises": {
     "apps/kimi-code/test/e2e/tui/support/terminal-session.ts": 1,
-    "apps/kimi-code/test/e2e/tui/terminal/real-pty.test.ts": 1,
     "apps/vscode/test/replay-resume.integration.test.ts": 1,
     "packages/agent-core-v2/test/features/tower/store.test.ts": 3,
     "packages/agent-core-v2/test/features/tower/tools/towerTools.test.ts": 1,
@@ -231,8 +230,5 @@
     "packages/node-sdk/test/session-runtime-helpers.ts": 2,
     "packages/product/test/session-rating-host.test.ts": 1,
     "packages/testkit/test/model.test.ts": 1
-  },
-  "wait-for-timeout": {
-    "apps/desktop/e2e/terminal-panel-drag.spec.ts": 1
   }
 }

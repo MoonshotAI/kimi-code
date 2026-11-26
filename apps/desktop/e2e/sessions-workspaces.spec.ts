@@ -144,12 +144,3 @@ test('a second workspace is added through the project dialog, organised in the s
     await app.snapshot('workspace-re-added');
   });
 });
-
-test('every restored turn keeps its message timestamps', async ({ app, model }) => {
-  await sendAndFinish(app, model, FIRST, 'First reply.');
-  await sendAndFinish(app, model, SECOND, 'Second reply.');
-  await expect(transcriptOf(app).getByText(/^\d\d:\d\d$/)).toHaveCount(4);
-  await relaunchAndSettle(app);
-  await expect(transcriptOf(app).getByText('Second reply.', { exact: true })).toBeVisible();
-  await expect(transcriptOf(app).getByText(/^\d\d:\d\d$/)).toHaveCount(4);
-});

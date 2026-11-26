@@ -6,7 +6,7 @@
 
 ## 测试今天写在哪
 
-回归用例优先补到已有的同层测试文件。用户通过窗口、终端或 ACP 编辑器操作的端到端场景写在 [`tests/e2e`](e2e/AGENTS.md)，也在这里补旧旅程缺失的断言。`apps/desktop/e2e/`、`apps/desktop/test/e2e/` 和 `apps/kimi-code/test/e2e/tui/` 是待迁移的旧目录，只为迁移或移除已有用例而改。迁移时保留原用例覆盖的行为，并使用新 E2E 的驱动。`pnpm lint` 里的 `scripts/checks/legacy-e2e.mjs` 按文件冻结这三个目录的用例数，新增会失败。
+回归用例优先补到已有的同层测试文件。用户通过窗口、终端或 ACP 编辑器操作的端到端场景写在 [`tests/e2e`](e2e/AGENTS.md)，也在这里补旧旅程缺失的断言。`apps/desktop/e2e/` 和 `apps/kimi-code/test/e2e/tui/` 是待迁移的旧目录，只为迁移或移除已有用例而改。迁移时保留原用例覆盖的行为，并使用新 E2E 的驱动。`pnpm lint` 里的 `scripts/checks/legacy-e2e.mjs` 按文件冻结这两个目录的用例数，新增会失败。
 
 | 要观察的行为 | 现有入口 |
 |---|---|
