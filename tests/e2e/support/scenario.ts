@@ -22,6 +22,7 @@ import { startWeb } from '../surfaces/web';
 import { DISK_TITLES, STEP_TITLES } from './steps';
 import {
   absenceReason,
+  StartupFailure,
   SURFACES,
   unavailableReason,
   VARIANTS,
@@ -278,7 +279,7 @@ class ScenarioSession {
     await writeKimiConfig(home.dataDir, fakeModelConfig(model));
     const startupStep = this.workspaceTrust === undefined ? '启动产品，等到可以输入' : '启动产品，处理工作区信任提示';
     await base.step(startupStep, async () => {
-      this.driver = await startSurface(this.surface, { home, model, workspaceTrust: this.workspaceTrust, ...this.variantLaunch() });
+      this.driver = await this.launch({ home, model, workspaceTrust: this.workspaceTrust, ...this.variantLaunch() });
       this.baseline = await snapshotDirectory(home.workspace);
       if (frames === 'every-step') await this.show('00 启动完成');
     });
@@ -353,6 +354,17 @@ class ScenarioSession {
     if (verb === 'newSession') this.lastPrompt = undefined;
   }
 
+  private async launch(launch: SurfaceLaunch): Promise<SurfaceDriver<Surface>> {
+    try {
+      return await startSurface(this.surface, launch);
+    } catch (error) {
+      if (error instanceof StartupFailure) {
+        for (const diagnostic of error.diagnostics) this.earlierDiagnostics.push({ ...diagnostic, name: `launch-${this.launches}-${diagnostic.name}` });
+      }
+      throw error;
+    }
+  }
+
   private variantLaunch(): { readonly variant?: Variant } {
     return this.variant === undefined ? {} : { variant: this.variant };
   }
@@ -389,7 +401,7 @@ class ScenarioSession {
     this.driver = undefined;
     if (problems.length > 0) throw new Error(`The product did not shut down cleanly before ${verb}():\n\n${problems.join('\n\n')}`);
     this.launches += 1;
-    this.driver = await startSurface(this.surface, {
+    this.driver = await this.launch({
       home,
       model,
       workspaceTrust: this.workspaceTrust,
