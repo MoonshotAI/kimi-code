@@ -239,6 +239,21 @@ describe('prompt cache ledger', () => {
     expect(problemsOf(model)).toEqual([expect.stringContaining('request #2 (every request) does not extend request #1')]);
   });
 
+  it("lets a subagent's next turn retire its previous turn, so the earlier turn cannot hide a rewrite", async () => {
+    const model = fakeModel();
+    const ask = openai(model);
+    const question: ChatCompletionMessageParam[] = [SYSTEM, { role: 'user', content: 'What does notes.txt say?' }, { role: 'assistant', content: 'Launch on friday.' }];
+    const followUp: ChatCompletionMessageParam[] = [...question, { role: 'user', content: 'And the time?' }];
+
+    await ask({ messages: question, role: 'subagent' });
+    await ask({ messages: followUp, role: 'subagent' });
+    await ask({ messages: [...followUp, { role: 'assistant', content: 'Reading notes.txt.' }, { role: 'user', content: 'noon' }], role: 'subagent', step: 'tool_results' });
+    await ask({ messages: [...followUp, { role: 'assistant', content: 'Reading time.txt.' }, { role: 'user', content: 'noon' }], role: 'subagent', step: 'tool_results' });
+
+    expect(model.promptCache().map((entry) => entry.baseline)).toEqual([undefined, undefined, 1, 2]);
+    expect(problemsOf(model)).toEqual([expect.stringContaining('request #3 (every request) does not extend request #2')]);
+  });
+
   it("accepts a declared break in a subagent's own history", async () => {
     const model = fakeModel();
     const ask = openai(model);

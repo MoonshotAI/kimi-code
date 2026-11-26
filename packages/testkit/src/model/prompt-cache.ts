@@ -161,10 +161,10 @@ export class PromptCacheLedger {
       const thread = threadOf(observation);
       const pool = this.observations.slice(0, position).filter((earlier) => !earlier.rejected && sameThread(earlier, thread));
       if (role === 'subagent') {
-        if (observation.source.continues !== true) return { observation };
-        const own = previousStepOf(observation, pool, continued);
-        if (own === undefined) return { observation };
-        if (!observation.rejected) continued.add(own);
+        const continues = observation.source.continues === true;
+        const own = continues ? previousStepOf(observation, pool, continued) : supersededHeadOf(observation, pool, continued);
+        if (own !== undefined && !observation.rejected) continued.add(own);
+        if (!continues || own === undefined) return { observation };
         return { observation, baseline: own.source.request, break: breakBetween(own.segments, observation.segments) };
       }
       const baseline = pool.findLast((earlier) => earlier.source.role === 'main');
@@ -216,9 +216,19 @@ function sameThread(observation: Observation, thread: Thread): boolean {
   return observation.source.protocol === thread.protocol && observation.cacheKey === thread.cacheKey && observation.model === thread.model;
 }
 
+function supersededHeadOf(observation: Observation, pool: readonly Observation[], continued: ReadonlySet<Observation>): Observation | undefined {
+  return headsOf(observation, pool, continued).findLast(
+    (earlier) => earlier.segments.length < observation.segments.length && breakBetween(earlier.segments, observation.segments) === undefined,
+  );
+}
+
+function headsOf(observation: Observation, pool: readonly Observation[], continued: ReadonlySet<Observation>): readonly Observation[] {
+  return pool.filter((earlier) => earlier.source.role === 'subagent' && earlier.source.agent === observation.source.agent && !continued.has(earlier));
+}
+
 function previousStepOf(observation: Observation, pool: readonly Observation[], continued: ReadonlySet<Observation>): Observation | undefined {
   const candidates = pool.filter((earlier) => earlier.source.role === 'subagent' && earlier.source.agent === observation.source.agent);
-  const heads = candidates.filter((earlier) => !continued.has(earlier));
+  const heads = headsOf(observation, pool, continued);
   const extended = heads.findLast((earlier) => breakBetween(earlier.segments, observation.segments) === undefined);
   return extended ?? mostSharedHistory(observation, heads) ?? mostSharedHistory(observation, candidates);
 }
