@@ -1,28 +1,20 @@
 <script setup lang="ts">
-import { useHistoryState } from '../historyState';
-import { computed, inject, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, Tooltip } from '@moonshot-ai/app-ui';
-import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import type { ToolCall } from '@moonshot-ai/app-core/client/types';
 import { basename } from '@moonshot-ai/app-core/lib';
 import { parseReadOutput } from '@moonshot-ai/app-core/lib';
-import { argFallbackText, argFilePath, num, parseArgRecord } from '@moonshot-ai/app-components';
+import { argFilePath, num } from '@moonshot-ai/app-components';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import HighlightedCode from '../../HighlightedCode.vue';
 import OutputPanel from './OutputPanel.vue';
+import { useToolCard, useToolCardExpansion, type ToolCardProps } from './useToolCard';
 
-const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
-
-const panelApi = inject(panelApiKey);
-
+const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
 const { t } = useI18n();
+const { panelApi, status, args, argText, hasOutput } = useToolCard(props);
 
-const argText = computed(() => argFallbackText(props.tool.arg));
-const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
-
-const args = computed(() => parseArgRecord(props.tool.arg));
 const path = computed(() => argFilePath(args.value) ?? '');
 const fileName = computed(() => (path.value ? basename(path.value) : ''));
 
@@ -52,21 +44,13 @@ const lineCount = computed(() => parsed.value?.contents.length ?? props.tool.out
 const panelTitle = computed(() => fileName.value || path.value);
 const copyText = computed(() => (parsed.value ? contentRows.value.join('\n') : (props.tool.output ?? []).join('\n')));
 
-const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
 const canExpand = computed(() => parsed.value !== null || hasOutput.value);
-const open = useHistoryState(`tool:${props.tool.id}:open`, props.tool.defaultExpanded === true && canExpand.value);
+const { open } = useToolCardExpansion(props, canExpand);
 
 const everOpened = ref(open.value);
 watch(open, (v) => {
   if (v) everOpened.value = true;
 });
-
-watch(
-  () => [props.tool.defaultExpanded, props.tool.output?.length, props.tool.status] as const,
-  () => {
-    if (props.tool.defaultExpanded === true && canExpand.value) open.value = true;
-  },
-);
 
 function openFile(): void {
   if (!path.value) return;
