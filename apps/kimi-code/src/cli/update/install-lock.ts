@@ -1,7 +1,7 @@
 import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { processStampAlive } from '@moonshot-ai/agent-core-v2/persistence/backends/node-fs/processLiveness';
+import { processStampAlive } from '@moonshot-ai/agent-core-v2/_base/utils/processLiveness';
 
 import { getUpdateInstallLockFile } from '#/utils/paths';
 import { createFileIfAbsent } from '#/utils/persistence';

@@ -4,7 +4,7 @@ import os from 'node:os';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { processStampAlive } from '#/persistence/backends/node-fs/processLiveness';
+import { processStampAlive } from '#/_base/utils/processLiveness';
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();

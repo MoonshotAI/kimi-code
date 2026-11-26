@@ -7,10 +7,10 @@ import { join } from 'pathe';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { parseBooleanEnv } from '#/_base/utils/env';
+import { processStampAlive } from '#/_base/utils/processLiveness';
 import { LifecycleScope } from '#/app/scopes';
 
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { processStampAlive } from '#/persistence/backends/node-fs/processLiveness';
 import {
   ISessionLockService,
   SessionLockHolds,

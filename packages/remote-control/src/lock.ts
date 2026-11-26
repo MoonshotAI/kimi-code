@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { processStampAlive } from '@moonshot-ai/agent-core-v2/persistence/backends/node-fs/processLiveness';
+import { processStampAlive } from '@moonshot-ai/agent-core-v2/_base/utils/processLiveness';
 
 export interface RemoteControlLockInfo {
   readonly pid: number;
