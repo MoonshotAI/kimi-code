@@ -697,6 +697,7 @@ export * from '#/agent/mcp/mcpService';
 export * from '#/agent/mcp/mcpDiscoveryOps';
 export * from '#/agent/mcp/mcpFailureOps';
 export * from '#/mcpCore/config-schema';
+export * from '#/mcpCore/config-override';
 export * from '#/agent/media/mediaTools';
 export * from '#/agent/media/mediaToolsRegistrar';
 export * from '#/agent/media/registerMediaTools';

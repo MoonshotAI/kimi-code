@@ -28,6 +28,7 @@ import { ProjectMcpService } from '#/project/projectMcp/projectMcpService';
 import {
   IProjectMcpConfigService,
   type McpServersChangeEvent,
+  type McpSourceServersChangeEvent,
   type McpTunables,
 } from '#/project/projectMcpConfig/projectMcpConfig';
 import {
@@ -67,6 +68,7 @@ describe('SessionMcpService', () => {
   let oauthService: McpOAuthService;
   let oauthScheduler: ManualMcpOAuthScheduler;
   let manager: McpConnectionManager | undefined;
+  let sourceChanges: AsyncEmitter<McpSourceServersChangeEvent>;
   let trackedSessions: Array<string | undefined>;
   let primaryDirs: IProjectDirs;
   let dirsChanges: Emitter<void>;
@@ -89,6 +91,7 @@ describe('SessionMcpService', () => {
     tunablesValue = {};
     tunablesFn = vi.fn(() => tunablesValue);
     configChanges = disposables.add(new AsyncEmitter<McpServersChangeEvent>());
+    sourceChanges = disposables.add(new AsyncEmitter<McpSourceServersChangeEvent>());
     tunablesChanges = disposables.add(new Emitter<McpTunables>());
     oauthScheduler = new ManualMcpOAuthScheduler();
     oauthService = new McpOAuthService({
@@ -147,8 +150,10 @@ describe('SessionMcpService', () => {
           _serviceBrand: undefined,
           ready: Promise.resolve(),
           servers: () => current,
+          sourceEntries: (id: string) => (id === 'workspace' ? current : {}),
           tunables: () => tunablesFn() as McpTunables,
           onDidChange: configChanges.event,
+          onDidChangeSource: sourceChanges.event,
           onDidChangeTunables: tunablesChanges.event,
         });
         reg.definePartialInstance(IMcpOAuthService, oauthService);
@@ -160,14 +165,14 @@ describe('SessionMcpService', () => {
       },
     });
     projectService = ix.get(IProjectMcpService);
-    manager = projectService.connectionManager();
+    manager = projectService.sourceManager('workspace');
     return projectService;
   }
 
   function createSession(
-    source: McpSource,
+    sources: readonly McpSource[],
     ephemeralServers: Record<string, McpServerConfig> = {},
-    options: { sessionId?: string; sessionCwd?: string } = {},
+    options: { sessionId?: string; sessionCwd?: string; disabledSources?: readonly string[] } = {},
   ): SessionMcpService {
     const sessionId = options.sessionId ?? 'session-1';
     const session = new SessionMcpService(
@@ -179,7 +184,8 @@ describe('SessionMcpService', () => {
         cwd: options.sessionCwd ?? cwd,
       }),
       ephemeralServers,
-      [source],
+      sources,
+      options.disabledSources ?? [],
       { ready: Promise.resolve(), get: () => undefined } as unknown as IConfigService,
       oauthService,
       environmentServices,
@@ -206,7 +212,7 @@ describe('SessionMcpService', () => {
     });
 
     const project = createProject();
-    const session = createSession(project.source());
+    const session = createSession(project.sources());
 
     await vi.waitFor(() => {
       expect(manager?.get('alpha')).toBeDefined();
@@ -221,13 +227,13 @@ describe('SessionMcpService', () => {
     expect(session.isBaselineServer('late')).toBe(false);
     expect(session.isBaselineServer('alpha')).toBe(true);
 
-    expect(createSession(project.source()).isBaselineServer('late')).toBe(true);
+    expect(createSession(project.sources()).isBaselineServer('late')).toBe(true);
   }, 20000);
 
   it('admits servers that finished the initial load before the first baseline read', async () => {
     current = { alpha: stdioServer() };
     const project = createProject();
-    const session = createSession(project.source());
+    const session = createSession(project.sources());
 
     await project.ready;
     expect(manager?.get('alpha')?.status).toBe('connected');
@@ -240,7 +246,7 @@ describe('SessionMcpService', () => {
     try {
       current = { remote: { transport: 'http', url: server.url } };
       const project = createProject();
-      const session = createSession(project.source());
+      const session = createSession(project.sources());
 
       await project.ready;
       expect(manager?.get('remote')?.status).toBe('needs-auth');
@@ -256,7 +262,7 @@ describe('SessionMcpService', () => {
     const project = createProject();
     await project.ready;
 
-    const session = createSession(project.source(), { eph: stdioServer() });
+    const session = createSession(project.sources(), { eph: stdioServer() });
     expect(session.isBaselineServer('eph')).toBe(true);
     expect(session.isBaselineServer('base')).toBe(true);
 
@@ -286,7 +292,7 @@ describe('SessionMcpService', () => {
     const project = createProject();
     await project.ready;
 
-    const session = createSession(project.source(), { eph: stdioServer() });
+    const session = createSession(project.sources(), { eph: stdioServer() });
     expect(session.isBaselineServer('eph')).toBe(true);
     expect(session.isBaselineServer('base')).toBe(true);
 
@@ -304,7 +310,7 @@ describe('SessionMcpService', () => {
     const project = createProject();
     await project.ready;
 
-    const session = createSession(project.source(), { eph: stdioServer() });
+    const session = createSession(project.sources(), { eph: stdioServer() });
     await session.ready;
 
     const view = session.connectionManager;
@@ -323,7 +329,7 @@ describe('SessionMcpService', () => {
     await project.ready;
     const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
 
-    const session = createSession(project.source(), { eph: stdioServer() });
+    const session = createSession(project.sources(), { eph: stdioServer() });
     await session.disposeAsync();
     await session.ready;
 
@@ -335,7 +341,7 @@ describe('SessionMcpService', () => {
     const project = createProject();
     await project.ready;
 
-    const session = createSession(project.source(), { eph: stdioServer() });
+    const session = createSession(project.sources(), { eph: stdioServer() });
     await session.ready;
 
     expect(new Set(trackedSessions)).toEqual(new Set([undefined, 'session-1']));
@@ -346,11 +352,11 @@ describe('SessionMcpService', () => {
     await project.ready;
     const sessionCwd = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-other-cwd-'));
     try {
-      const empty = createSession(project.source(), {}, { sessionCwd });
+      const empty = createSession(project.sources(), {}, { sessionCwd });
       await empty.ready;
       const connectAll = vi.spyOn(McpConnectionManager.prototype, 'connectAll');
       const session = createSession(
-        { ...project.source(), stdioCwd: () => cwd },
+        project.sources().map((source) => ({ ...source, stdioCwd: () => cwd })),
         { eph: stdioServer() },
         { sessionCwd },
       );
@@ -366,12 +372,13 @@ describe('SessionMcpService', () => {
     const sharedManager = new McpConnectionManager();
     await sharedManager.connect('shared', { transport: 'stdio', command: 'unused', enabled: false });
     const project = createProject();
-    const session = createSession(project.source());
+    const session = createSession(project.sources());
     const registration = session.registerSource({
       id: 'extra',
       priority: 50,
       ready: Promise.resolve(),
       view: sharedManager,
+      entries: () => ({ shared: { transport: 'stdio', command: 'unused', enabled: false } }),
     });
 
     expect(session.connectionManager.get('shared')?.name).toBe('shared');
@@ -383,7 +390,7 @@ describe('SessionMcpService', () => {
 
   it('does not admit sources registered after the baseline froze into the baseline', async () => {
     const project = createProject();
-    const session = createSession(project.source());
+    const session = createSession(project.sources());
     await session.ready;
 
     const lateManager = new McpConnectionManager();
@@ -394,6 +401,7 @@ describe('SessionMcpService', () => {
       priority: MCP_SOURCE_PRIORITY.caller + 1,
       ready: Promise.resolve(),
       view: lateManager,
+      entries: () => ({ late: { transport: 'stdio', command: 'unused', enabled: false } }),
     });
 
     expect(session.connectionManager.get('late')?.name).toBe('late');
@@ -404,7 +412,7 @@ describe('SessionMcpService', () => {
 
   it('releases a source registered after the session was disposed', async () => {
     const project = createProject();
-    const session = createSession(project.source());
+    const session = createSession(project.sources());
     await session.disposeAsync();
     const dispose = vi.fn();
     session.registerSource({
@@ -412,10 +420,147 @@ describe('SessionMcpService', () => {
       priority: 1,
       ready: Promise.resolve(),
       view: new McpConnectionManager(),
+      entries: () => ({}),
       dispose,
     });
     expect(dispose).toHaveBeenCalledTimes(1);
   });
+
+  it('disabling a source lets a lower-priority source take over and re-enabling shadows it again', async () => {
+    const userManager = new McpConnectionManager();
+    const workspaceManager = new McpConnectionManager();
+    await userManager.connect('shared', {
+      transport: 'http',
+      url: 'https://user.example.test/mcp',
+      enabled: false,
+    });
+    await workspaceManager.connect('shared', {
+      transport: 'http',
+      url: 'https://workspace.example.test/mcp',
+      enabled: false,
+    });
+    const session = createSession([
+      {
+        id: 'user',
+        priority: MCP_SOURCE_PRIORITY.user,
+        ready: Promise.resolve(),
+        view: userManager,
+        entries: () => ({
+          shared: { transport: 'http', url: 'https://user.example.test/mcp', enabled: false },
+        }),
+      },
+      {
+        id: 'workspace',
+        priority: MCP_SOURCE_PRIORITY.workspace,
+        ready: Promise.resolve(),
+        view: workspaceManager,
+        entries: () => ({
+          shared: { transport: 'http', url: 'https://workspace.example.test/mcp', enabled: false },
+        }),
+      },
+    ]);
+    await session.ready;
+
+    expect(session.connectionManager.getRemoteServerUrl('shared')).toBe('https://workspace.example.test/mcp');
+    session.setSourceEnabled('workspace', false);
+    expect(session.isSourceEnabled('workspace')).toBe(false);
+    expect(session.connectionManager.getRemoteServerUrl('shared')).toBe('https://user.example.test/mcp');
+    expect(session.listSources().map((source) => [source.id, source.enabled])).toEqual([
+      ['user', true],
+      ['workspace', false],
+    ]);
+
+    session.setSourceEnabled('workspace', true);
+    expect(session.connectionManager.getRemoteServerUrl('shared')).toBe('https://workspace.example.test/mcp');
+    await userManager.shutdown();
+    await workspaceManager.shutdown();
+  });
+
+  it('honors disabled sources from session options', async () => {
+    const userManager = new McpConnectionManager();
+    const rootManager = new McpConnectionManager();
+    await userManager.connect('srv', { transport: 'stdio', command: 'user-cmd', enabled: false });
+    await rootManager.connect('srv', { transport: 'stdio', command: 'root-cmd', enabled: false });
+    const session = createSession(
+      [
+        {
+          id: 'user',
+          priority: MCP_SOURCE_PRIORITY.user,
+          ready: Promise.resolve(),
+          view: userManager,
+          entries: () => ({ srv: { transport: 'stdio', command: 'user-cmd', enabled: false } }),
+        },
+        {
+          id: 'project-root',
+          priority: MCP_SOURCE_PRIORITY['project-root'],
+          ready: Promise.resolve(),
+          view: rootManager,
+          entries: () => ({ srv: { transport: 'stdio', command: 'root-cmd', enabled: false } }),
+        },
+      ],
+      {},
+      { disabledSources: ['project-root'] },
+    );
+    await session.ready;
+
+    expect(session.isSourceEnabled('project-root')).toBe(false);
+    await expect(session.connectionManager.reconnect('srv')).rejects.toThrow('MCP server is disabled: srv');
+    await userManager.shutdown();
+    await rootManager.shutdown();
+  });
+
+  it('projects higher-priority partial overrides as cross-source disable vetoes and disclosure overrides', async () => {
+    const userManager = new McpConnectionManager({
+      environmentResolver: environmentServices,
+      environmentId: 'local',
+      stdioCwd: () => cwd,
+    });
+    await userManager.connect('off', stdioServer());
+    await userManager.connect('tuned', stdioServer());
+    let overrideEntries: Record<string, { enabled?: boolean; deferred?: boolean; disabledTools?: string[] }> = {
+      off: { enabled: false },
+      tuned: { deferred: false, disabledTools: ['echo'] },
+    };
+    const overrideChanges = new Emitter<void>();
+    const workspaceManager = new McpConnectionManager();
+    const session = createSession([
+      {
+        id: 'user',
+        priority: MCP_SOURCE_PRIORITY.user,
+        ready: Promise.resolve(),
+        view: userManager,
+        entries: () => ({
+          off: stdioServer(),
+          tuned: { ...stdioServer(), deferred: true },
+        }),
+      },
+      {
+        id: 'workspace',
+        priority: MCP_SOURCE_PRIORITY.workspace,
+        ready: Promise.resolve(),
+        view: workspaceManager,
+        entries: () => overrideEntries,
+        onDidChangeEntries: overrideChanges.event,
+      },
+    ]);
+    await session.ready;
+
+    expect(session.connectionManager.get('off')?.status).toBe('disabled');
+    expect(session.connectionManager.resolved('off')).toBeUndefined();
+    await expect(session.connectionManager.reconnect('off')).rejects.toThrow('MCP server is disabled: off');
+    expect(session.connectionManager.deferredOf('tuned')).toBe(false);
+    const enabledNames = [...(session.connectionManager.resolved('tuned')?.enabledNames ?? [])];
+    expect(enabledNames).toContain('boom');
+    expect(enabledNames).not.toContain('echo');
+    expect(workspaceManager.list()).toEqual([]);
+
+    overrideEntries = {};
+    overrideChanges.fire();
+    expect(session.connectionManager.get('off')?.status).toBe('connected');
+    expect(session.connectionManager.deferredOf('tuned')).toBe(true);
+    await userManager.shutdown();
+    await workspaceManager.shutdown();
+  }, 20000);
 });
 
 describe('MergedMcpConnectionView', () => {

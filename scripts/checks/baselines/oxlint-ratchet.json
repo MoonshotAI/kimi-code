@@ -1039,7 +1039,6 @@
     "packages/agent-core-v2/src/project/projectDirs/projectDirsService.ts": 2,
     "packages/agent-core-v2/src/project/projectInstance/projectInstanceManagerService.ts": 1,
     "packages/agent-core-v2/src/project/projectInstructions/projectInstructionsService.ts": 2,
-    "packages/agent-core-v2/src/project/projectMcpConfig/projectMcpConfigService.ts": 5,
     "packages/agent-core-v2/test/app/capability/capabilityService.test.ts": 4,
     "packages/agent-core-v2/test/app/plugin/manager-consumption.test.ts": 3,
     "packages/agent-core-v2/test/features/sessionInit/sessionInit.test.ts": 3,

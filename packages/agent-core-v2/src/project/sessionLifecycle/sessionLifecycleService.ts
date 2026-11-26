@@ -73,7 +73,7 @@ import {
 import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { sessionMcpSourcesSeed } from '#/session/mcp/mcpSource';
+import { sessionDisabledMcpSourcesSeed, sessionMcpSourcesSeed } from '#/session/mcp/mcpSource';
 import { ISessionMcpService, SessionMcpService } from '#/session/mcp/sessionMcpService';
 import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
@@ -333,7 +333,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             [ISessionSkillCatalogData, workdir.skills.sessionData()],
             [ISessionInstructionsProvider, workdir.instructions.sessionProvider()],
             [ISessionMcpService, new SyncDescriptor(SessionMcpService)],
-            ...sessionMcpSourcesSeed([workdir.mcp.source()]),
+            ...sessionMcpSourcesSeed(workdir.mcp.sources()),
+            ...sessionDisabledMcpSourcesSeed(opts.disabledMcpSources ?? []),
             [ISessionProjectInfo, dirs.sessionInfo()],
             [ISessionWorkdir, {
               _serviceBrand: undefined,
@@ -536,6 +537,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       workDir,
       additionalDirs: opts?.additionalDirs,
       mcpServers: opts?.mcpServers,
+      disabledMcpSources: opts?.disabledMcpSources,
     }, environment, await this.openWorkdir(environment, workDir, environment?.environmentId !== LOCAL_ENVIRONMENT_ID));
     try {
       const agents = handle.accessor.get(IAgentLifecycleService);

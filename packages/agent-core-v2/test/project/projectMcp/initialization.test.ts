@@ -10,7 +10,6 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { IMcpConfigStore, type McpConfigWriteEvent } from '#/app/mcpConfig/configStore';
@@ -46,17 +45,17 @@ describe('Workspace MCP initialization', () => {
   let cwd: string;
   let homeDir: string;
   let disposables: DisposableStore;
-  let manager: McpConnectionManager | undefined;
+  let service: ProjectMcpService | undefined;
 
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-cwd-'));
     homeDir = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-home-'));
     disposables = new DisposableStore();
-    manager = undefined;
+    service = undefined;
   });
 
   afterEach(async () => {
-    await manager?.shutdown();
+    await service?.disposeAsync();
     disposables.dispose();
     await Promise.all([
       rm(cwd, { recursive: true, force: true }),
@@ -115,7 +114,8 @@ describe('Workspace MCP initialization', () => {
         reg.define(IProjectMcpService, ProjectMcpService);
       },
     });
-    return ix.get(IProjectMcpService);
+    service = ix.get(IProjectMcpService) as ProjectMcpService;
+    return service;
   }
 
   it('exposes the connection manager before config is ready and starts connecting once ready', async () => {
@@ -130,16 +130,16 @@ describe('Workspace MCP initialization', () => {
         environment_id: 'local',
       },
     });
-    const service = createWorkspaceMcpService(ready);
-    manager = service.connectionManager();
-    expect(manager.list()).toEqual([]);
+    const created = createWorkspaceMcpService(ready);
+    const view = created.connectionManager();
+    expect(view.list()).toEqual([]);
 
     await sleep(50);
-    expect(manager.list()).toEqual([]);
+    expect(view.list()).toEqual([]);
 
     resolveConfigReady();
-    await service.ready;
-    expect(manager.get('alpha')?.status).toBe('connected');
+    await created.ready;
+    expect(view.get('alpha')?.status).toBe('connected');
   }, 15000);
 
   it('times out tool calls using the session MCP timeout preference', async () => {
@@ -150,10 +150,9 @@ describe('Workspace MCP initialization', () => {
         environment_id: 'local',
       },
     });
-    const service = createWorkspaceMcpService(Promise.resolve(), { toolTimeoutMs: 1 });
-    await service.ready;
-    manager = service.connectionManager();
-    const client = manager.resolved('slowTool')?.client;
+    const created = createWorkspaceMcpService(Promise.resolve(), { toolTimeoutMs: 1 });
+    await created.ready;
+    const client = created.connectionManager().resolved('slowTool')?.client;
     if (client === undefined) throw new Error('expected a connected client');
     await expect(client.callTool('slow_echo', { text: 'hi' })).rejects.toThrow(/timed out/i);
   }, 15000);

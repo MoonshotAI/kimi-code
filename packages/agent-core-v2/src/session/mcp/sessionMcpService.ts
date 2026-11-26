@@ -4,6 +4,7 @@ import { ILogService } from '#/_base/log/log';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
+import { mergeMcpServerEntries } from '#/app/mcpConfig/configLoader';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import {
   MCP_SECTION,
@@ -21,14 +22,24 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import {
+  ISessionDisabledMcpSources,
   ISessionMcpSources,
   MCP_SOURCE_PRIORITY,
   type McpSource,
 } from '#/session/mcp/mcpSource';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 
+export interface SessionMcpSourceInfo {
+  readonly id: string;
+  readonly priority: number;
+  readonly enabled: boolean;
+}
+
 export interface ISessionMcpService extends ISessionMcpHandle {
   registerSource(source: McpSource): IDisposable;
+  setSourceEnabled(sourceId: string, enabled: boolean): void;
+  isSourceEnabled(sourceId: string): boolean;
+  listSources(): readonly SessionMcpSourceInfo[];
 }
 
 export const ISessionMcpService = ISessionMcpHandle as ServiceIdentifier<ISessionMcpService>;
@@ -40,9 +51,12 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
   readonly ready: Promise<void>;
 
   private readonly view = new MergedMcpConnectionView();
-  private readonly registrations = new Map<string, IDisposable>();
+  private readonly sources = new Map<string, McpSource>();
+  private readonly layerDisposers = new Map<string, IDisposable>();
+  private readonly sourceSubscriptions = new Map<string, IDisposable>();
+  private readonly disabledSources: Set<string>;
   private readonly extraBaselineNames = new Set<string>();
-  private readonly sharedViews: readonly McpConnectionView[];
+  private sharedBaselineViews: readonly McpConnectionView[];
   private readonly stdioCwd: () => string;
   private baseline?: Set<string>;
   private baselineFrozen = false;
@@ -52,6 +66,7 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
     @ISessionContext private readonly context: ISessionContext,
     @ISessionEphemeralMcpServers ephemeralServers: Readonly<Record<string, McpServerConfig>>,
     @ISessionMcpSources initialSources: readonly McpSource[],
+    @ISessionDisabledMcpSources disabledSources: readonly string[],
     @IConfigService private readonly config: IConfigService,
     @IMcpOAuthService private readonly oauthService: McpOAuthService,
     @IEnvironmentService private readonly environmentResolver: EnvironmentResolver,
@@ -61,7 +76,8 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
     super();
     this.connectionManager = this.view;
     this._register(this.view);
-    this.sharedViews = initialSources.map((source) => source.view);
+    this.disabledSources = new Set(disabledSources);
+    this.sharedBaselineViews = initialSources.map((source) => source.view);
     this.stdioCwd =
       initialSources.find((source) => source.stdioCwd !== undefined)?.stdioCwd ??
       (() => this.context.cwd ?? process.cwd());
@@ -80,6 +96,7 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
     );
     const ephemeralReady = this.attachEphemeralServers(ephemeralServers);
     this.ready = Promise.all([sharedReady, ephemeralReady]).then(() => undefined);
+    this.reconcileEffectiveEntries();
   }
 
   registerSource(source: McpSource): IDisposable {
@@ -90,11 +107,40 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
     return this.attachSource(source);
   }
 
+  setSourceEnabled(sourceId: string, enabled: boolean): void {
+    if (enabled) {
+      if (!this.disabledSources.delete(sourceId)) return;
+    } else if (this.disabledSources.has(sourceId)) {
+      return;
+    } else {
+      this.disabledSources.add(sourceId);
+    }
+    const source = this.sources.get(sourceId);
+    if (source !== undefined) {
+      this.syncSourceLayer(source);
+    }
+    this.reconcileEffectiveEntries();
+  }
+
+  isSourceEnabled(sourceId: string): boolean {
+    return !this.disabledSources.has(sourceId);
+  }
+
+  listSources(): readonly SessionMcpSourceInfo[] {
+    return [...this.sources.values()]
+      .toSorted((a, b) => a.priority - b.priority)
+      .map((source) => ({
+        id: source.id,
+        priority: source.priority,
+        enabled: !this.disabledSources.has(source.id),
+      }));
+  }
+
   isBaselineServer(name: string): boolean {
     const names = this.snapshotBaseline();
     if (names.has(name)) return true;
     if (this.baselineFrozen) return false;
-    if (!this.sharedViews.some((view) => view.get(name) !== undefined)) return false;
+    if (!this.sharedBaselineViews.some((view) => view.get(name) !== undefined)) return false;
     names.add(name);
     return true;
   }
@@ -107,27 +153,64 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
 
   disposeAsync(): Promise<void> {
     this.shutdown ??= (async () => {
-      for (const registration of [...this.registrations.values()].toReversed()) {
-        registration.dispose();
+      for (const [id, source] of [...this.sources.entries()].toReversed()) {
+        this.detachSource(id, source);
       }
-      this.registrations.clear();
       super.dispose();
     })();
     return this.shutdown;
   }
 
   private attachSource(source: McpSource): IDisposable {
-    this.registrations.get(source.id)?.dispose();
-    const removeLayer = this.view.addLayer(source);
-    const registration = toDisposable(() => {
-      removeLayer.dispose();
-      if (this.registrations.get(source.id) === registration) {
-        this.registrations.delete(source.id);
+    const previous = this.sources.get(source.id);
+    if (previous !== undefined) {
+      this.detachSource(source.id, previous);
+    }
+    this.sources.set(source.id, source);
+    const subscription =
+      source.onDidChangeEntries?.(() => this.reconcileEffectiveEntries()) ??
+      toDisposable(() => {});
+    this.sourceSubscriptions.set(source.id, subscription);
+    this.sharedBaselineViews = [
+      ...this.sharedBaselineViews.filter((view) => view !== previous?.view),
+      source.view,
+    ];
+    this.syncSourceLayer(source);
+    this.reconcileEffectiveEntries();
+    return toDisposable(() => {
+      if (this.sources.get(source.id) === source) {
+        this.detachSource(source.id, source);
       }
-      void source.dispose?.();
     });
-    this.registrations.set(source.id, registration);
-    return registration;
+  }
+
+  private detachSource(id: string, source: McpSource): void {
+    this.layerDisposers.get(id)?.dispose();
+    this.layerDisposers.delete(id);
+    this.sourceSubscriptions.get(id)?.dispose();
+    this.sourceSubscriptions.delete(id);
+    this.sources.delete(id);
+    this.sharedBaselineViews = this.sharedBaselineViews.filter((view) => view !== source.view);
+    void source.dispose?.();
+    this.reconcileEffectiveEntries();
+  }
+
+  private syncSourceLayer(source: McpSource): void {
+    if (this.disabledSources.has(source.id)) {
+      this.layerDisposers.get(source.id)?.dispose();
+      this.layerDisposers.delete(source.id);
+      return;
+    }
+    if (this.layerDisposers.has(source.id)) return;
+    this.layerDisposers.set(source.id, this.view.addLayer(source));
+  }
+
+  private reconcileEffectiveEntries(): void {
+    const activeLayers = [...this.sources.values()]
+      .filter((source) => !this.disabledSources.has(source.id))
+      .toSorted((a, b) => a.priority - b.priority)
+      .map((source) => source.entries());
+    this.view.setEffectiveEntries(mergeMcpServerEntries(activeLayers));
   }
 
   private async attachEphemeralServers(
@@ -150,11 +233,15 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
       resolveClientName: () => this.identity.current().slug,
     });
     const unsubscribeOAuth = subscribeMcpOAuthEvents(this.oauthService, this.log, manager);
+    const connecting = manager.connectAll({ ...servers }).catch((error: unknown) => {
+      this.log.error('session mcp overlay initial load failed', { error });
+    });
     const registration = this.registerSource({
       id: 'caller',
       priority: MCP_SOURCE_PRIORITY.caller,
-      ready: Promise.resolve(),
+      ready: connecting,
       view: manager,
+      entries: () => servers,
       dispose: () => {
         unsubscribeOAuth();
         return manager.dispose();
@@ -164,15 +251,13 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
       registration.dispose();
       return;
     }
-    await manager.connectAll({ ...servers }).catch((error: unknown) => {
-      this.log.error('session mcp overlay initial load failed', { error });
-    });
+    await connecting;
   }
 
   private snapshotBaseline(): Set<string> {
     if (this.baseline === undefined) {
       this.baseline = new Set<string>(this.extraBaselineNames);
-      for (const view of this.sharedViews) {
+      for (const view of this.sharedBaselineViews) {
         for (const entry of view.list()) {
           this.baseline.add(entry.name);
         }

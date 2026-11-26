@@ -7,13 +7,18 @@ import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { loadMcpServers, resolveMcpJsonPaths } from '#/app/mcpConfig/configLoader';
+import {
+  loadMcpConfigLayers,
+  mergeMcpServerEntries,
+  resolveMcpJsonPaths,
+} from '#/app/mcpConfig/configLoader';
 import { MCP_SECTION, mcpTunablesFromSection, type McpSection } from '#/app/mcpConfig/configSection';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { PluginMcpServerEntry } from '#/app/plugin/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
+import type { McpServerConfigEntry } from '#/mcpCore/config-override';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { mcpOAuthStoreKey } from '#/mcpCore/oauth/store';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -23,19 +28,28 @@ import { watch, watchCandidates } from '#human/utils/watch';
 
 import {
   IProjectMcpConfigService,
+  MCP_PROJECT_SOURCE_IDS,
   type McpDirs,
+  type McpProjectSourceId,
   type McpServersChangeEvent,
+  type McpSourceServersChangeEvent,
   type McpTunables,
 } from './projectMcpConfig';
 
 const WATCH_DEBOUNCE_MS = 200;
+
+type SourceEntriesMap = Record<McpProjectSourceId, Record<string, McpServerConfigEntry>>;
+
+function emptySourceEntries(): SourceEntriesMap {
+  return { plugin: {}, user: {}, 'project-root': {}, workspace: {} };
+}
 
 export class ProjectMcpConfigService extends Disposable implements IProjectMcpConfigService {
   declare readonly _serviceBrand: undefined;
 
   readonly ready: Promise<void>;
   private mutationTail: Promise<void> = Promise.resolve();
-  private fileServers = new Map<string, McpServerConfig>();
+  private layers: SourceEntriesMap = emptySourceEntries();
   private pluginServers = new Map<string, McpServerConfig>();
   private disabledOAuthServers = new Map<string, McpServerConfig>();
   private disposed = false;
@@ -44,8 +58,12 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
   private initializationComplete = false;
   private readonly watchDebounce = this._register(new TimeoutTimer());
   private readonly changeEmitter = this._register(new AsyncEmitter<McpServersChangeEvent>());
+  private readonly sourceChangeEmitter = this._register(
+    new AsyncEmitter<McpSourceServersChangeEvent>(),
+  );
   private readonly tunablesEmitter = this._register(new Emitter<McpTunables>());
   readonly onDidChange = this.changeEmitter.event;
+  readonly onDidChangeSource = this.sourceChangeEmitter.event;
   readonly onDidChangeTunables = this.tunablesEmitter.event;
   private projectWatcher?: IDisposable;
   private watchedPrimary?: string;
@@ -76,7 +94,7 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
     this._register(
       this.plugins.onDidReload((event) => {
         event.waitUntil(
-          this.reloadPluginServers().catch((error) => {
+          this.reloadPluginServers().catch((error: unknown) => {
             this.log.warn(`mcp plugin reload failed: ${String(error)}`);
           }),
         );
@@ -84,7 +102,7 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
     );
     this._register(
       this.trust.onDidChange(() => {
-        void this.reloadAfterTrustChange().catch((error) => {
+        void this.reloadAfterTrustChange().catch((error: unknown) => {
           this.log.warn(`mcp trust reload failed: ${String(error)}`);
         });
       }),
@@ -92,7 +110,7 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
     this._register(
       mcpConfigStore.onDidWrite((event) => {
         event.waitUntil(
-          this.reloadFileServers().catch((error) => {
+          this.reloadFileServers().catch((error: unknown) => {
             this.log.warn(`mcp config reload after management write failed: ${String(error)}`);
           }),
         );
@@ -114,21 +132,24 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
     );
     this._register({ dispose: () => this.projectWatcher?.dispose() });
     this.primaryReloadTail = this.watchConfigFiles();
-    this._register(
-      this.dirs.onDidChange(() => {
-        this.primaryReloadTail = this.primaryReloadTail.then(
-          () => this.refreshPrimary(),
-          () => this.refreshPrimary(),
-        );
-        void this.primaryReloadTail.catch((error) => {
-          this.log.warn(`mcp primary reload failed: ${String(error)}`);
-        });
-      }),
-    );
+    this._register(this.dirs.onDidChange(() => this.schedulePrimaryRefresh()));
+  }
+
+  private schedulePrimaryRefresh(): void {
+    const refresh = (): Promise<void> => this.refreshPrimary();
+    const reloaded = this.primaryReloadTail.then(refresh, refresh);
+    this.primaryReloadTail = reloaded;
+    void reloaded.catch((error: unknown) => {
+      this.log.warn(`mcp primary reload failed: ${String(error)}`);
+    });
   }
 
   servers(): Readonly<Record<string, McpServerConfig>> {
     return this.current;
+  }
+
+  sourceEntries(sourceId: McpProjectSourceId): Readonly<Record<string, McpServerConfigEntry>> {
+    return this.layers[sourceId];
   }
 
   tunables(): McpTunables {
@@ -141,20 +162,30 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
     return tail;
   }
 
+  private async loadLayers(trusted: boolean): Promise<SourceEntriesMap> {
+    const fileLayers = await loadMcpConfigLayers({
+      fs: this.fs,
+      cwd: this.dirs.primary,
+      homeDir: this.bootstrap.homeDir,
+      includeProject: trusted,
+    });
+    const next = emptySourceEntries();
+    next.plugin = this.layers.plugin;
+    for (const layer of fileLayers) {
+      next[layer.sourceId] = layer.servers;
+    }
+    return next;
+  }
+
   private async initialize(publish = false, preserveOAuthCredentials = false): Promise<void> {
     await this.config.ready;
     const trusted = await this.trust.get();
-    const [fileServers, pluginServers, entries] = await Promise.all([
-      loadMcpServers({
-        fs: this.fs,
-        cwd: this.dirs.primary,
-        homeDir: this.bootstrap.homeDir,
-        includeProject: trusted,
-      }),
+    const [layers, pluginServers, entries] = await Promise.all([
+      this.loadLayers(trusted),
       this.plugins.enabledMcpServers(),
       this.plugins.mcpServerEntries(),
     ]);
-    this.fileServers = new Map(Object.entries(fileServers));
+    layers.plugin = pluginServers;
     this.disabledOAuthServers = retainedDisabledOAuthServers(
       entries,
       this.pluginServers,
@@ -163,8 +194,9 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
     this.pluginServers = new Map(Object.entries(pluginServers));
     this.initializationComplete = true;
     if (publish) {
-      await this.publishIfChanged(preserveOAuthCredentials);
+      await this.publishIfChanged(layers, preserveOAuthCredentials);
     } else {
+      this.layers = layers;
       this.current = this.merged();
       this.syncOAuthConfiguration();
     }
@@ -175,21 +207,15 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
     await this.mutate(async () => {
       if (!this.initializationComplete) {
         await this.initialize(true, true);
-      } else {
-        const trusted = this.trust.isTrusted();
-        if (!trusted && this.untrustedOAuthServers === undefined) {
-          this.untrustedOAuthServers = Object.fromEntries(this.fileServers);
-        }
-        const fresh = await loadMcpServers({
-          fs: this.fs,
-          cwd: this.dirs.primary,
-          homeDir: this.bootstrap.homeDir,
-          includeProject: trusted,
-        });
-        if (trusted) await this.reconcileUntrustedOAuthServers(fresh);
-        this.fileServers = new Map(Object.entries(fresh));
+        return;
       }
-      await this.publishIfChanged(true);
+      const trusted = this.trust.isTrusted();
+      if (!trusted && this.untrustedOAuthServers === undefined) {
+        this.untrustedOAuthServers = this.mergedFiles();
+      }
+      const layers = await this.loadLayers(trusted);
+      if (trusted) await this.reconcileUntrustedOAuthServers(this.mergedFiles(layers));
+      await this.publishIfChanged(layers, true);
     });
   }
 
@@ -213,7 +239,11 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
   }
 
   private merged(): Record<string, McpServerConfig> {
-    return { ...Object.fromEntries(this.pluginServers), ...Object.fromEntries(this.fileServers) };
+    return mergeMcpServerEntries(MCP_PROJECT_SOURCE_IDS.map((id) => this.layers[id]));
+  }
+
+  private mergedFiles(layers: SourceEntriesMap = this.layers): Record<string, McpServerConfig> {
+    return mergeMcpServerEntries([layers.user, layers['project-root'], layers.workspace]);
   }
 
   private async refreshPrimary(): Promise<void> {
@@ -271,7 +301,7 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
 
   private scheduleFileReload(): void {
     this.watchDebounce.cancelAndSet(() => {
-      void this.reloadFileServers().catch((error) => {
+      void this.reloadFileServers().catch((error: unknown) => {
         this.log.warn(`mcp config reload failed: ${String(error)}`);
       });
     }, WATCH_DEBOUNCE_MS);
@@ -280,14 +310,8 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
   private async reloadFileServers(): Promise<void> {
     await this.ready;
     await this.mutate(async () => {
-      const fresh = await loadMcpServers({
-        fs: this.fs,
-        cwd: this.dirs.primary,
-        homeDir: this.bootstrap.homeDir,
-        includeProject: this.trust.isTrusted(),
-      });
-      this.fileServers = new Map(Object.entries(fresh));
-      await this.publishIfChanged();
+      const layers = await this.loadLayers(this.trust.isTrusted());
+      await this.publishIfChanged(layers);
     });
   }
 
@@ -306,6 +330,7 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
       );
       this.disabledOAuthServers = retained;
       this.pluginServers = new Map(Object.entries(fresh));
+      const layers: SourceEntriesMap = { ...this.layers, plugin: fresh };
       for (const [name, previous] of previousDisabled) {
         if (retained.has(name) || !('url' in previous)) continue;
         const next = entries.find((entry) => entry.name === name)?.config;
@@ -329,15 +354,17 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
         await this.cancelAuthorization(name, previous);
         await this.invalidateAuthorization(name, previous);
       }
-      await this.publishIfChanged(false, new Set(retained.keys()));
+      await this.publishIfChanged(layers, false, new Set(retained.keys()));
     });
   }
 
   private async publishIfChanged(
+    nextLayers: SourceEntriesMap,
     preserveOAuthCredentials = false,
     preservedOAuthServers?: ReadonlySet<string>,
   ): Promise<void> {
-    const next = this.merged();
+    const previousLayers = this.layers;
+    const next = mergeMcpServerEntries(MCP_PROJECT_SOURCE_IDS.map((id) => nextLayers[id]));
     const upsert: Record<string, McpServerConfig> = Object.create(null);
     const remove: string[] = [];
     for (const [name, config] of Object.entries(next)) {
@@ -369,10 +396,29 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
         await this.invalidateAuthorization(name, previous);
       }
     }
+    this.layers = nextLayers;
     this.current = next;
     this.syncOAuthConfiguration();
-    if (Object.keys(upsert).length === 0 && remove.length === 0) return;
-    await this.changeEmitter.fireAsync({ upsert, remove }, NO_ABORT);
+    if (Object.keys(upsert).length > 0 || remove.length > 0) {
+      await this.changeEmitter.fireAsync({ upsert, remove }, NO_ABORT);
+    }
+    for (const sourceId of MCP_PROJECT_SOURCE_IDS) {
+      const previousEntries = previousLayers[sourceId];
+      const entries = nextLayers[sourceId];
+      const changed =
+        Object.keys(previousEntries).length !== Object.keys(entries).length ||
+        Object.entries(entries).some(
+          ([name, entry]) =>
+            previousEntries[name] === undefined ||
+            fingerprintConfig(previousEntries[name]) !== fingerprintConfig(entry),
+        );
+      if (!changed) continue;
+      const sourceRemove = Object.keys(previousEntries).filter((name) => !Object.hasOwn(entries, name));
+      await this.sourceChangeEmitter.fireAsync(
+        { sourceId, upsert: entries, remove: sourceRemove },
+        NO_ABORT,
+      );
+    }
   }
 
   private syncOAuthConfiguration(): void {
@@ -430,7 +476,7 @@ function retainedDisabledOAuthServers(
 
 const NO_ABORT = new AbortController().signal;
 
-function fingerprintConfig(config: McpServerConfig): string {
+function fingerprintConfig(config: McpServerConfigEntry): string {
   return JSON.stringify(sortKeysDeep(config));
 }
 

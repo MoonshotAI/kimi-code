@@ -29,9 +29,12 @@ import { IProjectDirs } from '#/project/projectDirs/projectDirs';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { IProjectMcpService } from '#/project/projectMcp/projectMcp';
 import { ProjectMcpService } from '#/project/projectMcp/projectMcpService';
+import type { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import {
   IProjectMcpConfigService,
+  type McpServersChange,
   type McpServersChangeEvent,
+  type McpSourceServersChangeEvent,
   type McpTunables,
 } from '#/project/projectMcpConfig/projectMcpConfig';
 
@@ -60,10 +63,12 @@ describe('WorkspaceMcpService', () => {
   let tunablesValue: McpTunables;
   let tunablesFn: Mock<() => McpTunables>;
   let configChanges: AsyncEmitter<McpServersChangeEvent>;
+  let sourceChanges: AsyncEmitter<McpSourceServersChangeEvent>;
   let tunablesChanges: Emitter<McpTunables>;
   let oauthService: McpOAuthService;
   let oauthScheduler: ManualMcpOAuthScheduler;
-  let manager: InstanceType<typeof McpConnectionManager> | undefined;
+  let manager: MergedMcpConnectionView | undefined;
+  let service: ProjectMcpService | undefined;
   let trackedSessions: Array<string | undefined>;
   let primaryDirs: IProjectDirs;
   let dirsChanges: Emitter<void>;
@@ -83,6 +88,7 @@ describe('WorkspaceMcpService', () => {
     tunablesValue = {};
     tunablesFn = vi.fn(() => tunablesValue);
     configChanges = disposables.add(new AsyncEmitter<McpServersChangeEvent>());
+    sourceChanges = disposables.add(new AsyncEmitter<McpSourceServersChangeEvent>());
     tunablesChanges = disposables.add(new Emitter<McpTunables>());
     oauthScheduler = new ManualMcpOAuthScheduler();
     oauthService = new McpOAuthService({
@@ -90,11 +96,12 @@ describe('WorkspaceMcpService', () => {
       scheduler: oauthScheduler,
     });
     manager = undefined;
+    service = undefined;
   });
 
   afterEach(async () => {
     vi.restoreAllMocks();
-    await manager?.shutdown();
+    await service?.disposeAsync();
     await oauthService.dispose();
     disposables.dispose();
     await rm(cwd, { recursive: true, force: true });
@@ -105,10 +112,22 @@ describe('WorkspaceMcpService', () => {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       servers: () => current,
+      sourceEntries: (id: string) => (id === 'workspace' ? current : {}),
       tunables: () => tunablesFn() as McpTunables,
       onDidChange: configChanges.event,
+      onDidChangeSource: sourceChanges.event,
       onDidChangeTunables: tunablesChanges.event,
     };
+  }
+
+  async function fireChange(change: McpServersChange): Promise<void> {
+    current = { ...current, ...change.upsert };
+    for (const name of change.remove) delete current[name];
+    const signal = new AbortController().signal;
+    await Promise.all([
+      configChanges.fireAsync(change, signal),
+      sourceChanges.fireAsync({ sourceId: 'workspace', ...change }, signal),
+    ]);
   }
 
   function createService(): IProjectMcpService {
@@ -152,7 +171,8 @@ describe('WorkspaceMcpService', () => {
         reg.define(IProjectMcpService, ProjectMcpService);
       },
     });
-    return ix.get(IProjectMcpService);
+    service = ix.get(IProjectMcpService) as ProjectMcpService;
+    return service;
   }
 
   it('connects the config snapshot in the initial load', async () => {
@@ -161,12 +181,13 @@ describe('WorkspaceMcpService', () => {
       .spyOn(McpConnectionManager.prototype, 'connectAll')
       .mockResolvedValue(undefined);
 
-    const service = createService();
-    manager = service.connectionManager();
-    await service.ready;
+    const created = createService();
+    manager = created.connectionManager();
+    await created.ready;
 
     expect(connectAll).toHaveBeenCalledTimes(1);
-    expect(Object.keys(connectAll.mock.calls[0]?.[0] ?? {}).toSorted()).toEqual(['alpha', 'beta']);
+    const connectedNames = connectAll.mock.calls.flatMap(([servers]) => Object.keys(servers ?? {}));
+    expect(connectedNames.toSorted()).toEqual(['alpha', 'beta']);
   });
 
   it('reads timeout tunables from the config domain at connect and reschedules on retry changes', async () => {
@@ -191,12 +212,10 @@ describe('WorkspaceMcpService', () => {
     await service.ready;
     expect(manager.get('alpha')?.status).toBe('connected');
 
-    await configChanges.fireAsync(
-      { upsert: { beta: stdioServer() }, remove: ['alpha'] },
-      new AbortController().signal,
-    );
+    await fireChange({ upsert: { beta: stdioServer() }, remove: ['alpha'] });
 
-    expect(manager.get('alpha')?.status).toBe('removed');
+    expect(service.sourceManager('workspace')?.get('alpha')?.status).toBe('removed');
+    expect(manager.get('alpha')).toBeUndefined();
     expect(manager.get('beta')?.status).toBe('connected');
   }, 20000);
 
@@ -206,10 +225,7 @@ describe('WorkspaceMcpService', () => {
     await service.ready;
     const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
 
-    const applied = configChanges.fireAsync(
-      { upsert: { beta: stdioServer() }, remove: [] },
-      new AbortController().signal,
-    );
+    const applied = fireChange({ upsert: { beta: stdioServer() }, remove: [] });
     await (service as ProjectMcpService).disposeAsync();
     await applied;
 
@@ -260,10 +276,7 @@ describe('WorkspaceMcpService', () => {
     const service = createService();
     manager = service.connectionManager();
 
-    void configChanges.fireAsync(
-      { upsert: { beta: stdioServer() }, remove: ['alpha'] },
-      new AbortController().signal,
-    );
+    void fireChange({ upsert: { beta: stdioServer() }, remove: ['alpha'] });
     await connectAllStarted;
     expect(connect).not.toHaveBeenCalled();
     expect(markRemoved).not.toHaveBeenCalled();

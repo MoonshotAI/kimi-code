@@ -39,7 +39,7 @@ describe('SessionLifecycleService', () => {
       instructions: { sessionProvider: () => ({}) },
       agentProfiles: { ready },
       configuredSources: { contextKey: 'local:/workspace:configured', explicitAgentProfiles: { ready }, extraAgentProfiles: { ready } },
-      mcp: { source: () => ({}) },
+      mcp: { sources: () => [] },
       dispose: vi.fn(),
     };
     const handle = {
@@ -144,7 +144,7 @@ describe('SessionLifecycleService', () => {
         explicitAgentProfiles: { ready },
         extraAgentProfiles: { ready },
       },
-      mcp: { source: () => ({}) },
+      mcp: { sources: () => [] },
       dispose: vi.fn(),
     };
     const handle = {

@@ -585,7 +585,8 @@ describe('ProgramMcpSets', () => {
     try {
       await writeMcpJson(userFile(), { remote: { transport: 'http', url: remote.url } });
       const sets = createSets();
-      const views = [await settled(await sets.acquire()), await settled(await sets.acquire(worktree))];
+      const leases = [await sets.acquire(), await sets.acquire(worktree)];
+      const views = await Promise.all(leases.map(settled));
       expect(views.map((view) => view.get('remote')?.status)).toEqual(['needs-auth', 'needs-auth']);
       const reconnect = vi.spyOn(McpConnectionManager.prototype, 'reconnectAndJoin').mockResolvedValue(undefined);
 
@@ -594,7 +595,9 @@ describe('ProgramMcpSets', () => {
       await vi.waitFor(() => {
         expect(reconnect.mock.calls).toEqual([['remote'], ['remote']]);
       });
-      expect(new Set(reconnect.mock.contexts)).toEqual(new Set(views));
+      expect(new Set(reconnect.mock.contexts)).toEqual(
+        new Set(leases.map((lease) => lease.service.sourceManager('user'))),
+      );
     } finally {
       await remote.close();
     }
@@ -675,7 +678,8 @@ describe('ProgramMcpSets', () => {
       const service = new SessionMcpService(
         makeSessionContext({ sessionId: cwd, workspaceId: 'wd', sessionDir: cwd, sessionScope: cwd, cwd }),
         { eph: stdioServer('eph', { environment_id: 'local' }) },
-        [lease.service.source()],
+        lease.service.sources(),
+        [],
         { ready: Promise.resolve(), get: () => undefined } as never,
         oauth,
         {
