@@ -45,6 +45,7 @@ export interface UiState {
   linuxNativeTitleBar?: boolean;
   browserAskWhereToSave?: boolean;
   browserDefaultZoomFactor?: number;
+  mainWindowZoomLevel?: number;
   browserCustomUserAgent?: string | null;
   browserUserAgentPresets?: BrowserUserAgentSavedPreset[];
   browserSearchEngine?: BrowserSearchEngine;
@@ -82,6 +83,25 @@ export function getBrowserPreferences(file?: string): BrowserPreferences {
 export function getBrowserDownloadsAccess(file?: string): BrowserDownloadsAccess {
   const access = loadUiState(file).browserDownloadsAccess;
   return access === 'granted' || access === 'denied' ? access : 'unknown';
+}
+
+const MAIN_WINDOW_ZOOM_LEVEL_MIN = -6;
+const MAIN_WINDOW_ZOOM_LEVEL_MAX = 6;
+
+export function clampMainWindowZoomLevel(level: number): number {
+  return Math.min(MAIN_WINDOW_ZOOM_LEVEL_MAX, Math.max(MAIN_WINDOW_ZOOM_LEVEL_MIN, level));
+}
+
+export function getMainWindowZoomLevel(file?: string): number {
+  const value = loadUiState(file).mainWindowZoomLevel;
+  return typeof value === 'number' && Number.isFinite(value) ? clampMainWindowZoomLevel(value) : 0;
+}
+
+export function setMainWindowZoomLevel(level: number, file: string = defaultStateFile()): void {
+  if (!Number.isFinite(level)) return;
+  const next = clampMainWindowZoomLevel(level);
+  if (getMainWindowZoomLevel(file) === next) return;
+  writeUiState({ mainWindowZoomLevel: next }, file);
 }
 
 export function saveBrowserDownloadsAccess(access: 'granted' | 'denied', file: string = defaultStateFile()): void {

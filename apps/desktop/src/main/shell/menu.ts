@@ -2,6 +2,8 @@ import { app, dialog, Menu, shell, webContents } from 'electron';
 import type { BrowserWindow, MenuItemConstructorOptions } from 'electron';
 
 import { getMainWindow, createWindow, sendToRenderer, showMainWindow, usesCustomTitleBar, devToolsMode } from '../window/main-window';
+import { adjustMainWindowZoom, type MainWindowZoomAction } from '../window/zoom';
+import { zoomBrowserContents } from '../browser/browser-view';
 import { connect } from '../server/connect';
 import { getTraceRecorder } from '../diagnostics/trace';
 import { exportDiagnostics, openLogsFolder } from '../diagnostics/diagnostics-export';
@@ -23,6 +25,12 @@ function dispatchEditingCommand(command: 'undo' | 'redo' | 'select-all'): void {
     return;
   }
   sendToRenderer(IPC.menuAction, command);
+}
+
+function dispatchZoomCommand(action: MainWindowZoomAction): void {
+  const focused = webContents.getFocusedWebContents();
+  if (focused !== null && focused !== getMainWindow()?.webContents && zoomBrowserContents(focused, action)) return;
+  adjustMainWindowZoom(getMainWindow()?.webContents, action);
 }
 
 interface MenuStrings {
@@ -298,6 +306,11 @@ export function getTerminalMenuFocus(): boolean {
   return terminalFocused;
 }
 
+export function canHandleZoomShortcut(): boolean {
+  const suspension = currentSuspension();
+  return suspension === false || (suspension === 'terminal' && process.platform === 'darwin');
+}
+
 const ACCELERATOR_KEYS: Record<string, string> = {
   enter: 'Enter',
   escape: 'Esc',
@@ -558,9 +571,9 @@ export function menuTemplate(
         },
       },
       { type: 'separator' },
-      { role: 'resetZoom', label: strings.resetZoom },
-      { role: 'zoomIn', label: strings.zoomIn },
-      { role: 'zoomOut', label: strings.zoomOut },
+      { id: 'reset-zoom', label: strings.resetZoom, accelerator: 'CommandOrControl+0', click: () => dispatchZoomCommand('reset') },
+      { id: 'zoom-in', label: strings.zoomIn, accelerator: 'CommandOrControl+Plus', click: () => dispatchZoomCommand('in') },
+      { id: 'zoom-out', label: strings.zoomOut, accelerator: 'CommandOrControl+-', click: () => dispatchZoomCommand('out') },
       { type: 'separator' },
       {
         id: 'toggle-terminal',

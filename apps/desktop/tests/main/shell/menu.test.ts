@@ -6,9 +6,12 @@ import { IPC } from '../../../src/main/ipc/ipc-channels';
 import {
   bindingToAccelerator,
   buildMenu,
+  canHandleZoomShortcut,
   menuTemplate,
   normalizeMenuPopupPoint,
   popupWindowsMenu,
+  setMenuSuspended,
+  setTerminalMenuFocus,
   windowsMenuTemplate,
 } from '../../../src/main/shell/menu';
 import {
@@ -36,6 +39,8 @@ const mocks = vi.hoisted(() => ({
   sendActionToFirstResponder: vi.fn(),
   exportDiagnostics: vi.fn(async () => {}),
   openLogsFolder: vi.fn(async () => {}),
+  adjustMainWindowZoom: vi.fn(),
+  zoomBrowserContents: vi.fn(() => false),
 }));
 
 vi.mock('electron', () => ({
@@ -62,6 +67,12 @@ vi.mock('../../../src/main/window/main-window', () => ({
 }));
 vi.mock('../../../src/main/app/ui-state', () => ({
   isLinuxNativeTitleBar: mocks.isLinuxNativeTitleBar,
+}));
+vi.mock('../../../src/main/window/zoom', () => ({
+  adjustMainWindowZoom: mocks.adjustMainWindowZoom,
+}));
+vi.mock('../../../src/main/browser/browser-view', () => ({
+  zoomBrowserContents: mocks.zoomBrowserContents,
 }));
 vi.mock('../../../src/main/server/connect', () => ({ connect: mocks.connect }));
 vi.mock('../../../src/main/diagnostics/diagnostics-export', () => ({
@@ -104,9 +115,6 @@ const ELECTRON_ROLE_ACCELERATORS: Record<string, { apple?: string; other?: strin
   reload: { apple: 'CmdOrCtrl+R', other: 'CmdOrCtrl+R' },
   forceReload: { apple: 'Shift+CmdOrCtrl+R', other: 'Shift+CmdOrCtrl+R' },
   toggleDevTools: { apple: 'Alt+Command+I', other: 'Ctrl+Shift+I' },
-  resetZoom: { apple: 'CommandOrControl+0', other: 'CommandOrControl+0' },
-  zoomIn: { apple: 'CommandOrControl+Plus', other: 'CommandOrControl+Plus' },
-  zoomOut: { apple: 'CommandOrControl+-', other: 'CommandOrControl+-' },
   togglefullscreen: { apple: 'Control+Command+F', other: 'F11' },
   minimize: { apple: 'CommandOrControl+M', other: 'CommandOrControl+M' },
   close: { apple: 'CommandOrControl+W', other: 'CommandOrControl+W' },
@@ -156,6 +164,13 @@ function stubPlatform(platform: string): void {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setMenuSuspended(false);
+  setTerminalMenuFocus(false);
+  mocks.adjustMainWindowZoom.mockClear();
+  mocks.zoomBrowserContents.mockReset();
+  mocks.zoomBrowserContents.mockReturnValue(false);
+  mocks.focusedContents.mockReturnValue(null);
+  mocks.getMainWindow.mockReturnValue(null);
 });
 
 describe('native accelerator completeness', () => {
@@ -196,6 +211,80 @@ describe('native accelerator completeness', () => {
 });
 
 describe('menuTemplate', () => {
+  it('replaces zoom roles with wired items that persist main window zoom and keep native accelerators reserved', () => {
+    const host = { isDestroyed: () => false };
+    mocks.getMainWindow.mockReturnValue({ webContents: host });
+    for (const [template, platform] of [
+      [menuTemplate(true, 'zh'), 'MacIntel'],
+      [menuTemplate(false, 'zh'), 'Linux x86_64'],
+      [windowsMenuTemplate('zh', {}, false, false), 'Win32'],
+    ] as const) {
+      stubPlatform(platform);
+      const items = walkItems(template);
+      for (const role of ['resetZoom', 'zoomIn', 'zoomOut']) {
+        expect(items.some((item) => item.role === role)).toBe(false);
+      }
+      for (const [id, label, accelerator, binding, action] of [
+        ['reset-zoom', '实际大小', 'CommandOrControl+0', 'mod+0', 'reset'],
+        ['zoom-in', '放大', 'CommandOrControl+Plus', 'mod+plus', 'in'],
+        ['zoom-out', '缩小', 'CommandOrControl+-', 'mod+-', 'out'],
+      ] as const) {
+        const item = items.find((candidate) => candidate.id === id);
+        expect(item).toMatchObject({ label, accelerator });
+        expect(item?.role).toBeUndefined();
+        expect(isReservedBinding(binding), `${platform} ${binding}`).toBe(true);
+        expect(typeof item?.click).toBe('function');
+        (item!.click as () => void)();
+        expect(mocks.adjustMainWindowZoom).toHaveBeenLastCalledWith(host, action);
+      }
+    }
+  });
+
+  it('routes zoom to a focused built-in browser view instead of zooming the host window', () => {
+    const host = { isDestroyed: () => false };
+    const page = { isDestroyed: () => false };
+    mocks.getMainWindow.mockReturnValue({ webContents: host });
+    mocks.focusedContents.mockReturnValue(page as never);
+    mocks.zoomBrowserContents.mockReturnValue(true);
+    const items = walkItems(menuTemplate(true, 'en'));
+    const zoomIn = items.find((item) => item.id === 'zoom-in')!;
+    (zoomIn.click as () => void)();
+    expect(mocks.zoomBrowserContents).toHaveBeenCalledWith(page, 'in');
+    expect(mocks.adjustMainWindowZoom).not.toHaveBeenCalled();
+
+    mocks.zoomBrowserContents.mockReturnValue(false);
+    (zoomIn.click as () => void)();
+    expect(mocks.adjustMainWindowZoom).toHaveBeenCalledWith(host, 'in');
+  });
+
+  it('gates zoom shortcuts with menu suspension per platform', () => {
+    const realPlatform = process.platform;
+    try {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      expect(canHandleZoomShortcut()).toBe(true);
+      setTerminalMenuFocus(true);
+      expect(canHandleZoomShortcut()).toBe(true);
+      setMenuSuspended(true);
+      expect(canHandleZoomShortcut()).toBe(false);
+      setMenuSuspended(false);
+      setTerminalMenuFocus(false);
+
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+      expect(canHandleZoomShortcut()).toBe(true);
+      setTerminalMenuFocus(true);
+      expect(canHandleZoomShortcut()).toBe(false);
+      const suspended = walkItems(menuTemplate(false, 'en', {}, 'terminal'));
+      for (const id of ['reset-zoom', 'zoom-in', 'zoom-out']) {
+        expect(suspended.find((item) => item.id === id)?.accelerator).toBeUndefined();
+      }
+      setTerminalMenuFocus(false);
+      setMenuSuspended(true);
+      expect(canHandleZoomShortcut()).toBe(false);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
+    }
+  });
+
   it('routes browser shortcuts through native accelerators instead of reloading the app', () => {
     const items = walkItems(menuTemplate(true, 'zh'));
     for (const [id, key] of [['browser-reload', 'R'], ['browser-new-tab', 'T'], ['browser-focus-address', 'L']]) {
