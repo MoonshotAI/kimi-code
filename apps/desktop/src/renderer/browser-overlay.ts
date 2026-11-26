@@ -2,7 +2,7 @@ import { createApp } from 'vue';
 import { useAppearance, useFontPrefs } from '@moonshot-ai/app-core';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
+import { getIcon, type IconName } from '@moonshot-ai/app-ui/icons';
 import BrowserOverlayMenu from './components/browser-overlay/BrowserOverlayMenu.vue';
 import './style.css';
 

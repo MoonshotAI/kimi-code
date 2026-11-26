@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Checkbox, Dialog, Icon, Tooltip } from '@moonshot-ai/app-ui';
 import { Markdown } from '@moonshot-ai/app-markdown';
-import type { IconName } from '@moonshot-ai/app-client/icons';
+import type { IconName } from '@moonshot-ai/app-ui/icons';
 import { useCanaryChannel, useUpdateStatus } from '@moonshot-ai/app-client/composables';
 import { track } from '../lib/track';
 

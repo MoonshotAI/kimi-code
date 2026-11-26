@@ -17,7 +17,7 @@ import { getNativeBrowserBridge } from './lib/nativeBrowser';
 import { copyBrowserReceipts, deleteBrowserReceipts } from './lib/browserReceipts';
 import { createBrowserId } from '../shared/browser';
 import { clonedBrowserTabPayload } from './lib/browserTabClone';
-import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
+import { getIcon, type IconName } from '@moonshot-ai/app-ui/icons';
 import {
   configureTrace,
   installClientErrorCapture,

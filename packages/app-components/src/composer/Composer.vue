@@ -72,7 +72,7 @@ import type { QuickModelMenuAction, QuickModelMenuPayload } from '@moonshot-ai/a
 import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, providerDisplayName, type SlashCommand } from '@moonshot-ai/app-core/lib';
 import { placeholderText } from '@moonshot-ai/app-core/lib';
 import { useAppearance, useContextInspector } from '@moonshot-ai/app-core';
-import type { IconName } from '@moonshot-ai/app-client/icons';
+import type { IconName } from '@moonshot-ai/app-ui/icons';
 import type { PermissionMode, ToolMedia, TurnAttachment } from '@moonshot-ai/app-core/client/types';
 import {
   commitLevel,

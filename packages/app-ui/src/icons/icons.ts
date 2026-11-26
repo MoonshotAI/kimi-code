@@ -10,6 +10,7 @@ import RawVolumeMuteLine from '~icons/ri/volume-mute-line?raw';
 import RawVolumeUpLine from '~icons/ri/volume-up-line?raw';
 
 import type { Component } from 'vue';
+import { SIZE_PX, type IconSize } from '../iconResolver';
 
 
 import KimiAdd from '~icons/kimi/add';
@@ -732,9 +733,7 @@ export type IconName =
   | 'ft-vitest'
   | 'ft-webpack';
 
-export type IconSize = 'sm' | 'md' | 'lg';
-
-export const SIZE_PX: Record<IconSize, number> = { sm: 14, md: 16, lg: 20 };
+export { SIZE_PX, type IconSize } from '../iconResolver';
 
 export interface IconEntry {
   component: Component;

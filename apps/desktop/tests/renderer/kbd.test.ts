@@ -4,7 +4,7 @@ import { createApp, defineComponent, h, type App } from 'vue';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 
 import Kbd from '../../../../packages/app-ui/src/components/ui/Kbd.vue';
-import { IconResolverKey } from '../../../../packages/app-ui/src/icons';
+import { IconResolverKey } from '../../../../packages/app-ui/src/iconResolver';
 
 let app: App | undefined;
 let appHost: HTMLDivElement | undefined;

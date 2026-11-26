@@ -5,7 +5,7 @@ import { createKimiI18n } from '@moonshot-ai/app-i18n';
 
 import IconButton from '../../../../packages/app-ui/src/components/ui/IconButton.vue';
 import TooltipBubble from '../../../../packages/app-ui/src/components/ui/TooltipBubble.vue';
-import { IconResolverKey } from '../../../../packages/app-ui/src/icons';
+import { IconResolverKey } from '../../../../packages/app-ui/src/iconResolver';
 
 const TEXT = '关闭右侧面板';
 const PREFERRED_WIDTH = 100;

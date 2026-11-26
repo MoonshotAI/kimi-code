@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, nextTick, ref, type App } from 'vue';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
+import { getIcon, type IconName } from '@moonshot-ai/app-ui/icons';
 import type { SessionContextItemSummary, SessionContextItemsResponse } from '@moonshot-ai/app-core/api';
 
 const TOTAL_ITEMS = 650;

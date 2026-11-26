@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { iconSvg } from '@moonshot-ai/app-client/icons';
+import { iconSvg } from '@moonshot-ai/app-ui/icons';
 import { CODE_TIP_ATTR } from './codeTooltip';
 import {
   destroyTableWideToggles,
