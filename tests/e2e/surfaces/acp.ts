@@ -629,7 +629,15 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     if (!this.turnOver() || this.permissions.length > 0) {
       throw new Error(`The scenario ended while a turn was running or an approval was pending; end it with waitIdle().\n${this.describe()}`);
     }
-    if (this.proc.exit() !== undefined) throw new Error(`kimi acp exited before the scenario closed it.\n${this.describe()}`);
+    await this.closeEditor();
+  }
+
+  async quitDuringTurn(): Promise<void> {
+    await this.closeEditor();
+  }
+
+  private async closeEditor(): Promise<void> {
+    if (this.proc.exit() !== undefined) throw new Error(`kimi acp exited before the editor closed it.\n${this.describe()}`);
     this.proc.stdin.end();
     let exit;
     try {
