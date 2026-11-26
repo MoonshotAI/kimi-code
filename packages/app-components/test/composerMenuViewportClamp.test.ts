@@ -267,8 +267,10 @@ describe('Composer context ring', () => {
 });
 
 describe('Composer recent model menu', () => {
-  it('puts the selected provider model first on open, applies clicks immediately, and freezes the open order', async () => {
+  beforeEach(() => {
     isMobileViewport = false;
+    clientState.activeSessionId!.value = 'sess-1';
+    clientState.thinking!.value = 'max';
     clientState.status!.value = {
       connected: true,
       model: 'GPT-6.1 Sol',
@@ -278,6 +280,10 @@ describe('Composer recent model menu', () => {
       ctxMax: 262144,
     };
     clientState.selectModel.mockClear();
+    clientState.setThinking.mockClear();
+  });
+
+  it('stages model and effort clicks without applying them, freezes row order, and commits on outside click', async () => {
     await mountComposer(1200, 820);
 
     const modelPill = host.querySelector<HTMLButtonElement>('.model-pill')!;
@@ -298,14 +304,73 @@ describe('Composer recent model menu', () => {
 
     rows[2]?.click();
     await nextTick();
-    await vi.waitFor(() => expect(clientState.selectModel).toHaveBeenCalledWith('gpt-6-astra'));
-    await nextTick();
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+    expect(clientState.setThinking).not.toHaveBeenCalled();
+    expect(clientState.status!.value?.modelId).toBe('gpt-6.1-sol');
 
     const reorderedRows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row')];
     expect(
       reorderedRows.map((row) => row.querySelector('.mqm-name')?.textContent?.trim()),
     ).toEqual(['GPT-6.1 Sol', 'GPT-6.1 Sol', 'GPT-6 Astra']);
+    expect(reorderedRows[2]?.getAttribute('aria-checked')).toBe('true');
     expect(host.querySelector('.model-dropdown')).not.toBeNull();
+
+    host.querySelector<HTMLElement>('[data-row-key="action:effort"]')!.click();
+    await nextTick();
+    const lowOption = [...host.querySelectorAll<HTMLElement>('.mqm-flyout .mqm-row')].find(
+      (row) => row.textContent?.trim() === 'Low',
+    )!;
+    lowOption.click();
+    await nextTick();
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+    expect(clientState.setThinking).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-row-key="action:effort"] .mqm-action-value')?.textContent?.trim()).toBe('Low');
+
+    document.body.click();
+    await nextTick();
+    await vi.waitFor(() => expect(clientState.selectModel).toHaveBeenCalledWith('gpt-6-astra'));
+    expect(clientState.setThinking).toHaveBeenCalledWith('low');
+    expect(host.querySelector('.model-dropdown')?.classList.contains('ui-menu-pop-leave-active')).toBe(true);
+  });
+
+  it('discards staged changes when dismissed with Escape', async () => {
+    await mountComposer(1200, 820);
+
+    host.querySelector<HTMLButtonElement>('.model-pill')!.click();
+    await nextTick();
+    await nextTick();
+
+    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row')];
+    rows[2]?.click();
+    await nextTick();
+    expect(rows[2]?.getAttribute('aria-checked')).toBe('true');
+
+    host.querySelector<HTMLElement>('.mqm')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await nextTick();
+
+    expect(host.querySelector('.model-dropdown')?.classList.contains('ui-menu-pop-leave-active')).toBe(true);
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+    expect(clientState.setThinking).not.toHaveBeenCalled();
+    expect(clientState.status!.value?.modelId).toBe('gpt-6.1-sol');
+  });
+
+  it('does not apply staged changes after switching to another session', async () => {
+    await mountComposer(1200, 820);
+
+    host.querySelector<HTMLButtonElement>('.model-pill')!.click();
+    await nextTick();
+    await nextTick();
+
+    host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row')[2]?.click();
+    await nextTick();
+
+    clientState.activeSessionId!.value = 'sess-2';
+    await nextTick();
+    await nextTick();
+
+    expect(host.querySelector('.model-dropdown')?.classList.contains('ui-menu-pop-leave-active')).toBe(true);
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+    expect(clientState.setThinking).not.toHaveBeenCalled();
   });
 });
 

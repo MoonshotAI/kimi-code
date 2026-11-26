@@ -75,10 +75,12 @@ import { useAppearance, useContextInspector } from '@moonshot-ai/app-core';
 import type { IconName } from '@moonshot-ai/app-client/icons';
 import type { PermissionMode, ToolMedia, TurnAttachment } from '@moonshot-ai/app-core/client/types';
 import {
+  commitLevel,
   effectiveThinkingLevel,
   effortLabel,
   isThinkingOn,
   resolveEffortDescription,
+  thinkingLevelForModelSwitch,
 } from '@moonshot-ai/app-core/lib';
 import { openAgentSettings, openHostSettings, useInputHistory, useIsMobile, useRunningSendMode } from '@moonshot-ai/app-client/composables';
 import { slashMenuQuery, useSlashMenu } from '@moonshot-ai/app-client/composables';
@@ -3032,6 +3034,30 @@ const recentModelsSnapshot = ref<AppModel[]>([]);
 const providerModelsSnapshot = ref<AppModel[]>([]);
 const webModelMenuMaxHeight = ref(480);
 const modelDropdownRef = ref<InstanceType<typeof ModelQuickMenu> | null>(null);
+const menuDraftModelId = ref(status.value?.modelId);
+const menuDraftEffortSegment = ref<string>();
+let menuOpenedSessionId: string | null | undefined;
+let discardMenuDraftOnClose = false;
+
+const menuModel = computed(() =>
+  models.value?.find((model) => model.id === menuDraftModelId.value) ?? currentModel.value,
+);
+const menuDefaultThinkingLevel = computed(() =>
+  effectiveThinkingLevel(
+    menuModel.value,
+    thinkingLevelForModelSwitch(
+      menuModel.value,
+      thinking.value,
+      menuModel.value?.id !== currentModel.value?.id,
+      sessionId.value === null || sessionId.value === undefined ? client.config.value?.thinking : undefined,
+    ),
+  ),
+);
+const menuThinkingLevel = computed(() =>
+  menuDraftEffortSegment.value === undefined
+    ? menuDefaultThinkingLevel.value
+    : commitLevel(menuModel.value, menuDraftEffortSegment.value),
+);
 
 const menuProviders = computed(() =>
   orderedModelProviders(models.value ?? []).map((id) => ({ id, label: providerDisplayName(id, t) })),
@@ -3039,6 +3065,10 @@ const menuProviders = computed(() =>
 
 function prepareModelMenu(): void {
   const catalog = models.value ?? [];
+  menuOpenedSessionId = sessionId.value;
+  discardMenuDraftOnClose = false;
+  menuDraftModelId.value = status.value?.modelId;
+  menuDraftEffortSegment.value = undefined;
   menuProvider.value = currentProvider.value || orderedModelProviders(catalog)[0] || '';
   recentModelsSnapshot.value = recentModelsForMenu(catalog, recentIds.value ?? [], currentModel.value?.id);
   providerModelsSnapshot.value = menuProvider.value
@@ -3047,7 +3077,7 @@ function prepareModelMenu(): void {
 }
 
 const menuEffortDescriptions = computed<Record<string, string>>(() => {
-  if (currentModel.value?.provider !== MANAGED_KIMI_CODE_PROVIDER_ID) return {};
+  if (menuModel.value?.provider !== MANAGED_KIMI_CODE_PROVIDER_ID) return {};
   const config = effortSwitchStore().config;
   if (config?.descriptions?.enable !== true) return {};
   const lang = locale.value === 'zh' ? 'zh' : 'en';
@@ -3066,23 +3096,46 @@ const quickModelMenuPayload = computed<QuickModelMenuPayload>(() => ({
   providers: menuProviders.value,
   activeProvider: menuProvider.value,
   activeProviderLabel: providerDisplayName(menuProvider.value, t),
-  ...(status.value?.modelId === undefined ? {} : { currentModelId: status.value.modelId }),
-  ...(thinking.value === undefined ? {} : { currentEffort: thinking.value }),
+  ...(menuModel.value?.id === undefined ? {} : { currentModelId: menuModel.value.id }),
+  ...(menuThinkingLevel.value === undefined ? {} : { currentEffort: menuThinkingLevel.value }),
   effortDescriptions: menuEffortDescriptions.value,
 }));
 
 function onQuickModelAction(action: QuickModelMenuAction): void {
   if (action.type === 'select-provider') {
     menuProvider.value = action.providerId;
-    providerModelsSnapshot.value = providerModelsForMenu(models.value ?? [], action.providerId, status.value?.modelId);
+    providerModelsSnapshot.value = providerModelsForMenu(models.value ?? [], action.providerId, menuDraftModelId.value);
     return;
   }
   if (action.type === 'select-effort') {
-    void client.setThinking(action.effort as ThinkingLevel);
+    menuDraftEffortSegment.value = action.effort;
     return;
   }
+  if (action.modelId !== menuDraftModelId.value) menuDraftEffortSegment.value = undefined;
+  menuDraftModelId.value = action.modelId;
+  if (action.effort !== undefined) menuDraftEffortSegment.value = action.effort;
+  if (action.fromSearch === true) {
+    const selected = models.value?.find((model) => model.id === action.modelId);
+    if (selected !== undefined) {
+      menuProvider.value = selected.provider;
+      providerModelsSnapshot.value = providerModelsForMenu(models.value ?? [], selected.provider, selected.id);
+    }
+  }
+}
+
+function commitModelMenuDraft(): void {
+  if (discardMenuDraftOnClose) {
+    discardMenuDraftOnClose = false;
+    return;
+  }
+  const modelId = menuDraftModelId.value;
+  if (modelId === undefined || sessionId.value !== menuOpenedSessionId) return;
+  const effort =
+    menuDraftEffortSegment.value !== undefined && menuThinkingLevel.value !== menuDefaultThinkingLevel.value
+      ? menuThinkingLevel.value
+      : undefined;
   void applyModelMenuDraft(
-    { modelId: action.modelId, ...(action.effort === undefined ? {} : { effort: action.effort as ThinkingLevel }) },
+    { modelId, ...(effort === undefined ? {} : { effort }) },
     {
       currentModelId: status.value?.modelId,
       currentSessionId: sessionId.value,
@@ -3092,6 +3145,11 @@ function onQuickModelAction(action: QuickModelMenuAction): void {
       setThinking: (level) => client.setThinking(level),
     },
   );
+}
+
+function dismissModelMenu(): void {
+  discardMenuDraftOnClose = true;
+  closeDropdown();
 }
 
 const showSignIn = computed(() => gateVerdict.value === 'login');
@@ -3284,11 +3342,19 @@ const nativeModelMenu = nativeMenuHost?.register({
   modelMenu: () => quickModelMenuPayload.value,
   onSelect: () => {},
   onModelAction: onQuickModelAction,
+  onClose: (payload) => { if (payload.reason !== 'escape') commitModelMenuDraft(); },
 });
 if (nativePermissionMenu !== undefined) watch(nativePermissionMenu.open, open => { permDropdownOpen.value = open; });
 if (nativeModelMenu !== undefined) watch(nativeModelMenu.open, open => { dropdownOpen.value = open; });
 watch(permDropdownOpen, open => { if (!open) nativePermissionMenu?.close(); });
-watch(dropdownOpen, open => { if (!open) nativeModelMenu?.close(); });
+watch(dropdownOpen, (open, wasOpen) => {
+  if (open) return;
+  nativeModelMenu?.close();
+  if (wasOpen && (!nativeModelMenu?.available || isMobile.value)) commitModelMenuDraft();
+});
+watch(() => status.value?.modelId, (modelId) => {
+  if (!dropdownOpen.value) menuDraftModelId.value = modelId;
+});
 watchEffect(() => { if (nativePermissionMenu?.open.value) nativePermissionMenu.refresh(); });
 watchEffect(() => { if (nativeModelMenu?.open.value) nativeModelMenu.refresh(); });
 watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDropdown(); });
@@ -3691,10 +3757,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             :effort-descriptions="quickModelMenuPayload.effortDescriptions"
             :max-height="webModelMenuMaxHeight"
             @click.stop
-            @select-model="(modelId, effort) => onQuickModelAction({ type: 'select-model', modelId, ...(effort === undefined ? {} : { effort }) })"
+            @select-model="(modelId, effort, fromSearch) => onQuickModelAction({ type: 'select-model', modelId, ...(effort === undefined ? {} : { effort }), ...(fromSearch === true ? { fromSearch: true } : {}) })"
             @select-effort="(effort) => onQuickModelAction({ type: 'select-effort', effort })"
             @select-provider="(providerId) => onQuickModelAction({ type: 'select-provider', providerId })"
-            @dismiss="closeDropdown"
+            @dismiss="dismissModelMenu"
           />
         </Transition>
 

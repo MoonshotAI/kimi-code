@@ -405,7 +405,7 @@ onUnmounted(() => {
       :effort-descriptions="config.modelMenu.effortDescriptions"
       :max-height="config.maxHeight ?? 480"
       :host-frame="modelMenuFrame ?? undefined"
-      @select-model="(modelId, effort) => config?.kind === 'menu' && bridge?.activate({ requestId: config.requestId, itemId: 'model-menu', modelAction: { type: 'select-model', modelId, ...(effort === undefined ? {} : { effort }) } satisfies QuickModelMenuAction })"
+      @select-model="(modelId, effort, fromSearch) => config?.kind === 'menu' && bridge?.activate({ requestId: config.requestId, itemId: 'model-menu', modelAction: { type: 'select-model', modelId, ...(effort === undefined ? {} : { effort }), ...(fromSearch === true ? { fromSearch: true } : {}) } satisfies QuickModelMenuAction })"
       @select-effort="(effort) => config?.kind === 'menu' && bridge?.activate({ requestId: config.requestId, itemId: 'model-menu', modelAction: { type: 'select-effort', effort } satisfies QuickModelMenuAction })"
       @select-provider="(providerId) => config?.kind === 'menu' && bridge?.activate({ requestId: config.requestId, itemId: 'model-menu', modelAction: { type: 'select-provider', providerId } satisfies QuickModelMenuAction })"
       @dismiss="dismiss('escape')"

@@ -50,7 +50,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  selectModel: [modelId: string, effort?: string];
+  selectModel: [modelId: string, effort?: string, fromSearch?: boolean];
   selectEffort: [effort: string];
   selectProvider: [providerId: string];
   dismiss: [];
@@ -255,8 +255,9 @@ function onRowClick(row: NavRow): void {
     return;
   }
   if (row.model === undefined) return;
-  if (searching.value && row.hasSubmenu) {
-    openSubmenu({ kind: 'search-effort', triggerKey: row.key, model: row.model });
+  if (searching.value) {
+    if (row.hasSubmenu) openSubmenu({ kind: 'search-effort', triggerKey: row.key, model: row.model });
+    else selectSearchedModel(row.model);
     return;
   }
   emit('selectModel', row.model.id);
@@ -267,12 +268,25 @@ function chooseProvider(providerId: string): void {
   emit('selectProvider', providerId);
 }
 
+function selectSearchedModel(model: AppModel, effort?: string): void {
+  closeSubmenu();
+  hideHoverCard();
+  query.value = '';
+  void nextTick(() => {
+    const providerKey = `provider:${model.id}`;
+    const recentKey = `recent:${model.id}`;
+    const nextKey = rowElements.has(providerKey) ? providerKey : rowElements.has(recentKey) ? recentKey : undefined;
+    if (nextKey !== undefined) activeKey.value = nextKey;
+  });
+  emit('selectModel', model.id, effort, true);
+}
+
 function chooseSubmenuEffort(segment: string): void {
   const current = submenu.value;
-  closeSubmenu();
   if (current?.kind === 'search-effort') {
-    emit('selectModel', current.model.id, commitLevel(current.model, segment));
+    selectSearchedModel(current.model, commitLevel(current.model, segment));
   } else {
+    closeSubmenu();
     emit('selectEffort', segment);
   }
 }

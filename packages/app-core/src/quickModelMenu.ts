@@ -18,6 +18,6 @@ export interface QuickModelMenuPayload {
 }
 
 export type QuickModelMenuAction =
-  | { type: 'select-model'; modelId: string; effort?: string }
+  | { type: 'select-model'; modelId: string; effort?: string; fromSearch?: boolean }
   | { type: 'select-effort'; effort: string }
   | { type: 'select-provider'; providerId: string };

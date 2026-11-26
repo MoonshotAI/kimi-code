@@ -39,7 +39,7 @@ const QuickModelMenuPayloadSchema = Type.Object({
   effortDescriptions: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 32 }), Type.String({ maxLength: 1024 }))),
 }, { additionalProperties: false });
 const QuickModelMenuAction = Type.Union([
-  Type.Object({ type: Type.Literal('select-model'), modelId: Type.String({ minLength: 1, maxLength: 512 }), effort: Type.Optional(Type.String({ maxLength: 32 })) }, { additionalProperties: false }),
+  Type.Object({ type: Type.Literal('select-model'), modelId: Type.String({ minLength: 1, maxLength: 512 }), effort: Type.Optional(Type.String({ maxLength: 32 })), fromSearch: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
   Type.Object({ type: Type.Literal('select-effort'), effort: Type.String({ minLength: 1, maxLength: 32 }) }, { additionalProperties: false }),
   Type.Object({ type: Type.Literal('select-provider'), providerId: Type.String({ minLength: 1, maxLength: 256 }) }, { additionalProperties: false }),
 ]);

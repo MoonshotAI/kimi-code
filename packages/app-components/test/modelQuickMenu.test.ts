@@ -58,7 +58,7 @@ function mountMenu(state: QuickModelMenuPayload): void {
         currentEffort: props.state.currentEffort,
         effortDescriptions: props.state.effortDescriptions,
         maxHeight: props.maxHeight,
-        onSelectModel: (modelId, effort) => actions.push({ type: 'select-model', modelId, ...(effort === undefined ? {} : { effort }) }),
+        onSelectModel: (modelId, effort, fromSearch) => actions.push({ type: 'select-model', modelId, ...(effort === undefined ? {} : { effort }), ...(fromSearch === true ? { fromSearch: true } : {}) }),
         onSelectEffort: (effort) => actions.push({ type: 'select-effort', effort }),
         onSelectProvider: (providerId) => actions.push({ type: 'select-provider', providerId }),
         onDismiss: () => { dismissed += 1; },
@@ -200,7 +200,7 @@ describe('ModelQuickMenu states', () => {
     expect(host.textContent).toContain('没有匹配的模型');
   });
 
-  it('requires choosing an effort in the search result submenu before switching a thinking-capable model', async () => {
+  it('requires choosing an effort in the search result submenu, then exits search and emits a staged selection', async () => {
     mountMenu(initialState());
     const input = host.querySelector<HTMLInputElement>('.mqm-search__input')!;
     input.value = 'sonnet';
@@ -215,7 +215,11 @@ describe('ModelQuickMenu states', () => {
     expect(flyout.querySelectorAll('.mqm-row svg')).toHaveLength(0);
     const options = [...flyout.querySelectorAll<HTMLElement>('.mqm-row')];
     options.at(-1)!.click();
-    expect(actions).toEqual([{ type: 'select-model', modelId: 'openrouter/sonnet', effort: 'high' }]);
+    await nextTick();
+    expect(actions).toEqual([{ type: 'select-model', modelId: 'openrouter/sonnet', effort: 'high', fromSearch: true }]);
+    expect(input.value).toBe('');
+    expect(host.querySelector('.mqm-flyout')).toBeNull();
+    expect(host.querySelector('[data-row-key="recent:openrouter/sonnet"]')).not.toBeNull();
   });
 
   it('checks the current effort in the search submenu only when the result is the active model', async () => {
@@ -230,7 +234,7 @@ describe('ModelQuickMenu states', () => {
     expect(checked?.textContent?.trim()).toBe('High');
   });
 
-  it('switches non-thinking search results directly on click without a submenu', async () => {
+  it('stages non-thinking search results on click without a submenu and returns to the main list', async () => {
     mountMenu(initialState());
     const input = host.querySelector<HTMLInputElement>('.mqm-search__input')!;
     input.value = 'haiku';
@@ -239,7 +243,8 @@ describe('ModelQuickMenu states', () => {
     host.querySelector<HTMLElement>('[data-row-key="search:openrouter/haiku"]')!.click();
     await nextTick();
     expect(host.querySelector('.mqm-flyout')).toBeNull();
-    expect(actions).toEqual([{ type: 'select-model', modelId: 'openrouter/haiku' }]);
+    expect(input.value).toBe('');
+    expect(actions).toEqual([{ type: 'select-model', modelId: 'openrouter/haiku', fromSearch: true }]);
   });
 
   it('closes the submenu on first Escape and dismisses the menu on second Escape', async () => {

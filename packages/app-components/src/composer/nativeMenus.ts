@@ -23,6 +23,7 @@ export interface ComposerNativeMenuHost {
     submitOnCtrlEnter?: boolean;
     onSelect(id: string): void;
     onModelAction?(action: QuickModelMenuAction): void;
+    onClose?(payload: { reason: string }): void;
     onDismiss?(): void;
   }): ComposerNativeMenu;
 }
