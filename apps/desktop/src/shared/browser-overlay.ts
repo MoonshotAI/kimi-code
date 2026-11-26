@@ -94,6 +94,7 @@ const Shown = Type.Object({
   requestId: BrowserRequestIdSchema,
   placement: Type.Optional(Placement),
   menuOffset: Type.Optional(Type.Object({ x: Type.Number(), y: Type.Number() }, { additionalProperties: false })),
+  menuBottom: Type.Optional(Type.Number()),
   menuFrame: Type.Optional(Type.Object({ x: Type.Number(), y: Type.Number(), viewportWidth: Type.Number(), viewportHeight: Type.Number() }, { additionalProperties: false })),
 });
 const Action = Type.Object({ menuId: Id, itemId: Id, keepOpen: OptionalFlag, modelAction: Type.Optional(QuickModelMenuAction) });
