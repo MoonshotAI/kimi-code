@@ -9,7 +9,7 @@ import { browserControlOutOfView, createBrowserLiveView } from './lib/browserLiv
 import { browserFaviconSignature, createBrowserFaviconSource } from './lib/browserFavicons';
 import { commandArgumentText, commandPromptContent, composerSnapshotFromMetadata } from '@moonshot-ai/app-client/lib';
 import type { ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
-import { BrowserFaviconSourceKey, BrowserLiveViewKey, BrowserReceiptReaderKey, ComposerBrowserReferenceHostKey, ComposerNativeMenuHostKey } from '@moonshot-ai/app-components';
+import { BrowserFaviconSourceKey, BrowserLiveViewKey, BrowserReceiptReaderKey, ComposerBrowserReferenceHostKey, NativeMenuHostKey } from '@moonshot-ai/app-components';
 import { registerBrowserOverlayMenu } from './lib/browserOverlayMenu';
 import { createBrowserAnnotationHost } from './lib/browserAnnotationHost';
 import type { BrowserAnnotationContextRequest } from '../shared/browser-annotation';
@@ -142,7 +142,7 @@ useMenuDragRegions();
 const client = useKimiWebClient();
 const desktopBridge = hasDesktopBridge();
 const sessionViews = sessionViewsStore();
-provide(ComposerNativeMenuHostKey, { register: registerBrowserOverlayMenu });
+provide(NativeMenuHostKey, { register: registerBrowserOverlayMenu });
 const browserAnnotationHost = createBrowserAnnotationHost({
   context: () => JSON.stringify([client.activeSessionId.value, client.activeWorkspaceId.value]),
   t: (key, values) => t(key, values ?? {}),

@@ -560,7 +560,7 @@ function onChatContextMenu(event: MouseEvent): void {
       event.preventDefault();
       selectionPointerDown = false;
       if (selectionBubble.value !== null) onSelectionBubbleClose();
-      void tableSelectionMenuRef.value?.show(wrapper, event.clientX, event.clientY);
+      void tableSelectionMenuRef.value?.show(wrapper, event.clientX, event.clientY, event.button === -1);
       return;
     }
   }

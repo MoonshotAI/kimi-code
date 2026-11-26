@@ -3,11 +3,15 @@ import { nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useWarningsStore } from '@moonshot-ai/app-client/stores';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import type { NativeMenuItem } from '@moonshot-ai/app-core/native-menu';
 import { selectEntireTable, tableSelectionText, type TableCopyFormat } from '@moonshot-ai/app-markdown';
 import { Icon, Menu, MenuItem, menuNavigationIndex } from '@moonshot-ai/app-ui';
+import { useNativeMenuHost } from '../composer/nativeMenus';
 import { useAnchoredMenu } from '../composables/useAnchoredMenu';
 
-withDefaults(defineProps<{ allowQuote?: boolean }>(), { allowQuote: true });
+let tableMenuSequence = 0;
+
+const props = withDefaults(defineProps<{ allowQuote?: boolean }>(), { allowQuote: true });
 const emit = defineEmits<{ quote: [markdown: string] }>();
 const { t } = useI18n();
 const warningsStore = useWarningsStore();
@@ -28,6 +32,15 @@ const formats: Array<{ id: TableCopyFormat; label: string }> = [
 
 function closeFormats(): void {
   formatsOpen.value = false;
+}
+
+function restoreWrapperFocus(): void {
+  if (preserveEditorFocus) return;
+  const wrapper = currentWrapper.value;
+  if (!wrapper) return;
+  window.requestAnimationFrame(() => {
+    if (!preserveEditorFocus && currentWrapper.value === wrapper) wrapper.focus({ preventScroll: true });
+  });
 }
 
 watch(() => menu.open.value, (open) => {
@@ -97,48 +110,98 @@ function onSubmenuKeydown(event: KeyboardEvent): void {
   moveFocus(subMenuRef.value?.el, event);
 }
 
-async function show(wrapper: HTMLElement, x: number, y: number): Promise<void> {
-  preserveEditorFocus = false;
-  currentWrapper.value = wrapper;
-  closeFormats();
-  await menu.openAt(x, y);
-  await nextTick();
-  enabledItems(menuRef.value?.el)[0]?.focus();
+function nativeItems(): NativeMenuItem[] {
+  return [
+    { kind: 'item', id: 'copy', label: t('conversation.copyTableSelection'), icon: 'copy' },
+    {
+      kind: 'item',
+      id: 'copy-as',
+      label: t('conversation.copyTableSelectionAs'),
+      icon: 'copy',
+      keepOpen: true,
+      submenu: formats.map(format => ({ id: `copy-as-${format.id}`, label: format.label })),
+    },
+    { kind: 'item', id: 'select-all', label: t('conversation.selectWholeTable'), icon: 'grid-dots' },
+    ...(props.allowQuote ? [{ kind: 'item' as const, id: 'add-to-chat', label: t('selection.addToChat'), icon: 'plus' }] : []),
+  ];
 }
 
 async function copy(format: TableCopyFormat): Promise<void> {
   const wrapper = currentWrapper.value;
-  menu.close();
-  closeFormats();
+  const native = nativeMenu?.available === true;
+  closeMenu();
   if (!wrapper) return;
   const text = tableSelectionText(wrapper, format);
   if (text === null) return;
   const ok = await copyTextToClipboard(text);
   if (!ok) warningsStore.pushWarning({ severity: 'error', title: t('mediaPreview.copyFailed') });
+  if (native) restoreWrapperFocus();
 }
 
 function selectAll(): void {
   const wrapper = currentWrapper.value;
-  menu.close();
-  closeFormats();
-  if (wrapper) selectEntireTable(wrapper);
+  const native = nativeMenu?.available === true;
+  closeMenu();
+  if (!wrapper) return;
+  selectEntireTable(wrapper);
+  if (native) restoreWrapperFocus();
 }
 
 function addToChat(): void {
   preserveEditorFocus = true;
   const wrapper = currentWrapper.value;
-  menu.close();
-  closeFormats();
+  closeMenu();
   if (!wrapper) return;
   const markdown = tableSelectionText(wrapper, 'markdown');
   if (markdown !== null) emit('quote', markdown);
 }
 
-defineExpose({ show, close: menu.close });
+const nativeMenu = useNativeMenuHost()?.register({
+  id: `table-selection-${++tableMenuSequence}`,
+  autoWidth: true,
+  placement: 'bottom-start',
+  items: nativeItems,
+  onSelect: (id) => {
+    if (id === 'copy') void copy('tsv');
+    else if (id.startsWith('copy-as-')) void copy(id.slice('copy-as-'.length) as TableCopyFormat);
+    else if (id === 'select-all') selectAll();
+    else if (id === 'add-to-chat') addToChat();
+  },
+  onClose: ({ reason }) => {
+    if (reason !== 'action') restoreWrapperFocus();
+  },
+});
+
+function closeMenu(): void {
+  menu.close();
+  nativeMenu?.close();
+  closeFormats();
+}
+
+async function show(wrapper: HTMLElement, x: number, y: number, keyboard = false): Promise<void> {
+  preserveEditorFocus = false;
+  currentWrapper.value = wrapper;
+  closeFormats();
+  const initialFocus = keyboard ? 'first-item' : 'none';
+  if (nativeMenu?.available) {
+    menu.close();
+    nativeMenu.showAt(
+      { x, y, width: 0, height: 0 },
+      { placement: 'bottom-start', offset: 0, initialFocus, focusReturn: wrapper },
+    );
+    return;
+  }
+  await menu.openAt(x, y);
+  if (!keyboard) return;
+  await nextTick();
+  enabledItems(menuRef.value?.el)[0]?.focus();
+}
+
+defineExpose({ show, close: closeMenu });
 </script>
 
 <template>
-  <Teleport to="body">
+  <Teleport v-if="!nativeMenu?.available" to="body">
     <Menu
       v-if="menu.open.value"
       ref="menuRef"

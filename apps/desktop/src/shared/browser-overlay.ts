@@ -16,6 +16,7 @@ const Viewport = Type.Object({ width: Type.Number({ minimum: 1, maximum: 16384 }
 const ItemAction = Type.Object({ id: Id, label: Label, icon: IconName, keepOpen: OptionalFlag });
 const ItemProgress = Type.Object({ label: Label, value: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })), paused: OptionalFlag });
 const TextRange = Type.Object({ start: Type.Integer({ minimum: 0 }), end: Type.Integer({ minimum: 0 }) }, { additionalProperties: false });
+const SubmenuItem = Type.Object({ id: Id, label: Label, icon: Icon, disabled: OptionalFlag, danger: OptionalFlag });
 const MenuItem = Type.Union([
   Type.Object({ kind: Type.Literal('separator') }),
   Type.Object({ kind: Type.Enum(['section', 'note']), id: Id, label: Type.String({ maxLength: 1024 }), size: Type.Optional(Type.Literal('xs')) }),
@@ -29,7 +30,8 @@ const MenuItem = Type.Union([
     disabled: OptionalFlag, selected: OptionalFlag, danger: OptionalFlag, starred: OptionalFlag, keepOpen: OptionalFlag,
     labelRanges: Type.Optional(Type.Array(TextRange, { maxItems: 64 })), descriptionRanges: Type.Optional(Type.Array(TextRange, { maxItems: 64 })),
     metrics: Type.Optional(Type.Array(Type.Object({ label: Label, value: Label }), { maxItems: 4 })), description: Type.Optional(Type.String({ maxLength: 1024 })), detail: Type.Optional(Type.String({ maxLength: 1024 })), tone: Type.Optional(Type.Enum(['warning', 'danger'])),
-    actions: Type.Optional(Type.Array(ItemAction, { maxItems: 4 })), progress: Type.Optional(ItemProgress) }),
+    actions: Type.Optional(Type.Array(ItemAction, { maxItems: 4 })), progress: Type.Optional(ItemProgress),
+    submenu: Type.Optional(Type.Array(SubmenuItem, { minItems: 1, maxItems: 32 })) }),
 ]);
 const MenuFields = {
   menuId: Id, anchor: BrowserBoundsSchema, placement: Type.Optional(Placement), initialFocus: Type.Optional(InitialFocus),
@@ -56,7 +58,16 @@ const DialogFields = {
 };
 const DialogInput = Type.Object({ ...DialogFields, kind: Type.Optional(Type.Unknown()), requestId: Type.Optional(Type.Unknown()) }, { additionalProperties: false });
 export const BrowserOverlayDialogRequestSchema = Type.Object(DialogFields, { additionalProperties: false });
-const Rendered = Type.Object({ requestId: BrowserRequestIdSchema, ...Viewport.properties });
+const SubmenuPlacement = Type.Enum(['right', 'left']);
+const Rendered = Type.Object({
+  requestId: BrowserRequestIdSchema,
+  ...Viewport.properties,
+  anchorWidth: Type.Optional(Type.Number({ minimum: 1, maximum: 16384 })),
+  anchorHeight: Type.Optional(Type.Number({ minimum: 1, maximum: 16384 })),
+  offsetX: Type.Optional(Type.Number({ minimum: 0, maximum: 16384 })),
+  offsetY: Type.Optional(Type.Number({ minimum: 0, maximum: 16384 })),
+  placement: Type.Optional(SubmenuPlacement),
+});
 const Visibility = Type.Object({ requestId: BrowserRequestIdSchema });
 const Activate = Type.Object({ ...Visibility.properties, itemId: Id }, { additionalProperties: false });
 const DialogKind = Type.Object({ kind: Type.Literal('dialog') });
@@ -66,6 +77,8 @@ export type BrowserOverlayPlacement = Static<typeof Placement>;
 export type BrowserOverlayInitialFocus = Static<typeof InitialFocus>;
 export type BrowserOverlayAnchor = Static<typeof BrowserBoundsSchema>;
 export type BrowserOverlayMenuItem = Static<typeof MenuItem>;
+export type BrowserOverlaySubmenuItem = Static<typeof SubmenuItem>;
+export type BrowserOverlaySubmenuPlacement = Static<typeof SubmenuPlacement>;
 export type BrowserOverlayMenuRequest = Static<typeof BrowserOverlayMenuRequestSchema>;
 export type BrowserOverlayDialogRequest = Omit<Static<typeof BrowserOverlayDialogRequestSchema>, 'annotation'> & { annotation?: BrowserAnnotationDetails };
 export type BrowserOverlayDialogVariant = NonNullable<BrowserOverlayDialogRequest['variant']>;
@@ -79,8 +92,15 @@ const MenuConfig = Type.Object({
   ...MenuFields, kind: Type.Literal('menu'), requestId: BrowserRequestIdSchema,
   width: Type.Optional(Type.Number({ minimum: 1 })),
   minWidth: Type.Optional(Type.Number({ minimum: 1 })), maxHeight: Type.Optional(Type.Number({ minimum: 1 })),
+  viewportWidth: Type.Optional(Type.Number({ minimum: 1, maximum: 16384 })),
+  viewportHeight: Type.Optional(Type.Number({ minimum: 1, maximum: 16384 })),
 });
-const Shown = Type.Object({ requestId: BrowserRequestIdSchema, placement: Type.Optional(Placement) });
+const Shown = Type.Object({
+  requestId: BrowserRequestIdSchema,
+  placement: Type.Optional(Placement),
+  x: Type.Optional(Type.Number({ minimum: -16384, maximum: 16384 })),
+  y: Type.Optional(Type.Number({ minimum: -16384, maximum: 16384 })),
+});
 const Action = Type.Object({ menuId: Id, itemId: Id, keepOpen: OptionalFlag });
 const CloseReason = Type.Enum(['action', 'dismiss', 'escape', 'replaced', 'window-blur', 'window-move', 'window-resize', 'host-closed', 'programmatic']);
 const Closed = Type.Object({ menuId: Id, reason: CloseReason });
@@ -167,6 +187,15 @@ function asMenuItem(value: unknown): BrowserOverlayMenuItem | null {
     if (item.keepOpen !== true) delete item.keepOpen;
     if (item.actions !== undefined) item.actions = item.actions.map(({ id, label, icon, keepOpen }) => ({ id, label, icon, ...(keepOpen === true ? { keepOpen: true } : {}) }));
     if (item.progress !== undefined) item.progress = { label: item.progress.label, ...(item.progress.value === undefined ? {} : { value: item.progress.value }), ...(item.progress.paused === true ? { paused: true } : {}) };
+    if (item.submenu !== undefined) {
+      item.submenu = item.submenu.map((child) => ({
+        id: child.id,
+        label: child.label,
+        ...(child.icon === undefined ? {} : { icon: child.icon }),
+        ...(child.disabled === true ? { disabled: true } : {}),
+        ...(child.danger === true ? { danger: true } : {}),
+      }));
+    }
   }
   return item;
 }
@@ -185,7 +214,7 @@ export function asBrowserOverlayMenuRequest(value: unknown): BrowserOverlayMenuR
     if (item.kind !== 'separator') {
       const itemIds = item.kind === 'zoom' ? [item.id, item.decreaseAction, item.increaseAction, item.resetAction]
         : item.kind === 'choices' ? [item.id, ...item.options.map(option => option.id), ...(item.notice === undefined ? [] : [item.notice.action])]
-          : item.kind === 'item' ? [item.id, ...(item.actions ?? []).map(action => action.id)] : [item.id];
+          : item.kind === 'item' ? [item.id, ...(item.actions ?? []).map(action => action.id), ...(item.submenu ?? []).map(child => child.id)] : [item.id];
       if (new Set(itemIds).size !== itemIds.length) return null;
       if (itemIds.some(id => ids.has(id))) return null;
       for (const id of itemIds) ids.add(id);
@@ -195,7 +224,8 @@ export function asBrowserOverlayMenuRequest(value: unknown): BrowserOverlayMenuR
   if (items.every(item => item.kind === 'separator')) return null;
   return {
     menuId: request.menuId, anchor, items, placement: request.placement ?? 'bottom-end',
-    offset: Math.round(request.offset ?? 4), width: Math.round(request.width ?? 220),
+    offset: Math.round(request.offset ?? 4),
+    ...(request.width === undefined ? {} : { width: Math.round(request.width) }),
     ...(request.refresh === true ? { refresh: true } : {}),
     ...(request.initialFocus === undefined ? {} : { initialFocus: request.initialFocus }),
     ...(request.autoWidth === true ? { autoWidth: true } : {}),
@@ -235,7 +265,27 @@ export function asBrowserOverlayDialogRequest(value: unknown): BrowserOverlayDia
 
 export function asBrowserOverlayRendered(value: unknown): BrowserOverlayRendered | null {
   const rendered = browserValidators.Rendered.Parse(value);
-  return rendered === null ? null : { requestId: rendered.requestId, width: Math.ceil(rendered.width), height: Math.ceil(rendered.height) };
+  if (rendered === null) return null;
+  const width = Math.ceil(rendered.width);
+  const height = Math.ceil(rendered.height);
+  const anchorWidth = rendered.anchorWidth === undefined ? undefined : Math.ceil(rendered.anchorWidth);
+  const anchorHeight = rendered.anchorHeight === undefined ? undefined : Math.ceil(rendered.anchorHeight);
+  const offsetX = rendered.offsetX === undefined ? undefined : Math.round(rendered.offsetX);
+  const offsetY = rendered.offsetY === undefined ? undefined : Math.round(rendered.offsetY);
+  if (anchorWidth !== undefined && anchorWidth > width) return null;
+  if (anchorHeight !== undefined && anchorHeight > height) return null;
+  if (offsetX !== undefined && anchorWidth !== undefined && offsetX + anchorWidth > width) return null;
+  if (offsetY !== undefined && anchorHeight !== undefined && offsetY + anchorHeight > height) return null;
+  return {
+    requestId: rendered.requestId,
+    width,
+    height,
+    ...(anchorWidth === undefined ? {} : { anchorWidth }),
+    ...(anchorHeight === undefined ? {} : { anchorHeight }),
+    ...(offsetX === undefined ? {} : { offsetX }),
+    ...(offsetY === undefined ? {} : { offsetY }),
+    ...(rendered.placement === undefined ? {} : { placement: rendered.placement }),
+  };
 }
 
 export function asBrowserOverlayVisibilityRequest(value: unknown): BrowserOverlayVisibilityRequest | null {

@@ -220,7 +220,7 @@ export function registerBrowserOverlayMenu(
       anchor,
       placement: options?.placement ?? registration.placement ?? 'bottom-end',
       offset: options?.offset ?? registration.offset ?? 4,
-      width: registration.width ?? 220,
+      ...(registration.width === undefined ? {} : { width: registration.width }),
       ...(registration.autoWidth === true ? { autoWidth: true } : {}),
       initialFocus: options?.initialFocus ?? 'none',
       preserveFocus: options?.preserveFocus ?? registration.preserveFocus,

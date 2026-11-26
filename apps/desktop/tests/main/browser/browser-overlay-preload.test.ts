@@ -150,9 +150,14 @@ describe('browser overlay preload', () => {
     bridge.rendered({ requestId: 3, width: 220.2, height: 160.1, extra: true });
     bridge.rendered({ requestId: 3, width: -1, height: 160 });
     bridge.rendered(null);
+    bridge.rendered({ requestId: 3, width: 284.2, height: 140, anchorWidth: 160, anchorHeight: 140, offsetX: 124.1, offsetY: 0, placement: 'left', extra: true });
+    bridge.rendered({ requestId: 3, width: 200, height: 140, anchorWidth: 240 });
+    bridge.rendered({ requestId: 3, width: 200, height: 140, anchorWidth: 160, offsetX: 100 });
+    bridge.rendered({ requestId: 3, width: 200, height: 140, placement: 'up' });
     bridge.submitForm({ requestId: 3, action: 'confirm', value: '', checked: false, extra: true });
     expect(mocks.send.mock.calls).toEqual([
       ['kimi:browser-overlay-rendered', { requestId: 3, width: 221, height: 161 }],
+      ['kimi:browser-overlay-rendered', { requestId: 3, width: 285, height: 140, anchorWidth: 160, anchorHeight: 140, offsetX: 124, offsetY: 0, placement: 'left' }],
       ['kimi:browser-overlay-form-action', { requestId: 3, action: 'confirm', value: '', checked: false }],
     ]);
   });

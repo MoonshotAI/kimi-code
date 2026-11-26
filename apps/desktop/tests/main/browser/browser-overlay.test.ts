@@ -296,10 +296,10 @@ describe('browser overlay lifecycle', () => {
     expect(view.visible).toBe(true);
     expect(host.contentView.children.at(-1)).toBe(view);
     expect(view.webContents.focus).toHaveBeenCalledOnce();
-    expect(view.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayShown, {
+    expect(view.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayShown, expect.objectContaining({
       requestId: 1,
       placement: 'bottom-end',
-    });
+    }));
   });
 
   it('ignores an activation from a replaced native menu', () => {
@@ -1251,7 +1251,134 @@ it.each([0.8, 1.25, 1.5])('scales menu geometry with host zoom %s', zoom => {
   expect(view.bounds.x + 12 * zoom).toBeCloseTo(220 * zoom, 0);
   openBrowserOverlayMenu({ ...config, menuId: 'zoom-edge', anchor: { x: 1200 / zoom - 40, y: 800 / zoom - 40, width: 20, height: 20 } });
   showBrowserOverlayRendered(view.webContents as never, { requestId: 2, width: 220, height: 100 });
-  expect(view.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayShown, { requestId: 2, placement: 'top-end' });
+  expect(view.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayShown, expect.objectContaining({ requestId: 2, placement: 'top-end' }));
   expect(view.bounds.x + view.bounds.width).toBeLessThanOrEqual(1200);
   expect(view.bounds.y + view.bounds.height).toBeLessThanOrEqual(800);
  });
+
+describe('browser overlay nested menus', () => {
+  beforeEach(() => {
+    destroyBrowserOverlay();
+    mocks.FakeWebContentsView.instances = [];
+  });
+
+  it('validates one-level submenus and rejects duplicate ids across parent and child items', () => {
+    const menu = asBrowserOverlayMenuRequest({
+      menuId: 'table-selection',
+      anchor: { x: 200, y: 240, width: 0, height: 0 },
+      placement: 'bottom-start',
+      offset: 0,
+      autoWidth: true,
+      items: [
+        { kind: 'item', id: 'copy', label: 'Copy', icon: 'copy' },
+        {
+          kind: 'item',
+          id: 'copy-as',
+          label: 'Copy as',
+          icon: 'copy',
+          keepOpen: true,
+          submenu: [
+            { id: 'copy-as-tsv', label: 'TSV', disabled: false },
+            { id: 'copy-as-markdown', label: 'Markdown' },
+          ],
+        },
+      ],
+    });
+    expect(menu?.items[1]).toMatchObject({
+      id: 'copy-as',
+      submenu: [{ id: 'copy-as-tsv', label: 'TSV' }, { id: 'copy-as-markdown', label: 'Markdown' }],
+    });
+    expect(asBrowserOverlayMenuRequest({
+      menuId: 'dup-child',
+      anchor: { x: 0, y: 0, width: 0, height: 0 },
+      items: [
+        { kind: 'item', id: 'copy', label: 'Copy' },
+        { kind: 'item', id: 'copy-as', label: 'Copy as', submenu: [{ id: 'copy', label: 'Duplicate' }] },
+      ],
+    })).toBeNull();
+    expect(asBrowserOverlayMenuRequest({
+      menuId: 'dup-sibling',
+      anchor: { x: 0, y: 0, width: 0, height: 0 },
+      items: [
+        { kind: 'item', id: 'copy-as', label: 'Copy as', submenu: [{ id: 'same', label: 'A' }, { id: 'same', label: 'B' }] },
+      ],
+    })).toBeNull();
+  });
+
+  it('passes viewport dimensions and keeps the parent stationary when a submenu widens the view', () => {
+    const host = createHost(900, 700);
+    attachBrowserOverlayWindow(host as never);
+    const parsed = asBrowserOverlayMenuRequest({
+      menuId: 'table-selection',
+      anchor: { x: 300, y: 120, width: 0, height: 0 },
+      placement: 'bottom-start',
+      autoWidth: true,
+      items: [{ kind: 'item', id: 'copy', label: 'Copy' }],
+    })!;
+    openBrowserOverlayMenu(parsed);
+    const view = mocks.FakeWebContentsView.instances[0]!;
+    markBrowserOverlayReady(view.webContents as never);
+    expect(view.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayConfig, expect.objectContaining({
+      autoWidth: true,
+      width: 876,
+      viewportWidth: 900,
+      viewportHeight: 700,
+    }));
+    const pushed = view.webContents.send.mock.calls.find(([channel]) => channel === IPC.browserOverlayConfig)?.[1];
+    expect(pushed.minWidth).toBeUndefined();
+    showBrowserOverlayRendered(view.webContents as never, { requestId: 1, width: 160, height: 140 });
+    expect(view.bounds).toEqual({ x: 300 - 12, y: 124 - 12, width: 160 + 24, height: 140 + 24 });
+    showBrowserOverlayRendered(view.webContents as never, {
+      requestId: 1,
+      width: 284,
+      height: 140,
+      anchorWidth: 160,
+      anchorHeight: 140,
+      offsetX: 124,
+      offsetY: 0,
+      placement: 'left',
+    });
+    expect(view.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayShown, expect.objectContaining({
+      requestId: 1,
+      x: 300,
+      y: 124,
+    }));
+    expect(view.bounds).toEqual({ x: 300 - 124 - 12, y: 124 - 12, width: 284 + 24, height: 140 + 24 });
+    destroyBrowserOverlay();
+  });
+
+  it('activates submenu children and ignores parent row activation or disabled children', () => {
+    const host = createHost();
+    attachBrowserOverlayWindow(host as never);
+    const parsed = asBrowserOverlayMenuRequest({
+      menuId: 'table-selection',
+      anchor: { x: 100, y: 120, width: 0, height: 0 },
+      autoWidth: true,
+      items: [
+        {
+          kind: 'item',
+          id: 'copy-as',
+          label: 'Copy as',
+          submenu: [
+            { id: 'copy-as-tsv', label: 'TSV' },
+            { id: 'copy-as-csv', label: 'CSV', disabled: true },
+          ],
+        },
+      ],
+    })!;
+    openBrowserOverlayMenu(parsed);
+    const view = mocks.FakeWebContentsView.instances[0]!;
+    markBrowserOverlayReady(view.webContents as never);
+    showBrowserOverlayRendered(view.webContents as never, { requestId: 1, width: 160, height: 60 });
+    host.webContents.send.mockClear();
+
+    activateBrowserOverlayItem(view.webContents as never, { requestId: 1, itemId: 'copy-as' });
+    activateBrowserOverlayItem(view.webContents as never, { requestId: 1, itemId: 'copy-as-csv' });
+    expect(host.webContents.send).not.toHaveBeenCalledWith(IPC.browserOverlayAction, expect.anything());
+    expect(view.visible).toBe(true);
+
+    activateBrowserOverlayItem(view.webContents as never, { requestId: 1, itemId: 'copy-as-tsv' });
+    expect(host.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayAction, { menuId: 'table-selection', itemId: 'copy-as-tsv' });
+    destroyBrowserOverlay();
+  });
+});

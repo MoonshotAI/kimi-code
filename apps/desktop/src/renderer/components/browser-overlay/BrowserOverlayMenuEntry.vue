@@ -1,14 +1,22 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { Favicon, MetricBadge, Icon, IconButton, Kbd, MenuItem, ProgressBar, SegmentedControl } from '@moonshot-ai/app-ui';
 import type { BrowserOverlayMenuItem } from '../../../shared/browser-overlay';
 import BrowserOverlayNotice from './BrowserOverlayNotice.vue';
 import BrowserOverlayZoomItem from './BrowserOverlayZoomItem.vue';
 import { findBrowserTextMatches, splitBrowserTextHighlights, type BrowserTextRange } from '../../lib/browserTextHighlight';
 
-const props = defineProps<{ item: BrowserOverlayMenuItem; iconGutter: boolean; listbox?: boolean; highlightQuery?: string }>();
+const props = defineProps<{ item: BrowserOverlayMenuItem; iconGutter: boolean; listbox?: boolean; highlightQuery?: string; submenuOpen?: boolean }>();
 const failedFavicon = ref<string>();
-const emit = defineEmits<{ action: [id: string] }>();
+const emit = defineEmits<{ action: [id: string]; openSubmenu: [id: string, focusFirst: boolean]; closeSubmenu: []; hoverItem: [row: HTMLElement] }>();
+const hasSubmenu = computed(() => props.item.kind === 'item' && (props.item.submenu?.length ?? 0) > 0);
+
+function onItemMouseenter(event: MouseEvent): void {
+  if (props.item.kind !== 'item') return;
+  if (hasSubmenu.value) emit('openSubmenu', props.item.id, false);
+  else emit('closeSubmenu');
+  emit('hoverItem', event.currentTarget as HTMLElement);
+}
 
 function segments(text: string, ranges?: readonly BrowserTextRange[]) {
   return splitBrowserTextHighlights(text, ranges ?? (props.highlightQuery ? findBrowserTextMatches(text, props.highlightQuery) : undefined));
@@ -21,13 +29,36 @@ function segments(text: string, ranges?: readonly BrowserTextRange[]) {
     v-else-if="item.kind === 'section' || item.kind === 'note'"
     :class="['overlay-menu-copy', `is-${item.kind}`, { 'is-xs': item.kind === 'note' && item.size === 'xs' }]"
   >{{ item.label }}</div>
-  <div v-else-if="item.kind === 'choices'" class="overlay-menu-choices" :class="{ 'is-disabled': item.disabled }" role="group" :aria-label="item.label">
+  <div v-else-if="item.kind === 'choices'" class="overlay-menu-choices" :class="{ 'is-disabled': item.disabled }" role="group" :aria-label="item.label" @mouseenter="emit('closeSubmenu')">
     <span class="overlay-menu-choice-label"><Icon v-if="item.icon" :name="item.icon" size="sm" aria-hidden="true" />{{ item.label }}<BrowserOverlayNotice v-if="item.notice" :message="item.notice.message" :link-label="item.notice.linkLabel" @open="emit('action', item.notice!.action)" /></span>
     <SegmentedControl :model-value="item.value" :options="item.options.map(option => ({ value: option.id, label: option.label }))" size="xs" :disabled="item.disabled" @update:model-value="emit('action', $event)" />
   </div>
-  <BrowserOverlayZoomItem v-else-if="item.kind === 'zoom'" :item="item" :show-icon-gutter="iconGutter" @action="emit('action', $event)" />
-  <div v-else-if="item.kind === 'item'" :class="['overlay-menu-row-group', { 'has-actions': item.actions?.length }]">
-  <MenuItem :class="['overlay-menu-row', { 'has-metrics': item.metrics?.length }]" :data-tone="item.tone" :active="item.selected" :role="listbox ? 'option' : item.selected === undefined ? undefined : 'menuitemradio'" :aria-checked="listbox ? undefined : item.selected" :aria-selected="listbox ? item.selected : undefined" :danger="item.danger" :disabled="item.disabled" @click="emit('action', item.id)">
+  <BrowserOverlayZoomItem v-else-if="item.kind === 'zoom'" :item="item" :show-icon-gutter="iconGutter" @action="emit('action', $event)" @mouseenter="emit('closeSubmenu')" />
+  <div
+    v-else-if="item.kind === 'item'"
+    :class="['overlay-menu-row-group', { 'has-actions': item.actions?.length, 'has-submenu': hasSubmenu }]"
+    :data-submenu-anchor="hasSubmenu ? item.id : undefined"
+    @mouseenter="onItemMouseenter"
+  >
+  <MenuItem
+    v-if="hasSubmenu"
+    class="overlay-menu-row is-single-line"
+    :data-tone="item.tone"
+    :active="submenuOpen"
+    :danger="item.danger"
+    :disabled="item.disabled"
+    has-popup="menu"
+    :expanded="submenuOpen"
+    @click="emit('openSubmenu', item.id, $event.detail === 0)"
+  >
+    <span v-if="iconGutter" class="overlay-menu-icon" aria-hidden="true"><Icon v-if="item.icon" :name="item.icon" :style="item.tone ? { color: `var(--color-${item.tone})` } : undefined" /></span>
+    <span class="overlay-menu-text">
+      <span class="overlay-menu-title"><span class="overlay-menu-label">{{ item.label }}</span></span>
+    </span>
+    <template #action><Icon name="chevron-right" size="sm" /></template>
+  </MenuItem>
+  <template v-else>
+  <MenuItem :class="['overlay-menu-row', { 'has-metrics': item.metrics?.length, 'is-single-line': !item.description && !item.progress && !item.metrics?.length }]" :data-tone="item.tone" :active="item.selected" :role="listbox ? 'option' : item.selected === undefined ? undefined : 'menuitemradio'" :aria-checked="listbox ? undefined : item.selected" :aria-selected="listbox ? item.selected : undefined" :danger="item.danger" :disabled="item.disabled" @focusin="emit('closeSubmenu')" @click="emit('action', item.id)">
     <span v-if="iconGutter" class="overlay-menu-icon" aria-hidden="true"><Favicon v-if="item.favicon && item.favicon !== failedFavicon" :src="item.favicon" class="overlay-menu-favicon" referrerpolicy="no-referrer" @error="failedFavicon = item.favicon" /><Icon v-else-if="item.icon" :name="item.icon" :style="item.tone ? { color: `var(--color-${item.tone})` } : undefined" /></span>
     <span class="overlay-menu-text">
       <span class="overlay-menu-title"><span class="overlay-menu-label"><template v-for="(segment, index) in segments(item.label, item.labelRanges)" :key="index"><strong v-if="segment.match" class="overlay-menu-match">{{ segment.text }}</strong><template v-else>{{ segment.text }}</template></template></span><span v-if="item.metrics?.length" class="overlay-menu-metrics"><MetricBadge v-for="metric in item.metrics" :key="metric.label" :label="metric.label" muted>{{ metric.value }}</MetricBadge></span></span>
@@ -42,15 +73,19 @@ function segments(text: string, ranges?: readonly BrowserTextRange[]) {
   <span v-if="item.actions?.length" class="overlay-menu-actions">
     <IconButton v-for="action in item.actions" :key="action.id" size="sm" :label="action.label" :disabled="item.disabled" @click="emit('action', action.id)"><Icon :name="action.icon" /></IconButton>
   </span>
+  </template>
   </div>
 </template>
 
 <style scoped>
 .overlay-menu-favicon { width: var(--space-4); height: var(--space-4); object-fit: contain; flex: none; }
 .overlay-menu-row { align-items: flex-start; }
-.overlay-menu-row-group:not(.has-actions) { display: contents; }
+.overlay-menu-row.is-single-line { align-items: center; }
+.overlay-menu-row-group:not(.has-actions):not(.has-submenu) { display: contents; }
 .overlay-menu-row-group.has-actions { display: flex; align-items: center; gap: var(--space-1); padding-inline-end: var(--space-1); }
 .overlay-menu-row-group.has-actions > .overlay-menu-row { flex: 1; min-width: 0; }
+.overlay-menu-row-group.has-submenu { display: block; }
+.overlay-menu-row-group.has-submenu > :deep(.ui-menu-item-row) { width: 100%; }
 .overlay-menu-actions { display: inline-flex; align-items: center; gap: var(--space-05); flex: none; }
 .overlay-menu-progress { margin-top: var(--space-1); }
 .overlay-menu-progress.is-paused :deep(.ui-progress-bar__indicator) { animation-play-state: paused; }
