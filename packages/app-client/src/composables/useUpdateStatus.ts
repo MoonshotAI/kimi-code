@@ -42,7 +42,7 @@ export interface UpdateTracker {
   skipVersion: () => void;
   openDialog: () => void;
   check: () => Promise<UpdateCheckResult>;
-  checkAndUpdate: () => Promise<UpdateCheckResult>;
+  checkAndOpen: () => Promise<UpdateCheckResult>;
   download: () => void;
   install: () => Promise<void>;
 }
@@ -109,11 +109,10 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
     return result;
   };
 
-  const checkAndUpdate = async (): Promise<UpdateCheckResult> => {
+  const checkAndOpen = async (): Promise<UpdateCheckResult> => {
     const result = await check();
     if (result.outcome !== 'available') return result;
     dialogOpen.value = true;
-    download();
     return result;
   };
 
@@ -150,7 +149,7 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
       dialogOpen.value = true;
     },
     check,
-    checkAndUpdate,
+    checkAndOpen,
     download,
     install: async () => {
       await bridge?.installUpdate();

@@ -7,7 +7,7 @@ import { getTraceRecorder } from '../diagnostics/trace';
 import { exportDiagnostics, openLogsFolder } from '../diagnostics/diagnostics-export';
 import { reportExternalLinkFailure } from './external-links';
 import { refreshServerRegion, serverRegionProfile, whenServerRegionSource } from '../server/region';
-import { getUpdateStatus, requestUpdateCheck, requestUpdateDownload, UPDATE_CHECK_TIMED_OUT } from '../release/updater';
+import { requestUpdateCheck, UPDATE_CHECK_TIMED_OUT } from '../release/updater';
 import { trackDesktopEvent } from '../diagnostics/track';
 import { isLinuxNativeTitleBar } from '../app/ui-state';
 import { IPC } from '../ipc/ipc-channels';
@@ -337,9 +337,6 @@ async function runMenuUpdateCheck(): Promise<void> {
     win === null || win.isDestroyed() ? dialog.showMessageBox(opts) : dialog.showMessageBox(win, opts);
   if (result.outcome === 'available') {
     sendToRenderer(IPC.menuAction, 'open-update-dialog');
-    if (getUpdateStatus().state !== 'downloaded') {
-      requestUpdateDownload();
-    }
     return;
   }
   await show({

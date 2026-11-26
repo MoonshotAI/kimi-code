@@ -27,7 +27,6 @@ const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
   requestUpdateCheck: vi.fn(),
   requestUpdateDownload: vi.fn(),
-  getUpdateStatus: vi.fn((): { state: 'idle' | 'available' | 'downloading' | 'downloaded' | 'error'; version?: string } => ({ state: 'idle' })),
   isLinuxNativeTitleBar: vi.fn(() => false),
   devToolsMode: vi.fn((): 'right' | 'detach' => 'detach'),
   openExternal: vi.fn(),
@@ -68,7 +67,6 @@ vi.mock('../../../src/main/diagnostics/diagnostics-export', () => ({
   openLogsFolder: mocks.openLogsFolder,
 }));
 vi.mock('../../../src/main/release/updater', () => ({
-  getUpdateStatus: mocks.getUpdateStatus,
   requestUpdateCheck: mocks.requestUpdateCheck,
   requestUpdateDownload: mocks.requestUpdateDownload,
 }));
@@ -642,27 +640,14 @@ describe('menu telemetry', () => {
     await new Promise((resolve) => setImmediate(resolve));
   });
 
-  it('opens the renderer update dialog and starts downloading directly when an update is available', async () => {
+  it('opens the renderer update dialog without downloading when an update is available', async () => {
     mocks.requestUpdateCheck.mockResolvedValue({ outcome: 'available', version: '1.2.3' });
-    mocks.getUpdateStatus.mockReturnValueOnce({ state: 'available', version: '1.2.3' });
     clickItem(appMenuItems(menuTemplate(true, 'en')).find((item) => item.id === 'check-for-updates'));
     await vi.waitFor(() => {
       expect(mocks.sendToRenderer).toHaveBeenCalledWith(IPC.menuAction, 'open-update-dialog');
     });
 
     expect(mocks.showMainWindow).toHaveBeenCalledOnce();
-    expect(mocks.requestUpdateDownload).toHaveBeenCalledOnce();
-    expect(mocks.showMessageBox).not.toHaveBeenCalled();
-  });
-
-  it('opens the renderer update dialog without downloading again when the update is ready', async () => {
-    mocks.requestUpdateCheck.mockResolvedValue({ outcome: 'available', version: '1.2.3' });
-    mocks.getUpdateStatus.mockReturnValueOnce({ state: 'downloaded', version: '1.2.3' });
-    clickItem(appMenuItems(menuTemplate(true, 'en')).find((item) => item.id === 'check-for-updates'));
-    await vi.waitFor(() => {
-      expect(mocks.sendToRenderer).toHaveBeenCalledWith(IPC.menuAction, 'open-update-dialog');
-    });
-
     expect(mocks.requestUpdateDownload).not.toHaveBeenCalled();
     expect(mocks.showMessageBox).not.toHaveBeenCalled();
   });

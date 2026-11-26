@@ -471,7 +471,7 @@ async function onCheckUpdate(): Promise<void> {
   checkingUpdate.value = true;
   checkResult.value = null;
   try {
-    checkResult.value = await updateTracker.checkAndUpdate();
+    checkResult.value = await updateTracker.checkAndOpen();
   } finally {
     checkingUpdate.value = false;
   }

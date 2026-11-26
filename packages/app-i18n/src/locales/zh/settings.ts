@@ -332,7 +332,7 @@ export default {
   checkUpdateBtn: '立即检查',
   updateChecking: '检查中…',
   updateCheckLatest: '已是最新版本',
-  updateCheckAvailable: '发现新版本 {version}，即将开始下载',
+  updateCheckAvailable: '发现新版本 {version}，请在更新弹窗中下载',
   updateCheckUnsupported: '当前构建不支持检查更新',
   updateCheckFailed: '检查失败，请稍后重试',
   updateCheckAvailableAuto: '发现新版本 {version}，正在后台下载',

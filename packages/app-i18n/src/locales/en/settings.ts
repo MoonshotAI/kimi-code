@@ -332,7 +332,7 @@ export default {
   checkUpdateBtn: 'Check now',
   updateChecking: 'Checking…',
   updateCheckLatest: 'You’re on the latest version',
-  updateCheckAvailable: 'Version {version} found — starting download',
+  updateCheckAvailable: 'Version {version} found — download it from the update dialog',
   updateCheckUnsupported: 'This build does not support update checks',
   updateCheckFailed: 'Check failed. Please try again later.',
   updateCheckAvailableAuto: 'Version {version} found — downloading in the background',
