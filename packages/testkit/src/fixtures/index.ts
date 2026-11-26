@@ -31,13 +31,28 @@ export { createTestHome, osHomeEnv, removeDirectory, type TestHome } from '#/fix
 export {
   FAKE_MCP_SERVER,
   fakeMcpServer,
+  fakeMcpServerName,
   readMcpCalls,
+  readMcpStarts,
   writeMcpConfig,
+  type FakeMcpCatalog,
+  type FakeMcpExit,
+  type FakeMcpProcessTool,
+  type FakeMcpReply,
   type FakeMcpServerOptions,
+  type FakeMcpStart,
+  type FakeMcpText,
   type FakeMcpTool,
   type McpCall,
   type McpServerEntry,
 } from '#/fixtures/mcp';
+export {
+  startFakeMcpHttpServer,
+  type FakeMcpHttpRequest,
+  type FakeMcpHttpResponse,
+  type FakeMcpHttpServer,
+  type FakeMcpHttpServerOptions,
+} from '#/fixtures/mcp-http';
 export { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
 export {
   installNetworkGuard,
