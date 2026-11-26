@@ -2,7 +2,13 @@ import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 import { TuiAltScreen } from '@moonshot-ai/pi-tui';
 
 import { currentTheme, lightColors } from '#/tui/theme';
-import { DEFAULT_MARKDOWN_CONFIG, loadTuiConfig, resolveTuiMode, type TuiConfig } from '../config';
+import {
+  DEFAULT_MARKDOWN_CONFIG,
+  loadTuiConfig,
+  resolveTuiMode,
+  resolveWheelScrollLines,
+  type TuiConfig,
+} from '../config';
 import { TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { setMarkdownMermaidMode, setMarkdownRenderLatex } from '../utils/markdown-options';
 import type { SlashCommandHost } from './dispatch';
@@ -71,6 +77,7 @@ export async function applyReloadedTuiConfig(
     tuiMode: config.tuiMode,
     disablePasteBurst: config.disablePasteBurst,
     copyOnSelect: config.copyOnSelect,
+    wheelScrollLines: config.wheelScrollLines,
     renderLatex: config.renderLatex,
     cacheExpiryHint: config.cacheExpiryHint,
     autoSessionTitle: config.autoSessionTitle,
@@ -85,6 +92,7 @@ export async function applyReloadedTuiConfig(
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
   if (host.state.ui instanceof TuiAltScreen) {
     host.state.ui.setCopyOnSelect(config.copyOnSelect !== false);
+    host.state.ui.setWheelScrollLines(resolveWheelScrollLines(config.wheelScrollLines));
   }
   if (resolveTuiMode(config.tuiMode).mode !== host.state.ui.mode) {
     host.showNotice(TUI_MODE_RESTART_NOTICE);

@@ -2,34 +2,26 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import type { AppCatalogProvider, AppModel, AppProvider, AppSkill, ReadRequestOptions } from '@moonshot-ai/app-core/api';
-import { PROVIDER_PRESETS, safeGetString, safeSetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
+import { PROVIDER_PRESETS, safeGetJson, safeSetJson, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { getDeviceApi, getKimiWebApi } from '../client/deps';
 import { resolveChatModel } from '../lib/chatGate';
 import { clientPinia } from './pinia';
 
-const STARRED_MODELS_STORAGE_KEY = STORAGE_KEYS.starredModels;
+const RECENT_MODELS_STORAGE_KEY = STORAGE_KEYS.recentModels;
+const RECENT_MODELS_HISTORY_LIMIT = 20;
 
-function loadStarredModelsFromStorage(): string[] {
-  try {
-    const raw = safeGetString(STARRED_MODELS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
-      return parsed as string[];
-    }
-  } catch {}
-  return [];
+function loadRecentModelsFromStorage(): string[] {
+  const parsed = safeGetJson<unknown>(RECENT_MODELS_STORAGE_KEY);
+  return Array.isArray(parsed) && parsed.every((item) => typeof item === 'string') ? parsed : [];
 }
 
-function saveStarredModelsToStorage(v: string[]): void {
-  try {
-    safeSetString(STARRED_MODELS_STORAGE_KEY, JSON.stringify(v));
-  } catch {}
+function saveRecentModelsToStorage(value: string[]): void {
+  safeSetJson(RECENT_MODELS_STORAGE_KEY, value);
 }
 
 export const useModelsStore = defineStore('kimi.models', () => {
   const models = ref<AppModel[]>([]);
-  const starredModelIds = ref<string[]>(loadStarredModelsFromStorage());
+  const recentModelIds = ref<string[]>(loadRecentModelsFromStorage());
   const providers = ref<AppProvider[]>([]);
 
   const skillsBySession = ref<Record<string, AppSkill[]>>({});
@@ -171,15 +163,21 @@ export const useModelsStore = defineStore('kimi.models', () => {
     skillsFetchedByWorkspace.value = fetched;
   }
 
-  function toggleStarModel(modelId: string): void {
-    const set = new Set(starredModelIds.value);
-    if (set.has(modelId)) {
-      set.delete(modelId);
-    } else {
-      set.add(modelId);
-    }
-    starredModelIds.value = Array.from(set);
-    saveStarredModelsToStorage(starredModelIds.value);
+  function noteRecentModel(modelId: string, previousModelId?: string): void {
+    if (modelId.length === 0) return;
+    const prioritized = [
+      ...new Set(
+        [modelId, previousModelId].filter(
+          (id): id is string => id !== undefined && id.length > 0,
+        ),
+      ),
+    ];
+    const prioritizedSet = new Set(prioritized);
+    recentModelIds.value = [
+      ...prioritized,
+      ...recentModelIds.value.filter((id) => !prioritizedSet.has(id)),
+    ].slice(0, RECENT_MODELS_HISTORY_LIMIT);
+    saveRecentModelsToStorage(recentModelIds.value);
   }
 
   function loadSkillsForSession(sessionId: string, options?: ReadRequestOptions): Promise<boolean> {
@@ -260,7 +258,7 @@ export const useModelsStore = defineStore('kimi.models', () => {
 
   return {
     models,
-    starredModelIds,
+    recentModelIds,
     providers,
     draftModel,
     defaultModel,
@@ -290,7 +288,7 @@ export const useModelsStore = defineStore('kimi.models', () => {
     setSkillsForWorkspace,
     invalidateSkillsForSession,
     invalidateSkillsForWorkspace,
-    toggleStarModel,
+    noteRecentModel,
     loadSkillsForSession,
     loadSkillsForWorkspace,
   };

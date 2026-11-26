@@ -30,6 +30,7 @@ defineProps<{
   font-size: var(--markdown-body-font-size);
   line-height: var(--markdown-body-line-height);
   color: var(--color-text-muted);
+  user-select: none;
 }
 
 .wi-face {

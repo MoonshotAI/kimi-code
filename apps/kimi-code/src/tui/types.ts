@@ -15,7 +15,7 @@ import type {
 
 export type { WorkLocation };
 
-import type { FollowUpBehavior, MarkdownConfig, NotificationsConfig, StatusLineConfig, TranscriptConfig, TuiMode, UpgradePreferences } from './config';
+import type { FollowUpBehavior, MarkdownConfig, NotificationsConfig, StatusLineConfig, TranscriptConfig, TuiMode, UpgradePreferences, WheelScrollLines } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
 import type { MediaAttachment, VideoAttachment } from './utils/image-attachment-store';
@@ -73,6 +73,7 @@ export interface AppState {
   editorCommand: string | null;
   disablePasteBurst?: boolean;
   copyOnSelect?: boolean;
+  wheelScrollLines?: WheelScrollLines;
   renderLatex?: boolean;
   cacheExpiryHint?: boolean;
   disableFeedbackSurvey?: boolean;

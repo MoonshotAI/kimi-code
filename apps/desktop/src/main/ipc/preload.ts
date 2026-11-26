@@ -7,7 +7,7 @@ import { isBrowserTabCommand, type BrowserTabCommand } from '../../shared/browse
 import { browserValidators as siteValidators, type BrowserPermissionRequest, type BrowserPermissionDecision } from '../../shared/browser-sites';
 import { browserValidators as dialogValidators, type BrowserPageDialog, type BrowserPageDialogAnswer } from '../../shared/browser-dialogs';
 import { isBrowserControlConfig, isBrowserControlOwnership, type BrowserControlOwnership, type BrowserControlConfig } from '../../shared/browser-control';
-import { asBrowserOverlayMenuId, asBrowserOverlayDialogRequest, asBrowserOverlayMenuRequest, isBrowserOverlayAction, isBrowserOverlayClosed, isBrowserOverlayDialogAction, isBrowserOverlayDialogClosed } from '../../shared/browser-overlay';
+import { asBrowserOverlayMenuId, asBrowserOverlayDialogRequest, isBrowserOverlayMenuOpenInput, isBrowserOverlayAction, isBrowserOverlayClosed, isBrowserOverlayDialogAction, isBrowserOverlayDialogClosed } from '../../shared/browser-overlay';
 import { asBrowserDeviceModeRequest, asBrowserDeviceModeUpdate, type BrowserDeviceModeRequest } from '../../shared/browser-device';
 import { browserValidators as pageValidators, asBrowserCloneRequest, asBrowserNavigateRequest, asBrowserFocusEmulationRequest, EMPTY_BROWSER_STATE, isBrowserState, asBrowserId, asBrowserBoundsRequest, asBrowserOcclusionRequest, asBrowserVisibilityRequest, asBrowserZoomRequest, isBrowserStateEvent } from '../../shared/browser';
 import { asBrowserSiteAutoplayUpdate, asBrowserSiteInfo, asBrowserSiteSoundUpdate, asBrowserSitePermissionUpdate, asBrowserSystemPermissionStates, browserSiteOrigin, isBrowserSitePermission, type BrowserSiteInfo, type BrowserSitePermission, type BrowserSitePermissionSetting } from '../../shared/browser-sites';
@@ -1291,7 +1291,7 @@ export const api: KimiDesktopApi = {
     }
   },
   browserOverlayOpenMenu: (request) => {
-    if (asBrowserOverlayMenuRequest(request) !== null) {
+    if (isBrowserOverlayMenuOpenInput(request)) {
       ipcRenderer.send('kimi:browser-overlay-open', request);
     }
   },

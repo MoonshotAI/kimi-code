@@ -22,13 +22,13 @@ withDefaults(defineProps<{
 
 <style scoped>
 .ui-link {
-  color: var(--color-accent);
+  color: var(--color-link);
   text-decoration: none;
   cursor: pointer;
   font: inherit;
   transition: color var(--duration-base) var(--ease-out);
 }
-.ui-link:hover { color: var(--color-accent-hover); text-decoration: underline; }
+.ui-link:hover { color: var(--color-link-hover); text-decoration: underline; }
 .ui-link:focus-visible { outline: none; box-shadow: var(--p-focus-ring); border-radius: var(--radius-xs); }
 .ui-link--muted { color: var(--color-text-muted); }
 .ui-link--muted:hover { color: var(--color-text); }

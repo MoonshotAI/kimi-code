@@ -3502,7 +3502,7 @@ export function useKimiWebClient() {
     isStartingFirstPrompt,
 
     models: modelProvider.models,
-    starredModelIds: modelProvider.starredModelIds,
+    recentModelIds: modelProvider.recentModelIds,
     providers: modelProvider.providers,
 
     fontScale: appearance.fontScale,
@@ -3699,11 +3699,10 @@ export function useKimiWebClient() {
     skillsLoaded,
     activateSkill: modelProvider.activateSkill,
     selectModel,
-    setSessionModel: (sessionId: string, modelId: string) => {
+    setSessionModel: (sessionId: string, modelId: string, thinking?: ThinkingLevel) => {
       beginModelSelect(sessionId);
-      return modelProvider.setSessionModel(sessionId, modelId);
+      return modelProvider.setSessionModel(sessionId, modelId, thinking);
     },
-    toggleStarModel: modelProvider.toggleStarModel,
     addProvider: modelProvider.addProvider,
     updateProvider: modelProvider.updateProvider,
     getProvider: modelProvider.getProvider,
