@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
+import { Box } from "../src/components/box.ts";
 import { HStack } from "../src/components/h-stack.ts";
 import { ScrollView } from "../src/components/scroll-view.ts";
 import { Text } from "../src/components/text.ts";
@@ -395,5 +396,51 @@ describe("viewport layout", () => {
 
 		assert.strictEqual(first.root.children[0]?.lines?.length, 1);
 		assert.strictEqual(second.root.children[0]?.lines?.length, 3);
+	});
+
+	it("lays out a ScrollView inside a bordered Box with scrollbar inside the right border", () => {
+		const scrolledPositions: number[] = [];
+		const scrollView = new ScrollView(new Text("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8", 0, 0), {
+			scrollbar: "always",
+			onScroll: (top) => scrolledPositions.push(top),
+		});
+		const box = new Box({
+			border: true,
+			title: "─ Logs ",
+			padding: { left: 1 },
+		});
+		box.addChild(scrollView);
+
+		const frame = renderLayoutFrame(box, 12, 5, () => {});
+		assert.deepStrictEqual(visibleLines(frame.lines), [
+			"┌─ Logs ───┐",
+			"│ l1      ┃│",
+			"│ l2      ┃│",
+			"│ l3      ││",
+			"└──────────┘",
+		]);
+		assert.strictEqual(scrollView.viewportHeight, 3);
+
+		scrollView.scrollToEnd();
+		assert.deepStrictEqual(scrolledPositions, [5]);
+		const scrolled = renderLayoutFrame(box, 12, 5, () => {});
+		assert.deepStrictEqual(visibleLines(scrolled.lines), [
+			"┌─ Logs ───┐",
+			"│ l6      ││",
+			"│ l7      ┃│",
+			"│ l8      ┃│",
+			"└──────────┘",
+		]);
+	});
+
+	it("renders a full-height bordered Box even when empty", () => {
+		const emptyBox = new Box({ border: true, borderStyle: "rounded", title: " Empty " });
+		const frame = renderLayoutFrame(emptyBox, 10, 4, () => {});
+		assert.deepStrictEqual(visibleLines(frame.lines), [
+			"╭ Empty ─╮",
+			"│        │",
+			"│        │",
+			"╰────────╯",
+		]);
 	});
 });

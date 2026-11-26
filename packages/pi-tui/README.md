@@ -303,7 +303,7 @@ const collapsible = new MouseRegion(content, (event) => {
 });
 ```
 
-`Container` and `Box` route events to nested children using geometry recorded by the last rendered frame, so pointer motion does not rerender children merely to hit-test them. Explicit `VStack`, `HStack`, and `ScrollView` layouts use the alternate-screen layout frame directly.
+`Container` and `Box` route events to nested children using geometry recorded by the last rendered frame, so pointer motion does not rerender children merely to hit-test them. Explicit `VStack`, `HStack`, `Box`, and `ScrollView` layouts use the alternate-screen layout frame directly.
 
 ### Focusable Interface (IME Support)
 
@@ -375,16 +375,18 @@ container.removeChild(component);
 
 ### Box
 
-Container that applies padding and background color to all children.
+Container that frames children with optional borders, title, and padding, and participates directly in `TuiAltScreen` viewport layout.
 
 ```typescript
-const box = new Box(
-  1,                              // paddingX (default: 1)
-  1,                              // paddingY (default: 1)
-  (text) => chalk.bgGray(text)   // optional background function
-);
-box.addChild(new Text("Content"));
-box.setBgFn((text) => chalk.bgBlue(text));  // Change background dynamically
+const box = new Box({
+  border: true,
+  borderStyle: "rounded",
+  borderColor: (text) => chalk.cyan(text),
+  title: " Notes ",
+  padding: { left: 1, right: 1 },
+});
+box.addChild(new Text("Content", 0, 0));
+box.setTitle(" Updated ");
 ```
 
 ### Text

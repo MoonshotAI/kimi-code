@@ -953,7 +953,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const boxes = getLayoutBoxesAt(this.currentLayout, event.screenX, event.screenY);
 		for (const box of boxes) {
 			if (visited.has(box.component)) continue;
-			if (getLayoutNode(box.component) && box.component.handleMouse === Container.prototype.handleMouse) continue;
+			const layoutNode = getLayoutNode(box.component);
+			if (
+				layoutNode &&
+				(box.component.handleMouse === Container.prototype.handleMouse ||
+					(layoutNode.type === "box" && layoutNode.skipLayoutMouseDispatch))
+			) {
+				continue;
+			}
 			visited.add(box.component);
 			// lineOffset crops the top of an over-tall component so its cursor row
 			// stays visible; local coordinates must use the uncropped frame.
@@ -1004,7 +1011,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			previous &&
 			now - previous.timestamp <= DOUBLE_CLICK_INTERVAL_MS &&
 			previous.component === target.component &&
-			previous.x === x &&
+			Math.abs(previous.x - x) <= 1 &&
 			previous.y === y
 				? (previous.count % 3) + 1
 				: 1;
@@ -1036,7 +1043,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		if (this.mouseCapture || this.mousePressTarget) {
 			const target = this.mouseCapture ?? this.mousePressTarget!;
-			if (this.mousePressPoint && (raw.x !== this.mousePressPoint.x || raw.y !== this.mousePressPoint.y)) {
+			if (
+				this.mousePressPoint &&
+				(raw.y !== this.mousePressPoint.y || Math.abs(raw.x - this.mousePressPoint.x) > 1)
+			) {
 				this.mousePressMoved = true;
 				this.lastComponentClick = undefined;
 			}
@@ -1044,9 +1054,16 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			const targetResult = this.dispatchMouseToTarget(event, target);
 			if (targetResult) render = this.applyMouseDispatchResult(event, targetResult);
 			if (raw.release) {
-				if (!this.mousePressMoved && this.mousePressPoint?.x === raw.x && this.mousePressPoint.y === raw.y) {
-					const clickEvent = this.createMouseEvent("click", raw.button, raw.x, raw.y, {
-						clickCount: this.getComponentClickCount(target, raw.x, raw.y),
+				if (
+					!this.mousePressMoved &&
+					this.mousePressPoint !== undefined &&
+					raw.y === this.mousePressPoint.y &&
+					Math.abs(raw.x - this.mousePressPoint.x) <= 1
+				) {
+					const clickX = this.mousePressPoint.x;
+					const clickY = this.mousePressPoint.y;
+					const clickEvent = this.createMouseEvent("click", raw.button, clickX, clickY, {
+						clickCount: this.getComponentClickCount(target, clickX, clickY),
 					});
 					const clickResult = this.dispatchMouseToTarget(clickEvent, target);
 					if (clickResult) render = this.applyMouseDispatchResult(clickEvent, clickResult) || render;
@@ -1121,7 +1138,11 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		for (const scrollView of this.currentLayout ? getScrollViewsAt(this.currentLayout, event.x, event.y) : []) {
 			seen.add(scrollView);
 			remaining = scrollView.scrollBy(remaining);
-			if (remaining === 0 || scrollView.overscroll === "contain") break;
+			if (remaining === 0) break;
+			if (scrollView.overscroll === "contain") {
+				remaining = 0;
+				break;
+			}
 		}
 		const primary = this.getPrimaryScrollView();
 		if (remaining !== 0 && !seen.has(primary)) primary.scrollBy(remaining);

@@ -258,3 +258,21 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** When Kitty CSI-u input reports an uppercase Latin letter (`A`–`Z`) with Caps Lock and any non-lock modifier (`ctrl`, `alt`, `super`, or `shift`) active, key matching and `parseKey` normalize the letter identity to lowercase so modified letter bindings match while plain Caps Lock uppercase text input stays unaffected.
 
 **Why not in the app:** `KeybindingsManager`, `TuiAltScreen`, and all `pi-tui` components dispatch keybindings directly through `keys.ts` before any app component input handler runs.
+
+### box-layout-and-borders — keep
+
+**Decision:** `Box` is a layout-participating `Container` configured via `BoxOptions` (`border`, `borderStyle`, `borderColor`, `title`, `padding`), defaulting to zero padding and no border. In fullscreen layout frames it insets its child clip rectangle inside its border and padding, allocates its inner height to a single child (such as `ScrollView`) or stacks multiple children vertically, renders its frame even when empty, and paints borders outside the child clip so scrollbars and text selection stay inside the frame.
+
+**Why not in the app:** `LAYOUT_NODE` is internal to `pi-tui`; an app-level wrapper around `ScrollView` collapses it into a leaf component without viewport clipping, scrollbar geometry, wheel routing, or offscreen text selection.
+
+### scroll-view-on-scroll-and-overscroll-contain — keep
+
+**Decision:** `ScrollViewOptions.onScroll` notifies callers whenever `scrollTop` changes (via `scrollTo`, `scrollBy`, `scrollToStart`, `scrollToEnd`, or layout clamping), and `TuiAltScreen.routeWheel` zeroes remaining wheel delta when stopping at a `ScrollView` with `overscroll: "contain"` so wheel overscroll does not leak to `primaryScrollView`.
+
+**Why not in the app:** Wheel routing to `primaryScrollView` and scrollbar-drag `scrollTo` happen inside `TuiAltScreen` and `ScrollView`; intercepting `handleMouse` in the app bypassed viewport-only render caching and missed scrollbar drags.
+
+### component-click-horizontal-cell-tolerance — keep
+
+**Decision:** Component-handled pointer gestures synthesize `click` (and preserve consecutive `clickCount`) when the pointer stays on the pressed row and within at most 1 horizontal column (`|dx| <= 1`, `dy === 0`) between `press` and `release`, dispatching `click` at the release coordinates.
+
+**Why not in the app:** `TuiAltScreen.handleMouseEvent` suppresses `click` synthesis before calling component mouse handlers whenever `mousePressMoved` flips.
