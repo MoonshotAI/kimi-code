@@ -1845,7 +1845,7 @@ describe('KimiTUI startup', () => {
     await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
     const firstPicker = driver.state.editorContainer.children[0] as {
       handleInput(data: string): void;
-      render(width: number): string[];
+      render(width: number): readonly string[];
     };
     firstPicker.handleInput('c');
     firstPicker.handleInput('w');
@@ -1857,7 +1857,7 @@ describe('KimiTUI startup', () => {
 
     const allPicker = driver.state.editorContainer.children[0] as {
       handleInput(data: string): void;
-      render(width: number): string[];
+      render(width: number): readonly string[];
     };
     const output = allPicker.render(160).join('\n');
 
@@ -1887,7 +1887,7 @@ describe('KimiTUI startup', () => {
     await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
     const picker = driver.state.editorContainer.children[0] as {
       handleInput(data: string): void;
-      render(width: number): string[];
+      render(width: number): readonly string[];
     };
     picker.handleInput('\u0018');
     expect(picker.render(160).join('\n')).toContain('Delete session "Session A"? [y/N]');
@@ -1898,7 +1898,7 @@ describe('KimiTUI startup', () => {
     });
     await vi.waitFor(() => {
       const remounted = driver.state.editorContainer.children[0] as {
-        render(width: number): string[];
+        render(width: number): readonly string[];
       };
       expect(remounted.render(160).join('\n')).not.toContain('Session A');
     });
@@ -2069,7 +2069,7 @@ describe('KimiTUI startup', () => {
     });
     await vi.waitFor(() => {
       const remounted = driver.state.editorContainer.children[0] as {
-        render(width: number): string[];
+        render(width: number): readonly string[];
       };
       const output = remounted.render(160).join('\n');
       expect(output).not.toContain('Session A');
@@ -2125,7 +2125,7 @@ describe('KimiTUI startup', () => {
     await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
     const picker = driver.state.editorContainer.children[0] as {
       handleInput(data: string): void;
-      render(width: number): string[];
+      render(width: number): readonly string[];
     };
     picker.handleInput('\r');
     await vi.waitFor(() => {
@@ -2696,7 +2696,7 @@ describe('KimiTUI startup', () => {
     const prompt = maybeShowModelMigrationPrompt(driver as any, {});
     const picker = driver.state.editorContainer.children[0] as {
       handleInput(data: string): void;
-      render(width: number): string[];
+      render(width: number): readonly string[];
     };
     expect(picker.render(100).join('\n')).toContain('Use current to next');
     picker.handleInput('\r');

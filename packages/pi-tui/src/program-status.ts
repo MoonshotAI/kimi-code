@@ -5,6 +5,8 @@
  * Spec: https://www.superlogical.com/rex/docs/build/program-status
  */
 
+import { replaceControlCharacters } from "./utils.ts";
+
 export interface ProgramStatus {
 	/** `clear` removes the status instead of reporting one. */
 	state: "idle" | "working" | "blocked" | "done" | "error" | "clear";
@@ -30,7 +32,6 @@ export function isProgramStatusReply(sequence: string): boolean {
 
 const APP_PATTERN = /^[A-Za-z0-9_.+-]{1,32}$/;
 const ID_PATTERN = /^[A-Za-z0-9_.+-]{1,32}(?:\/[A-Za-z0-9_.+-]{1,32}){0,7}$/;
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]+/g;
 const MAX_TITLE_BYTES = 192;
 /** Decoded `msg` limit. Its base64 encoding stays under the 2732-byte encoded limit. */
 const MAX_MESSAGE_BYTES = 2048;
@@ -49,7 +50,7 @@ function truncateUtf8(text: string, maxBytes: number): string {
 }
 
 function encodeText(text: string | undefined, maxBytes: number): string | undefined {
-	const value = truncateUtf8((text ?? "").replace(CONTROL_CHARACTERS, " ").trim(), maxBytes);
+	const value = truncateUtf8(replaceControlCharacters(text ?? "").trim(), maxBytes);
 	return value ? Buffer.from(value, "utf8").toString("base64") : undefined;
 }
 

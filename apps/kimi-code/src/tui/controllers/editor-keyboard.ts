@@ -53,7 +53,7 @@ export interface EditorKeyboardHost {
   readonly defaultSkillPathForCommand?: (commandName: string) => string | undefined;
   retainSkillVariantSelection?(text: string): void;
   beginInputHistoryRecall?(): void;
-  restoreInputHistoryEntry?(direction: 1 | -1): void;
+  restoreInputHistoryEntry?(direction: 1 | -1, content?: string): void;
   restoreInputHistoryDraft?(): void;
   steerQueuedMessagesIntoRunningTurn(manual?: boolean): void;
   validateMediaCapabilities(extraction: {
@@ -151,7 +151,7 @@ export class EditorKeyboardController {
     });
 
     editor.onRecall = (entry: string, direction: 1 | -1) => {
-      host.restoreInputHistoryEntry?.(direction);
+      host.restoreInputHistoryEntry?.(direction, entry);
       if (entry.startsWith('!')) {
         editor.setInputMode('bash');
         return entry.slice(1);
