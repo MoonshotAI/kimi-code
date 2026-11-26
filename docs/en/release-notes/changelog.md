@@ -10,8 +10,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Bug Fixes
 
-- Canceling Gemini and Vertex AI requests now closes the connection immediately.
-- Preserve token usage when canceling a Gemini or Vertex AI request.
+- Fix some issues with the Gemini provider.
 - Fix `unloaded_tool` session errors when tools change or a session resumes.
 
 ## 2.8.0 (2026-11-25)
