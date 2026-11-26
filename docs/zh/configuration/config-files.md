@@ -677,7 +677,7 @@ defaultCwd = "/workspace"
 | `theme` | `string` | `auto` | 配色主题：`auto`、`dark`、`light` 或[自定义主题](../customization/themes.md)名 |
 | `tui_mode` | `string` | `regular` | 界面布局：`regular` 渲染进终端滚动缓冲区；`fullscreen`（实验性）部分组件支持鼠标交互，交互更顺手 |
 | `copy_on_select` | `boolean` | `true` | 仅全屏模式：选中文本即复制；也可以按 `Ctrl-C` 复制 |
-| `wheel_scroll_lines` | `"auto" \| integer` | `"auto"` | 仅全屏模式：每次鼠标滚轮事件滚动的行数（`"auto"` 或正整数）；终端自身不提供滚轮加速时，`"auto"` 会随快速滚动自动提速 |
+| `wheel_scroll_lines` | `"auto" \| integer` | `"auto"` | 仅全屏模式：每次鼠标滚轮事件滚动的行数（`"auto"` 或正整数）；`"auto"` 会在快速滚动时自动提速 |
 | `render_latex` | `boolean` | `true` | 将 Markdown 中的 LaTeX 公式渲染为 Unicode 文本；`false` 保留原始源码 |
 | `disable_paste_burst` | `boolean` | `false` | 禁用非 bracketed paste 的粘贴突发兜底；默认开启，避免快速多行粘贴被逐行提交 |
 | `cache_expiry_hint` | `boolean` | `true` | resume 或长时间空闲后发消息时，若上下文缓存可能过期则提醒，可先压缩或新建会话（仅 v2 引擎） |

@@ -307,7 +307,7 @@ describe('ScrollSpeedSelectorComponent', () => {
     const lines = picker.render(100).map(strip);
     expect(lines).toContain(' Scroll speed');
     expect(lines).toContain('  ❯ Auto ← current');
-    expect(lines).toContain('    Accelerate fast wheel spins where the terminal does not.');
+    expect(lines).toContain('    Automatically speed up when scrolling fast.');
     expect(lines).toContain('    1 line');
     expect(lines).toContain('    2 lines');
     expect(lines).toContain('    3 lines');

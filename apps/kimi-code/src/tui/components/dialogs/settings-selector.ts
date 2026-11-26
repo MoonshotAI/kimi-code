@@ -252,7 +252,7 @@ function buildScrollSpeedOptions(
     lines,
     label: formatWheelScrollSpeedLabel(lines),
     ...(lines === 'auto'
-      ? { description: 'Accelerate fast wheel spins where the terminal does not.' }
+      ? { description: 'Automatically speed up when scrolling fast.' }
       : {}),
   }));
   if (!WHEEL_SCROLL_PRESETS.some((preset) => preset === currentValue)) {
