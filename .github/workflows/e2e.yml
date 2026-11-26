@@ -35,12 +35,13 @@ on:
 permissions:
   contents: read
 
-# Each main commit gets its own group so every merge is tested, and so does
-# each nightly run, so a manual run on main cannot push it out of the queue.
+# Each main commit gets its own group so every merge is tested, and so do
+# each nightly run and each test card, so a manual run on the same branch
+# cannot hold them up or push them out of the queue.
 # Adding an unrelated label gets a throwaway group so it cannot cancel a
 # running suite.
 concurrency:
-  group: e2e-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'push' && github.sha || github.event_name == 'schedule' && github.run_id || (github.event.action == 'labeled' && github.event.label.name != 'e2e') && github.run_id || '' }}
+  group: e2e-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'push' && github.sha || (github.event_name == 'schedule' || inputs.notify_run_id != '') && github.run_id || (github.event.action == 'labeled' && github.event.label.name != 'e2e') && github.run_id || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -381,6 +382,8 @@ jobs:
         with:
           pattern: e2e-results-*
           path: ${{ runner.temp }}/e2e-results
+          run-id: ${{ inputs.notify_run_id || github.run_id }}
+          github-token: ${{ inputs.notify_run_id != '' && github.token || '' }}
       - name: Post the jobs and cases that did not pass to Feishu
         env:
           GH_TOKEN: ${{ github.token }}
