@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
 import { test } from 'node:test';
 
 import { compareCounts } from './ratchet.mjs';
-import { countBoundaries, extractImports, findRuntimeCycles, formatReport, isCheckedFile, packageOfFile } from './app-boundaries.mjs';
+import { countBoundaries, createDiskResolver, extractImports, findRuntimeCycles, formatReport, isCheckedFile, packageOfFile } from './app-boundaries.mjs';
 
 const CHAT_PANE = 'packages/app-components/src/chat/ChatPane.vue';
 const MARKDOWN = 'packages/app-markdown/src/Markdown.vue';
@@ -21,7 +22,7 @@ function measure(sources) {
     readText: (file) => sources[file],
     resolveTarget: (specifier, fromFile) => {
       if (!specifier.startsWith('.')) {
-        const match = /^(@moonshot-ai\/(app-[a-z]+))(\/[^'"]*)?$/.exec(specifier);
+        const match = /^(@moonshot-ai\/(app-[a-z0-9]+))(\/[^'"]*)?$/.exec(specifier);
         return match ? { targetPkg: match[2] } : undefined;
       }
       const fromDir = fromFile.split('/').slice(0, -1);
@@ -67,6 +68,7 @@ await test('extractImports distinguishes runtime edges from type-only imports an
       'export { g } from "./g";',
       'export * from "./h";',
       'const lazy = () => import("./i");',
+      'export type * from "./j";',
     ].join('\n'),
   );
   assert.deepEqual(imports, [
@@ -80,7 +82,49 @@ await test('extractImports distinguishes runtime edges from type-only imports an
     { specifier: './g', typeOnly: false },
     { specifier: './h', typeOnly: false },
     { specifier: './i', typeOnly: false },
+    { specifier: './j', typeOnly: true },
   ]);
+});
+
+await test('extractImports parses .tsx sources and Vue lang="tsx" blocks with JSX syntax', () => {
+  const tsx = 'import { helper } from "./helper";\nexport const Chip = () => <span>{helper()}</span>;';
+  assert.deepEqual(extractImports('packages/app-components/src/Chip.tsx', tsx), [{ specifier: './helper', typeOnly: false }]);
+
+  const vue = '<script setup lang="tsx">import { helper } from "./helper";\nconst render = () => <div>{helper()}</div>;</script>';
+  assert.deepEqual(extractImports(CHAT_PANE, vue), [{ specifier: './helper', typeOnly: false }]);
+});
+
+await test('packageOfFile recognizes app-i18n and enforces its upward and self-import boundaries', () => {
+  const file = 'packages/app-i18n/src/createKimiI18n.ts';
+  assert.equal(packageOfFile(file), 'app-i18n');
+  const counts = measure({
+    [file]: 'import { sessionsStore } from "@moonshot-ai/app-client/stores";\nimport { zh } from "@moonshot-ai/app-i18n";',
+  });
+  assert.deepEqual(counts, {
+    'self-package-import': { [file]: 1 },
+    'upward-package-import': { [file]: 1 },
+  });
+});
+
+await test('createDiskResolver resolves package roots and ./subpath exports from real manifests', () => {
+  const root = resolve(import.meta.dirname, '../..');
+  const resolveTarget = createDiskResolver(root);
+  assert.deepEqual(resolveTarget('@moonshot-ai/app-client/stores', CHAT_PANE), {
+    targetFile: 'packages/app-client/src/stores/index.ts',
+    targetPkg: 'app-client',
+  });
+  assert.deepEqual(resolveTarget('@moonshot-ai/app-core/lib', CHAT_PANE), {
+    targetFile: 'packages/app-core/src/lib/index.ts',
+    targetPkg: 'app-core',
+  });
+  assert.deepEqual(resolveTarget('@moonshot-ai/app-markdown', CHAT_PANE), {
+    targetFile: 'packages/app-markdown/src/index.ts',
+    targetPkg: 'app-markdown',
+  });
+  assert.deepEqual(resolveTarget('./tool-calls/toolRegistry', 'packages/app-components/src/chat/ToolCall.vue'), {
+    targetFile: 'packages/app-components/src/chat/tool-calls/toolRegistry.ts',
+    targetPkg: 'app-components',
+  });
 });
 
 await test('extractImports reads every Vue script block and ignores template text', () => {
@@ -144,24 +188,26 @@ await test('a store importing the stores barrel still forms a runtime cycle with
   });
 });
 
-await test('non-browser Vue components calling API accessors, fetch or IPC bridges directly count', () => {
+await test('non-browser Vue components count every direct API call and IPC access site', () => {
   const counts = measure({
     [CONVERSATION]: [
       '<script setup lang="ts">',
       'const api = getKimiWebApi();',
+      'const next = getKimiWebApi();',
       'window.kimiDesktop?.show();',
+      'window.kimiDesktop?.hide();',
       '</script>',
     ].join('\n'),
-    'packages/app-components/src/chat/AuthMedia.vue': '<script setup lang="ts">await fetch(url); model.fetch(input);</script>',
+    'packages/app-components/src/chat/AuthMedia.vue': '<script setup lang="ts">await fetch(url); await fetch(other); model.fetch(input);</script>',
     [BROWSER_TAB]: '<script setup lang="ts">window.kimiDesktop?.browserFocus(id); fetch(url);</script>',
   });
   assert.deepEqual(counts, {
     'view-direct-api': {
-      [CONVERSATION]: 1,
-      'packages/app-components/src/chat/AuthMedia.vue': 1,
+      [CONVERSATION]: 2,
+      'packages/app-components/src/chat/AuthMedia.vue': 2,
     },
     'view-direct-ipc': {
-      [CONVERSATION]: 1,
+      [CONVERSATION]: 2,
     },
   });
 });
@@ -186,6 +232,12 @@ await test('runtime cycles record cycle size per member and ignore type-only bac
     'apps/desktop/src/main/c.ts': 'import type { a } from "./a"; export const c = () => 1;',
   });
   assert.deepEqual(typeOnly, {});
+
+  const typeStar = measure({
+    'apps/desktop/src/main/a.ts': 'import { b } from "./b"; export const a = () => b();',
+    'apps/desktop/src/main/b.ts': 'export type * from "./a"; export const b = () => 1;',
+  });
+  assert.deepEqual(typeStar, {});
 });
 
 await test('findRuntimeCycles sorts cycles by size and breaks ties deterministically', () => {

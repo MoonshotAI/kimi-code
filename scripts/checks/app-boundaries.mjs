@@ -17,9 +17,9 @@ const TEST_FILE = /(?:^|\/)(?:test|tests|e2e|__tests__|testing)\/|\.(?:test|spec
 const STORES_PREFIX = 'packages/app-client/src/stores/';
 const STORES_INFRA = new Set(['packages/app-client/src/stores/index.ts', 'packages/app-client/src/stores/pinia.ts']);
 const BROWSER_VIEW_PREFIXES = ['/components/browser/', '/components/browser-overlay/'];
-const SCRIPT_BLOCK = /<script\b[^>]*>([\s\S]*?)<\/script>/g;
-const DIRECT_API_CALL = /(?<![\w.$])(?:getKimiWebApi|getDeviceApi|fetch)\s*\(/;
-const DIRECT_IPC_ACCESS = /\bwindow\.kimiDesktop\b|(?<![\w.$])(?:getNativeBrowserBridge|getDesktopBridge)\s*\(/;
+const SCRIPT_BLOCK = /<script\b([^>]*)>([\s\S]*?)<\/script>/g;
+const DIRECT_API_CALL = /(?<![\w.$])(?:getKimiWebApi|getDeviceApi|fetch)\s*\(/g;
+const DIRECT_IPC_ACCESS = /\bwindow\.kimiDesktop\b|(?<![\w.$])(?:getNativeBrowserBridge|getDesktopBridge)\s*\(/g;
 
 export const BOUNDARY_RULES = {
   'self-package-import': {
@@ -71,12 +71,15 @@ export function packageOfFile(file) {
   if (file.startsWith('apps/desktop/src/main/')) return 'desktop:main';
   if (file.startsWith('apps/desktop/src/renderer/')) return 'desktop:renderer';
   if (file.startsWith('apps/desktop/src/shared/')) return 'desktop:shared';
-  return /^packages\/(app-[a-z]+)\//.exec(file)?.[1];
+  return /^packages\/(app-[a-z0-9]+)\//.exec(file)?.[1];
 }
 
 export function scriptBlocks(file, text) {
-  if (!file.endsWith('.vue')) return [text];
-  return [...text.matchAll(SCRIPT_BLOCK)].map((match) => match[1]);
+  if (!file.endsWith('.vue')) return [{ code: text, lang: file.endsWith('.tsx') ? 'tsx' : 'ts' }];
+  return [...text.matchAll(SCRIPT_BLOCK)].map((match) => ({
+    code: match[2],
+    lang: /\blang\s*=\s*['"]tsx['"]/.test(match[1]) ? 'tsx' : 'ts',
+  }));
 }
 
 function isTypeOnlyStatement(statement) {
@@ -89,6 +92,9 @@ function isTypeOnlyStatement(statement) {
     if (statement.exportKind === 'type') return true;
     const specifiers = statement.specifiers ?? [];
     return specifiers.length > 0 && specifiers.every((s) => s.exportKind === 'type');
+  }
+  if (statement.type === 'ExportAllDeclaration') {
+    return statement.exportKind === 'type';
   }
   return false;
 }
@@ -116,8 +122,9 @@ export function extractImports(file, text) {
       if (value !== null && typeof value === 'object') visit(value);
     }
   };
-  for (const [index, block] of scriptBlocks(file, text).entries()) {
-    const { program, errors } = parseSync(`${file}#script-${index}.ts`, block);
+  for (const [index, { code, lang }] of scriptBlocks(file, text).entries()) {
+    const virtualFile = file.endsWith('.vue') ? `${file}#script-${index}.${lang}` : file;
+    const { program, errors } = parseSync(virtualFile, code);
     if (errors.length > 0) throw new Error(`${file}: ${errors[0].message}`);
     visit(program.body);
   }
@@ -207,9 +214,11 @@ export function countBoundaries({ files, readText, resolveTarget }) {
       }
     }
     if (file.endsWith('.vue') && !isBrowserView(file)) {
-      const script = scriptBlocks(file, text).join('\n');
-      if (DIRECT_API_CALL.test(script)) add('view-direct-api', file);
-      if (DIRECT_IPC_ACCESS.test(script)) add('view-direct-ipc', file);
+      const script = scriptBlocks(file, text).map((block) => block.code).join('\n');
+      const apiCalls = [...script.matchAll(DIRECT_API_CALL)].length;
+      if (apiCalls > 0) add('view-direct-api', file, apiCalls);
+      const ipcCalls = [...script.matchAll(DIRECT_IPC_ACCESS)].length;
+      if (ipcCalls > 0) add('view-direct-ipc', file, ipcCalls);
     }
   }
 
@@ -251,7 +260,7 @@ export function createDiskResolver(root, packages = APP_PACKAGES) {
     }
     for (const [prefix, pkg, exportsMap] of entries) {
       if (specifier !== prefix && !specifier.startsWith(`${prefix}/`)) continue;
-      const subpath = specifier === prefix ? '.' : specifier.slice(prefix.length);
+      const subpath = specifier === prefix ? '.' : `.${specifier.slice(prefix.length)}`;
       const entry = exportsMap[subpath];
       const targetFile = typeof entry === 'string' ? resolveOnDisk(root, resolve(root, 'packages', pkg, entry)) : undefined;
       return { targetFile, targetPkg: pkg };

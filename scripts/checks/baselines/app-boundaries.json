@@ -123,17 +123,17 @@
     "packages/app-ui/src/components/ui/toastTypes.ts": 1
   },
   "view-direct-api": {
-    "apps/desktop/src/renderer/App.vue": 1,
+    "apps/desktop/src/renderer/App.vue": 4,
     "apps/desktop/src/renderer/components/ForcedUpgradeDialog.vue": 1,
     "apps/desktop/src/renderer/inspector/ContextItemDialog.vue": 1,
     "apps/desktop/src/renderer/inspector/ContextPanel.vue": 1,
     "apps/desktop/src/renderer/screenshot/ScreenshotOverlay.vue": 1,
-    "packages/app-components/src/chat/AuthMedia.vue": 1,
-    "packages/app-components/src/chat/MediaLightbox.vue": 1,
-    "packages/app-components/src/composer/Composer.vue": 1
+    "packages/app-components/src/chat/AuthMedia.vue": 2,
+    "packages/app-components/src/chat/MediaLightbox.vue": 4,
+    "packages/app-components/src/composer/Composer.vue": 6
   },
   "view-direct-ipc": {
-    "apps/desktop/src/renderer/App.vue": 1,
-    "apps/desktop/src/renderer/components/panel/PanelTabs.vue": 1
+    "apps/desktop/src/renderer/App.vue": 7,
+    "apps/desktop/src/renderer/components/panel/PanelTabs.vue": 2
   }
 }
