@@ -152,7 +152,7 @@
 
 ## 发布流程
 
-- `main` 上累积 changeset；`release/*` 分支维护 `ci: release packages` PR。合并版本 PR 即授权正式发布，在合并提交的 CI 通过后发布对应版本。普通推送不会发布正式版。
+- `main` 上累积 changeset；`release/*` 分支维护 `ci: release packages` PR。合并版本 PR 即授权正式发布，发版 workflow 在同一 release commit 上运行单元测试，测试通过后发布对应版本。普通推送不会发布正式版。
 - CLI 发布到 npm 和 GitHub，桌面安装包发布到 GitHub Release，VS Code 扩展发布到扩展市场。CDN 上传和路由需另行审批。迁移和回同步见 `.changeset/README.md`。
 
 ## 工作流要求
