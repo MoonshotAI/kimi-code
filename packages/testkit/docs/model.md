@@ -69,6 +69,8 @@ test('reads a reply from the side lane', async ({ model }) => {
 
 在 Google 请求历史中，`functionCall` 和 `functionResponse` 可以省略 ID。两个同名调用都省略 ID 时，按它们出现的顺序配对无 ID 的结果。在 `request.view.messages` 中分别读取每条调用的 `id` 和结果的 `callId` 来断言配对关系。协议里显式给出的 ID 会原样保留，多出的结果或缺失的结果会被 `verify()` 报出。
 
+一条 Google user 内容可以先放普通 parts，再放 `functionResponse`。引擎把紧跟在工具结果后面的用户消息（例如回合中途压缩时的压缩指令）合并进这条内容时就是这个顺序，Gemini 也接受它。视图把这些开头的 parts 作为一条用户消息，排在紧随其后的那组工具结果之后，所以不会报 `arrives before the results`。内容里其他位置的 parts，例如两个结果之间的文字，仍按线上位置检查。
+
 三个协议都要求同时等待结果的工具调用各有自己的 ID。若 `verify()` 报 `repeats pending tool call ID`，检查出错消息里的调用列表和之前尚未配对的调用。等前一次调用收到匹配结果后，后续调用可以重新使用这个 ID。
 
 `model.problems()` 返回处理请求时已记录的问题。`verify()` 还会检查所有通道的剩余步骤和仍在等待处置的命名挂起点。手动用 `createFakeModel()` 时，在断言后调用 `verify()`，并用 `finally` 执行 `await model.close()`。有意发送的 `httpError(503)` 可以和成功通过的 `verify()` 同时出现。用例仍需断言客户端如何处理了错误。[校验实现](../src/model/fake-model.ts) · [未放行挂起点的场景](../../../tests/scenarios/verification.test.ts)
