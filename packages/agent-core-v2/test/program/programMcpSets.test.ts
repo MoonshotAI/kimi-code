@@ -34,13 +34,15 @@ import type { ProjectTrustChange } from '#/project/projectTrust/projectTrust';
 import { stubLog } from '../_base/log/stubs';
 import { stubAgentIdentity } from '../app/agentIdentity/stubs';
 import { bareRepository, forgedPointer, linkedWorktree, mainCheckout } from '../app/git/checkoutLayouts';
-import { createMemoryMcpOAuthStore, cwdStdioFixture, hostPathClass, startInProcessHttpMcpServer } from '../mcpCore/stubs';
+import { fakeMcpServerName } from '@moonshot-ai/testkit/fixtures';
+
+import { createMemoryMcpOAuthStore, cwdStdioServer, hostPathClass, startEchoHttpMcpServer } from '../mcpCore/stubs';
 
 const NO_ABORT = new AbortController().signal;
 const PROCESS_TIMEOUT_MS = 20_000;
 
 function stdioServer(tag: string, config: Partial<McpServerConfig> = {}): McpServerConfig {
-  return { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture, tag], ...config } as McpServerConfig;
+  return { transport: 'stdio', ...cwdStdioServer(tag), ...config } as McpServerConfig;
 }
 
 function disabledServer(): McpServerConfig {
@@ -192,7 +194,7 @@ describe('ProgramMcpSets', () => {
   }
 
   function startedTags(): string[] {
-    return spawn.mock.calls.map(([, args]) => args?.[1] ?? '').toSorted();
+    return spawn.mock.calls.map(([, args]) => fakeMcpServerName(args) ?? '').toSorted();
   }
 
   function startedProcesses(): Promise<IHostProcess[]> {
@@ -584,7 +586,7 @@ describe('ProgramMcpSets', () => {
   it('reconnects a server in every set once it is authorized', async () => {
     mainCheckout(checkout);
     const worktree = worktreeOf(checkout);
-    const remote = await startInProcessHttpMcpServer({ authToken: 'secret' });
+    const remote = await startEchoHttpMcpServer({ bearerToken: 'secret' });
     try {
       await writeMcpJson(userFile(), { remote: { transport: 'http', url: remote.url } });
       const sets = createSets();

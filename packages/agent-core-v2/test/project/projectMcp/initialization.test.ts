@@ -38,8 +38,8 @@ import { registerAgentIdentityStub } from '../../app/agentIdentity/stubs';
 import {
   createMemoryMcpOAuthStore,
   hostPathClass,
-  slowToolStdioFixture,
-  stdioFixture,
+  mockStdioServer,
+  slowToolStdioServer,
 } from '../../mcpCore/stubs';
 
 describe('Workspace MCP initialization', () => {
@@ -126,8 +126,7 @@ describe('Workspace MCP initialization', () => {
     await writeProjectMcpJson(cwd, {
       alpha: {
         transport: 'stdio',
-        command: process.execPath,
-        args: [stdioFixture],
+        ...mockStdioServer(),
         environment_id: 'local',
       },
     });
@@ -147,10 +146,8 @@ describe('Workspace MCP initialization', () => {
     await writeProjectMcpJson(cwd, {
       slowTool: {
         transport: 'stdio',
-        command: process.execPath,
-        args: [slowToolStdioFixture],
+        ...slowToolStdioServer(300),
         environment_id: 'local',
-        env: { KIMI_TEST_MCP_TOOL_DELAY_MS: '300' },
       },
     });
     const service = createWorkspaceMcpService(Promise.resolve(), { toolTimeoutMs: 1 });
