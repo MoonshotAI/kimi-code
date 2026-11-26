@@ -99,6 +99,12 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
     return;
   }
 
+  const token = tryResolveServerToken(dataDir);
+  if (token === undefined) {
+    host.showError('Unable to read the local server token.');
+    return;
+  }
+
   let rc: Awaited<ReturnType<typeof enableDaemonRemoteControl>>;
   try {
     rc = await enableDaemonRemoteControl(daemonResult.daemon.socketPath);
@@ -108,12 +114,6 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
       return;
     }
     host.showError(`Failed to start Remote Control: ${formatErrorMessage(error)}`);
-    return;
-  }
-
-  const token = tryResolveServerToken(dataDir);
-  if (token === undefined) {
-    host.showError('Unable to read the local server token.');
     return;
   }
 

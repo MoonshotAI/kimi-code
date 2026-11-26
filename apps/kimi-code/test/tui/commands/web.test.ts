@@ -209,6 +209,7 @@ describe('handleRemoteControlCommand', () => {
   it('stays in the TUI with a readable error when another foreground instance holds Remote Control', async () => {
     mocks.getDataDir.mockReturnValue('/tmp/kimi-home');
     mocks.ensureSharedDaemon.mockResolvedValue(sampleDaemon());
+    mocks.tryResolveServerToken.mockReturnValue('tok-1');
     mocks.enableDaemonRemoteControl.mockRejectedValue(
       new RemoteControlAlreadyRunningError({
         pid: process.pid,
@@ -228,6 +229,21 @@ describe('handleRemoteControlCommand', () => {
     expect(host.setExitForegroundTask).not.toHaveBeenCalled();
     expect(host.stop).not.toHaveBeenCalled();
     expect(mocks.startServerForeground).not.toHaveBeenCalled();
+  });
+
+  it('validates the local server token before enabling Remote Control on a running daemon', async () => {
+    mocks.getDataDir.mockReturnValue('/tmp/kimi-home');
+    mocks.ensureSharedDaemon.mockResolvedValue(sampleDaemon());
+    mocks.tryResolveServerToken.mockReturnValue(undefined);
+    const host = makeHost();
+
+    await handleRemoteControlCommand(host);
+
+    expect(mocks.ensureSharedDaemon).toHaveBeenCalledWith({ homeDir: '/tmp/kimi-home' });
+    expect(mocks.enableDaemonRemoteControl).not.toHaveBeenCalled();
+    expect(host.showError).toHaveBeenCalledWith('Unable to read the local server token.');
+    expect(host.setExitForegroundTask).not.toHaveBeenCalled();
+    expect(host.stop).not.toHaveBeenCalled();
   });
 
   it('enables Remote Control on the shared daemon and saves a token-free session QR code', async () => {
