@@ -256,12 +256,10 @@ entries:
     operation: Write or change AGENTS.md in the middle of a session
     promise: keeps
     coverage:
-      - kind: explicit
-        test: tests/e2e/scenarios/cache/agents-md-written-mid-session-keeps-the-prefix.spec.ts
       - kind: kap
         test: tests/scenarios/prompt-cache.test.ts
         case: writing AGENTS.md into the workspace
-    gap: The product tells the model about the new file only once its file watch fires, which can come after the next request or be lost across a restart, so the scenario checks the prefix but not that reminder.
+    gap: The product notices the new file only once its file watch fires, which can come after the next request or be lost across a restart, so no scenario can show yet that the product took the file in before comparing prefixes. Add the E2E scenario once the product checks for changed instruction files before each request.
 
   - id: E2
     operation: Change and add workspace files outside the product between two turns
