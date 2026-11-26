@@ -39,9 +39,19 @@ const PROFILES: readonly Profile[] = [
   },
   {
     name: 'every experimental feature on',
-    options: { env: { KIMI_CODE_EXPERIMENTAL_FLAG: '1' } },
+    options: {
+      env: {
+        KIMI_CODE_EXPERIMENTAL_FLAG: '1',
+        KIMI_CODE_EXPERIMENTAL_NOTIFY_USER: '1',
+        KIMI_CODE_EXPERIMENTAL_NOTIFY_USER_APP: '1',
+        KIMI_CODE_EXPERIMENTAL_SESSION_MENTIONS: '1',
+        KIMI_CODE_EXPERIMENTAL_SIDEBAR_MULTI_TAB: '1',
+        KIMI_CODE_EXPERIMENTAL_WAIT_FOR: '1',
+        KIMI_CODE_EXPERIMENTAL_TOWER: '1',
+      },
+    },
     roleMetadata: true,
-    takesEffect: (first) => expect(first.tools).toContain('NotifyUser'),
+    takesEffect: (first) => expect(first.tools).toEqual(expect.arrayContaining(['NotifyUser', 'WaitFor'])),
   },
   {
     name: 'progressive tool loading',
