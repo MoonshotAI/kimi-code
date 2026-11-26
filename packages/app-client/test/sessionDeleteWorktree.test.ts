@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSession, AppSessionWorktree, KimiWebApi } from '@moonshot-ai/app-core/api';
 import type { ToastOptions } from '@moonshot-ai/app-ui';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
-import { sessionWorktree } from '../src/testing/worktreeFixtures';
+import { appSession, sessionWorktree } from '../src/testing/worktreeFixtures';
 
 const clientApiMock: Record<string, unknown> = {};
 
@@ -60,18 +60,7 @@ function worktree(status: AppSessionWorktree['setup']['status'], extra: Partial<
 }
 
 function session(id: string, extra: Partial<AppSession> = {}): AppSession {
-  return {
-    id,
-    title: `title-${id}`,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    busy: false,
-    archived: false,
-    cwd: '/workspace',
-    model: '',
-    messageCount: 0,
-    ...extra,
-  } as AppSession;
+  return appSession({ id, title: `title-${id}`, ...extra });
 }
 
 function waitFor(check: () => void): Promise<void> {

@@ -30,9 +30,10 @@ function repo(overrides: Partial<WorkspaceGitBranches> = {}): WorkspaceGitBranch
   };
 }
 
-function freshStore() {
+function freshStore(environment?: 'worktree') {
   const store = useNewSessionEnvironmentStore(createPinia());
   store.bindHost(clientNewSessionEnvironmentHost);
+  if (environment !== undefined) store.selectEnvironment(environment);
   return store;
 }
 
@@ -78,8 +79,7 @@ describe('new session environment', () => {
 
   it('stays Local without asking for branches while the server has worktrees turned off', async () => {
     configStore().experimentalFlags = {};
-    const store = freshStore();
-    store.selectEnvironment('worktree');
+    const store = freshStore('worktree');
 
     await store.ensureBranches('git');
 
@@ -92,8 +92,7 @@ describe('new session environment', () => {
   it('is temporarily unavailable while the git check is loading', async () => {
     const pending = Promise.withResolvers<WorkspaceGitBranches>();
     getWorkspaceGitBranches.mockReturnValueOnce(pending.promise);
-    const store = freshStore();
-    store.selectEnvironment('worktree');
+    const store = freshStore('worktree');
 
     const loading = store.ensureBranches('git');
     expect(store.availability('git')).toBe('loading');
@@ -110,8 +109,7 @@ describe('new session environment', () => {
     getWorkspaceGitBranches.mockImplementation(async (id) =>
       id === 'plain' ? { isRepo: false, dirty: false, remotes: [], branches: [] } : repo(),
     );
-    const store = freshStore();
-    store.selectEnvironment('worktree');
+    const store = freshStore('worktree');
     await Promise.all([store.ensureBranches('git'), store.ensureBranches('plain')]);
 
     expect(store.availability('plain')).toBe('notGitRepo');
@@ -123,8 +121,7 @@ describe('new session environment', () => {
   });
 
   it('never offers Worktree for a project on a remote host', async () => {
-    const store = freshStore();
-    store.selectEnvironment('worktree');
+    const store = freshStore('worktree');
     await store.ensureBranches('remote');
 
     expect(getWorkspaceGitBranches).not.toHaveBeenCalledWith('remote');
@@ -134,8 +131,7 @@ describe('new session environment', () => {
 
   it('reports a failed git check and recovers on refresh', async () => {
     getWorkspaceGitBranches.mockRejectedValueOnce(new Error('offline'));
-    const store = freshStore();
-    store.selectEnvironment('worktree');
+    const store = freshStore('worktree');
     await store.ensureBranches('git');
     expect(store.availability('git')).toBe('failed');
     expect(store.effectiveEnvironment('git')).toBe('local');
@@ -161,8 +157,7 @@ describe('new session environment', () => {
   });
 
   it('loads the active project as soon as Worktree is chosen', async () => {
-    const store = freshStore();
-    store.selectEnvironment('worktree');
+    const store = freshStore('worktree');
     await vi.waitFor(() => expect(getWorkspaceGitBranches).toHaveBeenCalledWith('git'));
   });
 
@@ -206,8 +201,7 @@ describe('new session environment', () => {
   });
 
   it('remembers the remote toggle per project and applies it only to branches with a remote', async () => {
-    const store = freshStore();
-    store.selectEnvironment('worktree');
+    const store = freshStore('worktree');
     await store.ensureBranches('git');
     expect(store.useRemote('git')).toBe(false);
     expect(store.view('git')).toMatchObject({ remoteAvailable: true, useRemote: false, usesRemote: false });

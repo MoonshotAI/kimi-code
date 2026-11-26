@@ -11,10 +11,12 @@ import {
 } from '../src/stores/worktrees';
 import { appWorktree, memoryStorage, worktreeRemoveFailed } from '../src/testing/worktreeFixtures';
 
+type Removed = { removed: true; branchDeleted: boolean };
+
 const api = {
   listWorktrees: vi.fn<(input?: { refreshSizes?: boolean }) => Promise<WorktreeList>>(),
   inspectWorktrees: vi.fn(),
-  removeWorktree: vi.fn<(input: { path: string; deleteBranch?: boolean }) => Promise<{ removed: true; branchDeleted: boolean }>>(),
+  removeWorktree: vi.fn<(input: { path: string; deleteBranch?: boolean }) => Promise<Removed>>(),
 };
 
 function item(name: string, overrides: Partial<AppWorktree> = {}): AppWorktree {
@@ -27,6 +29,12 @@ function list(items: AppWorktree[], totalSizeBytes?: number): WorktreeList {
 
 function freshStore() {
   return useWorktreesStore(createPinia());
+}
+
+async function loadedStore() {
+  const store = freshStore();
+  await store.load();
+  return store;
 }
 
 function waitFor(check: () => void): Promise<void> {
@@ -65,8 +73,7 @@ afterEach(() => {
 
 describe('worktree list', () => {
   it('asks for fresh sizes only on an explicit refresh', async () => {
-    const store = freshStore();
-    await store.load();
+    const store = await loadedStore();
     expect(api.listWorktrees).toHaveBeenLastCalledWith(undefined);
 
     const pending = Promise.withResolvers<WorktreeList>();
@@ -82,8 +89,7 @@ describe('worktree list', () => {
   });
 
   it('keeps the previous list and the raw error when loading fails', async () => {
-    const store = freshStore();
-    await store.load();
+    const store = await loadedStore();
     api.listWorktrees.mockRejectedValueOnce(new Error('offline'));
 
     expect(await store.load()).toBe(false);
@@ -95,8 +101,7 @@ describe('worktree list', () => {
   it('re-fetches the list while sizes are still being computed, a bounded number of times', async () => {
     vi.useFakeTimers();
     api.listWorktrees.mockResolvedValue({ items: [item('a', { sizeBytes: undefined })] });
-    const store = freshStore();
-    await store.load();
+    const store = await loadedStore();
     expect(api.listWorktrees).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(WORKTREE_SIZE_BACKFILL_DELAY_MS);
@@ -112,8 +117,7 @@ describe('worktree list', () => {
     api.listWorktrees
       .mockResolvedValueOnce({ items: [item('a', { sizeBytes: undefined })] })
       .mockResolvedValue({ items: [item('a')], totalSizeBytes: GB });
-    const store = freshStore();
-    await store.load();
+    const store = await loadedStore();
 
     await vi.advanceTimersByTimeAsync(WORKTREE_SIZE_BACKFILL_DELAY_MS * 4);
 
@@ -125,11 +129,10 @@ describe('worktree list', () => {
 
 describe('worktree removal queue', () => {
   it('deletes one worktree at a time in order', async () => {
-    const first = Promise.withResolvers<{ removed: true; branchDeleted: boolean }>();
-    const second = Promise.withResolvers<{ removed: true; branchDeleted: boolean }>();
+    const first = Promise.withResolvers<Removed>();
+    const second = Promise.withResolvers<Removed>();
     api.removeWorktree.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-    const store = freshStore();
-    await store.load();
+    const store = await loadedStore();
 
     store.enqueueRemovals([{ path: '/wt/a', deleteBranch: true }, { path: '/wt/b' }]);
 
@@ -148,8 +151,7 @@ describe('worktree removal queue', () => {
   });
 
   it('removes deleted worktrees from the list and reloads it when the queue drains', async () => {
-    const store = freshStore();
-    await store.load();
+    const store = await loadedStore();
     api.listWorktrees.mockResolvedValueOnce(list([item('c')], GB));
 
     store.enqueueRemovals([{ path: '/wt/a' }, { path: '/wt/b' }]);
@@ -164,8 +166,7 @@ describe('worktree removal queue', () => {
       .mockRejectedValueOnce(worktreeRemoveFailed('in_use', 'fatal: worktree is locked'))
       .mockRejectedValueOnce(new Error('network down'))
       .mockResolvedValueOnce({ removed: true, branchDeleted: false });
-    const store = freshStore();
-    await store.load();
+    const store = await loadedStore();
     api.listWorktrees.mockResolvedValueOnce(list([item('a'), item('b')], 2 * GB));
 
     store.enqueueRemovals([{ path: '/wt/a' }, { path: '/wt/b' }, { path: '/wt/c' }]);
@@ -182,8 +183,7 @@ describe('worktree removal queue', () => {
     api.removeWorktree
       .mockRejectedValueOnce(worktreeRemoveFailed('session_busy', 'session running'))
       .mockRejectedValueOnce(worktreeRemoveFailed('unknown', 'boom'));
-    const store = freshStore();
-    await store.load();
+    const store = await loadedStore();
     store.enqueueRemovals([{ path: '/wt/a' }, { path: '/wt/b' }]);
     await settled(store);
     expect(states(store)).toEqual(['failed', 'failed']);
@@ -199,10 +199,9 @@ describe('worktree removal queue', () => {
   });
 
   it('keeps running without any consumer and accepts more work while busy', async () => {
-    const first = Promise.withResolvers<{ removed: true; branchDeleted: boolean }>();
+    const first = Promise.withResolvers<Removed>();
     api.removeWorktree.mockReturnValueOnce(first.promise);
-    const store = freshStore();
-    await store.load();
+    const store = await loadedStore();
 
     store.enqueueRemovals([{ path: '/wt/a' }]);
     store.enqueueRemovals([{ path: '/wt/a' }, { path: '/wt/b' }]);
@@ -215,8 +214,7 @@ describe('worktree removal queue', () => {
   });
 
   it('keeps a failed session removal with the session name for this run', async () => {
-    const store = freshStore();
-    await store.load();
+    const store = await loadedStore();
 
     store.recordSessionRemovalFailure({
       path: '/wt/a',
@@ -244,9 +242,8 @@ describe('worktree removal queue', () => {
   });
 
   it('only dismisses finished removals in the requested states', async () => {
-    const store = freshStore();
-    await store.load();
-    const slow = Promise.withResolvers<{ removed: true; branchDeleted: boolean }>();
+    const store = await loadedStore();
+    const slow = Promise.withResolvers<Removed>();
     api.removeWorktree
       .mockRejectedValueOnce(worktreeRemoveFailed('in_use', 'busy'))
       .mockReturnValueOnce(slow.promise);
@@ -294,8 +291,7 @@ describe('worktree disk reminder', () => {
   it('resets once usage drops below the threshold', async () => {
     storage.set(STORAGE_KEYS.worktreeDiskRemindedLevel, '7');
     api.listWorktrees.mockResolvedValueOnce(list([], 4 * GB));
-    const store = freshStore();
-    await store.load();
+    const store = await loadedStore();
 
     expect(store.lastRemindedLevel).toBe(0);
     expect(storage.get(STORAGE_KEYS.worktreeDiskRemindedLevel)).toBe('0');

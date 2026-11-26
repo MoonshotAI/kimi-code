@@ -66,7 +66,6 @@ describe('useKimiWebClient worktree session', () => {
     }));
     const api: Partial<KimiWebApi> = {
       getAuth: vi.fn(async () => ({ modelsReady: true, providersCount: 1, managedProvider: null })),
-      getHealth: vi.fn(async () => ({ status: 'ok' as const, uptimeSec: 1 })),
       getMeta: vi.fn(async () => ({
         protocolVersion: '1',
         serverVersion: '0.0.0',
@@ -81,13 +80,10 @@ describe('useKimiWebClient worktree session', () => {
       })),
       getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'model-1' }) as never),
       listModels: vi.fn(async () => [{ id: 'model-1', provider: 'p', model: 'model-1', maxContextSize: 0 }]),
-      listProviders: vi.fn(async () => []),
       listWorkspaces: vi.fn(async () => [
         { id: 'workspace-1', root: '/workspace', name: 'Workspace', kind: 'managed' as const, additionalDirs: ['/extra'], sessionCount: 0 },
       ]),
-      getFsHome: vi.fn(async () => ({ home: '/home/test', recentRoots: [] })),
       listSessions: vi.fn(async () => ({ items: [], hasMore: false, nextPageToken: null, total: 0 })),
-      listSessionGroups: vi.fn(async () => ({ groups: [], hasMore: false, nextPageToken: null, total: 0 })),
       getWorkspaceGitBranches: vi.fn(async () => ({
         isRepo: true,
         remotes: ['origin'],
@@ -101,15 +97,7 @@ describe('useKimiWebClient worktree session', () => {
       submitPrompt,
       sessionWorktreeAction,
       cancelSession,
-      getSessionWarnings: vi.fn(async () => []),
       getGitStatus,
-      getGitStatusBatch: vi.fn(async () => ({ results: {}, errors: {} })),
-      getPullRequestBatch: vi.fn(async () => ({ results: {}, statuses: {}, errors: {} })),
-      getWorkspaceTrust: vi.fn(async () => ({ trusted: true })),
-      listSkills: vi.fn(async () => []),
-      listSkillsForWorkspace: vi.fn(async () => []),
-      getFileUrl: (fileId: string) => `file:${fileId}`,
-      getSessionMediaUrl: (_sid: string, fileId: string) => `media:${fileId}`,
       connectEvents: vi.fn((nextHandlers) => {
         handlers = nextHandlers;
         return connection;

@@ -26,11 +26,10 @@ afterEach(() => {
 describe('workspacesStore panel roots', () => {
   const session = (id: string) => sessionsStore().sessions.find((item) => item.id === id)!;
 
-  it('uses the worktree directory once a worktree session is ready', () => {
-    expect(workspacesStore().sessionPanelRoots(session('ready'))).toEqual({ root: '/wt/a', roots: ['/wt/a', '/extra'] });
-  });
-
-  it('uses the worktree directory while the worktree is still being set up', () => {
-    expect(workspacesStore().sessionPanelRoots(session('creating'))).toEqual({ root: '/wt/b', roots: ['/wt/b', '/extra'] });
+  it.each([
+    ['ready', '/wt/a'],
+    ['creating', '/wt/b'],
+  ])('uses the worktree directory of the %s worktree session', (id, root) => {
+    expect(workspacesStore().sessionPanelRoots(session(id))).toEqual({ root, roots: [root, '/extra'] });
   });
 });
