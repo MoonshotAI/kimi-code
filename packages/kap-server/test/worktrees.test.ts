@@ -569,3 +569,21 @@ describe('server-v2 session worktrees', () => {
     expect(await branchOf(session.id)).toBe('main');
   });
 });
+
+describe('server-v2 session worktrees with a remote default environment', () => {
+  const { project, createWorktreeSession, settled } = useWorktreeServer('worktrees-remote-default', {
+    extraConfig: ['[environments]', 'default = "far"', '', '[environments.far]', 'command = "/bin/false"', 'defaultCwd = "/tmp"', ''].join('\n'),
+  });
+
+  it('creates the worktree session in the local environment', async () => {
+    const { workspaceId } = await project('remote-default');
+
+    const created = await createWorktreeSession(workspaceId);
+    expect(created.environment_id).toBe('local');
+    const ready = await settled(created.id);
+
+    expect(ready.worktree?.setup.status).toBe('ready');
+    expect(ready.environment_id).toBe('local');
+    expect(ready.cwd).toBe(ready.worktree?.path);
+  });
+});

@@ -294,7 +294,7 @@ export function registerSessionsRoutes(
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: planned?.workspaceId ?? workspaceId,
           workDir,
-          environmentId: body.environment_id,
+          environmentId: planned === undefined ? body.environment_id : LOCAL_ENVIRONMENT_ID,
           environmentCwd: body.environment_cwd,
           mainAgentBinding,
           ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',

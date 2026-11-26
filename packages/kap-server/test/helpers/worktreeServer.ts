@@ -55,7 +55,7 @@ const STUB_CONFIG = [
   '',
 ].join('\n');
 
-export function useWorktreeServer(name: string) {
+export function useWorktreeServer(name: string, options: { extraConfig?: string } = {}) {
   let server: RunningServer;
   let home: string;
   let scratch: string;
@@ -66,7 +66,7 @@ export function useWorktreeServer(name: string) {
   beforeAll(async () => {
     home = await realpath(await mkdtemp(join(tmpdir(), `kimi-server-v2-${name}-home-`)));
     scratch = await realpath(await mkdtemp(join(tmpdir(), `kimi-server-v2-${name}-`)));
-    await writeFile(join(home, 'config.toml'), STUB_CONFIG, 'utf-8');
+    await writeFile(join(home, 'config.toml'), STUB_CONFIG + (options.extraConfig ?? ''), 'utf-8');
     template = await createRepoTemplate({ 'README.md': 'hello\n', 'notes.txt': 'one\ntwo\nthree\n' });
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
