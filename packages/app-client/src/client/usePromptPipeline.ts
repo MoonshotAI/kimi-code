@@ -201,8 +201,9 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   }
 
   function importFailedHeldPrompt(sid: string, held: AppWorktreeHeldPrompt): void {
-    if (importedHeldFailures.has(held.promptId)) return;
-    importedHeldFailures.add(held.promptId);
+    const key = `${sid}\n${held.promptId}`;
+    if (importedHeldFailures.has(key)) return;
+    importedHeldFailures.add(key);
     takeOptimisticMessage(sid, held.promptId);
     const failure = new Error(held.failure?.msg ?? '');
     if (!(promptStore().queuedBySession[sid] ?? []).some((entry) => entry.id === held.promptId)) {

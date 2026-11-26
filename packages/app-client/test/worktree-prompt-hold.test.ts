@@ -330,6 +330,31 @@ describe('worktree first-prompt hold', () => {
     expect(warningsStore().warnings).toHaveLength(1);
   });
 
+  it('restores failed held prompts of different sessions that share a prompt id', async () => {
+    const { ws } = await createRig({ worktree: false });
+    const failed = (): AppSessionWorktree => ({
+      ...worktree('ready', { path: '/wt/a' }),
+      heldPrompt: {
+        promptId: 'shared',
+        kind: 'prompt',
+        createdAt: '2026-11-18T00:00:00.000Z',
+        content: [{ type: 'text', text: 'retry me' }],
+        failure: { code: 50001, msg: 'boom' },
+      },
+    });
+    sessionsStore().setSessions([
+      session({ cwd: '/wt/a', worktree: failed() }),
+      session({ id: 'other', title: 'other', cwd: '/wt/a', worktree: failed() }),
+    ]);
+
+    ws.syncWorktreeHold(SID);
+    ws.syncWorktreeHold('other');
+
+    expect(promptStore().queuedBySession[SID]?.map((entry) => entry.id)).toEqual(['shared']);
+    expect(promptStore().queuedBySession['other']?.map((entry) => entry.id)).toEqual(['shared']);
+    expect(warningsStore().warnings).toHaveLength(2);
+  });
+
   it('shows a prompt the server holds after the client reloads', async () => {
     const { ws } = await createRig({ worktree: false });
     openExisting({
