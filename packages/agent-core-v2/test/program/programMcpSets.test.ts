@@ -703,6 +703,10 @@ describe('ProgramMcpSets', () => {
     await expect(cwdOf(inWorktree.view, 'eph')).resolves.toBe(worktree);
     await expect(cwdOf(unrelated.view, 'eph')).resolves.toBe(checkout);
     for (const session of [atPrimary, inWorktree, unrelated]) session.close();
+    const children = await startedProcesses();
+    await vi.waitFor(() => {
+      expect(children.map((child) => child.exitCode === null)).toEqual([false, false, false]);
+    }, PROCESS_TIMEOUT_MS);
   }, PROCESS_TIMEOUT_MS);
 
   it('stops every set when the program goes away and admits no new holder', async () => {
