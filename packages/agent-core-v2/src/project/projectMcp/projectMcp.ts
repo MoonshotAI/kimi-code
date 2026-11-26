@@ -1,17 +1,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { McpConnectionManager } from '#/mcpCore/connection-manager';
-import type { McpServerConfig } from '#/mcpCore/config-schema';
-import type { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-
-export interface ISessionMcpOverlay {
-  readonly handle: ISessionMcpHandle;
-  shutdown(): Promise<void>;
-}
-
-export interface SessionMcpOverlayOptions {
-  readonly stdioCwd?: string;
-  readonly sessionId?: string;
-}
+import type { McpSource } from '#/session/mcp/mcpSource';
 
 export interface IProjectMcpService {
   readonly _serviceBrand: undefined;
@@ -20,12 +9,7 @@ export interface IProjectMcpService {
 
   connectionManager(): McpConnectionManager;
 
-  sessionHandle(): ISessionMcpHandle;
-
-  sessionOverlay(
-    servers: Readonly<Record<string, McpServerConfig>>,
-    opts?: SessionMcpOverlayOptions,
-  ): ISessionMcpOverlay;
+  source(): McpSource;
 }
 
 export const IProjectMcpService: ServiceIdentifier<IProjectMcpService> =

@@ -467,6 +467,8 @@ export * from '#/session/agentLifecycle/getOrRestoreAgent';
 export * from '#/session/agentLifecycle/forked';
 export * from '#/session/agentLifecycle/mainAgent';
 export * from '#/session/mcp/sessionMcpHandle';
+export * from '#/session/mcp/mcpSource';
+export * from '#/session/mcp/sessionMcpService';
 import '#/app/mcpConfig/configSection';
 export {
   MCP_SECTION,

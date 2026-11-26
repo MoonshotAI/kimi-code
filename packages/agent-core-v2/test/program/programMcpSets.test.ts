@@ -6,7 +6,6 @@ import { basename, join, normalize, relative } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
-import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { AsyncEmitter, Emitter, Event } from '#/_base/event';
 import type { IEnvironmentService } from '#/app/environment/environment';
 import type { McpConfigWriteEvent } from '#/app/mcpConfig/configStore';
@@ -23,10 +22,8 @@ import type { IHostProcess } from '#/os/interface/hostProcess';
 import type { ProgramDependencies } from '#/program/programDependencies';
 import type { ProgramMcpLease } from '#/program/programMcp';
 import { ProgramMcpSets } from '#/program/programMcpSets';
-import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
-import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
-import type { SessionWillCreateEvent } from '#/project/sessionLifecycle/sessionLifecycle';
+import { SessionMcpService } from '#/session/mcp/sessionMcpService';
+import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { IProjectContext } from '#/project/projectContext/projectContext';
 import type { IProjectDirs } from '#/project/projectDirs/projectDirs';
 import type { ProjectTrustChange } from '#/project/projectTrust/projectTrust';
@@ -77,7 +74,6 @@ describe('ProgramMcpSets', () => {
   let pluginServers: Record<string, McpServerConfig>;
   let pluginReloads: AsyncEmitter<PluginReloadEvent>;
   let storeWrites: AsyncEmitter<McpConfigWriteEvent>;
-  let willCreateSession: Emitter<SessionWillCreateEvent>;
   let oauth: McpOAuthService;
   let created: ProgramMcpSets[];
   let spawn: MockInstance<HostProcessService['spawn']>;
@@ -95,7 +91,6 @@ describe('ProgramMcpSets', () => {
     pluginServers = {};
     pluginReloads = disposables.add(new AsyncEmitter<PluginReloadEvent>());
     storeWrites = disposables.add(new AsyncEmitter<McpConfigWriteEvent>());
-    willCreateSession = disposables.add(new Emitter<SessionWillCreateEvent>());
     oauth = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     created = [];
     spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
@@ -149,7 +144,7 @@ describe('ProgramMcpSets', () => {
           Object.entries(pluginServers).map(([name, config]) => ({ name, config, pluginId: 'plugin', serverName: name })),
         onDidReload: pluginReloads.event,
       },
-      sessionManager: { current: { onWillCreateSession: willCreateSession.event }, onDidChange: Event.None },
+      sessionManager: { current: undefined, onDidChange: Event.None },
       telemetry: noopTelemetryService,
       workspaces: {
         projectDirAt: ({ root }: { readonly root: string }, dir: string) =>
@@ -672,26 +667,33 @@ describe('ProgramMcpSets', () => {
     const sets = createSets();
     const openSession = async (cwd: string, pinned?: string) => {
       const lease = await sets.acquire(pinned);
-      const seeds = new Map<unknown, unknown>([
-        [ISessionMcpHandle, lease.service.sessionHandle()],
-        [ISessionEphemeralMcpServers, { eph: stdioServer('eph', { environment_id: 'local' }) }],
-        [ISessionContext, makeSessionContext({ sessionId: cwd, workspaceId: 'wd', sessionDir: cwd, sessionScope: cwd, cwd })],
-      ]);
-      const disposers: Array<() => void> = [];
-      willCreateSession.fire({
-        sessionId: cwd,
-        onDidCreateScope: Event.None as SessionWillCreateEvent['onDidCreateScope'],
-        readSeed: <T>(id: ServiceIdentifier<T>): T => seeds.get(id) as T,
-        contributeSeed: (id, value) => {
-          seeds.set(id, value);
+      const environment = Object.assign(
+        new FakeEnvironment({ environmentId: 'local', generation: 'test' }, { capabilities: ['process'] }),
+        { process: new HostProcessService() },
+      );
+      const envLease = { environment, track: <T,>(resource: T): T => resource, dispose: () => {} };
+      const service = new SessionMcpService(
+        makeSessionContext({ sessionId: cwd, workspaceId: 'wd', sessionDir: cwd, sessionScope: cwd, cwd }),
+        { eph: stdioServer('eph', { environment_id: 'local' }) },
+        [lease.service.source()],
+        { ready: Promise.resolve(), get: () => undefined } as never,
+        oauth,
+        {
+          inspect: () => environment,
+          acquire: () => envLease,
+          acquireWhenReady: async () => envLease,
+        } as unknown as IEnvironmentService,
+        stubAgentIdentity(),
+        stubLog(),
+      );
+      await service.ready;
+      return {
+        view: service.connectionManager,
+        close: () => {
+          service.dispose();
+          lease.dispose();
         },
-        onSessionDispose: (dispose) => {
-          disposers.push(dispose);
-        },
-      });
-      const handle = seeds.get(ISessionMcpHandle) as ISessionMcpHandle;
-      await handle.ready;
-      return { view: handle.connectionManager, close: () => { for (const dispose of disposers) dispose(); } };
+      };
     };
 
     const atPrimary = await openSession(checkout);

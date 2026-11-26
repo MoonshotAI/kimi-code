@@ -72,7 +72,9 @@ import {
 } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
-import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import { sessionMcpSourcesSeed } from '#/session/mcp/mcpSource';
+import { ISessionMcpService, SessionMcpService } from '#/session/mcp/sessionMcpService';
 import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
@@ -330,7 +332,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             }),
             [ISessionSkillCatalogData, workdir.skills.sessionData()],
             [ISessionInstructionsProvider, workdir.instructions.sessionProvider()],
-            [ISessionMcpHandle, workdir.mcp.sessionHandle()],
+            [ISessionMcpService, new SyncDescriptor(SessionMcpService)],
+            ...sessionMcpSourcesSeed([workdir.mcp.source()]),
             [ISessionProjectInfo, dirs.sessionInfo()],
             [ISessionWorkdir, {
               _serviceBrand: undefined,

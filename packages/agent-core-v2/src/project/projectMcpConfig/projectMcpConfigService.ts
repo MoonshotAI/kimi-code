@@ -8,7 +8,7 @@ import { TimeoutTimer } from '#/_base/utils/timer';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { loadMcpServers, resolveMcpJsonPaths } from '#/app/mcpConfig/configLoader';
-import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
+import { MCP_SECTION, mcpTunablesFromSection, type McpSection } from '#/app/mcpConfig/configSection';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -101,8 +101,8 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
     this._register(
       this.config.onDidSectionChange((event) => {
         if (event.domain !== MCP_SECTION) return;
-        const value = toMcpTunables(event.value as McpSection | undefined);
-        const previous = toMcpTunables(event.previousValue as McpSection | undefined);
+        const value = mcpTunablesFromSection(event.value as McpSection | undefined);
+        const previous = mcpTunablesFromSection(event.previousValue as McpSection | undefined);
         if (
           value.reconnectInitialDelayMs === previous.reconnectInitialDelayMs &&
           value.reconnectMaxDelayMs === previous.reconnectMaxDelayMs
@@ -132,7 +132,7 @@ export class ProjectMcpConfigService extends Disposable implements IProjectMcpCo
   }
 
   tunables(): McpTunables {
-    return toMcpTunables(this.config.get<McpSection | undefined>(MCP_SECTION));
+    return mcpTunablesFromSection(this.config.get<McpSection | undefined>(MCP_SECTION));
   }
 
   private mutate(work: () => Promise<void>): Promise<void> {
@@ -426,17 +426,6 @@ function retainedDisabledOAuthServers(
     if ('url' in config) retained.set(entry.name, config);
   }
   return retained;
-}
-
-function toMcpTunables(section: McpSection | undefined): McpTunables {
-  return {
-    startupTimeoutMs: section?.startupTimeoutMs,
-    startupWaitMs: section?.startupWaitMs,
-    toolTimeoutMs: section?.toolTimeoutMs,
-    defaultDeferred: section?.defaultDeferred,
-    reconnectInitialDelayMs: section?.reconnectInitialDelayMs,
-    reconnectMaxDelayMs: section?.reconnectMaxDelayMs,
-  };
 }
 
 const NO_ABORT = new AbortController().signal;

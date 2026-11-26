@@ -12,14 +12,9 @@ export interface McpServersChange {
 
 export type McpServersChangeEvent = McpServersChange & IWaitUntil;
 
-export interface McpTunables {
-  readonly startupTimeoutMs?: number;
-  readonly startupWaitMs?: number;
-  readonly toolTimeoutMs?: number;
-  readonly defaultDeferred?: boolean;
-  readonly reconnectInitialDelayMs?: number;
-  readonly reconnectMaxDelayMs?: number;
-}
+import type { McpTunables } from '#/app/mcpConfig/configSection';
+
+export type { McpTunables };
 
 export interface IProjectMcpConfigService {
   readonly _serviceBrand: undefined;
