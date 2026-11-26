@@ -20,6 +20,8 @@ import {
 const fakes = vi.hoisted(() => ({
   current: null as unknown as ReturnType<typeof usePlugins>,
   authorization: null as unknown as ReturnType<typeof useMcpAuthorization>,
+  isMacosDesktop: false,
+  track: vi.fn(),
 }));
 
 vi.mock('@moonshot-ai/app-client/composables', async (importOriginal) => {
@@ -28,6 +30,24 @@ vi.mock('@moonshot-ai/app-client/composables', async (importOriginal) => {
     ...actual,
     usePlugins: () => fakes.current,
     useMcpAuthorization: () => fakes.authorization,
+  };
+});
+
+vi.mock('@moonshot-ai/app-client/contracts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@moonshot-ai/app-client/contracts')>();
+  return {
+    ...actual,
+    track: (event: string, payload?: Record<string, unknown>) => fakes.track(event, payload),
+  };
+});
+
+vi.mock('@moonshot-ai/app-core/lib', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@moonshot-ai/app-core/lib')>();
+  return {
+    ...actual,
+    get isMacosDesktop() {
+      return fakes.isMacosDesktop;
+    },
   };
 });
 
@@ -155,8 +175,10 @@ function makePlugins(rows: PluginViewModel[]): ReturnType<typeof usePlugins> {
       state.rowErrors = {};
     }),
     refresh: vi.fn(async () => {}),
-    install: vi.fn(async () => {}),
-    installRow: vi.fn(async () => {}),
+    refreshCapability: vi.fn(async (id: string) => state.capabilities.find((item) => item.id === id)),
+    requestCapabilityPermissions: vi.fn(async (id: string) => state.capabilities.find((item) => item.id === id)),
+    install: vi.fn(async () => 'installed' as const),
+    installRow: vi.fn(async () => 'installed' as const),
     installSource: vi.fn(async (source: string) => {
       if (source === 'bad') {
         state.rowErrors.__custom__ = 'bad zip';
@@ -168,7 +190,7 @@ function makePlugins(rows: PluginViewModel[]): ReturnType<typeof usePlugins> {
         official: false,
       }));
     }),
-    setupCapability: vi.fn(async () => {}),
+    setupCapability: vi.fn(async () => 'installed' as const),
     dismissExtensionHint: vi.fn(() => {
       state.extensionHint = false;
     }),
@@ -182,6 +204,9 @@ beforeEach(() => {
   host = document.createElement('div');
   document.body.append(host);
   rowData = reactive<PluginViewModel[]>([]);
+  fakes.isMacosDesktop = false;
+  fakes.track.mockReset();
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -1123,6 +1148,7 @@ describe('PluginsPanel', () => {
       plugins.state.installed.push(installed('vercel-package', 'marketplace', {
         catalogId: 'vercel-catalog',
       }));
+      return 'installed';
     });
 
     host.querySelector<HTMLButtonElement>(
@@ -1149,8 +1175,12 @@ describe('PluginsPanel', () => {
     );
     await mountPanel();
     vi.mocked(plugins.installRow).mockImplementation(async (item) => {
-      if (item.id === 'failed') plugins.state.rowErrors.failed = 'install failed';
+      if (item.id === 'failed') {
+        plugins.state.rowErrors.failed = 'install failed';
+        return 'failed';
+      }
       if (item.id === 'capability') plugins.state.installed.push(installed('capability', 'marketplace'));
+      return 'installed';
     });
     const clickAction = (id: string): void => {
       host.querySelector<HTMLButtonElement>(`[data-plugin-row="${id}"]`)!
@@ -1549,6 +1579,346 @@ describe('PluginsPanel', () => {
       serverName: 'vercel',
       runtimeName: 'plugin-vercel:vercel',
     });
+  });
+
+  function guideDialog(): HTMLElement | null {
+    return document.body.querySelector<HTMLElement>('[role="dialog"][aria-label="Connect browser extension"]');
+  }
+
+  async function flushAsync(): Promise<void> {
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    await nextTick();
+  }
+
+  it('opens the WebBridge guide after a first install from the list without permanent dismiss', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    try {
+      rowData.push(row('kimi-browser-extension', {
+        installId: 'kimi-webbridge',
+        catalogEntry: entry('kimi-browser-extension', 'Kimi Browser Extension', {
+          capabilityId: 'kimi-webbridge',
+          version: '1.11.3',
+        }),
+        capability: {
+          id: 'kimi-webbridge',
+          pluginId: 'kimi-browser-extension',
+          displayName: 'Kimi Browser Extension',
+          description: 'Browser control',
+          supported: true,
+          state: 'not_installed',
+          steps: [
+            { id: 'daemon', state: 'missing' },
+            { id: 'skill', state: 'missing' },
+            { id: 'extension', state: 'missing', optional: true },
+          ],
+          install: { running: false },
+        },
+        capabilityRequired: true,
+        displayName: 'Kimi Browser Extension',
+      }));
+      await mountPanel();
+      vi.mocked(plugins.installRow).mockImplementation(async () => {
+        rowData[0]!.installedPlugin = installed('kimi-browser-extension', 'marketplace', { version: '1.11.3' });
+        rowData[0]!.capability = {
+          ...rowData[0]!.capability!,
+          state: 'ready',
+          steps: [
+            { id: 'daemon', state: 'ok' },
+            { id: 'skill', state: 'ok' },
+            { id: 'extension', state: 'missing', optional: true },
+          ],
+        };
+        return 'installed';
+      });
+
+      host.querySelector<HTMLButtonElement>('.plugin-row .plugin-actions .ui-button')!.click();
+      await flushAsync();
+
+      const dialog = guideDialog();
+      expect(dialog).not.toBeNull();
+      expect(dialog?.querySelector('.ui-dialog__close')).toBeNull();
+      expect(dialog?.textContent).toContain('Select a browser, then install and enable the Kimi browser extension');
+      expect(dialog?.querySelectorAll('.wb-guide__browser')).toHaveLength(2);
+      expect(fakes.track).toHaveBeenCalledWith('webbridge_guide_show', {
+        plugin_id: 'kimi-webbridge',
+        entry: 'install',
+      });
+
+      dialog?.querySelector<HTMLButtonElement>('[data-browser="chrome"]')!.click();
+      expect(openSpy).toHaveBeenCalledWith(
+        'https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc',
+        '_blank',
+        'noopener',
+      );
+      expect(fakes.track).toHaveBeenCalledWith('webbridge_guide_click', {
+        plugin_id: 'kimi-webbridge',
+        action: 'chrome',
+        connected: false,
+      });
+
+      const later = [...dialog!.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent?.trim() === 'Maybe later')!;
+      later.click();
+      await flushAsync();
+
+      expect(guideDialog()).toBeNull();
+      expect(localStorage.getItem('kimi-web.plugins.extension-hint-dismissed')).toBeNull();
+      expect(fakes.track).toHaveBeenCalledWith('webbridge_guide_click', {
+        plugin_id: 'kimi-webbridge',
+        action: 'later',
+        connected: false,
+      });
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
+  it('keeps version labels in details, skips auto-guide on update, and clears the badge after Done detects connection', async () => {
+    rowData.push(row('kimi-browser-extension', {
+      installId: 'kimi-webbridge',
+      catalogEntry: entry('kimi-browser-extension', 'Kimi Browser Extension', {
+        capabilityId: 'kimi-webbridge',
+        version: '1.11.4',
+      }),
+      installedPlugin: installed('kimi-browser-extension', 'marketplace', { version: '1.11.3' }),
+      capability: {
+        id: 'kimi-webbridge',
+        pluginId: 'kimi-browser-extension',
+        displayName: 'Kimi Browser Extension',
+        description: 'Browser control',
+        supported: true,
+        state: 'ready',
+        steps: [
+          { id: 'daemon', state: 'ok' },
+          { id: 'skill', state: 'ok' },
+          { id: 'extension', state: 'missing', optional: true },
+        ],
+        install: { running: false },
+      },
+      capabilityRequired: true,
+      displayName: 'Kimi Browser Extension',
+      updateAvailable: true,
+    }));
+    await mountPanel();
+    clickButton('Kimi Browser Extension');
+    await settle();
+
+    const details = host.querySelector('.plugin-details')!;
+    expect(details.textContent).toContain('v1.11.3');
+    expect(details.textContent).toContain('Update to v1.11.4');
+    const badge = details.querySelector<HTMLButtonElement>('.plugin-details__status-badge')!;
+    expect(badge.textContent).toContain('Extension not connected');
+
+    details.querySelector<HTMLButtonElement>('.plugin-actions .ui-button')!.click();
+    await flushAsync();
+    expect(guideDialog()).toBeNull();
+
+    badge.click();
+    await flushAsync();
+    expect(guideDialog()).not.toBeNull();
+    expect(fakes.track).toHaveBeenCalledWith('webbridge_guide_show', {
+      plugin_id: 'kimi-webbridge',
+      entry: 'detail',
+    });
+
+    vi.mocked(plugins.refreshCapability).mockImplementation(async () => {
+      rowData[0]!.capability!.steps = [
+        { id: 'daemon', state: 'ok' },
+        { id: 'skill', state: 'ok' },
+        { id: 'extension', state: 'ok', optional: true },
+      ];
+      return rowData[0]!.capability;
+    });
+    const done = [...guideDialog()!.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Done')!;
+    done.click();
+    await flushAsync();
+
+    expect(plugins.refreshCapability).toHaveBeenCalledWith('kimi-webbridge');
+    expect(guideDialog()).toBeNull();
+    expect(host.querySelector('.plugin-details__status-badge')).toBeNull();
+    expect(host.querySelector('.plugin-details')?.textContent).toContain('v1.11.3');
+    expect(fakes.track).toHaveBeenCalledWith('webbridge_guide_click', {
+      plugin_id: 'kimi-webbridge',
+      action: 'done',
+      connected: true,
+    });
+    expect(fakes.track).toHaveBeenCalledWith('webbridge_connect_result', {
+      plugin_id: 'kimi-webbridge',
+      connected: true,
+      duration_ms: expect.any(Number),
+    });
+  });
+
+  it('hides the WebBridge badge while uninstalled, installing, or when the daemon is not running', async () => {
+    rowData.push(row('kimi-browser-extension', {
+      installId: 'kimi-webbridge',
+      catalogEntry: entry('kimi-browser-extension', 'Kimi Browser Extension', {
+        capabilityId: 'kimi-webbridge',
+        version: '1.11.3',
+      }),
+      installedPlugin: installed('kimi-browser-extension', 'marketplace', { version: '1.11.3' }),
+      capability: {
+        id: 'kimi-webbridge',
+        pluginId: 'kimi-browser-extension',
+        displayName: 'Kimi Browser Extension',
+        description: 'Browser control',
+        supported: true,
+        state: 'partial',
+        steps: [
+          { id: 'daemon', state: 'missing' },
+          { id: 'skill', state: 'ok' },
+          { id: 'extension', state: 'missing', optional: true },
+        ],
+        install: { running: false },
+      },
+      capabilityRequired: true,
+      displayName: 'Kimi Browser Extension',
+    }));
+    await mountPanel();
+    clickButton('Kimi Browser Extension');
+    await settle();
+    expect(host.querySelector('.plugin-details__status-badge')).toBeNull();
+
+    rowData[0]!.capability!.steps[0] = { id: 'daemon', state: 'ok' };
+    rowData[0]!.capability!.install = { running: true, step: 'daemon' };
+    await settle();
+    expect(host.querySelector('.plugin-details__status-badge')).toBeNull();
+  });
+
+  it('shows the macOS CU permission badge, enters waiting state on click, and clears after permissions are granted', async () => {
+    vi.useFakeTimers();
+    try {
+      fakes.isMacosDesktop = true;
+      rowData.push(row('kimi-cu', {
+        installId: 'kimi-cu',
+        catalogEntry: entry('kimi-cu', 'Kimi Computer Use', { capabilityId: 'kimi-cu' }),
+        installedPlugin: installed('kimi-cu', 'marketplace', { version: '0.5.4' }),
+        capability: {
+          id: 'kimi-cu',
+          pluginId: 'kimi-cu',
+          displayName: 'Kimi Computer Use',
+          description: 'macOS GUI automation',
+          supported: true,
+          state: 'partial',
+          steps: [
+            { id: 'plugin', state: 'ok' },
+            { id: 'app', state: 'ok' },
+            { id: 'service', state: 'ok' },
+            { id: 'permissions', state: 'missing', detail: 'screenRecording' },
+            { id: 'permissions.accessibility', state: 'ok' },
+            { id: 'permissions.screenRecording', state: 'missing' },
+          ],
+          install: { running: false },
+        },
+        capabilityRequired: true,
+        displayName: 'Kimi Computer Use',
+      }));
+      await mountPanel();
+      clickButton('Kimi Computer Use');
+      await settle();
+
+      const badge = host.querySelector<HTMLButtonElement>('.plugin-details__status-badge')!;
+      expect(badge.textContent).toContain('Permissions not enabled');
+      badge.click();
+      await settle();
+
+      expect(plugins.requestCapabilityPermissions).toHaveBeenCalledWith('kimi-cu');
+      expect(host.querySelector('.plugin-details__status-waiting')?.textContent).toContain('Waiting for permissions…');
+      expect(fakes.track).toHaveBeenCalledWith('cu_permission_click', {
+        plugin_id: 'kimi-cu',
+        entry: 'detail',
+      });
+
+      vi.mocked(plugins.refreshCapability).mockImplementation(async () => {
+        rowData[0]!.capability = {
+          ...rowData[0]!.capability!,
+          state: 'ready',
+          steps: [
+            { id: 'plugin', state: 'ok' },
+            { id: 'app', state: 'ok' },
+            { id: 'service', state: 'ok' },
+            { id: 'permissions', state: 'ok' },
+            { id: 'permissions.accessibility', state: 'ok' },
+            { id: 'permissions.screenRecording', state: 'ok' },
+          ],
+        };
+        return rowData[0]!.capability;
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await settle();
+
+      expect(plugins.refreshCapability).toHaveBeenCalledWith('kimi-cu');
+      expect(host.querySelector('.plugin-details__status-waiting')).toBeNull();
+      expect(host.querySelector('.plugin-details__status-badge')).toBeNull();
+      expect(fakes.track).toHaveBeenCalledWith('cu_permission_result', {
+        plugin_id: 'kimi-cu',
+        accessibility_granted: true,
+        screen_granted: true,
+        result: 'granted',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not re-trigger native CU permission prompt after first install and hides CU badges off macOS or before install', async () => {
+    fakes.isMacosDesktop = true;
+    rowData.push(row('kimi-cu', {
+      installId: 'kimi-cu',
+      catalogEntry: entry('kimi-cu', 'Kimi Computer Use', { capabilityId: 'kimi-cu' }),
+      capability: {
+        id: 'kimi-cu',
+        pluginId: 'kimi-cu',
+        displayName: 'Kimi Computer Use',
+        description: 'macOS GUI automation',
+        supported: true,
+        state: 'not_installed',
+        steps: [{ id: 'plugin', state: 'missing' }, { id: 'app', state: 'missing' }],
+        install: { running: false },
+      },
+      capabilityRequired: true,
+      displayName: 'Kimi Computer Use',
+    }));
+    await mountPanel();
+    clickButton('Kimi Computer Use');
+    await settle();
+    expect(host.querySelector('.plugin-details__status-badge')).toBeNull();
+    host.querySelector<HTMLButtonElement>('.plugin-details__header [aria-label="Back"]')!.click();
+    await settle();
+
+    vi.mocked(plugins.installRow).mockImplementation(async () => {
+      rowData[0]!.installedPlugin = installed('kimi-cu', 'marketplace', { version: '0.5.4' });
+      rowData[0]!.capability = {
+        ...rowData[0]!.capability!,
+        state: 'partial',
+        steps: [
+          { id: 'plugin', state: 'ok' },
+          { id: 'app', state: 'ok' },
+          { id: 'service', state: 'ok' },
+          { id: 'permissions', state: 'missing' },
+          { id: 'permissions.accessibility', state: 'missing' },
+          { id: 'permissions.screenRecording', state: 'missing' },
+        ],
+      };
+      return 'installed';
+    });
+    host.querySelector<HTMLButtonElement>('.plugin-row .plugin-actions .ui-button')!.click();
+    await flushAsync();
+
+    expect(plugins.requestCapabilityPermissions).not.toHaveBeenCalled();
+    expect(fakes.track).toHaveBeenCalledWith('cu_permission_click', {
+      plugin_id: 'kimi-cu',
+      entry: 'install',
+    });
+
+    fakes.isMacosDesktop = false;
+    rowData[0]!.capability!.pluginId = 'kimi-cu-win';
+    await settle();
+    clickButton('Kimi Computer Use');
+    await settle();
+    expect(host.querySelector('.plugin-details__status-badge')).toBeNull();
+    expect(host.querySelector('.plugin-details__status-waiting')).toBeNull();
   });
 
 });

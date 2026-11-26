@@ -433,6 +433,45 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
       edited: z.boolean(),
     }),
   }),
+  z.object({
+    event: z.literal('webbridge_guide_show'),
+    properties: z.object({
+      plugin_id: z.literal('kimi-webbridge'),
+      entry: z.enum(['install', 'detail']),
+    }),
+  }),
+  z.object({
+    event: z.literal('webbridge_guide_click'),
+    properties: z.object({
+      plugin_id: z.literal('kimi-webbridge'),
+      action: z.enum(['chrome', 'edge', 'later', 'done']),
+      connected: z.boolean(),
+    }),
+  }),
+  z.object({
+    event: z.literal('webbridge_connect_result'),
+    properties: z.object({
+      plugin_id: z.literal('kimi-webbridge'),
+      connected: z.boolean(),
+      duration_ms: optionalDurationSchema,
+    }),
+  }),
+  z.object({
+    event: z.literal('cu_permission_click'),
+    properties: z.object({
+      plugin_id: z.literal('kimi-cu'),
+      entry: z.enum(['install', 'detail']),
+    }),
+  }),
+  z.object({
+    event: z.literal('cu_permission_result'),
+    properties: z.object({
+      plugin_id: z.literal('kimi-cu'),
+      accessibility_granted: z.boolean(),
+      screen_granted: z.boolean(),
+      result: z.enum(['granted', 'partial', 'cancelled']),
+    }),
+  }),
 ]);
 
 export type RendererTrackEvent = z.infer<typeof rendererTrackEventSchema>;

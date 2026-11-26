@@ -145,6 +145,19 @@ export class CapabilityService extends Disposable implements ICapabilityService 
     return this.statusOf(entry);
   }
 
+  async requestCapabilityPermissions(id: string): Promise<CapabilityStatus> {
+    const entry = this.requireEntry(id);
+    if (!entry.supported || entry.requestPermissions === undefined) {
+      throw new Error2(
+        CapabilityErrors.codes.CAPABILITY_UNSUPPORTED,
+        `Capability "${entry.id}" does not support permission requests on ${process.platform}/${process.arch}`,
+        { details: { id: entry.id } },
+      );
+    }
+    await entry.requestPermissions();
+    return this.statusOf(entry);
+  }
+
   private requireEntry(id: string): CapabilityEntry {
     const entry = this.entries.get(id as CapabilityId);
     if (entry === undefined) {

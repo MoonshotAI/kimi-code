@@ -1107,6 +1107,14 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return toAppCapabilityStatus(data);
   }
 
+  async requestCapabilityPermissions(capabilityId: string): Promise<AppCapabilityStatus> {
+    const data = await this.http.post<WireCapabilityStatus>(
+      `/capabilities/${encodeURIComponent(capabilityId)}:request-permissions`,
+      {},
+    );
+    return toAppCapabilityStatus(data);
+  }
+
   async listPlugins(): Promise<AppPluginSummary[]> {
     const data = await this.http.get<{ plugins: WirePluginSummary[] }>('/plugins');
     return (data.plugins ?? []).map(toAppPluginSummary);

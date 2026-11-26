@@ -19,11 +19,14 @@ import { connectEventsIfNeeded } from '@moonshot-ai/app-client/client';
 import { hostsStore } from '@moonshot-ai/app-client/stores';
 import PluginDetails from './PluginDetails.vue';
 import PluginRow from './PluginRow.vue';
+import WebBridgeGuideDialog from './WebBridgeGuideDialog.vue';
 import { pluginErrorMessage } from './pluginErrorMessage';
+import { usePluginCapabilityGuides } from './usePluginCapabilityGuides';
 
 const { t, locale } = useI18n();
 const {
   state,
+  rows,
   marketplaceRows,
   officialRows,
   curatedRows,
@@ -34,6 +37,18 @@ const {
   clearRowErrors,
   busyKey,
 } = usePlugins({ locale });
+
+const {
+  webBridgeGuideOpen,
+  webBridgeChecking,
+  cuPermissionWaiting,
+  onPluginInstalled,
+  openWebBridgeGuide,
+  closeWebBridgeGuideLater,
+  confirmWebBridgeGuideDone,
+  selectWebBridgeBrowser,
+  requestCuPermissionsFromDetail,
+} = usePluginCapabilityGuides(rows);
 
 onMounted(() => {
   clearRowErrors();
@@ -230,7 +245,11 @@ async function closeDetails(): Promise<void> {
       v-else-if="selectedRow"
       :row="selectedRow"
       :source-view="activeView"
+      :cu-permission-waiting="cuPermissionWaiting"
       @back="closeDetails"
+      @installed="onPluginInstalled"
+      @open-webbridge-guide="openWebBridgeGuide('detail')"
+      @request-cu-permissions="requestCuPermissionsFromDetail"
     />
 
     <template v-else>
@@ -248,6 +267,7 @@ async function closeDetails(): Promise<void> {
               :key="row.id"
               :row="row"
               @details="openDetails(row)"
+              @installed="onPluginInstalled"
             />
           </div>
         </section>
@@ -282,6 +302,14 @@ async function closeDetails(): Promise<void> {
       </div>
 
     </template>
+
+    <WebBridgeGuideDialog
+      :open="webBridgeGuideOpen"
+      :checking="webBridgeChecking"
+      @later="closeWebBridgeGuideLater"
+      @done="confirmWebBridgeGuideDone"
+      @select-browser="selectWebBridgeBrowser"
+    />
   </section>
 </template>
 

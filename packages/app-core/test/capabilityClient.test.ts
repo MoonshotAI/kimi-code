@@ -87,6 +87,29 @@ describe('DaemonKimiWebApi capabilities', () => {
     expect(JSON.parse(init.body as string)).toEqual({ stop_running_processes: true });
   });
 
+  it('requestCapabilityPermissions POSTs the :request-permissions action', async () => {
+    const granted = {
+      ...wireCapability,
+      state: 'ready',
+      steps: [
+        { id: 'plugin', state: 'ok' },
+        { id: 'permissions', state: 'ok' },
+        { id: 'permissions.accessibility', state: 'ok' },
+        { id: 'permissions.screenRecording', state: 'ok' },
+      ],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(envelope(granted));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await makeApi().requestCapabilityPermissions('kimi-cu');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://test.local/api/v1/capabilities/kimi-cu:request-permissions');
+    expect(init.method).toBe('POST');
+    expect(result.state).toBe('ready');
+    expect(result.steps.find((step) => step.id === 'permissions')?.state).toBe('ok');
+  });
+
   it('surfaces wire error codes via DaemonApiError', async () => {
     vi.stubGlobal(
       'fetch',

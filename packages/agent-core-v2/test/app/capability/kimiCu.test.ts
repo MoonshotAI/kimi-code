@@ -915,6 +915,42 @@ describe('kimi-cu entry', () => {
     ]);
   });
 
+  it('requests macOS permissions directly without reinstalling plugin or app', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const plugins = fakePlugins([{ id: 'kimi-cu', enabled: true, state: 'ok', version: '0.5.4' }]);
+    const host = fakeHostProcess([
+      { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
+      { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=true screenRecording=false' },
+      { match: 'request-permissions', code: 0 },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({ applicationsDir, plugins: plugins.service, hostProcess: host.service }),
+    );
+
+    await entry.requestPermissions?.();
+
+    expect(host.calls).toEqual([
+      `${applicationsDir}/KimiCU.app/Contents/MacOS/kimi-cu request-permissions --ax --screen`,
+    ]);
+    expect(plugins.installs).toEqual([]);
+    expect(plugins.resolvedInstalls).toEqual([]);
+  });
+
+  it('rejects direct macOS permission requests before KimiCU.app is installed', async () => {
+    const host = fakeHostProcess([]);
+    const entry = createKimiCuEntry(
+      makeCtx({ applicationsDir: path.join(root, 'Applications'), hostProcess: host.service }),
+    );
+
+    await expect(entry.requestPermissions?.()).rejects.toThrow(/KimiCU\.app is not installed/);
+    expect(host.calls).toEqual([]);
+  });
+
+  it('does not expose direct permission requests on Windows', () => {
+    const entry = createKimiCuEntry(makeCtx({ platform: 'win32', arch: 'x64' }));
+    expect(entry.requestPermissions).toBeUndefined();
+  });
+
   it('rejects install on non-macOS before any side effect', async () => {
     const plugins = fakePlugins([]);
     const entry = createKimiCuEntry(makeCtx({ platform: 'linux', plugins: plugins.service }));

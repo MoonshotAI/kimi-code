@@ -1162,6 +1162,7 @@ export interface KimiWebApi {
   listCapabilities(): Promise<AppCapabilityStatus[]>;
   getCapability(capabilityId: string): Promise<AppCapabilityStatus>;
   installCapability(capabilityId: string, options?: AppCapabilityInstallOptions): Promise<AppCapabilityStatus>;
+  requestCapabilityPermissions(capabilityId: string): Promise<AppCapabilityStatus>;
   listPlugins(): Promise<AppPluginSummary[]>;
   getPluginInfo(pluginId: string, locale?: string): Promise<AppPluginCapabilities>;
   previewPlugin(input: { marketplaceId: string; expectedVersion?: string; expectedSha256?: string; locale?: string }): Promise<AppPluginCapabilities>;

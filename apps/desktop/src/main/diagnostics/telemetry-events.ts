@@ -312,6 +312,11 @@ export interface DesktopEventPayloads {
   prediction_shown: RendererEventPayloads['prediction_shown'];
   prediction_accepted: RendererEventPayloads['prediction_accepted'];
   prediction_submitted: RendererEventPayloads['prediction_submitted'];
+  webbridge_guide_show: RendererEventPayloads['webbridge_guide_show'];
+  webbridge_guide_click: RendererEventPayloads['webbridge_guide_click'];
+  webbridge_connect_result: RendererEventPayloads['webbridge_connect_result'];
+  cu_permission_click: RendererEventPayloads['cu_permission_click'];
+  cu_permission_result: RendererEventPayloads['cu_permission_result'];
   browser_operation_result: BrowserOperationResultEvent;
   browser_control_changed: BrowserControlChangedEvent;
   browser_mcp_reconnect: BrowserMcpReconnectEvent;

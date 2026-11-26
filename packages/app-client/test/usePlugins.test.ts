@@ -13,6 +13,7 @@ const apiMock = {
   getCapability: vi.fn(),
   listCapabilities: vi.fn(),
   installCapability: vi.fn(),
+  requestCapabilityPermissions: vi.fn(),
 };
 
 setKimiClientDeps({ api: () => apiMock as never, t: (key) => key });
@@ -1937,7 +1938,102 @@ describe('usePlugins', () => {
       expectedSha256: missing.sha256sum,
     });
   });
+
+  it('refreshCapability updates a single capability and extension hint without toggling loading', async () => {
+    apiMock.listPluginMarketplace.mockResolvedValue([entryWebbridge]);
+    apiMock.listCapabilities.mockResolvedValue([
+      {
+        ...capabilityWebbridge,
+        state: 'ready',
+        steps: [
+          { id: 'daemon', state: 'ok' },
+          { id: 'skill', state: 'ok' },
+          { id: 'extension', state: 'missing', optional: true },
+        ],
+      },
+    ]);
+    const { state, refresh, refreshCapability, rows } = usePlugins();
+    await refresh();
+    expect(state.extensionHint).toBe(true);
+
+    apiMock.getCapability.mockResolvedValue({
+      ...capabilityWebbridge,
+      state: 'ready',
+      steps: [
+        { id: 'daemon', state: 'ok' },
+        { id: 'skill', state: 'ok' },
+        { id: 'extension', state: 'ok', optional: true },
+      ],
+    });
+
+    const status = await refreshCapability('kimi-webbridge');
+
+    expect(status?.steps.find((step) => step.id === 'extension')?.state).toBe('ok');
+    expect(state.loading).toBe(false);
+    expect(state.extensionHint).toBe(false);
+    expect(rows.value[0]?.capability?.steps.find((step) => step.id === 'extension')?.state).toBe('ok');
+    expect(apiMock.listPluginMarketplace).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshCapability ignores stale out-of-order responses', async () => {
+    apiMock.listCapabilities.mockResolvedValue([capabilityWebbridge]);
+    const { state, refresh, refreshCapability } = usePlugins();
+    await refresh();
+
+    const first = deferred<AppCapabilityStatus>();
+    const second = deferred<AppCapabilityStatus>();
+    apiMock.getCapability.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+    const firstCall = refreshCapability('kimi-webbridge');
+    const secondCall = refreshCapability('kimi-webbridge');
+    second.resolve({
+      ...capabilityWebbridge,
+      state: 'ready',
+      steps: [{ id: 'extension', state: 'ok', optional: true }],
+    });
+    await secondCall;
+    first.resolve({
+      ...capabilityWebbridge,
+      state: 'partial',
+      steps: [{ id: 'extension', state: 'missing', optional: true }],
+    });
+    const stale = await firstCall;
+
+    expect(stale).toBeUndefined();
+    expect(state.capabilities[0]?.steps[0]?.state).toBe('ok');
+  });
+
+  it('installRow reports installed, failed, and cancelled outcomes', async () => {
+    apiMock.listPluginMarketplace.mockResolvedValue([entryVercel, entryWebbridge]);
+    apiMock.listCapabilities.mockResolvedValue([{ ...capabilityWebbridge, state: 'ready' }]);
+    const { refresh, installRow, rows } = usePlugins();
+    await refresh();
+
+    apiMock.installPlugin.mockResolvedValueOnce({
+      id: 'vercel-plugin',
+      catalogId: 'vercel-plugin',
+      enabled: true,
+      origin: 'marketplace',
+    });
+    const vercelRow = rows.value.find((row) => row.id === 'vercel-plugin')!;
+    await expect(installRow(vercelRow)).resolves.toBe('installed');
+
+    apiMock.installPlugin.mockRejectedValueOnce(new Error('network down'));
+    await expect(installRow(vercelRow)).resolves.toBe('failed');
+
+    apiMock.installCapability.mockResolvedValue({ install: { running: true } });
+    apiMock.getCapability.mockResolvedValue({
+      ...capabilityWebbridge,
+      state: 'ready',
+      install: { running: false, confirmationRequired: 'stop-processes' },
+    });
+    const webbridgeRow = rows.value.find((row) => row.id === 'kimi-webbridge')!;
+    await expect(
+      installRow(webbridgeRow, { confirmStopProcesses: () => Promise.resolve(false) }),
+    ).resolves.toBe('cancelled');
+  });
 });
+
 
 describe('pluginRowShowsInstall', () => {
   const installedWiring = {

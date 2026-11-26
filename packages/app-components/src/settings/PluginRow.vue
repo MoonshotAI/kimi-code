@@ -6,9 +6,10 @@ import { usePlugins, type PluginViewModel } from '@moonshot-ai/app-client/compos
 import PluginActions from './PluginActions.vue';
 import PluginIcon from './PluginIcon.vue';
 import PluginStatus from './PluginStatus.vue';
+import { WEBBRIDGE_EXTENSION_GUIDE_URL, WEBBRIDGE_EXTENSION_LINKS } from './webBridgeExtension';
 
 const props = defineProps<{ row: PluginViewModel }>();
-const emit = defineEmits<{ details: [] }>();
+const emit = defineEmits<{ details: []; installed: [row: PluginViewModel] }>();
 const { t } = useI18n();
 const { state, dismissExtensionHint } = usePlugins();
 
@@ -18,13 +19,6 @@ const version = computed(() =>
 const showExtensionHint = computed(() =>
   state.extensionHint && props.row.capability?.id === 'kimi-webbridge',
 );
-
-const CHROME_EXTENSION_URL =
-  'https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc';
-const EDGE_EXTENSION_URL =
-  'https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg';
-const EXTENSION_GUIDE_URL =
-  'https://www.kimi.com/code/docs/kimi-code-cli/customization/plugins.html#install-the-browser-extension';
 
 function openExternal(url: string): void {
   window.open(url, '_blank', 'noopener');
@@ -55,22 +49,22 @@ function openExternal(url: string): void {
             </span>
           </span>
         </button>
-        <PluginActions :row="row" install-variant="secondary" />
+        <PluginActions :row="row" install-variant="secondary" @installed="emit('installed', $event)" />
       </div>
       <PluginStatus :row="row" />
       <div v-if="showExtensionHint" class="pp-ext-hint" role="status">
         <Icon name="globe" size="md" class="pp-ext-icon" />
         <span class="pp-ext-title">{{ t('settings.plugins.extensionHintTitle') }}</span>
         <div class="pp-ext-actions">
-          <Button size="sm" variant="secondary" @click="openExternal(CHROME_EXTENSION_URL)">
+          <Button size="sm" variant="secondary" @click="openExternal(WEBBRIDGE_EXTENSION_LINKS.chrome.url)">
             Chrome
             <Icon name="external-link" size="sm" />
           </Button>
-          <Button size="sm" variant="secondary" @click="openExternal(EDGE_EXTENSION_URL)">
+          <Button size="sm" variant="secondary" @click="openExternal(WEBBRIDGE_EXTENSION_LINKS.edge.url)">
             Edge
             <Icon name="external-link" size="sm" />
           </Button>
-          <Link :href="EXTENSION_GUIDE_URL" external variant="muted" class="pp-ext-guide">
+          <Link :href="WEBBRIDGE_EXTENSION_GUIDE_URL" external variant="muted" class="pp-ext-guide">
             {{ t('settings.plugins.extensionGuide') }}
           </Link>
         </div>
