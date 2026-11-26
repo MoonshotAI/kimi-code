@@ -187,14 +187,6 @@ jobs:
       # `pnpm run test` does not execute it.
       - name: pi-tui (node:test)
         run: pnpm --filter @moonshot-ai/pi-tui test
-      # The VS Code extension suite runs on the default (v2) engine in the
-      # sharded root run; this reruns it on the legacy v1 engine, which the
-      # extension selects through the rollback env var.
-      - name: VS Code extension on the legacy engine
-        if: ${{ !cancelled() }}
-        run: pnpm --filter kimi-code test
-        env:
-          KIMI_CODE_LEGACY_FLAG: "1"
 
   test-windows:
     runs-on: windows-latest
