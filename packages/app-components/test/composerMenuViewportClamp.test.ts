@@ -295,10 +295,10 @@ describe('Composer recent model menu', () => {
     await nextTick();
     await nextTick();
 
-    const labels = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section > .mqm-label, .mqm > .mqm-label')].map(
+    const labels = [...host.querySelectorAll<HTMLElement>('.mqm-body > .mqm-label')].map(
       (section) => section.textContent?.trim(),
     );
-    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row, .mqm > .mqm-provider-scroll .mqm-row')];
+    const rows = [...host.querySelectorAll<HTMLElement>('.mqm-recent-scroll .mqm-row, .mqm-provider-scroll .mqm-row')];
     const names = rows.map((row) => row.querySelector('.mqm-name')?.textContent?.trim());
 
     expect(labels).toEqual(['最近使用', 'openai']);
@@ -312,7 +312,7 @@ describe('Composer recent model menu', () => {
     expect(clientState.setThinking).not.toHaveBeenCalled();
     expect(clientState.status!.value?.modelId).toBe('gpt-6.1-sol');
 
-    const reorderedRows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row, .mqm > .mqm-provider-scroll .mqm-row')];
+    const reorderedRows = [...host.querySelectorAll<HTMLElement>('.mqm-recent-scroll .mqm-row, .mqm-provider-scroll .mqm-row')];
     expect(
       reorderedRows.map((row) => row.querySelector('.mqm-name')?.textContent?.trim()),
     ).toEqual(['GPT-6.1 Sol', 'GPT-6.1 Sol', 'GPT-6 Astra']);
@@ -344,7 +344,7 @@ describe('Composer recent model menu', () => {
     await nextTick();
     await nextTick();
 
-    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row, .mqm > .mqm-provider-scroll .mqm-row')];
+    const rows = [...host.querySelectorAll<HTMLElement>('.mqm-recent-scroll .mqm-row, .mqm-provider-scroll .mqm-row')];
     rows[2]?.click();
     await nextTick();
     expect(rows[2]?.getAttribute('aria-checked')).toBe('true');
@@ -365,7 +365,7 @@ describe('Composer recent model menu', () => {
     await nextTick();
     await nextTick();
 
-    host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row, .mqm > .mqm-provider-scroll .mqm-row')[2]?.click();
+    host.querySelectorAll<HTMLElement>('.mqm-recent-scroll .mqm-row, .mqm-provider-scroll .mqm-row')[2]?.click();
     await nextTick();
 
     clientState.activeSessionId!.value = 'sess-2';
@@ -390,7 +390,7 @@ describe('Composer recent model menu', () => {
     await nextTick();
 
     expect(clientState.activeSessionId!.value).toBe('sess-1');
-    const providerRows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-provider-scroll .mqm-row')];
+    const providerRows = [...host.querySelectorAll<HTMLElement>('.mqm-provider-scroll .mqm-row')];
     providerRows[0]!.click();
     await nextTick();
     expect(clientState.setSessionModel).not.toHaveBeenCalled();
@@ -519,6 +519,26 @@ describe('Composer toolbar popup viewport clamping', () => {
     document.querySelector<HTMLElement>('.sheet-scrim')!.click();
     await nextTick();
     await vi.waitFor(() => expect(clientState.selectModel).toHaveBeenCalledWith('gpt-6-astra'));
+  });
+
+  it('discards staged mobile sheet selections on Escape while focus remains on the model pill', async () => {
+    isMobileViewport = true;
+    await mountComposer(390, 844);
+
+    const pill = host.querySelector<HTMLButtonElement>('.model-pill')!;
+    pill.click();
+    await nextTick();
+    await nextTick();
+
+    document.querySelector<HTMLElement>('[data-row-key="provider:gpt-6-astra"]')!.click();
+    await nextTick();
+    pill.focus();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await nextTick();
+
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+    expect(clientState.setThinking).not.toHaveBeenCalled();
+    expect(pill.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('commits staged mobile sheet selections when the viewport widens past the mobile breakpoint', async () => {

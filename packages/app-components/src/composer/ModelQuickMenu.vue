@@ -56,10 +56,11 @@ const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = us
 const rootEl = ref<HTMLElement>();
 const searchInputEl = ref<HTMLInputElement>();
 const flyoutEl = ref<HTMLElement>();
-const mainScrollEl = ref<HTMLElement | null>(null);
+const mqmBodyEl = ref<HTMLElement | null>(null);
+const providerScrollEl = ref<HTMLElement | null>(null);
+const resultsScrollEl = ref<HTMLElement | null>(null);
+const recentScrollEl = ref<HTMLElement | null>(null);
 const subScrollEl = ref<HTMLElement | null>(null);
-const mainScrollbar = useModelMenuScrollbar(mainScrollEl);
-const subScrollbar = useModelMenuScrollbar(subScrollEl);
 const rowElements = new Map<string, HTMLElement>();
 const query = ref('');
 const activeKey = ref('');
@@ -71,6 +72,13 @@ let hoverTimer: ReturnType<typeof setTimeout> | undefined;
 let submenuTimer: ReturnType<typeof setTimeout> | undefined;
 
 const searching = computed(() => query.value.trim().length > 0);
+const tightViewport = computed(() => props.maxHeight < 300);
+const mainScrollEl = computed(() =>
+  searching.value ? resultsScrollEl.value : tightViewport.value ? mqmBodyEl.value : providerScrollEl.value,
+);
+const mainScrollbar = useModelMenuScrollbar(mainScrollEl);
+const recentScrollbar = useModelMenuScrollbar(recentScrollEl);
+const subScrollbar = useModelMenuScrollbar(subScrollEl);
 const currentModel = computed(() => props.models.find((model) => model.id === props.currentModelId));
 const currentAvailability = computed(() => modelThinkingAvailability(currentModel.value));
 const currentSegments = computed(() => segmentsFor(currentModel.value));
@@ -404,9 +412,10 @@ watch(query, () => {
   activeKey.value = navRows.value[0]?.key ?? '';
 });
 
-watch([() => props.providerModels, searchResults, submenu], () => {
+watch([() => props.providerModels, searchResults, submenu, tightViewport], () => {
   void nextTick(() => {
     mainScrollbar.sync();
+    recentScrollbar.sync();
     subScrollbar.sync();
   });
 });
@@ -447,7 +456,7 @@ defineExpose({
     <template v-if="searching">
       <div v-if="searchResults.length > 0" class="mqm-label">{{ t('status.searchResults') }}</div>
       <div
-        ref="mainScrollEl"
+        ref="resultsScrollEl"
         class="mqm-scroll mqm-results-scroll"
         :style="{ maskImage: mainScrollbar.maskImage.value }"
         @scroll="onMainScroll"
@@ -483,39 +492,56 @@ defineExpose({
       </div>
     </template>
 
-    <template v-else>
-      <div v-if="props.recentModels.length > 0" class="mqm-section">
+    <div
+      v-else
+      ref="mqmBodyEl"
+      class="mqm-body"
+      :class="{ 'is-fluid': tightViewport }"
+      :style="tightViewport ? { maskImage: mainScrollbar.maskImage.value } : undefined"
+      @scroll="tightViewport ? onMainScroll() : undefined"
+      @mouseenter="tightViewport ? mainScrollbar.onListMouseEnter() : undefined"
+      @mouseleave="tightViewport ? mainScrollbar.onListMouseLeave() : undefined"
+    >
+      <template v-if="props.recentModels.length > 0">
         <div class="mqm-label">{{ t('status.recentModels') }}</div>
         <div
-          v-for="model in props.recentModels"
-          :key="`recent:${model.id}`"
-          :ref="setRowElement(`recent:${model.id}`)"
-          class="mqm-row"
-          :class="{ 'is-active': activeKey === `recent:${model.id}` }"
-          role="menuitemradio"
-          :aria-checked="model.id === props.currentModelId"
-          :data-row-key="`recent:${model.id}`"
-          @mouseenter="onRowEnter({ key: `recent:${model.id}`, kind: 'model', model, hasSubmenu: false })"
-          @mouseleave="onRowLeave"
-          @click="onRowClick({ key: `recent:${model.id}`, kind: 'model', model, hasSubmenu: false })"
+          ref="recentScrollEl"
+          class="mqm-scroll mqm-section mqm-recent-scroll"
+          :style="!tightViewport ? { maskImage: recentScrollbar.maskImage.value } : undefined"
+          @scroll="recentScrollbar.onScroll"
+          @mouseenter="recentScrollbar.onListMouseEnter"
+          @mouseleave="recentScrollbar.onListMouseLeave"
         >
-          <span class="mqm-name">{{ model.displayName ?? model.model }}</span>
-          <span class="mqm-provider">{{ providerDisplayName(model.provider, t) }}</span>
-          <Icon v-if="model.id === props.currentModelId" name="check" size="sm" class="mqm-trailing-icon" />
+          <div
+            v-for="model in props.recentModels"
+            :key="`recent:${model.id}`"
+            :ref="setRowElement(`recent:${model.id}`)"
+            class="mqm-row"
+            :class="{ 'is-active': activeKey === `recent:${model.id}` }"
+            role="menuitemradio"
+            :aria-checked="model.id === props.currentModelId"
+            :data-row-key="`recent:${model.id}`"
+            @mouseenter="onRowEnter({ key: `recent:${model.id}`, kind: 'model', model, hasSubmenu: false })"
+            @mouseleave="onRowLeave"
+            @click="onRowClick({ key: `recent:${model.id}`, kind: 'model', model, hasSubmenu: false })"
+          >
+            <span class="mqm-name">{{ model.displayName ?? model.model }}</span>
+            <span class="mqm-provider">{{ providerDisplayName(model.provider, t) }}</span>
+            <Icon v-if="model.id === props.currentModelId" name="check" size="sm" class="mqm-trailing-icon" />
+          </div>
         </div>
-      </div>
-
-      <div v-if="props.recentModels.length > 0" class="mqm-divider" />
+        <div class="mqm-divider" />
+      </template>
 
       <template v-if="props.providerModels.length > 0 || props.activeProvider">
         <div class="mqm-label">{{ props.activeProviderLabel }}</div>
         <div
-          ref="mainScrollEl"
+          ref="providerScrollEl"
           class="mqm-scroll mqm-provider-scroll"
-          :style="{ maskImage: mainScrollbar.maskImage.value }"
-          @scroll="onMainScroll"
-          @mouseenter="mainScrollbar.onListMouseEnter"
-          @mouseleave="mainScrollbar.onListMouseLeave"
+          :style="!tightViewport ? { maskImage: mainScrollbar.maskImage.value } : undefined"
+          @scroll="!tightViewport ? onMainScroll() : undefined"
+          @mouseenter="!tightViewport ? mainScrollbar.onListMouseEnter() : undefined"
+          @mouseleave="!tightViewport ? mainScrollbar.onListMouseLeave() : undefined"
         >
           <div
             v-for="model in props.providerModels"
@@ -535,7 +561,7 @@ defineExpose({
           </div>
         </div>
       </template>
-    </template>
+    </div>
 
     <template v-if="!searching">
       <div class="mqm-divider" />
@@ -596,6 +622,7 @@ defineExpose({
       />
     </div>
 
+    <ModelMenuScrollThumb v-if="!searching && !tightViewport" :scrollbar="recentScrollbar" />
     <ModelMenuScrollThumb :scrollbar="mainScrollbar" />
 
     <div
@@ -743,7 +770,31 @@ defineExpose({
 .mqm-submenu-scroll::-webkit-scrollbar {
   display: none;
 }
+.mqm-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mqm-body.is-fluid {
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.mqm-body.is-fluid::-webkit-scrollbar {
+  display: none;
+}
+.mqm-body.is-fluid .mqm-scroll {
+  flex: none;
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
+}
+.mqm-recent-scroll {
+  flex: 0 1 auto;
+}
 .mqm-provider-scroll {
+  flex: 0 1000 auto;
+  min-height: var(--mqm-row-height);
   max-height: calc(var(--mqm-row-height) * 6);
 }
 .mqm-results-scroll {

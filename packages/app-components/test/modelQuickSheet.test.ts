@@ -100,11 +100,32 @@ describe('ModelQuickSheet main page', () => {
     expect(recentRows).toHaveLength(5);
     expect(recentRows[0]?.querySelector('.mqs-provider')?.textContent).toBe('Kimi 订阅');
     expect(recentRows[0]?.getAttribute('aria-checked')).toBe('true');
-    expect(host.querySelector('.mqs-fixed [data-row-key^="recent:"]')).not.toBeNull();
-    expect(host.querySelector('.mqs-scroll [data-row-key^="recent:"]')).toBeNull();
-    expect(host.querySelectorAll('.mqs-scroll [data-row-key^="provider:"]')).toHaveLength(3);
+    expect(host.querySelector('.mqs-recent-scroll [data-row-key^="recent:"]')).not.toBeNull();
+    expect(host.querySelector('.mqs-provider-scroll [data-row-key^="recent:"]')).toBeNull();
+    expect(host.querySelectorAll('.mqs-provider-scroll [data-row-key^="provider:"]')).toHaveLength(3);
     expect(host.querySelector('.mqs-fixed [data-row-key="action:provider"]')?.textContent).toContain('切换供应商');
     expect(host.querySelector('.mqs-fixed [data-row-key="action:effort"]')?.textContent).toContain('High');
+  });
+
+  it('keeps actions reachable in short landscape by scrolling the whole upper body, and hides actions while the keyboard is open', async () => {
+    vi.stubGlobal('matchMedia', (media: string) => ({
+      matches: media.includes('max-height'),
+      media,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    mountSheet();
+    await nextTick();
+    const body = host.querySelector<HTMLElement>('.mqs-body.is-fluid')!;
+    expect(body).not.toBeNull();
+    expect(body.querySelectorAll('[data-row-key^="recent:"]')).toHaveLength(5);
+    expect(body.querySelectorAll('[data-row-key^="provider:"]')).toHaveLength(3);
+    expect(host.querySelector('.mqs-fixed [data-row-key="action:provider"]')).not.toBeNull();
+
+    host.querySelector<HTMLElement>('.mqs-search-input')!.dispatchEvent(new FocusEvent('focus'));
+    await nextTick();
+    expect(host.querySelector('[data-row-key="action:provider"]')).toBeNull();
+    expect(host.querySelector('.mqs-body.is-fluid')).not.toBeNull();
   });
 
   it('stages model row clicks without closing the sheet', async () => {
@@ -194,17 +215,62 @@ describe('ModelQuickSheet subpages', () => {
     expect(host.querySelector('.sheet-title')?.textContent).toBe('切换模型');
   });
 
-  it('goes back from a subpage on Escape and dismisses on a second Escape', async () => {
+  it('handles document-level Escape even when focus stays outside the sheet', async () => {
     mountSheet();
+    const outside = document.createElement('button');
+    document.body.append(outside);
+    outside.focus();
+
     host.querySelector<HTMLElement>('[data-row-key="action:provider"]')!.click();
     await nextTick();
-    host.querySelector<HTMLElement>('.mqs')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    outside.focus();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     await nextTick();
     expect(host.querySelector('.sheet-title')?.textContent).toBe('切换模型');
     expect(dismissed).toBe(0);
-    host.querySelector<HTMLElement>('.mqs')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await nextTick();
     expect(dismissed).toBe(1);
     expect(state.open).toBe(true);
+    outside.remove();
+  });
+
+  it('supports arrow navigation, Enter to stage, ArrowLeft to go back, and type-to-search', async () => {
+    mountSheet();
+    const activeRowKey = () => host.querySelector<HTMLElement>('.mqs-row.is-active')?.dataset.rowKey;
+    await vi.waitFor(() => expect(activeRowKey()).toBe('provider:kimi/k2.5'));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true }));
+    await nextTick();
+    expect(document.activeElement).toBe(host.querySelector('.mqs-search-input'));
+    (document.activeElement as HTMLElement).blur();
+    await vi.waitFor(() => expect(activeRowKey()).toBe('provider:kimi/k2.5'));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(activeRowKey()).toBe('recent:openrouter/haiku'));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(activeRowKey()).toBe('provider:kimi/k2.5'));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(activeRowKey()).toBe('provider:kimi/turbo'));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await nextTick();
+    expect(actions).toEqual([{ type: 'select-model', modelId: 'kimi/turbo' }]);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(activeRowKey()).toBe('provider:kimi/long'));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(activeRowKey()).toBe('action:provider'));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(activeRowKey()).toBe('action:effort'));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(host.querySelector('.sheet-title')?.textContent).toBe('思考强度'));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(host.querySelector('.sheet-title')?.textContent).toBe('切换模型'));
   });
 });
 
@@ -283,10 +349,17 @@ describe('ModelQuickSheet search and detail', () => {
     await vi.advanceTimersByTimeAsync(501);
     await nextTick();
     expect(host.querySelector('.sheet-title')?.textContent).toBe('Kimi Very Long Model Name For Truncation Check');
-    pointer(truncated, 'pointerup');
-    truncated.click();
+    window.dispatchEvent(new MouseEvent('pointerup'));
+
+    host.querySelector<HTMLElement>('.sheet-back')!.click();
     await nextTick();
-    expect(actions).toHaveLength(1);
+    await nextTick();
+    host.querySelector<HTMLElement>('[data-row-key="provider:kimi/long"]')!.click();
+    await nextTick();
+    expect(actions).toEqual([
+      { type: 'select-model', modelId: 'kimi/turbo' },
+      { type: 'select-model', modelId: 'kimi/long' },
+    ]);
   });
 });
 

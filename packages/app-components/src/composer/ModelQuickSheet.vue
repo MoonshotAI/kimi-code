@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppModel } from '@moonshot-ai/app-core/api';
 import type { QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
@@ -13,6 +13,14 @@ import { highlightSearchText, modelCapabilityText, supportsThinkingSubmenu, type
 import { useModelMenuScrollbar } from './useModelMenuScrollbar';
 
 type SheetPage = 'main' | 'provider' | 'effort' | 'detail';
+
+interface NavItem {
+  key: string;
+  expand?: boolean;
+  run: () => void;
+}
+
+const SHORT_VIEWPORT_QUERY = '(max-height: 480px)';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -29,8 +37,9 @@ const { t } = useI18n();
 const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
 
 const sheetRef = ref<InstanceType<typeof BottomSheet>>();
-const scrollEl = ref<HTMLElement>();
-const listScrollbar = useModelMenuScrollbar(scrollEl);
+const bodyEl = ref<HTMLElement | null>(null);
+const listScrollEl = ref<HTMLElement | null>(null);
+const recentScrollEl = ref<HTMLElement | null>(null);
 const searchInputEl = ref<HTMLInputElement>();
 const searchFocused = ref(false);
 const query = ref('');
@@ -38,15 +47,24 @@ const page = ref<SheetPage>('main');
 const detailModel = ref<AppModel>();
 const detailFromSearch = ref(false);
 const providerRowEl = ref<HTMLElement>();
+const activeKey = ref('');
+const isShortViewport = ref(false);
 const rowElements = new Map<string, HTMLElement>();
 let longPressTimer: ReturnType<typeof setTimeout> | undefined;
 let pressStartX = 0;
 let pressStartY = 0;
 let suppressRowClick = false;
 let pendingRevealModelId: string | undefined;
+let heightMedia: MediaQueryList | undefined;
 
 const menu = computed(() => props.payload());
 const searching = computed(() => query.value.trim().length > 0);
+const fluidBody = computed(() => searching.value || searchFocused.value || isShortViewport.value);
+const activeScrollEl = computed(() =>
+  (page.value === 'main' && fluidBody.value ? bodyEl.value : listScrollEl.value) ?? null,
+);
+const listScrollbar = useModelMenuScrollbar(activeScrollEl);
+const recentScrollbar = useModelMenuScrollbar(recentScrollEl);
 const currentModel = computed(() => menu.value.models.find((model) => model.id === menu.value.currentModelId));
 const currentAvailability = computed(() => modelThinkingAvailability(currentModel.value));
 const currentSegments = computed(() => segmentsFor(currentModel.value));
@@ -77,6 +95,51 @@ const sheetTitle = computed(() => {
   return t('status.switchModel');
 });
 
+const navItems = computed<NavItem[]>(() => {
+  if (page.value === 'provider') {
+    return menu.value.providers.map((provider) => ({
+      key: `subprovider:${provider.id}`,
+      run: () => chooseProvider(provider.id),
+    }));
+  }
+  if (page.value === 'effort') {
+    return currentSegments.value.map((segment) => ({
+      key: `effort:${segment}`,
+      run: () => chooseEffort(segment),
+    }));
+  }
+  if (page.value === 'detail') {
+    if (!detailModel.value || !supportsThinkingSubmenu(detailModel.value)) return [];
+    return detailSegments.value.map((segment) => ({
+      key: `detail:${segment}`,
+      run: () => chooseDetailEffort(segment),
+    }));
+  }
+  if (searching.value) {
+    return searchResults.value.map((entry) => ({
+      key: `search:${entry.model.id}`,
+      expand: supportsThinkingSubmenu(entry.model),
+      run: () => onModelRowClick(entry.model, true),
+    }));
+  }
+  const items: NavItem[] = menu.value.recentModels.map((model) => ({
+    key: `recent:${model.id}`,
+    run: () => onModelRowClick(model, false),
+  }));
+  for (const model of menu.value.providerModels) {
+    items.push({ key: `provider:${model.id}`, run: () => onModelRowClick(model, false) });
+  }
+  if (!searchFocused.value) {
+    if (menu.value.providers.length > 0) {
+      items.push({ key: 'action:provider', expand: true, run: () => { page.value = 'provider'; } });
+    }
+    if (effortExpandable.value) {
+      items.push({ key: 'action:effort', expand: true, run: () => { page.value = 'effort'; } });
+    }
+  }
+  return items;
+});
+
 function setRowElement(key: string) {
   return (el: unknown): void => {
     if (el instanceof HTMLElement) rowElements.set(key, el);
@@ -85,7 +148,7 @@ function setRowElement(key: string) {
 }
 
 function scrollRowWithinSheet(row: HTMLElement, align: 'center' | 'nearest'): void {
-  const body = scrollEl.value;
+  const body = activeScrollEl.value;
   if (!body || !body.contains(row)) return;
   const rowTop = row.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
   const rowBottom = rowTop + row.offsetHeight;
@@ -101,6 +164,22 @@ function revealStagedModel(modelId: string): void {
   const key = rowElements.has(`provider:${modelId}`) ? `provider:${modelId}` : `recent:${modelId}`;
   const row = rowElements.get(key);
   if (row) scrollRowWithinSheet(row, 'nearest');
+}
+
+function syncActiveKey(): void {
+  if (!props.modelValue) return;
+  const items = navItems.value;
+  if (items.some((item) => item.key === activeKey.value)) return;
+  const preferred =
+    page.value === 'provider'
+      ? `subprovider:${menu.value.activeProvider}`
+      : page.value === 'effort'
+        ? `effort:${currentEffortValue.value}`
+        : page.value === 'main' && !searching.value
+          ? `provider:${menu.value.currentModelId}`
+          : undefined;
+  const matched = preferred === undefined ? undefined : items.find((item) => item.key === preferred);
+  activeKey.value = (matched ?? items[0])?.key ?? '';
 }
 
 function transitionSheetHeight(fromHeight: number): void {
@@ -129,6 +208,7 @@ function isRowTruncated(row: HTMLElement): boolean {
 function openDetail(model: AppModel, fromSearch: boolean): void {
   detailModel.value = model;
   detailFromSearch.value = fromSearch;
+  activeKey.value = '';
   page.value = 'detail';
 }
 
@@ -152,30 +232,41 @@ function onRowPointerMove(e: PointerEvent): void {
   if (Math.abs(e.clientX - pressStartX) > 8 || Math.abs(e.clientY - pressStartY) > 8) clearLongPress();
 }
 
+function onRowPointerEnd(): void {
+  clearLongPress();
+  suppressRowClick = false;
+}
+
 function goBack(): void {
-  if (page.value === 'detail' && detailFromSearch.value) {
-    page.value = 'main';
-    void nextTick(() => searchInputEl.value?.focus());
-    return;
-  }
+  suppressRowClick = false;
+  activeKey.value = '';
   page.value = 'main';
+  if (detailFromSearch.value) {
+    detailFromSearch.value = false;
+    void nextTick(() => searchInputEl.value?.focus());
+  }
 }
 
 function chooseProvider(providerId: string): void {
+  suppressRowClick = false;
   emit('selectProvider', providerId);
+  activeKey.value = `provider:${menu.value.providerModels[0]?.id ?? ''}`;
   page.value = 'main';
 }
 
 function chooseEffort(segment: string): void {
+  suppressRowClick = false;
   emit('selectEffort', segment);
   page.value = 'main';
 }
 
 function stageModel(model: AppModel, effort: string | undefined, fromSearch: boolean): void {
+  suppressRowClick = false;
   pendingRevealModelId = model.id;
   query.value = '';
   detailModel.value = undefined;
   searchInputEl.value?.blur();
+  activeKey.value = `provider:${model.id}`;
   if (page.value !== 'main') {
     page.value = 'main';
   } else {
@@ -209,33 +300,100 @@ function clearSearch(): void {
 }
 
 function onKeydown(e: KeyboardEvent): void {
-  if (e.key !== 'Escape' || isComposingKeyEvent(e)) return;
-  e.preventDefault();
-  e.stopPropagation();
-  if (page.value !== 'main') goBack();
-  else emit('dismiss');
+  if (!props.modelValue || isComposingKeyEvent(e)) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation();
+    if (page.value !== 'main') goBack();
+    else emit('dismiss');
+    return;
+  }
+  const items = navItems.value;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (items.length === 0) return;
+    e.preventDefault();
+    const delta = e.key === 'ArrowDown' ? 1 : -1;
+    const index = items.findIndex((item) => item.key === activeKey.value);
+    const nextIndex = index === -1 ? (delta > 0 ? 0 : items.length - 1) : (index + delta + items.length) % items.length;
+    activeKey.value = items[nextIndex]!.key;
+    void nextTick(() => {
+      const row = rowElements.get(activeKey.value);
+      if (row) scrollRowWithinSheet(row, 'nearest');
+    });
+    return;
+  }
+  if (e.key === 'ArrowLeft' && page.value !== 'main') {
+    e.preventDefault();
+    goBack();
+    return;
+  }
+  const active = items.find((item) => item.key === activeKey.value) ?? items[0];
+  if (e.key === 'ArrowRight' && active?.expand) {
+    e.preventDefault();
+    active.run();
+    return;
+  }
+  if (e.key === 'Enter') {
+    const focused = document.activeElement;
+    if (focused instanceof HTMLButtonElement && sheetRef.value?.panelEl?.contains(focused)) return;
+    if (!active) return;
+    e.preventDefault();
+    active.run();
+    return;
+  }
+  if (
+    page.value === 'main' &&
+    e.key.length === 1 &&
+    !e.metaKey &&
+    !e.ctrlKey &&
+    !e.altKey &&
+    document.activeElement !== searchInputEl.value
+  ) {
+    searchInputEl.value?.focus();
+  }
 }
+
+function onHeightMediaChange(e: MediaQueryListEvent | MediaQueryList): void {
+  isShortViewport.value = e.matches;
+}
+
+onMounted(() => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+  heightMedia = window.matchMedia(SHORT_VIEWPORT_QUERY);
+  isShortViewport.value = heightMedia.matches;
+  heightMedia.addEventListener?.('change', onHeightMediaChange);
+});
 
 watch(
   () => props.modelValue,
   (open) => {
     clearLongPress();
+    if (typeof document !== 'undefined') {
+      if (open) document.addEventListener('keydown', onKeydown);
+      else document.removeEventListener('keydown', onKeydown);
+    }
     if (!open) return;
     page.value = 'main';
     detailModel.value = undefined;
+    detailFromSearch.value = false;
     pendingRevealModelId = undefined;
     query.value = '';
+    activeKey.value = '';
     suppressRowClick = false;
+    void nextTick(syncActiveKey);
   },
+  { immediate: true },
 );
 
 watch(
   page,
   async (next) => {
     clearLongPress();
+    suppressRowClick = false;
     const fromHeight = sheetRef.value?.panelEl?.offsetHeight ?? 0;
     await nextTick();
-    const body = scrollEl.value;
+    syncActiveKey();
+    const body = activeScrollEl.value;
     if (next === 'provider' && providerRowEl.value) {
       scrollRowWithinSheet(providerRowEl.value, 'center');
     } else if (next === 'main' && pendingRevealModelId !== undefined) {
@@ -251,11 +409,20 @@ watch(
   { flush: 'pre' },
 );
 
-watch([query, () => props.payload().providerModels, () => props.payload().activeProvider], () => {
-  void nextTick(listScrollbar.sync);
+watch([query, searchFocused, isShortViewport], () => {
+  if (!props.modelValue) return;
+  activeKey.value = '';
+  void nextTick(() => {
+    syncActiveKey();
+    listScrollbar.sync();
+  });
 });
 
-onUnmounted(clearLongPress);
+onUnmounted(() => {
+  clearLongPress();
+  heightMedia?.removeEventListener?.('change', onHeightMediaChange);
+  if (typeof document !== 'undefined') document.removeEventListener('keydown', onKeydown);
+});
 </script>
 
 <template>
@@ -270,7 +437,7 @@ onUnmounted(clearLongPress);
     @update:model-value="emit('update:modelValue', $event)"
     @back="goBack"
   >
-    <div class="mqs" @keydown="onKeydown">
+    <div class="mqs">
       <template v-if="page === 'main'">
         <div class="mqs-fixed">
           <div class="mqs-search-wrap">
@@ -302,102 +469,133 @@ onUnmounted(clearLongPress);
               </button>
             </div>
           </div>
-
-          <template v-if="searching">
-            <div v-if="searchResults.length > 0" class="mqs-label">{{ t('status.searchResults') }}</div>
-          </template>
-          <template v-else>
-            <div v-if="menu.recentModels.length > 0" class="mqs-list">
-              <div class="mqs-label">{{ t('status.recentModels') }}</div>
-              <button
-                v-for="model in menu.recentModels"
-                :key="`recent:${model.id}`"
-                :ref="setRowElement(`recent:${model.id}`)"
-                type="button"
-                class="mqs-row"
-                role="menuitemradio"
-                :aria-checked="model.id === menu.currentModelId"
-                :data-row-key="`recent:${model.id}`"
-                @pointerdown="onRowPointerDown($event, model, false)"
-                @pointermove="onRowPointerMove"
-                @pointerup="clearLongPress"
-                @pointercancel="clearLongPress"
-                @click="onModelRowClick(model, false)"
-              >
-                <span class="mqs-name">{{ model.displayName ?? model.model }}</span>
-                <span class="mqs-provider">{{ providerDisplayName(model.provider, t) }}</span>
-                <Icon v-if="model.id === menu.currentModelId" name="check" size="md" class="mqs-check" />
-              </button>
-              <div class="mqs-divider" />
-            </div>
-            <div v-if="menu.providerModels.length > 0 || menu.activeProvider" class="mqs-label">{{ menu.activeProviderLabel }}</div>
-          </template>
         </div>
 
         <div
-          ref="scrollEl"
-          class="mqs-scroll"
-          :style="{ maskImage: listScrollbar.maskImage.value }"
-          @scroll="listScrollbar.onScroll"
-          @mouseenter="listScrollbar.onListMouseEnter"
-          @mouseleave="listScrollbar.onListMouseLeave"
+          ref="bodyEl"
+          class="mqs-body"
+          :class="{ 'is-fluid': fluidBody }"
+          :style="fluidBody ? { maskImage: listScrollbar.maskImage.value } : undefined"
+          @scroll="fluidBody ? listScrollbar.onScroll() : undefined"
+          @mouseenter="fluidBody ? listScrollbar.onListMouseEnter() : undefined"
+          @mouseleave="fluidBody ? listScrollbar.onListMouseLeave() : undefined"
         >
-          <div v-if="searching" class="mqs-list">
-            <template v-if="searchResults.length > 0">
-              <button
-                v-for="entry in searchResults"
-                :key="`search:${entry.model.id}`"
-                type="button"
-                class="mqs-row"
-                :class="{ 'is-provider-match': entry.matchedProvider }"
-                :data-row-key="`search:${entry.model.id}`"
-                @pointerdown="onRowPointerDown($event, entry.model, true)"
-                @pointermove="onRowPointerMove"
-                @pointerup="clearLongPress"
-                @pointercancel="clearLongPress"
-                @click="onModelRowClick(entry.model, true)"
-              >
-                <span class="mqs-name">
-                  <template v-for="(part, index) in highlightSearchText(entry.modelName, entry.modelRanges)" :key="index"><span v-if="part.matched" class="mqs-match">{{ part.text }}</span><template v-else>{{ part.text }}</template></template>
-                </span>
-                <span class="mqs-provider">
-                  <template v-for="(part, index) in highlightSearchText(entry.providerName, entry.providerRanges)" :key="index"><span v-if="part.matched" class="mqs-match">{{ part.text }}</span><template v-else>{{ part.text }}</template></template>
-                </span>
-                <Icon v-if="supportsThinkingSubmenu(entry.model)" name="chevron-right" size="md" class="mqs-trailing" />
-              </button>
-            </template>
-            <div v-else class="mqs-empty" role="status">{{ t('status.noMatchingModels') }}</div>
-          </div>
+          <template v-if="searching">
+            <div v-if="searchResults.length > 0" class="mqs-label">{{ t('status.searchResults') }}</div>
+            <div class="mqs-list">
+              <template v-if="searchResults.length > 0">
+                <button
+                  v-for="entry in searchResults"
+                  :key="`search:${entry.model.id}`"
+                  :ref="setRowElement(`search:${entry.model.id}`)"
+                  type="button"
+                  class="mqs-row"
+                  :class="{ 'is-active': activeKey === `search:${entry.model.id}`, 'is-provider-match': entry.matchedProvider }"
+                  :data-row-key="`search:${entry.model.id}`"
+                  @pointerdown="onRowPointerDown($event, entry.model, true)"
+                  @pointermove="onRowPointerMove"
+                  @pointerup="onRowPointerEnd"
+                  @pointercancel="onRowPointerEnd"
+                  @pointerleave="onRowPointerEnd"
+                  @click="onModelRowClick(entry.model, true)"
+                >
+                  <span class="mqs-name">
+                    <template v-for="(part, index) in highlightSearchText(entry.modelName, entry.modelRanges)" :key="index"><span v-if="part.matched" class="mqs-match">{{ part.text }}</span><template v-else>{{ part.text }}</template></template>
+                  </span>
+                  <span class="mqs-provider">
+                    <template v-for="(part, index) in highlightSearchText(entry.providerName, entry.providerRanges)" :key="index"><span v-if="part.matched" class="mqs-match">{{ part.text }}</span><template v-else>{{ part.text }}</template></template>
+                  </span>
+                  <Icon v-if="supportsThinkingSubmenu(entry.model)" name="chevron-right" size="md" class="mqs-trailing" />
+                </button>
+              </template>
+              <div v-else class="mqs-empty" role="status">{{ t('status.noMatchingModels') }}</div>
+            </div>
+          </template>
 
-          <div v-else class="mqs-list">
-            <button
-              v-for="model in menu.providerModels"
-              :key="`provider:${model.id}`"
-              :ref="setRowElement(`provider:${model.id}`)"
-              type="button"
-              class="mqs-row"
-              role="menuitemradio"
-              :aria-checked="model.id === menu.currentModelId"
-              :data-row-key="`provider:${model.id}`"
-              @pointerdown="onRowPointerDown($event, model, false)"
-              @pointermove="onRowPointerMove"
-              @pointerup="clearLongPress"
-              @pointercancel="clearLongPress"
-              @click="onModelRowClick(model, false)"
+          <template v-else>
+            <template v-if="menu.recentModels.length > 0">
+              <div class="mqs-label">{{ t('status.recentModels') }}</div>
+              <div
+                ref="recentScrollEl"
+                class="mqs-scroll mqs-recent-scroll"
+                :style="!fluidBody ? { maskImage: recentScrollbar.maskImage.value } : undefined"
+                @scroll="recentScrollbar.onScroll"
+                @mouseenter="recentScrollbar.onListMouseEnter"
+                @mouseleave="recentScrollbar.onListMouseLeave"
+              >
+                <div class="mqs-list">
+                  <button
+                    v-for="model in menu.recentModels"
+                    :key="`recent:${model.id}`"
+                    :ref="setRowElement(`recent:${model.id}`)"
+                    type="button"
+                    class="mqs-row"
+                    :class="{ 'is-active': activeKey === `recent:${model.id}` }"
+                    role="menuitemradio"
+                    :aria-checked="model.id === menu.currentModelId"
+                    :data-row-key="`recent:${model.id}`"
+                    @pointerdown="onRowPointerDown($event, model, false)"
+                    @pointermove="onRowPointerMove"
+                    @pointerup="onRowPointerEnd"
+                    @pointercancel="onRowPointerEnd"
+                    @pointerleave="onRowPointerEnd"
+                    @click="onModelRowClick(model, false)"
+                  >
+                    <span class="mqs-name">{{ model.displayName ?? model.model }}</span>
+                    <span class="mqs-provider">{{ providerDisplayName(model.provider, t) }}</span>
+                    <Icon v-if="model.id === menu.currentModelId" name="check" size="md" class="mqs-check" />
+                  </button>
+                </div>
+              </div>
+              <div class="mqs-list">
+                <div class="mqs-divider" />
+              </div>
+            </template>
+
+            <div v-if="menu.providerModels.length > 0 || menu.activeProvider" class="mqs-label">{{ menu.activeProviderLabel }}</div>
+            <div
+              ref="listScrollEl"
+              class="mqs-scroll mqs-provider-scroll"
+              :style="!fluidBody ? { maskImage: listScrollbar.maskImage.value } : undefined"
+              @scroll="!fluidBody ? listScrollbar.onScroll() : undefined"
+              @mouseenter="!fluidBody ? listScrollbar.onListMouseEnter() : undefined"
+              @mouseleave="!fluidBody ? listScrollbar.onListMouseLeave() : undefined"
             >
-              <span class="mqs-name">{{ model.displayName ?? model.model }}</span>
-              <Icon v-if="model.id === menu.currentModelId" name="check" size="md" class="mqs-check" />
-            </button>
-          </div>
+              <div class="mqs-list">
+                <button
+                  v-for="model in menu.providerModels"
+                  :key="`provider:${model.id}`"
+                  :ref="setRowElement(`provider:${model.id}`)"
+                  type="button"
+                  class="mqs-row"
+                  :class="{ 'is-active': activeKey === `provider:${model.id}` }"
+                  role="menuitemradio"
+                  :aria-checked="model.id === menu.currentModelId"
+                  :data-row-key="`provider:${model.id}`"
+                  @pointerdown="onRowPointerDown($event, model, false)"
+                  @pointermove="onRowPointerMove"
+                  @pointerup="onRowPointerEnd"
+                  @pointercancel="onRowPointerEnd"
+                  @pointerleave="onRowPointerEnd"
+                  @click="onModelRowClick(model, false)"
+                >
+                  <span class="mqs-name">{{ model.displayName ?? model.model }}</span>
+                  <Icon v-if="model.id === menu.currentModelId" name="check" size="md" class="mqs-check" />
+                </button>
+              </div>
+            </div>
+          </template>
         </div>
 
-        <div v-if="!searching" class="mqs-fixed">
+        <div v-if="!searching && !searchFocused" class="mqs-fixed">
           <div class="mqs-list">
             <div class="mqs-divider" />
             <button
               v-if="menu.providers.length > 0"
+              :ref="setRowElement('action:provider')"
               type="button"
               class="mqs-row"
+              :class="{ 'is-active': activeKey === 'action:provider' }"
               data-row-key="action:provider"
               @click="page = 'provider'"
             >
@@ -406,9 +604,10 @@ onUnmounted(clearLongPress);
               <Icon name="chevron-right" size="md" class="mqs-trailing" />
             </button>
             <button
+              :ref="setRowElement('action:effort')"
               type="button"
               class="mqs-row"
-              :class="{ 'is-disabled': !effortExpandable }"
+              :class="{ 'is-active': activeKey === 'action:effort', 'is-disabled': !effortExpandable }"
               :disabled="!effortExpandable"
               :aria-disabled="!effortExpandable"
               data-row-key="action:effort"
@@ -424,7 +623,7 @@ onUnmounted(clearLongPress);
 
       <div
         v-else-if="page === 'provider'"
-        ref="scrollEl"
+        ref="listScrollEl"
         class="mqs-scroll"
         :style="{ maskImage: listScrollbar.maskImage.value }"
         @scroll="listScrollbar.onScroll"
@@ -435,9 +634,13 @@ onUnmounted(clearLongPress);
           <button
             v-for="provider in menu.providers"
             :key="provider.id"
-            :ref="provider.id === menu.activeProvider ? (el) => { providerRowEl = el as HTMLElement | undefined; } : undefined"
+            :ref="(el) => {
+              setRowElement(`subprovider:${provider.id}`)(el);
+              if (provider.id === menu.activeProvider) providerRowEl = el as HTMLElement | undefined;
+            }"
             type="button"
             class="mqs-row"
+            :class="{ 'is-active': activeKey === `subprovider:${provider.id}` }"
             role="menuitemradio"
             :aria-checked="provider.id === menu.activeProvider"
             :data-provider-id="provider.id"
@@ -452,7 +655,7 @@ onUnmounted(clearLongPress);
       <template v-else-if="page === 'effort'">
         <p class="mqs-desc mqs-fixed">{{ thinkingDescription }}</p>
         <div
-          ref="scrollEl"
+          ref="listScrollEl"
           class="mqs-scroll"
           :style="{ maskImage: listScrollbar.maskImage.value }"
           @scroll="listScrollbar.onScroll"
@@ -463,8 +666,10 @@ onUnmounted(clearLongPress);
             <button
               v-for="segment in currentSegments"
               :key="segment"
+              :ref="setRowElement(`effort:${segment}`)"
               type="button"
               class="mqs-row"
+              :class="{ 'is-active': activeKey === `effort:${segment}` }"
               role="menuitemradio"
               :aria-checked="segment === currentEffortValue"
               :data-effort="segment"
@@ -495,7 +700,7 @@ onUnmounted(clearLongPress);
         </div>
         <div
           v-if="supportsThinkingSubmenu(detailModel)"
-          ref="scrollEl"
+          ref="listScrollEl"
           class="mqs-scroll"
           :style="{ maskImage: listScrollbar.maskImage.value }"
           @scroll="listScrollbar.onScroll"
@@ -506,8 +711,10 @@ onUnmounted(clearLongPress);
             <button
               v-for="segment in detailSegments"
               :key="segment"
+              :ref="setRowElement(`detail:${segment}`)"
               type="button"
               class="mqs-row"
+              :class="{ 'is-active': activeKey === `detail:${segment}` }"
               role="menuitemradio"
               :aria-checked="detailModel.id === menu.currentModelId && segment === currentEffortValue"
               :data-detail-effort="segment"
@@ -526,6 +733,7 @@ onUnmounted(clearLongPress);
       </template>
 
       <div class="mqs-safe-bottom" aria-hidden="true" />
+      <ModelMenuScrollThumb v-if="page === 'main' && !fluidBody" :scrollbar="recentScrollbar" />
       <ModelMenuScrollThumb :scrollbar="listScrollbar" />
     </div>
   </BottomSheet>
@@ -554,8 +762,36 @@ onUnmounted(clearLongPress);
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }
-.mqs-scroll::-webkit-scrollbar {
+.mqs-scroll::-webkit-scrollbar,
+.mqs-body.is-fluid::-webkit-scrollbar {
   display: none;
+}
+.mqs-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mqs-body > .mqs-label,
+.mqs-body > .mqs-list {
+  flex: none;
+}
+.mqs-recent-scroll {
+  flex: 0 1 auto;
+}
+.mqs-provider-scroll {
+  flex: 0 1000 auto;
+  min-height: 44px;
+}
+.mqs-body.is-fluid {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.mqs-body.is-fluid .mqs-scroll {
+  flex: none;
+  min-height: 0;
+  overflow: visible;
 }
 .mqs-safe-bottom {
   flex: none;
@@ -657,6 +893,7 @@ onUnmounted(clearLongPress);
   -webkit-touch-callout: none;
   touch-action: pan-y;
 }
+.mqs-row.is-active,
 .mqs-row:active:not(.is-disabled),
 .mqs-row:focus-visible {
   background: var(--color-hover);

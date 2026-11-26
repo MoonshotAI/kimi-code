@@ -42,8 +42,8 @@ function initialState(overrides: Partial<QuickModelMenuPayload> = {}): QuickMode
   };
 }
 
-function mountMenu(state: QuickModelMenuPayload): void {
-  const props = reactive({ state, maxHeight: 480 });
+function mountMenu(state: QuickModelMenuPayload, maxHeight = 480): void {
+  const props = reactive({ state, maxHeight });
   app = createApp({
     render: () =>
       h(ModelQuickMenu, {
@@ -68,7 +68,7 @@ function mountMenu(state: QuickModelMenuPayload): void {
   app.mount(host);
 }
 
-function rows(selector = '.mqm > .mqm-scroll .mqm-row, .mqm > .mqm-actions .mqm-row'): HTMLElement[] {
+function rows(selector = '.mqm .mqm-scroll .mqm-row, .mqm > .mqm-actions .mqm-row'): HTMLElement[] {
   return [...host.querySelectorAll<HTMLElement>(selector)];
 }
 
@@ -92,9 +92,9 @@ afterEach(() => {
 describe('ModelQuickMenu states', () => {
   it('renders recent models with provider names and additively repeats the current provider group', () => {
     mountMenu(initialState());
-    const labels = [...host.querySelectorAll('.mqm > .mqm-section > .mqm-label, .mqm > .mqm-label')].map((el) => el.textContent?.trim());
+    const labels = [...host.querySelectorAll('.mqm-body > .mqm-label')].map((el) => el.textContent?.trim());
     expect(labels).toEqual(['最近使用', 'Kimi 订阅']);
-    const recentRows = rows('.mqm > .mqm-section .mqm-row');
+    const recentRows = rows('.mqm-recent-scroll .mqm-row');
     expect(recentRows).toHaveLength(3);
     expect(recentRows[0]?.querySelector('.mqm-name')?.textContent).toBe('Kimi K2.5');
     expect(recentRows[0]?.querySelector('.mqm-provider')?.textContent).toBe('Kimi 订阅');
@@ -105,7 +105,7 @@ describe('ModelQuickMenu states', () => {
   it('hides the recent section entirely when empty', () => {
     mountMenu(initialState({ recentModels: [] }));
     expect(host.textContent).not.toContain('最近使用');
-    expect(host.querySelector('.mqm > .mqm-label')?.textContent?.trim()).toBe('Kimi 订阅');
+    expect(host.querySelector('.mqm-body > .mqm-label')?.textContent?.trim()).toBe('Kimi 订阅');
   });
 
   it('shows a 500ms hover capability card on model rows', async () => {
@@ -323,11 +323,24 @@ describe('ModelQuickMenu states', () => {
     mountMenu(initialState());
     const menu = host.querySelector<HTMLElement>('.mqm')!;
     expect(menu.style.maxHeight).toBe('480px');
-    expect(menu.querySelectorAll(':scope > .mqm-section .mqm-row')).toHaveLength(3);
-    expect(menu.querySelector(':scope > .mqm-label')?.textContent?.trim()).toBe('Kimi 订阅');
-    expect(menu.querySelectorAll(':scope > .mqm-provider-scroll > .mqm-row')).toHaveLength(3);
-    expect(menu.querySelector(':scope > .mqm-scroll [data-row-key^="recent:"]')).toBeNull();
+    expect(menu.querySelectorAll(':scope > .mqm-body > .mqm-recent-scroll > .mqm-row')).toHaveLength(3);
+    expect(menu.querySelector(':scope > .mqm-body > .mqm-label')?.textContent?.trim()).toBe('最近使用');
+    expect(menu.querySelectorAll(':scope > .mqm-body > .mqm-provider-scroll > .mqm-row')).toHaveLength(3);
+    expect(menu.querySelector(':scope .mqm-provider-scroll [data-row-key^="recent:"]')).toBeNull();
     expect(menu.querySelector(':scope > .mqm-actions')).not.toBeNull();
     expect(menu.querySelector(':scope > .mqm-search')).not.toBeNull();
+  });
+
+  it('falls back to a single scrollable upper body when maxHeight cannot fit the fixed chrome', () => {
+    const fiveRecent = [...kimiModels, ...otherModels].slice(0, 5);
+    mountMenu(initialState({ recentModels: fiveRecent }), 220);
+    const menu = host.querySelector<HTMLElement>('.mqm')!;
+    const body = menu.querySelector<HTMLElement>('.mqm-body.is-fluid')!;
+    expect(menu.style.maxHeight).toBe('220px');
+    expect(body).not.toBeNull();
+    expect(body.querySelectorAll('[data-row-key^="recent:"]')).toHaveLength(5);
+    expect(body.querySelectorAll('[data-row-key^="provider:"]')).toHaveLength(3);
+    expect(menu.querySelector(':scope > .mqm-actions [data-row-key="action:provider"]')).not.toBeNull();
+    expect(menu.querySelector(':scope > .mqm-search input')).not.toBeNull();
   });
 });
