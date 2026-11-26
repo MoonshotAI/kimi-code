@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { formatShortcutKeys } from '@moonshot-ai/app-core/lib';
 import Icon from './Icon.vue';
+import Kbd from './Kbd.vue';
 import Spinner from './Spinner.vue';
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'text';
   size?: 'xs' | 'sm' | 'md' | 'lg';
   disabled?: boolean;
@@ -21,19 +20,6 @@ const props = withDefaults(defineProps<{
   trailingIcon: '',
   keys: () => [],
 });
-
-interface CapPart {
-  id: string;
-  text?: string;
-  icon?: string;
-}
-
-const capParts = computed<CapPart[]>(() =>
-  formatShortcutKeys(props.keys).flatMap((cap, index): CapPart[] => {
-    const part: CapPart = cap.icon === undefined ? { id: cap.name, text: cap.text } : { id: cap.name, icon: cap.icon };
-    return index === 0 ? [part] : [{ id: `plus-${index}`, icon: 'key-plus' }, part];
-  }),
-);
 </script>
 
 <template>
@@ -50,12 +36,7 @@ const capParts = computed<CapPart[]>(() =>
       <slot />
       <Icon v-if="trailingIcon" class="ui-button__icon" :name="trailingIcon" size="sm" aria-hidden="true" />
     </span>
-    <span v-if="capParts.length > 0" class="ui-button__cap" :class="{ 'ui-button__cap--combo': capParts.length > 1 }" aria-hidden="true">
-      <template v-for="part in capParts" :key="part.id">
-        <span v-if="part.icon === undefined" class="ui-button__cap-text">{{ part.text }}</span>
-        <span v-else class="ui-button__cap-key"><Icon :name="part.icon" size="md" /></span>
-      </template>
-    </span>
+    <Kbd v-if="keys.length > 0" class="ui-button__kbd" :keys="keys" variant="button" aria-hidden="true" />
   </button>
 </template>
 
@@ -95,11 +76,11 @@ const capParts = computed<CapPart[]>(() =>
 .ui-button--md { height: 36px; padding: 0 var(--space-4); font-size: var(--text-base); }
 .ui-button--lg { height: 42px; padding: 0 var(--space-5); font-size: 15px; border-radius: var(--radius-lg); }
 
-.ui-button--xs:has(.ui-button__cap, .ui-kbd--button) { padding-right: var(--space-1); }
-.ui-button--sm:has(.ui-button__cap, .ui-kbd--button) { padding-right: var(--space-1-5); }
-.ui-button--md:has(.ui-button__cap, .ui-kbd--button) { padding-right: var(--space-2); }
-.ui-button--lg:has(.ui-button__cap, .ui-kbd--button) { padding-right: var(--space-3); }
-.ui-button:has(.ui-button__cap) { gap: var(--space-1); }
+.ui-button--xs:has(.ui-kbd--button) { padding-right: calc(var(--space-1) - var(--p-hairline)); }
+.ui-button--sm:has(.ui-kbd--button) { padding-right: calc(var(--space-1-5) - var(--p-hairline)); }
+.ui-button--md:has(.ui-kbd--button) { padding-right: calc(var(--space-2) - var(--p-hairline)); }
+.ui-button--lg:has(.ui-kbd--button) { padding-right: calc(var(--space-3) - var(--p-hairline)); }
+.ui-button:has(.ui-kbd--button) { gap: var(--space-1); }
 
 .ui-button__content { display: inline-flex; align-items: center; gap: var(--space-2); }
 .ui-button__content:has(.ui-kbd--button) { gap: var(--space-1); }
@@ -107,6 +88,7 @@ const capParts = computed<CapPart[]>(() =>
 .ui-button__content :deep(svg) { flex: none; }
 .ui-button__content :deep(svg:not([width])) { width: 1em; height: 1em; }
 .ui-button__icon { flex: none; }
+.ui-button__kbd { flex: none; }
 
 .ui-button--primary {
   background: var(--color-send-bg);
@@ -162,40 +144,4 @@ const capParts = computed<CapPart[]>(() =>
 .ui-button.is-loading .ui-button__content { opacity: 0.7; }
 .ui-button .ui-button__spinner { flex: none; color: inherit; }
 .ui-button__spinner :deep(.ui-spinner__track) { opacity: 0.35; }
-
-.ui-button__cap {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  min-width: 24px;
-  height: 18px;
-  padding: 0 3px;
-  border-radius: var(--radius-xs);
-  background: var(--color-fill-1);
-  font-size: var(--text-xs);
-  line-height: 18px;
-}
-.ui-button--primary .ui-button__cap {
-  background: var(--color-fill-on-inverted);
-}
-.ui-button__cap--combo {
-  padding: 0 4px;
-}
-.ui-button__cap-key {
-  display: inline-flex;
-  justify-content: center;
-  flex: none;
-}
-.ui-button__cap--combo .ui-button__cap-key {
-  width: 12px;
-}
-.ui-button__cap--combo .ui-button__cap-text + .ui-button__cap-key {
-  margin-left: 2px;
-}
-.ui-button__cap :deep(.kw-icon) {
-  flex: none;
-  width: 18px;
-  height: 18px;
-}
 </style>

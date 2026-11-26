@@ -721,7 +721,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 }
 @media (pointer: coarse) {
   .qopt-key,
-  .qbtns :deep(.ui-button__cap) {
+  .qbtns :deep(.ui-button__kbd) {
     display: none;
   }
 }

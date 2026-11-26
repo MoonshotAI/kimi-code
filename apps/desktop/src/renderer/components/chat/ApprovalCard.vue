@@ -958,7 +958,7 @@ onUpdated(updateScrollSeams);
 }
 @media (pointer: coarse) {
   .popt-key,
-  .abtns :deep(.ui-button__cap) {
+  .abtns :deep(.ui-button__kbd) {
     display: none;
   }
 }
