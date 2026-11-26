@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 import { z } from 'zod';
 
@@ -27,6 +27,31 @@ const storedSessionWorktreeSchema = sessionWorktreeSchema
   });
 export type StoredSessionWorktree = z.infer<typeof storedSessionWorktreeSchema>;
 export type HeldPromptRequest = NonNullable<StoredSessionWorktree['held_request']>;
+
+function rebasePath(path: unknown, from: string, to: string): unknown {
+  if (typeof path !== 'string') return path;
+  const rel = relative(from, path);
+  return rel === '' || rel.startsWith('..') || isAbsolute(rel) ? path : join(to, rel);
+}
+
+function rebaseSkills(skills: unknown, from: string, to: string): unknown {
+  if (!Array.isArray(skills)) return skills;
+  return skills.map((skill: unknown) =>
+    typeof skill === 'object' && skill !== null && 'path' in skill
+      ? { ...skill, path: rebasePath(skill.path, from, to) }
+      : skill,
+  );
+}
+
+export function heldRequestForCheckout(stored: StoredSessionWorktree, request: HeldPromptRequest): HeldPromptRequest {
+  const to = stored.setup.status === 'ready' ? stored.path : undefined;
+  if (to === undefined || to === stored.repo_root) return request;
+  const from = stored.repo_root;
+  if (request.route === 'skills') {
+    return { ...request, body: { ...request.body, path: rebasePath(request.body['path'], from, to) } };
+  }
+  return { ...request, body: { ...request.body, skills: rebaseSkills(request.body['skills'], from, to) } };
+}
 
 export function worktreeHoldsPrompts(stored: StoredSessionWorktree | undefined): boolean {
   return stored !== undefined && stored.setup.status !== 'ready' && stored.setup.status !== 'local';

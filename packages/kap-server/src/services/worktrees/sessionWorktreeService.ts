@@ -30,6 +30,7 @@ import { repointSession } from './sessionRepoint';
 import { publishSessionUpdated } from './sessionUpdates';
 import {
   forgetWorktreeFacts,
+  heldRequestForCheckout,
   liveWorktreeBranch,
   refreshWorktreeFacts,
   settleInterruptedSetup,
@@ -196,10 +197,14 @@ export async function holdPromptForWorktree(
 
 const sendingHeldPrompts = new Map<string, Promise<void>>();
 
+function sendingKey(sessionId: string, promptId: string): string {
+  return `${sessionId}\n${promptId}`;
+}
+
 export async function withdrawHeldPrompt(core: Scope, sessionId: string, promptId: string): Promise<boolean> {
   const result: { withdrawn: boolean; sending?: Promise<void> } = { withdrawn: false };
   const withdraw = (current: StoredSessionWorktree | undefined): StoredSessionWorktree | undefined => {
-    result.sending = sendingHeldPrompts.get(promptId);
+    result.sending = sendingHeldPrompts.get(sendingKey(sessionId, promptId));
     if (result.sending !== undefined || current?.held_prompt?.prompt_id !== promptId) return undefined;
     result.withdrawn = true;
     return withoutHeldPrompt(current);
@@ -416,11 +421,11 @@ export class SessionWorktreeService {
     await writeStoredWorktree(this.core, sessionId, (current) => {
       if (current === undefined || worktreeHoldsPrompts(current)) return undefined;
       if (current.held_prompt === undefined || current.held_prompt.failure !== undefined) return undefined;
-      if (sendingHeldPrompts.has(current.held_prompt.prompt_id)) return undefined;
+      if (sendingHeldPrompts.has(sendingKey(sessionId, current.held_prompt.prompt_id))) return undefined;
       held = current.held_prompt;
-      request = current.held_request;
+      request = current.held_request === undefined ? undefined : heldRequestForCheckout(current, current.held_request);
       sendingHeldPrompts.set(
-        held.prompt_id,
+        sendingKey(sessionId, held.prompt_id),
         new Promise<void>((resolve) => {
           settle = resolve;
         }),
@@ -440,7 +445,7 @@ export class SessionWorktreeService {
     try {
       await this.settleDispatched(sessionId, promptId, failure);
     } finally {
-      sendingHeldPrompts.delete(promptId);
+      sendingHeldPrompts.delete(sendingKey(sessionId, promptId));
       settle();
     }
   }

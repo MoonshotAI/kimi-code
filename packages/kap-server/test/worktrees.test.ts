@@ -462,6 +462,62 @@ describe('server-v2 session worktrees', () => {
     });
   });
 
+  it('activates a held repository skill from the new checkout', async () => {
+    const { root, workspaceId } = await project('held-repo-skill');
+    const skillDir = join(root, '.kimi-code', 'skills', 'held-skill');
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, 'SKILL.md'), '---\nname: held-skill\ndescription: held skill\n---\n\nSay hi.\n');
+    commitAll(root, 'add a repository skill');
+    const originalBind = AgentEnvironmentBindingService.prototype.bind;
+    const originalBindProfile = AgentLoopService.prototype.bindProfile;
+    const worktreesHome = join(fixture.home, 'worktrees');
+    let sessionId = '';
+    let switching = false;
+    let held: Envelope<{ held?: boolean }> | undefined;
+    vi.spyOn(AgentEnvironmentBindingService.prototype, 'bind').mockImplementation(function (
+      this: AgentEnvironmentBindingService,
+      ...args: Parameters<AgentEnvironmentBindingService['bind']>
+    ) {
+      if (args[1]?.startsWith(worktreesHome) === true) switching = true;
+      return originalBind.apply(this, args);
+    });
+    vi.spyOn(AgentLoopService.prototype, 'bindProfile').mockImplementation(async function (
+      this: AgentLoopService,
+      ...args: Parameters<AgentLoopService['bindProfile']>
+    ) {
+      if (switching) {
+        switching = false;
+        await vi.waitFor(() => {
+          if (sessionId === '') throw new Error('the session has not been created yet');
+        });
+        held = await post(`/sessions/${sessionId}/skills/held-skill:activate`, {
+          path: join(skillDir, 'SKILL.md'),
+        });
+      }
+      return originalBindProfile.apply(this, args);
+    });
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+
+    sessionId = (await createWorktreeSession(workspaceId)).id;
+    await vi.waitFor(() => {
+      if (held === undefined) throw new Error('the skill has not been activated yet');
+    });
+    expect(held).toMatchObject({ code: 0, data: { held: true } });
+
+    expect((await settled(sessionId)).worktree?.setup.status).toBe('ready');
+    await vi.waitFor(async () => {
+      expect((await get<Session>(`/sessions/${sessionId}`)).data.worktree?.held_prompt).toBeUndefined();
+      const page = await get<{ turns: { items: { type: string; origin?: { kind: string; name?: string } }[] }[] }>(
+        `/sessions/${sessionId}/agents/main/turns`,
+      );
+      expect(page.data.turns.flatMap((turn) => turn.items.map((item) => item.origin))).toContainEqual(
+        expect.objectContaining({ kind: 'skill', name: 'held-skill' }),
+      );
+    });
+  });
+
   it('keeps a held prompt across reloads, refuses a second one, and sends it when the session stays local', async () => {
     const { root, workspaceId } = await project('held-local');
     hangingRemote(root);
@@ -523,10 +579,8 @@ describe('server-v2 session worktrees', () => {
     expect(await sentTexts(created.id)).toEqual([]);
   });
 
-  it('lets an abort wait for a held prompt that is already being sent', async () => {
-    const { workspaceId } = await project('held-abort-sending');
+  async function interruptedWithHeldPrompt(workspaceId: string, promptId: string): Promise<Session> {
     const ready = await settledWorktree(workspaceId);
-    const promptId = 'msg_held_sending';
     await patchSessionMetadata(fixture.server.core.accessor, ready.id, (meta) => {
       const current = meta.custom?.['worktree'] as object;
       return {
@@ -541,6 +595,32 @@ describe('server-v2 session worktrees', () => {
       };
     });
     await forceRunning(ready.id, ready.worktree!.setup);
+    return ready;
+  }
+
+  it('sends held prompts of different sessions that share a prompt id', async () => {
+    const { workspaceId } = await project('held-shared-id');
+    const first = await interruptedWithHeldPrompt(workspaceId, 'msg_shared');
+    const second = await interruptedWithHeldPrompt(workspaceId, 'msg_shared');
+    const sending: string[] = [];
+    const service = new SessionWorktreeService(fixture.server.core, {
+      dispatchHeld: (sessionId) => {
+        sending.push(sessionId);
+        return new Promise<void>(() => {});
+      },
+    });
+
+    await service.recoverInterrupted();
+
+    await vi.waitFor(() => {
+      expect(sending.toSorted()).toEqual([first.id, second.id].toSorted());
+    });
+  });
+
+  it('lets an abort wait for a held prompt that is already being sent', async () => {
+    const { workspaceId } = await project('held-abort-sending');
+    const promptId = 'msg_held_sending';
+    const ready = await interruptedWithHeldPrompt(workspaceId, promptId);
     let started = false;
     let fail = (): void => {};
     const service = new SessionWorktreeService(fixture.server.core, {
