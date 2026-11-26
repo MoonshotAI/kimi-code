@@ -234,11 +234,13 @@ describe('management rows', () => {
     expect(row.deletable).toBe(false);
   });
 
-  it('words each failure reason', () => {
-    expect(worktreeFailureText('in_use', en)).toBe('Deletion failed: directory in use');
-    expect(worktreeFailureText('session_busy', en)).toBe('Deletion failed: session is running');
-    expect(worktreeFailureText('unknown', en)).toBe('Deletion failed');
-    expect(worktreeFailureText('in_use', zh)).toBe('删除失败：目录被占用');
+  it.each([
+    ['in_use', 'Deletion failed: directory in use', en],
+    ['session_busy', 'Deletion failed: session is running', en],
+    ['unknown', 'Deletion failed', en],
+    ['in_use', '删除失败：目录被占用', zh],
+  ] as const)('words %s as "%s"', (reason, text, t) => {
+    expect(worktreeFailureText(reason, t)).toBe(text);
   });
 });
 
@@ -259,49 +261,33 @@ describe('removal progress and receipts', () => {
     expect(worktreeRemovalProgress([item('a', 'deleted'), item('b', 'failed')]).running).toBe(false);
   });
 
-  it('reports a single deletion with what happened to the branch', () => {
-    expect(worktreeRemovalSummaryText([item('a', 'deleted', false)], en)).toBe(
-      'Worktree kimi/a deleted; branch retained',
-    );
-    expect(worktreeRemovalSummaryText([item('a', 'deleted', true)], en)).toBe(
-      'Worktree kimi/a and its local branch deleted',
-    );
-    expect(worktreeRemovalSummaryText([item('a', 'deleted', true)], zh)).toBe('已删除 kimi/a 及本地分支');
-  });
-
-  it('reports a batch with what happened to the branches', () => {
-    const kept = [item('a', 'deleted', false), item('b', 'deleted', false), item('c', 'deleted')];
-    expect(worktreeRemovalSummaryText(kept, en)).toBe('3 Worktrees deleted; branches retained');
-    expect(worktreeRemovalSummaryText(kept, zh)).toBe('已删除 3 个工作树，分支已保留');
-    expect(worktreeRemovalSummaryText([item('a', 'deleted', true), item('b', 'deleted', true)], en)).toBe(
-      '2 Worktrees and local branches deleted',
-    );
-    expect(worktreeRemovalSummaryText([item('a', 'deleted', true), item('b', 'deleted', false)], en)).toBe(
-      '2 Worktrees deleted; 1 local branch deleted',
-    );
-  });
-
-  it('reports partial and total failure', () => {
-    expect(
-      worktreeRemovalSummaryText([item('a', 'deleted'), item('b', 'deleted'), item('c', 'failed')], en),
-    ).toBe('2 Worktrees deleted; 1 deletion failed');
-    expect(worktreeRemovalSummaryText([item('a', 'failed'), item('b', 'failed')], en)).toBe('2 deletions failed');
-    expect(worktreeRemovalSummaryText([item('a', 'failed')], en)).toBe('Deletion of kimi/a failed');
+  it.each([
+    ['Worktree kimi/a deleted; branch retained', en, [item('a', 'deleted', false)]],
+    ['Worktree kimi/a and its local branch deleted', en, [item('a', 'deleted', true)]],
+    ['已删除 kimi/a 及本地分支', zh, [item('a', 'deleted', true)]],
+    ['3 Worktrees deleted; branches retained', en, [item('a', 'deleted', false), item('b', 'deleted', false), item('c', 'deleted')]],
+    ['已删除 3 个工作树，分支已保留', zh, [item('a', 'deleted', false), item('b', 'deleted', false), item('c', 'deleted')]],
+    ['2 Worktrees and local branches deleted', en, [item('a', 'deleted', true), item('b', 'deleted', true)]],
+    ['2 Worktrees deleted; 1 local branch deleted', en, [item('a', 'deleted', true), item('b', 'deleted', false)]],
+    ['2 Worktrees deleted; 1 deletion failed', en, [item('a', 'deleted'), item('b', 'deleted'), item('c', 'failed')]],
+    ['2 deletions failed', en, [item('a', 'failed'), item('b', 'failed')]],
+    ['Deletion of kimi/a failed', en, [item('a', 'failed')]],
+  ])('summarizes the run as "%s"', (text, t, items) => {
+    expect(worktreeRemovalSummaryText(items, t)).toBe(text);
   });
 });
 
 describe('formatWorktreeSize', () => {
-  it('uses whole megabytes below one gigabyte and one decimal above', () => {
-    expect(formatWorktreeSize(0)).toBe('0 MB');
-    expect(formatWorktreeSize(60 * MB)).toBe('60 MB');
-    expect(formatWorktreeSize(640.4 * MB)).toBe('640 MB');
-    expect(formatWorktreeSize(GB)).toBe('1.0 GB');
-    expect(formatWorktreeSize(5.3 * GB)).toBe('5.3 GB');
-  });
-
-  it('is empty while the size is unknown', () => {
-    expect(formatWorktreeSize(undefined)).toBe('');
-    expect(formatWorktreeSize(null)).toBe('');
-    expect(formatWorktreeSize(Number.NaN)).toBe('');
+  it.each([
+    [0, '0 MB'],
+    [60 * MB, '60 MB'],
+    [640.4 * MB, '640 MB'],
+    [GB, '1.0 GB'],
+    [5.3 * GB, '5.3 GB'],
+    [undefined, ''],
+    [null, ''],
+    [Number.NaN, ''],
+  ])('formats %s bytes as "%s"', (bytes, text) => {
+    expect(formatWorktreeSize(bytes)).toBe(text);
   });
 });

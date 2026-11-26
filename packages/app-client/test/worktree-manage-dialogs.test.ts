@@ -30,6 +30,15 @@ function item(name: string, overrides: Partial<AppWorktree> = {}): AppWorktree {
   return appWorktree(name, { sizeBytes: 60 * MB, ...overrides });
 }
 
+function sessionRef(id: string, title: string, archived = false) {
+  return { id, title, archived, busy: false };
+}
+
+function confirmTargets() {
+  const state = dialogs.deleteDialog.value;
+  return state?.kind === 'worktrees' && state.phase === 'confirm' ? state.targets : undefined;
+}
+
 function waitFor(check: () => void): Promise<void> {
   return vi.waitFor(check, { interval: 1 });
 }
@@ -81,7 +90,7 @@ afterEach(() => {
 
 describe('worktree deletion from the management page', () => {
   it('refreshes the status silently before opening the confirmation', async () => {
-    await loadStore([item('a', { sessions: [{ id: 's1', title: 'One', archived: false, busy: false }] }), item('b')]);
+    await loadStore([item('a', { sessions: [sessionRef('s1', 'One')] }), item('b')]);
     const inspection = Promise.withResolvers<WorktreeInspection>();
     api.inspectWorktrees.mockReturnValueOnce(inspection.promise);
 
@@ -93,10 +102,7 @@ describe('worktree deletion from the management page', () => {
         worktreeRisk('a', {
           uncommittedFiles: 3,
           unpushedCommits: 2,
-          sessions: [
-            { id: 's1', title: 'One', archived: false, busy: false },
-            { id: 's2', title: 'Two', archived: true, busy: false },
-          ],
+          sessions: [sessionRef('s1', 'One'), sessionRef('s2', 'Two', true)],
         }),
       ],
       errors: {},
@@ -129,8 +135,7 @@ describe('worktree deletion from the management page', () => {
 
     await dialogs.requestWorktreeDeletion(['/wt/a']);
 
-    const state = dialogs.deleteDialog.value;
-    expect(state?.kind === 'worktrees' && state.phase === 'confirm' ? state.targets[0]?.risk : 'none').toBeNull();
+    expect(confirmTargets()?.[0]?.risk).toBeNull();
   });
 
   it('reloads the list instead of asking when the directory is already gone', async () => {
@@ -265,25 +270,14 @@ describe('worktree deletion from the management page', () => {
 
     expect(await stale).toBe(false);
     expect(await fresh).toBe(true);
-    const state = dialogs.deleteDialog.value;
-    expect(state?.kind === 'worktrees' && state.phase === 'confirm' ? state.targets.map((t) => t.path) : []).toEqual([
-      '/wt/b',
-    ]);
+    expect(confirmTargets()?.map((target) => target.path)).toEqual(['/wt/b']);
   });
 });
 
 describe('worktree session deletion', () => {
   it('counts the other sessions and never deletes the branch while they use the directory', async () => {
     api.inspectWorktrees.mockResolvedValueOnce({
-      items: [
-        worktreeRisk('a', {
-          sessions: [
-            { id: 's1', title: 'One', archived: false, busy: false },
-            { id: 's2', title: 'Two', archived: false, busy: false },
-            { id: 's3', title: 'Three', archived: true, busy: false },
-          ],
-        }),
-      ],
+      items: [worktreeRisk('a', { sessions: [sessionRef('s1', 'One'), sessionRef('s2', 'Two'), sessionRef('s3', 'Three', true)] })],
       errors: {},
     });
     const run = vi.fn(async (options: { deleteBranch: boolean }) => options);

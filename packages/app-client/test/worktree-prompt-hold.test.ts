@@ -69,10 +69,23 @@ function start(ws: WorkspaceRig, text = 'hello') {
   return ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text }));
 }
 
-async function moveTo(ws: WorkspaceRig, next: AppSessionWorktree | undefined, cwd?: string): Promise<void> {
-  setWorktree(next, cwd);
+function send(ws: WorkspaceRig, text: string) {
+  return ws.sendPrompt(ws.createPromptEnvelope({ text }));
+}
+
+function openExisting(next: AppSessionWorktree): void {
+  sessionsStore().setSessions([session({ cwd: '/wt/a', worktree: next })]);
+  sessionsStore().setActiveSessionId(SID);
+}
+
+async function moveTo(ws: WorkspaceRig, next: AppSessionWorktree): Promise<void> {
+  setWorktree(next, next.path);
   ws.syncWorktreeHold(SID);
   await flush();
+}
+
+function becomeReady(ws: WorkspaceRig): Promise<void> {
+  return moveTo(ws, worktree('ready', { path: '/wt/a' }));
 }
 
 async function createRig(options: { worktree?: boolean } = {}) {
@@ -205,15 +218,15 @@ describe('worktree first-prompt hold', () => {
 
     expect(ws.wouldEnqueuePrompt(SID)).toBe(true);
     expect(ws.wouldSteerPrompt(SID)).toBe(false);
-    expect(await ws.sendPrompt(ws.createPromptEnvelope({ text: 'second' }))).toBe('queued');
-    expect(await ws.sendPrompt(ws.createPromptEnvelope({ text: 'third' }))).toBe('queued');
+    expect(await send(ws, 'second')).toBe('queued');
+    expect(await send(ws, 'third')).toBe('queued');
     ws.flushQueueHead(SID);
     ws.resumeQueueIfIdle(SID);
     await flush();
     expect(api.submitPrompt).not.toHaveBeenCalled();
     expect(promptStore().queuedBySession[SID]?.map((entry) => entry.text)).toEqual(['second', 'third']);
 
-    await moveTo(ws, worktree('ready', { path: '/wt/a' }), '/wt/a');
+    await becomeReady(ws);
     expect(sentTexts(api.submitPrompt)).toEqual(['first', 'second', 'third']);
     expect(promptStore().queuedBySession[SID]).toEqual([]);
   });
@@ -229,22 +242,20 @@ describe('worktree first-prompt hold', () => {
 
   it('queues into an existing session whose worktree is being recreated, then flushes', async () => {
     const { api, ws } = await createRig({ worktree: false });
-    sessionsStore().setSessions([session({ cwd: '/wt/a', worktree: worktree('running', { path: '/wt/a', missing: true }) })]);
-    sessionsStore().setActiveSessionId(SID);
+    openExisting(worktree('running', { path: '/wt/a', missing: true }));
 
-    expect(await ws.sendPrompt(ws.createPromptEnvelope({ text: 'later' }))).toBe('queued');
+    expect(await send(ws, 'later')).toBe('queued');
     expect(api.submitPrompt).not.toHaveBeenCalled();
 
-    await moveTo(ws, worktree('ready', { path: '/wt/a' }), '/wt/a');
+    await becomeReady(ws);
     expect(sentTexts(api.submitPrompt)).toEqual(['later']);
   });
 
   it('cannot send into a session whose worktree is missing', async () => {
     const { api, ws } = await createRig({ worktree: false });
-    sessionsStore().setSessions([session({ cwd: '/wt/a', worktree: worktree('ready', { path: '/wt/a', missing: true }) })]);
-    sessionsStore().setActiveSessionId(SID);
+    openExisting(worktree('ready', { path: '/wt/a', missing: true }));
 
-    expect(await ws.sendPrompt(ws.createPromptEnvelope({ text: 'hello' }))).toBe('rejected');
+    expect(await send(ws, 'hello')).toBe('rejected');
     ws.flushQueueHead(SID);
     await flush();
     expect(api.submitPrompt).not.toHaveBeenCalled();
@@ -297,10 +308,10 @@ describe('worktree first-prompt hold', () => {
   it('puts the first prompt at the head of the queue when its send fails after release', async () => {
     const { api, ws } = await createRig();
     await start(ws, 'first');
-    await ws.sendPrompt(ws.createPromptEnvelope({ text: 'second' }));
+    await send(ws, 'second');
     api.submitPrompt.mockRejectedValueOnce(Object.assign(new Error('bad request'), { name: 'DaemonApiError', code: 40001 }));
 
-    await moveTo(ws, worktree('ready', { path: '/wt/a' }), '/wt/a');
+    await becomeReady(ws);
 
     expect(api.submitPrompt).toHaveBeenCalledTimes(1);
     expect(promptStore().queuedBySession[SID]?.map((entry) => entry.text)).toEqual(['first', 'second']);
@@ -310,30 +321,27 @@ describe('worktree first-prompt hold', () => {
     const { api, ws } = await createRig();
     await start(ws);
 
-    await moveTo(ws, worktree('running', { path: '/wt/a', branch: 'kimi/a' }), '/wt/a');
+    await moveTo(ws, worktree('running', { path: '/wt/a', branch: 'kimi/a' }));
     expect(api.submitPrompt).not.toHaveBeenCalled();
 
     expect(await ws.abortCurrentPrompt()).toBe(true);
     expect(api.sessionWorktreeAction).toHaveBeenCalledExactlyOnceWith(SID, 'cancel', undefined);
 
-    await moveTo(ws, worktree('ready', { path: '/wt/a' }), '/wt/a');
+    await becomeReady(ws);
     expect(sentTexts(api.submitPrompt)[0]).toBe('hello');
   });
 
   it('sends in local mode after a missing worktree is abandoned', async () => {
     const { api, ws } = await createRig({ worktree: false });
-    sessionsStore().setSessions([
-      session({ cwd: '/wt/a', worktree: worktree('ready', { path: '/wt/a', branch: 'kimi/a', missing: true }) }),
-    ]);
-    sessionsStore().setActiveSessionId(SID);
-    expect(await ws.sendPrompt(ws.createPromptEnvelope({ text: 'blocked' }))).toBe('rejected');
+    openExisting(worktree('ready', { path: '/wt/a', branch: 'kimi/a', missing: true }));
+    expect(await send(ws, 'blocked')).toBe('rejected');
 
     api.sessionWorktreeAction.mockResolvedValueOnce(session({ cwd: '/workspace', worktree: worktree('local') }));
     expect(await ws.runSessionWorktreeAction(SID, 'useLocal')).toBe(true);
 
     expect(sessionsStore().sessions[0]).toMatchObject({ cwd: '/workspace', worktree: { setup: { status: 'local' } } });
     expect(sessionsStore().sessions[0]?.worktree?.path).toBeUndefined();
-    expect(await ws.sendPrompt(ws.createPromptEnvelope({ text: 'hello' }))).toBe('ok');
+    expect(await send(ws, 'hello')).toBe('ok');
     expect(sentTexts(api.submitPrompt)).toEqual(['hello']);
   });
 
@@ -437,7 +445,7 @@ describe('worktree first-prompt hold', () => {
     await flush();
     expect(modelProvider.activateSkill).not.toHaveBeenCalled();
 
-    await moveTo(ws, worktree('ready', { path: '/wt/a' }), '/wt/a');
+    await becomeReady(ws);
     expect(await activation).toBe(true);
     expect(modelProvider.activateSkill).toHaveBeenCalledExactlyOnceWith('review', undefined, undefined, SID, undefined);
   });
@@ -450,7 +458,7 @@ describe('worktree first-prompt hold', () => {
     const activation = ws.activateSkill('review');
     sessionsStore().appendSession(session({ id: 'other', title: 'other', worktree: undefined }));
     sessionsStore().setActiveSessionId('other');
-    await moveTo(ws, worktree('ready', { path: '/wt/a' }), '/wt/a');
+    await becomeReady(ws);
 
     expect(await activation).toBe(true);
     expect(modelProvider.activateSkill).toHaveBeenCalledExactlyOnceWith('review', undefined, undefined, SID, undefined);
@@ -459,7 +467,7 @@ describe('worktree first-prompt hold', () => {
   it('refuses a skill activation while the worktree is missing', async () => {
     const { modelProvider, ws } = await createRig();
     await start(ws);
-    await moveTo(ws, worktree('ready', { path: '/wt/a', missing: true }), '/wt/a');
+    await moveTo(ws, worktree('ready', { path: '/wt/a', missing: true }));
 
     expect(await ws.activateSkill('review', undefined, undefined, SID)).toBe(false);
     expect(modelProvider.activateSkill).not.toHaveBeenCalled();
