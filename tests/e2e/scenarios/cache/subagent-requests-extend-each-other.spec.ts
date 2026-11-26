@@ -15,12 +15,10 @@ scenario(
     await product.waitIdle();
     await product.expectReply('Friday it is.');
 
-    const subagentRequests = model.requests('subagent');
-    expect(subagentRequests).toHaveLength(2);
-    expect(subagentRequests[1]?.texts('tool').join('\n')).toContain('launch on friday');
     expect(model.requests('main')[1]?.texts('tool').join('\n')).toContain('notes.txt says launch on friday.');
     const entries = model.promptCache();
     const subagent = entries.filter((entry) => entry.role === 'subagent');
+    expect(subagent.map((entry) => entry.continues)).toEqual([false, true]);
     expect(subagent.map((entry) => entry.baseline)).toEqual([undefined, subagent[0]?.request]);
     const main = entries.filter((entry) => entry.role === 'main');
     expect(main.map((entry) => entry.baseline)).toEqual([undefined, main[0]?.request, main[1]?.request]);

@@ -214,11 +214,13 @@ function sameThread(observation: Observation, thread: Thread): boolean {
 }
 
 function previousStepOf(observation: Observation, pool: readonly Observation[]): Observation | undefined {
+  const candidates = pool.filter((earlier) => earlier.source.role === 'subagent' && earlier.source.agent === observation.source.agent);
+  const extended = candidates.findLast((earlier) => breakBetween(earlier.segments, observation.segments) === undefined);
+  if (extended !== undefined) return extended;
   const history = observation.segments.filter((segment) => segment.region === 'messages');
   let best: Observation | undefined;
   let bestShared = 0;
-  for (const earlier of pool) {
-    if (earlier.source.role !== 'subagent' || earlier.source.agent !== observation.source.agent) continue;
+  for (const earlier of candidates) {
     const shared = sharedSegments(earlier.segments.filter((segment) => segment.region === 'messages'), history);
     if (shared === 0 || shared < bestShared) continue;
     best = earlier;

@@ -212,6 +212,20 @@ describe('prompt cache ledger', () => {
     expect(problemsOf(model)).toEqual([]);
   });
 
+  it('tells apart two subagents a parent started with the same task', async () => {
+    const model = fakeModel();
+    const ask = openai(model);
+    const task: ChatCompletionMessageParam[] = [SYSTEM, { role: 'user', content: 'Count the files.' }];
+
+    await ask({ messages: task, role: 'subagent' });
+    await ask({ messages: task, role: 'subagent' });
+    await ask({ messages: [...task, { role: 'assistant', content: 'Counting src.' }, { role: 'user', content: 'src has 4 files.' }], role: 'subagent', step: 'tool_results' });
+    await ask({ messages: [...task, { role: 'assistant', content: 'Counting test.' }, { role: 'user', content: 'test has 2 files.' }], role: 'subagent', step: 'tool_results' });
+
+    expect(model.promptCache().map((entry) => entry.baseline)).toEqual([undefined, undefined, 1, 1]);
+    expect(problemsOf(model)).toEqual([]);
+  });
+
   it("accepts a declared break in a subagent's own history", async () => {
     const model = fakeModel();
     const ask = openai(model);
