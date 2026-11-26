@@ -842,9 +842,14 @@ describe('AppendLogStore session lock integration', () => {
     rmSync(homeDir, { recursive: true, force: true });
   });
 
-  async function readAll(): Promise<void> {
+  async function readAll(onFirstRecord?: () => Promise<void>): Promise<void> {
     for await (const _ of log.read(SCOPE, KEY)) {
       void _;
+      if (onFirstRecord !== undefined) {
+        const action = onFirstRecord;
+        onFirstRecord = undefined;
+        await action();
+      }
     }
   }
 
@@ -897,6 +902,87 @@ describe('AppendLogStore session lock integration', () => {
     await readAll();
 
     expect(log.externallyModified(SCOPE, KEY)).toBe(true);
+  });
+
+  it.each([false, true])('keeps an own append completed during a read accounted for (initialized=%s)', async (initialized) => {
+    writeFileSync(join(homeDir, SCOPE, KEY), `${JSON.stringify({ n: 1 })}\n`);
+    if (initialized) await readAll();
+
+    await readAll(async () => {
+      log.append<Rec>(SCOPE, KEY, { n: 2 });
+      await log.flush();
+    });
+
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
+  it.each(['before', 'after'])('keeps an external append %s an own append during a read detectable', async (order) => {
+    const path = join(homeDir, SCOPE, KEY);
+    writeFileSync(path, `${JSON.stringify({ n: 1 })}\n`);
+
+    await readAll(async () => {
+      if (order === 'before') appendFileSync(path, `${JSON.stringify({ n: 3 })}\n`);
+      log.append<Rec>(SCOPE, KEY, { n: 2 });
+      await log.flush();
+      if (order === 'after') appendFileSync(path, `${JSON.stringify({ n: 3 })}\n`);
+    });
+
+    expect(log.externallyModified(SCOPE, KEY)).toBe(true);
+  });
+
+  it('keeps external truncation after an own append during a read detectable', async () => {
+    const path = join(homeDir, SCOPE, KEY);
+    writeFileSync(path, `${JSON.stringify({ n: 1 })}\n`);
+
+    await readAll(async () => {
+      log.append<Rec>(SCOPE, KEY, { n: 2 });
+      await log.flush();
+      writeFileSync(path, '');
+    });
+
+    expect(log.externallyModified(SCOPE, KEY)).toBe(true);
+  });
+
+  it('does not replace the baseline of an own rewrite completed during a read', async () => {
+    writeFileSync(join(homeDir, SCOPE, KEY), `${JSON.stringify({ n: 1 })}\n`);
+
+    await readAll(async () => {
+      await log.rewrite<Rec>(SCOPE, KEY, [{ n: 2 }, { n: 3 }]);
+    });
+
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
+  it('establishes the first read baseline after a handled rewrite failure', async () => {
+    const path = join(homeDir, SCOPE, KEY);
+    writeFileSync(path, `${JSON.stringify({ n: 1 })}\n`);
+    const failure = new Error('atomic rewrite rejected');
+    const write = vi.spyOn(storage, 'write').mockRejectedValue(failure);
+    const onError = vi.fn();
+
+    await readAll(async () => {
+      await log.rewrite<Rec>(SCOPE, KEY, [{ n: 2 }, { n: 3 }], { onError });
+    });
+
+    expect(onError).toHaveBeenCalledExactlyOnceWith(failure);
+    write.mockRestore();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+    appendFileSync(path, `${JSON.stringify({ n: 4 })}\n`);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(true);
+    writeFileSync(path, '');
+    expect(log.externallyModified(SCOPE, KEY)).toBe(true);
+  });
+
+  it('does not replace an external append already consumed by a later read', async () => {
+    const path = join(homeDir, SCOPE, KEY);
+    writeFileSync(path, `${JSON.stringify({ n: 1 })}\n`);
+
+    await readAll(async () => {
+      appendFileSync(path, `${JSON.stringify({ n: 2 })}\n`);
+      await readAll();
+    });
+
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
   });
 
   it('resets known length after rewrite', async () => {

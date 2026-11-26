@@ -113,6 +113,7 @@ interface LogState {
   ready: Promise<void>;
   retirement: Promise<void> | undefined;
   knownLength: number | undefined;
+  appendedBytes: number;
   inFlightBytes: number;
   rewriteInFlight: number | undefined;
   guardWarned: boolean;
@@ -196,6 +197,9 @@ export class AppendLogStore {
     await this.flushLog(scope, key);
     const state = this.state(scope, key);
     const lengthAtStart = this.diskLength(scope, key);
+    const knownLengthAtStart = state.knownLength;
+    const appendedBytesAtStart = state.appendedBytes;
+    const cutoverEpoch = state.cutoverEpoch;
     try {
       const onTruncate = options?.onTruncate;
       const textDecoder = new TextDecoder();
@@ -233,8 +237,11 @@ export class AppendLogStore {
       }
     } finally {
       const disk = this.diskLength(scope, key);
-      if (disk !== undefined) {
-        state.knownLength = lengthAtStart === disk ? disk : (lengthAtStart ?? 0);
+      const appendedBytes = state.appendedBytes - appendedBytesAtStart;
+      const expectedKnownLength = knownLengthAtStart === undefined ? undefined : knownLengthAtStart + appendedBytes;
+      const canEstablishBaseline = state.cutoverEpoch === cutoverEpoch || state.knownLength === undefined;
+      if (disk !== undefined && canEstablishBaseline && state.knownLength === expectedKnownLength) {
+        state.knownLength = (lengthAtStart ?? 0) + appendedBytes;
       }
     }
   }
@@ -379,6 +386,7 @@ export class AppendLogStore {
         ready,
         retirement: undefined,
         knownLength: undefined,
+        appendedBytes: 0,
         inFlightBytes: 0,
         rewriteInFlight: undefined,
         guardWarned: false,
@@ -547,6 +555,7 @@ export class AppendLogStore {
         state.inFlightBytes = 0;
         state.recovery = undefined;
         wrote = true;
+        state.appendedBytes += encoded.length;
         if (state.knownLength !== undefined) state.knownLength += encoded.length;
         if (wroteBox !== undefined) wroteBox.value = true;
       } catch (error) {
