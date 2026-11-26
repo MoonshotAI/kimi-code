@@ -76,7 +76,7 @@ import { IProjectGitService } from '#/project/projectGit/projectGit';
 
 import { readStream, runCommand } from './internal/fsProcess';
 import { ensureRgPath, type RgProbe, type RgResolution } from './internal/rgLocator';
-import { ensureFdPath, suggestWithFd, suggestWithFdEvents, type FdResolution } from './internal/fdSuggest';
+import { ensureFdPath, FdArgumentsRejectedError, suggestWithFd, suggestWithFdEvents, type FdResolution } from './internal/fdSuggest';
 import {
   compileGrepPattern,
   computeFuzzyScore,
@@ -822,6 +822,7 @@ export class ProjectFsService implements IProjectFsService {
           });
         } catch (error) {
           if (signal.aborted) throw error;
+          if (error instanceof FdArgumentsRejectedError) this.fdResolution = null;
         } finally {
           lease.dispose();
         }
@@ -893,6 +894,7 @@ export class ProjectFsService implements IProjectFsService {
           return;
         } catch (error) {
           if (signal.aborted) throw error;
+          if (error instanceof FdArgumentsRejectedError) this.fdResolution = null;
         } finally {
           lease.dispose();
         }

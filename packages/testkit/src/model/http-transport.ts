@@ -33,26 +33,26 @@ export async function serveHttp(handler: RequestHandler): Promise<HttpEndpoint> 
 }
 
 async function dispatch(handler: RequestHandler, request: IncomingMessage, response: ServerResponse): Promise<void> {
-  let body: string;
+  let bytes: Buffer;
   try {
-    body = await readBody(request);
+    bytes = await readBody(request);
   } catch {
     response.destroy();
     return;
   }
   const sink = new HttpSink(request, response);
   try {
-    await handler({ method: request.method ?? 'GET', path: request.url ?? '/', headers: headersOf(request), body }, sink);
+    await handler({ method: request.method ?? 'GET', path: request.url ?? '/', headers: headersOf(request), body: bytes.toString('utf8'), bytes: new Uint8Array(bytes) }, sink);
   } catch (error) {
     sink.crash(error);
   }
 }
 
-function readBody(request: IncomingMessage): Promise<string> {
+function readBody(request: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     request.on('data', (chunk: Buffer) => chunks.push(chunk));
-    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    request.on('end', () => resolve(Buffer.concat(chunks)));
     request.on('error', reject);
   });
 }

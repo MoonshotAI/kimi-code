@@ -95,6 +95,23 @@ await test('a new legacy Desktop journey is pointed at tests/e2e, not at the pau
   assert.doesNotMatch(added, /fixtures\/app\.ts/);
 });
 
+await test('a hand-written Kimi service stub counts everywhere except the managed clients\' own protocol tests', () => {
+  const stub = [
+    "if (url.endsWith('/coding/v1/tools')) return Response.json({ title: 'x' });",
+    "expect(JSON.parse(body)).toEqual({ method: 'chat_title', params: {} });",
+    "if (path === '/coding/v1/feedback/upload_url') return uploadUrl();",
+    "if (path === '/coding/v1/feedback/upload_complete') return done();",
+  ].join('\n');
+  const counts = countLegacyDoubles([
+    { file: 'packages/kap-server/test/feedback.test.ts', text: stub },
+    { file: 'packages/oauth/test/managed-tools.test.ts', text: stub },
+    { file: 'packages/agent-core-v2/test/session/title.test.ts', text: "services.title('x');\nconst hold = services.holdNext('title');" },
+  ]);
+  assert.deepEqual(counts['kimi-service-stub'], { 'packages/kap-server/test/feedback.test.ts': 6 });
+  const added = formatReport(compareCounts({}, counts)).join('\n');
+  assert.match(added, /instead: script session titles and feedback with the testkit fake Kimi services/);
+});
+
 await test('a new legacy double fails with the testkit alternative, and a migrated one asks to lower the baseline', () => {
   const baseline = { 'engine-mock-response': { 'packages/agent-core-v2/test/a.test.ts': 2 } };
   const added = formatReport(compareCounts(baseline, {

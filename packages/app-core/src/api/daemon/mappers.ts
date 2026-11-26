@@ -254,6 +254,7 @@ export function toAppInteractionEvent(interaction: WireInteraction): AppEvent {
         toolName: interaction.request.tool_name,
         action: interaction.request.action,
         display: interaction.request.tool_input_display,
+        approvalDetail: interaction.request.approval_detail,
       },
     };
   }

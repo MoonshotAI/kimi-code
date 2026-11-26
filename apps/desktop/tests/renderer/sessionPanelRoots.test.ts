@@ -50,6 +50,7 @@ vi.mock('@moonshot-ai/app-client/composables', async (importOriginal) => ({
   useEscInterrupt: () => ({ armed: ref(false), reset: vi.fn() }),
   useWorkspaceTrust: () => ({
     trustDenied: ref(false),
+    trustReadPending: ref(false),
     trustRejected: ref(false),
     trustGateOpen: ref(false),
     busy: ref(false),

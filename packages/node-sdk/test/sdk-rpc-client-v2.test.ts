@@ -11,6 +11,7 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 import { createGitRepository, createGitWorktree, type GitWorktreeLayout } from '@moonshot-ai/testkit/fixtures';
 import { createFakeModel, say } from '@moonshot-ai/testkit/model';
+import { createKimiServices } from '@moonshot-ai/testkit/services';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -1386,7 +1387,8 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     tempDirs.push(homeDir);
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
-    const titleBaseUrl = 'https://api.example.test/coding/v1';
+    const kimi = createKimiServices({ accessToken: 'test-access-token' });
+    const titleBaseUrl = kimi.baseUrl;
     const titleOAuthRef = resolveKimiCodeOAuthRef({ baseUrl: titleBaseUrl });
     await new FileTokenStorage(join(homeDir, 'credentials')).save(
       resolveKimiTokenStorageName({ oauthKey: titleOAuthRef.key }),
@@ -1424,16 +1426,8 @@ key = "${titleOAuthRef.key}"
 `,
       'utf-8',
     );
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url === 'https://api.example.test/coding/v1/tools') {
-        return new Response(JSON.stringify({ title: 'Generated title' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+    kimi.title('Generated title');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(kimi.fetch);
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
@@ -1477,6 +1471,7 @@ key = "${titleOAuthRef.key}"
           patch: { title: 'Generated title', isCustomTitle: false },
         }),
       ]);
+      kimi.verify();
     } finally {
       await harness.close();
       fetchSpy.mockRestore();
@@ -1488,7 +1483,8 @@ key = "${titleOAuthRef.key}"
     tempDirs.push(homeDir);
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
-    const titleBaseUrl = 'https://api.example.test/coding/v1';
+    const kimi = createKimiServices({ accessToken: 'test-access-token' });
+    const titleBaseUrl = kimi.baseUrl;
     const titleOAuthRef = resolveKimiCodeOAuthRef({ baseUrl: titleBaseUrl });
     await new FileTokenStorage(join(homeDir, 'credentials')).save(
       resolveKimiTokenStorageName({ oauthKey: titleOAuthRef.key }),
@@ -1526,22 +1522,9 @@ key = "${titleOAuthRef.key}"
 `,
       'utf-8',
     );
-    let markFetchStarted!: () => void;
-    let resolveFetch!: (response: Response) => void;
-    const fetchStarted = new Promise<void>((resolve) => {
-      markFetchStarted = resolve;
-    });
-    const fetchResponse = new Promise<Response>((resolve) => {
-      resolveFetch = resolve;
-    });
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url === 'https://api.example.test/coding/v1/tools') {
-        markFetchStarted();
-        return fetchResponse;
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+    kimi.title('Generated title');
+    const titleRequest = kimi.holdNext('title');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(kimi.fetch);
     const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
 
     try {
@@ -1554,7 +1537,7 @@ key = "${titleOAuthRef.key}"
       await client.closeSession({ sessionId: 'ses_title_race' });
 
       const titlePromise = client.generateSessionTitle({ id: 'ses_title_race' });
-      await fetchStarted;
+      await titleRequest.reached();
       const sessionManager = client.engineAccessor.get(ISessionManager);
       const tempHandle = sessionManager.get('ses_title_race');
       expect(tempHandle).toBeDefined();
@@ -1572,12 +1555,7 @@ key = "${titleOAuthRef.key}"
         event.waitUntil(closeGate);
       });
 
-      resolveFetch(
-        new Response(JSON.stringify({ title: 'Generated title' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      );
+      titleRequest.release();
       await closeStarted;
 
       const order: string[] = [];
@@ -1603,6 +1581,7 @@ key = "${titleOAuthRef.key}"
           { interval: 50, timeout: 4000 },
         )
         .toBe('Resumed title');
+      kimi.verify();
     } finally {
       await client.close();
       fetchSpy.mockRestore();

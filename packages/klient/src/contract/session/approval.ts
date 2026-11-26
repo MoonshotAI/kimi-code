@@ -12,6 +12,11 @@ export const approvalRequestSchema = z.object({
   toolName: z.string(),
   action: z.string(),
   display: z.unknown(),
+  approvalDetail: z.object({
+    outcome: z.enum(['denied', 'failed']),
+    risk: z.enum(['low', 'medium', 'high']).optional(),
+    reason: z.string(),
+  }).optional(),
 });
 
 export const approvalResponseSchema = z.object({

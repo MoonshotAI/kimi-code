@@ -12,6 +12,7 @@ import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-c
 
 import { bashPathOf, createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 import type { KapHarness } from '@moonshot-ai/testkit/kap';
+import { startKimiServices } from '@moonshot-ai/testkit/services';
 import {
   agent,
   bash,
@@ -25,7 +26,7 @@ import {
   type RequestFacts,
 } from '@moonshot-ai/testkit/model';
 import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, test as base, vi } from 'vitest';
 
 import {
   Error2,
@@ -1386,6 +1387,9 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   it('generates and persists a title through the public REST path', async () => {
+    const kimi = await startKimiServices({ accessToken: 'test-token' });
+    onTestFinished(() => kimi.close());
+    kimi.title(...Array.from({ length: 4 }, () => 'generated from REST'));
     await server?.close();
     server = undefined;
     await writeFile(
@@ -1405,7 +1409,7 @@ describe('server-v2 /api/v1/sessions', () => {
         '',
         '[providers."managed:kimi-code"]',
         'type = "kimi"',
-        'base_url = "https://api.example.test/coding/v1"',
+        `base_url = "${kimi.baseUrl}"`,
         '',
         '[providers."managed:kimi-code".oauth]',
         'storage = "file"',
@@ -1446,23 +1450,8 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     base = `http://127.0.0.1:${server.port}`;
 
-    let toolsRequest: { method: string; params: { chat_content: string } } | undefined;
-    const actualFetch = globalThis.fetch.bind(globalThis);
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url === 'https://api.example.test/coding/v1/tools') {
-        const body = init?.body;
-        if (typeof body !== 'string') {
-          throw new TypeError('expected a string request body');
-        }
-        toolsRequest = JSON.parse(body) as typeof toolsRequest;
-        return new Response(JSON.stringify({ title: 'generated from REST' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      return actualFetch(input, init);
-    });
+    const titleInputs = (): string[] =>
+      kimi.requests('title').map((request) => (request.json as { params: { chat_content: string } }).params.chat_content);
 
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },
@@ -1480,13 +1469,7 @@ describe('server-v2 /api/v1/sessions', () => {
       `/api/v1/sessions/${id}/title/generate`,
     );
     expect(generated.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
-    expect(toolsRequest).toEqual({
-      method: 'chat_title',
-      params: {
-        chat_content:
-          'user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt',
-      },
-    });
+    expect(titleInputs()).toEqual(['user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt']);
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
@@ -1513,9 +1496,8 @@ describe('server-v2 /api/v1/sessions', () => {
       source: 'digest',
     });
     expect(digested.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
-    expect(toolsRequest?.params.chat_content).toBe(
-      'user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt',
-    );
+    expect(titleInputs().at(-1)).toBe('user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt');
+    kimi.verify();
   });
 
   it('returns session-not-found when generating a title for a missing session', async () => {
@@ -4623,18 +4605,28 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
         toolName: 'Bash',
         action: 'run',
         display: { command: 'echo ok' },
+        approvalDetail: { outcome: 'denied', risk: 'high', reason: 'Not authorized.' },
       },
       tags: { agentId: 'main', sessionId: sid, toolCallId: 'tc_wait_1' },
     });
 
     const approvalWait = (await (await approvalWaitPromise).json()) as Envelope<{
       session: SessionWire;
-      pending_interactions: Array<{ interaction_id: string; kind: string }>;
+      pending_interactions: Array<{
+        interaction_id: string;
+        kind: string;
+        request?: { approval_detail?: unknown };
+      }>;
       timed_out: boolean;
     }>;
     expect(approvalWait.code).toBe(0);
     expect(approvalWait.data.timed_out).toBe(false);
     expect(approvalWait.data.pending_interactions.map((i) => i.interaction_id)).toEqual([parked.id]);
+    expect(approvalWait.data.pending_interactions[0]?.request?.approval_detail).toEqual({
+      outcome: 'denied',
+      risk: 'high',
+      reason: 'Not authorized.',
+    });
 
     await fetch(`${base}/api/v1/sessions/${sid}/interactions/${parked.id}`, {
       method: 'POST',

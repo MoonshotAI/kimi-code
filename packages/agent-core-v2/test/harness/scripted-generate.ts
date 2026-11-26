@@ -52,7 +52,7 @@ import { afterEach } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import { ChatProviderError, errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
+import { errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
 
 import {
   generateInputSnapshot,
@@ -342,7 +342,7 @@ export function withMockProvider(
         try {
           return await provider.fetch(input, init);
         } catch (error) {
-          if (isError2(error) && !(error instanceof ChatProviderError)) {
+          if (isError2(error)) {
             directError = error;
             directAbort.abort(error);
           }

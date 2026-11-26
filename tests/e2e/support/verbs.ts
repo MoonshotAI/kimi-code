@@ -50,6 +50,7 @@ export const VERBS = {
   setPermissionMode: { on: SURFACES, checksInterface: false },
   stop: { on: SURFACES, checksInterface: false },
   waitIdle: { on: SURFACES, checksInterface: false },
+  waitForUsageUpdates: { on: ['acp'], absentBecause: 'This action waits for usage updates delivered to an ACP editor.', checksInterface: false },
   expectTool: { on: SURFACES, checksInterface: true },
   expectReply: { on: SURFACES, checksInterface: true },
   expectError: { on: SURFACES, checksInterface: true },
@@ -198,6 +199,7 @@ interface VerbSignatures {
   setPermissionMode(mode: PermissionMode): Promise<void>;
   stop(): Promise<void>;
   waitIdle(): Promise<void>;
+  waitForUsageUpdates(count: number): Promise<void>;
   expectTool(expectation: ToolExpectation): Promise<void>;
   expectReply(text: string): Promise<void>;
   expectError(text: string): Promise<void>;

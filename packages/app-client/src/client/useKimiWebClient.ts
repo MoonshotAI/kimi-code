@@ -1238,6 +1238,7 @@ function refreshActiveHostWorkspace(hostId: string): void {
     (candidate) => candidate.id === activeWorkspaceId.value && candidate.hostId === hostId,
   );
   if (workspace === undefined) return;
+  if (activeWorkspaceTrust.value === undefined) observeWorkspace(workspace.id);
   if (hasFailedSkillsRefresh(workspace)) refreshSkillsForRoots(workspace);
   const sid = rawState.activeSessionId;
   if (sid !== undefined) {

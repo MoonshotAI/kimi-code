@@ -119,6 +119,8 @@ import {
   pillSubmitBlockers,
   decideComposerSubmit,
   decideSubmitKind,
+  commandNeedsProjectTrust,
+  isSessionBoundSubmit,
   planFileAttachment,
   planFolderAttachment,
   resetComposerAfterDispatch,
@@ -160,6 +162,7 @@ const props = defineProps<{
   interruptArmed?: boolean;
   hideContext?: boolean;
   submitDisabled?: boolean;
+  sessionSubmitBlockedReason?: string;
   statusNote?: string;
   beforeSubmit?: () => boolean;
   deferSubmitReset?: boolean;
@@ -174,6 +177,7 @@ const props = defineProps<{
 }>();
 
 const isSideChat = computed(() => props.variant === 'side-chat');
+const composerStatusNote = computed(() => props.sessionSubmitBlockedReason ?? props.statusNote);
 
 const { t, locale } = useI18n();
 const panelApi = inject(panelApiKey, undefined);
@@ -946,6 +950,7 @@ const {
   editorRef,
   skills: () => skills.value,
   insertSkillMention: insertMentionEntry,
+  beforeExecute: (cmd) => props.sessionSubmitBlockedReason === undefined || !commandNeedsProjectTrust(cmd),
   emitCommand: (cmd) => {
     if (cmd === '/plan') {
       armPlanMode();
@@ -1821,8 +1826,18 @@ function currentSubmitDecision(): SubmitDecision {
   });
 }
 
+function isBlockedByProjectTrust(decision: SubmitDecision): boolean {
+  return props.sessionSubmitBlockedReason !== undefined &&
+    (isSessionBoundSubmit(decision) ||
+      (decision.kind === 'builtin-command' && commandNeedsProjectTrust(decision.cmd)));
+}
+
 const canSend = computed(() => {
   if (props.submitDisabled === true) return false;
+  if (props.sessionSubmitBlockedReason !== undefined) {
+    const decision = currentSubmitDecision();
+    return decision.kind !== 'noop' && !isBlockedByProjectTrust(decision);
+  }
   const trimmed = text.value.trim();
   const assembly = submitAssembly();
   const blocked = pillGate.value.uploading || pillGate.value.errored || pillGate.value.missing;
@@ -1876,6 +1891,7 @@ function clearAfterDispatch(expectedSnapshot?: ComposerDocumentSnapshot): void {
 }
 
 function passSubmitGate(): boolean {
+  if (props.sessionSubmitBlockedReason !== undefined) return false;
   if (props.beforeSubmit !== undefined && props.beforeSubmit() === false) return false;
   if (hostSetupId.value !== undefined) {
     openHostSetup();
@@ -1920,7 +1936,7 @@ function handleQueue(): void {
 
 function handleSubmit(): void {
   const decision = currentSubmitDecision();
-  if (decision.kind === 'noop') return;
+  if (decision.kind === 'noop' || isBlockedByProjectTrust(decision)) return;
   if (decision.kind === 'disabled-command') {
     client.notify({ severity: 'warning', title: t('composer.disabledCommand', { cmd: decision.cmd }) });
     return;
@@ -1929,15 +1945,7 @@ function handleSubmit(): void {
     client.notify({ severity: 'warning', title: t('composer.noArgCommand', { cmd: decision.cmd }) });
     return;
   }
-  const sessionBound =
-    decision.kind === 'submit' ||
-    decision.kind === 'multi-skill-activation' ||
-    decision.kind === 'skill-activation' ||
-    decision.kind === 'skill-command' ||
-    decision.kind === 'unresolved-skill-command' ||
-    decision.kind === 'prompt-command' ||
-    (decision.kind === 'builtin-command' && decision.leave === true);
-  if (sessionBound && !passSubmitGate()) return;
+  if (isSessionBoundSubmit(decision) && !passSubmitGate()) return;
   if (!isSideChat.value) client.handlePromptPredictionSubmit(text.value);
   const snapshot = editor?.getSnapshot();
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
@@ -3799,7 +3807,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             </template>
           </button>
           </Tooltip>
-          <span v-if="statusNote" class="status-note">{{ statusNote }}</span>
+          <span v-if="composerStatusNote" class="status-note" role="status">{{ composerStatusNote }}</span>
           <Tooltip v-if="stopButtonVisible" :text="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interruptTitle')">
             <button
               class="stop"
