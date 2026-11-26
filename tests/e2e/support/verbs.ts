@@ -222,6 +222,15 @@ export type Product = ProductOn<Surface>;
 
 export type Diagnostic = { readonly name: string; readonly body: string } | { readonly name: string; readonly path: string };
 
+export class StartupFailure extends Error {
+  readonly diagnostics: readonly Diagnostic[];
+
+  constructor(cause: unknown, diagnostics: readonly Diagnostic[], message = cause instanceof Error ? cause.message : String(cause)) {
+    super(message, { cause });
+    this.diagnostics = diagnostics;
+  }
+}
+
 export type Frame = { readonly kind: 'image'; readonly png: Buffer } | { readonly kind: 'text'; readonly text: string };
 
 type SessionVerb = { [Name in Verb]: (typeof VERBS)[Name] extends { readonly bySession: true } ? Name : never }[Verb];

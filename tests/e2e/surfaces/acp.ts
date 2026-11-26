@@ -40,6 +40,7 @@ import {
   type PermissionMode,
   type ReopenState,
   type SurfaceDriver,
+  StartupFailure,
   type SurfaceLaunch,
   type ToolExpectation,
   type ToolStatus,
@@ -1096,8 +1097,9 @@ export async function startAcp({ home, reopen, variant }: SurfaceLaunch): Promis
   try {
     await driver.open(reopen?.state.sessionId);
   } catch (error) {
+    const diagnostics = await driver.diagnostics();
     await driver.kill();
-    throw error;
+    throw new StartupFailure(error, diagnostics);
   }
   return driver;
 }

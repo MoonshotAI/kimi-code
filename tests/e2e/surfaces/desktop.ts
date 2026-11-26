@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { killProcessTree, NETWORK_GUARD_PRELOAD, networkGuardEnv, readNetworkViolations, repoPath, TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
 import { _electron, type ElectronApplication } from '@playwright/test';
 
-import type { Diagnostic, ReopenState, SurfaceDriver, SurfaceLaunch } from '../support/verbs';
+import { StartupFailure, type Diagnostic, type ReopenState, type SurfaceDriver, type SurfaceLaunch } from '../support/verbs';
 import { productEnv } from './environment';
 import { offlineStubs } from './offline';
 import { OFFLINE_NAMES, PageDriver, reasonOf, WELCOME_DIALOG } from './page-driver';
@@ -69,17 +69,10 @@ class DesktopDriver extends PageDriver {
 
   async startupFailure(error: unknown): Promise<Error> {
     const page = await this.readPage();
-    await this.saveTrace();
+    const diagnostics = await this.diagnostics();
+    const state = this.describe();
     await this.kill();
-    return new Error(
-      [
-        `The Desktop app did not become ready: ${reasonOf(error)}`,
-        page,
-        this.describe(),
-        ...(existsSync(this.trace) ? [`A trace of the start-up is at ${this.trace}`] : []),
-      ].join('\n'),
-      { cause: error },
-    );
+    return new StartupFailure(error, diagnostics, [`The Desktop app did not become ready: ${reasonOf(error)}`, page, state].join('\n'));
   }
 
   async close(): Promise<void> {
