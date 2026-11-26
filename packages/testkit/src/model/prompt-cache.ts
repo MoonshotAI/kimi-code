@@ -82,6 +82,7 @@ interface Explained {
 
 const CHECKED_ROLES: ReadonlySet<BuiltInLaneName> = new Set(['main', 'compaction']);
 const AFTER_COMPACTION = 'the history restarts after compaction';
+const UNKEYED_HINT = 'Requests without a prompt cache key carry nothing that tells conversations apart, so every such request to this model counts as one conversation; give each conversation its own model if the test runs several.';
 const EXCERPT_BEFORE = 24;
 const EXCERPT_AFTER = 48;
 
@@ -263,6 +264,7 @@ function describeUnexplained({ observation, baseline, break: found }: Comparison
   return [
     `request #${observation.source.request} (${observation.source.lane}) does not extend request #${baseline} ${key}: ${found?.detail}.`,
     `It reuses ${observation.reusedTokens} of ${observation.totalTokens} estimated tokens.`,
+    ...(observation.cacheKey === undefined ? [UNKEYED_HINT] : []),
     'Declare an intended break with model.expectCacheBreak(reason).',
   ].join(' ');
 }

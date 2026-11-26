@@ -20,7 +20,7 @@ import { GutterContainer } from './components/chrome/gutter-container';
 import type { MoonLoader, SpinnerStyle } from './components/chrome/moon-loader';
 import { NotifyPanelComponent } from './components/chrome/notify-panel';
 import { QueuePaneComponent } from './components/panes/queue-pane';
-import type { SessionRow } from './components/dialogs/session-picker';
+import type { SessionRow, SessionsScope } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
 import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG } from './config';
 import { CHROME_GUTTER, DOCK_QUEUE_ROWS, DOCK_UPDATES_ROWS } from './constant/rendering';
@@ -73,7 +73,7 @@ export interface TUIState {
   loadingSessions: boolean;
   sessionsNextCursor: string | undefined;
   sessionsLoadingMore: boolean;
-  sessionsScope: 'cwd' | 'all';
+  sessionsScope: SessionsScope;
   activeDialog:
     | 'session-picker'
     | 'help'
@@ -177,7 +177,10 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     root.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
     ui.setLayoutRoot(root);
     ui.addLayoutEffect(() => {
-      if (ui.getLayoutRoot() === root && fullscreenView.updateStickyMessage()) ui.requestRender();
+      if (ui.getLayoutRoot() !== root) return;
+      const stickyChanged = fullscreenView.updateStickyMessage();
+      const dockOverflowChanged = consumeDockOverflowChange(state);
+      if (stickyChanged || dockOverflowChanged) ui.requestRender();
     });
   }
 
@@ -272,4 +275,14 @@ export function isBlockingPromptPending(state: Pick<TUIState, 'livePane' | 'acti
     state.livePane.pendingQuestion !== null ||
     state.activeDialog === 'goal-start'
   );
+}
+
+function consumeDockOverflowChange(
+  state: Pick<TUIState, 'notifyPanel' | 'queuePane' | 'editorContainer' | 'editorSlot'>,
+): boolean {
+  let changed = state.notifyPanel.consumeOverflowChange();
+  if (state.queuePane.consumeOverflowChange()) changed = true;
+  const active = editorSlotComponent(state);
+  if (active instanceof DockSection && active.consumeOverflowChange()) changed = true;
+  return changed;
 }

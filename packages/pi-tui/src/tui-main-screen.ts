@@ -2,8 +2,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
-import { SEGMENT_RESET, type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
+import { CURSOR_MARKER, SEGMENT_RESET, type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
 import { asciiVisibleWidthWithinLimit, normalizeTerminalOutput, sliceByColumn, visibleWidth } from "./utils.ts";
+
+/** OSC 133 prompt markers at the start of a rendered line. Fullscreen uses them for prompt navigation. */
+const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
@@ -280,7 +283,10 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 		// Render all components to get new lines
 		// Resolve fake cursors before compositing so overlays and line slicing see plain SGR codes
-		let newLines = this.resolveFakeCursors(this.render(width));
+		// Drop OSC 133 markers: the terminal reads 133;A as a new shell prompt, which ends program status (OSC 7501)
+		let newLines = this.resolveFakeCursors(
+			this.render(width).map((line) => (line.startsWith("\x1b]133;") ? line.replace(OSC133_ZONE_PREFIX, "") : line)),
+		);
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.hasOverlayEntries) {
@@ -318,6 +324,10 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			if (isImageLine(line)) {
 				imageIds = extractKittyImageIds(line);
 			} else {
+				// Cursor markers are internal render metadata and must never reach terminal output.
+				if (line.includes(CURSOR_MARKER)) {
+					line = line.replaceAll(CURSOR_MARKER, "");
+				}
 				const lineWidth = asciiVisibleWidthWithinLimit(line, width) ?? visibleWidth(line);
 				if (lineWidth > width) {
 					line = sliceByColumn(line, 0, width, true);

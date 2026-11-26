@@ -337,6 +337,7 @@ class FakeModelImpl implements FakeModel {
       throw error;
     }
     if (sink.gone && !record.settled) record.transition('aborted');
+    if (record.state === 'failed' || (record.state === 'cut' && !sink.headSent)) this.cache.reject(record.index);
   }
 
   private async resolveStep(lane: LaneState, record: RecordedRequest, codec: ProtocolCodec, sink: PlaybackSink): Promise<ScriptedStep | undefined> {

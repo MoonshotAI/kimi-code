@@ -162,7 +162,7 @@ function pendingApproval(): NonNullable<ReturnType<typeof createTUIState>['liveP
   };
 }
 
-function pillLines(state: ReturnType<typeof createTUIState>): string[] {
+function pillLines(state: ReturnType<typeof createTUIState>): readonly string[] {
   const root = (state.ui as TuiAltScreen).getLayoutRoot() as VStack;
   const transcript = root.children[0] as VStack;
   return transcript.children[0]!.render(state.ui.terminal.columns);

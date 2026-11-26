@@ -2276,7 +2276,14 @@ export type EnsureChatReadyResult = ChatGateVerdict | 'server-auth-required';
 
 const MODEL_SWITCH_COMPACT_TIMEOUT_MS = 10 * 60 * 1000;
 
-let modelSelectGeneration = 0;
+let modelSelectSequence = 0;
+const modelSelectGenerationBySession = new Map<string | null | undefined, number>();
+
+function beginModelSelect(sessionId: string | null | undefined): number {
+  modelSelectSequence += 1;
+  modelSelectGenerationBySession.set(sessionId, modelSelectSequence);
+  return modelSelectSequence;
+}
 
 async function applySelectModel(modelId: string): Promise<void> {
   const hostId = chatHostId();
@@ -2323,7 +2330,7 @@ async function runModelSwitchAction(
   generation: number,
 ): Promise<void> {
   const isSuperseded = () =>
-    generation !== modelSelectGeneration || rawState.activeSessionId !== triggerSid;
+    modelSelectGenerationBySession.get(triggerSid) !== generation || rawState.activeSessionId !== triggerSid;
   switch (action) {
     case 'cancel':
       return;
@@ -2339,6 +2346,7 @@ async function runModelSwitchAction(
       }
       const sid = triggerSid;
       if (isSuperseded()) return;
+      const fromModel = rawState.sessions.find((s) => s.id === sid)?.model;
       const request = sessionActions.compact(
         undefined,
         modelSwitchConfirmStore().hasCompactionWait(sid)
@@ -2357,17 +2365,15 @@ async function runModelSwitchAction(
       const outcome = await modelSwitchConfirmStore().waitCompactionSettled(sid, MODEL_SWITCH_COMPACT_TIMEOUT_MS);
       try {
         if (outcome === 'request-failed') return;
-        if (generation !== modelSelectGeneration) return;
+        if (modelSelectGenerationBySession.get(sid) !== generation) return;
         if (outcome === 'completed') {
-          if (rawState.activeSessionId !== sid) {
-            warningsStore().pushOperationFailure(
-              'modelSwitch',
-              new Error('session changed while compacting'),
-              { sessionId: sid, message: t('model.switchCompactAborted') },
-            );
-            return;
+          const session = rawState.sessions.find((s) => s.id === sid);
+          if (session === undefined || session.model !== fromModel) return;
+          if (rawState.activeSessionId === sid) {
+            await applySelectModel(modelId);
+          } else {
+            await modelProvider.setSessionModel(sid, modelId);
           }
-          await applySelectModel(modelId);
           return;
         }
         warningsStore().pushOperationFailure(
@@ -2383,15 +2389,14 @@ async function runModelSwitchAction(
 }
 
 async function selectModel(modelId: string): Promise<void> {
-  modelSelectGeneration += 1;
-  const generation = modelSelectGeneration;
   const triggerSid = rawState.activeSessionId;
+  const generation = beginModelSelect(triggerSid);
   const readiness: Promise<unknown>[] = [];
   if (modelSwitchConfirmStore().needsLoad()) readiness.push(modelSwitchConfirmStore().refresh());
   if (configStore().config === null) readiness.push(configStore().loadConfig());
   if (readiness.length > 0) {
     await Promise.all(readiness);
-    if (generation !== modelSelectGeneration || rawState.activeSessionId !== triggerSid) return;
+    if (modelSelectGenerationBySession.get(triggerSid) !== generation || rawState.activeSessionId !== triggerSid) return;
   }
   const matched = matchedModelSwitchRuleForActiveSession(modelId);
   if (matched === undefined) {
@@ -3717,7 +3722,10 @@ export function useKimiWebClient() {
     skillsLoaded,
     activateSkill: modelProvider.activateSkill,
     selectModel,
-    setSessionModel: modelProvider.setSessionModel,
+    setSessionModel: (sessionId: string, modelId: string) => {
+      beginModelSelect(sessionId);
+      return modelProvider.setSessionModel(sessionId, modelId);
+    },
     toggleStarModel: modelProvider.toggleStarModel,
     addProvider: modelProvider.addProvider,
     updateProvider: modelProvider.updateProvider,
