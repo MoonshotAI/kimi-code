@@ -23,15 +23,17 @@ selfTest('submit', {
     },
     'sends the prompt that undo put back': {
       run: async ({ product, model }) => {
-        model.script(say('The first answer.'), say('The answer again.'));
+        model.script(say('Started.'), say('The first answer.'), say('The answer again.'));
+        await product.send(OPENER);
+        await product.waitIdle();
         await product.send('Answer this.');
         await product.waitIdle();
         await product.undo();
-        model.expectCacheBreak('undo rewrites the history', { at: 'history' });
         await product.submit('Answer this.');
         await product.waitIdle();
         await product.expectReply('The answer again.');
-        expect(model.requests('main')[1]?.texts('assistant')).not.toContain('The first answer.');
+        expect(model.requests('main')[2]?.userTextsSinceReply).toEqual(['Answer this.']);
+        expect(model.requests('main')[2]?.texts('assistant')).not.toContain('The first answer.');
       },
     },
   },
