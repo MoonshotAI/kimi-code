@@ -82,6 +82,7 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
   private currentTab = 0;
   private submitActionIdx = 0;
   private editingOther = false;
+  private pendingEnsureCursor = false;
   private reviewMessage: string | undefined;
   private lastAnswerMethod: QuestionSubmissionMethod | undefined;
 
@@ -373,6 +374,7 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
     this.reviewMessage = undefined;
     if (this.isSubmitTab()) this.submitActionIdx = 0;
     this.scrollBodyToTop();
+    this.pendingEnsureCursor = !this.isSubmitTab() && this.currentCursor() > 0;
   }
 
   private moveQuestionCursor(delta: number): void {
@@ -385,6 +387,7 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
     const next = (this.currentCursor() + delta + total) % total;
     this.cursors[questionIdx] = next;
     this.reviewMessage = undefined;
+    this.pendingEnsureCursor = true;
     this.ensureOptionVisible(next);
   }
 
@@ -419,7 +422,7 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
     if (this.isOtherOption(questionIdx, optionIdx)) {
       if (question.multi_select && this.multiSelections[questionIdx]?.has(optionIdx)) {
         this.multiSelections[questionIdx].delete(optionIdx);
-        if (method !== undefined) this.lastAnswerMethod = method;
+        this.lastAnswerMethod = method;
         this.updateAnswer(questionIdx);
         return;
       }
@@ -432,14 +435,14 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
       if (set === undefined) return;
       if (set.has(optionIdx)) set.delete(optionIdx);
       else set.add(optionIdx);
-      if (method !== undefined) this.lastAnswerMethod = method;
+      this.lastAnswerMethod = method;
       this.updateAnswer(questionIdx);
       return;
     }
 
     this.singleSelections[questionIdx] = optionIdx;
     this.committedOtherValues[questionIdx] = undefined;
-    if (method !== undefined) this.lastAnswerMethod = method;
+    this.lastAnswerMethod = method;
     this.updateAnswer(questionIdx);
     this.advanceAfterSingleSelect(questionIdx);
   }
@@ -452,6 +455,7 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
     this.otherInput.setValue(draft);
     this.otherInput.setCursor(draft.length);
     this.reviewMessage = undefined;
+    this.pendingEnsureCursor = true;
     this.ensureOptionVisible(otherIdx);
   }
 
@@ -490,6 +494,7 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
     this.reviewMessage = undefined;
     if (this.isSubmitTab()) this.submitActionIdx = 0;
     this.scrollBodyToTop();
+    this.pendingEnsureCursor = !this.isSubmitTab() && this.currentCursor() > 0;
   }
 
   private findNextUnansweredAfter(fromIdx: number): number | null {
@@ -689,6 +694,10 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
       regions.push({ start: startRow, end: lines.length, index: i });
     }
     this.optionRegions = regions;
+    if (this.pendingEnsureCursor) {
+      this.pendingEnsureCursor = false;
+      this.ensureOptionVisible(cursor);
+    }
 
     if (this.layout === undefined && (visibleEnd < options.length || visibleStart > 0)) {
       lines.push(

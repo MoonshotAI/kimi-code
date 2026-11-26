@@ -693,4 +693,79 @@ describe('QuestionDialogComponent', () => {
       vi.restoreAllMocks();
     }
   });
+
+  it('keeps a lower saved option cursor visible after tab switches and clears stale keyboard method on mouse answer', async () => {
+    let now = 80_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const pending = makePending([
+      {
+        header: 'First',
+        question: 'Pick from long list?',
+        multi_select: false,
+        options: Array.from({ length: 9 }, (_, i) => ({
+          label: `Choice ${String(i + 1)}`,
+          description: `Detail ${String(i + 1)}`,
+        })),
+      },
+      {
+        header: 'Second',
+        question: 'Pick second?',
+        multi_select: false,
+        options: [{ label: 'Alpha' }, { label: 'Beta' }],
+      },
+    ]);
+    const { dialog, collected, methods } = makeDialog(pending, undefined, {
+      layout: { maxBodyRows: 8 },
+    });
+    const vt = new VirtualTerminal(90, 20);
+    const ui = new TuiAltScreen(vt);
+    ui.setLayoutRoot(dialog);
+    ui.start();
+    ui.setFocus(dialog);
+    await vt.waitForRender();
+    try {
+      now += 500;
+      vt.sendInput('8');
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).toContain('Pick second?');
+
+      vt.sendInput('\u001B[D');
+      await vt.waitForRender();
+      let screen = vt.getViewport().map(strip);
+      expect(screen.join('\n')).toContain('→ [8] Choice 8');
+
+      const tabRow = screen.findIndex((line) => line.includes('First') && line.includes('Second'));
+      const secondTabCol = screen[tabRow]!.indexOf('Second') + 3;
+      vt.sendInput(`\u001B[<0;${String(secondTabCol)};${String(tabRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(secondTabCol)};${String(tabRow + 1)}m`);
+      await vt.waitForRender();
+
+      screen = vt.getViewport().map(strip);
+      const betaRow = screen.findIndex((line) => line.includes('Beta'));
+      expect(betaRow).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<0;10;${String(betaRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(betaRow + 1)}m`);
+      await vt.waitForRender();
+
+      screen = vt.getViewport().map(strip);
+      const reviewRow = screen.findIndex((line) => line.includes('Review your answer'));
+      expect(reviewRow).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<65;10;${String(reviewRow + 1)}M`);
+      vt.sendInput(`\u001B[<65;10;${String(reviewRow + 1)}M`);
+      await vt.waitForRender();
+
+      screen = vt.getViewport().map(strip);
+      const submitRow = screen.findIndex((line) => line.includes('[1] Submit'));
+      expect(submitRow).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<0;10;${String(submitRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(submitRow + 1)}m`);
+      await vt.waitForRender();
+
+      expect(collected).toEqual([['Choice 8', 'Beta']]);
+      expect(methods).toEqual([undefined]);
+    } finally {
+      ui.stop();
+      vi.restoreAllMocks();
+    }
+  });
 });
