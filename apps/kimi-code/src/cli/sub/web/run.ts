@@ -35,7 +35,6 @@ import {
 } from './access-urls';
 import {
   computeManagedDaemonEnvHashes,
-  createDaemonEnvSalt,
   daemonLogPath,
   daemonSocketPath,
   enableDaemonRemoteControl,
@@ -525,8 +524,7 @@ async function runDaemonServerInProcess(
 
   let exiting = false;
   let ready = false;
-  const envSalt = createDaemonEnvSalt();
-  const envHashes = computeManagedDaemonEnvHashes(env, envSalt);
+  const envHashes = computeManagedDaemonEnvHashes(env);
 
   const finalizeExit = async (): Promise<void> => {
     if (exiting) return;
@@ -564,7 +562,6 @@ async function runDaemonServerInProcess(
         startedAt,
         version,
         kapVersion: KAP_VERSION,
-        envSalt,
         envHashes,
       });
     },

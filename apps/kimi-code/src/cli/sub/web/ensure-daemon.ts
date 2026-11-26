@@ -9,13 +9,11 @@ import { getDataDir } from '#/utils/paths';
 
 import { getVersion } from '../../version';
 import {
-  acquireDaemonLock,
   agentSocketPath,
-  daemonLockPath,
   daemonLogPath,
   daemonSocketPath,
+  ensureDaemonProcess,
   spawnDetachedDaemonProcess,
-  syncForwardedAgentSocket,
 } from './daemon-client';
 
 export { daemonSocketPath };
@@ -61,78 +59,37 @@ export interface EnsureDaemonDeps {
   wait(ms: number): Promise<void>;
 }
 
-async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> {
-  const socketPath = daemonSocketPath(deps.homeDir);
-  const existing = await deps.connectSocket(socketPath);
-  if (existing !== undefined) {
-    if (existing.version === deps.version) {
-      return {
-        version: existing.version,
-        kapVersion: existing.kapVersion ?? KAP_VERSION,
-        reusedBusyMismatch: false,
-        stream: existing.stream,
-      };
-    }
-    const stopped = await existing.stopIfIdle().catch(() => false);
-    if (!stopped) {
-      return {
-        version: existing.version,
-        kapVersion: existing.kapVersion ?? KAP_VERSION,
-        reusedBusyMismatch: true,
-        stream: existing.stream,
-      };
-    }
-    existing.close();
-    let closed = false;
-    for (let attempt = 0; attempt < START_MAX_ATTEMPTS; attempt += 1) {
-      const probe = await deps.connectSocket(socketPath);
-      if (probe === undefined) {
-        closed = true;
-        break;
-      }
-      probe.close();
-      await deps.wait(POLL_INTERVAL_MS);
-    }
-    if (!closed) {
-      throw new EnsureDaemonError(
-        'start_timeout',
-        'the previous kimi server did not shut down in time',
-      );
-    }
-  }
-  const logPath = daemonLogPath(deps.homeDir);
-  deps.spawnServer(socketPath, logPath, agentSocketPath(deps.homeDir));
-  for (let attempt = 0; attempt < START_MAX_ATTEMPTS; attempt += 1) {
-    const started = await deps.connectSocket(socketPath);
-    if (started !== undefined) {
-      return {
-        version: started.version,
-        kapVersion: started.kapVersion ?? KAP_VERSION,
-        reusedBusyMismatch: false,
-        stream: started.stream,
-      };
-    }
-    await deps.wait(POLL_INTERVAL_MS);
-  }
-  throw new EnsureDaemonError('start_timeout', `the kimi server did not start; see ${logPath}`);
-}
-
 export async function ensureDaemon(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> {
-  let release: (() => Promise<void>) | undefined;
-  try {
-    release = await acquireDaemonLock(daemonLockPath(deps.homeDir), (ms) => deps.wait(ms));
-  } catch (error) {
-    throw new EnsureDaemonError(
-      'lock_timeout',
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-  try {
-    await syncForwardedAgentSocket(deps.homeDir, deps.sshAuthSock);
-    return await findOrStart(deps);
-  } finally {
-    await release();
-  }
+  const socketPath = daemonSocketPath(deps.homeDir);
+  const logPath = daemonLogPath(deps.homeDir);
+  const { daemon, reusedBusyMismatch } = await ensureDaemonProcess({
+    homeDir: deps.homeDir,
+    version: deps.version,
+    sshAuthSock: deps.sshAuthSock,
+    pollIntervalMs: POLL_INTERVAL_MS,
+    maxAttempts: START_MAX_ATTEMPTS,
+    probe: () => deps.connectSocket(socketPath),
+    stopIfIdle: (existing) => existing.stopIfIdle().catch(() => false),
+    closeProbe: (conn) => conn.close(),
+    spawn: () => deps.spawnServer(socketPath, logPath, agentSocketPath(deps.homeDir)),
+    wait: (ms) => deps.wait(ms),
+    onLockError: (error) => {
+      throw new EnsureDaemonError(
+        'lock_timeout',
+        error instanceof Error ? error.message : String(error),
+      );
+    },
+    onShutdownTimeout: () =>
+      new EnsureDaemonError('start_timeout', 'the previous kimi server did not shut down in time'),
+    onStartTimeout: () =>
+      new EnsureDaemonError('start_timeout', `the kimi server did not start; see ${logPath}`),
+  });
+  return {
+    version: daemon.version,
+    kapVersion: daemon.kapVersion ?? KAP_VERSION,
+    reusedBusyMismatch,
+    stream: daemon.stream,
+  };
 }
 
 function spawnDetachedServer(_socketPath: string, logPath: string, agentSocket: string): void {

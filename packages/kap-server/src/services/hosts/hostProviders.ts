@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { okEnvelope } from '../../envelope';
 import { defineRoute } from '../../middleware/defineRoute';
 import { ErrorCode } from '../../protocol/error-codes';
+import { isTrustedUnixRequest, isTrustedUnixSocket } from '../../transport/stdioRpc';
 import { enqueueProviderWrite } from '../providerWrites';
 import type { HostSession } from './hostSession';
 
@@ -114,7 +115,6 @@ export function registerImportProvidersRoute(
     post(path: string, options: { preHandler: unknown[]; schema?: Record<string, unknown> }, handler: never): unknown;
   },
   core: Scope,
-  opts?: { readonly isTrustedRequest?: (req: { raw: IncomingMessage }) => boolean },
 ): void {
   const route = defineRoute(
     {
@@ -130,21 +130,13 @@ export function registerImportProvidersRoute(
       reply.send(okEnvelope(await importSharedProviders(core, req.body), req.id));
     },
   );
-  const preHandler =
-    opts?.isTrustedRequest === undefined
-      ? route.options.preHandler
-      : [
-          async (
-            req: { raw: IncomingMessage },
-            reply: { code(status: number): { send(payload: unknown): unknown } },
-          ) => {
-            if (!opts.isTrustedRequest!(req)) {
-              return reply
-                .code(404)
-                .send({ statusCode: 404, error: 'Not Found', message: 'Not Found' });
-            }
-          },
-          ...route.options.preHandler,
-        ];
-  app.post(route.path, { ...route.options, preHandler }, route.handler as never);
+  const unixOnly = async (
+    req: { raw: IncomingMessage },
+    reply: { code(status: number): { send(payload: unknown): unknown } },
+  ): Promise<unknown> => {
+    if (!isTrustedUnixRequest(req.raw) && !isTrustedUnixSocket(req.raw.socket)) {
+      return reply.code(404).send({ statusCode: 404, error: 'Not Found', message: 'Not Found' });
+    }
+  };
+  app.post(route.path, { ...route.options, preHandler: [unixOnly, ...route.options.preHandler] }, route.handler as never);
 }

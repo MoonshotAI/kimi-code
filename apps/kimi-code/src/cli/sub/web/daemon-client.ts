@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { chmod, mkdir, open, readFile, rename, rm, symlink } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
@@ -67,7 +67,6 @@ export interface DaemonStateRecord {
   readonly startedAt: string;
   readonly version: string;
   readonly kapVersion: number;
-  readonly envSalt?: string;
   readonly envHashes: Readonly<Record<string, string>>;
 }
 
@@ -81,7 +80,6 @@ export interface RunningDaemonInfo {
   readonly startedAt: string;
   readonly version: string;
   readonly kapVersion: number;
-  readonly envSalt?: string;
   readonly envHashes?: Readonly<Record<string, string>>;
 }
 
@@ -177,23 +175,15 @@ function isManagedEnvKey(key: string): boolean {
   );
 }
 
-export function createDaemonEnvSalt(): string {
-  return randomBytes(32).toString('hex');
-}
-
 export function computeManagedDaemonEnvHashes(
   env: NodeJS.ProcessEnv = process.env,
-  salt?: string,
 ): Record<string, string> {
   const hashes: Record<string, string> = {};
   for (const key of Object.keys(env).toSorted()) {
     if (!isManagedEnvKey(key)) continue;
     const value = env[key];
     if (value === undefined || value === '') continue;
-    hashes[key] =
-      salt !== undefined && salt.length > 0
-        ? createHmac('sha256', salt).update(`${key}\0${value}`).digest('hex')
-        : createHash('sha256').update(value).digest('hex');
+    hashes[key] = createHash('sha256').update(value).digest('hex');
   }
   return hashes;
 }
@@ -201,9 +191,8 @@ export function computeManagedDaemonEnvHashes(
 export function diffManagedDaemonEnv(
   currentEnv: NodeJS.ProcessEnv,
   daemonHashes: Readonly<Record<string, string>>,
-  salt?: string,
 ): string[] {
-  const current = computeManagedDaemonEnvHashes(currentEnv, salt);
+  const current = computeManagedDaemonEnvHashes(currentEnv);
   const allKeys = new Set([...Object.keys(current), ...Object.keys(daemonHashes)]);
   return [...allKeys].toSorted().filter((key) => current[key] !== daemonHashes[key]);
 }
@@ -309,9 +298,6 @@ export async function readDaemonState(homeDir: string): Promise<DaemonStateRecor
         startedAt: parsed.startedAt,
         version: parsed.version,
         kapVersion: typeof parsed.kapVersion === 'number' ? parsed.kapVersion : 1,
-        ...(typeof parsed.envSalt === 'string' && parsed.envSalt.length > 0
-          ? { envSalt: parsed.envSalt }
-          : {}),
         envHashes,
       };
     }
@@ -421,7 +407,6 @@ export async function probeRunningDaemon(homeDir: string): Promise<RunningDaemon
     startedAt: meta.started_at ?? liveState?.startedAt ?? '',
     version: meta.server_version,
     kapVersion: meta.kap_version ?? liveState?.kapVersion ?? 1,
-    envSalt: liveState?.envSalt,
     envHashes: liveState?.envHashes,
   };
 }
@@ -476,6 +461,71 @@ async function defaultStopIfIdle(socketPath: string): Promise<boolean> {
   return res?.status === 200 && res.envelope.code === 0 && res.envelope.data?.ok === true;
 }
 
+export interface EnsureDaemonProcessOptions<T extends { readonly version: string }> {
+  readonly homeDir: string;
+  readonly version: string;
+  readonly sshAuthSock?: string;
+  readonly pollIntervalMs: number;
+  readonly maxAttempts: number;
+  readonly probe: () => Promise<T | undefined>;
+  readonly stopIfIdle: (existing: T) => Promise<boolean>;
+  readonly closeProbe?: (item: T) => void;
+  readonly beforeReuse?: (existing: T) => void;
+  readonly spawn: () => void;
+  readonly wait: (ms: number) => Promise<void>;
+  readonly onLockError?: (error: unknown) => never;
+  readonly onShutdownTimeout: () => Error;
+  readonly onStartTimeout: () => Error;
+}
+
+export async function ensureDaemonProcess<T extends { readonly version: string }>(
+  options: EnsureDaemonProcessOptions<T>,
+): Promise<{ readonly daemon: T; readonly started: boolean; readonly reusedBusyMismatch: boolean }> {
+  let release: () => Promise<void>;
+  try {
+    release = await acquireDaemonLock(daemonLockPath(options.homeDir), options.wait);
+  } catch (error) {
+    if (options.onLockError !== undefined) options.onLockError(error);
+    throw error;
+  }
+  try {
+    await syncForwardedAgentSocket(options.homeDir, options.sshAuthSock);
+    const existing = await options.probe();
+    if (existing !== undefined) {
+      options.beforeReuse?.(existing);
+      if (existing.version === options.version) {
+        return { daemon: existing, started: false, reusedBusyMismatch: false };
+      }
+      if (!(await options.stopIfIdle(existing))) {
+        return { daemon: existing, started: false, reusedBusyMismatch: true };
+      }
+      options.closeProbe?.(existing);
+      let closed = false;
+      for (let attempt = 0; attempt < options.maxAttempts; attempt += 1) {
+        const probe = await options.probe();
+        if (probe === undefined) {
+          closed = true;
+          break;
+        }
+        options.closeProbe?.(probe);
+        await options.wait(options.pollIntervalMs);
+      }
+      if (!closed) throw options.onShutdownTimeout();
+    }
+    options.spawn();
+    for (let attempt = 0; attempt < options.maxAttempts; attempt += 1) {
+      const started = await options.probe();
+      if (started !== undefined) {
+        return { daemon: started, started: true, reusedBusyMismatch: false };
+      }
+      await options.wait(options.pollIntervalMs);
+    }
+    throw options.onStartTimeout();
+  } finally {
+    await release();
+  }
+}
+
 export async function ensureSharedDaemon(
   options: EnsureSharedDaemonOptions,
 ): Promise<EnsureSharedDaemonResult> {
@@ -486,49 +536,26 @@ export async function ensureSharedDaemon(
   const spawnDaemon = options.spawnDaemon ?? spawnDetachedDaemonProcess;
   const stopIfIdle = options.requestStopIfIdle ?? defaultStopIfIdle;
 
-  const release = await acquireDaemonLock(daemonLockPath(options.homeDir), wait);
-  try {
-    await syncForwardedAgentSocket(options.homeDir, env['SSH_AUTH_SOCK']);
-    const existing = await probe(options.homeDir);
-    if (existing !== undefined) {
+  return ensureDaemonProcess({
+    homeDir: options.homeDir,
+    version,
+    sshAuthSock: env['SSH_AUTH_SOCK'],
+    pollIntervalMs: POLL_INTERVAL_MS,
+    maxAttempts: START_MAX_ATTEMPTS,
+    probe: () => probe(options.homeDir),
+    stopIfIdle: (existing) => stopIfIdle(existing.socketPath),
+    beforeReuse: (existing) => {
       if (options.checkEnv === true && existing.envHashes !== undefined) {
-        const changed = diffManagedDaemonEnv(env, existing.envHashes, existing.envSalt);
-        if (changed.length > 0) {
-          throw new DaemonEnvMismatchError(changed);
-        }
+        const changed = diffManagedDaemonEnv(env, existing.envHashes);
+        if (changed.length > 0) throw new DaemonEnvMismatchError(changed);
       }
-      if (existing.version === version) {
-        return { daemon: existing, started: false, reusedBusyMismatch: false };
-      }
-      const stopped = await stopIfIdle(existing.socketPath);
-      if (!stopped) {
-        return { daemon: existing, started: false, reusedBusyMismatch: true };
-      }
-      let closed = false;
-      for (let attempt = 0; attempt < START_MAX_ATTEMPTS; attempt += 1) {
-        if ((await probe(options.homeDir)) === undefined) {
-          closed = true;
-          break;
-        }
-        await wait(POLL_INTERVAL_MS);
-      }
-      if (!closed) {
-        throw new Error('the previous Kimi daemon did not shut down in time');
-      }
-    }
-
-    spawnDaemon(options.homeDir, env);
-    for (let attempt = 0; attempt < START_MAX_ATTEMPTS; attempt += 1) {
-      const started = await probe(options.homeDir);
-      if (started !== undefined) {
-        return { daemon: started, started: true, reusedBusyMismatch: false };
-      }
-      await wait(POLL_INTERVAL_MS);
-    }
-    throw new Error(`the Kimi daemon did not start; see ${daemonLogPath(options.homeDir)}`);
-  } finally {
-    await release();
-  }
+    },
+    spawn: () => spawnDaemon(options.homeDir, env),
+    wait,
+    onShutdownTimeout: () => new Error('the previous Kimi daemon did not shut down in time'),
+    onStartTimeout: () =>
+      new Error(`the Kimi daemon did not start; see ${daemonLogPath(options.homeDir)}`),
+  });
 }
 
 interface RemoteControlStatusWire {
@@ -780,39 +807,24 @@ export async function stopSharedDaemon(
     }
 
     const socketPath = daemon?.socketPath ?? daemonSocketPath(options.homeDir);
-    const shutdownRes = await daemonHttpRequest<{ ok?: boolean }>(
-      socketPath,
-      'POST',
-      '/api/v1/shutdown',
-      undefined,
-      2_000,
-    );
-    const shutdownAccepted = shutdownRes?.status === 200 && shutdownRes.envelope.code === 0;
-    if (!shutdownAccepted && pid !== undefined) {
-      signalPid(pid, 'SIGTERM');
-    }
-
-    if (await waitForDaemonExit(options.homeDir, pid, STOP_GRACE_MS, wait)) {
+    const shutdownRes = await daemonHttpRequest<{ ok?: boolean }>(socketPath, 'POST', '/api/v1/shutdown', undefined, 2_000);
+    const cleanupFiles = async (): Promise<void> => {
       await rm(daemonStatePath(options.homeDir), { force: true });
       await rm(socketPath, { force: true });
+    };
+    const httpAccepted = shutdownRes?.status === 200 && shutdownRes.envelope.code === 0;
+    if (httpAccepted && (await waitForDaemonExit(options.homeDir, pid, STOP_GRACE_MS, wait))) {
+      await cleanupFiles();
       return { outcome: 'stopped', pid };
     }
-
-    if (shutdownAccepted && pid !== undefined) {
-      signalPid(pid, 'SIGTERM');
-      if (await waitForDaemonExit(options.homeDir, pid, STOP_GRACE_MS, wait)) {
-        await rm(daemonStatePath(options.homeDir), { force: true });
-        await rm(socketPath, { force: true });
-        return { outcome: 'stopped', pid };
-      }
+    if (pid !== undefined) signalPid(pid, 'SIGTERM');
+    if (await waitForDaemonExit(options.homeDir, pid, STOP_GRACE_MS, wait)) {
+      await cleanupFiles();
+      return { outcome: 'stopped', pid };
     }
-
-    if (pid !== undefined) {
-      signalPid(pid, 'SIGKILL');
-    }
+    if (pid !== undefined) signalPid(pid, 'SIGKILL');
     if (await waitForDaemonExit(options.homeDir, pid, KILL_GRACE_MS, wait)) {
-      await rm(daemonStatePath(options.homeDir), { force: true });
-      await rm(socketPath, { force: true });
+      await cleanupFiles();
       return { outcome: 'killed', pid };
     }
 

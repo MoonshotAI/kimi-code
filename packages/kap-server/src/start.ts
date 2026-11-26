@@ -704,7 +704,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       sessionRating,
       dangerousBypassAuth: opts.disableAuth === true,
       managedHost: opts.managedBy === 'ensure-daemon' || opts.managedBy === 'daemon',
-      isTrustedUnixRequest: listenTcp ? isTrustedRequest : undefined,
       webTitle: opts.webTitle,
     });
 

@@ -519,30 +519,42 @@ describe('server-v2 /api/v1/remote-control', () => {
     } as unknown as RemoteControlManager;
     const devices = {
       deactivateDevice: async () => {},
+      deleteDevice: async () => {},
     } as unknown as RemoteControlDeviceClient;
-    let handler: ((req: unknown, reply: unknown) => unknown) | undefined;
+    const persisted: boolean[] = [];
+    const handlers = new Map<string, (req: unknown, reply: unknown) => unknown>();
     const app = {
       get: () => {},
       post: (path: string, _options: unknown, next: unknown) => {
-        if (path === '/remote-control/devices/:id/deactivate') handler = next as typeof handler;
+        if (path === '/remote-control/devices/:id/deactivate') handlers.set('deactivate', next as never);
       },
       patch: () => {},
-      delete: () => {},
-    };
-    registerRemoteControlRoutes(app as never, { service, devices, homeDir });
-
-    let payload: unknown;
-    await handler!(
-      { id: 'req-1', params: { id: createKimiDeviceId(homeDir) } },
-      {
-        send: (value: unknown) => {
-          payload = value;
-        },
+      delete: (path: string, _options: unknown, next: unknown) => {
+        if (path === '/remote-control/devices/:id') handlers.set('delete', next as never);
       },
-    );
+    };
+    registerRemoteControlRoutes(app as never, {
+      service,
+      devices,
+      homeDir,
+      persistPreference: async (enabled) => {
+        persisted.push(enabled);
+      },
+    });
 
+    const localId = createKimiDeviceId(homeDir);
+    let payload: unknown;
+    const reply = {
+      send: (value: unknown) => {
+        payload = value;
+      },
+    };
+    await handlers.get('deactivate')!({ id: 'req-1', params: { id: localId } }, reply);
     expect(disabled).toBe(true);
     expect((payload as Envelope<{ ok: true }>).data.ok).toBe(true);
+    await handlers.get('delete')!({ id: 'req-2', params: { id: 'other-device' } }, reply);
+    await handlers.get('delete')!({ id: 'req-3', params: { id: localId } }, reply);
+    expect(persisted).toEqual([false, false]);
     await rm(homeDir, { recursive: true, force: true });
   });
 
@@ -1415,82 +1427,6 @@ describe('oauth logout remote-control cleanup', () => {
     expect(payload.code).toBe(0);
     expect(disableAttempts).toBe(0);
     await waitFor(async () => disableAttempts === 3, 10000);
-  });
-
-  it('clears persisted Remote Control preference when deactivating or deleting the local device', async () => {
-    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-rc-local-device-pref-'));
-    try {
-      const localId = createKimiDeviceId(homeDir);
-      const persisted: boolean[] = [];
-      const routes = new Map<
-        string,
-        (
-          req: { id: string; body?: unknown; params?: unknown },
-          reply: { send(payload: unknown): unknown },
-        ) => Promise<void> | void
-      >();
-      const app = {
-        get: () => {},
-        post: (path: string, _opts: unknown, handler: (req: never, reply: never) => unknown) => {
-          routes.set(`POST ${path}`, handler as never);
-        },
-        patch: () => {},
-        delete: (path: string, _opts: unknown, handler: (req: never, reply: never) => unknown) => {
-          routes.set(`DELETE ${path}`, handler as never);
-        },
-      };
-      const service = {
-        status: () => ({ enabled: false, state: 'off' as const }),
-        enable: async () => ({ enabled: true, state: 'on' as const }),
-        disable: async () => ({ enabled: false, state: 'off' as const }),
-        close: async () => {},
-      } as unknown as RemoteControlManager;
-      const devices = {
-        listDevices: async () => ({ devices: [] }),
-        renameDevice: async () => {},
-        deactivateDevice: async () => {},
-        deleteDevice: async () => {},
-        clear: () => {},
-      } as unknown as RemoteControlDeviceClient;
-
-      registerRemoteControlRoutes(app, {
-        service,
-        devices,
-        homeDir,
-        persistPreference: async (enabled) => {
-          persisted.push(enabled);
-        },
-      });
-
-      const invoke = async (key: string, id: string): Promise<Envelope<{ ok: boolean }>> => {
-        const handler = routes.get(key);
-        if (handler === undefined) throw new Error(`missing route ${key}`);
-        let response: unknown;
-        await handler(
-          { id: 'req-1', params: { id } },
-          {
-            send: (payload) => {
-              response = payload;
-            },
-          },
-        );
-        return response as Envelope<{ ok: boolean }>;
-      };
-
-      expect((await invoke('POST /remote-control/devices/:id/deactivate', 'other-device')).code).toBe(0);
-      expect(persisted).toEqual([]);
-
-      expect((await invoke('POST /remote-control/devices/:id/deactivate', localId)).code).toBe(0);
-      expect(persisted).toEqual([false]);
-
-      expect((await invoke('DELETE /remote-control/devices/:id', 'other-device')).code).toBe(0);
-      expect(persisted).toEqual([false]);
-
-      expect((await invoke('DELETE /remote-control/devices/:id', localId)).code).toBe(0);
-      expect(persisted).toEqual([false, false]);
-    } finally {
-      await rm(homeDir, { recursive: true, force: true });
-    }
   });
 });
 

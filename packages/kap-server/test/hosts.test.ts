@@ -1333,81 +1333,55 @@ describe('dual-listener daemon (daemon.sock + loopback TCP)', () => {
         expect(tcpBody.data.kap_version).toBe(KAP_VERSION);
         expect(tcpBody.data.server_version).toBe('2.7.3');
 
-        const udsHttp = await new Promise<{ status: number; body: string }>((resolve, reject) => {
-          const req = httpRequest(
-            { socketPath, method: 'GET', path: '/api/v1/meta', headers: { host: 'unix' } },
-            (res) => {
+        const udsHttp = (method: string, path: string, host = '127.0.0.1') =>
+          new Promise<{ status: number; body: Record<string, unknown> }>((resolve, reject) => {
+            const req = httpRequest({ socketPath, method, path, headers: { host } }, (res) => {
               const chunks: Buffer[] = [];
               res.on('data', (chunk: Buffer) => chunks.push(chunk));
               res.on('end', () =>
-                resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }),
+                resolve({ status: res.statusCode ?? 0, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown> }),
               );
-            },
-          );
-          req.on('error', reject);
-          req.end();
-        });
-        expect(udsHttp.status).toBe(200);
-        const udsHttpBody = JSON.parse(udsHttp.body) as { data: { kap_version: number; server_version: string } };
-        expect(udsHttpBody.data.kap_version).toBe(KAP_VERSION);
-        expect(udsHttpBody.data.server_version).toBe('2.7.3');
-
-        const udsJsonl = await new Promise<{ status: number; data: { kap_version: number } }>((resolve, reject) => {
-          const sock = createConnection(socketPath);
-          createInterface({ input: sock, crlfDelay: Infinity }).once('line', (line) => {
-            sock.destroy();
-            const frame = JSON.parse(line) as { status: number; body: string };
-            const parsed = JSON.parse(Buffer.from(frame.body, 'base64').toString('utf8')) as {
-              data: { kap_version: number };
-            };
-            resolve({ status: frame.status, data: parsed.data });
+            });
+            req.on('error', reject);
+            req.end();
           });
-          sock.once('error', reject);
-          sock.write(
-            `  ${JSON.stringify({ type: 'http.req', id: 'm1', method: 'GET', path: '/api/v1/meta', headers: { host: '127.0.0.1' } })}\n`,
-          );
-        });
-        expect(udsJsonl.status).toBe(200);
-        expect(udsJsonl.data.kap_version).toBe(KAP_VERSION);
-
-        const udsImportProviders = await new Promise<{ status: number; code: number }>((resolve, reject) => {
-          const sock = createConnection(socketPath);
-          createInterface({ input: sock, crlfDelay: Infinity }).once('line', (line) => {
-            sock.destroy();
-            const frame = JSON.parse(line) as { status: number; body: string };
-            const parsed = JSON.parse(Buffer.from(frame.body, 'base64').toString('utf8')) as { code: number };
-            resolve({ status: frame.status, code: parsed.code });
+        const udsJsonl = (frame: Record<string, unknown>, prefix = '') =>
+          new Promise<{ status: number; body: Record<string, unknown> }>((resolve, reject) => {
+            const sock = createConnection(socketPath);
+            createInterface({ input: sock, crlfDelay: Infinity }).once('line', (line) => {
+              sock.destroy();
+              const res = JSON.parse(line) as { status: number; body: string };
+              resolve({ status: res.status, body: JSON.parse(Buffer.from(res.body, 'base64').toString('utf8')) as Record<string, unknown> });
+            });
+            sock.once('error', reject);
+            sock.write(`${prefix}${JSON.stringify(frame)}\n`);
           });
-          sock.once('error', reject);
-          sock.write(
-            `${JSON.stringify({
-              type: 'http.req',
-              id: 'imp1',
-              method: 'POST',
-              path: '/api/v1/hosts:import-providers',
-              headers: { host: '127.0.0.1', 'content-type': 'application/json' },
-              body: Buffer.from(JSON.stringify({ providers: {}, models: {} })).toString('base64'),
-            })}\n`,
-          );
-        });
-        expect(udsImportProviders).toEqual({ status: 200, code: 0 });
 
-        const udsShutdown = await new Promise<{ status: number; body: string }>((resolve, reject) => {
-          const req = httpRequest(
-            { socketPath, method: 'POST', path: '/api/v1/shutdown', headers: { host: '127.0.0.1' } },
-            (res) => {
-              const chunks: Buffer[] = [];
-              res.on('data', (chunk: Buffer) => chunks.push(chunk));
-              res.on('end', () =>
-                resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }),
-              );
-            },
-          );
-          req.on('error', reject);
-          req.end();
+        const metaUds = await udsHttp('GET', '/api/v1/meta', 'unix');
+        expect(metaUds.status).toBe(200);
+        expect(metaUds.body['data']).toMatchObject({ kap_version: KAP_VERSION, server_version: '2.7.3' });
+
+        const metaJsonl = await udsJsonl(
+          { type: 'http.req', id: 'm1', method: 'GET', path: '/api/v1/meta', headers: { host: '127.0.0.1' } },
+          '  ',
+        );
+        expect(metaJsonl.status).toBe(200);
+        expect(metaJsonl.body['data']).toMatchObject({ kap_version: KAP_VERSION });
+
+        const importJsonl = await udsJsonl({
+          type: 'http.req',
+          id: 'imp1',
+          method: 'POST',
+          path: '/api/v1/hosts:import-providers',
+          headers: { host: '127.0.0.1', 'content-type': 'application/json' },
+          body: Buffer.from(JSON.stringify({ providers: {}, models: {} })).toString('base64'),
         });
-        expect(udsShutdown.status).toBe(200);
-        expect(JSON.parse(udsShutdown.body)).toMatchObject({ code: 0, data: { ok: true } });
+        expect(importJsonl.status).toBe(200);
+        expect(importJsonl.body['code']).toBe(0);
+
+        const shutdownUds = await udsHttp('POST', '/api/v1/shutdown');
+        expect(shutdownUds.status).toBe(200);
+        expect(shutdownUds.body).toMatchObject({ code: 0, data: { ok: true } });
 
         await Promise.all([server.close(), server.close()]);
         expect(didCloseCount).toBe(1);

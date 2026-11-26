@@ -1525,36 +1525,21 @@ describe('shared background daemon (`kimi web`, `kimi rc`, `kimi daemon`)', () =
   it('fails loudly when managed KIMI_* env vars differ from the running daemon', async () => {
     const {
       computeManagedDaemonEnvHashes,
-      createDaemonEnvSalt,
       DaemonEnvMismatchError,
       diffManagedDaemonEnv,
       ensureSharedDaemon,
     } = await import('#/cli/sub/web/daemon-client');
     const dir = mkdtempSync(join(tmpdir(), 'kimi-daemon-env-'));
     try {
-      const salt = createDaemonEnvSalt();
-      const saltedHashes = computeManagedDaemonEnvHashes(
-        {
-          KIMI_CODE_PASSWORD: 'old-secret',
-          http_proxy: 'http://127.0.0.1:7890',
-          KIMI_MODEL_TEMPERATURE: '0.5',
-        },
-        salt,
-      );
-      expect(saltedHashes['KIMI_CODE_PASSWORD']).not.toBe(
-        computeManagedDaemonEnvHashes({ KIMI_CODE_PASSWORD: 'old-secret' })['KIMI_CODE_PASSWORD'],
-      );
       expect(
         diffManagedDaemonEnv(
-          {
-            KIMI_CODE_PASSWORD: 'old-secret',
-            http_proxy: 'http://127.0.0.1:8080',
-            KIMI_MODEL_TEMPERATURE: '0.8',
-          },
-          saltedHashes,
-          salt,
+          { http_proxy: 'http://127.0.0.1:8080', KIMI_MODEL_TEMPERATURE: '0.8' },
+          computeManagedDaemonEnvHashes({ http_proxy: 'http://127.0.0.1:7890', KIMI_MODEL_TEMPERATURE: '0.5' }),
         ),
       ).toEqual(['KIMI_MODEL_TEMPERATURE', 'http_proxy']);
+      expect(daemonSocketPath(join('/tmp', 'a'.repeat(100)))).toMatch(
+        /kimi-daemon-[0-9a-f]{16}[/\\]daemon\.sock$/,
+      );
 
       await expect(
         ensureSharedDaemon({
@@ -1572,8 +1557,7 @@ describe('shared background daemon (`kimi web`, `kimi rc`, `kimi daemon`)', () =
             startedAt: '2026-11-25T00:00:00.000Z',
             version: '2.7.3',
             kapVersion: 1,
-            envSalt: salt,
-            envHashes: computeManagedDaemonEnvHashes({ KIMI_CODE_PASSWORD: 'old-secret' }, salt),
+            envHashes: computeManagedDaemonEnvHashes({ KIMI_CODE_PASSWORD: 'old-secret' }),
           }),
           spawnDaemon: vi.fn(),
           wait: async () => {},
@@ -1582,13 +1566,6 @@ describe('shared background daemon (`kimi web`, `kimi rc`, `kimi daemon`)', () =
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
-
-  it('places long-home fallback daemon.sock inside a dedicated tmpdir subdirectory', () => {
-    const longHome = join('/tmp', 'a'.repeat(100));
-    const socketPath = daemonSocketPath(longHome);
-    expect(socketPath.endsWith('daemon.sock')).toBe(true);
-    expect(socketPath).toMatch(/kimi-daemon-[0-9a-f]{16}[/\\]daemon\.sock$/);
   });
 
   it.skipIf(process.platform === 'win32')(
