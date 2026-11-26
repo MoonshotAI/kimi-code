@@ -115,7 +115,7 @@ function invalidatePluginStatuses(pluginId: string): void {
   const prefix = `plugin-${pluginId}:`;
   for (const [key, state] of Object.entries(states)) {
     if (!key.startsWith(prefix) || state?.phase !== 'idle') continue;
-    states[key] = { phase: 'idle', cancelled: state.cancelled };
+    states[key] = { ...state, status: undefined };
   }
 }
 

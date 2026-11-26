@@ -692,6 +692,35 @@ describe('useMcpAuthorization', () => {
     });
   });
 
+  it('preserves runtime operation errors when a targeted refresh invalidates stale status', async () => {
+    apiMock.getPluginInfo.mockResolvedValue({
+      skills: [],
+      mcpServers: [{ name: target.serverName, runtimeName: target.runtimeName, enabled: true, transport: 'http' }],
+    });
+    apiMock.inspectMcpAuthStatuses.mockResolvedValue([
+      { name: target.runtimeName, authStatus: 'oauth-authorized' },
+    ]);
+    const auth = useMcpAuthorization();
+    auth.states[target.runtimeName] = {
+      status: 'oauth-authorized',
+      phase: 'idle',
+      error: 'reset failed',
+    };
+
+    const pending = auth.refresh('vercel');
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: undefined,
+      error: 'reset failed',
+    });
+    await pending;
+
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-authorized',
+      phase: 'idle',
+      error: 'reset failed',
+    });
+  });
+
   it('preserves active flows when a targeted refresh invalidates cached plugin statuses', async () => {
     const inspection = deferred<unknown>();
     apiMock.getPluginInfo.mockResolvedValue({
