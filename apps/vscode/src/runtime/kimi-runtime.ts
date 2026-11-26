@@ -59,6 +59,7 @@ export class KimiRuntime {
   private readonly deferredModelSyncSessions = new Set<string>();
   private authMutationChain: Promise<void> = Promise.resolve();
   private revokingFlight: Promise<void> | undefined;
+  private _authGeneration = 0;
   private closed = false;
 
   constructor(options: KimiRuntimeOptions) {
@@ -268,6 +269,39 @@ export class KimiRuntime {
     );
   }
 
+  get authGeneration(): number {
+    return this._authGeneration;
+  }
+
+  bumpAuthGeneration(): number {
+    this._authGeneration += 1;
+    return this._authGeneration;
+  }
+
+  waitForAuthMutations(): Promise<void> {
+    return this.authMutationChain;
+  }
+
+  async hasBusyManagedSession(): Promise<boolean> {
+    const busySessions = [...this.sessions.values()].filter((runtime) => runtime.isBusy);
+    if (busySessions.length === 0) return false;
+    try {
+      const config = await this.harness.getConfig();
+      for (const runtime of busySessions) {
+        const status = await runtime.session.getStatus();
+        const modelId = status.model || config.defaultModel;
+        const entry = modelId ? config.models?.[modelId] : undefined;
+        if (entry?.provider === "managed:kimi-code") {
+          return true;
+        }
+      }
+    } catch (error) {
+      this.log("Unable to inspect busy session model before workspace switch", error);
+      return true;
+    }
+    return false;
+  }
+
   enqueueAuthMutation<T>(work: () => Promise<T>): Promise<T> {
     const run = this.authMutationChain.then(work, work);
     this.authMutationChain = run.then(
@@ -355,6 +389,7 @@ export class KimiRuntime {
       if (!shouldRevoke) {
         return;
       }
+      this._authGeneration += 1;
       await this.harness.auth?.logout?.();
     } catch (error) {
       this.log("Failed to clear credentials after business membership revocation", error);

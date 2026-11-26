@@ -906,6 +906,212 @@ describe("Enterprise workspace RPC and membership revocation", () => {
       "view-busy",
     );
   });
+
+  it("discards a stale getAccountProfile revocation response after the auth generation advances", async () => {
+    let resolveStaleProfile!: (value: unknown) => void;
+    host.harness.auth.getAccountProfile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStaleProfile = resolve;
+        }),
+    );
+    host.harness.auth.switchWorkspace.mockResolvedValueOnce({
+      providerName: "managed:kimi-code",
+      ok: true,
+      target: { kind: "personal" },
+    });
+
+    const staleProfilePromise = bridge.handle(
+      { id: "rpc-stale-profile", method: Methods.GetAccountProfile },
+      "view-1",
+    );
+
+    await bridge.handle(
+      {
+        id: "rpc-switch-personal",
+        method: Methods.SwitchWorkspace,
+        params: { target: { kind: "personal" } },
+      },
+      "view-1",
+    );
+
+    resolveStaleProfile({
+      kind: "error",
+      status: 401,
+      errorCode: "REASON_BUSINESS_MEMBER_REMOVED",
+      message: "Removed from old business workspace",
+    });
+
+    const staleResponse = await staleProfilePromise;
+    expect(staleResponse).toEqual({
+      id: "rpc-stale-profile",
+      result: {
+        kind: "error",
+        message: "Removed from old business workspace",
+        errorCode: "REASON_BUSINESS_MEMBER_REMOVED",
+      },
+    });
+    expect(host.harness.auth.logout).not.toHaveBeenCalled();
+    expect(broadcast).not.toHaveBeenCalledWith(
+      Events.BusinessMembershipRevoked,
+      expect.anything(),
+    );
+  });
+
+  it("converts HTTPS account avatars into CSP-safe data URIs and omits unsafe avatar URLs", async () => {
+    const pngBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const fetchMock = vi.fn(async () =>
+      new Response(pngBytes, {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      host.harness.auth.getAccountProfile.mockResolvedValueOnce({
+        kind: "ok",
+        profile: {
+          userId: "u_avatar",
+          nickname: "Alex Chen",
+          avatar: "https://example.com/avatar-safe.png",
+          userLevelName: "Pro",
+          hasBusinessWorkspace: true,
+          activeWorkspaceName: "Alex Chen",
+          workspaces: [
+            {
+              kind: "personal",
+              key: "personal",
+              name: "Alex Chen",
+              current: true,
+              disabled: false,
+              switchable: true,
+              roles: ["ROLE_OWNER"],
+            },
+          ],
+        },
+      });
+
+      const okRes = await bridge.handle(
+        { id: "rpc-avatar-https", method: Methods.GetAccountProfile },
+        "view-1",
+      );
+      expect(okRes).toMatchObject({
+        id: "rpc-avatar-https",
+        result: {
+          kind: "ok",
+          profile: {
+            avatar: `data:image/png;base64,${pngBytes.toString("base64")}`,
+          },
+        },
+      });
+
+      host.harness.auth.getAccountProfile.mockResolvedValueOnce({
+        kind: "ok",
+        profile: {
+          userId: "u_http",
+          nickname: "Alex Chen",
+          avatar: "http://example.com/insecure.png",
+          userLevelName: "Pro",
+          hasBusinessWorkspace: false,
+          activeWorkspaceName: "Alex Chen",
+          workspaces: [],
+        },
+      });
+
+      const httpRes = await bridge.handle(
+        { id: "rpc-avatar-http", method: Methods.GetAccountProfile },
+        "view-1",
+      );
+      expect(httpRes).toMatchObject({
+        id: "rpc-avatar-http",
+        result: {
+          kind: "ok",
+          profile: { nickname: "Alex Chen" },
+        },
+      });
+      expect(
+        (httpRes as { result: { profile: { avatar?: string } } }).result.profile.avatar,
+      ).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("blocks switchWorkspace while a managed session is busy and waits for in-flight auth mutations before streamChat", async () => {
+    const busySession = {
+      ...createResumedSession("ses-managed-busy", root),
+      getStatus: vi.fn(async () => ({
+        model: "kimi-code/kimi-for-coding",
+        thinkingEffort: "off",
+        permission: "manual",
+      })),
+    };
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "kimi-code/kimi-for-coding",
+      models: {
+        "kimi-code/kimi-for-coding": {
+          provider: "managed:kimi-code",
+          model: "kimi-for-coding",
+        },
+      },
+    });
+    const runtime = await bridge.runtime.attachResumedSession("view-1", busySession as never);
+    const actionId = runtime.beginHostAction("streaming prompt");
+
+    const rejected = await bridge.handle(
+      {
+        id: "rpc-switch-busy",
+        method: Methods.SwitchWorkspace,
+        params: { target: { kind: "business", businessId: "biz_acme" } },
+      },
+      "view-1",
+    );
+    expect(rejected).toEqual({
+      id: "rpc-switch-busy",
+      result: {
+        kind: "error",
+        message: "Finish or stop the active response before switching workspaces.",
+      },
+    });
+    expect(host.harness.auth.switchWorkspace).not.toHaveBeenCalled();
+
+    runtime.completeHostAction("finished", actionId);
+
+    let resolveSwitch!: () => void;
+    let switchSettled = false;
+    const gatedMutation = bridge.runtime.enqueueAuthMutation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSwitch = () => {
+            switchSettled = true;
+            resolve();
+          };
+        }),
+    );
+
+    const openSpy = vi.spyOn(bridge.runtime, "openSession").mockImplementation(async () => {
+      expect(switchSettled).toBe(true);
+      throw new Error("stop-after-gate-check");
+    });
+
+    const chatPromise = bridge.handle(
+      {
+        id: "rpc-chat-after-switch",
+        method: Methods.StreamChat,
+        params: { content: "hello", model: "kimi-code/kimi-for-coding" },
+      },
+      "view-1",
+    );
+
+    await Promise.resolve();
+    expect(openSpy).not.toHaveBeenCalled();
+
+    resolveSwitch();
+    await gatedMutation;
+    await chatPromise;
+    expect(openSpy).toHaveBeenCalledOnce();
+  });
 });
 
 function createResumedSession(id: string, workDir: string) {

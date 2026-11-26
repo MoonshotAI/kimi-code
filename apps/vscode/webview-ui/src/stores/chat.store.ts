@@ -6,7 +6,7 @@ import { Content } from "@/lib/content";
 import { useApprovalStore } from "./approval.store";
 import { toast } from "@/components/ui/sonner";
 
-import { useSettingsStore } from "./settings.store";
+import { getModelById, useSettingsStore } from "./settings.store";
 import { processEvent } from "./event-handlers";
 import type { StatusUpdate, ContentPart, QuestionRequest, ToolResult } from "shared/legacy-sdk";
 import type { UIStreamEvent } from "shared/types";
@@ -142,9 +142,29 @@ function clearAllInlineErrors(draft: ChatState): void {
   }
 }
 
+async function dispatchAfterWorkspaceSwitch(
+  content: string | ContentPart[],
+  initialModel: string,
+  planMode: boolean,
+  sessionId: string | undefined,
+): Promise<{ done: boolean }> {
+  await useSettingsStore.getState().waitForWorkspaceSwitch();
+  const latest = useSettingsStore.getState();
+  const resolvedModel =
+    initialModel && getModelById(latest.models, initialModel) ? initialModel : latest.currentModel;
+  useChatStore.setState(
+    produce((draft: ChatState) => {
+      if (draft.pendingInput !== null) {
+        draft.pendingInput.model = resolvedModel;
+      }
+    }),
+  );
+  return bridge.streamChat(content, resolvedModel, latest.thinkingEffort, planMode, sessionId);
+}
+
 function doSend(state: ChatState, content: string | ContentPart[], model: string) {
   const { sessionId, planMode } = state;
-  const { thinkingEffort } = useSettingsStore.getState();
+  const settings = useSettingsStore.getState();
 
   clearHandshakeTimer();
   handshakeTimer = setTimeout(() => {
@@ -160,18 +180,21 @@ function doSend(state: ChatState, content: string | ContentPart[], model: string
     }
   }, HANDSHAKE_TIMEOUT_MS);
 
-  void bridge
-    .streamChat(content, model, thinkingEffort, planMode, sessionId ?? undefined)
-    .catch((error: unknown) => {
-      const detail = error instanceof Error ? error.message : String(error);
-      useChatStore.getState().processEvent({
-        type: "error",
-        code: "internal",
-        message: "Unable to send the message.",
-        detail,
-        phase: "preflight",
-      });
+  const callPromise =
+    settings.switchingWorkspaceKey !== null
+      ? dispatchAfterWorkspaceSwitch(content, model, planMode, sessionId ?? undefined)
+      : bridge.streamChat(content, model, settings.thinkingEffort, planMode, sessionId ?? undefined);
+
+  void callPromise.catch((error: unknown) => {
+    const detail = error instanceof Error ? error.message : String(error);
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "internal",
+      message: "Unable to send the message.",
+      detail,
+      phase: "preflight",
     });
+  });
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({

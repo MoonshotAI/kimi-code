@@ -80,6 +80,8 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
     return { done: false };
   }
 
+  await ctx.runtime?.waitForAuthMutations?.();
+
   if (VSCodeSettings.autosave) {
     try {
       await ctx.saveAllDirty();

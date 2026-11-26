@@ -7,6 +7,7 @@ import {
   KIMI_REGION_PROFILES,
   kimiRegionProfile,
   OAuthAccessDeniedError,
+  OAuthWorkspaceSwitchError,
   type KimiRegion,
   type ManagedAccountProfile,
 } from "@moonshot-ai/kimi-code-oauth";
@@ -27,10 +28,70 @@ import { updateLoginContext } from "../utils/context";
 import { readPersistedKimiOAuthRef, resolveExtensionRegion } from "../utils/region";
 import type { Handler } from "./types";
 
-function toAccountProfileSnapshot(profile: ManagedAccountProfile): AccountProfileSnapshot {
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+const AVATAR_FETCH_TIMEOUT_MS = 4_000;
+const MAX_AVATAR_CACHE_ENTRIES = 16;
+const SAFE_AVATAR_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "image/gif",
+  "image/avif",
+]);
+const SAFE_DATA_AVATAR_RE = /^data:image\/(png|jpeg|jpg|webp|gif|avif);base64,/i;
+const avatarDataUriCache = new Map<string, string>();
+
+async function resolveWebviewSafeAvatar(avatarUrl: string | undefined): Promise<string | undefined> {
+  if (!avatarUrl) return undefined;
+  if (SAFE_DATA_AVATAR_RE.test(avatarUrl)) return avatarUrl;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(avatarUrl);
+  } catch {
+    return undefined;
+  }
+  if (parsed.protocol !== "https:") return undefined;
+
+  const cached = avatarDataUriCache.get(parsed.href);
+  if (cached !== undefined) return cached;
+
+  try {
+    const response = await fetch(parsed.href, {
+      signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) return undefined;
+    const rawMime = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+    if (!SAFE_AVATAR_MIME_TYPES.has(rawMime)) return undefined;
+    const declaredLength = response.headers.get("content-length");
+    if (declaredLength !== null && Number(declaredLength) > MAX_AVATAR_BYTES) {
+      return undefined;
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.byteLength === 0 || bytes.byteLength > MAX_AVATAR_BYTES) {
+      return undefined;
+    }
+    const normalizedMime = rawMime === "image/jpg" ? "image/jpeg" : rawMime;
+    const dataUri = `data:${normalizedMime};base64,${bytes.toString("base64")}`;
+    if (avatarDataUriCache.size >= MAX_AVATAR_CACHE_ENTRIES) {
+      const oldestKey = avatarDataUriCache.keys().next().value;
+      if (oldestKey !== undefined) avatarDataUriCache.delete(oldestKey);
+    }
+    avatarDataUriCache.set(parsed.href, dataUri);
+    return dataUri;
+  } catch {
+    return undefined;
+  }
+}
+
+async function toAccountProfileSnapshot(
+  profile: ManagedAccountProfile,
+): Promise<AccountProfileSnapshot> {
+  const safeAvatar = await resolveWebviewSafeAvatar(profile.avatar);
   return {
     nickname: profile.nickname,
-    ...(profile.avatar !== undefined ? { avatar: profile.avatar } : {}),
+    ...(safeAvatar !== undefined ? { avatar: safeAvatar } : {}),
     userLevelName: profile.userLevelName,
     hasBusinessWorkspace: profile.hasBusinessWorkspace,
     activeWorkspaceName: profile.activeWorkspaceName,
@@ -49,7 +110,7 @@ function toAccountProfileSnapshot(profile: ManagedAccountProfile): AccountProfil
 
 async function mapManagedAuthFailure(
   error: unknown,
-  onRevoked: () => Promise<void>,
+  onRevoked: () => Promise<boolean>,
 ): Promise<{
   readonly kind: "error";
   readonly message: string;
@@ -61,12 +122,12 @@ async function mapManagedAuthFailure(
     isBusinessMembershipRevokedCode(failure.errorCode) ||
     failure.message === BUSINESS_MEMBERSHIP_REVOKED_MESSAGE
   ) {
-    await onRevoked();
+    const revoked = await onRevoked();
     return {
       kind: "error",
-      message: BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+      message: revoked ? BUSINESS_MEMBERSHIP_REVOKED_MESSAGE : failure.message,
       ...(failure.errorCode !== undefined ? { errorCode: failure.errorCode } : {}),
-      revoked: true,
+      ...(revoked ? { revoked: true } : {}),
     };
   }
   return {
@@ -112,6 +173,7 @@ export const authHandlers: Record<string, Handler<any, any>> = {
             await vscode.env.openExternal(vscode.Uri.parse(url));
           },
         });
+        ctx.runtime.bumpAuthGeneration();
         await updateLoginContext(ctx.harness);
         try {
           resolveExtensionRegion({ homeDir: ctx.harness.homeDir ?? resolveKimiHome(), refresh: true });
@@ -138,6 +200,8 @@ export const authHandlers: Record<string, Handler<any, any>> = {
   [Methods.Logout]: async (_, ctx): Promise<LoginResult> => {
     return ctx.runtime.enqueueAuthMutation(async () => {
       try {
+        ctx.runtime.bumpAuthGeneration();
+        avatarDataUriCache.clear();
         await ctx.harness.auth.logout();
         await updateLoginContext(ctx.harness);
         try {
@@ -162,10 +226,18 @@ export const authHandlers: Record<string, Handler<any, any>> = {
   },
 
   [Methods.GetAccountProfile]: async (_, ctx): Promise<AccountProfileResponse> => {
+    const generation = ctx.runtime.authGeneration;
     try {
       const result = await ctx.harness.auth.getAccountProfile();
       if (result.kind === "error") {
         if (isBusinessMembershipRevokedCode(result.errorCode)) {
+          if (generation !== ctx.runtime.authGeneration) {
+            return {
+              kind: "error",
+              message: result.message,
+              errorCode: result.errorCode,
+            };
+          }
           await ctx.runtime.handleBusinessMembershipRevoked();
           return {
             kind: "error",
@@ -182,11 +254,15 @@ export const authHandlers: Record<string, Handler<any, any>> = {
       }
       return {
         kind: "ok",
-        profile: toAccountProfileSnapshot(result.profile),
+        profile: await toAccountProfileSnapshot(result.profile),
       };
     } catch (error) {
       ctx.logError("Failed to fetch account profile", error);
-      return mapManagedAuthFailure(error, () => ctx.runtime.handleBusinessMembershipRevoked());
+      return mapManagedAuthFailure(error, async () => {
+        if (generation !== ctx.runtime.authGeneration) return false;
+        await ctx.runtime.handleBusinessMembershipRevoked();
+        return true;
+      });
     }
   },
 
@@ -195,8 +271,15 @@ export const authHandlers: Record<string, Handler<any, any>> = {
     ctx,
   ): Promise<SwitchWorkspaceResponse> => {
     return ctx.runtime.enqueueAuthMutation(async () => {
+      if (await ctx.runtime.hasBusyManagedSession()) {
+        return {
+          kind: "error",
+          message: "Finish or stop the active response before switching workspaces.",
+        };
+      }
       try {
         const switched = await ctx.harness.auth.switchWorkspace(params.target);
+        ctx.runtime.bumpAuthGeneration();
         const loggedIn = await updateLoginContext(ctx.harness);
         if (!loggedIn) {
           return {
@@ -220,13 +303,19 @@ export const authHandlers: Record<string, Handler<any, any>> = {
           kind: "ok",
           target: switched.target,
           ...(switched.profile !== undefined
-            ? { profile: toAccountProfileSnapshot(switched.profile) }
+            ? { profile: await toAccountProfileSnapshot(switched.profile) }
             : {}),
           ...(switched.warning !== undefined ? { warning: switched.warning } : {}),
         };
       } catch (error) {
+        if (error instanceof OAuthWorkspaceSwitchError && error.committed) {
+          ctx.runtime.bumpAuthGeneration();
+        }
         ctx.logError("Kimi workspace switch failed", error);
-        return mapManagedAuthFailure(error, () => ctx.runtime.performBusinessMembershipRevocation());
+        return mapManagedAuthFailure(error, async () => {
+          await ctx.runtime.performBusinessMembershipRevocation();
+          return true;
+        });
       }
     });
   },

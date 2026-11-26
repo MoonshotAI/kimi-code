@@ -59,9 +59,10 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
   const [previewMedia, setPreviewMedia] = useState<string | null>(null);
 
   const { isStreaming, sendMessage, abort, draftMedia, removeDraftMedia, hasProcessingMedia, getMediaInConversation, pendingInput, planMode, messages } = useChatStore();
-  const { currentModel, thinkingEffort, updateModel, toggleThinking, selectThinkingEffort, models, extensionConfig, getCurrentThinkingMode } = useSettingsStore();
+  const { currentModel, thinkingEffort, updateModel, toggleThinking, selectThinkingEffort, models, extensionConfig, getCurrentThinkingMode, switchingWorkspaceKey } = useSettingsStore();
 
   const isProcessing = hasProcessingMedia();
+  const isSwitchingWorkspace = switchingWorkspaceKey !== null;
   const thinkingMode = getCurrentThinkingMode();
   const hasConversationHistory = messages.some((message) => message.role === "user");
 
@@ -164,7 +165,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
   }
 
   function handleSend() {
-    if (isProcessing || (!text.trim() && draftMedia.length === 0)) {
+    if (isProcessing || isSwitchingWorkspace || (!text.trim() && draftMedia.length === 0)) {
       return;
     }
 
@@ -174,6 +175,9 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
   }
 
   function handleSlashCommand(name: string) {
+    if (isSwitchingWorkspace) {
+      return;
+    }
     sendMessage(`/${name}`);
     clearInput();
   }
@@ -309,7 +313,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
   }
 
   const hasModels = availableModels.length > 0;
-  const canSend = (text.trim() || draftMedia.length > 0) && !isProcessing;
+  const canSend = (text.trim() || draftMedia.length > 0) && !isProcessing && !isSwitchingWorkspace;
 
   return (
     <div className="p-2 pt-0! flex flex-col min-h-0">
@@ -384,7 +388,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
                         variant="ghost"
                         size="xs"
                         className="gap-0.5 text-accent-foreground border-0! h-6 px-1.5 min-w-0 max-w-[calc(100%-4rem)]"
-                        disabled={isStreaming || !hasModels}
+                        disabled={isStreaming || isSwitchingWorkspace || !hasModels}
                       >
                         <span className="flex min-w-0 items-center text-xs">
                           <span className="truncate">{currentModelConfig?.name ?? "No models available"}</span>
@@ -432,7 +436,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
                 effort={thinkingEffort}
                 efforts={currentModelConfig?.support_efforts}
                 alwaysOn={currentModelConfig?.capabilities.includes("always_thinking")}
-                disabled={isStreaming}
+                disabled={isStreaming || isSwitchingWorkspace}
                 cacheNote={hasConversationHistory ? SWITCH_CACHE_NOTE : undefined}
                 onToggle={toggleThinking}
                 onSelectEffort={selectThinkingEffort}

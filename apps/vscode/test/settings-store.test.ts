@@ -7,6 +7,7 @@ const boundary = vi.hoisted(() => ({
   streamChat: vi.fn(),
   abortChat: vi.fn(),
   trackFiles: vi.fn(),
+  switchWorkspace: vi.fn(),
   toastError: vi.fn(),
   toastWarning: vi.fn(),
 }));
@@ -17,6 +18,7 @@ vi.mock("@/services", () => ({
     streamChat: boundary.streamChat,
     abortChat: boundary.abortChat,
     trackFiles: boundary.trackFiles,
+    switchWorkspace: boundary.switchWorkspace,
   },
 }));
 vi.mock("@/components/ui/sonner", () => ({
@@ -52,6 +54,7 @@ beforeEach(() => {
   boundary.abortChat.mockReset();
   boundary.abortChat.mockResolvedValue({ aborted: true });
   boundary.trackFiles.mockReset();
+  boundary.switchWorkspace.mockReset();
   boundary.toastError.mockReset();
   boundary.toastWarning.mockReset();
   useSettingsStore.getState().initModels(MODELS, "plain", false);
@@ -613,6 +616,46 @@ describe("Webview mid-turn warnings", () => {
     expect(useChatStore.getState().isStreaming).toBe(false);
     await vi.waitFor(() => {
       expect(boundary.streamChat).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("waits for an in-flight workspace switch and adopts the updated model before dispatching streamChat", async () => {
+    useSettingsStore.getState().setIsLoggedIn(true);
+    useSettingsStore.getState().initModels(
+      [
+        { id: "enterprise-only", name: "Enterprise Only", provider: "managed:kimi-code", capabilities: [] },
+        ...MODELS,
+      ],
+      "enterprise-only",
+      false,
+    );
+
+    let resolveSwitch!: (value: { kind: "ok"; target: { kind: "personal" } }) => void;
+    boundary.switchWorkspace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSwitch = resolve;
+        }),
+    );
+
+    const switchPromise = useSettingsStore.getState().switchWorkspace({ kind: "personal" });
+    expect(useSettingsStore.getState().switchingWorkspaceKey).toBe("personal");
+
+    useChatStore.getState().sendMessage("hello after switch");
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+
+    useSettingsStore.getState().setModels(MODELS, "reasoning", true, "high");
+    resolveSwitch({ kind: "ok", target: { kind: "personal" } });
+    await switchPromise;
+
+    await vi.waitFor(() => {
+      expect(boundary.streamChat).toHaveBeenCalledWith(
+        "hello after switch",
+        "reasoning",
+        "high",
+        false,
+        undefined,
+      );
     });
   });
 });

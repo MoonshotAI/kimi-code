@@ -12,6 +12,7 @@ import type { ModelConfig, ThinkingMode, SlashCommandInfo } from "shared/legacy-
 let settingsSaveRevision = 0;
 let accountProfileRevision = 0;
 let authSessionEpoch = 0;
+let switchWorkspaceFlight: Promise<SwitchWorkspaceOutcome> | null = null;
 const MAX_RECENT_WORKSPACE_KEYS = 8;
 const MANAGED_KIMI_CODE_PROVIDER = "managed:kimi-code";
 
@@ -212,6 +213,7 @@ interface SettingsState {
   setAccountProfile: (profile: AccountProfileSnapshot | null) => void;
   loadAccountProfile: () => Promise<void>;
   switchWorkspace: (target: WorkspaceTarget) => Promise<SwitchWorkspaceOutcome>;
+  waitForWorkspaceSwitch: () => Promise<void>;
   triggerMembershipRevoked: (message?: string) => void;
   acknowledgeMembershipRevoked: () => void;
   getCurrentThinkingMode: () => ThinkingMode;
@@ -420,6 +422,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
     authSessionEpoch += 1;
     accountProfileRevision += 1;
+    switchWorkspaceFlight = null;
     set({
       isLoggedIn: false,
       accountProfile: null,
@@ -494,65 +497,80 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const fromType: "personal" | "enterprise" =
       previousCurrent?.kind === "business" ? "enterprise" : "personal";
     set({ switchingWorkspaceKey: targetKey, accountProfileLoading: false });
-    try {
-      const response = await bridge.switchWorkspace(target, fromType);
-      if (epoch !== authSessionEpoch || !get().isLoggedIn) {
-        return { ok: false, revoked: get().membershipRevokedOpen };
-      }
-      if (response.kind === "error") {
-        if (response.revoked) {
-          get().triggerMembershipRevoked(response.message);
-          return { ok: false, revoked: true };
+    const flight = (async (): Promise<SwitchWorkspaceOutcome> => {
+      try {
+        const response = await bridge.switchWorkspace(target, fromType);
+        if (epoch !== authSessionEpoch || !get().isLoggedIn) {
+          return { ok: false, revoked: get().membershipRevokedOpen };
         }
-        return { ok: false, error: response.message };
-      }
-      accountProfileRevision += 1;
-      set((curr) => {
-        const withPrev = pushRecentWorkspaceKey(curr.recentWorkspaceKeys, previousKey);
-        const withTarget = pushRecentWorkspaceKey(withPrev, targetKey);
-        const nextProfile =
-          response.profile ??
-          (curr.accountProfile
-            ? {
-                ...curr.accountProfile,
-                workspaces: curr.accountProfile.workspaces.map((ws) => ({
-                  ...ws,
-                  current: ws.key === targetKey,
-                })),
-              }
-            : null);
+        if (response.kind === "error") {
+          if (response.revoked) {
+            get().triggerMembershipRevoked(response.message);
+            return { ok: false, revoked: true };
+          }
+          return { ok: false, error: response.message };
+        }
+        accountProfileRevision += 1;
+        set((curr) => {
+          const withPrev = pushRecentWorkspaceKey(curr.recentWorkspaceKeys, previousKey);
+          const withTarget = pushRecentWorkspaceKey(withPrev, targetKey);
+          const nextProfile =
+            response.profile ??
+            (curr.accountProfile
+              ? {
+                  ...curr.accountProfile,
+                  workspaces: curr.accountProfile.workspaces.map((ws) => ({
+                    ...ws,
+                    current: ws.key === targetKey,
+                  })),
+                }
+              : null);
+          return {
+            accountProfile: nextProfile,
+            accountProfileLoading: false,
+            accountProfileError: null,
+            recentWorkspaceKeys: withTarget,
+          };
+        });
+        if (response.profile === undefined) {
+          void get().loadAccountProfile();
+        }
         return {
-          accountProfile: nextProfile,
-          accountProfileLoading: false,
-          accountProfileError: null,
-          recentWorkspaceKeys: withTarget,
+          ok: true,
+          ...(response.warning !== undefined ? { warning: response.warning } : {}),
         };
-      });
-      if (response.profile === undefined) {
-        void get().loadAccountProfile();
+      } catch (error) {
+        if (epoch !== authSessionEpoch || !get().isLoggedIn) {
+          return { ok: false, revoked: get().membershipRevokedOpen };
+        }
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      } finally {
+        if (get().switchingWorkspaceKey === targetKey) {
+          set({ switchingWorkspaceKey: null });
+        }
       }
-      return {
-        ok: true,
-        ...(response.warning !== undefined ? { warning: response.warning } : {}),
-      };
-    } catch (error) {
-      if (epoch !== authSessionEpoch || !get().isLoggedIn) {
-        return { ok: false, revoked: get().membershipRevokedOpen };
+    })().finally(() => {
+      if (switchWorkspaceFlight === flight) {
+        switchWorkspaceFlight = null;
       }
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    } finally {
-      if (get().switchingWorkspaceKey === targetKey) {
-        set({ switchingWorkspaceKey: null });
-      }
+    });
+    switchWorkspaceFlight = flight;
+    return flight;
+  },
+
+  waitForWorkspaceSwitch: async () => {
+    if (switchWorkspaceFlight !== null) {
+      await switchWorkspaceFlight.catch(() => undefined);
     }
   },
 
   triggerMembershipRevoked: (message) => {
     authSessionEpoch += 1;
     accountProfileRevision += 1;
+    switchWorkspaceFlight = null;
     set({
       isLoggedIn: false,
       accountProfile: null,
