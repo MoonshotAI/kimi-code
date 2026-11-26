@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
 
-import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
+import { ErrorCode, HOST_PROTOCOL_VERSION, KAP_VERSION } from '@moonshot-ai/kap-server';
 
 import { registerWebCommand } from '#/cli/sub/web';
 import {
@@ -97,8 +97,8 @@ describe('kimi web', () => {
       const payload = JSON.parse(line.slice('__KIMI_ENSURE_DAEMON__'.length)) as Record<string, unknown>;
       expect(payload).toEqual({
         protocol: HOST_PROTOCOL_VERSION,
-        api_level: HOST_API_LEVEL,
-        kap_version: HOST_API_LEVEL,
+        api_level: KAP_VERSION,
+        kap_version: KAP_VERSION,
         version: expect.any(String),
       });
     } finally {
@@ -1525,11 +1525,37 @@ describe('shared background daemon (`kimi web`, `kimi rc`, `kimi daemon`)', () =
   it('fails loudly when managed KIMI_* env vars differ from the running daemon', async () => {
     const {
       computeManagedDaemonEnvHashes,
+      createDaemonEnvSalt,
       DaemonEnvMismatchError,
+      diffManagedDaemonEnv,
       ensureSharedDaemon,
     } = await import('#/cli/sub/web/daemon-client');
     const dir = mkdtempSync(join(tmpdir(), 'kimi-daemon-env-'));
     try {
+      const salt = createDaemonEnvSalt();
+      const saltedHashes = computeManagedDaemonEnvHashes(
+        {
+          KIMI_CODE_PASSWORD: 'old-secret',
+          http_proxy: 'http://127.0.0.1:7890',
+          KIMI_MODEL_TEMPERATURE: '0.5',
+        },
+        salt,
+      );
+      expect(saltedHashes['KIMI_CODE_PASSWORD']).not.toBe(
+        computeManagedDaemonEnvHashes({ KIMI_CODE_PASSWORD: 'old-secret' })['KIMI_CODE_PASSWORD'],
+      );
+      expect(
+        diffManagedDaemonEnv(
+          {
+            KIMI_CODE_PASSWORD: 'old-secret',
+            http_proxy: 'http://127.0.0.1:8080',
+            KIMI_MODEL_TEMPERATURE: '0.8',
+          },
+          saltedHashes,
+          salt,
+        ),
+      ).toEqual(['KIMI_MODEL_TEMPERATURE', 'http_proxy']);
+
       await expect(
         ensureSharedDaemon({
           homeDir: dir,
@@ -1546,7 +1572,8 @@ describe('shared background daemon (`kimi web`, `kimi rc`, `kimi daemon`)', () =
             startedAt: '2026-11-25T00:00:00.000Z',
             version: '2.7.3',
             kapVersion: 1,
-            envHashes: computeManagedDaemonEnvHashes({ KIMI_CODE_PASSWORD: 'old-secret' }),
+            envSalt: salt,
+            envHashes: computeManagedDaemonEnvHashes({ KIMI_CODE_PASSWORD: 'old-secret' }, salt),
           }),
           spawnDaemon: vi.fn(),
           wait: async () => {},
@@ -1556,6 +1583,50 @@ describe('shared background daemon (`kimi web`, `kimi rc`, `kimi daemon`)', () =
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('places long-home fallback daemon.sock inside a dedicated tmpdir subdirectory', () => {
+    const longHome = join('/tmp', 'a'.repeat(100));
+    const socketPath = daemonSocketPath(longHome);
+    expect(socketPath.endsWith('daemon.sock')).toBe(true);
+    expect(socketPath).toMatch(/kimi-daemon-[0-9a-f]{16}[/\\]daemon\.sock$/);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'surfaces RemoteControlAlreadyRunningError when the daemon returns REMOTE_CONTROL_ALREADY_RUNNING',
+    async () => {
+      const { createServer } = await import('node:http');
+      const { enableDaemonRemoteControl } = await import('#/cli/sub/web/daemon-client');
+      const { RemoteControlAlreadyRunningError } = await import('@moonshot-ai/remote-control');
+      const dir = mkdtempSync(join(tmpdir(), 'kimi-rc-conflict-'));
+      const socketPath = join(dir, 'daemon.sock');
+      const srv = createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            code: ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING,
+            msg: 'Remote Control is already running',
+            data: null,
+            details: {
+              pid: 9999,
+              local_origin: 'http://127.0.0.1:58627',
+              device_id: 'dev_conflict',
+              url: 'https://code-rc.kimi.com/devices/dev_conflict/',
+              started_at: 1700000000000,
+            },
+          }),
+        );
+      });
+      await new Promise<void>((resolve) => srv.listen(socketPath, resolve));
+      try {
+        await expect(enableDaemonRemoteControl(socketPath)).rejects.toBeInstanceOf(
+          RemoteControlAlreadyRunningError,
+        );
+      } finally {
+        await new Promise<void>((resolve) => srv.close(() => resolve()));
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('enables Remote Control on the shared daemon for `kimi rc` and prints `kimi rc stop`', async () => {
     const { handleWebCommand } = await import('#/cli/sub/web/run');

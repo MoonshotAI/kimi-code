@@ -35,6 +35,7 @@ import {
 } from './access-urls';
 import {
   computeManagedDaemonEnvHashes,
+  createDaemonEnvSalt,
   daemonLogPath,
   daemonSocketPath,
   enableDaemonRemoteControl,
@@ -523,6 +524,9 @@ async function runDaemonServerInProcess(
   }
 
   let exiting = false;
+  let ready = false;
+  const envSalt = createDaemonEnvSalt();
+  const envHashes = computeManagedDaemonEnvHashes(env, envSalt);
 
   const finalizeExit = async (): Promise<void> => {
     if (exiting) return;
@@ -549,13 +553,31 @@ async function runDaemonServerInProcess(
     logger,
     telemetry: true,
     webAssetsDir,
-    onDidClose: async () => {
-      await removeDaemonStateForPid(homeDir, process.pid).catch(() => {});
-      setImmediate(() => {
-        void finalizeExit();
+    onBeforeSocketListen: async ({ host: boundHost, port: boundPort }) => {
+      await writeDaemonState(homeDir, {
+        pid: process.pid,
+        host: boundHost,
+        port: boundPort,
+        origin: `http://${boundHost}:${String(boundPort)}`,
+        socketPath,
+        logPath,
+        startedAt,
+        version,
+        kapVersion: KAP_VERSION,
+        envSalt,
+        envHashes,
       });
     },
+    onDidClose: async () => {
+      await removeDaemonStateForPid(homeDir, process.pid).catch(() => {});
+      if (ready) {
+        setImmediate(() => {
+          void finalizeExit();
+        });
+      }
+    },
   });
+  ready = true;
 
   const shutdownFromSignal = async (reason: string): Promise<void> => {
     if (exiting) return;
@@ -572,18 +594,6 @@ async function runDaemonServerInProcess(
   };
 
   const origin = `http://${v2.host}:${String(v2.port)}`;
-  await writeDaemonState(homeDir, {
-    pid: process.pid,
-    host: v2.host,
-    port: v2.port,
-    origin,
-    socketPath,
-    logPath,
-    startedAt,
-    version,
-    kapVersion: KAP_VERSION,
-    envHashes: computeManagedDaemonEnvHashes(env),
-  });
 
   track('server_started', { daemon: true });
   process.once('SIGINT', () => {

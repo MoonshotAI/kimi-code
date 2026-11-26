@@ -3,7 +3,7 @@ import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { metaResponseSchema } from '../protocol/rest-meta';
 import type { MetaFeature, MetaResponse } from '../protocol/rest-meta';
-import { KAP_VERSION } from '../services/hosts/hostProtocol';
+import { KAP_VERSION, KIMI_AGENT_PROTOCOL_VERSION } from '../protocol/version';
 
 interface RouteHost {
   get(
@@ -28,7 +28,7 @@ export interface MetaRouteOptions {
   readonly getFeatures: () => MetaFeature[] | Promise<MetaFeature[]>;
 }
 
-export const KIMI_AGENT_PROTOCOL_VERSION = '1.0.0';
+export { KIMI_AGENT_PROTOCOL_VERSION } from '../protocol/version';
 
 export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void {
   const product = opts.product !== undefined && opts.product.length > 0 ? opts.product : undefined;

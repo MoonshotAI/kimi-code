@@ -1,16 +1,12 @@
-import { spawn } from 'node:child_process';
-import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { createConnection } from 'node:net';
-import { dirname } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION, KAP_VERSION } from '@moonshot-ai/kap-server';
+import { HOST_PROTOCOL_VERSION, KAP_VERSION } from '@moonshot-ai/kap-server';
 import type { Command } from 'commander';
 
 import { getDataDir } from '#/utils/paths';
 
-import { detectNativeInstall } from '../../update/source';
 import { getVersion } from '../../version';
 import {
   acquireDaemonLock,
@@ -18,6 +14,7 @@ import {
   daemonLockPath,
   daemonLogPath,
   daemonSocketPath,
+  spawnDetachedDaemonProcess,
   syncForwardedAgentSocket,
 } from './daemon-client';
 
@@ -139,24 +136,13 @@ export async function ensureDaemon(deps: EnsureDaemonDeps): Promise<EnsureDaemon
 }
 
 function spawnDetachedServer(_socketPath: string, logPath: string, agentSocket: string): void {
-  const argv = detectNativeInstall()
-    ? [process.execPath]
-    : [process.execPath, ...process.execArgv, process.argv[1]!];
-  mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
-  const log = openSync(logPath, 'a', 0o600);
   try {
-    const child = spawn(argv[0]!, [...argv.slice(1), 'server', '--daemon-server'], {
-      detached: true,
-      stdio: ['ignore', log, log],
-      env: { ...process.env, SSH_AUTH_SOCK: agentSocket },
-    });
-    child.on('error', () => {});
-    child.unref();
-    if (child.pid === undefined) {
-      throw new EnsureDaemonError('start_timeout', `unable to start the kimi server; see ${logPath}`);
-    }
-  } finally {
-    closeSync(log);
+    spawnDetachedDaemonProcess(getDataDir(), process.env, { logPath, agentSocket });
+  } catch (error) {
+    throw new EnsureDaemonError(
+      'start_timeout',
+      error instanceof Error ? error.message : String(error),
+    );
   }
 }
 
@@ -313,7 +299,7 @@ export function registerEnsureDaemonCommand(web: Command): void {
         process.stdout.write(
           `${ENSURE_DAEMON_MARKER}${JSON.stringify({
             protocol: HOST_PROTOCOL_VERSION,
-            api_level: HOST_API_LEVEL,
+            api_level: KAP_VERSION,
             kap_version: KAP_VERSION,
             version: cliVersion,
             ...payload,

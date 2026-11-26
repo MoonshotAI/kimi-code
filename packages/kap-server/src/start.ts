@@ -148,6 +148,7 @@ export interface ServerStartOptions {
   readonly socketPath?: string;
   readonly listenTcp?: boolean;
   readonly persistRemoteControl?: boolean;
+  readonly onBeforeSocketListen?: (info: { readonly host: string; readonly port: number }) => void | Promise<void>;
   readonly onDidClose?: () => void | Promise<void>;
   readonly managedBy?: string;
   readonly managedIdleExitMs?: number;
@@ -392,15 +393,16 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   let rpcServer: { close(): Promise<void> } | undefined;
   let remoteEnvironmentProvider: { dispose(): Promise<void> } | undefined;
+  let closePromise: Promise<void> | undefined;
 
-  const close = async (): Promise<void> => {
-    await rpcServer?.close();
+  const closeOnce = async (): Promise<void> => {
     if (wssDebug !== undefined) {
       for (const client of wssDebug.clients) client.terminate();
     }
     configChangedPublisher.close();
     await remoteControlManager.close();
     await app.close();
+    await rpcServer?.close();
     conversations.dispose();
     sessionRating.dispose();
     configWarningSubscription.dispose();
@@ -450,6 +452,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         }
       }
     }
+  };
+
+  const close = (): Promise<void> => {
+    closePromise ??= closeOnce();
+    return closePromise;
   };
 
   const connectionRegistry = new ConnectionRegistry();
@@ -697,6 +704,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       sessionRating,
       dangerousBypassAuth: opts.disableAuth === true,
       managedHost: opts.managedBy === 'ensure-daemon' || opts.managedBy === 'daemon',
+      isTrustedUnixRequest: listenTcp ? isTrustedRequest : undefined,
       webTitle: opts.webTitle,
     });
 
@@ -731,6 +739,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await app.ready();
       boundPort = 0;
     }
+    await opts.onBeforeSocketListen?.({ host, port: boundPort });
     if (opts.socketPath !== undefined) {
       rpcServer = await startUnixRpcServer(opts.socketPath, {
         app,

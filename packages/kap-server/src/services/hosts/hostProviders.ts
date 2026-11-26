@@ -1,3 +1,5 @@
+import type { IncomingMessage } from 'node:http';
+
 import { IConfigService, IKosongConfigService, type ModelRecord, type ProviderConfig, type Scope } from '@moonshot-ai/agent-core-v2';
 import {
   DEFAULT_MODEL_SECTION,
@@ -107,9 +109,13 @@ export async function sendSharedProviders(session: HostSession, shared: SharedPr
   return providerCopyResultSchema.parse(body.data);
 }
 
-export function registerImportProvidersRoute(app: {
-  post(path: string, options: { preHandler: unknown[]; schema?: Record<string, unknown> }, handler: never): unknown;
-}, core: Scope): void {
+export function registerImportProvidersRoute(
+  app: {
+    post(path: string, options: { preHandler: unknown[]; schema?: Record<string, unknown> }, handler: never): unknown;
+  },
+  core: Scope,
+  opts?: { readonly isTrustedRequest?: (req: { raw: IncomingMessage }) => boolean },
+): void {
   const route = defineRoute(
     {
       method: 'POST',
@@ -124,5 +130,21 @@ export function registerImportProvidersRoute(app: {
       reply.send(okEnvelope(await importSharedProviders(core, req.body), req.id));
     },
   );
-  app.post(route.path, route.options, route.handler as never);
+  const preHandler =
+    opts?.isTrustedRequest === undefined
+      ? route.options.preHandler
+      : [
+          async (
+            req: { raw: IncomingMessage },
+            reply: { code(status: number): { send(payload: unknown): unknown } },
+          ) => {
+            if (!opts.isTrustedRequest!(req)) {
+              return reply
+                .code(404)
+                .send({ statusCode: 404, error: 'Not Found', message: 'Not Found' });
+            }
+          },
+          ...route.options.preHandler,
+        ];
+  app.post(route.path, { ...route.options, preHandler }, route.handler as never);
 }

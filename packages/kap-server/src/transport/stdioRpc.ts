@@ -63,12 +63,15 @@ export type RpcFrame =
   | RpcWsMessageFrame
   | RpcWsCloseFrame;
 
+export const UNIX_SOCKET_SNIFF_TIMEOUT_MS = 5_000;
+
 export interface RpcStreamOptions {
   readonly app: FastifyInstance;
   readonly wssV1: WebSocketServer;
   readonly wssDebug?: WebSocketServer;
   readonly httpServer?: HttpServer;
   readonly onWsConnect?: () => void;
+  readonly sniffTimeoutMs?: number;
 }
 
 const trustedUnixSockets = new WeakSet<object>();
@@ -302,12 +305,22 @@ function dispatchUnixSocket(socket: Socket, opts: RpcStreamOptions): void {
   }
   const pendingChunks: Buffer[] = [];
   let pendingBytes = 0;
+  let sniffTimer: ReturnType<typeof setTimeout> | undefined;
   const cleanup = (): void => {
+    if (sniffTimer !== undefined) {
+      clearTimeout(sniffTimer);
+      sniffTimer = undefined;
+    }
     socket.off('readable', onReadable);
     socket.off('end', cleanup);
     socket.off('close', cleanup);
     socket.off('error', onError);
   };
+  sniffTimer = setTimeout(() => {
+    cleanup();
+    socket.destroy();
+  }, opts.sniffTimeoutMs ?? UNIX_SOCKET_SNIFF_TIMEOUT_MS);
+  sniffTimer.unref?.();
   const onError = (): void => {
     cleanup();
     socket.destroy();

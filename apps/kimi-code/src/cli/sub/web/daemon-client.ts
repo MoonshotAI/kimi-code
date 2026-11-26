@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { chmod, mkdir, open, readFile, rename, rm, symlink } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
@@ -9,6 +9,7 @@ import { createInterface } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
+  ErrorCode,
   readDaemonRemoteControlPreference,
   writeDaemonRemoteControlPreference,
 } from '@moonshot-ai/kap-server';
@@ -50,6 +51,10 @@ const MANAGED_DAEMON_ENV_KEYS = [
   'HTTP_PROXY',
   'ALL_PROXY',
   'NO_PROXY',
+  'https_proxy',
+  'http_proxy',
+  'all_proxy',
+  'no_proxy',
 ] as const;
 
 export interface DaemonStateRecord {
@@ -62,6 +67,7 @@ export interface DaemonStateRecord {
   readonly startedAt: string;
   readonly version: string;
   readonly kapVersion: number;
+  readonly envSalt?: string;
   readonly envHashes: Readonly<Record<string, string>>;
 }
 
@@ -75,6 +81,7 @@ export interface RunningDaemonInfo {
   readonly startedAt: string;
   readonly version: string;
   readonly kapVersion: number;
+  readonly envSalt?: string;
   readonly envHashes?: Readonly<Record<string, string>>;
 }
 
@@ -159,25 +166,34 @@ export function daemonSocketPath(homeDir: string): string {
   const direct = join(daemonServerDir(homeDir), SOCKET_FILE);
   if (Buffer.byteLength(direct) <= 100) return direct;
   const hash = createHash('sha256').update(homeDir).digest('hex').slice(0, 16);
-  return join(tmpdir(), `kimi-daemon-${hash}.sock`);
+  return join(tmpdir(), `kimi-daemon-${hash}`, SOCKET_FILE);
 }
 
 function isManagedEnvKey(key: string): boolean {
   return (
     (MANAGED_DAEMON_ENV_KEYS as readonly string[]).includes(key) ||
-    key.startsWith('KIMI_CODE_EXPERIMENTAL_')
+    key.startsWith('KIMI_CODE_EXPERIMENTAL_') ||
+    key.startsWith('KIMI_MODEL_')
   );
+}
+
+export function createDaemonEnvSalt(): string {
+  return randomBytes(32).toString('hex');
 }
 
 export function computeManagedDaemonEnvHashes(
   env: NodeJS.ProcessEnv = process.env,
+  salt?: string,
 ): Record<string, string> {
   const hashes: Record<string, string> = {};
   for (const key of Object.keys(env).toSorted()) {
     if (!isManagedEnvKey(key)) continue;
     const value = env[key];
     if (value === undefined || value === '') continue;
-    hashes[key] = createHash('sha256').update(value).digest('hex');
+    hashes[key] =
+      salt !== undefined && salt.length > 0
+        ? createHmac('sha256', salt).update(`${key}\0${value}`).digest('hex')
+        : createHash('sha256').update(value).digest('hex');
   }
   return hashes;
 }
@@ -185,8 +201,9 @@ export function computeManagedDaemonEnvHashes(
 export function diffManagedDaemonEnv(
   currentEnv: NodeJS.ProcessEnv,
   daemonHashes: Readonly<Record<string, string>>,
+  salt?: string,
 ): string[] {
-  const current = computeManagedDaemonEnvHashes(currentEnv);
+  const current = computeManagedDaemonEnvHashes(currentEnv, salt);
   const allKeys = new Set([...Object.keys(current), ...Object.keys(daemonHashes)]);
   return [...allKeys].toSorted().filter((key) => current[key] !== daemonHashes[key]);
 }
@@ -292,6 +309,9 @@ export async function readDaemonState(homeDir: string): Promise<DaemonStateRecor
         startedAt: parsed.startedAt,
         version: parsed.version,
         kapVersion: typeof parsed.kapVersion === 'number' ? parsed.kapVersion : 1,
+        ...(typeof parsed.envSalt === 'string' && parsed.envSalt.length > 0
+          ? { envSalt: parsed.envSalt }
+          : {}),
         envHashes,
       };
     }
@@ -401,6 +421,7 @@ export async function probeRunningDaemon(homeDir: string): Promise<RunningDaemon
     startedAt: meta.started_at ?? liveState?.startedAt ?? '',
     version: meta.server_version,
     kapVersion: meta.kap_version ?? liveState?.kapVersion ?? 1,
+    envSalt: liveState?.envSalt,
     envHashes: liveState?.envHashes,
   };
 }
@@ -408,9 +429,10 @@ export async function probeRunningDaemon(homeDir: string): Promise<RunningDaemon
 export function spawnDetachedDaemonProcess(
   homeDir: string,
   env: NodeJS.ProcessEnv = process.env,
+  paths?: { readonly logPath?: string; readonly agentSocket?: string },
 ): void {
-  const logPath = daemonLogPath(homeDir);
-  const agentSocket = agentSocketPath(homeDir);
+  const logPath = paths?.logPath ?? daemonLogPath(homeDir);
+  const agentSocket = paths?.agentSocket ?? agentSocketPath(homeDir);
   const argv = detectNativeInstall()
     ? [process.execPath]
     : [process.execPath, ...process.execArgv, process.argv[1]!];
@@ -470,7 +492,7 @@ export async function ensureSharedDaemon(
     const existing = await probe(options.homeDir);
     if (existing !== undefined) {
       if (options.checkEnv === true && existing.envHashes !== undefined) {
-        const changed = diffManagedDaemonEnv(env, existing.envHashes);
+        const changed = diffManagedDaemonEnv(env, existing.envHashes, existing.envSalt);
         if (changed.length > 0) {
           throw new DaemonEnvMismatchError(changed);
         }
@@ -547,7 +569,11 @@ export async function enableDaemonRemoteControl(
   if (res === undefined) {
     throw new Error('Unable to reach the Kimi daemon to enable Remote Control.');
   }
-  if (res.envelope.code === 40933 && typeof res.envelope.details === 'object' && res.envelope.details !== null) {
+  if (
+    res.envelope.code === ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING &&
+    typeof res.envelope.details === 'object' &&
+    res.envelope.details !== null
+  ) {
     const details = res.envelope.details as RemoteControlConflictDetails;
     throw new RemoteControlAlreadyRunningError({
       pid: details.pid,
@@ -754,8 +780,15 @@ export async function stopSharedDaemon(
     }
 
     const socketPath = daemon?.socketPath ?? daemonSocketPath(options.homeDir);
-    await daemonHttpRequest<{ ok?: boolean }>(socketPath, 'POST', '/api/v1/shutdown', undefined, 2_000);
-    if (pid !== undefined) {
+    const shutdownRes = await daemonHttpRequest<{ ok?: boolean }>(
+      socketPath,
+      'POST',
+      '/api/v1/shutdown',
+      undefined,
+      2_000,
+    );
+    const shutdownAccepted = shutdownRes?.status === 200 && shutdownRes.envelope.code === 0;
+    if (!shutdownAccepted && pid !== undefined) {
       signalPid(pid, 'SIGTERM');
     }
 
@@ -763,6 +796,15 @@ export async function stopSharedDaemon(
       await rm(daemonStatePath(options.homeDir), { force: true });
       await rm(socketPath, { force: true });
       return { outcome: 'stopped', pid };
+    }
+
+    if (shutdownAccepted && pid !== undefined) {
+      signalPid(pid, 'SIGTERM');
+      if (await waitForDaemonExit(options.homeDir, pid, STOP_GRACE_MS, wait)) {
+        await rm(daemonStatePath(options.homeDir), { force: true });
+        await rm(socketPath, { force: true });
+        return { outcome: 'stopped', pid };
+      }
     }
 
     if (pid !== undefined) {

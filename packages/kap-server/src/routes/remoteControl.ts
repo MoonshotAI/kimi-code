@@ -278,6 +278,9 @@ export function registerRemoteControlRoutes(
           await opts.devices.deactivateDevice(req.params.id);
           return { ok: true };
         }
+        await opts.persistPreference?.(false).catch((persistError: unknown) => {
+          requestLog(req)?.warn({ err: persistError }, 'remote-control preference clear failed');
+        });
         if (status.state !== 'off') {
           await opts.service.disable();
         }
@@ -323,6 +326,9 @@ export function registerRemoteControlRoutes(
           await opts.devices.deleteDevice(req.params.id);
           return { ok: true };
         }
+        await opts.persistPreference?.(false).catch((persistError: unknown) => {
+          requestLog(req)?.warn({ err: persistError }, 'remote-control preference clear failed');
+        });
         if (status.state !== 'off') {
           await opts.service.disable();
         }

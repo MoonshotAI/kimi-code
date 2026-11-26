@@ -1,3 +1,4 @@
+import type { IncomingMessage } from 'node:http';
 import { resolve } from 'node:path';
 import { IBootstrapService, IConfigService, ITelemetryService, type Scope } from '@moonshot-ai/agent-core-v2';
 import { FiberState } from '@moonshot-ai/agent-core-v2/_base/di/fiber';
@@ -75,6 +76,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
   readonly managedHost?: boolean;
+  readonly isTrustedUnixRequest?: (req: { raw: IncomingMessage }) => boolean;
   readonly webTitle?: string;
 }
 
@@ -150,7 +152,11 @@ export async function registerApiV1Routes(
       registerEnvironmentRoutes(apiV1 as unknown as Parameters<typeof registerEnvironmentRoutes>[0], core);
       registerHostsRoutes(apiV1 as unknown as Parameters<typeof registerHostsRoutes>[0], core, opts.hostBridges);
       if (opts.managedHost === true) {
-        registerImportProvidersRoute(apiV1 as unknown as Parameters<typeof registerImportProvidersRoute>[0], core);
+        registerImportProvidersRoute(
+          apiV1 as unknown as Parameters<typeof registerImportProvidersRoute>[0],
+          core,
+          { isTrustedRequest: opts.isTrustedUnixRequest },
+        );
       }
       registerSessionRatingRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionRatingRoutes>[0],

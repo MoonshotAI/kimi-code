@@ -4,7 +4,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { HostEntry } from '@moonshot-ai/agent-core-v2';
 
-import { HOST_PROTOCOL_VERSION, KAP_VERSION } from './hostProtocol';
+import { KAP_VERSION } from '../../protocol/version';
+import { HOST_PROTOCOL_VERSION } from './hostProtocol';
 import type { HostSession } from './hostSession';
 import { StdioHostSession } from './stdioHostSession';
 
