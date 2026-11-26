@@ -483,6 +483,34 @@ describe('applyPrintBackgroundPolicy', () => {
     expect(cronNextFireAt).toHaveBeenCalled();
   });
 
+  it('waits for a Stop hook continuation turn before exiting', async () => {
+    let active = false;
+    let consumed = 0;
+    let stopHookRan = false;
+    const drainStopHooks = vi.fn(async () => {
+      if (stopHookRan) return;
+      stopHookRan = true;
+      active = true;
+    });
+    await applyPrintBackgroundPolicy({
+      mode: 'exit',
+      ceilingS: 60,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain: async () => {},
+      turnEndings: scriptedTurnEndings([
+        { event: ending(2), apply: () => { consumed += 1; active = false; } },
+      ]),
+      skipTurnId: 1,
+      warn: () => {},
+      now: () => Date.now(),
+      turnActive: () => active,
+      drainStopHooks,
+    });
+    expect(drainStopHooks).toHaveBeenCalled();
+    expect(consumed).toBe(1);
+  });
+
   it('steer keeps waiting under the default ceiling with tasks pending', async () => {
     let pending = 1;
     const turnEndings = createPrintTurnEndings();
