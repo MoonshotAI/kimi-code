@@ -40,30 +40,6 @@ export function checkoutRelocation(stored: StoredSessionWorktree): CheckoutReloc
   };
 }
 
-export function mapHeldSkillPaths(
-  request: HeldPromptRequest,
-  choose: (name: string, path: string) => string,
-): HeldPromptRequest {
-  const pick = (name: unknown, path: unknown): unknown =>
-    typeof name === 'string' && typeof path === 'string' ? choose(name, path) : path;
-  if (request.route === 'skills') {
-    return { ...request, body: { ...request.body, path: pick(request.skill_id, request.body['path']) } };
-  }
-  const skills = request.body['skills'];
-  if (!Array.isArray(skills)) return request;
-  return {
-    ...request,
-    body: {
-      ...request.body,
-      skills: skills.map((skill: unknown) =>
-        typeof skill === 'object' && skill !== null && 'path' in skill && 'name' in skill
-          ? { ...skill, path: pick(skill.name, skill.path) }
-          : skill,
-      ),
-    },
-  };
-}
-
 export function worktreeHoldsPrompts(stored: StoredSessionWorktree | undefined): boolean {
   return stored !== undefined && stored.setup.status !== 'ready' && stored.setup.status !== 'local';
 }

@@ -531,6 +531,25 @@ describe('server-v2 session worktrees', () => {
     });
   });
 
+  it('finds a repository skill named by its path in the main checkout once the session runs in the worktree', async () => {
+    const { root, workspaceId } = await project('repo-skill-after-setup');
+    const skillDir = join(root, '.kimi-code', 'skills', 'late-skill');
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, 'SKILL.md'), '---\nname: late-skill\ndescription: late skill\n---\n\nSay hi.\n');
+    commitAll(root, 'add a repository skill');
+    const ready = await settledWorktree(workspaceId);
+    const path = join(skillDir, 'SKILL.md');
+
+    const activated = await post(`/sessions/${ready.id}/skills/late-skill:activate`, { path });
+    const prompted = await post(`/sessions/${ready.id}/prompts`, {
+      content: [{ type: 'text', text: 'with the skill' }],
+      skills: [{ name: 'late-skill', path }],
+    });
+
+    expect(activated).toMatchObject({ code: 0, data: { activated: true } });
+    expect(prompted.code).toBe(0);
+  });
+
   it('keeps a held prompt across reloads, refuses a second one, and sends it when the session stays local', async () => {
     const { root, workspaceId } = await project('held-local');
     hangingRemote(root);

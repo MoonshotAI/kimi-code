@@ -71,6 +71,7 @@ import {
   sessionConflictErrors,
 } from './sessionErrors';
 import { holdSkillActivationForWorktree } from './worktreeHold';
+import { skillsForCheckout } from './checkoutSkillPaths';
 
 interface SkillsRouteHost {
   get(
@@ -104,7 +105,7 @@ type ResolvedSession =
   | { readonly handle: ISessionScopeHandle }
   | { readonly envelope: ReturnType<typeof errEnvelope> };
 
-export async function resolveActivatedSession(
+async function resolveActivatedSession(
   core: Scope,
   sessionId: string,
   requestId: string,
@@ -283,14 +284,16 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
   );
 }
 
-export function runSkillActivation(
+export async function runSkillActivation(
   core: Scope,
   session_id: string,
   skillId: string,
-  body: ActivateSkillRequest,
+  request: ActivateSkillRequest,
   promptId: string,
   context: { readonly requestId: string; readonly onEnqueued?: () => void; readonly onActivated?: () => void },
 ): Promise<unknown> {
+  const [skill] = (await skillsForCheckout(core, session_id, [{ name: skillId, path: request.path }])) ?? [];
+  const body: ActivateSkillRequest = skill?.path === request.path ? request : { ...request, path: skill?.path };
   const activateOnce = async (): Promise<unknown> => {
     const resolved = await resolveActivatedSession(core, session_id, context.requestId);
     if ('envelope' in resolved) throw new Error2(ErrorCodes.SESSION_NOT_FOUND, resolved.envelope.msg);

@@ -73,6 +73,7 @@ import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
 import { sendEnvironmentError } from './environment';
 import { withdrawHeldPrompt } from '../services/worktrees/sessionWorktreeService';
+import { skillsForCheckout } from './checkoutSkillPaths';
 import { holdSubmissionForWorktree } from './worktreeHold';
 import { applyThinking } from './sessionAgentConfig';
 
@@ -425,14 +426,16 @@ export function projectPromptSnapshot(prompt: {
   };
 }
 
-export function runPromptSubmission(
+export async function runPromptSubmission(
   core: Scope,
   session_id: string,
-  body: PromptSubmission,
+  submission: PromptSubmission,
   promptId: string,
   directSteer: boolean,
   onEnqueued: () => void = () => {},
 ): Promise<unknown> {
+  const skills = await skillsForCheckout(core, session_id, submission.skills);
+  const body: PromptSubmission = skills === undefined ? submission : { ...submission, skills };
   const submitOnce = async (): Promise<unknown> => {
     let preparedMedia: PromptMediaPreparation | undefined;
     let enqueued = false;

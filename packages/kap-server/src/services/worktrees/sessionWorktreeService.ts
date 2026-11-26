@@ -30,7 +30,6 @@ import { repointSession } from './sessionRepoint';
 import { publishSessionUpdated } from './sessionUpdates';
 import {
   forgetWorktreeFacts,
-  checkoutRelocation,
   liveWorktreeBranch,
   refreshWorktreeFacts,
   settleInterruptedSetup,
@@ -38,7 +37,6 @@ import {
   withStoredSessionWorktree,
   withoutHeldPrompt,
   worktreeHoldsPrompts,
-  type CheckoutRelocation,
   type HeldPromptRequest,
   type StoredSessionWorktree,
 } from './sessionWorktreeState';
@@ -61,7 +59,6 @@ export type HeldPromptDispatcher = (
   sessionId: string,
   held: WorktreeHeldPrompt,
   request: HeldPromptRequest,
-  relocation?: CheckoutRelocation,
 ) => Promise<void>;
 
 export interface SessionWorktreeServiceOptions {
@@ -419,7 +416,6 @@ export class SessionWorktreeService {
   private async dispatchHeld(sessionId: string, dispatch: HeldPromptDispatcher): Promise<void> {
     let held: WorktreeHeldPrompt | undefined;
     let request: HeldPromptRequest | undefined;
-    let relocation: CheckoutRelocation | undefined;
     let settle = (): void => {};
     await writeStoredWorktree(this.core, sessionId, (current) => {
       if (current === undefined || worktreeHoldsPrompts(current)) return undefined;
@@ -427,7 +423,6 @@ export class SessionWorktreeService {
       if (sendingHeldPrompts.has(sendingKey(sessionId, current.held_prompt.prompt_id))) return undefined;
       held = current.held_prompt;
       request = current.held_request;
-      relocation = checkoutRelocation(current);
       sendingHeldPrompts.set(
         sendingKey(sessionId, held.prompt_id),
         new Promise<void>((resolve) => {
@@ -441,7 +436,7 @@ export class SessionWorktreeService {
     let failure: WorktreeHeldPrompt['failure'];
     try {
       if (request === undefined) throw new Error('the held prompt has no stored request');
-      await dispatch(sessionId, held, request, relocation);
+      await dispatch(sessionId, held, request);
     } catch (error) {
       const envelope = mapError(error, '');
       failure = { code: envelope.code, msg: envelope.msg };
