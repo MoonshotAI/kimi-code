@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Stop sending unload notifications for tools that were never declared to the model when tools change or a session resumes.
+Fix unloaded_tool session errors when tools change or a session resumes.
