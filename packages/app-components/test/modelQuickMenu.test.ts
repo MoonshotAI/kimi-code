@@ -92,9 +92,9 @@ afterEach(() => {
 describe('ModelQuickMenu states', () => {
   it('renders recent models with provider names and additively repeats the current provider group', () => {
     mountMenu(initialState());
-    const labels = [...host.querySelectorAll('.mqm > .mqm-scroll > .mqm-section > .mqm-label')].map((el) => el.textContent?.trim());
+    const labels = [...host.querySelectorAll('.mqm > .mqm-section > .mqm-label, .mqm > .mqm-label')].map((el) => el.textContent?.trim());
     expect(labels).toEqual(['最近使用', 'Kimi 订阅']);
-    const recentRows = rows('.mqm > .mqm-scroll > .mqm-section:first-child .mqm-row');
+    const recentRows = rows('.mqm > .mqm-section .mqm-row');
     expect(recentRows).toHaveLength(3);
     expect(recentRows[0]?.querySelector('.mqm-name')?.textContent).toBe('Kimi K2.5');
     expect(recentRows[0]?.querySelector('.mqm-provider')?.textContent).toBe('Kimi 订阅');
@@ -105,7 +105,7 @@ describe('ModelQuickMenu states', () => {
   it('hides the recent section entirely when empty', () => {
     mountMenu(initialState({ recentModels: [] }));
     expect(host.textContent).not.toContain('最近使用');
-    expect(host.querySelector('.mqm > .mqm-scroll > .mqm-section > .mqm-label')?.textContent?.trim()).toBe('Kimi 订阅');
+    expect(host.querySelector('.mqm > .mqm-label')?.textContent?.trim()).toBe('Kimi 订阅');
   });
 
   it('shows a 500ms hover capability card on model rows', async () => {
@@ -273,11 +273,60 @@ describe('ModelQuickMenu states', () => {
     expect(actions).toEqual([{ type: 'select-provider', providerId: 'provider-12' }]);
   });
 
-  it('keeps actions and search fixed below a single scrolling list on short viewports', async () => {
+  it('renders a draggable 4px overlay thumb with edge fades instead of the native scrollbar', async () => {
+    const manyModels = Array.from({ length: 10 }, (_, i) => ({
+      id: `openrouter/m${i}`,
+      provider: 'openrouter',
+      model: `m${i}`,
+      displayName: `Model ${i}`,
+      maxContextSize: 128 * 1024,
+      capabilities: ['tool_use'],
+    }));
+    mountMenu(initialState({ providerModels: manyModels }));
+    await nextTick();
+    await nextTick();
+    const scroller = host.querySelector<HTMLElement>('.mqm-provider-scroll')!;
+    scroller.style.setProperty('--overlay-scrollbar-track-inset', '2px');
+    scroller.style.setProperty('--overlay-scrollbar-thumb-min', '24px');
+    let scrollTopValue = 0;
+    Object.defineProperties(scroller, {
+      scrollTop: { configurable: true, get: () => scrollTopValue, set: (value) => { scrollTopValue = value; } },
+      scrollHeight: { configurable: true, value: 320 },
+      clientHeight: { configurable: true, value: 192 },
+      offsetTop: { configurable: true, value: 200 },
+    });
+    scroller.dispatchEvent(new MouseEvent('mouseenter'));
+    scroller.dispatchEvent(new Event('scroll'));
+    await nextTick();
+
+    const thumb = () => host.querySelector<HTMLElement>('.model-scroll-thumb');
+    expect(thumb()).not.toBeNull();
+    expect(thumb()?.classList.contains('is-visible')).toBe(true);
+    expect(thumb()?.style.height).toBe('112.8px');
+    expect(thumb()?.style.top).toBe('202px');
+    expect(scroller.style.maskImage).toContain('to top');
+
+    scrollTopValue = 64;
+    scroller.dispatchEvent(new Event('scroll'));
+    await nextTick();
+    expect(scroller.style.maskImage).toContain('to bottom');
+    expect(scroller.style.maskImage).toContain('calc(100% - var(--menu-scroll-fade, 20px))');
+    expect(thumb()?.style.top).not.toBe('202px');
+
+    scroller.dispatchEvent(new MouseEvent('mouseleave'));
+    await vi.advanceTimersByTimeAsync(950);
+    await nextTick();
+    expect(thumb()?.classList.contains('is-visible')).toBe(false);
+  });
+
+  it('keeps recent models, provider label, actions, and search fixed while only the provider list scrolls', async () => {
     mountMenu(initialState());
     const menu = host.querySelector<HTMLElement>('.mqm')!;
     expect(menu.style.maxHeight).toBe('480px');
-    expect(menu.querySelector(':scope > .mqm-scroll > .mqm-section .mqm-provider-scroll')).toBeNull();
+    expect(menu.querySelectorAll(':scope > .mqm-section .mqm-row')).toHaveLength(3);
+    expect(menu.querySelector(':scope > .mqm-label')?.textContent?.trim()).toBe('Kimi 订阅');
+    expect(menu.querySelectorAll(':scope > .mqm-provider-scroll > .mqm-row')).toHaveLength(3);
+    expect(menu.querySelector(':scope > .mqm-scroll [data-row-key^="recent:"]')).toBeNull();
     expect(menu.querySelector(':scope > .mqm-actions')).not.toBeNull();
     expect(menu.querySelector(':scope > .mqm-search')).not.toBeNull();
   });

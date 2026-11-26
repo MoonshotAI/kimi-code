@@ -146,6 +146,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
   isMobileViewport = true;
   clientState.recentModelIds!.value = [];
   menuDimensions = { modelWidth: 360, modelHeight: 305, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
@@ -204,6 +205,7 @@ afterEach(() => {
   app?.unmount();
   app = undefined;
   host.remove();
+  document.querySelectorAll('body > .sheet-root').forEach((el) => el.remove());
   if (origOffsetWidth) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', origOffsetWidth);
   if (origOffsetHeight) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', origOffsetHeight);
   Reflect.deleteProperty(window, 'visualViewport');
@@ -293,10 +295,10 @@ describe('Composer recent model menu', () => {
     await nextTick();
     await nextTick();
 
-    const labels = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section > .mqm-label')].map(
+    const labels = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section > .mqm-label, .mqm > .mqm-label')].map(
       (section) => section.textContent?.trim(),
     );
-    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')];
+    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row, .mqm > .mqm-provider-scroll .mqm-row')];
     const names = rows.map((row) => row.querySelector('.mqm-name')?.textContent?.trim());
 
     expect(labels).toEqual(['最近使用', 'openai']);
@@ -310,7 +312,7 @@ describe('Composer recent model menu', () => {
     expect(clientState.setThinking).not.toHaveBeenCalled();
     expect(clientState.status!.value?.modelId).toBe('gpt-6.1-sol');
 
-    const reorderedRows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')];
+    const reorderedRows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row, .mqm > .mqm-provider-scroll .mqm-row')];
     expect(
       reorderedRows.map((row) => row.querySelector('.mqm-name')?.textContent?.trim()),
     ).toEqual(['GPT-6.1 Sol', 'GPT-6.1 Sol', 'GPT-6 Astra']);
@@ -342,7 +344,7 @@ describe('Composer recent model menu', () => {
     await nextTick();
     await nextTick();
 
-    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')];
+    const rows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row, .mqm > .mqm-provider-scroll .mqm-row')];
     rows[2]?.click();
     await nextTick();
     expect(rows[2]?.getAttribute('aria-checked')).toBe('true');
@@ -363,7 +365,7 @@ describe('Composer recent model menu', () => {
     await nextTick();
     await nextTick();
 
-    host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')[2]?.click();
+    host.querySelectorAll<HTMLElement>('.mqm > .mqm-section .mqm-row, .mqm > .mqm-provider-scroll .mqm-row')[2]?.click();
     await nextTick();
 
     clientState.activeSessionId!.value = 'sess-2';
@@ -388,7 +390,7 @@ describe('Composer recent model menu', () => {
     await nextTick();
 
     expect(clientState.activeSessionId!.value).toBe('sess-1');
-    const providerRows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-scroll > .mqm-section .mqm-row')];
+    const providerRows = [...host.querySelectorAll<HTMLElement>('.mqm > .mqm-provider-scroll .mqm-row')];
     providerRows[0]!.click();
     await nextTick();
     expect(clientState.setSessionModel).not.toHaveBeenCalled();
@@ -403,23 +405,37 @@ describe('Composer recent model menu', () => {
 });
 
 describe('Composer toolbar popup viewport clamping', () => {
-  it('caps the model dropdown height to the space above the model pill on short mobile viewports', async () => {
+  beforeEach(() => {
+    clientState.activeSessionId!.value = 'sess-1';
+    clientState.thinking!.value = 'max';
+    clientState.status!.value = {
+      connected: true,
+      model: 'GPT-6.1 Sol',
+      modelId: 'gpt-6.1-sol',
+      permission: 'yolo',
+      ctxUsed: 76200,
+      ctxMax: 262144,
+    };
+    clientState.selectModel.mockClear();
+    clientState.setSessionModel.mockClear();
+    clientState.setThinking.mockClear();
+  });
+
+  it('opens the model bottom sheet with top search on mobile viewports instead of the anchored dropdown', async () => {
     isMobileViewport = true;
     await mountComposer(360, 740);
 
-    const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
     const modelPill = host.querySelector<HTMLElement>('.model-pill')!;
-    mockRect(toolbar, { left: 13, right: 347, width: 334, top: 290, bottom: 346, height: 56 });
-    mockRect(modelPill, { left: 223, right: 259, width: 36, top: 298, bottom: 334, height: 36 });
-
     modelPill.click();
     await nextTick();
     await nextTick();
-    await nextTick();
 
-    const menu = host.querySelector<HTMLElement>('.model-dropdown')!;
-    expect(menu.style.right).toBe('88px');
-    expect(menu.style.maxHeight).toBe('282px');
+    expect(host.querySelector('.model-dropdown')).toBeNull();
+    expect(document.querySelector('body > .sheet-root')).not.toBeNull();
+    expect(document.querySelector('.sheet-root .sheet-title')?.textContent).toBe('切换模型');
+    const searchWrap = document.querySelector('.mqs-search-wrap');
+    const list = document.querySelector('.mqs-list');
+    expect(searchWrap?.compareDocumentPosition(list!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it('keeps the model dropdown aligned to the model pill right edge and capped at 480px on wide viewports', async () => {
@@ -468,34 +484,68 @@ describe('Composer toolbar popup viewport clamping', () => {
     expect(menu.classList.contains('ui-menu-pop-leave-active')).toBe(true);
   });
 
-  it('respects narrowed visualViewport top offset when clamping model menu height', async () => {
+  it('keeps the mobile model sheet open when the software keyboard resizes visualViewport and commits on scrim tap', async () => {
     isMobileViewport = true;
+    clientState.selectModel.mockClear();
+    clientState.setThinking.mockClear();
+    let onVisualResize: (() => void) | undefined;
     Object.defineProperty(window, 'visualViewport', {
       configurable: true,
       value: {
-        offsetLeft: 40,
-        offsetTop: 120,
-        width: 260,
-        height: 580,
-        addEventListener: vi.fn(),
+        offsetLeft: 0,
+        offsetTop: 0,
+        width: 360,
+        height: 740,
+        addEventListener: (type: string, fn: () => void) => { if (type === 'resize') onVisualResize = fn; },
         removeEventListener: vi.fn(),
       },
     });
     await mountComposer(360, 740);
 
-    const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
-    const modelPill = host.querySelector<HTMLElement>('.model-pill')!;
-    mockRect(toolbar, { left: 13, right: 347, width: 334, top: 620, bottom: 676, height: 56 });
-    mockRect(modelPill, { left: 223, right: 259, width: 36, top: 628, bottom: 664, height: 36 });
-
-    modelPill.click();
-    await nextTick();
+    host.querySelector<HTMLElement>('.model-pill')!.click();
     await nextTick();
     await nextTick();
 
-    const menu = host.querySelector<HTMLElement>('.model-dropdown')!;
-    expect(menu.style.maxHeight).toBe('480px');
-    expect(menu.style.right).toBe('88px');
+    document.querySelector<HTMLElement>('[data-row-key="provider:gpt-6-astra"]')!.click();
+    await nextTick();
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+
+    onVisualResize?.();
+    window.dispatchEvent(new Event('resize'));
+    await nextTick();
+    expect(document.querySelector('.sheet-root')).not.toBeNull();
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+
+    document.querySelector<HTMLElement>('.sheet-scrim')!.click();
+    await nextTick();
+    await vi.waitFor(() => expect(clientState.selectModel).toHaveBeenCalledWith('gpt-6-astra'));
+  });
+
+  it('commits staged mobile sheet selections when the viewport widens past the mobile breakpoint', async () => {
+    isMobileViewport = true;
+    clientState.selectModel.mockClear();
+    const mediaListeners: ((event: { matches: boolean }) => void)[] = [];
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width') ? isMobileViewport : false,
+      media: query,
+      addEventListener: (type: string, fn: (event: { matches: boolean }) => void) => { if (type === 'change') mediaListeners.push(fn); },
+      removeEventListener: vi.fn(),
+    }));
+    await mountComposer(390, 844);
+
+    host.querySelector<HTMLElement>('.model-pill')!.click();
+    await nextTick();
+    await nextTick();
+    document.querySelector<HTMLElement>('[data-row-key="provider:gpt-6-astra"]')!.click();
+    await nextTick();
+    expect(clientState.selectModel).not.toHaveBeenCalled();
+
+    isMobileViewport = false;
+    for (const fn of mediaListeners) fn({ matches: false });
+    await nextTick();
+    window.dispatchEvent(new Event('resize'));
+    await nextTick();
+    await vi.waitFor(() => expect(clientState.selectModel).toHaveBeenCalledWith('gpt-6-astra'));
   });
 
   it('centers the context ring card above the ring and clamps it within toolbar bounds', async () => {
