@@ -998,6 +998,25 @@ describe('workspaces store session orchestration', () => {
     expect(hooks.writeSessionUrl).toHaveBeenCalledWith(undefined, 'push');
   });
 
+  it('openWorkspaceDraft clears the selected file diff and records the draft entry', async () => {
+    const { filesStore } = await import('../src/stores/files');
+    const { promptStore } = await import('../src/stores/prompt');
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('wd_1', '/ws'), makeWorkspace('wd_2', '/ws2')];
+    store.storedActiveWorkspaceId = 'wd_1';
+    sessionsStore().setActiveSessionId('s1');
+    filesStore().selectedDiffPath = 'src/index.ts';
+    filesStore().fileDiffLines = [{ type: 'add', text: '+line', newNo: 1 }];
+
+    expect(store.openWorkspaceDraft('wd_2', { entry: 'workspace' })).toBe(true);
+
+    expect(store.storedActiveWorkspaceId).toBe('wd_2');
+    expect(sessionsStore().activeSessionId).toBeUndefined();
+    expect(promptStore().draftEntry).toBe('workspace');
+    expect(filesStore().selectedDiffPath).toBeNull();
+    expect(filesStore().fileDiffLines).toEqual([]);
+  });
+
   it('openWorkspaceDraft refuses projects on a host that is disabled or failed to connect', () => {
     const store = workspacesStore();
     store.workspaces = [

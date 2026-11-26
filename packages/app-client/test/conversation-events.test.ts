@@ -953,6 +953,92 @@ describe('echoed steer prompt pruning', () => {
   });
 });
 
+describe('client app events', () => {
+  it('configChanged updates config, default model and warnings, and re-checks auth', async () => {
+    const h = await boot();
+    const { configStore } = await import('../src/stores/config');
+    const { modelsStore } = await import('../src/stores/models');
+    const getAuth = clientApiMock['getAuth'] as ReturnType<typeof vi.fn>;
+    const authCallsBefore = getAuth.mock.calls.length;
+
+    h.event('s1', {
+      type: 'configChanged',
+      changedFields: ['defaultModel'],
+      config: { providers: {}, defaultModel: 'model-2' },
+      warnings: [{ domain: 'providers', message: 'invalid provider entry' }],
+    });
+    await vi.waitFor(() => expect(getAuth.mock.calls.length).toBeGreaterThan(authCallsBefore));
+
+    expect(configStore().config?.defaultModel).toBe('model-2');
+    expect(modelsStore().defaultModel).toBe('model-2');
+    expect(h.warningsStore().warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: 'warning', title: 'providers', message: 'invalid provider entry' }),
+      ]),
+    );
+  });
+
+  it('modelCatalogChanged reloads models, providers and auth', async () => {
+    const h = await boot();
+    const listModels = clientApiMock['listModels'] as ReturnType<typeof vi.fn>;
+    const listProviders = clientApiMock['listProviders'] as ReturnType<typeof vi.fn>;
+    const getAuth = clientApiMock['getAuth'] as ReturnType<typeof vi.fn>;
+    const before = {
+      models: listModels.mock.calls.length,
+      providers: listProviders.mock.calls.length,
+      auth: getAuth.mock.calls.length,
+    };
+
+    h.event('s1', {
+      type: 'modelCatalogChanged',
+      changed: [{ providerId: 'p1', providerName: 'Provider 1', added: 1, removed: 0 }],
+      unchanged: [],
+      failed: [],
+    });
+
+    await vi.waitFor(() => {
+      expect(listModels.mock.calls.length).toBeGreaterThan(before.models);
+      expect(listProviders.mock.calls.length).toBeGreaterThan(before.providers);
+      expect(getAuth.mock.calls.length).toBeGreaterThan(before.auth);
+    });
+    expect(h.client.pendingApprovals.value).toEqual([]);
+  });
+
+  it('approvalRequested, questionRequested and interactionEnded update per-session interactions without duplicates', async () => {
+    const h = await boot({ sessionIds: ['s1', 's2'] });
+    const { approvalsStore } = await import('../src/stores/approvals');
+    const approval = {
+      approvalId: 'ap-1',
+      sessionId: 's1',
+      toolCallId: 'tc-1',
+      toolName: 'bash',
+      action: 'run',
+      display: null,
+    };
+    const question = {
+      questionId: 'q-1',
+      sessionId: 's1',
+      questions: [{ question: 'Continue?', header: 'Confirm', options: [{ label: 'Yes' }], multiSelect: false }],
+    };
+
+    h.event('s1', { type: 'approvalRequested', sessionId: 's1', approval });
+    h.event('s1', { type: 'approvalRequested', sessionId: 's1', approval });
+    h.event('s1', { type: 'questionRequested', sessionId: 's1', question });
+    h.event('s1', { type: 'questionRequested', sessionId: 's1', question });
+
+    expect(approvalsStore().approvalsBySession['s1']).toHaveLength(1);
+    expect(approvalsStore().questionsBySession['s1']).toHaveLength(1);
+    expect(approvalsStore().approvalsBySession['s2'] ?? []).toEqual([]);
+    expect(h.client.pendingApprovals.value).toHaveLength(1);
+
+    h.event('s1', { type: 'interactionEnded', sessionId: 's1', interactionId: 'ap-1', kind: 'approval', outcome: 'approved' });
+    h.event('s1', { type: 'interactionEnded', sessionId: 's1', interactionId: 'q-1', kind: 'question', outcome: 'answered' });
+
+    expect(approvalsStore().approvalsBySession['s1']).toEqual([]);
+    expect(approvalsStore().questionsBySession['s1']).toEqual([]);
+  });
+});
+
 describe('session continuation', () => {
   it('bridges working state across continueSession', async () => {
     const h = await boot();

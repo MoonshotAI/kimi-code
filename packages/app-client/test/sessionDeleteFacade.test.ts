@@ -212,6 +212,151 @@ describe('deleteSessionWithToast', () => {
     }
   });
 
+  it.each(['delete', 'archive'] as const)('clears per-session slices across stores only for the %sd session', async (mode) => {
+    const stored = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => void stored.set(key, value),
+      removeItem: (key: string) => void stored.delete(key),
+      clear: () => stored.clear(),
+    });
+    stubEventConnection();
+    clientApiMock.deleteSession = vi.fn().mockResolvedValue({ deleted: true });
+    clientApiMock.archiveSession = vi.fn().mockResolvedValue(undefined);
+    clientApiMock.getWorkspaceTrust = vi.fn(async () => ({ trusted: true }));
+    clientApiMock.getGitStatusBatch = vi.fn(async () => ({ results: {}, errors: {} }));
+    const { client, sessions, confirmDialog } = await freshFacade();
+    const { approvalsStore } = await import('../src/stores/approvals');
+    const { goalStore } = await import('../src/stores/goal');
+    const { tasksStore } = await import('../src/stores/tasks');
+    const { agentStatesStore } = await import('../src/stores/agentStates');
+    const { filesStore } = await import('../src/stores/files');
+    const { sessionInfoStore } = await import('../src/stores/sessionInfo');
+    const { promptStore } = await import('../src/stores/prompt');
+    const { modeStore } = await import('../src/stores/mode');
+    const { permissionsStore } = await import('../src/stores/permissions');
+    const { sessionRuntimeStore } = await import('../src/stores/sessionRuntime');
+    const { sessionViewsStore } = await import('../src/stores/sessionViews');
+
+    try {
+      const { nextTick } = await import('vue');
+      sessions.setSessions([session('s1'), session('s2')]);
+      sessions.setActiveSessionId('s2');
+      await nextTick();
+
+      for (const sid of ['s1', 's2']) {
+        approvalsStore().setSessionApprovals(sid, [{
+          approvalId: `ap-${sid}`,
+          sessionId: sid,
+          toolCallId: `tc-${sid}`,
+          toolName: 'bash',
+          action: 'run',
+          display: null,
+        }]);
+        approvalsStore().setSessionQuestions(sid, [{
+          questionId: `q-${sid}`,
+          sessionId: sid,
+          questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes' }], multiSelect: false }],
+        }]);
+        goalStore().applyGoalFrame(sid, {
+          goalId: `g-${sid}`,
+          objective: `goal-${sid}`,
+          status: 'active',
+          turnsUsed: 1,
+          tokensUsed: 10,
+          wallClockMs: 100,
+          budget: {
+            tokenBudget: null,
+            remainingTokens: null,
+            turnBudget: null,
+            remainingTurns: null,
+            wallClockBudgetMs: null,
+            remainingWallClockMs: null,
+            overBudget: false,
+          },
+        });
+        tasksStore().upsertTask(sid, 'main', { taskId: `task-${sid}`, kind: 'shell', state: 'running', detached: false });
+        agentStatesStore().setState(sid, 'main', { status: 'idle' });
+        filesStore().gitStatusBySession[sid] = {
+          branch: 'main',
+          ahead: 0,
+          behind: 0,
+          entries: {},
+          additions: 0,
+          deletions: 0,
+          pullRequest: null,
+        };
+        filesStore().fileTreeBySession[sid] = { childrenByDir: {}, expandedDirs: {} } as never;
+        promptStore().enqueueForSession(sid, { text: `queued-${sid}`, attachments: [], skills: [] });
+        modeStore().planModeBySession[sid] = true;
+        modeStore().swarmModeBySession[sid] = true;
+        modeStore().towerModeBySession[sid] = true;
+        modeStore().goalModeBySession[sid] = true;
+        modeStore().thinkingBySession[sid] = 'on';
+        permissionsStore().foldDaemonMode(sid, 'auto');
+        sessionRuntimeStore().runtimeFor(sid);
+        sessionViewsStore().markUnread(sid);
+      }
+      await sessionInfoStore().observe('s2', [{ path: '/workspace', primary: true }]);
+
+      if (mode === 'delete') {
+        const pending = client.deleteSessionWithToast('s1');
+        await confirmDialog.runAction();
+        await pending;
+      } else {
+        await client.archiveSessionWithToast('s1');
+      }
+
+      expect(approvalsStore().approvalsBySession['s1']).toBeUndefined();
+      expect(approvalsStore().questionsBySession['s1']).toBeUndefined();
+      expect(goalStore().goalBySession['s1']).toBeUndefined();
+      expect(goalStore().goalVersionBySession['s1']).toBeUndefined();
+      expect(tasksStore().tasksBySession['s1']).toBeUndefined();
+      expect(agentStatesStore().bySession['s1']).toBeUndefined();
+      expect(filesStore().gitStatusBySession['s1']).toBeUndefined();
+      expect(filesStore().fileTreeBySession['s1']).toBeUndefined();
+      expect(promptStore().queuedBySession['s1']).toBeUndefined();
+      expect(modeStore().planModeBySession['s1']).toBeUndefined();
+      expect(modeStore().swarmModeBySession['s1']).toBeUndefined();
+      expect(modeStore().towerModeBySession['s1']).toBeUndefined();
+      expect(modeStore().goalModeBySession['s1']).toBeUndefined();
+      expect(modeStore().thinkingBySession['s1']).toBeUndefined();
+      expect(permissionsStore().forSession('s1')).toBeUndefined();
+      expect(sessionRuntimeStore().peekRuntime('s1')).toBeUndefined();
+      expect(sessionViewsStore().unreadBySession['s1']).toBeFalsy();
+
+      expect(approvalsStore().approvalsBySession['s2']).toHaveLength(1);
+      expect(approvalsStore().questionsBySession['s2']).toHaveLength(1);
+      expect(goalStore().goalBySession['s2']?.goalId).toBe('g-s2');
+      expect(tasksStore().tasksOf('s2', 'main')).toHaveLength(1);
+      expect(agentStatesStore().stateOf('s2', 'main')?.status).toBe('idle');
+      expect(filesStore().gitStatusBySession['s2']?.branch).toBe('main');
+      expect(filesStore().fileTreeBySession['s2']).toBeDefined();
+      expect(sessionInfoStore().foldersForSession('s2')).toEqual([{ path: '/workspace', primary: true }]);
+      expect(promptStore().queuedBySession['s2']).toHaveLength(1);
+      expect(modeStore().planModeBySession['s2']).toBe(true);
+      expect(modeStore().swarmModeBySession['s2']).toBe(true);
+      expect(modeStore().towerModeBySession['s2']).toBe(true);
+      expect(modeStore().goalModeBySession['s2']).toBe(true);
+      expect(modeStore().thinkingBySession['s2']).toBe('on');
+      expect(permissionsStore().forSession('s2')).toBe('auto');
+      expect(sessionRuntimeStore().peekRuntime('s2')).toBeDefined();
+      expect(sessionViewsStore().unreadBySession['s2']).toBe(true);
+      expect(sessions.activeSessionId).toBe('s2');
+
+      if (mode === 'delete') {
+        const pending = client.deleteSessionWithToast('s2');
+        await confirmDialog.runAction();
+        await pending;
+      } else {
+        await client.archiveSessionWithToast('s2');
+      }
+      expect(sessionInfoStore().foldersForSession('s2')).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('moves to the next session when the deleted session was active', async () => {
     stubEventConnection();
     clientApiMock.deleteSession = vi.fn().mockResolvedValue({ deleted: true });
