@@ -52,7 +52,7 @@ describe('browser overlay locale sync', () => {
     windowTarget.dispatchEvent(Object.assign(new Event('storage'), { key: 'kimi-locale', newValue: 'en' }));
     expect(i18n.global.locale.value).toBe('en');
     expect(i18n.global.t('status.recentModels')).toBe('Recently used');
-    expect(i18n.global.t('status.switchProvider')).toBe('Switch provider');
+    expect(i18n.global.t('status.switchProvider')).toBe('Provider');
 
     windowTarget.dispatchEvent(Object.assign(new Event('storage'), { key: 'unrelated-key', newValue: 'zh' }));
     expect(i18n.global.locale.value).toBe('en');

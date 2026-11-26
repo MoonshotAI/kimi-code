@@ -55,7 +55,7 @@ export default {
   searchResults: 'Search results',
   noMatchingModels: 'No matching models',
   switchModel: 'Switch model',
-  switchProvider: 'Switch provider',
+  switchProvider: 'Provider',
   providerLabel: 'Provider',
   thinkingDesc: 'Higher effort thinks deeper, but takes longer and uses more tokens',
   thinkingUnsupported: 'Unsupported',
