@@ -979,4 +979,75 @@ describe('TasksBrowserController — opening an agent task', () => {
       vi.restoreAllMocks();
     }
   });
+
+  it('resets preview scroll on keyboard selection and keeps selected task visible when refresh reorders it', async () => {
+    const vt = new VirtualTerminal(100, 12);
+    const ui = new TuiAltScreen(vt);
+    const initialTasks = Array.from({ length: 10 }, (_, i) =>
+      task({
+        taskId: `bash-${String(i + 1).padStart(8, '0')}`,
+        status: 'running',
+        startedAt: i + 1,
+      }),
+    );
+    const tail = Array.from({ length: 15 }, (_, i) => `preview-row-${String(i + 1)}`).join('\n');
+    let currentSelectedId = initialTasks[0]!.taskId;
+    const app = new TasksBrowserApp(
+      makeProps({
+        tasks: initialTasks,
+        selectedTaskId: currentSelectedId,
+        tailOutput: tail,
+        onSelect: (taskId) => {
+          currentSelectedId = taskId;
+          app.setProps(
+            makeProps({
+              tasks: initialTasks,
+              selectedTaskId: currentSelectedId,
+              tailOutput: tail,
+            }),
+          );
+        },
+        requestRender: () => {
+          ui.requestRender();
+        },
+      }),
+      vt,
+    );
+    ui.setLayoutRoot(app);
+    ui.start();
+    ui.setFocus(app);
+    await vt.waitForRender();
+    try {
+      let screen = vt.getViewport().map(strip);
+      const previewRow = screen.findIndex((line) => line.includes('preview-row-15'));
+      expect(previewRow).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<64;70;${String(previewRow + 1)}M`);
+      vt.sendInput(`\u001B[<64;70;${String(previewRow + 1)}M`);
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).not.toContain('preview-row-15');
+
+      vt.sendInput('j');
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).toContain('preview-row-15');
+
+      const reordered = initialTasks.map((item) =>
+        item.taskId === currentSelectedId
+          ? { ...item, status: 'completed' as const, exitCode: 0, endedAt: 99 }
+          : item,
+      );
+      app.setProps(
+        makeProps({
+          tasks: reordered,
+          selectedTaskId: currentSelectedId,
+          tailOutput: tail,
+        }),
+      );
+      ui.requestRender();
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(screen.join('\n')).toContain(`❯ ${currentSelectedId}`);
+    } finally {
+      ui.stop();
+    }
+  });
 });

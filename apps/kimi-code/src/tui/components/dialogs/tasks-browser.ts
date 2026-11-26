@@ -161,6 +161,8 @@ export class TasksBrowserApp extends VStack implements Focusable {
   private readonly terminal: Terminal;
   private sortedVisible: BackgroundTaskInfo[];
   private selectedIndex = 0;
+  private displayedTaskId: string | undefined;
+  private pendingEnsureSelection = false;
   private listScroll = 0;
   private pendingStopTaskId: string | undefined;
   private pendingStopTimer: NodeJS.Timeout | undefined;
@@ -187,6 +189,8 @@ export class TasksBrowserApp extends VStack implements Focusable {
       .filter((task) => isVisibleTask(task, props.filter))
       .toSorted(compareTasks);
     this.syncSelectionFromProps();
+    this.displayedTaskId = this.sortedVisible[this.selectedIndex]?.taskId;
+    this.pendingEnsureSelection = this.selectedIndex > 0;
 
     const isTooSmall = (vp: { width: number; height: number }): boolean =>
       vp.width < MIN_WIDTH || vp.height < MIN_HEIGHT;
@@ -224,7 +228,16 @@ export class TasksBrowserApp extends VStack implements Focusable {
       (innerWidth) => this.buildListLines(Math.max(1, innerWidth)),
       (event) => this.handleListMouse(event),
     );
-    this.listScrollView = new OverflowScrollView(listBodyView);
+    this.listScrollView = new OverflowScrollView(listBodyView, {
+      onScroll: () => {
+        this.pendingEnsureSelection = false;
+      },
+      onLayout: () => {
+        if (!this.pendingEnsureSelection) return;
+        this.pendingEnsureSelection = false;
+        this.ensureSelectedTaskVisibleInScrollView();
+      },
+    });
     this.leftBox = new Box({
       border: true,
       borderColor: paintPrimary,
@@ -285,7 +298,8 @@ export class TasksBrowserApp extends VStack implements Focusable {
   }
 
   setProps(next: TasksBrowserProps): void {
-    const prevTaskId = this.sortedVisible[this.selectedIndex]?.taskId;
+    const prevSelectedIndex = this.selectedIndex;
+    const prevTaskId = this.displayedTaskId;
     const prevTail = this.props.tailOutput;
     this.props = next;
     this.sortedVisible = next.tasks
@@ -293,11 +307,16 @@ export class TasksBrowserApp extends VStack implements Focusable {
       .toSorted(compareTasks);
     this.syncSelectionFromProps();
     const nextTaskId = this.sortedVisible[this.selectedIndex]?.taskId;
+    this.displayedTaskId = nextTaskId;
     if (nextTaskId !== prevTaskId) {
       this.detailScrollView.scrollToStart();
       this.previewScrollView.scrollToEnd();
     } else if (next.tailOutput !== prevTail && this.previewScrollView.isFollowingEnd) {
       this.previewScrollView.scrollToEnd();
+    }
+    if (nextTaskId !== prevTaskId || this.selectedIndex !== prevSelectedIndex) {
+      this.pendingEnsureSelection = true;
+      this.ensureSelectedTaskVisibleInScrollView();
     }
     if (this.pendingStopTaskId !== undefined) {
       const task = next.tasks.find((t) => t.taskId === this.pendingStopTaskId);
@@ -393,19 +412,11 @@ export class TasksBrowserApp extends VStack implements Focusable {
       return;
     }
     if (matchesKey(data, Key.up) || k === 'k') {
-      if (this.sortedVisible.length === 0) return;
-      this.selectedIndex = Math.max(0, this.selectedIndex - 1);
-      this.ensureSelectedTaskVisibleInScrollView();
-      this.emitSelect();
-      this.invalidate();
+      this.stepSelection(-1);
       return;
     }
     if (matchesKey(data, Key.down) || k === 'j') {
-      if (this.sortedVisible.length === 0) return;
-      this.selectedIndex = Math.min(this.sortedVisible.length - 1, this.selectedIndex + 1);
-      this.ensureSelectedTaskVisibleInScrollView();
-      this.emitSelect();
-      this.invalidate();
+      this.stepSelection(1);
       return;
     }
     if (matchesKey(data, Key.tab) || k === '\t') {
@@ -424,6 +435,25 @@ export class TasksBrowserApp extends VStack implements Focusable {
       const task = this.sortedVisible[this.selectedIndex];
       if (task) this.props.onOpenOutput(task.taskId);
     }
+  }
+
+  private stepSelection(delta: -1 | 1): void {
+    if (this.sortedVisible.length === 0) return;
+    const prevTaskId = this.sortedVisible[this.selectedIndex]?.taskId;
+    this.selectedIndex = Math.max(
+      0,
+      Math.min(this.sortedVisible.length - 1, this.selectedIndex + delta),
+    );
+    const nextTaskId = this.sortedVisible[this.selectedIndex]?.taskId;
+    if (nextTaskId !== prevTaskId) {
+      this.displayedTaskId = nextTaskId;
+      this.detailScrollView.scrollToStart();
+      this.previewScrollView.scrollToEnd();
+    }
+    this.pendingEnsureSelection = true;
+    this.ensureSelectedTaskVisibleInScrollView();
+    this.emitSelect();
+    this.invalidate();
   }
 
   private handleListMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
@@ -449,6 +479,7 @@ export class TasksBrowserApp extends VStack implements Focusable {
           this.props.onOpenOutput(task.taskId);
           return;
         }
+        this.displayedTaskId = task.taskId;
         this.detailScrollView.scrollToStart();
         this.previewScrollView.scrollToEnd();
         this.props.onSelect(task.taskId);
