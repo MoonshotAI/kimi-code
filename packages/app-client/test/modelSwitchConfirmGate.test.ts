@@ -658,6 +658,76 @@ describe('model switch confirm gate', () => {
     );
   });
 
+  it('keeps concurrent compact-and-switch waits independent across sessions', async () => {
+    const gate = await freshGate();
+    const first = activateSession(gate);
+    gate.sessions.setSessions([first, makeSession({ id: 'sess-2' })]);
+    clientApiMock.compactSession = vi.fn(async () => ({}));
+    const { warningsStore } = await import('../src/stores/warnings');
+    warningsStore().resetWarnings();
+
+    const p1 = gate.client.selectModel('kimi-code/k3-256k');
+    gate.msc.settle('compact');
+    await vi.waitFor(() => expect(clientApiMock.compactSession).toHaveBeenCalledTimes(1));
+
+    gate.sessions.setActiveSessionId('sess-2');
+    const p2 = gate.client.selectModel('kimi-code/k3-256k');
+    gate.msc.settle('compact');
+    await vi.waitFor(() => expect(clientApiMock.compactSession).toHaveBeenCalledTimes(2));
+
+    gate.msc.noteCompactionSettled('sess-1', 'completed');
+    gate.msc.noteCompactionSettled('sess-2', 'completed');
+    await Promise.all([p1, p2]);
+
+    expect(gate.updateSession).toHaveBeenCalledWith(
+      'sess-1',
+      expect.objectContaining({ model: 'kimi-code/k3-256k' }),
+    );
+    expect(gate.updateSession).toHaveBeenCalledWith(
+      'sess-2',
+      expect.objectContaining({ model: 'kimi-code/k3-256k' }),
+    );
+    expect(
+      warningsStore().warnings.filter((w) => JSON.stringify(w).includes('modelSwitch')),
+    ).toHaveLength(0);
+  });
+
+  it('does not overwrite a newer model synced from the server while compacting in the background', async () => {
+    const gate = await freshGate();
+    const first = activateSession(gate);
+    gate.sessions.setSessions([first, makeSession({ id: 'sess-2' })]);
+    clientApiMock.compactSession = vi.fn(async () => ({}));
+
+    const p = gate.client.selectModel('kimi-code/k3-256k');
+    gate.msc.settle('compact');
+    await vi.waitFor(() => expect(clientApiMock.compactSession).toHaveBeenCalled());
+
+    gate.sessions.setActiveSessionId('sess-2');
+    gate.sessions.updateSession('sess-1', (s) => ({ ...s, model: 'kimi-code/k3-other' }));
+    gate.msc.noteCompactionSettled('sess-1', 'completed');
+    await p;
+
+    expect(gate.updateSession).not.toHaveBeenCalled();
+    expect(gate.sessions.sessions.find((s) => s.id === 'sess-1')?.model).toBe('kimi-code/k3-other');
+  });
+
+  it('does not overwrite a newer model synced from the server while compacting in the foreground', async () => {
+    const gate = await freshGate();
+    activateSession(gate);
+    clientApiMock.compactSession = vi.fn(async () => ({}));
+
+    const p = gate.client.selectModel('kimi-code/k3-256k');
+    gate.msc.settle('compact');
+    await vi.waitFor(() => expect(clientApiMock.compactSession).toHaveBeenCalled());
+
+    gate.sessions.updateSession('sess-1', (s) => ({ ...s, model: 'kimi-code/k3-other' }));
+    gate.msc.noteCompactionSettled('sess-1', 'completed');
+    await p;
+
+    expect(gate.updateSession).not.toHaveBeenCalled();
+    expect(gate.sessions.sessions.find((s) => s.id === 'sess-1')?.model).toBe('kimi-code/k3-other');
+  });
+
 });
 
 

@@ -2346,6 +2346,7 @@ async function runModelSwitchAction(
       }
       const sid = triggerSid;
       if (isSuperseded()) return;
+      const fromModel = rawState.sessions.find((s) => s.id === sid)?.model;
       const request = sessionActions.compact(
         undefined,
         modelSwitchConfirmStore().hasCompactionWait(sid)
@@ -2366,6 +2367,8 @@ async function runModelSwitchAction(
         if (outcome === 'request-failed') return;
         if (modelSelectGenerationBySession.get(sid) !== generation) return;
         if (outcome === 'completed') {
+          const session = rawState.sessions.find((s) => s.id === sid);
+          if (session === undefined || session.model !== fromModel) return;
           if (rawState.activeSessionId === sid) {
             await applySelectModel(modelId);
           } else {
