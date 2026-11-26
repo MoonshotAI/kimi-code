@@ -20,6 +20,7 @@ const DESKTOP_APP_FIXTURE_IMPORT = /import\s*\{([^}]*)\}\s*from\s*['"][^'"]*fixt
 const DESKTOP_STUB_DSL_IMPORT = /from\s*['"][^'"]*fixtures\/model['"]/g;
 const KIMI_SERVICE_PROTOCOL = /chat_title|\/coding\/v1\/(?:tools|feedback)\b|upload_url|upload_complete/g;
 const KIMI_CLIENT_PROTOCOL_TESTS = 'packages/oauth/test/';
+const MCP_SERVER_CONSTRUCTION = /\bnew (?:McpServer|StdioServerTransport|StreamableHTTPServerTransport|SSEServerTransport)\(/g;
 
 export const ENGINE_HARNESS_IMPORTERS = new Map([
   [
@@ -63,6 +64,12 @@ export const LEGACY_DOUBLES = [
     count: (text) => occurrences(text, KIMI_SERVICE_PROTOCOL),
   },
   {
+    id: 'mcp-server-stub',
+    instead: 'start fake MCP servers with the testkit (@moonshot-ai/testkit/fixtures): fakeMcpServer() runs one over stdio with scripted tools and lifecycle faults, startFakeMcpHttpServer() serves streamable HTTP or SSE and lets intercept answer a request itself',
+    applies: () => true,
+    count: (text) => occurrences(text, MCP_SERVER_CONSTRUCTION),
+  },
+  {
     id: 'engine-harness-import',
     instead: 'use @moonshot-ai/testkit; the agent-core-v2 test harness is internal to that package. A test that must drive the harness agent directly is listed in ENGINE_HARNESS_IMPORTERS with its reason',
     applies: (file) => !file.startsWith('packages/agent-core-v2/') && !ENGINE_HARNESS_IMPORTERS.has(file),
@@ -97,7 +104,7 @@ export function formatReport(changes) {
         `  ${change.rule} in ${change.file}: ${change.from} → ${change.to}`,
         `    instead: ${LEGACY_DOUBLES.find((candidate) => candidate.id === change.rule)?.instead ?? 'use @moonshot-ai/testkit'}`,
       ]),
-      '  Why: every layer shares one scripted model and one set of fake Kimi services, so new tests get the same scripts, holds and strict verify(). The legacy doubles stay only for existing tests until they migrate.',
+      '  Why: every layer shares one scripted model, one set of fake Kimi services and one fake MCP server, so new tests get the same scripts, holds and strict verify(). The legacy doubles stay only for existing tests until they migrate.',
       `  What to do: write the new case with the testkit. If you only moved an existing case between files, run \`node ${CHECK_FILE} --update --allow-increase\` and say so in the PR.`,
     ],
     removed: (removed) => [

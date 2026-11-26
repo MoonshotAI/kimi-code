@@ -1,28 +1,16 @@
-import { randomUUID } from 'node:crypto';
 import { mkdtempSync, realpathSync } from 'node:fs';
-import {
-  createServer as createHttpServer,
-  type IncomingMessage,
-  type Server as HttpServer,
-  type ServerResponse,
-} from 'node:http';
-import type { AddressInfo as HttpAddress } from 'node:net';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { join } from 'pathe';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type {
   OAuthClientInformationFull,
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { z } from 'zod';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Error2 } from '#/errors';
@@ -72,52 +60,31 @@ function createManager(options: McpConnectionManagerOptions = {}): McpConnection
   });
 }
 
+import { startFakeMcpHttpServer } from '@moonshot-ai/testkit/fixtures';
+
 import {
-  closeServer,
-  crashAfterConnectFixture,
+  crashAfterConnectServer,
   createMemoryMcpOAuthStore,
-  cwdStdioFixture,
-  hangingListStdioFixture,
-  slowStdioFixture,
-  slowToolStdioFixture,
+  cwdStdioServer,
+  hangingListStdioServer,
+  mockStdioServer,
+  slowStdioServer,
+  slowToolStdioServer,
   startAnonymousDiscoveryHttpMcpServer,
-  startInProcessHttpMcpServer,
-  stderrThenExitFixture,
-  stdioFixture,
+  startEchoHttpMcpServer,
+  stderrThenExitServer,
+  type StdioServerCommand,
 } from './stubs';
 
-function stdioConfig(args: string[] = [stdioFixture]) {
-  return {
-    transport: 'stdio' as const,
-    command: process.execPath,
-    args,
-  };
+function stdioConfig(server: StdioServerCommand = mockStdioServer()) {
+  return { transport: 'stdio' as const, ...server };
 }
 
-function createPerSessionMcpHandler(name: string) {
-  const sessions = new Map<string, StreamableHTTPServerTransport>();
-  return (req: IncomingMessage, res: ServerResponse): void => {
-    const sessionId = req.headers['mcp-session-id'];
-    const existing = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;
-    if (existing !== undefined) {
-      void existing.handleRequest(req, res);
-      return;
-    }
-    const mcpServer = new McpServer({ name, version: '0.0.1' });
-    mcpServer.registerTool(
-      'echo',
-      { description: 'Echoes text', inputSchema: { text: z.string() } },
-      ({ text }) => ({ content: [{ type: 'text', text }] }),
-    );
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (id) => {
-        sessions.set(id, transport);
-      },
-    });
-    void mcpServer.connect(transport).then(() => transport.handleRequest(req, res));
-  };
-}
+const OAUTH_CHALLENGE = {
+  status: 401,
+  headers: { 'www-authenticate': 'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"' },
+  json: { error: 'unauthorized' },
+} as const;
 
 describe('McpConnectionManager', () => {
   it('connects servers in parallel and exposes connected entries with their tool count', async () => {
@@ -137,7 +104,7 @@ describe('McpConnectionManager', () => {
   }, 20000);
 
   it('refreshes a connected server after tool additions, updates, and removals', async () => {
-    const server = await startInProcessHttpMcpServer();
+    const server = await startEchoHttpMcpServer();
     const cm = createManager();
     try {
       await cm.connect('remote', { transport: 'http', url: server.url });
@@ -147,11 +114,7 @@ describe('McpConnectionManager', () => {
       cm.onStatusChange((entry) => {
         if (entry.name === 'remote') statuses.push(entry);
       });
-      const added = server.mcpServer.registerTool(
-        'added',
-        { description: 'Initial description', inputSchema: {} },
-        () => ({ content: [{ type: 'text', text: 'added' }] }),
-      );
+      server.addTool({ name: 'added', description: 'Initial description', reply: 'added' });
       await vi.waitFor(() => {
         expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual(['echo', 'added']);
         expect(cm.get('remote')?.toolCount).toBe(2);
@@ -159,7 +122,7 @@ describe('McpConnectionManager', () => {
       });
 
       statuses.length = 0;
-      added.update({ description: 'Updated description' });
+      server.updateTool('added', { description: 'Updated description' });
       await vi.waitFor(() => {
         expect(
           cm.resolved('remote')?.tools.find((tool) => tool.name === 'added')?.description,
@@ -168,7 +131,7 @@ describe('McpConnectionManager', () => {
       });
 
       statuses.length = 0;
-      added.remove();
+      server.removeTool('added');
       await vi.waitFor(() => {
         expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual(['echo']);
         expect(cm.get('remote')?.toolCount).toBe(1);
@@ -454,13 +417,10 @@ describe('McpConnectionManager', () => {
       expect(cm.get('alpha')?.status).toBe('connected');
       expect(cm.resolved('alpha')).toBeDefined();
 
-      const delayedMockServer = `setTimeout(() => import(${JSON.stringify(
-        pathToFileURL(stdioFixture).href,
-      )}), 400)`;
+      const delayedMockServer = mockStdioServer({ startDelayMs: 400 });
       const connecting = cm.connect('slow', {
         transport: 'stdio',
-        command: process.execPath,
-        args: ['-e', delayedMockServer],
+        ...delayedMockServer,
         startupTimeoutMs: 5_000,
       });
       await sleep(50);
@@ -614,7 +574,7 @@ describe('McpConnectionManager', () => {
       return (result.content[0] as { type: 'text'; text: string }).text;
     };
     try {
-      await cm.connectAll({ cwd: stdioConfig([cwdStdioFixture]) });
+      await cm.connectAll({ cwd: stdioConfig(cwdStdioServer()) });
       expect(realpathSync(await readCwd())).toBe(realpathSync(first));
 
       cwd = next;
@@ -696,13 +656,10 @@ describe('McpConnectionManager', () => {
     cm.onStatusChange((entry) => {
       seen.push({ name: entry.name, status: entry.status });
     });
-    const delayedMockServer = `setTimeout(() => import(${JSON.stringify(
-      pathToFileURL(stdioFixture).href,
-    )}), 250)`;
+    const delayedMockServer = mockStdioServer({ startDelayMs: 250 });
     const config = {
       transport: 'stdio' as const,
-      command: process.execPath,
-      args: ['-e', delayedMockServer],
+      ...delayedMockServer,
       startupTimeoutMs: 2_000,
     };
 
@@ -766,16 +723,13 @@ describe('McpConnectionManager', () => {
     cm.onStatusChange((entry) => {
       seen.push({ name: entry.name, status: entry.status });
     });
-    const delayedMockServer = `setTimeout(() => import(${JSON.stringify(
-      pathToFileURL(stdioFixture).href,
-    )}), 250)`;
+    const delayedMockServer = mockStdioServer({ startDelayMs: 250 });
 
     try {
       await cm.connectAll({
         slow: {
           transport: 'stdio',
-          command: process.execPath,
-          args: ['-e', delayedMockServer],
+          ...delayedMockServer,
           startupTimeoutMs: 5_000,
         },
       });
@@ -806,11 +760,7 @@ describe('McpConnectionManager', () => {
   });
 
   it('closes the previous stdio client when replaced by an HTTP server config', async () => {
-    const server: HttpServer = createHttpServer((_req, res) => {
-      res.writeHead(401).end();
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as HttpAddress).port;
+    const server = await startFakeMcpHttpServer({ tools: [], intercept: () => ({ status: 401 }) });
     const cm = createManager();
     try {
       await cm.connectAll({ alpha: stdioConfig() });
@@ -818,7 +768,7 @@ describe('McpConnectionManager', () => {
 
       await cm.connect('alpha', {
         transport: 'http',
-        url: `http://127.0.0.1:${port}/mcp`,
+        url: server.url,
         startupTimeoutMs: 5_000,
       });
 
@@ -827,7 +777,7 @@ describe('McpConnectionManager', () => {
     } finally {
       vi.restoreAllMocks();
       await cm.shutdown();
-      await closeServer(server);
+      await server.close();
     }
   }, 15000);
 
@@ -937,8 +887,7 @@ describe('McpConnectionManager', () => {
     const connectPromise = cm.connectAll({
       slowList: {
         transport: 'stdio',
-        command: process.execPath,
-        args: [hangingListStdioFixture],
+        ...hangingListStdioServer(),
         startupTimeoutMs: 5_000,
       },
     });
@@ -969,8 +918,7 @@ describe('McpConnectionManager', () => {
         await cm.connectAll({
           slow: {
             transport: 'stdio',
-            command: process.execPath,
-            args: [slowStdioFixture],
+            ...slowStdioServer(),
             startupTimeoutMs: variant.startupTimeoutMs,
           },
         });
@@ -988,8 +936,7 @@ describe('McpConnectionManager', () => {
     const connectPromise = cm.connectAll({
       slowList: {
         transport: 'stdio',
-        command: process.execPath,
-        args: [hangingListStdioFixture],
+        ...hangingListStdioServer(),
         startupTimeoutMs: 100,
       },
     });
@@ -1079,8 +1026,7 @@ describe('McpConnectionManager', () => {
       await cm.connectAll({
         slowTool: {
           transport: 'stdio',
-          command: process.execPath,
-          args: [slowToolStdioFixture],
+          ...slowToolStdioServer(),
         },
       });
       const client = cm.resolved('slowTool')?.client;
@@ -1099,8 +1045,7 @@ describe('McpConnectionManager', () => {
       await cm.connectAll({
         slowTool: {
           transport: 'stdio',
-          command: process.execPath,
-          args: [slowToolStdioFixture],
+          ...slowToolStdioServer(),
           toolTimeoutMs: 10_000,
         },
       });
@@ -1114,16 +1059,7 @@ describe('McpConnectionManager', () => {
   }, 20000);
 
   it('flips HTTP servers into needs-auth when the server returns 401 and no static token is set', async () => {
-    const server: HttpServer = createHttpServer((_req, res) => {
-      res.writeHead(401, {
-        'content-type': 'application/json',
-        'www-authenticate':
-          'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"',
-      });
-      res.end(JSON.stringify({ error: 'unauthorized' }));
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as HttpAddress).port;
+    const server = await startFakeMcpHttpServer({ tools: [], intercept: () => OAUTH_CHALLENGE });
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     const cm = createManager({
       oauthService,
@@ -1136,7 +1072,7 @@ describe('McpConnectionManager', () => {
       await cm.connectAll({
         gated: {
           transport: 'http',
-          url: `http://127.0.0.1:${port}/mcp`,
+          url: server.url,
           startupTimeoutMs: 5_000,
         },
       });
@@ -1149,28 +1085,19 @@ describe('McpConnectionManager', () => {
       expect(statuses).toEqual(['gated:pending', 'gated:needs-auth']);
     } finally {
       await cm.shutdown();
-      await closeServer(server);
+      await server.close();
     }
   }, 15000);
 
   it('marks an explicitly OAuth HTTP server as needs-auth when non-auth headers accompany a 401', async () => {
-    const server: HttpServer = createHttpServer((_req, res) => {
-      res.writeHead(401, {
-        'content-type': 'application/json',
-        'www-authenticate':
-          'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"',
-      });
-      res.end(JSON.stringify({ error: 'unauthorized' }));
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as HttpAddress).port;
+    const server = await startFakeMcpHttpServer({ tools: [], intercept: () => OAUTH_CHALLENGE });
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     const cm = createManager({ oauthService });
     try {
       await cm.connectAll({
         gated: {
           transport: 'http',
-          url: `http://127.0.0.1:${port}/mcp`,
+          url: server.url,
           headers: { 'X-Tenant': 'example' },
           auth: 'oauth',
           startupTimeoutMs: 5_000,
@@ -1182,32 +1109,19 @@ describe('McpConnectionManager', () => {
       expect(entry?.toolCount).toBe(0);
     } finally {
       await cm.shutdown();
-      await closeServer(server);
+      await server.close();
     }
   }, 15000);
 
   it('retries transient startup failures and reschedules existing waits with new tunables', async () => {
-    const mcpServer = new McpServer({ name: 'cm-retry', version: '0.0.1' });
-    mcpServer.registerTool(
-      'echo',
-      { description: 'Echoes text', inputSchema: { text: z.string() } },
-      ({ text }) => ({ content: [{ type: 'text', text }] }),
-    );
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-    });
-    await mcpServer.connect(transport);
     let hits = 0;
-    const httpServer = createHttpServer((req, res) => {
-      hits += 1;
-      if (hits <= 2) {
-        res.writeHead(500).end();
-        return;
-      }
-      void transport.handleRequest(req, res);
+    const server = await startEchoHttpMcpServer({
+      name: 'cm-retry',
+      intercept: () => {
+        hits += 1;
+        return hits <= 2 ? { status: 500 } : undefined;
+      },
     });
-    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
-    const port = (httpServer.address() as HttpAddress).port;
 
     let retryDefaults = { reconnectInitialDelayMs: 50, reconnectMaxDelayMs: 100 };
     const cm = createManager({
@@ -1220,7 +1134,7 @@ describe('McpConnectionManager', () => {
       await cm.connectAll({
         remote: {
           transport: 'http',
-          url: `http://127.0.0.1:${port}/mcp`,
+          url: server.url,
           startupTimeoutMs: 5_000,
         },
       });
@@ -1247,7 +1161,7 @@ describe('McpConnectionManager', () => {
       ]);
     } finally {
       await cm.shutdown();
-      await closeServer(httpServer);
+      await server.close();
     }
 
     const spawn = vi.spyOn(testProcess, 'spawn').mockRejectedValueOnce(
@@ -1282,23 +1196,15 @@ describe('McpConnectionManager', () => {
     const thirdGate = new Promise<void>((resolve) => {
       releaseThird = resolve;
     });
-    const handler = createPerSessionMcpHandler('cm-coord');
-    const httpServer = createHttpServer((req, res) => {
-      hits += 1;
-      if (hits <= 2) {
-        res.writeHead(500).end();
-        return;
-      }
-      if (hits === 3) {
-        void thirdGate.then(() => {
-          handler(req, res);
-        });
-        return;
-      }
-      handler(req, res);
+    const server = await startEchoHttpMcpServer({
+      name: 'cm-coord',
+      intercept: async () => {
+        hits += 1;
+        if (hits <= 2) return { status: 500 };
+        if (hits === 3) await thirdGate;
+        return undefined;
+      },
     });
-    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
-    const port = (httpServer.address() as HttpAddress).port;
 
     const cm = createManager({
       reconnectRetryEnabled: true,
@@ -1310,7 +1216,7 @@ describe('McpConnectionManager', () => {
       await cm.connectAll({
         remote: {
           transport: 'http',
-          url: `http://127.0.0.1:${port}/mcp`,
+          url: server.url,
           startupTimeoutMs: 5_000,
         },
       });
@@ -1342,7 +1248,7 @@ describe('McpConnectionManager', () => {
     } finally {
       releaseThird();
       await cm.shutdown();
-      await closeServer(httpServer);
+      await server.close();
     }
   }, 15000);
 
@@ -1353,12 +1259,7 @@ describe('McpConnectionManager', () => {
     ];
     for (const headers of headerSets) {
       for (const statusCode of [401, 403]) {
-        const server: HttpServer = createHttpServer((_req, res) => {
-          res.writeHead(statusCode, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ error: 'unauthorized' }));
-        });
-        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-        const port = (server.address() as HttpAddress).port;
+        const server = await startFakeMcpHttpServer({ tools: [], intercept: () => ({ status: statusCode, json: { error: 'unauthorized' } }) });
         const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
         const cm = createManager({
           oauthService,
@@ -1371,7 +1272,7 @@ describe('McpConnectionManager', () => {
           await cm.connectAll({
             keyed: {
               transport: 'http',
-              url: `http://127.0.0.1:${port}/mcp`,
+              url: server.url,
               headers,
               startupTimeoutMs: 5_000,
             },
@@ -1382,30 +1283,24 @@ describe('McpConnectionManager', () => {
           expect(statuses).toEqual(['keyed:pending', 'keyed:failed']);
         } finally {
           await cm.shutdown();
-          await closeServer(server);
+          await server.close();
         }
       }
     }
   }, 15000);
 
   it('flips SSE servers into needs-auth when the server returns 401 and no static token is set', async () => {
-    const server: HttpServer = createHttpServer((_req, res) => {
-      res.writeHead(401, {
-        'content-type': 'text/plain',
-        'www-authenticate':
-          'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"',
-      });
-      res.end('unauthorized');
+    const server = await startFakeMcpHttpServer({
+      tools: [],
+      intercept: () => ({ status: 401, headers: { 'content-type': 'text/plain', 'www-authenticate': OAUTH_CHALLENGE.headers['www-authenticate'] }, text: 'unauthorized' }),
     });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as HttpAddress).port;
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     const cm = createManager({ oauthService });
     try {
       await cm.connectAll({
         legacy: {
           transport: 'sse',
-          url: `http://127.0.0.1:${port}/sse`,
+          url: `${server.origin}/sse`,
           startupTimeoutMs: 5_000,
         },
       });
@@ -1416,27 +1311,20 @@ describe('McpConnectionManager', () => {
       expect(entry?.toolCount).toBe(0);
     } finally {
       await cm.shutdown();
-      await closeServer(server);
+      await server.close();
     }
   }, 15000);
 
   it('flips cached OAuth credentials that require reauth into needs-auth', async () => {
-    const server: HttpServer = createHttpServer((req, res) => {
-      if (req.url === '/token') {
-        res.writeHead(400, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'invalid_grant' }));
-        return;
-      }
-      res.writeHead(401, {
-        'content-type': 'application/json',
-        'www-authenticate': 'Bearer realm="mcp"',
-      });
-      res.end(JSON.stringify({ error: 'unauthorized' }));
+    const server = await startFakeMcpHttpServer({
+      tools: [],
+      intercept: (request) =>
+        request.path === '/token'
+          ? { status: 400, json: { error: 'invalid_grant' } }
+          : { status: 401, headers: { 'www-authenticate': 'Bearer realm="mcp"' }, json: { error: 'unauthorized' } },
     });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as HttpAddress).port;
-    const serverUrl = `http://127.0.0.1:${port}/mcp`;
-    const authServerUrl = `http://127.0.0.1:${port}`;
+    const serverUrl = server.url;
+    const authServerUrl = server.origin;
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     const provider = oauthService.getProvider('notion', serverUrl);
     await provider.saveDiscoveryState({
@@ -1480,29 +1368,25 @@ describe('McpConnectionManager', () => {
       expect(entry?.error).not.toContain('redirectUrl must be set');
     } finally {
       await cm.shutdown();
-      await closeServer(server);
+      await server.close();
     }
   }, 15000);
 
   it('marks HTTP 401 as failed when no OAuth service is configured', async () => {
-    const server: HttpServer = createHttpServer((_req, res) => {
-      res.writeHead(401).end('nope');
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as HttpAddress).port;
+    const server = await startFakeMcpHttpServer({ tools: [], intercept: () => ({ status: 401, text: 'nope' }) });
     const cm = createManager();
     try {
       await cm.connectAll({
         gated: {
           transport: 'http',
-          url: `http://127.0.0.1:${port}/mcp`,
+          url: server.url,
           startupTimeoutMs: 5_000,
         },
       });
       expect(cm.get('gated')?.status).toBe('failed');
     } finally {
       await cm.shutdown();
-      await closeServer(server);
+      await server.close();
     }
   }, 15000);
 
@@ -1514,9 +1398,7 @@ describe('McpConnectionManager', () => {
       await cm.connectAll({
         crashy: {
           transport: 'stdio',
-          command: process.execPath,
-          args: [crashAfterConnectFixture],
-          env: { KIMI_TEST_MCP_EXIT_AFTER_MS: '500', KIMI_TEST_MCP_STDERR: 'fatal: out of memory' },
+          ...crashAfterConnectServer({ afterMs: 500, stderr: 'fatal: out of memory' }),
           startupTimeoutMs: 4_000,
         },
       });
@@ -1547,9 +1429,7 @@ describe('McpConnectionManager', () => {
       await cm.connectAll({
         nope: {
           transport: 'stdio',
-          command: process.execPath,
-          args: [stderrThenExitFixture],
-          env: { KIMI_TEST_MCP_STDERR: 'fatal: missing API token KIMI_X' },
+          ...stderrThenExitServer('fatal: missing API token KIMI_X'),
           startupTimeoutMs: 4_000,
         },
       });
@@ -1580,9 +1460,7 @@ describe('McpConnectionManager', () => {
   }, 10000);
 
   it('probes healthy weak evidence silently and waits for probes during shutdown', async () => {
-    const httpServer = createHttpServer(createPerSessionMcpHandler('cm-weak-ok'));
-    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
-    const port = (httpServer.address() as HttpAddress).port;
+    const server = await startEchoHttpMcpServer({ name: 'cm-weak-ok' });
 
     const ping = vi.spyOn(Client.prototype, 'ping');
     const cm = createManager({
@@ -1596,7 +1474,7 @@ describe('McpConnectionManager', () => {
       await cm.connectAll({
         remote: {
           transport: 'http',
-          url: `http://127.0.0.1:${port}/mcp`,
+          url: server.url,
           startupTimeoutMs: 5_000,
         },
       });
@@ -1642,22 +1520,16 @@ describe('McpConnectionManager', () => {
       releaseProbe();
       ping.mockRestore();
       await cm.shutdown();
-      await closeServer(httpServer);
+      await server.close();
     }
   }, 15000);
 
   it('reconnects automatically when weak session evidence proves the session dead', async () => {
     let healthy = true;
-    const handler = createPerSessionMcpHandler('cm-weak-dead');
-    const httpServer = createHttpServer((req, res) => {
-      if (!healthy) {
-        res.writeHead(500).end();
-        return;
-      }
-      handler(req, res);
+    const server = await startEchoHttpMcpServer({
+      name: 'cm-weak-dead',
+      intercept: () => (healthy ? undefined : { status: 500 }),
     });
-    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
-    const port = (httpServer.address() as HttpAddress).port;
 
     const cm = createManager({
       reconnectRetryEnabled: true,
@@ -1669,7 +1541,7 @@ describe('McpConnectionManager', () => {
       await cm.connectAll({
         remote: {
           transport: 'http',
-          url: `http://127.0.0.1:${port}/mcp`,
+          url: server.url,
           startupTimeoutMs: 5_000,
         },
       });
@@ -1709,7 +1581,7 @@ describe('McpConnectionManager', () => {
       expect(remoteStatuses).toEqual(['pending', 'connected', 'failed', 'connected']);
     } finally {
       await cm.shutdown();
-      await closeServer(httpServer);
+      await server.close();
     }
   }, 15000);
 

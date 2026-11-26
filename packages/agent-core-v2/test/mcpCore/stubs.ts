@@ -1,11 +1,12 @@
-import { randomUUID } from 'node:crypto';
-import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
-
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { z } from 'zod';
+import {
+  fakeMcpServer,
+  startFakeMcpHttpServer,
+  type FakeMcpExit,
+  type FakeMcpHttpServer,
+  type FakeMcpHttpServerOptions,
+  type FakeMcpProcessTool,
+  type FakeMcpServerOptions,
+} from '@moonshot-ai/testkit/fixtures';
 
 import type { ToolDescription as KosongTool } from '#human/message';
 import type { McpOAuthStore } from '#/mcpCore/oauth/store';
@@ -21,28 +22,118 @@ import type {
   ToolExecution,
 } from '#/tool/toolContract';
 
-export const fixturesDir = new URL('./fixtures/', import.meta.url).pathname;
 export const UNREACHABLE_SERVER_ORIGIN = 'https://127.0.0.1:9';
-export const stdioFixture = new URL('./fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
-export const cwdStdioFixture = new URL('./fixtures/cwd-stdio-server.mjs', import.meta.url).pathname;
-export const slowStdioFixture = new URL('./fixtures/slow-stdio-server.mjs', import.meta.url)
-  .pathname;
-export const slowToolStdioFixture = new URL(
-  './fixtures/slow-tool-stdio-server.mjs',
-  import.meta.url,
-).pathname;
-export const hangingListStdioFixture = new URL(
-  './fixtures/hanging-list-stdio-server.mjs',
-  import.meta.url,
-).pathname;
-export const crashAfterConnectFixture = new URL(
-  './fixtures/crash-after-connect-stdio-server.mjs',
-  import.meta.url,
-).pathname;
-export const stderrThenExitFixture = new URL(
-  './fixtures/stderr-then-exit-stdio-server.mjs',
-  import.meta.url,
-).pathname;
+
+export interface StdioServerCommand {
+  readonly command: string;
+  readonly args: string[];
+}
+
+type ServerLifecycle = Omit<FakeMcpServerOptions, 'tools'>;
+
+const TEXT_INPUT = { properties: { text: { type: 'string' } }, required: ['text'] };
+
+const ECHO: FakeMcpProcessTool = {
+  name: 'echo',
+  description: 'Echoes input text',
+  inputSchema: TEXT_INPUT,
+  reply: { text: { argument: 'text' } },
+};
+
+const MOCK_STDIO_TOOLS: readonly FakeMcpProcessTool[] = [
+  ECHO,
+  { name: 'boom', description: 'Always returns an error result', reply: { text: 'boom!', isError: true } },
+  {
+    name: 'read_env',
+    description: 'Returns the value of process.env[name], or empty string',
+    inputSchema: { properties: { name: { type: 'string' } }, required: ['name'] },
+    reply: { text: { envNamedBy: 'name' } },
+  },
+  { name: 'whoami', description: 'Returns the client name announced during initialize', reply: { text: { clientName: true } } },
+];
+
+const STRUCTURED_ROWS = { rows: [{ id: 1 }], total: 1 };
+
+const STRUCTURED_CONTENT_TOOLS: readonly FakeMcpProcessTool[] = [
+  {
+    name: 'dual_emit',
+    description: 'Returns the same JSON as a text block (pretty-printed, different key order) and as structuredContent',
+    reply: { text: '{\n  "total": 1,\n  "rows": [ { "id": 1 } ]\n}', structuredContent: STRUCTURED_ROWS },
+  },
+  {
+    name: 'structured_only',
+    description: 'Returns structuredContent without any text content',
+    reply: { structuredContent: STRUCTURED_ROWS },
+  },
+  {
+    name: 'prose_plus_structured',
+    description: 'Returns a prose summary in content plus distinct structuredContent',
+    reply: { text: 'Found 1 row.', structuredContent: STRUCTURED_ROWS },
+  },
+  {
+    name: 'meta_vendor',
+    description: 'Returns text content plus a vendor-namespaced _meta key',
+    reply: { text: 'done', meta: { 'example.com/trace': 'abc123' } },
+  },
+  {
+    name: 'faithful_rendering',
+    description: 'content is a faithful human rendering of structuredContent at similar size',
+    reply: {
+      text: 'Project: Example Project [example-project]\nDescription: none\nTimeline: 1920x1080 @ 30fps | durationInFrames=0\nAssets: total=0',
+      structuredContent: {
+        project: { id: 'example-project', name: 'Example Project', description: null },
+        timeline: { width: 1920, height: 1080, fps: 30, durationInFrames: 0 },
+        assets: { total: 0 },
+      },
+    },
+  },
+];
+
+function stdioServer(name: string, options: FakeMcpServerOptions): StdioServerCommand {
+  const entry = fakeMcpServer(name, options);
+  return { command: entry.command, args: [...entry.args] };
+}
+
+export function mockStdioServer(lifecycle: ServerLifecycle = {}): StdioServerCommand {
+  return stdioServer('mock-stdio', { tools: MOCK_STDIO_TOOLS, ...lifecycle });
+}
+
+export function cwdStdioServer(name = 'cwd-stdio', lifecycle: ServerLifecycle = {}): StdioServerCommand {
+  return stdioServer(name, {
+    tools: [{ name: 'get_cwd', description: 'Returns the server process cwd', reply: { text: { cwd: true } } }],
+    ...lifecycle,
+  });
+}
+
+export function slowStdioServer(startDelayMs = 2000): StdioServerCommand {
+  return stdioServer('slow-stdio', { tools: [ECHO], startDelayMs });
+}
+
+export function slowToolStdioServer(delayMs = 2000): StdioServerCommand {
+  return stdioServer('slow-tool-stdio', {
+    tools: [{ ...ECHO, name: 'slow_echo', description: 'Echoes input text after a delay', delayMs }],
+  });
+}
+
+export function hangingListStdioServer(): StdioServerCommand {
+  return stdioServer('hanging-list-stdio', { tools: [], hangListTools: true });
+}
+
+export function crashAfterConnectServer(exit: FakeMcpExit & { readonly afterMs?: number } = {}): StdioServerCommand {
+  const { afterMs, ...status } = exit;
+  return stdioServer('crash-after-connect', {
+    tools: [ECHO, { name: 'exit_after_reply', description: 'Replies, then exits the process', reply: 'bye', exitAfterReply: status }],
+    ...(afterMs === undefined ? {} : { exitAfterConnect: { ...status, afterMs } }),
+  });
+}
+
+export function stderrThenExitServer(stderr = 'fatal: missing API token'): StdioServerCommand {
+  return stdioServer('stderr-then-exit', { tools: [], exitBeforeConnect: { code: 2, stderr } });
+}
+
+export function structuredContentStdioServer(): StdioServerCommand {
+  return stdioServer('mock-structured-content', { tools: STRUCTURED_CONTENT_TOOLS });
+}
 
 export function createMemoryMcpOAuthStore(): McpOAuthStore {
   const data = new Map<string, unknown>();
@@ -154,180 +245,28 @@ export async function executeTool<Input>(
   return execution.execute(executionContext);
 }
 
-export async function startInProcessHttpMcpServer(opts?: {
-  authToken?: string;
-}): Promise<{ url: string; mcpServer: McpServer; close: () => Promise<void> }> {
-  const mcpServer = new McpServer({ name: 'mock-http', version: '0.0.1' });
-  mcpServer.registerTool(
-    'echo',
-    { description: 'Echoes text', inputSchema: { text: z.string() } },
-    ({ text }) => ({ content: [{ type: 'text', text }] }),
-  );
+const HTTP_ECHO = { ...ECHO, description: 'Echoes text' };
 
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-  });
-  await mcpServer.connect(transport);
-
-  const httpServer: Server = createServer((req, res) => {
-    if (opts?.authToken !== undefined) {
-      const auth = req.headers['authorization'];
-      if (auth !== `Bearer ${opts.authToken}`) {
-        res.writeHead(401, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'unauthorized' }));
-        return;
-      }
-    }
-    void transport.handleRequest(req, res);
-  });
-
-  await listen(httpServer);
-  const port = (httpServer.address() as AddressInfo).port;
-
-  return {
-    url: `http://127.0.0.1:${port}/mcp`,
-    mcpServer,
-    close: () => closeServer(httpServer),
-  };
+export function startEchoHttpMcpServer(options: Omit<FakeMcpHttpServerOptions, 'tools'> = {}): Promise<FakeMcpHttpServer> {
+  return startFakeMcpHttpServer({ name: 'mock-http', tools: [HTTP_ECHO], ...options });
 }
 
-export async function startAnonymousDiscoveryHttpMcpServer(opts?: {
+export function startAnonymousDiscoveryHttpMcpServer(opts?: {
   tokenEndpoint?: 'invalid_grant';
-}): Promise<{
-  url: string;
-  origin: string;
-  close: () => Promise<void>;
-}> {
-  const mcpServer = new McpServer({ name: 'mock-http-anon-discovery', version: '0.0.1' });
-  mcpServer.registerTool(
-    'echo',
-    { description: 'Echoes text', inputSchema: { text: z.string() } },
-    ({ text }) => ({ content: [{ type: 'text', text }] }),
-  );
-
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-  });
-  await mcpServer.connect(transport);
-
-  const httpServer: Server = createServer((req, res) => {
-    if (opts?.tokenEndpoint === 'invalid_grant' && req.method === 'POST' && req.url === '/token') {
-      res.writeHead(400, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: 'invalid_grant' }));
-      return;
-    }
-    if (req.method !== 'POST') {
-      void transport.handleRequest(req, res);
-      return;
-    }
-    const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
-    req.on('end', () => {
-      let body: unknown;
-      try {
-        body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      } catch {
-        body = undefined;
+}): Promise<FakeMcpHttpServer> {
+  return startEchoHttpMcpServer({
+    name: 'mock-http-anon-discovery',
+    intercept: (request) => {
+      if (opts?.tokenEndpoint === 'invalid_grant' && request.method === 'POST' && request.path === '/token') {
+        return { status: 400, json: { error: 'invalid_grant' } };
       }
-      const messages = Array.isArray(body) ? body : [body];
-      const isToolCall = messages.some(
-        (message) =>
-          typeof message === 'object' &&
-          message !== null &&
-          (message as { method?: unknown }).method === 'tools/call',
-      );
-      if (!isToolCall) {
-        void transport.handleRequest(req, res, body);
-        return;
-      }
-      res.writeHead(401, {
-        'content-type': 'application/json',
-        'www-authenticate':
-          'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"',
-      });
-      res.end(JSON.stringify({ error: 'unauthorized' }));
-    });
-  });
-
-  await listen(httpServer);
-  const port = (httpServer.address() as AddressInfo).port;
-
-  return {
-    url: `http://127.0.0.1:${port}/mcp`,
-    origin: `http://127.0.0.1:${port}`,
-    close: () => closeServer(httpServer),
-  };
-}
-
-export async function startInProcessSseMcpServer(opts?: {
-  authToken?: string;
-}): Promise<{ url: string; close: () => Promise<void> }> {
-  const transports = new Map<string, SSEServerTransport>();
-  const httpServer: Server = createServer((req, res) => {
-    if (opts?.authToken !== undefined) {
-      const auth = req.headers['authorization'];
-      if (auth !== `Bearer ${opts.authToken}`) {
-        res.writeHead(401, { 'content-type': 'text/plain' });
-        res.end('unauthorized');
-        return;
-      }
-    }
-
-    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-    if (req.method === 'GET' && url.pathname === '/mcp') {
-      const mcpServer = new McpServer({ name: 'mock-sse', version: '0.0.1' });
-      mcpServer.registerTool(
-        'echo',
-        { description: 'Echoes text', inputSchema: { text: z.string() } },
-        ({ text }) => ({ content: [{ type: 'text', text }] }),
-      );
-      const transport = new SSEServerTransport('/messages', res);
-      transports.set(transport.sessionId, transport);
-      transport.onclose = () => {
-        transports.delete(transport.sessionId);
+      if (!request.rpcMethods.includes('tools/call')) return undefined;
+      return {
+        status: 401,
+        headers: { 'www-authenticate': 'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"' },
+        json: { error: 'unauthorized' },
       };
-      void mcpServer.connect(transport);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/messages') {
-      const sessionId = url.searchParams.get('sessionId');
-      const transport = sessionId === null ? undefined : transports.get(sessionId);
-      if (transport === undefined) {
-        res.writeHead(404).end('Session not found');
-        return;
-      }
-      void transport.handlePostMessage(req, res);
-      return;
-    }
-
-    res.writeHead(404).end('not found');
-  });
-
-  await listen(httpServer);
-  const port = (httpServer.address() as AddressInfo).port;
-
-  return {
-    url: `http://127.0.0.1:${port}/mcp`,
-    async close() {
-      await Promise.all([...transports.values()].map((transport) => transport.close()));
-      await closeServer(httpServer);
     },
-  };
-}
-
-function listen(server: Server): Promise<void> {
-  return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', resolve);
-  });
-}
-
-export function closeServer(server: Server): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.close((err) => {
-      if (err) reject(err);
-      else resolve();
-    });
   });
 }
 

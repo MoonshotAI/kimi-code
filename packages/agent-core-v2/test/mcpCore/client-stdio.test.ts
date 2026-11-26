@@ -21,10 +21,10 @@ import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProce
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import {
-  crashAfterConnectFixture,
-  cwdStdioFixture,
-  stderrThenExitFixture,
-  stdioFixture,
+  crashAfterConnectServer,
+  cwdStdioServer,
+  mockStdioServer,
+  stderrThenExitServer,
 } from './stubs';
 
 function createClient(
@@ -156,7 +156,7 @@ describe('StdioMcpClient', () => {
   });
 
   it('accepts executor local for backward compatibility', async () => {
-    const client = createClient({ transport: 'stdio', command: process.execPath, args: [stdioFixture], executor: 'local' });
+    const client = createClient({ transport: 'stdio', ...mockStdioServer(), executor: 'local' });
     try {
       await client.connect();
       const result = await client.callTool('echo', { text: 'hello' });
@@ -170,8 +170,7 @@ describe('StdioMcpClient', () => {
     const harness = createEnvironmentClient(
       {
         transport: 'stdio',
-        command: process.execPath,
-        args: [stdioFixture],
+        ...mockStdioServer(),
         env: { KIMI_TEST_LITERAL: 'literal' },
       },
       { environmentId: 'dev-box' },
@@ -191,8 +190,7 @@ describe('StdioMcpClient', () => {
     const client = createClient(
       {
         transport: 'stdio',
-        command: process.execPath,
-        args: [cwdStdioFixture],
+        ...cwdStdioServer(),
       },
       { defaultCwd: cwd },
     );
@@ -214,8 +212,7 @@ describe('StdioMcpClient', () => {
     const client = createClient(
       {
         transport: 'stdio',
-        command: process.execPath,
-        args: [cwdStdioFixture],
+        ...cwdStdioServer(),
         cwd: configuredCwd,
       },
       { defaultCwd },
@@ -239,8 +236,7 @@ describe('StdioMcpClient', () => {
     const client = createClient(
       {
         transport: 'stdio',
-        command: process.execPath,
-        args: [cwdStdioFixture],
+        ...cwdStdioServer(),
         cwd: 'tools/mcp',
       },
       { defaultCwd },
@@ -262,8 +258,7 @@ describe('StdioMcpClient', () => {
     const client = createClient(
       {
         transport: 'stdio',
-        command: process.execPath,
-        args: [cwdStdioFixture],
+        ...cwdStdioServer(),
         cwd: outsideCwd,
       },
       { defaultCwd },
@@ -297,7 +292,7 @@ describe('StdioMcpClient', () => {
     ];
     const harnesses = cases.map(({ config, host }) =>
       createEnvironmentClient(
-        { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture], ...config },
+        { transport: 'stdio', ...cwdStdioServer(), ...config },
         { environmentId: 'dev-box', host, defaultCwd: carrierCwd },
       ),
     );
@@ -318,8 +313,7 @@ describe('StdioMcpClient', () => {
   it('connects, lists tools, and round-trips a text result', async () => {
     const client = createClient({
       transport: 'stdio',
-      command: process.execPath,
-      args: [stdioFixture],
+      ...mockStdioServer(),
     });
     try {
       await client.connect();
@@ -340,8 +334,7 @@ describe('StdioMcpClient', () => {
   it('propagates server-reported isError', async () => {
     const client = createClient({
       transport: 'stdio',
-      command: process.execPath,
-      args: [stdioFixture],
+      ...mockStdioServer(),
     });
     try {
       await client.connect();
@@ -356,8 +349,7 @@ describe('StdioMcpClient', () => {
   it('forwards configured env to the spawned server', async () => {
     const client = createClient({
       transport: 'stdio',
-      command: process.execPath,
-      args: [stdioFixture],
+      ...mockStdioServer(),
       env: { KIMI_TEST_ENV: 'forwarded-value' },
     });
     try {
@@ -376,8 +368,7 @@ describe('StdioMcpClient', () => {
     process.env[shared] = 'from-parent';
     const client = createClient({
       transport: 'stdio',
-      command: process.execPath,
-      args: [stdioFixture],
+      ...mockStdioServer(),
       env: { [shared]: 'from-config' },
     });
     try {
@@ -397,9 +388,7 @@ describe('StdioMcpClient', () => {
     const banner = `kimi-test-stderr-${Date.now()}`;
     const client = createClient({
       transport: 'stdio',
-      command: process.execPath,
-      args: [stderrThenExitFixture],
-      env: { KIMI_TEST_MCP_STDERR: banner },
+      ...stderrThenExitServer(banner),
     });
     try {
       await expect(client.connect()).rejects.toThrow();
@@ -412,8 +401,7 @@ describe('StdioMcpClient', () => {
   it('keeps the stderr buffer bounded so noisy servers cannot exhaust memory', async () => {
     const client = createClient({
       transport: 'stdio',
-      command: process.execPath,
-      args: [stdioFixture],
+      ...mockStdioServer(),
     });
     try {
       await client.connect();
@@ -428,9 +416,7 @@ describe('StdioMcpClient', () => {
     const banner = `kimi-test-crash-${Date.now()}`;
     const client = createClient({
       transport: 'stdio',
-      command: process.execPath,
-      args: [crashAfterConnectFixture],
-      env: { KIMI_TEST_MCP_EXIT_AFTER_MS: '50', KIMI_TEST_MCP_STDERR: banner },
+      ...crashAfterConnectServer({ afterMs: 50, stderr: banner }),
     });
     const closes: Array<{ kind?: string; stderr?: string; error?: string }> = [];
     client.onSessionEvidence((evidence) => {
@@ -458,9 +444,7 @@ describe('StdioMcpClient', () => {
     const banner = `kimi-test-early-${Date.now()}`;
     const client = createClient({
       transport: 'stdio',
-      command: process.execPath,
-      args: [crashAfterConnectFixture],
-      env: { KIMI_TEST_MCP_STDERR: banner, KIMI_TEST_MCP_EXIT_CODE: '0' },
+      ...crashAfterConnectServer({ code: 0, stderr: banner }),
     });
     try {
       await client.connect();
@@ -504,8 +488,7 @@ describe('StdioMcpClient', () => {
   it('does not fire session evidence when the caller closes the client itself', async () => {
     const client = createClient({
       transport: 'stdio',
-      command: process.execPath,
-      args: [stdioFixture],
+      ...mockStdioServer(),
     });
     const closes: number[] = [];
     client.onSessionEvidence(() => closes.push(Date.now()));
@@ -562,8 +545,7 @@ describe('StdioMcpClient', () => {
   it('disposes tracked environment resources on close', async () => {
     const { client, tracked } = createTrackingClient({
       transport: 'stdio',
-      command: process.execPath,
-      args: [stdioFixture],
+      ...mockStdioServer(),
     });
     await client.connect();
     expect(tracked).toHaveLength(2);

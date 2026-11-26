@@ -1,7 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { RequestError, type NewSessionResponse, type RequestPermissionRequest } from '@agentclientprotocol/sdk';
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
@@ -13,10 +12,6 @@ import { AcpSession, mapPromptLaunchError } from '../src/session';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { writeFakeModelConfig, type FakeModelConfigOptions } from './_helpers/fakeModelConfig';
 import { solidPngBase64 } from './_helpers/png';
-
-const STDIO_MCP_FIXTURE = fileURLToPath(
-  new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url),
-);
 
 describe('acp-server real prompt turn (scripted LLM)', () => {
   let homeDir: string | undefined;
@@ -777,7 +772,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
           type: 'http',
           name: 'mock',
           url: 'http://127.0.0.1:1/mcp',
-          headers: [{ name: 'X-Test-Fixture', value: STDIO_MCP_FIXTURE }],
+          headers: [{ name: 'X-Test-Fixture', value: 'example' }],
         },
       ],
     })) as { sessionId: string };

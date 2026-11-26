@@ -10,7 +10,7 @@ import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mc
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
-import { bashPathOf, createGitWorktree } from '@moonshot-ai/testkit/fixtures';
+import { bashPathOf, createGitWorktree, FAKE_MCP_SERVER, fakeMcpServer } from '@moonshot-ai/testkit/fixtures';
 import type { KapHarness } from '@moonshot-ai/testkit/kap';
 import { startKimiServices } from '@moonshot-ai/testkit/services';
 import {
@@ -2015,14 +2015,13 @@ describe('server-v2 /api/v1/sessions', () => {
 
   it('archives a session, force-kills a SIGTERM-ignoring baseline MCP, and reacquires the workspace', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-archive-mcp-'));
-    const fixture = new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
     const spawned: IHostProcess[] = [];
     let disposeReplacement: (() => void) | undefined;
     const hostProcesses = (server as RunningServer).core.accessor.get(IHostProcessService);
     const spawn = hostProcesses.spawn.bind(hostProcesses);
     const spawnSpy = vi.spyOn(hostProcesses, 'spawn').mockImplementation(async (command, args, options) => {
       const child = await spawn(command, args, options);
-      if (command === process.execPath && args?.[0] === fixture) spawned.push(child);
+      if (command === process.execPath && args?.[0] === FAKE_MCP_SERVER) spawned.push(child);
       return child;
     });
     try {
@@ -2032,11 +2031,7 @@ describe('server-v2 /api/v1/sessions', () => {
         join(cwd, '.kimi-code', 'mcp.json'),
         JSON.stringify({
           mcpServers: {
-            fixture: {
-              command: process.execPath,
-              args: [fixture],
-              env: { KIMI_TEST_MCP_IGNORE_SIGTERM: '1' },
-            },
+            fixture: fakeMcpServer('fixture', { tools: [{ name: 'echo', description: 'Echoes input text', inputSchema: { properties: { text: { type: 'string' } }, required: ['text'] }, reply: { text: { argument: 'text' } } }], ignoreSigterm: true }),
           },
         }),
       );
@@ -2122,7 +2117,7 @@ describe('server-v2 /api/v1/sessions', () => {
   }, 30_000);
 
   describe('MCP servers of a workspace', () => {
-    const fixture = new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
+    const fixture = fakeMcpServer('fixture', { tools: [{ name: 'echo', description: 'Echoes input text', inputSchema: { properties: { text: { type: 'string' } }, required: ['text'] }, reply: { text: { argument: 'text' } } }] });
     let root: string;
     let opened: string[];
     let spawned: IHostProcess[];
@@ -2131,7 +2126,7 @@ describe('server-v2 /api/v1/sessions', () => {
       await mkdir(join(dir, '.kimi-code'), { recursive: true });
       await writeFile(
         join(dir, '.kimi-code', 'mcp.json'),
-        JSON.stringify({ mcpServers: { [name]: { command: process.execPath, args: [fixture] } } }),
+        JSON.stringify({ mcpServers: { [name]: fixture } }),
       );
     }
 
@@ -2161,7 +2156,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const spawn = hostProcesses.spawn.bind(hostProcesses);
       vi.spyOn(hostProcesses, 'spawn').mockImplementation(async (command, args, options) => {
         const child = await spawn(command, args, options);
-        if (command === process.execPath && args?.[0] === fixture) spawned.push(child);
+        if (command === process.execPath && args?.[0] === FAKE_MCP_SERVER) spawned.push(child);
         return child;
       });
     });
