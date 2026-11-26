@@ -1,3 +1,5 @@
+import { relative } from 'node:path';
+
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
@@ -10,7 +12,7 @@ import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState, EnvironmentSlotState } from '#/tui/types';
 import { PERMISSION_MODE_DISPLAY_NAMES } from '#/tui/utils/permission-mode';
-import { sessionWorkDir } from '#/tui/utils/session-work-dir';
+import { sessionWorkDir, sessionWorktree } from '#/tui/utils/session-work-dir';
 import { SpinnerTicker } from '#/tui/utils/spinner-ticker';
 import {
   StatusLineCommandRunner,
@@ -160,8 +162,17 @@ function formatContextStatus(usage: number, tokens?: number, maxTokens?: number)
   return `context: ${String(usagePercentFromRatio(usage))}%`;
 }
 
+function formatWorktreeCwd(worktree: NonNullable<AppState['worktree']>, cwd: string, colors: ColorPalette): string {
+  const subdir = relative(worktree.root, cwd);
+  const label = `${chalk.hex(colors.textDim)('worktree')} ${chalk.hex(colors.accent)(worktree.name)}`;
+  const outside = subdir === '' || subdir === '..' || subdir.startsWith('../') || subdir.startsWith('..\\');
+  return outside ? label : `${label}${chalk.hex(colors.textDim)(`/${subdir}`)}`;
+}
+
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {
-  const base = chalk.hex(colors.textDim)(formatGitBadgeBase(status));
+  const base = chalk.hex(colors.textDim)(
+    formatGitBadgeBase(status.branch === '' ? { ...status, branch: 'detached' } : status),
+  );
   if (status.pullRequest === null) return base;
 
   const pullRequest = chalk.hex(colors.primary)(
@@ -475,25 +486,29 @@ export class FooterComponent implements Component {
       ];
     }
 
-    const bindingCwd = remote ? environment.cwd : undefined;
-    const cwd =
-      bindingCwd !== undefined
-        ? shortenCwd(bindingCwd, undefined)
-        : shortenCwd(state.workDir, process.env['HOME']);
-    if (cwd) slots['cwd'] = [chalk.hex(colors.textDim)(cwd)];
+    const worktree = sessionWorktree(state);
+    const cwd = shortenCwd(
+      sessionWorkDir(state),
+      remote && environment.cwd !== undefined ? undefined : process.env['HOME'],
+    );
+    if (worktree !== undefined) slots['cwd'] = [formatWorktreeCwd(worktree, state.workDir, colors)];
+    else if (cwd) slots['cwd'] = [chalk.hex(colors.textDim)(cwd)];
 
     const git = this.gitCache?.getStatus() ?? null;
-    if (git !== null) slots['git'] = [formatFooterGitBadge(git, colors)];
+    if (git !== null && (git.branch !== '' || worktree !== undefined)) {
+      slots['git'] = [formatFooterGitBadge(git, colors)];
+    }
 
     return slots;
   }
 
   private statusLinePayload(): StatusLinePayload {
     const state = this.state;
+    const gitBranch = this.gitCache?.getStatus()?.branch;
     return {
       model: modelDisplayName(state),
       cwd: sessionWorkDir(state),
-      gitBranch: this.gitCache?.getStatus()?.branch ?? null,
+      gitBranch: gitBranch === undefined || gitBranch === '' ? null : gitBranch,
       permissionMode: state.permissionMode,
       planMode: state.planMode,
       contextUsage: state.contextUsage,

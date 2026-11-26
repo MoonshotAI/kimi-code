@@ -19,6 +19,21 @@ export type DockPart = 'head' | 'body' | 'foot';
 
 class OverflowScrollView extends ScrollView {
   private overflowChanged = false;
+  private lastContentHeight = 0;
+
+  constructor(
+    component: Component,
+    private readonly onWheel?: () => void,
+  ) {
+    super(component, {
+      overscroll: 'contain',
+      scrollbar: 'always',
+    });
+  }
+
+  get measuredContentHeight(): number {
+    return this.lastContentHeight;
+  }
 
   override get isScrollbarVisible(): boolean {
     return this.canScroll;
@@ -26,6 +41,7 @@ class OverflowScrollView extends ScrollView {
 
   override updateLayout(contentHeight: number, viewportHeight: number, requestRender: () => void): void {
     const overflowed = this.canScroll;
+    this.lastContentHeight = Math.max(0, Math.floor(contentHeight));
     super.updateLayout(contentHeight, viewportHeight, requestRender);
     if (this.canScroll !== overflowed) this.overflowChanged = true;
   }
@@ -39,6 +55,7 @@ class OverflowScrollView extends ScrollView {
   override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
     if (event.type !== 'wheel') return undefined;
     this.scrollBy(event.wheelDelta ?? 0);
+    this.onWheel?.();
     return { handled: true, target: mouseTarget(this, event) };
   }
 }
@@ -76,9 +93,8 @@ export abstract class DockSection extends VStack {
       this.addChild(view('foot'));
       return;
     }
-    this.bodyScroll = new OverflowScrollView(padded(view('body')), {
-      overscroll: 'contain',
-      scrollbar: 'always',
+    this.bodyScroll = new OverflowScrollView(padded(view('body')), () => {
+      this.onBodyScrolled();
     });
     this.addChild(padded(view('head')), { shrink: 0 });
     this.addChild(this.bodyScroll, { shrink: 1, minSize: 0, maxSize: layout.maxBodyRows });
@@ -88,6 +104,24 @@ export abstract class DockSection extends VStack {
   scrollBody(lines: number): boolean {
     if (this.bodyScroll === undefined) return false;
     return this.bodyScroll.scrollBy(lines) !== lines;
+  }
+
+  protected ensureBodyVisible(startRow: number, endRow: number): void {
+    const scroll = this.bodyScroll;
+    if (scroll === undefined) return;
+    const viewport = scroll.viewportHeight;
+    if (viewport <= 0) return;
+    if (startRow < scroll.scrollTop) {
+      scroll.scrollTo(startRow);
+    } else if (endRow > scroll.scrollTop + viewport) {
+      scroll.scrollTo(Math.max(0, endRow - viewport));
+    }
+  }
+
+  protected isBodyScrolledNearEnd(thresholdRows = 3): boolean {
+    const scroll = this.bodyScroll;
+    if (scroll === undefined || !scroll.canScroll) return false;
+    return scroll.scrollTop + scroll.viewportHeight + thresholdRows >= scroll.measuredContentHeight;
   }
 
   protected bodyOverflows(partWidth: number): boolean {
@@ -105,6 +139,8 @@ export abstract class DockSection extends VStack {
   consumeOverflowChange(): boolean {
     return this.bodyScroll?.consumeOverflowChange() ?? false;
   }
+
+  protected onBodyScrolled(): void {}
 
   protected abstract renderPart(part: DockPart, width: number): string[];
 

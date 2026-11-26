@@ -195,6 +195,7 @@ describe('built-in slash command registry', () => {
         'undo',
         'usage',
         'version',
+        'worktree',
         'yolo',
         'auto',
       ]),
@@ -222,6 +223,13 @@ describe('built-in slash command registry', () => {
     const command = findBuiltInSlashCommand('tower');
     expect(command).toBeDefined();
     expect((command as KimiSlashCommand).experimentalFlag).toBe('tower');
+  });
+
+  it('gates worktree behind the worktree experiment and keeps it idle-only', () => {
+    const command = findBuiltInSlashCommand('worktree');
+    expect(command).toBeDefined();
+    expect((command as KimiSlashCommand).experimentalFlag).toBe('worktree');
+    expect(resolveSlashCommandAvailability(command!, '')).toBe('idle-only');
   });
 
   it('keeps every tower subcommand always available, including objectives', () => {

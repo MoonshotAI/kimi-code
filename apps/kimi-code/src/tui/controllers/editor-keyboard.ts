@@ -35,6 +35,7 @@ import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
 import type { SurveyController } from './survey-controller';
 import type { ModelMigrationController } from './model-migration';
+import type { WorktreeCreationController } from './worktree-creation';
 
 export interface EditorKeyboardHost {
   state: TUIState;
@@ -46,6 +47,7 @@ export interface EditorKeyboardHost {
   readonly btwPanelController: BtwPanelController;
   readonly surveyController: SurveyController;
   readonly modelMigration?: ModelMigrationController;
+  readonly worktreeCreation?: Pick<WorktreeCreationController, 'busy' | 'cancel'>;
   readonly promptPredictionController?: import('./prompt-prediction').PromptPredictionController;
   readonly skillCommandMap: Map<string, string>;
   readonly pluginCommandMap: Map<string, string>;
@@ -65,6 +67,7 @@ export interface EditorKeyboardHost {
   recallLastQueued(): QueuedMessage | undefined;
   isSteeringQueuedMessages(): boolean;
   showError(msg: string): void;
+  showStatus?(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   updateEditorBorderHighlight(text?: string): void;
   updateGoalLengthWarning(text: string | undefined): void;
@@ -76,7 +79,7 @@ export interface EditorKeyboardHost {
   cancelRunningShellCommand(): void;
   hideSessionPicker(): void;
   openUndoSelector(): void;
-  stop(exitCode?: number): Promise<void>;
+  requestExit(): Promise<void>;
   ensureSession(): Promise<Session | undefined>;
   handlePlanToggle(next: boolean): void;
   handleInputModeChange(mode: 'prompt' | 'bash'): void;
@@ -193,6 +196,14 @@ export class EditorKeyboardController {
         return;
       }
 
+      if (
+        host.worktreeCreation?.busy === true &&
+        (this.clearEditorTextIfPresent() || host.worktreeCreation.cancel())
+      ) {
+        this.clearPendingExit();
+        return;
+      }
+
       if (host.state.appState.isCompacting) {
         this.clearPendingExit();
 
@@ -213,7 +224,7 @@ export class EditorKeyboardController {
 
       if (this.pendingExit?.kind === 'ctrl-c') {
         this.clearPendingExit();
-        void host.stop();
+        void host.requestExit();
         return;
       }
 
@@ -226,7 +237,7 @@ export class EditorKeyboardController {
     editor.onCtrlD = () => {
       if (this.pendingExit?.kind === 'ctrl-d') {
         this.clearPendingExit();
-        void host.stop();
+        void host.requestExit();
         return;
       }
       this.armPendingExit('ctrl-d', CTRL_D_HINT);
@@ -240,6 +251,10 @@ export class EditorKeyboardController {
         return;
       }
       if (host.btwPanelController.closeOrCancel()) {
+        this.clearPendingUndoEsc();
+        return;
+      }
+      if (host.worktreeCreation?.cancel() === true) {
         this.clearPendingUndoEsc();
         return;
       }
@@ -262,6 +277,10 @@ export class EditorKeyboardController {
     };
 
     editor.onShiftTab = () => {
+      if (host.worktreeCreation?.busy === true) {
+        host.showStatus?.('Wait for the worktree to finish setting up.');
+        return;
+      }
       const togglePlan = (): void => {
         const next = !host.state.appState.planMode;
         host.track('shortcut_plan_toggle', { enabled: next });

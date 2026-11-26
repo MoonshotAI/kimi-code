@@ -1,4 +1,5 @@
 import { statSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 
 export interface ResumeElsewhereHint {
   readonly summary: string;
@@ -8,6 +9,14 @@ export interface ResumeElsewhereHint {
 export function isDirectory(path: string): boolean {
   try {
     return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+export async function isDirectoryAsync(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
   } catch {
     return false;
   }
