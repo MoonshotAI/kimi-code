@@ -930,4 +930,67 @@ describe('KimiOAuthToolkit', () => {
     await expect(storage.load('kimi-code')).resolves.toBeUndefined();
     expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toBeUndefined();
   });
+
+  it('skips overwriting provisioned config when another process rotates the token before /models finishes', async () => {
+    const storage = new MemoryTokenStorage();
+    storage.tokens.set('kimi-code', token('initial-access'));
+
+    let resolveModelsFetch!: (response: Response) => void;
+    const fetchImpl = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith('/api/oauth/token')) {
+        return new Response(
+          JSON.stringify({
+            access_token: 'workspace-a-access',
+            refresh_token: 'workspace-a-refresh',
+            expires_in: 3600,
+            scope: 'kimi-code',
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.endsWith('/models')) {
+        return new Promise<Response>((resolve) => {
+          resolveModelsFetch = resolve;
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const write = vi.fn();
+    const config: { providers: Record<string, unknown> } = { providers: {} };
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      fetchImpl,
+      now: () => 100,
+      configAdapter: {
+        read: () => config,
+        write,
+        apply: (target) => {
+          target.providers[KIMI_CODE_PROVIDER_NAME] = { type: 'kimi', apiKey: '' };
+          return { defaultModel: 'kimi-code/workspace-a-only', defaultThinking: true };
+        },
+      },
+    });
+
+    const pendingSwitch = toolkit.switchWorkspace({ kind: 'business', businessId: 'biz-a' });
+    await vi.waitFor(() => expect(resolveModelsFetch).toBeTypeOf('function'));
+
+    storage.tokens.set('kimi-code', token('workspace-b-access'));
+    resolveModelsFetch(
+      new Response(
+        JSON.stringify({
+          data: [{ id: 'workspace-a-only', limit: { context: 200000 } }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+
+    await expect(pendingSwitch).resolves.toMatchObject({ ok: true });
+    expect(write).not.toHaveBeenCalled();
+  });
 });

@@ -358,22 +358,28 @@ export class KimiOAuthToolkit<TConfig = unknown> {
         }
       }
 
-      if (!(await manager.hasToken())) {
-        throw new OAuthUnauthorizedError(
-          `No token for "${name}". Run /login to authenticate.`,
-        );
+      const isActiveSwitchToken = async (): Promise<boolean> =>
+        (await manager.getCachedAccessToken()) === switchedAccessToken;
+
+      if (!(await isActiveSwitchToken())) {
+        if (!(await manager.hasToken())) {
+          throw new OAuthUnauthorizedError(
+            `No token for "${name}". Run /login to authenticate.`,
+          );
+        }
+        return { providerName: name, ok: true, target };
       }
 
       const shouldProvision = options.provisionConfig ?? this.configAdapter !== undefined;
       const configAdapter = this.configAdapter;
       let provision: ManagedKimiCodeProvisionResult | undefined;
       if (shouldProvision && configAdapter !== undefined) {
-        let loggedOutDuringProvision = false;
+        let supersededDuringProvision = false;
         const guardedAdapter: ManagedKimiConfigAdapter<TConfig> = {
           ...configAdapter,
           write: async (nextConfig) => {
-            if (!(await manager.hasToken())) {
-              loggedOutDuringProvision = true;
+            if (!(await isActiveSwitchToken())) {
+              supersededDuringProvision = true;
               return;
             }
             await configAdapter.write(nextConfig);
@@ -395,10 +401,13 @@ export class KimiOAuthToolkit<TConfig = unknown> {
             `Failed to refresh model config: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
-        if (loggedOutDuringProvision || !(await manager.hasToken())) {
-          throw new OAuthUnauthorizedError(
-            `No token for "${name}". Run /login to authenticate.`,
-          );
+        if (supersededDuringProvision || !(await isActiveSwitchToken())) {
+          if (!(await manager.hasToken())) {
+            throw new OAuthUnauthorizedError(
+              `No token for "${name}". Run /login to authenticate.`,
+            );
+          }
+          return { providerName: name, ok: true, target };
         }
       }
 
@@ -408,10 +417,13 @@ export class KimiOAuthToolkit<TConfig = unknown> {
         accessToken: switchedAccessToken,
         ...this.managedRequestInit(),
       });
-      if (!(await manager.hasToken())) {
-        throw new OAuthUnauthorizedError(
-          `No token for "${name}". Run /login to authenticate.`,
-        );
+      if (!(await isActiveSwitchToken())) {
+        if (!(await manager.hasToken())) {
+          throw new OAuthUnauthorizedError(
+            `No token for "${name}". Run /login to authenticate.`,
+          );
+        }
+        return { providerName: name, ok: true, target };
       }
       const profile = profileRes.kind === 'ok' ? profileRes.profile : undefined;
       if (profileRes.kind === 'error') {

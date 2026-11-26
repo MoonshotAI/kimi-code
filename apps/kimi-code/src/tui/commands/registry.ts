@@ -376,7 +376,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Switch between personal and business workspaces',
     priority: 60,
-    availability: 'always',
   },
   {
     name: 'feedback',

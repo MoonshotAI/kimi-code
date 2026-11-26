@@ -13,6 +13,17 @@ const NOT_LOGGED_IN_MESSAGE = 'Not logged in to Kimi Code. Send /login to authen
 const NO_BUSINESS_WORKSPACES_MESSAGE = 'No business workspaces available for this account.';
 const ACTIVE_PROMPT_DEFER_MESSAGE =
   'Finish or dismiss the active prompt before switching workspaces.';
+const STREAMING_DEFER_MESSAGE =
+  'Cannot switch workspaces while streaming — press Esc or Ctrl-C first.';
+
+function isSessionBusy(host: SlashCommandHost): boolean {
+  const appState = (host.state as SlashCommandHost['state'] | undefined)?.appState;
+  if (appState === undefined) return false;
+  return (
+    (appState.streamingPhase !== undefined && appState.streamingPhase !== 'idle') ||
+    appState.isCompacting
+  );
+}
 
 function hasBlockingPrompt(host: SlashCommandHost): boolean {
   const state = host.state as SlashCommandHost['state'] | undefined;
@@ -64,6 +75,10 @@ export async function handleWorkspaceCommand(host: SlashCommandHost): Promise<vo
     return;
   }
 
+  if (isSessionBusy(host)) {
+    host.showError(STREAMING_DEFER_MESSAGE);
+    return;
+  }
   if (hasBlockingPrompt(host)) {
     host.showStatus(ACTIVE_PROMPT_DEFER_MESSAGE, 'warning');
     return;
@@ -85,6 +100,10 @@ export async function handleWorkspaceCommand(host: SlashCommandHost): Promise<vo
     return;
   }
 
+  if (isSessionBusy(host)) {
+    host.showError(STREAMING_DEFER_MESSAGE);
+    return;
+  }
   if (hasBlockingPrompt(host)) {
     host.showStatus(ACTIVE_PROMPT_DEFER_MESSAGE, 'warning');
     return;
@@ -92,6 +111,10 @@ export async function handleWorkspaceCommand(host: SlashCommandHost): Promise<vo
 
   const chosen = await promptWorkspaceSelection(host, listResult.workspaces);
   if (chosen === undefined) return;
+  if (isSessionBusy(host)) {
+    host.showError(STREAMING_DEFER_MESSAGE);
+    return;
+  }
 
   const targetLabel = workspaceSelectionLabel(chosen);
   if (chosen.current) {

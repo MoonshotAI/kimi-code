@@ -1,4 +1,8 @@
-import { llmErrorName as coreLlmErrorName, type LlmErrorMessage as CoreLlmErrorMessage } from '@moonshot-ai/core/llm/response';
+import {
+  llmErrorName as coreLlmErrorName,
+  llmStatusErrorMessage,
+  type LlmErrorMessage as CoreLlmErrorMessage,
+} from '@moonshot-ai/core/llm/response';
 import { CoreErrors, errorInfo, isErrorCode } from './codes';
 import type { ErrorCode } from '#/errors';
 import { Error2 } from './errors';
@@ -66,6 +70,16 @@ function toErrorPayloadAtDepth(error: unknown, depth: number): ErrorPayload {
 }
 
 function toShallowErrorPayload(error: unknown): ErrorPayload {
+  if (isLlmErrorMessage(error)) {
+    const code = llmErrorCode(error);
+    if (code === undefined) return makeErrorPayload(CoreErrors.codes.INTERNAL, error.message);
+    return {
+      ...makeErrorPayload(code, error.message),
+      name: llmErrorName(error),
+      details: llmErrorDetails(error),
+      retryable: error.kind !== 'syntax' && error.retryable,
+    };
+  }
   if (isCodedError(error)) {
     return {
       code: error.code,
@@ -77,16 +91,6 @@ function toShallowErrorPayload(error: unknown): ErrorPayload {
   }
   if (error instanceof Error) {
     return makeErrorPayload(CoreErrors.codes.INTERNAL, error.message, { name: error.name });
-  }
-  if (isLlmErrorMessage(error)) {
-    const code = llmErrorCode(error);
-    if (code === undefined) return makeErrorPayload(CoreErrors.codes.INTERNAL, error.message);
-    return {
-      ...makeErrorPayload(code, error.message),
-      name: llmErrorName(error),
-      details: llmErrorDetails(error),
-      retryable: error.kind !== 'syntax' && error.retryable,
-    };
   }
   return makeErrorPayload(CoreErrors.codes.INTERNAL, String(error));
 }
@@ -119,7 +123,9 @@ function isLlmErrorMessage(error: unknown): error is LlmErrorMessage {
 }
 
 function llmErrorCode(error: LlmErrorMessage): ErrorCode | undefined {
-  if ('code' in error && isErrorCode(error.code)) return error.code as ErrorCode;
+  if (llmStatusErrorMessage(error) === null && 'code' in error && isErrorCode(error.code)) {
+    return error.code as ErrorCode;
+  }
   switch (error.kind) {
     case 'rate_limit':
       return 'provider.rate_limit' as ErrorCode;
@@ -163,11 +169,12 @@ function llmErrorName(error: LlmErrorMessage): string | undefined {
 }
 
 function llmErrorDetails(error: LlmErrorMessage): Readonly<Record<string, unknown>> | undefined {
+  const isStatusError = llmStatusErrorMessage(error) !== null;
   const providerErrorCode =
     'code' in error &&
     typeof error.code === 'string' &&
     error.code.length > 0 &&
-    !isErrorCode(error.code)
+    (isStatusError || !isErrorCode(error.code))
       ? error.code
       : undefined;
   if (

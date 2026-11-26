@@ -103,6 +103,7 @@ export interface SessionEventHost {
   state: TUIState;
   session: Session | undefined;
   aborted: boolean;
+  authFlow?: { handleBusinessMembershipRevoked(): void };
   sessionEventUnsubscribe: (() => void) | undefined;
   readonly streamingUI: StreamingUIController;
   readonly programStatus?: ProgramStatusController;
@@ -1065,8 +1066,12 @@ export class SessionEventHandler {
       isBusinessMembershipRevokedCode(event.details?.['providerErrorCode']) ||
       event.message === BUSINESS_MEMBERSHIP_REVOKED_MESSAGE
     ) {
-      this.host.setAppState({ managedWorkspace: null });
-      this.host.programStatus?.setAuthRequired(true);
+      if (this.host.authFlow !== undefined) {
+        this.host.authFlow.handleBusinessMembershipRevoked();
+      } else {
+        this.host.setAppState({ managedWorkspace: null });
+        this.host.programStatus?.setAuthRequired(true);
+      }
       this.host.showError(BUSINESS_MEMBERSHIP_REVOKED_MESSAGE);
       return;
     }

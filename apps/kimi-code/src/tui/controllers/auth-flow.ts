@@ -137,7 +137,9 @@ export class AuthFlowController {
 
   handleBusinessMembershipRevoked(): void {
     this.clearManagedWorkspace();
-    this.host.setAuthRequired(true);
+    if (this.activeModelUsesManagedOAuth()) {
+      this.host.setAuthRequired(true);
+    }
   }
 
   private activeModelUsesManagedOAuth(): boolean {
@@ -170,11 +172,7 @@ export class AuthFlowController {
     if (generation !== this.workspaceRefreshGeneration) return;
     if (res.kind === 'error') {
       if (isBusinessMembershipRevokedCode(res.errorCode)) {
-        if (this.activeModelUsesManagedOAuth()) {
-          this.handleBusinessMembershipRevoked();
-        } else {
-          this.clearManagedWorkspace();
-        }
+        this.handleBusinessMembershipRevoked();
       }
       return;
     }
@@ -202,23 +200,34 @@ export class AuthFlowController {
     if (result.warning !== undefined) warnings.push(result.warning);
 
     try {
-      if (isStreaming) {
-        const config = await this.host.harness.getConfig({ reload: true });
-        const availableModels = config.models ?? {};
-        const availableProviders = config.providers ?? {};
-        const currentModel = this.host.state?.appState.model.trim() ?? '';
+      const config = await this.host.harness.getConfig({ reload: true });
+      const availableModels = config.models ?? {};
+      const availableProviders = config.providers ?? {};
+      const currentModel = this.host.state?.appState.model.trim() ?? '';
+      const retainedModel =
+        currentModel.length > 0 ? availableModels[currentModel] : undefined;
+      if (retainedModel !== undefined) {
+        try {
+          const accessToken = await this.host.harness.auth.getCachedAccessToken();
+          await Promise.all([
+            refreshModelSwitchConfirmConfig({ accessToken }),
+            refreshEffortSwitchConfig({ accessToken }),
+          ]);
+        } catch {}
+        this.host.setAppState({
+          availableModels,
+          availableProviders,
+          maxContextTokens: retainedModel.maxContextSize,
+        });
+        this.host.setAuthRequired(false);
+      } else if (isStreaming) {
         const defaultModel = resolvePreferredModel(
           this.host.options.startup.model,
           config.defaultModel,
           availableModels,
         );
         const fallback = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
-        if (
-          currentModel.length > 0 &&
-          availableModels[currentModel] === undefined &&
-          defaultModel !== undefined &&
-          fallback !== undefined
-        ) {
+        if (currentModel.length > 0 && defaultModel !== undefined && fallback !== undefined) {
           await this.activateModelAfterLogin(
             defaultModel,
             thinkingEffortFromConfig(config.thinking),

@@ -104,4 +104,28 @@ describe('SessionEventHandler business membership revoked errors', () => {
       expect(host.showStatus).not.toHaveBeenCalled();
     },
   );
+
+  it('delegates session revocation through authFlow.handleBusinessMembershipRevoked to advance generation', () => {
+    const { host } = makeHost();
+    const handleBusinessMembershipRevoked = vi.fn(() => {
+      host.state.appState.managedWorkspace = null;
+    });
+    host.authFlow = { handleBusinessMembershipRevoked };
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(
+      {
+        type: 'error',
+        sessionId: 's1',
+        agentId: 'main',
+        code: 'provider.auth_error',
+        message: 'Upstream 401 unauthorized',
+        details: { providerErrorCode: 'REASON_BUSINESS_MEMBER_REMOVED' },
+      } as any,
+      vi.fn(),
+    );
+
+    expect(handleBusinessMembershipRevoked).toHaveBeenCalledTimes(1);
+    expect(host.state.appState.managedWorkspace).toBeNull();
+  });
 });

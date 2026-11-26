@@ -548,6 +548,78 @@ describe('managed workspace state sync', () => {
     }
   });
 
+  it('preserves a manually selected model on an idle workspace switch when it remains in the refreshed catalog', async () => {
+    const { host, session, appState } = makeHost({
+      withSession: true,
+      defaultModel: 'k2-default',
+      boundModel: 'k2-custom-choice',
+    });
+    (appState as Record<string, unknown>)['streamingPhase'] = 'idle';
+    appState.model = 'k2-custom-choice';
+    host.harness.getConfig = vi.fn(async () => ({
+      defaultModel: 'k2-default',
+      models: {
+        'k2-default': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k2',
+          maxContextSize: 200_000,
+        },
+        'k2-custom-choice': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-for-coding',
+          maxContextSize: 256_000,
+        },
+      },
+      providers: {},
+    }));
+    host.harness.auth['switchWorkspace'] = vi.fn(async () => ({
+      providerName: 'managed:kimi-code',
+      ok: true as const,
+      target: { kind: 'business' as const, businessId: 'biz-1' },
+    }));
+
+    await new AuthFlowController(host).switchWorkspace(
+      { kind: 'business', businessId: 'biz-1' },
+      {
+        kind: 'business',
+        key: 'business:biz-1',
+        target: { kind: 'business', businessId: 'biz-1' },
+        businessId: 'biz-1',
+        name: 'Acme Corp',
+        status: 'STATUS_ACTIVE',
+        kindLabel: 'Business workspace',
+        current: false,
+        disabled: false,
+        switchable: true,
+        roles: ['member'],
+      },
+    );
+
+    expect(session!.setModel).not.toHaveBeenCalled();
+    expect(appState.model).toBe('k2-custom-choice');
+  });
+
+  it('clears workspace without setting authRequired when handleBusinessMembershipRevoked runs while a custom provider is active', () => {
+    const { host, appState } = makeHost({ defaultModel: 'custom-gpt' });
+    appState.model = 'custom-gpt';
+    (appState as Record<string, unknown>)['availableModels'] = {
+      'custom-gpt': {
+        provider: 'custom-openai',
+        model: 'gpt-4o',
+        maxContextSize: 128_000,
+      },
+    };
+    appState.managedWorkspace = {
+      hasBusinessWorkspace: true,
+      statusWorkspaceLine: 'Alice · Old Corp',
+    };
+
+    new AuthFlowController(host).handleBusinessMembershipRevoked();
+
+    expect(appState.managedWorkspace).toBeNull();
+    expect(host.setAuthRequired).not.toHaveBeenCalled();
+  });
+
   it('clears stale workspace without setting authRequired when active model uses a custom provider', async () => {
     const { host, appState } = makeHost({ defaultModel: 'custom-gpt' });
     appState.model = 'custom-gpt';

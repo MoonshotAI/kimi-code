@@ -412,9 +412,16 @@ export class OAuthManager {
 
         const result = await this.pollImpl(this.config, auth.deviceCode);
         if (result.kind === 'success') {
-          await this.storage.save(this.config.name, result.token);
-          this.volatileToken = undefined;
-          return result.token;
+          return this.runExclusive(async () => {
+            const release = await this.acquireRefreshLock();
+            try {
+              await this.storage.save(this.config.name, result.token);
+              this.volatileToken = undefined;
+              return result.token;
+            } finally {
+              await release();
+            }
+          });
         }
         if (result.kind === 'denied') {
           throw new OAuthAccessDeniedError(

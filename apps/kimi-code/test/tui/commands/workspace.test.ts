@@ -237,4 +237,21 @@ describe('handleWorkspaceCommand', () => {
       'warning',
     );
   });
+
+  it('rejects /workspace while a streaming turn is active', async () => {
+    const { host } = createHostStub({});
+    (host as unknown as { state: unknown }).state = {
+      appState: { streamingPhase: 'streaming', isCompacting: false },
+      editorReplacementMounted: false,
+      activeDialog: null,
+      livePane: { pendingApproval: null, pendingQuestion: null },
+    };
+
+    await handleWorkspaceCommand(host);
+
+    expect(host.harness.auth.listWorkspaces).not.toHaveBeenCalled();
+    expect(host.showError).toHaveBeenCalledWith(
+      'Cannot switch workspaces while streaming — press Esc or Ctrl-C first.',
+    );
+  });
 });
