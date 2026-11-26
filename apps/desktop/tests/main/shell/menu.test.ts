@@ -27,21 +27,20 @@ const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
   requestUpdateCheck: vi.fn(),
   requestUpdateDownload: vi.fn(),
-  requestUpdateInstall: vi.fn(),
-  getUpdateStatus: vi.fn(() => ({ state: 'idle' as const })),
-  getUpdateAutoDownload: vi.fn(() => false),
+  getUpdateStatus: vi.fn((): { state: 'idle' | 'available' | 'downloading' | 'downloaded' | 'error'; version?: string } => ({ state: 'idle' })),
   isLinuxNativeTitleBar: vi.fn(() => false),
   devToolsMode: vi.fn((): 'right' | 'detach' => 'detach'),
   openExternal: vi.fn(),
   sendActionToFirstResponder: vi.fn(),
   exportDiagnostics: vi.fn(async () => {}),
   openLogsFolder: vi.fn(async () => {}),
+  showMessageBox: vi.fn(async () => ({ response: 0, checkboxChecked: false })),
 }));
 
 vi.mock('electron', () => ({
   webContents: { getFocusedWebContents: mocks.focusedContents },
   app: { getLocale: () => 'en-US', isPackaged: true, getVersion: () => '1.0.1' },
-  dialog: { showMessageBox: vi.fn(async () => ({ response: 0, checkboxChecked: false })) },
+  dialog: { showMessageBox: mocks.showMessageBox },
   Menu: {
     buildFromTemplate: vi.fn((template: unknown) => template),
     setApplicationMenu: vi.fn(),
@@ -69,11 +68,9 @@ vi.mock('../../../src/main/diagnostics/diagnostics-export', () => ({
   openLogsFolder: mocks.openLogsFolder,
 }));
 vi.mock('../../../src/main/release/updater', () => ({
-  getUpdateAutoDownload: mocks.getUpdateAutoDownload,
   getUpdateStatus: mocks.getUpdateStatus,
   requestUpdateCheck: mocks.requestUpdateCheck,
   requestUpdateDownload: mocks.requestUpdateDownload,
-  requestUpdateInstall: mocks.requestUpdateInstall,
 }));
 
 function submenuItems(item: MenuItemConstructorOptions): MenuItemConstructorOptions[] {
@@ -643,6 +640,31 @@ describe('menu telemetry', () => {
     clickItem(appMenuItems(menuTemplate(true, 'en')).find((item) => item.id === 'check-for-updates'));
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('menu_action', { action: 'check-for-updates' });
     await new Promise((resolve) => setImmediate(resolve));
+  });
+
+  it('opens the renderer update dialog and starts downloading directly when an update is available', async () => {
+    mocks.requestUpdateCheck.mockResolvedValue({ outcome: 'available', version: '1.2.3' });
+    mocks.getUpdateStatus.mockReturnValueOnce({ state: 'available', version: '1.2.3' });
+    clickItem(appMenuItems(menuTemplate(true, 'en')).find((item) => item.id === 'check-for-updates'));
+    await vi.waitFor(() => {
+      expect(mocks.sendToRenderer).toHaveBeenCalledWith(IPC.menuAction, 'open-update-dialog');
+    });
+
+    expect(mocks.showMainWindow).toHaveBeenCalledOnce();
+    expect(mocks.requestUpdateDownload).toHaveBeenCalledOnce();
+    expect(mocks.showMessageBox).not.toHaveBeenCalled();
+  });
+
+  it('opens the renderer update dialog without downloading again when the update is ready', async () => {
+    mocks.requestUpdateCheck.mockResolvedValue({ outcome: 'available', version: '1.2.3' });
+    mocks.getUpdateStatus.mockReturnValueOnce({ state: 'downloaded', version: '1.2.3' });
+    clickItem(appMenuItems(menuTemplate(true, 'en')).find((item) => item.id === 'check-for-updates'));
+    await vi.waitFor(() => {
+      expect(mocks.sendToRenderer).toHaveBeenCalledWith(IPC.menuAction, 'open-update-dialog');
+    });
+
+    expect(mocks.requestUpdateDownload).not.toHaveBeenCalled();
+    expect(mocks.showMessageBox).not.toHaveBeenCalled();
   });
 
   it('tracks the Help menu Documentation / Console links', async () => {

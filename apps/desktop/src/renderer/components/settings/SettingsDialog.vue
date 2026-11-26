@@ -471,7 +471,7 @@ async function onCheckUpdate(): Promise<void> {
   checkingUpdate.value = true;
   checkResult.value = null;
   try {
-    checkResult.value = await updateTracker.check();
+    checkResult.value = await updateTracker.checkAndUpdate();
   } finally {
     checkingUpdate.value = false;
   }
@@ -485,7 +485,7 @@ const checkResultText = computed(() => {
       if (updateTracker.status.value.state === 'downloaded') {
         return t('settings.updateCheckDownloaded', { version: result.version ?? '' });
       }
-      if (updateTracker.autoDownload.value) {
+      if (updateTracker.status.value.state === 'downloading' || updateTracker.autoDownload.value) {
         return t('settings.updateCheckAvailableAuto', { version: result.version ?? '' });
       }
       return t('settings.updateCheckAvailable', { version: result.version ?? '' });

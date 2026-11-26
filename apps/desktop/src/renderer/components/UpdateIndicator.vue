@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Checkbox, Dialog, Icon, Tooltip } from '@moonshot-ai/app-ui';
 import { Markdown } from '@moonshot-ai/app-markdown';
@@ -13,8 +13,7 @@ const canary = useCanaryChannel();
 
 const status = update.status;
 const visible = update.visible;
-
-const open = ref(false);
+const open = update.dialogOpen;
 
 const currentVersion =
   typeof __KIMI_CLIENT_VERSION__ === 'string' && __KIMI_CLIENT_VERSION__.trim()

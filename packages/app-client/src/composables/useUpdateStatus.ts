@@ -34,12 +34,15 @@ interface UpdateBridge {
 export interface UpdateTracker {
   status: Ref<UpdateStatus>;
   visible: Ref<boolean>;
+  dialogOpen: Ref<boolean>;
   canCheck: boolean;
   autoDownload: Ref<boolean>;
   canToggleAutoDownload: boolean;
   setAutoDownload: (enabled: boolean, source: 'settings' | 'update_prompt') => void;
   skipVersion: () => void;
+  openDialog: () => void;
   check: () => Promise<UpdateCheckResult>;
+  checkAndUpdate: () => Promise<UpdateCheckResult>;
   download: () => void;
   install: () => Promise<void>;
 }
@@ -48,6 +51,7 @@ const IDLE: UpdateStatus = { state: 'idle' };
 
 export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTracker {
   const status = ref<UpdateStatus>(IDLE);
+  const dialogOpen = ref(false);
   const skippedVersion = ref<string | null>(safeGetString(STORAGE_KEYS.updateSkippedVersion));
   const autoDownload = ref(false);
 
@@ -87,9 +91,36 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
     return true;
   });
 
+  const download = (): void => {
+    void bridge?.downloadUpdate().catch(() => {});
+  };
+
+  const check = async (): Promise<UpdateCheckResult> => {
+    if (typeof bridge?.checkForUpdates !== 'function') {
+      return { outcome: 'unsupported' };
+    }
+    const result = await bridge
+      .checkForUpdates()
+      .catch((): UpdateCheckResult => ({ outcome: 'error', message: 'bridge call failed' }));
+    if (result.outcome === 'available' && result.version !== undefined && result.version === skippedVersion.value) {
+      skippedVersion.value = null;
+      safeRemove(STORAGE_KEYS.updateSkippedVersion);
+    }
+    return result;
+  };
+
+  const checkAndUpdate = async (): Promise<UpdateCheckResult> => {
+    const result = await check();
+    if (result.outcome !== 'available') return result;
+    dialogOpen.value = true;
+    download();
+    return result;
+  };
+
   return {
     status,
     visible,
+    dialogOpen,
     canCheck: typeof bridge?.checkForUpdates === 'function',
     autoDownload,
     canToggleAutoDownload:
@@ -115,22 +146,12 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
         safeSetString(STORAGE_KEYS.updateSkippedVersion, version);
       }
     },
-    check: async () => {
-      if (typeof bridge?.checkForUpdates !== 'function') {
-        return Promise.resolve({ outcome: 'unsupported' });
-      }
-      const result = await bridge
-        .checkForUpdates()
-        .catch((): UpdateCheckResult => ({ outcome: 'error', message: 'bridge call failed' }));
-      if (result.outcome === 'available' && result.version !== undefined && result.version === skippedVersion.value) {
-        skippedVersion.value = null;
-        safeRemove(STORAGE_KEYS.updateSkippedVersion);
-      }
-      return result;
+    openDialog: () => {
+      dialogOpen.value = true;
     },
-    download: () => {
-      void bridge?.downloadUpdate().catch(() => {});
-    },
+    check,
+    checkAndUpdate,
+    download,
     install: async () => {
       await bridge?.installUpdate();
     },
