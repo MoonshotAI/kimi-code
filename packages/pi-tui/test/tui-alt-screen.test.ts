@@ -3070,4 +3070,59 @@ describe("TuiAltScreen", () => {
 		assert.ok(!terminal.getViewport().some((line) => line.includes("Find in transcript")));
 		tui.stop();
 	});
+
+	it("closes active search when clicking a focusable editor while keeping search open on scroll, selection, and search-box clicks", async () => {
+		const terminal = new VirtualTerminal(80, 12);
+		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS, {
+			"tui.altScreen.search": ["ctrl+f", "ctrl+shift+f"],
+			"tui.altScreen.searchPrevious": ["up", "shift+enter", "ctrl+shift+g"],
+			"tui.altScreen.searchNext": ["down", "enter", "ctrl+g"],
+		});
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { keybindings });
+		const scrollView = new ScrollView(
+			new Text(Array.from({ length: 20 }, (_, index) => `alpha line ${index + 1}`).join("\n"), 0, 0),
+			{ primary: true },
+		);
+		const editor = new Editor(tui, defaultEditorTheme);
+		tui.setLayoutRoot(new VStack([{ component: scrollView, flex: 1 }, { component: editor }]));
+		tui.setFocus(editor);
+		tui.start();
+		await terminal.waitForRender();
+
+		tui.openSearch("alpha");
+		await terminal.waitForRender();
+		assert.strictEqual(editor.focused, false);
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+
+		terminal.sendInput("\x1b[<64;5;3M");
+		terminal.sendInput("\x1b[<0;2;2M");
+		terminal.sendInput("\x1b[<32;6;2M");
+		terminal.sendInput("\x1b[<0;6;2m");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+
+		const searchRow = terminal.getViewport().findIndex((line) => line.includes("alpha") && line.includes("/20"));
+		assert.ok(searchRow >= 0);
+		const searchCol = terminal.getViewport()[searchRow]!.indexOf("alpha") + 1;
+		terminal.sendInput(`\x1b[<0;${searchCol};${searchRow + 1}M`);
+		terminal.sendInput(`\x1b[<0;${searchCol};${searchRow + 1}m`);
+		terminal.sendInput("x");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+		assert.strictEqual(editor.getText(), "");
+
+		const editorRow = 11;
+		terminal.sendInput(`\x1b[<0;5;${editorRow}M`);
+		terminal.sendInput(`\x1b[<0;5;${editorRow}m`);
+		await terminal.waitForRender();
+		assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+		assert.strictEqual(editor.focused, true);
+		assert.strictEqual(tui.getFocusedComponent(), editor);
+
+		terminal.sendInput("hello");
+		await terminal.waitForRender();
+		assert.strictEqual(editor.getText(), "hello");
+		assert.ok(!terminal.getViewport().some((line) => line.includes("↑ Previous · ↓ Next")));
+		tui.stop();
+	});
 });
