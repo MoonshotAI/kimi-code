@@ -189,5 +189,17 @@ describe('sliceMainRecordsAtTurn', () => {
       expect(replayUsers(cold), label).toEqual(expectedUsers);
       expect(userTexts(cold), label).toEqual(expectedUsers.map(({ text }) => text));
     }
+
+    const modernNotify: WireRecord[] = [
+      append('same'),
+      { ...prompt('same', 7), trigger: 'notify' },
+      append('same'),
+      ended(7),
+    ];
+    expect(replayUsers(modernNotify)).toEqual([
+      { text: 'same', turnId: undefined },
+      { text: 'same', turnId: 7 },
+    ]);
+    expect(sliceMainRecordsAtTurn(modernNotify, 'session_source', 7).records).toEqual(modernNotify);
   });
 });

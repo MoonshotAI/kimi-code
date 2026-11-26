@@ -665,22 +665,14 @@ export function matchWireTurnInputRecords(
   for (const append of appends) {
     const exact = unused.findIndex(
       (index) =>
-        (
-          records[index]!.type !== 'turn.prompt' ||
-          index < append.index ||
-          records[index]!['trigger'] === 'notify'
-        ) &&
+        (records[index]!.type !== 'turn.prompt' || index < append.index) &&
         wireTurnInputMatches(records[index]!, append.record, true, allUserMessages),
     );
     const matchAt = exact !== -1
       ? exact
       : unused.findIndex(
           (index) =>
-            (
-              records[index]!.type !== 'turn.prompt' ||
-              index < append.index ||
-              records[index]!['trigger'] === 'notify'
-            ) &&
+            (records[index]!.type !== 'turn.prompt' || index < append.index) &&
             wireTurnInputMatches(records[index]!, append.record, false, allUserMessages),
         );
     const inputIndex = matchAt === -1 ? undefined : unused.splice(matchAt, 1)[0];
