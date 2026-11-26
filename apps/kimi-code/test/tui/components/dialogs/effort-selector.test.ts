@@ -1,3 +1,5 @@
+import { TuiAltScreen } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import { describe, expect, it, vi } from 'vitest';
 
 import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
@@ -167,5 +169,59 @@ describe('EffortSelectorComponent', () => {
     expect(lines[hintIdx + 2]).not.toBe('');
     const squashed = lines.join('').replaceAll(/\s+/g, '');
     expect(squashed).toContain(warning.replaceAll(/\s+/g, ''));
+  });
+
+  it('selects effort segments on mouse click, tolerates 1-col horizontal drift, supports Alt+click session-only, and guards unfocused first click', async () => {
+    let now = 10_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const onSelect = vi.fn();
+    const onSessionOnlySelect = vi.fn();
+    const picker = new EffortSelectorComponent({
+      efforts: ['off', 'low', 'high', 'max'],
+      currentValue: 'high',
+      onSelect,
+      onSessionOnlySelect,
+      onCancel: vi.fn(),
+    });
+    const vt = new VirtualTerminal(80, 10);
+    const ui = new TuiAltScreen(vt);
+    ui.setLayoutRoot(picker);
+    ui.start();
+    await vt.waitForRender();
+    try {
+      const viewport = vt.getViewport().map(strip);
+      const segRow = viewport.findIndex((line) => line.includes('[ High ]'));
+      expect(segRow).toBeGreaterThan(0);
+      const lowCol = viewport[segRow]!.indexOf('Low') + 1;
+      const lowRightEdgeCol = viewport[segRow]!.indexOf('Low') + 5;
+      const maxCol = viewport[segRow]!.indexOf('Max') + 1;
+
+      now += 500;
+      vt.sendInput(`\u001B[<0;${String(lowCol)};${String(segRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(lowCol)};${String(segRow + 1)}m`);
+      await vt.waitForRender();
+      expect(picker.focused).toBe(true);
+      expect(onSelect).not.toHaveBeenCalled();
+
+      vt.sendInput(`\u001B[<0;${String(lowCol)};${String(segRow + 1)}M`);
+      vt.sendInput(`\u001B[<32;${String(lowCol + 10)};${String(segRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(lowCol + 10)};${String(segRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(vt.getViewport().map(strip)[segRow]).toContain('[ High ]');
+
+      vt.sendInput(`\u001B[<0;${String(lowRightEdgeCol)};${String(segRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(lowRightEdgeCol + 1)};${String(segRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith('low');
+
+      vt.sendInput(`\u001B[<8;${String(maxCol)};${String(segRow + 1)}M`);
+      vt.sendInput(`\u001B[<8;${String(maxCol)};${String(segRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onSessionOnlySelect).toHaveBeenCalledExactlyOnceWith('max');
+    } finally {
+      ui.stop();
+      vi.restoreAllMocks();
+    }
   });
 });

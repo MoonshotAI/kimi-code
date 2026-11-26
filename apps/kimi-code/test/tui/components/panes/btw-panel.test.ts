@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { ScrollView, Text, TuiAltScreen, VStack } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
+import { describe, expect, it, vi } from 'vitest';
 
 import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
@@ -7,12 +9,13 @@ function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
 }
 
-function makePanel(): BtwPanelComponent {
+function makePanel(overrides: Partial<ConstructorParameters<typeof BtwPanelComponent>[0]> = {}): BtwPanelComponent {
   return new BtwPanelComponent({
     markdownTheme: createMarkdownTheme(),
     canUseScrollKeys: () => false,
     onPrompt: () => {},
     terminalRows: () => 0,
+    ...overrides,
   });
 }
 
@@ -30,5 +33,95 @@ describe('BtwPanelComponent', () => {
     const done = strip(panel.render(60).join('\n'));
     expect(done).not.toContain('A-->B');
     expect(done).toContain('┌');
+  });
+
+  it('bounds regular-mode render height to one third of terminal rows', () => {
+    const panel = makePanel({ terminalRows: () => 15 });
+    panel.submit('long answer');
+    panel.appendAnswer(Array.from({ length: 20 }, (_, i) => `line ${String(i + 1)}`).join('\n'));
+    panel.markDone();
+
+    const rendered = panel.render(50).map(strip);
+    expect(rendered).toHaveLength(5);
+    expect(rendered[0]).toMatch(/^╭ BTW ─ Esc close ─+╮$/);
+    expect(rendered.at(-1)).toContain('line 20');
+  });
+
+  it('supports fullscreen Box + ScrollView wheel scrolling, overscroll containment, clean copy without borders, and top-bar close click', async () => {
+    let copied = '';
+    const onClose = vi.fn();
+    const vt = new VirtualTerminal(60, 15);
+    const ui = new TuiAltScreen(vt, undefined, undefined, {
+      copySelection: async (text) => {
+        copied = text;
+        return true;
+      },
+    });
+    const transcript = new ScrollView(
+      new Text(Array.from({ length: 20 }, (_, i) => `chat ${String(i + 1)}`).join('\n'), 0, 0),
+      { follow: 'end', primary: true },
+    );
+    const panel = makePanel({
+      fullscreen: true,
+      terminalRows: () => vt.rows,
+      canUseScrollKeys: () => true,
+      onClose,
+    });
+    panel.submit('explain');
+    panel.appendAnswer(Array.from({ length: 12 }, (_, i) => `ans-${String(i + 1)}`).join('\n\n'));
+    panel.markDone();
+
+    const root = new VStack([
+      { component: transcript, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+      { component: panel, shrink: 1, minSize: 0 },
+    ]);
+    ui.addLayoutEffect(() => {
+      if (panel.consumeOverflowChange()) ui.requestRender();
+    });
+    ui.setLayoutRoot(root);
+    ui.start();
+    await vt.waitForRender();
+    try {
+      let screen = vt.getViewport().map(strip);
+      const topRow = screen.findIndex((line) => line.includes('BTW ─ Esc close'));
+      expect(topRow).toBeGreaterThan(0);
+      expect(screen[topRow]).toContain('↑↓ scroll');
+      expect(screen.join('\n')).toContain('ans-12');
+      const initialTranscriptTop = transcript.scrollTop;
+
+      vt.sendInput(`\u001B[<64;10;${String(topRow + 2)}M`);
+      vt.sendInput(`\u001B[<64;10;${String(topRow + 2)}M`);
+      vt.sendInput(`\u001B[<64;10;${String(topRow + 2)}M`);
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(transcript.scrollTop).toBe(initialTranscriptTop);
+
+      for (let i = 0; i < 30; i++) {
+        vt.sendInput(`\u001B[<64;3;${String(topRow + 2)}M`);
+      }
+      await vt.waitForRender();
+      expect(transcript.scrollTop).toBe(initialTranscriptTop);
+
+      const exitSnapshot = panel.render(60).map(strip).join('\n');
+      expect(exitSnapshot).toContain('Q: explain');
+      expect(exitSnapshot).not.toContain('ans-12');
+
+      screen = vt.getViewport().map(strip);
+      const bodyRow = topRow + 1;
+      vt.sendInput(`\u001B[<0;3;${String(bodyRow + 1)}M`);
+      vt.sendInput(`\u001B[<32;12;${String(bodyRow + 2)}M`);
+      vt.sendInput(`\u001B[<0;12;${String(bodyRow + 2)}m`);
+      await vt.waitForRender();
+      expect(copied).not.toContain('│');
+      expect(copied).toContain('Q: explain');
+
+      const closeCol = screen[topRow]!.indexOf('Esc close') + 2;
+      vt.sendInput(`\u001B[<0;${String(closeCol)};${String(topRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(closeCol)};${String(topRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      ui.stop();
+    }
   });
 });
