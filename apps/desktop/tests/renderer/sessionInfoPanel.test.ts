@@ -717,11 +717,11 @@ describe('ActivityNotice compaction timer', () => {
 
       await vi.advanceTimersByTimeAsync(1000);
       await nextTick();
-      expect(host!.querySelector('.activity-notice')?.textContent).toBe('1秒');
+      expect(host!.querySelector('.activity-notice')?.textContent).toBe('1 秒');
 
       await vi.advanceTimersByTimeAsync(2000);
       await nextTick();
-      expect(host!.querySelector('.activity-notice')?.textContent).toBe('3秒');
+      expect(host!.querySelector('.activity-notice')?.textContent).toBe('3 秒');
     } finally {
       vi.useRealTimers();
     }

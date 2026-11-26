@@ -1,8 +1,6 @@
 // @vitest-environment jsdom
 import { createApp, h, nextTick, type App, type Component } from 'vue';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
-vi.mock('@moonshot-ai/app-components', () => ({ formatDuration: (ms: number) => `${ms}ms` }));
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';

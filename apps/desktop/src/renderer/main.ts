@@ -61,6 +61,7 @@ if (desktopVariant) {
 setKimiClientDeps({
   api: getKimiWebApi,
   t: (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params)),
+  locale: () => i18n.global.locale.value,
   traceClientEvent,
   traceKeyEvent: (event, info) => traceKeyEvent(event as never, info),
   sessionExportTraceToJsonl,

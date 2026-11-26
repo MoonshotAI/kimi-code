@@ -223,8 +223,8 @@ describe('browser activity digest', () => {
 describe('browser activity clauses', () => {
   it('summarizes a finished run by pages and the most frequent actions', () => {
     const { list, contextOf } = research();
-    const summary = summarizeActivity(t, summaryItems(list), { durationMs: 175_000, providers: [browserClauseProvider(t, { contextOf })] });
-    expect(render(summary.clauses)).toBe('浏览了 3 个页面，读了 2 个 · 点击 3 次（1 失败） · 截图 1 次 · 2m55s(faint)');
+    const summary = summarizeActivity(t, summaryItems(list), { durationMs: 175_000, locale: 'zh', providers: [browserClauseProvider(t, { contextOf })] });
+    expect(render(summary.clauses)).toBe('浏览了 3 个页面，读了 2 个 · 点击 3 次（1 失败） · 截图 1 次 · 2 分钟 55 秒(faint)');
     expect(summary.detail).toBe('共 10 次浏览器操作：新建标签页 1、查看页面元素 2、点击页面元素 3（1 失败）、读取页面文字 2、返回上一页 1、截取页面截图 1');
   });
 

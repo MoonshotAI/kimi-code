@@ -20,7 +20,7 @@ const props = defineProps<{
   active: boolean;
 }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const loading = ref(true);
 const result = ref<ManagedQuotaResult | null>(null);
@@ -85,7 +85,7 @@ function money(cents: number, currency: string): string {
 }
 
 function resetHint(resetAt: string | undefined): string {
-  return resetAt === undefined ? '' : formatResetAt(resetAt, t);
+  return resetAt === undefined ? '' : formatResetAt(resetAt, t, locale.value);
 }
 </script>
 

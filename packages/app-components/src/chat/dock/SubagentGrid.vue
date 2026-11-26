@@ -21,8 +21,8 @@ function canOpen(task: TaskItem): boolean {
   return Boolean(task.agentId) || Boolean(task.output && task.output.length > 0);
 }
 
-const { t } = useI18n();
-const { panelApi, modelDisplay, subagentEffort, isCancelling, stateLabel, durationLabel } = useTaskList(props, t);
+const { t, locale } = useI18n();
+const { panelApi, modelDisplay, subagentEffort, isCancelling, stateLabel, durationLabel } = useTaskList(props, t, locale);
 const emit = defineEmits<TaskListEmits>();
 </script>
 

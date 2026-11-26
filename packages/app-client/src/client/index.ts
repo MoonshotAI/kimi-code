@@ -11,6 +11,7 @@ export {
   getKimiWebApi,
   getDeviceApi,
   t,
+  clientLocale,
   type KimiClientDeps,
   type SessionCreatedSource,
 } from './deps';

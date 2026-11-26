@@ -178,10 +178,16 @@ describe('notification formatting helpers', () => {
 
   it('formats durations including sub-second tasks', () => {
     expect(formatNotificationDuration(undefined)).toBe('');
-    expect(formatNotificationDuration(0)).toBe('0s');
-    expect(formatNotificationDuration(420)).toBe('<1s');
-    expect(formatNotificationDuration(47461)).toBe('47s');
-    expect(formatNotificationDuration(600012)).toBe('10m');
+    expect(formatNotificationDuration(0, 'en')).toBe('0s');
+    expect(formatNotificationDuration(0, 'zh')).toBe('0 秒');
+    expect(formatNotificationDuration(420, 'en')).toBe('<1s');
+    expect(formatNotificationDuration(420, 'zh')).toBe('<1s');
+    expect(formatNotificationDuration(47461, 'en')).toBe('47s');
+    expect(formatNotificationDuration(47461, 'zh')).toBe('47 秒');
+    expect(formatNotificationDuration(600012, 'en')).toBe('10m');
+    expect(formatNotificationDuration(600012, 'zh')).toBe('10 分钟');
+    expect(formatNotificationDuration(297_000, 'en')).toBe('4m 57s');
+    expect(formatNotificationDuration(297_000, 'zh')).toBe('4 分钟 57 秒');
   });
 
   it('compacts long output paths to the trailing task segment and filename', () => {

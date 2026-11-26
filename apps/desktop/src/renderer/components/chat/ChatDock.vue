@@ -63,7 +63,7 @@ const emit = defineEmits<ComposerEmits & {
   'close-dock-panel': [];
 }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const { confirm, isConfirmOpen } = useConfirmDialog();
 const { fontScale } = useAppearance();
 
@@ -99,13 +99,7 @@ const goalStatusLabel = computed(() => {
 });
 
 const goalWallClockLabel = computed(() =>
-  goal.value
-    ? formatDuration(goal.value.wallClockMs, {
-        h: t('status.timeUnitHour'),
-        m: t('status.timeUnitMinute'),
-        s: t('status.timeUnitSecond'),
-      })
-    : '',
+  goal.value ? formatDuration(goal.value.wallClockMs, locale.value) : '',
 );
 
 async function onGoalCancel(): Promise<void> {

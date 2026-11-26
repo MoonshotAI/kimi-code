@@ -116,7 +116,7 @@ function failedFragment(t: Translator, count: number, tone: SummaryTone): Summar
 export function summarizeActivity(
   t: Translator,
   items: ActivitySummaryItem[],
-  opts: { durationMs?: number; providers?: readonly ActivityClauseProvider[] } = {},
+  opts: { durationMs?: number; locale?: string; providers?: readonly ActivityClauseProvider[] } = {},
 ): ActivitySummary {
   const providers = opts.providers ?? [];
   const { order, byKind } = aggregate(items, providers);
@@ -140,7 +140,7 @@ export function summarizeActivity(
     if (tail) clauses.push(tail);
   }
   if (opts.durationMs !== undefined) {
-    const span = formatDuration(opts.durationMs);
+    const span = formatDuration(opts.durationMs, opts.locale ?? 'en');
     if (span) clauses.push({ fragments: [{ text: span, tone: 'faint' }] });
   }
   return { clauses, plain: plainText(clauses), hasError, detail: detailText(providers, order, byKind) };

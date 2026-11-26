@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Icon, Tooltip } from '@moonshot-ai/app-ui';
 import { HistoryStateKey } from '@moonshot-ai/app-core/contracts';
 import BlockList from './BlockList.vue';
@@ -163,11 +164,12 @@ const reviewHint = useAutoReviewHint(() => {
   return item?.kind === 'tool' && item.tool.autoReviewing === true;
 });
 const live = computed(() => summarizeLive(props.items, currentItem.value, browserSummary.value, reviewHint.value));
-const settled = computed(() => summarizeActivity(props.items, { durationMs: settledDurationMs.value, browser: browserSummary.value }));
+const { locale } = useI18n();
+const settled = computed(() => summarizeActivity(props.items, { durationMs: settledDurationMs.value, locale: locale.value, browser: browserSummary.value }));
 
 const elapsedLabel = computed(() => {
   if (runStatus.value !== 'running' || startedMs.value === null) return '';
-  return formatDuration(nowMs.value - startedMs.value);
+  return formatDuration(nowMs.value - startedMs.value, locale.value);
 });
 
 const displayClauses = computed<SummaryClause[]>(() => {

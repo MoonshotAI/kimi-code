@@ -6,7 +6,7 @@ import {
   type LiveSummary,
 } from '@moonshot-ai/app-core/lib';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
-import { t } from '@moonshot-ai/app-client/client';
+import { clientLocale, t } from '@moonshot-ai/app-client/client';
 import { browserClauseProvider } from '../chat/tool-calls/browserActivity';
 import type { BrowserToolContext } from '../chat/tool-calls/browserToolPresentation';
 
@@ -27,9 +27,9 @@ export interface ActivityBrowserOptions {
 
 export function summarizeActivity(
   items: ActivitySummaryItem[],
-  opts: { durationMs?: number; browser?: ActivityBrowserOptions } = {},
+  opts: { durationMs?: number; locale?: string; browser?: ActivityBrowserOptions } = {},
 ): ActivitySummary {
-  return summarizeActivityBase(t, items, { durationMs: opts.durationMs, providers: [browserClauseProvider(t, opts.browser)] });
+  return summarizeActivityBase(t, items, { durationMs: opts.durationMs, locale: opts.locale ?? clientLocale(), providers: [browserClauseProvider(t, opts.browser)] });
 }
 
 export function summarizeLive(

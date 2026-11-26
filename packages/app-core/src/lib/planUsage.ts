@@ -1,4 +1,5 @@
 import type { ManagedQuota, QuotaEntry } from '../api/types';
+import { formatDuration } from './formatDuration';
 
 export type UsageTranslator = (key: string, params?: Record<string, unknown>) => string;
 
@@ -48,28 +49,12 @@ export function formatQuotaLabel(key: QuotaUsageKey, t: UsageTranslator): string
   }
 }
 
-export function formatResetAt(resetAt: string, t: UsageTranslator): string {
+export function formatResetAt(resetAt: string, t: UsageTranslator, locale: string = 'en'): string {
   const resetMs = Date.parse(resetAt);
   if (Number.isNaN(resetMs)) return '';
-  const totalSeconds = Math.floor((resetMs - Date.now()) / 1000);
-  if (totalSeconds <= 0) return t('settings.planUsage.resetDone');
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const parts: string[] = [];
-  if (days > 0) {
-    parts.push(t('settings.planUsage.durationDay', { n: days }));
-    parts.push(t('settings.planUsage.durationHour', { n: hours }));
-    parts.push(t('settings.planUsage.durationMinute', { n: minutes }));
-  } else if (hours > 0) {
-    parts.push(t('settings.planUsage.durationHour', { n: hours }));
-    parts.push(t('settings.planUsage.durationMinute', { n: minutes }));
-  } else if (minutes > 0) {
-    parts.push(t('settings.planUsage.durationMinute', { n: minutes }));
-  } else {
-    parts.push(t('settings.planUsage.durationSecond', { n: totalSeconds }));
-  }
-  return t('settings.planUsage.resetsIn', { duration: parts.join(' ') });
+  const remainingMs = resetMs - Date.now();
+  if (remainingMs < 1000) return t('settings.planUsage.resetDone');
+  return t('settings.planUsage.resetsIn', { duration: formatDuration(remainingMs, locale) });
 }
 
 function clampRatio(ratio: number): number {

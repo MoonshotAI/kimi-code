@@ -68,7 +68,7 @@ const headline = computed(() => {
 const waited = computed(() => {
   const r = result.value;
   if (!r || r.status === 'no_tasks') return '';
-  return formatDuration(r.waitedMs);
+  return formatDuration(r.waitedMs, locale.value);
 });
 const chip = computed(() => waited.value || props.tool.timing || '');
 
@@ -97,7 +97,7 @@ const details = computed(() => {
     { key: 'taskStatus', label: t('tools.waitfor.field.taskStatus'), value: completed ? finishedStatusLabel.value : '', mono: false },
     { key: 'description', label: t('tools.waitfor.field.description'), value: completed ? (r.finishedDescription ?? '') : '', mono: false },
     { key: 'waited', label: t('tools.waitfor.field.waited'), value: waited.value, mono: false },
-    { key: 'timeout', label: t('tools.waitfor.field.timeout'), value: r.timeoutMs === undefined ? '' : formatDuration(r.timeoutMs), mono: false },
+    { key: 'timeout', label: t('tools.waitfor.field.timeout'), value: r.timeoutMs === undefined ? '' : formatDuration(r.timeoutMs, locale.value), mono: false },
     { key: 'finishedDuringWait', label: t('tools.waitfor.field.finishedDuringWait'), value: r.extraCount > 0 ? String(r.extraCount) : '', mono: false },
     { key: 'stillRunning', label: t('tools.waitfor.field.stillRunning'), value: r.runningCount > 0 ? String(r.runningCount) : '', mono: false },
     { key: 'runningTasks', label: t('tools.waitfor.field.runningTasks'), value: runningTasksText(r), mono: false },
@@ -105,7 +105,7 @@ const details = computed(() => {
   ].filter((row) => row.value !== '');
 });
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const { status, args, hasOutput, toolNameLabel } = useToolCard(props);
 const canExpand = computed(() => details.value.length > 0 || hasOutput.value);
 const { open } = useToolCardExpansion(props, canExpand);

@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { formatDuration } from '@moonshot-ai/app-core/lib';
 
-const { t } = useI18n();
+const { locale } = useI18n();
 const startedAt = Date.now();
 const elapsedMs = ref(0);
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -20,11 +20,7 @@ onUnmounted(() => {
 
 const elapsedLabel = computed(() => {
   if (elapsedMs.value < 1000) return '';
-  return formatDuration(elapsedMs.value, {
-    h: t('status.timeUnitHour'),
-    m: t('status.timeUnitMinute'),
-    s: t('status.timeUnitSecond'),
-  });
+  return formatDuration(elapsedMs.value, locale.value);
 });
 </script>
 

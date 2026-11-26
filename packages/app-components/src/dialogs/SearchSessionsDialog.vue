@@ -431,7 +431,6 @@ onMounted(() => {
 }
 .sd-time {
   flex: none;
-  font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--color-text-faint);
 }

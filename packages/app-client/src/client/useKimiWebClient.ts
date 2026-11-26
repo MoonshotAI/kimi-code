@@ -2,6 +2,7 @@
 import { computed, h, reactive, ref, watch, watchEffect, type Component } from 'vue';
 import { formatDuration as formatTaskDuration } from '@moonshot-ai/app-core/lib';
 import {
+  clientLocale,
   getKimiWebApi,
   notifyPluginsShelfEvent,
   notifySessionDeleted,
@@ -1630,11 +1631,7 @@ function toUiTask(task: AppTask): TaskItem {
   } else if (task.completedAt && task.startedAt) {
     durationMs = new Date(task.completedAt).getTime() - new Date(task.startedAt).getTime();
     timing = t('tasks.timingDone', {
-      time: formatTaskDuration(durationMs, {
-        h: t('status.timeUnitHour'),
-        m: t('status.timeUnitMinute'),
-        s: t('status.timeUnitSecond'),
-      }),
+      time: formatTaskDuration(durationMs, clientLocale()),
     });
   } else {
     timing = task.status;

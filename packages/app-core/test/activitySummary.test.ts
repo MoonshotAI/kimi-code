@@ -60,6 +60,8 @@ describe('summarizeActivity', () => {
   it('appends the duration faint when given', () => {
     const s = summarizeActivity(t, [tool('read')], { durationMs: 26_800 });
     expect(s.clauses.at(-1)?.fragments).toEqual([{ text: '26s', tone: 'faint' }]);
+    const zh = summarizeActivity(t, [tool('read')], { durationMs: 297_000, locale: 'zh' });
+    expect(zh.clauses.at(-1)?.fragments).toEqual([{ text: '4 分钟 57 秒', tone: 'faint' }]);
   });
 
   it('omits a sub-second duration', () => {

@@ -256,7 +256,7 @@ const usageErrorMessage = computed(() =>
 );
 
 function resetHint(resetAt: string | undefined): string {
-  return resetAt === undefined ? '' : formatResetAt(resetAt, t);
+  return resetAt === undefined ? '' : formatResetAt(resetAt, t, locale.value);
 }
 
 function onUpgrade(): void {

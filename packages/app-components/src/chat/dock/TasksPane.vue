@@ -28,8 +28,8 @@ function taskEffort(task: TaskItem): string | undefined {
   return subagentEffort?.(task.thinkingEffort);
 }
 
-const { t } = useI18n();
-const { panelApi, modelDisplay, subagentEffort, isCancelling, stateLabel, durationLabel } = useTaskList(props, t);
+const { t, locale } = useI18n();
+const { panelApi, modelDisplay, subagentEffort, isCancelling, stateLabel, durationLabel } = useTaskList(props, t, locale);
 const emit = defineEmits<TaskListEmits>();
 </script>
 
