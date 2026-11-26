@@ -4716,6 +4716,7 @@ describe('FullCompaction pre-shrink', () => {
         { role: 'user', text: 'Start the conversation' },
         { role: 'assistant', text: 'Turn response.' },
       ]);
+      expect(ctx.tokenCounting.get().size).toBeGreaterThan(ctx.tokenCounting.estimateMessages(ctx.context.history()));
       const events = ctx.newEvents();
       expect(events).toContainEqual(
         expect.objectContaining({

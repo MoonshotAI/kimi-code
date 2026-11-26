@@ -77,7 +77,7 @@ export function buildContextCompactionShape(
       contextSummary,
       compactedCount: input.compactedCount,
       tokensBefore: input.tokensBefore,
-      tokensAfter: input.tokensAfter ?? estimate.messages(messages),
+      tokensAfter: input.tokensAfter ?? (input.requestOverheadTokens ?? 0) + estimate.messages(messages),
       keptUserMessageCount: 0,
       appendedInjectionCount: 0,
       droppedCount: input.droppedCount,
