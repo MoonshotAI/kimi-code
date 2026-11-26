@@ -13,6 +13,7 @@ import {
   IWorktreeService,
   closeSessionById,
   getLiveSessionById,
+  patchSessionMetadata,
 } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
@@ -21,7 +22,7 @@ import type { Session } from '../src/protocol/session';
 import { repointSession } from '../src/services/worktrees/sessionRepoint';
 import { SessionWorktreeService } from '../src/services/worktrees/sessionWorktreeService';
 import { commitAll, git, hangingRemote } from './helpers/gitRepo';
-import { useWorktreeServer } from './helpers/worktreeServer';
+import { type Envelope, useWorktreeServer } from './helpers/worktreeServer';
 
 describe('server-v2 session worktrees', () => {
   const fixture = useWorktreeServer('worktrees');
@@ -405,6 +406,146 @@ describe('server-v2 session worktrees', () => {
     expect(session.cwd).toBe(root);
     expect(agentState(sessionId)).toMatchObject({ cwd: undefined, workDir: root });
     await expectNothingLeft(root, before);
+  });
+
+  async function sentTexts(id: string): Promise<string[]> {
+    const page = await get<{ turns: { items: { type: string; text?: string }[] }[] }>(
+      `/sessions/${id}/agents/main/turns`,
+    );
+    return page.data.turns.flatMap((turn) =>
+      turn.items.flatMap((item) => (item.type === 'user_message' && item.text !== undefined ? [item.text] : [])),
+    );
+  }
+
+  it('holds a prompt sent during setup and sends it once the worktree is ready', async () => {
+    const { workspaceId } = await project('held-ready');
+    const originalBind = AgentEnvironmentBindingService.prototype.bind;
+    const originalBindProfile = AgentLoopService.prototype.bindProfile;
+    const worktreesHome = join(fixture.home, 'worktrees');
+    let sessionId = '';
+    let switching = false;
+    let held: Envelope<{ prompt_id: string; status: string }> | undefined;
+    vi.spyOn(AgentEnvironmentBindingService.prototype, 'bind').mockImplementation(function (
+      this: AgentEnvironmentBindingService,
+      ...args: Parameters<AgentEnvironmentBindingService['bind']>
+    ) {
+      if (args[1]?.startsWith(worktreesHome) === true) switching = true;
+      return originalBind.apply(this, args);
+    });
+    vi.spyOn(AgentLoopService.prototype, 'bindProfile').mockImplementation(async function (
+      this: AgentLoopService,
+      ...args: Parameters<AgentLoopService['bindProfile']>
+    ) {
+      if (switching) {
+        switching = false;
+        await vi.waitFor(() => {
+          if (sessionId === '') throw new Error('the session has not been created yet');
+        });
+        held = await post(`/sessions/${sessionId}/prompts`, { content: [{ type: 'text', text: 'held hello' }] });
+      }
+      return originalBindProfile.apply(this, args);
+    });
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+
+    sessionId = (await createWorktreeSession(workspaceId)).id;
+    await vi.waitFor(() => {
+      if (held === undefined) throw new Error('the prompt has not been sent yet');
+    });
+    expect(held).toMatchObject({ code: 0, data: { status: 'queued' } });
+
+    expect((await settled(sessionId)).worktree?.setup.status).toBe('ready');
+    await vi.waitFor(async () => {
+      expect((await get<Session>(`/sessions/${sessionId}`)).data.worktree?.held_prompt).toBeUndefined();
+      expect(await sentTexts(sessionId)).toContain('held hello');
+    });
+  });
+
+  it('keeps a held prompt across reloads, refuses a second one, and sends it when the session stays local', async () => {
+    const { root, workspaceId } = await project('held-local');
+    hangingRemote(root);
+    const created = await createWorktreeSession(workspaceId, { use_remote: true });
+    await untilStep(created.id, 'fetch', 'running');
+
+    const first = await post<{ prompt_id: string; status: string }>(`/sessions/${created.id}/prompts`, {
+      content: [{ type: 'text', text: 'first while waiting' }],
+    });
+    expect(first).toMatchObject({ code: 0, data: { status: 'queued' } });
+    const second = await post(`/sessions/${created.id}/prompts`, {
+      content: [{ type: 'text', text: 'second while waiting' }],
+    });
+    expect(second.code).toBe(ErrorCode.WORKTREE_STATE_INVALID);
+
+    const reloaded = (await get<Session>(`/sessions/${created.id}`)).data;
+    expect(reloaded.worktree?.held_prompt).toMatchObject({
+      prompt_id: first.data.prompt_id,
+      kind: 'prompt',
+      content: [{ type: 'text', text: 'first while waiting' }],
+    });
+    expect(JSON.stringify(reloaded)).not.toContain('held_request');
+
+    expect((await post<Session>(`/sessions/${created.id}/worktree:cancel`)).code).toBe(0);
+    expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt?.prompt_id).toBe(
+      first.data.prompt_id,
+    );
+    expect(await sentTexts(created.id)).not.toContain('first while waiting');
+
+    expect((await post<Session>(`/sessions/${created.id}/worktree:use_local`)).code).toBe(0);
+    await vi.waitFor(async () => {
+      expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt).toBeUndefined();
+      expect(await sentTexts(created.id)).toContain('first while waiting');
+    });
+  });
+
+  it('holds a skill activation sent during setup', async () => {
+    const { root, workspaceId } = await project('held-skill');
+    hangingRemote(root);
+    const created = await createWorktreeSession(workspaceId, { use_remote: true });
+    await untilStep(created.id, 'fetch', 'running');
+
+    const activated = await post(`/sessions/${created.id}/skills/update-config:activate`, { args: 'now' });
+
+    expect(activated).toMatchObject({ code: 0, data: { activated: true, skill_name: 'update-config', held: true } });
+    expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt).toMatchObject({
+      kind: 'skill',
+      skill: { name: 'update-config', args: 'now' },
+    });
+    expect((await post<Session>(`/sessions/${created.id}/worktree:cancel`)).code).toBe(0);
+  });
+
+  it('marks a held prompt failed when a previous server process may have sent it', async () => {
+    const { root, workspaceId } = await project('held-restart');
+    hangingRemote(root);
+    const created = await createWorktreeSession(workspaceId, { use_remote: true });
+    await untilStep(created.id, 'fetch', 'running');
+    const held = await post<{ prompt_id: string }>(`/sessions/${created.id}/prompts`, {
+      content: [{ type: 'text', text: 'maybe sent' }],
+    });
+    await post<Session>(`/sessions/${created.id}/worktree:cancel`);
+    await patchSessionMetadata(fixture.server.core.accessor, created.id, (meta) => ({
+      custom: {
+        ...meta.custom,
+        worktree: {
+          ...(meta.custom?.['worktree'] as { setup: object }),
+          setup: { ...(meta.custom?.['worktree'] as { setup: object }).setup, status: 'local' },
+        },
+      },
+    }));
+
+    await new SessionWorktreeService(fixture.server.core).recoverInterrupted();
+
+    expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt).toMatchObject({
+      prompt_id: held.data.prompt_id,
+      failure: { code: ErrorCode.INTERNAL_ERROR },
+    });
+    const next = await post<{ status: string }>(`/sessions/${created.id}/prompts`, {
+      content: [{ type: 'text', text: 'sent again' }],
+    });
+    expect(next.code).toBe(0);
+    await vi.waitFor(async () => {
+      expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt).toBeUndefined();
+    });
   });
 
   it('rejects worktree requests it cannot serve', async () => {

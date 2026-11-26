@@ -2622,6 +2622,423 @@
                         "branch_missing": {
                           "type": "boolean"
                         },
+                        "held_prompt": {
+                          "properties": {
+                            "content": {
+                              "items": {
+                                "oneOf": [
+                                  {
+                                    "properties": {
+                                      "text": {
+                                        "type": "string"
+                                      },
+                                      "type": {
+                                        "const": "text",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "text"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "properties": {
+                                      "input": {},
+                                      "tool_call_id": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "tool_name": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "type": {
+                                        "const": "tool_use",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "tool_call_id",
+                                      "tool_name",
+                                      "input"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "properties": {
+                                      "is_error": {
+                                        "type": "boolean"
+                                      },
+                                      "output": {},
+                                      "tool_call_id": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "type": {
+                                        "const": "tool_result",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "tool_call_id",
+                                      "output"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "properties": {
+                                      "name": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "source": {
+                                        "oneOf": [
+                                          {
+                                            "properties": {
+                                              "id": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "const": "url",
+                                                "type": "string"
+                                              },
+                                              "url": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "url"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "properties": {
+                                              "data": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "const": "base64",
+                                                "type": "string"
+                                              },
+                                              "media_type": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "media_type",
+                                              "data"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "properties": {
+                                              "file_id": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "const": "file",
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "file_id"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "properties": {
+                                              "file_id": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "const": "session_media",
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "file_id"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "properties": {
+                                              "kind": {
+                                                "const": "path",
+                                                "type": "string"
+                                              },
+                                              "path": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "path"
+                                            ],
+                                            "type": "object"
+                                          }
+                                        ]
+                                      },
+                                      "type": {
+                                        "const": "image",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "source"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "properties": {
+                                      "name": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "source": {
+                                        "oneOf": [
+                                          {
+                                            "properties": {
+                                              "id": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "const": "url",
+                                                "type": "string"
+                                              },
+                                              "url": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "url"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "properties": {
+                                              "data": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "const": "base64",
+                                                "type": "string"
+                                              },
+                                              "media_type": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "media_type",
+                                              "data"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "properties": {
+                                              "file_id": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "const": "file",
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "file_id"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "properties": {
+                                              "file_id": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "const": "session_media",
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "file_id"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "properties": {
+                                              "kind": {
+                                                "const": "path",
+                                                "type": "string"
+                                              },
+                                              "path": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "path"
+                                            ],
+                                            "type": "object"
+                                          }
+                                        ]
+                                      },
+                                      "type": {
+                                        "const": "video",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "source"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "properties": {
+                                      "file_id": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "media_type": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "name": {
+                                        "type": "string"
+                                      },
+                                      "path": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "size": {
+                                        "maximum": 9007199254740991,
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      "type": {
+                                        "const": "file",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "type"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "properties": {
+                                      "signature": {
+                                        "type": "string"
+                                      },
+                                      "thinking": {
+                                        "type": "string"
+                                      },
+                                      "type": {
+                                        "const": "thinking",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "thinking"
+                                    ],
+                                    "type": "object"
+                                  }
+                                ]
+                              },
+                              "type": "array"
+                            },
+                            "created_at": {
+                              "type": "string"
+                            },
+                            "failure": {
+                              "properties": {
+                                "code": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer"
+                                },
+                                "msg": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "msg"
+                              ],
+                              "type": "object"
+                            },
+                            "kind": {
+                              "enum": [
+                                "prompt",
+                                "skill"
+                              ],
+                              "type": "string"
+                            },
+                            "metadata": {
+                              "additionalProperties": {},
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "type": "object"
+                            },
+                            "prompt_id": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "skill": {
+                              "properties": {
+                                "args": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "name"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "prompt_id",
+                            "kind",
+                            "created_at",
+                            "content"
+                          ],
+                          "type": "object"
+                        },
                         "included_local_changes": {
                           "type": "boolean"
                         },

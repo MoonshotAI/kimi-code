@@ -18,8 +18,24 @@ const storedSessionWorktreeSchema = sessionWorktreeSchema
   .extend({
     repo_root: z.string().min(1),
     pending: z.object({ path: z.string().min(1), branch: z.string().min(1) }).optional(),
+    held_request: z
+      .discriminatedUnion('route', [
+        z.object({ route: z.literal('prompts'), body: z.record(z.string(), z.unknown()) }),
+        z.object({ route: z.literal('skills'), skill_id: z.string().min(1), body: z.record(z.string(), z.unknown()) }),
+      ])
+      .optional(),
   });
 export type StoredSessionWorktree = z.infer<typeof storedSessionWorktreeSchema>;
+export type HeldPromptRequest = NonNullable<StoredSessionWorktree['held_request']>;
+
+export function worktreeHoldsPrompts(stored: StoredSessionWorktree | undefined): boolean {
+  return stored !== undefined && stored.setup.status !== 'ready' && stored.setup.status !== 'local';
+}
+
+export function withoutHeldPrompt(stored: StoredSessionWorktree): StoredSessionWorktree {
+  const { held_prompt: _held, held_request: _request, ...rest } = stored;
+  return rest;
+}
 
 export function storedSessionWorktree(
   custom: Record<string, unknown> | undefined,
@@ -131,7 +147,7 @@ export function sessionWorktreeWire(
 ): SessionWorktree | undefined {
   const stored = storedSessionWorktree(custom);
   if (stored === undefined) return undefined;
-  const { repo_root: _repoRoot, pending: _pending, ...wire } = stored;
+  const { repo_root: _repoRoot, pending: _pending, held_request: _heldRequest, ...wire } = stored;
   if (stored.path === undefined) return wire;
   if (existsSync(stored.path)) {
     return { ...wire, branch: liveWorktreeBranch(stored) ?? stored.branch };

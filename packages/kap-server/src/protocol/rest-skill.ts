@@ -28,5 +28,6 @@ export type ActivateSkillRequest = z.infer<typeof activateSkillRequestSchema>;
 export const activateSkillResultSchema = z.object({
   activated: z.literal(true),
   skill_name: z.string().min(1),
+  held: z.literal(true).optional(),
 });
 export type ActivateSkillResult = z.infer<typeof activateSkillResultSchema>;

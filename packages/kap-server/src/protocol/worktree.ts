@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
 
+import { messageContentSchema } from './message';
+
 export const worktreeBaseSchema = z.object({
   ref: z.string().min(1),
   remote: z.boolean(),
@@ -78,6 +80,19 @@ export const worktreeSetupSchema = z.object({
 });
 export type WorktreeSetup = z.infer<typeof worktreeSetupSchema>;
 
+export const worktreeHeldPromptSchema = z.object({
+  prompt_id: z.string().min(1),
+  kind: z.enum(['prompt', 'skill']),
+  created_at: isoDateTimeSchema,
+  content: z.array(messageContentSchema),
+  skill: z
+    .object({ name: z.string().min(1), path: z.string().optional(), args: z.string().optional() })
+    .optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  failure: z.object({ code: z.number().int(), msg: z.string() }).optional(),
+});
+export type WorktreeHeldPrompt = z.infer<typeof worktreeHeldPromptSchema>;
+
 export const sessionWorktreeSchema = z.object({
   path: z.string().min(1).optional(),
   branch: z.string().min(1).optional(),
@@ -86,6 +101,7 @@ export const sessionWorktreeSchema = z.object({
   missing: z.boolean().optional(),
   branch_missing: z.boolean().optional(),
   setup: worktreeSetupSchema,
+  held_prompt: worktreeHeldPromptSchema.optional(),
 });
 export type SessionWorktree = z.infer<typeof sessionWorktreeSchema>;
 

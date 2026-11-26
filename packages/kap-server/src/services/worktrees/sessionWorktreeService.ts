@@ -18,10 +18,12 @@ import { SessionErrors } from '@moonshot-ai/agent-core-v2/session/errors';
 import { ErrorCode } from '../../protocol/error-codes';
 import type { SessionWorktreeAction, SessionWorktreeRetryRequest } from '../../protocol/rest-worktree';
 import type {
+  WorktreeHeldPrompt,
   WorktreeSetup,
   WorktreeSetupFailure,
   WorktreeSetupRequest,
 } from '../../protocol/worktree';
+import { mapError } from '../../transport/errors';
 import type { ServerLogger } from '../pinoLoggerService';
 import { branchExists, isRepoRoot } from './gitRefs';
 import { repointSession } from './sessionRepoint';
@@ -33,6 +35,9 @@ import {
   settleInterruptedSetup,
   storedSessionWorktree,
   withStoredSessionWorktree,
+  withoutHeldPrompt,
+  worktreeHoldsPrompts,
+  type HeldPromptRequest,
   type StoredSessionWorktree,
 } from './sessionWorktreeState';
 import { WorktreeError, stateInvalid } from './worktreeError';
@@ -50,9 +55,16 @@ import {
 
 const OUTPUT_PUBLISH_INTERVAL_MS = 250;
 
+export type HeldPromptDispatcher = (
+  sessionId: string,
+  held: WorktreeHeldPrompt,
+  request: HeldPromptRequest,
+) => Promise<void>;
+
 export interface SessionWorktreeServiceOptions {
   readonly fetchTimeoutMs?: number;
   readonly logger?: Pick<ServerLogger, 'warn'>;
+  readonly dispatchHeld?: HeldPromptDispatcher;
 }
 
 export interface PlannedWorktreeSetup {
@@ -129,16 +141,52 @@ export async function writeStoredWorktree(
   core: Scope,
   sessionId: string,
   change: (stored: StoredSessionWorktree | undefined) => StoredSessionWorktree | undefined,
+  options: { readonly held?: 'keep' | 'replace' } = {},
 ): Promise<StoredSessionWorktree | undefined> {
   let written: StoredSessionWorktree | undefined;
   await patchSessionMetadata(core.accessor, sessionId, (meta) => {
-    written = change(storedSessionWorktree(meta.custom));
+    const current = storedSessionWorktree(meta.custom);
+    const next = change(current);
+    written =
+      next === undefined || options.held === 'replace' || current?.held_prompt === undefined
+        ? next
+        : { ...withoutHeldPrompt(next), held_prompt: current.held_prompt, held_request: current.held_request };
     return written === undefined
       ? undefined
       : { custom: withStoredSessionWorktree(meta.custom, written) };
   });
   if (written !== undefined) publishSessionUpdated(core, sessionId);
   return written;
+}
+
+export async function holdPromptForWorktree(
+  core: Scope,
+  sessionId: string,
+  held: WorktreeHeldPrompt,
+  request: HeldPromptRequest,
+): Promise<boolean> {
+  const result: { outcome: 'held' | 'busy' | 'free' } = { outcome: 'free' };
+  await writeStoredWorktree(
+    core,
+    sessionId,
+    (current) => {
+      if (current === undefined) return undefined;
+      if (!worktreeHoldsPrompts(current)) {
+        return current.held_prompt?.failure === undefined ? undefined : withoutHeldPrompt(current);
+      }
+      if (current.held_prompt !== undefined && current.held_prompt.failure === undefined) {
+        result.outcome = current.held_prompt.prompt_id === held.prompt_id ? 'held' : 'busy';
+        return undefined;
+      }
+      result.outcome = 'held';
+      return { ...current, held_prompt: held, held_request: request };
+    },
+    { held: 'replace' },
+  );
+  if (result.outcome === 'busy') {
+    throw stateInvalid('another prompt is already waiting for this session\'s worktree setup');
+  }
+  return result.outcome === 'held';
 }
 
 function ended(
@@ -158,6 +206,7 @@ export class SessionWorktreeService {
   readonly inventory: WorktreeInventory;
   private readonly runs = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private readonly acting = new Map<string, Promise<void>>();
+  private readonly releasing = new Map<string, Promise<void>>();
   private closed = false;
 
   constructor(
@@ -315,6 +364,58 @@ export class SessionWorktreeService {
       return;
     }
     await recorder.update((stored) => ({ ...stored, setup: ended(stored.setup, 'ready') }));
+    void this.releaseHeld(recorder.sessionId);
+  }
+
+  releaseHeld(sessionId: string): Promise<void> {
+    const dispatch = this.options.dispatchHeld;
+    if (dispatch === undefined) return Promise.resolve();
+    const running = this.releasing.get(sessionId);
+    if (running !== undefined) return running;
+    const release = this.dispatchHeld(sessionId, dispatch)
+      .catch((error: unknown) => {
+        this.options.logger?.warn(
+          { sessionId, err: error instanceof Error ? error.message : String(error) },
+          'held prompt could not be released',
+        );
+      })
+      .finally(() => {
+        if (this.releasing.get(sessionId) === release) this.releasing.delete(sessionId);
+      });
+    this.releasing.set(sessionId, release);
+    return release;
+  }
+
+  private async dispatchHeld(sessionId: string, dispatch: HeldPromptDispatcher): Promise<void> {
+    let held: WorktreeHeldPrompt | undefined;
+    let request: HeldPromptRequest | undefined;
+    await writeStoredWorktree(this.core, sessionId, (current) => {
+      if (current === undefined || worktreeHoldsPrompts(current)) return undefined;
+      if (current.held_prompt?.failure !== undefined) return undefined;
+      held = current.held_prompt;
+      request = current.held_request;
+      return undefined;
+    });
+    if (held === undefined || request === undefined) return;
+    const promptId = held.prompt_id;
+    let failure: WorktreeHeldPrompt['failure'];
+    try {
+      await dispatch(sessionId, held, request);
+    } catch (error) {
+      const envelope = mapError(error, '');
+      failure = { code: envelope.code, msg: envelope.msg };
+    }
+    await writeStoredWorktree(
+      this.core,
+      sessionId,
+      (current) => {
+        if (current?.held_prompt?.prompt_id !== promptId) return undefined;
+        return failure === undefined
+          ? withoutHeldPrompt(current)
+          : { ...current, held_prompt: { ...current.held_prompt, failure } };
+      },
+      { held: 'replace' },
+    );
   }
 
   private async discardCreated(
@@ -365,6 +466,7 @@ export class SessionWorktreeService {
     }
     forgetWorktreeFacts(recorder.current);
     await recorder.update((stored) => ({ ...withoutPending(stored), setup: ended(stored.setup, 'ready') }));
+    void this.releaseHeld(recorder.sessionId);
   }
 
   async read(sessionId: string): Promise<StoredSessionWorktree | undefined> {
@@ -451,6 +553,7 @@ export class SessionWorktreeService {
           await writeStoredWorktree(this.core, sessionId, (current) =>
             current === undefined ? undefined : { ...current, setup: ended(current.setup, 'local') },
           );
+          void this.releaseHeld(sessionId);
           return;
         }
         if (!missing || status === 'running') {
@@ -462,6 +565,7 @@ export class SessionWorktreeService {
           const { path: _path, branch: _branch, base: _base, included_local_changes: _included, ...rest } = current;
           return { ...rest, setup: ended(current.setup, 'local') };
         });
+        void this.releaseHeld(sessionId);
         return;
       }
       case 'recreate': {
@@ -522,6 +626,7 @@ export class SessionWorktreeService {
       await patchSessionMetadata(this.core.accessor, sessionId, (meta) =>
         meta.environmentCwd === path ? undefined : { environmentCwd: path },
       );
+      void this.releaseHeld(sessionId);
       return;
     }
     if (pending !== undefined) await removeWorktreeArtifacts(repoRoot, pending, true);
@@ -531,7 +636,11 @@ export class SessionWorktreeService {
     const page = await this.core.accessor.get(ISessionIndex).listRecent({ includeArchived: true });
     for (const summary of page.items) {
       if (this.runs.has(summary.id)) continue;
-      if (storedSessionWorktree(summary.custom)?.setup.status !== 'running') continue;
+      const stored = storedSessionWorktree(summary.custom);
+      if (stored?.held_prompt !== undefined && stored.held_prompt.failure === undefined && !worktreeHoldsPrompts(stored)) {
+        await this.failInterruptedHeld(summary.id).catch(() => undefined);
+      }
+      if (stored?.setup.status !== 'running') continue;
       await this.settleInterrupted(summary.id).catch((error: unknown) => {
         this.options.logger?.warn(
           { sessionId: summary.id, err: error instanceof Error ? error.message : String(error) },
@@ -539,6 +648,28 @@ export class SessionWorktreeService {
         );
       });
     }
+  }
+
+  private async failInterruptedHeld(sessionId: string): Promise<void> {
+    await writeStoredWorktree(
+      this.core,
+      sessionId,
+      (current) => {
+        if (current?.held_prompt === undefined || current.held_prompt.failure !== undefined) return undefined;
+        if (worktreeHoldsPrompts(current)) return undefined;
+        return {
+          ...current,
+          held_prompt: {
+            ...current.held_prompt,
+            failure: {
+              code: ErrorCode.INTERNAL_ERROR,
+              msg: 'the server stopped before this prompt could be sent; send it again',
+            },
+          },
+        };
+      },
+      { held: 'replace' },
+    );
   }
 
   async refreshFacts(
@@ -570,6 +701,7 @@ export class SessionWorktreeService {
     const runs = [...this.runs.values()];
     for (const run of runs) run.controller.abort();
     await Promise.all(runs.map((run) => run.done));
+    await Promise.all(this.releasing.values());
   }
 }
 

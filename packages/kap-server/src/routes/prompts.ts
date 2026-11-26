@@ -48,6 +48,7 @@ import {
   promptSubmissionSchema,
   promptSubmitResultSchema,
   type PromptSkillActivation,
+  type PromptSubmission,
 } from '../protocol/rest-prompt';
 import { z } from 'zod';
 
@@ -71,6 +72,7 @@ import { defineRoute, type RouteDefinition } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
 import { sendEnvironmentError } from './environment';
+import { holdSubmissionForWorktree } from './worktreeHold';
 import { applyThinking } from './sessionAgentConfig';
 
 interface PromptRouteHost {
@@ -201,167 +203,25 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         sendMappedError(reply, req, error);
         return;
       }
-      const submitOnce = async (): Promise<unknown> => {
-        let preparedMedia: PromptMediaPreparation | undefined;
-        let enqueued = false;
+      if (!directSteer) {
         try {
-          const session = await resolveSession(core, session_id);
-          let resolved: Awaited<ReturnType<typeof resolvePromptFromSession>> | undefined;
-          if (contentHasPathRefs(req.body.content)) {
-            resolved = await resolvePromptFromSession(session, req.body.agent_id);
-            if (resolved.binding.current.environmentId !== 'local') {
-              throw new Error2(
-                ErrorCodes.REQUEST_INVALID,
-                'file attachments by server-local path require the local environment',
-              );
-            }
-          }
-          await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
-          await assertPromptPathRefs(req.body.content);
-          if (req.body.skills !== undefined) {
-            await assertActivatableSkills(
-              session.accessor.get(ISessionSkillCatalog),
-              req.body.skills,
-            );
-          }
-          const resolvedSessionMedia = await resolvePromptSessionMediaRefs(
-            req.body.content,
-            session.accessor.get(ISessionMediaStore),
-          );
-          resolved ??= await resolvePromptFromSession(session, req.body.agent_id);
-
-          const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
-          const environmentMedia = environmentMediaTargets(resolved.binding.current, resolved.environment);
-          try {
-            preparedMedia = await resolvePromptMediaFiles(
-              resolvedSessionMedia,
-              core.accessor.get(IFileService),
-              core.accessor.get(IBootstrapService).cacheDir,
-              {
-                telemetry,
-                providerType: resolved.profile.getModelProviderType(req.body.model),
-                resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => {
-                  try {
-                    const session = await resumeSessionById(core.accessor, session_id);
-                    return session === undefined
-                      ? undefined
-                      : { dir: sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir) };
-                  } catch {
-                    return undefined;
-                  }
-                }),
-                resolveAttachmentsTarget: environmentMedia.resolveAttachmentsTarget ?? (async () => {
-                  try {
-                    const session = await resumeSessionById(core.accessor, session_id);
-                    return session === undefined
-                      ? undefined
-                      : { dir: join(session.accessor.get(ISessionContext).sessionDir, 'attachments') };
-                  } catch {
-                    return undefined;
-                  }
-                }),
-              },
-            );
-          } finally {
-            environmentMedia.dispose();
-          }
-          const resolvedContent = preparedMedia.content;
-          const promptAttachments =
-            preparedMedia.attachments.length > 0 ? preparedMedia.attachments : undefined;
-
-          if (req.body.model !== undefined) await resolved.prompt.setModel(req.body.model);
-          if (req.body.thinking !== undefined) applyThinking(resolved.profile, req.body.thinking);
-          if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
-          if (req.body.swarm_mode !== undefined && resolved.swarm.isActive !== req.body.swarm_mode) {
-            if (req.body.swarm_mode) resolved.swarm.enter('manual');
-            else resolved.swarm.exit();
-          }
-          if (req.body.disabled_tools !== undefined) {
-            try {
-              await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
-            } catch (error) {
-              if (error instanceof ProfileError) {
-                throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
-              }
-              throw error;
-            }
-          }
-          const parts = contentToCoreParts(resolvedContent);
-          const clientMetadata = req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)];
-          if (req.body.skills !== undefined) {
-            if (req.body.agent_id !== undefined && req.body.agent_id !== MAIN_AGENT_ID) {
-              await applyPromptMetadataUpdate({
-                metadata: session.accessor.get(ISessionMetadata),
-                eventService: core.accessor.get(IEventService),
-                sessionId: session_id,
-              }, promptMetadataTextFromContentParts(parts, clientMetadata));
-            }
-            const settlement = watchPromptSettlements(resolved.events);
-            let result: PromptWithSkillsResult;
-            try {
-              result = await resolved.skill.promptWithSkills({
-                input: parts,
-                promptId: attempt.id,
-                clientMetadata,
-                skills: req.body.skills,
-                attachments: promptAttachments,
-                steerIfActive: directSteer || undefined,
-              });
-            } catch (error) {
-              settlement.dispose();
-              throw error;
-            }
+          const held = await holdSubmissionForWorktree(core, session_id, attempt.id, req.body);
+          if (held !== undefined) {
             attempt.enqueued();
-            enqueued = true;
-            settlement.settle(result.prompt_id, () => preparedMedia?.discard());
-            return {
-              prompt_id: result.prompt_id,
-              user_message_id: result.prompt_id,
-              status: result.state,
-              content: projectPromptContentParts(parts),
-              created_at: result.created_at,
-              metadata: clientMetadata?.[0],
-            };
+            attempt.succeed(held);
+            reply.send(okEnvelope(held, req.id));
+            return;
           }
-          await applyPromptMetadataUpdate({
-            metadata: session.accessor.get(ISessionMetadata),
-            eventService: core.accessor.get(IEventService),
-            sessionId: session_id,
-          }, promptMetadataTextFromContentParts(parts, clientMetadata));
-          const status = resolved.prompt.snapshot();
-          const entry = {
-            role: 'user' as const,
-            content: parts,
-            attributes: {
-              promptId: attempt.id,
-              origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
-            },
-          };
-          const { id } = directSteer && status.state === 'running'
-            ? resolved.prompt.sendNow(entry)
-            : resolved.prompt.submit(entry);
-          attempt.enqueued();
-          enqueued = true;
-          const handle = resolved.prompt.promptHandle(id)!;
-          if (
-            (directSteer && status.state === 'running') ||
-            (status.state === 'idle' && !status.paused && status.queue.length === 0)
-          ) {
-            await Promise.race([handle.launched, handle.completion]);
-          }
-          const staging = preparedMedia;
-          void Promise.race([handle.launched, handle.completion]).then(
-            () => staging?.discard(),
-            () => staging?.discard(),
-          );
-          return projectPromptHandle(handle);
         } catch (error) {
-          if (!enqueued) await preparedMedia?.discardStaged();
-          throw error;
+          attempt.fail(error);
+          sendMappedError(reply, req, error);
+          return;
         }
-      };
+      }
       try {
-        const response = await reloadOnStale(core.accessor, session_id, submitOnce);
+        const response = await runPromptSubmission(core, session_id, req.body, attempt.id, directSteer, () => {
+          attempt.enqueued();
+        });
         attempt.succeed(response);
         reply.send(okEnvelope(response, req.id));
       } catch (error) {
@@ -386,6 +246,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+        [ErrorCode.WORKTREE_STATE_INVALID]: {},
         ...sessionConflictErrors,
       },
       description: 'Submit a prompt to a session',
@@ -560,6 +421,176 @@ export function projectPromptSnapshot(prompt: {
     created_at: prompt.createdAt,
     metadata: origin?.kind === 'user' || origin?.kind === 'skill_activation' ? origin.clientMetadata?.[0] : undefined,
   };
+}
+
+export function runPromptSubmission(
+  core: Scope,
+  session_id: string,
+  body: PromptSubmission,
+  promptId: string,
+  directSteer: boolean,
+  onEnqueued: () => void = () => {},
+): Promise<unknown> {
+  const submitOnce = async (): Promise<unknown> => {
+    let preparedMedia: PromptMediaPreparation | undefined;
+    let enqueued = false;
+    try {
+      const session = await resolveSession(core, session_id);
+      let resolved: Awaited<ReturnType<typeof resolvePromptFromSession>> | undefined;
+      if (contentHasPathRefs(body.content)) {
+        resolved = await resolvePromptFromSession(session, body.agent_id);
+        if (resolved.binding.current.environmentId !== 'local') {
+          throw new Error2(
+            ErrorCodes.REQUEST_INVALID,
+            'file attachments by server-local path require the local environment',
+          );
+        }
+      }
+      await assertPromptFileRefs(body.content, core.accessor.get(IFileService));
+      await assertPromptPathRefs(body.content);
+      if (body.skills !== undefined) {
+        await assertActivatableSkills(
+          session.accessor.get(ISessionSkillCatalog),
+          body.skills,
+        );
+      }
+      const resolvedSessionMedia = await resolvePromptSessionMediaRefs(
+        body.content,
+        session.accessor.get(ISessionMediaStore),
+      );
+      resolved ??= await resolvePromptFromSession(session, body.agent_id);
+
+      const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
+      const environmentMedia = environmentMediaTargets(resolved.binding.current, resolved.environment);
+      try {
+        preparedMedia = await resolvePromptMediaFiles(
+          resolvedSessionMedia,
+          core.accessor.get(IFileService),
+          core.accessor.get(IBootstrapService).cacheDir,
+          {
+            telemetry,
+            providerType: resolved.profile.getModelProviderType(body.model),
+            resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => {
+              try {
+                const session = await resumeSessionById(core.accessor, session_id);
+                return session === undefined
+                  ? undefined
+                  : { dir: sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir) };
+              } catch {
+                return undefined;
+              }
+            }),
+            resolveAttachmentsTarget: environmentMedia.resolveAttachmentsTarget ?? (async () => {
+              try {
+                const session = await resumeSessionById(core.accessor, session_id);
+                return session === undefined
+                  ? undefined
+                  : { dir: join(session.accessor.get(ISessionContext).sessionDir, 'attachments') };
+              } catch {
+                return undefined;
+              }
+            }),
+          },
+        );
+      } finally {
+        environmentMedia.dispose();
+      }
+      const resolvedContent = preparedMedia.content;
+      const promptAttachments =
+        preparedMedia.attachments.length > 0 ? preparedMedia.attachments : undefined;
+
+      if (body.model !== undefined) await resolved.prompt.setModel(body.model);
+      if (body.thinking !== undefined) applyThinking(resolved.profile, body.thinking);
+      if (body.permission_mode !== undefined) resolved.permissionMode.setMode(body.permission_mode);
+      if (body.swarm_mode !== undefined && resolved.swarm.isActive !== body.swarm_mode) {
+        if (body.swarm_mode) resolved.swarm.enter('manual');
+        else resolved.swarm.exit();
+      }
+      if (body.disabled_tools !== undefined) {
+        try {
+          await resolved.toolPolicy.setSessionDisabledTools(body.disabled_tools);
+        } catch (error) {
+          if (error instanceof ProfileError) {
+            throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+          }
+          throw error;
+        }
+      }
+      const parts = contentToCoreParts(resolvedContent);
+      const clientMetadata = body.metadata === undefined ? undefined : [structuredClone(body.metadata)];
+      if (body.skills !== undefined) {
+        if (body.agent_id !== undefined && body.agent_id !== MAIN_AGENT_ID) {
+          await applyPromptMetadataUpdate({
+            metadata: session.accessor.get(ISessionMetadata),
+            eventService: core.accessor.get(IEventService),
+            sessionId: session_id,
+          }, promptMetadataTextFromContentParts(parts, clientMetadata));
+        }
+        const settlement = watchPromptSettlements(resolved.events);
+        let result: PromptWithSkillsResult;
+        try {
+          result = await resolved.skill.promptWithSkills({
+            input: parts,
+            promptId: promptId,
+            clientMetadata,
+            skills: body.skills,
+            attachments: promptAttachments,
+            steerIfActive: directSteer || undefined,
+          });
+        } catch (error) {
+          settlement.dispose();
+          throw error;
+        }
+        onEnqueued();
+        enqueued = true;
+        settlement.settle(result.prompt_id, () => preparedMedia?.discard());
+        return {
+          prompt_id: result.prompt_id,
+          user_message_id: result.prompt_id,
+          status: result.state,
+          content: projectPromptContentParts(parts),
+          created_at: result.created_at,
+          metadata: clientMetadata?.[0],
+        };
+      }
+      await applyPromptMetadataUpdate({
+        metadata: session.accessor.get(ISessionMetadata),
+        eventService: core.accessor.get(IEventService),
+        sessionId: session_id,
+      }, promptMetadataTextFromContentParts(parts, clientMetadata));
+      const status = resolved.prompt.snapshot();
+      const entry = {
+        role: 'user' as const,
+        content: parts,
+        attributes: {
+          promptId: promptId,
+          origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
+        },
+      };
+      const { id } = directSteer && status.state === 'running'
+        ? resolved.prompt.sendNow(entry)
+        : resolved.prompt.submit(entry);
+      onEnqueued();
+      enqueued = true;
+      const handle = resolved.prompt.promptHandle(id)!;
+      if (
+        (directSteer && status.state === 'running') ||
+        (status.state === 'idle' && !status.paused && status.queue.length === 0)
+      ) {
+        await Promise.race([handle.launched, handle.completion]);
+      }
+      const staging = preparedMedia;
+      void Promise.race([handle.launched, handle.completion]).then(
+        () => staging?.discard(),
+        () => staging?.discard(),
+      );
+      return projectPromptHandle(handle);
+    } catch (error) {
+      if (!enqueued) await preparedMedia?.discardStaged();
+      throw error;
+    }
+  };
+  return reloadOnStale(core.accessor, session_id, submitOnce);
 }
 
 export interface PromptAttempt {

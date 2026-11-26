@@ -90,6 +90,7 @@ import { HostBridgeManager, hostSnapshots } from './services/hosts/hostBridgeMan
 import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from './services/hosts/hostProxy';
 import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
 import { SessionIdleReaper, closeIdleSessions, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
+import { heldPromptDispatcher } from './routes/heldPromptDispatcher';
 import { SessionWorktreeService } from './services/worktrees/sessionWorktreeService';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
@@ -330,7 +331,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     );
   }
 
-  const worktrees = new SessionWorktreeService(core, { logger });
+  const worktrees = new SessionWorktreeService(core, { logger, dispatchHeld: heldPromptDispatcher(core) });
   try {
     await worktrees.recoverInterrupted();
   } catch (error) {
