@@ -524,6 +524,26 @@ describe('BottomSheet gestures, focus, and accessibility', () => {
     expect(document.activeElement).toBe(focusables[0]);
   });
 
+  it('wraps Shift+Tab from the initially focused panel to the last control instead of escaping behind the scrim', async () => {
+    const trigger = document.createElement('button');
+    document.body.append(trigger);
+    trigger.focus();
+    mountSheet();
+    await nextTick();
+    await nextTick();
+
+    const panel = host.querySelector<HTMLElement>('.sheet-panel')!;
+    expect(document.activeElement).toBe(panel);
+    const focusables = [...panel.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])')];
+    const last = focusables[focusables.length - 1]!;
+    const event = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+    panel.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(last);
+    expect(panel.contains(document.activeElement)).toBe(true);
+    trigger.remove();
+  });
+
   it('gives every selectable radio row a labelled radiogroup owner', async () => {
     mountSheet();
     const radios = [...host.querySelectorAll<HTMLElement>('[role="radio"]')];

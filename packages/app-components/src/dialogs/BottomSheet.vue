@@ -67,7 +67,7 @@ function onKeydown(e: KeyboardEvent): void {
   }
   const active = document.activeElement;
   const inside = panelEl.value?.contains(active) ?? false;
-  if (e.shiftKey && (!inside || active === first)) {
+  if (e.shiftKey && (!inside || active === first || active === panelEl.value)) {
     e.preventDefault();
     last.focus();
   } else if (!e.shiftKey && (!inside || active === last)) {
