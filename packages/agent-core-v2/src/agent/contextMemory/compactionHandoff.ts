@@ -70,7 +70,7 @@ export function buildContextCompactionShape(
     const contextSummary = input.contextSummary ?? input.summary;
     const messages = [
       input.legacySummaryMessage ?? createCompactionSummaryMessage(contextSummary),
-      ...history.slice(input.compactedCount),
+      ...history.slice(input.compactedCount).map(withoutUsage),
     ];
     return {
       summary: input.summary,
@@ -300,6 +300,12 @@ export function selectCompactionUserMessages<T extends MessageLike>(
   for (const message of head) keptTokens += estimateMessage(message);
   for (const message of tail) keptTokens += estimateMessage(message);
   return { head, tail, elided: true, omittedTokens: Math.max(0, totalTokens - keptTokens) };
+}
+
+function withoutUsage(message: ContextMessage): ContextMessage {
+  if (message.usage === undefined) return message;
+  const { usage: _usage, ...rest } = message;
+  return rest;
 }
 
 function usesLegacyTailShape(input: ContextCompactionShapeInput): boolean {

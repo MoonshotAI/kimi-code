@@ -5120,6 +5120,11 @@ describe('FullCompaction pre-shrink', () => {
       { role: 'assistant', text: 'recent assistant three' },
     ]);
     await ctx.expectResumeMatches();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue after compacting' }] });
+    await ctx.untilTurnEnd();
+    expect(ctx.allEvents.filter((event) => event.event === 'compaction.started')).toHaveLength(1);
+    expect(compactionBudgets).toHaveLength(2);
   });
 });
 
