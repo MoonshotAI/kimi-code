@@ -219,6 +219,9 @@ function onCopy(event: ClipboardEvent): void {
   if (comparePoints(selected.endContainer, selected.endOffset, full.endContainer, full.endOffset) > 0) selected.setEnd(full.endContainer, full.endOffset);
 
   const parts: string[] = [];
+  const textEls = root.querySelectorAll('.hl-row .hl-text');
+  let startClamped = false;
+  let endClamped = false;
   for (const row of root.querySelectorAll('.hl-row')) {
     const textEl = row.querySelector('.hl-text');
     if (!textEl) continue;
@@ -229,8 +232,14 @@ function onCopy(event: ClipboardEvent): void {
     if (comparePoints(selected.startContainer, selected.startOffset, textEl, textEl.childNodes.length) > 0) continue;
     const rowRange = doc.createRange();
     rowRange.selectNodeContents(textEl);
-    if (comparePoints(selected.startContainer, selected.startOffset, rowRange.startContainer, rowRange.startOffset) > 0) rowRange.setStart(selected.startContainer, selected.startOffset);
-    if (comparePoints(selected.endContainer, selected.endOffset, rowRange.endContainer, rowRange.endOffset) < 0) rowRange.setEnd(selected.endContainer, selected.endOffset);
+    if (comparePoints(selected.startContainer, selected.startOffset, rowRange.startContainer, rowRange.startOffset) > 0) {
+      rowRange.setStart(selected.startContainer, selected.startOffset);
+      startClamped = true;
+    }
+    if (comparePoints(selected.endContainer, selected.endOffset, rowRange.endContainer, rowRange.endOffset) < 0) {
+      rowRange.setEnd(selected.endContainer, selected.endOffset);
+      endClamped = true;
+    }
     parts.push(rowRange.toString());
   }
   if (parts.length === 0) return;
@@ -243,7 +252,17 @@ function onCopy(event: ClipboardEvent): void {
   const htmlHost = doc.createElement('div');
   htmlHost.appendChild(fragment);
 
-  clip.setData('text/plain', parts.join('\n'));
+  const source = typeof props.code === 'string' ? props.code : null;
+  let plain = parts.join('\n');
+  if (source !== null) {
+    const eol = source.includes('\r\n') ? '\r\n' : '\n';
+    plain = parts.map((part) => part.replace(/\r$/, '')).join(eol);
+    if (parts.length === textEls.length && !startClamped && !endClamped && /\r?\n$/.test(source)) {
+      plain += eol;
+    }
+  }
+
+  clip.setData('text/plain', plain);
   clip.setData('text/html', htmlHost.innerHTML);
   event.preventDefault();
 }
