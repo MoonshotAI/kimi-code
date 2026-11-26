@@ -86,6 +86,7 @@ import TerminalResizeHandle from './components/terminal/TerminalResizeHandle.vue
 import { selectContentsOf } from '@moonshot-ai/app-core/lib';
 import { useFullscreen } from './composables/useFullscreen';
 import { useNativeTerminal, nativeTerminalDraftKey } from './composables/useNativeTerminal';
+import { selectAllTerminalIn } from './composables/terminalInstances';
 import { runWhenInitialized, useTrayAttention } from './composables/useTrayAttention';
 import { useJumpList } from './composables/useJumpList';
 import { useVibrancy } from './composables/useVibrancy';
@@ -672,6 +673,9 @@ function hideWindowFromShortcut(): void {
 
 function selectAllFromMenu(): void {
   const active = document.activeElement;
+  if (active instanceof Element && active.closest('.terminal-host') !== null && selectAllTerminalIn(active)) {
+    return;
+  }
   if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
     active.select();
     return;

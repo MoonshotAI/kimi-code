@@ -1,4 +1,4 @@
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 
 import {
   type AvailableCommand,
@@ -11,6 +11,7 @@ import {
   type ToolCallLocation,
   type ToolKind,
 } from '@agentclientprotocol/sdk';
+import { isDaemonFileUrl } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
   AssistantDeltaEvent,
@@ -136,12 +137,22 @@ export function toolCallLocations(
   name: string,
   args: unknown,
   display: ToolInputDisplay | undefined,
+  cwd?: string,
 ): ToolCallLocation[] | undefined {
   const displayPath =
     display !== undefined && (display.kind === 'diff' || display.kind === 'file_io')
       ? display.path
       : undefined;
-  const path = [displayPath, argsPath(name, args)].find(
+  const requested = argsPath(name, args);
+  const argsLocation =
+    requested === undefined ||
+    cwd === undefined ||
+    isAbsolute(requested) ||
+    requested.startsWith('~') ||
+    isDaemonFileUrl(requested)
+      ? requested
+      : resolve(cwd, requested);
+  const path = [displayPath, argsLocation].find(
     (candidate): candidate is string => candidate !== undefined && isAbsolute(candidate),
   );
   if (path === undefined) return undefined;
@@ -273,6 +284,21 @@ export function toolUpdatedToSessionUpdate(
     };
   }
   return null;
+}
+
+export function liveToolOutputToSessionUpdate(
+  sessionId: string,
+  toolCallId: string,
+  text: string,
+): SessionNotification {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      content: [{ type: 'content', content: { type: 'text', text } }],
+    },
+  };
 }
 
 export function thinkingDeltaToSessionUpdate(

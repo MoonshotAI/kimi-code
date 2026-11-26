@@ -35,6 +35,7 @@ export interface FakeMcpHttpServer {
   readonly url: string;
   readonly origin: string;
   readonly requests: readonly FakeMcpHttpRequest[];
+  readonly answered: readonly FakeMcpHttpRequest[];
   addTool(tool: FakeMcpTool): void;
   updateTool(name: string, change: Partial<Omit<FakeMcpTool, 'name'>>): void;
   removeTool(name: string): void;
@@ -54,6 +55,7 @@ export async function startFakeMcpHttpServer(options: FakeMcpHttpServerOptions):
   const name = options.name ?? 'fake-mcp';
   let tools = [...options.tools];
   const requests: FakeMcpHttpRequest[] = [];
+  const answered: FakeMcpHttpRequest[] = [];
   const sessions = new Map<string, Session>();
   const route = options.transport === 'sse' ? routeSse : routeStreamableHttp;
 
@@ -66,6 +68,7 @@ export async function startFakeMcpHttpServer(options: FakeMcpHttpServerOptions):
   const http = createServer((incoming, response) => {
     void readRequest(incoming).then(async (request) => {
       requests.push(request);
+      response.once('finish', () => answered.push(request));
       const answer = (await options.intercept?.(request)) ?? unauthorized(request, options.bearerToken);
       if (answer !== undefined) {
         send(response, answer);
@@ -150,6 +153,7 @@ export async function startFakeMcpHttpServer(options: FakeMcpHttpServerOptions):
     url: `${origin}${MCP_PATH}`,
     origin,
     requests,
+    answered,
     addTool: (tool) => changeTools([...tools, tool]),
     updateTool: (toolName, change) => changeTools(tools.map((tool) => (tool.name === toolName ? { ...tool, ...change } : tool))),
     removeTool: (toolName) => changeTools(tools.filter((tool) => tool.name !== toolName)),

@@ -51,19 +51,11 @@ kimi -w fix-auth --worktree-base main
 kimi -p "修复登录重试逻辑并运行测试" -w fix-auth
 ```
 
-::: warning 注意
-在 print 模式下使用 `-w` 需要先信任当前项目：先在该目录运行 `kimi` 确认信任，或设置 `KIMI_CODE_TRUST_WORKSPACE=1`。
-:::
-
 print 模式结束后会保留工作树，并在终端输出其路径，方便后续查看或清理。
 
-## 复制忽略文件与初始化脚本
+## 复制被忽略的文件
 
-Git worktree 默认只包含已跟踪文件。需要带上被 `.gitignore` 忽略的本地文件或自动准备环境时，可在仓库中配置 `.worktreeinclude` 和 `.kimi-code/worktree-setup.sh`（两者均可提交到仓库与团队共享）。
-
-### `.worktreeinclude`
-
-在仓库根目录创建 `.worktreeinclude`，用 `.gitignore` 语法列出需要复制到新工作树的忽略文件：
+Git worktree 默认只包含已跟踪文件。如需将 `.gitignore` 忽略的本地文件复制到新工作树，可在仓库根目录创建 `.worktreeinclude`（可提交到仓库与团队共享），并用 `.gitignore` 语法列出要复制的文件：
 
 ```text
 .env
@@ -72,23 +64,6 @@ config/local.json
 ```
 
 仅复制被 Git 忽略的文件，不会覆盖新工作树中已有的文件。
-
-### `.kimi-code/worktree-setup.sh`
-
-在仓库中放置 `.kimi-code/worktree-setup.sh`，可在新建工作树时自动准备环境（例如安装依赖）：
-
-```sh
-#!/bin/sh
-set -e
-pnpm install
-```
-
-该脚本仅在新建工作树后执行一次（切回已有工作树不会重复执行），优先读取新工作树中的版本，不存在时回退到源目录。运行时以新工作树根目录为工作目录，并提供两个环境变量：
-
-- **`KIMI_CODE_WORKTREE_SOURCE_DIR`**：源目录根路径。
-- **`KIMI_CODE_WORKTREE_DIR`**：新工作树根路径。
-
-TUI 中每次新建都会询问是否运行；print 模式在项目受信任后自动运行。
 
 ## 退出时的清理
 

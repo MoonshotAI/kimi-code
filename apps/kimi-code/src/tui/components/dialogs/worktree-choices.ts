@@ -4,33 +4,7 @@ import { ChoicePickerComponent, type ChoiceNoticeLine, type ChoiceOption } from 
 
 const escHint = (meaning: string): string => `↑↓ navigate · Enter select · Esc ${meaning}`;
 
-export type SetupScriptChoice = 'run' | 'skip';
 export type WorktreeFailedChoice = 'retry' | 'stay';
-export type SetupFailedChoice = 'again' | 'continue' | 'delete';
-
-export function createSetupScriptPrompt(input: {
-  readonly script: string;
-  readonly sourceDir: string;
-  readonly onChoose: (choice: SetupScriptChoice) => void;
-}): ChoicePickerComponent {
-  return new ChoicePickerComponent({
-    title: 'Run the worktree setup script?',
-    hint: escHint('skip'),
-    notice: `${input.script} from ${abbreviateHome(input.sourceDir)}`,
-    noticeTone: 'text',
-    options: [
-      { value: 'run', label: 'Run it' },
-      { value: 'skip', label: 'Skip this time' },
-    ],
-    spaceSelect: false,
-    onSelect: (value) => {
-      input.onChoose(value === 'run' ? 'run' : 'skip');
-    },
-    onCancel: () => {
-      input.onChoose('skip');
-    },
-  });
-}
 
 export function createWorktreeFailedPrompt(input: {
   readonly sourceDir: string;
@@ -49,27 +23,6 @@ export function createWorktreeFailedPrompt(input: {
     },
     onCancel: () => {
       input.onChoose('stay');
-    },
-  });
-}
-
-export function createSetupFailedPrompt(input: {
-  readonly onChoose: (choice: SetupFailedChoice) => void;
-}): ChoicePickerComponent {
-  return new ChoicePickerComponent({
-    title: 'The setup script failed',
-    hint: escHint('continue'),
-    options: [
-      { value: 'again', label: 'Run it again' },
-      { value: 'continue', label: 'Continue without it' },
-      { value: 'delete', label: 'Delete the worktree and exit', tone: 'danger' },
-    ],
-    spaceSelect: false,
-    onSelect: (value) => {
-      input.onChoose(value === 'again' || value === 'delete' ? value : 'continue');
-    },
-    onCancel: () => {
-      input.onChoose('continue');
     },
   });
 }

@@ -9,6 +9,7 @@ import {
   type ContextApplyCompactionPayload,
 } from '#/agent/contextMemory/contextEvents';
 import type { WireLineRange } from '#/wire/record';
+import type { KimiErrorPayload } from '#/_base/errors/serialize';
 
 import type { CompactionBeginData, CompactionResult, CompactionSource } from './types';
 
@@ -35,7 +36,10 @@ export interface FullCompactionBegin extends CompactionBeginData {
   readonly agentId: string;
 }
 
-const fullCompactionCancelSchema = z.object({ agentId: z.string() });
+const fullCompactionCancelSchema = z.object({
+  agentId: z.string(),
+  error: z.custom<KimiErrorPayload>().optional(),
+});
 
 export class FullCompactionCancel extends AgentEvent2<
   z.infer<typeof fullCompactionCancelSchema>
@@ -46,6 +50,7 @@ export class FullCompactionCancel extends AgentEvent2<
 }
 export interface FullCompactionCancel {
   readonly agentId: string;
+  readonly error?: KimiErrorPayload;
 }
 
 const fullCompactionCompleteSchema = z.object({ agentId: z.string() });

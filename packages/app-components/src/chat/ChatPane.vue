@@ -811,7 +811,9 @@ function onQueueDragEnd(): void {
 }
 
 const undoableTurnIds = computed(() => {
-  const afterCompaction = props.turns.slice(props.turns.findLastIndex((turn) => turn.role === 'compaction') + 1);
+  const afterCompaction = props.turns.slice(
+    props.turns.findLastIndex((turn) => turn.role === 'compaction' && turn.compaction?.error === undefined) + 1,
+  );
   return new Set(afterCompaction.flatMap((turn) => (turn.undoTurnId === undefined ? [] : [turn.id])));
 });
 
@@ -851,6 +853,21 @@ function compactionBaseLabel(turn: ChatTurn): string {
   return turn.compaction?.trigger === 'auto'
     ? t('conversation.compactedAuto')
     : t('conversation.compactedPlain');
+}
+
+function compactionFailedTitle(turn: ChatTurn): string {
+  return turn.compaction?.trigger === 'auto'
+    ? t('conversation.compactionFailedAuto')
+    : t('conversation.compactionFailed');
+}
+
+function compactionFailureDetail(turn: ChatTurn): string {
+  const error = turn.compaction?.error;
+  if (!error) return '';
+  const meta = [error.code];
+  if (error.statusCode !== undefined) meta.push(`HTTP ${error.statusCode}`);
+  if (error.requestId !== undefined && error.requestId.length > 0) meta.push(error.requestId);
+  return `${formatProviderErrorMessage(error.message)}\n${meta.join(' · ')}`;
 }
 
 function compactionTokenDelta(turn: ChatTurn): string {
@@ -1524,6 +1541,20 @@ function streamingTailIndex(turn: ChatTurn): number | null {
            transcript, whose turns the root lookup cannot resolve) the label
            stays a plain inert divider. -->
       <div
+        v-else-if="turn.role === 'compaction' && turn.compaction?.error"
+        class="compact-divider compact-divider--failed turn-anchor"
+        :data-turn-id="turn.id"
+        role="separator"
+      >
+        <span class="cd-card cd-failed" :title="compactionFailureDetail(turn)">
+          <span class="cd-chip" aria-hidden="true">
+            <Icon name="collapse" size="sm" />
+          </span>
+          <span class="cd-title">{{ compactionFailedTitle(turn) }}</span>
+          <span class="cd-reason">{{ formatProviderErrorMessage(turn.compaction.error.message) }}</span>
+        </span>
+      </div>
+      <div
         v-else-if="turn.role === 'compaction'"
         class="compact-divider compact-divider--compacted turn-anchor"
         :data-turn-id="turn.id"
@@ -1970,6 +2001,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 6px;
   max-width: 78%;
   margin-top: 6px;
+  user-select: none;
 }
 .u-steer-receipt {
   display: inline-flex;
@@ -2070,6 +2102,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   align-self: stretch;
   width: 100%;
   margin: 0;
+  user-select: none;
 }
 .compact-divider-interrupted {
   margin-top: var(--chat-turn-gap);
@@ -2129,6 +2162,18 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
 }
+.cd-failed .cd-chip {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.cd-failed .cd-title {
+  color: var(--color-danger);
+}
+.cd-reason {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .cd-chevron {
   display: inline-flex;
   color: var(--color-text-faint);
@@ -2167,6 +2212,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   background: var(--color-danger-soft);
   box-shadow: var(--shadow-xs);
   animation: kimi-card-in var(--duration-slow) var(--ease-out);
+}
+.turn-failed :deep(.ui-button) {
+  user-select: none;
 }
 .tf-chip {
   display: inline-flex;
@@ -2222,6 +2270,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   height: auto;
   margin-top: 6px;
   overflow: visible;
+  user-select: none;
 }
 .a-msg-meta {
   display: flex;
@@ -2432,6 +2481,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .sending-placeholder {
   align-self: flex-start;
   padding: var(--space-4) 0 10px;
+  user-select: none;
 }
 
 .skill-act {
@@ -2570,6 +2620,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   padding: 0 6px;
   color: var(--color-text-faint);
   font-size: var(--text-xs);
+  user-select: none;
 }
 .q-title {
   display: inline-flex;
@@ -2601,6 +2652,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   color: var(--color-text-on-accent);
   box-shadow: var(--shadow-xs);
   cursor: pointer;
+  user-select: none;
   transition: background var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 .q-send:hover {
@@ -2648,6 +2700,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   color: var(--color-text-faint);
   cursor: grab;
   opacity: 0.7;
+  user-select: none;
 }
 .q-grip:hover {
   opacity: 1;

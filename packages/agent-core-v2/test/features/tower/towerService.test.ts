@@ -3094,6 +3094,15 @@ describe('AgentTowerService', () => {
       return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
     }
 
+    async function wakeTextAfterBarrier(): Promise<string> {
+      publishInbox({ from: 'w9', to: 'tower', subject: 'barrier' });
+      await flushWake();
+      const messages = drainWakeMessages();
+      expect(messages).toHaveLength(1);
+      expect(loop.snapshot().hasPendingRequests).toBe(false);
+      return wakeText(messages[0]!);
+    }
+
     it('wakes the main agent once when a worker messages the tower', async () => {
       const tower = ix.get(IAgentTowerService);
       await tower.enter();
@@ -3162,8 +3171,9 @@ describe('AgentTowerService', () => {
       expect(text).toContain('w1');
       expect(text).toContain('three');
 
-      await flushWake();
-      expect(drainWakeMessages()).toEqual([]);
+      const next = await wakeTextAfterBarrier();
+      expect(next).toContain('barrier');
+      expect(next).not.toContain('three');
     });
 
     it('queues consecutive legacy events with the same sender and subject independently', async () => {
@@ -3373,8 +3383,6 @@ describe('AgentTowerService', () => {
         await tower.exit();
         await tower.enter();
         release();
-        await flushWake();
-        expect(drainWakeMessages()).toEqual([]);
 
         publishInbox({ from: 'w1', to: 'tower', subject: 'new flush', messageId: 'msg-new-flush' });
         await flushWake();
@@ -3382,6 +3390,7 @@ describe('AgentTowerService', () => {
         expect(messages).toHaveLength(1);
         expect(wakeText(messages[0]!)).toContain('messageId=msg-new-flush');
         expect(wakeText(messages[0]!)).not.toContain('messageId=msg-old-flush');
+        expect(loop.snapshot().hasPendingRequests).toBe(false);
       } finally {
         release();
         gate.mockRestore();
@@ -3395,20 +3404,23 @@ describe('AgentTowerService', () => {
 
       publishInbox({ from: 'w1', to: 'w2', subject: 'direct' });
       publishInbox({ from: 'tower', to: 'all', subject: 'self broadcast' });
-      await flushWake();
 
-      expect(drainWakeMessages()).toEqual([]);
-      expect(loop.snapshot().hasPendingRequests).toBe(false);
+      const text = await wakeTextAfterBarrier();
+      expect(text).toContain('barrier');
+      expect(text).not.toContain('direct');
+      expect(text).not.toContain('self broadcast');
     });
 
     it('does not wake while tower mode is inactive', async () => {
-      ix.get(IAgentTowerService);
+      const tower = ix.get(IAgentTowerService);
 
       publishInbox({ from: 'w1', to: 'tower', subject: 'hello' });
-      await flushWake();
-
-      expect(drainWakeMessages()).toEqual([]);
       expect(loop.snapshot().hasPendingRequests).toBe(false);
+      await tower.enter();
+
+      const text = await wakeTextAfterBarrier();
+      expect(text).toContain('barrier');
+      expect(text).not.toContain('hello');
     });
 
     it('does not deliver a pending wake when tower mode exits before rendering completes', async () => {
@@ -3550,7 +3562,9 @@ describe('AgentTowerService', () => {
           }),
         );
         publishPrompt(`p${String(index + 1)}`, origin);
-        await flushWake();
+        await vi.waitFor(() => {
+          expect(loop.cancels).toHaveLength(index + 1);
+        });
       }
 
       expect(loop.cancels.map((cancel) => cancel.turnId)).toEqual(wakeTurnIds);
@@ -3571,7 +3585,6 @@ describe('AgentTowerService', () => {
         }),
       );
       publishPrompt('p1', { kind: 'user' });
-      await flushWake();
 
       const wakeTurn = loop.startTurn();
       publishAsMain(
@@ -3595,9 +3608,12 @@ describe('AgentTowerService', () => {
         skillName: 'example-skill',
         trigger: 'model-tool',
       });
-      await flushWake();
+      publishPrompt('barrier', { kind: 'user' });
+      await vi.waitFor(() => {
+        expect(loop.cancels).not.toEqual([]);
+      });
 
-      expect(loop.cancels).toEqual([]);
+      expect(loop.cancels.map((cancel) => cancel.turnId)).toEqual([wakeTurn.id]);
     });
 
     it('does not cancel after the wake turn has already ended', async () => {
@@ -3615,9 +3631,22 @@ describe('AgentTowerService', () => {
       );
       publishAsMain(ix, new TurnEnded({ agentId: 'main', turnId: wakeTurn.id, reason: 'completed' }));
       publishPrompt('p1', { kind: 'user' });
-      await flushWake();
 
-      expect(loop.cancels).toEqual([]);
+      const barrierTurn = loop.startTurn();
+      publishAsMain(
+        ix,
+        new TurnStarted({
+          agentId: 'main',
+          turnId: barrierTurn.id,
+          origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
+        }),
+      );
+      publishPrompt('barrier', { kind: 'user' });
+      await vi.waitFor(() => {
+        expect(loop.cancels).not.toEqual([]);
+      });
+
+      expect(loop.cancels.map((cancel) => cancel.turnId)).toEqual([barrierTurn.id]);
     });
 
     it('re-arms the inbox wake after the interrupting user turn ends', async () => {

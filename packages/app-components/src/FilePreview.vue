@@ -514,7 +514,7 @@ function menuDownload(): void {
       </div>
 
       <div class="fp-content">
-        <div v-if="error && !loading" class="fp-empty fp-error">
+        <div v-if="error && !loading" class="fp-empty fp-error" data-panel-content>
           <span>{{ error }}</span>
           <Button v-if="canOpenInDefaultApp" variant="secondary" size="sm" @click="openInDefaultApp">
             <Icon name="external-link" size="sm" />
@@ -525,11 +525,11 @@ function menuDownload(): void {
           </Button>
         </div>
 
-        <div v-else-if="!file && !loading" class="fp-empty">
+        <div v-else-if="!file && !loading" class="fp-empty" data-panel-content>
           <slot name="empty">{{ t('filePreview.empty') }}</slot>
         </div>
 
-        <div v-else-if="loading" class="fp-loading">
+        <div v-else-if="loading" class="fp-loading" data-panel-content>
           <Spinner size="sm" aria-hidden="true" />
           <span>{{ t('filePreview.loading') }}</span>
         </div>
@@ -542,6 +542,7 @@ function menuDownload(): void {
         <div
           v-if="contentKind === 'markdown'"
           class="fp-body"
+          data-panel-content
           :class="{ 'fp-markdown': markdownMode === 'preview' }"
           :data-quote-display-lines="markdownMode === 'preview' || undefined"
         >
@@ -564,12 +565,12 @@ function menuDownload(): void {
         <!-- Body: JSON (pretty-printed: only an ACTUALLY reformatted document
              has FORMATTED display lines instead of source-file lines — the
              quote provenance marker tracks jsonReformatted) -->
-        <div v-else-if="contentKind === 'json'" class="fp-body fp-code" :data-quote-display-lines="jsonReformatted || undefined">
+        <div v-else-if="contentKind === 'json'" class="fp-body fp-code" data-panel-content :data-quote-display-lines="jsonReformatted || undefined">
           <HighlightedCode :code="lines" :path="highlightPath" :line-numbers="lineNumberList" :framed="false" :line-class="lineClass" :wrap="codeWrap" />
         </div>
 
         <!-- Body: HTML (sandboxed preview + source mode) -->
-        <div v-else-if="contentKind === 'html'" class="fp-body">
+        <div v-else-if="contentKind === 'html'" class="fp-body" data-panel-content>
           <iframe
             v-if="htmlMode === 'preview'"
             class="fp-html-frame"
@@ -583,7 +584,7 @@ function menuDownload(): void {
         </div>
 
         <!-- Body: PDF -->
-        <div v-else-if="contentKind === 'pdf'" class="fp-body fp-pdf-wrap">
+        <div v-else-if="contentKind === 'pdf'" class="fp-body fp-pdf-wrap" data-panel-content>
           <iframe v-if="pdfSrc" class="fp-pdf-frame" :src="pdfSrc" :title="file.path"></iframe>
           <div v-else class="fp-binary-card">
             <span class="fp-binary-label">{{ t('filePreview.pdfNoPreview') }}</span>
@@ -591,7 +592,7 @@ function menuDownload(): void {
         </div>
 
         <!-- Body: CSV -->
-        <div v-else-if="contentKind === 'csv'" class="fp-body fp-table-wrap">
+        <div v-else-if="contentKind === 'csv'" class="fp-body fp-table-wrap" data-panel-content>
           <table class="fp-table">
             <tbody>
               <tr v-for="(row, ri) in csvRows" :key="ri" :class="lineClass(ri + 1)" :data-line="ri + 1">
@@ -603,7 +604,7 @@ function menuDownload(): void {
         </div>
 
         <!-- Body: Image (base64) -->
-        <div v-else-if="contentKind === 'image'" class="fp-body fp-image-wrap">
+        <div v-else-if="contentKind === 'image'" class="fp-body fp-image-wrap" data-panel-content>
           <template v-if="imageSrc">
             <img
               :src="imageSrc"
@@ -621,12 +622,12 @@ function menuDownload(): void {
         </div>
 
         <!-- Body: Text/Code (with line numbers) -->
-        <div v-else-if="contentKind === 'text'" class="fp-body fp-code">
+        <div v-else-if="contentKind === 'text'" class="fp-body fp-code" data-panel-content>
           <HighlightedCode :code="lines" :path="highlightPath" :line-numbers="lineNumberList" :framed="false" :line-class="lineClass" :wrap="codeWrap" />
         </div>
 
         <!-- Body: Binary / unknown -->
-        <div v-else class="fp-body fp-binary-wrap">
+        <div v-else class="fp-body fp-binary-wrap" data-panel-content>
           <div class="fp-binary-card">
             <span class="fp-binary-icon">
               <Icon name="file-off" size="lg" />
@@ -849,6 +850,10 @@ function menuDownload(): void {
   flex-direction: column;
   padding: 24px;
   text-align: center;
+}
+
+.fp-error :deep(.ui-button) {
+  user-select: none;
 }
 
 @media (max-width: 640px) {

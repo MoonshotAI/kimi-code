@@ -753,6 +753,117 @@ describe('model turn error notices', () => {
   });
 });
 
+describe('compaction failures', () => {
+  const REFUSED = 'APIStatusError: The example service refused to summarize.';
+  const cancelled = { type: 'notice', level: 'warning', title: 'Context compaction did not finish', code: 'compaction.cancelled' } as const;
+  const failed = { type: 'notice', level: 'error', title: REFUSED, code: 'compaction.failed' } as const;
+  const failure = expect.objectContaining({ severity: 'error', title: 'warnings.agentError.compactionFailed', message: REFUSED });
+  const failedItem = {
+    type: 'system',
+    kind: 'compaction',
+    item_id: 'c0',
+    status: 'ended',
+    outcome: 'failed',
+    created_at: AT,
+    trigger: 'manual',
+    error: { code: 'compaction.failed', message: REFUSED, status_code: 400, request_id: 'req-1' },
+  } as const;
+  const deliverFailure = (h: Awaited<ReturnType<typeof boot>>, sessionId: string) => {
+    h.frame(sessionId, { type: 'turn.started', turn: { turn_id: 'tc', ordinal: 5, kind: 'system', status: 'running', started_at: AT, steps: [] } });
+    h.frame(sessionId, { type: 'item.ended', turn_id: 'tc', item: failedItem });
+    h.frame(sessionId, cancelled);
+    h.frame(sessionId, failed);
+  };
+
+  it('shows why a compaction failed in the transcript of the open session, without a toast', async () => {
+    const h = await boot();
+    const { modelSwitchConfirmStore } = await import('../src/stores/modelSwitchConfirm');
+    const { promptStore } = await import('../src/stores/prompt');
+    h.agentStatus('s1', 'compacting');
+    const settled = modelSwitchConfirmStore().waitCompactionSettled('s1', 60_000);
+    h.agentStatus('s1', 'idle');
+    h.warningsStore().resetWarnings();
+
+    deliverFailure(h, 's1');
+
+    await expect(settled).resolves.toBe('cancelled');
+    expect(promptStore().hasUnsettledCompaction('s1')).toBe(false);
+    await vi.waitFor(() => expect(h.client.turns.value.at(-1)).toMatchObject({
+      role: 'compaction',
+      compaction: {
+        trigger: 'manual',
+        error: { code: 'compaction.failed', message: REFUSED, statusCode: 400, requestId: 'req-1' },
+      },
+    }));
+    expect(h.warningsStore().warnings).toEqual([]);
+  });
+
+  it('keeps the did-not-finish note when nothing failed', async () => {
+    const h = await boot();
+    h.warningsStore().resetWarnings();
+
+    h.frame('s1', cancelled);
+
+    expect(h.warningsStore().warnings).toEqual([
+      expect.objectContaining({ severity: 'warning', title: 'warnings.noteLabel', message: 'Context compaction did not finish' }),
+    ]);
+  });
+
+  it('keeps the did-not-finish note of the next cancelled compaction after a failure', async () => {
+    const h = await boot();
+    deliverFailure(h, 's1');
+    h.agentStatus('s1', 'compacting');
+    h.agentStatus('s1', 'idle');
+    h.warningsStore().resetWarnings();
+
+    h.frame('s1', cancelled);
+
+    expect(h.warningsStore().warnings).toEqual([
+      expect.objectContaining({ severity: 'warning', title: 'warnings.noteLabel', message: 'Context compaction did not finish' }),
+    ]);
+  });
+
+  it('names a failed compaction in another session as a compaction failure, in one toast', async () => {
+    const h = await boot({ sessionIds: ['s1', 's2'] });
+    await h.client.selectSession('s2');
+    await h.client.selectSession('s1');
+    h.warningsStore().resetWarnings();
+
+    deliverFailure(h, 's2');
+
+    expect(h.warningsStore().warnings).toEqual([failure]);
+  });
+
+  it('still raises one toast when a compaction in another session fails on authentication', async () => {
+    const h = await boot({ sessionIds: ['s1', 's2'] });
+    await h.client.selectSession('s2');
+    await h.client.selectSession('s1');
+    h.warningsStore().resetWarnings();
+    const DENIED = 'Unauthorized: the example key was rejected.';
+
+    h.frame('s2', { type: 'turn.started', turn: { turn_id: 'tc', ordinal: 5, kind: 'system', status: 'running', started_at: AT, steps: [] } });
+    h.frame('s2', { type: 'item.ended', turn_id: 'tc', item: { ...failedItem, error: { code: 'provider.auth_error', message: DENIED, status_code: 401 } } });
+    h.frame('s2', cancelled);
+    h.frame('s2', { type: 'notice', level: 'error', title: DENIED, code: 'provider.auth_error' });
+
+    expect(h.warningsStore().warnings).toEqual([
+      expect.objectContaining({ severity: 'error', title: 'warnings.agentError.compactionFailed', message: DENIED }),
+    ]);
+  });
+
+  it('keeps hiding an authentication error of another session that no compaction failure announced', async () => {
+    const h = await boot({ sessionIds: ['s1', 's2'] });
+    await h.client.selectSession('s2');
+    await h.client.selectSession('s1');
+    deliverFailure(h, 's2');
+    h.warningsStore().resetWarnings();
+
+    h.frame('s2', { type: 'notice', level: 'error', title: 'Unauthorized', code: 'provider.auth_error' });
+
+    expect(h.warningsStore().warnings).toEqual([]);
+  });
+});
+
 describe('model availability notices', () => {
   it('opens the model picker from the unavailable-model confirmation dialog', async () => {
     const h = await boot();

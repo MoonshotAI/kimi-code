@@ -24,9 +24,9 @@ function fakeWebAssets(files: Record<string, string>): {
   const manifest: WebAssetManifest = {
     version: WEB_ASSET_MANIFEST_VERSION,
     target: 'test-target',
-    root: 'dist-web',
+    root: 'web-dist',
     files: Object.entries(files).map(([relativePath, content]) => ({
-      assetKey: `web/test-target/dist-web/${relativePath}`,
+      assetKey: `web/test-target/web-dist/${relativePath}`,
       relativePath,
       sha256: sha256(content),
     })),
@@ -34,7 +34,7 @@ function fakeWebAssets(files: Record<string, string>): {
   const assets = new Map<string, Buffer>([
     ['web/test-target/manifest.json', Buffer.from(JSON.stringify(manifest))],
     ...Object.entries(files).map(([relativePath, content]) => [
-      `web/test-target/dist-web/${relativePath}`,
+      `web/test-target/web-dist/${relativePath}`,
       Buffer.from(content),
     ] as const),
   ]);
@@ -52,7 +52,7 @@ function fakeWebAssets(files: Record<string, string>): {
 }
 
 describe('web assets', () => {
-  it('extracts embedded web assets into a dist-web cache directory', () => {
+  it('extracts embedded web assets into a web-dist cache directory', () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-web-assets-runtime-'));
     try {
       const { manifest, source } = fakeWebAssets({

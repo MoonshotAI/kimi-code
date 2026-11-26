@@ -489,7 +489,8 @@ export interface TestAgentOptions {
   readonly telemetry?: ITelemetryService | undefined;
   readonly persistence?: WireRecordPersistence | undefined;
   readonly hookEngine?:
-  | Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'>
+  | (Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'> &
+    Partial<Pick<IExternalHooksRunnerService, 'hasHooksFor'>>)
   | undefined;
   readonly initialConfig?: Partial<KimiConfig> | undefined;
   readonly autoConfigure?: boolean | undefined;
@@ -729,7 +730,10 @@ export function telemetryServices(telemetry: ITelemetryService): TestAgentServic
 }
 
 export function externalHookServices(
-  hookRunner: Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'> | undefined,
+  hookRunner:
+    | (Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'> &
+      Partial<Pick<IExternalHooksRunnerService, 'hasHooksFor'>>)
+    | undefined,
 ): TestAgentServiceOverride {
   return [
     appService(IExternalHooksRunnerService, resolveExternalHooksRunner(hookRunner)),
@@ -738,7 +742,10 @@ export function externalHookServices(
 }
 
 function resolveExternalHooksRunner(
-  hookRunner: Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'> | undefined,
+  hookRunner:
+    | (Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'> &
+      Partial<Pick<IExternalHooksRunnerService, 'hasHooksFor'>>)
+    | undefined,
 ): IExternalHooksRunnerService {
   return hookRunner === undefined
     ? noopHookRunner

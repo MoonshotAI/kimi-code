@@ -76,7 +76,7 @@ kimi acp
 | `session/request_permission` | 是 | 工具审批和提问共用此通道。Bash 审批包含完整命令和工作目录。已解析的绝对文件路径通过 `toolCall.locations` 提供 |
 | `fs/read_text_file` | 是 | 客户端声明 `fsCapabilities` 时，引擎的文件读取路由到客户端 |
 | `fs/write_text_file` | 是 | 引擎的文件写入路由到客户端 |
-| `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | 是 | 客户端声明 `clientCapabilities.terminal` 时，shell 执行通过 reverse-RPC 交给客户端 |
+| `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | 是 | 客户端声明 `clientCapabilities.terminal` 时，shell 执行通过 reverse-RPC 交给客户端；否则命令在本机运行，运行中已打印的内容以 `tool_call_update` 的文字内容发给客户端 |
 | `elicitation/create` | 是 | 客户端声明 `elicitation.form` 时，ask-user 问题走原生表单；RPC 失败回退 `session/request_permission` |
 | `elicitation/complete` | 否 | |
 

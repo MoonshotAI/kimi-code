@@ -60,7 +60,7 @@
     "apps/desktop/tests/main/e2e-stub-model.test.ts": 1
   },
   "engine-mock-provider": {
-    "packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts": 53,
+    "packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts": 52,
     "packages/agent-core-v2/test/agent/llmRequester/llmRequester.test.ts": 10,
     "packages/agent-core-v2/test/agent/loop/loop.test.ts": 3,
     "packages/agent-core-v2/test/agent/profile/config-state.test.ts": 4,
@@ -74,7 +74,7 @@
   },
   "engine-mock-response": {
     "packages/agent-core-v2/test/agent/contextMemory/context.test.ts": 4,
-    "packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts": 52,
+    "packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts": 44,
     "packages/agent-core-v2/test/agent/llmRequester/llmRequester.test.ts": 10,
     "packages/agent-core-v2/test/agent/loop/coreLoopService.test.ts": 33,
     "packages/agent-core-v2/test/agent/loop/loop.test.ts": 100,
