@@ -361,6 +361,8 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       refreshOAuthProviderModels,
       getManagedUsage: async () => ({ kind: 'error' as const, message: 'unused' }),
       getManagedUserInfo: async () => ({ kind: 'error' as const, message: 'unused' }),
+      listManagedWorkspaces: async () => ({ kind: 'error' as const, message: 'unused' }),
+      switchManagedWorkspace: async () => ({ kind: 'error' as const, message: 'unused' }),
       resolveTokenProvider: () => undefined,
       getCachedAccessToken: async () => undefined,
       getRegion: () => 'mainland-cn',

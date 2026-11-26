@@ -14,9 +14,10 @@ export {
   BUSINESS_MEMBERSHIP_REVOKED_CODES,
   BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
   BusinessMembershipRevokedError,
+  describeManagedOAuthFailure,
   isBusinessMembershipRevokedCode,
 } from './business-membership';
-export type { BusinessMembershipRevokedCode } from './business-membership';
+export type { BusinessMembershipRevokedCode, ManagedOAuthFailureInfo } from './business-membership';
 
 export type {
   DeviceAuthorization,

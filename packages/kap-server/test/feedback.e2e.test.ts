@@ -121,6 +121,8 @@ default_model = "alternate"
       refreshOAuthProviderModels: async () => ({ changed: [], unchanged: [], failed: [] }),
       getManagedUsage: async () => ({ kind: 'error', message: 'Unavailable in this test.' }),
       getManagedUserInfo: async () => ({ kind: 'error', message: 'Unavailable in this test.' }),
+      listManagedWorkspaces: async () => ({ kind: 'error', message: 'Unavailable in this test.' }),
+      switchManagedWorkspace: async () => ({ kind: 'error', message: 'Unavailable in this test.' }),
       resolveTokenProvider: () => ({
         getAccessToken: async () => {
           if (!signedIn) throw new OAuthUnauthorizedError('Not signed in.');

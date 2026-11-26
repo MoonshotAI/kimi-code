@@ -156,6 +156,7 @@ export function conversationTurnError(turn: ConversationTurn | undefined): AppTu
     retryable: turn.error.retryable,
     statusCode: turn.error.status_code,
     requestId: turn.error.request_id,
+    providerErrorCode: turn.error.provider_error_code,
     endReason: turn.end_reason,
   };
 }

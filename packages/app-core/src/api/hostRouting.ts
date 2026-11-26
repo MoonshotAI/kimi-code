@@ -152,6 +152,8 @@ const ROUTES = {
   logout: 'local',
   getUsage: 'local',
   getUserInfo: 'local',
+  listManagedWorkspaces: 'local',
+  switchManagedWorkspace: 'local',
   getOAuthRegion: 'local',
   getClientConfig: 'local',
 } as const satisfies Record<keyof KimiWebApi, Route>;

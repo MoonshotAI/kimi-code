@@ -1,4 +1,4 @@
-import { OAuthUnauthorizedError } from './errors';
+import { OAuthUnauthorizedError, OAuthWorkspaceSwitchError } from './errors';
 
 export const BUSINESS_MEMBERSHIP_REVOKED_CODES = [
   'REASON_BUSINESS_MEMBER_REMOVED',
@@ -26,4 +26,27 @@ export class BusinessMembershipRevokedError extends OAuthUnauthorizedError {
     this.name = 'BusinessMembershipRevokedError';
     this.reasonCode = reasonCode;
   }
+}
+
+export interface ManagedOAuthFailureInfo {
+  readonly status?: number;
+  readonly errorCode?: string;
+  readonly message: string;
+}
+
+export function describeManagedOAuthFailure(error: unknown): ManagedOAuthFailureInfo {
+  if (error instanceof BusinessMembershipRevokedError) {
+    return { status: 401, errorCode: error.reasonCode, message: error.message };
+  }
+  if (error instanceof OAuthWorkspaceSwitchError) {
+    return {
+      ...(error.status !== undefined ? { status: error.status } : {}),
+      ...(error.oauthError !== undefined ? { errorCode: error.oauthError } : {}),
+      message: error.message,
+    };
+  }
+  if (error instanceof OAuthUnauthorizedError) {
+    return { status: 401, message: error.message };
+  }
+  return { message: error instanceof Error ? error.message : String(error) };
 }

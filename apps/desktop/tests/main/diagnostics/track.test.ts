@@ -6,6 +6,7 @@ import {
   setRuntimeLocale,
   trackDesktopEvent,
 } from '../../../src/main/diagnostics/track';
+import { rendererTrackEventSchema } from '../../../src/shared/track-events';
 
 beforeEach(() => {
   setDesktopTrackImpl(null);
@@ -89,5 +90,31 @@ describe('runtime locale', () => {
     expect(getRuntimeLocale()).toBe('zh');
     setRuntimeLocale(undefined);
     expect(getRuntimeLocale()).toBeUndefined();
+  });
+});
+
+describe('rendererTrackEventSchema — identity_switch', () => {
+  it('accepts personal-to-enterprise and enterprise-to-personal switches', () => {
+    expect(
+      rendererTrackEventSchema.safeParse({
+        event: 'identity_switch',
+        properties: {
+          from_type: 'personal',
+          to_type: 'enterprise',
+          enterprise_id: 'biz_01',
+        },
+      }).success,
+    ).toBe(true);
+
+    expect(
+      rendererTrackEventSchema.safeParse({
+        event: 'identity_switch',
+        properties: {
+          from_type: 'enterprise',
+          to_type: 'personal',
+          enterprise_id: '',
+        },
+      }).success,
+    ).toBe(true);
   });
 });

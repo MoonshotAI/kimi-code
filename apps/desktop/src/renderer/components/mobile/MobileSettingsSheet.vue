@@ -483,7 +483,15 @@ function toggleAutoSessionTitle(): void {
               <span class="srow-label">{{ managedUserInfo?.nickname || t('sidebar.defaultUserName') }}</span>
               <Badge v-if="accountLevel" class="acct-level" variant="neutral" size="sm">{{ accountLevel }}</Badge>
             </span>
-            <span class="srow-sub">{{ t('settings.signedIn') }}</span>
+            <span class="srow-sub">
+              {{
+                client.hasBusinessWorkspace.value
+                  ? client.currentManagedWorkspace.value?.kind === 'business'
+                    ? managedUserInfo?.workspaceName || client.currentManagedWorkspace.value.name
+                    : managedUserInfo?.workspaceName || t('account.personalWorkspace')
+                  : t('settings.signedIn')
+              }}
+            </span>
           </span>
         </div>
         <button v-if="!rcMode" type="button" class="srow acct out" @click="onLogout">

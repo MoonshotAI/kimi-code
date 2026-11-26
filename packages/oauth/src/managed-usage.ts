@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { readApiErrorMessage } from './api-error';
+import { fetchManagedJson, type ManagedEndpointFetchOptions } from './managed-fetch';
 import { isRecord } from './utils';
 
 const MANAGED_PREFIX = 'managed:';
@@ -97,6 +97,7 @@ const managedUsageErrorSchema = z.object({
   kind: z.literal('error'),
   message: z.string(),
   status: z.number().int().optional(),
+  errorCode: z.string().optional(),
 });
 
 export const managedUsageResultSchema = z.discriminatedUnion('kind', [
@@ -212,45 +213,19 @@ export interface FetchManagedUsageResult {
 export interface FetchManagedUsageError {
   readonly kind: 'error';
   readonly status?: number;
+  readonly errorCode?: string;
   readonly message: string;
 }
 
 export async function fetchManagedUsage(
   url: string,
   accessToken: string,
-  opts: { timeoutMs?: number } = {},
+  opts: ManagedEndpointFetchOptions = {},
 ): Promise<FetchManagedUsageResult | FetchManagedUsageError> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, opts.timeoutMs ?? 8000);
-  try {
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json',
-      },
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      const status = res.status;
-      const hint =
-        status === 401
-          ? 'Authorization failed. Please check your API key (try /login).'
-          : status === 404
-            ? 'Usage endpoint not available. Try Kimi For Coding.'
-            : `Failed to fetch usage: HTTP ${String(status)}`;
-      return { kind: 'error', status, message: await readApiErrorMessage(res, hint) };
-    }
-    const json: unknown = await res.json();
-    return { kind: 'ok', quota: parseManagedUsagePayload(json) };
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      return { kind: 'error', message: 'Failed to fetch usage: request timed out.' };
-    }
-    const msg = error instanceof Error ? error.message : String(error);
-    return { kind: 'error', message: `Failed to fetch usage: ${msg}` };
-  } finally {
-    clearTimeout(timer);
-  }
+  const response = await fetchManagedJson(url, accessToken, 'usage', {
+    ...opts,
+    status404Message: 'Usage endpoint not available. Try Kimi For Coding.',
+  });
+  if (response.kind === 'error') return response;
+  return { kind: 'ok', quota: parseManagedUsagePayload(response.payload) };
 }

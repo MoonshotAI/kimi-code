@@ -1,3 +1,4 @@
+import { oauthWorkspaceTargetSchema } from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
 import { z } from 'zod';
 
 export const oauthLoginStartRequestSchema = z.object({
@@ -15,3 +16,9 @@ export const oauthLogoutRequestSchema = z.object({
   provider: z.string().min(1).optional(),
 });
 export type OAuthLogoutRequest = z.infer<typeof oauthLogoutRequestSchema>;
+
+export const oauthWorkspaceSwitchRequestSchema = z.object({
+  provider: z.string().min(1).optional(),
+  target: oauthWorkspaceTargetSchema,
+});
+export type OAuthWorkspaceSwitchRequest = z.infer<typeof oauthWorkspaceSwitchRequestSchema>;

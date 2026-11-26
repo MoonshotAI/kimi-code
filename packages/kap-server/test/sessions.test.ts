@@ -1434,6 +1434,8 @@ describe('server-v2 /api/v1/sessions', () => {
       refreshOAuthProviderModels: async () => ({ changed: [], unchanged: [], failed: [] }),
       getManagedUsage: async () => ({ kind: 'error', message: 'unused' }),
       getManagedUserInfo: async () => ({ kind: 'error', message: 'unused' }),
+      listManagedWorkspaces: async () => ({ kind: 'error', message: 'unused' }),
+      switchManagedWorkspace: async () => ({ kind: 'error', message: 'unused' }),
       resolveTokenProvider: () => ({ getAccessToken: async () => 'test-token' }),
       getCachedAccessToken: async () => 'test-token',
       getRegion: () => 'mainland-cn',

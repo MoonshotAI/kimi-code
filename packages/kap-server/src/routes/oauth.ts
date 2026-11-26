@@ -6,7 +6,9 @@ import {
   oauthFlowStartSchema,
   oauthLoginCancelResponseSchema,
   oauthLogoutResponseSchema,
+  oauthManagedWorkspacesResultSchema,
   oauthRegionResultSchema,
+  oauthWorkspaceSwitchResponseSchema,
 } from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import {
@@ -24,6 +26,7 @@ import {
   oauthLoginQuerySchema,
   oauthLoginStartRequestSchema,
   oauthLogoutRequestSchema,
+  oauthWorkspaceSwitchRequestSchema,
 } from '../protocol/rest-oauth';
 import {
   acquireRemoteControlStartGate,
@@ -140,6 +143,14 @@ export function registerOAuthRoutes(
   );
 
   let kimiLogoutQueue: Promise<void> = Promise.resolve();
+  const enqueueKimiAuthMutation = <T>(work: () => Promise<T>): Promise<T> => {
+    const run = kimiLogoutQueue.then(work, work);
+    kimiLogoutQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
 
   const logoutRoute = defineRoute(
     {
@@ -158,7 +169,7 @@ export function registerOAuthRoutes(
         reply.send(okEnvelope(result, req.id));
         return;
       }
-      const serialized = kimiLogoutQueue.then(async () => {
+      await enqueueKimiAuthMutation(async () => {
         try {
           const status = remoteControl.status();
           if (status.state === 'on') {
@@ -248,11 +259,6 @@ export function registerOAuthRoutes(
           );
         }
       });
-      kimiLogoutQueue = serialized.then(
-        () => undefined,
-        () => undefined,
-      );
-      await serialized;
     },
   );
   app.post(
@@ -299,6 +305,63 @@ export function registerOAuthRoutes(
     userInfoRoute.path,
     userInfoRoute.options,
     userInfoRoute.handler as Parameters<RouteHost['get']>[2],
+  );
+
+  const workspacesRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/oauth/workspaces',
+      querystring: oauthLoginQuerySchema,
+      success: { data: oauthManagedWorkspacesResultSchema },
+      description: 'List managed personal and business workspaces for the signed-in account',
+      tags: ['auth'],
+    },
+    async (req, reply) => {
+      const result = await core.accessor
+        .get(IOAuthService)
+        .listManagedWorkspaces(req.query.provider);
+      reply.send(okEnvelope(result, req.id));
+    },
+  );
+  app.get(
+    workspacesRoute.path,
+    workspacesRoute.options,
+    workspacesRoute.handler as Parameters<RouteHost['get']>[2],
+  );
+
+  const switchWorkspaceRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/oauth/workspaces/switch',
+      body: oauthWorkspaceSwitchRequestSchema,
+      success: { data: oauthWorkspaceSwitchResponseSchema },
+      errors: { [ErrorCode.VALIDATION_FAILED]: {} },
+      description: 'Switch the active managed workspace without restarting OAuth login',
+      tags: ['auth'],
+    },
+    async (req, reply) => {
+      const provider = req.body.provider ?? KIMI_CODE_PROVIDER_NAME;
+      const runSwitch = () =>
+        core.accessor.get(IOAuthService).switchManagedWorkspace(req.body.target, req.body.provider);
+      const result =
+        provider === KIMI_CODE_PROVIDER_NAME
+          ? await enqueueKimiAuthMutation(runSwitch)
+          : await runSwitch();
+      requestLog(req)?.info(
+        {
+          provider,
+          targetKind: req.body.target.kind,
+          ok: result.kind === 'ok',
+        },
+        'oauth switch workspace',
+      );
+      reply.send(okEnvelope(result, req.id));
+    },
+  );
+  app.post(
+    switchWorkspaceRoute.path,
+    switchWorkspaceRoute.options,
+    switchWorkspaceRoute.handler as Parameters<RouteHost['post']>[2],
   );
 
   const regionRoute = defineRoute(

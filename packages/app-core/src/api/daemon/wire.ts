@@ -594,6 +594,42 @@ export interface WireOAuthRegionResult {
   region: 'mainland-cn' | 'global';
 }
 
+export type WireManagedWorkspace =
+  | {
+      kind: 'personal';
+      key: string;
+      name: string;
+      current: boolean;
+      disabled: boolean;
+      switchable: boolean;
+      roles: string[];
+    }
+  | {
+      kind: 'business';
+      key: string;
+      business_id: string;
+      name: string;
+      status: string;
+      current: boolean;
+      disabled: boolean;
+      switchable: boolean;
+      nickname?: string;
+      roles: string[];
+    };
+
+export type WireManagedWorkspacesResult =
+  | { kind: 'ok'; workspaces: WireManagedWorkspace[] }
+  | { kind: 'error'; message: string; status?: number; error_code?: string };
+
+export type WireWorkspaceSwitchResult =
+  | {
+      kind: 'ok';
+      provider: string;
+      target: { kind: 'personal' } | { kind: 'business'; business_id: string };
+      warning?: string;
+    }
+  | { kind: 'error'; message: string; status?: number; error_code?: string };
+
 export interface WireFileMeta {
   id: string;
   name: string;

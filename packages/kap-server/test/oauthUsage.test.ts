@@ -10,8 +10,12 @@ import {
 import {
   managedUsageResultSchema,
   managedUserInfoResultSchema,
+  oauthManagedWorkspacesResultSchema,
+  oauthWorkspaceSwitchResponseSchema,
   type ManagedUsageResult,
   type ManagedUserInfoResult,
+  type OAuthManagedWorkspacesResult,
+  type OAuthWorkspaceSwitchResponse,
 } from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -63,6 +67,8 @@ describe('server-v2 GET /api/v1/oauth/usage', () => {
       refreshOAuthProviderModels: async () => ({ changed: [], unchanged: [], failed: [] }),
       getManagedUsage,
       getManagedUserInfo: async () => ({ kind: 'error' as const, message: 'unused' }),
+      listManagedWorkspaces: async () => ({ kind: 'error' as const, message: 'unused' }),
+      switchManagedWorkspace: async () => ({ kind: 'error' as const, message: 'unused' }),
       resolveTokenProvider: () => undefined,
       getCachedAccessToken: async () => undefined,
       getRegion: () => 'mainland-cn',
@@ -187,6 +193,8 @@ describe('server-v2 GET /api/v1/oauth/userinfo', () => {
       refreshOAuthProviderModels: async () => ({ changed: [], unchanged: [], failed: [] }),
       getManagedUsage: async () => ({ kind: 'error' as const, message: 'unused' }),
       getManagedUserInfo,
+      listManagedWorkspaces: async () => ({ kind: 'error' as const, message: 'unused' }),
+      switchManagedWorkspace: async () => ({ kind: 'error' as const, message: 'unused' }),
       resolveTokenProvider: () => undefined,
       getCachedAccessToken: async () => undefined,
       getRegion: () => 'mainland-cn',
@@ -275,5 +283,182 @@ describe('server-v2 GET /api/v1/oauth/userinfo', () => {
       status: 401,
     });
     expect(getManagedUserInfo).toHaveBeenCalledWith('managed:kimi-code');
+  });
+});
+
+describe('server-v2 /api/v1/oauth/workspaces and /switch', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-oauth-workspaces-'));
+  });
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  function oauthStub(overrides: Partial<IOAuthServiceType>): IOAuthServiceType {
+    return {
+      _serviceBrand: undefined,
+      startLogin: async () => {
+        throw new Error('unused');
+      },
+      getFlow: () => undefined,
+      cancelLogin: async () => {
+        throw new Error('unused');
+      },
+      logout: async () => {
+        throw new Error('unused');
+      },
+      status: async () => ({ loggedIn: true }),
+      refreshOAuthProviderModels: async () => ({ changed: [], unchanged: [], failed: [] }),
+      getManagedUsage: async () => ({ kind: 'error' as const, message: 'unused' }),
+      getManagedUserInfo: async () => ({ kind: 'error' as const, message: 'unused' }),
+      listManagedWorkspaces: async () => ({ kind: 'ok' as const, workspaces: [] }),
+      switchManagedWorkspace: async () => ({
+        kind: 'ok' as const,
+        provider: 'managed:kimi-code',
+        target: { kind: 'personal' as const },
+      }),
+      resolveTokenProvider: () => undefined,
+      getCachedAccessToken: async () => undefined,
+      getRegion: () => 'mainland-cn',
+      getRegionAsync: async () => 'mainland-cn',
+      ...overrides,
+    };
+  }
+
+  async function boot(seeds: ScopeSeed): Promise<void> {
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      seeds,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  }
+
+  it('lists personal and business workspaces in snake_case wire format', async () => {
+    const listManagedWorkspaces = vi.fn(async () => ({
+      kind: 'ok' as const,
+      workspaces: [
+        {
+          kind: 'personal' as const,
+          key: 'personal',
+          name: 'Alex',
+          current: true,
+          disabled: false,
+          switchable: true,
+          roles: ['ROLE_OWNER'],
+        },
+        {
+          kind: 'business' as const,
+          key: 'business:biz_01',
+          business_id: 'biz_01',
+          name: 'Acme Org',
+          status: 'STATUS_ACTIVE',
+          current: false,
+          disabled: false,
+          switchable: true,
+          nickname: 'Alex',
+          roles: ['ROLE_MEMBER'],
+        },
+      ],
+    }));
+    await boot([[IOAuthService, oauthStub({ listManagedWorkspaces })]] as unknown as ScopeSeed);
+
+    const res = await fetch(`${base}/api/v1/oauth/workspaces`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Envelope<OAuthManagedWorkspacesResult>;
+    expect(body.code).toBe(0);
+    expect(oauthManagedWorkspacesResultSchema.parse(body.data)).toEqual({
+      kind: 'ok',
+      workspaces: [
+        {
+          kind: 'personal',
+          key: 'personal',
+          name: 'Alex',
+          current: true,
+          disabled: false,
+          switchable: true,
+          roles: ['ROLE_OWNER'],
+        },
+        {
+          kind: 'business',
+          key: 'business:biz_01',
+          business_id: 'biz_01',
+          name: 'Acme Org',
+          status: 'STATUS_ACTIVE',
+          current: false,
+          disabled: false,
+          switchable: true,
+          nickname: 'Alex',
+          roles: ['ROLE_MEMBER'],
+        },
+      ],
+    });
+  });
+
+  it('switches workspace via POST /api/v1/oauth/workspaces/switch and preserves membership revocation error_code', async () => {
+    const switchManagedWorkspace = vi
+      .fn<IOAuthServiceType['switchManagedWorkspace']>()
+      .mockResolvedValueOnce({
+        kind: 'ok',
+        provider: 'managed:kimi-code',
+        target: { kind: 'business', business_id: 'biz_01' },
+      })
+      .mockResolvedValueOnce({
+        kind: 'error',
+        status: 401,
+        error_code: 'REASON_BUSINESS_MEMBER_REMOVED',
+        message: 'Removed from business workspace.',
+      });
+    await boot([[IOAuthService, oauthStub({ switchManagedWorkspace })]] as unknown as ScopeSeed);
+
+    const okRes = await fetch(`${base}/api/v1/oauth/workspaces/switch`, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(server as RunningServer),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ target: { kind: 'business', business_id: 'biz_01' } }),
+    } as never);
+    expect(okRes.status).toBe(200);
+    const okBody = (await okRes.json()) as Envelope<OAuthWorkspaceSwitchResponse>;
+    expect(oauthWorkspaceSwitchResponseSchema.parse(okBody.data)).toEqual({
+      kind: 'ok',
+      provider: 'managed:kimi-code',
+      target: { kind: 'business', business_id: 'biz_01' },
+    });
+
+    const errRes = await fetch(`${base}/api/v1/oauth/workspaces/switch`, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(server as RunningServer),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ target: { kind: 'personal' } }),
+    } as never);
+    expect(errRes.status).toBe(200);
+    const errBody = (await errRes.json()) as Envelope<OAuthWorkspaceSwitchResponse>;
+    expect(oauthWorkspaceSwitchResponseSchema.parse(errBody.data)).toEqual({
+      kind: 'error',
+      status: 401,
+      error_code: 'REASON_BUSINESS_MEMBER_REMOVED',
+      message: 'Removed from business workspace.',
+    });
   });
 });

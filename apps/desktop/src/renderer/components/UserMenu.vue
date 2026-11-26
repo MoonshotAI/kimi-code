@@ -2,8 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
 import FeedbackIcon from '~icons/kimi/feedback';
-import type { ManagedQuotaResult } from '../api/types';
-import { useKimiWebClient, type ColorScheme } from '@moonshot-ai/app-client/client';
+import UserMenuWorkspaceItem from './UserMenuWorkspaceItem.vue';
+import type { ManagedQuotaResult, ManagedWorkspace } from '../api/types';
+import { toast, useKimiWebClient, type ColorScheme } from '@moonshot-ai/app-client/client';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { availableLocales, setLocale, type LocaleCode } from '../i18n';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
@@ -18,7 +19,21 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { track } from '@moonshot-ai/app-client/contracts';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
-import { Avatar, Badge, Button, Icon, Kbd, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
+import {
+  Avatar,
+  Badge,
+  Button,
+  focusMenuContainerItem,
+  Icon,
+  Kbd,
+  Menu,
+  MenuItem,
+  MenuSearch,
+  ScrollArea,
+  Spinner,
+} from '@moonshot-ai/app-ui';
+
+const INLINE_WORKSPACE_LIMIT = 3;
 
 const emit = defineEmits<{
   login: [];
@@ -34,10 +49,149 @@ const signedIn = computed(() => client.managedProviderStatus.value === 'authenti
 const rcMode = isRcLocation(window.location);
 const userInfo = client.managedUserInfo;
 const membership = client.managedMembership;
+const managedWorkspaces = client.managedWorkspaces;
+const workspacesLoading = client.managedWorkspacesLoading;
+const workspacesError = client.managedWorkspacesError;
+const hasBusinessWorkspace = client.hasBusinessWorkspace;
+const currentWorkspace = client.currentManagedWorkspace;
+const recentWorkspaceKeys = client.recentWorkspaceKeys;
+const switchingKey = client.switchingWorkspaceKey;
+const switchingName = client.switchingWorkspaceName;
+const isSwitchingWorkspace = computed(() => switchingKey.value !== null);
+
 const nickname = computed(() => userInfo.value?.nickname || t('sidebar.defaultUserName'));
 const showUpgrade = computed(() => membership.value === 'free' || shouldShowUpgrade(userInfo.value?.userLevel));
 const showUsageRow = computed(() => membership.value !== 'free');
 const accountLevel = computed(() => userInfo.value?.userLevelName?.trim() ?? '');
+
+const activeWorkspaceSubtitle = computed(() => {
+  if (!hasBusinessWorkspace.value) return '';
+  const serverWorkspaceName = userInfo.value?.workspaceName?.trim();
+  if (currentWorkspace.value?.kind === 'business') {
+    return serverWorkspaceName || currentWorkspace.value.name;
+  }
+  if (currentWorkspace.value?.kind === 'personal') {
+    return t('account.personalWorkspace');
+  }
+  return serverWorkspaceName || t('account.personalWorkspace');
+});
+
+const duplicateBusinessNames = computed(() => {
+  const counts = new Map<string, number>();
+  for (const ws of managedWorkspaces.value) {
+    if (ws.kind !== 'business') continue;
+    counts.set(ws.name, (counts.get(ws.name) ?? 0) + 1);
+  }
+  const duplicates = new Set<string>();
+  for (const [name, count] of counts) {
+    if (count > 1) duplicates.add(name);
+  }
+  return duplicates;
+});
+
+const primaryWorkspaces = computed<readonly ManagedWorkspace[]>(() => {
+  const all = managedWorkspaces.value;
+  if (all.length <= INLINE_WORKSPACE_LIMIT) return all;
+  const picked: ManagedWorkspace[] = [];
+  const pickedKeys = new Set<string>();
+  const add = (entry: ManagedWorkspace | undefined): void => {
+    if (!entry || pickedKeys.has(entry.key) || picked.length >= INLINE_WORKSPACE_LIMIT) return;
+    picked.push(entry);
+    pickedKeys.add(entry.key);
+  };
+  add(all.find((entry) => entry.current));
+  for (const key of recentWorkspaceKeys.value) {
+    add(all.find((entry) => entry.key === key));
+  }
+  for (const entry of all) {
+    add(entry);
+  }
+  return picked;
+});
+
+const overflowWorkspaces = computed<readonly ManagedWorkspace[]>(() => {
+  const all = managedWorkspaces.value;
+  if (all.length <= INLINE_WORKSPACE_LIMIT) return [];
+  const primaryKeys = new Set(primaryWorkspaces.value.map((entry) => entry.key));
+  return all.filter((entry) => !primaryKeys.has(entry.key));
+});
+
+const workspaceQuery = ref('');
+const workspaceSearchRef = ref<InstanceType<typeof MenuSearch> | null>(null);
+
+const filteredOverflowWorkspaces = computed<readonly ManagedWorkspace[]>(() => {
+  const q = workspaceQuery.value.trim().toLowerCase();
+  if (!q) return overflowWorkspaces.value;
+  return overflowWorkspaces.value.filter((entry) => {
+    if (entry.name.toLowerCase().includes(q)) return true;
+    if (entry.kind === 'business' && entry.businessId.toLowerCase().includes(q)) return true;
+    return false;
+  });
+});
+
+function workspaceInitial(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return 'W';
+  const first = Array.from(trimmed)[0] ?? 'W';
+  return first.toUpperCase();
+}
+
+function workspaceSubtitle(ws: ManagedWorkspace): string {
+  if (ws.kind === 'personal') return t('account.personalWorkspace');
+  if (ws.disabled) return t('account.workspaceDisabledHint');
+  if (duplicateBusinessNames.value.has(ws.name)) {
+    return `${t('account.businessWorkspace')} · #${ws.businessId.slice(-4)}`;
+  }
+  return t('account.businessWorkspace');
+}
+
+function workspaceTooltip(ws: ManagedWorkspace): string {
+  const kindText =
+    ws.kind === 'personal' ? t('account.personalWorkspace') : t('account.businessWorkspace');
+  if (ws.kind === 'business' && ws.disabled) {
+    return `${ws.name} · ${t('account.workspaceDisabledTitle')} (${t('account.workspaceDisabledHint')})`;
+  }
+  return `${ws.name} · ${kindText}`;
+}
+
+async function onSelectWorkspace(ws: ManagedWorkspace): Promise<void> {
+  if (ws.disabled || isSwitchingWorkspace.value) return;
+  if (ws.current) {
+    closeMenu();
+    return;
+  }
+  const target =
+    ws.kind === 'personal'
+      ? ({ kind: 'personal' } as const)
+      : ({ kind: 'business', businessId: ws.businessId } as const);
+  const outcome = await client.switchManagedWorkspace(target, ws.name);
+  if (outcome.ok) {
+    usageResult.value = null;
+    closeMenu();
+    toast({
+      variant: 'info',
+      position: 'bottom-right',
+      title: t('account.switchSuccessToast', { name: ws.name }),
+    });
+    if (outcome.warning) {
+      client.notify({ severity: 'warning', title: outcome.warning });
+    }
+    return;
+  }
+  if (!outcome.revoked && outcome.message) {
+    toast({
+      variant: 'danger',
+      position: 'bottom-right',
+      title: t('account.switchFailedTitle'),
+      message: outcome.message,
+    });
+  }
+}
+
+function clearWorkspaceSearch(): void {
+  workspaceQuery.value = '';
+  void nextTick(() => workspaceSearchRef.value?.focus());
+}
 
 const colorScheme = client.colorScheme;
 const themeLabel = computed(() => t(`theme.${colorScheme.value}`));
@@ -82,8 +236,13 @@ function onDocMousedown(e: MouseEvent): void {
 
 function onDocKeydown(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
+  e.preventDefault();
   e.stopPropagation();
-  closeMenu();
+  if (openSubmenu.value === 'workspaces') {
+    closeWorkspacesSubmenu();
+  } else {
+    closeMenu();
+  }
 }
 
 async function toggleMenu(): Promise<void> {
@@ -92,10 +251,10 @@ async function toggleMenu(): Promise<void> {
     return;
   }
   menuOpen.value = true;
+  if (signedIn.value) void loadUsage();
   document.addEventListener('mousedown', onDocMousedown);
   document.addEventListener('keydown', onDocKeydown, true);
   window.addEventListener('resize', closeMenu);
-  if (signedIn.value) void loadUsage();
   await nextTick();
   positionMenu();
   const btn = triggerRef.value;
@@ -148,6 +307,7 @@ function syncMenuBox(): void {
 function closeMenu(): void {
   menuOpen.value = false;
   openSubmenu.value = null;
+  workspaceQuery.value = '';
   cancelSubmenuClose();
   triggerObserver?.disconnect();
   triggerObserver = null;
@@ -158,12 +318,17 @@ function closeMenu(): void {
 
 onBeforeUnmount(closeMenu);
 
-type SubmenuTarget = 'usage' | 'theme' | 'language';
+type SubmenuTarget = 'workspaces' | 'usage' | 'theme' | 'language';
 
 const openSubmenu = ref<SubmenuTarget | null>(null);
 const submenuStyle = ref<Record<string, string>>({});
 const submenuRef = ref<InstanceType<typeof Menu> | null>(null);
-const rowEls: Record<SubmenuTarget, HTMLElement | null> = { usage: null, theme: null, language: null };
+const rowEls: Record<SubmenuTarget, HTMLElement | null> = {
+  workspaces: null,
+  usage: null,
+  theme: null,
+  language: null,
+};
 let submenuCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
 function setRowRef(target: SubmenuTarget) {
@@ -177,7 +342,45 @@ function openSubmenuFor(target: SubmenuTarget): void {
   cancelSubmenuClose();
   if (openSubmenu.value === target) return;
   openSubmenu.value = target;
-  void nextTick(positionSubmenu);
+  void nextTick(() => {
+    positionSubmenu();
+    if (target === 'workspaces') {
+      workspaceSearchRef.value?.focus();
+    }
+  });
+}
+
+function closeWorkspacesSubmenu(): void {
+  openSubmenu.value = null;
+  workspaceQuery.value = '';
+  rowEls.workspaces?.focus();
+}
+
+function onWorkspacesSubmenuKeydown(e: KeyboardEvent): void {
+  if (e.key === 'ArrowLeft') {
+    const active = document.activeElement;
+    if (active instanceof HTMLInputElement && active.value.length > 0) return;
+    e.preventDefault();
+    closeWorkspacesSubmenu();
+    return;
+  }
+  if (e.key === 'Tab') return;
+  if (focusMenuContainerItem(submenuRef.value?.el, e.key, e.shiftKey)) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}
+
+function onSubmenuFocusOut(e: FocusEvent): void {
+  const target = e.target;
+  if (target instanceof Node && !submenuRef.value?.el?.contains(target)) {
+    return;
+  }
+  const related = e.relatedTarget;
+  if (related instanceof Node && submenuRef.value?.el?.contains(related)) {
+    return;
+  }
+  scheduleSubmenuClose();
 }
 
 function onParentRowKeydown(e: KeyboardEvent, target: SubmenuTarget): void {
@@ -246,6 +449,39 @@ watch([usageLoading, usageResult], async () => {
   positionSubmenu();
 });
 
+watch(menuOpen, (open) => {
+  workspaceQuery.value = '';
+  if (open && signedIn.value && !isSwitchingWorkspace.value) {
+    void client.probeManagedMembership();
+  }
+});
+
+watch(overflowWorkspaces, (items) => {
+  if (openSubmenu.value === 'workspaces' && items.length === 0 && !workspacesLoading.value && !workspacesError.value) {
+    openSubmenu.value = null;
+    workspaceQuery.value = '';
+  }
+});
+
+watch([signedIn, client.businessMembershipRevokedOpen], ([nextSignedIn, revokedOpen]) => {
+  if (menuOpen.value && (!nextSignedIn || revokedOpen)) {
+    closeMenu();
+  }
+});
+
+watch([managedWorkspaces, switchingName], async () => {
+  if (!menuOpen.value) return;
+  await nextTick();
+  positionMenu();
+  if (openSubmenu.value !== null) positionSubmenu();
+});
+
+watch([workspaceQuery, workspacesLoading, workspacesError], async () => {
+  if (openSubmenu.value !== 'workspaces') return;
+  await nextTick();
+  positionSubmenu();
+});
+
 const usageRows = computed(() => {
   if (usageResult.value?.kind !== 'ok') return [];
   return quotaUsageRows(usageResult.value.quota);
@@ -295,12 +531,25 @@ async function onLogout(): Promise<void> {
   <button
     ref="triggerRef"
     class="user-menu-trigger"
+    :class="{ 'user-menu-trigger--stacked': signedIn && hasBusinessWorkspace }"
     type="button"
     aria-haspopup="menu"
     :aria-expanded="menuOpen"
     @click.stop="toggleMenu"
   >
-    <template v-if="signedIn">
+    <template v-if="signedIn && hasBusinessWorkspace">
+      <Avatar :src="userInfo?.avatar" size="sm" shape="circle" aria-hidden="true">
+        <template v-if="!userInfo?.avatar">{{ workspaceInitial(nickname) }}</template>
+      </Avatar>
+      <span class="user-menu-identity">
+        <span class="user-menu-identity-top">
+          <span class="user-menu-name">{{ nickname }}</span>
+          <Badge v-if="accountLevel" variant="neutral" size="sm">{{ accountLevel }}</Badge>
+        </span>
+        <span class="user-menu-workspace-sub">{{ activeWorkspaceSubtitle }}</span>
+      </span>
+    </template>
+    <template v-else-if="signedIn">
       <Avatar :src="userInfo?.avatar" size="sm" shape="circle" aria-hidden="true" />
       <span class="user-menu-name">{{ nickname }}</span>
       <Badge v-if="accountLevel" variant="neutral" size="sm">{{ accountLevel }}</Badge>
@@ -315,6 +564,57 @@ async function onLogout(): Promise<void> {
   <Teleport to="body">
     <Transition name="ui-menu-pop">
       <Menu v-if="menuOpen" ref="menuRef" class="ui-menu-floating user-menu" :style="menuStyle" @click.stop>
+        <template v-if="signedIn && hasBusinessWorkspace">
+          <div class="user-menu-section-title">{{ t('account.workspaceSection') }}</div>
+          <template v-if="primaryWorkspaces.length > 0">
+            <UserMenuWorkspaceItem
+              v-for="ws in primaryWorkspaces"
+              :key="ws.key"
+              :workspace="ws"
+              :avatar-src="userInfo?.avatar"
+              :initial="workspaceInitial(ws.name)"
+              :subtitle="workspaceSubtitle(ws)"
+              :tooltip="workspaceTooltip(ws)"
+              :disabled="ws.disabled || isSwitchingWorkspace"
+              :switching="switchingKey === ws.key"
+              @mouseenter="scheduleSubmenuClose"
+              @select="void onSelectWorkspace($event)"
+            />
+          </template>
+          <div v-else-if="workspacesLoading" class="user-menu-ws-inline-state">
+            <Spinner size="sm" />
+            <span>{{ t('account.loadingWorkspaces') }}</span>
+          </div>
+          <div v-else-if="workspacesError" class="user-menu-ws-inline-state user-menu-ws-inline-state--error">
+            <span>{{ t('account.loadWorkspacesFailed') }}</span>
+            <Button variant="ghost" size="sm" @click="void client.reloadManagedWorkspaces()">
+              {{ t('account.retryWorkspaces') }}
+            </Button>
+          </div>
+
+          <div v-if="switchingName" class="user-menu-ws-progress" role="status">
+            {{ t('account.switchingTo', { name: switchingName }) }}
+          </div>
+
+          <MenuItem
+            v-if="overflowWorkspaces.length > 0"
+            :ref="setRowRef('workspaces')"
+            has-popup="dialog"
+            :expanded="openSubmenu === 'workspaces'"
+            @mouseenter="openSubmenuFor('workspaces')"
+            @mouseleave="scheduleSubmenuClose"
+            @click="openSubmenuFor('workspaces')"
+            @keydown="onParentRowKeydown($event, 'workspaces')"
+          >
+            <Icon name="view-switch" size="sm" />
+            <span class="user-menu-item-label">{{ t('account.moreWorkspaces') }}</span>
+            <span v-if="!workspacesLoading" class="user-menu-row-value">{{ overflowWorkspaces.length }}</span>
+            <Icon name="chevron-right" size="sm" />
+          </MenuItem>
+
+          <MenuItem separator />
+        </template>
+
         <template v-if="signedIn">
           <MenuItem
             v-if="showUsageRow"
@@ -383,7 +683,7 @@ async function onLogout(): Promise<void> {
         </MenuItem>
         <template v-if="signedIn && !rcMode">
           <MenuItem separator />
-          <MenuItem @click="void onLogout()" @mouseenter="scheduleSubmenuClose">
+          <MenuItem :disabled="isSwitchingWorkspace" @click="void onLogout()" @mouseenter="scheduleSubmenuClose">
             <Icon name="log-out" size="sm" />
             {{ t('sidebar.signOut') }}
           </MenuItem>
@@ -406,15 +706,60 @@ async function onLogout(): Promise<void> {
         v-if="openSubmenu !== null"
         ref="submenuRef"
         class="ui-menu-floating user-submenu"
+        :class="{ 'user-submenu--workspaces': openSubmenu === 'workspaces' }"
         :style="submenuStyle"
-        :role="openSubmenu === 'usage' ? 'dialog' : 'menu'"
+        :role="openSubmenu === 'usage' || openSubmenu === 'workspaces' ? 'dialog' : 'menu'"
         @click.stop
         @mouseenter="cancelSubmenuClose"
         @mouseleave="scheduleSubmenuClose"
         @focusin="cancelSubmenuClose"
-        @focusout="scheduleSubmenuClose"
+        @focusout="onSubmenuFocusOut"
+        @keydown="openSubmenu === 'workspaces' ? onWorkspacesSubmenuKeydown($event) : undefined"
       >
-        <template v-if="openSubmenu === 'usage'">
+        <template v-if="openSubmenu === 'workspaces'">
+          <MenuSearch
+            ref="workspaceSearchRef"
+            v-model="workspaceQuery"
+            :placeholder="t('account.searchWorkspaces')"
+            divider
+            @escape="closeWorkspacesSubmenu"
+          />
+          <ScrollArea class="user-menu-ws-scroll">
+            <div v-if="workspacesLoading && overflowWorkspaces.length === 0" class="user-menu-ws-panel-state">
+              <Spinner size="sm" />
+              <span>{{ t('account.loadingWorkspaces') }}</span>
+            </div>
+            <div v-else-if="workspacesError && overflowWorkspaces.length === 0" class="user-menu-ws-panel-state">
+              <Icon name="warning" size="md" />
+              <span>{{ t('account.loadWorkspacesFailed') }}</span>
+              <Button variant="secondary" size="sm" @click="void client.reloadManagedWorkspaces()">
+                {{ t('account.retryWorkspaces') }}
+              </Button>
+            </div>
+            <div v-else-if="filteredOverflowWorkspaces.length === 0" class="user-menu-ws-panel-state">
+              <span>{{ t('account.noMatchingWorkspaces') }}</span>
+              <Button variant="secondary" size="sm" @click="clearWorkspaceSearch">
+                {{ t('account.clearSearch') }}
+              </Button>
+            </div>
+            <template v-else>
+              <UserMenuWorkspaceItem
+                v-for="ws in filteredOverflowWorkspaces"
+                :key="ws.key"
+                role="button"
+                :workspace="ws"
+                :avatar-src="userInfo?.avatar"
+                :initial="workspaceInitial(ws.name)"
+                :subtitle="workspaceSubtitle(ws)"
+                :tooltip="workspaceTooltip(ws)"
+                :disabled="ws.disabled || isSwitchingWorkspace"
+                :switching="switchingKey === ws.key"
+                @select="void onSelectWorkspace($event)"
+              />
+            </template>
+          </ScrollArea>
+        </template>
+        <template v-else-if="openSubmenu === 'usage'">
           <div class="user-menu-usage">
             <div v-if="usageLoading" class="user-menu-usage-state">
               <Spinner size="sm" />
@@ -459,6 +804,10 @@ async function onLogout(): Promise<void> {
   border: none;
   border-radius: var(--radius-sm);
 }
+.user-menu-trigger--stacked {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
 .user-menu-trigger:hover,
 .user-menu-trigger[aria-expanded='true'] {
   background: var(--sb-hover);
@@ -475,11 +824,34 @@ html.macos-desktop.vibrancy .user-menu-trigger :deep(.ui-badge--neutral) {
 html.macos-desktop.vibrancy .user-menu-trigger :deep(.ui-avatar) {
   background: var(--color-selected);
 }
+.user-menu-identity {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+.user-menu-identity-top {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+}
 .user-menu-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.user-menu-workspace-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  color: var(--color-text-muted);
 }
 
 .user-menu {
@@ -496,6 +868,53 @@ html.macos-desktop.vibrancy .user-menu-trigger :deep(.ui-avatar) {
   overflow-y: auto;
   overflow-x: hidden;
   user-select: none;
+}
+.user-submenu--workspaces {
+  width: 220px;
+  overflow: hidden;
+}
+.user-menu-section-title {
+  padding: 4px var(--menu-item-padding-inline);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  line-height: 18px;
+  color: var(--color-text-faint);
+}
+.user-menu-ws-progress {
+  padding: 4px var(--menu-item-padding-inline);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  line-height: 18px;
+  color: var(--color-text-muted);
+}
+.user-menu-ws-inline-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--menu-item-padding-inline);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+.user-menu-ws-inline-state--error {
+  justify-content: space-between;
+}
+.user-menu-ws-scroll {
+  max-height: min(392px, calc(100vh - 68px));
+}
+.user-menu-ws-panel-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2-5);
+  padding: var(--space-6) var(--space-3);
+  text-align: center;
+  font-size: var(--text-xs);
+  line-height: 18px;
+  color: var(--color-text-muted);
 }
 .user-menu-usage {
   display: flex;

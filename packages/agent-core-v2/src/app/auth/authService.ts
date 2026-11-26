@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   DeviceCodeTimeoutError,
+  describeManagedOAuthFailure,
   KIMI_CODE_PLATFORM_ID,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
@@ -20,6 +21,8 @@ import {
   type DeviceAuthorization,
   type KimiRegion,
   type ManagedKimiConfigShape,
+  type ManagedWorkspace,
+  type WorkspaceTarget,
 } from '@moonshot-ai/kimi-code-oauth';
 import { declaredProviderCredential } from '@moonshot-ai/kimi-code-oauth/provider-credential';
 import type {
@@ -29,6 +32,10 @@ import type {
   OAuthFlowStatus,
   OAuthLoginCancelResponse,
   OAuthLogoutResponse,
+  OAuthManagedWorkspace,
+  OAuthManagedWorkspacesResult,
+  OAuthWorkspaceSwitchResponse,
+  OAuthWorkspaceTarget,
   RefreshOAuthProviderModelsResponse,
 } from './oauthProtocol';
 
@@ -304,6 +311,86 @@ export class OAuthService extends Disposable implements IOAuthService {
       oauthRef: auth.oauthRef,
       baseUrl: auth.baseUrl,
     });
+  }
+
+  async listManagedWorkspaces(
+    provider = KIMI_CODE_PROVIDER_NAME,
+  ): Promise<OAuthManagedWorkspacesResult> {
+    const configured = this.providerService.getProviderConfig(provider);
+    const auth = resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: configured?.baseUrl,
+      configuredOAuthRef: configured?.oauth,
+    });
+    const result = await this.toolkit.listWorkspaces(provider, {
+      oauthRef: auth.oauthRef,
+      baseUrl: auth.baseUrl,
+    });
+    if (result.kind === 'error') {
+      return {
+        kind: 'error',
+        message: result.message,
+        ...(result.status !== undefined ? { status: result.status } : {}),
+        ...(result.errorCode !== undefined ? { error_code: result.errorCode } : {}),
+      };
+    }
+    return {
+      kind: 'ok',
+      workspaces: result.workspaces.map((entry) => toProtocolManagedWorkspace(entry)),
+    };
+  }
+
+  async switchManagedWorkspace(
+    target: OAuthWorkspaceTarget,
+    provider = KIMI_CODE_PROVIDER_NAME,
+  ): Promise<OAuthWorkspaceSwitchResponse> {
+    const configured = this.providerService.getProviderConfig(provider);
+    const auth = resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: configured?.baseUrl,
+      configuredOAuthRef: configured?.oauth,
+    });
+    const sdkTarget: WorkspaceTarget =
+      target.kind === 'personal'
+        ? { kind: 'personal' }
+        : { kind: 'business', businessId: target.business_id };
+    try {
+      const switched = await this.toolkit.switchWorkspace(sdkTarget, provider, {
+        oauthRef: auth.oauthRef,
+        baseUrl: auth.baseUrl,
+        provisionConfig: false,
+      });
+      if ((await this.getCachedAccessToken(provider, auth.oauthRef)) === undefined) {
+        return {
+          kind: 'error',
+          status: 401,
+          message: 'Not logged in to Kimi Code.',
+        };
+      }
+      try {
+        await this.provisionProvider(provider, auth.oauthRef, auth.baseUrl);
+        if (provider === KIMI_CODE_PROVIDER_NAME) {
+          await this.refreshOAuthProviderModelsBestEffort(provider);
+        }
+      } catch (error) {
+        this.log.warn('oauth switchManagedWorkspace: provider provisioning failed', {
+          provider,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return {
+        kind: 'ok',
+        provider: switched.providerName,
+        target,
+        ...(switched.warning !== undefined ? { warning: switched.warning } : {}),
+      };
+    } catch (error) {
+      const failure = describeManagedOAuthFailure(error);
+      return {
+        kind: 'error',
+        message: failure.message,
+        ...(failure.status !== undefined ? { status: failure.status } : {}),
+        ...(failure.errorCode !== undefined ? { error_code: failure.errorCode } : {}),
+      };
+    }
   }
 
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse> {
@@ -661,6 +748,32 @@ export class OAuthService extends Disposable implements IOAuthService {
       error_message: state.errorMessage,
     };
   }
+}
+
+function toProtocolManagedWorkspace(entry: ManagedWorkspace): OAuthManagedWorkspace {
+  if (entry.kind === 'personal') {
+    return {
+      kind: 'personal',
+      key: entry.key,
+      name: entry.name,
+      current: entry.current,
+      disabled: entry.disabled,
+      switchable: entry.switchable,
+      roles: [...entry.roles],
+    };
+  }
+  return {
+    kind: 'business',
+    key: entry.key,
+    business_id: entry.businessId,
+    name: entry.name,
+    status: entry.status,
+    current: entry.current,
+    disabled: entry.disabled,
+    switchable: entry.switchable,
+    ...(entry.nickname !== undefined ? { nickname: entry.nickname } : {}),
+    roles: [...entry.roles],
+  };
 }
 
 export class AuthSummaryService implements IAuthSummaryService {

@@ -33,6 +33,7 @@ import GlobalFeedbackDialog from './components/feedback/GlobalFeedbackDialog.vue
 import { DesktopFeedbackKey, useDesktopFeedback, type GlobalFeedbackTarget } from './composables/useDesktopFeedback';
 import ScreenshotGuidanceDialog from './components/dialogs/ScreenshotGuidanceDialog.vue';
 import ForcedUpgradeDialog from './components/ForcedUpgradeDialog.vue';
+import BusinessMembershipRevokedDialog from './components/BusinessMembershipRevokedDialog.vue';
 import { ErrorBoundary } from '@moonshot-ai/app-components';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
 import { AddWorkspaceDialog, WorkspaceEditDialog } from '@moonshot-ai/app-components';
@@ -2914,6 +2915,7 @@ function openPr(url: string): void {
     />
     <FileContextMenuHost />
     <ForcedUpgradeDialog @update:visible="forcedUpgradeVisible = $event" />
+    <BusinessMembershipRevokedDialog @relogin="openLogin()" />
   </div>
 </template>
 

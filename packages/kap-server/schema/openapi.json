@@ -11495,6 +11495,9 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "errorCode": {
+                              "type": "string"
+                            },
                             "kind": {
                               "enum": [
                                 "error"
@@ -11654,6 +11657,9 @@
                                 },
                                 "username": {
                                   "type": "string"
+                                },
+                                "workspaceName": {
+                                  "type": "string"
                                 }
                               },
                               "required": [
@@ -11678,6 +11684,9 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "errorCode": {
+                              "type": "string"
+                            },
                             "kind": {
                               "enum": [
                                 "error"
@@ -11716,6 +11725,442 @@
                     "request_id"
                   ],
                   "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/oauth/workspaces": {
+      "get": {
+        "description": "List managed personal and business workspaces for the signed-in account",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        0
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "ok"
+                              ],
+                              "type": "string"
+                            },
+                            "workspaces": {
+                              "items": {
+                                "oneOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "current": {
+                                        "type": "boolean"
+                                      },
+                                      "disabled": {
+                                        "type": "boolean"
+                                      },
+                                      "key": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "kind": {
+                                        "enum": [
+                                          "personal"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "name": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "roles": {
+                                        "items": {
+                                          "type": "string"
+                                        },
+                                        "type": "array"
+                                      },
+                                      "switchable": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "key",
+                                      "name",
+                                      "current",
+                                      "disabled",
+                                      "switchable",
+                                      "roles"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "business_id": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "current": {
+                                        "type": "boolean"
+                                      },
+                                      "disabled": {
+                                        "type": "boolean"
+                                      },
+                                      "key": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "kind": {
+                                        "enum": [
+                                          "business"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "name": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "nickname": {
+                                        "type": "string"
+                                      },
+                                      "roles": {
+                                        "items": {
+                                          "type": "string"
+                                        },
+                                        "type": "array"
+                                      },
+                                      "status": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "switchable": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "key",
+                                      "business_id",
+                                      "name",
+                                      "status",
+                                      "current",
+                                      "disabled",
+                                      "switchable",
+                                      "roles"
+                                    ],
+                                    "type": "object"
+                                  }
+                                ]
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "workspaces"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "error_code": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "enum": [
+                                "error"
+                              ],
+                              "type": "string"
+                            },
+                            "message": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "message"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/oauth/workspaces/switch": {
+      "post": {
+        "description": "Switch the active managed workspace without restarting OAuth login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "provider": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "personal"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "properties": {
+                          "business_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "kind": {
+                            "enum": [
+                              "business"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "business_id"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "target"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "ok"
+                                  ],
+                                  "type": "string"
+                                },
+                                "provider": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "target": {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "personal"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "business_id": {
+                                          "minLength": 1,
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "enum": [
+                                            "business"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "business_id"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "warning": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "provider",
+                                "target"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "error_code": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "enum": [
+                                    "error"
+                                  ],
+                                  "type": "string"
+                                },
+                                "message": {
+                                  "type": "string"
+                                },
+                                "status": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "message"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 }
               }
             },
@@ -18122,6 +18567,9 @@
                                       "name": {
                                         "type": "string"
                                       },
+                                      "provider_error_code": {
+                                        "type": "string"
+                                      },
                                       "request_id": {
                                         "type": "string"
                                       },
@@ -19238,6 +19686,9 @@
                                                   "type": "string"
                                                 },
                                                 "name": {
+                                                  "type": "string"
+                                                },
+                                                "provider_error_code": {
                                                   "type": "string"
                                                 },
                                                 "request_id": {
