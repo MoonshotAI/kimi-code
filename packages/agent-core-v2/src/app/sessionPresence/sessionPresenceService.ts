@@ -7,6 +7,11 @@ import { join, resolve } from 'pathe';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
+import {
+  currentProcessLiveness,
+  processStampAlive,
+  type ProcessStamp,
+} from '#/_base/utils/processLiveness';
 import { workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { LifecycleScope } from '#/app/scopes';
@@ -14,7 +19,6 @@ import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIn
 import { canonicalPath } from '#/app/worktree/worktreeCheckout';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { processStampAlive, type ProcessStamp } from '#/persistence/backends/node-fs/processLiveness';
 import { projectPersistenceScope, sessionDirOf } from '#/project/sessionLifecycle/internal/addressing';
 
 import {
@@ -58,11 +62,13 @@ export class SessionPresenceService extends Disposable implements ISessionPresen
     const release = this.holdOpen(sessionDir);
     const dir = join(sessionDir, SESSION_PRESENCE_DIR);
     const marker = join(dir, `${process.pid}-${randomUUID()}.json`);
+    const liveness = currentProcessLiveness();
     const body: PresenceMarker = {
       version: PRESENCE_MARKER_VERSION,
       pid: process.pid,
       hostname: this.hostname,
       startedAt: this.startedAt,
+      ...(liveness === undefined ? {} : { liveness }),
     };
     try {
       fs.mkdirSync(dir, { recursive: true });
@@ -175,10 +181,15 @@ function readMarker(path: string): ProcessStamp | undefined {
   try {
     const parsed = JSON.parse(fs.readFileSync(path, 'utf8')) as Partial<PresenceMarker>;
     if (typeof parsed.pid !== 'number' || typeof parsed.startedAt !== 'number') return undefined;
+    const liveness =
+      typeof parsed.liveness === 'string' && parsed.liveness.length > 0
+        ? parsed.liveness
+        : undefined;
     return {
       pid: parsed.pid,
       hostname: typeof parsed.hostname === 'string' ? parsed.hostname : '',
       startedAt: parsed.startedAt,
+      ...(liveness === undefined ? {} : { liveness }),
     };
   } catch {
     return undefined;
