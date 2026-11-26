@@ -86,6 +86,7 @@ export class SessionRuntime {
   private readonly cancelledHostActions = new Set<number>();
   private pendingHostCompaction: PendingHostCompaction | undefined;
   private readonly activeWorkSettledWaiters = new Set<() => void>();
+  private readonly idleWaiters = new Set<() => void>();
   private exclusiveActionActive = false;
   private readonly terminalKeys = new Set<string>();
   private suppressedError: SuppressedError | undefined;
@@ -120,6 +121,13 @@ export class SessionRuntime {
 
   get isBusy(): boolean {
     return this.hasActiveWork || this.exclusiveActionActive;
+  }
+
+  whenIdle(): Promise<void> {
+    if (!this.isBusy) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.idleWaiters.add(resolve);
+    });
   }
 
   get legacyApprovalFlags(): LegacyApprovalFlags {
@@ -344,6 +352,7 @@ export class SessionRuntime {
       return await action();
     } finally {
       this.exclusiveActionActive = false;
+      this.notifyActiveWorkSettled();
     }
   }
 
@@ -593,9 +602,14 @@ export class SessionRuntime {
   }
 
   private notifyActiveWorkSettled(): void {
-    if (this.hasActiveWork) return;
-    for (const resolve of this.activeWorkSettledWaiters) resolve();
-    this.activeWorkSettledWaiters.clear();
+    if (!this.hasActiveWork) {
+      for (const resolve of this.activeWorkSettledWaiters) resolve();
+      this.activeWorkSettledWaiters.clear();
+    }
+    if (!this.isBusy) {
+      for (const resolve of this.idleWaiters) resolve();
+      this.idleWaiters.clear();
+    }
   }
 
   private ensureOpen(): void {

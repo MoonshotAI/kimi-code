@@ -191,7 +191,12 @@ interface SettingsState {
   membershipRevokedMessage: string;
 
   setCurrentModel: (model: string) => void;
-  setModels: (models: ModelConfig[], nextDefaultModel?: string | null) => void;
+  setModels: (
+    models: ModelConfig[],
+    nextDefaultModel?: string | null,
+    nextDefaultThinking?: boolean,
+    nextDefaultThinkingEffort?: string,
+  ) => void;
   setThinkingEffort: (effort: string) => void;
   updateModel: (modelId: string) => void;
   toggleThinking: () => void;
@@ -237,13 +242,30 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setCurrentModel: (currentModel) => set({ currentModel }),
 
-  setModels: (models, nextDefaultModel) => {
+  setModels: (models, nextDefaultModel, nextDefaultThinking, nextDefaultThinkingEffort) => {
     const { currentModel, defaultModel, defaultThinking, defaultThinkingEffort } = get();
     const resolvedDefault = nextDefaultModel !== undefined ? nextDefaultModel : defaultModel;
+    const resolvedThinking =
+      nextDefaultThinking !== undefined ? nextDefaultThinking : defaultThinking;
+    const resolvedThinkingEffort =
+      nextDefaultThinking !== undefined || nextDefaultThinkingEffort !== undefined
+        ? nextDefaultThinkingEffort
+        : defaultThinkingEffort;
+    const defaultsPatch: Partial<SettingsState> = {
+      ...(nextDefaultModel !== undefined ? { defaultModel: nextDefaultModel } : {}),
+      ...(nextDefaultThinking !== undefined
+        ? {
+            defaultThinking: nextDefaultThinking,
+            defaultThinkingEffort: nextDefaultThinkingEffort,
+          }
+        : nextDefaultThinkingEffort !== undefined
+          ? { defaultThinkingEffort: nextDefaultThinkingEffort }
+          : {}),
+    };
     if (models.length === 0) {
       set({
         models,
-        ...(nextDefaultModel !== undefined ? { defaultModel: nextDefaultModel } : {}),
+        ...defaultsPatch,
         currentModel: "",
         thinkingEffort: "off",
       });
@@ -252,7 +274,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (currentModel && getModelById(models, currentModel)) {
       set({
         models,
-        ...(nextDefaultModel !== undefined ? { defaultModel: nextDefaultModel } : {}),
+        ...defaultsPatch,
       });
       return;
     }
@@ -263,10 +285,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const fallbackModel = getModelById(models, fallbackId);
     set({
       models,
-      ...(nextDefaultModel !== undefined ? { defaultModel: nextDefaultModel } : {}),
+      ...defaultsPatch,
       currentModel: fallbackId,
       thinkingEffort: fallbackModel
-        ? defaultEffortForModel(fallbackModel, defaultThinking, defaultThinkingEffort)
+        ? defaultEffortForModel(fallbackModel, resolvedThinking, resolvedThinkingEffort)
         : "off",
     });
   },

@@ -76,14 +76,17 @@ export function useAppInit(): AppInitState {
     let latestRead = 0;
     const unsubscribe = bridge.on(Events.ModelCatalogChanged, () => {
       const read = ++latestRead;
-      void bridge.getModels().then(({ models, defaultModel }) => {
-        if (!cancelled && read === latestRead) {
-          catalogApplied.current = true;
-          setModels(models, defaultModel);
-        }
-      }).catch((error: unknown) => {
-        console.error("[AppInit] Failed to refresh models:", error);
-      });
+      void bridge
+        .getModels()
+        .then(({ models, defaultModel, defaultThinking, defaultThinkingEffort }) => {
+          if (!cancelled && read === latestRead) {
+            catalogApplied.current = true;
+            setModels(models, defaultModel, defaultThinking, defaultThinkingEffort);
+          }
+        })
+        .catch((error: unknown) => {
+          console.error("[AppInit] Failed to refresh models:", error);
+        });
     });
     return () => {
       cancelled = true;
@@ -130,11 +133,12 @@ export function useAppInit(): AppInitState {
         if (loginStatus.loggedIn) {
           void useSettingsStore.getState().loadAccountProfile();
         }
+        const currentStore = useSettingsStore.getState();
         initModels(
-          catalogApplied.current ? useSettingsStore.getState().models : kimiConfig.models,
-          kimiConfig.defaultModel,
-          kimiConfig.defaultThinking,
-          kimiConfig.defaultThinkingEffort,
+          catalogApplied.current ? currentStore.models : kimiConfig.models,
+          catalogApplied.current ? currentStore.defaultModel : kimiConfig.defaultModel,
+          catalogApplied.current ? currentStore.defaultThinking : kimiConfig.defaultThinking,
+          catalogApplied.current ? currentStore.defaultThinkingEffort : kimiConfig.defaultThinkingEffort,
         );
 
         const modelsCount = useSettingsStore.getState().models.length;

@@ -841,6 +841,71 @@ describe("Enterprise workspace RPC and membership revocation", () => {
       expect.anything(),
     );
   });
+
+  it("completes revocation cleanup and broadcasts BusinessMembershipRevoked even when the token was already tombstoned", async () => {
+    host.harness.auth.status.mockResolvedValue({
+      providers: [{ providerName: "managed:kimi-code", hasToken: false }],
+    });
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "kimi-code/kimi-k2",
+      providers: { "managed:kimi-code": { type: "kimi", apiKey: "" } },
+      models: {
+        "kimi-code/kimi-k2": { provider: "managed:kimi-code", model: "kimi-k2" },
+      },
+    });
+
+    await bridge.runtime.handleModelBusinessMembershipRevoked("kimi-code/kimi-k2");
+
+    expect(host.harness.auth.logout).toHaveBeenCalledOnce();
+    expect(broadcast).toHaveBeenCalledWith(Events.ModelCatalogChanged, {});
+    expect(broadcast).toHaveBeenCalledWith(Events.BusinessMembershipRevoked, {
+      message: BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+    });
+  });
+
+  it("defers model resynchronization for a busy session during workspace switch until its active turn settles", async () => {
+    let currentModel = "enterprise-only";
+    const setModel = vi.fn(async (next: string) => {
+      currentModel = next;
+    });
+    const setThinking = vi.fn(async () => undefined);
+    const busySession = {
+      ...createResumedSession("ses-busy", "/workspace/project"),
+      getStatus: vi.fn(async () => ({ model: currentModel, thinkingEffort: "off", permission: "manual" })),
+      setModel,
+      setThinking,
+    };
+    const runtime = await bridge.runtime.attachResumedSession("view-busy", busySession as never);
+    const actionId = runtime.beginHostAction("streaming prompt");
+
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "kimi-code/kimi-for-coding",
+      thinking: { enabled: true, effort: "high" },
+      models: {
+        "kimi-code/kimi-for-coding": {
+          provider: "managed:kimi-code",
+          model: "kimi-for-coding",
+        },
+      },
+    });
+
+    await bridge.runtime.syncActiveSessionsModel();
+    expect(setModel).not.toHaveBeenCalled();
+
+    runtime.completeHostAction("finished", actionId);
+    await vi.waitFor(() => {
+      expect(setModel).toHaveBeenCalledWith("kimi-code/kimi-for-coding");
+    });
+    expect(setThinking).toHaveBeenCalledWith("high");
+    expect(broadcast).toHaveBeenCalledWith(
+      Events.StreamEvent,
+      expect.objectContaining({
+        type: "StatusUpdate",
+        payload: expect.objectContaining({ model: "kimi-code/kimi-for-coding" }),
+      }),
+      "view-busy",
+    );
+  });
 });
 
 function createResumedSession(id: string, workDir: string) {

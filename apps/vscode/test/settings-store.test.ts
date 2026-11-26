@@ -215,6 +215,39 @@ describe("Webview model catalog refresh", () => {
       defaultThinkingEffort: "low",
     });
   });
+
+  it("applies refreshed defaultThinking and defaultThinkingEffort when falling back after a workspace switch", () => {
+    useSettingsStore.setState({
+      currentModel: "removed-enterprise-model",
+      thinkingEffort: "low",
+      defaultModel: "removed-enterprise-model",
+      defaultThinking: false,
+      defaultThinkingEffort: undefined,
+    });
+    const nextModels = [
+      {
+        id: "kimi-for-coding",
+        name: "Kimi For Coding",
+        provider: "managed:kimi-code",
+        capabilities: ["thinking"],
+        support_efforts: ["low", "medium", "high"],
+        default_effort: "medium",
+      },
+    ];
+
+    useSettingsStore
+      .getState()
+      .setModels(nextModels, "kimi-for-coding", true, "high");
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      models: nextModels,
+      currentModel: "kimi-for-coding",
+      defaultModel: "kimi-for-coding",
+      defaultThinking: true,
+      defaultThinkingEffort: "high",
+      thinkingEffort: "high",
+    });
+  });
 });
 
 describe("Webview MCP update bridge", () => {

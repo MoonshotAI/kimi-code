@@ -56,6 +56,7 @@ export class KimiRuntime {
   private readonly sessions = new Map<string, SessionRuntime>();
   private readonly sessionByView = new Map<string, string>();
   private readonly viewChains = new Map<string, Promise<void>>();
+  private readonly deferredModelSyncSessions = new Set<string>();
   private authMutationChain: Promise<void> = Promise.resolve();
   private revokingFlight: Promise<void> | undefined;
   private closed = false;
@@ -281,52 +282,80 @@ export class KimiRuntime {
     try {
       const config = await this.harness.getConfig({ reload: true });
       if (this.sessions.size === 0) return;
-      const models = config.models ?? {};
-      const fallback =
-        config.defaultModel !== undefined && config.defaultModel in models
-          ? config.defaultModel
-          : Object.keys(models)[0];
-      if (!fallback) return;
       await Promise.all(
-        [...this.sessions.values()].map(async (runtime) => {
-          if (runtime.isBusy) return;
-          try {
-            const status = await runtime.session.getStatus();
-            if (status.model && !(status.model in models)) {
-              await runtime.session.setModel(fallback);
-              const targetEffort =
-                config.thinking?.enabled === false
-                  ? "off"
-                  : normalizeEffort(config.thinking?.effort ?? "on");
-              await runtime.session.setThinking(targetEffort).catch(async () => {
-                await runtime.session.setThinking("off").catch(() => undefined);
-              });
-              await Promise.all(
-                runtime.subscribers.map((webviewId) => runtime.announceStatus(webviewId)),
-              );
-            }
-          } catch (error) {
-            this.log("Unable to sync session model after workspace switch", error);
-          }
-        }),
+        [...this.sessions.values()].map((runtime) => this.syncSingleSessionModel(runtime, config)),
       );
     } catch (error) {
       this.log("Unable to reload config after workspace switch", error);
     }
   }
 
-  async performBusinessMembershipRevocation(): Promise<void> {
-    let hasManagedToken = false;
+  private deferBusySessionModelSync(runtime: SessionRuntime): void {
+    if (this.deferredModelSyncSessions.has(runtime.id)) return;
+    this.deferredModelSyncSessions.add(runtime.id);
+    void runtime.whenIdle().then(async () => {
+      this.deferredModelSyncSessions.delete(runtime.id);
+      if (this.closed || !this.sessions.has(runtime.id)) return;
+      try {
+        const config = await this.harness.getConfig({ reload: true });
+        await this.syncSingleSessionModel(runtime, config);
+      } catch (error) {
+        this.log("Unable to reload config after deferred session turn settled", error);
+      }
+    });
+  }
+
+  private async syncSingleSessionModel(
+    runtime: SessionRuntime,
+    config: Awaited<ReturnType<KimiHarness["getConfig"]>>,
+  ): Promise<void> {
+    if (runtime.isBusy) {
+      this.deferBusySessionModelSync(runtime);
+      return;
+    }
+    const models = config.models ?? {};
+    const fallback =
+      config.defaultModel !== undefined && config.defaultModel in models
+        ? config.defaultModel
+        : Object.keys(models)[0];
+    if (!fallback) return;
     try {
-      const status = await this.harness.auth?.status?.();
-      hasManagedToken =
+      const status = await runtime.session.getStatus();
+      if (status.model && !(status.model in models)) {
+        await runtime.session.setModel(fallback);
+        const targetEffort =
+          config.thinking?.enabled === false
+            ? "off"
+            : normalizeEffort(config.thinking?.effort ?? "on");
+        await runtime.session.setThinking(targetEffort).catch(async () => {
+          await runtime.session.setThinking("off").catch(() => undefined);
+        });
+        await Promise.all(
+          runtime.subscribers.map((webviewId) => runtime.announceStatus(webviewId)),
+        );
+      }
+    } catch (error) {
+      this.log("Unable to sync session model after workspace switch", error);
+    }
+  }
+
+  async performBusinessMembershipRevocation(): Promise<void> {
+    let shouldRevoke = false;
+    try {
+      const [status, config] = await Promise.all([
+        this.harness.auth?.status?.(),
+        this.harness.getConfig().catch(() => undefined),
+      ]);
+      const hasManagedToken =
         status?.providers.some(
           (provider) => provider.providerName === "managed:kimi-code" && provider.hasToken,
         ) ?? false;
-      if (!hasManagedToken) {
+      const hasManagedProviderConfig = Boolean(config?.providers?.["managed:kimi-code"]);
+      shouldRevoke = hasManagedToken || hasManagedProviderConfig;
+      if (!shouldRevoke) {
         return;
       }
-      await this.harness.auth.logout();
+      await this.harness.auth?.logout?.();
     } catch (error) {
       this.log("Failed to clear credentials after business membership revocation", error);
     }
