@@ -548,10 +548,15 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     });
   }
 
-  private defaultOAuthRef(baseUrl?: string): KimiOAuthTokenRef {
+  private defaultOAuthRef(
+    baseUrl?: string,
+    oauthHost?: string,
+    oauthRef?: KimiOAuthTokenRef,
+  ): KimiOAuthTokenRef {
+    const resolvedHost = this.oauthHostFor(oauthRef, oauthHost);
     return {
-      key: this.defaultOAuthKey(baseUrl, this.flowConfig.oauthHost),
-      oauthHost: this.flowConfig.oauthHost,
+      key: oauthRef?.key ?? this.defaultOAuthKey(baseUrl, resolvedHost),
+      oauthHost: resolvedHost,
     };
   }
 
@@ -581,7 +586,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     try {
       const accessToken = await this.ensureFresh(name, {
-        oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
+        oauthRef: this.defaultOAuthRef(options.baseUrl, options.oauthHost, options.oauthRef),
       });
       return await run(accessToken);
     } catch (error) {

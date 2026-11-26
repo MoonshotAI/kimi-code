@@ -993,4 +993,100 @@ describe('KimiOAuthToolkit', () => {
     await expect(pendingSwitch).resolves.toMatchObject({ ok: true });
     expect(write).not.toHaveBeenCalled();
   });
+
+  it('honors custom oauthHost and baseUrl in listWorkspaces and getAccountProfile without an explicit oauthRef', async () => {
+    const storage = new MemoryTokenStorage();
+    const customOauthHost = 'https://auth.custom.example.test';
+    const customBaseUrl = 'https://api.custom.example.test/coding/v1';
+    const customKey = resolveKimiCodeOAuthKey({
+      oauthHost: customOauthHost,
+      baseUrl: customBaseUrl,
+    });
+    storage.tokens.set(
+      resolveKimiTokenStorageName({ oauthKey: customKey }),
+      token('custom-env-access'),
+    );
+
+    const seenAuthHeaders: string[] = [];
+    const fetchImpl = vi.fn(
+      async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const url = fetchInputUrl(input);
+        seenAuthHeaders.push(new Headers(init?.headers).get('authorization') ?? '');
+        if (url === `${customBaseUrl}/me`) {
+          return new Response(
+            JSON.stringify({
+              user_id: 'u-custom',
+              nickname: 'Alex Chen',
+              status: 'USER_STATUS_NORMAL',
+              region: 'REGION_CN',
+              user_level: 50,
+              user_level_name: 'Premium',
+              domain: 1,
+              domain_name: 'DOMAIN_EXAMPLE',
+              workspace_name: 'Acme AI',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (url === `${customBaseUrl}/workspaces`) {
+          return new Response(
+            JSON.stringify({
+              workspaces: [
+                {
+                  type: 'business',
+                  business: {
+                    id: 'biz-custom',
+                    name: 'Acme AI',
+                    status: 'STATUS_ACTIVE',
+                  },
+                  current: true,
+                  roles: ['ROLE_MEMBER'],
+                },
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      },
+    ) as unknown as typeof fetch;
+
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      fetchImpl,
+      now: () => 100,
+    });
+
+    await expect(
+      toolkit.listWorkspaces(undefined, {
+        baseUrl: customBaseUrl,
+        oauthHost: customOauthHost,
+      }),
+    ).resolves.toMatchObject({
+      kind: 'ok',
+      workspaces: [expect.objectContaining({ key: 'business:biz-custom', current: true })],
+    });
+
+    await expect(
+      toolkit.getAccountProfile(undefined, {
+        baseUrl: customBaseUrl,
+        oauthHost: customOauthHost,
+      }),
+    ).resolves.toMatchObject({
+      kind: 'ok',
+      profile: expect.objectContaining({
+        nickname: 'Alex Chen',
+        hasBusinessWorkspace: true,
+        activeWorkspaceName: 'Acme AI',
+      }),
+    });
+
+    expect(seenAuthHeaders).toEqual([
+      'Bearer custom-env-access',
+      'Bearer custom-env-access',
+      'Bearer custom-env-access',
+    ]);
+  });
 });
