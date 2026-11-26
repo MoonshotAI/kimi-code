@@ -524,23 +524,22 @@ function approvalPanel(screen: Screen): ApprovalPanel | undefined {
   return { title, tool: header === undefined ? undefined : APPROVAL_HEADERS[header], rows };
 }
 
-function panelCommand(panel: ApprovalPanel): string | undefined {
+function panelCommandReadings(panel: ApprovalPanel): string[] {
   const start = panel.rows.findIndex((row) => row.trimStart().startsWith(COMMAND_PROMPT));
   const first = panel.rows[start];
-  if (first === undefined) return undefined;
+  if (first === undefined) return [];
   const lines = [first.trim().slice(COMMAND_PROMPT.length)];
   for (const row of panel.rows.slice(start + 1)) {
     if (row.trim() === '' || indentOf(row) <= indentOf(first)) break;
     lines.push(row.trim());
   }
-  return lines.join(' ');
+  return lines.map((_, last) => lines.slice(0, last + 1).join(' '));
 }
 
 function panelShows(panel: ApprovalPanel, { name, target }: ApprovalExpectation, workspace: string): boolean {
   if (panel.tool !== name) return false;
   if (name !== 'Bash') return panel.rows.some((row) => namesFile(row.trim(), target, workspace));
-  const command = panelCommand(panel);
-  return command !== undefined && squash(command) === squash(target);
+  return panelCommandReadings(panel).some((command) => squash(command) === squash(target));
 }
 
 function panelChanges(panel: ApprovalPanel): ChangedLines {

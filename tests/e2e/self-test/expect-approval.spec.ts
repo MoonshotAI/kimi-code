@@ -17,6 +17,17 @@ selfTest('expectApproval', {
         await workspace.expectFile('hi.txt', 'hi\n');
       },
     },
+    'finds a pending command that carries a description': {
+      run: async ({ product, model, workspace }) => {
+        model.script(bash({ command: COMMAND, description: 'Write the greeting file' }), say('Wrote hi.txt.'));
+        await product.send('Write hi.txt with a shell command.');
+        await product.expectApproval({ name: 'Bash', target: COMMAND });
+        await product.approve();
+        await product.waitIdle();
+        await product.expectReply('Wrote hi.txt.');
+        await workspace.expectFile('hi.txt', 'hi\n');
+      },
+    },
     'finds a pending edit and a pending write with their paths': {
       workspace: { 'docs/b.txt': 'old\n' },
       run: async ({ product, model, workspace }) => {
@@ -47,6 +58,16 @@ selfTest('expectApproval', {
     },
   },
   negative: {
+    'fails when the target is only the start of a command that carries a description': {
+      run: async ({ product, model }) => {
+        model.script(bash({ command: COMMAND, description: 'Write the greeting file' }), say('Left hi.txt alone.'));
+        await product.send('Write hi.txt with a shell command.');
+        await expect(product.expectApproval({ name: 'Bash', target: "printf 'hi\\n'" })).rejects.toThrow('does not show Bash');
+        await product.reject();
+        await product.waitIdle();
+        await product.expectReply('Left hi.txt alone.');
+      },
+    },
     'fails when an edit removes the line instead of adding it': {
       workspace: { 'notes.txt': 'alpha\nold line\nomega\n' },
       run: async ({ product, model }) => {
