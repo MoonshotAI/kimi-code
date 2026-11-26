@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { IWorkspaceService } from "#/app/workspace/workspace";
+import { HostFolderBrowser } from "#/app/hostFolderBrowser/hostFolderBrowserService";
+
 vi.mock("node:fs/promises", async (importOriginal) => {
-  const actual = await importOriginal<typeof fsPromises>();
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
     stat: vi.fn((...args: Parameters<typeof actual.stat>) =>
@@ -13,9 +16,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ),
   };
 });
-
-import type { IWorkspaceService } from "#/app/workspace/workspace";
-import { HostFolderBrowser } from "#/app/hostFolderBrowser/hostFolderBrowserService";
 
 const fakeRegistry = {
   list: async () => [],
