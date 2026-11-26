@@ -145,6 +145,30 @@ describe('ModelQuickMenu states', () => {
     expect(host.querySelector('.mqm-flyout')).toBeNull();
   });
 
+  it('keeps an already open flyout visible without re-positioning when its trigger row is re-entered', async () => {
+    mountMenu(initialState());
+    const menu = host.querySelector<HTMLElement>('.mqm')!;
+    const rectSpy = vi.spyOn(menu, 'getBoundingClientRect');
+    const trigger = host.querySelector<HTMLElement>('[data-row-key="action:provider"]')!;
+    trigger.dispatchEvent(new MouseEvent('mouseenter'));
+    await vi.advanceTimersByTimeAsync(80);
+    await nextTick();
+    await nextTick();
+    const flyout = host.querySelector<HTMLElement>('.mqm-flyout')!;
+    expect(flyout.style.visibility).not.toBe('hidden');
+    expect(rectSpy).toHaveBeenCalled();
+    rectSpy.mockClear();
+
+    trigger.dispatchEvent(new MouseEvent('mouseenter'));
+    vi.advanceTimersByTime(80);
+    await nextTick();
+    expect(rectSpy).not.toHaveBeenCalled();
+    expect(host.querySelector('.mqm-flyout')).toBe(flyout);
+    expect(flyout.style.visibility).not.toBe('hidden');
+    await nextTick();
+    expect(flyout.style.visibility).not.toBe('hidden');
+  });
+
   it('disables the thinking submenu when the current model does not support thinking', async () => {
     mountMenu(initialState({ currentModelId: 'kimi/turbo' }));
     const effortRow = host.querySelector<HTMLElement>('[data-row-key="action:effort"]')!;

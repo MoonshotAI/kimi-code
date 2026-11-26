@@ -42,6 +42,7 @@ const stageRef = ref<HTMLElement | null>(null);
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
 const modelMenuRef = ref<InstanceType<typeof ModelQuickMenu> | null>(null);
 const modelMenuOffset = ref<{ x: number; y: number } | null>(null);
+const modelMenuBottom = ref<number | null>(null);
 const modelMenuFrame = ref<{ x: number; y: number; viewportWidth: number; viewportHeight: number } | null>(null);
 const dialogRef = ref<HTMLElement | null>(null);
 const inputValue = ref('');
@@ -100,7 +101,9 @@ const menuStyle = computed<Record<string, string>>(() => {
 const modelMenuPositionStyle = computed((): Record<string, string> => ({
   position: 'absolute',
   left: `${modelMenuOffset.value?.x ?? BROWSER_OVERLAY_GUTTER}px`,
-  top: `${modelMenuOffset.value?.y ?? BROWSER_OVERLAY_GUTTER}px`,
+  ...(modelMenuBottom.value !== null
+    ? { bottom: `${modelMenuBottom.value}px`, top: 'auto' }
+    : { top: `${modelMenuOffset.value?.y ?? BROWSER_OVERLAY_GUTTER}px` }),
 }));
 
 const stageStyle = computed((): Record<string, string> => {
@@ -168,6 +171,9 @@ function applyConfig(next: BrowserOverlayConfig): void {
     shownPayload = null;
     presented.value = false;
     closing.value = false;
+    modelMenuOffset.value = null;
+    modelMenuBottom.value = null;
+    modelMenuFrame.value = null;
   }
   if (next.kind === 'menu') resolvedPlacement.value = next.placement ?? 'bottom-end';
   reducedMotion.value = next.kind === 'dialog' && next.agent !== undefined && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -186,6 +192,13 @@ function reportSize(): void {
   const current = config.value;
   const card = measuredCard();
   if (current === null || card === null || closing.value) return;
+  const frame = modelMenuFrame.value;
+  const offset = modelMenuOffset.value;
+  if (current.kind === 'menu' && current.modelMenu !== undefined && frame !== null && offset !== null) {
+    const x = frame.x - offset.x + card.offsetLeft;
+    const y = frame.y - offset.y + card.offsetTop;
+    if (x !== frame.x || y !== frame.y) modelMenuFrame.value = { ...frame, x, y };
+  }
   const { width, height } = measureBrowserOverlayCard(card);
   const anchor = current.anchor === undefined ? '' : [current.anchor.x, current.anchor.y, current.anchor.width, current.anchor.height].join(':');
   const sizeKey = current.kind === 'dialog' && current.annotation ? 'annotation' : `${width}:${height}`;
@@ -211,10 +224,9 @@ function show(payload: BrowserOverlayShown): void {
   if (current.kind === 'menu' && payload.placement !== undefined) {
     resolvedPlacement.value = payload.placement;
   }
-  if (current.kind === 'menu' && payload.menuOffset !== undefined) {
-    modelMenuOffset.value = payload.menuOffset;
-  }
   if (current.kind === 'menu' && payload.menuFrame !== undefined) {
+    modelMenuOffset.value = payload.menuOffset ?? null;
+    modelMenuBottom.value = payload.menuBottom ?? null;
     modelMenuFrame.value = payload.menuFrame;
   }
   const entering = !presented.value;

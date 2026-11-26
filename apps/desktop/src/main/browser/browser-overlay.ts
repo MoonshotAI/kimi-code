@@ -458,6 +458,7 @@ export interface BrowserModelOverlayLayoutInput {
 export interface BrowserModelOverlayLayout {
   bounds: Rectangle;
   menuOffset: { x: number; y: number };
+  menuBottom?: number;
   menuFrame: { x: number; y: number; viewportWidth: number; viewportHeight: number };
 }
 
@@ -473,9 +474,12 @@ export function browserModelOverlayLayout(input: BrowserModelOverlayLayoutInput)
   const y = Math.max(0, Math.floor(menuY - MODEL_OVERLAY_FLYOUT_RESERVE_TOP - BROWSER_OVERLAY_GUTTER));
   const right = Math.min(contentWidth, Math.ceil(menuX + menuWidth + MODEL_OVERLAY_FLYOUT_RESERVE_X + BROWSER_OVERLAY_GUTTER));
   const bottom = Math.min(contentHeight, Math.ceil(menuY + menuHeight + MODEL_OVERLAY_FLYOUT_RESERVE_BOTTOM + BROWSER_OVERLAY_GUTTER));
+  const topClamped = menuY <= VIEWPORT_MARGIN && anchor.y - MODEL_OVERLAY_ANCHOR_OFFSET - menuHeight < VIEWPORT_MARGIN;
+  const menuBottom = topClamped ? undefined : bottom - (menuY + menuHeight);
   return {
     bounds: { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) },
     menuOffset: { x: menuX - x, y: menuY - y },
+    ...(menuBottom === undefined ? {} : { menuBottom }),
     menuFrame: { x: menuX, y: menuY, viewportWidth: contentWidth, viewportHeight: contentHeight },
   };
 }
@@ -540,6 +544,7 @@ export function showBrowserOverlayRendered(
       requestId: current.requestId,
       placement: 'top-end',
       menuOffset: modelLayout.menuOffset,
+      ...(modelLayout.menuBottom === undefined ? {} : { menuBottom: modelLayout.menuBottom }),
       menuFrame: modelLayout.menuFrame,
     } satisfies BrowserOverlayShown);
     return;

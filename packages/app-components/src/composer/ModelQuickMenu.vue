@@ -182,14 +182,15 @@ function openSubmenu(next: SubmenuState): void {
   clearSubmenuTimer();
   hideHoverCard();
   const changed = submenu.value?.kind !== next.kind || submenu.value.triggerKey !== next.triggerKey;
+  if (!changed) return;
   submenu.value = next;
-  if (changed && next.kind === 'effort') {
+  if (next.kind === 'effort') {
     const currentIndex = currentSegments.value.indexOf(currentEffortValue.value);
     submenuIndex.value = currentIndex >= 0 ? currentIndex : 0;
-  } else if (changed && next.kind === 'provider') {
+  } else if (next.kind === 'provider') {
     const currentIndex = props.providers.findIndex((provider) => provider.id === props.activeProvider);
     submenuIndex.value = currentIndex >= 0 ? currentIndex : 0;
-  } else if (changed) {
+  } else {
     submenuIndex.value = 0;
   }
 }
