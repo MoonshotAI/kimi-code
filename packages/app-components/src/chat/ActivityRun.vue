@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref, watch } from 'vue';
 import { Icon, Tooltip } from '@moonshot-ai/app-ui';
-import { HistoryStateKey } from '@moonshot-ai/app-core/contracts';
+import { HistoryStateKey, PinScrollKey } from '@moonshot-ai/app-core/contracts';
 import BlockList from './BlockList.vue';
 import { useHistoryState } from './historyState';
-import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import { useActivityRunFolding, useAutoReviewHint } from '@moonshot-ai/app-client/composables';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ToolCall from './ToolCall.vue';

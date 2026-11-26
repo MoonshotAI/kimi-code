@@ -2,8 +2,7 @@
 import { createApp, h, nextTick, ref, type App } from 'vue';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import { HistoryStateKey } from '@moonshot-ai/app-core/contracts';
-import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
+import { HistoryStateKey, PinScrollKey } from '@moonshot-ai/app-core/contracts';
 import Markdown from './Markdown.vue';
 
 vi.mock('markstream-vue', async (importOriginal) => ({

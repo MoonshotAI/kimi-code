@@ -27,12 +27,12 @@ import {
   STORAGE_KEYS,
 } from '@moonshot-ai/app-core/lib';
 import { useAppearance } from '@moonshot-ai/app-core';
-import { useResizable, useOverlayScrollbar } from '@moonshot-ai/app-client/composables';
+import { useResizable } from '@moonshot-ai/app-client/composables';
 import SessionRow from './SessionRow.vue';
 import SidebarSectionHeader from './sidebar/SidebarSectionHeader.vue';
 import { useAnchoredMenu } from './composables/useAnchoredMenu';
 import { useSessionDrag, usePinnedListDrag } from './composables/useSessionDrag';
-import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Menu, MenuItem, Tooltip, useOverlayScrollbar } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

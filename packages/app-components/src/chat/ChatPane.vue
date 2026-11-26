@@ -16,7 +16,7 @@ import { CronToolContextKey, cronToolContexts } from './tool-calls/cronToolConte
 import BlockList from './BlockList.vue';
 import TranscriptList from './TranscriptList.vue';
 import { settledSteerTurnIdsFor, syncSettledSteerTurnIds } from './steerContinuationState';
-import { TranscriptScrollKey } from '@moonshot-ai/app-core/contracts';
+import { PinScrollKey, TranscriptScrollKey } from '@moonshot-ai/app-core/contracts';
 import ActivityRun from './ActivityRun.vue';
 import TurnFold from './TurnFold.vue';
 import RequestDebugRow from './RequestDebugRow.vue';
@@ -24,7 +24,7 @@ import TurnFilesSummary from './TurnFilesSummary.vue';
 import BrowserSources from './tool-calls/browser/BrowserSources.vue';
 import NotificationCard from './NotificationCard.vue';
 import { createHistoryImageCache, HistoryImageCacheKey, Markdown, tableSelectionContextText } from '@moonshot-ai/app-markdown';
-import { FetchTurnFileChangesKey, LatestNotifyToolCallIdKey, NotifyUserEnabledKey, PinScrollKey, SelectionContextMenuKey, SessionRatingKey } from '@moonshot-ai/app-client/contracts';
+import { FetchTurnFileChangesKey, LatestNotifyToolCallIdKey, NotifyUserEnabledKey, SelectionContextMenuKey, SessionRatingKey } from '@moonshot-ai/app-client/contracts';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { useTurnFileStats } from './useTurnFileStats';
 import { editedFileCount } from '../lib/fileStaleness';
