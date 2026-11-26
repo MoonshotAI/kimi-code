@@ -85,7 +85,7 @@ function captureHandlers(driver: SignalDriver): CapturedHandlers {
   const prependSpy = vi.spyOn(process, 'prependListener');
   (prependSpy as unknown as { mockImplementation: (fn: unknown) => unknown }).mockImplementation(
     (event: string | symbol, listener: (...args: unknown[]) => void): NodeJS.Process => {
-      if (event === 'SIGTERM' || event === 'SIGHUP') {
+      if (event === 'SIGTERM' || event === 'SIGHUP' || event === 'SIGCONT') {
         signalHandlers.set(event, listener);
       }
       return process;
@@ -155,12 +155,13 @@ describe('KimiTUI signal handlers', () => {
     expect(exitSpy).toHaveBeenCalledWith(129);
   });
 
-  it('registers SIGTERM and SIGHUP on POSIX, only SIGTERM on Windows', () => {
+  it('registers SIGTERM, SIGHUP, and SIGCONT on POSIX, only SIGTERM on Windows', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     const posix = makeDriver();
     const posixCaptured = captureHandlers(posix.driver);
     expect(posixCaptured.signalHandlers.has('SIGTERM')).toBe(true);
     expect(posixCaptured.signalHandlers.has('SIGHUP')).toBe(true);
+    expect(posixCaptured.signalHandlers.has('SIGCONT')).toBe(true);
     posixCaptured.restore();
     posix.driver.unregisterSignalHandlers();
 
@@ -169,6 +170,7 @@ describe('KimiTUI signal handlers', () => {
     const winCaptured = captureHandlers(win.driver);
     expect(winCaptured.signalHandlers.has('SIGTERM')).toBe(true);
     expect(winCaptured.signalHandlers.has('SIGHUP')).toBe(false);
+    expect(winCaptured.signalHandlers.has('SIGCONT')).toBe(false);
     winCaptured.restore();
     win.driver.unregisterSignalHandlers();
   });
@@ -362,6 +364,7 @@ describe('KimiTUI signal handlers', () => {
 
     const beforeSigterm = process.listenerCount('SIGTERM');
     const beforeSighup = process.listenerCount('SIGHUP');
+    const beforeSigcont = process.listenerCount('SIGCONT');
     const beforeStdout = process.stdout.listenerCount('error');
     const beforeStderr = process.stderr.listenerCount('error');
 
@@ -369,8 +372,60 @@ describe('KimiTUI signal handlers', () => {
 
     expect(process.listenerCount('SIGTERM')).toBe(beforeSigterm);
     expect(process.listenerCount('SIGHUP')).toBe(beforeSighup);
+    expect(process.listenerCount('SIGCONT')).toBe(beforeSigcont);
     expect(process.stdout.listenerCount('error')).toBe(beforeStdout);
     expect(process.stderr.listenerCount('error')).toBe(beforeStderr);
+  });
+
+  it('republishes OSC 7577 on SIGCONT unless the external editor is running or shutting down', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    const harness = makeHarness();
+    const tui = new KimiTUI(harness as never, {
+      ...makeStartupInput(),
+      programResumeToken: 'sigcont-token',
+    });
+    const driver = tui as unknown as SignalDriver;
+    const writes: string[] = [];
+    vi.spyOn(driver.state.terminal, 'write').mockImplementation((chunk: string) => {
+      writes.push(chunk);
+    });
+    vi.spyOn(driver.state.terminal, 'drainInput').mockResolvedValue(undefined);
+    vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
+    vi.spyOn(driver.state.ui, 'requestRender').mockImplementation(() => {});
+
+    tui.setAppState({ sessionId: 'ses-sigcont' });
+    tui.appendTranscriptEntry({
+      id: 'entry-1',
+      kind: 'user',
+      renderMode: 'plain',
+      content: 'hello',
+    });
+    const oscWrites = () => writes.filter((item) => item.startsWith('\u001B]7577;'));
+    expect(oscWrites()).toHaveLength(1);
+
+    const captured = captureHandlers(driver);
+    const sigcont = captured.signalHandlers.get('SIGCONT');
+    expect(sigcont).toBeDefined();
+
+    sigcont?.();
+    expect(oscWrites()).toHaveLength(2);
+    expect(oscWrites()[1]).toContain(':argv=');
+
+    tui.setExternalEditorRunning(true);
+    sigcont?.();
+    expect(oscWrites()).toHaveLength(2);
+
+    tui.setExternalEditorRunning(false);
+    expect(oscWrites()).toHaveLength(3);
+
+    await tui.stop();
+    expect(oscWrites()).toHaveLength(4);
+    expect(oscWrites()[3]).toContain(':clear=1:mac=');
+    sigcont?.();
+    expect(oscWrites()).toHaveLength(4);
+
+    captured.restore();
+    driver.unregisterSignalHandlers();
   });
 
   it('clears OSC 7577 on normal stop(), preserves it on SIGTERM and SIGHUP, and force-clears on second Ctrl+C', async () => {

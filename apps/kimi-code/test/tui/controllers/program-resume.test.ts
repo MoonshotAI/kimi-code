@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { UNDO_LIMIT_STATUS_TURN_ID } from '#/tui/constant/kimi-tui';
 import {
@@ -10,6 +14,29 @@ import {
 } from '#/tui/controllers/program-resume';
 
 import { decodeOsc7577, type DecodedProgramResume } from '../../helpers/osc7577';
+
+const originalEnv = { ...process.env };
+const originalPlatform = process.platform;
+let tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  tempDirs = [];
+  process.env = { ...originalEnv };
+  Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+});
+
+function makeTempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function mockPlatform(platform: NodeJS.Platform): void {
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+}
 
 interface MutableHarnessState extends ProgramResumeState {
   readonly appState: {
@@ -50,6 +77,10 @@ function makeHarness(options: ProgramResumeControllerOptions = { token: TEST_TOK
     writes,
     advanceTime(seconds = 10): number {
       now += seconds;
+      return now;
+    },
+    setTime(value: number): number {
+      now = value;
       return now;
     },
     decoded(token = options.token ?? TEST_TOKEN): DecodedProgramResume[] {
@@ -513,6 +544,223 @@ describe('ProgramResumeController', () => {
         kind: 'clear',
         pid: TEST_PID,
         time: clearAfterTime,
+      },
+    ]);
+  });
+
+  it('resolves a trusted launcher outside cwd on Windows instead of bare kimi', () => {
+    mockPlatform('win32');
+    const untrustedCwd = makeTempDir('kimi-osc-untrusted-');
+    const trustedBin = makeTempDir('kimi-osc-bin-');
+    writeFileSync(join(untrustedCwd, 'kimi.EXE'), 'MZ-untrusted');
+    writeFileSync(join(untrustedCwd, 'kimi.CMD'), '@echo untrusted\r\n');
+    const trustedShim = join(trustedBin, 'kimi.CMD');
+    writeFileSync(trustedShim, '@echo trusted\r\n');
+    process.env['PATH'] = `${untrustedCwd};${trustedBin}`;
+    process.env['PATHEXT'] = '.COM;.EXE;.BAT;.CMD';
+
+    const harness = makeHarness({ token: TEST_TOKEN, isNativeInstall: () => false });
+    harness.state.appState.workDir = untrustedCwd;
+    harness.state.appState.sessionId = 'ses-win-1';
+    harness.state.transcriptEntries.push({ id: 'msg-1' });
+    harness.controller.refresh();
+
+    expect(harness.decoded()).toEqual([
+      {
+        kind: 'resume',
+        pid: TEST_PID,
+        time: 1_795_543_200,
+        argv: [trustedShim, '-r', 'ses-win-1'],
+        cwd: untrustedCwd,
+      },
+    ]);
+
+    const soloCwd = makeTempDir('kimi-osc-solo-');
+    writeFileSync(join(soloCwd, 'kimi.CMD'), '@echo solo-untrusted\r\n');
+    process.env['PATH'] = soloCwd;
+    const clearTime = harness.advanceTime(10);
+    harness.state.appState.workDir = soloCwd;
+    harness.controller.refresh();
+
+    expect(harness.decoded()).toEqual([
+      {
+        kind: 'resume',
+        pid: TEST_PID,
+        time: 1_795_543_200,
+        argv: [trustedShim, '-r', 'ses-win-1'],
+        cwd: untrustedCwd,
+      },
+      {
+        kind: 'clear',
+        pid: TEST_PID,
+        time: clearTime,
+      },
+    ]);
+  });
+
+  it('falls back to native execPath outside cwd on Windows and suppresses workspace-local binaries', () => {
+    mockPlatform('win32');
+    const untrustedCwd = makeTempDir('kimi-osc-native-cwd-');
+    const nativeDir = makeTempDir('kimi-osc-native-bin-');
+    const workspaceExe = join(untrustedCwd, 'kimi.EXE');
+    const nativeExe = join(nativeDir, 'kimi.EXE');
+    const nestedDir = join(untrustedCwd, 'tools');
+    mkdirSync(nestedDir);
+    const nestedExe = join(nestedDir, 'kimi.EXE');
+    writeFileSync(workspaceExe, 'MZ-workspace');
+    writeFileSync(nativeExe, 'MZ-native');
+    writeFileSync(nestedExe, 'MZ-nested');
+    process.env['PATH'] = untrustedCwd;
+    process.env['PATHEXT'] = '.COM;.EXE;.BAT;.CMD';
+
+    const nonNative = makeHarness({
+      token: TEST_TOKEN,
+      isNativeInstall: () => false,
+      execPath: nativeExe,
+    });
+    nonNative.state.appState.workDir = untrustedCwd;
+    nonNative.state.appState.sessionId = 'ses-non-native';
+    nonNative.state.transcriptEntries.push({ id: 'msg-1' });
+    nonNative.controller.refresh();
+    expect(nonNative.writes).toEqual([]);
+
+    const workspaceNative = makeHarness({
+      token: TEST_TOKEN,
+      isNativeInstall: () => true,
+      execPath: nestedExe,
+    });
+    workspaceNative.state.appState.workDir = untrustedCwd;
+    workspaceNative.state.appState.sessionId = 'ses-in-cwd';
+    workspaceNative.state.transcriptEntries.push({ id: 'msg-1' });
+    workspaceNative.controller.refresh();
+    expect(workspaceNative.writes).toEqual([]);
+
+    const trustedNative = makeHarness({
+      token: TEST_TOKEN,
+      isNativeInstall: () => true,
+      execPath: nativeExe,
+    });
+    trustedNative.state.appState.workDir = untrustedCwd;
+    trustedNative.state.appState.sessionId = 'ses-native';
+    trustedNative.state.transcriptEntries.push({ id: 'msg-1' });
+    trustedNative.controller.refresh();
+
+    expect(trustedNative.decoded()).toEqual([
+      {
+        kind: 'resume',
+        pid: TEST_PID,
+        time: 1_795_543_200,
+        argv: [nativeExe, '-r', 'ses-native'],
+        cwd: untrustedCwd,
+      },
+    ]);
+  });
+
+  it('clamps backward clock jumps and re-emits once the wall clock catches up', () => {
+    const harness = makeHarness();
+    harness.state.appState.sessionId = 'ses-1';
+    harness.state.transcriptEntries.push({ id: 'msg-1' });
+    harness.controller.refresh();
+
+    harness.setTime(1_795_542_900);
+    harness.state.appState.sessionId = 'ses-2';
+    harness.controller.refresh();
+
+    harness.setTime(1_795_542_950);
+    harness.state.transcriptEntries.push({ id: 'msg-2' });
+    harness.controller.refresh();
+    expect(harness.writes).toHaveLength(2);
+
+    const caughtUpTime = harness.setTime(1_795_543_205);
+    harness.state.transcriptEntries.push({ id: 'msg-3' });
+    harness.controller.refresh();
+
+    harness.setTime(1_795_543_220);
+    harness.state.transcriptEntries.push({ id: 'msg-4' });
+    harness.controller.refresh();
+
+    expect(harness.decoded()).toEqual([
+      {
+        kind: 'resume',
+        pid: TEST_PID,
+        time: 1_795_543_200,
+        argv: ['kimi', '-r', 'ses-1'],
+        cwd: '/workspace/project',
+      },
+      {
+        kind: 'resume',
+        pid: TEST_PID,
+        time: 1_795_543_200,
+        argv: ['kimi', '-r', 'ses-2'],
+        cwd: '/workspace/project',
+      },
+      {
+        kind: 'resume',
+        pid: TEST_PID,
+        time: caughtUpTime,
+        argv: ['kimi', '-r', 'ses-2'],
+        cwd: '/workspace/project',
+      },
+    ]);
+
+    harness.setTime(1_795_543_000);
+    harness.state.transcriptEntries = [];
+    harness.controller.refresh();
+    harness.setTime(1_795_543_100);
+    harness.controller.refresh();
+    expect(harness.writes).toHaveLength(4);
+
+    const clearCatchupTime = harness.setTime(1_795_543_210);
+    harness.controller.refresh();
+    harness.setTime(1_795_543_230);
+    harness.controller.refresh();
+
+    expect(harness.decoded().slice(3)).toEqual([
+      {
+        kind: 'clear',
+        pid: TEST_PID,
+        time: caughtUpTime,
+      },
+      {
+        kind: 'clear',
+        pid: TEST_PID,
+        time: clearCatchupTime,
+      },
+    ]);
+  });
+
+  it('rejects non-positive or non-integer sender fields and floors fractional timestamps', () => {
+    for (const badPid of [0, -1, Number.NaN, 42.5]) {
+      const harness = makeHarness({ token: TEST_TOKEN, pid: badPid });
+      harness.state.appState.sessionId = 'ses-bad-pid';
+      harness.state.transcriptEntries.push({ id: 'msg-1' });
+      harness.controller.refresh();
+      expect(harness.writes).toEqual([]);
+    }
+
+    let currentTime = Number.NaN;
+    const harness = makeHarness({
+      token: TEST_TOKEN,
+      nowSeconds: () => currentTime,
+    });
+    harness.state.appState.sessionId = 'ses-time';
+    harness.state.transcriptEntries.push({ id: 'msg-1' });
+    harness.controller.refresh();
+    currentTime = 0;
+    harness.controller.refresh();
+    currentTime = -5;
+    harness.controller.refresh();
+    expect(harness.writes).toEqual([]);
+
+    currentTime = 1_795_543_200.9;
+    harness.controller.refresh();
+    expect(harness.decoded()).toEqual([
+      {
+        kind: 'resume',
+        pid: TEST_PID,
+        time: 1_795_543_200,
+        argv: ['kimi', '-r', 'ses-time'],
+        cwd: '/workspace/project',
       },
     ]);
   });

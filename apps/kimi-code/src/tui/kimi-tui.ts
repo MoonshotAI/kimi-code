@@ -1475,6 +1475,18 @@ export class KimiTUI {
       });
     }
 
+    if (process.platform !== 'win32') {
+      const sigcontHandler = (): void => {
+        if (!this.state.externalEditorRunning && !this.isShuttingDown) {
+          this.programResume.republish();
+        }
+      };
+      process.prependListener('SIGCONT', sigcontHandler);
+      this.signalCleanupHandlers.push(() => {
+        process.off('SIGCONT', sigcontHandler);
+      });
+    }
+
     const terminalErrorHandler = (error: Error): void => {
       if (isDeadTerminalError(error)) {
         this.emergencyTerminalExit();
