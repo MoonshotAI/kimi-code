@@ -104,7 +104,7 @@ type ResolvedSession =
   | { readonly handle: ISessionScopeHandle }
   | { readonly envelope: ReturnType<typeof errEnvelope> };
 
-async function resolveActivatedSession(
+export async function resolveActivatedSession(
   core: Scope,
   sessionId: string,
   requestId: string,

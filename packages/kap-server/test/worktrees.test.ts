@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import {
   AgentEnvironmentBindingService,
   AgentLoopService,
+  EXTRA_SKILL_DIRS_SECTION,
+  IConfigService,
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
   IAgentLoopService,
@@ -462,12 +464,23 @@ describe('server-v2 session worktrees', () => {
     });
   });
 
-  it('activates a held repository skill from the new checkout', async () => {
-    const { root, workspaceId } = await project('held-repo-skill');
-    const skillDir = join(root, '.kimi-code', 'skills', 'held-skill');
+  it.each([
+    ['project skill', 'project'],
+    ['skill from an absolute configured directory', 'configured'],
+  ] as const)('activates a held repository %s once the worktree is ready', async (_label, source) => {
+    const { root, workspaceId } = await project(`held-${source}-skill`);
+    const skillDir =
+      source === 'project'
+        ? join(root, '.kimi-code', 'skills', 'held-skill')
+        : join(root, 'custom-skills', 'held-skill');
     await mkdir(skillDir, { recursive: true });
     await writeFile(join(skillDir, 'SKILL.md'), '---\nname: held-skill\ndescription: held skill\n---\n\nSay hi.\n');
     commitAll(root, 'add a repository skill');
+    if (source === 'configured') {
+      const config = fixture.server.core.accessor.get(IConfigService);
+      await config.set(EXTRA_SKILL_DIRS_SECTION, [join(root, 'custom-skills')]);
+      onTestFinished(() => config.set(EXTRA_SKILL_DIRS_SECTION, []));
+    }
     const originalBind = AgentEnvironmentBindingService.prototype.bind;
     const originalBindProfile = AgentLoopService.prototype.bindProfile;
     const worktreesHome = join(fixture.home, 'worktrees');
