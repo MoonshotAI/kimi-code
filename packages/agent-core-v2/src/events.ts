@@ -23,6 +23,7 @@ import type { ModelCatalogChangedEvent } from '#/app/kosongConfig/discovery';
 import type { PluginChangedEvent } from '#/app/plugin/pluginEvents';
 import type { SessionCreatedEvent, SessionStatusChangedEvent, SessionWorkChangedEvent } from '#/app/sessionLegacy/sessionProtocol';
 import type { ProjectCreatedEvent, ProjectDeletedEvent, ProjectUpdatedEvent } from '#/app/project/projectProtocol';
+import type { AutoReviewCompletedEvent, AutoReviewStartedEvent } from '#/features/autoReview/autoReviewEvents';
 import type { CronFiredEvent } from '#/features/cron/cronOps';
 import type { HookResultEvent } from '#/features/externalHooks/agent/agentExternalHooksService';
 import type { GoalUpdatedEvent } from '#/features/goal/goalOps';
@@ -69,6 +70,8 @@ export type AgentEvent =
   | ToolCallDeltaEvent
   | ToolCallStartedEvent
   | ToolUpdatedEvent
+  | AutoReviewStartedEvent
+  | AutoReviewCompletedEvent
   | ShellOutputEvent
   | ShellStartedEvent
   | ShellCompletedEvent

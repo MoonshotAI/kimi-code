@@ -4605,18 +4605,28 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
         toolName: 'Bash',
         action: 'run',
         display: { command: 'echo ok' },
+        approvalDetail: { outcome: 'denied', risk: 'high', reason: 'Not authorized.' },
       },
       tags: { agentId: 'main', sessionId: sid, toolCallId: 'tc_wait_1' },
     });
 
     const approvalWait = (await (await approvalWaitPromise).json()) as Envelope<{
       session: SessionWire;
-      pending_interactions: Array<{ interaction_id: string; kind: string }>;
+      pending_interactions: Array<{
+        interaction_id: string;
+        kind: string;
+        request?: { approval_detail?: unknown };
+      }>;
       timed_out: boolean;
     }>;
     expect(approvalWait.code).toBe(0);
     expect(approvalWait.data.timed_out).toBe(false);
     expect(approvalWait.data.pending_interactions.map((i) => i.interaction_id)).toEqual([parked.id]);
+    expect(approvalWait.data.pending_interactions[0]?.request?.approval_detail).toEqual({
+      outcome: 'denied',
+      risk: 'high',
+      reason: 'Not authorized.',
+    });
 
     await fetch(`${base}/api/v1/sessions/${sid}/interactions/${parked.id}`, {
       method: 'POST',

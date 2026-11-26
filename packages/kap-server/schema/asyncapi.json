@@ -341,6 +341,33 @@
                     "action": {
                       "type": "string"
                     },
+                    "approval_detail": {
+                      "properties": {
+                        "outcome": {
+                          "enum": [
+                            "denied",
+                            "failed"
+                          ],
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "risk": {
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "outcome",
+                        "reason"
+                      ],
+                      "type": "object"
+                    },
                     "expires_at": {
                       "type": "string"
                     },
@@ -1205,6 +1232,9 @@
                       },
                       "type": "array"
                     },
+                    "auto_review": {
+                      "type": "boolean"
+                    },
                     "created_at": {
                       "type": "string"
                     },
@@ -2021,6 +2051,9 @@
                     "type": "object"
                   },
                   "type": "array"
+                },
+                "auto_review": {
+                  "type": "boolean"
                 },
                 "created_at": {
                   "type": "string"
@@ -4583,6 +4616,9 @@
                                 "type": "object"
                               },
                               "type": "array"
+                            },
+                            "auto_review": {
+                              "type": "boolean"
                             },
                             "created_at": {
                               "type": "string"

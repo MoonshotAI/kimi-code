@@ -876,6 +876,7 @@ GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.d
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.agent_refs[].swarm_index: integer minimum=0 maximum=9007199254740991 optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.agent_refs[].task_id: string optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.agent_refs[]: object closed
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.auto_review: boolean optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.created_at: any
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.debug: shape e56d743c optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.display: any optional
@@ -1213,6 +1214,10 @@ GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]
 GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.interaction_id: string minLength=1
 GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.kind: enum "approval"
 GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.action: string
+GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.approval_detail.outcome: enum "denied"|"failed"
+GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.approval_detail.reason: string
+GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.approval_detail.risk: enum "high"|"low"|"medium" optional
+GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.approval_detail: object closed optional
 GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.expires_at: any
 GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.tool_input_display: any optional
 GET /api/v1/sessions/{session_id}/interactions response 200<code=0>.data.items[]<#0>.request.tool_name: string minLength=1
@@ -3384,6 +3389,10 @@ POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_intera
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.interaction_id: string minLength=1
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.kind: enum "approval"
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.action: string
+POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.approval_detail.outcome: enum "denied"|"failed"
+POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.approval_detail.reason: string
+POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.approval_detail.risk: enum "high"|"low"|"medium" optional
+POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.approval_detail: object closed optional
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.expires_at: any
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.tool_input_display: any optional
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#0>.request.tool_name: string minLength=1
@@ -3855,6 +3864,10 @@ ws server message interaction<interaction#0>.interaction_id: string minLength=1
 ws server message interaction<interaction#0>.kind: const "approval"
 ws server message interaction<interaction#0>.outcome: enum "answered"|"approved"|"cancelled"|"dismissed"|"rejected" optional
 ws server message interaction<interaction#0>.request.action: string
+ws server message interaction<interaction#0>.request.approval_detail.outcome: enum "denied"|"failed"
+ws server message interaction<interaction#0>.request.approval_detail.reason: string
+ws server message interaction<interaction#0>.request.approval_detail.risk: enum "high"|"low"|"medium" optional
+ws server message interaction<interaction#0>.request.approval_detail: object optional
 ws server message interaction<interaction#0>.request.expires_at: string
 ws server message interaction<interaction#0>.request.tool_input_display: any optional
 ws server message interaction<interaction#0>.request.tool_name: string minLength=1
@@ -3983,6 +3996,7 @@ ws server message item.item<system#6>.type: const "system"
 ws server message item.item<system#6>: object
 ws server message item.item<tool_call>.agent_refs: array optional
 ws server message item.item<tool_call>.agent_refs[]: shape b8eb6785
+ws server message item.item<tool_call>.auto_review: boolean optional
 ws server message item.item<tool_call>.created_at: string
 ws server message item.item<tool_call>.debug: shape e7fbf47b optional
 ws server message item.item<tool_call>.display: any optional
@@ -4090,6 +4104,7 @@ ws server message item_updated.item_id: string minLength=1
 ws server message item_updated.session_id: string minLength=1
 ws server message item_updated.set.agent_refs: array optional
 ws server message item_updated.set.agent_refs[]: shape b8eb6785
+ws server message item_updated.set.auto_review: boolean optional
 ws server message item_updated.set.created_at: string optional
 ws server message item_updated.set.debug: shape e7fbf47b optional
 ws server message item_updated.set.display: any optional
@@ -4467,6 +4482,7 @@ ws server message turns.turns[].items[]<system#6>.type: const "system"
 ws server message turns.turns[].items[]<system#6>: object
 ws server message turns.turns[].items[]<tool_call>.agent_refs: array optional
 ws server message turns.turns[].items[]<tool_call>.agent_refs[]: shape b8eb6785
+ws server message turns.turns[].items[]<tool_call>.auto_review: boolean optional
 ws server message turns.turns[].items[]<tool_call>.created_at: string
 ws server message turns.turns[].items[]<tool_call>.debug: shape e7fbf47b optional
 ws server message turns.turns[].items[]<tool_call>.display: any optional

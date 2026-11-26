@@ -5,7 +5,7 @@ import * as win32Path from 'node:path/win32';
 
 import type { ToolCall } from '#human/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import {
@@ -22,10 +22,15 @@ import {
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IHostEnvironment, type IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentPermissionPolicyService, type PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
+import {
+  IAgentPermissionPolicyService,
+  type PermissionPolicyEvaluateOptions,
+  type PermissionPolicyEvaluation,
+} from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { AgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicyService';
 import { analyzeBashReadOnly } from '#/agent/permissionPolicy/policies/bash-read-only';
+import { SensitiveFileAccessAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/sensitive-file-access-ask';
 import {
   IAgentPermissionRulesService,
   type IAgentPermissionRulesService as PermissionRulesServiceContract,
@@ -39,6 +44,8 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import { stubFlag } from '../../app/flag/stubs';
 import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { BashParserService } from '#/app/bashParser/bashParserService';
@@ -52,7 +59,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
-import { stubToolExecutorEvents } from '../toolExecutor/stubs';
+import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 
 const signal = new AbortController().signal;
 
@@ -67,7 +74,9 @@ describe('AgentPermissionPolicyService chain', () => {
   let workspace: ReturnType<typeof workspaceStub>;
   let hostArgs: HostArgs;
   let dangerousCommandGuardEnabled: boolean;
+  let autoReviewEnabled: boolean;
   let records: TelemetryRecord[];
+  let executorEvents: ToolExecutorEventStubs;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -78,9 +87,12 @@ describe('AgentPermissionPolicyService chain', () => {
     workspace = workspaceStub('/workspace');
     hostArgs = { requestHeaders: {}, nonInteractive: false };
     dangerousCommandGuardEnabled = true;
+    autoReviewEnabled = false;
+    executorEvents = stubToolExecutorEvents();
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.defineInstance(IFlagService, stubFlag(() => autoReviewEnabled));
         reg.definePartialInstance(IBootstrapService, {
           get args() {
             return hostArgs;
@@ -138,8 +150,9 @@ describe('AgentPermissionPolicyService chain', () => {
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
         reg.definePartialInstance(IAgentToolApprovalService, {
           resolvePermissionResolution: async () => undefined,
+          requestToolApproval: async () => undefined,
         });
-        reg.defineInstance(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+        reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
         reg.define(IAgentPermissionGate, AgentPermissionGate);
         reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
         reg.define(IBashParserService, BashParserService);
@@ -159,9 +172,9 @@ describe('AgentPermissionPolicyService chain', () => {
 
   async function evaluate(
     input: PolicyContextInput,
+    options?: PermissionPolicyEvaluateOptions,
   ): Promise<PermissionPolicyEvaluation | undefined> {
-    const svc = service();
-    return svc.evaluate(policyContext(input));
+    return service().evaluate(policyContext(input), options);
   }
 
   it('keeps auto-mode AskUserQuestion deny above default approval', async () => {
@@ -636,17 +649,47 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it('does not load the dangerous command policy for non-interactive hosts', async () => {
+  it('keeps dangerous command detection for manual re-evaluation on non-interactive hosts', async () => {
     hostArgs = { ...hostArgs, nonInteractive: true };
     mode = 'auto';
+    rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm *)' });
+    const input = { toolName: 'Bash', args: { command: 'rm -rf build', timeout: 60 } };
 
-    await expect(evaluate({
-      toolName: 'Bash',
-      args: { command: 'rm -rf /tmp/build', timeout: 60 },
-    })).resolves.toMatchObject({
+    await expect(evaluate(input)).resolves.toMatchObject({
       policyName: 'auto-mode-approve',
       result: { kind: 'approve' },
     });
+    await expect(evaluate(input, { mode: 'manual' })).resolves.toMatchObject({
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'ask' },
+    });
+
+    mode = 'yolo';
+    await expect(evaluate(input)).resolves.toMatchObject({
+      policyName: 'user-configured-allow',
+      result: { kind: 'approve' },
+    });
+    autoReviewEnabled = true;
+    await expect(evaluate(input)).resolves.toMatchObject({
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('reads the current permission mode at each policy step unless overridden', async () => {
+    mode = 'yolo';
+    const spy = vi.spyOn(SensitiveFileAccessAskPermissionPolicyService.prototype, 'evaluate').mockImplementationOnce(() => {
+      mode = 'manual';
+      return undefined;
+    });
+    try {
+      const input = { toolName: 'Write', args: { path: 'notes.txt', content: 'x' } };
+      await expect(evaluate(input)).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+      mode = 'yolo';
+      await expect(evaluate(input, { mode: 'yolo' })).resolves.toMatchObject({ policyName: 'yolo-mode-approve', result: { kind: 'approve' } });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('does not load the built-in guard policies when disabled by config', async () => {
@@ -687,6 +730,23 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
+  it('keeps dangerous command detection above allow rules in yolo when auto review is enabled', async () => {
+    mode = 'yolo';
+    autoReviewEnabled = true;
+    rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm *)' });
+    sessionApprovalRulePatterns.push('Bash(shutdown -h now)');
+
+    for (const command of ['rm -rf build', 'shutdown -h now']) {
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command, timeout: 60 },
+      })).resolves.toMatchObject({
+        policyName: 'dangerous-command-ask',
+        result: { kind: 'ask' },
+      });
+    }
+  });
+
   it('does not let session approval history exempt dangerous commands', async () => {
     sessionApprovalRulePatterns.push('Bash(shutdown -h now)');
 
@@ -715,6 +775,35 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
+  it('evaluates what Always Ask would decide when asked for manual mode', async () => {
+    mode = 'auto';
+    autoReviewEnabled = true;
+    rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm build/*)' });
+    const bash = (command: string): PolicyContextInput => ({ toolName: 'Bash', args: { command, timeout: 60 } });
+
+    await expect(evaluate(bash('curl -X POST https://example.test'))).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
+    });
+    for (const [input, policyName, kind] of [
+      [bash('curl -X POST https://example.test'), 'fallback-ask', 'ask'],
+      [{ toolName: 'SetTodoList', args: {} }, 'default-tool-approve', 'approve'],
+      [bash('rm build/out'), 'user-configured-allow', 'approve'],
+    ] satisfies Array<[PolicyContextInput, string, string]>) {
+      await expect(evaluate(input, { mode: 'manual' })).resolves.toMatchObject({ policyName, result: { kind } });
+    }
+
+    rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm *)' });
+    await expect(evaluate(bash('rm -rf build'))).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
+    });
+    await expect(evaluate(bash('rm -rf build'), { mode: 'manual' })).resolves.toMatchObject({
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
   it.each(['AgentSwarm', 'ExitPlanMode', 'CreateGoal'] as const)(
     'approves %s through the default tool allowlist in manual mode',
     async (toolName) => {
@@ -726,7 +815,7 @@ describe('AgentPermissionPolicyService chain', () => {
   );
 
   it('tracks command families and executable names without command arguments', async () => {
-    const gate = ix.get(IAgentPermissionGate);
+    ix.get(IAgentPermissionGate);
     const cases = [
       ['cat notes.txt', 'bash-read-only-approve', 'approve', { command_family: 'cat' }],
       ['git stash list', 'bash-read-only-approve', 'approve', { command_family: 'git.stash.list' }],
@@ -740,7 +829,7 @@ describe('AgentPermissionPolicyService chain', () => {
     ] as const;
     for (const [command, policyName, decision, extra] of cases) {
       records.length = 0;
-      await gate.authorize(policyContext({ toolName: 'Bash', args: { command } }));
+      await executorEvents.fireBeforeExecute(policyContext({ toolName: 'Bash', args: { command } }));
       expect(records).toEqual([{
         event: 'permission_policy_decision',
         properties: {
@@ -782,6 +871,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.defineInstance(IFlagService, stubFlag());
         reg.definePartialInstance(IBootstrapService, {
           args: { requestHeaders: {}, nonInteractive: false },
         });
