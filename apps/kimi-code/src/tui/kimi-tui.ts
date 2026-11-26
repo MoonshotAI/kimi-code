@@ -5496,6 +5496,9 @@ export class KimiTUI {
         onClose: () => {
           this.closeApprovalPreview();
         },
+        requestRender: () => {
+          this.state.ui.requestRender();
+        },
       },
       this.state.terminal,
     );

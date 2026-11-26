@@ -111,7 +111,6 @@
     "apps/kimi-code/test/tui/fullscreen-layout.test.ts": 2,
     "apps/kimi-code/test/tui/kimi-tui-message-flow.test.ts": 1,
     "apps/kimi-code/test/tui/printable-key-guard.test.ts": 1,
-    "apps/kimi-code/test/tui/task-output-viewer.test.ts": 1,
     "apps/kimi-code/test/tui/tasks-browser.test.ts": 1,
     "apps/vis/server/test/lib/import-store.test.ts": 1,
     "apps/vis/server/test/routes/logs.test.ts": 1,

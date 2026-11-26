@@ -20,6 +20,12 @@ export interface MouseColRegion {
   readonly index: number;
 }
 
+export interface MouseActionSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly onClick: () => void;
+}
+
 export function focusOnUnfocusedMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
   if (event.type === 'press') return { handled: true };
   if (event.type === 'click') return { handled: true, focus: true };
@@ -85,6 +91,25 @@ export function handleSegmentedMouse(input: {
       return { handled: true, render: true };
     }
     return { handled: true, render: changed };
+  }
+  return { handled: true };
+}
+
+export function handleActionBarMouse(input: {
+  readonly event: TuiMouseEvent;
+  readonly focused: boolean;
+  readonly shownAt: number;
+  readonly spans: readonly MouseActionSpan[];
+}): TuiMouseEventResult | undefined {
+  const { event, focused, shownAt, spans } = input;
+  if (!focused) return focusOnUnfocusedMouse(event);
+  if (event.button !== 'left' || event.y !== 0) return undefined;
+  const hit = spans.find((span) => event.x >= span.start && event.x < span.end);
+  if (hit === undefined) return undefined;
+  if (event.type === 'press') return { handled: true };
+  if (event.type === 'click' && !isSettlingClick(shownAt)) {
+    hit.onClick();
+    return { handled: true, render: true };
   }
   return { handled: true };
 }

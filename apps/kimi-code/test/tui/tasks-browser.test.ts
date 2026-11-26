@@ -1,4 +1,5 @@
-import type { Terminal } from '@moonshot-ai/pi-tui';
+import { TuiAltScreen, type Terminal } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import type { BackgroundTaskInfo, BackgroundTaskStatus, Event } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -877,5 +878,105 @@ describe('TasksBrowserController — opening an agent task', () => {
     expect(browser.tailOutput).toContain('── step 0 ──');
     expect(browser.tailOutput).toContain('✓ Used Grep (foo) · 2 matches across 2 files');
     controller.close();
+  });
+
+  it('supports fullscreen mouse selection, second-click output open, borderless preview copy, header filter click, and footer stop confirmation', async () => {
+    let now = 70_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    let copied = '';
+    const onSelect = vi.fn();
+    const onOpenOutput = vi.fn();
+    const onToggleFilter = vi.fn();
+    const onStopConfirmed = vi.fn();
+    const onCancel = vi.fn();
+    const vt = new VirtualTerminal(100, 18);
+    const ui = new TuiAltScreen(vt, undefined, undefined, {
+      copySelection: async (text) => {
+        copied = text;
+        return true;
+      },
+    });
+    const tasks = [
+      task({ taskId: 'bash-aaaaaaaa', status: 'running', description: 'first server' }),
+      task({ taskId: 'bash-bbbbbbbb', status: 'running', description: 'second worker' }),
+    ];
+    const app = new TasksBrowserApp(
+      makeProps({
+        tasks,
+        selectedTaskId: 'bash-aaaaaaaa',
+        tailOutput: Array.from({ length: 16 }, (_, i) => `tail-line-${String(i + 1)}`).join('\n'),
+        onSelect,
+        onOpenOutput,
+        onToggleFilter,
+        onStopConfirmed,
+        onCancel,
+        requestRender: () => {
+          ui.requestRender();
+        },
+      }),
+      vt,
+    );
+    ui.setLayoutRoot(app);
+    ui.start();
+    ui.setFocus(app);
+    await vt.waitForRender();
+    try {
+      now += 500;
+      let screen = vt.getViewport().map(strip);
+      const secondRow = screen.findIndex((line) => line.includes('bash-bbbbbbbb'));
+      expect(secondRow).toBeGreaterThan(0);
+
+      vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith('bash-bbbbbbbb');
+      expect(onOpenOutput).not.toHaveBeenCalled();
+
+      vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onOpenOutput).toHaveBeenCalledExactlyOnceWith('bash-bbbbbbbb');
+
+      screen = vt.getViewport().map(strip);
+      const previewRow = screen.findIndex((line) => line.includes('tail-line-16'));
+      expect(previewRow).toBeGreaterThan(0);
+      const previewCol = screen[previewRow]!.indexOf('tail-line-16') + 1;
+      vt.sendInput(`\u001B[<0;${String(previewCol)};${String(previewRow + 1)}M`);
+      vt.sendInput(`\u001B[<32;${String(previewCol + 12)};${String(previewRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(previewCol + 12)};${String(previewRow + 1)}m`);
+      await vt.waitForRender();
+      expect(copied).not.toContain('│');
+      expect(copied).toContain('tail-line-16');
+
+      const filterCol = screen[0]!.indexOf('filter=ALL') + 2;
+      vt.sendInput(`\u001B[<0;${String(filterCol)};1M`);
+      vt.sendInput(`\u001B[<0;${String(filterCol)};1m`);
+      await vt.waitForRender();
+      expect(onToggleFilter).toHaveBeenCalledTimes(1);
+
+      const footerRow = screen.length - 1;
+      const stopCol = screen[footerRow]!.indexOf('S stop') + 2;
+      vt.sendInput(`\u001B[<0;${String(stopCol)};${String(footerRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(stopCol)};${String(footerRow + 1)}m`);
+      await vt.waitForRender();
+
+      screen = vt.getViewport().map(strip);
+      expect(screen[footerRow]).toContain('Y confirm');
+      const confirmCol = screen[footerRow]!.indexOf('Y confirm') + 2;
+      vt.sendInput(`\u001B[<0;${String(confirmCol)};${String(footerRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(confirmCol)};${String(footerRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onStopConfirmed).toHaveBeenCalledExactlyOnceWith('bash-bbbbbbbb');
+
+      screen = vt.getViewport().map(strip);
+      const cancelCol = screen[footerRow]!.indexOf('cancel') + 2;
+      vt.sendInput(`\u001B[<0;${String(cancelCol)};${String(footerRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(cancelCol)};${String(footerRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onCancel).toHaveBeenCalledTimes(1);
+    } finally {
+      ui.stop();
+      vi.restoreAllMocks();
+    }
   });
 });

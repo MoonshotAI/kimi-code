@@ -1,11 +1,16 @@
 import {
-  Container,
+  Box,
+  HStack,
   Key,
   matchesKey,
+  type Component,
+  type Focusable,
   type Terminal,
   truncateToWidth,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
   visibleWidth,
-  type Focusable,
+  VStack,
 } from '@moonshot-ai/pi-tui';
 import type {
   BackgroundTaskInfo,
@@ -13,12 +18,25 @@ import type {
   ModelAlias,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { SELECT_POINTER } from '@/tui/constant/symbols';
+import {
+  createInteractiveChildView,
+  OverflowScrollView,
+} from '#/tui/components/chrome/dock-section';
+import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
-import { printableChar } from '@/tui/utils/printable-key';
+import {
+  focusOnUnfocusedMouse,
+  handleActionBarMouse,
+  handleSelectableListMouse,
+  type MouseActionSpan,
+  type MouseRowRegion,
+} from '#/tui/utils/dialog-mouse';
+import { printableChar } from '#/tui/utils/printable-key';
 import { formatRelativeTime } from '#/tui/utils/relative-time';
 import { sanitizeShellOutput } from '#/tui/utils/shell-output';
+import { fitViewerLine as fitExactly } from './framed-scroll-viewer';
 import { modelDisplayName } from './model-selector';
+import { STATUS_LABEL, statusColor } from './task-output-viewer';
 
 const ELLIPSIS = '…';
 
@@ -39,16 +57,8 @@ export interface TasksBrowserProps {
   readonly onStopConfirmed: (taskId: string) => void;
   readonly onOpenOutput: (taskId: string) => void;
   readonly onStopIgnored?: (taskId: string, reason: 'terminal') => void;
+  readonly requestRender?: () => void;
 }
-
-const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
-  running: 'running',
-  completed: 'completed',
-  failed: 'failed',
-  timed_out: 'timed out',
-  killed: 'killed',
-  lost: 'lost',
-};
 
 const STOP_CONFIRM_TIMEOUT_MS = 5_000;
 
@@ -59,45 +69,34 @@ const LIST_COL_MIN = 28;
 const LIST_COL_MAX = 44;
 const LIST_COL_RATIO = 0.32;
 
-function statusColor(status: BackgroundTaskStatus): 'success' | 'textMuted' | 'error' {
-  switch (status) {
-    case 'running':
-      return 'success';
-    case 'completed':
-      return 'textMuted';
-    case 'failed':
-    case 'timed_out':
-    case 'killed':
-    case 'lost':
-      return 'error';
+const paintPrimary = (text: string): string => currentTheme.fg('primary', text);
+
+function formatFrameTitle(title: string, innerWidth?: number): string | undefined {
+  const titleStyled = currentTheme.boldFg('textStrong', title);
+  const segmentWidth = visibleWidth(`─ ${titleStyled} `);
+  if (innerWidth !== undefined && (visibleWidth(titleStyled) === 0 || segmentWidth > innerWidth)) {
+    return undefined;
   }
+  return currentTheme.fg('primary', '─ ') + titleStyled + ' ';
+}
+
+function computeListWidth(width: number): number {
+  return Math.max(LIST_COL_MIN, Math.min(LIST_COL_MAX, Math.floor(width * LIST_COL_RATIO)));
+}
+
+function computeDetailHeight(bodyHeight: number): number {
+  return Math.min(
+    Math.max(10, Math.min(Math.floor(bodyHeight * 0.4), bodyHeight - 5)),
+    Math.max(3, bodyHeight - 3),
+  );
 }
 
 function isTerminal(status: BackgroundTaskStatus): boolean {
-  return (
-    status === 'completed' ||
-    status === 'failed' ||
-    status === 'timed_out' ||
-    status === 'killed' ||
-    status === 'lost'
-  );
+  return status !== 'running';
 }
 
 function singleLine(text: string): string {
   return text.replaceAll(/\s+/g, ' ').trim();
-}
-
-function padToWidth(line: string, width: number): string {
-  const w = visibleWidth(line);
-  if (w === width) return line;
-  if (w > width) return truncateToWidth(line, width, ELLIPSIS);
-  return line + ' '.repeat(width - w);
-}
-
-function fitExactly(line: string, width: number): string {
-  let s = line;
-  if (visibleWidth(s) > width) s = truncateToWidth(s, width, ELLIPSIS);
-  return padToWidth(s, width);
 }
 
 export function isVisibleTask(task: BackgroundTaskInfo, filter: TasksFilter): boolean {
@@ -140,16 +139,45 @@ function countByStatus(tasks: readonly BackgroundTaskInfo[]): StatusCounts {
   return counts;
 }
 
-export class TasksBrowserApp extends Container implements Focusable {
+class SplitRow extends HStack {
+  setFirstBasis(basis: number): void {
+    const first = this.entries[0];
+    if (first !== undefined) first.basis = basis;
+  }
+}
+
+class SplitColumn extends VStack {
+  setFirstBasis(basis: number): void {
+    const first = this.entries[0];
+    if (first !== undefined) first.basis = basis;
+  }
+}
+
+export class TasksBrowserApp extends VStack implements Focusable {
   focused = false;
+  capturesViewportInput = true;
 
   private props: TasksBrowserProps;
   private readonly terminal: Terminal;
   private sortedVisible: BackgroundTaskInfo[];
   private selectedIndex = 0;
   private listScroll = 0;
-  private pendingStopTaskId: string | undefined = undefined;
-  private pendingStopTimer: NodeJS.Timeout | undefined = undefined;
+  private pendingStopTaskId: string | undefined;
+  private pendingStopTimer: NodeJS.Timeout | undefined;
+  private readonly shownAt = Date.now();
+
+  private readonly leftBox: Box;
+  private readonly detailBox: Box;
+  private readonly previewBox: Box;
+  private readonly listScrollView: OverflowScrollView;
+  private readonly detailScrollView: OverflowScrollView;
+  private readonly previewScrollView: OverflowScrollView;
+  private readonly middleRow: SplitRow;
+  private readonly rightStack: SplitColumn;
+
+  private taskRegions: readonly MouseRowRegion[] = [];
+  private headerSpans: readonly MouseActionSpan[] = [];
+  private footerSpans: readonly MouseActionSpan[] = [];
 
   constructor(props: TasksBrowserProps, terminal: Terminal) {
     super();
@@ -159,14 +187,118 @@ export class TasksBrowserApp extends Container implements Focusable {
       .filter((task) => isVisibleTask(task, props.filter))
       .toSorted(compareTasks);
     this.syncSelectionFromProps();
+
+    const isTooSmall = (vp: { width: number; height: number }): boolean =>
+      vp.width < MIN_WIDTH || vp.height < MIN_HEIGHT;
+    const isNormal = (vp: { width: number; height: number }): boolean => !isTooSmall(vp);
+
+    const tooSmallView: Component = {
+      render: (width) => this.renderTooSmall(width, Math.max(1, this.terminal.rows)),
+      invalidate: () => {},
+    };
+
+    const headerView = createInteractiveChildView(
+      this,
+      (width) => {
+        const listWidth = computeListWidth(width);
+        const rightWidth = Math.max(4, width - listWidth);
+        this.middleRow.setFirstBasis(listWidth);
+        const bodyHeight = Math.max(4, this.terminal.rows - 2);
+        this.rightStack.setFirstBasis(computeDetailHeight(bodyHeight));
+        this.leftBox.setTitle(formatFrameTitle(`Tasks [${this.props.filter}]`, listWidth - 2));
+        this.detailBox.setTitle(formatFrameTitle('Detail', rightWidth - 2));
+        this.previewBox.setTitle(formatFrameTitle('Preview Output', rightWidth - 2));
+        return [this.renderHeader(width)];
+      },
+      (event) =>
+        handleActionBarMouse({
+          event,
+          focused: this.focused,
+          shownAt: this.shownAt,
+          spans: this.headerSpans,
+        }),
+    );
+
+    const listBodyView = createInteractiveChildView(
+      this,
+      (innerWidth) => this.buildListLines(Math.max(1, innerWidth)),
+      (event) => this.handleListMouse(event),
+    );
+    this.listScrollView = new OverflowScrollView(listBodyView);
+    this.leftBox = new Box({
+      border: true,
+      borderColor: paintPrimary,
+      title: formatFrameTitle(`Tasks [${props.filter}]`),
+    });
+    this.leftBox.addChild(this.listScrollView);
+
+    const detailBodyView: Component = {
+      render: (innerWidth) =>
+        this.buildDetailLines().map((line) => fitExactly(line, Math.max(1, innerWidth))),
+      invalidate: () => {},
+    };
+    this.detailScrollView = new OverflowScrollView(detailBodyView);
+    this.detailBox = new Box({
+      border: true,
+      borderColor: paintPrimary,
+      title: formatFrameTitle('Detail'),
+    });
+    this.detailBox.addChild(this.detailScrollView);
+
+    const previewBodyView: Component = {
+      render: (innerWidth) =>
+        this.buildPreviewLines().map((line) => fitExactly(line, Math.max(1, innerWidth))),
+      invalidate: () => {},
+    };
+    this.previewScrollView = new OverflowScrollView(previewBodyView, { follow: 'end' });
+    this.previewBox = new Box({
+      border: true,
+      borderColor: paintPrimary,
+      title: formatFrameTitle('Preview Output'),
+    });
+    this.previewBox.addChild(this.previewScrollView);
+
+    this.rightStack = new SplitColumn();
+    this.rightStack.addChild(this.detailBox, { basis: 10, shrink: 1, minSize: 3 });
+    this.rightStack.addChild(this.previewBox, { basis: 0, grow: 1, shrink: 1, minSize: 3 });
+
+    this.middleRow = new SplitRow();
+    this.middleRow.addChild(this.leftBox, { basis: 38, shrink: 0 });
+    this.middleRow.addChild(this.rightStack, { basis: 0, grow: 1, shrink: 1 });
+
+    const footerView = createInteractiveChildView(
+      this,
+      (width) => [this.renderFooter(width)],
+      (event) =>
+        handleActionBarMouse({
+          event,
+          focused: this.focused,
+          shownAt: this.shownAt,
+          spans: this.footerSpans,
+        }),
+    );
+
+    this.addChild(tooSmallView, { basis: 0, grow: 1, shrink: 1, visible: isTooSmall });
+    this.addChild(headerView, { basis: 1, shrink: 0, visible: isNormal });
+    this.addChild(this.middleRow, { basis: 0, grow: 1, shrink: 1, minSize: 4, visible: isNormal });
+    this.addChild(footerView, { basis: 1, shrink: 0, visible: isNormal });
   }
 
   setProps(next: TasksBrowserProps): void {
+    const prevTaskId = this.sortedVisible[this.selectedIndex]?.taskId;
+    const prevTail = this.props.tailOutput;
     this.props = next;
     this.sortedVisible = next.tasks
       .filter((task) => isVisibleTask(task, next.filter))
       .toSorted(compareTasks);
     this.syncSelectionFromProps();
+    const nextTaskId = this.sortedVisible[this.selectedIndex]?.taskId;
+    if (nextTaskId !== prevTaskId) {
+      this.detailScrollView.scrollToStart();
+      this.previewScrollView.scrollToEnd();
+    } else if (next.tailOutput !== prevTail && this.previewScrollView.isFollowingEnd) {
+      this.previewScrollView.scrollToEnd();
+    }
     if (this.pendingStopTaskId !== undefined) {
       const task = next.tasks.find((t) => t.taskId === this.pendingStopTaskId);
       if (task === undefined || isTerminal(task.status)) this.clearPendingStop();
@@ -200,9 +332,47 @@ export class TasksBrowserApp extends Container implements Focusable {
     }
   }
 
+  private confirmPendingStop(): void {
+    const taskId = this.pendingStopTaskId;
+    if (taskId === undefined) return;
+    this.clearPendingStop();
+    this.props.onStopConfirmed(taskId);
+    this.invalidate();
+    this.props.requestRender?.();
+  }
+
+  private requestStopSelected(): void {
+    const task = this.sortedVisible[this.selectedIndex];
+    if (task === undefined || task.detached === false) return;
+    if (isTerminal(task.status)) {
+      this.props.onStopIgnored?.(task.taskId, 'terminal');
+      return;
+    }
+    this.pendingStopTaskId = task.taskId;
+    this.pendingStopTimer = setTimeout(() => {
+      this.clearPendingStop();
+      this.invalidate();
+      this.props.requestRender?.();
+    }, STOP_CONFIRM_TIMEOUT_MS);
+    this.invalidate();
+    this.props.requestRender?.();
+  }
+
   private emitSelect(): void {
     const task = this.sortedVisible[this.selectedIndex];
     if (task) this.props.onSelect(task.taskId);
+  }
+
+  private ensureSelectedTaskVisibleInScrollView(): void {
+    if (this.listScrollView.viewportHeight <= 0) return;
+    const { starts, total } = this.taskLineStarts();
+    const start = starts[this.selectedIndex] ?? 0;
+    const end = starts[this.selectedIndex + 1] ?? total;
+    if (start < this.listScrollView.scrollTop) {
+      this.listScrollView.scrollTo(start);
+    } else if (end > this.listScrollView.scrollTop + this.listScrollView.viewportHeight) {
+      this.listScrollView.scrollTo(Math.max(0, end - this.listScrollView.viewportHeight));
+    }
   }
 
   handleInput(data: string): void {
@@ -210,10 +380,7 @@ export class TasksBrowserApp extends Container implements Focusable {
 
     if (this.pendingStopTaskId !== undefined) {
       if (k === 'y' || k === 'Y') {
-        const taskId = this.pendingStopTaskId;
-        this.clearPendingStop();
-        this.props.onStopConfirmed(taskId);
-        this.invalidate();
+        this.confirmPendingStop();
         return;
       }
       this.clearPendingStop();
@@ -228,6 +395,7 @@ export class TasksBrowserApp extends Container implements Focusable {
     if (matchesKey(data, Key.up) || k === 'k') {
       if (this.sortedVisible.length === 0) return;
       this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+      this.ensureSelectedTaskVisibleInScrollView();
       this.emitSelect();
       this.invalidate();
       return;
@@ -235,6 +403,7 @@ export class TasksBrowserApp extends Container implements Focusable {
     if (matchesKey(data, Key.down) || k === 'j') {
       if (this.sortedVisible.length === 0) return;
       this.selectedIndex = Math.min(this.sortedVisible.length - 1, this.selectedIndex + 1);
+      this.ensureSelectedTaskVisibleInScrollView();
       this.emitSelect();
       this.invalidate();
       return;
@@ -248,25 +417,43 @@ export class TasksBrowserApp extends Container implements Focusable {
       return;
     }
     if (k === 's' || k === 'S') {
-      const task = this.sortedVisible[this.selectedIndex];
-      if (task === undefined || task.detached === false) return;
-      if (isTerminal(task.status)) {
-        this.props.onStopIgnored?.(task.taskId, 'terminal');
-        return;
-      }
-      this.pendingStopTaskId = task.taskId;
-      this.pendingStopTimer = setTimeout(() => {
-        this.clearPendingStop();
-        this.invalidate();
-      }, STOP_CONFIRM_TIMEOUT_MS);
-      this.invalidate();
+      this.requestStopSelected();
       return;
     }
     if (k === 'o' || k === 'O' || matchesKey(data, Key.enter)) {
       const task = this.sortedVisible[this.selectedIndex];
       if (task) this.props.onOpenOutput(task.taskId);
-      return;
     }
+  }
+
+  private handleListMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (!this.focused) return focusOnUnfocusedMouse(event);
+    if (this.pendingStopTaskId !== undefined) return undefined;
+
+    let wasAlreadySelected = false;
+    return handleSelectableListMouse({
+      event,
+      focused: this.focused,
+      shownAt: this.shownAt,
+      regions: this.taskRegions,
+      selectOnHover: false,
+      select: (index) => {
+        wasAlreadySelected = index === this.selectedIndex;
+        this.selectedIndex = index;
+        return !wasAlreadySelected;
+      },
+      activate: (index) => {
+        const task = this.sortedVisible[index];
+        if (task === undefined) return;
+        if (wasAlreadySelected) {
+          this.props.onOpenOutput(task.taskId);
+          return;
+        }
+        this.detailScrollView.scrollToStart();
+        this.previewScrollView.scrollToEnd();
+        this.props.onSelect(task.taskId);
+      },
+    });
   }
 
   override render(width: number): string[] {
@@ -279,10 +466,7 @@ export class TasksBrowserApp extends Container implements Focusable {
     const footer = this.renderFooter(width);
     const bodyHeight = rows - 2;
 
-    const listWidth = Math.max(
-      LIST_COL_MIN,
-      Math.min(LIST_COL_MAX, Math.floor(width * LIST_COL_RATIO)),
-    );
+    const listWidth = computeListWidth(width);
     const rightWidth = width - listWidth;
 
     const listFrame = this.renderListFrame(listWidth, bodyHeight);
@@ -290,7 +474,9 @@ export class TasksBrowserApp extends Container implements Focusable {
 
     const lines: string[] = [header];
     for (let i = 0; i < bodyHeight; i++) {
-      lines.push((listFrame[i] ?? ' '.repeat(listWidth)) + (rightFrames[i] ?? ' '.repeat(rightWidth)));
+      lines.push(
+        (listFrame[i] ?? ' '.repeat(listWidth)) + (rightFrames[i] ?? ' '.repeat(rightWidth)),
+      );
     }
     lines.push(footer);
     return lines;
@@ -298,10 +484,23 @@ export class TasksBrowserApp extends Container implements Focusable {
 
   private renderHeader(width: number): string {
     const title = currentTheme.boldFg('primary', ' TASK BROWSER ');
-    const filterText = currentTheme.fg(
-      'textMuted',
-      ` filter=${this.props.filter === 'all' ? 'ALL' : 'ACTIVE'} `,
-    );
+    const filterRaw = ` filter=${this.props.filter === 'all' ? 'ALL' : 'ACTIVE'} `;
+    const filterText = currentTheme.fg('textMuted', filterRaw);
+    const titleWidth = visibleWidth(title);
+    const filterWidth = visibleWidth(filterRaw);
+    this.headerSpans =
+      this.pendingStopTaskId === undefined && titleWidth < width
+        ? [
+            {
+              start: titleWidth,
+              end: Math.min(width, titleWidth + filterWidth),
+              onClick: () => {
+                this.props.onToggleFilter();
+              },
+            },
+          ]
+        : [];
+
     const visible = this.sortedVisible;
     const counts = countByStatus(visible);
     const countSegments: string[] = [];
@@ -325,24 +524,77 @@ export class TasksBrowserApp extends Container implements Focusable {
 
     if (this.pendingStopTaskId !== undefined) {
       const warn = (text: string): string => currentTheme.boldFg('warning', text);
-      const line =
-        ` ${warn('Stop')} ${currentTheme.fg('text', this.pendingStopTaskId)}? ` +
-        `${key('Y')} ${dim('confirm')}  ${key('N')}${dim('/')}${key('esc')} ${dim('cancel')} `;
-      return fitExactly(line, width);
+      const prefix = ` ${warn('Stop')} ${currentTheme.fg('text', this.pendingStopTaskId)}? `;
+      const confirmItem = `${key('Y')} ${dim('confirm')}`;
+      const cancelItem = `${key('N')}${dim('/')}${key('esc')} ${dim('cancel')}`;
+      const prefixW = visibleWidth(prefix);
+      const confirmW = visibleWidth(confirmItem);
+      const cancelStart = prefixW + confirmW + 2;
+      const cancelW = visibleWidth(cancelItem);
+      const spans: MouseActionSpan[] = [];
+      if (prefixW < width) {
+        spans.push({
+          start: prefixW,
+          end: Math.min(width, prefixW + confirmW),
+          onClick: () => {
+            this.confirmPendingStop();
+          },
+        });
+      }
+      if (cancelStart < width) {
+        spans.push({
+          start: cancelStart,
+          end: Math.min(width, cancelStart + cancelW),
+          onClick: () => {
+            this.clearPendingStop();
+            this.invalidate();
+            this.props.requestRender?.();
+          },
+        });
+      }
+      this.footerSpans = spans;
+      return fitExactly(`${prefix}${confirmItem}  ${cancelItem} `, width);
     }
 
-    const parts = [
-      ` ${key('↑↓')} ${dim('select')}`,
-      `${key('Enter/O')} ${dim('output')}`,
-      `${key('R')} ${dim('refresh')}`,
-      `${key('Tab')} ${dim('filter')}`,
-      `${key('Q/Esc')} ${dim('cancel')} `,
+    const items: Array<{ readonly text: string; readonly onClick?: () => void }> = [
+      { text: `${key('↑↓')} ${dim('select')}` },
+      {
+        text: `${key('Enter/O')} ${dim('output')}`,
+        onClick: () => {
+          const selected = this.sortedVisible[this.selectedIndex];
+          if (selected) this.props.onOpenOutput(selected.taskId);
+        },
+      },
+      { text: `${key('R')} ${dim('refresh')}`, onClick: () => this.props.onRefresh() },
+      { text: `${key('Tab')} ${dim('filter')}`, onClick: () => this.props.onToggleFilter() },
+      { text: `${key('Q/Esc')} ${dim('cancel')}`, onClick: () => this.props.onCancel() },
     ];
-    const task = this.sortedVisible[this.selectedIndex];
-    if (task !== undefined && task.detached !== false) {
-      parts.splice(2, 0, `${key('S')} ${dim('stop')}`);
+    const selectedTask = this.sortedVisible[this.selectedIndex];
+    if (selectedTask !== undefined && selectedTask.detached !== false) {
+      items.splice(2, 0, {
+        text: `${key('S')} ${dim('stop')}`,
+        onClick: () => this.requestStopSelected(),
+      });
     }
-    const left = parts.join('  ');
+
+    const spans: MouseActionSpan[] = [];
+    let col = 1;
+    const renderedParts: string[] = [];
+    for (const item of items) {
+      const itemW = visibleWidth(item.text);
+      if (item.onClick !== undefined && col < width) {
+        spans.push({
+          start: col,
+          end: Math.min(width, col + itemW),
+          onClick: item.onClick,
+        });
+      }
+      renderedParts.push(item.text);
+      col += itemW + 2;
+    }
+    this.footerSpans = spans;
+
+    const left = ` ${renderedParts.join('  ')} `;
     const flash = this.props.flashMessage;
     if (flash !== undefined && flash.length > 0) {
       const flashStyled = currentTheme.fg('warning', ` ${flash} `);
@@ -367,59 +619,59 @@ export class TasksBrowserApp extends Container implements Focusable {
     }
     const innerWidth = width - 2;
     const innerHeight = height - 2;
-
-    const titleStyled = currentTheme.boldFg('textStrong', title);
-    const titleWidth = visibleWidth(titleStyled);
-    const titleSegment = `─ ${titleStyled} `;
-    const titleSegmentWidth = visibleWidth(titleSegment);
-    const remainingDashes = Math.max(0, innerWidth - titleSegmentWidth);
-    const topMid =
-      titleWidth > 0 && titleSegmentWidth <= innerWidth
-        ? currentTheme.fg('primary', '─ ') +
-          titleStyled +
-          ' ' +
-          currentTheme.fg('primary', '─'.repeat(remainingDashes))
-        : currentTheme.fg('primary', '─'.repeat(innerWidth));
-    const top = currentTheme.fg('primary', '┌') + topMid + currentTheme.fg('primary', '┐');
-    const bottom = currentTheme.fg('primary', '└' + '─'.repeat(innerWidth) + '┘');
-
-    const lines: string[] = [top];
+    const paddedLines: string[] = [];
     for (let i = 0; i < innerHeight; i++) {
-      const inner = content[i] ?? '';
-      lines.push(currentTheme.fg('primary', '│') + fitExactly(inner, innerWidth) + currentTheme.fg('primary', '│'));
+      paddedLines.push(fitExactly(content[i] ?? '', innerWidth));
     }
-    lines.push(bottom);
-    return lines;
+    const box = new Box({
+      border: true,
+      borderColor: paintPrimary,
+      title: formatFrameTitle(title, innerWidth),
+    });
+    box.addChild({
+      render: () => paddedLines,
+      invalidate: () => {},
+    });
+    return [...box.render(width)];
+  }
+
+  private buildListLines(innerWidth: number): string[] {
+    if (this.sortedVisible.length === 0) {
+      this.taskRegions = [];
+      const empty =
+        this.props.filter === 'active'
+          ? 'No active tasks. Tab = show all.'
+          : 'No tasks in this session.';
+      return [fitExactly(currentTheme.fg('textMuted', empty), innerWidth)];
+    }
+
+    const allLines: string[] = [];
+    const regions: MouseRowRegion[] = [];
+    for (const [index, task] of this.sortedVisible.entries()) {
+      const startRow = allLines.length;
+      allLines.push(this.renderListRow(task, index === this.selectedIndex, innerWidth));
+      const modelText = this.agentModelText(task);
+      if (modelText !== undefined) {
+        allLines.push(fitExactly(this.renderModelRow(modelText, innerWidth), innerWidth));
+      }
+      regions.push({ start: startRow, end: allLines.length, index });
+    }
+    this.taskRegions = regions;
+    return allLines;
   }
 
   private renderListFrame(width: number, height: number): string[] {
     const title = `Tasks [${this.props.filter}]`;
     const innerHeight = Math.max(0, height - 2);
+    const innerWidth = Math.max(1, width - 2);
+    const allLines = this.buildListLines(innerWidth);
 
     if (this.sortedVisible.length === 0) {
-      const empty =
-        this.props.filter === 'active'
-          ? 'No active tasks. Tab = show all.'
-          : 'No tasks in this session.';
-      const lines: string[] = [currentTheme.fg('textMuted', empty)];
-      while (lines.length < innerHeight) lines.push('');
-      return this.renderFrame(title, lines, width, height);
+      return this.renderFrame(title, allLines, width, height);
     }
 
     this.adjustScroll(innerHeight);
-
-    const innerWidth = width - 2;
-    const allLines: string[] = [];
-    for (const [index, task] of this.sortedVisible.entries()) {
-      allLines.push(this.renderListRow(task, index === this.selectedIndex, innerWidth));
-      const modelText = this.agentModelText(task);
-      if (modelText !== undefined) {
-        allLines.push(this.renderModelRow(modelText, innerWidth));
-      }
-    }
     const lines = allLines.slice(this.listScroll, this.listScroll + innerHeight);
-    while (lines.length < innerHeight) lines.push('');
-
     return this.renderFrame(title, lines, width, height);
   }
 
@@ -496,10 +748,7 @@ export class TasksBrowserApp extends Container implements Focusable {
   }
 
   private renderRightStack(width: number, height: number): string[] {
-    const detailHeight = Math.min(
-      Math.max(10, Math.min(Math.floor(height * 0.4), height - 5)),
-      Math.max(3, height - 3),
-    );
+    const detailHeight = computeDetailHeight(height);
     const previewHeight = height - detailHeight;
     return [
       ...this.renderDetailFrame(width, detailHeight),
@@ -507,14 +756,10 @@ export class TasksBrowserApp extends Container implements Focusable {
     ];
   }
 
-  private renderDetailFrame(width: number, height: number): string[] {
-    const innerHeight = Math.max(0, height - 2);
+  private buildDetailLines(): string[] {
     const task = this.sortedVisible[this.selectedIndex];
     if (task === undefined) {
-      const empty = currentTheme.fg('textMuted', 'Select a task from the list.');
-      const lines: string[] = [empty];
-      while (lines.length < innerHeight) lines.push('');
-      return this.renderFrame('Detail', lines, width, height);
+      return [currentTheme.fg('textMuted', 'Select a task from the list.')];
     }
 
     const label = (text: string): string => currentTheme.fg('textMuted', text.padEnd(14));
@@ -565,17 +810,17 @@ export class TasksBrowserApp extends Container implements Focusable {
     if (task.stopReason !== undefined && task.stopReason.length > 0) {
       lines.push(`${label('Reason:')}${currentTheme.fg('textMuted', task.stopReason)}`);
     }
-    while (lines.length < innerHeight) lines.push('');
-    return this.renderFrame('Detail', lines, width, height);
+    return lines;
   }
 
-  private renderPreviewFrame(width: number, height: number): string[] {
-    const innerHeight = Math.max(0, height - 2);
+  private renderDetailFrame(width: number, height: number): string[] {
+    return this.renderFrame('Detail', this.buildDetailLines(), width, height);
+  }
+
+  private buildPreviewLines(): string[] {
     const task = this.sortedVisible[this.selectedIndex];
     if (task === undefined) {
-      const lines: string[] = [currentTheme.fg('textMuted', 'No task selected.')];
-      while (lines.length < innerHeight) lines.push('');
-      return this.renderFrame('Preview Output', lines, width, height);
+      return [currentTheme.fg('textMuted', 'No task selected.')];
     }
 
     let body: string;
@@ -584,11 +829,14 @@ export class TasksBrowserApp extends Container implements Focusable {
       body = '[no output captured]';
     else body = sanitizeShellOutput(this.props.tailOutput);
 
-    const rawLines = body.split('\n');
-    const tailLines = rawLines.slice(-innerHeight);
-    const styled = tailLines.map((line) => currentTheme.fg('textDim', line));
-    while (styled.length < innerHeight) styled.push('');
-    return this.renderFrame('Preview Output', styled, width, height);
+    return body.split('\n').map((line) => currentTheme.fg('textDim', line));
+  }
+
+  private renderPreviewFrame(width: number, height: number): string[] {
+    const innerHeight = Math.max(0, height - 2);
+    const allLines = this.buildPreviewLines();
+    const tailLines = innerHeight > 0 ? allLines.slice(-innerHeight) : [];
+    return this.renderFrame('Preview Output', tailLines, width, height);
   }
 
   private renderTooSmall(width: number, rows: number): string[] {
