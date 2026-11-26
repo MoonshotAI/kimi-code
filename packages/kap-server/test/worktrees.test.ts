@@ -4,6 +4,8 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
+  AgentEnvironmentBindingService,
+  AgentLoopService,
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
   IAgentLoopService,
@@ -12,7 +14,7 @@ import {
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { ErrorCode } from '../src/protocol/error-codes';
 import type { Session } from '../src/protocol/session';
@@ -356,6 +358,53 @@ describe('server-v2 session worktrees', () => {
     await expectNothingLeft(root, before);
     const twice = await post<Session>(`/sessions/${created.id}/worktree:cancel`);
     expect(twice.code).toBe(ErrorCode.WORKTREE_STATE_INVALID);
+  });
+
+  it('moves the session back when setup is cancelled while it switches into the worktree', async () => {
+    const { root, workspaceId } = await project('cancel-repoint');
+    const before = await worktreeDirectories();
+    const worktreesHome = join(fixture.home, 'worktrees');
+    const originalBind = AgentEnvironmentBindingService.prototype.bind;
+    const originalBindProfile = AgentLoopService.prototype.bindProfile;
+    const abort = vi.spyOn(AbortController.prototype, 'abort');
+    let sessionId = '';
+    let switching = false;
+    vi.spyOn(AgentEnvironmentBindingService.prototype, 'bind').mockImplementation(function (
+      this: AgentEnvironmentBindingService,
+      ...args: Parameters<AgentEnvironmentBindingService['bind']>
+    ) {
+      if (args[1]?.startsWith(worktreesHome) === true) switching = true;
+      return originalBind.apply(this, args);
+    });
+    const bindProfile = vi
+      .spyOn(AgentLoopService.prototype, 'bindProfile')
+      .mockImplementation(async function (this: AgentLoopService, ...args: Parameters<AgentLoopService['bindProfile']>) {
+        if (switching) {
+          switching = false;
+          const aborts = abort.mock.calls.length;
+          await vi.waitFor(() => {
+            if (sessionId === '') throw new Error('the session has not been created yet');
+          });
+          void post(`/sessions/${sessionId}/worktree:cancel`);
+          await vi.waitFor(() => {
+            if (abort.mock.calls.length === aborts) throw new Error('the setup has not been cancelled yet');
+          });
+        }
+        return originalBindProfile.apply(this, args);
+      });
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+
+    sessionId = (await createWorktreeSession(workspaceId)).id;
+    const session = await settled(sessionId);
+
+    expect(bindProfile).toHaveBeenCalled();
+    expect(session.worktree?.setup).toMatchObject({ status: 'stopped', stopped_step: 'create' });
+    expect(session.worktree?.path).toBeUndefined();
+    expect(session.cwd).toBe(root);
+    expect(agentState(sessionId)).toMatchObject({ cwd: undefined, workDir: root });
+    await expectNothingLeft(root, before);
   });
 
   it('rejects worktree requests it cannot serve', async () => {

@@ -322,9 +322,16 @@ export class SessionWorktreeService {
     created: CreatedWorktree,
     reason: { readonly stopped: true } | { readonly error: unknown },
   ): Promise<void> {
-    await patchSessionMetadata(this.core.accessor, recorder.sessionId, (meta) =>
-      meta.environmentCwd === created.path ? { environmentCwd: undefined } : undefined,
-    ).catch(() => undefined);
+    const meta = await patchSessionMetadata(this.core.accessor, recorder.sessionId, () => undefined).catch(
+      () => undefined,
+    );
+    if (meta?.environmentCwd === created.path) {
+      await repointSession(this.core, recorder.sessionId, undefined).catch(() =>
+        patchSessionMetadata(this.core.accessor, recorder.sessionId, (current) =>
+          current.environmentCwd === created.path ? { environmentCwd: undefined } : undefined,
+        ).catch(() => undefined),
+      );
+    }
     await removeWorktreeArtifacts(recorder.current.repo_root, created, true);
     const stopped = 'stopped' in reason;
     const stoppedStep = stopped ? (recorder.steps.at(-1)?.kind ?? 'create') : 'create';
