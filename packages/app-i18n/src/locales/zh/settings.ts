@@ -121,7 +121,7 @@ export default {
     cancelAuthorization: '取消授权',
     resettingAuthorization: '正在取消授权…',
     resetAuthorizationConfirmMessage: '确定要取消 {name} 的授权吗？这会清除本机保存的 OAuth 凭据，之后需要重新授权才能继续使用。',
-    retryAuthorization: '重新授权',
+    resetAuthorizationFailed: '取消授权失败，请稍后重试',
     authorizationFailed: '授权失败，请稍后重试',
     retryAuthorizationStatus: '重试加载授权状态',
     authorized: '已授权',

@@ -4,7 +4,8 @@ import type {
   AppMcpAuthStatus,
   AppPluginCapabilities,
 } from '@moonshot-ai/app-core/api';
-import { getKimiWebApi } from '../client/deps';
+import { getKimiWebApi, t } from '../client/deps';
+import { toast } from '../client/toast';
 
 export interface McpAuthorizationTarget {
   pluginId: string;
@@ -19,7 +20,6 @@ export interface McpAuthorizationViewState {
   phase: McpAuthorizationPhase;
   flowId?: string;
   authorizationUrl?: string;
-  error?: string;
   discoveryError?: string;
   openBlocked?: boolean;
   cancelled?: boolean;
@@ -68,6 +68,16 @@ function clearOpenedRuntime(runtimeName: string): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function showAuthorizationError(titleKey: string, error: unknown): void {
+  toast({
+    mode: 'replace',
+    variant: 'danger',
+    title: t(titleKey),
+    message: errorMessage(error),
+    duration: 5_000,
+  });
 }
 
 interface PluginAuthorizationSnapshot {
@@ -215,7 +225,6 @@ async function watchCompletion(flow: ActiveFlow, completion: Promise<null>): Pro
         phase: 'idle',
         flowId: undefined,
         authorizationUrl: undefined,
-        error: undefined,
         openBlocked: undefined,
         cancelled: undefined,
       };
@@ -226,6 +235,8 @@ async function watchCompletion(flow: ActiveFlow, completion: Promise<null>): Pro
   } catch (error) {
     if (activeFlows.get(flow.flowId) !== flow) return;
     activeFlows.delete(flow.flowId);
+    const cancelled = flow.controller.signal.aborted ||
+      [...flow.targets.keys()].every((name) => states[name]?.phase === 'cancelling');
     for (const runtimeName of flow.targets.keys()) {
       controllers.delete(runtimeName);
       clearOpenedFlow(runtimeName, flow.flowId);
@@ -234,11 +245,11 @@ async function watchCompletion(flow: ActiveFlow, completion: Promise<null>): Pro
         phase: 'idle',
         flowId: undefined,
         authorizationUrl: undefined,
-        error: errorMessage(error),
         openBlocked: undefined,
-        cancelled: undefined,
+        cancelled: cancelled ? true : undefined,
       };
     }
+    if (!cancelled) showAuthorizationError('settings.plugins.authorizationFailed', error);
   }
 }
 
@@ -253,7 +264,6 @@ async function performAuthorization(
       ...states[target.runtimeName],
       status: undefined,
       phase: 'starting',
-      error: undefined,
       openBlocked: undefined,
       cancelled: undefined,
     };
@@ -276,7 +286,6 @@ async function performAuthorization(
         ...states[target.runtimeName],
         status: 'oauth-authorized',
         phase: 'idle',
-        error: undefined,
         openBlocked: undefined,
         cancelled: undefined,
       };
@@ -326,12 +335,13 @@ async function performAuthorization(
     controllers.delete(target.runtimeName);
     states[target.runtimeName] = {
       ...states[target.runtimeName],
+      status: states[target.runtimeName]?.status ?? 'oauth-required',
       phase: 'idle',
       flowId: undefined,
       authorizationUrl: undefined,
-      error: errorMessage(error),
       openBlocked: undefined,
     };
+    if (!controller.signal.aborted) showAuthorizationError('settings.plugins.authorizationFailed', error);
   }
 }
 
@@ -367,7 +377,6 @@ export function useMcpAuthorization() {
     states[runtimeName] = {
       ...states[runtimeName],
       phase: 'cancelling',
-      error: undefined,
       cancelled: undefined,
     };
     if (flow.targets.size > 1) {
@@ -379,7 +388,6 @@ export function useMcpAuthorization() {
         phase: 'idle',
         flowId: undefined,
         authorizationUrl: undefined,
-        error: undefined,
         openBlocked: undefined,
         cancelled: true,
       };
@@ -394,8 +402,8 @@ export function useMcpAuthorization() {
           phase: 'waiting',
           flowId: flow.flowId,
           authorizationUrl: flow.authorizationUrl,
-          error: errorMessage(error),
         };
+        showAuthorizationError('settings.plugins.resetAuthorizationFailed', error);
       }
       return;
     }
@@ -410,7 +418,6 @@ export function useMcpAuthorization() {
       phase: 'idle',
       flowId: undefined,
       authorizationUrl: undefined,
-      error: undefined,
       openBlocked: undefined,
       cancelled: true,
     };
@@ -423,7 +430,6 @@ export function useMcpAuthorization() {
       states[target.runtimeName] = {
         ...states[target.runtimeName],
         phase: 'resetting',
-        error: undefined,
         cancelled: undefined,
       };
       try {
@@ -439,7 +445,6 @@ export function useMcpAuthorization() {
           phase: 'idle',
           flowId: undefined,
           authorizationUrl: undefined,
-          error: undefined,
           openBlocked: undefined,
           cancelled: true,
         };
@@ -448,8 +453,8 @@ export function useMcpAuthorization() {
         states[target.runtimeName] = {
           ...states[target.runtimeName],
           phase: 'idle',
-          error: errorMessage(error),
         };
+        showAuthorizationError('settings.plugins.resetAuthorizationFailed', error);
       }
     })();
     operations.set(target.runtimeName, operation);

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Badge, Button, Icon, Link, Spinner, Tooltip } from '@moonshot-ai/app-ui';
+import { Badge, Button, Icon, Link, Spinner } from '@moonshot-ai/app-ui';
 import type { AppPluginCapabilities } from '@moonshot-ai/app-core/api';
 import type {
   McpAuthorizationTarget,
@@ -75,7 +75,6 @@ function authVisible(server: McpServer): boolean {
     state.status === 'oauth-expired' ||
     state.status === 'oauth-authorized' ||
     state.phase !== 'idle' ||
-    state.error !== undefined ||
     state.cancelled === true;
 }
 
@@ -166,9 +165,7 @@ function confirmReset(): void {
                     variant="primary"
                     @click="authorize(server)"
                   >
-                    {{ authState(server)?.error !== undefined
-                      ? t('settings.plugins.retryAuthorization')
-                      : t('settings.plugins.authorize') }}
+                    {{ t('settings.plugins.authorize') }}
                   </Button>
                 </template>
                 <template v-else>
@@ -199,14 +196,6 @@ function confirmReset(): void {
                 </template>
               </div>
             </template>
-            <Tooltip v-if="authState(server)?.error !== undefined" :text="authState(server)?.error">
-              <p
-                class="plugin-capabilities__error plugin-capabilities__authorization-error"
-                role="alert"
-              >
-                {{ t('settings.plugins.authorizationFailed') }}
-              </p>
-            </Tooltip>
           </li>
         </ul>
       </section>
@@ -355,11 +344,6 @@ function confirmReset(): void {
   color: var(--color-text-muted);
   font-size: var(--text-xs);
   white-space: nowrap;
-}
-
-.plugin-capabilities__authorization-error {
-  grid-column: 2 / -1;
-  overflow-wrap: anywhere;
 }
 
 .plugin-capabilities__loading,

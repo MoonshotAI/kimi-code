@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
 import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
-import { setKimiClientDeps, resetKimiClientDeps } from '@moonshot-ai/app-client/client';
+import { setKimiClientDeps, resetKimiClientDeps, onToast, type ToastEvent } from '@moonshot-ai/app-client/client';
 import {
   __resetMcpAuthorizationForTests,
   __resetPluginsForTests,
@@ -84,6 +84,8 @@ describe('PluginsPanel reinstall authorization wiring', () => {
   let authorized: boolean;
   let inspectCalls: number;
   let reinstallInspection: ReturnType<typeof deferred<AppMcpAuthStatus[]>>;
+  let toasts: ToastEvent[];
+  let stopToastListener: (() => void) | undefined;
 
   const apiMock = {
     listPluginMarketplace: vi.fn(async (): Promise<AppPluginMarketplaceEntry[]> => [
@@ -110,7 +112,10 @@ describe('PluginsPanel reinstall authorization wiring', () => {
     inspectMcpAuthStatuses: vi.fn((): Promise<AppMcpAuthStatus[]> => {
       inspectCalls += 1;
       if (inspectCalls > 1) return reinstallInspection.promise;
-      return Promise.resolve([{ name: 'plugin-kuaishan:kuaishan', authStatus: 'oauth-authorized' }]);
+      return Promise.resolve([{
+        name: 'plugin-kuaishan:kuaishan',
+        authStatus: authorized ? 'oauth-authorized' : 'oauth-required',
+      }]);
     }),
     beginMcpAuth: vi.fn(async () => ({
       status: 'authorization-required' as const,
@@ -139,9 +144,17 @@ describe('PluginsPanel reinstall authorization wiring', () => {
     installed = true;
     authorized = true;
     inspectCalls = 0;
+    toasts = [];
     reinstallInspection = deferred<AppMcpAuthStatus[]>();
+    stopToastListener = onToast((event) => {
+      if (event.type === 'show') toasts.push(event);
+    });
     vi.clearAllMocks();
-    setKimiClientDeps({ api: () => apiMock as never, t: (key) => key });
+    const i18n = createKimiI18n({ locale: 'zh' });
+    setKimiClientDeps({
+      api: () => apiMock as never,
+      t: (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params)),
+    });
     vi.spyOn(window, 'open').mockReturnValue({
       closed: false,
       opener: null,
@@ -152,12 +165,14 @@ describe('PluginsPanel reinstall authorization wiring', () => {
     host = document.createElement('div');
     document.body.append(host);
     app = createApp({ render: () => h(PluginsPanel) });
-    app.use(createKimiI18n({ locale: 'zh' }));
+    app.use(i18n);
     app.provide(IconResolverKey, (name) => getIcon(name as IconName)?.component);
     app.mount(host);
   });
 
   afterEach(() => {
+    stopToastListener?.();
+    stopToastListener = undefined;
     app?.unmount();
     app = null;
     host.remove();
@@ -219,5 +234,92 @@ describe('PluginsPanel reinstall authorization wiring', () => {
     for (const text of renderedTexts) {
       expect(text).not.toContain('已授权');
     }
+  });
+
+  it('shows a transient toast and no inline error row when beginning authorization fails', async () => {
+    authorized = false;
+    apiMock.beginMcpAuth.mockRejectedValueOnce(new Error('OAuth service unavailable'));
+    await settle();
+
+    host.querySelector<HTMLButtonElement>('[data-plugin-row="kuaishan"]')!.click();
+    await settle();
+    const details = () => host.querySelector<HTMLElement>('.plugin-details')!;
+    const actionButton = () => details().querySelector<HTMLButtonElement>('.plugin-capabilities__actions button')!;
+    expect(actionButton().textContent).toBe('授权');
+
+    actionButton().click();
+    await settle();
+
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]?.options).toMatchObject({
+      variant: 'danger',
+      title: '授权失败，请稍后重试',
+      message: 'OAuth service unavailable',
+    });
+    expect(details().querySelector('.plugin-capabilities__item [role="alert"]')).toBeNull();
+    expect(actionButton().textContent).toBe('授权');
+
+    details().querySelector<HTMLButtonElement>('[aria-label="返回"]')!.click();
+    await settle();
+    host.querySelector<HTMLButtonElement>('[data-plugin-row="kuaishan"]')!.click();
+    reinstallInspection.resolve([{ name: 'plugin-kuaishan:kuaishan', authStatus: 'oauth-required' }]);
+    await settle();
+
+    expect(toasts).toHaveLength(1);
+    expect(details().querySelector('.plugin-capabilities__item [role="alert"]')).toBeNull();
+    expect(actionButton().textContent).toBe('授权');
+  });
+
+  it('shows a transient toast and keeps the authorized row clean when resetting authorization fails', async () => {
+    apiMock.resetMcpAuth.mockRejectedValueOnce(new Error('reset failed'));
+    await settle();
+
+    host.querySelector<HTMLButtonElement>('[data-plugin-row="kuaishan"]')!.click();
+    await settle();
+    const details = () => host.querySelector<HTMLElement>('.plugin-details')!;
+    expect(details().querySelector('.plugin-capabilities__identity .ui-badge')?.textContent).toBe('已授权');
+
+    details().querySelector<HTMLButtonElement>('.plugin-capabilities__actions button')!.click();
+    await nextTick();
+    document.querySelector<HTMLButtonElement>('.confirm-dialog__confirm')!.click();
+    await settle();
+
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]?.options).toMatchObject({
+      variant: 'danger',
+      title: '取消授权失败，请稍后重试',
+      message: 'reset failed',
+    });
+    expect(details().querySelector('.plugin-capabilities__identity .ui-badge')?.textContent).toBe('已授权');
+    expect(details().querySelector('.plugin-capabilities__item [role="alert"]')).toBeNull();
+
+    details().querySelector<HTMLButtonElement>('[aria-label="返回"]')!.click();
+    await settle();
+    host.querySelector<HTMLButtonElement>('[data-plugin-row="kuaishan"]')!.click();
+    reinstallInspection.resolve([{ name: 'plugin-kuaishan:kuaishan', authStatus: 'oauth-authorized' }]);
+    await settle();
+
+    expect(toasts).toHaveLength(1);
+    expect(details().querySelector('.plugin-capabilities__item [role="alert"]')).toBeNull();
+  });
+
+  it('keeps the status refresh failure banner with retry and does not toast', async () => {
+    apiMock.inspectMcpAuthStatuses.mockRejectedValueOnce(new Error('status unavailable'));
+    await settle();
+
+    host.querySelector<HTMLButtonElement>('[data-plugin-row="kuaishan"]')!.click();
+    await settle();
+    const details = () => host.querySelector<HTMLElement>('.plugin-details')!;
+    const banner = () => details().querySelector<HTMLElement>('.plugin-capabilities__error');
+    expect(banner()?.textContent).toContain('status unavailable');
+    expect(toasts).toHaveLength(0);
+
+    banner()!.querySelector<HTMLButtonElement>('button')!.click();
+    reinstallInspection.resolve([{ name: 'plugin-kuaishan:kuaishan', authStatus: 'oauth-authorized' }]);
+    await settle();
+
+    expect(banner()).toBeNull();
+    expect(details().querySelector('.plugin-capabilities__identity .ui-badge')?.textContent).toBe('已授权');
+    expect(toasts).toHaveLength(0);
   });
 });
