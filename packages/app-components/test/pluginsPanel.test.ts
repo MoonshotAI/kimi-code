@@ -1966,6 +1966,82 @@ describe('PluginsPanel', () => {
     }
   });
 
+  it('keeps waiting without an error banner after a client timeout until polling detects granted permissions', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    try {
+      fakes.isMacosDesktop = true;
+      rowData.push(row('kimi-cu', {
+        installId: 'kimi-cu',
+        catalogEntry: entry('kimi-cu', 'Kimi Computer Use', { capabilityId: 'kimi-cu' }),
+        installedPlugin: installed('kimi-cu', 'marketplace', { version: '0.5.4' }),
+        capability: {
+          id: 'kimi-cu',
+          pluginId: 'kimi-cu',
+          displayName: 'Kimi Computer Use',
+          description: 'macOS GUI automation',
+          supported: true,
+          state: 'partial',
+          steps: [
+            { id: 'plugin', state: 'ok' },
+            { id: 'app', state: 'ok' },
+            { id: 'service', state: 'ok' },
+            { id: 'permissions', state: 'missing' },
+            { id: 'permissions.accessibility', state: 'missing' },
+            { id: 'permissions.screenRecording', state: 'missing' },
+          ],
+          install: { running: false },
+        },
+        capabilityRequired: true,
+        displayName: 'Kimi Computer Use',
+      }));
+      await mountPanel();
+      let grantedByUser = false;
+      vi.mocked(plugins.requestCapabilityPermissions).mockImplementation(async () => rowData[0]!.capability!);
+      vi.mocked(plugins.refreshCapability).mockImplementation(async () => {
+        if (grantedByUser) {
+          rowData[0]!.capability = {
+            ...rowData[0]!.capability!,
+            state: 'ready',
+            steps: [
+              { id: 'plugin', state: 'ok' },
+              { id: 'app', state: 'ok' },
+              { id: 'service', state: 'ok' },
+              { id: 'permissions', state: 'ok' },
+              { id: 'permissions.accessibility', state: 'ok' },
+              { id: 'permissions.screenRecording', state: 'ok' },
+            ],
+          };
+        }
+        return rowData[0]!.capability!;
+      });
+      clickButton('Kimi Computer Use');
+      await settle();
+
+      host.querySelector<HTMLButtonElement>('.plugin-details__status-badge')!.click();
+      await vi.advanceTimersByTimeAsync(30_000);
+      await flushAsync();
+
+      expect(host.querySelector('.plugin-details__status-waiting')?.textContent).toContain('Waiting for permissions…');
+      expect(host.querySelector('.plugin-status__error')).toBeNull();
+
+      grantedByUser = true;
+      await vi.advanceTimersByTimeAsync(2_000);
+      await flushAsync();
+
+      expect(host.querySelector('.plugin-details__status-waiting')).toBeNull();
+      expect(host.querySelector('.plugin-details__status-badge')).toBeNull();
+      expect(host.querySelector('.plugin-status__error')).toBeNull();
+      expect(fakes.track).toHaveBeenCalledWith('cu_permission_result', {
+        plugin_id: 'kimi-cu',
+        accessibility_granted: true,
+        screen_granted: true,
+        result: 'granted',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not re-trigger native CU permission prompt after first install and hides CU badges off macOS or before install', async () => {
     fakes.isMacosDesktop = true;
     rowData.push(row('kimi-cu', {

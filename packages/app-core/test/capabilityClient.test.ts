@@ -100,12 +100,16 @@ describe('DaemonKimiWebApi capabilities', () => {
     };
     const fetchMock = vi.fn().mockResolvedValue(envelope(granted));
     vi.stubGlobal('fetch', fetchMock);
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
 
     const result = await makeApi().requestCapabilityPermissions('kimi-cu');
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('http://test.local/api/v1/capabilities/kimi-cu:request-permissions');
     expect(init.method).toBe('POST');
+    expect(init.signal).toBeDefined();
+    expect(timeout).toHaveBeenCalledOnce();
+    expect(timeout.mock.calls[0]?.[0]).toBeGreaterThanOrEqual(250_000);
     expect(result.state).toBe('ready');
     expect(result.steps.find((step) => step.id === 'permissions')?.state).toBe('ok');
   });

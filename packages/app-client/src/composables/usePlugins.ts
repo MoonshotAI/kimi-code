@@ -1,6 +1,6 @@
 import { computed, reactive, toValue, type MaybeRefOrGetter } from 'vue';
 import { getKimiWebApi } from '../client/deps';
-import { DaemonNetworkError, isDaemonApiError } from '@moonshot-ai/app-core/api';
+import { DaemonNetworkError, isDaemonApiError, isDaemonNetworkError } from '@moonshot-ai/app-core/api';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import type {
   AppCapabilityInstallProgress,
@@ -827,8 +827,10 @@ async function refreshCapability(id: string): Promise<AppCapabilityStatus | unde
   }
 }
 
-function isCapabilityPermissionTimeout(error: unknown): boolean {
-  return error instanceof Error && error.message.startsWith('command timed out after ');
+function isCapabilityPermissionInterruption(error: unknown): boolean {
+  if (error instanceof Error && error.message.startsWith('command timed out after ')) return true;
+  if (error instanceof Error && error.name === 'AbortError') return true;
+  return isDaemonNetworkError(error) && error.phase === 'fetch' && error.status === undefined;
 }
 
 async function requestCapabilityPermissions(id: string): Promise<AppCapabilityStatus | undefined> {
@@ -842,7 +844,7 @@ async function requestCapabilityPermissions(id: string): Promise<AppCapabilitySt
     syncExtensionHint();
     return status;
   } catch (error) {
-    if (isCapabilityPermissionTimeout(error)) {
+    if (isCapabilityPermissionInterruption(error)) {
       return refreshCapability(id);
     }
     state.rowErrors[id] = errorMessage(error);

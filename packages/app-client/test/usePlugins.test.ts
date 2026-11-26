@@ -2070,6 +2070,73 @@ describe('usePlugins', () => {
     expect(status?.state).toBe('partial');
     expect(state.rowErrors['kimi-cu']).toBeUndefined();
   });
+
+  it('requestCapabilityPermissions tolerates client fetch timeouts and aborts without row errors', async () => {
+    apiMock.listCapabilities.mockResolvedValue([capabilityCu]);
+    const { state, refresh, requestCapabilityPermissions } = usePlugins();
+    await refresh();
+    apiMock.getCapability.mockResolvedValue({
+      ...capabilityCu,
+      state: 'partial',
+      steps: [{ id: 'permissions', state: 'missing' }],
+    });
+
+    apiMock.requestCapabilityPermissions.mockRejectedValueOnce(
+      new DaemonNetworkError({
+        message: 'Network error calling POST /capabilities/kimi-cu:request-permissions',
+        cause: Object.assign(new Error('timed out'), { name: 'TimeoutError' }),
+        method: 'POST',
+        path: '/capabilities/kimi-cu:request-permissions',
+        url: 'http://test.local/api/v1/capabilities/kimi-cu:request-permissions',
+        requestId: 'r1',
+        phase: 'fetch',
+        timeoutMs: 30_000,
+      }),
+    );
+    const afterTimeout = await requestCapabilityPermissions('kimi-cu');
+    expect(afterTimeout?.state).toBe('partial');
+    expect(state.rowErrors['kimi-cu']).toBeUndefined();
+
+    apiMock.requestCapabilityPermissions.mockRejectedValueOnce(
+      Object.assign(new Error('aborted'), { name: 'AbortError' }),
+    );
+    const afterAbort = await requestCapabilityPermissions('kimi-cu');
+    expect(afterAbort?.state).toBe('partial');
+    expect(state.rowErrors['kimi-cu']).toBeUndefined();
+  });
+
+  it('requestCapabilityPermissions still surfaces business errors and HTTP error responses', async () => {
+    apiMock.listCapabilities.mockResolvedValue([capabilityCu]);
+    const { state, refresh, requestCapabilityPermissions } = usePlugins();
+    await refresh();
+
+    apiMock.requestCapabilityPermissions.mockRejectedValueOnce(
+      new DaemonApiError({
+        code: 50001,
+        msg: 'kimi-cu request-permissions failed: xpc service unavailable',
+        requestId: 'r2',
+      }),
+    );
+    await expect(requestCapabilityPermissions('kimi-cu')).resolves.toBeUndefined();
+    expect(state.rowErrors['kimi-cu']).toContain('xpc service unavailable');
+
+    apiMock.requestCapabilityPermissions.mockRejectedValueOnce(
+      new DaemonNetworkError({
+        message: 'Failed to parse JSON response from POST /capabilities/kimi-cu:request-permissions',
+        cause: new SyntaxError('Unexpected token'),
+        method: 'POST',
+        path: '/capabilities/kimi-cu:request-permissions',
+        url: 'http://test.local/api/v1/capabilities/kimi-cu:request-permissions',
+        requestId: 'r3',
+        phase: 'parse',
+        timeoutMs: 250_000,
+        status: 502,
+        statusText: 'Bad Gateway',
+      }),
+    );
+    await expect(requestCapabilityPermissions('kimi-cu')).resolves.toBeUndefined();
+    expect(state.rowErrors['kimi-cu']).toContain('Failed to parse JSON response');
+  });
 });
 
 
