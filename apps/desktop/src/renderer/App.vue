@@ -35,6 +35,7 @@ import ScreenshotGuidanceDialog from './components/dialogs/ScreenshotGuidanceDia
 import ForcedUpgradeDialog from './components/ForcedUpgradeDialog.vue';
 import { ErrorBoundary } from '@moonshot-ai/app-components';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
+import UpdateDialog from './components/UpdateDialog.vue';
 import { AddWorkspaceDialog, WorkspaceEditDialog } from '@moonshot-ai/app-components';
 import { ConfirmDialogHost, PastedTextDialog, openPastedTextDialog, usePastedTextStats } from '@moonshot-ai/app-components';
 import BrowserOverlayConfirmHost from './components/browser-overlay/BrowserOverlayConfirmHost.vue';
@@ -2867,6 +2868,7 @@ function openPr(url: string): void {
       @logout="confirmLogout"
     />
     </div>
+    <UpdateDialog v-if="updateTracker.dialogOpen.value" />
     <!-- First-run onboarding wizard (language → appearance → notifications →
          Kimi login). Held back until the first load settled so it can't cover
          the connecting splash. Outside `.app` like LoginDialog — `.app` goes

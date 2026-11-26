@@ -1,7 +1,7 @@
 import { app, dialog, Menu, shell, webContents } from 'electron';
 import type { BrowserWindow, MenuItemConstructorOptions } from 'electron';
 
-import { getMainWindow, createWindow, sendToRenderer, showMainWindow, usesCustomTitleBar, devToolsMode } from '../window/main-window';
+import { getMainWindow, createWindow, sendMenuActionWhenReady, sendToRenderer, showMainWindow, usesCustomTitleBar, devToolsMode } from '../window/main-window';
 import { connect } from '../server/connect';
 import { getTraceRecorder } from '../diagnostics/trace';
 import { exportDiagnostics, openLogsFolder } from '../diagnostics/diagnostics-export';
@@ -336,7 +336,7 @@ async function runMenuUpdateCheck(): Promise<void> {
   const show = (opts: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> =>
     win === null || win.isDestroyed() ? dialog.showMessageBox(opts) : dialog.showMessageBox(win, opts);
   if (result.outcome === 'available') {
-    sendToRenderer(IPC.menuAction, 'open-update-dialog');
+    sendMenuActionWhenReady('open-update-dialog');
     return;
   }
   await show({

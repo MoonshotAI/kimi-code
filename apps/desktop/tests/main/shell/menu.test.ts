@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   showMainWindow: vi.fn(),
   createWindow: vi.fn(),
   sendToRenderer: vi.fn(),
+  sendMenuActionWhenReady: vi.fn(),
   getMainWindow: vi.fn((): { webContents: object } | null => null),
   focusedContents: vi.fn((): { isDestroyed: () => boolean; selectAll: () => void; undo: () => void; redo: () => void } | null => null),
   connect: vi.fn(),
@@ -53,6 +54,7 @@ vi.mock('../../../src/main/window/main-window', () => ({
   getMainWindow: mocks.getMainWindow,
   createWindow: mocks.createWindow,
   sendToRenderer: mocks.sendToRenderer,
+  sendMenuActionWhenReady: mocks.sendMenuActionWhenReady,
   showMainWindow: mocks.showMainWindow,
   devToolsMode: mocks.devToolsMode,
   usesCustomTitleBar: (platform: NodeJS.Platform, linuxNativeTitleBar: boolean) =>
@@ -644,7 +646,7 @@ describe('menu telemetry', () => {
     mocks.requestUpdateCheck.mockResolvedValue({ outcome: 'available', version: '1.2.3' });
     clickItem(appMenuItems(menuTemplate(true, 'en')).find((item) => item.id === 'check-for-updates'));
     await vi.waitFor(() => {
-      expect(mocks.sendToRenderer).toHaveBeenCalledWith(IPC.menuAction, 'open-update-dialog');
+      expect(mocks.sendMenuActionWhenReady).toHaveBeenCalledWith('open-update-dialog');
     });
 
     expect(mocks.showMainWindow).toHaveBeenCalledOnce();

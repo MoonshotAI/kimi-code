@@ -225,6 +225,19 @@ describe('visibility & version skip', () => {
     expect(tracker.visible.value).toBe(true);
   });
 
+  it('lifts a skipped version when the dialog is opened directly', async () => {
+    const { bridge } = fakeBridge({ state: 'available', version: '1.2.3' });
+    const tracker = createUpdateTracker(bridge);
+    await flush();
+
+    tracker.skipVersion();
+    expect(tracker.visible.value).toBe(false);
+
+    tracker.openDialog();
+    expect(tracker.visible.value).toBe(true);
+    expect(tracker.dialogOpen.value).toBe(true);
+  });
+
   it('does not skip non-available states', async () => {
     const { bridge, emit } = fakeBridge({ state: 'downloaded', version: '1.2.3' });
     const tracker = createUpdateTracker(bridge);

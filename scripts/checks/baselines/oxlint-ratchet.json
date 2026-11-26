@@ -213,7 +213,6 @@
   },
   "eslint/prefer-const": {
     "apps/desktop/src/main/screenshot/screenshot-output.ts": 1,
-    "apps/desktop/src/main/window/main-window.ts": 1,
     "apps/desktop/tests/renderer/browser-live-view.test.ts": 2,
     "apps/desktop/tests/renderer/latest-frame.test.ts": 1,
     "apps/desktop/tests/renderer/panelAdapters.test.ts": 1,

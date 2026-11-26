@@ -95,6 +95,12 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
     void bridge?.downloadUpdate().catch(() => {});
   };
 
+  const clearSkippedVersion = (version?: string): void => {
+    if (version === undefined || version !== skippedVersion.value) return;
+    skippedVersion.value = null;
+    safeRemove(STORAGE_KEYS.updateSkippedVersion);
+  };
+
   const check = async (): Promise<UpdateCheckResult> => {
     if (typeof bridge?.checkForUpdates !== 'function') {
       return { outcome: 'unsupported' };
@@ -102,9 +108,8 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
     const result = await bridge
       .checkForUpdates()
       .catch((): UpdateCheckResult => ({ outcome: 'error', message: 'bridge call failed' }));
-    if (result.outcome === 'available' && result.version !== undefined && result.version === skippedVersion.value) {
-      skippedVersion.value = null;
-      safeRemove(STORAGE_KEYS.updateSkippedVersion);
+    if (result.outcome === 'available') {
+      clearSkippedVersion(result.version);
     }
     return result;
   };
@@ -146,6 +151,7 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
       }
     },
     openDialog: () => {
+      clearSkippedVersion(status.value.version);
       dialogOpen.value = true;
     },
     check,
