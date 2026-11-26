@@ -239,7 +239,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 }
 
-function canSplitAfter(messages: readonly Message[], index: number): boolean {
+export function canSplitAfter(messages: readonly Message[], index: number): boolean {
   const m = messages[index];
   if (m === undefined) return false;
   if (m.role === 'user') return false;

@@ -44,7 +44,7 @@ import {
   type TestkitAgentFixtures,
   type MockProviderResponse,
 } from '../../harness';
-import { batch, call, held, say, withUsage } from '@moonshot-ai/testkit/model';
+import { batch, call, held, httpError, say, withUsage } from '@moonshot-ai/testkit/model';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
@@ -766,10 +766,9 @@ describe('FullCompaction', () => {
 
     expect(attempts).toBe(3);
     expect(ctx.compactHistory()).toEqual([
-      { role: 'user', text: 'old user one' },
-      { role: 'user', text: 'recent user two' },
       { role: 'user', text: `${COMPACTION_SUMMARY_PREFIX}\nRecovered compacted summary.` },
-      { role: 'user', text: buildCompactionContinuationText() },
+      { role: 'user', text: 'recent user two' },
+      { role: 'assistant', text: 'recent assistant two' },
     ]);
     expect(
       ctx.allEvents.filter((event) => event.event === 'compaction.completed'),
@@ -827,10 +826,9 @@ describe('FullCompaction', () => {
     expect(inputs).toHaveLength(2);
     expect(inputs[1]!.length).toBeLessThan(inputs[0]!.length);
     expect(ctx.compactHistory()).toEqual([
-      { role: 'user', text: 'old user one' },
-      { role: 'user', text: 'recent user two' },
       { role: 'user', text: `${COMPACTION_SUMMARY_PREFIX}\nRecovered compacted summary.` },
-      { role: 'user', text: buildCompactionContinuationText() },
+      { role: 'user', text: 'recent user two' },
+      { role: 'assistant', text: 'recent assistant two' },
     ]);
     vi.useRealTimers();
     await ctx.expectResumeMatches();
@@ -917,7 +915,7 @@ describe('FullCompaction', () => {
       event: 'compaction_failed',
       properties: expect.objectContaining({
         source: 'manual',
-        retry_count: 1,
+        retry_count: 2,
         error_type: 'APIEmptyResponseError',
       }),
     });
@@ -1347,7 +1345,7 @@ describe('FullCompaction', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await failed;
 
-    expect(attempts).toBe(4);
+    expect(attempts).toBe(3);
     expect(ctx.newEvents()).toContainEqual(
       expect.objectContaining({
         event: 'error',
@@ -4524,7 +4522,6 @@ describe('FullCompaction cache probe', () => {
     await ctx.untilTurnEnd();
     const completed = ctx.once('compaction.completed');
 
-    ctx.expectCacheBreak('a truncated summary is retried without the oldest message', { at: 'history' });
     await ctx.rpc.beginCompaction({});
     await completed;
 
@@ -4690,6 +4687,51 @@ describe('FullCompaction pre-shrink', () => {
     );
     await ctx.expectResumeMatches();
   });
+
+  const overflowTest = base.extend<TestkitAgentFixtures>(testkitAgentFixtures());
+
+  overflowTest(
+    'retries an overflowing compaction on the leading messages and keeps the rest of the history as it was',
+    async ({ agent: ctx, model }) => {
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+      ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+      model.script(say('Turn response.'));
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the conversation' }] });
+      await ctx.untilTurnEnd();
+      model.lane('compaction').script(
+        httpError(400, { message: 'prompt is too long', type: 'context_length_exceeded' }),
+        say('Leading summary.'),
+      );
+      const completed = ctx.once('compaction.completed');
+
+      await ctx.rpc.beginCompaction({});
+      await completed;
+
+      const [overflowed, retried] = model.requests('compaction');
+      expect(overflowed?.texts('user')).toContain('Start the conversation');
+      expect(retried?.texts('user').slice(0, 2)).toEqual(['old user one', 'recent user two']);
+      expect(retried?.texts('user')).not.toContain('Start the conversation');
+      expect(ctx.compactHistory()).toEqual([
+        { role: 'user', text: `${COMPACTION_SUMMARY_PREFIX}\nLeading summary.` },
+        { role: 'user', text: 'Start the conversation' },
+        { role: 'assistant', text: 'Turn response.' },
+      ]);
+      const events = ctx.newEvents();
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'compaction.completed',
+          args: expect.objectContaining({ result: expect.objectContaining({ compactedCount: 4 }) }),
+        }),
+      );
+      expect(events).not.toContainEqual(
+        expect.objectContaining({
+          event: 'compaction.completed',
+          args: expect.objectContaining({ result: expect.objectContaining({ droppedCount: expect.any(Number) }) }),
+        }),
+      );
+      await ctx.expectResumeMatches();
+    },
+  );
 
   it('falls back to reactive overflow shrinking when the pre-shrunk request still overflows', async () => {
     let attempts = 0;
@@ -5055,23 +5097,29 @@ describe('FullCompaction pre-shrink', () => {
 
     expect(compactionBudgets).toHaveLength(1);
     const [call] = compactionBudgets;
-    expect(call!.texts.some((text) => text.includes('old user one'))).toBe(false);
-    expect(call!.texts.some((text) => text.includes('old assistant one'))).toBe(false);
-    expect(call!.texts.some((text) => text.includes('mid user two'))).toBe(true);
-    expect(call!.texts.some((text) => text.includes('recent assistant three'))).toBe(true);
+    expect(call!.texts.some((text) => text.includes('old user one'))).toBe(true);
+    expect(call!.texts.some((text) => text.includes('mid assistant two'))).toBe(true);
+    expect(call!.texts.some((text) => text.includes('recent user three'))).toBe(false);
     expect(call!.maxContextSize! - call!.usedTokens!).toBeGreaterThan(125_000);
     const events = ctx.newEvents();
     expect(events).toContainEqual(
       expect.objectContaining({
         event: 'compaction.completed',
-        args: expect.objectContaining({
-          result: expect.objectContaining({
-            droppedCount: 2,
-            tokensBefore: 1_003_601,
-          }),
-        }),
+        args: expect.objectContaining({ result: expect.objectContaining({ compactedCount: 4, tokensBefore: 1_003_601 }) }),
       }),
     );
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.completed',
+        args: expect.objectContaining({ result: expect.objectContaining({ droppedCount: expect.any(Number) }) }),
+      }),
+    );
+    expect(ctx.compactHistory()).toEqual([
+      { role: 'user', text: `${COMPACTION_SUMMARY_PREFIX}\nUsage-shrunk summary.` },
+      { role: 'user', text: 'recent user three' },
+      { role: 'assistant', text: 'recent assistant three' },
+    ]);
+    await ctx.expectResumeMatches();
   });
 });
 

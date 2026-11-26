@@ -54,6 +54,7 @@ import {
   type FullCompactionTask,
 } from './fullCompaction';
 import {
+  canSplitAfter,
   RuntimeCompactionStrategy,
   type CompactionStrategy,
 } from './strategy';
@@ -81,6 +82,12 @@ const COMPLETION_BUDGET_ESTIMATE_MARGIN_RATIO = 0.02;
 const OVERFLOW_STATUS_RECOVERY_RATIO = 0.5;
 const MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS = 3;
 const COMPACTION_OVERFLOW_SHRINK_RATIOS = [0.7, 0.5, 0.35] as const;
+const KEPT_TAIL_BUDGET_SHARE = 0.5;
+
+interface CompactionInputRange {
+  readonly start: number;
+  readonly end: number;
+}
 
 type CompactionTelemetryProperties = Pick<
   CompactionFinishedEvent,
@@ -676,8 +683,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
       const maxAttempts = resolvedModel.compactionMaxAttempts ?? MAX_COMPACTION_RETRY_ATTEMPTS;
       let attempt: CompactionAttemptResult | undefined;
-      let historyForModel: readonly ContextMessage[] = originalHistory;
-      let droppedCount = 0;
       let overflowShrinkCount = 0;
       let requestAttempts = 0;
       let cacheProbePending = true;
@@ -687,16 +692,16 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         this.requestTokens([]),
         (message) => this.tokenCounting.estimateMessage(message),
       );
-      const preShrunkHistory = this.preShrinkHistoryToWindowBudget(
-        historyForModel,
+      const { range: preShrunkRange, keptTailLimit } = this.preShrinkToWindowBudget(
+        originalHistory,
         instructionMessage,
         compactionMaxOutputSize,
         tokenProfile,
       );
-      droppedCount += historyForModel.length - preShrunkHistory.length;
-      historyForModel = preShrunkHistory;
+      let range = preShrunkRange;
       while (true) {
-        const messagesToCompact = historyForModel;
+        const messagesToCompact = originalHistory.slice(range.start, range.end);
+        const droppedCount = range.start;
         const messages: Message[] = [...messagesToCompact, instructionMessage];
         const estimatedCompactionRequestTokens =
           messagesToCompact.length === originalHistory.length
@@ -753,14 +758,24 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             ) {
               throw error;
             }
-            const before = messagesToCompact.length;
-            historyForModel = shrinkCompactionHistoryAfterOverflow(
-              messagesToCompact,
-              overflowShrinkCount,
+            const tailShrunk = shrinkFromTail(
+              originalHistory,
+              range,
+              overflowShrinkBudget(messagesToCompact, overflowShrinkCount, tokenProfile.estimateMessage),
+              keptTailLimit,
               tokenProfile.estimateMessage,
             );
-            if (historyForModel.length === 0) throw error;
-            droppedCount += before - historyForModel.length;
+            if (tailShrunk !== undefined) {
+              range = tailShrunk;
+            } else {
+              const recent = shrinkCompactionHistoryAfterOverflow(
+                messagesToCompact,
+                overflowShrinkCount,
+                tokenProfile.estimateMessage,
+              );
+              if (recent.length === 0) throw error;
+              range = { start: range.end - recent.length, end: range.end };
+            }
             retryCount = 0;
             continue;
           }
@@ -774,9 +789,16 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             if (requestAttempts >= maxAttempts) {
               throw error;
             }
-            const reduced = dropOldestMessageAndLeadingToolResults(messagesToCompact);
-            droppedCount += messagesToCompact.length - reduced.length;
-            historyForModel = reduced;
+            range = shrinkFromTail(
+              originalHistory,
+              range,
+              Number.POSITIVE_INFINITY,
+              keptTailLimit,
+              tokenProfile.estimateMessage,
+            ) ?? {
+              start: range.end - dropOldestMessageAndLeadingToolResults(messagesToCompact).length,
+              end: range.end,
+            };
             retryCount = 0;
             continue;
           }
@@ -811,7 +833,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         ? undefined
         : attempt.usage.output +
           (recoveryFooter === undefined ? 0 : this.tokenCounting.estimateText(recoveryFooter));
-      const dropped = droppedCount === 0 ? undefined : droppedCount;
+      const dropped = range.start === 0 ? undefined : range.start;
+      const keepsTail = range.end < originalHistory.length;
       this.loopService.flushReminders();
       const currentRaw = this.loopService.rawHistory();
       if (!historySafeToCompact(currentRaw, originalRaw)) {
@@ -821,11 +844,12 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       const compacted = buildContextCompactionShape(currentHistory, {
         summary,
         contextSummary,
-        compactedCount: originalHistory.length,
+        compactedCount: range.end,
         tokensBefore,
         summaryOutputTokens,
         requestOverheadTokens: this.requestTokens([]),
         droppedCount: dropped,
+        legacyTail: keepsTail,
       }, {
         text: (text) => this.tokenCounting.estimateText(text),
         message: (message) => this.tokenCounting.estimateMessage(message),
@@ -844,6 +868,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           keptHeadUserMessageCount: compacted.keptHeadUserMessageCount,
           appendedInjectionCount: compacted.appendedInjectionCount,
           droppedCount: dropped,
+          ...(keepsTail ? { legacyTail: true } : {}),
           wireLines,
         }));
         this.tokenCounting.rebase(this.agent.agentContext, {
@@ -905,31 +930,35 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     }
   }
 
-  private preShrinkHistoryToWindowBudget(
+  private preShrinkToWindowBudget(
     history: readonly ContextMessage[],
     instructionMessage: Message,
     compactionMaxOutputSize: number | undefined,
     tokenProfile: HistoryTokenProfile,
-  ): readonly ContextMessage[] {
+  ): { readonly range: CompactionInputRange; readonly keptTailLimit: number } {
+    const full: CompactionInputRange = { start: 0, end: history.length };
     const effectiveMaxTokens = this.getEffectiveMaxContextTokens();
-    if (effectiveMaxTokens <= 0) return history;
+    if (effectiveMaxTokens <= 0) return { range: full, keptTailLimit: 0 };
     const outputReserve =
       compactionMaxOutputSize === undefined
         ? Math.floor(effectiveMaxTokens / 8)
         : Math.min(compactionMaxOutputSize, Math.floor(effectiveMaxTokens / 8));
     const inputLimit = effectiveMaxTokens - outputReserve;
-    const totalInputTokens =
-      this.historyRequestTokens(history) + this.tokenCounting.estimateMessage(instructionMessage);
-    if (totalInputTokens <= inputLimit) return history;
     const messageBudget =
       Math.floor(inputLimit * OVERFLOW_CONTEXT_SAFETY_RATIO) - tokenProfile.overheadTokens;
-    if (messageBudget <= 0) return history;
-    const preShrunk = takeRecentMessagesWithinTokenBudget(
+    const keptTailLimit = Math.max(0, Math.floor(messageBudget * KEPT_TAIL_BUDGET_SHARE));
+    const totalInputTokens =
+      this.historyRequestTokens(history) + this.tokenCounting.estimateMessage(instructionMessage);
+    if (totalInputTokens <= inputLimit || messageBudget <= 0) return { range: full, keptTailLimit };
+    const leading = shrinkFromTail(history, full, messageBudget, keptTailLimit, tokenProfile.estimateMessage);
+    if (leading !== undefined) return { range: leading, keptTailLimit };
+    const recent = takeRecentMessagesWithinTokenBudget(
       history,
       messageBudget,
       tokenProfile.estimateMessage,
     );
-    return preShrunk.length === 0 ? history : preShrunk;
+    if (recent.length === 0) return { range: full, keptTailLimit };
+    return { range: { start: history.length - recent.length, end: history.length }, keptTailLimit };
   }
 
   private async postProcessSummary(summary: string): Promise<string> {
@@ -1128,19 +1157,46 @@ function historySafeToCompact(
     .every((message) => isRealUserInput(message) || message.origin?.kind === 'injection');
 }
 
+function shrinkFromTail(
+  history: readonly ContextMessage[],
+  range: CompactionInputRange,
+  tokenBudget: number,
+  keptTailLimit: number,
+  estimateMessage: (message: ContextMessage) => number,
+): CompactionInputRange | undefined {
+  let tokens = 0;
+  let end: number | undefined;
+  for (let index = range.start; index < range.end - 1; index += 1) {
+    tokens += estimateMessage(history[index]!);
+    if (tokens > tokenBudget) break;
+    if (canSplitAfter(history, index)) end = index + 1;
+  }
+  if (end === undefined) return undefined;
+  let tailTokens = 0;
+  for (let index = end; index < history.length; index += 1) tailTokens += estimateMessage(history[index]!);
+  return tailTokens <= keptTailLimit ? { start: range.start, end } : undefined;
+}
+
+function overflowShrinkBudget<T extends Message>(
+  messages: readonly T[],
+  attempt: number,
+  estimateMessage: (message: T) => number,
+): number {
+  const ratio = COMPACTION_OVERFLOW_SHRINK_RATIOS[
+    Math.min(attempt - 1, COMPACTION_OVERFLOW_SHRINK_RATIOS.length - 1)
+  ]!;
+  let totalTokens = 0;
+  for (const message of messages) totalTokens += estimateMessage(message);
+  return Math.floor(totalTokens * ratio);
+}
+
 function shrinkCompactionHistoryAfterOverflow<T extends Message>(
   messages: readonly T[],
   attempt: number,
   estimateMessage: (message: T) => number = estimateTokensForMessage,
 ): T[] {
   if (messages.length <= 1) return messages.slice();
-  const ratio = COMPACTION_OVERFLOW_SHRINK_RATIOS[
-    Math.min(attempt - 1, COMPACTION_OVERFLOW_SHRINK_RATIOS.length - 1)
-  ]!;
-  let totalTokens = 0;
-  for (const message of messages) totalTokens += estimateMessage(message);
-  const tokenBudget = Math.floor(totalTokens * ratio);
-  return takeRecentMessagesWithinTokenBudget(messages, tokenBudget, estimateMessage);
+  return takeRecentMessagesWithinTokenBudget(messages, overflowShrinkBudget(messages, attempt, estimateMessage), estimateMessage);
 }
 
 function takeRecentMessagesWithinTokenBudget<T extends Message>(
