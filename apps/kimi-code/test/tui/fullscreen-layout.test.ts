@@ -162,7 +162,7 @@ function pendingApproval(): NonNullable<ReturnType<typeof createTUIState>['liveP
   };
 }
 
-function pillLines(state: ReturnType<typeof createTUIState>): string[] {
+function pillLines(state: ReturnType<typeof createTUIState>): readonly string[] {
   const root = (state.ui as TuiAltScreen).getLayoutRoot() as VStack;
   const transcript = root.children[0] as VStack;
   return transcript.children[0]!.render(state.ui.terminal.columns);
@@ -1445,7 +1445,7 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     rows = screenRows(vt);
     expect(rows.join('\n')).toContain('Page 2/2');
-    expect(rows.join('\n')).toContain('❯ Follow-up behavior');
+    expect(rows.join('\n')).toContain('❯ Editor');
 
     state.ui.setFocus(state.notifyPanel);
     state.ui.requestRender();

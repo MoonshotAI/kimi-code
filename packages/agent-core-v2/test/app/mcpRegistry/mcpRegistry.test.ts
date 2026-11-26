@@ -22,21 +22,21 @@ import type { PluginMcpServerEntry } from '#/app/plugin/types';
 import { IMcpRegistryService, mcpServerConfigsEqual } from '#/app/mcpRegistry/mcpRegistry';
 import { McpRegistryService } from '#/app/mcpRegistry/mcpRegistryService';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
-import { decideImplicitProject } from '#/app/workspace/implicitProject';
-import { projectDirAt } from '#/app/workspace/projectWorkDir';
-import { IWorkspaceService } from '#/app/workspace/workspace';
+import { decideImplicitProject } from '#/app/project/implicitProject';
+import { projectDirAt } from '#/app/project/projectWorkDir';
+import { IProjectService } from '#/app/project/project';
 import { ErrorCodes } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { WORKSPACE_TRUST_SECTION } from '#/workspace/workspaceTrust/configSection';
-import { TRUST_WORKSPACE_ENV } from '#/workspace/workspaceTrust/workspaceTrustService';
+import { WORKSPACE_TRUST_SECTION } from '#/project/projectTrust/configSection';
+import { TRUST_WORKSPACE_ENV } from '#/project/projectTrust/projectTrustService';
 import {
-  IWorkspaceTrustStore,
-  WorkspaceTrustStore,
-} from '#/workspace/workspaceTrust/workspaceTrustStore';
+  IProjectTrustStore,
+  ProjectTrustStore,
+} from '#/project/projectTrust/projectTrustStore';
 
 import { linkedWorktree, mainCheckout } from '../git/checkoutLayouts';
 
@@ -114,9 +114,9 @@ describe('McpRegistryService', () => {
               ? { requireTrust: workspaceTrustEnabled }
               : undefined) as T) as IConfigService['get'],
         });
-        reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
+        reg.define(IProjectTrustStore, ProjectTrustStore);
         const hostFs = new HostFileSystem();
-        reg.definePartialInstance(IWorkspaceService, {
+        reg.definePartialInstance(IProjectService, {
           peekImplicit: (dir: string) =>
             decideImplicitProject(dir, [], {
               occupied: async () => false,

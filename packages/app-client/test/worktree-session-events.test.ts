@@ -9,6 +9,10 @@ import type {
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { appSession, memoryStorage, sessionWorktree as worktree } from '../src/testing/worktreeFixtures';
 
+async function flushMicrotasks(): Promise<void> {
+  for (let round = 0; round < 20; round++) await Promise.resolve();
+}
+
 const SID = 'worktree-session';
 
 function session(overrides: Partial<AppSession> = {}): AppSession {
@@ -139,7 +143,7 @@ describe('useKimiWebClient worktree session', () => {
     expect(sessionWorktreeAction).toHaveBeenCalledExactlyOnceWith(SID, 'cancel', undefined);
     expect(cancelSession).not.toHaveBeenCalled();
     expect(client.activeSessionWorktree.value?.setup.status).toBe('stopped');
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushMicrotasks();
     expect(submitPrompt).not.toHaveBeenCalled();
 
     getGitStatus.mockClear();
@@ -163,7 +167,7 @@ describe('useKimiWebClient worktree session', () => {
       { type: 'sessionWorkChanged', sessionId: SID, busy: false, mainTurnActive: false, session: ready },
       { sessionId: SID },
     );
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushMicrotasks();
     expect(submitPrompt).toHaveBeenCalledTimes(1);
   });
 });

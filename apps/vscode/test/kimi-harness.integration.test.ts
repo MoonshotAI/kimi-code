@@ -21,9 +21,13 @@ vi.mock("vscode", () => ({
 }));
 
 import {
-  createFakeProviderHarness,
-  type FakeProviderHarness,
-} from "./fake-provider-harness";
+  held,
+  httpError,
+  say,
+  startFakeModel,
+  type FakeModel,
+  type Lane,
+} from "@moonshot-ai/testkit/model";
 import { Events, Methods } from "../shared/bridge";
 import {
   MCP_SECRET_MASK,
@@ -55,7 +59,8 @@ interface LogRecord {
 interface RuntimeRig {
   readonly homeDir: string;
   readonly workDir: string;
-  readonly provider: FakeProviderHarness;
+  readonly provider: FakeModel;
+  readonly replies: Lane;
   readonly runtime: KimiRuntime;
   readonly broadcasts: BroadcastRecord[];
   readonly logs: LogRecord[];
@@ -84,7 +89,8 @@ async function createRuntimeRig(extraAliases: readonly string[] = []): Promise<R
   const workDir = join(rootDir, "workspace");
   await Promise.all([mkdir(homeDir), mkdir(workDir)]);
 
-  const provider = await createFakeProviderHarness();
+  const provider = await startFakeModel();
+  const replies = provider.route("vscode", () => true);
   let providerOpen = true;
   const closeProvider = async (): Promise<void> => {
     if (!providerOpen) return;
@@ -92,7 +98,7 @@ async function createRuntimeRig(extraAliases: readonly string[] = []): Promise<R
     await provider.close();
   };
 
-  await writeProviderConfig(homeDir, `${provider.baseUrl}/v1`, extraAliases);
+  await writeProviderConfig(homeDir, provider.baseUrl, extraAliases);
   const version = await readExtensionVersion();
   const broadcasts: BroadcastRecord[] = [];
   const logs: LogRecord[] = [];
@@ -113,9 +119,13 @@ async function createRuntimeRig(extraAliases: readonly string[] = []): Promise<R
       await runtime.dispose();
     } finally {
       try {
-        await closeProvider();
+        provider.verify();
       } finally {
-        await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        try {
+          await closeProvider();
+        } finally {
+          await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        }
       }
     }
   });
@@ -124,6 +134,7 @@ async function createRuntimeRig(extraAliases: readonly string[] = []): Promise<R
     homeDir,
     workDir,
     provider,
+    replies,
     runtime,
     broadcasts,
     logs,
@@ -234,57 +245,19 @@ max_attempts_per_step = 1
   );
 }
 
-function routeSuccessfulPrompt(provider: FakeProviderHarness): void {
-  provider.route("POST", "/v1/chat/completions", async (_request, reply) => {
-    await reply.sseJson(200, [
-      completionChunk({ content: "mock response" }),
-      completionChunk({}, "stop"),
-    ]);
-  });
+function scriptRejectedRequest(rig: RuntimeRig): void {
+  rig.replies.script(
+    httpError(400, { message: "mock request rejected", type: "invalid_request_error" }),
+  );
 }
 
-function routeBadRequest(provider: FakeProviderHarness): void {
-  provider.route("POST", "/v1/chat/completions", async (_request, reply) => {
-    await reply.json(400, {
-      error: {
-        message: "mock request rejected",
-        type: "invalid_request_error",
-      },
-    });
-  });
-}
-
-function routeBlockedPrompt(provider: FakeProviderHarness): {
-  readonly started: Promise<void>;
+function scriptBlockedReply(rig: RuntimeRig): {
+  readonly started: Promise<unknown>;
   readonly release: () => void;
 } {
-  let markStarted!: () => void;
-  let release!: () => void;
-  const started = new Promise<void>((resolve) => {
-    markStarted = resolve;
-  });
-  const blocked = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  provider.route("POST", "/v1/chat/completions", async (_request, reply) => {
-    markStarted();
-    await blocked;
-    await reply.sseJson(200, [completionChunk({ content: "late response" }), completionChunk({}, "stop")]);
-  });
-  return { started, release };
-}
-
-function completionChunk(
-  delta: Record<string, unknown>,
-  finishReason: string | null = null,
-): Record<string, unknown> {
-  return {
-    id: "chatcmpl-vscode-test",
-    object: "chat.completion.chunk",
-    created: 1,
-    model: "mock-model",
-    choices: [{ index: 0, delta, finish_reason: finishReason }],
-  };
+  rig.replies.script(held("blocked-reply", say("late response")));
+  const hold = rig.provider.hold("blocked-reply");
+  return { started: hold.reached(), release: () => hold.release() };
 }
 
 async function openRuntimeSession(rig: RuntimeRig, sessionId?: string, yoloMode = false) {
@@ -415,12 +388,12 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
 
   it("sends the package version in User-Agent when VS Code prompts the provider", async () => {
     const rig = await createRuntimeRig();
-    routeSuccessfulPrompt(rig.provider);
+    rig.replies.script(say("mock response"));
     const session = await openRuntimeSession(rig);
 
     await expect(session.prompt("hello")).resolves.toEqual({ status: "finished" });
 
-    expect(rig.provider.requests[0]?.headers["user-agent"]).toBe(
+    expect(rig.provider.requests()[0]?.headers["user-agent"]).toBe(
       `kimi-code-vscode/${rig.version}`,
     );
   });
@@ -1135,7 +1108,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
         },
       ],
     });
-    expect(rig.provider.requests).toHaveLength(0);
+    expect(rig.provider.requests()).toHaveLength(0);
     expect(streamEvents(rig.broadcasts)).toContainEqual({
       type: "TurnBegin",
       payload: { user_input: "/import notes.md", forkable: true },
@@ -1157,7 +1130,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
 
   it("applies the composer-submitted model before the turn starts", async () => {
     const rig = await createRuntimeRig(["vscode-alt"]);
-    routeSuccessfulPrompt(rig.provider);
+    rig.replies.script(say("mock response"));
     const runtime = await openRuntimeSession(rig);
 
     const result = await chatHandlers[Methods.StreamChat]!(
@@ -1180,7 +1153,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     await expect(runtime.session.getStatus()).resolves.toMatchObject({ planMode: true });
     await expect(runSlash(runtime, "/plan off")).resolves.toBe(true);
     await expect(runtime.session.getStatus()).resolves.toMatchObject({ planMode: false });
-    expect(rig.provider.requests).toHaveLength(0);
+    expect(rig.provider.requests()).toHaveLength(0);
   });
 
   it("clears a non-persisted slash-added directory after VS Code closes and resumes the session", async () => {
@@ -1210,7 +1183,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
 
   it("fails a prompt sent while a turn is running without disturbing the active turn", async () => {
     const rig = await createRuntimeRig();
-    const blocked = routeBlockedPrompt(rig.provider);
+    const blocked = scriptBlockedReply(rig);
     const runtime = await openRuntimeSession(rig);
     const first = runtime.prompt("first message");
     await blocked.started;
@@ -1229,7 +1202,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
 
   it("stops a running init command without surfacing its late result", async () => {
     const rig = await createRuntimeRig();
-    const blocked = routeBlockedPrompt(rig.provider);
+    const blocked = scriptBlockedReply(rig);
     const runtime = await openRuntimeSession(rig);
     const command = runSlash(runtime, "/init");
     await blocked.started;
@@ -1244,7 +1217,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
 
   it("stops a running manual compaction through the compaction cancellation API", async () => {
     const rig = await createRuntimeRig();
-    const blocked = routeBlockedPrompt(rig.provider);
+    const blocked = scriptBlockedReply(rig);
     const runtime = await openRuntimeSession(rig);
     await runtime.session.importContext("Enough prior context to compact.", "file 'prior.md'");
     const command = runSlash(runtime, "/compact keep decisions");
@@ -1259,7 +1232,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
 
   it("keeps the host action busy until manual compaction completes", async () => {
     const rig = await createRuntimeRig();
-    routeSuccessfulPrompt(rig.provider);
+    rig.replies.script(say("Compacted summary."));
     const runtime = await openRuntimeSession(rig);
     await runtime.session.importContext("Enough prior context to compact.", "file 'prior.md'");
 
@@ -1380,7 +1353,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
 
   it("settles the prompt as failed when the provider returns 400", async () => {
     const rig = await createRuntimeRig();
-    routeBadRequest(rig.provider);
+    scriptRejectedRequest(rig);
     const session = await openRuntimeSession(rig);
 
     await expect(session.prompt("reject this request")).resolves.toEqual({ status: "failed" });
@@ -1393,20 +1366,8 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
 
   it("accepts a new prompt after a provider 400 ends the previous turn", async () => {
     const rig = await createRuntimeRig();
-    let calls = 0;
-    rig.provider.route("POST", "/v1/chat/completions", async (_request, reply) => {
-      calls += 1;
-      if (calls === 1) {
-        await reply.json(400, {
-          error: { message: "mock request rejected", type: "invalid_request_error" },
-        });
-        return;
-      }
-      await reply.sseJson(200, [
-        completionChunk({ content: "recovered" }),
-        completionChunk({}, "stop"),
-      ]);
-    });
+    scriptRejectedRequest(rig);
+    rig.replies.script(say("recovered"));
     const session = await openRuntimeSession(rig);
     await session.prompt("first request");
 
@@ -1415,7 +1376,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
 
   it("does not expose the provider token when reporting a provider 400", async () => {
     const rig = await createRuntimeRig();
-    routeBadRequest(rig.provider);
+    scriptRejectedRequest(rig);
     const session = await openRuntimeSession(rig);
 
     await session.prompt("reject this request");
@@ -1425,7 +1386,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
 
   it("keeps the provider's 400 detail in the extension-host log", async () => {
     const rig = await createRuntimeRig();
-    routeBadRequest(rig.provider);
+    scriptRejectedRequest(rig);
     const session = await openRuntimeSession(rig);
 
     await session.prompt("reject this request");

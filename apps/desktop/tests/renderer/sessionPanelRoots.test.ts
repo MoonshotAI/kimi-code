@@ -50,6 +50,7 @@ vi.mock('@moonshot-ai/app-client/composables', async (importOriginal) => ({
   useEscInterrupt: () => ({ armed: ref(false), reset: vi.fn() }),
   useWorkspaceTrust: () => ({
     trustDenied: ref(false),
+    trustReadPending: ref(false),
     trustRejected: ref(false),
     trustGateOpen: ref(false),
     busy: ref(false),
@@ -102,6 +103,7 @@ function mountHeader(): void {
   mocks.client = {
     activeSessionId: computed(() => sessionsStore().activeSessionId ?? ''),
     activeSessionArchived: ref(false),
+    activeSessionEnvironment: ref('local'),
     visibleWorkspace: computed(() => workspacesStore().visibleWorkspace),
   };
   app = createApp({ render: () => h(ChatHeader) });

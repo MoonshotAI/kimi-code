@@ -1,4 +1,4 @@
-import { IWorkspaceService, type Scope } from '@moonshot-ai/agent-core-v2';
+import { IProjectService, type Scope } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -117,7 +117,7 @@ export function registerWorktreeRoutes(
       tags: ['worktrees'],
     },
     async (req, reply) => {
-      const workspace = await core.accessor.get(IWorkspaceService).get(req.params.workspace_id);
+      const workspace = await core.accessor.get(IProjectService).get(req.params.workspace_id);
       if (workspace === undefined) {
         reply.send(
           errEnvelope(

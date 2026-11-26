@@ -35,6 +35,9 @@ const BLOCK = `${ROW}${SHOWN}:not(:has(${LIST}))`;
 const REPLY = `:not(:has(${DISCLOSURE})):not(:has(${STATE})):has(${MARKDOWN})`;
 const ON_A_CARD = `${SHOWN}:not(:is(${MARKDOWN}), :is(${MARKDOWN}) *)`;
 const DESCRIBED_LINES = 80;
+const NEW_SESSION = 'New Session';
+const COMPACT_COMMAND = '/compact';
+const COMPACTED = /^Context compacted/;
 const APPROVAL_TITLES: Readonly<Record<string, ApprovalToolName>> = { 'Run command?': 'Bash', 'Apply changes?': 'Edit', 'Write file?': 'Write' };
 const COMMAND_PROMPT = '$ ';
 const FEEDBACK_BOX = 'Explain why you are rejecting…';
@@ -99,6 +102,8 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     const before = await this.conversationSize();
     await this.press('send()', 'the message input', this.composer());
     await this.page.keyboard.type(text);
+    const send = this.page.getByRole('button', { name: 'Send ↵', exact: true, disabled: false });
+    await this.wait('the Send button to become enabled', async () => (await send.isVisible()) || undefined);
     await this.page.keyboard.press('Enter');
     await this.wait(`the user message ${JSON.stringify(text)} to appear in the conversation`, () => this.messageAfter(before, text));
   }
@@ -159,8 +164,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     const ask = await this.pendingAsk(`an approval for ${wanted}`);
     if (ask === undefined) throw new Error(`expectApproval() found no approval for ${wanted}: the turn ended without asking for one.\n${await this.describe()}`);
     if (ask === 'question') throw new Error(`expectApproval() found no approval for ${wanted}: ${QUESTION_PENDING}.\n${await this.describe()}`);
-    const card = this.minimizeButton().locator('xpath=ancestor::*').filter({ has: this.approveButton() }).last();
-    const lines = (await card.innerText({ timeout: TIMEOUTS.wait }))
+    const lines = (await this.approvalCard().innerText({ timeout: TIMEOUTS.wait }))
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line !== '');
@@ -271,7 +275,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
       throw new Error(`expectReply() did not find ${JSON.stringify(text)} in an assistant reply. The turn ended and it shows:\n${await this.describe()}`);
     }
     const flat = (value: string): string => value.replaceAll(/\s+/g, ' ').trim();
-    const times = (await this.replies().allInnerTexts()).reduce((sum, reply) => sum + flat(reply).split(flat(text)).length - 1, 0);
+    const times = (await this.replies().allTextContents()).reduce((sum, reply) => sum + flat(reply).split(flat(text)).length - 1, 0);
     if (times > 1) {
       throw new Error(`expectReply() found ${JSON.stringify(text)} ${times} times in the replies of this turn; it must appear exactly once.\n${await this.describe()}`);
     }
@@ -344,6 +348,58 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     } catch (error) {
       return `The page could not be read: ${reasonOf(error)}`;
     }
+  }
+
+  async compact(): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`compact() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    const compacted = this.conversation().getByText(COMPACTED);
+    const before = await compacted.count();
+    await this.press('compact()', 'the message input', this.composer());
+    await this.page.keyboard.type(COMPACT_COMMAND);
+    await this.page.keyboard.press('Enter');
+    await this.page.keyboard.press('Enter');
+    await this.wait('the conversation to show Context compacted (Desktop and Web show nothing when a compaction fails, so a failed one ends in this timeout)', async () =>
+      (await compacted.count()) > before && (await this.idle()) ? true : undefined,
+    );
+  }
+
+  async newSession(): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`newSession() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    await this.press('newSession()', `the ${NEW_SESSION} button`, this.page.getByRole('button', { name: new RegExp(`^${NEW_SESSION}`) }).first());
+    await this.wait('a new, empty conversation', async () => ((await this.conversationSize()) === 0 && (await this.composer().isVisible()) ? true : undefined));
+  }
+
+  async resize(viewport: { readonly width: number; readonly height: number }): Promise<void> {
+    const area = await this.inputArea();
+    const before = await area.boundingBox({ timeout: TIMEOUTS.wait }).catch(() => null);
+    if (before === null) throw new Error(`resize() needs the message input, an approval or a question on screen to tell when the page has laid itself out again.\n${await this.describe()}`);
+    await this.page.setViewportSize(viewport);
+    let previous: string | undefined;
+    await this.wait(`the message input, approval or question to settle inside a window ${viewport.width} pixels wide`, async () => {
+      const box = await area.boundingBox({ timeout: TIMEOUTS.wait }).catch(() => null);
+      if (box === null || box.width === before.width || box.x < 0 || box.x + box.width > viewport.width) {
+        previous = undefined;
+        return undefined;
+      }
+      const reading = JSON.stringify(box);
+      const settled = reading === previous;
+      previous = reading;
+      return settled ? true : undefined;
+    });
+  }
+
+  private async inputArea(): Promise<Locator> {
+    if (await this.approvalShown()) return this.approvalCard();
+    if (await this.questionShown()) return this.questionCard();
+    return this.composer();
+  }
+
+  private approvalCard(): Locator {
+    return this.minimizeButton().locator('xpath=ancestor::*').filter({ has: this.approveButton() }).last();
   }
 
   private composer(): Locator {
@@ -495,8 +551,8 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
         throw new Error(`expectTranscript() can read only the ${rendered} of ${size} messages the conversation has rendered; keep the scenario's conversation short enough to fit.`);
       }
     }
-    const users = await rows.filter({ hasNot: this.page.locator(LIST) }).allInnerTexts();
-    const replies = await this.conversation().locator(`${ROW} ${BLOCK}${REPLY}`).allInnerTexts();
+    const users = await rows.filter({ hasNot: this.page.locator(LIST) }).allTextContents();
+    const replies = await this.conversation().locator(`${ROW} ${BLOCK}${REPLY}`).allTextContents();
     const flat = (value: string): string => value.replaceAll(/\s+/g, ' ').trim();
     return [...users, ...replies].reduce((sum, shown) => sum + flat(shown).split(flat(text)).length - 1, 0);
   }
@@ -683,7 +739,9 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
   }
 
   private async approvalShown(): Promise<boolean> {
-    return (await this.approveButton().isVisible()) && (await this.rejectButton().isVisible());
+    const approve = this.page.getByRole('button', { name: 'Approve', exact: true, disabled: false });
+    const reject = this.page.getByRole('button', { name: 'Reject', exact: true, disabled: false });
+    return (await approve.isVisible()) && (await reject.isVisible());
   }
 
   private async answerApproval(verb: string, button: Locator): Promise<void> {

@@ -7,7 +7,7 @@ import {
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
   IAgentLoopService,
-  IWorkspaceTrust,
+  IProjectTrust,
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
@@ -127,7 +127,7 @@ describe('server-v2 session worktrees', () => {
     expect(main.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(worktree.path);
     expect(main.accessor.get(IAgentLoopService).getSystemPrompt()).toContain(worktree.path);
     const live = getLiveSessionById(fixture.server.core.accessor, created.id)!;
-    expect(live.accessor.get(IWorkspaceTrust).isTrusted()).toBe(true);
+    expect(live.accessor.get(IProjectTrust).isTrusted()).toBe(true);
 
     await expect.poll(() => events.at(-1)?.session.worktree?.setup.status).toBe('ready');
     const mine = events.filter((event) => event.session.id === created.id);

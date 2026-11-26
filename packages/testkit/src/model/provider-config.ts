@@ -1,7 +1,7 @@
 import type { KimiConfig } from '#/fixtures/config';
 import type { FakeModel } from '#/model/fake-model';
 
-export type FakeProviderType = 'kimi' | 'openai' | 'anthropic' | 'google-genai';
+export type FakeProviderType = 'kimi' | 'openai' | 'openai_responses' | 'anthropic' | 'google-genai';
 
 export interface FakeProviderOptions {
   readonly type?: FakeProviderType;

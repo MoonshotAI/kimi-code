@@ -1,6 +1,6 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type {
+  PermissionMode,
   PermissionPolicy,
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
@@ -8,12 +8,8 @@ import type {
 export class AutoModeAskUserQuestionDenyPermissionPolicyService implements PermissionPolicy {
   readonly name = 'auto-mode-ask-user-question-deny';
 
-  constructor(
-    @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
-  ) {}
-
-  evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {
-    if (this.modeService.mode !== 'auto') return undefined;
+  evaluate(context: ResolvedToolExecutionHookContext, mode: PermissionMode): PermissionPolicyResult | undefined {
+    if (mode !== 'auto') return undefined;
     if (context.toolCall.name !== 'AskUserQuestion') return undefined;
     return {
       kind: 'deny',

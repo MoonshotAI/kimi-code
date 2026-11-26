@@ -5,7 +5,7 @@ import { HistoryStateKey } from '@moonshot-ai/app-core/contracts';
 import BlockList from './BlockList.vue';
 import { useHistoryState } from './historyState';
 import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
-import { useActivityRunFolding } from '@moonshot-ai/app-client/composables';
+import { useActivityRunFolding, useAutoReviewHint } from '@moonshot-ai/app-client/composables';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ToolCall from './ToolCall.vue';
 import RequestDebugRow from './RequestDebugRow.vue';
@@ -158,7 +158,11 @@ function toggle(): void {
 
 const browserSummary = computed(() => ({ contextOf, recovered: folded.value.recovered }));
 
-const live = computed(() => summarizeLive(props.items, currentItem.value, browserSummary.value));
+const reviewHint = useAutoReviewHint(() => {
+  const item = currentItem.value;
+  return item?.kind === 'tool' && item.tool.autoReviewing === true;
+});
+const live = computed(() => summarizeLive(props.items, currentItem.value, browserSummary.value, reviewHint.value));
 const settled = computed(() => summarizeActivity(props.items, { durationMs: settledDurationMs.value, browser: browserSummary.value }));
 
 const elapsedLabel = computed(() => {

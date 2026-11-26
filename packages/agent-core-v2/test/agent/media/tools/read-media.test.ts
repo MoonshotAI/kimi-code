@@ -1243,7 +1243,8 @@ describe('createVideoUploader', () => {
 
     expect(result.isError).toBeFalsy();
     const stored = await store.get(mediaUrl(outputParts(result)[1]));
-    expect(Buffer.from(stored!.bytes)).toEqual(heic);
+    expect(stored!.bytes.byteLength).toBe(heic.byteLength);
+    expect(Buffer.compare(Buffer.from(stored!.bytes), heic)).toBe(0);
   });
 
   it('preserves a HEIC above the former provider inline budget', async () => {
@@ -1255,7 +1256,8 @@ describe('createVideoUploader', () => {
 
     expect(result.isError).toBeFalsy();
     const stored = await store.get(mediaUrl(outputParts(result)[1]));
-    expect(Buffer.from(stored!.bytes)).toEqual(heic);
+    expect(stored!.bytes.byteLength).toBe(heic.byteLength);
+    expect(Buffer.compare(Buffer.from(stored!.bytes), heic)).toBe(0);
   });
 
   it('puts AVIF for capability and format handling during resolution', async () => {

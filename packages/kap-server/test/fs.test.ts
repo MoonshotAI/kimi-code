@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { Error2, ErrorCodes, IEnvironmentService, IModelCatalog, ISessionManager, IWorkspaceInstanceManager, WorkspaceFsService, getLiveSessionById } from '@moonshot-ai/agent-core-v2';
+import { Error2, ErrorCodes, IEnvironmentService, IModelCatalog, ISessionManager, IProjectInstanceManager, ProjectFsService, getLiveSessionById } from '@moonshot-ai/agent-core-v2';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { IProjectPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/projectPermissionRules';
-import { IWorkspacePersistence } from '@moonshot-ai/agent-core-v2/app/workspace/workspacePersistence';
+import { IProjectPersistence } from '@moonshot-ai/agent-core-v2/app/project/projectPersistence';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -1355,7 +1355,7 @@ describe('server-v2 /api/v1 fs routes', () => {
 
     const previewItem = { path: 'preview.ts', name: 'preview.ts', kind: 'file' as const, score: 1, match_positions: [] };
     const finalItem = { path: 'epsilon.ts', name: 'epsilon.ts', kind: 'file' as const, score: 1, match_positions: [0] };
-    const streamSpy = vi.spyOn(WorkspaceFsService.prototype, 'suggestStream');
+    const streamSpy = vi.spyOn(ProjectFsService.prototype, 'suggestStream');
     try {
       streamSpy.mockImplementation(async function* () {
         yield { phase: 'preview' as const, response: { items: [previewItem], truncated: true } };
@@ -1601,7 +1601,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     } as never)).json()) as Envelope<unknown>;
     expect(trusted.code).toBe(0);
     const before = await listWorkspaces();
-    const instances = server!.core.accessor.get(IWorkspaceInstanceManager);
+    const instances = server!.core.accessor.get(IProjectInstanceManager);
     const openBefore = instances.list().map((instance) => instance.id);
 
     const listed = await postWorkspaceList<{ items: FsEntryWire[] }>({ workspace: work });
@@ -1657,7 +1657,7 @@ describe('server-v2 /api/v1 fs routes', () => {
       const extra = join(lab, 'shared');
       await mkdir(extra);
       await writeFile(join(extra, 'extra-file.ts'), '');
-      await server!.core.accessor.get(IWorkspacePersistence).update((catalog) => ({
+      await server!.core.accessor.get(IProjectPersistence).update((catalog) => ({
         ...catalog,
         workspaces: [
           ...catalog.workspaces,
@@ -1708,7 +1708,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect((await listWorkspaces()).some((w) => workAliases.has(w.root))).toBe(false);
     expect(
       server!.core.accessor
-        .get(IWorkspaceInstanceManager)
+        .get(IProjectInstanceManager)
         .list()
         .some((w) => workAliases.has(w.root)),
     ).toBe(false);

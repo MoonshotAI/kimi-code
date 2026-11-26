@@ -4,12 +4,12 @@ import { join } from 'node:path';
 import {
   IBootstrapService,
   ISessionIndex,
-  IWorkspaceService,
+  IProjectService,
   isError2,
   patchSessionMetadata,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import type { Workspace } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
+import type { Project } from '@moonshot-ai/agent-core-v2/app/project/project';
 import { SessionErrors } from '@moonshot-ai/agent-core-v2/session/errors';
 
 import { ErrorCode } from '../../protocol/error-codes';
@@ -173,7 +173,7 @@ export class SessionWorktreeService {
   }
 
   async planCreate(
-    workspace: Pick<Workspace, 'id' | 'root' | 'name'>,
+    workspace: Pick<Project, 'id' | 'root' | 'name'>,
     request: WorktreeSetupRequest,
   ): Promise<PlannedWorktreeSetup> {
     if (!(await isRepoRoot(workspace.root))) {
@@ -392,7 +392,7 @@ export class SessionWorktreeService {
         if (stored.path !== undefined) {
           throw stateInvalid('the worktree already exists');
         }
-        const workspace = await this.core.accessor.get(IWorkspaceService).get(summary.workspaceId);
+        const workspace = await this.core.accessor.get(IProjectService).get(summary.workspaceId);
         if (workspace === undefined) {
           throw new WorktreeError(
             ErrorCode.WORKSPACE_NOT_FOUND,

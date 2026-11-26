@@ -6,6 +6,18 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.8.0（2026-11-25）
+
+### 优化
+
+- 优化提示词预测功能，可在 `/experiments` 开启。
+- TUI 连续排队发送消息时，中间回合不再弹出完成通知；后台任务仍会照常提醒。
+
+### 修复
+
+- 修复使用已失效的模型的会话不能恢复的问题。
+- 修复了一些已知问题，并做了若干细节优化。更多技术条目见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 2.7.3（2026-11-24）
 
 ### 修复

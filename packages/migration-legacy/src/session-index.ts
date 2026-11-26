@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import type { SessionIndexLine } from '@moonshot-ai/agent-core-v2/app/workspace/workspaceAlias';
+import type { SessionIndexLine } from '@moonshot-ai/agent-core-v2/app/project/projectAlias';
 
 import { targetSessionIndex } from './paths.js';
 

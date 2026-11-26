@@ -29,6 +29,7 @@ afterEach(() => {
 function mountDialog(props: {
   sessionType: 'old' | 'new';
   kind?: 'model' | 'effort';
+  toModel?: string;
   fromEffort?: string;
   toEffort?: string;
   hint?: string;
@@ -48,15 +49,30 @@ function button(label: string): HTMLButtonElement | undefined {
 }
 
 describe('ModelSwitchConfirmDialog', () => {
-  it('shows compact, continue, and cancel choices for an old session', async () => {
-    const select = mountDialog({ sessionType: 'old', hint: 'Model hint', warning: 'Model warning' });
+  it('shows target prompt, compact and continue cards, and a footer cancel button for an old session', async () => {
+    const select = mountDialog({ sessionType: 'old', toModel: 'Claude Sonnet 4.5', hint: 'Model hint', warning: 'Model warning' });
     await nextTick();
 
+    expect(document.body.textContent).toContain('Switch to Claude Sonnet 4.5. How should this session continue?');
     expect(document.body.textContent).toContain('Model hint');
     expect(document.body.textContent).toContain('Model warning');
-    expect(button('Compact and continueLower cost and better output quality when continuing this session')).toBeDefined();
-    button('Continue as-isOutput quality may suffer · cache loss may increase token usage')!.click();
+    const cards = [...document.querySelectorAll<HTMLButtonElement>('.model-switch-confirm__option')];
+    expect(cards).toHaveLength(2);
+    expect(cards[0]?.textContent).toContain('Compact and continue');
+    expect(cards[0]?.textContent).toContain('Continue this session with lower cost and better results');
+    expect(cards[1]?.textContent).toContain('Continue as-is');
+    expect(cards[1]?.textContent).toContain('Quality may degrade | cache miss, higher token usage');
+
+    cards[0]!.click();
+    expect(select).toHaveBeenCalledWith('compact');
+
+    select.mockClear();
+    cards[1]!.click();
     expect(select).toHaveBeenCalledWith('continue');
+
+    select.mockClear();
+    button('Cancel')!.click();
+    expect(select).toHaveBeenCalledWith('cancel');
   });
 
   it('uses confirm and cancel footer actions for a new session', async () => {

@@ -60,6 +60,18 @@ import type {
   WorkspaceTrustInfo,
   WorkspaceTrustInfoOptions,
 } from '#/types';
+import type {
+  CreatedWorktree,
+  CreateWorktreeInput,
+  CreateWorktreeOptions,
+  InspectWorktreeRemovalInput,
+  RemoveWorktreeInput,
+  RunSetupScriptInput,
+  RunSetupScriptOptions,
+  WorkLocation,
+  WorktreeListing,
+  WorktreeRemovalCheck,
+} from '#/worktree';
 
 export interface KimiHarnessEnvironmentOptions {
   readonly identity?: KimiHostIdentity;
@@ -375,6 +387,33 @@ export class KimiHarness {
    */
   async getGitPullRequest(workDir: string, input: GitQueryInput = {}): Promise<GitPullRequest | null> {
     return this.rpc.getGitPullRequest(workDir, input);
+  }
+
+  async resolveWorkLocation(cwd: string): Promise<WorkLocation> {
+    return this.rpc.resolveWorkLocation(cwd);
+  }
+
+  async listWorktrees(cwd: string): Promise<WorktreeListing> {
+    return this.rpc.listWorktrees(cwd);
+  }
+
+  async createWorktree(input: CreateWorktreeInput, options?: CreateWorktreeOptions): Promise<CreatedWorktree> {
+    return this.rpc.createWorktree(input, options);
+  }
+
+  async runWorktreeSetupScript(
+    input: RunSetupScriptInput,
+    options?: RunSetupScriptOptions,
+  ): Promise<{ readonly exitCode: number }> {
+    return this.rpc.runWorktreeSetupScript(input, options);
+  }
+
+  async inspectWorktreeRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck> {
+    return this.rpc.inspectWorktreeRemoval(input);
+  }
+
+  async removeWorktree(input: RemoveWorktreeInput): Promise<void> {
+    return this.rpc.removeWorktree(input);
   }
 
   /**

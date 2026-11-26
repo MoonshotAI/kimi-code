@@ -21,12 +21,12 @@ export type AppDialogsDeps = {
   restorePendingComposer: (pending: PendingWorkspaceSubmit, sessionId?: string) => void;
   beforePendingPromptSend?: (pending: PendingWorkspaceSubmit) => void;
   onWorkspaceAdded?: () => void;
+  openQuickModelMenu?: (targetSid?: string) => void;
 };
 
 const showOnboarding = ref(false);
 const showMobileSwitcher = ref(false);
 const showMobileSettings = ref(false);
-const showModelPicker = ref(false);
 const showLogin = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
@@ -38,9 +38,6 @@ export type SettingsHighlightKey = 'running-send-mode';
 const settingsInitialTab = ref<'providers' | 'archived' | 'agent' | 'hosts' | 'worktrees' | undefined>(undefined);
 const mobileSettingsInitialTab = ref<'providers' | undefined>(undefined);
 const settingsHighlightKey = ref<SettingsHighlightKey | undefined>(undefined);
-const modelPickerTargetSid = ref<string | undefined>(undefined);
-const modelsLoading = ref(false);
-const modelsUnavailable = ref(false);
 const configSaving = ref(false);
 const addWorkspaceError = ref<string | null>(null);
 const pendingWorkspaceSubmit = ref<PendingWorkspaceSubmit | null>(null);
@@ -59,7 +56,6 @@ watch([showSettings, showMobileSettings], ([settingsOpen, mobileOpen]) => {
 const anyOverlayOpen = computed<boolean>(
   () =>
     openDialogCount.value > 0 ||
-    showModelPicker.value ||
     showLogin.value ||
     showAddWorkspace.value ||
     showStatusPanel.value ||
@@ -75,7 +71,6 @@ let dialogOpenSeq = 0;
 
 export function openAgentSettings(mobile = false): void {
   const seq = ++dialogOpenSeq;
-  showModelPicker.value = false;
   if (mobile) {
     showSettings.value = false;
     mobileSettingsInitialTab.value = undefined;
@@ -110,7 +105,6 @@ export function openAgentSettings(mobile = false): void {
 
 function openWorktreeSettingsTab(): void {
   const seq = ++dialogOpenSeq;
-  showModelPicker.value = false;
   showMobileSettings.value = false;
   settingsHighlightKey.value = undefined;
   settingsInitialTab.value = 'worktrees';
@@ -130,7 +124,6 @@ registerWorktreeSettingsOpener(openWorktreeSettingsTab);
 
 export function openHostSettings(hostId?: string, options?: { addIfEmpty?: boolean }): void {
   const seq = ++dialogOpenSeq;
-  showModelPicker.value = false;
   showMobileSettings.value = false;
   settingsHighlightKey.value = undefined;
   hostsStore().requestFocus(hostId ?? null, options);
@@ -175,17 +168,9 @@ export function useAppDialogs(dialogDeps?: AppDialogsDeps) {
   }
 
   async function openModelPicker(targetSid?: string): Promise<void> {
-    modelPickerTargetSid.value = targetSid;
-    modelsLoading.value = true;
-    modelsUnavailable.value = false;
-    showModelPicker.value = true;
-    try {
-      await client.refreshAllProviders();
-    } catch {
-      modelsUnavailable.value = true;
-    } finally {
-      modelsLoading.value = false;
-    }
+    await client.refreshAllProviders();
+    await nextTick();
+    deps?.openQuickModelMenu?.(targetSid);
   }
 
   registerModelPickerOpener(openModelPicker);
@@ -200,7 +185,6 @@ export function useAppDialogs(dialogDeps?: AppDialogsDeps) {
 
   function openProviderSettings(): void {
     const seq = ++dialogOpenSeq;
-    showModelPicker.value = false;
     settingsHighlightKey.value = undefined;
     if (isMobile.value) {
       showSettings.value = false;
@@ -281,7 +265,6 @@ export function useAppDialogs(dialogDeps?: AppDialogsDeps) {
     showOnboarding,
     showMobileSwitcher,
     showMobileSettings,
-    showModelPicker,
     showLogin,
     showAddWorkspace,
     showStatusPanel,
@@ -291,9 +274,6 @@ export function useAppDialogs(dialogDeps?: AppDialogsDeps) {
     settingsInitialTab,
     mobileSettingsInitialTab,
     settingsHighlightKey,
-    modelPickerTargetSid,
-    modelsLoading,
-    modelsUnavailable,
     configSaving,
     addWorkspaceError,
     pendingWorkspaceSubmit,

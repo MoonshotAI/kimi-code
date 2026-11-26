@@ -434,7 +434,13 @@ interface WireInteractionBase<K extends string, Req, Res> {
 export type WireInteraction =
   | WireInteractionBase<
       'approval',
-      { tool_name: string; action: string; tool_input_display?: unknown; expires_at: string },
+      {
+        tool_name: string;
+        action: string;
+        tool_input_display?: unknown;
+        approval_detail?: { outcome: 'denied' | 'failed'; risk?: 'low' | 'medium' | 'high'; reason: string };
+        expires_at: string;
+      },
       WireApprovalResponse
     >
   | WireInteractionBase<
@@ -494,10 +500,6 @@ export interface WireAgentStateFrame extends WireAgentFrameBase {
   plan_mode: boolean;
   swarm_mode: boolean;
   tower_mode: boolean;
-  plan_mode_available: boolean;
-  swarm_mode_available: boolean;
-  tower_mode_available: boolean;
-  goal_mode_available: boolean;
 }
 
 export interface WireContextFrame extends WireAgentFrameBase {
@@ -667,7 +669,6 @@ export interface WireConfig {
   default_provider?: string;
   default_model?: string;
   secondary_model?: unknown;
-  tools?: { enabled?: string[]; disabled?: string[] };
   models?: Record<string, unknown>;
   thinking?: unknown;
   plan_mode?: boolean;

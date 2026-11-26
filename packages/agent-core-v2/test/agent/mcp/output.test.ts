@@ -19,6 +19,8 @@ import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/mcpCore/types'
 import type { ToolExecution } from '#/tool/toolContract';
 import { sniffImageDimensions } from '#/agent/media/file-type';
 
+import { hostPathClass, structuredContentStdioServer } from '../../mcpCore/stubs';
+
 function modelText(result: Awaited<ReturnType<typeof mcpResultToExecutableOutput>>): string {
   return renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
 }
@@ -971,21 +973,19 @@ describe('createMcpTool', () => {
 });
 
 describe('mcpResultToExecutableOutput over a real stdio server', () => {
-  const fixture = join(import.meta.dirname, '../../mcpCore/fixtures/structured-content-stdio-server.mjs');
 
   async function callFixtureTool(name: string) {
     const environment = Object.assign(
       new FakeEnvironment(
         { environmentId: 'local', generation: 'test' },
-        { capabilities: ['process'] },
+        { capabilities: ['process'], pathClass: hostPathClass },
       ),
       { process: new HostProcessService() },
     );
     const client = new StdioMcpClient(
       {
         transport: 'stdio',
-        command: process.execPath,
-        args: [fixture],
+        ...structuredContentStdioServer(),
       },
       {
         environmentResolver: {

@@ -8,7 +8,7 @@ import {
   getLiveSessionById,
   patchSessionMetadata,
 } from '@moonshot-ai/agent-core-v2';
-import { afterAll, afterEach, beforeAll, expect } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, vi } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 
 import type { Session } from '../../src/protocol/session';
@@ -154,12 +154,14 @@ export function useWorktreeServer(name: string) {
   }
 
   async function settled(id: string): Promise<Session> {
-    for (let attempt = 0; attempt < 400; attempt++) {
-      const session = await get<Session>(`/sessions/${id}`);
-      if (session.data.worktree?.setup.status !== 'running') return session.data;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    throw new Error(`worktree setup of ${id} is still running`);
+    return vi.waitFor(
+      async () => {
+        const session = (await get<Session>(`/sessions/${id}`)).data;
+        expect(session.worktree?.setup.status, `worktree setup of ${id}`).not.toBe('running');
+        return session;
+      },
+      { timeout: 10_000, interval: 25 },
+    );
   }
 
   async function settledWorktree(workspaceId: string, worktree?: Record<string, unknown>): Promise<Session> {
@@ -167,13 +169,14 @@ export function useWorktreeServer(name: string) {
   }
 
   async function untilStep(id: string, kind: string, state: string): Promise<void> {
-    for (let attempt = 0; attempt < 400; attempt++) {
-      const session = await get<Session>(`/sessions/${id}`);
-      const step = session.data.worktree?.setup.steps.find((candidate) => candidate.kind === kind);
-      if (step?.state === state) return;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    throw new Error(`step ${kind} of ${id} never became ${state}`);
+    await vi.waitFor(
+      async () => {
+        const session = (await get<Session>(`/sessions/${id}`)).data;
+        const step = session.worktree?.setup.steps.find((candidate) => candidate.kind === kind);
+        expect(step?.state, `step ${kind} of ${id}`).toBe(state);
+      },
+      { timeout: 10_000, interval: 25 },
+    );
   }
 
   async function branchOf(sessionId: string): Promise<string> {

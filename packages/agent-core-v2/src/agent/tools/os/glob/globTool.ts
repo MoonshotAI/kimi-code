@@ -344,7 +344,6 @@ export class GlobTool implements IGlobTool {
 registerAgentToolService(IGlobTool, GlobTool, {
   name: 'Glob',
   domain: 'os/backends',
-  userConfigurable: true,
   requiredEnvironmentCapabilities: ['fs', 'process'],
 });
 

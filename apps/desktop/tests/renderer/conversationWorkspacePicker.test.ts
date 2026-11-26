@@ -12,6 +12,7 @@ const mockWorkspacesView = ref<WorkspaceView[]>([]);
 const mockActiveWorkspaceId = ref<string | null>(null);
 const mockVisibleWorkspace = ref<WorkspaceView | null>(null);
 const mockEnvironment = ref<'local' | 'worktree' | 'settingUp' | 'invalid'>('local');
+const mockTrustReadPending = ref(false);
 
 vi.mock('@moonshot-ai/app-client/client', () => ({
   sessionObservationOptions: () => ({}),
@@ -62,6 +63,7 @@ vi.mock('@moonshot-ai/app-client/composables', async (importOriginal) => {
     useComposerAutoFocus: vi.fn(),
     useWorkspaceTrust: () => ({
       trustDenied: ref(false),
+      trustReadPending: mockTrustReadPending,
       trustRejected: ref(false),
       trustGateOpen: ref(false),
       busy: ref(false),
@@ -82,7 +84,11 @@ vi.mock('@moonshot-ai/app-components', async (importOriginal) => {
   return {
     ...actual,
     ChatPane: stub,
-    Composer: stub,
+    Composer: {
+      props: { sessionSubmitBlockedReason: String },
+      setup: (props: { sessionSubmitBlockedReason?: string }) => () =>
+        h('div', { 'data-test-composer': '' }, props.sessionSubmitBlockedReason),
+    },
     ConversationToc: stub,
     KimiCodeWordmark: stub,
     KimiMascotPeek: { setup: (_: unknown, { expose }: { expose: (api: unknown) => void }) => { expose({ playEntrance: vi.fn() }); return () => null; } },
@@ -103,6 +109,7 @@ beforeEach(() => {
   mockActiveWorkspaceId.value = null;
   mockVisibleWorkspace.value = null;
   mockEnvironment.value = 'local';
+  mockTrustReadPending.value = false;
   workspacesStore().workspaces = [];
   newSessionEnvironmentStore().reset();
   hostsStore().byId = {};
@@ -176,6 +183,19 @@ function pressEscape(): void {
 }
 
 describe.each([['desktop', DesktopConversationPane]])('%s ConversationPane project picker with SSH hosts', (_platform, Pane) => {
+  it('passes the pending project trust reason to the new-session composer only while trust is being checked', async () => {
+    showProjects();
+    mockTrustReadPending.value = true;
+    const { el } = mountPane(Pane);
+    await nextTick();
+    const composer = () => el.querySelector('[data-test-composer]');
+    expect(composer()?.textContent).toBe('正在检查信任状态…');
+
+    mockTrustReadPending.value = false;
+    await nextTick();
+    expect(composer()?.textContent).toBe('');
+  });
+
   it('lists projects with their host and leaves SSH hosts out of the picker', async () => {
     hostsStore().byId = {
       'host-gpu': sshHost('host-gpu', { name: 'GPU 开发机', host: 'ubuntu@10.0.0.8', status: 'ready' }),

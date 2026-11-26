@@ -1,5 +1,6 @@
 import type { BrowserOverlayClosed } from '../../src/shared/browser-overlay';
-import { effectScope } from 'vue';
+import type { QuickModelMenuAction } from '@moonshot-ai/app-core/quick-model-menu';
+import { effectScope, isProxy, reactive } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const openMenu = vi.fn();
@@ -7,7 +8,7 @@ const closeMenu = vi.fn();
 const releaseSurface = vi.fn();
 const addDocumentListener = vi.fn();
 let actionListener:
-  | ((payload: { menuId: string; itemId: string; keepOpen?: boolean }) => void)
+  | ((payload: { menuId: string; itemId: string; keepOpen?: boolean; modelAction?: QuickModelMenuAction }) => void)
   | undefined;
 let closedListener: ((payload: BrowserOverlayClosed) => void) | undefined;
 
@@ -64,6 +65,7 @@ describe('browser overlay menu renderer adapter', () => {
       registerBrowserOverlayMenu({
         id: 'panel-tabs.browser-context',
         width: 220,
+        maxHeight: 400,
         items: () => [{ kind: 'item', id: 'reload', label: 'Reload' }],
         onSelect, onClose,
       }),
@@ -79,6 +81,7 @@ describe('browser overlay menu renderer adapter', () => {
       placement: 'bottom-start',
       offset: 0,
       width: 220,
+      maxHeight: 400,
       initialFocus: 'none',
       items: [{ kind: 'item', id: 'reload', label: 'Reload' }],
     });
@@ -173,6 +176,58 @@ describe('browser overlay menu renderer adapter', () => {
         ],
       }),
     );
+    scope.stop();
+  });
+
+  it('sends cloneable plain model menu payloads stripped of Vue proxies and routes model actions without closing', async () => {
+    const { registerBrowserOverlayMenu } = await import('../../src/renderer/lib/browserOverlayMenu');
+    const onModelAction = vi.fn();
+    const onSelect = vi.fn();
+    const scope = effectScope();
+    const model = reactive({ id: 'p/m', provider: 'p', model: 'm', displayName: 'Model M', maxContextSize: 262144, supportEfforts: ['low', 'high'] });
+    const state = reactive({
+      models: [model],
+      recentModels: [model],
+      providerModels: [model],
+      providers: [{ id: 'p', label: 'Provider P' }],
+      activeProvider: 'p',
+      activeProviderLabel: 'Provider P',
+      currentModelId: 'p/m',
+      currentEffort: 'high',
+      effortDescriptions: { low: '轻量思考', high: '深入思考' },
+    });
+    const menu = scope.run(() =>
+      registerBrowserOverlayMenu({
+        id: 'composer.models',
+        width: 240,
+        maxHeight: 480,
+        items: () => [],
+        modelMenu: () => state,
+        onSelect,
+        onModelAction,
+      }),
+    )!;
+
+    menu.showAt({ x: 800, y: 700, width: 120, height: 32 });
+    expect(openMenu).toHaveBeenCalledWith(expect.objectContaining({
+      width: 240,
+      maxHeight: 480,
+      items: [],
+      modelMenu: expect.objectContaining({ activeProvider: 'p', currentModelId: 'p/m', effortDescriptions: { low: '轻量思考', high: '深入思考' } }),
+    }));
+    const sent = openMenu.mock.lastCall![0].modelMenu;
+    expect(isProxy(sent)).toBe(false);
+    expect(isProxy(sent.effortDescriptions)).toBe(false);
+    expect(isProxy(sent.models)).toBe(false);
+    expect(isProxy(sent.models[0])).toBe(false);
+    expect(isProxy(sent.models[0].supportEfforts)).toBe(false);
+    expect(() => structuredClone(sent)).not.toThrow();
+
+    const action: QuickModelMenuAction = { type: 'select-model', modelId: 'p/m2', effort: 'max' };
+    actionListener?.({ menuId: openMenu.mock.lastCall![0].menuId, itemId: 'model-menu', keepOpen: true, modelAction: action });
+    expect(onModelAction).toHaveBeenCalledWith(action);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(menu.open.value).toBe(true);
     scope.stop();
   });
 });

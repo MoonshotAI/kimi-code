@@ -136,7 +136,7 @@ export {
 } from './settings/fontPreviewChrome';
 export { default as ManagedProviderView } from './settings/ManagedProviderView.vue';
 export { ComposerNativeMenuHostKey } from './composer/nativeMenus';
-export { default as ModelPicker } from './settings/ModelPicker.vue';
+export { default as ModelQuickMenu } from './composer/ModelQuickMenu.vue';
 export { default as PlanUpgradeCard } from './settings/PlanUpgradeCard.vue';
 export { default as ProviderBrandIcon } from './settings/ProviderBrandIcon.vue';
 export { default as ProviderForm } from './settings/ProviderForm.vue';
@@ -145,9 +145,6 @@ export { default as PluginsPanel } from './settings/PluginsPanel.vue';
 export { default as HostsPanel } from './settings/HostsPanel.vue';
 export { default as WorktreesPanel } from './settings/WorktreesPanel.vue';
 export { default as WorktreeManageDialogHost } from './worktree/ManageDialogHost.vue';
-export { default as DefaultToolsPanel } from './settings/DefaultToolsPanel.vue';
-export { default as DefaultToolsRow } from './settings/DefaultToolsRow.vue';
-export { default as DefaultToolsSetting } from './settings/DefaultToolsSetting.vue';
 export { default as SecondaryModelPicker } from './settings/SecondaryModelPicker.vue';
 
 export * from './chatTurnRendering';

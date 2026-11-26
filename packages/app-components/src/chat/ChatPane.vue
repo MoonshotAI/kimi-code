@@ -2232,9 +2232,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .a-msg-meta:has(> .a-reply-actions > *) { gap: 2px; }
 .a-msg-meta:has(> .a-reply-actions > *) .a-time {
   margin-inline: 6px;
-  color: light-dark(rgb(0 0 0 / 45%), rgb(255 255 255 / 42%));
-  font-size: var(--ui-c1);
-  line-height: 1.5;
 }
 .chat > .sr-tailrow {
   margin-top: 6px;
@@ -2445,13 +2442,13 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .skill-act-head {
   font-size: var(--text-sm);
   font-weight: 500;
-  color: var(--color-accent-hover);
+  color: var(--p-pill-fg);
   display: flex;
   align-items: center;
   gap: 6px;
 }
 .skill-act-arrow {
-  color: var(--color-accent);
+  color: var(--p-pill-icon);
   font-size: var(--text-base);
 }
 .skill-act-args {

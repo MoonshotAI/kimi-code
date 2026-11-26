@@ -39,7 +39,6 @@ import type {
   SessionContextItemDetail,
   SessionContextItemsResponse,
   SessionContextSummary,
-  AppToolCatalogEntry,
   AppSkill,
   AppSkillAttachment,
   AppSkillActivationOptions,
@@ -1064,11 +1063,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return { outcome: data.outcome, endedAt: data.ended_at };
   }
 
-  async listToolCatalog(): Promise<AppToolCatalogEntry[]> {
-    const data = await this.http.get<{ tools: AppToolCatalogEntry[] }>('/tools/catalog');
-    return data.tools;
-  }
-
   async listSkills(sessionId: string, options?: ReadRequestOptions): Promise<AppSkill[]> {
     const data = await this.http.get<{ skills: WireSkillDescriptor[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/skills`,
@@ -1966,7 +1960,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
       defaultProvider: 'default_provider',
       defaultModel: 'default_model',
       secondaryModel: 'secondary_model',
-      tools: 'tools',
       models: 'models',
       thinking: 'thinking',
       planMode: 'plan_mode',

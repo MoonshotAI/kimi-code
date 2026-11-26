@@ -1,3 +1,4 @@
+import { deferred } from '@moonshot-ai/testkit/fixtures';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -11,11 +12,11 @@ import type { Event2 } from '#/app/event/event2';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { SessionMetadata } from '#/session/sessionMetadata/sessionMetadataService';
+import { drainSessionMetadataWrites, SessionMetadata } from '#/session/sessionMetadata/sessionMetadataService';
 import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
 import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
 import { ISessionStateService } from '#/session/state/sessionState';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -76,7 +77,7 @@ describe('SessionMetadata', () => {
     mirror = stubSessionIndexMirror();
     ix.stub(ILogService, stubLog());
     ix.stub(ISessionContext, makeContext());
-    ix.stub(ISessionWorkspaceInfo, {
+    ix.stub(ISessionProjectInfo, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       primaryByWorkspace: {},
@@ -108,6 +109,34 @@ describe('SessionMetadata', () => {
     expect((await meta.read()).createdAt).toBeGreaterThan(0);
   });
 
+  it.each([
+    { scenario: 'creates for a new session', existing: undefined },
+    {
+      scenario: 'migrates for an older document',
+      existing: { id: 's1', version: 2, createdAt: 1700000000000, updatedAt: 1700000000000 },
+    },
+  ])('drains the document that loading $scenario', async ({ existing }) => {
+    const store = ix.get(IAtomicDocumentStore);
+    if (existing !== undefined) await store.set(META_SCOPE, 'state.json', existing);
+    const set = store.set.bind(store);
+    const reached = deferred();
+    const release = deferred();
+    const order: string[] = [];
+    vi.spyOn(store, 'set').mockImplementation(async (scope, key, value) => {
+      reached.resolve();
+      await release.promise;
+      await set(scope, key, value);
+      order.push('written');
+    });
+    ix.get(ISessionMetadata);
+    await reached.promise;
+    const drained = drainSessionMetadataWrites().then(() => order.push('drained'));
+    release.resolve();
+    await drained;
+
+    expect(order).toEqual(['written', 'drained']);
+  });
+
   it('retains the host cwd in metadata and the read model for a remote session', async () => {
     const meta = ix.get(ISessionMetadata);
     await meta.ready;
@@ -118,7 +147,7 @@ describe('SessionMetadata', () => {
 
   it('exposes the live effective cwd while preserving explicit and remote bindings', async () => {
     const primaryByWorkspace: Record<string, string> = { wd_test: '/old' };
-    ix.stub(ISessionWorkspaceInfo, {
+    ix.stub(ISessionProjectInfo, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       primaryByWorkspace,

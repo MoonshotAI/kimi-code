@@ -10,11 +10,23 @@ import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mc
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
-import { bashPathOf, createGitWorktree } from '@moonshot-ai/testkit/fixtures';
+import { bashPathOf, createGitWorktree, FAKE_MCP_SERVER, fakeMcpServer } from '@moonshot-ai/testkit/fixtures';
 import type { KapHarness } from '@moonshot-ai/testkit/kap';
-import { agent, bash, fakeModelConfig, say } from '@moonshot-ai/testkit/model';
+import { startKimiServices } from '@moonshot-ai/testkit/services';
+import {
+  agent,
+  bash,
+  fakeModelConfig,
+  held,
+  reply,
+  say,
+  startFakeModel,
+  type FakeModel,
+  type Lane,
+  type RequestFacts,
+} from '@moonshot-ai/testkit/model';
 import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, test as base, vi } from 'vitest';
 
 import {
   Error2,
@@ -49,8 +61,8 @@ import {
   ISessionTitleService,
   ISessionWorkdir,
   IWireService,
-  IWorkspaceInstanceManager,
-  IWorkspaceService,
+  IProjectInstanceManager,
+  IProjectService,
   MAIN_AGENT_ID,
   closeSessionById,
   getLiveSessionById,
@@ -688,7 +700,7 @@ describe('server-v2 /api/v1/sessions', () => {
       secondId = second.body.data.id;
       expect(second.body.data.workspace_id).toBe(first.body.data.workspace_id);
       expect(second.body.data.id).not.toBe(first.body.data.id);
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const workspace = manager.get(first.body.data.workspace_id);
       expect(workspace).toBeDefined();
       await closeSessionById((server as RunningServer).core.accessor, firstId);
@@ -1375,6 +1387,9 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   it('generates and persists a title through the public REST path', async () => {
+    const kimi = await startKimiServices({ accessToken: 'test-token' });
+    onTestFinished(() => kimi.close());
+    kimi.title(...Array.from({ length: 4 }, () => 'generated from REST'));
     await server?.close();
     server = undefined;
     await writeFile(
@@ -1394,7 +1409,7 @@ describe('server-v2 /api/v1/sessions', () => {
         '',
         '[providers."managed:kimi-code"]',
         'type = "kimi"',
-        'base_url = "https://api.example.test/coding/v1"',
+        `base_url = "${kimi.baseUrl}"`,
         '',
         '[providers."managed:kimi-code".oauth]',
         'storage = "file"',
@@ -1435,23 +1450,8 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     base = `http://127.0.0.1:${server.port}`;
 
-    let toolsRequest: { method: string; params: { chat_content: string } } | undefined;
-    const actualFetch = globalThis.fetch.bind(globalThis);
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url === 'https://api.example.test/coding/v1/tools') {
-        const body = init?.body;
-        if (typeof body !== 'string') {
-          throw new TypeError('expected a string request body');
-        }
-        toolsRequest = JSON.parse(body) as typeof toolsRequest;
-        return new Response(JSON.stringify({ title: 'generated from REST' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      return actualFetch(input, init);
-    });
+    const titleInputs = (): string[] =>
+      kimi.requests('title').map((request) => (request.json as { params: { chat_content: string } }).params.chat_content);
 
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },
@@ -1469,13 +1469,7 @@ describe('server-v2 /api/v1/sessions', () => {
       `/api/v1/sessions/${id}/title/generate`,
     );
     expect(generated.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
-    expect(toolsRequest).toEqual({
-      method: 'chat_title',
-      params: {
-        chat_content:
-          'user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt',
-      },
-    });
+    expect(titleInputs()).toEqual(['user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt']);
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
@@ -1502,9 +1496,8 @@ describe('server-v2 /api/v1/sessions', () => {
       source: 'digest',
     });
     expect(digested.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
-    expect(toolsRequest?.params.chat_content).toBe(
-      'user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt',
-    );
+    expect(titleInputs().at(-1)).toBe('user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt');
+    kimi.verify();
   });
 
   it('returns session-not-found when generating a title for a missing session', async () => {
@@ -2022,14 +2015,13 @@ describe('server-v2 /api/v1/sessions', () => {
 
   it('archives a session, force-kills a SIGTERM-ignoring baseline MCP, and reacquires the workspace', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-archive-mcp-'));
-    const fixture = new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
     const spawned: IHostProcess[] = [];
     let disposeReplacement: (() => void) | undefined;
     const hostProcesses = (server as RunningServer).core.accessor.get(IHostProcessService);
     const spawn = hostProcesses.spawn.bind(hostProcesses);
     const spawnSpy = vi.spyOn(hostProcesses, 'spawn').mockImplementation(async (command, args, options) => {
       const child = await spawn(command, args, options);
-      if (command === process.execPath && args?.[0] === fixture) spawned.push(child);
+      if (command === process.execPath && args?.[0] === FAKE_MCP_SERVER) spawned.push(child);
       return child;
     });
     try {
@@ -2039,18 +2031,14 @@ describe('server-v2 /api/v1/sessions', () => {
         join(cwd, '.kimi-code', 'mcp.json'),
         JSON.stringify({
           mcpServers: {
-            fixture: {
-              command: process.execPath,
-              args: [fixture],
-              env: { KIMI_TEST_MCP_IGNORE_SIGTERM: '1' },
-            },
+            fixture: fakeMcpServer('fixture', { tools: [{ name: 'echo', description: 'Echoes input text', inputSchema: { properties: { text: { type: 'string' } }, required: ['text'] }, reply: { text: { argument: 'text' } } }], ignoreSigterm: true }),
           },
         }),
       );
       const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
       const id = created.body.data.id;
       const workspaceId = created.body.data.workspace_id;
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const workspace = manager.get(workspaceId);
       expect(workspace).toBeDefined();
       const mcp = getLiveSessionById((server as RunningServer).core.accessor, id)!.accessor.get(ISessionMcpHandle);
@@ -2129,7 +2117,7 @@ describe('server-v2 /api/v1/sessions', () => {
   }, 30_000);
 
   describe('MCP servers of a workspace', () => {
-    const fixture = new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
+    const fixture = fakeMcpServer('fixture', { tools: [{ name: 'echo', description: 'Echoes input text', inputSchema: { properties: { text: { type: 'string' } }, required: ['text'] }, reply: { text: { argument: 'text' } } }] });
     let root: string;
     let opened: string[];
     let spawned: IHostProcess[];
@@ -2138,7 +2126,7 @@ describe('server-v2 /api/v1/sessions', () => {
       await mkdir(join(dir, '.kimi-code'), { recursive: true });
       await writeFile(
         join(dir, '.kimi-code', 'mcp.json'),
-        JSON.stringify({ mcpServers: { [name]: { command: process.execPath, args: [fixture] } } }),
+        JSON.stringify({ mcpServers: { [name]: fixture } }),
       );
     }
 
@@ -2168,7 +2156,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const spawn = hostProcesses.spawn.bind(hostProcesses);
       vi.spyOn(hostProcesses, 'spawn').mockImplementation(async (command, args, options) => {
         const child = await spawn(command, args, options);
-        if (command === process.execPath && args?.[0] === fixture) spawned.push(child);
+        if (command === process.execPath && args?.[0] === FAKE_MCP_SERVER) spawned.push(child);
         return child;
       });
     });
@@ -2181,7 +2169,7 @@ describe('server-v2 /api/v1/sessions', () => {
     it('start with its first session, serve every session, and stop with the last while the workspace stays open', async () => {
       const src = join(root, 'src');
       const elsewhere = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-mcp-other-')));
-      const lease = await (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager).acquire({ cwd: root });
+      const lease = await (server as RunningServer).core.accessor.get(IProjectInstanceManager).acquire({ cwd: root });
       try {
         await writeServer(src, 'own');
         await writeServer(elsewhere, 'elsewhere');
@@ -2271,7 +2259,7 @@ describe('server-v2 /api/v1/sessions', () => {
     }
     await closeSessionById((server as RunningServer).core.accessor, id);
     await (server as RunningServer).core.accessor
-      .get(IWorkspaceService)
+      .get(IProjectService)
       .delete(encodeWorkDirKey(cwd));
     await rm(cwd, { recursive: true, force: true });
 
@@ -4338,28 +4326,22 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
 });
 
 describe('server-v2 /api/v1/sessions:btw', () => {
-  const modelBase = 'https://model.example.test/v1';
   const mainAnswer = 'The main agent answered with a much longer explanation than the side chat.';
   const sideAnswer = 'Short side answer.';
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
-  let releaseSideAnswer: () => void = () => {};
-  let sideAnswerGate: Promise<void> = Promise.resolve();
+  let model: FakeModel;
+  let sideLane: Lane;
+  let mainLane: Lane;
 
-  function sseBody(text: string): string {
-    const chunk = (delta: Record<string, unknown>, finishReason: string | null) =>
-      `data: ${JSON.stringify({
-        id: 'chatcmpl-test',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'fake-model',
-        choices: [{ index: 0, delta, finish_reason: finishReason }],
-      })}\n\n`;
-    return `${chunk({ role: 'assistant', content: text }, null)}${chunk({}, 'stop')}data: [DONE]\n\n`;
-  }
+  const asksSideQuestion = (request: RequestFacts): boolean =>
+    request.texts('user').some((text) => text.includes('side question'));
 
   beforeAll(async () => {
+    model = await startFakeModel();
+    sideLane = model.route('side-chat', asksSideQuestion);
+    mainLane = model.route('main-chat', () => true);
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-btw-'));
     await writeFile(
       join(home, 'config.toml'),
@@ -4369,7 +4351,7 @@ describe('server-v2 /api/v1/sessions:btw', () => {
         '[providers.fake]',
         'type = "openai"',
         'api_key = "sk-test"',
-        `base_url = "${modelBase}"`,
+        `base_url = "${model.baseUrl}"`,
         '',
         '[models.fake]',
         'provider = "fake"',
@@ -4379,18 +4361,6 @@ describe('server-v2 /api/v1/sessions:btw', () => {
       ].join('\n'),
       'utf-8',
     );
-    const realFetch = globalThis.fetch;
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (!url.startsWith(modelBase)) return realFetch(input, init);
-      const messages = JSON.stringify(JSON.parse(typeof init?.body === 'string' ? init.body : '{}').messages ?? []);
-      const side = messages.includes('side question');
-      if (side) await sideAnswerGate;
-      return new Response(sseBody(side ? sideAnswer : mainAnswer), {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-      });
-    });
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -4402,12 +4372,16 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
+  afterEach(() => {
+    model.verify();
+  });
+
   afterAll(async () => {
-    vi.restoreAllMocks();
     if (server !== undefined) {
       await server.close();
       server = undefined;
     }
+    await model.close();
     if (home !== undefined) {
       await new Promise((resolve) => setTimeout(resolve, 25));
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
@@ -4451,6 +4425,7 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const sessionId = created.data.id;
     await agentTurns(sessionId, 'main');
+    mainLane.script(say(mainAnswer));
     await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
       content: [{ type: 'text', text: 'main question' }],
       model: 'fake',
@@ -4462,9 +4437,7 @@ describe('server-v2 /api/v1/sessions:btw', () => {
       { timeout: 10_000 },
     );
 
-    sideAnswerGate = new Promise((resolve) => {
-      releaseSideAnswer = resolve;
-    });
+    sideLane.script(held('side-answer', say(sideAnswer)));
     const btw = await postJson<{ agent_id: string }>(`/api/v1/sessions/${sessionId}:btw`, {});
     const agentId = btw.data.agent_id;
     await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
@@ -4473,7 +4446,7 @@ describe('server-v2 /api/v1/sessions:btw', () => {
       model: 'fake',
     });
     await agentTurns(sessionId, agentId);
-    releaseSideAnswer();
+    model.hold('side-answer').release();
 
     await vi.waitFor(
       async () => {
@@ -4495,11 +4468,11 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
-  let releaseModel: () => void = () => {};
-  let modelGate: Promise<void> = Promise.resolve();
-  const modelBase = 'https://fake-wait-llm.example.test/v1';
+  let model: FakeModel;
+  const releaseModel = (): void => model.hold('model-gate').release();
 
   beforeAll(async () => {
+    model = await startFakeModel();
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-wait-'));
     await writeFile(
       join(home, 'config.toml'),
@@ -4509,7 +4482,7 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
         '[providers.fake]',
         'type = "openai"',
         'api_key = "sk-test"',
-        `base_url = "${modelBase}"`,
+        `base_url = "${model.baseUrl}"`,
         '',
         '[models.fake]',
         'provider = "fake"',
@@ -4519,40 +4492,6 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
       ].join('\n'),
       'utf-8',
     );
-    const realFetch = globalThis.fetch;
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (!url.startsWith(modelBase)) return realFetch(input, init);
-      const gate = modelGate;
-      const stream = new ReadableStream<Uint8Array>({
-        async start(controller) {
-          const enc = new TextEncoder();
-          const send = (delta: Record<string, unknown>, finishReason: string | null) => {
-            controller.enqueue(
-              enc.encode(
-                `data: ${JSON.stringify({
-                  id: 'chatcmpl-wait',
-                  object: 'chat.completion.chunk',
-                  created: 0,
-                  model: 'fake-model',
-                  choices: [{ index: 0, delta, finish_reason: finishReason }],
-                })}\n\n`,
-              ),
-            );
-          };
-          send({ role: 'assistant', content: 'halfway ' }, null);
-          await gate;
-          send({ content: 'done' }, null);
-          send({}, 'stop');
-          controller.enqueue(enc.encode('data: [DONE]\n\n'));
-          controller.close();
-        },
-      });
-      return new Response(stream, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-      });
-    });
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -4565,11 +4504,11 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
 
   afterAll(async () => {
     releaseModel();
-    vi.restoreAllMocks();
     if (server !== undefined) {
       await server.close();
       server = undefined;
     }
+    await model.close();
     if (home !== undefined) {
       await new Promise((resolve) => setTimeout(resolve, 25));
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
@@ -4600,9 +4539,7 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
     expect(idleWait.data.session.activity).toBe('idle');
     expect(idleWait.data.pending_interactions).toEqual([]);
 
-    modelGate = new Promise((resolve) => {
-      releaseModel = resolve;
-    });
+    model.script(held('model-gate', reply(say('halfway '), say('done')), 1));
 
     await fetch(`${base}/api/v1/sessions/${sid}/prompts`, {
       method: 'POST',
@@ -4663,18 +4600,28 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
         toolName: 'Bash',
         action: 'run',
         display: { command: 'echo ok' },
+        approvalDetail: { outcome: 'denied', risk: 'high', reason: 'Not authorized.' },
       },
       tags: { agentId: 'main', sessionId: sid, toolCallId: 'tc_wait_1' },
     });
 
     const approvalWait = (await (await approvalWaitPromise).json()) as Envelope<{
       session: SessionWire;
-      pending_interactions: Array<{ interaction_id: string; kind: string }>;
+      pending_interactions: Array<{
+        interaction_id: string;
+        kind: string;
+        request?: { approval_detail?: unknown };
+      }>;
       timed_out: boolean;
     }>;
     expect(approvalWait.code).toBe(0);
     expect(approvalWait.data.timed_out).toBe(false);
     expect(approvalWait.data.pending_interactions.map((i) => i.interaction_id)).toEqual([parked.id]);
+    expect(approvalWait.data.pending_interactions[0]?.request?.approval_detail).toEqual({
+      outcome: 'denied',
+      risk: 'high',
+      reason: 'Not authorized.',
+    });
 
     await fetch(`${base}/api/v1/sessions/${sid}/interactions/${parked.id}`, {
       method: 'POST',
@@ -4698,6 +4645,7 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
     expect(finalWait.data.timed_out).toBe(false);
     expect(finalWait.data.session.activity).toBe('idle');
     expect(finalWait.data.pending_interactions).toEqual([]);
+    model.verify();
   });
 });
 
@@ -4796,6 +4744,10 @@ kapTest('a session whose saved model was removed opens with history and a model 
   const session = await kap.createSession({ agentConfig: { model: 'old' } });
   await kap.prompt(session.id, 'history from removed model', { model: 'old' });
   await kap.waitIdle(session.id);
+  const live = await ensureMainAgent((await resumeSessionById(kap.server.core.accessor, session.id))!);
+  const liveState = readAgentState(live, false);
+  expect(liveState).toMatchObject({ model: 'old', profile_revision: expect.any(Number) });
+  expect(liveState.missing_model).toBeUndefined();
 
   await kap.writeConfig(baseConfig);
   modelFrames.length = 0;
@@ -4803,7 +4755,10 @@ kapTest('a session whose saved model was removed opens with history and a model 
   expect(JSON.stringify(await kap.turns(session.id))).toContain('history from removed model');
   const resumed = await resumeSessionById(kap.server.core.accessor, session.id);
   const main = await ensureMainAgent(resumed!);
-  expect(readAgentState(main, false).model).toBeUndefined();
+  const resumedState = readAgentState(main, false);
+  expect(resumedState.model).toBeUndefined();
+  expect(resumedState.missing_model).toBe('old');
+  expect(resumedState.profile_revision).toBeGreaterThan(liveState.profile_revision!);
   expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
 
   const first = await kap.connect();
@@ -4829,6 +4784,32 @@ kapTest('a session whose saved model was removed opens with history and a model 
   await kap.prompt(session.id, 'after fallback', { model: 'testkit' });
   await kap.waitIdle(session.id);
   expect(JSON.parse(model.requests().at(-1)!.rawBody).model).toBe('testkit-model');
+});
+
+kapTest('pushes missing_model to a connected client when the saved model is removed from the config', { timeout: 30_000 }, async ({ kap, model }) => {
+  const baseConfig = fakeModelConfig(model);
+  await kap.writeConfig({
+    ...baseConfig,
+    models: {
+      ...baseConfig.models,
+      old: { provider: 'testkit', model: 'old-model', maxContextSize: 100000 },
+    },
+  });
+  await kap.server.core.accessor.get(IConfigService).reload();
+  const session = await kap.createSession({ agentConfig: { model: 'old' } });
+  const isMainAgentFrame = (frame: Record<string, unknown>): boolean =>
+    frame['type'] === 'agent' && frame['session_id'] === session.id && frame['agent_id'] === 'main';
+  const socket = await kap.connect();
+  await socket.subscribe(session.id);
+  const live = await socket.waitFor((frame) => isMainAgentFrame(frame) && frame['model'] === 'old');
+
+  await kap.writeConfig(baseConfig);
+  await kap.server.core.accessor.get(IConfigService).reload();
+
+  const removed = await socket.waitFor((frame) => isMainAgentFrame(frame) && frame['missing_model'] === 'old');
+  expect(removed['model']).toBeUndefined();
+  expect(removed['profile_revision']).toBeGreaterThan(live['profile_revision'] as number);
+  await socket.close();
 });
 
 kapTest('a session with no default model opens with no displayed model and a model error notice', { timeout: 30_000 }, async ({ kap, model }) => {

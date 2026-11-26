@@ -2,6 +2,8 @@ import { v4 as randomUUID } from 'uuid';
 import { createBrowserFocusRequest } from './browserFocusRequest';
 import { onScopeDispose, readonly, ref, watch, type Ref } from 'vue';
 import { openDialogCount, registerExternalMenuSurface } from '@moonshot-ai/app-ui';
+import type { AppModel } from '@moonshot-ai/app-core/api';
+import type { QuickModelMenuAction, QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
 import type {
   BrowserOverlayAction,
   BrowserOverlayAnchor,
@@ -23,12 +25,15 @@ interface BrowserOverlayHostBridge {
 export interface BrowserOverlayMenuRegistration {
   id: string;
   items: () => BrowserOverlayMenuItem[];
+  modelMenu?: () => QuickModelMenuPayload;
   footerStart?: () => number;
   highlightQuery?: () => string;
   onSelect: (itemId: string) => void;
+  onModelAction?: (action: QuickModelMenuAction) => void;
   onClose?: (payload: BrowserOverlayClosed) => void;
   onDismiss?: () => void;
   width?: number;
+  maxHeight?: number;
   autoWidth?: boolean;
   preserveFocus?: boolean;
   submitOnCtrlEnter?: boolean;
@@ -79,6 +84,30 @@ function browserOverlayBridge(): BrowserOverlayHostBridge | null {
 }
 
 const registeredIds = new Set<string>();
+
+export function toPlainModelMenuPayload(payload: QuickModelMenuPayload): QuickModelMenuPayload {
+  const copyModel = (model: AppModel): AppModel => ({
+    id: model.id,
+    provider: model.provider,
+    model: model.model,
+    ...(model.displayName === undefined ? {} : { displayName: model.displayName }),
+    maxContextSize: model.maxContextSize,
+    ...(model.capabilities === undefined ? {} : { capabilities: [...model.capabilities] }),
+    ...(model.supportEfforts === undefined ? {} : { supportEfforts: [...model.supportEfforts] }),
+    ...(model.defaultEffort === undefined ? {} : { defaultEffort: model.defaultEffort }),
+  });
+  return {
+    models: payload.models.map(copyModel),
+    recentModels: payload.recentModels.map(copyModel),
+    providerModels: payload.providerModels.map(copyModel),
+    providers: payload.providers.map((provider) => ({ id: provider.id, label: provider.label })),
+    activeProvider: payload.activeProvider,
+    activeProviderLabel: payload.activeProviderLabel,
+    ...(payload.currentModelId === undefined ? {} : { currentModelId: payload.currentModelId }),
+    ...(payload.currentEffort === undefined ? {} : { currentEffort: payload.currentEffort }),
+    ...(payload.effortDescriptions === undefined ? {} : { effortDescriptions: { ...payload.effortDescriptions } }),
+  };
+}
 
 
 
@@ -170,7 +199,8 @@ export function registerBrowserOverlayMenu(
   const offAction = bridge?.onBrowserOverlayAction((payload) => {
     if (payload.menuId !== nativeMenuId || disposed || actionConsumed) return;
     if (payload.keepOpen !== true) { actionConsumed = true; finish(); }
-    registration.onSelect(payload.itemId);
+    if (payload.modelAction !== undefined) registration.onModelAction?.(payload.modelAction);
+    else registration.onSelect(payload.itemId);
   });
   const offClosed = bridge?.onBrowserOverlayClosed((payload) => {
     if (payload.menuId !== nativeMenuId || disposed) return;
@@ -221,11 +251,13 @@ export function registerBrowserOverlayMenu(
       placement: options?.placement ?? registration.placement ?? 'bottom-end',
       offset: options?.offset ?? registration.offset ?? 4,
       width: registration.width ?? 220,
+      ...(registration.maxHeight === undefined ? {} : { maxHeight: registration.maxHeight }),
       ...(registration.autoWidth === true ? { autoWidth: true } : {}),
       initialFocus: options?.initialFocus ?? 'none',
       preserveFocus: options?.preserveFocus ?? registration.preserveFocus,
       submitOnCtrlEnter: registration.submitOnCtrlEnter === true ? true : undefined,
       items: registration.items(),
+      ...(registration.modelMenu === undefined ? {} : { modelMenu: toPlainModelMenuPayload(registration.modelMenu()) }),
       ...(registration.footerStart === undefined ? {} : { footerStart: registration.footerStart() }),
       ...(registration.highlightQuery === undefined ? {} : { query: registration.highlightQuery().slice(0, 1024) }),
     });

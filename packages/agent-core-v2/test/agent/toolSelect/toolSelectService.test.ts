@@ -967,6 +967,60 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(renderedAnnouncementText(next)).toContain(`<tools_removed>\n${USER_INLINE}\n</tools_removed>`);
   });
 
+  it('unloads only tools declared by earlier system messages when shaping requests', async () => {
+    const h = createHarness();
+    registerBuiltin(h, new EchoTool('CreateGoal'));
+    registerBuiltin(h, new EchoTool('Read'));
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    registerMcp(h, new StubMcpTool(MCP_BETA));
+    activeToolNames = new Set(['Read', MCP_ALPHA, MCP_BETA]);
+    await h.sut.prepareForRequest();
+    await announce(h);
+    h.contextMemory.messages.push(userMessage('load alpha'), schemaMessage(MCP_ALPHA));
+
+    const persisted = JSON.stringify(h.ix.get(IAgentStateService).get(toolSelectKey));
+    const restored = createHarness();
+    registerBuiltin(restored, new EchoTool('Read'));
+    registerMcp(restored, new StubMcpTool(MCP_ALPHA));
+    restored.ix.get(IAgentStateService).set(toolSelectKey, JSON.parse(persisted));
+    restored.contextMemory.messages.push(...structuredClone(h.contextMemory.history()));
+
+    const removedText = await announce(restored, 2);
+    expect(removedText).toContain(`<tools_removed>\nCreateGoal\n${MCP_BETA}\n</tools_removed>`);
+    const persistedDelta = restored.contextMemory.history().at(-1)!;
+    expect(persistedDelta.content[0]).toMatchObject({
+      meta: { kind: 'tool_lifecycle', added: [], removed: ['CreateGoal', MCP_BETA] },
+    });
+
+    const encodeHistory = async (harness: Harness) => {
+      const resolved = await resolveWith(harness, {
+        messages: harness.contextMemory.history(),
+        tools: harness.sut.initialTools(),
+        capabilities,
+      });
+      return kimiOpenAIProtocol.encode({
+        model: { spec: { provider: 'kimi', name: 'test-model', capability: capabilities } },
+        profile: resolved.profile ?? {},
+        content: resolved.content,
+        options: undefined,
+      });
+    };
+
+    const restoredWire = await encodeHistory(restored);
+    expect(restoredWire.params.messages.filter((message) => 'unload_tools' in message)).toEqual([]);
+    expect(restoredWire.params.messages.some((message) =>
+      typeof message.content === 'string' &&
+      message.content.includes(`<tools_removed>\nCreateGoal\n${MCP_BETA}\n</tools_removed>`))).toBe(true);
+    expect(restored.contextMemory.history().at(-1)).toBe(persistedDelta);
+
+    restored.registry.unregister(MCP_ALPHA);
+    await announce(restored, 3);
+    const unloadedWire = await encodeHistory(restored);
+    expect(unloadedWire.params.messages.filter((message) => 'unload_tools' in message)).toEqual([
+      { role: 'system', unload_tools: [MCP_ALPHA] },
+    ]);
+  });
+
   it('announces unload/load replacements and gates execution until reselection', async () => {
     const h = createExecutorHarness();
     const original = new StubMcpTool(MCP_ALPHA);
@@ -1119,6 +1173,18 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(neverLoadedDelta).toContain(`<tools_removed>\n${MCP_ALPHA}\n</tools_removed>`);
     expect(neverLoadedDelta).toContain(`<tools_added>\n${MCP_ALPHA}\n</tools_added>`);
     expect(neverLoaded.contextMemory.history().every((message) => toolsOf(message) === undefined)).toBe(true);
+    const neverLoadedResolved = await resolveWith(neverLoaded, {
+      messages: neverLoaded.contextMemory.history(),
+      tools: [],
+      capabilities,
+    });
+    const neverLoadedWire = kimiOpenAIProtocol.encode({
+      model: { spec: { provider: 'kimi', name: 'test-model', capability: capabilities } },
+      profile: neverLoadedResolved.profile ?? {},
+      content: neverLoadedResolved.content,
+      options: undefined,
+    });
+    expect(neverLoadedWire.params.messages.filter((message) => 'unload_tools' in message)).toEqual([]);
 
     const legacy = h.sut.shapeHistory([
       originalSchemaMessage,

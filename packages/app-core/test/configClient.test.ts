@@ -196,35 +196,3 @@ describe('host text editing', () => {
     await expect(makeApi().readHostTextFile(path)).rejects.toMatchObject({ code: 40411 });
   });
 });
-
-
-describe('DaemonKimiWebApi tools config and catalog', () => {
-  it('maps tools from getConfig and setConfig', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      envelope({ providers: {}, tools: { enabled: ['Read'], disabled: ['Bash'] } }),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-
-    const config = await makeApi().setConfig({ tools: { enabled: ['Read'], disabled: ['Bash'] } });
-
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('/config');
-    expect(JSON.parse(init.body as string)).toEqual({
-      tools: { enabled: ['Read'], disabled: ['Bash'] },
-    });
-    expect(config.tools).toEqual({ enabled: ['Read'], disabled: ['Bash'] });
-  });
-
-  it('loads the session-independent tool catalog', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      envelope({ tools: [{ name: 'Bash', source: 'builtin' }] }),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-
-    const tools = await makeApi().listToolCatalog();
-
-    const [url] = fetchMock.mock.calls[0] as [string];
-    expect(url).toContain('/tools/catalog');
-    expect(tools).toEqual([{ name: 'Bash', source: 'builtin' }]);
-  });
-});

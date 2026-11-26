@@ -3,7 +3,7 @@
   "publisher": "moonshot-ai",
   "displayName": "Kimi Code",
   "description": "Official Kimi Code plugin for VS Code",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -261,6 +261,7 @@
     "publish:ovsx": "node scripts/ovsx-publish.mjs"
   },
   "devDependencies": {
+    "@moonshot-ai/testkit": "workspace:^",
     "@tailwindcss/vite": "^4.1.4",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.3",

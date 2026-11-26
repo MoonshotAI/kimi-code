@@ -1,7 +1,6 @@
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import {
   createDecorator,
@@ -9,27 +8,25 @@ import {
   IAgentEnvironmentBindingService,
   ISessionContext,
   ISessionWorkdir,
-  IWorkspaceService,
+  IProjectService,
   IAgentLifecycleService,
   ensureMainAgent,
   ISessionManager,
   ISessionMcpHandle,
-  IWorkspaceInstanceManager,
+  IProjectInstanceManager,
   SyncDescriptor,
 } from '@moonshot-ai/agent-core-v2';
 import { createFakeModel, say, type FakeModel } from '@moonshot-ai/testkit/model';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionSummary } from '@moonshot-ai/klient';
-import { createGitWorktree } from '@moonshot-ai/testkit/fixtures';
+import { createGitWorktree, fakeMcpServer } from '@moonshot-ai/testkit/fixtures';
 
 import { filterSessionSummariesByCwd } from '../src/server';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { writeFakeModelConfig } from './_helpers/fakeModelConfig';
 
-const STDIO_MCP_FIXTURE = fileURLToPath(
-  new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url),
-);
+const STDIO_MCP_SERVER = fakeMcpServer('mock', { tools: [{ name: 'echo', description: 'Echoes input text', inputSchema: { properties: { text: { type: 'string' } }, required: ['text'] }, reply: { text: { argument: 'text' } } }] });
 
 const OAUTH_PROVIDER_CONFIG = `[providers.test-oauth]
 type = "kimi"
@@ -99,7 +96,7 @@ describe('acp-server session lifecycle', () => {
     sessionId: string,
   ): Promise<readonly { readonly name: string; readonly status: string; readonly error?: string }[]> {
     const lease = await c.server.core.accessor
-      .get(IWorkspaceInstanceManager)
+      .get(IProjectInstanceManager)
       .acquire({ cwd: homeDir! });
     try {
       const handle = c.server.core.accessor.get(ISessionManager).get(sessionId);
@@ -335,17 +332,20 @@ describe('acp-server session lifecycle', () => {
         sessionId: string;
       };
 
+      const before = (await c.send('session/list', {})) as { sessions: { sessionId: string }[] };
+      expect(before.sessions.map((session) => session.sessionId)).toContain(created.sessionId);
+
       const deleted = await c.send('session/delete', { sessionId: created.sessionId });
       expect(deleted).toEqual({});
-      await expect(
-        c.send('session/prompt', { sessionId: created.sessionId, prompt: [] }),
-      ).rejects.toThrow(/-32602/);
 
       const listed = (await c.send('session/list', {})) as {
         sessions: { sessionId: string }[];
       };
       expect(listed.sessions.some((s) => s.sessionId === created.sessionId)).toBe(false);
 
+      await expect(
+        c.send('session/prompt', { sessionId: created.sessionId, prompt: [] }),
+      ).rejects.toThrow(/-32602/);
       await expect(
         c.send('session/delete', { sessionId: created.sessionId }),
       ).rejects.toThrow(/-32602/);
@@ -373,9 +373,9 @@ describe('acp-server session lifecycle', () => {
         mcpServers: [
           {
             name: 'mock',
-            command: process.execPath,
-            args: [STDIO_MCP_FIXTURE],
-            env: [{ name: 'KIMI_TEST_MCP_START_DELAY_MS', value: '0' }],
+            command: STDIO_MCP_SERVER.command,
+            args: [...STDIO_MCP_SERVER.args],
+            env: [{ name: 'EXAMPLE_MCP_SETTING', value: '0' }],
           },
         ],
       })) as { sessionId: string };
@@ -400,7 +400,7 @@ describe('acp-server session lifecycle', () => {
         sessionId: created.sessionId,
         cwd: homeDir,
         mcpServers: [
-          { name: 'mock', command: process.execPath, args: [STDIO_MCP_FIXTURE], env: [] },
+          { name: 'mock', command: STDIO_MCP_SERVER.command, args: [...STDIO_MCP_SERVER.args], env: [] },
         ],
       });
 
@@ -449,7 +449,7 @@ describe('acp-server session lifecycle', () => {
       expect(created.sessionId).toMatch(/^session_/);
 
       const lease = await c.server.core.accessor
-        .get(IWorkspaceInstanceManager)
+        .get(IProjectInstanceManager)
         .acquire({ cwd: homeDir! });
       try {
         const dirs = lease.instance.program.dirs;
@@ -581,7 +581,7 @@ describe('acp-server session lifecycle', () => {
 
       const handle = c.server.core.accessor.get(ISessionManager).get(created.sessionId)!;
       const context = handle.accessor.get(ISessionContext);
-      const project = await c.server.core.accessor.get(IWorkspaceService).get(context.workspaceId);
+      const project = await c.server.core.accessor.get(IProjectService).get(context.workspaceId);
       expect(await realpath(project!.root)).toBe(await realpath(main));
       expect(context.cwd).toBe(worktree);
       const inWorktree = (await c.send('session/list', { cwd: worktree })) as {

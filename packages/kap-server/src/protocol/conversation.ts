@@ -18,6 +18,9 @@ export const turnEndReasonSchema = z.enum([
 ]);
 export type TurnEndReason = z.infer<typeof turnEndReasonSchema>;
 
+export const conversationContinuationSchema = z.enum(['turn', 'background', 'none']);
+export type ConversationContinuation = z.infer<typeof conversationContinuationSchema>;
+
 export const errorInfoSchema = z.object({
   code: z.string(),
   message: z.string(),
@@ -190,6 +193,7 @@ export const toolCallItemSchema = z.object({
   ...itemFields,
   name: z.string(),
   stage: toolStageSchema.optional(),
+  auto_review: z.boolean().optional(),
   input: z.unknown().optional(),
   input_text: z.string().optional(),
   display: z.unknown().optional(),
@@ -274,6 +278,7 @@ export const conversationTurnHeaderSchema = z.object({
   status: conversationStatusSchema,
   outcome: conversationOutcomeSchema.optional(),
   end_reason: turnEndReasonSchema.optional(),
+  continuation: conversationContinuationSchema.optional(),
   error: errorInfoSchema.optional(),
   retry: retryStateSchema.optional(),
   turn_number: z.number().int().nonnegative().optional(),

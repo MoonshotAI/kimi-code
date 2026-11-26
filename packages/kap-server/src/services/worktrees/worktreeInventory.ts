@@ -4,11 +4,11 @@ import { basename, join } from 'node:path';
 import {
   ISessionActivityView,
   ISessionIndex,
-  IWorkspaceService,
+  IProjectService,
   getLiveSessionById,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import type { Workspace } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
+import type { Project } from '@moonshot-ai/agent-core-v2/app/project/project';
 
 import { ErrorCode } from '../../protocol/error-codes';
 import type {
@@ -33,7 +33,7 @@ interface KnownWorktree {
   readonly branch?: string;
   readonly origin: Worktree['origin'];
   readonly createdAt?: string;
-  readonly workspace?: Workspace;
+  readonly workspace?: Project;
   readonly exists: boolean;
 }
 
@@ -87,8 +87,8 @@ export class WorktreeInventory {
   ) {}
 
   private async known(): Promise<readonly KnownWorktree[]> {
-    const workspaces = await this.core.accessor.get(IWorkspaceService).list();
-    const workspaceByRoot = new Map<string, Workspace>();
+    const workspaces = await this.core.accessor.get(IProjectService).list();
+    const workspaceByRoot = new Map<string, Project>();
     for (const workspace of workspaces) {
       const key = await canonical(workspace.root);
       if (!workspaceByRoot.has(key)) workspaceByRoot.set(key, workspace);
@@ -325,7 +325,7 @@ export class WorktreeInventory {
     | {
         readonly repoRoot: string;
         readonly branch?: string;
-        readonly workspace?: Workspace;
+        readonly workspace?: Project;
         readonly sessionCount: number;
       }
     | undefined
@@ -339,8 +339,8 @@ export class WorktreeInventory {
     if (main === undefined) return undefined;
     const repoRoot = await canonical(main.path);
     if (repoRoot === key) return undefined;
-    const workspaces = await this.core.accessor.get(IWorkspaceService).list();
-    let workspace: Workspace | undefined;
+    const workspaces = await this.core.accessor.get(IProjectService).list();
+    let workspace: Project | undefined;
     for (const candidate of workspaces) {
       if ((await canonical(candidate.root)) === repoRoot) {
         workspace = candidate;

@@ -2,7 +2,12 @@ import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
 
-import { approvalDecisionSchema, approvalResponseSchema, approvalScopeSchema } from './approval';
+import {
+  approvalDecisionSchema,
+  approvalDetailSchema,
+  approvalResponseSchema,
+  approvalScopeSchema,
+} from './approval';
 import { questionAnswerMethodSchema, questionAnswerSchema, questionItemSchema } from './question';
 
 export const interactionOutcomeSchema = z.enum([
@@ -26,14 +31,17 @@ const interactionEventBaseSchema = z.object({
   tool_call_id: z.string().min(1).optional(),
 });
 
+const approvalInteractionRequestSchema = z.object({
+  tool_name: z.string().min(1),
+  action: z.string(),
+  tool_input_display: z.unknown().optional(),
+  approval_detail: approvalDetailSchema.optional(),
+  expires_at: isoDateTimeSchema,
+});
+
 export const approvalInteractionEventSchema = interactionEventBaseSchema.extend({
   kind: z.literal('approval'),
-  request: z.object({
-    tool_name: z.string().min(1),
-    action: z.string(),
-    tool_input_display: z.unknown().optional(),
-    expires_at: isoDateTimeSchema,
-  }),
+  request: approvalInteractionRequestSchema,
   response: approvalResponseSchema.optional(),
 });
 
@@ -102,12 +110,7 @@ const pendingInteractionBaseSchema = z.object({
 
 export const pendingApprovalInteractionSchema = pendingInteractionBaseSchema.extend({
   kind: z.literal('approval'),
-  request: z.object({
-    tool_name: z.string().min(1),
-    action: z.string(),
-    tool_input_display: z.unknown().optional(),
-    expires_at: isoDateTimeSchema,
-  }),
+  request: approvalInteractionRequestSchema,
 });
 
 export const pendingQuestionInteractionSchema = pendingInteractionBaseSchema.extend({

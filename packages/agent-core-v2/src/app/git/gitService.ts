@@ -70,7 +70,7 @@ export class GitService implements IGitService {
 
     const records = porc.stdout.split('\0');
     const dirty = records.some((record) => record.length > 0 && !record.startsWith('## '));
-    if (dirty) {
+    if (dirty && options.includeStats !== false) {
       const paths = options.pathFilter === undefined ? [] : [...options.pathFilter].toSorted();
       const scope = paths.length > 0 ? paths : options.scopeToCwd === true ? ['.'] : [];
       const failures: string[] = [];

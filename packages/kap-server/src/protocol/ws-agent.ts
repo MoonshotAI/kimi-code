@@ -12,15 +12,13 @@ export const agentStateSchema = z.object({
   status: z.enum(['idle', 'running', 'ended']),
   compacting: z.boolean(),
   model: z.string().optional(),
+  missing_model: z.string().optional(),
   thinking: z.string().optional(),
   permission_mode: z.enum(['manual', 'yolo', 'auto']).optional(),
   plan_mode: z.boolean(),
   swarm_mode: z.boolean(),
   tower_mode: z.boolean(),
-  plan_mode_available: z.boolean(),
-  swarm_mode_available: z.boolean(),
-  tower_mode_available: z.boolean(),
-  goal_mode_available: z.boolean(),
+  profile_revision: z.number().int().nonnegative().optional(),
 });
 export type AgentState = z.infer<typeof agentStateSchema>;
 

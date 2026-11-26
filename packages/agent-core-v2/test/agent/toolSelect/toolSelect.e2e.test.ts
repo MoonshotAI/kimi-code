@@ -30,7 +30,7 @@ import {
   type TestAgentContext,
   type TestkitAgentFixtures,
 } from '../../harness';
-import { createMemoryMcpOAuthStore, startInProcessHttpMcpServer } from '../../mcpCore/stubs';
+import { createMemoryMcpOAuthStore, startEchoHttpMcpServer } from '../../mcpCore/stubs';
 import type { Message } from '@moonshot-ai/core/llm/message';
 
 function toolsOf(message: Message | undefined) {
@@ -502,6 +502,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load alpha' }] });
     await ctx.untilTurnEnd();
 
+    ctx.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await ctx.get(IAgentConversationUndoService).undo(1);
     const afterUndo = ctx.get(IAgentLoopService).history();
     expect(afterUndo.some((message) => toolsOf(message)?.some((tool) => tool.name === MCP_ALPHA))).toBe(
@@ -642,7 +643,7 @@ describe('progressive tool disclosure end-to-end', () => {
 
 describe('same-turn MCP tool replacement', () => {
   it.each([true, false])('authenticates and calls the replacement tool with deferred=%s', async (deferred) => {
-    const server = await startInProcessHttpMcpServer({ authToken: 'test-token' });
+    const server = await startEchoHttpMcpServer({ bearerToken: 'test-token' });
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     const authenticating = createControlledPromise<void>();
     const authorized = createControlledPromise<void>();
@@ -751,6 +752,7 @@ describe('deferred tool argument correction', () => {
         say('done'),
       );
 
+      model.expectCacheBreak('the argument correction is dropped once the retry succeeds', { at: 'history' });
       await agent.rpc.prompt({ input: [{ type: 'text', text: 'load and call the deferred weather tool' }] });
       await agent.untilTurnEnd();
 

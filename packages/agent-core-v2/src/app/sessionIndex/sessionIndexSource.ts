@@ -215,7 +215,7 @@ export function summaryEquals(a: SessionSummary, b: SessionSummary): boolean {
   );
 }
 
-export async function listWorkspaceIds(
+export async function listProjectIds(
   storage: IFileSystemStorageService,
   sessionsScope: string,
 ): Promise<readonly string[]> {

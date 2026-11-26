@@ -150,7 +150,6 @@ const ROUTES = {
   downloadHostFile: 'local',
   getConfig: 'local',
   setConfig: 'local',
-  listToolCatalog: 'local',
   readHostTextFile: 'local',
   writeHostTextFile: 'local',
   getAuth: 'local',

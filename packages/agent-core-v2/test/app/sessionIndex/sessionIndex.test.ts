@@ -2,6 +2,7 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 
+import { deferred } from '@moonshot-ai/testkit/fixtures';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter } from '#/_base/event';
@@ -18,8 +19,8 @@ import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
-import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
-import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
+import { IProjectService, type Project } from '#/app/project/project';
+import { IProjectPersistence } from '#/app/project/projectPersistence';
 import {
   ISessionIndex,
   ISessionIndexMirror,
@@ -428,8 +429,8 @@ describe('FileSessionIndex (read model)', () => {
   function build(
     fileStorage: FileStorageService = new FileStorageService(homeDir),
     primary?: {
-      service: IWorkspaceService;
-      persistence: IWorkspacePersistence;
+      service: IProjectService;
+      persistence: IProjectPersistence;
       deferActivation?: boolean;
     },
   ): FileSessionIndex {
@@ -441,8 +442,8 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
       ...(primary === undefined || primary.deferActivation === true ? [] : [
-        stubPair(IWorkspaceService, primary.service),
-        stubPair(IWorkspacePersistence, primary.persistence),
+        stubPair(IProjectService, primary.service),
+        stubPair(IProjectPersistence, primary.persistence),
       ]),
     ]);
     disposeHost = () => {
@@ -450,8 +451,8 @@ describe('FileSessionIndex (read model)', () => {
     };
     activatePrimary = primary?.deferActivation === true
       ? () => {
-          host.app.instantiation.provide(IWorkspaceService, primary.service);
-          host.app.instantiation.provide(IWorkspacePersistence, primary.persistence);
+          host.app.instantiation.provide(IProjectService, primary.service);
+          host.app.instantiation.provide(IProjectPersistence, primary.persistence);
         }
       : () => {};
     queryStore = host.app.accessor.get(IQueryStore);
@@ -497,7 +498,7 @@ describe('FileSessionIndex (read model)', () => {
 
   it('reprojects closed sessions on primary changes and detects stale primaries after restart', async () => {
     const changes = new Emitter<void>();
-    const workspace: Workspace = {
+    const workspace: Project = {
       id: workspaceId,
       root: '/old',
       name: 'project',
@@ -507,8 +508,8 @@ describe('FileSessionIndex (read model)', () => {
       lastOpenedAt: 0,
     };
     let primary = workspace.root;
-    const service = { list: async () => [{ ...workspace, root: primary }] } as unknown as IWorkspaceService;
-    const persistence = { onDidChange: changes.event } as IWorkspacePersistence;
+    const service = { list: async () => [{ ...workspace, root: primary }] } as unknown as IProjectService;
+    const persistence = { onDidChange: changes.event } as IProjectPersistence;
     const storage = new FileStorageService(homeDir);
     await seedSession('closed', { cwd: '/old', createdAt: 1, updatedAt: 2 });
     const store = build(storage, { service, persistence });
@@ -540,7 +541,7 @@ describe('FileSessionIndex (read model)', () => {
 
   it('publishes the primary snapshot used to build reconciliation summaries', async () => {
     const changes = new Emitter<void>();
-    const workspace: Workspace = {
+    const workspace: Project = {
       id: workspaceId,
       root: '/old',
       name: 'project',
@@ -550,8 +551,8 @@ describe('FileSessionIndex (read model)', () => {
       lastOpenedAt: 0,
     };
     const list = vi.fn(async () => [{ ...workspace, root: '/old' }]);
-    const service = { list } as unknown as IWorkspaceService;
-    const persistence = { onDidChange: changes.event } as IWorkspacePersistence;
+    const service = { list } as unknown as IProjectService;
+    const persistence = { onDidChange: changes.event } as IProjectPersistence;
     await seedSession('closed', { cwd: '/old', createdAt: 1, updatedAt: 2 });
     const store = build(new FileStorageService(homeDir), { service, persistence });
     await store.prepare();
@@ -568,7 +569,7 @@ describe('FileSessionIndex (read model)', () => {
 
   it('subscribes when workspace persistence activates after the index', async () => {
     const changes = new Emitter<void>();
-    const workspace: Workspace = {
+    const workspace: Project = {
       id: workspaceId,
       root: '/old',
       name: 'project',
@@ -578,9 +579,9 @@ describe('FileSessionIndex (read model)', () => {
       lastOpenedAt: 0,
     };
     let primary = workspace.root;
-    const service = { list: async () => [{ ...workspace, root: primary }] } as unknown as IWorkspaceService;
+    const service = { list: async () => [{ ...workspace, root: primary }] } as unknown as IProjectService;
     const onDidChange = vi.fn(changes.event);
-    const persistence = { onDidChange } as unknown as IWorkspacePersistence;
+    const persistence = { onDidChange } as unknown as IProjectPersistence;
     await seedSession('closed', { cwd: '/old', createdAt: 1, updatedAt: 2 });
     const store = build(new FileStorageService(homeDir), {
       service,
@@ -932,6 +933,95 @@ describe('FileSessionIndex (read model)', () => {
     await mirror.drain();
     const settled = await store.listRecent({ workspaceIds: [workspaceId] });
     expect(settled.items.map((s) => s.id)).toEqual(['a']);
+  });
+
+  it.each(['startup', 'ready'] as const)(
+    'keeps concurrently deleted sessions out of the list after projection from %s',
+    async (state) => {
+      const removedIds = ['removed-first', 'removed-second'] as const;
+      await seedSession('kept', { createdAt: 1, updatedAt: 2 });
+      await seedSession(removedIds[0], { createdAt: 2, updatedAt: 3 });
+      await seedSession(removedIds[1], { createdAt: 3, updatedAt: 4 });
+      const store = build();
+      if (state === 'ready') await store.prepare();
+      const publishing = deferred();
+      const releasePublish = deferred();
+      const setCheckpoint = queryStore.setCheckpoint.bind(queryStore);
+      vi.spyOn(queryStore, 'setCheckpoint').mockImplementationOnce(async (...args) => {
+        publishing.resolve();
+        await releasePublish.promise;
+        return setCheckpoint(...args);
+      });
+
+      const projecting = state === 'startup' ? store.prepare() : store.reprojectNow();
+      const query = { workspaceIds: [workspaceId] };
+      let removing: Promise<void[]> | undefined;
+      try {
+        await publishing.promise;
+        expect((await store.listRecent(query)).items.map((session) => session.id)).toEqual([
+          'removed-second',
+          'removed-first',
+          'kept',
+        ]);
+        await Promise.all(
+          removedIds.map((id) => fsp.rm(join(sessionsDir, workspaceId, id), { recursive: true })),
+        );
+        removing = Promise.all(removedIds.map((id) => store.remove(id)));
+        const duringDelete = (await store.listRecent(query)).items.map((session) => session.id);
+        const expectedDuringDelete = { startup: ['kept'], ready: expect.arrayContaining(['kept']) };
+        expect(duringDelete).toEqual(expectedDuringDelete[state]);
+      } finally {
+        releasePublish.resolve();
+        await Promise.all([projecting, removing]);
+      }
+
+      expect(store.status().state).toBe('ready');
+      expect((await store.listRecent(query)).items.map((session) => session.id)).toEqual(['kept']);
+      await expect(Promise.all(removedIds.map((id) => store.get(id)))).resolves.toEqual([
+        undefined,
+        undefined,
+      ]);
+      await expect(store.count(query)).resolves.toBe(1);
+    },
+  );
+
+  it('keeps a deleted session unlisted after a concurrent reconciliation', async () => {
+    await seedSession('kept', { createdAt: 1, updatedAt: 2 });
+    await seedSession('removed', { createdAt: 2, updatedAt: 3 });
+    const storage = new FileStorageService(homeDir);
+    const store = build(storage);
+    await store.prepare();
+    store.stopReconcileLoop();
+    await seedSession('removed', { createdAt: 2, updatedAt: 4 });
+    await markSessionDirty(storage, 'sessions', 'removed');
+
+    const reconcilingBatch = deferred<readonly WriteOp[]>();
+    const releaseBatch = deferred();
+    const batch = queryStore.batch.bind(queryStore);
+    vi.spyOn(queryStore, 'batch').mockImplementationOnce(async (ops) => {
+      reconcilingBatch.resolve(ops);
+      await releaseBatch.promise;
+      return batch(ops);
+    });
+
+    const reconciling = store.reconcileNow();
+    const query = { workspaceIds: [workspaceId] };
+    let removing: Promise<void> | undefined;
+    try {
+      expect(await reconcilingBatch.promise).toEqual(
+        expect.arrayContaining([expect.objectContaining({ kind: 'put', key: 'removed' })]),
+      );
+      await fsp.rm(join(sessionsDir, workspaceId, 'removed'), { recursive: true });
+      removing = store.remove('removed');
+      expect((await store.listRecent(query)).items.map((session) => session.id)).toContain('kept');
+    } finally {
+      releaseBatch.resolve();
+      await Promise.all([reconciling, removing]);
+    }
+
+    expect((await store.listRecent(query)).items.map((session) => session.id)).toEqual(['kept']);
+    await expect(store.get('removed')).resolves.toBeUndefined();
+    await expect(store.count(query)).resolves.toBe(1);
   });
 
   it('remove waits out an in-flight mirror flush before deleting from the store', async () => {
