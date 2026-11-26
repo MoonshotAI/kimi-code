@@ -93,6 +93,7 @@ const OAUTH_REGION_PROBE_TIMEOUT_MS = 5_000;
 
 const AGENT_TURNS_TIMEOUT_MS = 2 * 60_000;
 const FEEDBACK_UPLOAD_TIMEOUT_MS = Infinity;
+const CAPABILITY_PERMISSIONS_TIMEOUT_MS = 250_000;
 
 const VALIDATION_FAILED_CODE = 40001;
 import {
@@ -1097,6 +1098,15 @@ export class DaemonKimiWebApi implements KimiWebApi {
     const data = await this.http.post<WireCapabilityStatus>(
       `/capabilities/${encodeURIComponent(capabilityId)}:install`,
       body,
+    );
+    return toAppCapabilityStatus(data);
+  }
+
+  async requestCapabilityPermissions(capabilityId: string): Promise<AppCapabilityStatus> {
+    const data = await this.http.post<WireCapabilityStatus>(
+      `/capabilities/${encodeURIComponent(capabilityId)}:request-permissions`,
+      {},
+      { timeoutMs: CAPABILITY_PERMISSIONS_TIMEOUT_MS },
     );
     return toAppCapabilityStatus(data);
   }

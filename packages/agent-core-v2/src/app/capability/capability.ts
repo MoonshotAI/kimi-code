@@ -15,6 +15,8 @@ export interface ICapabilityService {
   getCapability(id: string): Promise<CapabilityStatus>;
 
   installCapability(id: string, options?: CapabilityInstallOptions): Promise<CapabilityStatus>;
+
+  requestCapabilityPermissions(id: string): Promise<CapabilityStatus>;
 }
 
 export const ICapabilityService: ServiceIdentifier<ICapabilityService> =

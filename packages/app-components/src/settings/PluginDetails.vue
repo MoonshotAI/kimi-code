@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Badge, Icon, IconButton, Link } from '@moonshot-ai/app-ui';
+import { Badge, Icon, IconButton, Link, Spinner } from '@moonshot-ai/app-ui';
 import {
+  isKimiCuMacCapability,
+  isKimiCuPermissionMissing,
+  isWebBridgeExtensionDisconnected,
   pluginUsesInstalledCapabilities,
+  readKimiCuPermissions,
   usePlugins,
   useMcpAuthorization,
   type PluginViewModel,
@@ -14,28 +18,22 @@ import PluginCapabilities from './PluginCapabilities.vue';
 import PluginIcon from './PluginIcon.vue';
 import PluginStatus from './PluginStatus.vue';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   row: PluginViewModel;
   sourceView: 'marketplace' | 'installed';
+  cuPermissionWaiting?: boolean;
+}>(), {
+  cuPermissionWaiting: false,
+});
+const emit = defineEmits<{
+  back: [];
+  installed: [row: PluginViewModel];
+  openWebbridgeGuide: [];
+  requestCuPermissions: [];
 }>();
-const emit = defineEmits<{ back: [] }>();
 const { t, locale } = useI18n();
 const { loadPluginCapabilities } = usePlugins({ locale });
 
-const version = computed(() =>
-  props.row.installedPlugin?.version ?? props.row.catalogEntry?.version ?? props.row.capability?.version,
-);
-const versionLabel = computed(() => {
-  const value = version.value;
-  if (value === undefined) return undefined;
-  return value.startsWith('v') ? value : `v${value}`;
-});
-const updateVersionLabel = computed(() => {
-  if (!props.row.updateAvailable) return undefined;
-  const value = props.row.catalogEntry?.version;
-  if (value === undefined) return undefined;
-  return value.startsWith('v') ? value : `v${value}`;
-});
 const originLabel = computed(() => {
   if (props.sourceView === 'installed' && props.row.installedPlugin?.origin === 'custom') {
     return t('settings.plugins.custom');
@@ -53,6 +51,16 @@ const breadcrumbParent = computed(() =>
     : t('settings.plugins.marketplaceGroup'),
 );
 const officialBadge = computed(() => originLabel.value === t('settings.plugins.official'));
+const showWebBridgeBadge = computed(() => isWebBridgeExtensionDisconnected(props.row));
+const showCuWaitingBadge = computed(() =>
+  props.cuPermissionWaiting &&
+  isKimiCuMacCapability(props.row) &&
+  props.row.installedPlugin?.enabled === true &&
+  !readKimiCuPermissions(props.row).granted,
+);
+const showCuPermissionBadge = computed(() =>
+  !showCuWaitingBadge.value && isKimiCuPermissionMissing(props.row),
+);
 
 const capabilities = ref<AppPluginCapabilities>();
 const capabilitiesLoading = ref(false);
@@ -142,17 +150,39 @@ watch([pluginId, () => props.row.installedPlugin?.version], () => {
           <Badge size="sm" variant="neutral" :class="{ 'plugin-details__badge--official': officialBadge }">
             {{ originLabel }}
           </Badge>
-          <span v-if="versionLabel" class="plugin-details__version">{{ versionLabel }}</span>
-          <span
-            v-if="updateVersionLabel"
-            class="plugin-details__version plugin-details__version--update"
+          <button
+            v-if="showWebBridgeBadge"
+            type="button"
+            class="plugin-details__status-badge"
+            @click="emit('openWebbridgeGuide')"
           >
-            {{ t('settings.plugins.updateTo', { version: updateVersionLabel }) }}
-          </span>
+            <Badge size="sm" variant="warning">
+              {{ t('settings.plugins.webbridgeDisconnected') }}
+            </Badge>
+          </button>
+          <Badge
+            v-else-if="showCuWaitingBadge"
+            size="sm"
+            variant="warning"
+            class="plugin-details__status-waiting"
+          >
+            <Spinner size="sm" />
+            {{ t('settings.plugins.cuPermissionWaiting') }}
+          </Badge>
+          <button
+            v-else-if="showCuPermissionBadge"
+            type="button"
+            class="plugin-details__status-badge"
+            @click="emit('requestCuPermissions')"
+          >
+            <Badge size="sm" variant="warning">
+              {{ t('settings.plugins.cuPermissionMissing') }}
+            </Badge>
+          </button>
         </div>
         <p v-if="row.shortDescription" class="plugin-details__tagline">{{ row.shortDescription }}</p>
       </div>
-      <PluginActions :row="row" />
+      <PluginActions :row="row" @installed="emit('installed', $event)" />
     </div>
 
     <PluginStatus :row="row" />
@@ -255,25 +285,26 @@ watch([pluginId, () => props.row.installedPlugin?.version], () => {
   color: var(--color-surface);
 }
 
-.plugin-details__version {
+.plugin-details__status-badge {
   display: inline-flex;
-  align-items: center;
-  height: 18px;
-  padding: 0 7px;
-  border: var(--p-hairline) solid var(--color-line);
+  padding: 0;
+  border: none;
   border-radius: var(--radius-full);
-  color: var(--color-text-muted);
-  font-size: 11px;
-  font-weight: var(--weight-medium);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  white-space: nowrap;
+  background: transparent;
+  cursor: pointer;
 }
 
-.plugin-details__version--update {
-  border-color: transparent;
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
+.plugin-details__status-badge:hover :deep(.ui-badge) {
+  border-color: var(--color-warning);
+}
+
+.plugin-details__status-badge:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+
+.plugin-details__status-waiting {
+  gap: var(--space-1);
 }
 
 .plugin-details__tagline {

@@ -16,8 +16,9 @@ function fakeEntry(overrides: {
   id: 'kimi-cu' | 'kimi-webbridge';
   pluginId?: string;
   supported?: boolean;
-  detect?: CapabilityDetectResult;
+  detect?: CapabilityDetectResult | (() => CapabilityDetectResult);
   install?: (report: CapabilityInstallReporter) => Promise<string | undefined>;
+  requestPermissions?: () => Promise<void>;
 }): CapabilityEntry {
   return {
     id: overrides.id,
@@ -27,9 +28,12 @@ function fakeEntry(overrides: {
     supported: overrides.supported ?? true,
     detect: () =>
       Promise.resolve(
-        overrides.detect ?? { steps: [{ id: 'plugin', state: 'ok' }] },
+        typeof overrides.detect === 'function'
+          ? overrides.detect()
+          : (overrides.detect ?? { steps: [{ id: 'plugin', state: 'ok' }] }),
       ),
     install: overrides.install ?? (() => Promise.resolve(undefined)),
+    requestPermissions: overrides.requestPermissions,
   };
 }
 
@@ -349,5 +353,83 @@ describe('CapabilityService', () => {
         payload: { capabilityId: 'kimi-cu', step: 'runtime', error },
       },
     ]);
+  });
+
+  it('requests permissions without touching install progress and returns refreshed status', async () => {
+    let granted = false;
+    let requests = 0;
+    const entry = fakeEntry({
+      id: 'kimi-cu',
+      detect: () => ({
+        steps: [
+          { id: 'app', state: 'ok' },
+          { id: 'permissions', state: granted ? 'ok' : 'missing' },
+        ],
+      }),
+      install: () => {
+        throw new Error('install must not run');
+      },
+      requestPermissions: () => {
+        requests += 1;
+        granted = true;
+        return Promise.resolve();
+      },
+    });
+    const service = fakeService([entry]);
+    const events: unknown[] = [];
+    service.onDidChangeInstall((event) => events.push(event));
+
+    const status = await service.requestCapabilityPermissions('kimi-cu');
+
+    expect(requests).toBe(1);
+    expect(status.state).toBe('ready');
+    expect(status.install).toEqual({ running: false });
+    expect(events).toEqual([]);
+  });
+
+  it('rejects permission requests for unknown, unsupported, or non-permission capabilities', async () => {
+    const service = fakeService([
+      fakeEntry({ id: 'kimi-webbridge' }),
+      fakeEntry({ id: 'kimi-cu', supported: false, requestPermissions: () => Promise.resolve() }),
+    ]);
+
+    await service.requestCapabilityPermissions('missing').then(
+      () => { throw new Error('expected failure'); },
+      (error: unknown) => expectErrorCode(error, CapabilityErrors.codes.CAPABILITY_NOT_FOUND),
+    );
+    await service.requestCapabilityPermissions('kimi-webbridge').then(
+      () => { throw new Error('expected failure'); },
+      (error: unknown) => expectErrorCode(error, CapabilityErrors.codes.CAPABILITY_UNSUPPORTED),
+    );
+    await service.requestCapabilityPermissions('kimi-cu').then(
+      () => { throw new Error('expected failure'); },
+      (error: unknown) => expectErrorCode(error, CapabilityErrors.codes.CAPABILITY_UNSUPPORTED),
+    );
+  });
+
+  it('coalesces concurrent permission requests for the same capability', async () => {
+    let release!: () => void;
+    let calls = 0;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const entry = fakeEntry({
+      id: 'kimi-cu',
+      requestPermissions: () => {
+        calls += 1;
+        return gate;
+      },
+    });
+    const service = fakeService([entry]);
+
+    const first = service.requestCapabilityPermissions('kimi-cu');
+    const second = service.requestCapabilityPermissions('kimi-cu');
+    expect(calls).toBe(1);
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a.state).toBe('ready');
+    expect(b.state).toBe('ready');
+    expect(calls).toBe(1);
+
+    await service.requestCapabilityPermissions('kimi-cu');
+    expect(calls).toBe(2);
   });
 });

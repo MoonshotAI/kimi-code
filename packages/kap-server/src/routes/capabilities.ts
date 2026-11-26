@@ -133,14 +133,14 @@ export function registerCapabilitiesRoutes(app: CapabilitiesRouteHost, core: Sco
         [ErrorCode.CAPABILITY_UNSUPPORTED]: {},
         [ErrorCode.CAPABILITY_INSTALL_IN_PROGRESS]: {},
       },
-      description: 'Start an idempotent capability install (poll GET for progress)',
+      description: 'Run a capability action (:install or :request-permissions)',
       tags: ['capabilities'],
-      operationId: 'installCapability',
+      operationId: 'runCapabilityAction',
     },
     async (req, reply) => {
       const parsed = parseActionSuffix({
         tail: req.params.tail,
-        allowedActions: ['install'],
+        allowedActions: ['install', 'request-permissions'],
         resourceLabel: 'capability',
       });
       if (parsed.kind !== 'action') {
@@ -149,11 +149,12 @@ export function registerCapabilitiesRoutes(app: CapabilitiesRouteHost, core: Sco
         return;
       }
       try {
-        const capability = await core.accessor
-          .get(ICapabilityService)
-          .installCapability(parsed.id, {
-            stopRunningProcesses: req.body?.stop_running_processes,
-          });
+        const service = core.accessor.get(ICapabilityService);
+        const capability = parsed.action === 'request-permissions'
+          ? await service.requestCapabilityPermissions(parsed.id)
+          : await service.installCapability(parsed.id, {
+              stopRunningProcesses: req.body?.stop_running_processes,
+            });
         reply.send(okEnvelope(toCapabilityStatusWire(capability), req.id));
       } catch (error) {
         reply.send(mapCapabilityError(error, req.id));

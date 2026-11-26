@@ -13,6 +13,7 @@ const apiMock = {
   getCapability: vi.fn(),
   listCapabilities: vi.fn(),
   installCapability: vi.fn(),
+  requestCapabilityPermissions: vi.fn(),
 };
 
 setKimiClientDeps({ api: () => apiMock as never, t: (key) => key });
@@ -1937,7 +1938,210 @@ describe('usePlugins', () => {
       expectedSha256: missing.sha256sum,
     });
   });
+
+  it('refreshCapability updates a single capability and extension hint without toggling loading', async () => {
+    apiMock.listPluginMarketplace.mockResolvedValue([entryWebbridge]);
+    apiMock.listCapabilities.mockResolvedValue([
+      {
+        ...capabilityWebbridge,
+        state: 'ready',
+        steps: [
+          { id: 'daemon', state: 'ok' },
+          { id: 'skill', state: 'ok' },
+          { id: 'extension', state: 'missing', optional: true },
+        ],
+      },
+    ]);
+    const { state, refresh, refreshCapability, rows } = usePlugins();
+    await refresh();
+    expect(state.extensionHint).toBe(true);
+
+    apiMock.getCapability.mockResolvedValue({
+      ...capabilityWebbridge,
+      state: 'ready',
+      steps: [
+        { id: 'daemon', state: 'ok' },
+        { id: 'skill', state: 'ok' },
+        { id: 'extension', state: 'ok', optional: true },
+      ],
+    });
+
+    const status = await refreshCapability('kimi-webbridge');
+
+    expect(status?.steps.find((step) => step.id === 'extension')?.state).toBe('ok');
+    expect(state.loading).toBe(false);
+    expect(state.extensionHint).toBe(false);
+    expect(rows.value[0]?.capability?.steps.find((step) => step.id === 'extension')?.state).toBe('ok');
+    expect(apiMock.listPluginMarketplace).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshCapability ignores stale out-of-order responses', async () => {
+    apiMock.listCapabilities.mockResolvedValue([capabilityWebbridge]);
+    const { state, refresh, refreshCapability } = usePlugins();
+    await refresh();
+
+    const first = deferred<AppCapabilityStatus>();
+    const second = deferred<AppCapabilityStatus>();
+    apiMock.getCapability.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+    const firstCall = refreshCapability('kimi-webbridge');
+    const secondCall = refreshCapability('kimi-webbridge');
+    second.resolve({
+      ...capabilityWebbridge,
+      state: 'ready',
+      steps: [{ id: 'extension', state: 'ok', optional: true }],
+    });
+    await secondCall;
+    first.resolve({
+      ...capabilityWebbridge,
+      state: 'partial',
+      steps: [{ id: 'extension', state: 'missing', optional: true }],
+    });
+    const stale = await firstCall;
+
+    expect(stale).toBeUndefined();
+    expect(state.capabilities[0]?.steps[0]?.state).toBe('ok');
+  });
+
+  it('installRow reports installed, failed, and cancelled outcomes', async () => {
+    apiMock.listPluginMarketplace.mockResolvedValue([entryVercel, entryWebbridge]);
+    apiMock.listCapabilities.mockResolvedValue([{ ...capabilityWebbridge, state: 'ready' }]);
+    const { refresh, installRow, rows } = usePlugins();
+    await refresh();
+
+    apiMock.installPlugin.mockResolvedValueOnce({
+      id: 'vercel-plugin',
+      catalogId: 'vercel-plugin',
+      enabled: true,
+      origin: 'marketplace',
+    });
+    const vercelRow = rows.value.find((row) => row.id === 'vercel-plugin')!;
+    await expect(installRow(vercelRow)).resolves.toBe('installed');
+
+    apiMock.installPlugin.mockRejectedValueOnce(new Error('network down'));
+    await expect(installRow(vercelRow)).resolves.toBe('failed');
+
+    apiMock.installCapability.mockResolvedValue({ install: { running: true } });
+    apiMock.getCapability.mockResolvedValue({
+      ...capabilityWebbridge,
+      state: 'ready',
+      install: { running: false, confirmationRequired: 'stop-processes' },
+    });
+    const webbridgeRow = rows.value.find((row) => row.id === 'kimi-webbridge')!;
+    await expect(
+      installRow(webbridgeRow, { confirmStopProcesses: () => Promise.resolve(false) }),
+    ).resolves.toBe('cancelled');
+  });
+
+  it('requestCapabilityPermissions reports late failures without writing inline row errors', async () => {
+    apiMock.listCapabilities.mockResolvedValue([capabilityCu]);
+    const { state, refresh, refreshCapability, requestCapabilityPermissions } = usePlugins();
+    await refresh();
+
+    const slowRequest = deferred<AppCapabilityStatus>();
+    apiMock.requestCapabilityPermissions.mockReturnValueOnce(slowRequest.promise);
+    apiMock.getCapability.mockResolvedValueOnce(capabilityCu);
+
+    const pending = requestCapabilityPermissions('kimi-cu');
+    await refreshCapability('kimi-cu');
+    slowRequest.reject(new Error('helper launch failed'));
+    const result = await pending;
+
+    expect(result).toEqual({ failed: true });
+    expect(state.rowErrors['kimi-cu']).toBeUndefined();
+  });
+
+  it('requestCapabilityPermissions treats helper wait timeouts as unfinished without row errors', async () => {
+    apiMock.listCapabilities.mockResolvedValue([capabilityCu]);
+    const { state, refresh, requestCapabilityPermissions } = usePlugins();
+    await refresh();
+
+    apiMock.requestCapabilityPermissions.mockRejectedValueOnce(
+      new Error('command timed out after 240000ms: /Applications/KimiCU.app/Contents/MacOS/kimi-cu'),
+    );
+    apiMock.getCapability.mockResolvedValueOnce({
+      ...capabilityCu,
+      state: 'partial',
+      steps: [{ id: 'permissions', state: 'missing' }],
+    });
+
+    const result = await requestCapabilityPermissions('kimi-cu');
+
+    expect(result.failed).toBe(false);
+    expect(result.status?.state).toBe('partial');
+    expect(state.rowErrors['kimi-cu']).toBeUndefined();
+  });
+
+  it('requestCapabilityPermissions tolerates client fetch timeouts and aborts without row errors', async () => {
+    apiMock.listCapabilities.mockResolvedValue([capabilityCu]);
+    const { state, refresh, requestCapabilityPermissions } = usePlugins();
+    await refresh();
+    apiMock.getCapability.mockResolvedValue({
+      ...capabilityCu,
+      state: 'partial',
+      steps: [{ id: 'permissions', state: 'missing' }],
+    });
+
+    apiMock.requestCapabilityPermissions.mockRejectedValueOnce(
+      new DaemonNetworkError({
+        message: 'Network error calling POST /capabilities/kimi-cu:request-permissions',
+        cause: Object.assign(new Error('timed out'), { name: 'TimeoutError' }),
+        method: 'POST',
+        path: '/capabilities/kimi-cu:request-permissions',
+        url: 'http://test.local/api/v1/capabilities/kimi-cu:request-permissions',
+        requestId: 'r1',
+        phase: 'fetch',
+        timeoutMs: 30_000,
+      }),
+    );
+    const afterTimeout = await requestCapabilityPermissions('kimi-cu');
+    expect(afterTimeout.failed).toBe(false);
+    expect(afterTimeout.status?.state).toBe('partial');
+    expect(state.rowErrors['kimi-cu']).toBeUndefined();
+
+    apiMock.requestCapabilityPermissions.mockRejectedValueOnce(
+      Object.assign(new Error('aborted'), { name: 'AbortError' }),
+    );
+    const afterAbort = await requestCapabilityPermissions('kimi-cu');
+    expect(afterAbort.failed).toBe(false);
+    expect(afterAbort.status?.state).toBe('partial');
+    expect(state.rowErrors['kimi-cu']).toBeUndefined();
+  });
+
+  it('requestCapabilityPermissions flags business and HTTP errors for toast without inline row errors', async () => {
+    apiMock.listCapabilities.mockResolvedValue([capabilityCu]);
+    const { state, refresh, requestCapabilityPermissions } = usePlugins();
+    await refresh();
+
+    apiMock.requestCapabilityPermissions.mockRejectedValueOnce(
+      new DaemonApiError({
+        code: 50001,
+        msg: 'kimi-cu request-permissions failed: xpc service unavailable',
+        requestId: 'r2',
+      }),
+    );
+    await expect(requestCapabilityPermissions('kimi-cu')).resolves.toEqual({ failed: true });
+    expect(state.rowErrors['kimi-cu']).toBeUndefined();
+
+    apiMock.requestCapabilityPermissions.mockRejectedValueOnce(
+      new DaemonNetworkError({
+        message: 'Failed to parse JSON response from POST /capabilities/kimi-cu:request-permissions',
+        cause: new SyntaxError('Unexpected token'),
+        method: 'POST',
+        path: '/capabilities/kimi-cu:request-permissions',
+        url: 'http://test.local/api/v1/capabilities/kimi-cu:request-permissions',
+        requestId: 'r3',
+        phase: 'parse',
+        timeoutMs: 250_000,
+        status: 502,
+        statusText: 'Bad Gateway',
+      }),
+    );
+    await expect(requestCapabilityPermissions('kimi-cu')).resolves.toEqual({ failed: true });
+    expect(state.rowErrors['kimi-cu']).toBeUndefined();
+  });
 });
+
 
 describe('pluginRowShowsInstall', () => {
   const installedWiring = {

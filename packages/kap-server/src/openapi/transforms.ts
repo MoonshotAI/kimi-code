@@ -161,6 +161,7 @@ export function transformOpenApiDocument(
   patchSessionExport(paths);
   patchSessionAction(paths);
   patchAgentAction(paths);
+  patchCapabilityAction(paths);
   patchFsAction(paths);
   patchFsDownload(paths);
   patchWorkspaceFsContent(paths);
@@ -315,6 +316,33 @@ function patchAgentAction(paths: Record<string, unknown>): void {
     clonedOperation['operationId'] = 'runAgentCloseAction';
   }
   paths['/api/v1/sessions/{session_id}/agents/{agent_id}:close'] = cloned;
+  delete paths[internalPath];
+}
+
+function patchCapabilityAction(paths: Record<string, unknown>): void {
+  const internalPath = '/api/v1/capabilities/{tail}';
+  const pathItem = asRecord(paths[internalPath]);
+  const operation = asRecord(pathItem?.['post']);
+  if (pathItem === undefined || operation === undefined) return;
+
+  const install = cloneRecord(pathItem);
+  replacePathParamName(install, 'tail', 'capability_id');
+  const installOperation = asRecord(install['post']);
+  if (installOperation !== undefined) {
+    installOperation['operationId'] = 'installCapability';
+    installOperation['description'] = 'Start an idempotent capability install (poll GET for progress)';
+  }
+  paths['/api/v1/capabilities/{capability_id}:install'] = install;
+
+  const requestPermissions = cloneRecord(pathItem);
+  replacePathParamName(requestPermissions, 'tail', 'capability_id');
+  const permissionsOperation = asRecord(requestPermissions['post']);
+  if (permissionsOperation !== undefined) {
+    permissionsOperation['operationId'] = 'requestCapabilityPermissions';
+    permissionsOperation['description'] = 'Request system permissions for an installed capability and return its refreshed status';
+    delete permissionsOperation['requestBody'];
+  }
+  paths['/api/v1/capabilities/{capability_id}:request-permissions'] = requestPermissions;
   delete paths[internalPath];
 }
 

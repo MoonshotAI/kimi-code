@@ -89,4 +89,26 @@ describe('server-v2 /api/v1 capabilities', () => {
       expect(body.code).toBe(40925);
     },
   );
+
+  it('routes request-permissions without starting an install', async () => {
+    const missing = await postJson<unknown>('/api/v1/capabilities/nope:request-permissions');
+    expect(missing.body.code).toBe(40418);
+
+    const webbridge = await postJson<unknown>('/api/v1/capabilities/kimi-webbridge:request-permissions');
+    expect(webbridge.body.code).toBe(40925);
+
+    const { body } = await getJson<unknown>('/api/v1/capabilities');
+    const parsed = listCapabilitiesResponseSchema.parse(body.data);
+    for (const capability of parsed.capabilities) {
+      expect(capability.install.running).toBe(false);
+    }
+  });
+
+  it.skipIf(process.platform === 'darwin')(
+    'rejects kimi-cu request-permissions off macOS with 40925',
+    async () => {
+      const cu = await postJson<unknown>('/api/v1/capabilities/kimi-cu:request-permissions');
+      expect(cu.body.code).toBe(40925);
+    },
+  );
 });

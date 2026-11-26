@@ -64,4 +64,5 @@ export interface CapabilityEntry {
   readonly supported: boolean;
   detect(): Promise<CapabilityDetectResult>;
   install(report: CapabilityInstallReporter, options?: CapabilityInstallOptions): Promise<string | undefined>;
+  requestPermissions?(): Promise<void>;
 }

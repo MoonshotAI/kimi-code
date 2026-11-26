@@ -41,6 +41,7 @@ export class CapabilityService extends Disposable implements ICapabilityService 
   private readonly entries: ReadonlyMap<CapabilityId, CapabilityEntry>;
   private readonly installProgress = new Map<CapabilityId, CapabilityInstallProgress>();
   private readonly runningInstalls = new Set<CapabilityId>();
+  private readonly runningPermissionRequests = new Map<CapabilityId, Promise<CapabilityStatus>>();
 
   private setInstallProgress(id: CapabilityId, progress: CapabilityInstallProgress): void {
     this.installProgress.set(id, progress);
@@ -142,6 +143,31 @@ export class CapabilityService extends Disposable implements ICapabilityService 
       }
     })();
 
+    return this.statusOf(entry);
+  }
+
+  requestCapabilityPermissions(id: string): Promise<CapabilityStatus> {
+    const existing = this.runningPermissionRequests.get(id as CapabilityId);
+    if (existing !== undefined) return existing;
+    const task = this.runPermissionRequest(id).finally(() => {
+      if (this.runningPermissionRequests.get(id as CapabilityId) === task) {
+        this.runningPermissionRequests.delete(id as CapabilityId);
+      }
+    });
+    this.runningPermissionRequests.set(id as CapabilityId, task);
+    return task;
+  }
+
+  private async runPermissionRequest(id: string): Promise<CapabilityStatus> {
+    const entry = this.requireEntry(id);
+    if (!entry.supported || entry.requestPermissions === undefined) {
+      throw new Error2(
+        CapabilityErrors.codes.CAPABILITY_UNSUPPORTED,
+        `Capability "${entry.id}" does not support permission requests on ${process.platform}/${process.arch}`,
+        { details: { id: entry.id } },
+      );
+    }
+    await entry.requestPermissions();
     return this.statusOf(entry);
   }
 

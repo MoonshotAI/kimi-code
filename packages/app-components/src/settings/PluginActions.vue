@@ -24,6 +24,7 @@ const props = defineProps<{
   row: PluginViewModel;
   installVariant?: 'primary' | 'secondary';
 }>();
+const emit = defineEmits<{ installed: [row: PluginViewModel] }>();
 const { t } = useI18n();
 const { state, installRow, remove, setEnabled, busyKey } = usePlugins();
 const { authorizePlugin } = useMcpAuthorization();
@@ -62,8 +63,9 @@ function isBusy(id: string, action: PluginRowAction): boolean {
 
 async function install(): Promise<void> {
   const firstInstall = props.row.installedPlugin === undefined;
-  await installRow(props.row, { confirmStopProcesses });
-  if (!firstInstall) return;
+  const result = await installRow(props.row, { confirmStopProcesses });
+  if (firstInstall && result === 'installed') emit('installed', props.row);
+  if (!firstInstall || result !== 'installed') return;
   const entry = props.row.catalogEntry;
   if (entry === undefined || entry.capabilityId !== undefined) return;
   if (state.rowErrors[entry.id] !== undefined) return;

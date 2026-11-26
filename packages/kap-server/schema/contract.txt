@@ -73,18 +73,8 @@ GET /api/v1/capabilities response 200.request_id: string
 GET /api/v1/capabilities response 200: object closed
 GET /api/v1/capabilities/{capability_id} param path:capability_id: string minLength=1
 GET /api/v1/capabilities/{capability_id} response 200: oneOf
-GET /api/v1/capabilities/{capability_id} response 200<code=0>.code: enum 0
-GET /api/v1/capabilities/{capability_id} response 200<code=0>.data: shape 432b4abe
-GET /api/v1/capabilities/{capability_id} response 200<code=0>.details: any optional
-GET /api/v1/capabilities/{capability_id} response 200<code=0>.msg: string
-GET /api/v1/capabilities/{capability_id} response 200<code=0>.request_id: string
-GET /api/v1/capabilities/{capability_id} response 200<code=0>: object closed
-GET /api/v1/capabilities/{capability_id} response 200<code=40418>.code: enum 40418
-GET /api/v1/capabilities/{capability_id} response 200<code=40418>.data: enum null nullable
-GET /api/v1/capabilities/{capability_id} response 200<code=40418>.details: any optional
-GET /api/v1/capabilities/{capability_id} response 200<code=40418>.msg: string
-GET /api/v1/capabilities/{capability_id} response 200<code=40418>.request_id: string
-GET /api/v1/capabilities/{capability_id} response 200<code=40418>: object closed
+GET /api/v1/capabilities/{capability_id} response 200<code=0>: shape a34da180
+GET /api/v1/capabilities/{capability_id} response 200<code=40418>: shape 5a5da7e1
 GET /api/v1/capabilities/{capability_id}: operation
 GET /api/v1/capabilities: operation
 GET /api/v1/catalog/providers response 200: oneOf
@@ -1469,36 +1459,44 @@ PATCH /api/v1/workspaces/{workspace_id} response 200<code=40006>: object closed
 PATCH /api/v1/workspaces/{workspace_id} response 200<code=40409>: shape 197643f0
 PATCH /api/v1/workspaces/{workspace_id} response 200<code=40410>: shape 3fb7704d
 PATCH /api/v1/workspaces/{workspace_id}: operation
-POST /api/v1/capabilities/{tail} param path:tail: string minLength=1
-POST /api/v1/capabilities/{tail} request.stop_running_processes: boolean optional
-POST /api/v1/capabilities/{tail} request: object
-POST /api/v1/capabilities/{tail} response 200: oneOf
-POST /api/v1/capabilities/{tail} response 200<code=0>.code: enum 0
-POST /api/v1/capabilities/{tail} response 200<code=0>.data: shape 432b4abe
-POST /api/v1/capabilities/{tail} response 200<code=0>.details: any optional
-POST /api/v1/capabilities/{tail} response 200<code=0>.msg: string
-POST /api/v1/capabilities/{tail} response 200<code=0>.request_id: string
-POST /api/v1/capabilities/{tail} response 200<code=0>: object closed
-POST /api/v1/capabilities/{tail} response 200<code=40001>: shape a642160a
-POST /api/v1/capabilities/{tail} response 200<code=40418>.code: enum 40418
-POST /api/v1/capabilities/{tail} response 200<code=40418>.data: enum null nullable
-POST /api/v1/capabilities/{tail} response 200<code=40418>.details: any optional
-POST /api/v1/capabilities/{tail} response 200<code=40418>.msg: string
-POST /api/v1/capabilities/{tail} response 200<code=40418>.request_id: string
-POST /api/v1/capabilities/{tail} response 200<code=40418>: object closed
-POST /api/v1/capabilities/{tail} response 200<code=40924>.code: enum 40924
-POST /api/v1/capabilities/{tail} response 200<code=40924>.data: enum null nullable
-POST /api/v1/capabilities/{tail} response 200<code=40924>.details: any optional
-POST /api/v1/capabilities/{tail} response 200<code=40924>.msg: string
-POST /api/v1/capabilities/{tail} response 200<code=40924>.request_id: string
-POST /api/v1/capabilities/{tail} response 200<code=40924>: object closed
-POST /api/v1/capabilities/{tail} response 200<code=40925>.code: enum 40925
-POST /api/v1/capabilities/{tail} response 200<code=40925>.data: enum null nullable
-POST /api/v1/capabilities/{tail} response 200<code=40925>.details: any optional
-POST /api/v1/capabilities/{tail} response 200<code=40925>.msg: string
-POST /api/v1/capabilities/{tail} response 200<code=40925>.request_id: string
-POST /api/v1/capabilities/{tail} response 200<code=40925>: object closed
-POST /api/v1/capabilities/{tail}: operation
+POST /api/v1/capabilities/{capability_id}:install param path:capability_id: string minLength=1
+POST /api/v1/capabilities/{capability_id}:install request.stop_running_processes: boolean optional
+POST /api/v1/capabilities/{capability_id}:install request: object
+POST /api/v1/capabilities/{capability_id}:install response 200: oneOf
+POST /api/v1/capabilities/{capability_id}:install response 200<code=0>: shape a34da180
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40001>: shape a642160a
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40418>: shape 5a5da7e1
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40924>.code: enum 40924
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40924>.data: enum null nullable
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40924>.details: any optional
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40924>.msg: string
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40924>.request_id: string
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40924>: object closed
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40925>.code: enum 40925
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40925>.data: enum null nullable
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40925>.details: any optional
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40925>.msg: string
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40925>.request_id: string
+POST /api/v1/capabilities/{capability_id}:install response 200<code=40925>: object closed
+POST /api/v1/capabilities/{capability_id}:install: operation
+POST /api/v1/capabilities/{capability_id}:request-permissions param path:capability_id: string minLength=1
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200: oneOf
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=0>: shape a34da180
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40001>: shape a642160a
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40418>: shape 5a5da7e1
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40924>.code: enum 40924
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40924>.data: enum null nullable
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40924>.details: any optional
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40924>.msg: string
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40924>.request_id: string
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40924>: object closed
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40925>.code: enum 40925
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40925>.data: enum null nullable
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40925>.details: any optional
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40925>.msg: string
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40925>.request_id: string
+POST /api/v1/capabilities/{capability_id}:request-permissions response 200<code=40925>: object closed
+POST /api/v1/capabilities/{capability_id}:request-permissions: operation
 POST /api/v1/config request.auto_session_title: boolean optional
 POST /api/v1/config request.background: any optional
 POST /api/v1/config request.default_model: string optional
@@ -4708,6 +4706,11 @@ shape 4c937256.request_id: string
 shape 54fae70b.id: string minLength=1 optional
 shape 54fae70b.kind: enum "url"
 shape 54fae70b.url: string minLength=1
+shape 5a5da7e1.code: enum 40418
+shape 5a5da7e1.data: enum null nullable
+shape 5a5da7e1.details: any optional
+shape 5a5da7e1.msg: string
+shape 5a5da7e1.request_id: string
 shape 5cd46836.signature: string optional
 shape 5cd46836.thinking: string
 shape 5cd46836.type: enum "thinking"
@@ -4884,6 +4887,11 @@ shape a1ffb7b0.modified_at: any
 shape a1ffb7b0.name: string
 shape a1ffb7b0.path: string
 shape a1ffb7b0.size: integer minimum=0 maximum=9007199254740991 optional
+shape a34da180.code: enum 0
+shape a34da180.data: shape 432b4abe
+shape a34da180.details: any optional
+shape a34da180.msg: string
+shape a34da180.request_id: string
 shape a642160a.code: enum 40001
 shape a642160a.data: enum null nullable
 shape a642160a.details: any optional

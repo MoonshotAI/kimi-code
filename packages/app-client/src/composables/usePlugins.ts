@@ -1,6 +1,7 @@
 import { computed, reactive, toValue, type MaybeRefOrGetter } from 'vue';
 import { getKimiWebApi } from '../client/deps';
-import { DaemonNetworkError, isDaemonApiError } from '@moonshot-ai/app-core/api';
+import { DaemonNetworkError, isDaemonApiError, isDaemonNetworkError } from '@moonshot-ai/app-core/api';
+import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import type {
   AppCapabilityInstallProgress,
   AppCapabilityStatus,
@@ -10,6 +11,8 @@ import type {
 } from '@moonshot-ai/app-core/api';
 
 export type PluginRowAction = 'install' | 'remove' | 'toggle';
+
+export type PluginInstallResult = 'installed' | 'failed' | 'cancelled';
 
 export const CUSTOM_INSTALL_ROW_ID = '__custom__';
 
@@ -94,6 +97,7 @@ let settleReadSliceMs = 5_000;
 let extensionHintDismissed = loadExtensionHintDismissed();
 let pendingForceRefresh = false;
 let installedReadGeneration = 0;
+const capabilityReadGenerations = new Map<string, number>();
 
 export function __setSettleTimersForTests(input: { timeoutMs: number; sliceMs: number }): void {
   settleTimeoutMs = input.timeoutMs;
@@ -108,6 +112,7 @@ export function __resetPluginsForTests(): void {
   setExtensionHintDismissed(false);
   pendingForceRefresh = false;
   installedReadGeneration += 1;
+  capabilityReadGenerations.clear();
 }
 
 function onSettleOnce(id: string): { promise: Promise<void>; dispose: () => void } {
@@ -357,9 +362,9 @@ async function run(
   action: PluginRowAction,
   task: () => Promise<unknown>,
   opts?: { fullRefresh?: boolean },
-): Promise<void> {
+): Promise<boolean> {
   const key = busyKey(id, action);
-  if (state.busy[key]) return;
+  if (state.busy[key]) return false;
   state.busy[key] = true;
   capabilityReconcileErrors.delete(id);
   state.rowErrors[id] = undefined;
@@ -373,12 +378,13 @@ async function run(
   } finally {
     state.busy[key] = undefined;
   }
-  if (failed) return;
+  if (failed) return false;
   if (opts?.fullRefresh === false) {
     void reconcilePlugins();
   } else {
     void refresh(true);
   }
+  return true;
 }
 
 async function probeSupport(): Promise<void> {
@@ -468,6 +474,53 @@ export function pluginRowShowsInstall(row: PluginViewModel): boolean {
       (row.updateAvailable && (capability.id === 'kimi-webbridge' || capability.state === 'ready'));
   }
   return row.installedPlugin === undefined || row.updateAvailable;
+}
+
+function capabilityStepOk(row: PluginViewModel, stepId: string): boolean {
+  return row.capability?.steps.some((step) => step.id === stepId && step.state === 'ok') === true;
+}
+
+function rowInstallInProgress(row: PluginViewModel): boolean {
+  return row.capability?.install.running === true ||
+    state.busy[busyKey(row.installId, 'install')] === true;
+}
+
+export function isWebBridgeExtensionDisconnected(row: PluginViewModel): boolean {
+  const capability = row.capability;
+  if (capability?.id !== 'kimi-webbridge' || !capability.supported) return false;
+  if (row.installedPlugin === undefined || !row.installedPlugin.enabled) return false;
+  if (rowInstallInProgress(row)) return false;
+  if (!capabilityStepOk(row, 'daemon') || !capabilityStepOk(row, 'skill')) return false;
+  return capability.steps.find((step) => step.id === 'extension')?.state !== 'ok';
+}
+
+export function isKimiCuMacCapability(row: PluginViewModel): boolean {
+  const capability = row.capability;
+  return isMacosDesktop &&
+    capability?.id === 'kimi-cu' &&
+    capability.pluginId !== 'kimi-cu-win' &&
+    capability.supported;
+}
+
+export interface KimiCuPermissionSnapshot {
+  readonly accessibility: boolean;
+  readonly screenRecording: boolean;
+  readonly granted: boolean;
+}
+
+export function readKimiCuPermissions(row: PluginViewModel): KimiCuPermissionSnapshot {
+  const steps = row.capability?.steps ?? [];
+  const accessibility = steps.some((step) => step.id === 'permissions.accessibility' && step.state === 'ok');
+  const screenRecording = steps.some((step) => step.id === 'permissions.screenRecording' && step.state === 'ok');
+  return { accessibility, screenRecording, granted: accessibility && screenRecording };
+}
+
+export function isKimiCuPermissionMissing(row: PluginViewModel): boolean {
+  if (!isKimiCuMacCapability(row)) return false;
+  if (row.installedPlugin === undefined || !row.installedPlugin.enabled) return false;
+  if (rowInstallInProgress(row)) return false;
+  if (!capabilityStepOk(row, 'app') || !capabilityStepOk(row, 'service')) return false;
+  return !readKimiCuPermissions(row).granted;
 }
 
 function nonEmptyString(value: unknown): string | undefined {
@@ -702,14 +755,16 @@ interface PluginInstallOptions {
   confirmStopProcesses?: () => Promise<boolean>;
 }
 
-async function installEntry(entry: AppPluginMarketplaceEntry, options?: PluginInstallOptions): Promise<void> {
+async function installEntry(
+  entry: AppPluginMarketplaceEntry,
+  options?: PluginInstallOptions,
+): Promise<PluginInstallResult> {
   const currentEntry = state.entries.find((candidate) => candidate.id === entry.id);
-  if (currentEntry === undefined) return;
+  if (currentEntry === undefined) return 'failed';
   if (currentEntry.capabilityId !== undefined) {
-    await setupCapability(currentEntry.capabilityId, options);
-    return;
+    return setupCapability(currentEntry.capabilityId, options);
   }
-  await run(currentEntry.id, 'install', async () => {
+  const completed = await run(currentEntry.id, 'install', async () => {
     applyInstalledLocally(
       await getKimiWebApi().installPlugin({
         marketplaceId: currentEntry.id,
@@ -718,10 +773,15 @@ async function installEntry(entry: AppPluginMarketplaceEntry, options?: PluginIn
       }),
     );
   });
+  return completed ? 'installed' : 'failed';
 }
 
-async function setupCapability(id: string, options?: PluginInstallOptions): Promise<void> {
-  await run(id, 'install', async () => {
+async function setupCapability(
+  id: string,
+  options?: PluginInstallOptions,
+): Promise<PluginInstallResult> {
+  let result: PluginInstallResult = 'failed';
+  const completed = await run(id, 'install', async () => {
     let stopRunningProcesses = false;
     for (;;) {
       try {
@@ -737,14 +797,69 @@ async function setupCapability(id: string, options?: PluginInstallOptions): Prom
       if (settled === undefined) return;
       await applySettled(id, settled);
       if (settled.install.confirmationRequired === 'stop-processes') {
-        if (stopRunningProcesses || !await options?.confirmStopProcesses?.()) return;
+        if (stopRunningProcesses || !await options?.confirmStopProcesses?.()) {
+          result = 'cancelled';
+          return;
+        }
         stopRunningProcesses = true;
         continue;
       }
       if (settled.install.error !== undefined) throw new Error(settled.install.error);
+      result = 'installed';
       return;
     }
   });
+  return completed ? result : 'failed';
+}
+
+async function refreshCapability(id: string): Promise<AppCapabilityStatus | undefined> {
+  if (state.capabilitiesUnsupported) return undefined;
+  const generation = (capabilityReadGenerations.get(id) ?? 0) + 1;
+  capabilityReadGenerations.set(id, generation);
+  try {
+    const status = await getKimiWebApi().getCapability(id);
+    if (capabilityReadGenerations.get(id) !== generation) return undefined;
+    applyCapabilityStatus(status);
+    syncExtensionHint();
+    return status;
+  } catch {
+    return undefined;
+  }
+}
+
+function isCapabilityPermissionInterruption(error: unknown): boolean {
+  if (error instanceof Error && error.message.startsWith('command timed out after ')) return true;
+  if (error instanceof Error && error.name === 'AbortError') return true;
+  return isDaemonNetworkError(error) && error.phase === 'fetch' && error.status === undefined;
+}
+
+export interface CapabilityPermissionRequestResult {
+  readonly status?: AppCapabilityStatus;
+  readonly failed: boolean;
+}
+
+async function requestCapabilityPermissions(
+  id: string,
+): Promise<CapabilityPermissionRequestResult> {
+  const generation = (capabilityReadGenerations.get(id) ?? 0) + 1;
+  capabilityReadGenerations.set(id, generation);
+  try {
+    const status = await getKimiWebApi().requestCapabilityPermissions(id);
+    if (capabilityReadGenerations.get(id) === generation) {
+      applyCapabilityStatus(status);
+      syncExtensionHint();
+    }
+    return { status, failed: false };
+  } catch (error) {
+    if (isCapabilityPermissionInterruption(error)) {
+      const refreshed = await refreshCapability(id);
+      return {
+        status: refreshed ?? state.capabilities.find((candidate) => candidate.id === id),
+        failed: false,
+      };
+    }
+    return { failed: true };
+  }
 }
 
 export function usePlugins(options: { locale?: MaybeRefOrGetter<string> } = {}) {
@@ -827,13 +942,16 @@ export function usePlugins(options: { locale?: MaybeRefOrGetter<string> } = {}) 
       state.rowErrors = {};
     },
     refresh,
+    refreshCapability,
+    requestCapabilityPermissions,
     loadPluginCapabilities: (
       row: PluginViewModel,
       sourceView: 'marketplace' | 'installed',
     ) => loadPluginCapabilities(row, sourceView, locale()),
     install: installEntry,
-    installRow: async (row: PluginViewModel, options?: PluginInstallOptions) => {
-      if (row.catalogEntry !== undefined) await installEntry(row.catalogEntry, options);
+    installRow: async (row: PluginViewModel, options?: PluginInstallOptions): Promise<PluginInstallResult> => {
+      if (row.catalogEntry === undefined) return 'failed';
+      return installEntry(row.catalogEntry, options);
     },
     installSource: async (source: string) => {
       await run(CUSTOM_INSTALL_ROW_ID, 'install', async () => {

@@ -72,6 +72,7 @@ const ROUTES = {
   listCapabilities: 'local',
   getCapability: 'local',
   installCapability: 'local',
+  requestCapabilityPermissions: 'local',
   listPlugins: 'local',
   getPluginInfo: 'local',
   previewPlugin: 'local',
