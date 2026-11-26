@@ -14,17 +14,13 @@ function source(worktree: Record<string, unknown>): Source {
 }
 
 describe('sessionWorktreeDisplay', () => {
-  it('returns nothing for a local session', () => {
-    expect(sessionWorktreeDisplay(null)).toBeNull();
-    expect(sessionWorktreeDisplay({})).toBeNull();
-  });
-
-  it('returns nothing while the worktree has no directory', () => {
-    expect(sessionWorktreeDisplay(source({ setup: { status: 'running' } }))).toBeNull();
-  });
-
-  it('returns nothing after the session fell back to local mode', () => {
-    expect(sessionWorktreeDisplay(source({ path: '/wt', setup: { status: 'local' } }))).toBeNull();
+  it.each([
+    ['a missing session', null],
+    ['a local session', {}],
+    ['a worktree without a directory yet', source({ setup: { status: 'running' } })],
+    ['a session that fell back to local mode', source({ path: '/wt', setup: { status: 'local' } })],
+  ])('returns nothing for %s', (_label, value) => {
+    expect(sessionWorktreeDisplay(value)).toBeNull();
   });
 
   it.each(['ready', 'running'])(

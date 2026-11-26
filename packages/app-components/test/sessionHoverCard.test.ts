@@ -87,12 +87,13 @@ function ready(path: string, value: Record<string, unknown> = {}): Record<string
   };
 }
 
-function mountCard(session: Session, openInApp?: (url: string) => void): HTMLElement {
+async function mountCard(session: Session, openInApp?: (url: string) => void): Promise<HTMLElement> {
   app = createApp({ render: () => h(SessionHoverCard, { session }) });
   app.use(createKimiI18n({ locale: 'zh' }));
   app.provide(IconResolverKey, (name) => ({ render: () => h('svg', { 'data-icon': name }) }));
   if (openInApp !== undefined) app.provide(OpenSidebarBrowserUrlKey, () => openInApp);
   app.mount(host);
+  await nextTick();
   return host.querySelector<HTMLElement>('[data-session-hover-card]')!;
 }
 
@@ -126,8 +127,7 @@ describe('SessionHoverCard', () => {
     stores.sessions = [worktreeRecord()];
     stores.roots = [WORKTREE];
     stores.rows = [ready(WORKTREE)];
-    const el = mountCard(row());
-    await nextTick();
+    const el = await mountCard(row());
 
     expect(el.querySelector('.shc-title')?.textContent).toBe('Login redirect analysis');
     const main = directory(el, WORKTREE);
@@ -148,8 +148,7 @@ describe('SessionHoverCard', () => {
     stores.roots = [WORKTREE];
     stores.rows = [ready(WORKTREE)];
     stores.workspaces = [{ id: 'ws-demo', name: 'demo-project' }];
-    const el = mountCard({ ...row(), workspaceId: 'ws-demo' });
-    await nextTick();
+    const el = await mountCard({ ...row(), workspaceId: 'ws-demo' });
 
     expect(el.querySelector('.shc-name')?.textContent).toBe('demo-project');
   });
@@ -157,8 +156,7 @@ describe('SessionHoverCard', () => {
   it('adds the cloud badge when the worktree was created from a remote', async () => {
     stores.sessions = [worktreeRecord({ base: { ref: 'origin/main', remote: true } })];
     stores.roots = [WORKTREE];
-    const el = mountCard(row());
-    await nextTick();
+    const el = await mountCard(row());
 
     expect(el.querySelector('.shc-created')?.textContent).toBe('基于 origin/main 创建');
     expect(el.querySelector('.shc-created [data-icon="git-fork-cloud"]')).not.toBeNull();
@@ -172,8 +170,7 @@ describe('SessionHoverCard', () => {
       ready('/Users/other/extra', { branch: 'codex/conflict-safety', upstream: 'origin/codex/conflict-safety' }),
       { path: '/srv/plain', primary: false, state: { status: 'non-git' } },
     ];
-    const el = mountCard(row());
-    await nextTick();
+    const el = await mountCard(row());
 
     expect([...el.querySelectorAll('[data-directory]')].map(node => node.getAttribute('data-directory'))).toEqual(stores.roots);
     expect(el.querySelectorAll('.shc-role')).toHaveLength(1);
@@ -192,8 +189,7 @@ describe('SessionHoverCard', () => {
     stores.sessions = [worktreeRecord({ missing: true })];
     stores.roots = [WORKTREE];
     stores.rows = [{ path: WORKTREE, primary: true, state: { status: 'missing' } }];
-    const el = mountCard(row({ pullRequest: { number: 7, state: 'open', url: 'https://example.test/pr/7' } }));
-    await nextTick();
+    const el = await mountCard(row({ pullRequest: { number: 7, state: 'open', url: 'https://example.test/pr/7' } }));
 
     expect(el.querySelector('.shc-path')?.classList.contains('missing')).toBe(true);
     expect(el.querySelector('.shc-missing')?.textContent).toBe('工作树目录不存在');
@@ -205,8 +201,7 @@ describe('SessionHoverCard', () => {
   it('shows only the directory for a local session', async () => {
     stores.sessions = [{ id: 's1', cwd: '/Users/me/Desktop' }];
     stores.roots = ['/Users/me/Desktop'];
-    const el = mountCard(row({ cwd: '/Users/me/Desktop' }));
-    await nextTick();
+    const el = await mountCard(row({ cwd: '/Users/me/Desktop' }));
 
     const main = directory(el, '/Users/me/Desktop');
     expect(main.querySelector('.shc-name')?.textContent).toBe('Desktop');
@@ -219,8 +214,7 @@ describe('SessionHoverCard', () => {
     stores.sessions = [{ ...worktreeRecord(), pullRequest: { number: 1312, state: 'merged', url: 'https://example.test/pr/1312' } }];
     stores.roots = [WORKTREE];
     const openInApp = vi.fn();
-    const el = mountCard(row(), openInApp);
-    await nextTick();
+    const el = await mountCard(row(), openInApp);
 
     expect(el.querySelector('.shc-branch')?.textContent).toBe('kimi/1104-b8b6');
     expect(el.querySelector('.shc-not-pushed')).toBeNull();
@@ -234,8 +228,7 @@ describe('SessionHoverCard', () => {
     stores.sessions = [worktreeRecord()];
     stores.roots = [WORKTREE];
     stores.rows = [ready(WORKTREE, { additions: 3, deletions: 1, entries: { 'a.ts': 'M' } })];
-    const el = mountCard(row());
-    await nextTick();
+    const el = await mountCard(row());
 
     expect(el.querySelectorAll('button')).toHaveLength(0);
     expect(el.textContent).not.toContain('+3');
@@ -244,8 +237,7 @@ describe('SessionHoverCard', () => {
   });
 
   it('uses the row directory when the session is not in the loaded list', async () => {
-    const el = mountCard(row({ cwd: '/Users/me/elsewhere' }));
-    await nextTick();
+    const el = await mountCard(row({ cwd: '/Users/me/elsewhere' }));
 
     expect(stores.sessionPanelRoots).not.toHaveBeenCalled();
     expect(el.querySelector('.shc-path')?.textContent).toBe('~/elsewhere');

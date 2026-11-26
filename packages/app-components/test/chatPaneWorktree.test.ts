@@ -71,12 +71,13 @@ const secondPrompt = turn({ id: 'u2', no: 3, text: 'Again' });
 let app: App | null = null;
 let host: HTMLDivElement;
 
-function mount(props: Record<string, unknown> | (() => Record<string, unknown>)): void {
+async function mount(props: Record<string, unknown> | (() => Record<string, unknown>)): Promise<void> {
   const read = typeof props === 'function' ? props : () => props;
   app = createApp({ render: () => h(ChatPane, { sessionId: 's1', ...read() }) });
   app.use(createKimiI18n({ locale: 'en' }));
   app.provide(IconResolverKey, (name: string) => ({ render: () => h('svg', { 'data-icon': name }) }));
   app.mount(host);
+  await nextTick();
 }
 
 const blocks = () => [...host.querySelectorAll<HTMLElement>('[data-worktree-create-block]')];
@@ -108,8 +109,7 @@ afterEach(() => {
 
 describe('ChatPane worktree creation block', () => {
   it('renders one block directly below the first user message', async () => {
-    mount({ turns: [firstPrompt, reply, secondPrompt], worktree: sessionWorktree('ready', { path: '/w' }) });
-    await nextTick();
+    await mount({ turns: [firstPrompt, reply, secondPrompt], worktree: sessionWorktree('ready', { path: '/w' }) });
 
     expect(blocks()).toHaveLength(1);
     const first = host.querySelector<HTMLElement>('[data-turn-id="u1"]')!.closest('.u-turn')!;
@@ -119,21 +119,18 @@ describe('ChatPane worktree creation block', () => {
   });
 
   it('renders no block for a local session or before the start of the history is loaded', async () => {
-    mount({ turns: [firstPrompt, reply] });
-    await nextTick();
+    await mount({ turns: [firstPrompt, reply] });
     expect(blocks()).toHaveLength(0);
     app?.unmount();
 
-    mount({ turns: [secondPrompt], worktree: sessionWorktree('ready', { path: '/w' }), hasMoreMessages: true });
-    await nextTick();
+    await mount({ turns: [secondPrompt], worktree: sessionWorktree('ready', { path: '/w' }), hasMoreMessages: true });
     expect(blocks()).toHaveLength(0);
   });
 
   it('hides the queue steer control while the worktree holds prompts', async () => {
     const queued: QueuedPromptView[] = [{ id: 'q1', text: 'Next', attachmentCount: 0 }];
     const held = ref<AppSessionWorktree>(sessionWorktree('failed', {}, { failure: { kind: 'fetch_failed' } }));
-    mount(() => ({ turns: [firstPrompt], queued, worktree: held.value }));
-    await nextTick();
+    await mount(() => ({ turns: [firstPrompt], queued, worktree: held.value }));
     expect(host.querySelector('.q-turn')).not.toBeNull();
     expect(host.querySelector('.q-send')).toBeNull();
 
