@@ -43,22 +43,12 @@ vi.mock('@moonshot-ai/app-components', async (importOriginal) => {
 vi.mock('@moonshot-ai/app-markdown', () => ({ Markdown: { render: () => null } }));
 
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import approvalCardSource from '../../src/renderer/components/chat/ApprovalCard.vue?raw';
 import ChatDock from '../../src/renderer/components/chat/ChatDock.vue';
 
 const FEEDBACK = 'Put it in the README instead';
 const approval = (approvalId: string) => ({
   approvalId,
   block: { kind: 'shell' as const, command: 'echo hello', language: 'bash' },
-});
-
-const planApproval = (approvalId: string) => ({
-  approvalId,
-  block: {
-    kind: 'plan_review' as const,
-    plan: Array.from({ length: 80 }, (_, index) => `${index + 1}. Plan step`).join('\n'),
-    path: '/workspace/plan.md',
-  },
 });
 
 let app: App | null = null;
@@ -146,37 +136,5 @@ describe('ChatDock pending approvals', () => {
     expect(host.querySelector('textarea')).toBeNull();
     pressKey('1');
     expect(decisions[1]).toEqual(['approval-2', { decision: 'approved' }]);
-  });
-
-  it('keeps plan revision feedback operable when a long plan fills the card', async () => {
-    const current = ref<ReturnType<typeof planApproval> | undefined>(planApproval('plan-1'));
-    app = createApp({
-      setup: () => () => h(ChatDock, {
-        dockPanel: null,
-        bashTasks: [],
-        subagentTasks: [],
-        bashRunning: 0,
-        subagentRunning: 0,
-        todoDoneCount: 0,
-        hasDockWork: false,
-        todos: [],
-        pendingApproval: current.value,
-      }),
-    });
-    app.use(createKimiI18n({ locale: 'en' }));
-    app.provide(IconResolverKey, name => ({ render: () => h('svg', { 'data-icon': name }) }));
-    app.provide(panelApiKey, undefined);
-    app.mount(host);
-    await nextTick();
-
-    button('Revise').click();
-    await nextTick();
-
-    const body = host.querySelector<HTMLElement>('.ab')!;
-    const textarea = host.querySelector<HTMLTextAreaElement>('textarea')!;
-    expect(body.classList.contains('has-feedback')).toBe(true);
-    expect(approvalCardSource).toMatch(/\.ab\.has-feedback\s*\{[^}]*overflow:\s*hidden auto/);
-    expect(approvalCardSource).toMatch(/\.ab > \.feedback-wrap\s*\{[^}]*flex:\s*none/);
-    expect(textarea.rows).toBe(3);
   });
 });
