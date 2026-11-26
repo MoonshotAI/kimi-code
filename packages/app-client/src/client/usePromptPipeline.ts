@@ -395,8 +395,12 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       if (!(await commitArmedPlanMode(sid))) return rollBackSubmit(sid, tempId);
 
       if ((modeStore().goalModeBySession[sid] ?? false) && text) {
-        if (!(await persistSessionProfile({ goalObjective: text.trim(), planMode: false }, sid))) return rollBackSubmit(sid, tempId);
+        if (!(await persistSessionProfile({ goalObjective: text.trim(), planMode: false, towerMode: false }, sid))) return rollBackSubmit(sid, tempId);
         modeStore().planModeBySession = { ...modeStore().planModeBySession, [sid]: false };
+        if (modeStore().towerModeBySession[sid]) {
+          modeStore().towerModeBySession = { ...modeStore().towerModeBySession, [sid]: false };
+          modeStore().saveTowerModeToStorage();
+        }
         modeStore().goalModeBySession = { ...modeStore().goalModeBySession, [sid]: false };
         modeStore().saveGoalModeToStorage();
       }

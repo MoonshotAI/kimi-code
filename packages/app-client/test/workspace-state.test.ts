@@ -1379,7 +1379,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
 
     await ws.createGoal({ text, snapshot, attachments: [] });
 
-    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', { goalObjective: 'Fix Button: Save · Rename this', planMode: false });
+    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', { goalObjective: 'Fix Button: Save · Rename this', planMode: false, towerMode: false });
     const sent = apiMock.submitPrompt.mock.calls[0]?.[1] as { content: { text?: string }[] };
     expect(sent.content.map((part) => part.text ?? '').join('\n')).toContain('<browser_references version="1">');
     expect(pushFailureSpy).not.toHaveBeenCalled();
@@ -1396,6 +1396,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', {
       goalObjective: 'improve test coverage',
       planMode: false,
+      towerMode: false,
     });
     expect(apiMock.submitPrompt).toHaveBeenCalledWith(
       'sess_new',
@@ -1417,6 +1418,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', {
       goalObjective: 'improve test coverage',
       planMode: false,
+      towerMode: false,
     });
     expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
   });
@@ -1433,6 +1435,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     expect(apiMock.updateSession).toHaveBeenCalledWith('sess_1', {
       goalObjective: 'improve test coverage',
       planMode: false,
+      towerMode: false,
     });
     expect(apiMock.submitPrompt).not.toHaveBeenCalled();
     expect(promptStore().queuedBySession['sess_1']).toEqual([
@@ -1528,6 +1531,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', {
       goalObjective: 'improve test coverage',
       planMode: false,
+      towerMode: false,
     });
     expect(apiMock.submitPrompt).toHaveBeenCalledTimes(1);
     expect(apiMock.submitPrompt).toHaveBeenCalledWith(
@@ -2472,6 +2476,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(apiMock.updateSession).toHaveBeenCalledWith('sess_1', {
       goalObjective: prompt.text,
       planMode: false,
+      towerMode: false,
     });
     expect(state.goalModeBySession.sess_1).toBe(false);
     expect(saveGoalSpy).toHaveBeenCalledOnce();
