@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 63 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 62 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/project/projectDirs/projectDirsService.ts
