@@ -25,7 +25,6 @@ import {
   ISessionIndex,
   ISessionManager,
   ISessionMetadata,
-  ISessionToolPolicy,
   IProjectService,
   followSessionLifecycles,
   getLiveSessionById,
@@ -139,7 +138,7 @@ function releaseConversation(subscription: AgentSubscription): void {
   subscription.conversation = undefined;
 }
 
-const AGENT_STATE_CONFIG_DOMAINS = new Set(['tools', 'experimental', 'models', 'providers']);
+const AGENT_STATE_CONFIG_DOMAINS = new Set(['models', 'providers']);
 
 export class SessionEventBroadcaster {
   private readonly sessions = new Map<string, SessionState>();
@@ -472,7 +471,6 @@ export class SessionEventBroadcaster {
     const tasks = new SessionTaskFeed(agents, (agentId, info) => {
       this.sendAgentFrame(state, agentId, toTaskMessage(state.sessionId, agentId, info));
     });
-    const sessionPolicy = session.accessor.get(ISessionToolPolicy) as ISessionToolPolicy | undefined;
     const config = this.opts.core.accessor.get(IConfigService) as IConfigService | undefined;
     const agentStates = new SessionAgentFeed(
       sessionId,
@@ -481,15 +479,10 @@ export class SessionEventBroadcaster {
         this.sendAgentFrame(state, agentId, message);
       },
       (listener) => {
-        const subscriptions = [
-          sessionPolicy?.onDidChange(() => listener()),
-          config?.onDidSectionChange?.((event) => {
-            if (AGENT_STATE_CONFIG_DOMAINS.has(event.domain)) listener();
-          }),
-        ];
-        return toDisposable(() => {
-          for (const subscription of subscriptions) subscription?.dispose();
+        const subscription = config?.onDidSectionChange?.((event) => {
+          if (AGENT_STATE_CONFIG_DOMAINS.has(event.domain)) listener();
         });
+        return toDisposable(() => subscription?.dispose());
       },
     );
     state.tasks = tasks;
