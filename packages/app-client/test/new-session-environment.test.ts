@@ -157,7 +157,7 @@ describe('new session environment', () => {
   });
 
   it('loads the active project as soon as Worktree is chosen', async () => {
-    const store = freshStore('worktree');
+    freshStore('worktree');
     await vi.waitFor(() => expect(getWorkspaceGitBranches).toHaveBeenCalledWith('git'));
   });
 

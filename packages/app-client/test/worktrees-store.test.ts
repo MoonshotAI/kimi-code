@@ -101,7 +101,7 @@ describe('worktree list', () => {
   it('re-fetches the list while sizes are still being computed, a bounded number of times', async () => {
     vi.useFakeTimers();
     api.listWorktrees.mockResolvedValue({ items: [item('a', { sizeBytes: undefined })] });
-    const store = await loadedStore();
+    await loadedStore();
     expect(api.listWorktrees).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(WORKTREE_SIZE_BACKFILL_DELAY_MS);
