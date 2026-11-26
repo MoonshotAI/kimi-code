@@ -748,14 +748,7 @@ describe('QuestionDialogComponent', () => {
       await vt.waitForRender();
 
       screen = vt.getViewport().map(strip);
-      const reviewRow = screen.findIndex((line) => line.includes('Review your answer'));
-      expect(reviewRow).toBeGreaterThan(0);
-      vt.sendInput(`\u001B[<65;10;${String(reviewRow + 1)}M`);
-      vt.sendInput(`\u001B[<65;10;${String(reviewRow + 1)}M`);
-      await vt.waitForRender();
-
-      screen = vt.getViewport().map(strip);
-      const submitRow = screen.findIndex((line) => line.includes('[1] Submit'));
+      const submitRow = screen.findIndex((line) => line.includes('→ [1] Submit'));
       expect(submitRow).toBeGreaterThan(0);
       vt.sendInput(`\u001B[<0;10;${String(submitRow + 1)}M`);
       vt.sendInput(`\u001B[<0;10;${String(submitRow + 1)}m`);
@@ -763,6 +756,80 @@ describe('QuestionDialogComponent', () => {
 
       expect(collected).toEqual([['Choice 8', 'Beta']]);
       expect(methods).toEqual([undefined]);
+    } finally {
+      ui.stop();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('scrolls numbered multi-select choices into view and navigates clipped question tabs by mouse', async () => {
+    let now = 90_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const pending = makePending([
+      {
+        header: 'Architecture',
+        question: 'Select modules?',
+        multi_select: true,
+        options: Array.from({ length: 8 }, (_, i) => ({
+          label: `Module ${String(i + 1)}`,
+          description: `Subsystem ${String(i + 1)}`,
+        })),
+      },
+      {
+        header: 'Verification',
+        question: 'Run suite?',
+        multi_select: false,
+        options: [{ label: 'Unit' }, { label: 'Full' }],
+      },
+      {
+        header: 'Deployment',
+        question: 'Target env?',
+        multi_select: false,
+        options: [{ label: 'Staging' }, { label: 'Prod' }],
+      },
+    ]);
+    const { dialog, collected } = makeDialog(pending, undefined, {
+      layout: { maxBodyRows: 8 },
+    });
+    const vt = new VirtualTerminal(38, 20);
+    const ui = new TuiAltScreen(vt);
+    ui.setLayoutRoot(dialog);
+    ui.start();
+    ui.setFocus(dialog);
+    await vt.waitForRender();
+    try {
+      now += 500;
+      vt.sendInput('8');
+      await vt.waitForRender();
+      let screen = vt.getViewport().map(strip);
+      expect(screen.join('\n')).toContain('[✓] Module 8');
+
+      const initialTabRow = screen.findIndex((line) => line.includes('Architecture'));
+      expect(screen[initialTabRow]).not.toContain('Submit');
+
+      const markerRow = screen.findIndex((line) => line.includes(' >'));
+      expect(markerRow).toBeGreaterThan(0);
+      const markerCol = screen[markerRow]!.lastIndexOf('>') + 1;
+      vt.sendInput(`\u001B[<0;${String(markerCol)};${String(markerRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(markerCol)};${String(markerRow + 1)}m`);
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+
+      const tabRow = screen.findIndex((line) => line.includes('Submit'));
+      expect(tabRow).toBeGreaterThan(0);
+      const submitTabCol = screen[tabRow]!.indexOf('Submit') + 2;
+      vt.sendInput(`\u001B[<0;${String(submitTabCol)};${String(tabRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(submitTabCol)};${String(tabRow + 1)}m`);
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+
+      const submitRow = screen.findIndex((line) => line.includes('→ [1] Submit'));
+      expect(submitRow).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<0;10;${String(submitRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(submitRow + 1)}m`);
+      await vt.waitForRender();
+
+      expect(collected[0]?.[0]).toBe('Module 8');
     } finally {
       ui.stop();
       vi.restoreAllMocks();

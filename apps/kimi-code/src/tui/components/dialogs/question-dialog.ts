@@ -26,6 +26,7 @@ import {
   type MouseColRegion,
   type MouseRowRegion,
 } from '#/tui/utils/dialog-mouse';
+import { layoutStyledTabStrip } from '#/tui/utils/tab-strip';
 
 const NUMBER_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const MAX_BODY_LINES = 12;
@@ -83,6 +84,7 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
   private submitActionIdx = 0;
   private editingOther = false;
   private pendingEnsureCursor = false;
+  private pendingEnsureSubmit = false;
   private reviewMessage: string | undefined;
   private lastAnswerMethod: QuestionSubmissionMethod | undefined;
 
@@ -210,6 +212,14 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
     if (!this.focused) return focusOnUnfocusedMouse(event);
 
     if (part === 'head') {
+      if (event.type === 'wheel' && event.y === this.tabRow && event.wheelDelta !== undefined) {
+        if (event.wheelDelta === 0) return { handled: true };
+        const questionIdx = this.currentQuestionIndex();
+        if (this.isEditingOther() && questionIdx !== undefined) this.syncOtherDraft(questionIdx);
+        const before = this.currentTab;
+        this.gotoTab(this.currentTab + (event.wheelDelta > 0 ? 1 : -1));
+        return { handled: true, render: this.currentTab !== before };
+      }
       return handleSegmentedMouse({
         event,
         focused: this.focused,
@@ -321,12 +331,14 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
       this.submitActionIdx =
         (this.submitActionIdx - 1 + SUBMIT_ACTIONS.length) % SUBMIT_ACTIONS.length;
       this.reviewMessage = undefined;
+      this.pendingEnsureSubmit = true;
       this.ensureSubmitActionVisible(this.submitActionIdx);
       return;
     }
     if (matchesKey(data, Key.down)) {
       this.submitActionIdx = (this.submitActionIdx + 1) % SUBMIT_ACTIONS.length;
       this.reviewMessage = undefined;
+      this.pendingEnsureSubmit = true;
       this.ensureSubmitActionVisible(this.submitActionIdx);
       return;
     }
@@ -372,9 +384,13 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
     this.currentTab = wrapped;
     this.editingOther = false;
     this.reviewMessage = undefined;
-    if (this.isSubmitTab()) this.submitActionIdx = 0;
     this.scrollBodyToTop();
-    this.pendingEnsureCursor = !this.isSubmitTab() && this.currentCursor() > 0;
+    if (this.isSubmitTab()) {
+      this.submitActionIdx = 0;
+      this.pendingEnsureSubmit = true;
+    } else {
+      this.pendingEnsureCursor = this.currentCursor() > 0;
+    }
   }
 
   private moveQuestionCursor(delta: number): void {
@@ -424,6 +440,8 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
         this.multiSelections[questionIdx].delete(optionIdx);
         this.lastAnswerMethod = method;
         this.updateAnswer(questionIdx);
+        this.pendingEnsureCursor = true;
+        this.ensureOptionVisible(optionIdx);
         return;
       }
       this.enterOtherInput(questionIdx);
@@ -437,6 +455,8 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
       else set.add(optionIdx);
       this.lastAnswerMethod = method;
       this.updateAnswer(questionIdx);
+      this.pendingEnsureCursor = true;
+      this.ensureOptionVisible(optionIdx);
       return;
     }
 
@@ -492,9 +512,13 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
     this.currentTab = next ?? this.submitTabIndex();
     this.editingOther = false;
     this.reviewMessage = undefined;
-    if (this.isSubmitTab()) this.submitActionIdx = 0;
     this.scrollBodyToTop();
-    this.pendingEnsureCursor = !this.isSubmitTab() && this.currentCursor() > 0;
+    if (this.isSubmitTab()) {
+      this.submitActionIdx = 0;
+      this.pendingEnsureSubmit = true;
+    } else {
+      this.pendingEnsureCursor = this.currentCursor() > 0;
+    }
   }
 
   private findNextUnansweredAfter(fromIdx: number): number | null {
@@ -758,6 +782,10 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
       actionRegions.push({ start: row, end: lines.length, index: i });
     }
     this.submitActionRegions = actionRegions;
+    if (this.pendingEnsureSubmit) {
+      this.pendingEnsureSubmit = false;
+      this.ensureSubmitActionVisible(this.submitActionIdx);
+    }
 
     return lines.map((line) => truncateToWidth(line, width));
   }
@@ -780,8 +808,6 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
       currentTheme.bg('primary', currentTheme.boldFg('text', text));
 
     const tabs: string[] = [];
-    const regions: MouseColRegion[] = [];
-    let col = 1;
     for (let i = 0; i < this.request.data.questions.length; i++) {
       const question = this.request.data.questions[i];
       if (question === undefined) continue;
@@ -789,33 +815,24 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
         question.header !== undefined && question.header.length > 0
           ? question.header
           : `Q${String(i + 1)}`;
-      let rendered: string;
-      if (i === this.currentTab) rendered = active(` ${label} `);
-      else if (this.isAnswered(i)) rendered = currentTheme.fg('success', `(✓) ${label}`);
-      else rendered = dim(`(○) ${label}`);
-      const segWidth = visibleWidth(rendered);
-      if (col < width) {
-        regions.push({ start: col, end: Math.min(width, col + segWidth), index: i });
-      }
-      col += segWidth + 2;
-      tabs.push(rendered);
+      if (i === this.currentTab) tabs.push(active(` ${label} `));
+      else if (this.isAnswered(i)) tabs.push(currentTheme.fg('success', `(✓) ${label}`));
+      else tabs.push(dim(`(○) ${label}`));
     }
 
     const submitLabel = 'Submit';
-    const submitRendered = this.isSubmitTab() ? active(` ${submitLabel} `) : dim(` ${submitLabel} `);
-    const submitWidth = visibleWidth(submitRendered);
-    if (col < width) {
-      regions.push({
-        start: col,
-        end: Math.min(width, col + submitWidth),
-        index: this.submitTabIndex(),
-      });
-    }
-    tabs.push(submitRendered);
+    tabs.push(this.isSubmitTab() ? active(` ${submitLabel} `) : dim(` ${submitLabel} `));
 
+    const strip = layoutStyledTabStrip({
+      segments: tabs,
+      activeIndex: this.currentTab,
+      width,
+      separator: '  ',
+      styleMarker: dim,
+    });
     this.tabRow = lines.length;
-    this.tabRegions = regions;
-    lines.push(` ${tabs.join('  ')}`);
+    this.tabRegions = strip.hitRanges;
+    lines.push(strip.line);
   }
 
   private buildQuestionHint(dim: (text: string) => string, questionIdx: number): string {
