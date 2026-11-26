@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createApp, h, nextTick, ref, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
@@ -153,5 +155,24 @@ describe('SecondaryModelSettings', () => {
         'kimi/highspeed': { description: '检索', effort: 'low' },
       },
     });
+  });
+
+  it('focuses the rule textarea when switching to custom rule preset', async () => {
+    mount({ allModels: true });
+    await nextTick();
+
+    buttonWithText('自定义').click();
+    await nextTick();
+    const textarea = host.querySelector('textarea');
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it('scopes settings-common.css instead of importing it globally in script', () => {
+    const source = readFileSync(
+      resolve(__dirname, '../src/settings/SecondaryModelSettings.vue'),
+      'utf8',
+    );
+    expect(source).not.toMatch(/import\s+['"]\.\/settings-common\.css['"]/);
+    expect(source).toContain('<style scoped src="./settings-common.css"></style>');
   });
 });

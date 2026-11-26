@@ -163,8 +163,12 @@ function closeFlyout(): void {
 function openMenu(): void {
   if (open.value) return;
   open.value = true;
-  activeModelId.value = props.modelValue;
-  activeModelIndex.value = Math.max(0, modelIds.value.indexOf(activeModelId.value));
+  const initialId =
+    props.modelValue && modelIds.value.includes(props.modelValue)
+      ? props.modelValue
+      : (modelIds.value[0] ?? FOLLOW_DEFAULT_MODEL_ID);
+  activeModelId.value = initialId;
+  activeModelIndex.value = Math.max(0, modelIds.value.indexOf(initialId));
   flyoutFor.value = null;
   focusColumn.value = 'models';
   void nextTick(positionMenu);

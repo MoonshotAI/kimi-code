@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import './settings-common.css';
-import './settings-row-label.css';
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Checkbox, Input, SegmentedControl, Select, Textarea } from '@moonshot-ai/app-ui';
@@ -278,8 +276,7 @@ function onRulePresetChange(next: string): void {
   }
   explicitCustomRule.value = true;
   void nextTick(() => {
-    const el = ruleTextareaRef.value?.$el?.querySelector?.('textarea') as HTMLTextAreaElement | null | undefined;
-    el?.focus();
+    ruleTextareaRef.value?.el?.focus();
   });
 }
 
@@ -367,9 +364,7 @@ function onEntryDescriptionInput(alias: string, description: string): void {
 
 <template>
   <section class="sec">
-    <div class="sec-head">
-      <h3 class="sec-title">{{ t('settings.secondaryModelSection') }}</h3>
-    </div>
+    <h3 class="sec-title">{{ t('settings.secondaryModelSection') }}</h3>
 
     <div class="settings-group">
       <div class="row sm-row-wrap">
@@ -491,7 +486,23 @@ function onEntryDescriptionInput(alias: string, description: string): void {
   </section>
 </template>
 
+<style scoped src="./settings-common.css"></style>
+
 <style scoped>
+.sec {
+  padding: var(--space-4) 0;
+}
+.hint {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-normal);
+  color: var(--color-text-faint);
+}
+.rvalue.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
 .sm-row-wrap {
   flex-wrap: wrap;
 }
@@ -575,5 +586,15 @@ function onEntryDescriptionInput(alias: string, description: string): void {
 }
 .sm-summary.is-warning {
   color: var(--color-warn, var(--color-danger));
+}
+@media (max-width: 640px) {
+  .row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .select-wrap {
+    width: 100%;
+    max-width: none;
+  }
 }
 </style>
