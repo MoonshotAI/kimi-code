@@ -194,18 +194,21 @@ export async function holdPromptForWorktree(
   return result.outcome === 'held';
 }
 
+const sendingHeldPrompts = new Map<string, Promise<void>>();
+
 export async function withdrawHeldPrompt(core: Scope, sessionId: string, promptId: string): Promise<boolean> {
-  const result = { withdrawn: false };
-  await writeStoredWorktree(
-    core,
-    sessionId,
-    (current) => {
-      if (current?.held_prompt?.prompt_id !== promptId) return undefined;
-      result.withdrawn = true;
-      return withoutHeldPrompt(current);
-    },
-    { held: 'replace' },
-  );
+  const result: { withdrawn: boolean; sending?: Promise<void> } = { withdrawn: false };
+  const withdraw = (current: StoredSessionWorktree | undefined): StoredSessionWorktree | undefined => {
+    result.sending = sendingHeldPrompts.get(promptId);
+    if (result.sending !== undefined || current?.held_prompt?.prompt_id !== promptId) return undefined;
+    result.withdrawn = true;
+    return withoutHeldPrompt(current);
+  };
+  await writeStoredWorktree(core, sessionId, withdraw, { held: 'replace' });
+  if (result.sending === undefined) return result.withdrawn;
+  await result.sending;
+  result.sending = undefined;
+  await writeStoredWorktree(core, sessionId, withdraw, { held: 'replace' });
   return result.withdrawn;
 }
 
@@ -409,22 +412,44 @@ export class SessionWorktreeService {
   private async dispatchHeld(sessionId: string, dispatch: HeldPromptDispatcher): Promise<void> {
     let held: WorktreeHeldPrompt | undefined;
     let request: HeldPromptRequest | undefined;
+    let settle = (): void => {};
     await writeStoredWorktree(this.core, sessionId, (current) => {
       if (current === undefined || worktreeHoldsPrompts(current)) return undefined;
-      if (current.held_prompt?.failure !== undefined) return undefined;
+      if (current.held_prompt === undefined || current.held_prompt.failure !== undefined) return undefined;
+      if (sendingHeldPrompts.has(current.held_prompt.prompt_id)) return undefined;
       held = current.held_prompt;
       request = current.held_request;
+      sendingHeldPrompts.set(
+        held.prompt_id,
+        new Promise<void>((resolve) => {
+          settle = resolve;
+        }),
+      );
       return undefined;
     });
-    if (held === undefined || request === undefined) return;
+    if (held === undefined) return;
     const promptId = held.prompt_id;
     let failure: WorktreeHeldPrompt['failure'];
     try {
+      if (request === undefined) throw new Error('the held prompt has no stored request');
       await dispatch(sessionId, held, request);
     } catch (error) {
       const envelope = mapError(error, '');
       failure = { code: envelope.code, msg: envelope.msg };
     }
+    try {
+      await this.settleDispatched(sessionId, promptId, failure);
+    } finally {
+      sendingHeldPrompts.delete(promptId);
+      settle();
+    }
+  }
+
+  private async settleDispatched(
+    sessionId: string,
+    promptId: string,
+    failure: WorktreeHeldPrompt['failure'],
+  ): Promise<void> {
     await writeStoredWorktree(
       this.core,
       sessionId,

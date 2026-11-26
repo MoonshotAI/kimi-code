@@ -373,13 +373,7 @@ const promptActions: ActionTable<'abort', PromptActionExtra> = {
 
 async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { core, resolved, session_id, req, reply, id } = ctx;
-  if (await withdrawHeldPrompt(core, session_id, id)) {
-    try {
-      resolved.prompt.cancel({ promptId: id });
-    } catch {}
-  } else {
-    resolved.prompt.cancel({ promptId: id });
-  }
+  if (!(await withdrawHeldPrompt(core, session_id, id))) resolved.prompt.cancel({ promptId: id });
   requestLog(req)?.info({ session_id, prompt_id: id }, 'prompt aborted');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }

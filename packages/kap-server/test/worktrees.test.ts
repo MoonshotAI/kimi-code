@@ -523,6 +523,56 @@ describe('server-v2 session worktrees', () => {
     expect(await sentTexts(created.id)).toEqual([]);
   });
 
+  it('lets an abort wait for a held prompt that is already being sent', async () => {
+    const { workspaceId } = await project('held-abort-sending');
+    const ready = await settledWorktree(workspaceId);
+    const promptId = 'msg_held_sending';
+    await patchSessionMetadata(fixture.server.core.accessor, ready.id, (meta) => {
+      const current = meta.custom?.['worktree'] as object;
+      return {
+        custom: {
+          ...meta.custom,
+          worktree: {
+            ...current,
+            held_prompt: { prompt_id: promptId, kind: 'prompt', created_at: new Date().toISOString(), content: [] },
+            held_request: { route: 'prompts', body: { content: [{ type: 'text', text: 'x' }], prompt_id: promptId } },
+          },
+        },
+      };
+    });
+    await forceRunning(ready.id, ready.worktree!.setup);
+    let started = false;
+    let fail = (): void => {};
+    const service = new SessionWorktreeService(fixture.server.core, {
+      dispatchHeld: () =>
+        new Promise<void>((_resolve, reject) => {
+          started = true;
+          fail = () => {
+            reject(new Error('could not send'));
+          };
+        }),
+    });
+    onTestFinished(() => service.close());
+
+    await service.recoverInterrupted();
+    await vi.waitFor(() => {
+      if (!started) throw new Error('the held prompt is not being sent yet');
+    });
+    let answered = false;
+    const abort = post(`/sessions/${ready.id}/prompts/${promptId}:abort`).then((response) => {
+      answered = true;
+      return response;
+    });
+    expect((await get<Session>(`/sessions/${ready.id}`)).data.worktree?.held_prompt?.prompt_id).toBe(promptId);
+    expect((await get<Session>(`/sessions/${ready.id}`)).data.worktree?.held_prompt?.prompt_id).toBe(promptId);
+    expect(answered).toBe(false);
+
+    fail();
+
+    expect(await abort).toMatchObject({ code: 0, data: { aborted: true } });
+    expect((await get<Session>(`/sessions/${ready.id}`)).data.worktree?.held_prompt).toBeUndefined();
+  });
+
   it('holds a skill activation sent during setup', async () => {
     const { root, workspaceId } = await project('held-skill');
     hangingRemote(root);
