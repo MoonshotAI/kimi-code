@@ -25,7 +25,6 @@ import {
   ISessionIndex,
   ISessionManager,
   ISessionMetadata,
-  ISessionToolPolicy,
   IProjectService,
   followSessionLifecycles,
   getLiveSessionById,
@@ -470,26 +469,9 @@ export class SessionEventBroadcaster {
     const tasks = new SessionTaskFeed(agents, (agentId, info) => {
       this.sendAgentFrame(state, agentId, toTaskMessage(state.sessionId, agentId, info));
     });
-    const sessionPolicy = session.accessor.get(ISessionToolPolicy) as ISessionToolPolicy | undefined;
-    const config = this.opts.core.accessor.get(IConfigService) as IConfigService | undefined;
-    const agentStates = new SessionAgentFeed(
-      sessionId,
-      agents,
-      (agentId, message) => {
-        this.sendAgentFrame(state, agentId, message);
-      },
-      (listener) => {
-        const subscriptions = [
-          sessionPolicy?.onDidChange(() => listener()),
-          config?.onDidSectionChange?.((event) => {
-            if (event.domain === 'tools' || event.domain === 'experimental') listener();
-          }),
-        ];
-        return toDisposable(() => {
-          for (const subscription of subscriptions) subscription?.dispose();
-        });
-      },
-    );
+    const agentStates = new SessionAgentFeed(sessionId, agents, (agentId, message) => {
+      this.sendAgentFrame(state, agentId, message);
+    });
     state.tasks = tasks;
     state.agents = agentStates;
     state.lifecycleDisposables.push(tasks, agentStates);

@@ -8,7 +8,6 @@ import {
   type IAgentScopeHandle,
   type IDisposable,
 } from '@moonshot-ai/agent-core-v2';
-import { Event } from '@moonshot-ai/agent-core-v2/_base/event';
 
 import type {
   AgentEventMessage,
@@ -52,7 +51,6 @@ export class SessionAgentFeed implements IDisposable {
     private readonly sessionId: string,
     private readonly agents: IAgentLifecycleService,
     private readonly send: AgentFeedSend,
-    onDidPolicyChange: Event<void> = Event.None as Event<void>,
     private readonly contextIntervalMs = CONTEXT_FRAME_INTERVAL_MS,
   ) {
     for (const agent of agents.list()) this.watch(agent.agentId, false);
@@ -65,9 +63,6 @@ export class SessionAgentFeed implements IDisposable {
       }),
       agents.onDidClose((agent) => {
         this.close(agent.agentId);
-      }),
-      onDidPolicyChange(() => {
-        for (const watch of this.watches.values()) watch.refresh();
       }),
     ];
   }
@@ -169,10 +164,6 @@ class AgentWatch implements IDisposable {
   captureBeforeClose(): void {
     if (this.disposed) return;
     this.lastState = readAgentState(this.handle, false);
-  }
-
-  refresh(): void {
-    this.schedule();
   }
 
   close(): void {

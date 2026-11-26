@@ -5,7 +5,6 @@ import {
   IAgentLoopService,
   IAgentStateService,
   IAgentSwarmService,
-  IAgentToolPolicyService,
   IAgentTodoService,
   IAgentTowerService,
   MAIN_AGENT_ID,
@@ -31,17 +30,11 @@ export function readAgentState(handle: IAgentScopeHandle | undefined, running: b
       plan_mode: false,
       swarm_mode: false,
       tower_mode: false,
-      plan_mode_available: false,
-      swarm_mode_available: false,
-      tower_mode_available: false,
-      goal_mode_available: false,
     };
   }
   const profile = optionalService(handle, IAgentLoopService);
   let model = profile?.getModel() ?? '';
-  const isMain = handle.id === MAIN_AGENT_ID;
-  if (isMain && model !== '' && missingConfiguredModelAlias(handle) !== undefined) model = '';
-  const toolPolicy = optionalService(handle, IAgentToolPolicyService);
+  if (handle.id === MAIN_AGENT_ID && model !== '' && missingConfiguredModelAlias(handle) !== undefined) model = '';
   return {
     status: running ? 'running' : 'idle',
     compacting: (optionalService(handle, IAgentFullCompactionService)?.compacting ?? null) !== null,
@@ -51,10 +44,6 @@ export function readAgentState(handle: IAgentScopeHandle | undefined, running: b
     plan_mode: planActive(handle),
     swarm_mode: optionalService(handle, IAgentSwarmService)?.isActive === true,
     tower_mode: optionalService(handle, IAgentTowerService)?.isActive === true,
-    plan_mode_available: isMain && toolPolicy?.isToolActive('ExitPlanMode') === true,
-    swarm_mode_available: toolPolicy?.isToolActive('AgentSwarm') === true,
-    tower_mode_available: isMain && optionalService(handle, IAgentTowerService)?.toolsAvailable === true,
-    goal_mode_available: isMain && toolPolicy?.isToolActive('UpdateGoal') === true,
   };
 }
 

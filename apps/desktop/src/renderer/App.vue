@@ -515,7 +515,6 @@ const MENU_ACTION_TO_SHORTCUT: Record<string, AppActionId> = {
 };
 
 const sidebarRef = ref<InstanceType<typeof Sidebar> | null>(null);
-const settingsDialogRef = ref<InstanceType<typeof SettingsDialog> | null>(null);
 
 const OPEN_IN_FILE_EXCLUDED_IDS: ReadonlySet<string> = new Set([
   'terminal',
@@ -562,12 +561,8 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
     case 'openSettings':
       if (isMobile.value) {
         showMobileSettings.value = !showMobileSettings.value;
-      } else if (showSettings.value) {
-        void Promise.resolve(settingsDialogRef.value?.confirmDiscard()).then((discard) => {
-          if (discard) showSettings.value = false;
-        });
       } else {
-        showSettings.value = true;
+        showSettings.value = !showSettings.value;
       }
       break;
     case 'toggleSidebar':
@@ -1953,10 +1948,6 @@ let sendGeneration = 0;
 // command, stale row) fails the enable write server-side and toasts the
 // daemon's own error.
 const towerEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
-const towerEntryEnabled = computed(() => towerEnabled.value && client.towerModeAvailable.value);
-const planEntryEnabled = computed(() => client.planModeAvailable.value);
-const swarmEntryEnabled = computed(() => client.swarmModeAvailable.value);
-const goalEntryEnabled = computed(() => client.goalModeAvailable.value);
 
 // Mobile settings sheet's tower toggle: the sheet hides the row while the
 // flag is off, so this only forwards.
@@ -2729,7 +2720,6 @@ function openPr(url: string): void {
     <ErrorBoundary closable @close="showSettings = false">
     <SettingsDialog
       v-if="showSettings"
-      ref="settingsDialogRef"
       :color-scheme="colorScheme"
       :font-scale="fontScale"
       :managed-provider-status="managedProviderStatus"
@@ -2874,10 +2864,7 @@ function openPr(url: string): void {
       :goal-active="mobileGoalActive"
       :swarm-mode="swarmMode"
       :tower-mode="client.towerMode.value"
-      :tower-enabled="towerEntryEnabled"
-      :plan-enabled="planEntryEnabled"
-      :swarm-enabled="swarmEntryEnabled"
-      :goal-enabled="goalEntryEnabled"
+      :tower-enabled="towerEnabled"
       :color-scheme="colorScheme"
       :font-scale="fontScale"
       :managed-provider-status="managedProviderStatus"

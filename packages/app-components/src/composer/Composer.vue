@@ -249,12 +249,7 @@ const browserDetails = useBrowserReferenceDetails(() => JSON.stringify([sessionI
 const browserReferences = ref<BrowserReference[]>([]);
 const browserCaptures = ref<BrowserCapture[]>([]);
 
-const towerExperimentEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
-const towerAvailable = computed(() => client.towerModeAvailable.value);
-const towerEntryEnabled = computed(() => towerExperimentEnabled.value && towerAvailable.value);
-const planEnabled = computed(() => client.planModeAvailable.value);
-const swarmEnabled = computed(() => client.swarmModeAvailable.value);
-const goalEnabled = computed(() => client.goalModeAvailable.value);
+const towerEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
 
 const attachmentEntries = ref<AttachmentEntry[]>([]);
 const attachmentInventoryState = shallowRef<AttachmentInventoryState>({
@@ -316,13 +311,7 @@ watch(promptPredictionSuggestion, (suggestion) => {
   handleInput();
 });
 
-const highlightCommands = computed(() => buildSlashItems([], {
-  towerEnabled: towerExperimentEnabled.value,
-  planEnabled: planEnabled.value,
-  swarmEnabled: swarmEnabled.value,
-  goalEnabled: goalEnabled.value,
-  extraBuiltins: props.extraBuiltinCommands,
-}));
+const highlightCommands = computed(() => buildSlashItems([], { towerEnabled: towerEnabled.value, extraBuiltins: props.extraBuiltinCommands }));
 
 const pendingCommandArgument = computed(() => {
   if (isSideChat.value || !mayStartWithSlashCommand(text.value)) return null;
@@ -972,11 +961,8 @@ const {
   },
   historyPush: (entry) => history.push(entry),
   clearDraft,
-  towerEnabled: () => towerEntryEnabled.value,
+  towerEnabled: () => towerEnabled.value,
   extraBuiltins: () => props.extraBuiltinCommands,
-  planEnabled: () => planEnabled.value,
-  swarmEnabled: () => swarmEnabled.value,
-  goalEnabled: () => goalEnabled.value,
   resolveDesc: (item) => (item.isSkill ? item.desc : t(item.desc)),
 });
 
@@ -1796,13 +1782,8 @@ function submitCommandContext() {
     running: running.value,
     queueLength: queued.value.length,
     goalMode: goalMode.value,
-    towerEnabled: towerExperimentEnabled.value,
-    towerAvailable: towerAvailable.value,
-    towerActive: towerOn.value,
+    towerEnabled: towerEnabled.value,
     extraBuiltins: props.extraBuiltinCommands,
-    planEnabled: planEnabled.value,
-    swarmEnabled: swarmEnabled.value,
-    goalEnabled: goalEnabled.value,
   };
 }
 
@@ -1937,10 +1918,6 @@ function handleQueue(): void {
 function handleSubmit(): void {
   const decision = currentSubmitDecision();
   if (decision.kind === 'noop' || isBlockedByProjectTrust(decision)) return;
-  if (decision.kind === 'disabled-command') {
-    client.notify({ severity: 'warning', title: t('composer.disabledCommand', { cmd: decision.cmd }) });
-    return;
-  }
   if (decision.kind === 'invalid-command') {
     client.notify({ severity: 'warning', title: t('composer.noArgCommand', { cmd: decision.cmd }) });
     return;
@@ -2540,16 +2517,10 @@ const addItems = computed(() => {
     items.push({ id: 'slash', icon: 'terminal', nameKey: 'composer.addSlash', descKey: 'composer.addSlashDesc', action: onAddSlashMenu });
     items.push({ id: 'mention', icon: 'at', nameKey: 'composer.addMention', descKey: 'composer.addMentionDesc', action: onAddMentionMenu });
   }
-  if (goalEnabled.value) {
-    items.push({ id: 'goal', icon: 'target', nameKey: 'status.goalLabel', descKey: 'composer.addGoalDesc', action: onAddGoalMode });
-  }
-  if (planEnabled.value) {
-    items.push({ id: 'plan', icon: 'file-edit', nameKey: 'status.planLabel', descKey: 'composer.addPlanDesc', action: onAddPlanMode });
-  }
-  if (swarmEnabled.value) {
-    items.push({ id: 'swarm', icon: 'sparkles', nameKey: 'status.swarmLabel', descKey: 'composer.addSwarmDesc', action: onAddSwarmMode });
-  }
-  if (towerEntryEnabled.value) {
+  items.push({ id: 'goal', icon: 'target', nameKey: 'status.goalLabel', descKey: 'composer.addGoalDesc', action: onAddGoalMode });
+  items.push({ id: 'plan', icon: 'file-edit', nameKey: 'status.planLabel', descKey: 'composer.addPlanDesc', action: onAddPlanMode });
+  items.push({ id: 'swarm', icon: 'sparkles', nameKey: 'status.swarmLabel', descKey: 'composer.addSwarmDesc', action: onAddSwarmMode });
+  if (towerEnabled.value) {
     items.push({ id: 'tower', icon: 'tower', nameKey: 'status.towerLabel', descKey: 'composer.addTowerDesc', action: onAddTowerMode });
   }
   if (isSideChat.value) {
@@ -3674,7 +3645,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             </IconButton>
           </span>
 
-          <span v-if="towerOn && towerExperimentEnabled && !isSideChat" class="tower-chip">
+          <span v-if="towerOn && towerEnabled && !isSideChat" class="tower-chip">
             <Icon class="tower-ic" name="tower" size="md" />
             <span class="tower-label">{{ t('status.towerLabel') }}</span>
             <IconButton

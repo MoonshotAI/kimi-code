@@ -323,10 +323,6 @@ export interface WireAgentStateFrame extends WireAgentFrameBase {
   plan_mode: boolean;
   swarm_mode: boolean;
   tower_mode: boolean;
-  plan_mode_available: boolean;
-  swarm_mode_available: boolean;
-  tower_mode_available: boolean;
-  goal_mode_available: boolean;
 }
 
 export interface WireContextFrame extends WireAgentFrameBase {
@@ -496,7 +492,6 @@ export interface WireConfig {
   default_provider?: string;
   default_model?: string;
   secondary_model?: unknown;
-  tools?: { enabled?: string[]; disabled?: string[] };
   models?: Record<string, unknown>;
   thinking?: unknown;
   plan_mode?: boolean;

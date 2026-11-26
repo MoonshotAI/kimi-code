@@ -10,7 +10,7 @@ import { HOST_API_LEVEL, startServer, type RunningServer } from '../src';
 import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
-const HOST_CONTRACT = { apiLevel: 1, digest: '0c1b217a9d43516c8982555a1eff9e15642291e8dd32e7a14c4ade555b763b20' };
+const HOST_CONTRACT = { apiLevel: 1, digest: '5cd2445ec08798ccc0e53162bc3d634c8715b0862fc19f83d86ecc41fb676002' };
 
 const DEBUG_ROUTES = [
   'GET /api/v1/debug/channels',

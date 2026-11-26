@@ -113,9 +113,6 @@
             "event_created_at": {
               "type": "string"
             },
-            "goal_mode_available": {
-              "type": "boolean"
-            },
             "model": {
               "type": "string"
             },
@@ -128,9 +125,6 @@
               "type": "string"
             },
             "plan_mode": {
-              "type": "boolean"
-            },
-            "plan_mode_available": {
               "type": "boolean"
             },
             "session_id": {
@@ -148,16 +142,10 @@
             "swarm_mode": {
               "type": "boolean"
             },
-            "swarm_mode_available": {
-              "type": "boolean"
-            },
             "thinking": {
               "type": "string"
             },
             "tower_mode": {
-              "type": "boolean"
-            },
-            "tower_mode_available": {
               "type": "boolean"
             },
             "type": {
@@ -171,10 +159,6 @@
             "plan_mode",
             "swarm_mode",
             "tower_mode",
-            "plan_mode_available",
-            "swarm_mode_available",
-            "tower_mode_available",
-            "goal_mode_available",
             "type",
             "session_id",
             "agent_id",
@@ -2778,23 +2762,6 @@
                       "type": "boolean"
                     },
                     "thinking": {},
-                    "tools": {
-                      "properties": {
-                        "disabled": {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        "enabled": {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        }
-                      },
-                      "type": "object"
-                    },
                     "yolo": {
                       "type": "boolean"
                     }

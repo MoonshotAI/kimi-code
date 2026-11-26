@@ -20,7 +20,6 @@ export interface AgentToolContributionOptions {
   readonly when?: (accessor: ServicesAccessor) => boolean;
   readonly requiredEnvironmentCapabilities?: readonly EnvironmentCapability[];
   readonly domain?: string;
-  readonly userConfigurable?: boolean;
 }
 
 export interface AgentToolContribution<T extends AnyAgentTool = AnyAgentTool> {
