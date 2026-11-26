@@ -23,6 +23,8 @@ export interface ObservedRequest {
   readonly lane: string;
   readonly role: BuiltInLaneName;
   readonly protocol: ProtocolName;
+  readonly agent?: string;
+  readonly continues?: boolean;
 }
 
 export interface CacheBreakOptions {
@@ -80,7 +82,6 @@ interface Explained {
   readonly unused: readonly Expectation[];
 }
 
-const CHECKED_ROLES: ReadonlySet<BuiltInLaneName> = new Set(['main', 'compaction']);
 const AFTER_COMPACTION = 'the history restarts after compaction';
 const UNKEYED_HINT = 'Requests without a prompt cache key carry nothing that tells conversations apart, so every such request to this model counts as one conversation; give each conversation its own model if the test runs several.';
 const EXCERPT_BEFORE = 24;
@@ -153,10 +154,19 @@ export class PromptCacheLedger {
   }
 
   private compare(): readonly Comparison[] {
+    const continued = new Set<Observation>();
     return this.observations.map((observation, position) => {
-      if (!CHECKED_ROLES.has(observation.source.role)) return { observation };
+      const role = observation.source.role;
+      if (role === 'side') return { observation };
       const thread = threadOf(observation);
       const pool = this.observations.slice(0, position).filter((earlier) => !earlier.rejected && sameThread(earlier, thread));
+      if (role === 'subagent') {
+        const continues = observation.source.continues === true;
+        const own = continues ? previousStepOf(observation, pool, continued) : supersededHeadOf(observation, pool, continued);
+        if (own !== undefined && !observation.rejected) continued.add(own);
+        if (!continues || own === undefined) return { observation };
+        return { observation, baseline: own.source.request, break: breakBetween(own.segments, observation.segments) };
+      }
       const baseline = pool.findLast((earlier) => earlier.source.role === 'main');
       if (baseline === undefined) return { observation };
       const found = breakBetween(baseline.segments, observation.segments);
@@ -204,6 +214,42 @@ function threadOf(observation: Observation): Thread {
 
 function sameThread(observation: Observation, thread: Thread): boolean {
   return observation.source.protocol === thread.protocol && observation.cacheKey === thread.cacheKey && observation.model === thread.model;
+}
+
+function supersededHeadOf(observation: Observation, pool: readonly Observation[], continued: ReadonlySet<Observation>): Observation | undefined {
+  return headsOf(observation, pool, continued).findLast(
+    (earlier) => earlier.segments.length < observation.segments.length && breakBetween(earlier.segments, observation.segments) === undefined,
+  );
+}
+
+function headsOf(observation: Observation, pool: readonly Observation[], continued: ReadonlySet<Observation>): readonly Observation[] {
+  return pool.filter((earlier) => earlier.source.role === 'subagent' && earlier.source.agent === observation.source.agent && !continued.has(earlier));
+}
+
+function previousStepOf(observation: Observation, pool: readonly Observation[], continued: ReadonlySet<Observation>): Observation | undefined {
+  const candidates = pool.filter((earlier) => earlier.source.role === 'subagent' && earlier.source.agent === observation.source.agent);
+  const heads = headsOf(observation, pool, continued);
+  const extended = heads.findLast((earlier) => breakBetween(earlier.segments, observation.segments) === undefined);
+  return extended ?? mostSharedHistory(observation, heads) ?? mostSharedHistory(observation, candidates);
+}
+
+function mostSharedHistory(observation: Observation, candidates: readonly Observation[]): Observation | undefined {
+  const history = observation.segments.filter((segment) => segment.region === 'messages');
+  let best: Observation | undefined;
+  let bestShared = 0;
+  for (const earlier of candidates) {
+    const shared = sharedSegments(earlier.segments.filter((segment) => segment.region === 'messages'), history);
+    if (shared === 0 || shared < bestShared) continue;
+    best = earlier;
+    bestShared = shared;
+  }
+  return best;
+}
+
+function sharedSegments(previous: readonly PromptSegment[], next: readonly PromptSegment[]): number {
+  let shared = 0;
+  while (shared < previous.length && shared < next.length && sameSegment(previous[shared]!, next[shared]!)) shared += 1;
+  return shared;
 }
 
 function sharedCharacters(previous: readonly PromptSegment[], next: readonly PromptSegment[]): number {
