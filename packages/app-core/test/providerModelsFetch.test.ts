@@ -223,6 +223,194 @@ describe('parseModelsResponseBody', () => {
     expect(parseModelsResponseBody(JSON.stringify({ object: 'garbage' }))).toBeNull();
     expect(parseModelsResponseBody(JSON.stringify(['array']))).toBeNull();
   });
+
+  it('preserves multimodal capabilities, context size, and thinking efforts from rich entries', () => {
+    expect(
+      parseModelsResponseBody(
+        JSON.stringify({
+          data: [
+            {
+              id: 'example-vision-pro',
+              display_name: 'Example Vision Pro',
+              limit: { context: 1048576, output: 65536 },
+              modalities: { input: ['text', 'image', 'video'], output: ['text'] },
+              reasoning: {
+                support: true,
+                type: 'only',
+                effort: { valid: ['low', 'high', 'max'], default: 'max' },
+              },
+              tools: { support: true, dynamic_load: true },
+            },
+          ],
+        }),
+      ),
+    ).toEqual([
+      {
+        id: 'example-vision-pro',
+        displayName: 'Example Vision Pro',
+        maxContextSize: 1048576,
+        capabilities: [
+          'thinking',
+          'always_thinking',
+          'image_in',
+          'video_in',
+          'tool_use',
+          'dynamically_loaded_tools',
+        ],
+        supportEfforts: ['low', 'high', 'max'],
+      },
+    ]);
+  });
+
+  it('derives text-only and non-reasoning capabilities without inventing hints', () => {
+    expect(
+      parseModelsResponseBody(
+        JSON.stringify({
+          data: [
+            {
+              id: 'text-reasoner',
+              modalities: { input: ['text'] },
+              reasoning: { support: true, type: 'both' },
+              tool_call: true,
+            },
+            {
+              id: 'vision-plain',
+              modalities: { input: ['text', 'image'] },
+              reasoning: { type: 'none' },
+              tool_call: true,
+            },
+          ],
+        }),
+      ),
+    ).toEqual([
+      { id: 'text-reasoner', capabilities: ['thinking', 'tool_use'] },
+      { id: 'vision-plain', capabilities: ['image_in', 'tool_use'] },
+    ]);
+  });
+
+  it('reads flat capability and context fields from compatible gateways', () => {
+    expect(
+      parseModelsResponseBody(
+        JSON.stringify({
+          data: [
+            {
+              id: 'flat-vision',
+              context_length: 200000,
+              capabilities: {
+                input_modalities: ['text', 'image'],
+                reasoning: true,
+                tool_call: true,
+                support_efforts: ['high'],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toEqual([
+      {
+        id: 'flat-vision',
+        maxContextSize: 200000,
+        capabilities: ['thinking', 'image_in', 'tool_use'],
+        supportEfforts: ['high'],
+      },
+    ]);
+  });
+
+  it('respects explicit false hints and tolerates malformed optional metadata', () => {
+    expect(
+      parseModelsResponseBody(
+        JSON.stringify({
+          data: [
+            {
+              id: 'no-tools',
+              tool_call: false,
+              reasoning: false,
+              limit: { context: -1 },
+              context_length: '128000',
+              modalities: 'bad',
+              support_efforts: [1, ''],
+            },
+          ],
+        }),
+      ),
+    ).toEqual([{ id: 'no-tools', maxContextSize: 128000, capabilities: [] }]);
+  });
+
+  it('lets explicit primary fields win over conflicting legacy fallbacks', () => {
+    expect(
+      parseModelsResponseBody(
+        JSON.stringify({
+          data: [
+            {
+              id: 'conflict-text',
+              modalities: { input: ['text'] },
+              reasoning: { support: false },
+              supports_image_in: true,
+              supports_video_in: true,
+              supports_reasoning: true,
+              tool_call: true,
+            },
+          ],
+        }),
+      ),
+    ).toEqual([{ id: 'conflict-text', capabilities: ['tool_use'] }]);
+  });
+
+  it('keeps defaults when optional metadata uses unrecognized shapes', () => {
+    expect(
+      parseModelsResponseBody(
+        JSON.stringify({
+          data: [{ id: 'foreign-shape', capabilities: ['chat'], modalities: ['text'], reasoning: 'yes' }],
+        }),
+      ),
+    ).toEqual([{ id: 'foreign-shape' }]);
+  });
+
+  it('parses flat open-platform thinking type and think_efforts', () => {
+    expect(
+      parseModelsResponseBody(
+        JSON.stringify({
+          data: [
+            {
+              id: 'flat-only',
+              supports_thinking_type: 'only',
+              supports_reasoning: false,
+              think_efforts: {
+                support: true,
+                valid_efforts: ['low', 'high'],
+                default_effort: 'high',
+              },
+            },
+            {
+              id: 'flat-no',
+              supports_thinking_type: 'no',
+              supports_reasoning: true,
+            },
+          ],
+        }),
+      ),
+    ).toEqual([
+      {
+        id: 'flat-no',
+        capabilities: ['tool_use'],
+      },
+      {
+        id: 'flat-only',
+        capabilities: ['thinking', 'always_thinking', 'tool_use'],
+        supportEfforts: ['low', 'high'],
+      },
+    ]);
+  });
+
+  it('reads top-level dynamically_loaded_tools from models.dev entries', () => {
+    expect(
+      parseModelsResponseBody(
+        JSON.stringify({
+          data: [{ id: 'dyn-tools', modalities: { input: ['text'] }, dynamically_loaded_tools: true }],
+        }),
+      ),
+    ).toEqual([{ id: 'dyn-tools', capabilities: ['tool_use', 'dynamically_loaded_tools'] }]);
+  });
 });
 
 describe('fetchProviderModels', () => {

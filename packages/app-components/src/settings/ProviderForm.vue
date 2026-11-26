@@ -9,6 +9,7 @@ import {
   buildUpdateProviderInput,
   catalogModelToRow,
   emptyModelRow,
+  fetchedModelToRow,
   fetchProviderModels,
   isManagedOAuthProvider,
   kimiCodingProviderFor,
@@ -250,11 +251,7 @@ async function runFetchModels(): Promise<void> {
     );
     form.models = [
       ...kept,
-      ...adding.map((m) => ({
-        ...emptyModelRow(),
-        model: m.id,
-        maxContextSize: FETCH_MODELS_CONTEXT_SIZE,
-      })),
+      ...adding.map((m) => fetchedModelToRow(m, FETCH_MODELS_CONTEXT_SIZE)),
     ];
     contentTouched.value = true;
     client.notify({
