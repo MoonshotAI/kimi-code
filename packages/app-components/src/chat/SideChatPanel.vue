@@ -175,7 +175,7 @@ defineExpose({ focusInput });
 
 <template>
   <div class="sc" @keydown="onRootKeydown">
-    <div ref="bodyRef" class="sc-body" @scroll.passive="onBodyScroll">
+    <div ref="bodyRef" class="sc-body" data-panel-content @scroll.passive="onBodyScroll">
       <EmptyState v-if="turns.length === 0" class="sc-empty" :title="t('sideChat.title')" :hint="t('sideChat.empty')">
         <template #icon>
           <Icon name="side-chat" size="lg" />

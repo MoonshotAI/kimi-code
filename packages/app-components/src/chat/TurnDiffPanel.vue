@@ -127,7 +127,7 @@ const codeWrap = ref(false);
       </div>
     </PanelHeader>
 
-    <div ref="diffBody" class="td-body" data-quote-display-lines>
+    <div ref="diffBody" class="td-body" data-panel-content data-quote-display-lines>
       <HighlightedCode v-if="hasDiff" :lines="trueDiff!" :path="change.path" :framed="false" :wrap="codeWrap" />
       <div v-else-if="loading" class="td-empty">
         <Spinner size="sm" />

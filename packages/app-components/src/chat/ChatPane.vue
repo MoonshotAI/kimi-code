@@ -1954,6 +1954,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 6px;
   max-width: 78%;
   margin-top: 6px;
+  user-select: none;
 }
 .u-steer-receipt {
   display: inline-flex;
@@ -2054,6 +2055,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   align-self: stretch;
   width: 100%;
   margin: 0;
+  user-select: none;
 }
 .compact-divider-interrupted {
   margin-top: var(--chat-turn-gap);
@@ -2152,6 +2154,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   box-shadow: var(--shadow-xs);
   animation: kimi-card-in var(--duration-slow) var(--ease-out);
 }
+.turn-failed :deep(.ui-button) {
+  user-select: none;
+}
 .tf-chip {
   display: inline-flex;
   align-items: center;
@@ -2206,6 +2211,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   height: auto;
   margin-top: 6px;
   overflow: visible;
+  user-select: none;
 }
 .a-msg-meta {
   display: flex;
@@ -2416,6 +2422,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .sending-placeholder {
   align-self: flex-start;
   padding: var(--space-4) 0 10px;
+  user-select: none;
 }
 
 .skill-act {
@@ -2554,6 +2561,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   padding: 0 6px;
   color: var(--color-text-faint);
   font-size: var(--text-xs);
+  user-select: none;
 }
 .q-title {
   display: inline-flex;
@@ -2585,6 +2593,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   color: var(--color-text-on-accent);
   box-shadow: var(--shadow-xs);
   cursor: pointer;
+  user-select: none;
   transition: background var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 .q-send:hover {
@@ -2632,6 +2641,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   color: var(--color-text-faint);
   cursor: grab;
   opacity: 0.7;
+  user-select: none;
 }
 .q-grip:hover {
   opacity: 1;
