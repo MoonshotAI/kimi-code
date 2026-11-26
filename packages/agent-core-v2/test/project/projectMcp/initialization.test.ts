@@ -37,6 +37,7 @@ import { stubLog } from '../../_base/log/stubs';
 import { registerAgentIdentityStub } from '../../app/agentIdentity/stubs';
 import {
   createMemoryMcpOAuthStore,
+  hostPathClass,
   slowToolStdioFixture,
   stdioFixture,
 } from '../../mcpCore/stubs';
@@ -92,7 +93,7 @@ describe('Workspace MCP initialization', () => {
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
         const environment = Object.assign(
-          new FakeEnvironment({ environmentId: 'local', generation: 'test-generation' }, { capabilities: ['process'] }),
+          new FakeEnvironment({ environmentId: 'local', generation: 'test-generation' }, { capabilities: ['process'], pathClass: hostPathClass }),
           { process: new HostProcessService() },
         );
         reg.definePartialInstance(IEnvironmentService, { _serviceBrand: undefined, inspect: () => environment, acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }), acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }) });

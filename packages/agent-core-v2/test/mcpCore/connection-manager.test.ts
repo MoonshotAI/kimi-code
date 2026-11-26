@@ -45,6 +45,7 @@ const testProcess = new HostProcessService();
 const testEnvironment = Object.assign(
   new FakeEnvironment({ ...testEnvironmentBinding, generation: 'test-generation' }, {
     capabilities: ['process'],
+    pathClass: hostPathClass,
   }),
   { process: testProcess },
 );
@@ -78,6 +79,7 @@ import {
   createMemoryMcpOAuthStore,
   cwdStdioFixture,
   hangingListStdioFixture,
+  hostPathClass,
   slowStdioFixture,
   slowToolStdioFixture,
   startAnonymousDiscoveryHttpMcpServer,
