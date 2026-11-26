@@ -104,7 +104,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true));
 <style scoped src="../lib/dock-card.css"></style>
 <style scoped>
 .wcc {
-  margin: var(--space-2) var(--dock-inline-right, 16px) 0 var(--dock-inline-left, 16px);
+  margin: var(--space-2) var(--dock-inline-right, 16px) var(--space-2) var(--dock-inline-left, 16px);
   font-family: var(--font-ui);
 }
 .wcc-spin::before {
