@@ -357,13 +357,13 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     }
     const compacted = this.conversation().getByText(COMPACTED);
     const before = await compacted.count();
-    const failed = this.page.getByRole('status').filter({ hasText: COMPACTION_FAILED });
+    const failed = this.conversation().getByText(COMPACTION_FAILED);
     const failedBefore = await failed.count();
     await this.press('compact()', 'the message input', this.composer());
     await this.page.keyboard.type(COMPACT_COMMAND);
     await this.page.keyboard.press('Enter');
     await this.page.keyboard.press('Enter');
-    const outcome = await this.wait(`the conversation to show Context compacted, or a ${COMPACTION_FAILED} notice`, async () => {
+    const outcome = await this.wait(`the conversation to show Context compacted, or a ${COMPACTION_FAILED} divider`, async () => {
       if ((await failed.count()) > failedBefore) return 'failed' as const;
       return (await compacted.count()) > before && (await this.idle()) ? ('compacted' as const) : undefined;
     });

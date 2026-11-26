@@ -648,6 +648,56 @@ describe('conversation fold', () => {
     expect(turns[2]?.items[0]).toMatchObject({ kind: 'compaction', trigger: 'auto', summary: 'legacy' });
   });
 
+  it('shows a failed compaction with its reason and keeps a later summary out of it', () => {
+    const error = {
+      code: 'compaction.failed',
+      message: 'APIStatusError: 400 Bad Request',
+      retryable: false,
+      details: { statusCode: 400, requestId: 'req-1' },
+    };
+    const state = fold([
+      record('full_compaction.begin', { source: 'manual' }),
+      record('full_compaction.cancel', { error }),
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'go'),
+      stepBegin(0, 1, 's1'),
+      record('full_compaction.begin', { source: 'auto' }),
+      record('full_compaction.cancel', { error: { ...error, message: 'mid-turn refusal' } }),
+      turnEnded(0, 'completed'),
+      record('context.apply_compaction', { summary: 'legacy', compactedCount: 2 }),
+    ]);
+
+    const turns = state.turns;
+    expect(turns.map((turn) => `${turn.kind}:${turn.status}:${turn.outcome}`)).toEqual([
+      'system:ended:completed',
+      'agent:ended:completed',
+      'system:ended:completed',
+    ]);
+    expect(turns[0]?.items).toEqual([{
+      type: 'system',
+      item_id: `${turns[0]!.turn_id}#0`,
+      status: 'ended',
+      outcome: 'failed',
+      created_at: expect.any(String),
+      kind: 'compaction',
+      trigger: 'manual',
+      error: {
+        code: 'compaction.failed',
+        message: 'APIStatusError: 400 Bad Request',
+        status_code: 400,
+        request_id: 'req-1',
+        retryable: false,
+      },
+    }]);
+    expect(turns[1]?.items[1]).toMatchObject({
+      kind: 'compaction',
+      trigger: 'auto',
+      outcome: 'failed',
+      error: { message: 'mid-turn refusal' },
+    });
+    expect(turns[2]?.items[0]).toMatchObject({ kind: 'compaction', outcome: 'completed', summary: 'legacy' });
+  });
+
   it('opens a forked conversation with a boundary turn and hides what it inherited', () => {
     const state = fold([
       userMessage('m1', 'inherited question'),

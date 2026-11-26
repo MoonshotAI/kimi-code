@@ -800,7 +800,9 @@ function onQueueDragEnd(): void {
 }
 
 const undoableTurnIds = computed(() => {
-  const afterCompaction = props.turns.slice(props.turns.findLastIndex((turn) => turn.role === 'compaction') + 1);
+  const afterCompaction = props.turns.slice(
+    props.turns.findLastIndex((turn) => turn.role === 'compaction' && turn.compaction?.error === undefined) + 1,
+  );
   return new Set(afterCompaction.flatMap((turn) => (turn.undoTurnId === undefined ? [] : [turn.id])));
 });
 
@@ -840,6 +842,21 @@ function compactionBaseLabel(turn: ChatTurn): string {
   return turn.compaction?.trigger === 'auto'
     ? t('conversation.compactedAuto')
     : t('conversation.compactedPlain');
+}
+
+function compactionFailedTitle(turn: ChatTurn): string {
+  return turn.compaction?.trigger === 'auto'
+    ? t('conversation.compactionFailedAuto')
+    : t('conversation.compactionFailed');
+}
+
+function compactionFailureDetail(turn: ChatTurn): string {
+  const error = turn.compaction?.error;
+  if (!error) return '';
+  const meta = [error.code];
+  if (error.statusCode !== undefined) meta.push(`HTTP ${error.statusCode}`);
+  if (error.requestId !== undefined && error.requestId.length > 0) meta.push(error.requestId);
+  return `${formatProviderErrorMessage(error.message)}\n${meta.join(' · ')}`;
 }
 
 function compactionTokenDelta(turn: ChatTurn): string {
@@ -1508,6 +1525,20 @@ function streamingTailIndex(turn: ChatTurn): number | null {
            transcript, whose turns the root lookup cannot resolve) the label
            stays a plain inert divider. -->
       <div
+        v-else-if="turn.role === 'compaction' && turn.compaction?.error"
+        class="compact-divider compact-divider--failed turn-anchor"
+        :data-turn-id="turn.id"
+        role="separator"
+      >
+        <span class="cd-card cd-failed" :title="compactionFailureDetail(turn)">
+          <span class="cd-chip" aria-hidden="true">
+            <Icon name="collapse" size="sm" />
+          </span>
+          <span class="cd-title">{{ compactionFailedTitle(turn) }}</span>
+          <span class="cd-reason">{{ formatProviderErrorMessage(turn.compaction.error.message) }}</span>
+        </span>
+      </div>
+      <div
         v-else-if="turn.role === 'compaction'"
         class="compact-divider compact-divider--compacted turn-anchor"
         :data-turn-id="turn.id"
@@ -2112,6 +2143,18 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   font-size: 11px;
   font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
+}
+.cd-failed .cd-chip {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.cd-failed .cd-title {
+  color: var(--color-danger);
+}
+.cd-reason {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cd-chevron {
   display: inline-flex;

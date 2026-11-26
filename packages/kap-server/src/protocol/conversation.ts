@@ -247,6 +247,7 @@ export const compactionItemSchema = z.object({
   tokens_after: z.number().nonnegative().optional(),
   compacted_count: z.number().int().nonnegative().optional(),
   summary: z.string().optional(),
+  error: errorInfoSchema.optional(),
 });
 export type CompactionItem = z.infer<typeof compactionItemSchema>;
 

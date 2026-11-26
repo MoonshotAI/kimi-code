@@ -249,7 +249,7 @@ export function applyConversationRecord(state: ConversationState, record: WireRe
       completeCompaction(state, time);
       return;
     case 'full_compaction.cancel':
-      state.compaction = undefined;
+      cancelCompaction(state, record, time);
       return;
     case 'context.clear':
       clearConversation(state);
@@ -730,7 +730,8 @@ function applyCompactionSummary(state: ConversationState, record: WireRecord, ti
   }
   const last = state.turns.at(-1);
   const completed = last?.items.at(-1);
-  if (last !== undefined && completed?.type === 'system' && completed.kind === 'compaction' && completed.summary === undefined) {
+  if (last !== undefined && completed?.type === 'system' && completed.kind === 'compaction' &&
+    completed.summary === undefined && completed.error === undefined) {
     upsertItem(last, { ...completed, ...details });
     return;
   }
@@ -744,7 +745,20 @@ function completeCompaction(state: ConversationState, time: number): void {
   appendCompaction(state, compaction, time);
 }
 
-function appendCompaction(state: ConversationState, compaction: CompactionDetails, time: number): void {
+function cancelCompaction(state: ConversationState, record: WireRecord, time: number): void {
+  const compaction = state.compaction;
+  state.compaction = undefined;
+  const error = errorInfoOf(record['error'], undefined);
+  if (compaction === undefined || error === undefined) return;
+  appendCompaction(state, { trigger: compaction.trigger, instruction: compaction.instruction }, time, error);
+}
+
+function appendCompaction(
+  state: ConversationState,
+  compaction: CompactionDetails,
+  time: number,
+  error?: ErrorInfo,
+): void {
   const open = openTurn(state);
   const turn = open ?? addTurn(state, time, 'system');
   turn.items.push({
@@ -752,9 +766,10 @@ function appendCompaction(state: ConversationState, compaction: CompactionDetail
     kind: 'compaction',
     item_id: nextItemId(turn),
     status: 'ended',
-    outcome: 'completed',
+    outcome: error === undefined ? 'completed' : 'failed',
     created_at: isoTime(time),
     ...compaction,
+    ...(error === undefined ? {} : { error }),
   });
   if (open === undefined) endTurn(state, turn, COMPLETED, time);
 }

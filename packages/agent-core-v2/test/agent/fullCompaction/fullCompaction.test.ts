@@ -1096,6 +1096,18 @@ describe('FullCompaction', () => {
       ]),
     );
     expect(eventIndex(events, 'compaction.cancelled')).toBeLessThan(eventIndex(events, 'error'));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: '[wire]',
+        event: 'full_compaction.cancel',
+        args: expect.objectContaining({
+          error: expect.objectContaining({
+            code: 'compaction.failed',
+            message: expect.stringContaining('compaction exploded'),
+          }),
+        }),
+      }),
+    );
     expect(ctx.compactHistory()).toEqual([
       { role: 'user', text: 'old user one' },
       { role: 'assistant', text: 'old assistant one' },
@@ -1199,6 +1211,13 @@ describe('FullCompaction', () => {
 
     expect(attempts).toBe(1);
     expect(events).not.toContainEqual(expect.objectContaining({ event: 'error' }));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: '[wire]',
+        event: 'full_compaction.cancel',
+        args: expect.not.objectContaining({ error: expect.anything() }),
+      }),
+    );
     expect(events).toContainEqual(
       expect.objectContaining({
         event: 'turn.ended',

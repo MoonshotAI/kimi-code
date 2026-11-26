@@ -753,20 +753,49 @@ describe('model turn error notices', () => {
   });
 });
 
-describe('compaction failure notices', () => {
+describe('compaction failures', () => {
   const REFUSED = 'APIStatusError: The example service refused to summarize.';
   const cancelled = { type: 'notice', level: 'warning', title: 'Context compaction did not finish', code: 'compaction.cancelled' } as const;
   const failed = { type: 'notice', level: 'error', title: REFUSED, code: 'compaction.failed' } as const;
   const failure = expect.objectContaining({ severity: 'error', title: 'warnings.agentError.compactionFailed', message: REFUSED });
+  const failedItem = {
+    type: 'system',
+    kind: 'compaction',
+    item_id: 'c0',
+    status: 'ended',
+    outcome: 'failed',
+    created_at: AT,
+    trigger: 'manual',
+    error: { code: 'compaction.failed', message: REFUSED, status_code: 400, request_id: 'req-1' },
+  } as const;
+  const deliverFailure = (h: Awaited<ReturnType<typeof boot>>, sessionId: string) => {
+    h.frame(sessionId, { type: 'turn.started', turn: { turn_id: 'tc', ordinal: 5, kind: 'system', status: 'running', started_at: AT, steps: [] } });
+    h.frame(sessionId, { type: 'item.ended', turn_id: 'tc', item: failedItem });
+    h.frame(sessionId, cancelled);
+    h.frame(sessionId, failed);
+  };
 
-  it('tells the user why a compaction failed in the open session, in place of the did-not-finish note', async () => {
+  it('shows why a compaction failed in the transcript of the open session, without a toast', async () => {
     const h = await boot();
+    const { modelSwitchConfirmStore } = await import('../src/stores/modelSwitchConfirm');
+    const { promptStore } = await import('../src/stores/prompt');
+    h.agentStatus('s1', 'compacting');
+    const settled = modelSwitchConfirmStore().waitCompactionSettled('s1', 60_000);
+    h.agentStatus('s1', 'idle');
     h.warningsStore().resetWarnings();
 
-    h.frame('s1', cancelled);
-    h.frame('s1', failed);
+    deliverFailure(h, 's1');
 
-    expect(h.warningsStore().warnings).toEqual([failure]);
+    await expect(settled).resolves.toBe('cancelled');
+    expect(promptStore().hasUnsettledCompaction('s1')).toBe(false);
+    await vi.waitFor(() => expect(h.client.turns.value.at(-1)).toMatchObject({
+      role: 'compaction',
+      compaction: {
+        trigger: 'manual',
+        error: { code: 'compaction.failed', message: REFUSED, statusCode: 400, requestId: 'req-1' },
+      },
+    }));
+    expect(h.warningsStore().warnings).toEqual([]);
   });
 
   it('keeps the did-not-finish note when nothing failed', async () => {
@@ -780,29 +809,27 @@ describe('compaction failure notices', () => {
     ]);
   });
 
-  it('leaves a compaction failure that ended the turn to the failed-turn card', async () => {
+  it('keeps the did-not-finish note of the next cancelled compaction after a failure', async () => {
     const h = await boot();
-    h.frame('s1', {
-      type: 'turns',
-      turns: [endedTurn(0, { outcome: 'failed', end_reason: 'error', error: { code: 'compaction.failed', message: REFUSED } })],
-      has_more: false,
-    });
-    await vi.waitFor(() => expect(h.client.activeTurnError.value).toMatchObject({ code: 'compaction.failed', message: REFUSED }));
+    deliverFailure(h, 's1');
+    h.agentStatus('s1', 'compacting');
+    h.agentStatus('s1', 'idle');
     h.warningsStore().resetWarnings();
 
-    h.frame('s1', failed);
+    h.frame('s1', cancelled);
 
-    expect(h.warningsStore().warnings).toEqual([]);
+    expect(h.warningsStore().warnings).toEqual([
+      expect.objectContaining({ severity: 'warning', title: 'warnings.noteLabel', message: 'Context compaction did not finish' }),
+    ]);
   });
 
-  it('names a failed compaction in another session as a compaction failure', async () => {
+  it('names a failed compaction in another session as a compaction failure, in one toast', async () => {
     const h = await boot({ sessionIds: ['s1', 's2'] });
     await h.client.selectSession('s2');
     await h.client.selectSession('s1');
     h.warningsStore().resetWarnings();
 
-    h.frame('s2', cancelled);
-    h.frame('s2', failed);
+    deliverFailure(h, 's2');
 
     expect(h.warningsStore().warnings).toEqual([failure]);
   });

@@ -113,7 +113,7 @@ import { approvalsStore, setApprovalsHooks } from '../stores/approvals';
 import { filesStore } from '../stores/files';
 import { modelsStore } from '../stores/models';
 import { modeStore } from '../stores/mode';
-import { warningsStore, warningDetail, warningKey } from '../stores/warnings';
+import { warningsStore, warningDetail } from '../stores/warnings';
 import { goalStore } from '../stores/goal';
 import { configStore, setConfigHooks } from '../stores/config';
 import { hostsStore, setHostsHooks } from '../stores/hosts';
@@ -150,7 +150,6 @@ import type {
   AppConfig,
   AppGoal,
   AppMessage,
-  AppNotice,
   AppNoticeDetail,
   AppModel,
   AppProvider,
@@ -526,7 +525,7 @@ function forgetSession(sessionId: string): void {
   promptStore().clearOptimisticMessages(sessionId);
   delete rawState.sessionStatusSettledBySession[sessionId];
   notifiedInteractionIdsBySession.delete(sessionId);
-  compactionCancelledNoteBySession.delete(sessionId);
+  failedCompactionSettled.delete(sessionId);
   promptStore().forgetLocalTurnState(sessionId);
   promptStore().clearQueued(sessionId);
   promptStore().clearInFlight(sessionId);
@@ -835,8 +834,12 @@ function mainCompacting(sessionId: string): boolean {
 }
 
 function observeMainCompaction(sessionId: string): void {
-  if (mainCompacting(sessionId)) promptStore().noteCompactionStarted(sessionId);
+  if (!mainCompacting(sessionId)) return;
+  failedCompactionSettled.delete(sessionId);
+  promptStore().noteCompactionStarted(sessionId);
 }
+
+const failedCompactionSettled = new Set<string>();
 
 const latestCompactionKeyByEntry = new WeakMap<ConversationEntry, string | undefined>();
 
@@ -844,9 +847,13 @@ function settleMainCompaction(entry: ConversationEntry, initial: boolean): void 
   const latest = latestCompactionOf(entry.view.turns);
   const seen = latestCompactionKeyByEntry.get(entry);
   latestCompactionKeyByEntry.set(entry, latest?.key);
-  if (!initial && latest !== undefined && latest.key !== seen) {
+  if (initial || latest === undefined || latest.key === seen) return;
+  if (latest.item.error === undefined) {
     settleCompaction(entry.sessionId, 'completed', latest.item.trigger);
+    return;
   }
+  failedCompactionSettled.add(entry.sessionId);
+  settleCompaction(entry.sessionId, 'cancelled', latest.item.trigger);
 }
 
 function settleCompaction(
@@ -1958,35 +1965,18 @@ function onMainNotice(sessionId: string, notice: ConversationNotice): void {
     });
     return;
   }
-  if (notice.code === 'compaction.cancelled') settleCompaction(sessionId, 'cancelled', undefined);
+  if (notice.code === 'compaction.cancelled') {
+    if (failedCompactionSettled.delete(sessionId)) return;
+    settleCompaction(sessionId, 'cancelled', undefined);
+  }
   warningsStore().markSessionWarningShown(sessionId, `${notice.code ?? ''} ${notice.title}`);
   if (notice.level === 'error') {
     if (isModelTurnErrorNotice(notice)) return;
-    if (sessionId === rawState.activeSessionId && !isCompactionFailureOffTurnCard(sessionId, notice)) return;
-    if (notice.code === 'compaction.failed') dismissCompactionCancelledNote(sessionId);
+    if (sessionId === rawState.activeSessionId) return;
     warningsStore().pushWarning(buildAgentErrorNotice(notice, t));
     return;
   }
-  const note: AppNotice = { severity: notice.level, title: t('warnings.noteLabel'), message: notice.title };
-  if (notice.code === 'compaction.cancelled') compactionCancelledNoteBySession.set(sessionId, warningKey(note));
-  warningsStore().pushWarning(note);
-}
-
-const compactionCancelledNoteBySession = new Map<string, string>();
-
-function isCompactionFailureOffTurnCard(sessionId: string, notice: ConversationNotice): boolean {
-  if (notice.code !== 'compaction.failed') return false;
-  const shown = conversationTurnError(mainConversationOf(sessionId)?.view.turns.at(-1));
-  return shown?.code !== notice.code || shown.message !== notice.title;
-}
-
-function dismissCompactionCancelledNote(sessionId: string): void {
-  const key = compactionCancelledNoteBySession.get(sessionId);
-  if (key === undefined) return;
-  compactionCancelledNoteBySession.delete(sessionId);
-  const store = warningsStore();
-  const note = store.warnings.findLast((warning) => warningKey(warning) === key);
-  if (note !== undefined) store.dismissWarning(note);
+  warningsStore().pushWarning({ severity: notice.level, title: t('warnings.noteLabel'), message: notice.title });
 }
 const tasks = computed<TaskItem[]>(() => {
   void taskClock.tick.value;

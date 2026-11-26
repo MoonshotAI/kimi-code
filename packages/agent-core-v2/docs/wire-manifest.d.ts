@@ -307,6 +307,50 @@ interface FullCompactionBeginPayload {
 interface FullCompactionCancelPayload {
   _name: 'full_compaction.cancel';
   agentId: string;
+  /** KimiErrorPayload */
+  error?: {
+    code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+    message: string;
+    name?: string;
+    details?: Readonly<Record<string, unknown>>;
+    retryable: boolean;
+    cause?: {
+      code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+      message: string;
+      name?: string;
+      details?: Readonly<Record<string, unknown>>;
+      retryable: boolean;
+      cause?: {
+        code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+        message: string;
+        name?: string;
+        details?: Readonly<Record<string, unknown>>;
+        retryable: boolean;
+        cause?: {
+          code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+          message: string;
+          name?: string;
+          details?: Readonly<Record<string, unknown>>;
+          retryable: boolean;
+          cause?: {
+            code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
+            message: string;
+            name?: string;
+            details?: Readonly<Record<string, unknown>>;
+            retryable: boolean;
+            cause?: {
+              code: ErrorCode;
+              message: string;
+              name?: string;
+              details?: Readonly<Record<string, unknown>>;
+              retryable: boolean;
+              cause?: ErrorPayload;
+            };
+          };
+        };
+      };
+    };
+  };
 }
 
 /**
