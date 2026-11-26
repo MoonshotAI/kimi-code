@@ -3029,6 +3029,27 @@
                                 "name"
                               ],
                               "type": "object"
+                            },
+                            "skills": {
+                              "items": {
+                                "properties": {
+                                  "args": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "path": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
                             }
                           },
                           "required": [

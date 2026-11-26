@@ -80,14 +80,15 @@ export const worktreeSetupSchema = z.object({
 });
 export type WorktreeSetup = z.infer<typeof worktreeSetupSchema>;
 
+const heldSkillSchema = z.object({ name: z.string().min(1), path: z.string().optional(), args: z.string().optional() });
+
 export const worktreeHeldPromptSchema = z.object({
   prompt_id: z.string().min(1),
   kind: z.enum(['prompt', 'skill']),
   created_at: isoDateTimeSchema,
   content: z.array(messageContentSchema),
-  skill: z
-    .object({ name: z.string().min(1), path: z.string().optional(), args: z.string().optional() })
-    .optional(),
+  skill: heldSkillSchema.optional(),
+  skills: z.array(heldSkillSchema).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   failure: z.object({ code: z.number().int(), msg: z.string() }).optional(),
 });

@@ -17114,6 +17114,28 @@
                                                       "name"
                                                     ],
                                                     "type": "object"
+                                                  },
+                                                  "skills": {
+                                                    "items": {
+                                                      "additionalProperties": false,
+                                                      "properties": {
+                                                        "args": {
+                                                          "type": "string"
+                                                        },
+                                                        "name": {
+                                                          "minLength": 1,
+                                                          "type": "string"
+                                                        },
+                                                        "path": {
+                                                          "type": "string"
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "name"
+                                                      ],
+                                                      "type": "object"
+                                                    },
+                                                    "type": "array"
                                                   }
                                                 },
                                                 "required": [
@@ -17948,6 +17970,28 @@
                                                             "name"
                                                           ],
                                                           "type": "object"
+                                                        },
+                                                        "skills": {
+                                                          "items": {
+                                                            "additionalProperties": false,
+                                                            "properties": {
+                                                              "args": {
+                                                                "type": "string"
+                                                              },
+                                                              "name": {
+                                                                "minLength": 1,
+                                                                "type": "string"
+                                                              },
+                                                              "path": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "name"
+                                                            ],
+                                                            "type": "object"
+                                                          },
+                                                          "type": "array"
                                                         }
                                                       },
                                                       "required": [
@@ -19067,6 +19111,28 @@
                                         "name"
                                       ],
                                       "type": "object"
+                                    },
+                                    "skills": {
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "args": {
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          "path": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "name"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
                                     }
                                   },
                                   "required": [
@@ -20376,6 +20442,28 @@
                                         "name"
                                       ],
                                       "type": "object"
+                                    },
+                                    "skills": {
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "args": {
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          "path": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "name"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
                                     }
                                   },
                                   "required": [
@@ -26783,6 +26871,28 @@
                                             "name"
                                           ],
                                           "type": "object"
+                                        },
+                                        "skills": {
+                                          "items": {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "args": {
+                                                "type": "string"
+                                              },
+                                              "name": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "path": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "name"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          "type": "array"
                                         }
                                       },
                                       "required": [
@@ -34074,6 +34184,28 @@
                                         "name"
                                       ],
                                       "type": "object"
+                                    },
+                                    "skills": {
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "args": {
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          "path": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "name"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
                                     }
                                   },
                                   "required": [
@@ -35205,6 +35337,28 @@
                                         "name"
                                       ],
                                       "type": "object"
+                                    },
+                                    "skills": {
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "args": {
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          "path": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "name"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
                                     }
                                   },
                                   "required": [
@@ -36343,6 +36497,28 @@
                                         "name"
                                       ],
                                       "type": "object"
+                                    },
+                                    "skills": {
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "args": {
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          "path": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "name"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
                                     }
                                   },
                                   "required": [
@@ -37474,6 +37650,28 @@
                                         "name"
                                       ],
                                       "type": "object"
+                                    },
+                                    "skills": {
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "args": {
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          "path": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "name"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
                                     }
                                   },
                                   "required": [
@@ -43539,6 +43737,28 @@
                                         "name"
                                       ],
                                       "type": "object"
+                                    },
+                                    "skills": {
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "args": {
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          "path": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "name"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
                                     }
                                   },
                                   "required": [
@@ -44838,6 +45058,28 @@
                                         "name"
                                       ],
                                       "type": "object"
+                                    },
+                                    "skills": {
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "args": {
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          "path": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "name"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
                                     }
                                   },
                                   "required": [
@@ -46137,6 +46379,28 @@
                                         "name"
                                       ],
                                       "type": "object"
+                                    },
+                                    "skills": {
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "args": {
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          "path": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "name"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
                                     }
                                   },
                                   "required": [
@@ -48803,6 +49067,28 @@
                                             "name"
                                           ],
                                           "type": "object"
+                                        },
+                                        "skills": {
+                                          "items": {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "args": {
+                                                "type": "string"
+                                              },
+                                              "name": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "path": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "name"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          "type": "array"
                                         }
                                       },
                                       "required": [

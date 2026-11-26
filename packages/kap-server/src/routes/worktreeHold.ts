@@ -30,6 +30,7 @@ export async function holdSubmissionForWorktree(
       kind: 'prompt',
       created_at: createdAt,
       content: body.content,
+      skills: body.skills,
       metadata: body.metadata,
     },
     { route: 'prompts', body: { ...body, prompt_id: promptId } },

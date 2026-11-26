@@ -498,6 +498,28 @@ describe('server-v2 session worktrees', () => {
     });
   });
 
+  it('withdraws a held prompt that is aborted by its id', async () => {
+    const { root, workspaceId } = await project('held-abort');
+    hangingRemote(root);
+    const created = await createWorktreeSession(workspaceId, { use_remote: true });
+    await untilStep(created.id, 'fetch', 'running');
+    const held = await post<{ prompt_id: string }>(`/sessions/${created.id}/prompts`, {
+      content: [{ type: 'text', text: 'never mind' }],
+      skills: [{ name: 'update-config' }],
+    });
+    expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt?.skills).toEqual([
+      { name: 'update-config' },
+    ]);
+
+    const aborted = await post(`/sessions/${created.id}/prompts/${held.data.prompt_id}:abort`);
+
+    expect(aborted).toMatchObject({ code: 0, data: { aborted: true } });
+    expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt).toBeUndefined();
+    await post<Session>(`/sessions/${created.id}/worktree:cancel`);
+    expect((await post<Session>(`/sessions/${created.id}/worktree:use_local`)).code).toBe(0);
+    expect(await sentTexts(created.id)).toEqual([]);
+  });
+
   it('holds a skill activation sent during setup', async () => {
     const { root, workspaceId } = await project('held-skill');
     hangingRemote(root);

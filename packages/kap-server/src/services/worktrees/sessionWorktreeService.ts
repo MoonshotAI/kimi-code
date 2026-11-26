@@ -189,6 +189,21 @@ export async function holdPromptForWorktree(
   return result.outcome === 'held';
 }
 
+export async function withdrawHeldPrompt(core: Scope, sessionId: string, promptId: string): Promise<boolean> {
+  const result = { withdrawn: false };
+  await writeStoredWorktree(
+    core,
+    sessionId,
+    (current) => {
+      if (current?.held_prompt?.prompt_id !== promptId) return undefined;
+      result.withdrawn = true;
+      return withoutHeldPrompt(current);
+    },
+    { held: 'replace' },
+  );
+  return result.withdrawn;
+}
+
 function ended(
   setup: WorktreeSetup,
   status: WorktreeSetup['status'],

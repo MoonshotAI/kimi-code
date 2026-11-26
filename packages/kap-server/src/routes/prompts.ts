@@ -72,6 +72,7 @@ import { defineRoute, type RouteDefinition } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
 import { sendEnvironmentError } from './environment';
+import { withdrawHeldPrompt } from '../services/worktrees/sessionWorktreeService';
 import { holdSubmissionForWorktree } from './worktreeHold';
 import { applyThinking } from './sessionAgentConfig';
 
@@ -346,7 +347,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           action: target.action,
           id: target.id,
           actions: promptActions,
-          extra: { resolved, session_id, req, reply },
+          extra: { core, resolved, session_id, req, reply },
         });
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -357,6 +358,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
 }
 
 type PromptActionExtra = {
+  readonly core: Scope;
   readonly resolved: Awaited<ReturnType<typeof resolvePrompt>>;
   readonly session_id: string;
   readonly req: { readonly id: string };
@@ -370,8 +372,14 @@ const promptActions: ActionTable<'abort', PromptActionExtra> = {
 };
 
 async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
-  const { resolved, session_id, req, reply, id } = ctx;
-  resolved.prompt.cancel({ promptId: id });
+  const { core, resolved, session_id, req, reply, id } = ctx;
+  if (await withdrawHeldPrompt(core, session_id, id)) {
+    try {
+      resolved.prompt.cancel({ promptId: id });
+    } catch {}
+  } else {
+    resolved.prompt.cancel({ promptId: id });
+  }
   requestLog(req)?.info({ session_id, prompt_id: id }, 'prompt aborted');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }
