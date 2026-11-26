@@ -778,8 +778,12 @@ describe('fake MCP server', () => {
       expect(await replying.callTool({ name: 'exit_after_reply', arguments: {} })).toEqual({ content: [{ type: 'text', text: 'bye' }] });
       await repliedThenClosed;
 
-      const crashing = await connectStdio(fakeMcpServer('crashing', { tools: [{ name: 'ping' }], exitAfterConnect: { afterMs: 50 } }));
-      await closed(crashing);
+      const exitSignal = join(home.root, 'exit');
+      const crashing = await connectStdio(fakeMcpServer('crashing', { tools: [{ name: 'ping' }], exitAfterConnect: { whenFile: exitSignal } }));
+      const crashed = closed(crashing);
+      expect(await crashing.callTool({ name: 'ping', arguments: {} })).toEqual({ content: [{ type: 'text', text: 'ping done' }] });
+      await writeFile(exitSignal, '');
+      await crashed;
 
       expect((await readMcpStarts(startLog)).map((start) => start.server)).toEqual(['broken']);
       expect(realpathSync((await readMcpStarts(startLog))[0]!.cwd)).toBe(realpathSync(process.cwd()));

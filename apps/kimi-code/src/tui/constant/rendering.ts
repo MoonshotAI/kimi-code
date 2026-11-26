@@ -14,6 +14,7 @@ export const COMMAND_PREVIEW_LINES = 10;
 export const DOCK_QUEUE_ROWS = 3;
 export const DOCK_UPDATES_ROWS = 6;
 export const DOCK_APPROVAL_ROWS = 6;
+export const DOCK_SESSION_PICKER_ROWS = 18;
 export const DOCK_PREVIEW_ROWS = Number.POSITIVE_INFINITY;
 export const UPDATES_PROMPT_FOLD_SCREEN_ROWS = 32;
 

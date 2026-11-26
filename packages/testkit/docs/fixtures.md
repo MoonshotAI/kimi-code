@@ -47,7 +47,7 @@ test('writes manual permissions to the test config', async ({ testHome }) => {
 
 工具上的 `delayMs` 让这次调用晚一点回复，目录上的 `hangListTools: true` 让 `tools/list` 永远不回，用来测客户端的超时。
 
-**stdio 服务**：`fakeMcpServer(name, options)` 返回 `mcp.json` 里的一项服务配置，产品按它启动一个真实的 stdio 进程。进程的生命周期也由选项决定：`startDelayMs` 晚一点再握手，`ignoreSigterm` 不理会 SIGTERM，`exitBeforeConnect: { code, stderr }` 写完 stderr 就退出，`exitAfterConnect: { afterMs, code, stderr }` 握手后过一会儿退出，工具上的 `exitAfterReply` 回复之后退出。给了 `startLog`，进程启动时写一行 `{ server, cwd }`，用 `readMcpStarts(startLog)` 读回，可以断言哪些服务在哪个目录启动过。要从 spawn 的参数认出是哪台服务，用 `fakeMcpServerName(args)`。服务配置里的 `deferred: true` 让产品把这台服务的工具放到渐进加载后面。[MCP 夹具](../src/fixtures/mcp.ts)
+**stdio 服务**：`fakeMcpServer(name, options)` 返回 `mcp.json` 里的一项服务配置，产品按它启动一个真实的 stdio 进程。进程的生命周期也由选项决定：`startDelayMs` 晚一点再握手，`ignoreSigterm` 不理会 SIGTERM，`exitBeforeConnect: { code, stderr }` 写完 stderr 就退出，`exitAfterConnect: { whenFile, code, stderr }` 握手后等测试创建 `whenFile` 这个文件再退出（用信号而不是固定延时，握手再慢也不会提前退出），工具上的 `exitAfterReply` 回复之后退出。给了 `startLog`，进程启动时写一行 `{ server, cwd }`，用 `readMcpStarts(startLog)` 读回，可以断言哪些服务在哪个目录启动过。要从 spawn 的参数认出是哪台服务，用 `fakeMcpServerName(args)`。服务配置里的 `deferred: true` 让产品把这台服务的工具放到渐进加载后面。[MCP 夹具](../src/fixtures/mcp.ts)
 
 **HTTP 服务**：`await startFakeMcpHttpServer({ tools, transport })` 在本机回环地址起一个服务，`transport` 是 `'streamable-http'`（默认）或 `'sse'`，返回的 `url` 交给客户端。每个客户端拿到自己的会话。`addTool`、`updateTool`、`removeTool` 改工具目录，并给每个会话发一次 `tools/list_changed`。`bearerToken` 拒绝没带这个令牌的请求。`intercept(request)` 先看到每个请求（方法、路径、头、原文和其中的 JSON-RPC 方法名），返回 `{ status, headers, json | text }` 就由测试自己回答，返回 `undefined` 就交给服务；它也可以返回 Promise，把某个请求挂到测试放行为止。`requests` 按顺序记下所有请求。用完调用 `close()`。[HTTP 服务](../src/fixtures/mcp-http.ts)
 

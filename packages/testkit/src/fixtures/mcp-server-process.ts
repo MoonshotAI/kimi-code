@@ -1,4 +1,4 @@
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -30,7 +30,13 @@ serveFakeMcpCatalog(mcp, {
 await mcp.connect(new StdioServerTransport());
 
 const exitAfterConnect = spec.exitAfterConnect;
-if (exitAfterConnect !== undefined) setTimeout(() => void exitWith(exitAfterConnect), exitAfterConnect.afterMs);
+if (exitAfterConnect !== undefined) {
+  const poll = setInterval(() => {
+    if (!existsSync(exitAfterConnect.whenFile)) return;
+    clearInterval(poll);
+    void exitWith(exitAfterConnect);
+  }, 10);
+}
 
 function exitWith(exit: FakeMcpExit): Promise<never> {
   return new Promise<never>(() => {

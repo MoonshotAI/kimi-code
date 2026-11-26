@@ -203,14 +203,21 @@ describe('waitCompactionSettled', () => {
     await expect(second).resolves.toBe('completed');
   });
 
-  it('cancels a pending wait for a different session', async () => {
+  it('tracks pending waits independently per session', async () => {
     const store = modelSwitchConfirmStore();
     const first = store.waitCompactionSettled('ses-1', 10_000);
     const second = store.waitCompactionSettled('ses-2', 10_000);
 
-    await expect(first).resolves.toBe('cancelled');
+    expect(store.hasCompactionWait('ses-1')).toBe(true);
+    expect(store.hasCompactionWait('ses-2')).toBe(true);
+
     store.noteCompactionSettled('ses-2', 'completed');
     await expect(second).resolves.toBe('completed');
+    expect(store.hasCompactionWait('ses-1')).toBe(true);
+
+    store.noteCompactionSettled('ses-1', 'completed');
+    await expect(first).resolves.toBe('completed');
+    expect(store.hasCompactionWait('ses-1')).toBe(false);
   });
 
   it('resolves timeout when nothing settles', async () => {

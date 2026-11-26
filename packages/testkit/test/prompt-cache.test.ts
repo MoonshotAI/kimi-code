@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { FakeModelVerificationError, TestkitError } from '#/errors';
 import { createFakeModel, type FakeModel, type FakeModelOptions } from '#/model/fake-model';
-import { httpError, say, withUsage } from '#/model/steps';
+import { held, httpError, say, withUsage } from '#/model/steps';
 
 const models: FakeModel[] = [];
 
@@ -327,6 +327,26 @@ describe('prompt cache ledger', () => {
     expect(problemsOf(model)).toEqual([]);
   });
 
+  it('treats a request whose hold failed before the headers as rejected', async () => {
+    const model = fakeModel();
+    model.lane('every request').script(say('first'), held('refuse', say('never sent')), say('recovered'));
+    const ask = openai(model);
+
+    await ask({ messages: FIRST_TURN });
+    const refused = ask({ messages: SECOND_TURN, tools: [READ] });
+    await model.hold('refuse').reached();
+    model.hold('refuse').fail(400);
+    await expect(refused).rejects.toThrow();
+    await ask({ messages: SECOND_TURN });
+
+    expect(model.promptCache().map(({ rejected, baseline }) => ({ rejected, baseline }))).toEqual([
+      { rejected: false, baseline: undefined },
+      { rejected: true, baseline: 0 },
+      { rejected: false, baseline: 0 },
+    ]);
+    expect(problemsOf(model)).toEqual([]);
+  });
+
   it('checks the prefix by default and reports cached tokens only when asked', async () => {
     const model = fakeModel({});
     const ask = openai(model);
@@ -392,6 +412,38 @@ describe('prompt cache ledger', () => {
     expect(second.usage.cache_read_input_tokens).toBe(extended?.reusedTokens);
     expect(changed?.break).toMatchObject({ region: 'system', part: 'header', previous: 'system[0]' });
     expect(problemsOf(model)).toEqual([expect.stringContaining('request #2 (every request) does not extend request #1 under prompt cache key "session-a": system[0] changed')]);
+  });
+
+  it('ignores Anthropic cache markers only where the protocol puts them, not a schema property of the same name', async () => {
+    const model = fakeModel();
+    const client = new Anthropic({ apiKey: 'sk-test', baseURL: 'http://testkit.invalid', fetch: model.fetch, maxRetries: 0 });
+    const ephemeral = { type: 'ephemeral' } as const;
+    const toolWith = (type: string): Anthropic.Tool => ({
+      name: 'Cache',
+      description: 'Tune the cache.',
+      input_schema: { type: 'object', properties: { cache_control: { type } } },
+    });
+    const ask = (tool: Anthropic.Tool, messages: Anthropic.MessageParam[]) =>
+      client.messages.create({ model: 'testkit-model', max_tokens: 64, metadata: { user_id: 'session-a' }, tools: [tool], messages });
+    const called: Anthropic.MessageParam[] = [
+      { role: 'user', content: 'Tune it.' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'call-1', name: 'Cache', input: { cache_control: 'off' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: [{ type: 'text', text: 'done' }] }] },
+    ];
+    const marked: Anthropic.MessageParam[] = [
+      called[0]!,
+      called[1]!,
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: [{ type: 'text', text: 'done', cache_control: ephemeral }], cache_control: ephemeral }] },
+    ];
+
+    await ask(toolWith('string'), called);
+    await ask({ ...toolWith('string'), cache_control: ephemeral }, marked);
+    await ask(toolWith('number'), marked);
+
+    const [, moved, changed] = model.promptCache();
+    expect(moved?.break).toBeUndefined();
+    expect(changed?.break).toMatchObject({ region: 'tools', part: 'header', previous: 'tools[0] Cache' });
+    expect(problemsOf(model)).toEqual([expect.stringContaining('request #2 (every request) does not extend request #1 under prompt cache key "session-a": tools[0] Cache changed')]);
   });
 
   it('takes a block appended to the last Anthropic user message as an extension, and still reports a changed block', async () => {

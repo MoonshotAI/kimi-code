@@ -7,7 +7,8 @@ import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import { isRainbowDancing, renderDanceWelcomeHeader } from '#/tui/easter-eggs/dance';
 import type { AppState } from '#/tui/types';
 import { currentTheme } from '#/tui/theme';
-import { sessionWorkDir } from '#/tui/utils/session-work-dir';
+import { sessionWorkDir, sessionWorktree } from '#/tui/utils/session-work-dir';
+import { abbreviateHome } from '#/utils/paths';
 
 export class WelcomeComponent implements Component {
   private state: AppState;
@@ -71,8 +72,12 @@ export class WelcomeComponent implements Component {
       ? chalk.hex(currentTheme.palette.warning)('not set, run /login or /provider')
       : (effectiveActiveModel?.displayName ?? effectiveActiveModel?.model ?? this.state.model);
 
+    const worktree = sessionWorktree(this.state);
     const infoLines = [
       labelStyle('Directory: ') + sessionWorkDir(this.state),
+      ...(worktree === undefined
+        ? []
+        : [labelStyle('Worktree:  ') + `${worktree.name} of ${abbreviateHome(worktree.repoRoot)}`]),
       labelStyle('Session:   ') + this.state.sessionId,
       labelStyle('Model:     ') + modelValue,
       labelStyle('Version:   ') + this.state.version,

@@ -10,7 +10,10 @@ import type {
   ThinkingEffort,
   TokenUsage,
   ToolInputDisplay,
+  WorkLocation,
 } from '@moonshot-ai/kimi-code-sdk';
+
+export type { WorkLocation };
 
 import type { FollowUpBehavior, MarkdownConfig, NotificationsConfig, StatusLineConfig, TranscriptConfig, TuiMode, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
@@ -39,6 +42,9 @@ export interface EnvironmentSlotState {
 export interface AppState {
   model: string;
   workDir: string;
+  projectRoot?: string;
+  isGitRepo?: boolean;
+  worktree?: WorkLocation['worktree'];
   additionalDirs: readonly string[];
   sessionId: string;
   permissionMode: PermissionMode;
@@ -342,6 +348,7 @@ export interface TUIStartupOptions {
   readonly agentFiles?: readonly string[];
   readonly environment?: string;
   readonly environmentCwd?: string;
+  readonly worktree?: { readonly name: string; readonly base?: string };
   readonly startupNotice?: string;
 }
 

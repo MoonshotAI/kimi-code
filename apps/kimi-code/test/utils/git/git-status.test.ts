@@ -169,7 +169,7 @@ describe('git status cache', () => {
     cache.dispose();
   });
 
-  it('returns null outside a git repo and on a detached HEAD', async () => {
+  it('returns null outside a git repo and an empty branch on a detached HEAD', async () => {
     const notRepo = fakeSource(async () => null);
     const outside = createGitStatusCache(notRepo);
     outside.getStatus();
@@ -177,11 +177,19 @@ describe('git status cache', () => {
     expect(outside.getStatus()).toBeNull();
     outside.dispose();
 
-    const detachedSource = fakeSource(async () => summary({ branch: '' }));
+    const detachedSource = fakeSource(async () => summary({ branch: '', dirty: true, additions: 2 }));
     const detached = createGitStatusCache(detachedSource);
     detached.getStatus();
     await drain();
-    expect(detached.getStatus()).toBeNull();
+    expect(detached.getStatus()).toEqual({
+      branch: '',
+      dirty: true,
+      ahead: 0,
+      behind: 0,
+      diffAdded: 2,
+      diffDeleted: 0,
+      pullRequest: null,
+    });
     expect(detachedSource.pullRequest).not.toHaveBeenCalled();
     detached.dispose();
   });

@@ -49,6 +49,7 @@ import { stubLog } from '../../_base/log/stubs';
 import { registerAgentIdentityStub } from '../../app/agentIdentity/stubs';
 import {
   createMemoryMcpOAuthStore,
+  hostPathClass,
   ManualMcpOAuthScheduler,
   startEchoHttpMcpServer,
   mockStdioServer,
@@ -136,7 +137,7 @@ describe('WorkspaceMcpService', () => {
         const environment = Object.assign(
           new FakeEnvironment(
             { environmentId: 'local', generation: 'test-generation' },
-            { capabilities: ['process'] },
+            { capabilities: ['process'], pathClass: hostPathClass },
           ),
           { process: new HostProcessService() },
         );

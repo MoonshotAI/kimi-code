@@ -22,7 +22,7 @@ export interface FakeMcpServerOptions extends FakeMcpCatalog<FakeMcpProcessTool>
   readonly startDelayMs?: number;
   readonly ignoreSigterm?: boolean;
   readonly exitBeforeConnect?: FakeMcpExit;
-  readonly exitAfterConnect?: FakeMcpExit & { readonly afterMs: number };
+  readonly exitAfterConnect?: FakeMcpExit & { readonly whenFile: string };
 }
 
 export interface FakeMcpProcessSpec extends FakeMcpServerOptions {

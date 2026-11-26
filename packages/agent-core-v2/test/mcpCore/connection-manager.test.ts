@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync } from 'node:fs';
+import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -33,6 +33,7 @@ const testProcess = new HostProcessService();
 const testEnvironment = Object.assign(
   new FakeEnvironment({ ...testEnvironmentBinding, generation: 'test-generation' }, {
     capabilities: ['process'],
+    pathClass: hostPathClass,
   }),
   { process: testProcess },
 );
@@ -67,6 +68,7 @@ import {
   createMemoryMcpOAuthStore,
   cwdStdioServer,
   hangingListStdioServer,
+  hostPathClass,
   mockStdioServer,
   slowStdioServer,
   slowToolStdioServer,
@@ -1394,15 +1396,18 @@ describe('McpConnectionManager', () => {
     const cm = createManager();
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
     cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
+    const signalDir = mkdtempSync(join(tmpdir(), 'kimi-mcp-exit-signal-'));
+    const exitSignal = join(signalDir, 'exit');
     try {
       await cm.connectAll({
         crashy: {
           transport: 'stdio',
-          ...crashAfterConnectServer({ afterMs: 500, stderr: 'fatal: out of memory' }),
+          ...crashAfterConnectServer({ whenFile: exitSignal, stderr: 'fatal: out of memory' }),
           startupTimeoutMs: 4_000,
         },
       });
       expect(cm.get('crashy')?.status).toBe('connected');
+      writeFileSync(exitSignal, '');
 
       for (let i = 0; i < 100; i++) {
         if (cm.get('crashy')?.status === 'failed') break;
@@ -1420,6 +1425,7 @@ describe('McpConnectionManager', () => {
       ]);
     } finally {
       await cm.shutdown();
+      await rm(signalDir, { recursive: true, force: true });
     }
   }, 10000);
 

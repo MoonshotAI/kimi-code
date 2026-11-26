@@ -15,6 +15,7 @@ import type {
   McpOAuthScheduler,
 } from '#/mcpCore/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/mcpCore/types';
+import type { PathClass } from '#/os/interface/hostEnvironment';
 import type {
   ExecutableTool,
   ExecutableToolContext,
@@ -22,6 +23,7 @@ import type {
   ToolExecution,
 } from '#/tool/toolContract';
 
+export const hostPathClass: PathClass = process.platform === 'win32' ? 'win32' : 'posix';
 export const UNREACHABLE_SERVER_ORIGIN = 'https://127.0.0.1:9';
 
 export interface StdioServerCommand {
@@ -119,11 +121,11 @@ export function hangingListStdioServer(): StdioServerCommand {
   return stdioServer('hanging-list-stdio', { tools: [], hangListTools: true });
 }
 
-export function crashAfterConnectServer(exit: FakeMcpExit & { readonly afterMs?: number } = {}): StdioServerCommand {
-  const { afterMs, ...status } = exit;
+export function crashAfterConnectServer(exit: FakeMcpExit & { readonly whenFile?: string } = {}): StdioServerCommand {
+  const { whenFile, ...status } = exit;
   return stdioServer('crash-after-connect', {
     tools: [ECHO, { name: 'exit_after_reply', description: 'Replies, then exits the process', reply: 'bye', exitAfterReply: status }],
-    ...(afterMs === undefined ? {} : { exitAfterConnect: { ...status, afterMs } }),
+    ...(whenFile === undefined ? {} : { exitAfterConnect: { ...status, whenFile } }),
   });
 }
 

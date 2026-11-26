@@ -67,9 +67,13 @@ export class SessionAgentFeed implements IDisposable {
         this.close(agent.agentId);
       }),
       onDidPolicyChange(() => {
-        for (const watch of this.watches.values()) watch.refresh();
+        this.refresh();
       }),
     ];
+  }
+
+  refresh(): void {
+    for (const watch of this.watches.values()) watch.refresh();
   }
 
   agentIds(): readonly string[] {

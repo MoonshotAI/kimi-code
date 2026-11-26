@@ -54,7 +54,7 @@
     "apps/kimi-code/test/tui/controllers/survey-controller.test.ts": 2,
     "apps/kimi-code/test/tui/input/image-placeholder.test.ts": 1,
     "apps/kimi-code/test/tui/kimi-tui-message-flow.test.ts": 41,
-    "apps/kimi-code/test/tui/kimi-tui-startup.test.ts": 18,
+    "apps/kimi-code/test/tui/kimi-tui-startup.test.ts": 6,
     "apps/vscode/test/extension-host/index.cjs": 1,
     "apps/vscode/test/webview/useDebouncedValue.test.ts": 2,
     "apps/vscode/test/webview/useFilePicker.test.tsx": 1,

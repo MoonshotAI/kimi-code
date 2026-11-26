@@ -1093,6 +1093,64 @@ describe('KimiTUI message flow', () => {
     }
   });
 
+  it('keeps skill variants aligned with editor recall when non-adjacent prompts repeat', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const pathA = '/work/A/review/SKILL.md';
+    const pathB = '/work/B/review/SKILL.md';
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: pathA, source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: pathB, source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    driver.persistInputHistory = Object.getPrototypeOf(driver).persistInputHistory;
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('pathe');
+    const home = await mkdtemp(join(tmpdir(), 'kimi-skill-history-dedupe-'));
+    const previousHome = process.env['KIMI_CODE_HOME'];
+    process.env['KIMI_CODE_HOME'] = home;
+    try {
+      driver.restoreInputText('/skill:review alpha', [{ skillName: 'review', path: pathA, start: 0 }]);
+      await driver.persistInputHistory('/skill:review alpha');
+      await driver.persistInputHistory('repeat me');
+      driver.restoreInputText('/skill:review beta', [{ skillName: 'review', path: pathB, start: 0 }]);
+      await driver.persistInputHistory('/skill:review beta');
+      await driver.persistInputHistory('repeat me');
+
+      driver.state.editor.clearHistory();
+      (driver as unknown as { inputHistoryEntries: unknown[] }).inputHistoryEntries = [];
+      driver.restoreInputText('');
+      await (driver as unknown as { loadPersistedInputHistory(): Promise<void> }).loadPersistedInputHistory();
+
+      driver.state.editor.handleInput('\u001B[A');
+      expect(driver.state.editor.getText()).toBe('repeat me');
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+
+      driver.state.editor.handleInput('\u001B[A');
+      expect(driver.state.editor.getText()).toBe('/skill:review beta');
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathB);
+
+      driver.state.editor.handleInput('\u001B[A');
+      expect(driver.state.editor.getText()).toBe('/skill:review alpha');
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathA);
+
+      driver.state.editor.handleInput('\u001B[B');
+      expect(driver.state.editor.getText()).toBe('/skill:review beta');
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathB);
+
+      driver.state.editor.handleInput('\u001B[B');
+      expect(driver.state.editor.getText()).toBe('repeat me');
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+    } finally {
+      if (previousHome === undefined) delete process.env['KIMI_CODE_HOME'];
+      else process.env['KIMI_CODE_HOME'] = previousHome;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('keeps both variants through queue recall and invalidates edited positions', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const { driver } = await makeDriver(session, {
@@ -1506,7 +1564,7 @@ describe('KimiTUI message flow', () => {
     });
     const picker = driver.state.editorContainer.children[0] as {
       handleInput(data: string): void;
-      render(width: number): string[];
+      render(width: number): readonly string[];
     };
     const output = stripSgr(picker.render(40).join(' ')).replaceAll(/\s+/g, ' ');
     expect(output).toContain('Session in use');
@@ -1528,7 +1586,7 @@ describe('KimiTUI message flow', () => {
     const takeOverLock = vi.fn(async () => {});
     const session = makeSession({ prompt, takeOverLock });
     const { driver } = await makeDriver(session);
-    type Picker = { handleInput(data: string): void; render(width: number): string[] };
+    type Picker = { handleInput(data: string): void; render(width: number): readonly string[] };
     const picker = (): Picker => driver.state.editorContainer.children[0] as Picker;
 
     driver.handleUserInput('hello');
@@ -1577,7 +1635,7 @@ describe('KimiTUI message flow', () => {
     await (
       driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
     ).refreshSkillCommands(session);
-    type Picker = { handleInput(data: string): void; render(width: number): string[] };
+    type Picker = { handleInput(data: string): void; render(width: number): readonly string[] };
     const picker = (): Picker => driver.state.editorContainer.children[0] as Picker;
 
     (
@@ -7783,7 +7841,7 @@ command = "vim"
 
   describe('steer-draft delivery', () => {
     const occupied = (): KimiError => new KimiError(ErrorCodes.SESSION_OCCUPIED, 'in use');
-    type Picker = { handleInput(data: string): void; render(width: number): string[] };
+    type Picker = { handleInput(data: string): void; render(width: number): readonly string[] };
     const picker = (driver: MessageDriver): Picker => driver.state.editorContainer.children[0] as Picker;
     const userEntries = (driver: MessageDriver) =>
       driver.state.transcriptEntries.filter((entry) => entry.kind === 'user');

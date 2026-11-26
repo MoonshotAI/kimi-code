@@ -4,6 +4,7 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -55,6 +56,9 @@ export class SessionBtwService extends Disposable implements ISessionBtwService 
       { labels: { [BTW_AGENT_LABEL]: 'true' } },
     );
     const child = this.agentLifecycle.handleOf(childContext.agentId)!;
+    child.accessor
+      .get(IAgentPermissionModeService)
+      .setMode(main.accessor.get(IAgentPermissionModeService).mode);
     child.accessor
       .get(IAgentReminderService)
       .notify(SIDE_QUESTION_SYSTEM_REMINDER, { variant: 'btw' });
