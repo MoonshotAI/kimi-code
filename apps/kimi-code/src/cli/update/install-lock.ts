@@ -1,7 +1,10 @@
 import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { processStampAlive } from '@moonshot-ai/agent-core-v2/_base/utils/processLiveness';
+import {
+  currentProcessLiveness,
+  processStampAlive,
+} from '@moonshot-ai/agent-core-v2/_base/utils/processLiveness';
 
 import { getUpdateInstallLockFile } from '#/utils/paths';
 import { createFileIfAbsent } from '#/utils/persistence';
@@ -56,11 +59,24 @@ function isStaleLock(inspection: LockInspection, now: Date): boolean {
     return now.getTime() - inspection.mtimeMs > LOCK_PUBLISH_GRACE_MS;
   }
   if (typeof parsed !== 'object' || parsed === null) return true;
-  const lock = parsed as { readonly startedAt?: unknown; readonly pid?: unknown };
+  const lock = parsed as {
+    readonly startedAt?: unknown;
+    readonly pid?: unknown;
+    readonly liveness?: unknown;
+  };
   if (typeof lock.startedAt !== 'string') return true;
   const startedAt = Date.parse(lock.startedAt);
   if (!Number.isFinite(startedAt)) return true;
-  if (typeof lock.pid === 'number' && !processStampAlive({ pid: lock.pid, startedAt })) {
+  const liveness =
+    typeof lock.liveness === 'string' && lock.liveness.length > 0 ? lock.liveness : undefined;
+  if (
+    typeof lock.pid === 'number' &&
+    !processStampAlive({
+      pid: lock.pid,
+      startedAt,
+      ...(liveness === undefined ? {} : { liveness }),
+    })
+  ) {
     return true;
   }
   if (now.getTime() - startedAt <= UPDATE_INSTALL_LOCK_STALE_MS) return false;
@@ -72,10 +88,12 @@ async function createLockFile(
   request: UpdateInstallLockRequest,
 ): Promise<UpdateInstallLockHandle | null> {
   const now = request.now ?? new Date();
+  const liveness = currentProcessLiveness();
   const content = `${JSON.stringify({
     version: request.version,
     pid: process.pid,
     startedAt: now.toISOString(),
+    ...(liveness === undefined ? {} : { liveness }),
   }, null, 2)}\n`;
   await createFileIfAbsent(filePath, content);
   const published = await readFile(filePath, 'utf-8').catch(() => null);

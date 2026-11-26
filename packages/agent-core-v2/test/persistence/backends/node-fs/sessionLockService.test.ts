@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
+import { currentProcessLiveness } from '#/_base/utils/processLiveness';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { SessionLockHolder } from '#/persistence/interface/sessionLock';
 import {
@@ -70,6 +71,7 @@ describe('SessionLockService', () => {
     const holder = readLockFile(homeDir, SID);
     expect(holder.pid).toBe(process.pid);
     expect(holder.clientIdentity).toBe('client_a');
+    expect(holder.liveness).toBe(currentProcessLiveness());
     serviceA.release(SID);
     expect(existsSync(lockPath(homeDir, SID))).toBe(false);
   });
@@ -179,7 +181,7 @@ describe('SessionLockService', () => {
     }
   });
 
-  it.skipIf(process.platform === 'win32')('reclaims a lock whose pid now belongs to a process started after it', () => {
+  it('reclaims a lock whose pid now belongs to a process started after it', () => {
     const reused: SessionLockHolder = {
       version: 1,
       token: 'reused-token',
@@ -187,6 +189,7 @@ describe('SessionLockService', () => {
       hostname: '',
       startedAt: Date.now() - 60_000,
       clientIdentity: 'ghost',
+      liveness: 'kimi-code-live-0-00000000000000000000000000000000',
     };
     serviceA.hold('warmup');
     serviceA.release('warmup');

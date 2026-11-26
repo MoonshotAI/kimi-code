@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { currentProcessLiveness } from '@moonshot-ai/agent-core-v2/_base/utils/processLiveness';
+
 import { tryAcquireUpdateInstallLock } from '#/cli/update/install-lock';
 import { getUpdateInstallLockFile } from '#/utils/paths';
 
@@ -146,7 +148,7 @@ describe('update install lock', () => {
     await lock?.release();
   });
 
-  function writeAgedLock(pid: number): void {
+  function writeAgedLock(pid: number, liveness?: string): void {
     const filePath = getUpdateInstallLockFile();
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(
@@ -155,6 +157,7 @@ describe('update install lock', () => {
         version: '0.5.0',
         pid,
         startedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        ...(liveness === undefined ? {} : { liveness }),
       })}\n`,
       'utf-8',
     );
@@ -173,15 +176,21 @@ describe('update install lock', () => {
     await holder?.release();
   });
 
-  it.runIf(process.platform !== 'win32')('sweeps an aged lock whose pid now belongs to a process started after it', async () => {
+  it('sweeps an aged lock whose pid now belongs to a process started after it', async () => {
     const reused = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
     try {
       await new Promise((resolve) => reused.once('spawn', resolve));
-      writeAgedLock(reused.pid ?? -1);
+      writeAgedLock(reused.pid ?? -1, 'kimi-code-live-0-00000000000000000000000000000000');
 
       const lock = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
 
       expect(lock).not.toBeNull();
+      const held = JSON.parse(readFileSync(getUpdateInstallLockFile(), 'utf-8')) as {
+        pid: number;
+        liveness?: string;
+      };
+      expect(held.pid).toBe(process.pid);
+      expect(held.liveness).toBe(currentProcessLiveness());
       await lock?.release();
     } finally {
       reused.kill('SIGKILL');
