@@ -1,49 +1,17 @@
 <script setup lang="ts">
-import { inject } from 'vue';
-import { useI18n } from 'vue-i18n';
 import type { TaskItem } from '@moonshot-ai/app-core/client/types';
 import { Icon, IconButton, Spinner, StatusDot, Tooltip } from '@moonshot-ai/app-ui';
-import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import { ModelDisplayKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
-import { formatDuration } from '@moonshot-ai/app-components';
+import { useTaskList, type TaskListEmits, type TaskListProps } from './useTaskList';
 
-const props = defineProps<{ tasks: TaskItem[]; cancellingTaskIds?: Record<string, true> }>();
+const props = defineProps<TaskListProps>();
 
-const emit = defineEmits<{
-  cancel: [taskId: string];
-}>();
+const emit = defineEmits<TaskListEmits>();
 
-const { t } = useI18n();
-
-const panelApi = inject(panelApiKey);
-
-function isCancelling(task: TaskItem): boolean {
-  return props.cancellingTaskIds?.[task.id] === true;
-}
-
-const modelDisplay = inject(ModelDisplayKey);
-const subagentEffort = inject(SubagentEffortKey);
 function modelEffortLabel(task: TaskItem): string | undefined {
   const parts = [modelDisplay?.(task.model), subagentEffort?.(task.thinkingEffort)].filter(
     (part): part is string => part !== undefined,
   );
   return parts.length > 0 ? parts.join(' · ') : undefined;
-}
-
-function stateLabel(state: string): string {
-  if (state === 'done') return t('tasks.stateDone');
-  if (state === 'fail') return t('tasks.stateFail');
-  if (state === 'cancelled') return t('tasks.stateCancelled');
-  return t('tasks.running');
-}
-
-function durationLabel(task: TaskItem): string {
-  if (typeof task.durationMs !== 'number') return '';
-  return formatDuration(task.durationMs, {
-    h: t('status.timeUnitHour'),
-    m: t('status.timeUnitMinute'),
-    s: t('status.timeUnitSecond'),
-  });
 }
 
 function num(task: TaskItem, i: number): string {
@@ -53,6 +21,8 @@ function num(task: TaskItem, i: number): string {
 function canOpen(task: TaskItem): boolean {
   return Boolean(task.agentId) || Boolean(task.output && task.output.length > 0);
 }
+
+const { t, panelApi, modelDisplay, subagentEffort, isCancelling, stateLabel, durationLabel } = useTaskList(props);
 </script>
 
 <template>

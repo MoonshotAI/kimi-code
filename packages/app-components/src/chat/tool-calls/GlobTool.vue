@@ -1,27 +1,16 @@
 <script setup lang="ts">
-import { useHistoryState } from '../historyState';
-import { computed, inject, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
+import { computed } from 'vue';
 import { Icon } from '@moonshot-ai/app-ui';
-import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import type { ToolCall } from '@moonshot-ai/app-core/client/types';
-import { normalizeToolName } from '@moonshot-ai/app-components';
-import { argFallbackText, parseArgRecord, str } from '@moonshot-ai/app-components';
+import { normalizeToolName } from '@moonshot-ai/app-core/lib';
+import { parseArgRecord, str } from '@moonshot-ai/app-components';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import OutputPanel from './OutputPanel.vue';
+import { useToolCard, useToolCardExpansion, type ToolCardProps } from './useToolCard';
 
-const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
-
-const panelApi = inject(panelApiKey);
-
-const { t } = useI18n();
-
-const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
+const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
 const isGlob = computed(() => normalizeToolName(props.tool.name) === 'glob');
-
 const args = computed(() => parseArgRecord(props.tool.arg));
-const argText = computed(() => argFallbackText(props.tool.arg));
 const pattern = computed(() => {
   const d = args.value;
   return str(d?.pattern) ?? str(d?.glob) ?? str(d?.query) ?? '';
@@ -30,19 +19,10 @@ const dir = computed(() => {
   const d = args.value;
   return str(d?.path) ?? str(d?.dir) ?? str(d?.directory) ?? str(d?.cwd) ?? '';
 });
-
 const files = computed(() => (props.tool.output ?? []).filter((l) => l.trim().length > 0));
-
-const hasOutput = computed(() => files.value.length > 0);
-const canExpand = computed(() => hasOutput.value);
-const open = useHistoryState(`tool:${props.tool.id}:open`, props.tool.defaultExpanded === true && canExpand.value);
-
-watch(
-  () => [props.tool.defaultExpanded, props.tool.output?.length, props.tool.status] as const,
-  () => {
-    if (props.tool.defaultExpanded === true && canExpand.value) open.value = true;
-  },
-);
+const canExpand = computed(() => files.value.length > 0);
+const { t, panelApi, status, argText } = useToolCard(props);
+const { open } = useToolCardExpansion(props, canExpand);
 
 function openPath(path: string): void {
   const p = path.trim();

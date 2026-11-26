@@ -1,27 +1,22 @@
 <script setup lang="ts">
-import { useHistoryState } from '../historyState';
-import { computed, inject, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
+import { computed } from 'vue';
 import { Icon } from '@moonshot-ai/app-ui';
-import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import type { ToolCall } from '@moonshot-ai/app-core/client/types';
-import { normalizeToolName } from '@moonshot-ai/app-components';
-import { argFallbackText, parseArgRecord, str } from '@moonshot-ai/app-components';
+import { normalizeToolName } from '@moonshot-ai/app-core/lib';
+import { parseArgRecord, str } from '@moonshot-ai/app-components';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import OutputPanel from './OutputPanel.vue';
+import { useToolCard, useToolCardExpansion, type ToolCardProps } from './useToolCard';
 
-const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
+interface GrepMatch {
+  path?: string;
+  line?: number;
+  text: string;
+}
 
-const panelApi = inject(panelApiKey);
-
-const { t } = useI18n();
-
-const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
+const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
 const isContentSearch = computed(() => normalizeToolName(props.tool.name) === 'grep');
-
 const args = computed(() => parseArgRecord(props.tool.arg));
-const argText = computed(() => argFallbackText(props.tool.arg));
 const pattern = computed(() => {
   const d = args.value;
   return str(d?.pattern) ?? str(d?.query) ?? str(d?.regex) ?? '';
@@ -30,12 +25,6 @@ const scope = computed(() => {
   const d = args.value;
   return str(d?.path) ?? str(d?.glob) ?? str(d?.include) ?? '';
 });
-
-interface GrepMatch {
-  path?: string;
-  line?: number;
-  text: string;
-}
 
 const matches = computed<GrepMatch[]>(() =>
   (props.tool.output ?? [])
@@ -48,17 +37,9 @@ const matches = computed<GrepMatch[]>(() =>
 );
 
 const resultCount = computed(() => matches.value.length);
-
-const hasOutput = computed(() => resultCount.value > 0);
-const canExpand = computed(() => hasOutput.value);
-const open = useHistoryState(`tool:${props.tool.id}:open`, props.tool.defaultExpanded === true && canExpand.value);
-
-watch(
-  () => [props.tool.defaultExpanded, props.tool.output?.length, props.tool.status] as const,
-  () => {
-    if (props.tool.defaultExpanded === true && canExpand.value) open.value = true;
-  },
-);
+const canExpand = computed(() => resultCount.value > 0);
+const { t, panelApi, status, argText } = useToolCard(props);
+const { open } = useToolCardExpansion(props, canExpand);
 
 function openMatch(match: GrepMatch): void {
   if (!match.path) return;

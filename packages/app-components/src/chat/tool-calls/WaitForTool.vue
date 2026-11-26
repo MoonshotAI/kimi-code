@@ -1,23 +1,14 @@
 <script setup lang="ts">
-import { useHistoryState } from '../historyState';
-import { computed, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
+import { computed } from 'vue';
 import { Badge, Icon } from '@moonshot-ai/app-ui';
 import { formatDuration, parseWaitForResult, type WaitForResult } from '@moonshot-ai/app-core/lib';
-import type { ToolCall } from '@moonshot-ai/app-core/client/types';
-import { toolLabel } from '@moonshot-ai/app-components';
-import { parseArgRecord, str } from '@moonshot-ai/app-components';
+import { str } from '@moonshot-ai/app-components';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import OutputPanel from './OutputPanel.vue';
+import { useToolCard, useToolCardExpansion, type ToolCardProps } from './useToolCard';
 
-const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
-
-const { t } = useI18n();
-
-const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
-
-const args = computed(() => parseArgRecord(props.tool.arg));
+const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
 const taskId = computed(() => str(args.value?.task_id) ?? str(args.value?.taskId));
 
 const result = computed(() => (status.value === 'error' ? null : parseWaitForResult(props.tool.output)));
@@ -113,16 +104,9 @@ const details = computed(() => {
   ].filter((row) => row.value !== '');
 });
 
-const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
+const { t, status, args, hasOutput, toolLabel } = useToolCard(props);
 const canExpand = computed(() => details.value.length > 0 || hasOutput.value);
-const open = useHistoryState(`tool:${props.tool.id}:open`, props.tool.defaultExpanded === true && canExpand.value);
-
-watch(
-  () => [props.tool.defaultExpanded, props.tool.output?.length, props.tool.status] as const,
-  () => {
-    if (props.tool.defaultExpanded === true && canExpand.value) open.value = true;
-  },
-);
+const { open } = useToolCardExpansion(props, canExpand);
 </script>
 
 <template>
