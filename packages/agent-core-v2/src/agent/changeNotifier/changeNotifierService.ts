@@ -11,6 +11,8 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IEventBus } from '#/app/event/eventBus';
+import { ContextUndone } from '#/agent/undo/undoService';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -51,6 +53,7 @@ const SUBAGENTS_CHANGE_VARIANT = 'subagents_change';
 const WORKSPACE_DIRS_CHANGE_VARIANT = 'workspace_dirs_change';
 
 const SKILL_LISTING_MARKER = 'DISREGARD any earlier skill listings';
+const RESTORED_CHANGES_VARIANT = 'restored_changes';
 
 interface AgentsMdChanges {
   readonly modified: readonly string[];
@@ -74,6 +77,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
   declare readonly _serviceBrand: undefined;
 
   private muted = false;
+  private restoredChangesPending = false;
   private workspaceDirsNotificationTail: Promise<void> = Promise.resolve();
 
   private legacySubagentBaseline: { readonly names: readonly string[] } | undefined;
@@ -97,10 +101,30 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IEventBus private readonly eventBus: IEventBus,
     @ILogService private readonly log: ILogService,
   ) {
     super();
     this.states.contributeState(changeNotifierSnapshotKey);
+    this._register(
+      this.dispatcher.hooks.onDidRestore.register('changeNotifier', async (_ctx, next) => {
+        await next();
+        this.armRestoredChangesCheck();
+      }),
+    );
+    this._register(
+      this.eventBus.subscribe(ContextUndone, (event) => {
+        if (event.agentId === this.scopeContext.agentId) this.armRestoredChangesCheck();
+      }),
+    );
+    this._register(
+      this.reminder.register(RESTORED_CHANGES_VARIANT, async () => {
+        if (!this.restoredChangesPending) return undefined;
+        this.restoredChangesPending = false;
+        await this.notifyAllChanges();
+        return undefined;
+      }),
+    );
     this._register(
       this.instructions.onDidChange(() => {
         void this.notifyAgentsMdChanges();
@@ -128,6 +152,11 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         names: this.agentCatalog.list().map((profile) => profile.name),
       };
     });
+  }
+
+  private armRestoredChangesCheck(): void {
+    this.restoredChangesPending =
+      this.scopeContext.agentId === MAIN_AGENT_ID && this.profile.data().profileName !== undefined;
   }
 
   private get snapshot(): ChangeNotifierSnapshotState {
