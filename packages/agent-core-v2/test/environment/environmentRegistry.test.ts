@@ -15,16 +15,23 @@ describe('EnvironmentRegistry', () => {
   });
 
   it('removes the current environment without waiting on held leases', async () => {
-    const first = fakeEnvironment('local', 'one');
-    const second = fakeEnvironment('local', 'two');
-    const registration = registry.register(first);
-    const lease = registry.acquire({ environmentId: 'local' }, ['fs']);
-    await registration.remove();
-    registry.register(second);
-    expect(lease.environment).toBe(first);
-    expect(first.disposed).toBe(true);
-    expect(registry.acquire({ environmentId: 'local' }).environment).toBe(second);
-    lease.dispose();
+    vi.useFakeTimers();
+    try {
+      const first = fakeEnvironment('local', 'one');
+      const second = fakeEnvironment('local', 'two');
+      const registration = registry.register(first);
+      const lease = registry.acquire({ environmentId: 'local' }, ['fs']);
+      const removal = registration.remove();
+      await vi.advanceTimersByTimeAsync(5000);
+      await removal;
+      registry.register(second);
+      expect(lease.environment).toBe(first);
+      expect(first.disposed).toBe(true);
+      expect(registry.acquire({ environmentId: 'local' }).environment).toBe(second);
+      lease.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('drains a removed environment after its lease is released', async () => {
@@ -82,7 +89,14 @@ describe('EnvironmentRegistry', () => {
     const c = lease.track(resource('c'));
     b.dispose();
     b.dispose();
-    await registration.remove();
+    vi.useFakeTimers();
+    try {
+      const removal = registration.remove();
+      await vi.advanceTimersByTimeAsync(5000);
+      await removal;
+    } finally {
+      vi.useRealTimers();
+    }
     lease.dispose();
     expect(order).toEqual(['b', 'c', 'a']);
     expect(counts.get('a')).toBe(1);
@@ -91,11 +105,18 @@ describe('EnvironmentRegistry', () => {
   });
 
   it('rejects track once the environment has been removed', async () => {
-    const registration = registry.register(fakeEnvironment('local', 'one'));
-    const lease = registry.acquire({ environmentId: 'local' });
-    await registration.remove();
-    expect(() => lease.track({ dispose: () => {} })).toThrow('unavailable');
-    lease.dispose();
+    vi.useFakeTimers();
+    try {
+      const registration = registry.register(fakeEnvironment('local', 'one'));
+      const lease = registry.acquire({ environmentId: 'local' });
+      const removal = registration.remove();
+      await vi.advanceTimersByTimeAsync(5000);
+      await removal;
+      expect(() => lease.track({ dispose: () => {} })).toThrow('unavailable');
+      lease.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('drains only the closing session resources and keeps other sessions and untagged resources alive', async () => {

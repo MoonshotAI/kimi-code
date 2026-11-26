@@ -246,7 +246,7 @@ function treeRowStyle(depth: number): Record<string, string> {
         </div>
       </PanelHeader>
 
-      <div class="dv-detail-body" :class="{ dim: refreshing }">
+      <div class="dv-detail-body" data-panel-content :class="{ dim: refreshing }">
         <Transition name="diff-content" mode="out-in">
           <div v-if="loading" key="loading" class="empty-state diff-loading">
             <Spinner size="md" />

@@ -25,6 +25,17 @@ export function adoptTerminalInstance(id: string, owner: symbol): TerminalInstan
   return entry.instance;
 }
 
+export function selectAllTerminalIn(target: Element): boolean {
+  for (const { instance } of instances.values()) {
+    const el = instance.term.element;
+    if (el?.contains(target)) {
+      instance.term.selectAll();
+      return true;
+    }
+  }
+  return false;
+}
+
 export function releaseTerminalInstance(id: string, owner: symbol): boolean {
   const entry = instances.get(id);
   if (entry === undefined || entry.owner !== owner) return false;
