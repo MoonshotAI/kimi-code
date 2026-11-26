@@ -103,8 +103,21 @@ Hook 命令始终在运行 Kimi Code 的机器上执行，工作目录是当前�
 }
 ```
 
+### 结构化输出字段
+
+退出码为 `0` 时，脚本可以在 stdout 输出一段 JSON，通过 `hookSpecificOutput` 携带结构化指令：
+
+| 字段 | 适用事件 | 作用 |
+| --- | --- | --- |
+| `permissionDecision` / `permissionDecisionReason` | 可阻断事件 | `"deny"` 等价于退出码 `2` 的阻断 |
+| `additionalContext` | `SessionStart` | 把一段文本注入模型上下文；模型可见，但不会作为消息显示在界面里 |
+| `updatedInput` | `PreToolUse` | 完整替换本次工具调用的入参对象（不是合并）；schema 校验、路径/计划守卫与权限审批都基于替换后的入参 |
+| `updatedToolOutput` | `PostToolUse` | 替换工具结果，取字符串或内容块数组；模型和界面看到的都是替换后的内容 |
+
+同一事件命中多条 hook 时按配置顺序归并：阻断优先；`updatedInput` / `updatedToolOutput` 取最后一条有效改写；`additionalContext` 按顺序拼接。改写值不合法（如 `updatedInput` 不是对象）不会被静默忽略：`PreToolUse` 会阻断该次调用并说明原因，`PostToolUse` 保留原结果并显示一次 hook 警告。
+
 ::: info 说明
-只有**可阻断事件**（`PreToolUse`、`Stop`、`UserPromptSubmit`）的返回值会影响主流程。其余事件属于**观察型事件**：触发后即发即忘，不管脚本返回什么，主流程都不会改变。
+只有**可阻断事件**（`PreToolUse`、`Stop`、`UserPromptSubmit`）的返回值会阻断主流程。`PostToolUse` 不能阻断，但会用 `updatedToolOutput` 替换工具结果，因此 CLI 会等它执行完。其余事件属于**观察型事件**：触发后即发即忘，不管脚本返回什么，主流程都不会改变。
 :::
 
 ## 事件一览
@@ -113,14 +126,14 @@ Hook 命令始终在运行 Kimi Code 的机器上执行，工作目录是当前�
 | --- | --- | --- | --- |
 | `UserPromptSubmit` | 用户提交的文本内容 | ✓ | 用户发送消息时触发；返回文本会附加到上下文，阻断则本轮不调用模型 |
 | `UserPromptQueued` | 排队消息的文本内容 | — | 上一回合仍在运行、新消息进入队列时触发；payload 含 `prompt_id`、`prompt`、`queue_length` |
-| `PreToolUse` | 工具名 | ✓ | 工具调用前、权限检查前触发；阻断后工具不会执行 |
-| `Stop` | 空字符串 | ✓ | 回合完成后触发；payload 含 `turn_id`、`step`、`first_step_of_turn`、`finish_reason` 和 `usage`（最后一个 step 的 token 用量）；阻断后追加一条消息并开启新的续跑回合 |
+| `PreToolUse` | 工具名 | ✓ | 工具调用前、权限检查前触发；阻断后工具不会执行；可用 `updatedInput` 替换工具入参 |
+| `Stop` | 空字符串 | ✓ | 回合完成后触发；payload 含 `turn_id`、`step`、`first_step_of_turn`、`finish_reason`、`usage`（最后一个 step 的 token 用量）、`response_text`（本回合最终回答文本，无文本时为 `null`）、`transcript_path`（会话 transcript 文件路径）和 `stop_hook_active`（是否为 Stop 续跑回合）；阻断后追加一条消息并开启新的续跑回合；续跑回合也会触发 Stop（此时 `stop_hook_active` 为 `true`），但其阻断会被忽略以防死循环 |
 | `TurnStarted` | 回合来源类型（如 `user`、`task`、`system_trigger`） | — | 新回合开始时触发；payload 含 `turn_id`、`origin_kind`、`origin_name`、`prompt` |
-| `PostToolUse` | 工具名 | — | 工具成功执行后触发 |
+| `PostToolUse` | 工具名 | — | 工具成功执行后触发；可用 `updatedToolOutput` 替换工具结果，CLI 会等待脚本执行完 |
 | `PostToolUseFailure` | 工具名 | — | 工具失败或被阻断后触发 |
 | `PermissionRequest` | 工具名 | — | 即将等待用户审批前触发 |
 | `PermissionResult` | 工具名 | — | 审批结束后触发 |
-| `SessionStart` | `startup` 或 `resume` | — | 新会话启动或历史会话恢复后触发；payload 含 `source`、`model`、`profile` |
+| `SessionStart` | `startup` 或 `resume` | — | 新会话启动或历史会话恢复后触发；payload 含 `source`、`model`、`profile`；返回 `additionalContext` 可向模型注入会话背景（对用户不显示） |
 | `SessionEnd` | `exit` 或 `archive` | — | 会话关闭后触发；`archive` 表示会话被归档而非退出；`kimi web` 将空闲会话从内存卸载时不触发，之后归档或删除这个已卸载的会话也不触发；透明恢复不触发 `SessionStart` |
 | `SessionHeartbeat` | 空字符串 | — | 会话存活期间每 60 秒触发一次，仅配置本事件时计时器才运行；payload 含 `uptime_ms`；`kimi web` 卸载会话期间暂停，恢复后 `uptime_ms` 重新计时 |
 | `SubagentStart` | subagent 名称 | — | subagent 开始运行前触发 |

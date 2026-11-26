@@ -1,7 +1,12 @@
 import { Service } from '#/_base/di/service';
 import { IntervalTimer } from '#/_base/utils/timer';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IModelService } from '#/llm-adapter/model/model';
+import {
+  IAgentLifecycleService,
+  MAIN_AGENT_ID,
+} from '#/session/agentLifecycle/agentLifecycle';
 import {
   ISessionAgentProfileCatalog,
 } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -18,6 +23,8 @@ import {
 } from '#/project/sessionLifecycle/sessionLifecycle';
 
 import { IExternalHooksRunnerService } from '../app/externalHooksRunner';
+import { collectAdditionalContext } from '../internal/matchHooks';
+import { sessionStartHookEntry } from '../internal/sessionStart';
 import { ISessionExternalHooksService } from './sessionExternalHooks';
 
 type SessionStartHookSource = Exclude<SessionCreateSource, 'fork' | 'reclaimed'>;
@@ -41,6 +48,7 @@ export class SessionExternalHooksService
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionAgentProfileCatalog private readonly profiles: ISessionAgentProfileCatalog,
     @IModelService private readonly models: IModelService,
+    @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
   ) {
     super();
@@ -66,9 +74,13 @@ export class SessionExternalHooksService
       this._register(
         onDidCreate((event) => {
           if (event.sessionId !== this.context.sessionId) return;
-          if (event.source !== 'fork' && event.source !== 'reclaimed') {
-            event.waitUntil(this.triggerSessionStart(event.source));
+          if (event.source === 'fork' || event.source === 'reclaimed') {
+            this.settleSessionStart();
+            return;
           }
+          event.waitUntil(
+            this.triggerSessionStart(event.source).finally(() => this.settleSessionStart()),
+          );
         }),
       );
     }
@@ -88,6 +100,7 @@ export class SessionExternalHooksService
       }),
     );
     this._register(subagents.onDidStopAgentTask((ctx) => this.notifySubagentStop(ctx)));
+    this._register({ dispose: () => this.settleSessionStart() });
 
     void this.runner.ready
       .then(() => this.syncHeartbeat())
@@ -112,8 +125,33 @@ export class SessionExternalHooksService
     return this.metadata.effectiveCwd;
   }
 
+  private pendingSessionStartContext: string | undefined;
+  private sessionStartSettled = false;
+  private readonly sessionStartWaiters: Array<() => void> = [];
+
+  takeSessionStartContext(): string | undefined {
+    const context = this.pendingSessionStartContext;
+    this.pendingSessionStartContext = undefined;
+    return context;
+  }
+
+  async whenSessionStartSettled(): Promise<void> {
+    await this.runner.ready;
+    if (!this.runner.hasHooksFor('SessionStart')) return;
+    if (this.sessionStartSettled) return;
+    await new Promise<void>((resolve) => {
+      this.sessionStartWaiters.push(resolve);
+    });
+  }
+
+  private settleSessionStart(): void {
+    if (this.sessionStartSettled) return;
+    this.sessionStartSettled = true;
+    for (const resolve of this.sessionStartWaiters.splice(0)) resolve();
+  }
+
   private async triggerSessionStart(source: SessionStartHookSource): Promise<void> {
-    await this.runner.trigger('SessionStart', {
+    const results = await this.runner.trigger('SessionStart', {
       matcherValue: source,
       cwd: await this.hookCwd(),
       sessionId: this.context.sessionId,
@@ -124,6 +162,20 @@ export class SessionExternalHooksService
         profile: await this.defaultProfileName(),
       },
     });
+    const additionalContext = collectAdditionalContext(results);
+    if (additionalContext === undefined) return;
+    this.pendingSessionStartContext = additionalContext;
+    this.deliverSessionStartContext();
+  }
+
+  private deliverSessionStartContext(): void {
+    const handle = this.agents.handleOf(MAIN_AGENT_ID);
+    if (handle === undefined) return;
+    const additionalContext = this.takeSessionStartContext();
+    if (additionalContext === undefined) return;
+    try {
+      handle.accessor.get(IAgentLoopService).remind(sessionStartHookEntry(additionalContext));
+    } catch {}
   }
 
   private async defaultProfileName(): Promise<string | undefined> {
