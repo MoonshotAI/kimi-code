@@ -146,6 +146,7 @@ export { default as DefaultToolsPanel } from './settings/DefaultToolsPanel.vue';
 export { default as DefaultToolsRow } from './settings/DefaultToolsRow.vue';
 export { default as DefaultToolsSetting } from './settings/DefaultToolsSetting.vue';
 export { default as SecondaryModelPicker } from './settings/SecondaryModelPicker.vue';
+export { default as SecondaryModelSettings } from './settings/SecondaryModelSettings.vue';
 
 export * from './chatTurnRendering';
 export * from './chat/tool-calls/toolArgs';

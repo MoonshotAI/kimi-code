@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
-import { isPlainObject } from '#/app/config/toml';
+import { cloneRecord, isPlainObject, setDefined } from '#/app/config/toml';
 import {
   type ConfigDiagnostic,
   type EnvBindings,
@@ -10,7 +10,7 @@ import {
   type IConfigService,
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
-import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
+import { MODELS_SECTION, THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { IModelCatalog, Model } from '#/llm-adapter/model/catalog';
 import {
   declaredDefaultEffortForModel,
@@ -20,6 +20,24 @@ import {
 } from '@moonshot-ai/core/llm/thinking';
 import type { ThinkingConfig } from '#/llm-adapter/model/thinking';
 
+import {
+  SecondaryModelConfigSchema,
+  SecondaryModelEntryObjectSchema,
+  SecondaryModelEntrySchema,
+  type SecondaryModelConfig,
+  type SecondaryModelEntry,
+  type SecondaryModelEntryObject,
+} from './secondaryModelSchema';
+
+export {
+  SecondaryModelConfigSchema,
+  SecondaryModelEntryObjectSchema,
+  SecondaryModelEntrySchema,
+  type SecondaryModelConfig,
+  type SecondaryModelEntry,
+  type SecondaryModelEntryObject,
+};
+
 export const SUBAGENT_SECTION = 'subagent';
 export const SECONDARY_MODEL_SECTION = 'secondaryModel';
 
@@ -28,15 +46,6 @@ export const SubagentConfigSchema = z.object({
 });
 
 export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
-
-export const SecondaryModelConfigSchema = z.object({
-  defaultModel: z.string().min(1).optional(),
-  models: z.record(z.string(), z.string()).optional(),
-  model: z.string().min(1).optional(),
-  defaultEffort: z.string().optional(),
-});
-
-export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
 
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
@@ -96,8 +105,48 @@ function collectRemovedSecondaryModelKeys(rawSection: unknown): ConfigDiagnostic
   }));
 }
 
+function serializeSecondaryModelEntry(entry: SecondaryModelEntry): SecondaryModelEntry {
+  if (typeof entry === 'string') return entry;
+  const description = entry.description ?? '';
+  const effort = entry.effort !== undefined && entry.effort.length > 0 ? entry.effort : undefined;
+  if (effort === undefined) return description;
+  return description.length > 0 ? { description, effort } : { effort };
+}
+
+const KNOWN_SECONDARY_MODEL_TOML_KEYS = [
+  'default_model',
+  'model',
+  'default_effort',
+  'all_models',
+  'rule',
+  'models',
+] as const;
+
+export function secondaryModelToToml(value: unknown, rawSnake: unknown): unknown {
+  if (!isPlainObject(value)) return value;
+  const section = value as SecondaryModelConfig;
+  const out = cloneRecord(rawSnake);
+  for (const key of KNOWN_SECONDARY_MODEL_TOML_KEYS) {
+    delete out[key];
+  }
+  setDefined(out, 'default_model', section.defaultModel);
+  setDefined(out, 'model', section.model);
+  setDefined(out, 'default_effort', section.defaultEffort);
+  if (section.allModels === true) out['all_models'] = true;
+  if (section.rule !== undefined && section.rule.trim().length > 0) out['rule'] = section.rule;
+  if (section.models !== undefined) {
+    const models: Record<string, SecondaryModelEntry> = {};
+    for (const [alias, entry] of Object.entries(section.models)) {
+      models[alias] = serializeSecondaryModelEntry(entry);
+    }
+    out['models'] = models;
+  }
+  return out;
+}
+
 registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema, {
   collectDiagnostics: collectRemovedSecondaryModelKeys,
+  toToml: secondaryModelToToml,
 });
 
 export function resolveSubagentTimeoutMs(config: IConfigService): number {
@@ -107,21 +156,91 @@ export function resolveSubagentTimeoutMs(config: IConfigService): number {
   );
 }
 
-export interface SubagentModelPool {
-  readonly defaultModel?: string;
-  readonly models: Record<string, string>;
+export interface NormalizedSubagentModelEntry {
+  readonly description: string;
+  readonly effort?: string;
 }
 
-export function resolveSubagentModelPool(config: IConfigService): SubagentModelPool | undefined {
+export function normalizeSecondaryModelEntry(
+  entry: SecondaryModelEntry,
+): NormalizedSubagentModelEntry {
+  if (typeof entry === 'string') return { description: entry };
+  const effort = entry.effort !== undefined && entry.effort.length > 0 ? entry.effort : undefined;
+  return {
+    description: entry.description ?? '',
+    ...(effort !== undefined ? { effort } : {}),
+  };
+}
+
+export interface SubagentModelPool {
+  readonly defaultModel?: string;
+  readonly models: Record<string, NormalizedSubagentModelEntry>;
+  readonly allModels?: boolean;
+  readonly rule?: string;
+}
+
+export const SECONDARY_MODEL_ALL_MODELS_CONFLICT_MESSAGE =
+  '[secondary_model].all_models cannot be combined with [secondary_model.models]';
+
+function normalizedRule(rule: string | undefined): string | undefined {
+  if (rule === undefined) return undefined;
+  const trimmed = rule.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function listCatalogAliases(
+  modelCatalog: IModelCatalog | undefined,
+  config: IConfigService,
+): readonly string[] {
+  if (typeof modelCatalog?.listAliases === 'function') {
+    return modelCatalog.listAliases();
+  }
+  const configured = config.get<Record<string, unknown> | undefined>(MODELS_SECTION);
+  return configured === undefined ? [] : Object.keys(configured);
+}
+
+export function resolveSubagentModelPool(
+  config: IConfigService,
+  modelCatalog?: IModelCatalog,
+): SubagentModelPool | undefined {
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
+  const rule = normalizedRule(section?.rule);
+  if (section?.allModels === true) {
+    const models: Record<string, NormalizedSubagentModelEntry> = {};
+    for (const alias of listCatalogAliases(modelCatalog, config)) {
+      models[alias] = { description: '' };
+    }
+    return {
+      defaultModel: section.defaultModel,
+      models,
+      allModels: true,
+      ...(rule !== undefined ? { rule } : {}),
+    };
+  }
   if (section?.models !== undefined) {
-    return { defaultModel: section.defaultModel, models: section.models };
+    const models: Record<string, NormalizedSubagentModelEntry> = {};
+    for (const [alias, entry] of Object.entries(section.models)) {
+      models[alias] = normalizeSecondaryModelEntry(entry);
+    }
+    return {
+      defaultModel: section.defaultModel,
+      models,
+      ...(rule !== undefined ? { rule } : {}),
+    };
   }
   if (section?.defaultModel !== undefined) {
-    return { defaultModel: section.defaultModel, models: { [section.defaultModel]: '' } };
+    return {
+      defaultModel: section.defaultModel,
+      models: { [section.defaultModel]: { description: '' } },
+      ...(rule !== undefined ? { rule } : {}),
+    };
   }
   if (section?.model !== undefined) {
-    return { defaultModel: section.model, models: { [section.model]: '' } };
+    return {
+      defaultModel: section.model,
+      models: { [section.model]: { description: '' } },
+      ...(rule !== undefined ? { rule } : {}),
+    };
   }
   return undefined;
 }
@@ -134,6 +253,20 @@ export function assertValidSubagentModelPool(
   modelCatalog: IModelCatalog,
 ): void {
   const aliases = Object.keys(pool.models);
+  if (pool.allModels === true) {
+    if (pool.defaultModel !== undefined) {
+      try {
+        modelCatalog.get(pool.defaultModel);
+      } catch (error) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          `[secondary_model].default_model "${pool.defaultModel}" could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error, details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel', model: pool.defaultModel } },
+        );
+      }
+    }
+    return;
+  }
   if (pool.defaultModel === undefined) {
     throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE, {
       details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },
@@ -159,29 +292,66 @@ export function assertValidSubagentModelPool(
   }
 }
 
+function assertNoAllModelsConflict(section: SecondaryModelConfig | undefined): void {
+  if (section?.allModels === true && section.models !== undefined) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_ALL_MODELS_CONFLICT_MESSAGE, {
+      details: { section: SECONDARY_MODEL_SECTION, field: 'allModels' },
+    });
+  }
+}
+
 export function assertValidSubagentModelConfig(
   config: IConfigService,
   modelCatalog: IModelCatalog,
 ): void {
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
-  const pool = resolveSubagentModelPool(config);
+  assertNoAllModelsConflict(section);
+  const pool = resolveSubagentModelPool(config, modelCatalog);
   if (pool !== undefined) assertValidSubagentModelPool(pool, modelCatalog);
-  assertValidSubagentDefaultEffort(section, pool, modelCatalog);
+  assertValidSubagentEfforts(section, pool, modelCatalog);
 }
 
-function assertValidSubagentDefaultEffort(
+function assertValidSubagentEfforts(
   section: SecondaryModelConfig | undefined,
   pool: SubagentModelPool | undefined,
   modelCatalog: IModelCatalog,
 ): void {
-  if (section?.defaultEffort === undefined || pool === undefined) return;
-  for (const alias of Object.keys(pool.models)) {
-    assertModelSupportsConfiguredEffort(
-      { section: SECONDARY_MODEL_SECTION, field: 'defaultEffort', key: '[secondary_model].default_effort' },
-      section.defaultEffort,
-      alias,
-      modelCatalog.get(alias),
-    );
+  if (pool === undefined) return;
+  if (pool.allModels === true) {
+    if (section?.defaultEffort === undefined) return;
+    const targets = pool.defaultModel !== undefined ? [pool.defaultModel] : Object.keys(pool.models);
+    for (const alias of targets) {
+      assertModelSupportsConfiguredEffort(
+        { section: SECONDARY_MODEL_SECTION, field: 'defaultEffort', key: '[secondary_model].default_effort' },
+        section.defaultEffort,
+        alias,
+        modelCatalog.get(alias),
+      );
+    }
+    return;
+  }
+  for (const [alias, entry] of Object.entries(pool.models)) {
+    if (entry.effort !== undefined) {
+      assertModelSupportsConfiguredEffort(
+        {
+          section: SECONDARY_MODEL_SECTION,
+          field: 'models',
+          key: `[secondary_model.models]."${alias}".effort`,
+        },
+        entry.effort,
+        alias,
+        modelCatalog.get(alias),
+      );
+      continue;
+    }
+    if (section?.defaultEffort !== undefined) {
+      assertModelSupportsConfiguredEffort(
+        { section: SECONDARY_MODEL_SECTION, field: 'defaultEffort', key: '[secondary_model].default_effort' },
+        section.defaultEffort,
+        alias,
+        modelCatalog.get(alias),
+      );
+    }
   }
 }
 
@@ -230,17 +400,20 @@ export function resolveSubagentBinding(
   config: IConfigService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: string,
+  modelCatalog?: IModelCatalog,
 ): SubagentBinding {
-  return bindSubagentModel(config, own, requested);
+  return bindSubagentModel(config, own, requested, modelCatalog);
 }
 
 function bindSubagentModel(
   config: IConfigService,
   own: { modelAlias: string; thinkingLevel: string },
   requested: string | undefined,
+  modelCatalog: IModelCatalog | undefined,
 ): SubagentBinding {
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
-  const pool = resolveSubagentModelPool(config);
+  assertNoAllModelsConflict(section);
+  const pool = resolveSubagentModelPool(config, modelCatalog);
   if (pool === undefined) {
     if (requested !== undefined) {
       throw new Error2(
@@ -250,6 +423,35 @@ function bindSubagentModel(
       );
     }
     return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' };
+  }
+  if (pool.allModels === true) {
+    if (requested === undefined) {
+      if (pool.defaultModel !== undefined) {
+        return {
+          model: pool.defaultModel,
+          thinking: section?.defaultEffort,
+          modelSource: 'secondary_pool',
+        };
+      }
+      return {
+        model: own.modelAlias,
+        thinking: section?.defaultEffort ?? own.thinkingLevel,
+        modelSource: 'inherited',
+      };
+    }
+    const available = Object.keys(pool.models);
+    if (!Object.hasOwn(pool.models, requested)) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `Invalid model "${requested}". Available models: ${available.join(', ')}.`,
+        { details: { model: requested, availableModels: available } },
+      );
+    }
+    return {
+      model: requested,
+      thinking: section?.defaultEffort,
+      modelSource: 'secondary_pool',
+    };
   }
   const choice = requested ?? pool.defaultModel;
   if (choice === undefined) {
@@ -265,7 +467,12 @@ function bindSubagentModel(
       { details: { model: choice, availableModels: available } },
     );
   }
-  return { model: choice, thinking: section?.defaultEffort, modelSource: 'secondary_pool' };
+  const entry = pool.models[choice];
+  return {
+    model: choice,
+    thinking: entry?.effort ?? section?.defaultEffort,
+    modelSource: 'secondary_pool',
+  };
 }
 
 export function resolveSubagentThinking(

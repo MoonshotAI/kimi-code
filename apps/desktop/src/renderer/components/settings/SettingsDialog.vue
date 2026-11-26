@@ -18,7 +18,6 @@ import { canPickWorkspaceDirectory, pickNativeFile } from '../../lib/nativeWorks
 import { saveDefaultOpenInTarget, useDefaultOpenInTarget } from '@moonshot-ai/app-components';
 import { canSetDockIconChoice, useDockIconChoice, type DockIconChoice } from '../../lib/dockIconChoice';
 import {
-  buildSecondaryModelPatch,
   commitLevel,
   defaultThinkingLevelFor,
   effortLabel,
@@ -44,7 +43,7 @@ import { useUpdateStatus, type UpdateCheckResult } from '@moonshot-ai/app-client
 import type { ColorScheme, FontScale } from '@moonshot-ai/app-client/client';
 import type { AppConfig, AppModel, ManagedQuotaResult, ManagedUserInfo, ThinkingLevel } from '../../api/types';
 import PlanUsageCard from './PlanUsageCard.vue';
-import { SecondaryModelPicker } from '@moonshot-ai/app-components';
+import { SecondaryModelSettings } from '@moonshot-ai/app-components';
 import { PlanUpgradeCard } from '@moonshot-ai/app-components';
 import { Avatar, Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/app-ui';
 import type { BrowserSettingsSection } from '../../../shared/browser-data';
@@ -582,37 +581,12 @@ function setDefaultPermissionMode(mode: 'manual' | 'auto' | 'yolo'): void {
   emit('updateConfig', { defaultPermissionMode: mode });
 }
 
-const secondaryModel = computed(
-  () => props.config?.secondaryModel?.defaultModel ?? props.config?.secondaryModel?.model ?? '',
-);
-const secondaryModelEffort = computed(() => props.config?.secondaryModel?.defaultEffort ?? '');
-
 const modelInfoById = computed(() =>
   Object.fromEntries((props.models ?? []).map((model) => [model.id, model])),
 );
 
-async function setSecondaryModel(value: { model: string | null; effort?: string }): Promise<void> {
-  const model = value.model;
-  if (model === null) {
-    const current = props.config?.secondaryModel;
-    if (!current) return;
-    if (Object.keys(current.models ?? {}).length > 0) {
-      const confirmed = await confirm({
-        title: t('settings.secondaryModelClearPoolTitle'),
-        message: t('settings.secondaryModelClearPoolMessage'),
-        confirmLabel: t('settings.secondaryModelClearPoolConfirm'),
-      });
-      if (!confirmed) return;
-    }
-    emit('updateConfig', { secondaryModel: null });
-    return;
-  }
-  if (model === secondaryModel.value && (value.effort ?? '') === secondaryModelEffort.value) {
-    return;
-  }
-  emit('updateConfig', {
-    secondaryModel: buildSecondaryModelPatch(props.config?.secondaryModel, { ...value, model }),
-  });
+function updateSecondaryModel(value: AppConfig['secondaryModel']): void {
+  emit('updateConfig', { secondaryModel: value });
 }
 
 function toggleConfigBoolean(key: 'defaultPlanMode'): void {
@@ -1185,30 +1159,15 @@ defineExpose({ confirmDiscard });
           <GlobalAgentsMdSetting v-show="!defaultToolsOpen" ref="globalAgentsMdSettingRef" @open-change="globalAgentsMdOpen = $event" />
 
           <div v-show="!defaultToolsOpen && !globalAgentsMdOpen" class="panel-sections">
-          <section v-if="config" class="sec">
-            <div class="sec-head">
-              <h3 class="sec-title">{{ t('settings.secondaryModelSection') }}</h3>
-            </div>
-
-            <div class="settings-group">
-              <div class="row">
-                <span class="rlabel">
-                  {{ t('settings.secondaryModel') }}
-                  <span class="hint">{{ t(hostsStore().hosts.length > 0 ? 'settings.secondaryModelHintLocalOnly' : 'settings.secondaryModelHint') }}</span>
-                </span>
-                <div v-if="modelGroups.length > 0" class="select-wrap">
-                  <SecondaryModelPicker
-                    :model-value="secondaryModel"
-                    :effort="secondaryModelEffort"
-                    :groups="modelGroups"
-                    :model-info-by-id="modelInfoById"
-                    @select="setSecondaryModel"
-                  />
-                </div>
-                <span v-else class="rvalue mono">{{ secondaryModel || t('settings.noSecondaryModel') }}</span>
-              </div>
-            </div>
-          </section>
+          <SecondaryModelSettings
+            v-if="config"
+            :config="config.secondaryModel"
+            :default-model="config.defaultModel"
+            :groups="modelGroups"
+            :model-info-by-id="modelInfoById"
+            :local-only="hostsStore().hosts.length > 0"
+            @update="updateSecondaryModel"
+          />
 
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.composerSection') }}</h3>

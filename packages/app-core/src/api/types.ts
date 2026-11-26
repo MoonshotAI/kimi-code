@@ -823,6 +823,13 @@ export interface AppProviderCopyResult {
   providers: string[];
 }
 
+export interface SecondaryModelEntryObject {
+  description?: string;
+  effort?: string;
+}
+
+export type SecondaryModelEntry = string | SecondaryModelEntryObject;
+
 export interface AppConfig {
   providers: Record<string, AppConfigProvider>;
   defaultProvider?: string;
@@ -830,9 +837,11 @@ export interface AppConfig {
   secondaryModel?: {
     model?: string;
     defaultModel?: string;
-    models?: Record<string, string>;
+    models?: Record<string, SecondaryModelEntry>;
     force?: boolean;
     defaultEffort?: string;
+    allModels?: boolean;
+    rule?: string;
   } | null;
   tools?: AppToolsConfig;
   models?: Record<string, unknown>;

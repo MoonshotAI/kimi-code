@@ -70,8 +70,8 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
         delete camelPatch['yolo'];
         for (const domain of Object.keys(camelPatch)) {
           const patch = camelPatch[domain];
-          if (domain === 'secondaryModel' && patch === null) {
-            await config.replace(domain, null);
+          if (domain === 'secondaryModel') {
+            await config.replace(domain, patch);
           } else {
             await config.set(domain, patch);
           }

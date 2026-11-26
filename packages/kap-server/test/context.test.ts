@@ -128,6 +128,7 @@ describe('context routes on restored sessions and dynamic tools', () => {
           },
         },
       } as never),
+      listAliases: () => [],
       findByName: () => [],
       listModels: async () => [],
       listProviders: async () => [],

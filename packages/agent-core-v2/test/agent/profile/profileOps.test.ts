@@ -129,6 +129,7 @@ function createModelCatalogStub(models: Readonly<Record<string, Model>> = {}): I
       if (model === undefined) throw new Error(`Unknown model: ${id}`);
       return model;
     },
+    listAliases: () => Object.keys(models),
     findByName: () => [],
     listModels: () => {
       throw new Error('not exercised');

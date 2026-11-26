@@ -169,6 +169,7 @@ export interface IModelCatalog {
   readonly _serviceBrand: undefined;
 
   get(id: string): Model;
+  listAliases(): readonly string[];
   findByName(name: string): readonly string[];
 
   listModels(): Promise<readonly ModelCatalogItem[]>;

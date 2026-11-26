@@ -1473,6 +1473,65 @@ describe('subagent models reminder', () => {
     await runTurn('explore turn');
     expect(subagentModelReminders()).toEqual([]);
   });
+
+  it('includes selection rule, per-entry effort markers, and all-models mode in the reminder', async () => {
+    ctx = createTestAgent(
+      modelProviderServices({
+        ...modelCatalogResolving('mock-model', 'provider/fast', 'provider/smart'),
+        listAliases: () => ['mock-model', 'provider/fast', 'provider/smart'],
+      }),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            rule: 'Use fast for search, smart for hard bugs.',
+            models: {
+              'provider/fast': { description: 'fast and cheap', effort: 'low' },
+              'provider/smart': 'hard tasks',
+            },
+          },
+          models: POOL_MODEL_ENTRIES,
+        },
+      },
+    );
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
+
+    await runTurn('turn 1');
+    expect(subagentModelReminders()).toEqual([
+      [
+        '<system-reminder>',
+        'Available subagent models (pass via model):',
+        '- provider/fast [default] [effort: low]: fast and cheap',
+        '- provider/smart: hard tasks',
+        '',
+        'Selection rule:',
+        'Use fast for search, smart for hard bugs.',
+        '</system-reminder>',
+      ].join('\n'),
+    ]);
+
+    await (ctx.get(IConfigService) as StubConfigService).replace(SECONDARY_MODEL_SECTION, {
+      allModels: true,
+      rule: 'Pick from any configured model.',
+    });
+    await runTurn('turn 2');
+    expect(subagentModelReminders()).toHaveLength(2);
+    expect(subagentModelReminders()[1]).toBe(
+      [
+        '<system-reminder>',
+        'The available subagent models changed; the list below replaces any earlier subagent model list.',
+        '',
+        'Available subagent models (all configured models; pass via model):',
+        '- mock-model',
+        '- provider/fast',
+        '- provider/smart',
+        '',
+        'Selection rule:',
+        'Pick from any configured model.',
+        '</system-reminder>',
+      ].join('\n'),
+    );
+  });
 });
 
 describe('tool parameter schemas', () => {

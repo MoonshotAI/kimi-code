@@ -670,6 +670,25 @@ function secondaryModelToToml(
 ): Record<string, unknown> {
   const out = cloneRecord(rawSecondaryModel);
   for (const [key, value] of Object.entries(secondaryModel)) {
+    if (key === 'models' && isPlainObject(value)) {
+      const serialized: Record<string, unknown> = {};
+      for (const [alias, entry] of Object.entries(value)) {
+        if (typeof entry === 'string') {
+          serialized[alias] = entry;
+        } else if (isPlainObject(entry)) {
+          const description = typeof entry['description'] === 'string' ? entry['description'] : '';
+          const effort = typeof entry['effort'] === 'string' && entry['effort'].length > 0 ? entry['effort'] : undefined;
+          serialized[alias] =
+            effort === undefined
+              ? description
+              : description.length > 0
+                ? { description, effort }
+                : { effort };
+        }
+      }
+      out['models'] = serialized;
+      continue;
+    }
     setDefined(out, camelToSnake(key), value);
   }
   return out;

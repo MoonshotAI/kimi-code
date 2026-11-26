@@ -6,6 +6,7 @@ export function fakeModelCatalog(): IModelCatalog {
     get: () => {
       throw new Error('modelCatalog.get not exercised in this test');
     },
+    listAliases: () => [],
     findByName: () => [],
     listModels: async () => [],
     listProviders: async () => [],

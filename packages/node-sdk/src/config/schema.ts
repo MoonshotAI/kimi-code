@@ -1,5 +1,13 @@
 import { parsePattern } from '@moonshot-ai/agent-core-v2/agent/permissionRules/matchesRule';
 import { EnvironmentsSectionSchema } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
+import {
+  SecondaryModelConfigSchema,
+  SecondaryModelEntryObjectSchema,
+  SecondaryModelEntrySchema,
+  type SecondaryModelConfig,
+  type SecondaryModelEntry,
+  type SecondaryModelEntryObject,
+} from '@moonshot-ai/agent-core-v2/session/subagent/secondaryModelSchema';
 import { z } from 'zod';
 
 import { ErrorCodes, KimiError } from '#/errors';
@@ -103,14 +111,14 @@ export const ModelAliasSchema = ModelAliasBaseSchema.extend({
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;
 
-export const SecondaryModelConfigSchema = z.object({
-  model: z.string().min(1).optional(),
-  defaultModel: z.string().min(1).optional(),
-  models: z.record(z.string(), z.string()).optional(),
-  defaultEffort: z.string().optional(),
-});
-
-export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
+export {
+  SecondaryModelConfigSchema,
+  SecondaryModelEntryObjectSchema,
+  SecondaryModelEntrySchema,
+  type SecondaryModelConfig,
+  type SecondaryModelEntry,
+  type SecondaryModelEntryObject,
+};
 
 export const ThinkingConfigSchema = z.object({
   enabled: z.boolean().optional(),
@@ -368,7 +376,7 @@ export const KimiConfigPatchSchema = z
     loopControl: LoopControlPatchSchema.optional(),
     background: BackgroundConfigPatchSchema.optional(),
     subagent: SubagentConfigPatchSchema.optional(),
-    secondaryModel: SecondaryModelConfigPatchSchema.optional(),
+    secondaryModel: SecondaryModelConfigPatchSchema.nullable().optional(),
     mcp: McpConfigPatchSchema.optional(),
     image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),

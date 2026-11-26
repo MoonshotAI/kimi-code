@@ -6,7 +6,11 @@ import { IConfigService } from '#/app/config/config';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { ContextInjectionContext, ContextInjectionResult } from '#/features/reminder/types';
-import { resolveSubagentModelPool } from '#/session/subagent/configSection';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import {
+  resolveSubagentModelPool,
+  type NormalizedSubagentModelEntry,
+} from '#/session/subagent/configSection';
 
 import {
   IAgentSubagentModelsReminderService,
@@ -26,6 +30,7 @@ export class AgentSubagentModelsReminderService
     @IAgentLoopService private readonly profile: IAgentLoopService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IConfigService private readonly config: IConfigService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {
     super();
     this._register(
@@ -43,7 +48,7 @@ export class AgentSubagentModelsReminderService
     | undefined {
     if (this.profile.data().profileName === undefined) return undefined;
     if (!this.hasActiveSubagentTool()) return undefined;
-    const current = currentDisclosure(this.config);
+    const current = currentDisclosure(this.config, this.modelCatalog);
     const unchanged =
       lastDisclosure === undefined
         ? !offersModels(current)
@@ -66,26 +71,47 @@ export class AgentSubagentModelsReminderService
 
 const NO_SUBAGENT_MODELS: SubagentModelsDisclosure = { models: {} };
 
-function currentDisclosure(config: IConfigService): SubagentModelsDisclosure {
-  const pool = resolveSubagentModelPool(config);
+function currentDisclosure(
+  config: IConfigService,
+  modelCatalog: IModelCatalog,
+): SubagentModelsDisclosure {
+  const pool = resolveSubagentModelPool(config, modelCatalog);
   if (pool === undefined || Object.keys(pool.models).length === 0) return NO_SUBAGENT_MODELS;
-  return { defaultModel: pool.defaultModel, models: { ...pool.models } };
+  return {
+    defaultModel: pool.defaultModel,
+    allModels: pool.allModels,
+    rule: pool.rule,
+    models: { ...pool.models },
+  };
 }
 
 function offersModels(disclosure: SubagentModelsDisclosure): boolean {
   return Object.keys(disclosure.models).length > 0;
 }
 
+function sameEntry(
+  left: NormalizedSubagentModelEntry | undefined,
+  right: NormalizedSubagentModelEntry | undefined,
+): boolean {
+  return left?.description === right?.description && left?.effort === right?.effort;
+}
+
 function sameDisclosure(
   left: SubagentModelsDisclosure,
   right: SubagentModelsDisclosure,
 ): boolean {
-  if (left.defaultModel !== right.defaultModel) return false;
+  if (
+    left.defaultModel !== right.defaultModel ||
+    left.allModels !== right.allModels ||
+    left.rule !== right.rule
+  ) {
+    return false;
+  }
   const leftKeys = Object.keys(left.models);
   const rightKeys = Object.keys(right.models);
   return (
     leftKeys.length === rightKeys.length &&
-    leftKeys.every((key, index) => rightKeys[index] === key && right.models[key] === left.models[key])
+    leftKeys.every((key, index) => rightKeys[index] === key && sameEntry(left.models[key], right.models[key]))
   );
 }
 
@@ -109,14 +135,22 @@ function renderSubagentModelsReminder(
   if (!offersModels(disclosure)) {
     return 'The subagent model list was withdrawn: no [secondary_model] pool is configured now. Omit the model parameter; subagents inherit your model.';
   }
-  const lines = ['Available subagent models (pass via model):'];
+  const header = disclosure.allModels === true
+    ? 'Available subagent models (all configured models; pass via model):'
+    : 'Available subagent models (pass via model):';
+  const lines = [header];
   for (const alias of orderedAliases(disclosure)) {
-    const marker = alias === disclosure.defaultModel ? ' [default]' : '';
-    lines.push(formatModelLine(`${alias}${marker}`, disclosure.models[alias] ?? ''));
+    const entry = disclosure.models[alias] ?? { description: '' };
+    const defaultMarker = alias === disclosure.defaultModel ? ' [default]' : '';
+    const effortMarker = entry.effort !== undefined ? ` [effort: ${entry.effort}]` : '';
+    lines.push(formatModelLine(`${alias}${defaultMarker}${effortMarker}`, entry.description));
   }
-  const listing = lines.join('\n');
-  if (!changed) return listing;
-  return `The available subagent models changed; the list below replaces any earlier subagent model list.\n\n${listing}`;
+  const body =
+    disclosure.rule !== undefined
+      ? `${lines.join('\n')}\n\nSelection rule:\n${disclosure.rule}`
+      : lines.join('\n');
+  if (!changed) return body;
+  return `The available subagent models changed; the list below replaces any earlier subagent model list.\n\n${body}`;
 }
 
 registerScopedService(

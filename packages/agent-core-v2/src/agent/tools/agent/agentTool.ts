@@ -242,7 +242,7 @@ export class SubagentTool implements ISubagentTool {
   private anySubagentModelSupports(
     supports: (capabilities: ModelCapability | undefined) => boolean,
   ): boolean {
-    const pool = resolveSubagentModelPool(this.config);
+    const pool = resolveSubagentModelPool(this.config, this.modelCatalog);
     if (pool === undefined) return supports(this.loop.getModelCapabilities());
     for (const alias of Object.keys(pool.models)) {
       try {

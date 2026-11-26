@@ -369,4 +369,74 @@ describe('SessionSubagentModelsValidationService', () => {
     expect((error as Error2).message).toContain('[secondary_model].default_effort "off"');
     expect((error as Error2).message).toContain('"provider/always"');
   });
+
+  it('validates per-entry effort independently for each pool model', () => {
+    modelIds.add('provider/fast');
+    modelIds.add('provider/smart');
+    modelMeta.set('provider/fast', {
+      capabilities: { thinking: true },
+      supportEfforts: ['low', 'medium'],
+    });
+    modelMeta.set('provider/smart', {
+      capabilities: { thinking: true },
+      alwaysThinking: true,
+      supportEfforts: ['high', 'max'],
+    });
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/fast',
+        models: {
+          'provider/fast': { description: 'fast', effort: 'low' },
+          'provider/smart': { description: 'smart', effort: 'max' },
+        },
+      },
+    });
+    expect(resolve()).toBeUndefined();
+  });
+
+  it('fails session creation when a pool entry specifies an unsupported effort', () => {
+    modelIds.add('provider/fast');
+    modelMeta.set('provider/fast', {
+      capabilities: { thinking: true },
+      supportEfforts: ['low', 'medium'],
+    });
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/fast',
+        models: {
+          'provider/fast': { description: 'fast', effort: 'max' },
+        },
+      },
+    });
+    const error = resolve();
+    expect(isError2(error)).toBe(true);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect((error as Error2).message).toContain('[secondary_model.models]."provider/fast".effort');
+  });
+
+  it('accepts all_models without default_model and rejects combining all_models with models', () => {
+    modelIds.add('provider/fast');
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        allModels: true,
+        rule: 'Prefer fast models for small tasks.',
+      },
+    });
+    expect(resolve()).toBeUndefined();
+
+    disposables.dispose();
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        allModels: true,
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast' },
+      },
+    });
+    const error = resolve();
+    expect(isError2(error)).toBe(true);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect((error as Error2).message).toContain('all_models cannot be combined');
+  });
 });
