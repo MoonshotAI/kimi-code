@@ -43,7 +43,11 @@ entries:
     break:
       at: history
       reason: the user withdrew the last prompt, so the history ends before it
-    gap: The undo action exists on TUI, Desktop and Web (an ACP editor cannot undo); the scenario is not written yet.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/undo-breaks-only-the-history.spec.ts
+      - kind: implicit
+        test: tests/e2e/scenarios/conversation/undo-puts-the-prompt-back.spec.ts
 
   - id: A6
     operation: Quit the product while a turn is running, open it again and continue
@@ -51,6 +55,20 @@ entries:
     coverage:
       - kind: implicit
         test: tests/e2e/scenarios/conversation/quit-during-turn-keeps-the-prompt.spec.ts
+
+  - id: A7
+    operation: The model service rejects a compaction request as too long, and the product retries it with a shorter history
+    promise: breaks
+    break:
+      at: history
+      reason: the compaction request was too long, so the product retries it without the oldest messages
+    coverage:
+      - kind: engine
+        test: packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts
+        case: auto-compacts over-window context by shrinking after the provider rejects the full history
+      - kind: engine
+        test: packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts
+        case: reduces the compacted prefix and retries when compaction receives plain 413
 
   - id: B1
     operation: Switch the permission mode between two turns
