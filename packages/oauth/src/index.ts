@@ -264,3 +264,13 @@ export type {
 
 export type { OAuthTokenTransactionOptions } from './oauth-token-transaction';
 export { OAuthTokenTransaction } from './oauth-token-transaction';
+
+export {
+  CLIENT_CONFIGS_PATH,
+  RESOURCE_CONFIGS_PATH,
+  ClientConfigClient,
+} from './client-configs';
+export type {
+  ClientConfigEnvironment,
+  ClientConfigFetchOptions,
+} from './client-configs';

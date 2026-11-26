@@ -32,6 +32,7 @@ export interface SessionReviewRun {
 export interface ISessionAutoReviewService {
   readonly _serviceBrand: undefined;
   assertConfigValid(): void;
+  resolveTimeoutMs(mainModelAlias: string, signal?: AbortSignal): Promise<number>;
   projectInstructions(): Promise<ProjectInstructions>;
   execute(input: SessionReviewInput): Promise<SessionReviewRun>;
 }
