@@ -770,7 +770,6 @@
     "packages/agent-core-v2/src/_base/di/scopeUnits.ts": 1,
     "packages/agent-core-v2/src/_base/di/service.ts": 1,
     "packages/agent-core-v2/src/_base/di/testInstantiationService.ts": 8,
-    "packages/agent-core-v2/src/_base/errors/serialize.ts": 1,
     "packages/agent-core-v2/src/_base/utils/canonical-args.ts": 1,
     "packages/agent-core-v2/src/agent/agentContext/agentSpace.ts": 2,
     "packages/agent-core-v2/src/agent/fullCompaction/fullCompactionService.ts": 1,
