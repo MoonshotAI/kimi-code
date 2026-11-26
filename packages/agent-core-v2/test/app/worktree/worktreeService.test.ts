@@ -1430,6 +1430,25 @@ describe('WorktreeService', () => {
       open.dispose();
     });
 
+    it('does not count worktrees removed together as keeping commits alive', async () => {
+      const first = (await create({ name: 'together-a' })).worktree.path;
+      const second = (await create({ name: 'together-b' })).worktree.path;
+      const shared = commitFile(first, 'shared.txt', 'shared\n');
+      git(second, 'checkout', '-q', '--detach', shared);
+      const inspect = { repoRoot: realRepo, path: first, deleteBranch: true };
+
+      expect(await service.inspectRemoval(inspect)).toMatchObject({ uniqueCommits: 0 });
+      expect(await service.inspectRemoval({ ...inspect, removedTogether: [second] })).toMatchObject({ uniqueCommits: 1 });
+
+      git(first, 'switch', '-q', '-c', 'together-a');
+      git(second, 'switch', '-q', '-c', 'together-b');
+      expect(await service.inspectRemoval(inspect)).toMatchObject({ uniqueCommits: 0 });
+      expect(await service.inspectRemoval({ ...inspect, removedTogether: [second] })).toMatchObject({ uniqueCommits: 1 });
+      expect(
+        await service.inspectRemoval({ ...inspect, deleteBranch: false, removedTogether: [second] }),
+      ).toMatchObject({ uniqueCommits: 0 });
+    });
+
     it('leaves out every listed session when several are excluded', async () => {
       const created = await create({ name: 'several' });
       const wt = created.worktree.path;

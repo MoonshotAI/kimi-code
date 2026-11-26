@@ -629,7 +629,7 @@ export class WorktreeService implements IWorktreeService {
         excludeSessionId: input.excludeSessionId,
         excludeSessionIds: input.excludeSessionIds,
       }),
-      this.countUniqueCommits(repo, target, input.deleteBranch),
+      this.countUniqueCommits(repo, target, input.deleteBranch, this.entriesAt(repo, input.removedTogether ?? [])),
     ]);
     return {
       path: worktree.path,
@@ -702,25 +702,38 @@ export class WorktreeService implements IWorktreeService {
     return modified;
   }
 
-  private async countUniqueCommits(repo: Repository, target: LinkedEntry, deleteBranch: boolean): Promise<number> {
+  private entriesAt(repo: Repository, paths: readonly string[]): ReadonlySet<PorcelainWorktree> {
+    const wanted = paths.map((path) => resolve(path));
+    return new Set(repo.entries.filter((entry) => wanted.some((path) => sameDir(entry.path, path))));
+  }
+
+  private async countUniqueCommits(
+    repo: Repository,
+    target: LinkedEntry,
+    deleteBranch: boolean,
+    removedTogether: ReadonlySet<PorcelainWorktree>,
+  ): Promise<number> {
     const { branch, head } = target.worktree;
     if (head === undefined) return 0;
     const otherHeads = [
       ...new Set(
         repo.entries
-          .filter((entry) => entry !== target.entry)
+          .filter((entry) => entry !== target.entry && !removedTogether.has(entry))
           .flatMap((entry) => (entry.head === undefined ? [] : [entry.head])),
       ),
     ];
+    const deletedBranches = deleteBranch
+      ? [...removedTogether].flatMap((entry) => (entry.branch === undefined ? [] : [`--exclude=${entry.branch}`]))
+      : [];
     let tip: string;
     let excluded: string[];
     if (branch !== undefined) {
       if (!deleteBranch) return 0;
       tip = `refs/heads/${branch}`;
-      excluded = [`--exclude=${branch}`, '--branches'];
+      excluded = [`--exclude=${branch}`, ...deletedBranches, '--branches'];
     } else {
       tip = head;
-      excluded = ['--branches'];
+      excluded = [...deletedBranches, '--branches'];
     }
     const args = ['rev-list', '--count', tip, '--not', ...excluded, '--remotes', '--tags'];
     const counted = await this.git(

@@ -211,6 +211,7 @@ export class WorktreeInventory {
     const [known, sessions] = await Promise.all([this.known(), this.sessionsByDirectory()]);
     const items: InspectWorktreesResponse['items'] = [];
     const errors: InspectWorktreesResponse['errors'] = {};
+    const requested: { path: string; worktree: (typeof known)[number] }[] = [];
     for (const path of new Set(paths)) {
       const key = await canonical(path);
       const worktree = known.find((candidate) => candidate.key === key);
@@ -224,13 +225,19 @@ export class WorktreeInventory {
         };
         continue;
       }
-      const refs = sessions.under(key);
+      requested.push({ path, worktree });
+    }
+    for (const { path, worktree } of requested) {
+      const refs = sessions.under(worktree.key);
       try {
         const check = await this.core.accessor.get(IWorktreeService).inspectRemoval({
           repoRoot: worktree.repoRoot,
           path: worktree.path,
           deleteBranch: true,
           excludeSessionIds: refs.map((ref) => ref.id),
+          removedTogether: requested
+            .filter((other) => other.worktree !== worktree && other.worktree.repoRoot === worktree.repoRoot)
+            .map((other) => other.worktree.path),
         });
         const openElsewhere = new Set(check.openSessionIds);
         items.push({

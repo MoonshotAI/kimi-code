@@ -134,6 +134,24 @@ describe('server-v2 worktree inventory', () => {
     expect(inspected.data.errors[nowhere]?.code).toBe(ErrorCode.WORKTREE_NOT_FOUND);
   });
 
+  it('counts commits shared only by worktrees inspected together as lost', async () => {
+    const { workspaceId } = await project('inspect-batch');
+    const first = (await settledWorktree(workspaceId)).worktree!.path!;
+    const second = (await settledWorktree(workspaceId)).worktree!.path!;
+    await writeFile(join(first, 'shared.txt'), 'shared\n');
+    git(first, 'add', 'shared.txt');
+    commit(first, 'shared');
+    git(second, 'reset', '-q', '--hard', git(first, 'rev-parse', 'HEAD'));
+    const inspect = (paths: string[]) =>
+      post<{ items: { path: string; unpushed_commits: number }[] }>('/worktrees:inspect', { paths });
+
+    expect((await inspect([first])).data.items).toMatchObject([{ path: first, unpushed_commits: 0 }]);
+    expect((await inspect([first, second])).data.items).toMatchObject([
+      { path: first, unpushed_commits: 1 },
+      { path: second, unpushed_commits: 1 },
+    ]);
+  });
+
   it('removes a dirty worktree unless a session using it is busy', async () => {
     const { root, workspaceId } = await project('remove');
     const session = await settledWorktree(workspaceId);

@@ -85,6 +85,7 @@ export interface InspectWorktreeRemovalInput {
   readonly deleteBranch: boolean;
   readonly excludeSessionId?: string;
   readonly excludeSessionIds?: readonly string[];
+  readonly removedTogether?: readonly string[];
 }
 
 export interface WorktreeRemovalCheck {
