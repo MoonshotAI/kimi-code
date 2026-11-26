@@ -143,7 +143,6 @@
     "packages/agent-core-v2/test/app/agentProfileCatalog/profile-shared.test.ts": 1,
     "packages/agent-core-v2/test/app/file/fileService.test.ts": 1,
     "packages/agent-core-v2/test/app/gateway/gateway.test.ts": 3,
-    "packages/agent-core-v2/test/app/git/gitService.test.ts": 1,
     "packages/agent-core-v2/test/app/kosongConfig/discovery.test.ts": 1,
     "packages/agent-core-v2/test/app/mcpManagement/mcpManagement.test.ts": 3,
     "packages/agent-core-v2/test/app/project/projectService.test.ts": 1,
