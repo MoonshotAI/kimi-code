@@ -301,6 +301,14 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
     properties: z.object({}),
   }),
   z.object({
+    event: z.literal('identity_switch'),
+    properties: z.object({
+      from_type: z.enum(['personal', 'enterprise']),
+      to_type: z.enum(['personal', 'enterprise']),
+      enterprise_id: z.string().max(128),
+    }),
+  }),
+  z.object({
     event: z.literal('plan_usage_card_viewed'),
     properties: z.object({ usage_bucket: z.enum(['ok', 'warn', 'danger']) }),
   }),
@@ -465,6 +473,7 @@ export type NotificationKindEvent = RendererEventPayloads['notification_shown'];
 export type OnboardingCompletedEvent = RendererEventPayloads['onboarding_completed'];
 export type OnboardingAbandonedEvent = RendererEventPayloads['onboarding_abandoned'];
 export type SearchExecutedEvent = RendererEventPayloads['search_executed'];
+export type IdentitySwitchEvent = RendererEventPayloads['identity_switch'];
 export type PlanUsageCardViewedEvent = RendererEventPayloads['plan_usage_card_viewed'];
 export type TelemetryConsentChangedEvent = RendererEventPayloads['telemetry_consent_changed'];
 export type RendererErrorEvent = RendererEventPayloads['renderer_error'];

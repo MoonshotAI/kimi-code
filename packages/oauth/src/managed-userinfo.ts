@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { readApiErrorMessage } from './api-error';
+import { fetchManagedJson, type ManagedEndpointFetchOptions } from './managed-fetch';
 import { kimiCodeBaseUrl } from './managed-usage';
 import { isRecord } from './utils';
 
@@ -32,6 +32,7 @@ export const managedUserInfoSchema = z.object({
   phone: managedUserInfoPhoneSchema.optional(),
   createdTime: z.string().optional(),
   lastLoginTime: z.string().optional(),
+  workspaceName: z.string().optional(),
 });
 export type ManagedUserInfo = z.infer<typeof managedUserInfoSchema>;
 
@@ -44,6 +45,7 @@ const managedUserInfoErrorSchema = z.object({
   kind: z.literal('error'),
   message: z.string(),
   status: z.number().int().optional(),
+  errorCode: z.string().optional(),
 });
 
 export const managedUserInfoResultSchema = z.discriminatedUnion('kind', [
@@ -74,6 +76,7 @@ export function parseManagedUserInfoPayload(payload: unknown): ManagedUserInfo |
     phone: parsePhone(payload['phone']),
     createdTime: stringField(payload, 'created_time'),
     lastLoginTime: stringField(payload, 'last_login_time'),
+    workspaceName: stringField(payload, 'workspace_name'),
   };
 }
 
@@ -110,49 +113,23 @@ export interface FetchManagedUserInfoResult {
 export interface FetchManagedUserInfoError {
   readonly kind: 'error';
   readonly status?: number;
+  readonly errorCode?: string;
   readonly message: string;
 }
 
 export async function fetchManagedUserInfo(
   url: string,
   accessToken: string,
-  opts: { timeoutMs?: number } = {},
+  opts: ManagedEndpointFetchOptions = {},
 ): Promise<FetchManagedUserInfoResult | FetchManagedUserInfoError> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, opts.timeoutMs ?? 8000);
-  try {
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json',
-      },
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      const status = res.status;
-      const hint =
-        status === 401
-          ? 'Authorization failed. Please check your API key (try /login).'
-          : status === 404
-            ? 'Profile endpoint not available. Try Kimi For Coding.'
-            : `Failed to fetch profile: HTTP ${String(status)}`;
-      return { kind: 'error', status, message: await readApiErrorMessage(res, hint) };
-    }
-    const json: unknown = await res.json();
-    const me = parseManagedUserInfoPayload(json);
-    if (me === null) {
-      return { kind: 'error', message: 'Failed to fetch profile: malformed response.' };
-    }
-    return { kind: 'ok', userInfo: me };
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      return { kind: 'error', message: 'Failed to fetch profile: request timed out.' };
-    }
-    const msg = error instanceof Error ? error.message : String(error);
-    return { kind: 'error', message: `Failed to fetch profile: ${msg}` };
-  } finally {
-    clearTimeout(timer);
+  const response = await fetchManagedJson(url, accessToken, 'profile', {
+    ...opts,
+    status404Message: 'Profile endpoint not available. Try Kimi For Coding.',
+  });
+  if (response.kind === 'error') return response;
+  const me = parseManagedUserInfoPayload(response.payload);
+  if (me === null) {
+    return { kind: 'error', message: 'Failed to fetch profile: malformed response.' };
   }
+  return { kind: 'ok', userInfo: me };
 }

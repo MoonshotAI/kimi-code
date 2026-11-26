@@ -28,6 +28,7 @@ export const errorInfoSchema = z.object({
   status_code: z.number().int().optional(),
   request_id: z.string().optional(),
   retryable: z.boolean().optional(),
+  provider_error_code: z.string().optional(),
 });
 export type ErrorInfo = z.infer<typeof errorInfoSchema>;
 

@@ -91,6 +91,69 @@ export type RefreshOAuthProviderModelsResponse = z.infer<
   typeof refreshOAuthProviderModelsResponseSchema
 >;
 
+export const oauthWorkspaceTargetSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('personal'),
+  }),
+  z.object({
+    kind: z.literal('business'),
+    business_id: z.string().trim().min(1),
+  }),
+]);
+export type OAuthWorkspaceTarget = z.infer<typeof oauthWorkspaceTargetSchema>;
+
+export const oauthManagedWorkspaceSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('personal'),
+    key: z.string().min(1),
+    name: z.string().min(1),
+    current: z.boolean(),
+    disabled: z.boolean(),
+    switchable: z.boolean(),
+    roles: z.array(z.string()),
+  }),
+  z.object({
+    kind: z.literal('business'),
+    key: z.string().min(1),
+    business_id: z.string().min(1),
+    name: z.string().min(1),
+    status: z.string().min(1),
+    current: z.boolean(),
+    disabled: z.boolean(),
+    switchable: z.boolean(),
+    nickname: z.string().optional(),
+    roles: z.array(z.string()),
+  }),
+]);
+export type OAuthManagedWorkspace = z.infer<typeof oauthManagedWorkspaceSchema>;
+
+const oauthManagedWorkspacesErrorSchema = z.object({
+  kind: z.literal('error'),
+  message: z.string(),
+  status: z.number().int().optional(),
+  error_code: z.string().optional(),
+});
+
+export const oauthManagedWorkspacesResultSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('ok'),
+    workspaces: z.array(oauthManagedWorkspaceSchema),
+  }),
+  oauthManagedWorkspacesErrorSchema,
+]);
+export type OAuthManagedWorkspacesResult = z.infer<typeof oauthManagedWorkspacesResultSchema>;
+
+export const oauthWorkspaceSwitchResponseSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('ok'),
+    provider: z.string().min(1),
+    target: oauthWorkspaceTargetSchema,
+    warning: z.string().optional(),
+  }),
+  oauthManagedWorkspacesErrorSchema,
+]);
+export type OAuthWorkspaceSwitchResponse = z.infer<typeof oauthWorkspaceSwitchResponseSchema>;
+
 export {
   managedUsageResultSchema,
   type ManagedUsageResult,

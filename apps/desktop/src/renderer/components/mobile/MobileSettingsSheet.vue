@@ -2,9 +2,9 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
-import type { AppModel, ManagedUserInfo, ThinkingLevel } from '../../api/types';
+import type { AppModel, ManagedUserInfo, ManagedWorkspace, ThinkingLevel } from '../../api/types';
 import type { ColorScheme, FontScale } from '@moonshot-ai/app-client/client';
-import { useKimiWebClient } from '@moonshot-ai/app-client/client';
+import { toast, useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { effortSwitchStore } from '@moonshot-ai/app-client/stores';
 import { useActivityRunFolding, useConfirmDialog, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client/composables';
 import { track } from '../../lib/track';
@@ -22,7 +22,7 @@ import type { FontTarget } from '@moonshot-ai/app-core';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
 import PlanUsageCard from '../settings/PlanUsageCard.vue';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
-import { Avatar, Badge, Icon, SegmentedControl, Switch } from '@moonshot-ai/app-ui';
+import { Avatar, Badge, Button, Icon, SegmentedControl, Spinner, Switch } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
@@ -200,6 +200,85 @@ const accountLevel = computed(() => props.managedUserInfo?.userLevelName?.trim()
 const signedIn = computed(() => props.managedProviderStatus === 'authenticated');
 const rcMode = isRcLocation(window.location);
 const desktopBridge = hasDesktopBridge();
+const mobileWorkspaceQuery = ref('');
+
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (!open) {
+      mobileWorkspaceQuery.value = '';
+      return;
+    }
+    if (signedIn.value) {
+      void client.probeManagedMembership();
+    }
+  },
+);
+
+const mobileDuplicateBusinessNames = computed(() => {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const item of client.managedWorkspaces.value) {
+    if (item.kind !== 'business') continue;
+    if (seen.has(item.name)) duplicates.add(item.name);
+    seen.add(item.name);
+  }
+  return duplicates;
+});
+
+const filteredMobileWorkspaces = computed<readonly ManagedWorkspace[]>(() => {
+  const all = client.managedWorkspaces.value;
+  const query = mobileWorkspaceQuery.value.trim().toLowerCase();
+  if (!query) return all;
+  return all.filter(
+    (item) =>
+      item.name.toLowerCase().includes(query) ||
+      (item.kind === 'business' && item.businessId.toLowerCase().includes(query)),
+  );
+});
+
+function mobileWorkspaceInitial(label: string): string {
+  return (Array.from(label.trim())[0] ?? 'W').toUpperCase();
+}
+
+function mobileWorkspaceSublabel(item: ManagedWorkspace): string {
+  if (item.kind === 'personal') return t('account.personalWorkspace');
+  if (item.disabled) return t('account.workspaceDisabledHint');
+  if (mobileDuplicateBusinessNames.value.has(item.name)) {
+    return `${t('account.businessWorkspace')} · #${item.businessId.slice(-4)}`;
+  }
+  return t('account.businessWorkspace');
+}
+
+async function onMobileSelectWorkspace(item: ManagedWorkspace): Promise<void> {
+  if (item.disabled || client.switchingWorkspaceKey.value !== null) return;
+  if (item.current) return;
+  const target =
+    item.kind === 'personal'
+      ? ({ kind: 'personal' } as const)
+      : ({ kind: 'business', businessId: item.businessId } as const);
+  const res = await client.switchManagedWorkspace(target, item.name);
+  if (res.ok) {
+    emit('update:modelValue', false);
+    toast({
+      variant: 'info',
+      position: 'bottom-right',
+      title: t('account.switchSuccessToast', { name: item.name }),
+    });
+    if (res.warning) {
+      client.notify({ severity: 'warning', title: res.warning });
+    }
+    return;
+  }
+  if (!res.revoked && res.message) {
+    toast({
+      variant: 'danger',
+      position: 'bottom-right',
+      title: t('account.switchFailedTitle'),
+      message: res.message,
+    });
+  }
+}
 
 const permColor = computed<string>(() => {
   const p = props.status.permission;
@@ -473,6 +552,74 @@ function toggleAutoSessionTitle(): void {
       </div>
     </div>
 
+    <template
+      v-if="
+        signedIn &&
+        (client.hasBusinessWorkspace.value ||
+          (!client.managedWorkspacesLoaded.value &&
+            (client.managedWorkspacesLoading.value || Boolean(client.managedWorkspacesError.value))))
+      "
+    >
+      <div class="group-title">{{ t('account.workspaceSection') }}</div>
+      <div class="card">
+        <div v-if="client.managedWorkspaces.value.length > 3" class="srow read-only mobile-ws-search-row">
+          <input
+            v-model="mobileWorkspaceQuery"
+            type="search"
+            class="mobile-ws-search"
+            :placeholder="t('account.searchWorkspaces')"
+            :aria-label="t('account.searchWorkspaces')"
+          />
+        </div>
+        <template v-if="filteredMobileWorkspaces.length > 0">
+          <button
+            v-for="ws in filteredMobileWorkspaces"
+            :key="ws.key"
+            type="button"
+            class="srow mobile-ws-row"
+            :disabled="ws.disabled || client.switchingWorkspaceKey.value !== null"
+            @click="void onMobileSelectWorkspace(ws)"
+          >
+            <Avatar
+              :src="ws.kind === 'personal' ? managedUserInfo?.avatar : undefined"
+              size="sm"
+              :shape="ws.kind === 'personal' ? 'circle' : 'square'"
+              aria-hidden="true"
+            >
+              <template v-if="ws.kind !== 'personal' || !managedUserInfo?.avatar">
+                {{ mobileWorkspaceInitial(ws.name) }}
+              </template>
+            </Avatar>
+            <span class="srow-main">
+              <span class="srow-label">{{ ws.name }}</span>
+              <span class="srow-sub">{{ mobileWorkspaceSublabel(ws) }}</span>
+            </span>
+            <Spinner v-if="client.switchingWorkspaceKey.value === ws.key" size="sm" />
+            <Icon v-else-if="ws.current" name="check" size="sm" />
+          </button>
+        </template>
+        <div v-else-if="client.managedWorkspacesLoading.value" class="srow read-only">
+          <Spinner size="sm" />
+          <span class="srow-main">
+            <span class="srow-sub">{{ t('account.loadingWorkspaces') }}</span>
+          </span>
+        </div>
+        <div v-else-if="mobileWorkspaceQuery.trim().length > 0" class="srow read-only">
+          <span class="srow-main">
+            <span class="srow-sub">{{ t('account.noMatchingWorkspaces') }}</span>
+          </span>
+        </div>
+        <div v-if="client.managedWorkspacesError.value && !client.managedWorkspacesLoading.value" class="srow read-only">
+          <span class="srow-main">
+            <span class="srow-sub">{{ t('account.loadWorkspacesFailed') }}</span>
+          </span>
+          <Button variant="ghost" size="sm" @click="void client.reloadManagedWorkspaces()">
+            {{ t('account.retryWorkspaces') }}
+          </Button>
+        </div>
+      </div>
+    </template>
+
     <div class="group-title">{{ t('mobile.groupAccount') }}</div>
     <div class="card">
       <template v-if="signedIn">
@@ -483,10 +630,24 @@ function toggleAutoSessionTitle(): void {
               <span class="srow-label">{{ managedUserInfo?.nickname || t('sidebar.defaultUserName') }}</span>
               <Badge v-if="accountLevel" class="acct-level" variant="neutral" size="sm">{{ accountLevel }}</Badge>
             </span>
-            <span class="srow-sub">{{ t('settings.signedIn') }}</span>
+            <span class="srow-sub">
+              {{
+                client.hasBusinessWorkspace.value
+                  ? client.currentManagedWorkspace.value?.kind === 'business'
+                    ? managedUserInfo?.workspaceName || client.currentManagedWorkspace.value.name
+                    : managedUserInfo?.workspaceName || t('account.personalWorkspace')
+                  : t('settings.signedIn')
+              }}
+            </span>
           </span>
         </div>
-        <button v-if="!rcMode" type="button" class="srow acct out" @click="onLogout">
+        <button
+          v-if="!rcMode"
+          type="button"
+          class="srow acct out"
+          :disabled="client.switchingWorkspaceKey.value !== null"
+          @click="onLogout"
+        >
           <span class="srow-main">
             <span class="srow-label">{{ t('sidebar.signOut') }}</span>
           </span>
@@ -686,6 +847,29 @@ function toggleAutoSessionTitle(): void {
   height: 100%;
   border-radius: var(--radius-full);
   background: var(--color-accent);
+}
+
+.mobile-ws-row {
+  gap: var(--space-3);
+}
+.mobile-ws-row:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.mobile-ws-search-row {
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+.mobile-ws-search {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  padding: var(--space-1-5) var(--space-2-5);
+  outline: none;
 }
 
 .srow,

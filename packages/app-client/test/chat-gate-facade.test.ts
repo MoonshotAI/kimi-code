@@ -378,6 +378,86 @@ describe('ensureChatReady — the §2.3 decision flow', () => {
     await expect(client.ensureChatReady()).resolves.toBe('configure-model');
   });
 
+  it('blocks ensureChatReady while a workspace switch is in flight and evaluates the switched workspace state', async () => {
+    const { client, auth, models } = await freshFacade();
+    auth.managedProviderStatus = 'authenticated';
+    auth.managedMembership = 'member';
+    models.setModels([MANAGED_MODEL]);
+    models.setDefaultModel('managed:kimi-code/kimi-k2');
+
+    let resolveSwitch!: (value: unknown) => void;
+    clientApiMock.switchManagedWorkspace = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveSwitch = resolve;
+        }),
+    );
+    clientApiMock.getAuth = vi.fn(async () => ({
+      modelsReady: true,
+      providersCount: 1,
+      managedProvider: { status: 'authenticated' },
+    }));
+    clientApiMock.getUserInfo = vi.fn(async () => ({
+      kind: 'error',
+      status: 402,
+      message: 'payment required',
+    }));
+    clientApiMock.listManagedWorkspaces = vi.fn(async () => ({
+      kind: 'ok',
+      workspaces: [],
+    }));
+    clientApiMock.listModels = vi.fn(async () => [MANAGED_MODEL]);
+    clientApiMock.getConfig = vi.fn(async () => ({
+      providers: {},
+      defaultModel: 'managed:kimi-code/kimi-k2',
+    }));
+
+    const switching = auth.switchManagedWorkspace({ kind: 'personal' }, 'Personal');
+    let gateResolved = false;
+    const ready = client.ensureChatReady().then((verdict) => {
+      gateResolved = true;
+      return verdict;
+    });
+
+    await Promise.resolve();
+    expect(gateResolved).toBe(false);
+
+    resolveSwitch({
+      kind: 'ok',
+      provider: 'managed:kimi-code',
+      target: { kind: 'personal' },
+    });
+
+    await switching;
+    await expect(ready).resolves.toBe('upgrade');
+  });
+
+  it('rejects switchManagedWorkspace while a local managed session turn is busy', async () => {
+    const { client, auth, models, sessions } = await freshFacade();
+    auth.managedProviderStatus = 'authenticated';
+    auth.managedMembership = 'member';
+    models.setModels([MANAGED_MODEL]);
+    models.setDefaultModel('managed:kimi-code/kimi-k2');
+    sessions.setSessions([
+      {
+        ...session('s-busy', 'managed:kimi-code/kimi-k2'),
+        busy: true,
+      },
+    ]);
+    clientApiMock.switchManagedWorkspace = vi.fn();
+
+    const outcome = await client.switchManagedWorkspace(
+      { kind: 'business', businessId: 'biz_1' },
+      'Acme AI',
+    );
+
+    expect(outcome).toEqual({
+      ok: false,
+      message: 'account.switchBusyMessage',
+    });
+    expect(clientApiMock.switchManagedWorkspace).not.toHaveBeenCalled();
+  });
+
   it('configure-model when the OAuth refresh lands but the auth convergence probe retries (ok:false, no stale-cache recovery)', async () => {
     const { client, auth } = await freshFacade();
     auth.managedProviderStatus = 'authenticated';

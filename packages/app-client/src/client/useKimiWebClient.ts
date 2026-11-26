@@ -17,7 +17,15 @@ import { dismissToastByKey, nextToastKey, onToast, toast, toastReplaceRevision }
 import { planAdminBatchToast, undoBatchDirectionOf, type AdminBatchToastPlan } from './adminBatchToast';
 import type { ToastOptions } from '@moonshot-ai/app-ui';
 import { consumeDraftPromotionOnSessionChange, getDraftPromotion } from './draftPromotion';
-import { DaemonApiError, isDaemonApiError, MANAGED_KIMI_CODE_PROVIDER_ID, type AppWorkspace } from '@moonshot-ai/app-core/api';
+import {
+  DaemonApiError,
+  isBusinessMembershipRevokedCode,
+  isDaemonApiError,
+  MANAGED_KIMI_CODE_PROVIDER_ID,
+  type AppWorkspace,
+  type ManagedWorkspace,
+  type ManagedWorkspaceTarget,
+} from '@moonshot-ai/app-core/api';
 import {
   type DropPosition,
   type PinnedInsertTarget,
@@ -676,6 +684,10 @@ async function writeSessionProfile(
 }
 
 async function whenSessionProfileSettled(sid: string): Promise<boolean> {
+  if (chatHostId(sid) === undefined && authStore().switchingWorkspaceKey !== null) {
+    await authStore().waitForWorkspaceSwitch();
+    if (authStore().businessMembershipRevokedOpen) return false;
+  }
   let ok = true;
   for (;;) {
     const tail = sessionRuntimeStore().profileWriteChainBySid.get(sid);
@@ -789,6 +801,20 @@ const auxiliaryConversations = createConversationPool({
   maxParked: 6,
   listener: {
     onChange: (entry) => sideChat.pruneEchoedMessages(entry.sessionId, entry.agentId),
+    onTurnEnded: (entry, turn) => {
+      if (isBusinessMembershipRevokedCode(turn.error?.provider_error_code) && isLocalManagedSession(entry.sessionId)) {
+        void authStore().handleBusinessMembershipRevoked();
+      }
+    },
+    onNotice: (entry, notice) => {
+      if (
+        notice.level === 'error' &&
+        isBusinessMembershipRevokedCode(extractNoticeProviderErrorCode(notice.detail)) &&
+        isLocalManagedSession(entry.sessionId)
+      ) {
+        void authStore().handleBusinessMembershipRevoked();
+      }
+    },
   },
 });
 
@@ -1943,6 +1969,9 @@ function settleMainTurnEnd(entry: ConversationEntry, turn: ConversationTurn): vo
   turnPhasesOf(entry).set(turn.turn_id, 'settled');
   pruneEchoedPrompts(sessionId);
   promptPipeline.resumeQueueIfIdle(sessionId);
+  if (isBusinessMembershipRevokedCode(turn.error?.provider_error_code) && isLocalManagedSession(sessionId)) {
+    void authStore().handleBusinessMembershipRevoked();
+  }
   if (turn.kind !== 'agent') return;
   scheduleSessionRowRefresh(sessionId);
   onMainTurnEnd(sessionId, turnResult(turn) === 'completed' ? 'idle' : 'aborted', {
@@ -1955,7 +1984,56 @@ function settleMainTurnEnd(entry: ConversationEntry, turn: ConversationTurn): vo
   });
 }
 
+function isLocalManagedSession(sessionId: string): boolean {
+  if (!authStore().signedIn || chatHostId(sessionId) !== undefined) return false;
+  const session = rawState.sessions.find((row) => row.id === sessionId);
+  const store = modelsStore();
+  const modelId = session?.model ?? store.defaultModel;
+  if (!modelId) return false;
+  const entry = store.models.find((m) => m.id === modelId || m.model === modelId);
+  return entry?.provider === MANAGED_KIMI_CODE_PROVIDER_ID;
+}
+
+function hasActiveLocalManagedWork(): boolean {
+  if (!authStore().signedIn) return false;
+  if (promptStore().isStartingFirstPrompt) {
+    const defaultModel = modelsStore().defaultModel;
+    const entry = defaultModel
+      ? modelsStore().models.find((m) => m.id === defaultModel || m.model === defaultModel)
+      : undefined;
+    if (entry?.provider === MANAGED_KIMI_CODE_PROVIDER_ID) return true;
+  }
+  for (const session of rawState.sessions) {
+    if (!isLocalManagedSession(session.id)) continue;
+    if (session.busy || mainTurnRunning(session.id) || hasPendingLocalWork(session.id)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function extractNoticeProviderErrorCode(detail: string | undefined): string | undefined {
+  if (!detail) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(detail);
+    if (typeof parsed !== 'object' || parsed === null) return undefined;
+    const details = (parsed as { details?: unknown }).details;
+    if (typeof details !== 'object' || details === null) return undefined;
+    const code = (details as { providerErrorCode?: unknown }).providerErrorCode;
+    return typeof code === 'string' && code.length > 0 ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function onMainNotice(sessionId: string, notice: ConversationNotice): void {
+  if (notice.level === 'error' && isLocalManagedSession(sessionId)) {
+    const providerErrorCode = extractNoticeProviderErrorCode(notice.detail);
+    if (isBusinessMembershipRevokedCode(providerErrorCode)) {
+      void authStore().handleBusinessMembershipRevoked();
+      return;
+    }
+  }
   if (notice.code === 'model.not_configured') {
     rawState.unavailableModelBySession = { ...rawState.unavailableModelBySession, [sessionId]: notice.title };
     void confirm({
@@ -2220,6 +2298,16 @@ const presetCatalogState = computed(() => modelsStore().catalogState);
 const managedProviderStatus = computed<string | null>(() => authStore().managedProviderStatus);
 const managedUserInfo = computed<ManagedUserInfo | null>(() => authStore().managedUserInfo);
 const managedMembership = computed<ManagedMembership>(() => authStore().managedMembership);
+const managedWorkspaces = computed<readonly ManagedWorkspace[]>(() => authStore().managedWorkspaces);
+const managedWorkspacesLoaded = computed<boolean>(() => authStore().managedWorkspacesLoaded);
+const managedWorkspacesLoading = computed<boolean>(() => authStore().managedWorkspacesLoading);
+const managedWorkspacesError = computed<string | null>(() => authStore().managedWorkspacesError);
+const hasBusinessWorkspace = computed<boolean>(() => authStore().hasBusinessWorkspace);
+const currentManagedWorkspace = computed<ManagedWorkspace | null>(() => authStore().currentManagedWorkspace);
+const recentWorkspaceKeys = computed<readonly string[]>(() => authStore().recentWorkspaceKeys);
+const switchingWorkspaceKey = computed<string | null>(() => authStore().switchingWorkspaceKey);
+const switchingWorkspaceName = computed<string | null>(() => authStore().switchingWorkspaceName);
+const businessMembershipRevokedOpen = computed<boolean>(() => authStore().businessMembershipRevokedOpen);
 const config = computed<AppConfig | null>(() => rawState.config);
 
 function resolveGateChatModel(
@@ -2498,12 +2586,14 @@ function ensureChatReady(): Promise<EnsureChatReadyResult> {
 async function runEnsureChatReady(): Promise<EnsureChatReadyResult> {
   if (chatHostId() !== undefined) return 'ok';
   const pendingSid = rawState.activeSessionId;
+  const waitedForWorkspaceSwitch =
+    authStore().switchingWorkspaceKey !== null && (await authStore().waitForWorkspaceSwitch());
   if (pendingSid !== null && pendingSid !== undefined) {
     const row = rawState.sessions.find((s) => s.id === pendingSid);
     if (row !== undefined && row.model === '') await whenSessionStatusSettled(pendingSid);
   }
   const early = gateVerdictInput();
-  if (early.chatModel !== null) {
+  if (!waitedForWorkspaceSwitch && early.chatModel !== null) {
     if (early.chatModelManaged && early.signedIn && authStore().managedMembership !== 'member') {
       await authStore().probeMembership();
     }
@@ -2529,6 +2619,9 @@ async function runEnsureChatReady(): Promise<EnsureChatReadyResult> {
 
 async function ensureSideChatReady(sid: string): Promise<EnsureChatReadyResult> {
   if (chatHostId(sid) !== undefined) return 'ok';
+  if (authStore().switchingWorkspaceKey !== null) {
+    await authStore().waitForWorkspaceSwitch();
+  }
   let verdict: EnsureChatReadyResult;
   if (sid === rawState.activeSessionId) {
     verdict = await ensureChatReady();
@@ -3741,6 +3834,16 @@ export function useKimiWebClient() {
     managedProviderStatus,
     managedUserInfo,
     managedMembership,
+    managedWorkspaces,
+    managedWorkspacesLoaded,
+    managedWorkspacesLoading,
+    managedWorkspacesError,
+    hasBusinessWorkspace,
+    currentManagedWorkspace,
+    recentWorkspaceKeys,
+    switchingWorkspaceKey,
+    switchingWorkspaceName,
+    businessMembershipRevokedOpen,
     chatGateVerdict,
     ensureChatReady,
     sendFailureVerdict,
@@ -3757,11 +3860,29 @@ export function useKimiWebClient() {
 
     checkAuth: () => authStore().checkAuth(),
     probeManagedMembership: () => authStore().probeMembership(),
+    reloadManagedWorkspaces: () => authStore().reloadManagedWorkspaces(),
+    switchManagedWorkspace: async (target: ManagedWorkspaceTarget, displayName?: string) => {
+      if (hasActiveLocalManagedWork()) {
+        return { ok: false as const, message: t('account.switchBusyMessage') };
+      }
+      return authStore().switchManagedWorkspace(target, displayName);
+    },
+    acknowledgeBusinessMembershipRevoked: () => authStore().acknowledgeBusinessMembershipRevoked(),
     startOAuthLogin: modelProvider.startOAuthLogin,
     pollOAuthLogin: modelProvider.pollOAuthLogin,
     cancelOAuthLogin: modelProvider.cancelOAuthLogin,
     getOAuthRegion: modelProvider.getOAuthRegion,
-    getUsage: modelProvider.getUsage,
+    getUsage: async () => {
+      const result = await modelProvider.getUsage();
+      if (
+        result.kind === 'error' &&
+        isBusinessMembershipRevokedCode(result.errorCode) &&
+        authStore().signedIn
+      ) {
+        void authStore().handleBusinessMembershipRevoked();
+      }
+      return result;
+    },
     logout: authStore().logout,
   };
 }

@@ -281,7 +281,7 @@ export function errorInfoOf(error: unknown, requestId: string | undefined): Erro
     message?: unknown;
     name?: unknown;
     retryable?: unknown;
-    details?: { statusCode?: unknown; requestId?: unknown };
+    details?: { statusCode?: unknown; requestId?: unknown; providerErrorCode?: unknown };
   };
   if (typeof payload.message !== 'string') return undefined;
   return {
@@ -291,6 +291,10 @@ export function errorInfoOf(error: unknown, requestId: string | undefined): Erro
     status_code: typeof payload.details?.statusCode === 'number' ? payload.details.statusCode : undefined,
     request_id: typeof payload.details?.requestId === 'string' ? payload.details.requestId : requestId,
     retryable: typeof payload.retryable === 'boolean' ? payload.retryable : undefined,
+    provider_error_code:
+      typeof payload.details?.providerErrorCode === 'string'
+        ? payload.details.providerErrorCode
+        : undefined,
   };
 }
 

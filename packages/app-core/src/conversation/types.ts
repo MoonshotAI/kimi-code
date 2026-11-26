@@ -13,6 +13,7 @@ export interface ConversationError {
   readonly status_code?: number;
   readonly request_id?: string;
   readonly retryable?: boolean;
+  readonly provider_error_code?: string;
 }
 
 export interface ConversationUsage {

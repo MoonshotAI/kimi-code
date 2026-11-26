@@ -50,4 +50,4 @@ export { useImeComposition } from './composables/useImeComposition';
 export { IconResolverKey, SIZE_PX, type IconSize } from './icons';
 
 export { default as MetricBadge } from './components/ui/MetricBadge.vue';
-export { menuNavigationIndex } from './composables/menuNavigation';
+export { focusMenuContainerItem, menuNavigationIndex } from './composables/menuNavigation';

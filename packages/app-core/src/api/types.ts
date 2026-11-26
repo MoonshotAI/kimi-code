@@ -52,6 +52,7 @@ export interface AppTurnError {
   retryable?: boolean;
   statusCode?: number;
   requestId?: string;
+  providerErrorCode?: string;
   endReason?: string;
 }
 
@@ -1237,6 +1238,8 @@ export interface KimiWebApi {
   logout(): Promise<{ loggedOut: boolean }>;
   getUsage(): Promise<ManagedQuotaResult>;
   getUserInfo(): Promise<ManagedUserInfoResult>;
+  listManagedWorkspaces(): Promise<ManagedWorkspacesResult>;
+  switchManagedWorkspace(target: ManagedWorkspaceTarget): Promise<ManagedWorkspaceSwitchResult>;
   getOAuthRegion(): Promise<OAuthRegion | null>;
   getClientConfig(name: string, options?: ReadRequestOptions): Promise<unknown>;
   getSessionContextSummary(sessionId: string, agentId?: string, options?: ReadRequestOptions): Promise<SessionContextSummary>;
@@ -1298,7 +1301,7 @@ export interface BoosterWallet {
 
 export type ManagedQuotaResult =
   | { kind: 'ok'; quota: ManagedQuota }
-  | { kind: 'error'; message: string; status?: number };
+  | { kind: 'error'; message: string; status?: number; errorCode?: string };
 
 export interface ManagedUserInfo {
   userId: string;
@@ -1318,11 +1321,56 @@ export interface ManagedUserInfo {
   phone?: { countryCode: string; number: string };
   createdTime?: string;
   lastLoginTime?: string;
+  workspaceName?: string;
 }
 
 export type ManagedUserInfoResult =
   | { kind: 'ok'; userInfo: ManagedUserInfo }
-  | { kind: 'error'; message: string; status?: number };
+  | { kind: 'error'; message: string; status?: number; errorCode?: string };
+
+export type ManagedWorkspaceTarget =
+  | { readonly kind: 'personal' }
+  | { readonly kind: 'business'; readonly businessId: string };
+
+export type ManagedWorkspace =
+  | {
+      readonly kind: 'personal';
+      readonly key: string;
+      readonly name: string;
+      readonly current: boolean;
+      readonly disabled: boolean;
+      readonly switchable: boolean;
+      readonly roles: readonly string[];
+    }
+  | {
+      readonly kind: 'business';
+      readonly key: string;
+      readonly businessId: string;
+      readonly name: string;
+      readonly status: string;
+      readonly current: boolean;
+      readonly disabled: boolean;
+      readonly switchable: boolean;
+      readonly nickname?: string;
+      readonly roles: readonly string[];
+    };
+
+export type ManagedWorkspacesResult =
+  | { readonly kind: 'ok'; readonly workspaces: readonly ManagedWorkspace[] }
+  | { readonly kind: 'error'; readonly message: string; readonly status?: number; readonly errorCode?: string };
+
+export type ManagedWorkspaceSwitchResult =
+  | {
+      readonly kind: 'ok';
+      readonly provider: string;
+      readonly target: ManagedWorkspaceTarget;
+      readonly warning?: string;
+    }
+  | { readonly kind: 'error'; readonly message: string; readonly status?: number; readonly errorCode?: string };
+
+export function isBusinessMembershipRevokedCode(code: string | undefined): boolean {
+  return code === 'REASON_BUSINESS_MEMBER_REMOVED' || code === 'REASON_BUSINESS_MEMBER_DISABLED';
+}
 
 export const MANAGED_KIMI_CODE_PROVIDER_ID = 'managed:kimi-code';
 

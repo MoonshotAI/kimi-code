@@ -10,6 +10,7 @@ import type {
   OnboardingCompletedEvent,
   OnboardingStepEvent,
   OauthLoginStepEvent,
+  IdentitySwitchEvent,
   OccupiedChoiceEvent,
   OccupiedPromptShownEvent,
   PlanUsageCardViewedEvent,
@@ -48,6 +49,7 @@ export type {
   OnboardingCompletedEvent,
   OnboardingStepEvent,
   OauthLoginStepEvent,
+  IdentitySwitchEvent,
   OccupiedChoiceEvent,
   OccupiedPromptShownEvent,
   PlanUsageCardViewedEvent,
@@ -294,6 +296,7 @@ export interface DesktopEventPayloads {
   search_opened: Record<string, never>;
   search_executed: SearchExecutedEvent;
   logout: Record<string, never>;
+  identity_switch: IdentitySwitchEvent;
   plan_usage_card_viewed: PlanUsageCardViewedEvent;
   upgrade_clicked: Record<string, never>;
   telemetry_consent_changed: TelemetryConsentChangedEvent;

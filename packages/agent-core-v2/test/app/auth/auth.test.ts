@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import {
+  BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+  BusinessMembershipRevokedError,
   clearManagedKimiCodeConfig,
   resolveKimiCodeOAuthKey,
   resolveKimiCodeRuntimeAuth,
@@ -25,6 +27,8 @@ import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { WebSearchProviderService } from '#/app/auth/webSearch/webSearchService';
 import { IAuthLegacyService } from '#/app/authLegacy/authLegacy';
 import { AuthLegacyService } from '#/app/authLegacy/authLegacyService';
+import { ModelOAuthTokenAdapter } from '#/app/kosongConfig/oauthTokenAdapter';
+import { toErrorPayload } from '#/_base/errors/serialize';
 import { IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
 import { IEventService } from '#/app/event/event';
@@ -85,6 +89,7 @@ const OVERSEAS_SCOPED_REF = {
 interface FakeToolkit {
   readonly login: Mock<(...args: any[]) => any>;
   readonly logout: ReturnType<typeof vi.fn>;
+  readonly switchWorkspace: ReturnType<typeof vi.fn>;
   readonly getCachedAccessToken: ReturnType<typeof vi.fn>;
   readonly tokenProvider: ReturnType<typeof vi.fn>;
   readonly getManagedUsage: ReturnType<typeof vi.fn>;
@@ -162,6 +167,11 @@ describe('OAuthService', () => {
     toolkit = {
       login: vi.fn<(...args: any[]) => any>(),
       logout: vi.fn().mockResolvedValue({ providerName: OAUTH_PROVIDER, ok: true }),
+      switchWorkspace: vi.fn().mockResolvedValue({
+        providerName: OAUTH_PROVIDER,
+        ok: true,
+        target: { kind: 'personal' },
+      }),
       getCachedAccessToken: vi.fn().mockResolvedValue(undefined),
       tokenProvider: vi.fn().mockReturnValue({ getAccessToken: async () => 'access-token' }),
       getManagedUsage: vi.fn().mockResolvedValue({ kind: 'error', message: 'not configured' }),
@@ -1210,6 +1220,64 @@ describe('OAuthService', () => {
     expect(configReplace).toHaveBeenCalledWith('thinking', { enabled: false });
     expect(thinking).toEqual({ enabled: false });
   });
+
+  it('surfaces model catalog refresh failures as a warning in switchManagedWorkspace', async () => {
+    toolkit.getCachedAccessToken.mockResolvedValue('switched-token');
+    toolkit.switchWorkspace.mockResolvedValue({
+      providerName: OAUTH_PROVIDER,
+      ok: true,
+      target: { kind: 'business', businessId: 'biz_1' },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('upstream unavailable', { status: 503 })),
+    );
+    const svc = createService();
+
+    const response = await svc.switchManagedWorkspace(
+      { kind: 'business', business_id: 'biz_1' },
+      OAUTH_PROVIDER,
+    );
+
+    expect(response).toMatchObject({
+      kind: 'ok',
+      provider: OAUTH_PROVIDER,
+      target: { kind: 'business', business_id: 'biz_1' },
+      warning: expect.stringContaining('Failed to refresh model catalog'),
+    });
+    expect(events.some((event) => event.type === 'event.model_catalog.changed')).toBe(true);
+  });
+
+  it('publishes ModelCatalogChanged after switchManagedWorkspace even when models are unchanged', async () => {
+    stubManagedModelsFetch();
+    models = {
+      'kimi-code/kimi-k2': {
+        provider: OAUTH_PROVIDER,
+        model: 'kimi-k2',
+        maxContextSize: 131072,
+      },
+    };
+    defaultModel = 'kimi-code/kimi-k2';
+    toolkit.getCachedAccessToken.mockResolvedValue('switched-token');
+    toolkit.switchWorkspace.mockResolvedValue({
+      providerName: OAUTH_PROVIDER,
+      ok: true,
+      target: { kind: 'business', businessId: 'biz_1' },
+    });
+    const svc = createService();
+
+    const response = await svc.switchManagedWorkspace(
+      { kind: 'business', business_id: 'biz_1' },
+      OAUTH_PROVIDER,
+    );
+
+    expect(response).toEqual({
+      kind: 'ok',
+      provider: OAUTH_PROVIDER,
+      target: { kind: 'business', business_id: 'biz_1' },
+    });
+    expect(events.filter((event) => event.type === 'event.model_catalog.changed')).toHaveLength(1);
+  });
 });
 
 describe('WebSearchProviderService', () => {
@@ -2093,5 +2161,32 @@ describe('AuthLegacyService', () => {
     defaultModel = 'k2';
     await expect(svc.get()).resolves.toMatchObject({ models_ready: true });
     expect(configReload).not.toHaveBeenCalled();
+  });
+
+  it('preserves providerErrorCode when ModelOAuthTokenAdapter encounters BusinessMembershipRevokedError during refresh', async () => {
+    const adapter = new ModelOAuthTokenAdapter({
+      getCachedAccessToken: vi.fn(),
+      resolveTokenProvider: vi.fn(() => ({
+        getAccessToken: vi
+          .fn()
+          .mockRejectedValue(
+            new BusinessMembershipRevokedError('REASON_BUSINESS_MEMBER_REMOVED'),
+          ),
+      })),
+    } as unknown as IOAuthService);
+
+    const caught = await adapter
+      .getAccessToken('managed:kimi-code', { storage: 'file', key: 'oauth/kimi-code' })
+      .catch((error: unknown) => error);
+
+    expect(toErrorPayload(caught)).toMatchObject({
+      code: 'provider.auth_error',
+      message: BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+      retryable: false,
+      details: {
+        statusCode: 401,
+        providerErrorCode: 'REASON_BUSINESS_MEMBER_REMOVED',
+      },
+    });
   });
 });

@@ -61,6 +61,10 @@ import type {
   ListSessionsInput,
   ManagedQuotaResult,
   ManagedUserInfoResult,
+  ManagedWorkspace,
+  ManagedWorkspacesResult,
+  ManagedWorkspaceSwitchResult,
+  ManagedWorkspaceTarget,
   OAuthLoginStartResult,
   OAuthRegion,
   PromptSubmission,
@@ -93,6 +97,24 @@ const OAUTH_REGION_PROBE_TIMEOUT_MS = 5_000;
 
 const AGENT_TURNS_TIMEOUT_MS = 2 * 60_000;
 const FEEDBACK_UPLOAD_TIMEOUT_MS = Infinity;
+
+function fromWireManagedError(data: {
+  message: string;
+  status?: number;
+  error_code?: string;
+}): {
+  readonly kind: 'error';
+  readonly message: string;
+  readonly status?: number;
+  readonly errorCode?: string;
+} {
+  return {
+    kind: 'error',
+    message: data.message,
+    ...(data.status !== undefined ? { status: data.status } : {}),
+    ...(data.error_code !== undefined ? { errorCode: data.error_code } : {}),
+  };
+}
 
 const VALIDATION_FAILED_CODE = 40001;
 import {
@@ -148,11 +170,13 @@ import type {
   WireMcpAuthBeginResult,
   WireMcpAuthStatus,
   WireMcpServerAuthInspection,
+  WireManagedWorkspacesResult,
   WireModel,
   WireOAuthCancelResult,
   WireOAuthLoginPollResult,
   WireOAuthLoginStartResult,
   WireOAuthRegionResult,
+  WireWorkspaceSwitchResult,
   WirePage,
   WirePluginCapabilities,
   WirePluginMarketplaceEntry,
@@ -2006,6 +2030,60 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   async getUserInfo(): Promise<ManagedUserInfoResult> {
     return this.http.get<ManagedUserInfoResult>('/oauth/userinfo');
+  }
+
+  async listManagedWorkspaces(): Promise<ManagedWorkspacesResult> {
+    const data = await this.http.get<WireManagedWorkspacesResult>('/oauth/workspaces');
+    if (data.kind === 'error') return fromWireManagedError(data);
+    return {
+      kind: 'ok',
+      workspaces: data.workspaces.map((entry): ManagedWorkspace =>
+        entry.kind === 'personal'
+          ? {
+              kind: 'personal',
+              key: entry.key,
+              name: entry.name,
+              current: entry.current,
+              disabled: entry.disabled,
+              switchable: entry.switchable,
+              roles: entry.roles,
+            }
+          : {
+              kind: 'business',
+              key: entry.key,
+              businessId: entry.business_id,
+              name: entry.name,
+              status: entry.status,
+              current: entry.current,
+              disabled: entry.disabled,
+              switchable: entry.switchable,
+              ...(entry.nickname !== undefined ? { nickname: entry.nickname } : {}),
+              roles: entry.roles,
+            },
+      ),
+    };
+  }
+
+  async switchManagedWorkspace(
+    target: ManagedWorkspaceTarget,
+  ): Promise<ManagedWorkspaceSwitchResult> {
+    const wireTarget =
+      target.kind === 'personal'
+        ? { kind: 'personal' as const }
+        : { kind: 'business' as const, business_id: target.businessId };
+    const data = await this.http.post<WireWorkspaceSwitchResult>('/oauth/workspaces/switch', {
+      target: wireTarget,
+    });
+    if (data.kind === 'error') return fromWireManagedError(data);
+    return {
+      kind: 'ok',
+      provider: data.provider,
+      target:
+        data.target.kind === 'personal'
+          ? { kind: 'personal' }
+          : { kind: 'business', businessId: data.target.business_id },
+      ...(data.warning !== undefined ? { warning: data.warning } : {}),
+    };
   }
 
   async getOAuthRegion(): Promise<OAuthRegion | null> {

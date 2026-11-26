@@ -424,6 +424,7 @@ GET /api/v1/oauth/usage response 200.data<#0>.quota.usages.monthTotal: object cl
 GET /api/v1/oauth/usage response 200.data<#0>.quota.usages: object closed
 GET /api/v1/oauth/usage response 200.data<#0>.quota: object closed
 GET /api/v1/oauth/usage response 200.data<#0>: object closed
+GET /api/v1/oauth/usage response 200.data<#1>.errorCode: string optional
 GET /api/v1/oauth/usage response 200.data<#1>.kind: enum "error"
 GET /api/v1/oauth/usage response 200.data<#1>.message: string
 GET /api/v1/oauth/usage response 200.data<#1>.status: integer minimum=-9007199254740991 maximum=9007199254740991 optional
@@ -456,8 +457,10 @@ GET /api/v1/oauth/userinfo response 200.data<#0>.userInfo.userId: string
 GET /api/v1/oauth/userinfo response 200.data<#0>.userInfo.userLevel: integer minimum=-9007199254740991 maximum=9007199254740991
 GET /api/v1/oauth/userinfo response 200.data<#0>.userInfo.userLevelName: string
 GET /api/v1/oauth/userinfo response 200.data<#0>.userInfo.username: string optional
+GET /api/v1/oauth/userinfo response 200.data<#0>.userInfo.workspaceName: string optional
 GET /api/v1/oauth/userinfo response 200.data<#0>.userInfo: object closed
 GET /api/v1/oauth/userinfo response 200.data<#0>: object closed
+GET /api/v1/oauth/userinfo response 200.data<#1>.errorCode: string optional
 GET /api/v1/oauth/userinfo response 200.data<#1>.kind: enum "error"
 GET /api/v1/oauth/userinfo response 200.data<#1>.message: string
 GET /api/v1/oauth/userinfo response 200.data<#1>.status: integer minimum=-9007199254740991 maximum=9007199254740991 optional
@@ -467,6 +470,44 @@ GET /api/v1/oauth/userinfo response 200.msg: string
 GET /api/v1/oauth/userinfo response 200.request_id: string
 GET /api/v1/oauth/userinfo response 200: object closed
 GET /api/v1/oauth/userinfo: operation
+GET /api/v1/oauth/workspaces param query:provider: string minLength=1 optional
+GET /api/v1/oauth/workspaces response 200.code: enum 0
+GET /api/v1/oauth/workspaces response 200.data: oneOf
+GET /api/v1/oauth/workspaces response 200.data<#0>.kind: enum "ok"
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces: array
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]: oneOf
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#0>.current: boolean
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#0>.disabled: boolean
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#0>.key: string minLength=1
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#0>.kind: enum "personal"
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#0>.name: string minLength=1
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#0>.roles: array
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#0>.roles[]: string
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#0>.switchable: boolean
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#0>: object closed
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#1>.business_id: string minLength=1
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#1>.current: boolean
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#1>.disabled: boolean
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#1>.key: string minLength=1
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#1>.kind: enum "business"
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#1>.name: string minLength=1
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#1>.nickname: string optional
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#1>.roles: array
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#1>.roles[]: string
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#1>.status: string minLength=1
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#1>.switchable: boolean
+GET /api/v1/oauth/workspaces response 200.data<#0>.workspaces[]<#1>: object closed
+GET /api/v1/oauth/workspaces response 200.data<#0>: object closed
+GET /api/v1/oauth/workspaces response 200.data<#1>.error_code: string optional
+GET /api/v1/oauth/workspaces response 200.data<#1>.kind: enum "error"
+GET /api/v1/oauth/workspaces response 200.data<#1>.message: string
+GET /api/v1/oauth/workspaces response 200.data<#1>.status: integer minimum=-9007199254740991 maximum=9007199254740991 optional
+GET /api/v1/oauth/workspaces response 200.data<#1>: object closed
+GET /api/v1/oauth/workspaces response 200.details: any optional
+GET /api/v1/oauth/workspaces response 200.msg: string
+GET /api/v1/oauth/workspaces response 200.request_id: string
+GET /api/v1/oauth/workspaces response 200: object closed
+GET /api/v1/oauth/workspaces: operation
 GET /api/v1/plugins response 200.code: enum 0
 GET /api/v1/plugins response 200.data.plugins: array
 GET /api/v1/plugins response 200.data.plugins[].catalog_id: string optional
@@ -783,6 +824,7 @@ GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.d
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].error.code: string
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].error.message: string
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].error.name: string optional
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].error.provider_error_code: string optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].error.request_id: string optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].error.retryable: boolean optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].error.status_code: integer minimum=-9007199254740991 maximum=9007199254740991 optional
@@ -844,6 +886,7 @@ GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.d
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error.code: string
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error.message: string
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error.name: string optional
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error.provider_error_code: string optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error.request_id: string optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error.retryable: boolean optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<system#5>.error.status_code: integer minimum=-9007199254740991 maximum=9007199254740991 optional
@@ -2076,6 +2119,38 @@ POST /api/v1/oauth/logout response 200<code=0>.request_id: string
 POST /api/v1/oauth/logout response 200<code=0>: object closed
 POST /api/v1/oauth/logout response 200<code=50001>: shape c8fef53e
 POST /api/v1/oauth/logout: operation
+POST /api/v1/oauth/workspaces/switch request.provider: string minLength=1 optional
+POST /api/v1/oauth/workspaces/switch request.target: oneOf
+POST /api/v1/oauth/workspaces/switch request.target<#0>.kind: enum "personal"
+POST /api/v1/oauth/workspaces/switch request.target<#0>: object
+POST /api/v1/oauth/workspaces/switch request.target<#1>.business_id: string minLength=1
+POST /api/v1/oauth/workspaces/switch request.target<#1>.kind: enum "business"
+POST /api/v1/oauth/workspaces/switch request.target<#1>: object
+POST /api/v1/oauth/workspaces/switch request: object
+POST /api/v1/oauth/workspaces/switch response 200: oneOf
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.code: enum 0
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data: oneOf
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#0>.kind: enum "ok"
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#0>.provider: string minLength=1
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#0>.target: oneOf
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#0>.target<#0>.kind: enum "personal"
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#0>.target<#0>: object closed
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#0>.target<#1>.business_id: string minLength=1
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#0>.target<#1>.kind: enum "business"
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#0>.target<#1>: object closed
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#0>.warning: string optional
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#0>: object closed
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#1>.error_code: string optional
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#1>.kind: enum "error"
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#1>.message: string
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#1>.status: integer minimum=-9007199254740991 maximum=9007199254740991 optional
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.data<#1>: object closed
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.details: any optional
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.msg: string
+POST /api/v1/oauth/workspaces/switch response 200<code=0>.request_id: string
+POST /api/v1/oauth/workspaces/switch response 200<code=0>: object closed
+POST /api/v1/oauth/workspaces/switch response 200<code=40001>: shape a642160a
+POST /api/v1/oauth/workspaces/switch: operation
 POST /api/v1/plugins request: anyOf
 POST /api/v1/plugins request<#0>.source: string minLength=1
 POST /api/v1/plugins request<#0>: object closed
@@ -3947,7 +4022,7 @@ ws server message item.item<reasoning>: object
 ws server message item.item<system#5>.compacted_count: integer minimum=0 maximum=9007199254740991 optional
 ws server message item.item<system#5>.created_at: string
 ws server message item.item<system#5>.debug: shape e7fbf47b optional
-ws server message item.item<system#5>.error: shape a7e385b8 optional
+ws server message item.item<system#5>.error: shape d4191810 optional
 ws server message item.item<system#5>.instruction: string optional
 ws server message item.item<system#5>.item_id: string minLength=1
 ws server message item.item<system#5>.kind: const "compaction"
@@ -4330,7 +4405,7 @@ ws server message turn.turn.continuation: enum "background"|"none"|"turn" option
 ws server message turn.turn.duration_ms: number minimum=0 optional
 ws server message turn.turn.end_reason: enum "aborted"|"blocked"|"error"|"filtered"|"max_steps"|"user_cancelled" optional
 ws server message turn.turn.ended_at: string optional
-ws server message turn.turn.error: shape a7e385b8 optional
+ws server message turn.turn.error: shape d4191810 optional
 ws server message turn.turn.kind: enum "agent"|"system"
 ws server message turn.turn.ordinal: integer minimum=0 maximum=9007199254740991
 ws server message turn.turn.outcome: enum "completed"|"failed"|"interrupted" optional
@@ -4362,7 +4437,7 @@ ws server message turns.turns[].continuation: enum "background"|"none"|"turn" op
 ws server message turns.turns[].duration_ms: number minimum=0 optional
 ws server message turns.turns[].end_reason: enum "aborted"|"blocked"|"error"|"filtered"|"max_steps"|"user_cancelled" optional
 ws server message turns.turns[].ended_at: string optional
-ws server message turns.turns[].error: shape a7e385b8 optional
+ws server message turns.turns[].error: shape d4191810 optional
 ws server message turns.turns[].items: array
 ws server message turns.turns[].items[]: anyOf
 ws server message turns.turns[].items[]<assistant_message>.created_at: string
@@ -4417,7 +4492,7 @@ ws server message turns.turns[].items[]<reasoning>: object
 ws server message turns.turns[].items[]<system#5>.compacted_count: integer minimum=0 maximum=9007199254740991 optional
 ws server message turns.turns[].items[]<system#5>.created_at: string
 ws server message turns.turns[].items[]<system#5>.debug: shape e7fbf47b optional
-ws server message turns.turns[].items[]<system#5>.error: shape a7e385b8 optional
+ws server message turns.turns[].items[]<system#5>.error: shape d4191810 optional
 ws server message turns.turns[].items[]<system#5>.instruction: string optional
 ws server message turns.turns[].items[]<system#5>.item_id: string minLength=1
 ws server message turns.turns[].items[]<system#5>.kind: const "compaction"
@@ -4886,12 +4961,6 @@ shape a642160a.data: enum null nullable
 shape a642160a.details: any optional
 shape a642160a.msg: string
 shape a642160a.request_id: string
-shape a7e385b8.code: string
-shape a7e385b8.message: string
-shape a7e385b8.name: string optional
-shape a7e385b8.request_id: string optional
-shape a7e385b8.retryable: boolean optional
-shape a7e385b8.status_code: integer minimum=-9007199254740991 maximum=9007199254740991 optional
 shape aaa33e5e.client_blocked_ms: number optional
 shape aaa33e5e.client_consume_ms: number optional
 shape aaa33e5e.first_token_ms: number optional
@@ -5008,6 +5077,13 @@ shape d08e456a.input_cache_creation: number minimum=0
 shape d08e456a.input_cache_read: number minimum=0
 shape d08e456a.input_other: number minimum=0
 shape d08e456a.output: number minimum=0
+shape d4191810.code: string
+shape d4191810.message: string
+shape d4191810.name: string optional
+shape d4191810.provider_error_code: string optional
+shape d4191810.request_id: string optional
+shape d4191810.retryable: boolean optional
+shape d4191810.status_code: integer minimum=-9007199254740991 maximum=9007199254740991 optional
 shape d4845858.code: enum 40001
 shape d4845858.data: enum null nullable
 shape d4845858.details: array nullable optional

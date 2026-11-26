@@ -1,4 +1,8 @@
-import { extractApiErrorMessage } from './api-error';
+import { extractApiErrorCode, extractApiErrorMessage } from './api-error';
+import {
+  BusinessMembershipRevokedError,
+  isBusinessMembershipRevokedCode,
+} from './business-membership';
 import {
   OAuthConnectionError,
   OAuthError,
@@ -258,8 +262,16 @@ export async function refreshAccessToken(
     },
     options,
     (status, data) => {
-      const errorCode = typeof data['error'] === 'string' ? data['error'] : '';
+      const errorCode =
+        extractApiErrorCode(data) ??
+        (typeof data['error'] === 'string' && data['error'].length > 0 ? data['error'] : '');
       const detail = extractApiErrorMessage(data);
+      if (status === 401 && isBusinessMembershipRevokedCode(errorCode)) {
+        return {
+          error: new BusinessMembershipRevokedError(errorCode),
+          retryable: false,
+        };
+      }
       if (status === 401 || status === 403 || errorCode === 'invalid_grant') {
         return {
           error: new OAuthUnauthorizedError(detail ?? 'Token refresh unauthorized.'),
@@ -300,7 +312,8 @@ export async function switchWorkspaceToken(
     options,
     (status, data) => {
       const errorCode =
-        typeof data['error'] === 'string' && data['error'].length > 0 ? data['error'] : undefined;
+        extractApiErrorCode(data) ??
+        (typeof data['error'] === 'string' && data['error'].length > 0 ? data['error'] : undefined);
       const detail = extractApiErrorMessage(data);
       const desc = detail ?? `Workspace switch failed (HTTP ${status}).`;
       return {

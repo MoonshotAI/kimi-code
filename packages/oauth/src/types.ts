@@ -7,6 +7,7 @@ export interface TokenInfo {
   readonly scope: string;
   readonly tokenType: string;
   readonly expiresIn: number;
+  readonly revokedReasonCode?: string;
 }
 
 export interface DeviceAuthorization {
@@ -42,6 +43,7 @@ export interface TokenInfoWire {
   readonly scope: string;
   readonly token_type: string;
   readonly expires_in: number;
+  readonly revoked_reason_code?: string;
 }
 
 export function tokenToWire(token: TokenInfo): TokenInfoWire {
@@ -52,6 +54,9 @@ export function tokenToWire(token: TokenInfo): TokenInfoWire {
     scope: token.scope,
     token_type: token.tokenType,
     expires_in: token.expiresIn,
+    ...(token.revokedReasonCode !== undefined
+      ? { revoked_reason_code: token.revokedReasonCode }
+      : {}),
   };
 }
 
@@ -63,5 +68,8 @@ export function tokenFromWire(wire: Partial<TokenInfoWire>): TokenInfo {
     scope: wire.scope ?? '',
     tokenType: wire.token_type ?? '',
     expiresIn: typeof wire.expires_in === 'number' ? wire.expires_in : 0,
+    ...(typeof wire.revoked_reason_code === 'string' && wire.revoked_reason_code.length > 0
+      ? { revokedReasonCode: wire.revoked_reason_code }
+      : {}),
   };
 }

@@ -1,7 +1,10 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { isBusinessMembershipRevokedCode } from './business-membership';
+import {
+  describeManagedOAuthFailure,
+  isBusinessMembershipRevokedCode,
+} from './business-membership';
 import { KIMI_CODE_FLOW_CONFIG } from './constants';
 import { OAuthUnauthorizedError, OAuthWorkspaceSwitchError } from './errors';
 import {
@@ -449,20 +452,15 @@ export class KimiOAuthToolkit<TConfig = unknown> {
       readonly baseUrl?: string | undefined;
     } = {},
   ): Promise<AuthManagedUsageResult> {
-    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
-    try {
-      const accessToken = await this.ensureFresh(name, {
-        oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
-      });
-      const result = await fetchManagedUsage(managedUsageUrl(options.baseUrl), accessToken);
+    return this.withManagedAccessToken(providerName, options, async (accessToken) => {
+      const result = await fetchManagedUsage(
+        managedUsageUrl(options.baseUrl),
+        accessToken,
+        this.managedRequestInit(),
+      );
       if (result.kind === 'error') return result;
       return { kind: 'ok', quota: result.quota };
-    } catch (error) {
-      return {
-        kind: 'error',
-        message: error instanceof Error ? error.message : String(error),
-      };
-    }
+    });
   }
 
   async getManagedUserInfo(
@@ -472,20 +470,15 @@ export class KimiOAuthToolkit<TConfig = unknown> {
       readonly baseUrl?: string | undefined;
     } = {},
   ): Promise<AuthManagedUserInfoResult> {
-    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
-    try {
-      const accessToken = await this.ensureFresh(name, {
-        oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
-      });
-      const result = await fetchManagedUserInfo(managedUserInfoUrl(options.baseUrl), accessToken);
+    return this.withManagedAccessToken(providerName, options, async (accessToken) => {
+      const result = await fetchManagedUserInfo(
+        managedUserInfoUrl(options.baseUrl),
+        accessToken,
+        this.managedRequestInit(),
+      );
       if (result.kind === 'error') return result;
       return { kind: 'ok', userInfo: result.userInfo };
-    } catch (error) {
-      return {
-        kind: 'error',
-        message: error instanceof Error ? error.message : String(error),
-      };
-    }
+    });
   }
 
   managerFor(
@@ -582,7 +575,15 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     providerName: string | undefined,
     options: KimiOAuthWorkspaceOptions,
     run: (accessToken: string) => Promise<TResult>,
-  ): Promise<TResult | { readonly kind: 'error'; readonly message: string }> {
+  ): Promise<
+    | TResult
+    | {
+        readonly kind: 'error';
+        readonly status?: number;
+        readonly errorCode?: string;
+        readonly message: string;
+      }
+  > {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     try {
       const accessToken = await this.ensureFresh(name, {
@@ -590,10 +591,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
       });
       return await run(accessToken);
     } catch (error) {
-      return {
-        kind: 'error',
-        message: error instanceof Error ? error.message : String(error),
-      };
+      return { kind: 'error', ...describeManagedOAuthFailure(error) };
     }
   }
 

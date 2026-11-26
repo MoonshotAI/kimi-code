@@ -7,7 +7,12 @@ import type {
   KimiOAuthLoginResult,
   KimiOAuthLogoutResult,
   KimiOAuthTokenRef,
+  KimiOAuthWorkspaceOptions,
+  KimiOAuthWorkspaceSwitchResult,
   KimiRegion,
+  ManagedAccountProfileResult,
+  ManagedWorkspacesResult,
+  WorkspaceTarget,
 } from '@moonshot-ai/kimi-code-oauth';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
@@ -21,6 +26,9 @@ import type {
   OAuthFlowStart,
   OAuthLoginCancelResponse,
   OAuthLogoutResponse,
+  OAuthManagedWorkspacesResult,
+  OAuthWorkspaceSwitchResponse,
+  OAuthWorkspaceTarget,
   RefreshOAuthProviderModelsResponse,
 } from './oauthProtocol';
 
@@ -44,6 +52,11 @@ export interface IOAuthService {
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse>;
   getManagedUsage(provider?: string): Promise<AuthManagedUsageResult>;
   getManagedUserInfo(provider?: string): Promise<AuthManagedUserInfoResult>;
+  listManagedWorkspaces(provider?: string): Promise<OAuthManagedWorkspacesResult>;
+  switchManagedWorkspace(
+    target: OAuthWorkspaceTarget,
+    provider?: string,
+  ): Promise<OAuthWorkspaceSwitchResponse>;
   resolveTokenProvider(provider: string, oauthRef?: OAuthRef): BearerTokenProvider | undefined;
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined>;
   getRegion(): KimiRegion;
@@ -71,6 +84,19 @@ export interface IOAuthToolkit {
     providerName?: string,
     options?: { readonly oauthRef?: KimiOAuthTokenRef; readonly baseUrl?: string },
   ): Promise<AuthManagedUserInfoResult>;
+  listWorkspaces(
+    providerName?: string,
+    options?: KimiOAuthWorkspaceOptions,
+  ): Promise<ManagedWorkspacesResult>;
+  getAccountProfile(
+    providerName?: string,
+    options?: KimiOAuthWorkspaceOptions,
+  ): Promise<ManagedAccountProfileResult>;
+  switchWorkspace(
+    target: WorkspaceTarget,
+    providerName?: string,
+    options?: KimiOAuthWorkspaceOptions,
+  ): Promise<KimiOAuthWorkspaceSwitchResult>;
 }
 
 export const IOAuthToolkit: ServiceIdentifier<IOAuthToolkit> =
