@@ -739,4 +739,72 @@ describe('kimi.auth — enterprise workspaces and membership revocation', () => 
     expect(logoutSettled).toBe(true);
     expect(ackResolved).toBe(true);
   });
+
+  it('updates current workspace selection and surfaces a warning when post-switch listManagedWorkspaces fails', async () => {
+    let listCalls = 0;
+    getKimiWebApiMock.mockReturnValue({
+      getAuth: vi.fn().mockResolvedValue(AUTHENTICATED),
+      getUserInfo: vi.fn().mockResolvedValue({
+        kind: 'ok',
+        userInfo: { ...profile, workspaceName: 'Acme Studio' },
+      }),
+      listManagedWorkspaces: vi.fn().mockImplementation(async () => {
+        listCalls += 1;
+        if (listCalls === 1) {
+          return {
+            kind: 'ok',
+            workspaces: [
+              {
+                kind: 'personal',
+                key: 'personal',
+                name: 'Personal',
+                current: true,
+                disabled: false,
+                switchable: true,
+                roles: ['ROLE_OWNER'],
+              },
+              {
+                kind: 'business',
+                key: 'business:biz_42',
+                businessId: 'biz_42',
+                name: 'Acme Studio',
+                status: 'STATUS_ACTIVE',
+                current: false,
+                disabled: false,
+                switchable: true,
+                roles: ['ROLE_MEMBER'],
+              },
+            ],
+          };
+        }
+        return {
+          kind: 'error',
+          status: 503,
+          message: 'Workspace directory temporarily unavailable',
+        };
+      }),
+      switchManagedWorkspace: vi.fn().mockResolvedValue({
+        kind: 'ok',
+        provider: 'managed:kimi-code',
+        target: { kind: 'business', businessId: 'biz_42' },
+      }),
+    });
+
+    await authStore().checkAuth();
+    await flushUserInfo();
+    expect(authStore().currentManagedWorkspace?.key).toBe('personal');
+
+    const outcome = await authStore().switchManagedWorkspace(
+      { kind: 'business', businessId: 'biz_42' },
+      'Acme Studio',
+    );
+
+    expect(outcome).toEqual({
+      ok: true,
+      warning: 'Workspace directory temporarily unavailable',
+    });
+    expect(authStore().currentManagedWorkspace?.key).toBe('business:biz_42');
+    expect(authStore().managedWorkspaces.find((ws) => ws.key === 'personal')?.current).toBe(false);
+    expect(authStore().managedWorkspacesError).toBe('Workspace directory temporarily unavailable');
+  });
 });

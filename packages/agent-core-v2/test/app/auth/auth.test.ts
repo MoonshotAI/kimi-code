@@ -85,6 +85,7 @@ const OVERSEAS_SCOPED_REF = {
 interface FakeToolkit {
   readonly login: Mock<(...args: any[]) => any>;
   readonly logout: ReturnType<typeof vi.fn>;
+  readonly switchWorkspace: ReturnType<typeof vi.fn>;
   readonly getCachedAccessToken: ReturnType<typeof vi.fn>;
   readonly tokenProvider: ReturnType<typeof vi.fn>;
   readonly getManagedUsage: ReturnType<typeof vi.fn>;
@@ -162,6 +163,11 @@ describe('OAuthService', () => {
     toolkit = {
       login: vi.fn<(...args: any[]) => any>(),
       logout: vi.fn().mockResolvedValue({ providerName: OAUTH_PROVIDER, ok: true }),
+      switchWorkspace: vi.fn().mockResolvedValue({
+        providerName: OAUTH_PROVIDER,
+        ok: true,
+        target: { kind: 'personal' },
+      }),
       getCachedAccessToken: vi.fn().mockResolvedValue(undefined),
       tokenProvider: vi.fn().mockReturnValue({ getAccessToken: async () => 'access-token' }),
       getManagedUsage: vi.fn().mockResolvedValue({ kind: 'error', message: 'not configured' }),
@@ -1209,6 +1215,64 @@ describe('OAuthService', () => {
     expect(result.changed).toHaveLength(1);
     expect(configReplace).toHaveBeenCalledWith('thinking', { enabled: false });
     expect(thinking).toEqual({ enabled: false });
+  });
+
+  it('surfaces model catalog refresh failures as a warning in switchManagedWorkspace', async () => {
+    toolkit.getCachedAccessToken.mockResolvedValue('switched-token');
+    toolkit.switchWorkspace.mockResolvedValue({
+      providerName: OAUTH_PROVIDER,
+      ok: true,
+      target: { kind: 'business', businessId: 'biz_1' },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('upstream unavailable', { status: 503 })),
+    );
+    const svc = createService();
+
+    const response = await svc.switchManagedWorkspace(
+      { kind: 'business', business_id: 'biz_1' },
+      OAUTH_PROVIDER,
+    );
+
+    expect(response).toMatchObject({
+      kind: 'ok',
+      provider: OAUTH_PROVIDER,
+      target: { kind: 'business', business_id: 'biz_1' },
+      warning: expect.stringContaining('Failed to refresh model catalog'),
+    });
+    expect(events.some((event) => event.type === 'event.model_catalog.changed')).toBe(true);
+  });
+
+  it('publishes ModelCatalogChanged after switchManagedWorkspace even when models are unchanged', async () => {
+    stubManagedModelsFetch();
+    models = {
+      'kimi-code/kimi-k2': {
+        provider: OAUTH_PROVIDER,
+        model: 'kimi-k2',
+        maxContextSize: 131072,
+      },
+    };
+    defaultModel = 'kimi-code/kimi-k2';
+    toolkit.getCachedAccessToken.mockResolvedValue('switched-token');
+    toolkit.switchWorkspace.mockResolvedValue({
+      providerName: OAUTH_PROVIDER,
+      ok: true,
+      target: { kind: 'business', businessId: 'biz_1' },
+    });
+    const svc = createService();
+
+    const response = await svc.switchManagedWorkspace(
+      { kind: 'business', business_id: 'biz_1' },
+      OAUTH_PROVIDER,
+    );
+
+    expect(response).toEqual({
+      kind: 'ok',
+      provider: OAUTH_PROVIDER,
+      target: { kind: 'business', business_id: 'biz_1' },
+    });
+    expect(events.filter((event) => event.type === 'event.model_catalog.changed')).toHaveLength(1);
   });
 });
 

@@ -684,6 +684,10 @@ async function writeSessionProfile(
 }
 
 async function whenSessionProfileSettled(sid: string): Promise<boolean> {
+  if (chatHostId(sid) === undefined && authStore().switchingWorkspaceKey !== null) {
+    await authStore().waitForWorkspaceSwitch();
+    if (authStore().businessMembershipRevokedOpen) return false;
+  }
   let ok = true;
   for (;;) {
     const tail = sessionRuntimeStore().profileWriteChainBySid.get(sid);
@@ -2564,12 +2568,14 @@ function ensureChatReady(): Promise<EnsureChatReadyResult> {
 async function runEnsureChatReady(): Promise<EnsureChatReadyResult> {
   if (chatHostId() !== undefined) return 'ok';
   const pendingSid = rawState.activeSessionId;
+  const waitedForWorkspaceSwitch =
+    authStore().switchingWorkspaceKey !== null && (await authStore().waitForWorkspaceSwitch());
   if (pendingSid !== null && pendingSid !== undefined) {
     const row = rawState.sessions.find((s) => s.id === pendingSid);
     if (row !== undefined && row.model === '') await whenSessionStatusSettled(pendingSid);
   }
   const early = gateVerdictInput();
-  if (early.chatModel !== null) {
+  if (!waitedForWorkspaceSwitch && early.chatModel !== null) {
     if (early.chatModelManaged && early.signedIn && authStore().managedMembership !== 'member') {
       await authStore().probeMembership();
     }
@@ -2595,6 +2601,9 @@ async function runEnsureChatReady(): Promise<EnsureChatReadyResult> {
 
 async function ensureSideChatReady(sid: string): Promise<EnsureChatReadyResult> {
   if (chatHostId(sid) !== undefined) return 'ok';
+  if (authStore().switchingWorkspaceKey !== null) {
+    await authStore().waitForWorkspaceSwitch();
+  }
   let verdict: EnsureChatReadyResult;
   if (sid === rawState.activeSessionId) {
     verdict = await ensureChatReady();

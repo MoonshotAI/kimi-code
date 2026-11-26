@@ -365,22 +365,48 @@ export class OAuthService extends Disposable implements IOAuthService {
           message: 'Not logged in to Kimi Code.',
         };
       }
+      const warnings: string[] = [];
+      if (switched.warning !== undefined) {
+        warnings.push(switched.warning);
+      }
+      let publishedCatalogInvalidation = false;
       try {
         await this.provisionProvider(provider, auth.oauthRef, auth.baseUrl);
         if (provider === KIMI_CODE_PROVIDER_NAME) {
-          await this.refreshOAuthProviderModelsBestEffort(provider);
+          const refreshResult = await this.refreshOAuthProviderModels();
+          if (refreshResult.changed.length > 0) {
+            publishedCatalogInvalidation = true;
+          }
+          if (refreshResult.failed.length > 0) {
+            const reasons = refreshResult.failed.map((entry) => entry.reason).join('; ');
+            this.log.warn('oauth switchManagedWorkspace: model refresh reported failures', {
+              provider,
+              failures: refreshResult.failed,
+            });
+            warnings.push(`Failed to refresh model catalog: ${reasons}`);
+          }
         }
       } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
         this.log.warn('oauth switchManagedWorkspace: provider provisioning failed', {
           provider,
-          error: error instanceof Error ? error.message : String(error),
+          error: reason,
         });
+        warnings.push(`Failed to refresh model catalog: ${reason}`);
       }
+      if (!publishedCatalogInvalidation) {
+        this.events.publish(
+          new ModelCatalogChanged({
+            payload: { changed: [], unchanged: [provider], failed: [] },
+          }),
+        );
+      }
+      const warning = warnings.length > 0 ? warnings.join(' ') : undefined;
       return {
         kind: 'ok',
         provider: switched.providerName,
         target,
-        ...(switched.warning !== undefined ? { warning: switched.warning } : {}),
+        ...(warning !== undefined ? { warning } : {}),
       };
     } catch (error) {
       const failure = describeManagedOAuthFailure(error);

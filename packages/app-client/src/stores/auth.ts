@@ -81,6 +81,7 @@ export const useAuthStore = defineStore('kimi.auth', () => {
   let userInfoFetchGeneration = 0;
   let workspacesFetchGeneration = 0;
   let membershipFlight: Promise<void> | null = null;
+  let switchWorkspaceFlight: Promise<SwitchManagedWorkspaceOutcome> | null = null;
   let revokingFlight: Promise<void> | null = null;
 
   function recordRecentWorkspaceKey(key: string | undefined): void {
@@ -125,8 +126,8 @@ export const useAuthStore = defineStore('kimi.auth', () => {
       managedWorkspacesLoading.value = true;
     }
     const [infoSettled, workspacesSettled] = await Promise.allSettled([
-      api.getUserInfo(),
-      canListWorkspaces ? api.listManagedWorkspaces() : Promise.resolve(null),
+      (async () => api.getUserInfo())(),
+      canListWorkspaces ? (async () => api.listManagedWorkspaces())() : Promise.resolve(null),
     ]);
     if (generation !== userInfoFetchGeneration) return;
     if (canListWorkspaces && wsGen === workspacesFetchGeneration) {
@@ -211,17 +212,57 @@ export const useAuthStore = defineStore('kimi.auth', () => {
     }
   }
 
-  async function switchManagedWorkspace(
+  function applyCommittedWorkspaceTarget(targetKey: string, targetName?: string): void {
+    if (managedWorkspaces.value.length > 0) {
+      const hasTarget = managedWorkspaces.value.some((entry) => entry.key === targetKey);
+      managedWorkspaces.value = hasTarget
+        ? managedWorkspaces.value.map((entry) => ({
+            ...entry,
+            current: entry.key === targetKey,
+          }))
+        : [];
+    }
+    if (managedUserInfo.value !== null) {
+      if (targetKey === 'personal') {
+        const { workspaceName: _removed, ...rest } = managedUserInfo.value;
+        managedUserInfo.value = rest;
+      } else if (targetName) {
+        managedUserInfo.value = { ...managedUserInfo.value, workspaceName: targetName };
+      }
+    }
+  }
+
+  async function waitForWorkspaceSwitch(): Promise<boolean> {
+    if (switchWorkspaceFlight === null) return false;
+    await switchWorkspaceFlight.catch(() => undefined);
+    return true;
+  }
+
+  function switchManagedWorkspace(
     target: ManagedWorkspaceTarget,
     displayName?: string,
   ): Promise<SwitchManagedWorkspaceOutcome> {
     if (switchingWorkspaceKey.value !== null || managedProviderStatus.value !== 'authenticated') {
-      return { ok: false };
+      return Promise.resolve({ ok: false });
     }
     const api = getKimiWebApi();
     if (typeof api.switchManagedWorkspace !== 'function') {
-      return { ok: false };
+      return Promise.resolve({ ok: false });
     }
+    const flight = runSwitchManagedWorkspace(api, target, displayName).finally(() => {
+      if (switchWorkspaceFlight === flight) {
+        switchWorkspaceFlight = null;
+      }
+    });
+    switchWorkspaceFlight = flight;
+    return flight;
+  }
+
+  async function runSwitchManagedWorkspace(
+    api: ReturnType<typeof getKimiWebApi>,
+    target: ManagedWorkspaceTarget,
+    displayName?: string,
+  ): Promise<SwitchManagedWorkspaceOutcome> {
     const switchEpoch = epoch;
     const targetKey = target.kind === 'personal' ? 'personal' : `business:${target.businessId}`;
     const previousCurrent = currentManagedWorkspace.value;
@@ -236,7 +277,7 @@ export const useAuthStore = defineStore('kimi.auth', () => {
     switchingWorkspaceKey.value = targetKey;
     switchingWorkspaceName.value = displayName ?? null;
     try {
-      const result = await api.switchManagedWorkspace(target);
+      const result = await api.switchManagedWorkspace!(target);
       if (switchEpoch !== epoch || managedProviderStatus.value !== 'authenticated') {
         return { ok: false, revoked: businessMembershipRevokedOpen.value };
       }
@@ -255,6 +296,8 @@ export const useAuthStore = defineStore('kimi.auth', () => {
       });
       recordRecentWorkspaceKey(previousCurrent?.key);
       recordRecentWorkspaceKey(targetKey);
+      applyCommittedWorkspaceTarget(targetKey, displayName);
+      managedWorkspacesError.value = null;
 
       await trackMembershipFlight(++userInfoFetchGeneration).catch(() => undefined);
       if (
@@ -264,6 +307,7 @@ export const useAuthStore = defineStore('kimi.auth', () => {
       ) {
         return { ok: false, revoked: businessMembershipRevokedOpen.value };
       }
+      const postSwitchWorkspaceError = managedWorkspacesError.value;
       await runCheckAuth(switchEpoch, undefined, true).catch(() => 'retry' as AuthCheckResult);
       if (
         switchEpoch !== epoch ||
@@ -272,10 +316,18 @@ export const useAuthStore = defineStore('kimi.auth', () => {
       ) {
         return { ok: false, revoked: businessMembershipRevokedOpen.value };
       }
-      await authHooks?.reload?.().catch(() => undefined);
+      const warnings: string[] = [];
+      if (result.warning !== undefined) warnings.push(result.warning);
+      if (postSwitchWorkspaceError !== null) warnings.push(postSwitchWorkspaceError);
+      try {
+        await authHooks?.reload?.();
+      } catch (reloadErr) {
+        warnings.push(reloadErr instanceof Error ? reloadErr.message : String(reloadErr));
+      }
+      const warning = warnings.length > 0 ? warnings.join(' ') : undefined;
       return {
         ok: true,
-        ...(result.warning !== undefined ? { warning: result.warning } : {}),
+        ...(warning !== undefined ? { warning } : {}),
       };
     } catch (err) {
       return {
@@ -391,6 +443,7 @@ export const useAuthStore = defineStore('kimi.auth', () => {
     checkAuthFlight = null;
     checkAuthDirty = false;
     membershipFlight = null;
+    switchWorkspaceFlight = null;
     managedProviderStatus.value = null;
     managedUserInfo.value = null;
     managedMembership.value = null;
@@ -436,6 +489,7 @@ export const useAuthStore = defineStore('kimi.auth', () => {
     probeMembership,
     reloadManagedWorkspaces,
     switchManagedWorkspace,
+    waitForWorkspaceSwitch,
     handleBusinessMembershipRevoked,
     acknowledgeBusinessMembershipRevoked,
     markAuthDirty,

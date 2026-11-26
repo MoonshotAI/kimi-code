@@ -585,7 +585,7 @@ async function onLogout(): Promise<void> {
             <Spinner size="sm" />
             <span>{{ t('account.loadingWorkspaces') }}</span>
           </div>
-          <div v-else-if="workspacesError" class="user-menu-ws-inline-state user-menu-ws-inline-state--error">
+          <div v-if="workspacesError && !workspacesLoading" class="user-menu-ws-inline-state user-menu-ws-inline-state--error">
             <span>{{ t('account.loadWorkspacesFailed') }}</span>
             <Button variant="ghost" size="sm" @click="void client.reloadManagedWorkspaces()">
               {{ t('account.retryWorkspaces') }}
