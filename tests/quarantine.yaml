@@ -27,20 +27,6 @@ quarantine:
     owner: '@RealKai42'
     since: '2026-11-19'
     expires: '2027-01-18'
-  - file: apps/desktop/e2e/settings-agent-defaults.spec.ts
-    test: 'agent defaults shape new sessions: thinking, title, subagent model and folding'
-    runner: playwright
-    reason: 在基线 0ee6dff5f 上用同一 Electron 构建复现失败：默认设置。
-    owner: '@RealKai42'
-    since: '2026-11-19'
-    expires: '2027-01-18'
-  - file: apps/desktop/e2e/settings-appearance.spec.ts
-    test: appearance, font size and language apply app-wide and survive a relaunch
-    runner: playwright
-    reason: 在基线 0ee6dff5f 上用同一 Electron 构建复现失败：外观。
-    owner: '@RealKai42'
-    since: '2026-11-19'
-    expires: '2027-01-18'
   - file: apps/desktop/e2e/transcript-failures.spec.ts
     test: failed, stopped and dropped turns render their markers, resume with Continue, and keep them after a relaunch
     runner: playwright
@@ -52,13 +38,6 @@ quarantine:
     test: Enter steers by default with a one-time composer tip, and Mod+Enter queues for Ctrl+S steering
     runner: playwright
     reason: 在基线 0ee6dff5f 上用同一 Electron 构建复现失败：插话。
-    owner: '@RealKai42'
-    since: '2026-11-19'
-    expires: '2027-01-18'
-  - file: apps/desktop/e2e/lifecycle-restore.spec.ts
-    test: panel tabs, sidebar layout, pins and window size survive a relaunch and a renderer reload
-    runner: playwright
-    reason: 只在 CI 的 macOS runner 上失败：重启后窗口尺寸回到默认的 1440×900，期望 1180×820；本地通过，加网络守卫之前（c722f973f）就已出现。隔离期间，面板标签、侧栏布局和置顶的恢复也不在默认运行里。
     owner: '@RealKai42'
     since: '2026-11-19'
     expires: '2027-01-18'
