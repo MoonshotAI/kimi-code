@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
@@ -28,6 +29,7 @@ export interface FakeMcpHttpServerOptions extends FakeMcpCatalog {
   readonly name?: string;
   readonly transport?: 'streamable-http' | 'sse';
   readonly bearerToken?: string;
+  readonly initializeDelayMs?: number;
   readonly intercept?: (request: FakeMcpHttpRequest) => FakeMcpHttpResponse | undefined | Promise<FakeMcpHttpResponse | undefined>;
 }
 
@@ -70,6 +72,7 @@ export async function startFakeMcpHttpServer(options: FakeMcpHttpServerOptions):
     void readRequest(incoming).then(async (request) => {
       requests.push(request);
       response.once('finish', () => answered.push(request));
+      if (options.initializeDelayMs !== undefined && request.rpcMethods.includes('initialize')) await sleep(options.initializeDelayMs);
       const answer = (await options.intercept?.(request)) ?? unauthorized(request, options.bearerToken);
       if (answer !== undefined) {
         send(response, answer);

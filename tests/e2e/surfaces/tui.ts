@@ -223,6 +223,10 @@ interface QueuedMessage {
 
 type Settled<T> = { readonly found: T } | { readonly over: Screen };
 
+function namesSessionModel(line: string): boolean {
+  return line.includes(FAKE_PROVIDER_DEFAULTS.modelName) || line.trimStart().startsWith(`${FAKE_PROVIDER_DEFAULTS.alias}  `);
+}
+
 function quote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
@@ -662,8 +666,8 @@ class TuiDriver implements SurfaceDriver<'tui'> {
       );
       this.write(KEYS.enter);
     }
-    await this.wait('the TUI to show its editor and the configured model', (screen) =>
-      screen.input === 'editor' && screen.viewport.some((line) => line.includes(FAKE_PROVIDER_DEFAULTS.modelName)) ? true : undefined,
+    await this.wait('the TUI to show its editor and the session model', (screen) =>
+      screen.input === 'editor' && screen.viewport.some(namesSessionModel) ? true : undefined,
     );
     this.assertKeyboard();
     const { lastPrompt } = this;
@@ -768,6 +772,10 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const off = RESTORED_MODES.filter((mode) => !modes.includes(mode) || modes.includes(`-${mode}`));
     if (off.length > 0) {
       throw new Error(`The shell got the terminal back with ${off.join(' and ')} off after the CLI exited.\nModes: ${modes.join(' ')}\n${await this.describe()}`);
+    }
+    await this.terminal.flush();
+    if (this.terminal.isAlternateScreen()) {
+      throw new Error(`The shell got the terminal back on the alternate screen after the CLI exited, so the user's scrollback is hidden.\n${await this.describe()}`);
     }
   }
 

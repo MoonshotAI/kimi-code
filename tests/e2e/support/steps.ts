@@ -61,6 +61,8 @@ export const DISK_TITLES = {
 
 export const CLOCK_TITLE = (time: string): string => `本机的时间变成${quote(time)}`;
 
+export const CONFIG_TITLE = '用户编辑配置文件';
+
 export const MCP_TITLES = {
   addTool: (server: string, tool: string): string => `MCP 服务${quote(server)}新增工具${quote(tool)}，等产品重新读取工具清单`,
   updateTool: (server: string, tool: string): string => `MCP 服务${quote(server)}修改工具${quote(tool)}，等产品重新读取工具清单`,

@@ -32,7 +32,7 @@ playwright.config.ts               一个面一个 project，另有两个跑法�
 
 ## 写场景
 
-场景文件长这样，`scenario(标题, 选项, 本体)` 的本体只拿得到 `product`、`model`、`workspace` 和 `mcp`：
+场景文件长这样，`scenario(标题, 选项, 本体)` 的本体只拿得到 `product`、`model`、`workspace`、`mcp`、`clock` 和 `configure`：
 
 ```ts
 scenario('reads one file and edits another after approval', { workspace: { 'a.txt': 'hello\n' } }, async ({ product, model, workspace }) => {
@@ -66,7 +66,8 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | 假模型的缓存账本默认开着：主请求和压缩请求都要延续上一个主请求，有意的断点用 `model.expectCacheBreak(原因, { at })` 声明。主请求用到的缓存键个数不能超过「1 + `newSession()` 的次数」：同一个会话的请求必须一直用同一个键，重启之后也一样，否则供应商那边的缓存用不上 | `model.verify()` 和收尾检查 |
 | 选项 `provider` 设假模型服务的类型、模型能力和窗口大小（`type`、`capabilities`、`maxContextSize`），`config` 合并进测试 home 的 `config.toml`（例如 `loopControl`、第二个模型）。只写用户自己也能写进配置文件的内容 | 评审 |
 | 选项 `clock` 给出本机时间的起点（ISO-8601，例如 `2030-01-01T12:00:00Z`），本体里 `clock(时间)` 把本机时间改成另一个时刻，相当于用户的机器上时间过去了。驱动把测试 home 里的时钟文件通过 `KIMI_CODE_CLOCK_FILE` 交给产品，产品只在 `IHostClock` 里读它，它只决定告诉模型的本地日期。没给 `clock` 选项就调用 `clock()` 会报错。要断言日期时，在场景里用 `toLocaleDateString` 算出本地日期，别写死，因为不同时区的日期不同 | `scenario()` 的运行时检查；`scripts/checks/e2e-boundary.json` 的 `testSwitches` |
-| 选项 `mcp` 声明用户配置的 MCP 服务：每个服务是本机的一个 testkit HTTP 假服务，写进测试 home 的 `mcp.json`，`deferred` 照写。本体里 `mcp(名字)` 拿到它，`addTool`、`updateTool`、`removeTool` 相当于 MCP 服务自己改了工具：改完通知产品，等到这个服务答复了产品重新要的工具清单才返回。产品收到答复之后是异步更新的，没有承诺紧接着的下一次请求就反映这次变化，所以场景只断言「变化之前的请求里没有、之后的请求里恰好有一次」，不断言是哪一次。`disconnect()` 断开这个服务的所有会话，相当于 MCP 服务重启了，等到产品自己重新连上、又读了一次工具清单才返回。服务写 `from: 'editor'` 时不写进 `mcp.json`，而是由 ACP 编辑器在 `session/new` 和 `session/load` 里传给产品，场景只能在 ACP 上跑，也不能设 `deferred`。没声明的名字直接报错 | `mcp()` 的运行时检查；`from: 'editor'` 由 `scenario()` 登记时检查 |
+| 本体里 `configure(改法)` 相当于用户在磁盘上编辑了 `config.toml`：`改法` 拿到当前的配置、返回新的配置，驱动把它整份写回测试 home。产品什么时候读到新配置由产品决定，场景通常接着 `restart()`，让产品重新读一遍。只写用户自己也能写进配置文件的内容 | 评审 |
+| 选项 `mcp` 声明用户配置的 MCP 服务：每个服务是本机的一个 testkit HTTP 假服务，写进测试 home 的 `mcp.json`，`deferred` 照写。`startupDelayMs` 让这个服务每次答复 `initialize` 之前先等这么久，相当于一个启动慢的服务，产品每次连上它（包括重启之后）都要等。本体里 `mcp(名字)` 拿到它，`addTool`、`updateTool`、`removeTool` 相当于 MCP 服务自己改了工具：改完通知产品，等到这个服务答复了产品重新要的工具清单才返回。产品收到答复之后是异步更新的，没有承诺紧接着的下一次请求就反映这次变化，所以场景只断言「变化之前的请求里没有、之后的请求里恰好有一次」，不断言是哪一次。`disconnect()` 断开这个服务的所有会话，相当于 MCP 服务重启了，等到产品自己重新连上、又读了一次工具清单才返回。服务写 `from: 'editor'` 时不写进 `mcp.json`，而是由 ACP 编辑器在 `session/new` 和 `session/load` 里传给产品，场景只能在 ACP 上跑，也不能设 `deferred`。没声明的名字直接报错 | `mcp()` 的运行时检查；`from: 'editor'` 由 `scenario()` 登记时检查 |
 | `scenarios/cache/` 下的场景各自对应 `scenarios/cache/catalog.yaml` 里的一项：清单列出会改变产品发给模型服务的请求的用户操作，写明承诺保持前缀还是有意断开、哪些测试覆盖它，没覆盖的写明缺什么。缓存场景先证明操作生效了（用户看得见的效果，或者模型收到的内容），再断言前后的主请求在账本里的延续关系。别的场景只有在这个操作前后都发了主请求时，才能记成 `implicit` 覆盖，否则账本什么也没比较 | `scripts/checks/e2e-cache-catalog.mjs`：每项都有测试或写明的缺口，每个缓存场景都登记了，承诺保持的场景不声明断点，承诺断开的场景用清单里的原因声明 |
 | 改场景断言就是改产品行为，PR 里要写明为什么改 | CODEOWNERS 评审 |
 | 提示词用一行文字，可以是中文，不含控制字符，不以 `/`、`!`、`@` 开头，不以反斜杠结尾 | `send()`、`queue()`、`steer()` 的运行时检查 |
@@ -118,7 +119,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | `newSession()` 新建一个会话，产品必须空闲。TUI 输入 `/new`，证据是屏幕上最后一条 `Started a new session (…)` 里的会话 ID 变了（`/new` 会清掉滚动区，所以不能数这一行出现了几次）；Desktop 和 Web 点侧栏的 `New Session`，证据是对话变空、消息输入框可用（对话本来就是空的时候，这个证据分不出按钮有没有生效）；ACP 像编辑器新开一个对话那样发 `session/new`，要求拿到另一个会话 ID，之后对话、模式和最近一回合都只看新会话的消息，离开的会话晚到的通知丢掉。新建会话之后、发消息之前重启，驱动只等产品重新可用，不再等之前会话的提示词。新会话的第一条请求里不应有之前会话的内容，这一点由自测固定 | `newSession` 的自测 |
 | 重启：TUI 用同一个 home 和工作区跑 `kimi --continue`，等转录里出现上一条提示词；ACP 新起 `kimi acp`，要求 `initialize` 公布 `loadSession`，再对原会话 ID 发 `session/load`，回放在答复之前到齐；Desktop 用同一个 `--user-data-dir` 再启动，不再传 `--workspace`；Web 用原来的端口重新起 `kimi web`，浏览器从第一次启动就用持久的配置目录（`<测试目录>/web-profile`），重新打开它打印的地址。Desktop 和 Web 重启后不点引导向导，向导如果又出现就报错；它们都要自动回到原来的会话，等对话里出现上一条提示词 | `restart` 的自测 |
 | `resize(尺寸)` 只在 TUI 和 Web 上有，尺寸是 `normal` 或 `narrow`，产品启动时是 `normal`，改成当前的尺寸就报错。<br>TUI：`normal` 是 120×40，`narrow` 是 60×40。驱动先改虚拟终端，再改伪终端的尺寸（CLI 收到 `SIGWINCH`）；证据是改尺寸之后 CLI 清屏重画了一次（`ESC[2J ESC[H ESC[3J`），屏幕上最后一条输入框或面板的横线是新宽度，并且连续两次读到的屏幕一样。只看横线不够：xterm.js 会把旧的整行横线折成两行，长度可能正好等于新宽度。Windows 上 ConPTY 会自己重新输出整个画面，不原样转发清屏的序列，所以只要求改尺寸之后收到了新的输出、横线是新宽度。这个证据更弱：ConPTY 自己的重画也算新输出，审批面板那种没有拐角的整行横线被折行后可能正好是新宽度，所以 Windows 上证明不了 CLI 自己重画了，「不发尺寸变化时正例超时」这条破坏性检查在 Windows 上也不成立。<br>Web：`normal` 是 1440×900，`narrow` 是 390×844（手机宽度），用 Playwright 改视口；证据是当时在屏幕上的输入区域（消息输入框，或者挂着的审批卡、问题卡）宽度变了、整块落在视口里，并且连续两次读到的位置一样。<br>重启之后保持重启前的尺寸，和用户在同一个窗口里重新打开产品一样。<br>ACP 没有窗口；Desktop 的窗口最窄 900 像素，用户拉不到手机宽度，而且只能在 Electron 主进程里执行代码才能改 | 驱动自测固定「能在空闲、审批挂着、重启之后改」和「改成当前尺寸就报错」；「产品没重画就不返回」造不出用户走得到的反例，靠改坏驱动的破坏性检查（不发 `SIGWINCH`、不改视口时正例超时） |
-| TUI 的 `exit()` 照用户的做法退出，等退出标记和伪终端关闭，要求退出码 0；`expectTerminalRestored()` 读启动脚本在 CLI 退出后、在同一个 shell 里跑的 `stty -a`，要求 `icanon` 和 `echo` 都开着 | `exit`、`expect-terminal-restored` 的自测只固定前置条件；「模式没恢复就报错」造不出用户走得到的反例，靠评审和改坏驱动的破坏性检查 |
+| TUI 的 `exit()` 照用户的做法退出，等退出标记和伪终端关闭，要求退出码 0；`expectTerminalRestored()` 读启动脚本在 CLI 退出后、在同一个 shell 里跑的 `stty -a`，要求 `icanon` 和 `echo` 都开着，并且终端不停在备用屏幕上（停在那里，用户的滚动历史就看不见了） | `exit`、`expect-terminal-restored` 的自测只固定前置条件；「模式没恢复就报错」造不出用户走得到的反例，靠评审和改坏驱动的破坏性检查 |
 | 每个动作在每个面上都要有正例和反例。自测写成 `selfTest('动作', { positive, negative })`，放在以动作命名的文件里；要加动作，先改 `VERBS`。某个用例要用只在部分面上才有的动作（例如 `waitIdle` 的自测里用 `queue`），写成 `selfTestCase({ except: … }, run)`，`run` 拿到的 `product` 按这个用例跑的面收窄 | `selfTest()` 登记时检查每个面都有正反例；`self-test/coverage.spec.ts` 检查每个动作都有自测文件 |
 | 动作的含义由自测固定，改自测就等于改含义 | CODEOWNERS 评审 |
 | 产品不连真网络：会去 CDN 下载的工具和 Desktop 启动时要取的模型目录，在 `surfaces/offline.ts` 里桩成 404，其余对外连接由 testkit 的网络守卫记下 | 收尾检查 |
