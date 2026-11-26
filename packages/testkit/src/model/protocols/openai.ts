@@ -154,7 +154,7 @@ function promptPrefix(body: unknown): PromptPrefix {
     cacheKey: optionalString(record['prompt_cache_key']),
     model: optionalString(record['model']),
     segments: [
-      promptSegment('params', 'params', pickedFields(record, ['model', 'reasoning_effort', 'thinking'])),
+      promptSegment('params', 'params', pickedFields(record, ['model', 'reasoning_effort', 'thinking', 'response_format'])),
       ...messages.slice(0, systemCount).map((message, index) => promptSegment('system', labelOf(message, index), message)),
       ...asArray(record['tools']).map((tool, index) =>
         promptSegment('tools', `tools[${index}] ${stringOf(asRecord(asRecord(tool)['function'])['name'])}`, tool),

@@ -8,7 +8,7 @@ import {
   type ProtocolCodec,
   type ResolvedUsage,
 } from '#/model/protocols/codec';
-import { promptSegment, type PromptPrefix } from '#/model/prompt-cache';
+import { pickedFields, promptSegment, type PromptPrefix } from '#/model/prompt-cache';
 import { asArray, asRecord, optionalString, stringOf } from '#/model/protocols/json';
 import type { ErrorSpec, ReplyStep, RequestView, ToolCallSpec, ViewCall, ViewMessage, ViewPart } from '#/model/types';
 import { textOfParts } from '#/model/view';
@@ -141,10 +141,20 @@ function promptPrefix(body: unknown, path: string): PromptPrefix {
   return {
     model: modelOfPath(path),
     segments: [
-      promptSegment('params', 'params', { model: modelOfPath(path), thinkingConfig: asRecord(record['generationConfig'])['thinkingConfig'] }),
+      promptSegment('params', 'params', {
+        model: modelOfPath(path),
+        ...pickedFields(asRecord(record['generationConfig']), ['thinkingConfig', 'responseMimeType', 'responseJsonSchema', 'responseSchema']),
+      }),
       ...(record['systemInstruction'] === undefined ? [] : [promptSegment('system', 'systemInstruction', record['systemInstruction'])]),
       ...declarations.map((declaration, index) => promptSegment('tools', `tools[${index}] ${stringOf(asRecord(declaration)['name'])}`, declaration)),
-      ...asArray(record['contents']).map((content, index) => promptSegment('messages', `contents[${index}] ${stringOf(asRecord(content)['role'])}`, content)),
+      ...asArray(record['contents']).flatMap((raw, index) => {
+        const content = asRecord(raw);
+        const label = `contents[${index}] ${stringOf(content['role'])}`;
+        return [
+          promptSegment('messages', label, { ...content, parts: undefined }),
+          ...asArray(content['parts']).map((part, position) => promptSegment('messages', `${label} parts[${position}]`, part)),
+        ];
+      }),
     ],
   };
 }

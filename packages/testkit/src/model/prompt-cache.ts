@@ -51,10 +51,21 @@ export interface PromptCacheEntry extends ObservedRequest {
 }
 
 interface Observation {
-  readonly entry: Omit<PromptCacheEntry, 'explanation' | 'rejected'>;
-  readonly allowance?: string;
+  readonly source: ObservedRequest;
+  readonly cacheKey?: string;
+  readonly model?: string;
   readonly segments: readonly PromptSegment[];
+  readonly totalTokens: number;
+  readonly reusedTokens: number;
+  readonly reusedFrom?: number;
   rejected: boolean;
+}
+
+interface Comparison {
+  readonly observation: Observation;
+  readonly baseline?: number;
+  readonly break?: PromptCacheBreak;
+  readonly allowance?: string;
 }
 
 interface Expectation {
@@ -63,8 +74,9 @@ interface Expectation {
 }
 
 interface Explained {
+  readonly comparisons: readonly Comparison[];
   readonly explanations: ReadonlyMap<number, string>;
-  readonly unexplained: readonly Observation[];
+  readonly unexplained: readonly Comparison[];
   readonly unused: readonly Expectation[];
 }
 
@@ -86,47 +98,35 @@ export class PromptCacheLedger {
   private readonly expectations: Expectation[] = [];
 
   observe(source: ObservedRequest, prefix: PromptPrefix): void {
-    const { role } = source;
-    const pool = this.observations.filter(
-      ({ rejected, entry }) =>
-        !rejected && entry.protocol === source.protocol && entry.cacheKey === prefix.cacheKey && entry.model === prefix.model,
-    );
+    const thread: Thread = { protocol: source.protocol, cacheKey: prefix.cacheKey, model: prefix.model };
     let reusedCharacters = 0;
     let reusedFrom: number | undefined;
-    for (const earlier of pool) {
+    for (const earlier of this.observations) {
+      if (earlier.rejected || !sameThread(earlier, thread)) continue;
       const shared = sharedCharacters(earlier.segments, prefix.segments);
       if (shared <= reusedCharacters) continue;
       reusedCharacters = shared;
-      reusedFrom = earlier.entry.request;
+      reusedFrom = earlier.source.request;
     }
-    const baseline = CHECKED_ROLES.has(role) ? pool.findLast((observation) => observation.entry.role === 'main') : undefined;
-    const found = baseline === undefined ? undefined : breakBetween(baseline.segments, prefix.segments);
-    const compactedSinceBaseline =
-      baseline !== undefined && pool.some((observation) => observation.entry.role === 'compaction' && observation.entry.request > baseline.entry.request);
     this.observations.push({
-      entry: {
-        ...source,
-        cacheKey: prefix.cacheKey,
-        model: prefix.model,
-        totalTokens: tokensOf(prefix.segments.reduce((total, segment) => total + segment.text.length, 0)),
-        reusedTokens: tokensOf(reusedCharacters),
-        reusedFrom,
-        baseline: baseline?.entry.request,
-        break: found,
-      },
-      allowance: role === 'main' && found?.part === 'history' && compactedSinceBaseline ? AFTER_COMPACTION : undefined,
+      source,
+      cacheKey: prefix.cacheKey,
+      model: prefix.model,
       segments: prefix.segments,
+      totalTokens: tokensOf(prefix.segments.reduce((total, segment) => total + segment.text.length, 0)),
+      reusedTokens: tokensOf(reusedCharacters),
+      reusedFrom,
       rejected: false,
     });
   }
 
   reject(request: number): void {
-    const observation = this.observations.find((candidate) => candidate.entry.request === request);
+    const observation = this.observations.find((candidate) => candidate.source.request === request);
     if (observation !== undefined) observation.rejected = true;
   }
 
   reusedTokens(request: number): number {
-    return this.observations.find((observation) => observation.entry.request === request)?.entry.reusedTokens ?? 0;
+    return this.observations.find((observation) => observation.source.request === request)?.reusedTokens ?? 0;
   }
 
   expect(reason: string, options: CacheBreakOptions): void {
@@ -134,43 +134,75 @@ export class PromptCacheLedger {
   }
 
   entries(): readonly PromptCacheEntry[] {
-    const { explanations } = this.explain();
-    return this.observations.map(({ entry, rejected }) => {
-      const explanation = explanations.get(entry.request);
-      return explanation === undefined ? { ...entry, rejected } : { ...entry, rejected, explanation };
+    const { comparisons, explanations } = this.explain();
+    return comparisons.map(({ observation, baseline, break: found }) => {
+      const { source, segments: _segments, ...rest } = observation;
+      const entry: PromptCacheEntry = { ...source, ...rest, baseline, break: found };
+      const explanation = explanations.get(source.request);
+      return explanation === undefined ? entry : { ...entry, explanation };
     });
   }
 
   problems(): readonly string[] {
     const { unexplained, unused } = this.explain();
     return [
-      ...unexplained.map(({ entry }) => describeUnexplained(entry)),
+      ...unexplained.map(describeUnexplained),
       ...unused.map(({ reason, at }) => `expected a prompt cache break${at === undefined ? '' : ` in the ${at}`} (${reason}), but no request made one`),
     ];
   }
 
+  private compare(): readonly Comparison[] {
+    return this.observations.map((observation, position) => {
+      if (!CHECKED_ROLES.has(observation.source.role)) return { observation };
+      const thread = threadOf(observation);
+      const pool = this.observations.slice(0, position).filter((earlier) => !earlier.rejected && sameThread(earlier, thread));
+      const baseline = pool.findLast((earlier) => earlier.source.role === 'main');
+      if (baseline === undefined) return { observation };
+      const found = breakBetween(baseline.segments, observation.segments);
+      const compactedSinceBaseline = pool.some((earlier) => earlier.source.role === 'compaction' && earlier.source.request > baseline.source.request);
+      const restartsAfterCompaction = observation.source.role === 'main' && found?.part === 'history' && compactedSinceBaseline;
+      return { observation, baseline: baseline.source.request, break: found, allowance: restartsAfterCompaction ? AFTER_COMPACTION : undefined };
+    });
+  }
+
   private explain(): Explained {
+    const comparisons = this.compare();
     const remaining = [...this.expectations];
     const explanations = new Map<number, string>();
-    const unexplained: Observation[] = [];
-    for (const observation of this.observations) {
-      const found = observation.entry.break;
-      if (found === undefined || observation.rejected) continue;
-      if (observation.allowance !== undefined) {
-        explanations.set(observation.entry.request, observation.allowance);
+    const unexplained: Comparison[] = [];
+    for (const comparison of comparisons) {
+      const found = comparison.break;
+      const request = comparison.observation.source.request;
+      if (found === undefined || comparison.observation.rejected) continue;
+      if (comparison.allowance !== undefined) {
+        explanations.set(request, comparison.allowance);
         continue;
       }
       const index = remaining.findIndex((expectation) => expectation.at === undefined || expectation.at === found.part);
       const expectation = remaining[index];
       if (expectation === undefined) {
-        unexplained.push(observation);
+        unexplained.push(comparison);
         continue;
       }
-      explanations.set(observation.entry.request, expectation.reason);
+      explanations.set(request, expectation.reason);
       remaining.splice(index, 1);
     }
-    return { explanations, unexplained, unused: remaining };
+    return { comparisons, explanations, unexplained, unused: remaining };
   }
+}
+
+interface Thread {
+  readonly protocol: ProtocolName;
+  readonly cacheKey?: string;
+  readonly model?: string;
+}
+
+function threadOf(observation: Observation): Thread {
+  return { protocol: observation.source.protocol, cacheKey: observation.cacheKey, model: observation.model };
+}
+
+function sameThread(observation: Observation, thread: Thread): boolean {
+  return observation.source.protocol === thread.protocol && observation.cacheKey === thread.cacheKey && observation.model === thread.model;
 }
 
 function sharedCharacters(previous: readonly PromptSegment[], next: readonly PromptSegment[]): number {
@@ -226,11 +258,11 @@ function countIn(segments: readonly PromptSegment[], region: PromptRegion): numb
   return segments.filter((segment) => segment.region === region).length;
 }
 
-function describeUnexplained(entry: Observation['entry']): string {
-  const key = entry.cacheKey === undefined ? 'without a prompt cache key' : `under prompt cache key ${JSON.stringify(entry.cacheKey)}`;
+function describeUnexplained({ observation, baseline, break: found }: Comparison): string {
+  const key = observation.cacheKey === undefined ? 'without a prompt cache key' : `under prompt cache key ${JSON.stringify(observation.cacheKey)}`;
   return [
-    `request #${entry.request} (${entry.lane}) does not extend request #${entry.baseline} ${key}: ${entry.break?.detail}.`,
-    `It reuses ${entry.reusedTokens} of ${entry.totalTokens} estimated tokens.`,
+    `request #${observation.source.request} (${observation.source.lane}) does not extend request #${baseline} ${key}: ${found?.detail}.`,
+    `It reuses ${observation.reusedTokens} of ${observation.totalTokens} estimated tokens.`,
     'Declare an intended break with model.expectCacheBreak(reason).',
   ].join(' ');
 }

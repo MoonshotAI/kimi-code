@@ -274,7 +274,7 @@ function promptPrefix(body: unknown): PromptPrefix {
     cacheKey: optionalString(record['prompt_cache_key']),
     model: optionalString(record['model']),
     segments: [
-      promptSegment('params', 'params', pickedFields(record, ['model', 'reasoning'])),
+      promptSegment('params', 'params', pickedFields(record, ['model', 'reasoning', 'text'])),
       ...(instructions === undefined ? [] : [promptSegment('system', 'instructions', instructions)]),
       ...items.slice(0, systemCount).map((item, index) => promptSegment('system', labelOf(item, index), item)),
       ...asArray(record['tools']).map((tool, index) => promptSegment('tools', `tools[${index}] ${stringOf(asRecord(tool)['name'])}`, tool)),

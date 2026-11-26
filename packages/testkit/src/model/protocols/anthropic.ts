@@ -170,12 +170,16 @@ function promptPrefix(body: unknown): PromptPrefix {
     cacheKey: optionalString(asRecord(record['metadata'])['user_id']),
     model: optionalString(record['model']),
     segments: [
-      promptSegment('params', 'params', pickedFields(record, ['model', 'thinking'])),
+      promptSegment('params', 'params', pickedFields(record, ['model', 'thinking', 'output_config'])),
       ...asArray(record['tools']).map((tool, index) => promptSegment('tools', `tools[${index}] ${stringOf(asRecord(tool)['name'])}`, tool)),
       ...contentBlocks(record['system']).map((block, index) => promptSegment('system', `system[${index}]`, block)),
-      ...asArray(record['messages']).map((raw, index) => {
+      ...asArray(record['messages']).flatMap((raw, index) => {
         const message = asRecord(raw);
-        return promptSegment('messages', `messages[${index}] ${stringOf(message['role'])}`, { ...message, content: contentBlocks(message['content']) });
+        const label = `messages[${index}] ${stringOf(message['role'])}`;
+        return [
+          promptSegment('messages', label, { ...message, content: undefined }),
+          ...contentBlocks(message['content']).map((block, position) => promptSegment('messages', `${label} content[${position}]`, block)),
+        ];
       }),
     ],
   };

@@ -85,7 +85,7 @@ test('reads a reply from the side lane', async ({ model }) => {
 
 ## 检查 prompt 缓存前缀
 
-服务端只能复用请求开头那段与之前请求完全相同的内容。假模型按服务端缓存的顺序把每个请求切成段（模型与思考参数、system、tools、messages），记在 `model.promptCache()` 里：每个请求复用了多少估算 token、复用自哪个请求、主通道和压缩请求比上一个主请求在哪一段变了。这项检查默认开启，没有声明过的断点会让 `verify()` 失败，`checkPromptCache: false` 可以关掉。创建模型时传 `reportCachedTokens: true`，没写 usage 的步骤会把复用的 token 作为缓存读数报给客户端。
+服务端只能复用请求开头那段与之前请求完全相同的内容。假模型按服务端缓存的顺序把每个请求切成段（模型、思考参数与结构化输出的 schema，system，tools，messages），记在 `model.promptCache()` 里：每个请求复用了多少估算 token、复用自哪个请求、主通道和压缩请求比上一个主请求在哪一段变了。这项检查默认开启，没有声明过的断点会让 `verify()` 失败，`checkPromptCache: false` 可以关掉。创建模型时传 `reportCachedTokens: true`，没写 usage 的步骤会把复用的 token 作为缓存读数报给客户端。
 
 ```ts
 import { say } from '@moonshot-ai/testkit/model';
@@ -114,7 +114,7 @@ test('reuses the first request as the cached prefix of the second', async ({ mod
 });
 ```
 
-第二个请求改了 tools、system 或者更早的消息时，夹具收尾的 `verify()` 会报出第一处不同，例如 `tools[1] Bash is missing`，并给出复用了多少 token。产品有意改写前缀时（撤销、清空上下文、媒体恢复），在测试里用 `model.expectCacheBreak('撤销改写了上一轮回答', { at: 'history' })` 写明原因；声明了却没发生的断点同样会失败。换模型不用声明，每个模型各有一份缓存；被服务端拒绝的请求也不参与比较。压缩请求生效后的第一个主请求可以换一段新历史，但模型参数、system 和 tools 仍不能变，这条只在 `kimi` provider 类型下自动识别。完整规则见 [README](../README.md#prompt-cache)。[规则用例](../test/prompt-cache.test.ts) · [经过真实引擎](../../../tests/scenarios/providers.test.ts)
+第二个请求改了 tools、system 或者更早的消息时，夹具收尾的 `verify()` 会报出第一处不同，例如 `tools[1] Bash is missing`，并给出复用了多少 token。产品有意改写前缀时（撤销、清空上下文、媒体恢复），在测试里用 `model.expectCacheBreak('撤销改写了上一轮回答', { at: 'history' })` 写明原因；声明了却没发生的断点同样会失败。换模型不用声明，每个模型各有一份缓存；被服务端拒绝的请求也不参与比较；子 agent 的压缩请求只压缩它自己的历史，不和主 agent 比较。压缩请求生效后的第一个主请求可以换一段新历史，但模型参数、system 和 tools 仍不能变，这条只在 `kimi` provider 类型下自动识别。完整规则见 [README](../README.md#prompt-cache)。[规则用例](../test/prompt-cache.test.ts) · [经过真实引擎](../../../tests/scenarios/providers.test.ts)
 
 ## 检查客户端是否依赖整齐的分块
 

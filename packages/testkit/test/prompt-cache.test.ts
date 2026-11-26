@@ -49,7 +49,7 @@ interface Ask {
   readonly messages: ChatCompletionMessageParam[];
   readonly tools?: ChatCompletionTool[];
   readonly key?: string;
-  readonly role?: 'main' | 'compaction';
+  readonly role?: 'main' | 'compaction' | 'subagent-compaction';
   readonly model?: string;
 }
 
@@ -57,7 +57,9 @@ function openai(model: FakeModel) {
   const client = new OpenAI({ apiKey: 'sk-test', baseURL: 'http://testkit.invalid/v1', fetch: model.fetch, maxRetries: 0 });
   return async ({ messages, tools = [READ, BASH], key = 'session-1', role, model: name = 'testkit-model' }: Ask) => {
     const body: ChatCompletionCreateParamsNonStreaming = { model: name, messages, tools, prompt_cache_key: key };
-    const metadata = role === undefined ? undefined : { agent_role: 'main', step_reason: role === 'compaction' ? 'compact' : 'tool_use' };
+    const metadata = role === undefined
+      ? undefined
+      : { agent_role: role === 'subagent-compaction' ? 'explore' : 'main', step_reason: role === 'main' ? 'tool_use' : 'compact' };
     return client.chat.completions.create(body, metadata === undefined ? {} : { headers: { 'x-msh-client-metadata': JSON.stringify(metadata) } });
   };
 }
@@ -169,6 +171,86 @@ describe('prompt cache ledger', () => {
     expect(problemsOf(model)).toEqual([expect.stringContaining('request #1 (every request) does not extend request #0')]);
   });
 
+  it('keeps a subagent compaction out of the main thread, so it neither fails nor lets the main history restart', async () => {
+    const model = fakeModel();
+    const ask = openai(model);
+    const explored: ChatCompletionMessageParam[] = [SYSTEM, { role: 'user', content: 'Explore the repository.' }, { role: 'user', content: 'Summarize the conversation.' }];
+
+    await ask({ messages: SECOND_TURN, role: 'main' });
+    await ask({ messages: explored, role: 'subagent-compaction' });
+    await ask({ messages: [SYSTEM, { role: 'user', content: 'Summary: the notes say launch on friday.' }], role: 'main' });
+
+    const entries = model.promptCache();
+    expect(entries.map(({ role, baseline }) => ({ role, baseline }))).toEqual([
+      { role: 'main', baseline: undefined },
+      { role: 'subagent', baseline: undefined },
+      { role: 'main', baseline: 0 },
+    ]);
+    expect(entries[2]?.explanation).toBeUndefined();
+    expect(problemsOf(model)).toEqual([expect.stringContaining('request #2 (every request) does not extend request #0')]);
+  });
+
+  const ANSWER_SCHEMA = { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] };
+  const SCORE_SCHEMA = { type: 'object', properties: { score: { type: 'number' } }, required: ['score'] };
+  const STRUCTURED_OUTPUT: ReadonlyArray<{ readonly protocol: string; readonly path: string; readonly body: (schema: object) => object }> = [
+    {
+      protocol: 'openai',
+      path: '/v1/chat/completions',
+      body: (schema) => ({
+        model: 'testkit-model',
+        messages: [{ role: 'user', content: 'Read notes.txt.' }],
+        tools: [{ type: 'function', function: { name: 'Bash', parameters: { type: 'object' } } }],
+        response_format: { type: 'json_schema', json_schema: { name: 'reply', schema } },
+      }),
+    },
+    {
+      protocol: 'openai-responses',
+      path: '/v1/responses',
+      body: (schema) => ({
+        model: 'testkit-model',
+        input: [{ role: 'user', content: 'Read notes.txt.' }],
+        tools: [{ type: 'function', name: 'Bash', parameters: { type: 'object' } }],
+        text: { format: { type: 'json_schema', name: 'reply', schema } },
+      }),
+    },
+    {
+      protocol: 'anthropic',
+      path: '/v1/messages',
+      body: (schema) => ({
+        model: 'testkit-model',
+        max_tokens: 64,
+        messages: [{ role: 'user', content: 'Read notes.txt.' }],
+        tools: [{ name: 'Bash', input_schema: { type: 'object' } }],
+        output_config: { format: { type: 'json_schema', schema } },
+      }),
+    },
+    {
+      protocol: 'google',
+      path: '/v1beta/models/testkit-model:generateContent',
+      body: (schema) => ({
+        contents: [{ role: 'user', parts: [{ text: 'Read notes.txt.' }] }],
+        tools: [{ functionDeclarations: [{ name: 'Bash' }] }],
+        generationConfig: { responseMimeType: 'application/json', responseJsonSchema: schema },
+      }),
+    },
+  ];
+
+  it.for(STRUCTURED_OUTPUT)('reports a $protocol request whose structured output schema changed', async ({ path, body }) => {
+    const model = fakeModel();
+    const send = (schema: object) =>
+      model.fetch(`http://testkit.invalid${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body(schema)) });
+
+    expect((await send(ANSWER_SCHEMA)).status).toBe(200);
+    expect((await send(ANSWER_SCHEMA)).status).toBe(200);
+    expect((await send(SCORE_SCHEMA)).status).toBe(200);
+
+    const [, same, changed] = model.promptCache();
+    expect(same).toMatchObject({ baseline: 0 });
+    expect(same?.break).toBeUndefined();
+    expect(changed?.break).toMatchObject({ region: 'params', part: 'header', previous: 'params' });
+    expect(problemsOf(model)).toEqual([expect.stringContaining('request #2 (every request) does not extend request #1')]);
+  });
+
   it('keeps requests with different cache keys apart', async () => {
     const model = fakeModel();
     const ask = openai(model);
@@ -210,6 +292,37 @@ describe('prompt cache ledger', () => {
       { rejected: false, baseline: undefined, reusedFrom: undefined },
       { rejected: true, baseline: 0, reusedFrom: 0 },
       { rejected: false, baseline: 0, reusedFrom: 0 },
+    ]);
+    expect(problemsOf(model)).toEqual([]);
+  });
+
+  it('compares a request only with requests the provider accepted, even when the rejection comes after it', async () => {
+    const model = fakeModel();
+    let rejectFirst = (): void => {};
+    const rejection = new Promise<void>((resolve) => {
+      rejectFirst = resolve;
+    });
+    model.lane('every request').script(
+      say('first'),
+      async () => {
+        await rejection;
+        return httpError(400, { message: 'image rejected' });
+      },
+      say('second'),
+    );
+    const ask = openai(model);
+
+    await ask({ messages: FIRST_TURN });
+    const rejected = ask({ messages: SECOND_TURN, tools: [READ] });
+    await model.waitForRequest(1);
+    await ask({ messages: SECOND_TURN });
+    rejectFirst();
+    await expect(rejected).rejects.toThrow('image rejected');
+
+    expect(model.promptCache().map(({ rejected: isRejected, baseline }) => ({ rejected: isRejected, baseline }))).toEqual([
+      { rejected: false, baseline: undefined },
+      { rejected: true, baseline: 0 },
+      { rejected: false, baseline: 0 },
     ]);
     expect(problemsOf(model)).toEqual([]);
   });
@@ -281,6 +394,31 @@ describe('prompt cache ledger', () => {
     expect(problemsOf(model)).toEqual([expect.stringContaining('request #2 (every request) does not extend request #1 under prompt cache key "session-a": system[0] changed')]);
   });
 
+  it('takes a block appended to the last Anthropic user message as an extension, and still reports a changed block', async () => {
+    const model = fakeModel();
+    const client = new Anthropic({ apiKey: 'sk-test', baseURL: 'http://testkit.invalid', fetch: model.fetch, maxRetries: 0 });
+    const ask = (content: Anthropic.TextBlockParam[]) =>
+      client.messages.create({
+        model: 'testkit-model',
+        max_tokens: 64,
+        metadata: { user_id: 'session-a' },
+        system: 'You are a careful agent.',
+        tools: [{ name: 'Bash', description: 'Run a command.', input_schema: { type: 'object' } }],
+        messages: [{ role: 'user', content }],
+      });
+    const read: Anthropic.TextBlockParam = { type: 'text', text: 'Read notes.txt.' };
+
+    await ask([read]);
+    await ask([read, { type: 'text', text: 'Also read todo.txt.' }]);
+    await ask([{ type: 'text', text: 'Read todo.txt.' }, { type: 'text', text: 'Also read todo.txt.' }]);
+
+    const [, appended, changed] = model.promptCache();
+    expect(appended).toMatchObject({ baseline: 0, reusedFrom: 0 });
+    expect(appended?.break).toBeUndefined();
+    expect(changed?.break).toMatchObject({ region: 'messages', part: 'history', previous: 'messages[0] user content[0]' });
+    expect(problemsOf(model)).toEqual([expect.stringContaining('request #2 (every request) does not extend request #1 under prompt cache key "session-a": messages[0] user content[0] changed')]);
+  });
+
   it('reads OpenAI Responses instructions, tools and input items', async () => {
     const model = fakeModel();
     const client = new OpenAI({ apiKey: 'sk-test', baseURL: 'http://testkit.invalid/v1', fetch: model.fetch, maxRetries: 0 });
@@ -299,6 +437,28 @@ describe('prompt cache ledger', () => {
     expect(second.usage?.input_tokens_details.cached_tokens).toBe(extended?.reusedTokens);
     expect(changed?.break).toMatchObject({ region: 'system', previous: 'instructions' });
     expect(problemsOf(model)).toEqual([expect.stringContaining('request #2 (every request) does not extend request #1 under prompt cache key "session-r": instructions changed')]);
+  });
+
+  it('takes a part appended to the last Google user content as an extension, and still reports a part put before it', async () => {
+    const model = fakeModel();
+    await model.listen();
+    const client = new GoogleGenAI({ apiKey: 'test-key', httpOptions: { baseUrl: model.origin } });
+    const ask = (parts: { text: string }[]) =>
+      client.models.generateContent({
+        model: 'testkit-model',
+        contents: [{ role: 'user', parts }],
+        config: { systemInstruction: 'You are a careful agent.', tools: [{ functionDeclarations: [{ name: 'Bash', description: 'Run a command.' }] }] },
+      });
+
+    await ask([{ text: 'Read notes.txt.' }]);
+    await ask([{ text: 'Read notes.txt.' }, { text: 'Also read todo.txt.' }]);
+    await ask([{ text: 'First, read todo.txt.' }, { text: 'Read notes.txt.' }, { text: 'Also read todo.txt.' }]);
+
+    const [, appended, prepended] = model.promptCache();
+    expect(appended).toMatchObject({ baseline: 0, reusedFrom: 0 });
+    expect(appended?.break).toBeUndefined();
+    expect(prepended?.break).toMatchObject({ region: 'messages', part: 'history', previous: 'contents[0] user parts[0]' });
+    expect(problemsOf(model)).toEqual([expect.stringContaining('request #2 (every request) does not extend request #1 without a prompt cache key: contents[0] user parts[0] changed')]);
   });
 
   it('reads Google system instructions, function declarations and contents', async () => {

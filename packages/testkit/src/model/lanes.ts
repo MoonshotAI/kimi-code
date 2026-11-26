@@ -98,6 +98,11 @@ export class LaneState implements Lane {
   }
 }
 
+export function promptCacheRoleOf(request: RequestFacts): BuiltInLaneName {
+  const agentRole = request.metadata?.agentRole;
+  return agentRole !== undefined && agentRole !== 'main' ? 'subagent' : builtInLaneOf(request);
+}
+
 export function builtInLaneOf(request: RequestFacts): BuiltInLaneName {
   const metadata = request.metadata;
   if (metadata !== undefined) {
