@@ -5,8 +5,6 @@ export type {
   InspectWorktreeRemovalInput,
   KimiWorktree,
   RemoveWorktreeInput,
-  RunSetupScriptInput,
-  RunSetupScriptOptions,
   WorktreeCreateEvent,
   WorktreeCreateStep,
   WorktreeListing,

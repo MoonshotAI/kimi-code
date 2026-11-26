@@ -5387,11 +5387,6 @@ describe('KimiHarness worktrees', () => {
       code: ErrorCodes.NOT_IMPLEMENTED,
     });
     await expect(
-      SDKRpcClientBase.prototype.runWorktreeSetupScript({ worktreePath: '/tmp/wt', sourceRoot: '/tmp/repo' }),
-    ).rejects.toMatchObject({
-      code: ErrorCodes.NOT_IMPLEMENTED,
-    });
-    await expect(
       SDKRpcClientBase.prototype.inspectWorktreeRemoval({ repoRoot: '/tmp/repo', path: '/tmp/wt', deleteBranch: false }),
     ).rejects.toMatchObject({
       code: ErrorCodes.NOT_IMPLEMENTED,
