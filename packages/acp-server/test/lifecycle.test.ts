@@ -1,7 +1,6 @@
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import {
   createDecorator,
@@ -21,15 +20,13 @@ import { createFakeModel, say, type FakeModel } from '@moonshot-ai/testkit/model
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionSummary } from '@moonshot-ai/klient';
-import { createGitWorktree } from '@moonshot-ai/testkit/fixtures';
+import { createGitWorktree, fakeMcpServer } from '@moonshot-ai/testkit/fixtures';
 
 import { filterSessionSummariesByCwd } from '../src/server';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { writeFakeModelConfig } from './_helpers/fakeModelConfig';
 
-const STDIO_MCP_FIXTURE = fileURLToPath(
-  new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url),
-);
+const STDIO_MCP_SERVER = fakeMcpServer('mock', { tools: [{ name: 'echo', description: 'Echoes input text', inputSchema: { properties: { text: { type: 'string' } }, required: ['text'] }, reply: { text: { argument: 'text' } } }] });
 
 const OAUTH_PROVIDER_CONFIG = `[providers.test-oauth]
 type = "kimi"
@@ -376,9 +373,9 @@ describe('acp-server session lifecycle', () => {
         mcpServers: [
           {
             name: 'mock',
-            command: process.execPath,
-            args: [STDIO_MCP_FIXTURE],
-            env: [{ name: 'KIMI_TEST_MCP_START_DELAY_MS', value: '0' }],
+            command: STDIO_MCP_SERVER.command,
+            args: [...STDIO_MCP_SERVER.args],
+            env: [{ name: 'EXAMPLE_MCP_SETTING', value: '0' }],
           },
         ],
       })) as { sessionId: string };
@@ -403,7 +400,7 @@ describe('acp-server session lifecycle', () => {
         sessionId: created.sessionId,
         cwd: homeDir,
         mcpServers: [
-          { name: 'mock', command: process.execPath, args: [STDIO_MCP_FIXTURE], env: [] },
+          { name: 'mock', command: STDIO_MCP_SERVER.command, args: [...STDIO_MCP_SERVER.args], env: [] },
         ],
       });
 

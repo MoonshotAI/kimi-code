@@ -51,16 +51,15 @@ import {
   createMemoryMcpOAuthStore,
   hostPathClass,
   ManualMcpOAuthScheduler,
-  startInProcessHttpMcpServer,
-  stdioFixture,
+  startEchoHttpMcpServer,
+  mockStdioServer,
   UNREACHABLE_SERVER_ORIGIN,
 } from '../../mcpCore/stubs';
 
 function stdioServer(): McpServerConfig {
   return {
     transport: 'stdio',
-    command: process.execPath,
-    args: [stdioFixture],
+    ...mockStdioServer(),
     environment_id: 'local',
   };
 }
@@ -344,7 +343,7 @@ describe('WorkspaceMcpService', () => {
   }, 20000);
 
   it('sessionHandle admits a needs-auth server that settled before the first baseline read', async () => {
-    const server = await startInProcessHttpMcpServer({ authToken: 'secret' });
+    const server = await startEchoHttpMcpServer({ bearerToken: 'secret' });
     try {
       current = { remote: { transport: 'http', url: server.url } };
       const service = createService();

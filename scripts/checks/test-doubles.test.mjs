@@ -124,3 +124,26 @@ await test('a new legacy double fails with the testkit alternative, and a migrat
   assert.match(removed, /engine-mock-response in packages\/agent-core-v2\/test\/a\.test\.ts: 2 → 0/);
   assert.deepEqual(formatReport(compareCounts(baseline, baseline)), []);
 });
+
+await test('a hand-built MCP server counts in every test, while spying on the SDK classes does not', () => {
+  const counts = countLegacyDoubles([
+    {
+      file: 'packages/agent-core-v2/test/mcpCore/fixtures/echo-server.mjs',
+      text: "const server = new McpServer({ name: 'echo', version: '0' });\nawait server.connect(new StdioServerTransport());",
+    },
+    {
+      file: 'packages/kap-server/test/mcp.test.ts',
+      text: 'const http = new StreamableHTTPServerTransport({});\nconst sse = new SSEServerTransport(path, res);',
+    },
+    {
+      file: 'apps/desktop/tests/main/browser/browser-mcp.test.ts',
+      text: "vi.spyOn(StreamableHTTPServerTransport.prototype, 'handleRequest');",
+    },
+  ]);
+  assert.deepEqual(counts['mcp-server-stub'], {
+    'packages/agent-core-v2/test/mcpCore/fixtures/echo-server.mjs': 2,
+    'packages/kap-server/test/mcp.test.ts': 2,
+  });
+  const added = formatReport(compareCounts({}, counts)).join('\n');
+  assert.match(added, /instead: start fake MCP servers with the testkit/);
+});
