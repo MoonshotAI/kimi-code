@@ -22,7 +22,7 @@ import { NotifyPanelComponent } from './components/chrome/notify-panel';
 import { QueuePaneComponent } from './components/panes/queue-pane';
 import type { SessionRow, SessionsScope } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
-import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG } from './config';
+import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, resolveWheelScrollLines } from './config';
 import { CHROME_GUTTER, DOCK_QUEUE_ROWS, DOCK_UPDATES_ROWS } from './constant/rendering';
 import { CLICK_GUARD_MS } from './constant/terminal';
 import type { TasksBrowserState } from './controllers/tasks-browser';
@@ -104,6 +104,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
           refocusMouseGuardMs: CLICK_GUARD_MS,
           copyOnSelect:
             initialAppState.copyOnSelect ?? DEFAULT_TUI_CONFIG.copyOnSelect,
+          wheelScrollLines: resolveWheelScrollLines(initialAppState.wheelScrollLines),
           onRightClickPaste: () => {
             const target = ui.getFocusedComponent();
             if (!target?.handleInput || clipboard?.getText === undefined) return;

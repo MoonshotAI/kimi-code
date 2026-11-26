@@ -895,6 +895,30 @@ describe('runShell', () => {
     });
   });
 
+  it('forwards per-field tui.toml warnings into the startup notice', async () => {
+    mocks.loadTuiConfig.mockImplementationOnce(
+      async (_filePath?: string, warn?: (message: string) => void) => {
+        warn?.(
+          '[tui.toml] ignoring invalid wheel_scroll_lines value: 0.5 (expected "auto" or a positive integer)',
+        );
+        return {
+          theme: 'dark',
+          editorCommand: null,
+          notifications: { enabled: true, condition: 'unfocused' },
+        };
+      },
+    );
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await runShell(minimalCliOptions, '1.2.3-test');
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({
+      startupNotice:
+        '[tui.toml] ignoring invalid wheel_scroll_lines value: 0.5 (expected "auto" or a positive integer)',
+    });
+  });
+
   it('passes the KIMI_CODE_TUI_ANIMATION_FPS frame rate to the TUI', async () => {
     vi.stubEnv('KIMI_CODE_TUI_ANIMATION_FPS', '25');
     mocks.loadTuiConfig.mockResolvedValue({

@@ -1,9 +1,11 @@
-import { ScrollView, TuiAltScreen, TuiMainScreen, VStack } from '@moonshot-ai/pi-tui';
-import { describe, it, expect } from 'vitest';
+import { ScrollView, Text, TuiAltScreen, TuiMainScreen, VStack, type Terminal } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
+import { describe, it, expect, onTestFinished, vi } from 'vitest';
 
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import { StickyUserMessageComponent } from '#/tui/components/messages/sticky-user-message';
 import { TranscriptView } from '#/tui/components/messages/transcript-view';
+import type { WheelScrollLines } from '#/tui/config';
 import { createTUIState, type KimiTUIOptions } from '#/tui/kimi-tui';
 import type { AppState } from '#/tui/types';
 
@@ -131,6 +133,66 @@ describe('createTUIState', () => {
 
     expect(startWith(undefined)).toBe(true);
     expect(startWith(false)).toBe(false);
+  });
+
+  async function mountFullscreenWheelProbe(wheelScrollLines?: WheelScrollLines): Promise<{
+    ui: TuiAltScreen;
+    vt: VirtualTerminal;
+  }> {
+    const state = createTUIState({
+      initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen', wheelScrollLines },
+      startup: { continueLast: false, yolo: false, auto: false, plan: false },
+    });
+    const ui = state.ui as TuiAltScreen;
+    const vt = new VirtualTerminal(80, 12);
+    (ui as { terminal: Terminal }).terminal = vt;
+    state.transcriptContainer.addChild(
+      new Text(Array.from({ length: 60 }, (_, index) => `line ${String(index + 1)}`).join('\n'), 0, 0),
+    );
+    ui.start();
+    onTestFinished(() => {
+      ui.stop();
+    });
+    await vt.waitForRender();
+    return { ui, vt };
+  }
+
+  it.each<readonly [number]>([[5], [2]])(
+    'starts the fullscreen renderer with configured wheelScrollLines = %d',
+    async (lines) => {
+      const { ui, vt } = await mountFullscreenWheelProbe(lines);
+      const before = ui.viewportTop;
+      expect(before).toBeGreaterThan(lines);
+
+      vt.sendInput('\u001B[<64;1;1M');
+      await vt.waitForRender();
+
+      expect(before - ui.viewportTop).toBe(lines);
+    },
+  );
+
+  it('defaults unset wheelScrollLines to auto instead of pi-tui fixed 1 line', async () => {
+    vi.stubEnv('SSH_CONNECTION', '1');
+    let now = 1_000;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    onTestFinished(() => {
+      nowSpy.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    const { ui, vt } = await mountFullscreenWheelProbe(undefined);
+    const start = ui.viewportTop;
+    expect(start).toBeGreaterThan(10);
+
+    vt.sendInput('\u001B[<64;1;1M');
+    await vt.waitForRender();
+    const afterFirst = ui.viewportTop;
+    expect(start - afterFirst).toBe(1);
+
+    now += 25;
+    vt.sendInput('\u001B[<64;1;1M');
+    await vt.waitForRender();
+    expect(afterFirst - ui.viewportTop).toBeGreaterThan(1);
   });
 
   it('builds an alternate-screen renderer with a docked layout in fullscreen mode', () => {
