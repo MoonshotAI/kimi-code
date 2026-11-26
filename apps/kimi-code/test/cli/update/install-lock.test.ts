@@ -161,11 +161,31 @@ describe('update install lock', () => {
   }
 
   it('does not treat an aged lock as stale while its holder process is alive', async () => {
-    writeAgedLock(process.pid);
+    const holder = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
+    expect(holder).not.toBeNull();
 
-    const lock = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
+    const lock = await tryAcquireUpdateInstallLock({
+      version: '0.5.0',
+      now: new Date(Date.now() + 60 * 60 * 1000),
+    });
 
     expect(lock).toBeNull();
+    await holder?.release();
+  });
+
+  it.runIf(process.platform !== 'win32')('sweeps an aged lock whose pid now belongs to a process started after it', async () => {
+    const reused = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    try {
+      await new Promise((resolve) => reused.once('spawn', resolve));
+      writeAgedLock(reused.pid ?? -1);
+
+      const lock = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
+
+      expect(lock).not.toBeNull();
+      await lock?.release();
+    } finally {
+      reused.kill('SIGKILL');
+    }
   });
 
   it('sweeps an aged lock whose holder process is gone', async () => {

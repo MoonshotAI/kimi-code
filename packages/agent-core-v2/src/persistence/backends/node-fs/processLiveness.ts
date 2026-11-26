@@ -3,31 +3,68 @@ import os from 'node:os';
 
 export interface ProcessStamp {
   readonly pid: number;
-  readonly hostname: string;
+  readonly hostname?: string;
   readonly startedAt: number;
 }
 
-function pidAlive(pid: number): boolean {
+interface ProcessProbe {
+  readonly zombie: boolean;
+  readonly startedAt?: number;
+}
+
+const CLOCK_TOLERANCE_MS = 5_000;
+
+const PROBE_TIMEOUT_MS = 1_000;
+
+export function processStampAlive(stamp: ProcessStamp, hostname = os.hostname()): boolean {
+  if (stamp.hostname !== undefined && stamp.hostname !== '' && stamp.hostname !== hostname) return true;
+  if (!Number.isSafeInteger(stamp.pid) || stamp.pid <= 0) return false;
+  if (!Number.isFinite(stamp.startedAt)) return false;
+  if (!signalable(stamp.pid)) return false;
+  if (stamp.startedAt < bootTime() - CLOCK_TOLERANCE_MS) return false;
+  if (process.platform === 'win32') return true;
+  const probe = probeProcess(stamp.pid);
+  if (probe === undefined) return true;
+  if (probe.zombie) return false;
+  return probe.startedAt === undefined || probe.startedAt <= stamp.startedAt + CLOCK_TOLERANCE_MS;
+}
+
+function signalable(pid: number): boolean {
   try {
     process.kill(pid, 0);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EPERM') return false;
-  }
-  if (process.platform === 'win32') return true;
-  try {
-    const stat = execFileSync('ps', ['-p', String(pid), '-o', 'stat='], {
-      encoding: 'utf8',
-      timeout: 1000,
-    });
-    return !stat.trim().startsWith('Z');
-  } catch {
     return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 
-export function processStampAlive(stamp: ProcessStamp, hostname = os.hostname()): boolean {
-  if (stamp.hostname !== '' && stamp.hostname !== hostname) return true;
-  if (!pidAlive(stamp.pid)) return false;
-  const bootTime = Date.now() - os.uptime() * 1000;
-  return stamp.startedAt >= bootTime;
+function bootTime(): number {
+  return Date.now() - os.uptime() * 1000;
+}
+
+function probeProcess(pid: number): ProcessProbe | undefined {
+  let output: string;
+  try {
+    output = execFileSync('ps', ['-o', 'stat=', '-o', 'etime=', '-p', String(pid)], {
+      encoding: 'utf8',
+      timeout: PROBE_TIMEOUT_MS,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return undefined;
+  }
+  const [stat, elapsed] = output.trim().split(/\s+/);
+  if (stat === undefined || stat === '') return undefined;
+  const elapsedSeconds = elapsed === undefined ? undefined : parseElapsedSeconds(elapsed);
+  return {
+    zombie: stat.startsWith('Z'),
+    ...(elapsedSeconds === undefined ? {} : { startedAt: Date.now() - elapsedSeconds * 1000 }),
+  };
+}
+
+function parseElapsedSeconds(elapsed: string): number | undefined {
+  const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(elapsed);
+  if (match === null) return undefined;
+  const [, days = '0', hours = '0', minutes = '0', seconds = '0'] = match;
+  return Number(days) * 86_400 + Number(hours) * 3_600 + Number(minutes) * 60 + Number(seconds);
 }

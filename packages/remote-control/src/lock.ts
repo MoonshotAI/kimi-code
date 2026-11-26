@@ -2,6 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import { processStampAlive } from '@moonshot-ai/agent-core-v2/persistence/backends/node-fs/processLiveness';
+
 export interface RemoteControlLockInfo {
   readonly pid: number;
   readonly nonce: string;
@@ -78,7 +80,7 @@ export async function acquireRemoteControlLock(
         throw error;
       }
       const holder = await readRemoteControlLock(lockPath);
-      if (holder !== undefined && pidAlive(holder.pid)) {
+      if (holder !== undefined && holderAlive(holder)) {
         throw new RemoteControlAlreadyRunningError(holder);
       }
       await removeFile(lockPath);
@@ -92,7 +94,7 @@ export async function inspectRemoteControlLock(
   const lockPath = remoteControlLockPath(homeDir);
   const info = await readRemoteControlLock(lockPath);
   if (info === undefined) return undefined;
-  if (!pidAlive(info.pid)) {
+  if (!holderAlive(info)) {
     await removeFile(lockPath);
     return undefined;
   }
@@ -172,12 +174,6 @@ async function removeFile(lockPath: string): Promise<void> {
   }
 }
 
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
-    return true;
-  }
+function holderAlive(holder: RemoteControlLockInfo): boolean {
+  return processStampAlive({ pid: holder.pid, startedAt: holder.startedAt });
 }

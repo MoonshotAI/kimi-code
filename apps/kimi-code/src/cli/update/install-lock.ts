@@ -1,6 +1,8 @@
 import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
+import { processStampAlive } from '@moonshot-ai/agent-core-v2/persistence/backends/node-fs/processLiveness';
+
 import { getUpdateInstallLockFile } from '#/utils/paths';
 import { createFileIfAbsent } from '#/utils/persistence';
 
@@ -33,15 +35,6 @@ function isAlreadyExists(error: unknown): boolean {
   );
 }
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
 interface LockInspection {
   readonly content: string;
   readonly mtimeMs: number;
@@ -67,7 +60,9 @@ function isStaleLock(inspection: LockInspection, now: Date): boolean {
   if (typeof lock.startedAt !== 'string') return true;
   const startedAt = Date.parse(lock.startedAt);
   if (!Number.isFinite(startedAt)) return true;
-  if (typeof lock.pid === 'number' && !isProcessAlive(lock.pid)) return true;
+  if (typeof lock.pid === 'number' && !processStampAlive({ pid: lock.pid, startedAt })) {
+    return true;
+  }
   if (now.getTime() - startedAt <= UPDATE_INSTALL_LOCK_STALE_MS) return false;
   return typeof lock.pid !== 'number';
 }

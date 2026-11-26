@@ -179,6 +179,29 @@ describe('SessionLockService', () => {
     }
   });
 
+  it.skipIf(process.platform === 'win32')('reclaims a lock whose pid now belongs to a process started after it', () => {
+    const reused: SessionLockHolder = {
+      version: 1,
+      token: 'reused-token',
+      pid: process.pid,
+      hostname: '',
+      startedAt: Date.now() - 60_000,
+      clientIdentity: 'ghost',
+    };
+    serviceA.hold('warmup');
+    serviceA.release('warmup');
+    writeFileSync(lockPath(homeDir, SID), JSON.stringify(reused), { mode: 0o600 });
+    const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true);
+    mocks.execFileSync.mockReturnValue('S    00:10\n');
+    try {
+      expect(() => serviceA.hold(SID)).not.toThrow();
+      expect(readLockFile(homeDir, SID).token).not.toBe('reused-token');
+      serviceA.release(SID);
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
   it('reclaims a lock from another hostname even when its pid is locally alive', () => {
     const foreign: SessionLockHolder = {
       version: 1,
