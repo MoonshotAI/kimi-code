@@ -579,6 +579,12 @@ describe('server-v2 session worktrees', () => {
     );
     expect(await sentTexts(created.id)).not.toContain('first while waiting');
 
+    const fork = await post<Session>(`/sessions/${created.id}:fork`, {});
+    expect(fork.code).toBe(0);
+    expect(fork.data.worktree?.setup.status).toBe('stopped');
+    expect(fork.data.worktree?.held_prompt).toBeUndefined();
+    expect((await stored(fork.data.id))?.held_request).toBeUndefined();
+
     expect((await post<Session>(`/sessions/${created.id}/worktree:use_local`)).code).toBe(0);
     await vi.waitFor(async () => {
       expect((await get<Session>(`/sessions/${created.id}`)).data.worktree?.held_prompt).toBeUndefined();

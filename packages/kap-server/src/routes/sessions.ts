@@ -21,6 +21,7 @@ import {
   IEventService,
   SessionCreated,
   ISessionManager,
+  patchSessionMetadata,
   IHostFileSystem,
   IProjectService,
   IWireService,
@@ -123,7 +124,9 @@ import { stateInvalid } from '../services/worktrees/worktreeError';
 import {
   SESSION_WORKTREE_METADATA_KEY,
   sessionWorktreeWire,
+  storedSessionWorktree,
   withStoredSessionWorktree,
+  withoutHeldPrompt,
 } from '../services/worktrees/sessionWorktreeState';
 
 type SessionRouteHost = GetRouteHost & PostRouteHost;
@@ -849,12 +852,19 @@ async function forkSessionAction(
     if ((await worktrees.read(id))?.setup.status === 'running') {
       throw stateInvalid('wait for worktree setup to finish before forking this session');
     }
-    const meta = await core.accessor.get(ISessionManager).fork({
+    const forked = await core.accessor.get(ISessionManager).fork({
       sourceSessionId: id,
       title: body.title,
       metadata: body.metadata,
       turnIndex: body.turn_index,
     });
+    const inherited = storedSessionWorktree(forked.custom);
+    const meta =
+      inherited?.held_prompt === undefined
+        ? forked
+        : ((await patchSessionMetadata(core.accessor, forked.id, (current) => ({
+            custom: withStoredSessionWorktree(current.custom, withoutHeldPrompt(inherited)),
+          }))) ?? forked);
     const workspaceId = lease.instance.program.workspaceId;
     const session = toWireSession(
       { ...meta, workspaceId, workspaceRoot: await workspaceRootOf(core, workspaceId) },
