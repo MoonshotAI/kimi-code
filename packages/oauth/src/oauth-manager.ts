@@ -99,7 +99,7 @@ export class OAuthManager {
   private readonly onRefresh: ((outcome: OAuthRefreshOutcome) => void) | undefined;
 
   private inFlightRefresh: { promise: Promise<string>; force: boolean } | undefined;
-  private inFlightSwitch: Promise<TokenInfo> | undefined;
+  private inFlightExclusive: Promise<unknown> | undefined;
   private volatileToken: TokenInfo | undefined;
 
   constructor(options: OAuthManagerOptions) {
@@ -212,13 +212,22 @@ export class OAuthManager {
   }
 
   async logout(): Promise<void> {
-    this.volatileToken = undefined;
-    await this.storage.remove(this.config.name);
+    return this.runExclusive(() => this.doLogout());
+  }
+
+  private async doLogout(): Promise<void> {
+    const release = await this.acquireRefreshLock();
+    try {
+      this.volatileToken = undefined;
+      await this.storage.remove(this.config.name);
+    } finally {
+      await release();
+    }
   }
 
   async ensureFresh(options: { force?: boolean } = {}): Promise<string> {
-    if (this.inFlightSwitch !== undefined) {
-      return this.inFlightSwitch.catch(() => undefined).then(() => this.ensureFresh(options));
+    if (this.inFlightExclusive !== undefined) {
+      return this.inFlightExclusive.catch(() => undefined).then(() => this.ensureFresh(options));
     }
     const force = options.force === true;
     const current = this.inFlightRefresh;
@@ -239,15 +248,17 @@ export class OAuthManager {
   }
 
   async switchWorkspace(target: WorkspaceTarget): Promise<TokenInfo> {
-    const prior = this.inFlightSwitch ?? this.inFlightRefresh?.promise;
-    const run = (
-      prior === undefined ? this.doSwitchWorkspace(target) : prior.catch(() => undefined).then(() => this.doSwitchWorkspace(target))
-    ).finally(() => {
-      if (this.inFlightSwitch === run) {
-        this.inFlightSwitch = undefined;
+    return this.runExclusive(() => this.doSwitchWorkspace(target));
+  }
+
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const prior = this.inFlightExclusive ?? this.inFlightRefresh?.promise;
+    const run = (prior === undefined ? fn() : prior.catch(() => undefined).then(fn)).finally(() => {
+      if (this.inFlightExclusive === run) {
+        this.inFlightExclusive = undefined;
       }
     });
-    this.inFlightSwitch = run;
+    this.inFlightExclusive = run;
     return run;
   }
 

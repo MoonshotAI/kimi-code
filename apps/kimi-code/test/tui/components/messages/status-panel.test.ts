@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
+import type { SlashCommandHost } from '#/tui/commands/dispatch';
+import { showStatusReport } from '#/tui/commands/info';
 import { buildStatusReportLines } from '#/tui/components/messages/status-panel';
 
 function strip(text: string): string {
@@ -276,5 +278,66 @@ describe('status panel report lines', () => {
     expect(output).toContain('Workspace    Failed to fetch workspaces: HTTP 503');
     expect(output).not.toContain('Stale Corp');
     expect(output).not.toMatch(/^\s*Plan\s{2,}/m);
+  });
+
+  it('hides cached managed workspace rows in /status when the active model uses a custom provider', async () => {
+    const addedPanels: Array<{ render(width: number): string[] }> = [];
+    const host = {
+      session: undefined,
+      harness: {
+        auth: {
+          getManagedUsage: vi.fn(),
+          getAccountProfile: vi.fn(),
+        },
+      },
+      state: {
+        appState: {
+          version: '1.2.3',
+          model: 'custom-gpt',
+          workDir: '/tmp/project',
+          additionalDirs: [],
+          sessionId: 'ses-custom',
+          sessionTitle: null,
+          thinkingEffort: 'off',
+          permissionMode: 'manual',
+          planMode: false,
+          towerMode: false,
+          contextUsage: 0,
+          contextTokens: 0,
+          maxContextTokens: 128_000,
+          availableModels: {
+            'custom-gpt': {
+              provider: 'custom-openai',
+              model: 'gpt-4o',
+              maxContextSize: 128_000,
+              displayName: 'Custom GPT',
+            },
+          },
+          availableProviders: {},
+          managedWorkspace: {
+            hasBusinessWorkspace: true,
+            statusWorkspaceLine: 'Alice · Acme Corp',
+            planLabel: 'Premium',
+          },
+        },
+        transcriptContainer: {
+          addChild: (panel: { render(width: number): string[] }) => {
+            addedPanels.push(panel);
+          },
+        },
+        ui: {
+          requestRender: vi.fn(),
+        },
+      },
+    } as unknown as SlashCommandHost;
+
+    await showStatusReport(host);
+
+    expect(addedPanels).toHaveLength(1);
+    const rendered = addedPanels[0]!.render(100).map(strip).join('\n');
+    expect(rendered).toContain('Custom GPT');
+    expect(rendered).not.toContain('Acme Corp');
+    expect(rendered).not.toMatch(/^\s*Workspace\s{2,}/m);
+    expect(rendered).not.toMatch(/^\s*Plan\s{2,}/m);
   });
 });

@@ -825,4 +825,109 @@ describe('KimiOAuthToolkit', () => {
     await expect(toolkit.login()).resolves.toMatchObject({ ok: true });
     expect(tokenCalls).toEqual(['urn:ietf:params:oauth:grant-type:device_code']);
   });
+
+  it('serializes logout behind an in-flight switchWorkspace so config and credentials end cleared', async () => {
+    const storage = new MemoryTokenStorage();
+    storage.tokens.set('kimi-code', token('initial-access'));
+
+    let resolveSwitchFetch!: (response: Response) => void;
+    const fetchImpl = vi.fn(
+      async (input: Parameters<typeof fetch>[0]) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.endsWith('/api/oauth/token')) {
+          return new Promise<Response>((resolve) => {
+            resolveSwitchFetch = resolve;
+          });
+        }
+        if (url.endsWith('/models')) {
+          return new Response(
+            JSON.stringify({
+              data: [{ id: 'kimi-for-coding', limit: { context: 200000 } }],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (url.endsWith('/me')) {
+          return new Response(
+            JSON.stringify({
+              user_id: 'u-1',
+              nickname: 'Alex',
+              status: 'USER_STATUS_NORMAL',
+              region: 'REGION_CN',
+              user_level: 50,
+              user_level_name: 'Premium',
+              domain: 1,
+              domain_name: 'DOMAIN_EXAMPLE',
+              workspace_name: 'Acme AI',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (url.endsWith('/workspaces')) {
+          return new Response(
+            JSON.stringify({
+              workspaces: [
+                {
+                  kind: 'business',
+                  business_id: 'biz-1',
+                  name: 'Acme AI',
+                  status: 'STATUS_ACTIVE',
+                  current: true,
+                  disabled: false,
+                  roles: ['ROLE_MEMBER'],
+                },
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      },
+    ) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const config: { providers: Record<string, unknown> } = { providers: {} };
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      fetchImpl,
+      now: () => 100,
+      configAdapter: {
+        read: () => config,
+        write: () => {},
+        apply: (target) => {
+          target.providers[KIMI_CODE_PROVIDER_NAME] = { type: 'kimi', apiKey: '' };
+          return { defaultModel: 'kimi-code/kimi-for-coding', defaultThinking: true };
+        },
+        remove: (target) => {
+          delete target.providers[KIMI_CODE_PROVIDER_NAME];
+        },
+      },
+    });
+
+    const pendingSwitch = toolkit.switchWorkspace({ kind: 'business', businessId: 'biz-1' });
+    await vi.waitFor(() => expect(resolveSwitchFetch).toBeTypeOf('function'));
+
+    const pendingLogout = toolkit.logout();
+
+    resolveSwitchFetch(
+      new Response(
+        JSON.stringify({
+          access_token: 'switched-access',
+          refresh_token: 'switched-refresh',
+          expires_in: 3600,
+          scope: 'kimi-code',
+          token_type: 'Bearer',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+
+    await pendingSwitch;
+    await pendingLogout;
+
+    await expect(storage.load('kimi-code')).resolves.toBeUndefined();
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toBeUndefined();
+  });
 });

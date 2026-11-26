@@ -1003,4 +1003,50 @@ describe('OAuthManager.switchWorkspace', () => {
     await expect(mgr.ensureFresh()).resolves.toBe('at-committed');
     await expect(mgr.getCachedAccessToken()).resolves.toBe('at-committed');
   });
+
+  it('serializes logout behind an in-flight switchWorkspace so rotated tokens are not resurrected', async () => {
+    const storage = new InMemoryStorage();
+    await storage.save(
+      'kimi-code',
+      makeToken({
+        accessToken: 'at-before',
+        refreshToken: 'rt-before',
+        expiresAt: currentNow + 7200,
+      }),
+    );
+
+    let resolveSwitch!: (token: TokenInfo) => void;
+    const switchImpl = vi.fn(
+      () =>
+        new Promise<TokenInfo>((resolve) => {
+          resolveSwitch = resolve;
+        }),
+    );
+    const mgr = new OAuthManager({
+      config,
+      storage,
+      now,
+      switchWorkspaceImpl: switchImpl,
+    });
+
+    const pendingSwitch = mgr.switchWorkspace({ kind: 'business', businessId: 'biz-1' });
+    await vi.waitFor(() => expect(switchImpl).toHaveBeenCalledTimes(1));
+
+    const pendingLogout = mgr.logout();
+
+    resolveSwitch(
+      makeToken({
+        accessToken: 'at-rotated-during-logout',
+        refreshToken: 'rt-rotated-during-logout',
+        expiresAt: currentNow + 7200,
+      }),
+    );
+
+    await expect(pendingSwitch).resolves.toMatchObject({ accessToken: 'at-rotated-during-logout' });
+    await pendingLogout;
+
+    await expect(storage.load('kimi-code')).resolves.toBeUndefined();
+    await expect(mgr.hasToken()).resolves.toBe(false);
+    await expect(mgr.getCachedAccessToken()).resolves.toBeUndefined();
+  });
 });

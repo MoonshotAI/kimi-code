@@ -180,6 +180,9 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     loadManagedWorkspaceReport(host),
   ]);
   const appState = host.state.appState;
+  const isManagedModel = isManagedUsageProvider(
+    appState.availableModels[appState.model]?.provider,
+  );
   const reportArgs = {
     version: appState.version,
     model: appState.model,
@@ -199,7 +202,9 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     statusError: runtimeStatus.error,
     managedUsage: managedUsage?.usage,
     managedUsageError: managedUsage?.error,
-    managedWorkspace: managedWorkspace?.workspace ?? appState.managedWorkspace,
+    managedWorkspace: isManagedModel
+      ? (managedWorkspace?.workspace ?? appState.managedWorkspace)
+      : undefined,
     managedWorkspaceError: managedWorkspace?.error,
   };
   const panel = new UsagePanelComponent(() => buildStatusReportLines(reportArgs), 'primary', ' Status ');

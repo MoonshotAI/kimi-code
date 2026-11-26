@@ -40,6 +40,17 @@ function toManagedWorkspaceSummary(profile: ManagedAccountProfile): ManagedWorks
   };
 }
 
+function resolvePreferredModel(
+  startupModel: string | undefined,
+  defaultModel: string | undefined,
+  availableModels: Readonly<Record<string, unknown>>,
+): string | undefined {
+  if (startupModel !== undefined && availableModels[startupModel] !== undefined) {
+    return startupModel;
+  }
+  return defaultModel;
+}
+
 function switchedWorkspaceDisplayName(
   target: WorkspaceTarget,
   chosen: ManagedWorkspace,
@@ -196,7 +207,11 @@ export class AuthFlowController {
         const availableModels = config.models ?? {};
         const availableProviders = config.providers ?? {};
         const currentModel = this.host.state?.appState.model.trim() ?? '';
-        const defaultModel = this.host.options.startup.model ?? config.defaultModel;
+        const defaultModel = resolvePreferredModel(
+          this.host.options.startup.model,
+          config.defaultModel,
+          availableModels,
+        );
         const fallback = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
         if (
           currentModel.length > 0 &&
@@ -264,7 +279,11 @@ export class AuthFlowController {
     const config = await host.harness.getConfig({ reload: true });
     const availableModels = config.models ?? {};
     const availableProviders = config.providers ?? {};
-    const defaultModel = host.options.startup.model ?? config.defaultModel;
+    const defaultModel = resolvePreferredModel(
+      host.options.startup.model,
+      config.defaultModel,
+      availableModels,
+    );
     const selected = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
     try {
       const accessToken = await host.harness.auth.getCachedAccessToken();
@@ -303,8 +322,14 @@ export class AuthFlowController {
 
     const activated = await this.activateModelAfterLogin(defaultModel, configuredEffort);
     if (host.session === undefined) {
-      await host.hydrateLazyConfigDefaults();
-      host.setAppState({ availableModels, availableProviders });
+      const startupOverridden =
+        host.options.startup.model !== undefined && host.options.startup.model !== defaultModel;
+      await host.hydrateLazyConfigDefaults(!startupOverridden);
+      host.setAppState({
+        ...(startupOverridden ? lazyModelSelection(config, defaultModel) : {}),
+        availableModels,
+        availableProviders,
+      });
       return activated;
     }
     const appStatePatch: Partial<AppState> = {

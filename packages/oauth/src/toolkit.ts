@@ -131,6 +131,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     'now' | 'sleep' | 'deviceCodeTimeoutMs' | 'refreshThreshold' | 'onRefresh'
   >;
   private readonly managers = new Map<string, OAuthManager>();
+  private readonly mutationQueues = new Map<string, Promise<unknown>>();
   private _identityHeaders: Record<string, string> | undefined;
 
   constructor(options: KimiOAuthToolkitOptions<TConfig>) {
@@ -255,13 +256,15 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
     const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
-    await this.managerFor(name, oauthKey, oauthHost).logout();
-    if (this.configAdapter?.remove !== undefined && name === KIMI_CODE_PROVIDER_NAME) {
-      const config = await this.configAdapter.read();
-      this.configAdapter.remove(config);
-      await this.configAdapter.write(config);
-    }
-    return { providerName: name, ok: true };
+    return this.enqueueMutation(this.mutationKeyFor(name, oauthKey, oauthHost), async () => {
+      await this.managerFor(name, oauthKey, oauthHost).logout();
+      if (this.configAdapter?.remove !== undefined && name === KIMI_CODE_PROVIDER_NAME) {
+        const config = await this.configAdapter.read();
+        this.configAdapter.remove(config);
+        await this.configAdapter.write(config);
+      }
+      return { providerName: name, ok: true };
+    });
   }
 
   async ensureFresh(
@@ -335,67 +338,96 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(options.oauthRef, options.oauthHost);
     const oauthKey = options.oauthRef?.key ?? this.defaultOAuthKey(options.baseUrl, oauthHost);
-    const manager = this.managerFor(name, oauthKey, oauthHost);
-    const warnings: string[] = [];
-    let switchedAccessToken: string;
-    try {
-      const switched = await manager.switchWorkspace(target);
-      switchedAccessToken = switched.accessToken;
-    } catch (error) {
-      if (
-        error instanceof OAuthWorkspaceSwitchError &&
-        error.committed &&
-        error.token !== undefined
-      ) {
-        switchedAccessToken = error.token.accessToken;
-        warnings.push(error.message);
-      } else {
-        throw error;
-      }
-    }
-
-    const shouldProvision = options.provisionConfig ?? this.configAdapter !== undefined;
-    const configAdapter = this.configAdapter;
-    let provision: ManagedKimiCodeProvisionResult | undefined;
-    if (shouldProvision && configAdapter !== undefined) {
+    return this.enqueueMutation(this.mutationKeyFor(name, oauthKey, oauthHost), async () => {
+      const manager = this.managerFor(name, oauthKey, oauthHost);
+      const warnings: string[] = [];
+      let switchedAccessToken: string;
       try {
-        provision = await provisionManagedKimiCodeConfig({
-          accessToken: switchedAccessToken,
-          adapter: configAdapter,
-          baseUrl: options.baseUrl,
-          oauthKey,
-          oauthHost,
-          preserveDefaultModel: true,
-          fetchImpl: this.fetchImpl,
-          headers: this.identityHeaders(),
-        });
+        const switched = await manager.switchWorkspace(target);
+        switchedAccessToken = switched.accessToken;
       } catch (error) {
-        warnings.push(
-          `Failed to refresh model config: ${error instanceof Error ? error.message : String(error)}`,
+        if (
+          error instanceof OAuthWorkspaceSwitchError &&
+          error.committed &&
+          error.token !== undefined
+        ) {
+          switchedAccessToken = error.token.accessToken;
+          warnings.push(error.message);
+        } else {
+          throw error;
+        }
+      }
+
+      if (!(await manager.hasToken())) {
+        throw new OAuthUnauthorizedError(
+          `No token for "${name}". Run /login to authenticate.`,
         );
       }
-    }
 
-    const profileRes = await fetchManagedAccountProfile({
-      userInfoUrl: managedUserInfoUrl(options.baseUrl),
-      workspacesUrl: managedWorkspacesUrl(options.baseUrl),
-      accessToken: switchedAccessToken,
-      ...this.managedRequestInit(),
+      const shouldProvision = options.provisionConfig ?? this.configAdapter !== undefined;
+      const configAdapter = this.configAdapter;
+      let provision: ManagedKimiCodeProvisionResult | undefined;
+      if (shouldProvision && configAdapter !== undefined) {
+        let loggedOutDuringProvision = false;
+        const guardedAdapter: ManagedKimiConfigAdapter<TConfig> = {
+          ...configAdapter,
+          write: async (nextConfig) => {
+            if (!(await manager.hasToken())) {
+              loggedOutDuringProvision = true;
+              return;
+            }
+            await configAdapter.write(nextConfig);
+          },
+        };
+        try {
+          provision = await provisionManagedKimiCodeConfig({
+            accessToken: switchedAccessToken,
+            adapter: guardedAdapter,
+            baseUrl: options.baseUrl,
+            oauthKey,
+            oauthHost,
+            preserveDefaultModel: true,
+            fetchImpl: this.fetchImpl,
+            headers: this.identityHeaders(),
+          });
+        } catch (error) {
+          warnings.push(
+            `Failed to refresh model config: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        if (loggedOutDuringProvision || !(await manager.hasToken())) {
+          throw new OAuthUnauthorizedError(
+            `No token for "${name}". Run /login to authenticate.`,
+          );
+        }
+      }
+
+      const profileRes = await fetchManagedAccountProfile({
+        userInfoUrl: managedUserInfoUrl(options.baseUrl),
+        workspacesUrl: managedWorkspacesUrl(options.baseUrl),
+        accessToken: switchedAccessToken,
+        ...this.managedRequestInit(),
+      });
+      if (!(await manager.hasToken())) {
+        throw new OAuthUnauthorizedError(
+          `No token for "${name}". Run /login to authenticate.`,
+        );
+      }
+      const profile = profileRes.kind === 'ok' ? profileRes.profile : undefined;
+      if (profileRes.kind === 'error') {
+        warnings.push(profileRes.message);
+      }
+
+      const warning = warnings.length > 0 ? warnings.join(' ') : undefined;
+      return {
+        providerName: name,
+        ok: true,
+        target,
+        ...(provision !== undefined ? { provision } : {}),
+        ...(profile !== undefined ? { profile } : {}),
+        ...(warning !== undefined ? { warning } : {}),
+      };
     });
-    const profile = profileRes.kind === 'ok' ? profileRes.profile : undefined;
-    if (profileRes.kind === 'error') {
-      warnings.push(profileRes.message);
-    }
-
-    const warning = warnings.length > 0 ? warnings.join(' ') : undefined;
-    return {
-      providerName: name,
-      ok: true,
-      target,
-      ...(provision !== undefined ? { provision } : {}),
-      ...(profile !== undefined ? { profile } : {}),
-      ...(warning !== undefined ? { warning } : {}),
-    };
   }
 
   async getManagedUsage(
@@ -476,6 +508,22 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     });
     this.managers.set(managerKey, manager);
     return manager;
+  }
+
+  private mutationKeyFor(providerName: string, oauthKey: string, oauthHost: string): string {
+    const storageName = resolveKimiTokenStorageName({ providerName, oauthKey });
+    return `${storageName}\0${normalizeOAuthHost(oauthHost)}`;
+  }
+
+  private enqueueMutation<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prior = this.mutationQueues.get(key);
+    const run = (prior === undefined ? fn() : prior.catch(() => undefined).then(fn)).finally(() => {
+      if (this.mutationQueues.get(key) === run) {
+        this.mutationQueues.delete(key);
+      }
+    });
+    this.mutationQueues.set(key, run);
+    return run;
   }
 
   private defaultOAuthKey(

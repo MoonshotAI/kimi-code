@@ -505,6 +505,49 @@ describe('managed workspace state sync', () => {
     expect(appState.model).toBe('k2-next');
   });
 
+  it('falls back to config.defaultModel on both streaming and idle workspace switches when startup --model was removed', async () => {
+    for (const streamingPhase of ['streaming', 'idle'] as const) {
+      const { host, session, appState } = makeHost({ withSession: true, defaultModel: 'k2-next' });
+      (host.options.startup as { model?: string }).model = 'enterprise-only-model';
+      (appState as Record<string, unknown>)['streamingPhase'] = streamingPhase;
+      appState.model = 'enterprise-only-model';
+      host.harness.getConfig = vi.fn(async () => ({
+        defaultModel: 'k2-next',
+        models: {
+          'k2-next': {
+            provider: 'managed:kimi-code',
+            model: 'kimi-for-coding',
+            maxContextSize: 256_000,
+          },
+        },
+        providers: {},
+      }));
+      host.harness.auth['switchWorkspace'] = vi.fn(async () => ({
+        providerName: 'managed:kimi-code',
+        ok: true as const,
+        target: { kind: 'personal' as const },
+      }));
+
+      await new AuthFlowController(host).switchWorkspace(
+        { kind: 'personal' },
+        {
+          kind: 'personal',
+          key: 'personal',
+          target: { kind: 'personal' },
+          name: 'Alice',
+          kindLabel: 'Personal workspace',
+          current: false,
+          disabled: false,
+          switchable: true,
+          roles: ['owner'],
+        },
+      );
+
+      expect(session!.setModel).toHaveBeenCalledWith('k2-next');
+      expect(appState.model).toBe('k2-next');
+    }
+  });
+
   it('clears stale workspace without setting authRequired when active model uses a custom provider', async () => {
     const { host, appState } = makeHost({ defaultModel: 'custom-gpt' });
     appState.model = 'custom-gpt';
