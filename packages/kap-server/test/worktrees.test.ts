@@ -523,15 +523,10 @@ describe('server-v2 session worktrees', () => {
       content: [{ type: 'text', text: 'maybe sent' }],
     });
     await post<Session>(`/sessions/${created.id}/worktree:cancel`);
-    await patchSessionMetadata(fixture.server.core.accessor, created.id, (meta) => ({
-      custom: {
-        ...meta.custom,
-        worktree: {
-          ...(meta.custom?.['worktree'] as { setup: object }),
-          setup: { ...(meta.custom?.['worktree'] as { setup: object }).setup, status: 'local' },
-        },
-      },
-    }));
+    await patchSessionMetadata(fixture.server.core.accessor, created.id, (meta) => {
+      const current = meta.custom?.['worktree'] as { setup: object };
+      return { custom: { ...meta.custom, worktree: { ...current, setup: { ...current.setup, status: 'local' } } } };
+    });
 
     await new SessionWorktreeService(fixture.server.core).recoverInterrupted();
 
