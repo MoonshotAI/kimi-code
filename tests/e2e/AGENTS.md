@@ -2,7 +2,7 @@
 
 一端是模拟的用户输入，另一端是真实的产品进程，中间只有 testkit 的假模型是假的。每个场景查三样：模型收到了什么、界面显示了什么、磁盘变成了什么样。同一个场景要在 TUI、Web、Desktop、ACP 四个面上各跑一遍，四个面都已接通。
 
-旧 E2E 不在这里：`apps/desktop/e2e/`、`apps/desktop/test/e2e/`、`apps/kimi-code/test/e2e/`，以及 `packages/acp-server/test/` 里的 e2e 和 parity 测试。不要把它们搬进来，也不要 import 它们的夹具。KAP 协议本身的场景在 `tests/scenarios/`。
+旧 E2E 不在这里：`apps/desktop/e2e/`、`apps/kimi-code/test/e2e/`，以及 `packages/acp-server/test/` 里的 e2e 和 parity 测试。不要把它们搬进来，也不要 import 它们的夹具。KAP 协议本身的场景在 `tests/scenarios/`。
 
 ## 目录
 

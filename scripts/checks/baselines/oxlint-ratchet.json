@@ -8,7 +8,6 @@
     "packages/kap-server/test/services/conversation.test.ts": 1
   },
   "eslint/eqeqeq": {
-    "apps/desktop/e2e/fixtures/settings.ts": 1,
     "apps/desktop/src/main/browser/browser-file-read-guard.ts": 1,
     "apps/desktop/src/main/browser/browser-overlay.ts": 1,
     "apps/desktop/src/main/browser/browser-view.ts": 6,
@@ -92,7 +91,6 @@
     "packages/oauth/test/custom-registry.test.ts": 1
   },
   "eslint/no-unused-vars": {
-    "apps/desktop/e2e/lifecycle-restore.spec.ts": 1,
     "apps/desktop/src/main/app/lifecycle.ts": 1,
     "apps/desktop/src/shared/browser-data.ts": 1,
     "apps/desktop/tests/main/browser/browser-view.test.ts": 1,
@@ -910,7 +908,6 @@
   },
   "typescript/only-throw-error": {
     "apps/desktop/e2e/fixtures/app.ts": 1,
-    "apps/desktop/e2e/sidebar-topbar-layout.spec.ts": 1,
     "apps/desktop/src/main/browser/browser-input.ts": 1,
     "apps/desktop/tests/renderer/remoteControl.test.ts": 2
   },
@@ -1131,10 +1128,7 @@
   },
   "unicorn/no-array-sort": {
     "apps/desktop/e2e/lifecycle-connection.spec.ts": 1,
-    "apps/desktop/e2e/sidebar-topbar-layout.spec.ts": 1,
     "apps/desktop/e2e/transcript-failures.spec.ts": 1,
-    "apps/desktop/e2e/turn-queue.spec.ts": 1,
-    "apps/desktop/e2e/turn-stop-then-send.spec.ts": 1,
     "apps/desktop/src/main/browser/browser-automation.ts": 1,
     "apps/desktop/src/main/browser/browser-dialogs.ts": 2,
     "apps/desktop/src/main/diagnostics/diagnostics-export.ts": 1,
