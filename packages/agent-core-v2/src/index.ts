@@ -554,6 +554,8 @@ import '#/app/git/gitService';
 export * from '#/app/worktree/worktree';
 export * from '#/app/worktree/flag';
 import '#/app/worktree/worktreeService';
+export * from '#/app/sessionAdmission/sessionAdmission';
+import '#/app/sessionAdmission/sessionAdmissionService';
 export * from '#/app/sessionPresence/sessionPresence';
 import '#/app/sessionPresence/sessionPresenceService';
 export * from '#/app/bashParser/bashParser';

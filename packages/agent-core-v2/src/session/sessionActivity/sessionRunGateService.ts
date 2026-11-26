@@ -2,6 +2,7 @@ import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { LifecycleScope } from '#/app/scopes';
+import { ISessionAdmission } from '#/app/sessionAdmission/sessionAdmission';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -26,6 +27,7 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
     @ISessionActivityView private readonly activity: ISessionActivityView,
+    @ISessionAdmission private readonly admission: ISessionAdmission,
   ) {
     super();
     this._register(this.activity.onDidChange(() => this.schedule()));
@@ -43,6 +45,11 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
   }
 
   begin(): void {
+    this.admission.assertAdmits(this.ctx.sessionId);
+    this.hold();
+  }
+
+  private hold(): void {
     this.sessionLocks.hold(this.ctx.sessionId);
     this.checkWritable();
   }
@@ -66,7 +73,7 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
   }
 
   acquire(): SessionLockLease {
-    this.begin();
+    this.hold();
     return this.sessionLocks.lease(this.ctx.sessionId);
   }
 

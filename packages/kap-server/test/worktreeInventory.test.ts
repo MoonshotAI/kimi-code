@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { IWorktreeService } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { ErrorCode } from '../src/protocol/error-codes';
@@ -198,6 +199,40 @@ describe('server-v2 worktree inventory', () => {
     expect(status.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
     const again = await post('/worktrees:remove', { path });
     expect(again.code).toBe(ErrorCode.WORKTREE_NOT_FOUND);
+  });
+
+  it('refuses a prompt to a session whose worktree is being removed', async () => {
+    const { workspaceId } = await project('remove-race');
+    const session = await settledWorktree(workspaceId);
+    const { path } = session.worktree as { path: string };
+    const worktrees = fixture.server.core.accessor.get(IWorktreeService);
+    const remove = worktrees.remove.bind(worktrees);
+    let start!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const spy = vi.spyOn(worktrees, 'remove').mockImplementation(async (input) => {
+      start();
+      await held;
+      return remove(input);
+    });
+    onTestFinished(() => {
+      spy.mockRestore();
+    });
+
+    const removal = post('/worktrees:remove', { path });
+    await started;
+    const prompt = await post(`/sessions/${session.id}/prompts`, { content: [{ type: 'text', text: 'hello' }] });
+    release();
+
+    expect(prompt.code).toBe(ErrorCode.SESSION_BUSY);
+    expect(prompt.msg).toContain('is being removed');
+    expect((await removal).code).toBe(0);
+    expect(existsSync(path)).toBe(false);
   });
 
   it('prunes a worktree whose directory is already gone and keeps the branch by default', async () => {

@@ -3,7 +3,10 @@ import { basename, join, sep } from 'node:path';
 
 import {
   ErrorCodes,
+  IAgentLifecycleService,
+  IAgentLoopService,
   ISessionActivityView,
+  ISessionAdmission,
   ISessionIndex,
   IProjectService,
   IWorktreeService,
@@ -44,6 +47,18 @@ interface SessionsByDirectory {
 
 const IN_USE_OUTPUT = /resource busy|being used by another process|permission denied|directory not empty/i;
 const DU_TIMEOUT_MS = 10 * 60_000;
+
+function sessionActive(core: Scope, sessionId: string): boolean {
+  const live = getLiveSessionById(core.accessor, sessionId);
+  if (live === undefined) return false;
+  const activity = live.accessor.get(ISessionActivityView).state();
+  if (activity.busy || activity.mainTurnActive) return true;
+  const agents = live.accessor.get(IAgentLifecycleService);
+  return agents.list().some(({ agentId }) => {
+    const loop = agents.handleOf(agentId)?.accessor.get(IAgentLoopService).snapshot();
+    return loop !== undefined && (loop.state === 'running' || loop.queue.length > 0 || loop.notificationCount > 0);
+  });
+}
 
 async function canonical(path: string): Promise<string> {
   return realpath(path).catch(() => path);
@@ -138,8 +153,6 @@ export class WorktreeInventory {
         key = await canonical(summary.cwd);
         canonicalByCwd.set(summary.cwd, key);
       }
-      const live = getLiveSessionById(this.core.accessor, summary.id);
-      const activity = live?.accessor.get(ISessionActivityView).state();
       entries.push({
         key,
         ref: {
@@ -147,8 +160,7 @@ export class WorktreeInventory {
           title: summary.title ?? '',
           archived: summary.archived,
           busy:
-            activity?.busy === true ||
-            activity?.mainTurnActive === true ||
+            sessionActive(this.core, summary.id) ||
             storedSessionWorktree(summary.custom)?.setup.status === 'running',
         },
       });
@@ -257,16 +269,20 @@ export class WorktreeInventory {
   async remove(path: string, deleteBranch: boolean): Promise<RemoveWorktreeResponse> {
     const worktree = await this.find(path);
     const sessions = (await this.sessionsByDirectory()).under(worktree.key);
-    if (sessions.some((session) => session.busy)) {
-      throw removeFailed(path, 'session_busy', 'a session that uses this worktree is running');
+    const sessionIds = sessions.map((session) => session.id);
+    const suspension = this.core.accessor
+      .get(ISessionAdmission)
+      .suspend(sessionIds, `the worktree at ${worktree.path} is being removed`);
+    try {
+      if (sessions.some((session) => session.busy || sessionActive(this.core, session.id))) {
+        throw removeFailed(path, 'session_busy', 'a session that uses this worktree is running');
+      }
+      const branchDeleted = await this.discard(worktree, deleteBranch, sessionIds);
+      for (const session of sessions) publishSessionUpdated(this.core, session.id);
+      return { removed: true, branch_deleted: branchDeleted };
+    } finally {
+      suspension.dispose();
     }
-    const branchDeleted = await this.discard(
-      worktree,
-      deleteBranch,
-      sessions.map((session) => session.id),
-    );
-    for (const session of sessions) publishSessionUpdated(this.core, session.id);
-    return { removed: true, branch_deleted: branchDeleted };
   }
 
   private async discard(
