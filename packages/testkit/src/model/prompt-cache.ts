@@ -23,6 +23,8 @@ export interface ObservedRequest {
   readonly lane: string;
   readonly role: BuiltInLaneName;
   readonly protocol: ProtocolName;
+  readonly agent?: string;
+  readonly continues?: boolean;
 }
 
 export interface CacheBreakOptions {
@@ -80,7 +82,6 @@ interface Explained {
   readonly unused: readonly Expectation[];
 }
 
-const CHECKED_ROLES: ReadonlySet<BuiltInLaneName> = new Set(['main', 'compaction']);
 const AFTER_COMPACTION = 'the history restarts after compaction';
 const UNKEYED_HINT = 'Requests without a prompt cache key carry nothing that tells conversations apart, so every such request to this model counts as one conversation; give each conversation its own model if the test runs several.';
 const EXCERPT_BEFORE = 24;
@@ -154,9 +155,15 @@ export class PromptCacheLedger {
 
   private compare(): readonly Comparison[] {
     return this.observations.map((observation, position) => {
-      if (!CHECKED_ROLES.has(observation.source.role)) return { observation };
+      const role = observation.source.role;
+      if (role === 'side') return { observation };
       const thread = threadOf(observation);
       const pool = this.observations.slice(0, position).filter((earlier) => !earlier.rejected && sameThread(earlier, thread));
+      if (role === 'subagent') {
+        if (observation.source.continues !== true) return { observation };
+        const own = previousStepOf(observation, pool);
+        return own === undefined ? { observation } : { observation, baseline: own.source.request, break: breakBetween(own.segments, observation.segments) };
+      }
       const baseline = pool.findLast((earlier) => earlier.source.role === 'main');
       if (baseline === undefined) return { observation };
       const found = breakBetween(baseline.segments, observation.segments);
@@ -204,6 +211,26 @@ function threadOf(observation: Observation): Thread {
 
 function sameThread(observation: Observation, thread: Thread): boolean {
   return observation.source.protocol === thread.protocol && observation.cacheKey === thread.cacheKey && observation.model === thread.model;
+}
+
+function previousStepOf(observation: Observation, pool: readonly Observation[]): Observation | undefined {
+  const history = observation.segments.filter((segment) => segment.region === 'messages');
+  let best: Observation | undefined;
+  let bestShared = 0;
+  for (const earlier of pool) {
+    if (earlier.source.role !== 'subagent' || earlier.source.agent !== observation.source.agent) continue;
+    const shared = sharedSegments(earlier.segments.filter((segment) => segment.region === 'messages'), history);
+    if (shared === 0 || shared < bestShared) continue;
+    best = earlier;
+    bestShared = shared;
+  }
+  return best;
+}
+
+function sharedSegments(previous: readonly PromptSegment[], next: readonly PromptSegment[]): number {
+  let shared = 0;
+  while (shared < previous.length && shared < next.length && sameSegment(previous[shared]!, next[shared]!)) shared += 1;
+  return shared;
 }
 
 function sharedCharacters(previous: readonly PromptSegment[], next: readonly PromptSegment[]): number {
