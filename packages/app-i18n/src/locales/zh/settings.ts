@@ -102,7 +102,6 @@ export default {
     install: '安装',
     installing: '正在安装…',
     update: '更新',
-    updateTo: '可更新至 {version}',
     remove: '卸载',
     removeConfirmTitle: '卸载插件',
     stopProcessesConfirmTitle: '结束进程并继续安装',

@@ -34,20 +34,6 @@ const emit = defineEmits<{
 const { t, locale } = useI18n();
 const { loadPluginCapabilities } = usePlugins({ locale });
 
-const version = computed(() =>
-  props.row.installedPlugin?.version ?? props.row.catalogEntry?.version ?? props.row.capability?.version,
-);
-const versionLabel = computed(() => {
-  const value = version.value;
-  if (value === undefined) return undefined;
-  return value.startsWith('v') ? value : `v${value}`;
-});
-const updateVersionLabel = computed(() => {
-  if (!props.row.updateAvailable) return undefined;
-  const value = props.row.catalogEntry?.version;
-  if (value === undefined) return undefined;
-  return value.startsWith('v') ? value : `v${value}`;
-});
 const originLabel = computed(() => {
   if (props.sourceView === 'installed' && props.row.installedPlugin?.origin === 'custom') {
     return t('settings.plugins.custom');
@@ -193,13 +179,6 @@ watch([pluginId, () => props.row.installedPlugin?.version], () => {
               {{ t('settings.plugins.cuPermissionMissing') }}
             </Badge>
           </button>
-          <span v-if="versionLabel" class="plugin-details__version">{{ versionLabel }}</span>
-          <span
-            v-if="updateVersionLabel"
-            class="plugin-details__version plugin-details__version--update"
-          >
-            {{ t('settings.plugins.updateTo', { version: updateVersionLabel }) }}
-          </span>
         </div>
         <p v-if="row.shortDescription" class="plugin-details__tagline">{{ row.shortDescription }}</p>
       </div>
@@ -326,27 +305,6 @@ watch([pluginId, () => props.row.installedPlugin?.version], () => {
 
 .plugin-details__status-waiting {
   gap: var(--space-1);
-}
-
-.plugin-details__version {
-  display: inline-flex;
-  align-items: center;
-  height: 18px;
-  padding: 0 7px;
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-full);
-  color: var(--color-text-muted);
-  font-size: 11px;
-  font-weight: var(--weight-medium);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.plugin-details__version--update {
-  border-color: transparent;
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
 }
 
 .plugin-details__tagline {

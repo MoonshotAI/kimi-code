@@ -140,12 +140,24 @@ export function usePluginCapabilityGuides(rows: ComputedRef<readonly PluginViewM
     syncFocusListeners();
   }
 
+  function stopCuPermissionWatch(): void {
+    if (!cuWatchActive) return;
+    cuWatchActive = false;
+    clearCuPoll();
+    cuPermissionWaiting.value = false;
+    syncFocusListeners();
+  }
+
   async function requestCuPermissionsFromDetail(): Promise<void> {
     const row = cuRow.value;
     if (row === undefined || !isKimiCuMacCapability(row) || cuWatchActive) return;
     startCuPermissionWatch('detail');
-    await requestCapabilityPermissions('kimi-cu');
+    const status = await requestCapabilityPermissions('kimi-cu');
     if (!cuWatchActive) return;
+    if (status === undefined) {
+      stopCuPermissionWatch();
+      return;
+    }
     const latest = cuRow.value;
     if (latest === undefined || readKimiCuPermissions(latest).granted || Date.now() >= cuDeadlineAt) {
       finishCuPermissionWatch();

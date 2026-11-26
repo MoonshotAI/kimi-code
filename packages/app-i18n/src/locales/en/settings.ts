@@ -102,7 +102,6 @@ export default {
     install: 'Install',
     installing: 'Installing…',
     update: 'Update',
-    updateTo: 'Update to {version}',
     remove: 'Uninstall',
     removeConfirmTitle: 'Uninstall plugin',
     stopProcessesConfirmTitle: 'Stop processes and continue installation',

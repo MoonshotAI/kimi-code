@@ -946,6 +946,18 @@ describe('kimi-cu entry', () => {
     expect(host.calls).toEqual([]);
   });
 
+  it('propagates non-zero permission-helper exits instead of reporting success', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const host = fakeHostProcess([
+      { match: 'request-permissions', code: 1, stderr: 'xpc service unavailable' },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({ applicationsDir, hostProcess: host.service }),
+    );
+
+    await expect(entry.requestPermissions?.()).rejects.toThrow(/xpc service unavailable/);
+  });
+
   it('does not expose direct permission requests on Windows', () => {
     const entry = createKimiCuEntry(makeCtx({ platform: 'win32', arch: 'x64' }));
     expect(entry.requestPermissions).toBeUndefined();

@@ -672,7 +672,7 @@ describe('PluginsPanel', () => {
     expect(plugins.refresh).toHaveBeenCalledWith(true);
   });
 
-  it('shows installed and target versions with the English uninstall label', async () => {
+  it('hides version numbers in details while keeping row versions and the update and uninstall actions', async () => {
     rowData.push(row('cloudbase', {
       catalogEntry: entry('cloudbase', 'CloudBase', { version: '2.0.0' }),
       installedPlugin: installed('cloudbase', 'marketplace', { version: '1.2.3' }),
@@ -681,15 +681,20 @@ describe('PluginsPanel', () => {
     }));
     await mountPanel();
 
+    expect(host.querySelector('.plugin-row__version')?.textContent).toBe('1.2.3');
     clickButton('CloudBase');
     await settle();
 
-    const details = host.querySelector('.plugin-details');
-    expect(details?.querySelector('.plugin-details__version')?.textContent).toBe('v1.2.3');
-    expect(details?.querySelector('.plugin-details__version--update')?.textContent?.trim()).toBe(
-      'Update to v2.0.0',
-    );
-    expect(details?.querySelector('.plugin-actions .ui-button')?.textContent).toContain('Update');
+    const details = host.querySelector('.plugin-details')!;
+    expect(details.querySelector('.plugin-details__version')).toBeNull();
+    expect(details.querySelector('.plugin-details__name-line')?.textContent).not.toContain('1.2.3');
+    expect(details.querySelector('.plugin-details__name-line')?.textContent).not.toContain('2.0.0');
+    const updateButton = details.querySelector<HTMLButtonElement>('.plugin-actions .ui-button')!;
+    expect(updateButton.textContent).toContain('Update');
+    expect(updateButton.disabled).toBe(false);
+    updateButton.click();
+    await settle();
+    expect(plugins.installRow).toHaveBeenCalledWith(rowData[0], { confirmStopProcesses: expect.any(Function) });
 
     host.querySelector<HTMLButtonElement>('.plugin-actions [aria-label="More actions"]')!.click();
     await settle();
@@ -1673,7 +1678,7 @@ describe('PluginsPanel', () => {
     }
   });
 
-  it('keeps version labels in details, skips auto-guide on update, and clears the badge after Done detects connection', async () => {
+  it('hides version labels in details, skips auto-guide on update, and clears the badge after Done detects connection', async () => {
     rowData.push(row('kimi-browser-extension', {
       installId: 'kimi-webbridge',
       catalogEntry: entry('kimi-browser-extension', 'Kimi Browser Extension', {
@@ -1700,17 +1705,20 @@ describe('PluginsPanel', () => {
       updateAvailable: true,
     }));
     await mountPanel();
+    expect(host.querySelector('.plugin-row__version')?.textContent).toBe('1.11.3');
     clickButton('Kimi Browser Extension');
     await settle();
 
     const details = host.querySelector('.plugin-details')!;
-    expect(details.textContent).toContain('v1.11.3');
-    expect(details.textContent).toContain('Update to v1.11.4');
+    expect(details.querySelector('.plugin-details__version')).toBeNull();
+    expect(details.querySelector('.plugin-details__name-line')?.textContent).not.toContain('1.11.3');
+    expect(details.querySelector('.plugin-details__name-line')?.textContent).not.toContain('1.11.4');
     const badge = details.querySelector<HTMLButtonElement>('.plugin-details__status-badge')!;
     expect(badge.textContent).toContain('Extension not connected');
 
     details.querySelector<HTMLButtonElement>('.plugin-actions .ui-button')!.click();
     await flushAsync();
+    expect(plugins.installRow).toHaveBeenCalledTimes(1);
     expect(guideDialog()).toBeNull();
 
     badge.click();
@@ -1737,7 +1745,8 @@ describe('PluginsPanel', () => {
     expect(plugins.refreshCapability).toHaveBeenCalledWith('kimi-webbridge');
     expect(guideDialog()).toBeNull();
     expect(host.querySelector('.plugin-details__status-badge')).toBeNull();
-    expect(host.querySelector('.plugin-details')?.textContent).toContain('v1.11.3');
+    expect(host.querySelector('.plugin-details__version')).toBeNull();
+    expect(host.querySelector('.plugin-details')?.textContent).not.toContain('v1.11.3');
     expect(fakes.track).toHaveBeenCalledWith('webbridge_guide_click', {
       plugin_id: 'kimi-webbridge',
       action: 'done',
@@ -1815,13 +1824,14 @@ describe('PluginsPanel', () => {
         displayName: 'Kimi Computer Use',
       }));
       await mountPanel();
+      vi.mocked(plugins.requestCapabilityPermissions).mockResolvedValue(rowData[0]!.capability!);
       clickButton('Kimi Computer Use');
       await settle();
 
       const badge = host.querySelector<HTMLButtonElement>('.plugin-details__status-badge')!;
       expect(badge.textContent).toContain('Permissions not enabled');
       badge.click();
-      await settle();
+      await flushAsync();
 
       expect(plugins.requestCapabilityPermissions).toHaveBeenCalledWith('kimi-cu');
       expect(host.querySelector('.plugin-details__status-waiting')?.textContent).toContain('Waiting for permissions…');
@@ -1846,7 +1856,7 @@ describe('PluginsPanel', () => {
         return rowData[0]!.capability;
       });
       await vi.advanceTimersByTimeAsync(2_000);
-      await settle();
+      await flushAsync();
 
       expect(plugins.refreshCapability).toHaveBeenCalledWith('kimi-cu');
       expect(host.querySelector('.plugin-details__status-waiting')).toBeNull();
@@ -1860,6 +1870,45 @@ describe('PluginsPanel', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('exits the CU waiting state when the permission request itself fails', async () => {
+    fakes.isMacosDesktop = true;
+    rowData.push(row('kimi-cu', {
+      installId: 'kimi-cu',
+      catalogEntry: entry('kimi-cu', 'Kimi Computer Use', { capabilityId: 'kimi-cu' }),
+      installedPlugin: installed('kimi-cu', 'marketplace', { version: '0.5.4' }),
+      capability: {
+        id: 'kimi-cu',
+        pluginId: 'kimi-cu',
+        displayName: 'Kimi Computer Use',
+        description: 'macOS GUI automation',
+        supported: true,
+        state: 'partial',
+        steps: [
+          { id: 'plugin', state: 'ok' },
+          { id: 'app', state: 'ok' },
+          { id: 'service', state: 'ok' },
+          { id: 'permissions', state: 'missing' },
+          { id: 'permissions.accessibility', state: 'missing' },
+          { id: 'permissions.screenRecording', state: 'missing' },
+        ],
+        install: { running: false },
+      },
+      capabilityRequired: true,
+      displayName: 'Kimi Computer Use',
+    }));
+    await mountPanel();
+    vi.mocked(plugins.requestCapabilityPermissions).mockResolvedValue(undefined);
+    clickButton('Kimi Computer Use');
+    await settle();
+
+    host.querySelector<HTMLButtonElement>('.plugin-details__status-badge')!.click();
+    await flushAsync();
+
+    expect(host.querySelector('.plugin-details__status-waiting')).toBeNull();
+    expect(host.querySelector('.plugin-details__status-badge')?.textContent).toContain('Permissions not enabled');
+    expect(fakes.track).not.toHaveBeenCalledWith('cu_permission_result', expect.anything());
   });
 
   it('does not re-trigger native CU permission prompt after first install and hides CU badges off macOS or before install', async () => {

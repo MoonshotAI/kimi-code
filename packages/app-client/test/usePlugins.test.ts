@@ -2032,6 +2032,24 @@ describe('usePlugins', () => {
       installRow(webbridgeRow, { confirmStopProcesses: () => Promise.resolve(false) }),
     ).resolves.toBe('cancelled');
   });
+
+  it('requestCapabilityPermissions preserves late errors even after a poll refresh starts', async () => {
+    apiMock.listCapabilities.mockResolvedValue([capabilityCu]);
+    const { state, refresh, refreshCapability, requestCapabilityPermissions } = usePlugins();
+    await refresh();
+
+    const slowRequest = deferred<AppCapabilityStatus>();
+    apiMock.requestCapabilityPermissions.mockReturnValueOnce(slowRequest.promise);
+    apiMock.getCapability.mockResolvedValueOnce(capabilityCu);
+
+    const pending = requestCapabilityPermissions('kimi-cu');
+    await refreshCapability('kimi-cu');
+    slowRequest.reject(new Error('helper launch failed'));
+    const result = await pending;
+
+    expect(result).toBeUndefined();
+    expect(state.rowErrors['kimi-cu']).toBe('helper launch failed');
+  });
 });
 
 

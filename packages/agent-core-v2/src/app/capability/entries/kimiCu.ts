@@ -531,25 +531,32 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
       stepStates.get('permissions.screenRecording') !== 'ok'
     ) {
       report('permissions');
-      await requestPermissions();
+      await requestPermissions().catch(() => undefined);
     }
     return undefined;
   }
 
   async function requestPermissions(): Promise<void> {
-    if (!(await exists(appBin))) {
+    if (!(await exists(appBin)) || !(await executable(appBin))) {
       throw new Error2(
         CapabilityErrors.codes.CAPABILITY_UNSUPPORTED,
-        'KimiCU.app is not installed',
+        'KimiCU.app is not installed or not executable',
         { details: { id: 'kimi-cu' } },
       );
     }
-    await runCommand(
+    const result = await runCommand(
       ctx.hostProcess,
       appBin,
       ['request-permissions', '--ax', '--screen'],
       { timeout: PERMISSIONS_TIMEOUT_MS },
-    ).catch(() => undefined);
+    );
+    if (result.code !== 0) {
+      throw new Error2(
+        CapabilityErrors.codes.CAPABILITY_PROCESS_CONTROL_FAILED,
+        `kimi-cu request-permissions failed: ${result.stderr || result.stdout || `exit ${result.code}`}`,
+        { details: { id: 'kimi-cu', code: result.code } },
+      );
+    }
   }
 
   return {

@@ -828,18 +828,17 @@ async function refreshCapability(id: string): Promise<AppCapabilityStatus | unde
 }
 
 async function requestCapabilityPermissions(id: string): Promise<AppCapabilityStatus | undefined> {
+  state.rowErrors[id] = undefined;
   const generation = (capabilityReadGenerations.get(id) ?? 0) + 1;
   capabilityReadGenerations.set(id, generation);
   try {
     const status = await getKimiWebApi().requestCapabilityPermissions(id);
-    if (capabilityReadGenerations.get(id) !== generation) return undefined;
+    if (capabilityReadGenerations.get(id) !== generation) return status;
     applyCapabilityStatus(status);
     syncExtensionHint();
     return status;
   } catch (error) {
-    if (capabilityReadGenerations.get(id) === generation) {
-      state.rowErrors[id] = errorMessage(error);
-    }
+    state.rowErrors[id] = errorMessage(error);
     return undefined;
   }
 }
