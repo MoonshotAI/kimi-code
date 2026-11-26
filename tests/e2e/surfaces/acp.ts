@@ -16,6 +16,8 @@ import {
   type ReadTextFileRequest,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
+  type SessionConfigOption,
+  type SessionConfigSelectOption,
   type SessionUpdate,
   type StopReason,
   type TerminalExitStatus,
@@ -302,6 +304,8 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private sessionStart = 0;
   private sessionId = '';
   private openedMode: string | undefined;
+  private configOptions: readonly SessionConfigOption[] = [];
+  private configOptionsAt = 0;
   private restored = false;
   private readonly leftSessions = new Set<string>();
   private leftSessionUpdates = 0;
@@ -364,6 +368,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
       );
       this.sessionId = session.sessionId;
       this.openedMode = session.modes?.currentModeId;
+      this.adoptConfigOptions(session.configOptions);
       return;
     }
     if (initialized.agentCapabilities?.loadSession !== true) {
@@ -376,6 +381,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     this.sessionId = resume;
     this.restored = true;
     this.openedMode = loaded.modes?.currentModeId;
+    this.adoptConfigOptions(loaded.configOptions);
   }
 
   idle(): Promise<boolean> {
@@ -492,6 +498,48 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     }
   }
 
+  async chooseModel(name: string): Promise<void> {
+    await this.setConfigChoice('chooseModel()', 'model', name, (choice) => choice.name === name);
+  }
+
+  async setThinking(level: string): Promise<void> {
+    await this.setConfigChoice('setThinking()', 'thinking', level, (choice) => choice.value === level);
+  }
+
+  private async setConfigChoice(verb: string, id: string, wanted: string, matches: (choice: SessionConfigSelectOption) => boolean): Promise<void> {
+    if (!this.turnOver() || this.permissions.length > 0) {
+      throw new Error(`${verb} needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
+    }
+    const option = this.configOption(id);
+    if (option?.type !== 'select') throw new Error(`${verb} found no ${JSON.stringify(id)} option in the session's configuration.\n${this.describe()}`);
+    const choices = option.options.flatMap((entry) => ('group' in entry ? entry.options : [entry]));
+    const choice = choices.find(matches);
+    if (choice === undefined) {
+      throw new Error(`${verb} found no ${JSON.stringify(wanted)} among the ${id} choices: ${choices.map((entry) => `${entry.name} (${entry.value})`).join(', ')}.\n${this.describe()}`);
+    }
+    if (option.currentValue === choice.value) throw new Error(`${verb} asked for ${JSON.stringify(wanted)}, but the session's ${id} is already ${choice.value}.\n${this.describe()}`);
+    const result = await this.response(
+      `the agent to set the session's ${id} to ${choice.value}`,
+      this.connection.agent.request(methods.agent.session.setConfigOption, { sessionId: this.sessionId, configId: id, value: choice.value }),
+    );
+    this.adoptConfigOptions(result.configOptions);
+    const applied = this.configOption(id);
+    if (applied?.currentValue !== choice.value) {
+      throw new Error(`${verb} asked the agent to set ${id} to ${choice.value}, but the session reports ${String(applied?.currentValue)}.\n${this.describe()}`);
+    }
+  }
+
+  private adoptConfigOptions(options: readonly SessionConfigOption[] | null | undefined): void {
+    this.configOptions = options ?? [];
+    this.configOptionsAt = this.updates.length;
+  }
+
+  private configOption(id: string): SessionConfigOption | undefined {
+    const reported = this.updates.slice(this.configOptionsAt).findLast((update) => update.sessionUpdate === 'config_option_update');
+    const options = reported?.sessionUpdate === 'config_option_update' ? reported.configOptions : this.configOptions;
+    return options.find((option) => option.id === id);
+  }
+
   async compact(): Promise<void> {
     if (!this.turnOver() || this.permissions.length > 0) {
       throw new Error(`compact() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
@@ -524,6 +572,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     this.leftSessions.add(this.sessionId);
     this.sessionId = session.sessionId;
     this.openedMode = session.modes?.currentModeId;
+    this.adoptConfigOptions(session.configOptions);
     this.sessionStart = this.updates.length;
     this.restored = false;
     this.prompts = [];

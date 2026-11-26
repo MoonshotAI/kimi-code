@@ -31,6 +31,13 @@ const SHOWN = ':not([inert], [inert] *)';
 const LIST = '[role="list"]';
 const ROW = '[role="listitem"]';
 const STATE = '[role="status"]';
+const MENU_BUTTON = 'button[aria-haspopup="menu"]';
+const THINKING = 'Thinking';
+const SETTINGS = 'Settings';
+const SETTINGS_AGENT_TAB = 'Agent & Sessions';
+const DEFAULT_PERMISSION = /^Default permission/;
+const THINKING_SUFFIX = ' · ';
+const PERMISSION_MODE_BUTTON = new RegExp(`^(?:${Object.values(PERMISSION_MODE_NAMES).join('|')})$`);
 const DISCLOSURE = 'button[aria-expanded]';
 const FOLDED = 'button[aria-expanded="false"]';
 const MARKDOWN = 'p, h1, h2, h3, h4, h5, h6, ul, ol, pre, blockquote, table';
@@ -95,6 +102,25 @@ function cardShows(lines: readonly string[], { name, target }: ApprovalExpectati
 function cardChanges(lines: readonly string[]): ChangedLines {
   const changed = (sign: string): string[] => lines.flatMap((line, index) => (line === sign && index + 1 < lines.length ? [lines[index + 1] ?? ''] : []));
   return { added: changed('+'), removed: changed('-') };
+}
+
+function modelOf(pill: string): string {
+  const cut = pill.indexOf(THINKING_SUFFIX);
+  return cut < 0 ? pill : pill.slice(0, cut);
+}
+
+function thinkingSuffixOf(pill: string): string {
+  const cut = pill.indexOf(THINKING_SUFFIX);
+  return cut < 0 ? '' : pill.slice(cut + THINKING_SUFFIX.length);
+}
+
+function effortLabelOf(level: string): string {
+  return level.length === 0 ? level : `${level.charAt(0).toUpperCase()}${level.slice(1)}`;
+}
+
+function shownThinking(level: string): string {
+  if (level === 'off') return '';
+  return level === 'on' ? THINKING : effortLabelOf(level);
 }
 
 export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
@@ -330,6 +356,70 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     await this.wait(`the permission mode button to show ${name}`, async () => ((await this.modeButton(name).isVisible()) && !(await choice.isVisible()) ? true : undefined));
   }
 
+  async chooseModel(name: string): Promise<void> {
+    if (!(await this.idle())) throw new Error(`chooseModel() needs an idle product, but a turn is running or an approval is pending.\n${await this.describe()}`);
+    const pill = this.modelPill();
+    const shown = await this.wait('the model button to show the current model', async () => (await pill.textContent())?.trim() || undefined);
+    if (modelOf(shown) === name) throw new Error(`chooseModel() asked for ${JSON.stringify(name)}, but that is already the model.\n${await this.describe()}`);
+    await this.press('chooseModel()', 'the model button', pill);
+    const menu = await this.menus();
+    const choice = menu.getByRole('menuitemradio', { name: startingWith(name) }).first();
+    if ((await choice.count()) === 0) {
+      const offered = await menu.getByRole('menuitemradio').allTextContents();
+      await this.page.keyboard.press('Escape');
+      throw new Error(`chooseModel() found no model ${JSON.stringify(name)} in the model menu. It offers:\n${offered.join('\n')}\n${await this.describe()}`);
+    }
+    await this.press('chooseModel()', name, choice);
+    await this.wait(`the model menu to mark ${JSON.stringify(name)} as chosen`, async () => ((await choice.getAttribute('aria-checked')) === 'true' ? true : undefined));
+    await this.press('chooseModel()', 'the model button, to close the menu and apply the choice', pill);
+    await this.wait(`the model button to show ${JSON.stringify(name)}`, async () => (modelOf((await pill.textContent())?.trim() ?? '') === name && !(await choice.isVisible()) ? true : undefined));
+  }
+
+  async setThinking(level: string): Promise<void> {
+    if (!(await this.idle())) throw new Error(`setThinking() needs an idle product, but a turn is running or an approval is pending.\n${await this.describe()}`);
+    const pill = this.modelPill();
+    await this.press('setThinking()', 'the model button', pill);
+    const menu = await this.menus();
+    await this.press('setThinking()', THINKING, menu.getByRole('menuitem', { name: startingWith(THINKING) }));
+    const label = effortLabelOf(level);
+    const choice = menu.getByRole('menuitemradio', { name: label, exact: true });
+    if ((await choice.count()) === 0) {
+      const offered = await menu.getByRole('menuitemradio').allTextContents();
+      await this.page.keyboard.press('Escape');
+      throw new Error(`setThinking() found no thinking level ${JSON.stringify(level)} (${label} in the menu). The menu offers:\n${offered.join('\n')}\n${await this.describe()}`);
+    }
+    if ((await choice.getAttribute('aria-checked')) === 'true') {
+      await this.page.keyboard.press('Escape');
+      throw new Error(`setThinking() asked for ${JSON.stringify(level)}, but that is already the thinking level.\n${await this.describe()}`);
+    }
+    await this.press('setThinking()', label, choice);
+    await this.wait(`the thinking menu to mark ${JSON.stringify(label)} as chosen`, async () => ((await choice.getAttribute('aria-checked')) === 'true' ? true : undefined));
+    await this.press('setThinking()', 'the model button, to close the menu and apply the choice', pill);
+    await this.wait(`the model button to show thinking ${JSON.stringify(level)}`, async () =>
+      thinkingSuffixOf((await pill.textContent())?.trim() ?? '') === shownThinking(level) && !(await choice.isVisible()) ? true : undefined,
+    );
+  }
+
+  async setDefaultPermissionMode(mode: PermissionMode): Promise<void> {
+    const name = PERMISSION_MODE_NAMES[mode];
+    if (!(await this.idle())) {
+      throw new Error(`setDefaultPermissionMode() needs an idle product, but a turn is running or an approval is pending.\n${await this.describe()}`);
+    }
+    await this.press('setDefaultPermissionMode()', SETTINGS, this.page.getByRole('button', { name: SETTINGS, exact: true }));
+    const tabs = this.page.getByRole('tablist', { name: SETTINGS, exact: true });
+    await this.press('setDefaultPermissionMode()', SETTINGS_AGENT_TAB, tabs.getByRole('tab', { name: SETTINGS_AGENT_TAB, exact: true }));
+    const row = this.page.getByText(DEFAULT_PERMISSION).locator('xpath=ancestor::*').filter({ has: this.page.getByRole('tablist') }).last();
+    const choice = row.getByRole('tab', { name, exact: true });
+    const already = (await choice.getAttribute('aria-selected', { timeout: TIMEOUTS.wait })) === 'true';
+    if (!already) {
+      await this.press('setDefaultPermissionMode()', name, choice);
+      await this.wait(`the default permission to show ${name}`, async () => ((await choice.getAttribute('aria-selected')) === 'true' ? true : undefined));
+    }
+    await this.page.keyboard.press('Escape');
+    await this.wait('the settings to close', async () => ((await tabs.isVisible()) ? undefined : true));
+    if (already) throw new Error(`setDefaultPermissionMode() asked for ${name}, but that is already the default permission.\n${await this.describe()}`);
+  }
+
   async stop(): Promise<void> {
     if (await this.questionShown()) {
       throw new Error(
@@ -524,6 +614,12 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
 
   private composer(): Locator {
     return this.page.getByRole('combobox', { name: 'Message input' });
+  }
+
+  private modelPill(): Locator {
+    const named = (scope: Locator | Page): Locator => scope.locator(MENU_BUTTON).filter({ hasText: /\S/ }).filter({ hasNotText: PERMISSION_MODE_BUTTON });
+    const toolbar = this.page.getByRole('button', { name: SEND, exact: true }).locator('xpath=ancestor::*').filter({ has: named(this.page) }).last();
+    return named(toolbar);
   }
 
   private failureCards(): Locator {

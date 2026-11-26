@@ -64,7 +64,12 @@ const MODIFY_OTHER_KEYS = /\x1b\[>4(?:;(\d*))?m/g;
 const KITTY_DISAMBIGUATE = 1;
 const KITTY_EVENT_TYPES = 2;
 const KITTY_EMULATED_FLAGS = 7;
-const KITTY_LEGACY_RELEASES: Readonly<Record<string, string>> = { '\x1b[A': '\x1b[1;1:3A', '\x1b[B': '\x1b[1;1:3B' };
+const KITTY_LEGACY_RELEASES: Readonly<Record<string, string>> = {
+  '\x1b[A': '\x1b[1;1:3A',
+  '\x1b[B': '\x1b[1;1:3B',
+  '\x1b[C': '\x1b[1;1:3C',
+  '\x1b[D': '\x1b[1;1:3D',
+};
 const KITTY_SEQUENCE_LONGEST = 16;
 const KITTY_KEYS: Readonly<Record<string, { readonly code: number; readonly modifiers: number }>> = {
   '\x1b': { code: 27, modifiers: 1 },
@@ -86,6 +91,8 @@ const KEYS = {
   quit: '\x04',
   up: '\x1b[A',
   down: '\x1b[B',
+  right: '\x1b[C',
+  left: '\x1b[D',
   approveOnce: '1',
   approveForSession: '2',
   reject: '3',
@@ -156,6 +163,14 @@ const ASKED_ANSWER = '→';
 const DISMISSED_NOTE = 'User dismissed the question without answering.';
 const NEW_SESSION_COMMAND = '/new';
 const COMPACT_COMMAND = '/compact';
+const MODEL_COMMAND = '/model';
+const EFFORT_COMMAND = '/effort';
+const PICKER_HINT = 'Enter select';
+const PICKER_SEARCH = 'Search: ';
+const PICKER_CURSOR = '❯ ';
+const PICKER_NO_MATCHES = 'No matches';
+const EFFORT_PICKER = 'Select thinking effort';
+const FOOTER_THINKING = ' thinking';
 const COMPACTION_DONE = 'Compaction complete';
 const COMPACTION_CANCELLED = 'Compaction cancelled';
 const NEW_SESSION_NOTICE = 'Started a new session (';
@@ -323,6 +338,46 @@ function blocksOf(screen: Screen): Block[] {
     }
   }
   return blocks;
+}
+
+function modelShown(footer: string | undefined, name: string): boolean {
+  return footer === name || footer?.startsWith(`${name} `) === true;
+}
+
+function effortLabelOf(level: string): string {
+  return level.length === 0 ? level : `${level.charAt(0).toUpperCase()}${level.slice(1)}`;
+}
+
+function footerThinking(level: string): string {
+  if (level === 'off') return '';
+  return level === 'on' ? FOOTER_THINKING : ` ${level}`;
+}
+
+function withoutThinking(footer: string, selected: string | undefined): string {
+  const suffix = footerThinking((selected ?? 'off').toLowerCase());
+  return suffix !== '' && footer.endsWith(suffix) ? footer.slice(0, -suffix.length) : footer;
+}
+
+function thinkingChoices(screen: Screen): { readonly choices: readonly string[]; readonly selected: string | undefined } | undefined {
+  const lines = screen.viewport.map((line) => line.trim());
+  const title = lines.lastIndexOf(EFFORT_PICKER);
+  if (title < 0) return undefined;
+  const row = lines.slice(title + 1).find((line) => line.includes('[ ') && line.includes(' ]'));
+  if (row === undefined) return undefined;
+  const tokens = row.split(/\s{2,}/).filter((token) => token !== '');
+  const choices = tokens.map((token) => token.replace(/^\[ /, '').replace(/ \]$/, ''));
+  const selected = tokens.find((token) => token.startsWith('[ '))?.replace(/^\[ /, '').replace(/ \]$/, '');
+  return { choices, selected };
+}
+
+function pickerOpen(screen: Screen): boolean {
+  return screen.viewport.some((line) => line.includes(PICKER_HINT));
+}
+
+function footerModel(screen: Screen): string | undefined {
+  const lines = screen.viewport.map((line) => line.trim());
+  const bottom = lines.findLastIndex((line) => EDITOR_BOTTOM.test(line));
+  return bottom < 0 ? undefined : lines[bottom + 1]?.split(/\s{2,}/)[0];
 }
 
 function statusLines(screen: Screen, prefix: string): number {
@@ -707,6 +762,71 @@ class TuiDriver implements SurfaceDriver<'tui'> {
         settled.found,
       );
     }
+  }
+
+  async chooseModel(name: string): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) throw this.failure('chooseModel() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
+    if (modelShown(footerModel(screen), name)) throw this.failure(`chooseModel() asked for ${JSON.stringify(name)}, but that is already the model.`, screen);
+    this.write(paste(MODEL_COMMAND));
+    this.write(KEYS.enter);
+    await this.wait('the model picker to open', (current) => (pickerOpen(current) ? true : undefined));
+    this.write(name);
+    const searched = await this.wait(`the model picker to search for ${JSON.stringify(name)}`, (current) => {
+      const lines = current.viewport.map((line) => line.trim());
+      if (!lines.includes(`${PICKER_SEARCH}${name}`)) return undefined;
+      if (lines.some((line) => line.startsWith(`${PICKER_CURSOR}${name}  `))) return 'listed' as const;
+      return lines.includes(PICKER_NO_MATCHES) ? ('missing' as const) : undefined;
+    });
+    if (searched === 'missing') {
+      const shown = await this.read();
+      await this.closePicker('the model picker');
+      throw this.failure(`chooseModel() found no model ${JSON.stringify(name)} in the model picker.`, shown);
+    }
+    this.write(KEYS.enter);
+    await this.wait(`the model picker to close and the status bar to show ${JSON.stringify(name)}`, (current) =>
+      current.input === 'editor' && !pickerOpen(current) && modelShown(footerModel(current), name) ? true : undefined,
+    );
+  }
+
+  async setThinking(level: string): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) throw this.failure('setThinking() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
+    const before = footerModel(screen) ?? '';
+    this.write(paste(EFFORT_COMMAND));
+    this.write(KEYS.enter);
+    const opened = await this.wait('the thinking effort picker to open', (current) => thinkingChoices(current));
+    const wanted = effortLabelOf(level);
+    if (!opened.choices.includes(wanted) || opened.selected === wanted) {
+      const shown = await this.read();
+      await this.closePicker('the thinking effort picker');
+      const reason = opened.selected === wanted ? 'that is already the thinking level' : `the picker offers only ${opened.choices.join(', ')}`;
+      throw this.failure(`setThinking() asked for ${JSON.stringify(level)} (${wanted} in the picker), but ${reason}.`, shown);
+    }
+    let picker = opened;
+    while (picker.selected !== wanted) {
+      const from = picker.selected;
+      this.write(picker.choices.indexOf(wanted) > picker.choices.indexOf(from ?? '') ? KEYS.right : KEYS.left);
+      picker = await this.wait('the thinking effort picker to move', (current) => {
+        const moved = thinkingChoices(current);
+        return moved !== undefined && moved.selected !== from ? moved : undefined;
+      });
+    }
+    this.write(KEYS.enter);
+    const expected = `${withoutThinking(before, opened.selected)}${footerThinking(level)}`;
+    await this.wait(`the thinking effort picker to close and the status bar to show ${JSON.stringify(expected)}`, (current) =>
+      current.input === 'editor' && !pickerOpen(current) && footerModel(current) === expected ? true : undefined,
+    );
+  }
+
+  private async closePicker(label: string): Promise<void> {
+    for (let presses = 0; presses < 2; presses += 1) {
+      const before = await this.read();
+      if (!pickerOpen(before)) return;
+      this.write(KEYS.escape);
+      await this.wait(`${label} to clear its search or close`, (current) => (current.viewport.join('\n') !== before.viewport.join('\n') ? true : undefined));
+    }
+    await this.wait(`${label} to close`, (current) => (current.input === 'editor' && !pickerOpen(current) ? true : undefined));
   }
 
   async compact(): Promise<void> {
