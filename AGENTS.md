@@ -146,7 +146,7 @@
 - 几乎每个任务都需要的规则写进根 `AGENTS.md`，局部规则写进最近的子目录 `AGENTS.md`。
 - 项目地图里，每个工作区包写一行，而且只写一行；包的深入说明放在包自己的 `AGENTS.md` 里。
 - 如果 lint 规则、测试或脚本能拦住这类错误，就加检查而不是写规则；有检查执行的规则，旁边写明是哪个检查。
-- 改 `review-pr` 技能的「Code Review Rules」时，只写容易漏、漏了代价高的约束，每条写明安全做法和等级。根 `AGENTS.md` 里指向它的那句话要保留「必须读」并点名这一节。用一个应该触发的改动、一个安全的反例和一个无关的改动核对，只有第一个应该被报。
+- 改 `review-pr` 技能的「Code Review Rules」时，只写容易漏、漏了代价高的约束，每条写明安全做法和等级。根 `AGENTS.md` 里指向它的那句话要保留「必须读」这样的明确措辞。用一个应该触发的改动、一个安全的反例和一个无关的改动核对，只有第一个应该被报。
 - 说明文件的改动要聚焦，并有代码事实支撑。
 - 把经验写成团队规则前，确认同类失误至少出现过两次、规则会改变 agent 的做法，并且半年后仍然适用。
 - `pnpm lint` 里的 `scripts/checks/instructions.mjs` 会检查：所有 `AGENTS.md` 里的行内链接和反引号里的仓库路径是否存在。指向本仓库之外的路径或构建产物时，把它加进 `scripts/checks/instructions.json` 的 `unresolved`，并写明理由。
@@ -179,4 +179,4 @@
 
 ## Code Review Rules
 
-评审 PR 时必须读 `.agents/skills/review-pr/SKILL.md` 的「Code Review Rules」一节，那里的规则适用于每一次 PR 评审，自动评审、人工评审和开 PR 前的自查都一样。
+评审 PR 时必须读 `.agents/skills/review-pr/SKILL.md` 全文。那里的规则适用于每一次 PR 评审，自动评审、人工评审和开 PR 前的自查都一样。
