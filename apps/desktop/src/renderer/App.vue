@@ -27,7 +27,6 @@ import { SessionAdminView, useSessionAdminBatch } from '@moonshot-ai/app-compone
 import { SelectionActionBubble } from '@moonshot-ai/app-components';
 import { MediaLightbox } from '@moonshot-ai/app-components';
 import { FileContextMenuHost } from '@moonshot-ai/app-components';
-import { ModelPicker } from '@moonshot-ai/app-components';
 import { ModelSwitchConfirmDialog } from '@moonshot-ai/app-components';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
 import GlobalFeedbackDialog from './components/feedback/GlobalFeedbackDialog.vue';
@@ -210,7 +209,7 @@ const workspaces = workspacesStore();
 const { visibleWorkspace, activeWorkspaceId } = storeToRefs(workspaces);
 const { mobileWorkspaceGroups, pinnedSessions, attentionBySession, attentionByWorkspace } =
   storeToRefs(sessionViews);
-const { models, activeModels, starredModelIds, defaultModel } = storeToRefs(modelsStore());
+const { models, activeModels } = storeToRefs(modelsStore());
 const { pending: modelSwitchConfirmPending } = storeToRefs(modelSwitchConfirmStore());
 const { pending: effortSwitchConfirmPending } = storeToRefs(effortSwitchStore());
 const { notifyEnabled, notifySound, notifyPermission } = storeToRefs(notificationsStore());
@@ -248,7 +247,6 @@ const {
   toggleGoalMode,
   toggleSwarmMode,
   setPermission,
-  toggleStarModel,
   renameSession,
   regenerateSessionTitle,
   archiveSessionWithToast,
@@ -1385,7 +1383,6 @@ const {
   showOnboarding,
   showMobileSwitcher,
   showMobileSettings,
-  showModelPicker,
   showLogin,
   showAddWorkspace,
   showStatusPanel,
@@ -1395,9 +1392,6 @@ const {
   settingsInitialTab,
   mobileSettingsInitialTab,
   settingsHighlightKey,
-  modelPickerTargetSid,
-  modelsLoading,
-  modelsUnavailable,
   configSaving,
   addWorkspaceError,
   pendingWorkspaceSubmit,
@@ -1431,6 +1425,7 @@ const {
     track('workspace_added', { workspace_count: client.workspacesView.value.length });
     terminalStore.destroySession(terminalBucketKey('', null));
   },
+  openQuickModelMenu: (targetSid?: string) => conversationPaneRef.value?.openModelMenu(targetSid),
 });
 
 const offQuitConfirm = useQuitConfirm({
@@ -1582,20 +1577,6 @@ provide(OpenSidebarBrowserUrlKey, () => {
     void panelTabsRef.value?.openBrowserUrl(url);
   };
 });
-
-async function handleSelectModel(modelId: string): Promise<void> {
-  showModelPicker.value = false;
-  const targetSid = modelPickerTargetSid.value;
-  modelPickerTargetSid.value = undefined;
-  if (targetSid !== undefined && targetSid !== (client.activeSessionId.value ?? undefined)) {
-    const switched = await client.setSessionModel(targetSid, modelId);
-    if (switched && modelId !== defaultModel.value) {
-      void client.updateConfig({ defaultModel: modelId });
-    }
-    return;
-  }
-  await client.selectModel(modelId);
-}
 
 function onAttachmentOpen(target: { url: string; fileId?: string; name: string; mediaType?: string; kind?: string; sessionId?: string }): void {
   if (target.kind === 'image' || target.kind === 'video') {
@@ -2564,7 +2545,6 @@ function openPr(url: string): void {
       @continue="handleContinue"
       @steer-queued="handleSteerQueued"
       @toggle-pin="togglePinFromHeader"
-      @pick-model="openModelPicker()"
       @configure-model="openProviderSettings()"
       @open-media="onOpenMedia"
       @edit-message="handleEditMessage"
@@ -2688,23 +2668,11 @@ function openPr(url: string): void {
 
     <TerminalDropZone v-if="terminalStore.available && !isMobile" />
 
-    <!-- Model Picker overlay -->
-    <ModelPicker
-      v-if="showModelPicker"
-      :models="activeModels"
-      :current="status.modelId"
-      :starred-ids="starredModelIds"
-      :loading="modelsLoading"
-      :unavailable="modelsUnavailable"
-      @select="handleSelectModel($event)"
-      @toggle-star="toggleStarModel($event)"
-      @close="showModelPicker = false"
-    />
-
     <ModelSwitchConfirmDialog
       v-if="modelSwitchConfirmPending !== null"
       :open="true"
       :session-type="modelSwitchConfirmPending.sessionType"
+      :to-model="modelSwitchConfirmPending.toModel"
       :hint="modelSwitchConfirmPending.hint"
       :warning="modelSwitchConfirmPending.warning"
       @select="modelSwitchConfirmStore().settle($event)"
@@ -2876,7 +2844,7 @@ function openPr(url: string): void {
       :managed-provider-status="managedProviderStatus"
       :managed-user-info="managedUserInfo"
       :server-version="serverVersion"
-      @pick-model="openModelPicker()"
+      @pick-model="showMobileSettings = false; void nextTick(() => conversationPaneRef?.openModelMenu())"
       @set-thinking="setThinking($event)"
       @toggle-plan="togglePlanMode()"
       @toggle-goal="toggleGoalMode()"

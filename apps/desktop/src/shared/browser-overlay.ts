@@ -1,8 +1,11 @@
 import { defineBrowserValidator } from './browser-validator';
 import { Type, type Static } from 'typebox';
-import { asBrowserFavicon, asBrowserBounds, BrowserBoundsSchema } from './browser';
+import { asBrowserFavicon } from './browser';
+import { asBrowserBounds, BrowserBoundsSchema } from './browser-bounds';
 import { parseBrowserAnnotationDetails, type BrowserAnnotationDetails } from './browser-annotation-details';
 import { BrowserRequestIdSchema } from './browser-schema';
+import type { QuickModelMenuAction, QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
+import { asQuickModelMenuPayload } from './browser-overlay-model';
 
 export const BROWSER_OVERLAY_GUTTER = 12;
 const Id = Type.String({ minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9:_.-]+$' });
@@ -16,6 +19,11 @@ const Viewport = Type.Object({ width: Type.Number({ minimum: 1, maximum: 16384 }
 const ItemAction = Type.Object({ id: Id, label: Label, icon: IconName, keepOpen: OptionalFlag });
 const ItemProgress = Type.Object({ label: Label, value: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })), paused: OptionalFlag });
 const TextRange = Type.Object({ start: Type.Integer({ minimum: 0 }), end: Type.Integer({ minimum: 0 }) }, { additionalProperties: false });
+const QuickModelMenuAction = Type.Union([
+  Type.Object({ type: Type.Literal('select-model'), modelId: Type.String({ minLength: 1, maxLength: 512 }), effort: Type.Optional(Type.String({ maxLength: 32 })), fromSearch: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
+  Type.Object({ type: Type.Literal('select-effort'), effort: Type.String({ minLength: 1, maxLength: 32 }) }, { additionalProperties: false }),
+  Type.Object({ type: Type.Literal('select-provider'), providerId: Type.String({ minLength: 1, maxLength: 256 }) }, { additionalProperties: false }),
+]);
 const MenuItem = Type.Union([
   Type.Object({ kind: Type.Literal('separator') }),
   Type.Object({ kind: Type.Enum(['section', 'note']), id: Id, label: Type.String({ maxLength: 1024 }), size: Type.Optional(Type.Literal('xs')) }),
@@ -34,8 +42,10 @@ const MenuItem = Type.Union([
 const MenuFields = {
   menuId: Id, anchor: BrowserBoundsSchema, placement: Type.Optional(Placement), initialFocus: Type.Optional(InitialFocus),
   offset: Type.Optional(Type.Number({ minimum: -16, maximum: 32 })), width: Type.Optional(Type.Number({ minimum: 180 })),
-  autoWidth: OptionalFlag, preserveFocus: OptionalFlag, submitOnCtrlEnter: OptionalFlag, items: Type.Array(MenuItem, { minItems: 1, maxItems: 2048 }),
+  maxHeight: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096 })),
+  autoWidth: OptionalFlag, preserveFocus: OptionalFlag, submitOnCtrlEnter: OptionalFlag, items: Type.Array(MenuItem, { minItems: 0, maxItems: 2048 }),
   footerStart: Type.Optional(Type.Integer({ minimum: 0 })), query: Type.Optional(Type.String({ maxLength: 1024 })),
+  modelMenu: Type.Optional(Type.Unknown()),
 };
 export const BrowserOverlayMenuRequestSchema = Type.Object({ ...MenuFields, refresh: OptionalFlag });
 const DialogCoordinate = Type.Number({ minimum: 0, maximum: 32768 });
@@ -58,7 +68,7 @@ const DialogInput = Type.Object({ ...DialogFields, kind: Type.Optional(Type.Unkn
 export const BrowserOverlayDialogRequestSchema = Type.Object(DialogFields, { additionalProperties: false });
 const Rendered = Type.Object({ requestId: BrowserRequestIdSchema, ...Viewport.properties });
 const Visibility = Type.Object({ requestId: BrowserRequestIdSchema });
-const Activate = Type.Object({ ...Visibility.properties, itemId: Id }, { additionalProperties: false });
+const Activate = Type.Object({ ...Visibility.properties, itemId: Id, modelAction: Type.Optional(QuickModelMenuAction) }, { additionalProperties: false });
 const DialogKind = Type.Object({ kind: Type.Literal('dialog') });
 const Dismiss = Type.Object({ ...Visibility.properties, reason: Type.Enum(['dismiss', 'escape']) }, { additionalProperties: false });
 
@@ -66,7 +76,7 @@ export type BrowserOverlayPlacement = Static<typeof Placement>;
 export type BrowserOverlayInitialFocus = Static<typeof InitialFocus>;
 export type BrowserOverlayAnchor = Static<typeof BrowserBoundsSchema>;
 export type BrowserOverlayMenuItem = Static<typeof MenuItem>;
-export type BrowserOverlayMenuRequest = Static<typeof BrowserOverlayMenuRequestSchema>;
+export type BrowserOverlayMenuRequest = Omit<Static<typeof BrowserOverlayMenuRequestSchema>, 'modelMenu'> & { modelMenu?: QuickModelMenuPayload };
 export type BrowserOverlayDialogRequest = Omit<Static<typeof BrowserOverlayDialogRequestSchema>, 'annotation'> & { annotation?: BrowserAnnotationDetails };
 export type BrowserOverlayDialogVariant = NonNullable<BrowserOverlayDialogRequest['variant']>;
 export type BrowserOverlayViewport = Static<typeof Viewport>;
@@ -78,10 +88,15 @@ export type BrowserOverlayDismissRequest = Static<typeof Dismiss>;
 const MenuConfig = Type.Object({
   ...MenuFields, kind: Type.Literal('menu'), requestId: BrowserRequestIdSchema,
   width: Type.Optional(Type.Number({ minimum: 1 })),
-  minWidth: Type.Optional(Type.Number({ minimum: 1 })), maxHeight: Type.Optional(Type.Number({ minimum: 1 })),
+  minWidth: Type.Optional(Type.Number({ minimum: 1 })),
 });
-const Shown = Type.Object({ requestId: BrowserRequestIdSchema, placement: Type.Optional(Placement) });
-const Action = Type.Object({ menuId: Id, itemId: Id, keepOpen: OptionalFlag });
+const Shown = Type.Object({
+  requestId: BrowserRequestIdSchema,
+  placement: Type.Optional(Placement),
+  menuOffset: Type.Optional(Type.Object({ x: Type.Number(), y: Type.Number() }, { additionalProperties: false })),
+  menuFrame: Type.Optional(Type.Object({ x: Type.Number(), y: Type.Number(), viewportWidth: Type.Number(), viewportHeight: Type.Number() }, { additionalProperties: false })),
+});
+const Action = Type.Object({ menuId: Id, itemId: Id, keepOpen: OptionalFlag, modelAction: Type.Optional(QuickModelMenuAction) });
 const CloseReason = Type.Enum(['action', 'dismiss', 'escape', 'replaced', 'window-blur', 'window-move', 'window-resize', 'host-closed', 'programmatic']);
 const Closed = Type.Object({ menuId: Id, reason: CloseReason });
 const DialogActionFields = {
@@ -92,7 +107,7 @@ const DialogAction = Type.Object({ ...DialogActionFields, dialogId: Id, value: T
 const FormAction = Type.Object({ ...DialogActionFields, requestId: BrowserRequestIdSchema });
 const DialogClosed = Type.Object({ dialogId: Id, reason: CloseReason });
 
-export type BrowserOverlayMenuConfig = Static<typeof MenuConfig>;
+export type BrowserOverlayMenuConfig = Omit<Static<typeof MenuConfig>, 'modelMenu'> & { modelMenu?: QuickModelMenuPayload };
 export interface BrowserOverlayDialogConfig extends BrowserOverlayDialogRequest {
   kind: 'dialog';
   requestId: number;
@@ -107,7 +122,10 @@ export type BrowserOverlayFormAction = Static<typeof FormAction>;
 export type BrowserOverlayDialogClosed = Static<typeof DialogClosed>;
 
 export function isBrowserOverlayConfig(value: unknown): value is BrowserOverlayConfig {
-  return browserValidators.MenuConfig.Check(value) || asBrowserOverlayDialogConfig(value) !== null;
+  if (browserValidators.MenuConfig.Check(value)) {
+    return value.modelMenu === undefined ? value.items.length > 0 : asQuickModelMenuPayload(value.modelMenu) !== null;
+  }
+  return asBrowserOverlayDialogConfig(value) !== null;
 }
 
 export function isBrowserOverlayShown(value: unknown): value is BrowserOverlayShown {
@@ -142,6 +160,16 @@ export function asBrowserOverlayAnchor(value: unknown): BrowserOverlayAnchor | n
   return asBrowserBounds(value);
 }
 
+export function isBrowserOverlayMenuOpenInput(value: unknown): value is BrowserOverlayMenuRequest {
+  if (!isRecord(value)) return false;
+  if (asBrowserOverlayMenuId(value['menuId']) === null || asBrowserOverlayAnchor(value['anchor']) === null) return false;
+  const items = value['items'];
+  if (!Array.isArray(items) || items.length > 2048) return false;
+  const modelMenu = value['modelMenu'];
+  if (modelMenu !== undefined) return isRecord(modelMenu) && Array.isArray(modelMenu['models']);
+  return items.length > 0;
+}
+
 function asMenuItem(value: unknown): BrowserOverlayMenuItem | null {
   const validator = [browserValidators.menuItem0, browserValidators.menuItem1, browserValidators.menuItem2, browserValidators.menuItem3, browserValidators.menuItem4].find(branch => branch.Check(value));
   if (validator === undefined) return null;
@@ -171,12 +199,18 @@ function asMenuItem(value: unknown): BrowserOverlayMenuItem | null {
   return item;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export function asBrowserOverlayMenuRequest(value: unknown): BrowserOverlayMenuRequest | null {
   const request = browserValidators.BrowserOverlayMenuRequestSchema.Parse(value);
   if (request === null) return null;
   const anchor = asBrowserBounds(request.anchor)!;
   if (request.width !== undefined && request.width > Math.max(640, request.preserveFocus === true ? Math.ceil(anchor.width) : 0)) return null;
   if (request.footerStart !== undefined && request.footerStart > request.items.length) return null;
+  const modelMenu = request.modelMenu === undefined ? undefined : asQuickModelMenuPayload(request.modelMenu);
+  if (modelMenu === null) return null;
   const items: BrowserOverlayMenuItem[] = [];
   const ids = new Set<string>();
   for (const raw of request.items) {
@@ -192,10 +226,12 @@ export function asBrowserOverlayMenuRequest(value: unknown): BrowserOverlayMenuR
     }
     items.push(item);
   }
-  if (items.every(item => item.kind === 'separator')) return null;
+  if (modelMenu === undefined && items.every(item => item.kind === 'separator')) return null;
   return {
     menuId: request.menuId, anchor, items, placement: request.placement ?? 'bottom-end',
     offset: Math.round(request.offset ?? 4), width: Math.round(request.width ?? 220),
+    ...(modelMenu === undefined ? {} : { modelMenu }),
+    ...(request.maxHeight === undefined ? {} : { maxHeight: request.maxHeight }),
     ...(request.refresh === true ? { refresh: true } : {}),
     ...(request.initialFocus === undefined ? {} : { initialFocus: request.initialFocus }),
     ...(request.autoWidth === true ? { autoWidth: true } : {}),

@@ -349,6 +349,7 @@ describe('useModelProviderState thinking on model selection', () => {
     apiMock.activateSkill.mockResolvedValue({});
     persistSessionProfileMock.mockReset();
     persistSessionProfileMock.mockResolvedValue(true);
+    modelsStore().$patch({ recentModelIds: [] });
     permissionsStore().$reset();
     permissionsStore().pickInSession('session-1', 'auto');
     const prompt = promptStore();
@@ -473,6 +474,27 @@ describe('useModelProviderState thinking on model selection', () => {
     await provider.setModel(effortAppModel.id);
 
     expect(state.thinking).toBe('high');
+  });
+
+  it('records the selected model before the previous model after a successful draft switch', async () => {
+    const state = createState({ defaultModel: booleanAppModel.id });
+    const provider = createModelProvider(state);
+
+    await provider.setModel(effortAppModel.id);
+
+    expect(provider.recentModelIds.value).toEqual([effortAppModel.id, booleanAppModel.id]);
+  });
+
+  it('records a successful model selection for a specified session', async () => {
+    const state = createState({
+      activeSession: { id: 'session-1', model: booleanAppModel.id },
+      defaultModel: booleanAppModel.id,
+    });
+    const provider = createModelProvider(state);
+
+    await provider.setSessionModel('session-1', effortAppModel.id);
+
+    expect(provider.recentModelIds.value).toEqual([effortAppModel.id, booleanAppModel.id]);
   });
 
   it('preserves the draft thinking level when normalizing a bare model name to its catalog id', async () => {
@@ -988,6 +1010,7 @@ describe('useModelProviderState thinking on model selection', () => {
 
     expect(switched).toBe(false);
     expect(apiMock.setConfig).not.toHaveBeenCalled();
+    expect(provider.recentModelIds.value).toEqual([]);
   });
 
   it('sends no thinking level for a session whose level has not landed yet', () => {
