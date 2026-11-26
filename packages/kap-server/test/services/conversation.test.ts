@@ -655,7 +655,12 @@ describe('conversation fold', () => {
       code: 'compaction.failed',
       message: 'APIStatusError: 400 Bad Request',
       retryable: false,
-      details: { statusCode: 400, requestId: 'req-1' },
+      cause: {
+        code: 'provider.api_error',
+        message: '400 Bad Request',
+        retryable: false,
+        details: { statusCode: 400, requestId: 'req-1' },
+      },
     };
     const state = fold([
       record('full_compaction.begin', { source: 'manual' }),

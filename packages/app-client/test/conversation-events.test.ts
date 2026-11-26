@@ -833,6 +833,35 @@ describe('compaction failures', () => {
 
     expect(h.warningsStore().warnings).toEqual([failure]);
   });
+
+  it('still raises one toast when a compaction in another session fails on authentication', async () => {
+    const h = await boot({ sessionIds: ['s1', 's2'] });
+    await h.client.selectSession('s2');
+    await h.client.selectSession('s1');
+    h.warningsStore().resetWarnings();
+    const DENIED = 'Unauthorized: the example key was rejected.';
+
+    h.frame('s2', { type: 'turn.started', turn: { turn_id: 'tc', ordinal: 5, kind: 'system', status: 'running', started_at: AT, steps: [] } });
+    h.frame('s2', { type: 'item.ended', turn_id: 'tc', item: { ...failedItem, error: { code: 'provider.auth_error', message: DENIED, status_code: 401 } } });
+    h.frame('s2', cancelled);
+    h.frame('s2', { type: 'notice', level: 'error', title: DENIED, code: 'provider.auth_error' });
+
+    expect(h.warningsStore().warnings).toEqual([
+      expect.objectContaining({ severity: 'error', title: 'warnings.agentError.compactionFailed', message: DENIED }),
+    ]);
+  });
+
+  it('keeps hiding an authentication error of another session that no compaction failure announced', async () => {
+    const h = await boot({ sessionIds: ['s1', 's2'] });
+    await h.client.selectSession('s2');
+    await h.client.selectSession('s1');
+    deliverFailure(h, 's2');
+    h.warningsStore().resetWarnings();
+
+    h.frame('s2', { type: 'notice', level: 'error', title: 'Unauthorized', code: 'provider.auth_error' });
+
+    expect(h.warningsStore().warnings).toEqual([]);
+  });
 });
 
 describe('model availability notices', () => {

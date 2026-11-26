@@ -525,6 +525,7 @@ function forgetSession(sessionId: string): void {
   delete rawState.sessionStatusSettledBySession[sessionId];
   notifiedInteractionIdsBySession.delete(sessionId);
   failedCompactionSettled.delete(sessionId);
+  failedCompactionErrorDue.delete(sessionId);
   promptStore().forgetLocalTurnState(sessionId);
   promptStore().clearQueued(sessionId);
   promptStore().clearInFlight(sessionId);
@@ -835,10 +836,12 @@ function mainCompacting(sessionId: string): boolean {
 function observeMainCompaction(sessionId: string): void {
   if (!mainCompacting(sessionId)) return;
   failedCompactionSettled.delete(sessionId);
+  failedCompactionErrorDue.delete(sessionId);
   promptStore().noteCompactionStarted(sessionId);
 }
 
 const failedCompactionSettled = new Set<string>();
+const failedCompactionErrorDue = new Set<string>();
 
 const latestCompactionKeyByEntry = new WeakMap<ConversationEntry, string | undefined>();
 
@@ -1965,14 +1968,19 @@ function onMainNotice(sessionId: string, notice: ConversationNotice): void {
     return;
   }
   if (notice.code === 'compaction.cancelled') {
-    if (failedCompactionSettled.delete(sessionId)) return;
+    if (failedCompactionSettled.delete(sessionId)) {
+      failedCompactionErrorDue.add(sessionId);
+      return;
+    }
     settleCompaction(sessionId, 'cancelled', undefined);
   }
   warningsStore().markSessionWarningShown(sessionId, `${notice.code ?? ''} ${notice.title}`);
   if (notice.level === 'error') {
-    if (isModelTurnErrorNotice(notice)) return;
+    const compactionFailure = failedCompactionErrorDue.delete(sessionId);
+    if (!compactionFailure && isModelTurnErrorNotice(notice)) return;
     if (sessionId === rawState.activeSessionId) return;
-    warningsStore().pushWarning(buildAgentErrorNotice(notice, t));
+    const toast = buildAgentErrorNotice(notice, t);
+    warningsStore().pushWarning(compactionFailure ? { ...toast, title: t('warnings.agentError.compactionFailed') } : toast);
     return;
   }
   warningsStore().pushWarning({ severity: notice.level, title: t('warnings.noteLabel'), message: notice.title });

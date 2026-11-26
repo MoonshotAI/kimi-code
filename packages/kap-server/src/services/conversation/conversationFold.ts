@@ -750,7 +750,25 @@ function cancelCompaction(state: ConversationState, record: WireRecord, time: nu
   state.compaction = undefined;
   const error = errorInfoOf(record['error'], undefined);
   if (compaction === undefined || error === undefined) return;
-  appendCompaction(state, { trigger: compaction.trigger, instruction: compaction.instruction }, time, error);
+  appendCompaction(state, { trigger: compaction.trigger, instruction: compaction.instruction }, time, withCauseDiagnostics(error, record['error']));
+}
+
+function withCauseDiagnostics(error: ErrorInfo, payload: unknown): ErrorInfo {
+  let statusCode = error.status_code;
+  let requestId = error.request_id;
+  let cause = causeOf(payload);
+  while (cause !== undefined && (statusCode === undefined || requestId === undefined)) {
+    const info = errorInfoOf(cause, undefined);
+    statusCode ??= info?.status_code;
+    requestId ??= info?.request_id;
+    cause = causeOf(cause);
+  }
+  return { ...error, status_code: statusCode, request_id: requestId };
+}
+
+function causeOf(payload: unknown): unknown {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  return (payload as { cause?: unknown }).cause;
 }
 
 function appendCompaction(
