@@ -303,6 +303,33 @@ describe('worktree first-prompt hold', () => {
     expect(sentTexts(api.submitPrompt)).toEqual(['first', 'second']);
   });
 
+  it('puts a held skill activation the server could not send back in the queue', async () => {
+    const { ws } = await createRig({ worktree: false });
+    openExisting({
+      ...worktree('ready', { path: '/wt/a' }),
+      heldPrompt: {
+        promptId: 'held-skill',
+        kind: 'skill',
+        createdAt: '2026-11-18T00:00:00.000Z',
+        content: [{ type: 'image', source: { kind: 'file', fileId: 'f-1' } }],
+        skill: { name: 'review', path: '/workspace/.kimi-code/skills/review/SKILL.md', args: 'now' },
+        failure: { code: 40401, msg: 'missing' },
+      },
+    });
+
+    ws.syncWorktreeHold(SID);
+
+    expect(promptStore().queuedBySession[SID]).toEqual([
+      expect.objectContaining({
+        id: 'held-skill',
+        text: '/review now',
+        attachments: [{ kind: 'image', fileId: 'f-1' }],
+        skills: [{ name: 'review', path: '/workspace/.kimi-code/skills/review/SKILL.md', args: 'now' }],
+      }),
+    ]);
+    expect(warningsStore().warnings).toHaveLength(1);
+  });
+
   it('shows a prompt the server holds after the client reloads', async () => {
     const { ws } = await createRig({ worktree: false });
     openExisting({

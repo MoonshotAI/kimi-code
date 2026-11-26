@@ -181,10 +181,21 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   function heldPromptEnvelope(sid: string, held: AppWorktreeHeldPrompt): PromptEnvelope {
     const sent = sentToWorktreeHold.get(sid);
     if (sent?.promptId === held.promptId) return sent.prompt;
+    const attachments = contentToAttachments(held.content, sid);
+    const snapshot = heldPromptSnapshot(held);
+    if (held.kind === 'skill' && held.skill !== undefined) {
+      const { name, path, args } = held.skill;
+      return {
+        text: `/${name}${args ? ` ${args}` : ''}`,
+        snapshot,
+        attachments,
+        skills: [{ name, ...(path === undefined ? {} : { path }), ...(args === undefined ? {} : { args }) }],
+      };
+    }
     return {
       text: held.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n'),
-      snapshot: heldPromptSnapshot(held),
-      attachments: contentToAttachments(held.content, sid),
+      snapshot,
+      attachments,
       skills: held.skills ?? [],
     };
   }
@@ -194,10 +205,6 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     importedHeldFailures.add(held.promptId);
     takeOptimisticMessage(sid, held.promptId);
     const failure = new Error(held.failure?.msg ?? '');
-    if (held.kind === 'skill') {
-      warningsStore().pushOperationFailure('activateSkill', failure, { sessionId: sid });
-      return;
-    }
     if (!(promptStore().queuedBySession[sid] ?? []).some((entry) => entry.id === held.promptId)) {
       promptStore().restoreQueueEntry(sid, { ...heldPromptEnvelope(sid, held), enqueuedAt: Date.now(), id: held.promptId });
       promptStore().noteQueueFlushFailure(sid, held.promptId, MAX_QUEUE_FLUSH_FAILURES);
