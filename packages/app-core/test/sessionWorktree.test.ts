@@ -39,43 +39,26 @@ function worktree(
 }
 
 describe('classifySessionEnvironment', () => {
-  it('treats sessions without a worktree as local', () => {
+  it.each([
+    ['no worktree', undefined, 'local'],
+    ['a local fallback', worktree('local'), 'local'],
+    ['a failed creation without a directory', worktree('failed', { path: undefined }), 'local'],
+    ['a setup running before a path exists', worktree('running', { path: undefined }), 'settingUp'],
+    ['a setup running in an existing directory', worktree('running'), 'settingUp'],
+    ['a recreate running on a missing worktree', worktree('running', { missing: true }, { purpose: 'recreate' }), 'settingUp'],
+    ['a ready worktree', worktree('ready'), 'worktree'],
+    ['a missing worktree', worktree('ready', { missing: true }), 'invalid'],
+  ] as const)('classifies %s as %s', (_label, value, expected) => {
+    expect(classifySessionEnvironment({ worktree: value })).toBe(expected);
+  });
+
+  it('matches the narrower predicates and the tag', () => {
     expect(classifySessionEnvironment(undefined)).toBe('local');
-    expect(classifySessionEnvironment({})).toBe('local');
-  });
-
-  it('treats a session that fell back to local mode as local', () => {
-    const session = { worktree: worktree('local') };
-    expect(classifySessionEnvironment(session)).toBe('local');
-    expect(isWorktreeSession(session)).toBe(false);
-  });
-
-  it('reports setting up while the setup runs, even before a path exists', () => {
-    const session = { worktree: worktree('running', { path: undefined }) };
-    expect(classifySessionEnvironment(session)).toBe('settingUp');
-    expect(isSessionWorktreeSettingUp(session)).toBe(true);
-    expect(isWorktreeSession(session)).toBe(false);
-  });
-
-  it('reports a ready worktree', () => {
-    expect(classifySessionEnvironment({ worktree: worktree('ready') })).toBe('worktree');
-  });
-
-  it('reports a missing worktree as invalid', () => {
-    const session = { worktree: worktree('ready', { missing: true }) };
-    expect(classifySessionEnvironment(session)).toBe('invalid');
-    expect(isSessionWorktreeInvalid(session)).toBe(true);
-  });
-
-  it('prefers setting up over invalid while a recreate runs', () => {
-    expect(classifySessionEnvironment({ worktree: worktree('running', { missing: true }, { purpose: 'recreate' }) })).toBe('settingUp');
-  });
-
-  it('keeps a failed creation without a directory local', () => {
-    expect(classifySessionEnvironment({ worktree: worktree('failed', { path: undefined }) })).toBe('local');
-  });
-
-  it('tags a session unless it is local', () => {
+    expect(isWorktreeSession({ worktree: worktree('local') })).toBe(false);
+    expect(isWorktreeSession({ worktree: worktree('running', { path: undefined }) })).toBe(false);
+    expect(isWorktreeSession({ worktree: worktree('running') })).toBe(true);
+    expect(isSessionWorktreeSettingUp({ worktree: worktree('running', { path: undefined }) })).toBe(true);
+    expect(isSessionWorktreeInvalid({ worktree: worktree('ready', { missing: true }) })).toBe(true);
     expect(sessionEnvironmentTag({ worktree: worktree('local') })).toBeUndefined();
     expect(sessionEnvironmentTag({ worktree: worktree('ready') })).toBe('worktree');
   });
@@ -106,73 +89,48 @@ describe('prompt gating predicates', () => {
 });
 
 describe('sessionWorktreeCard', () => {
-  it('shows no card for local, running, ready or local-fallback sessions', () => {
-    expect(sessionWorktreeCard(undefined)).toBeNull();
-    expect(sessionWorktreeCard(worktree('running'))).toBeNull();
-    expect(sessionWorktreeCard(worktree('ready'))).toBeNull();
-    expect(sessionWorktreeCard(worktree('local', { missing: true }))).toBeNull();
-  });
-
   it.each([
-    ['fetch_failed', 'fetchFailed'],
-    ['fetch_timeout', 'fetchTimeout'],
-    ['conflict', 'conflict'],
-    ['disk_full', 'diskFull'],
-    ['create_failed', 'createFailed'],
-  ] as const)('maps the %s failure to the %s card', (kind, card) => {
-    expect(sessionWorktreeCard(worktree('failed', {}, { failure: { kind } }))).toBe(card);
-  });
-
-  it('shows the stopped card whichever step was stopped', () => {
-    expect(sessionWorktreeCard(worktree('stopped', {}, { stoppedStep: 'fetch' }))).toBe('stopped');
-    expect(sessionWorktreeCard(worktree('stopped'))).toBe('stopped');
-  });
-
-  it('reports a missing directory, and separately a missing branch', () => {
-    expect(sessionWorktreeCard(worktree('ready', { missing: true }))).toBe('missing');
-    expect(sessionWorktreeCard(worktree('ready', { missing: true, branchMissing: true }))).toBe('missingBranchGone');
-  });
-
-  it('never treats a failure as a stop even though the failed step is recorded', () => {
-    expect(
-      sessionWorktreeCard(worktree('failed', {}, { stoppedStep: 'fetch', failure: { kind: 'fetch_timeout' } })),
-    ).toBe('fetchTimeout');
-    expect(
-      sessionWorktreeCard(worktree('failed', {}, { stoppedStep: 'create', failure: { kind: 'disk_full' } })),
-    ).toBe('diskFull');
-    expect(sessionWorktreeCard(worktree('failed', {}, { stoppedStep: 'prune' }))).toBe('createFailed');
-  });
-
-  it('shows the recreate failure rather than the missing card', () => {
-    expect(
-      sessionWorktreeCard(worktree('failed', { missing: true }, { purpose: 'recreate', failure: { kind: 'disk_full' } })),
-    ).toBe('diskFull');
+    ['no worktree', undefined, null],
+    ['a running setup', worktree('running'), null],
+    ['a ready worktree', worktree('ready'), null],
+    ['a local fallback from a missing worktree', worktree('local', { missing: true }), null],
+    ['a fetch failure', worktree('failed', {}, { failure: { kind: 'fetch_failed' } }), 'fetchFailed'],
+    ['a fetch timeout', worktree('failed', {}, { stoppedStep: 'fetch', failure: { kind: 'fetch_timeout' } }), 'fetchTimeout'],
+    ['a conflict', worktree('failed', {}, { failure: { kind: 'conflict' } }), 'conflict'],
+    ['a full disk', worktree('failed', {}, { stoppedStep: 'create', failure: { kind: 'disk_full' } }), 'diskFull'],
+    ['a create failure', worktree('failed', {}, { failure: { kind: 'create_failed' } }), 'createFailed'],
+    ['a failure without a kind', worktree('failed', {}, { stoppedStep: 'prune' }), 'createFailed'],
+    ['a stop at the fetch', worktree('stopped', {}, { stoppedStep: 'fetch' }), 'stopped'],
+    ['a stop without a step', worktree('stopped'), 'stopped'],
+    ['a missing directory', worktree('ready', { missing: true }), 'missing'],
+    ['a missing directory and branch', worktree('ready', { missing: true, branchMissing: true }), 'missingBranchGone'],
+    [
+      'a failed recreate of a missing worktree',
+      worktree('failed', { missing: true }, { purpose: 'recreate', failure: { kind: 'disk_full' } }),
+      'diskFull',
+    ],
+  ] as const)('shows for %s: %s', (_label, value, card) => {
+    expect(sessionWorktreeCard(value)).toBe(card);
   });
 });
 
 describe('sessionWorkingDirectory', () => {
-  it('uses the session directory for local and worktree sessions', () => {
-    expect(sessionWorkingDirectory({ cwd: '/repo/sub' })).toBe('/repo/sub');
-    expect(sessionWorkingDirectory({ cwd: '/wt/a', worktree: worktree('ready') })).toBe('/wt/a');
-    expect(sessionWorkingDirectory({ cwd: '/wt/a', worktree: worktree('ready', { missing: true }) })).toBe('/wt/a');
+  it.each([
+    ['a local session', undefined, '/repo/sub', '/repo/sub'],
+    ['a ready worktree', worktree('ready'), '/wt/a', '/wt/a'],
+    ['a missing worktree', worktree('ready', { missing: true }), '/wt/a', '/wt/a'],
+    ['a setup running in an existing directory', worktree('running'), '/repo', '/wt/a'],
+    ['a setup running before a path exists', worktree('running', { path: undefined }), '/repo', '/repo'],
+    ['a local fallback', worktree('local'), '/repo', '/repo'],
+    ['an abandoned missing worktree', worktree('local', { path: undefined, branch: undefined, missing: true }), '/repo', '/repo'],
+  ] as const)('uses the right directory for %s', (_label, value, cwd, expected) => {
+    expect(sessionWorkingDirectory({ cwd, worktree: value })).toBe(expected);
   });
 
-  it('uses the worktree as soon as it exists, before setup has finished', () => {
-    expect(isWorktreeSession({ worktree: worktree('running') })).toBe(true);
-    expect(sessionWorkingDirectory({ cwd: '/repo', worktree: worktree('running') })).toBe('/wt/a');
-    expect(classifySessionEnvironment({ worktree: worktree('running') })).toBe('settingUp');
-  });
-
-  it('returns to the project root once a missing worktree was abandoned', () => {
+  it('stops blocking sends once a missing worktree was abandoned', () => {
     const abandoned = worktree('local', { path: undefined, branch: undefined, missing: true });
-    expect(sessionWorkingDirectory({ cwd: '/repo', worktree: abandoned })).toBe('/repo');
     expect(classifySessionEnvironment({ worktree: abandoned })).toBe('local');
     expect(sessionWorktreeBlocksSend({ worktree: abandoned })).toBe(false);
-  });
-
-  it('stays on the project root while the worktree is being created and after falling back', () => {
-    expect(sessionWorkingDirectory({ cwd: '/repo', worktree: worktree('running', { path: undefined }) })).toBe('/repo');
-    expect(sessionWorkingDirectory({ cwd: '/repo', worktree: worktree('local') })).toBe('/repo');
   });
 });
 
