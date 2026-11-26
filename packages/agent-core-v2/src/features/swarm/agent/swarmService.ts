@@ -3,7 +3,6 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IEventBus } from '#/app/event/eventBus';
 import type { SwarmModeTransitionEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -25,7 +24,6 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
     @IEventBus eventBus: IEventBus,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentLoopService loop: IAgentLoopService,
-    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @IAgentStateService private readonly agentState: IAgentStateService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -76,12 +74,6 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
       throw new Error2(ErrorCodes.VALIDATION_FAILED, 'Only the user can turn on swarm mode.');
     }
     if (this.agentState.get(swarmKey) !== null) return;
-    if (!this.toolPolicy.isToolActive('AgentSwarm')) {
-      throw new Error2(
-        ErrorCodes.VALIDATION_FAILED,
-        'Swarm mode requires the AgentSwarm tool; enable it before entering swarm mode',
-      );
-    }
     void this.dispatcher.dispatch(new SwarmModeEnter({ agentId: this.agentCtx.agentId, trigger }));
     const properties: SwarmModeTransitionEvent = { trigger };
     this.telemetry.track2('swarm_mode_entered', properties);

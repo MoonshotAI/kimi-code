@@ -8,7 +8,7 @@ Update this section after every sync. Do not reuse the previous range.
 
 - **Repo:** `https://github.com/earendil-works/pi.git`
 - **Subtree:** `packages/tui`
-- **Commit:** `7c22a93d0ed02092142fa63823e63d76aa4e2406` (2026-10-22; v1.4.0 plus upstream main through this commit)
+- **Commit:** `b882d08f34f8a245c8d3ea8b057759e1b8b2054c` (2026-11-25; v1.6.1 plus upstream main through this commit)
 - **This commit is an upstream marker.** It may not exist in this repo's object database.
 
 ## Reconstruct the fork

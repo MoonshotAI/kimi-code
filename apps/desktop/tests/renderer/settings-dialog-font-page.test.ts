@@ -13,6 +13,7 @@ afterEach(() => {
   app?.unmount();
   app = null;
   document.body.innerHTML = '';
+  vi.unstubAllGlobals();
 });
 
 async function flush(): Promise<void> {
@@ -138,25 +139,27 @@ it('opens Agent & Sessions on initialTab="agent", scrolls to and highlights runn
   expect(row.getAttribute('data-setting-highlighted')).toBeNull();
 }, 60_000);
 
-
-it('exposes confirmDiscard so external shortcut or menu toggles respect unsaved tool edits', async () => {
+it('exposes confirmDiscard so external shortcut or menu toggles respect unsaved Global AGENTS.md edits', async () => {
+  vi.stubGlobal('ResizeObserver', class {
+    observe(): void {}
+    disconnect(): void {}
+  });
   const { IconResolverKey } = await import('@moonshot-ai/app-ui');
   const { KimiI18nKey } = await import('@moonshot-ai/app-i18n');
   const { setKimiClientDeps } = await import('@moonshot-ai/app-client/client');
   const { useConfirmDialog } = await import('@moonshot-ai/app-client/composables');
-  const { clientPinia, configStore } = await import('@moonshot-ai/app-client/stores');
+  const { clientPinia } = await import('@moonshot-ai/app-client/stores');
   const { default: i18n } = await import('../../src/renderer/i18n');
   const { default: SettingsDialog } = await import('../../src/renderer/components/settings/SettingsDialog.vue');
-  configStore().resetConfig();
   setKimiClientDeps({
     api: () => ({
-      listToolCatalog: async () => [{ name: 'Bash', source: 'builtin' }],
-      getConfig: async () => ({ providers: {}, tools: { disabled: [] } }),
+      getMeta: async () => ({ homeDir: '/home/test' }),
+      readHostTextFile: async () => ({ path: '/home/test/AGENTS.md', content: '# Existing\n', revision: 'original' }),
     }),
     t: (key: string) => key,
   } as never);
 
-  let dialogRef!: { confirmDiscard: () => Promise<boolean> };
+  let dialogRef!: { confirmDiscard?: () => Promise<boolean> };
   const host = document.createElement('div');
   document.body.append(host);
   app = createApp({
@@ -178,20 +181,23 @@ it('exposes confirmDiscard so external shortcut or menu toggles respect unsaved 
   app.mount(host);
   await flush();
 
-  document.querySelector<HTMLButtonElement>('[data-settings-subpage-origin="tools"]')!.click();
-  await vi.waitFor(() => expect(document.querySelector('.settings-subpage [role="switch"]')).not.toBeNull());
-  await expect(dialogRef.confirmDiscard()).resolves.toBe(true);
+  document.querySelector<HTMLButtonElement>('[data-settings-subpage-origin="globalAgentsMd"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector<HTMLTextAreaElement>('.global-agents-md-editor')?.value).toBe('# Existing\n'));
+  expect(typeof dialogRef.confirmDiscard).toBe('function');
+  await expect(dialogRef.confirmDiscard!()).resolves.toBe(true);
 
-  document.querySelector<HTMLButtonElement>('.settings-subpage [role="switch"]')!.click();
+  const editor = document.querySelector<HTMLTextAreaElement>('.global-agents-md-editor')!;
+  editor.value = '# Edited\n';
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
   await flush();
 
-  const cancelled = dialogRef.confirmDiscard();
+  const cancelled = dialogRef.confirmDiscard!();
   await flush();
   expect(useConfirmDialog().isConfirmOpen.value).toBe(true);
   useConfirmDialog().settle(false);
   await expect(cancelled).resolves.toBe(false);
 
-  const confirmed = dialogRef.confirmDiscard();
+  const confirmed = dialogRef.confirmDiscard!();
   await flush();
   useConfirmDialog().settle(true);
   await expect(confirmed).resolves.toBe(true);

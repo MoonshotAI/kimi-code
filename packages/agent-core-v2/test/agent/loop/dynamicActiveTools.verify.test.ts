@@ -64,6 +64,7 @@ test('keeps turn and operation request tools frozen at the loop-start baseline',
 
   userTools.unregister('UserMid');
   const signal = new AbortController().signal;
+  model.expectCacheBreak('the test sends its own messages through an operation request', { at: 'history' });
   const requester = await loop.requester.prepareOperation(
     { source: () => ({ type: 'operation', requestKind: 'verify_active_tools' }) },
     signal,

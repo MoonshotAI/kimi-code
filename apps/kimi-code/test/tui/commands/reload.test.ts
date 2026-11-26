@@ -108,6 +108,23 @@ auto_install = false
     });
   });
 
+  it('re-resolves the working directory when the reload flips the worktree flag', async () => {
+    await writeTuiConfig('theme = "dark"\n');
+    const host = makeHost({ session: { id: 'ses-1', reloadSession: vi.fn(async () => ({})) } });
+    const refreshWorkLocation = vi.fn(async () => {});
+    Object.assign(host, { refreshWorkLocation });
+
+    await handleReloadCommand(host);
+    expect(refreshWorkLocation).not.toHaveBeenCalled();
+
+    host.harness.getExperimentalFeatures.mockResolvedValue([{ id: 'worktree', enabled: true }]);
+    await handleReloadCommand(host);
+    expect(refreshWorkLocation).toHaveBeenCalledOnce();
+
+    await handleReloadCommand(host);
+    expect(refreshWorkLocation).toHaveBeenCalledOnce();
+  });
+
   it('awaits the async theme application before refreshing terminal tracking', async () => {
     await writeTuiConfig('theme = "auto"\n');
     const host = makeHost();

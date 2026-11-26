@@ -487,6 +487,7 @@ describe('core LoopService integration', () => {
     const previousRevision = core.historyRevision;
     const begin = vi.spyOn(ctx.get(ISessionRunGate), 'begin');
     const acquire = vi.spyOn(ctx.get(ISessionRunGate), 'acquire');
+    ctx.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await ctx.get(IAgentConversationUndoService).undo(1);
     expect(begin).toHaveBeenCalledTimes(2);
     expect(acquire).toHaveBeenCalledTimes(1);
@@ -857,6 +858,7 @@ describe('core LoopService integration', () => {
             };
           }
           await expect(loop.promptHandle(submitted.id)!.completion).resolves.toMatchObject({ state: 'completed' });
+          subject.expectCacheBreak('undo rewrites the history', { at: 'history' });
           await subject.get(IAgentConversationUndoService).undo(1);
           expect(stop).not.toHaveBeenCalled();
           gate.resolve();

@@ -1071,8 +1071,11 @@ describe('FullCompaction', () => {
   });
 
   it('cancels the compaction lifecycle when manual compaction generation fails', async () => {
+    vi.useFakeTimers();
     const records: TelemetryRecord[] = [];
+    const firstAttemptFailed = deferred<void>();
     const generate: GenerateFn = createMockProvider(async () => {
+      firstAttemptFailed.resolve();
       throw new Error('compaction exploded');
     });
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
@@ -1085,6 +1088,8 @@ describe('FullCompaction', () => {
     const failed = ctx.once('error');
 
     await ctx.rpc.beginCompaction({});
+    await firstAttemptFailed.promise;
+    await vi.advanceTimersByTimeAsync(60_000);
     await failed;
 
     const events = ctx.newEvents();
@@ -1117,6 +1122,7 @@ describe('FullCompaction', () => {
     expect(
       records.find((record) => record.event === 'compaction_failed')?.properties,
     ).not.toHaveProperty('tokens_after');
+    vi.useRealTimers();
     await ctx.expectResumeMatches();
   });
 
@@ -1149,12 +1155,17 @@ describe('FullCompaction', () => {
   });
 
   it('attributes compaction_failed to the in-flight request id on a mid-stream failure', async () => {
+    vi.useFakeTimers();
     const records: TelemetryRecord[] = [];
-    const generate: GenerateFn = createMockProvider(async () => ({
-      parts: [{ type: 'text', text: 'partial summary' }],
-      error: new Error('stream reset'),
-      requestId: 'trace-mid-stream',
-    }));
+    const firstAttemptFailed = deferred<void>();
+    const generate: GenerateFn = createMockProvider(async () => {
+      firstAttemptFailed.resolve();
+      return {
+        parts: [{ type: 'text', text: 'partial summary' }],
+        error: new Error('stream reset'),
+        requestId: 'trace-mid-stream',
+      };
+    });
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1166,6 +1177,8 @@ describe('FullCompaction', () => {
     const failed = ctx.once('error');
 
     await ctx.rpc.beginCompaction({});
+    await firstAttemptFailed.promise;
+    await vi.advanceTimersByTimeAsync(60_000);
     await failed;
 
     const apiError = records.find((record) => record.event === 'api_error');
@@ -1178,6 +1191,7 @@ describe('FullCompaction', () => {
       }),
     });
     expect(ctx.get(ITelemetryService).getContext().request_id).toBe('trace-turn-1');
+    vi.useRealTimers();
     await ctx.expectResumeMatches();
   });
 
@@ -2233,6 +2247,8 @@ describe('FullCompaction', () => {
     'compacts again instead of cancelling the turn when the compaction it waits for is discarded',
     async ({ agent: ctx, model }) => {
       ctx.appendExchange(1, 'old user one', 'old assistant one', 100_000);
+      model.expectCacheBreak('the stale compaction drops the oldest exchange to fit the window', { at: 'history' });
+      model.expectCacheBreak('the fresh compaction drops the same exchange', { at: 'history' });
       model.lane('compaction').script(held('stale-summary', say('Stale summary.')), say('Fresh summary.'));
       model.script(withUsage({ input: 900_000, output: 1 }, say('First turn answer.')), say('Continued the goal.'));
       const firstTurnEnded = ctx.untilTurnEnd();
@@ -4508,6 +4524,7 @@ describe('FullCompaction cache probe', () => {
     await ctx.untilTurnEnd();
     const completed = ctx.once('compaction.completed');
 
+    ctx.expectCacheBreak('a truncated summary is retried without the oldest message', { at: 'history' });
     await ctx.rpc.beginCompaction({});
     await completed;
 

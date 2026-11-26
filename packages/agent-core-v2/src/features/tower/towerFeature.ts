@@ -73,10 +73,6 @@ const TOWER_WORKER_SHARED_TOOL_NAMES: ReadonlySet<string> = new Set([
   'TowerStatus',
 ]);
 
-export const USER_CONFIGURABLE_TOWER_MODE_TOOLS = TOWER_TOOL_CONTRIBUTIONS.filter(
-  (tool) => tool.name !== 'TowerComplete' && !TOWER_WORKER_SHARED_TOOL_NAMES.has(tool.name),
-).map((tool) => ({ name: tool.name, source: 'builtin' as const }));
-
 function isTowerWorkerProfile(accessor: ServicesAccessor): boolean {
   return accessor.get(IAgentLoopService).data().profileName === TOWER_WORKER_PROFILE;
 }
@@ -99,7 +95,6 @@ export class TowerFeature extends Feature {
         this.contributeTool(tool.id, tool.ctor, {
           name: tool.name,
           domain: 'tower',
-          userConfigurable: true,
         });
         continue;
       }
@@ -114,7 +109,6 @@ export class TowerFeature extends Feature {
           name: tool.name,
           domain: 'tower',
           when: isTowerWorkerProfile,
-          userConfigurable: true,
         },
       });
     }
