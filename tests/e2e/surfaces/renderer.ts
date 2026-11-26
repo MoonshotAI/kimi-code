@@ -13,6 +13,7 @@ import {
   missingChanges,
   type ApprovalExpectation,
   type ChangedLines,
+  type SessionBadge,
   type TaskExpectation,
   type TaskStatus,
   type ApprovalToolName,
@@ -38,6 +39,8 @@ const THINKING = 'Thinking';
 const TO_BACKGROUND = 'To background';
 const SESSION_ID = 'data-session-id';
 const SESSION_TITLE = '.t';
+const UNREAD_MARK = 'session-unread';
+const SESSION_BADGE_LABELS = { approval: 'Approve', question: 'Answer' } as const;
 const OPEN_SESSION = /\/sessions\/([^/?#]+)/;
 const FORK_SESSION = 'Fork session';
 const DELETE_SESSION = 'Delete session';
@@ -741,6 +744,37 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     });
     if (JSON.stringify(shown) !== JSON.stringify(wanted)) {
       throw new Error(`expectSessions() wanted the sidebar to list ${JSON.stringify(wanted)}, but it lists ${JSON.stringify(shown)}.\n${await this.describe()}`);
+    }
+  }
+
+  async expectSessionBadge(title: string, badge: SessionBadge): Promise<void> {
+    const rows = await this.sessionRows();
+    const matching = rows.filter((row) => row.title === title);
+    if (matching.length !== 1) {
+      const reason = matching.length === 0 ? 'no session has that title' : `${matching.length} sessions have that title`;
+      throw new Error(`expectSessionBadge() cannot pick the session ${JSON.stringify(title)}: ${reason}. The sidebar lists ${describeRows(rows, this.openSessionId())}.\n${await this.describe()}`);
+    }
+    const row = this.sessionRow(matching[0]!.id);
+    const marks = async (): Promise<SessionBadge[]> => {
+      const shown: SessionBadge[] = [];
+      if ((await row.getByTestId(UNREAD_MARK).count()) > 0) shown.push('unread');
+      if ((await row.getByText(SESSION_BADGE_LABELS.approval, { exact: true }).count()) > 0) shown.push('approval');
+      if ((await row.getByText(SESSION_BADGE_LABELS.question, { exact: true }).count()) > 0) shown.push('question');
+      return shown;
+    };
+    const wanted = (shown: readonly SessionBadge[]): boolean => (badge === 'none' ? shown.length === 0 : shown.includes(badge));
+    let previous: string | undefined;
+    const shown = await this.wait(`the session ${JSON.stringify(title)} to show ${badge === 'none' ? 'no mark' : `the ${badge} mark`}`, async () => {
+      const now = await marks();
+      const reading = JSON.stringify(now);
+      if (wanted(now)) return now;
+      const settled = reading === previous && (await this.idle());
+      previous = reading;
+      return settled ? now : undefined;
+    });
+    if (!wanted(shown)) {
+      const listed = shown.length === 0 ? 'no mark' : shown.join(' and ');
+      throw new Error(`expectSessionBadge() wanted the session ${JSON.stringify(title)} to show ${badge === 'none' ? 'no mark' : `the ${badge} mark`}, but it shows ${listed}.\n${await this.describe()}`);
     }
   }
 

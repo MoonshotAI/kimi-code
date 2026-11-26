@@ -45,6 +45,10 @@ const NO_ARCHIVE = {
   tui: 'The terminal UI has no archive; a user deletes sessions from /sessions instead.',
   acp: 'ACP has no request to archive a session.',
 };
+const NO_SESSION_BADGES = {
+  tui: 'The terminal UI shows one session at a time; /sessions lists no unread or approval marks.',
+  acp: 'An ACP editor keeps its own list of sessions; the agent sends no marks for them.',
+};
 const NO_TASK_STOP_OVER_ACP = 'An editor cannot stop one background task over ACP; it can only cancel the whole turn.';
 const NO_PAGE_TO_RELOAD = {
   tui: 'A terminal shows the CLI itself; there is no page to reload.',
@@ -96,6 +100,7 @@ export const VERBS = {
   deleteSession: { on: SURFACES, checksInterface: false },
   archiveSession: { on: ['desktop', 'web'], absentBecause: NO_ARCHIVE, checksInterface: false },
   expectSessions: { on: SURFACES, checksInterface: true },
+  expectSessionBadge: { on: ['desktop', 'web'], absentBecause: NO_SESSION_BADGES, checksInterface: true },
   compact: { on: SURFACES, checksInterface: false },
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
   reload: { on: ['web'], absentBecause: NO_PAGE_TO_RELOAD, checksInterface: false },
@@ -184,6 +189,8 @@ export function describeTool(expectation: ToolExpectation): string {
   const printed = output === undefined ? '' : ` and output ${JSON.stringify(output)}`;
   return `${expectation.name} on ${JSON.stringify(expectation.target)} with status ${expectation.status}${printed}`;
 }
+
+export type SessionBadge = 'unread' | 'approval' | 'question' | 'none';
 
 export type TaskStatus = 'running' | 'done' | 'failed' | 'stopped';
 
@@ -305,6 +312,7 @@ interface VerbSignatures {
   deleteSession(title: string): Promise<void>;
   archiveSession(title: string): Promise<void>;
   expectSessions(titles: readonly string[]): Promise<void>;
+  expectSessionBadge(title: string, badge: SessionBadge): Promise<void>;
   compact(): Promise<void>;
   resize(size: WindowSize): Promise<void>;
   reload(): Promise<void>;

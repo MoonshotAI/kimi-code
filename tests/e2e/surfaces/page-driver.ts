@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { TIMEOUTS } from '@moonshot-ai/testkit/fixtures';
 import type { BrowserContext, Page } from '@playwright/test';
 
-import type { ApprovalExpectation, ApproveOptions, Diagnostic, Frame, PermissionMode, ReopenState, SurfaceDriver, TaskExpectation, ToolExpectation } from '../support/verbs';
+import type { ApprovalExpectation, ApproveOptions, Diagnostic, Frame, PermissionMode, ReopenState, SessionBadge, SurfaceDriver, TaskExpectation, ToolExpectation } from '../support/verbs';
 import { RendererSurface, type MenuPage } from './renderer';
 
 export const WELCOME_DIALOG = 'Welcome to Kimi Code';
@@ -215,6 +215,10 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
 
   expectSessions(titles: readonly string[]): Promise<void> {
     return this.window().expectSessions(titles);
+  }
+
+  expectSessionBadge(title: string, badge: SessionBadge): Promise<void> {
+    return this.window().expectSessionBadge(title, badge);
   }
 
   compact(): Promise<void> {
