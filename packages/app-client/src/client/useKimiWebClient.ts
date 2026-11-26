@@ -113,7 +113,7 @@ import { approvalsStore, setApprovalsHooks } from '../stores/approvals';
 import { filesStore } from '../stores/files';
 import { modelsStore } from '../stores/models';
 import { modeStore } from '../stores/mode';
-import { warningsStore, warningDetail } from '../stores/warnings';
+import { warningsStore, warningDetail, warningKey } from '../stores/warnings';
 import { goalStore } from '../stores/goal';
 import { configStore, setConfigHooks } from '../stores/config';
 import { hostsStore, setHostsHooks } from '../stores/hosts';
@@ -150,6 +150,7 @@ import type {
   AppConfig,
   AppGoal,
   AppMessage,
+  AppNotice,
   AppNoticeDetail,
   AppModel,
   AppProvider,
@@ -525,6 +526,7 @@ function forgetSession(sessionId: string): void {
   promptStore().clearOptimisticMessages(sessionId);
   delete rawState.sessionStatusSettledBySession[sessionId];
   notifiedInteractionIdsBySession.delete(sessionId);
+  compactionCancelledNoteBySession.delete(sessionId);
   promptStore().forgetLocalTurnState(sessionId);
   promptStore().clearQueued(sessionId);
   promptStore().clearInFlight(sessionId);
@@ -1960,11 +1962,31 @@ function onMainNotice(sessionId: string, notice: ConversationNotice): void {
   warningsStore().markSessionWarningShown(sessionId, `${notice.code ?? ''} ${notice.title}`);
   if (notice.level === 'error') {
     if (isModelTurnErrorNotice(notice)) return;
-    if (sessionId === rawState.activeSessionId) return;
+    if (sessionId === rawState.activeSessionId && !isCompactionFailureOffTurnCard(sessionId, notice)) return;
+    if (notice.code === 'compaction.failed') dismissCompactionCancelledNote(sessionId);
     warningsStore().pushWarning(buildAgentErrorNotice(notice, t));
     return;
   }
-  warningsStore().pushWarning({ severity: notice.level, title: t('warnings.noteLabel'), message: notice.title });
+  const note: AppNotice = { severity: notice.level, title: t('warnings.noteLabel'), message: notice.title };
+  if (notice.code === 'compaction.cancelled') compactionCancelledNoteBySession.set(sessionId, warningKey(note));
+  warningsStore().pushWarning(note);
+}
+
+const compactionCancelledNoteBySession = new Map<string, string>();
+
+function isCompactionFailureOffTurnCard(sessionId: string, notice: ConversationNotice): boolean {
+  if (notice.code !== 'compaction.failed') return false;
+  const shown = conversationTurnError(mainConversationOf(sessionId)?.view.turns.at(-1));
+  return shown?.code !== notice.code || shown.message !== notice.title;
+}
+
+function dismissCompactionCancelledNote(sessionId: string): void {
+  const key = compactionCancelledNoteBySession.get(sessionId);
+  if (key === undefined) return;
+  compactionCancelledNoteBySession.delete(sessionId);
+  const store = warningsStore();
+  const note = store.warnings.findLast((warning) => warningKey(warning) === key);
+  if (note !== undefined) store.dismissWarning(note);
 }
 const tasks = computed<TaskItem[]>(() => {
   void taskClock.tick.value;

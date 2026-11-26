@@ -38,6 +38,7 @@ const DESCRIBED_LINES = 80;
 const NEW_SESSION = 'New Session';
 const COMPACT_COMMAND = '/compact';
 const COMPACTED = /^Context compacted/;
+const COMPACTION_FAILED = 'Context compaction failed';
 const APPROVAL_TITLES: Readonly<Record<string, ApprovalToolName>> = { 'Run command?': 'Bash', 'Apply changes?': 'Edit', 'Write file?': 'Write' };
 const COMMAND_PROMPT = '$ ';
 const FEEDBACK_BOX = 'Explain why you are rejecting…';
@@ -356,13 +357,17 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     }
     const compacted = this.conversation().getByText(COMPACTED);
     const before = await compacted.count();
+    const failed = this.page.getByRole('status').filter({ hasText: COMPACTION_FAILED });
+    const failedBefore = await failed.count();
     await this.press('compact()', 'the message input', this.composer());
     await this.page.keyboard.type(COMPACT_COMMAND);
     await this.page.keyboard.press('Enter');
     await this.page.keyboard.press('Enter');
-    await this.wait('the conversation to show Context compacted (Desktop and Web show nothing when a compaction fails, so a failed one ends in this timeout)', async () =>
-      (await compacted.count()) > before && (await this.idle()) ? true : undefined,
-    );
+    const outcome = await this.wait(`the conversation to show Context compacted, or a ${COMPACTION_FAILED} notice`, async () => {
+      if ((await failed.count()) > failedBefore) return 'failed' as const;
+      return (await compacted.count()) > before && (await this.idle()) ? ('compacted' as const) : undefined;
+    });
+    if (outcome === 'failed') throw new Error(`compact() saw the compaction fail.\n${await this.describe()}`);
   }
 
   async newSession(): Promise<void> {

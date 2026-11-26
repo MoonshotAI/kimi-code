@@ -753,6 +753,61 @@ describe('model turn error notices', () => {
   });
 });
 
+describe('compaction failure notices', () => {
+  const REFUSED = 'APIStatusError: The example service refused to summarize.';
+  const cancelled = { type: 'notice', level: 'warning', title: 'Context compaction did not finish', code: 'compaction.cancelled' } as const;
+  const failed = { type: 'notice', level: 'error', title: REFUSED, code: 'compaction.failed' } as const;
+  const failure = expect.objectContaining({ severity: 'error', title: 'warnings.agentError.compactionFailed', message: REFUSED });
+
+  it('tells the user why a compaction failed in the open session, in place of the did-not-finish note', async () => {
+    const h = await boot();
+    h.warningsStore().resetWarnings();
+
+    h.frame('s1', cancelled);
+    h.frame('s1', failed);
+
+    expect(h.warningsStore().warnings).toEqual([failure]);
+  });
+
+  it('keeps the did-not-finish note when nothing failed', async () => {
+    const h = await boot();
+    h.warningsStore().resetWarnings();
+
+    h.frame('s1', cancelled);
+
+    expect(h.warningsStore().warnings).toEqual([
+      expect.objectContaining({ severity: 'warning', title: 'warnings.noteLabel', message: 'Context compaction did not finish' }),
+    ]);
+  });
+
+  it('leaves a compaction failure that ended the turn to the failed-turn card', async () => {
+    const h = await boot();
+    h.frame('s1', {
+      type: 'turns',
+      turns: [endedTurn(0, { outcome: 'failed', end_reason: 'error', error: { code: 'compaction.failed', message: REFUSED } })],
+      has_more: false,
+    });
+    await vi.waitFor(() => expect(h.client.activeTurnError.value).toMatchObject({ code: 'compaction.failed', message: REFUSED }));
+    h.warningsStore().resetWarnings();
+
+    h.frame('s1', failed);
+
+    expect(h.warningsStore().warnings).toEqual([]);
+  });
+
+  it('names a failed compaction in another session as a compaction failure', async () => {
+    const h = await boot({ sessionIds: ['s1', 's2'] });
+    await h.client.selectSession('s2');
+    await h.client.selectSession('s1');
+    h.warningsStore().resetWarnings();
+
+    h.frame('s2', cancelled);
+    h.frame('s2', failed);
+
+    expect(h.warningsStore().warnings).toEqual([failure]);
+  });
+});
+
 describe('model availability notices', () => {
   it('opens the model picker from the unavailable-model confirmation dialog', async () => {
     const h = await boot();
