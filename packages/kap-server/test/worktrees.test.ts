@@ -506,8 +506,12 @@ describe('server-v2 session worktrees', () => {
       ErrorCode.FS_DIRECTORY_NOT_FOUND,
     );
 
-    const started = await post<Session>(`/sessions/${session.id}/worktree:recreate`);
+    const [started, again] = await Promise.all([
+      post<Session>(`/sessions/${session.id}/worktree:recreate`),
+      post<Session>(`/sessions/${session.id}/worktree:recreate`),
+    ]);
     expect(started.code).toBe(0);
+    expect(again.code).toBe(ErrorCode.WORKTREE_STATE_INVALID);
     expect(started.data.worktree?.setup).toMatchObject({ status: 'running', purpose: 'recreate' });
     expect(started.data.worktree?.setup.steps).toMatchObject([
       { kind: 'prune', command: 'git worktree prune' },

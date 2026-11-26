@@ -150,6 +150,7 @@ function withoutPending(stored: StoredSessionWorktree): StoredSessionWorktree {
 export class SessionWorktreeService {
   readonly inventory: WorktreeInventory;
   private readonly runs = new Map<string, { controller: AbortController; done: Promise<void> }>();
+  private readonly acting = new Map<string, Promise<void>>();
   private closed = false;
 
   constructor(
@@ -349,10 +350,29 @@ export class SessionWorktreeService {
     return storedSessionWorktree(summary?.custom);
   }
 
-  async act(
+  act(
     sessionId: string,
     action: SessionWorktreeAction,
     body: SessionWorktreeRetryRequest = {},
+  ): Promise<void> {
+    const result = (this.acting.get(sessionId) ?? Promise.resolve()).then(() =>
+      this.actNow(sessionId, action, body),
+    );
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.acting.set(sessionId, settled);
+    void settled.then(() => {
+      if (this.acting.get(sessionId) === settled) this.acting.delete(sessionId);
+    });
+    return result;
+  }
+
+  private async actNow(
+    sessionId: string,
+    action: SessionWorktreeAction,
+    body: SessionWorktreeRetryRequest,
   ): Promise<void> {
     const summary = await this.core.accessor.get(ISessionIndex).get(sessionId);
     if (summary === undefined) {

@@ -297,19 +297,7 @@ export class WorktreeCreation {
         timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
         onOutput,
       });
-    }).catch(
-      (error: unknown): CommandResult => {
-        const failure: NodeJS.ErrnoException = error instanceof Error ? error : new Error(String(error));
-        return {
-          exitCode: null,
-          stdout: '',
-          output: `${failure.message}\n`,
-          timedOut: false,
-          aborted: false,
-          spawnError: failure,
-        };
-      },
-    );
+    }).catch(commandFailure);
     if (result.exitCode === 0) {
       setStep(progress, 'create', { state: 'done', output: undefined });
       return { kind: 'done', value: await gitText(this.target.path, ['rev-parse', 'HEAD']) };
@@ -464,6 +452,18 @@ export function plannedRecreationSteps(options: WorktreeRecreationOptions): Setu
   ];
 }
 
+function commandFailure(error: unknown): CommandResult {
+  const failure: NodeJS.ErrnoException = error instanceof Error ? error : new Error(String(error));
+  return {
+    exitCode: null,
+    stdout: '',
+    output: `${failure.message}\n`,
+    timedOut: false,
+    aborted: false,
+    spawnError: failure,
+  };
+}
+
 export async function recreateWorktree(
   options: WorktreeRecreationOptions,
   progress: SetupProgress,
@@ -483,19 +483,22 @@ export async function recreateWorktree(
     return { kind: 'failed', step: 'prune', failure: { kind: 'create_failed' } };
   }
   setStep(progress, 'prune', { state: 'done', output: undefined });
+  let reserved = false;
   const added = await runStepCommand(progress, 'create', async (onOutput) => {
     await mkdir(dirname(path), { recursive: true });
+    await mkdir(path);
+    reserved = true;
     return runGit(repoRoot, ['worktree', 'add', path, branch], {
       signal,
       timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
       onOutput,
     });
-  });
+  }).catch(commandFailure);
   if (added.exitCode === 0) {
     setStep(progress, 'create', { state: 'done', output: undefined });
     return { kind: 'done', value: undefined };
   }
-  await removeWorktreeArtifacts(repoRoot, target, false);
+  if (reserved) await removeWorktreeArtifacts(repoRoot, target, false);
   if (added.aborted) {
     setStep(progress, 'create', { state: 'stopped' });
     return { kind: 'stopped', step: 'create' };

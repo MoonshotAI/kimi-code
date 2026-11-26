@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,8 @@ import {
   WorktreeCreation,
   abbreviateHome,
   displayCommand,
+  plannedRecreationSteps,
+  recreateWorktree,
   type SetupProgress,
 } from '../../src/services/worktrees/worktreeSetup';
 import { createRepoTemplate, git, hangingRemote, type RepoTemplate } from '../helpers/gitRepo';
@@ -113,6 +115,24 @@ describe('worktree setup engine', () => {
     expect(progress.steps[0]?.output).toMatch(/EEXIST|already exists/);
     expect(git(first.target.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(first.target.branch);
     expect(git(root, 'branch', '--list', first.target.branch)).toContain(first.target.branch);
+  });
+
+  it('leaves a checkout that another recreation already put in place untouched', async () => {
+    const root = await createRepo('recreate-twice');
+    const path = join(scratch, 'recreate-twice-worktrees', 'feature');
+    git(root, 'worktree', 'add', '-q', '-b', 'feature', path);
+    await writeFile(join(path, 'edit.txt'), 'new work\n');
+    const options = { repoRoot: root, osHomeDir: scratch, path, branch: 'feature' };
+
+    const outcome = await recreateWorktree(
+      options,
+      { steps: plannedRecreationSteps(options), commandsRan: 0, notify: () => {} },
+      new AbortController().signal,
+    );
+
+    expect(outcome).toMatchObject({ kind: 'failed', step: 'create' });
+    expect(await readFile(join(path, 'edit.txt'), 'utf-8')).toBe('new work\n');
+    expect(git(path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('feature');
   });
 
   it('keeps a branch of the same name that appeared after planning', async () => {
