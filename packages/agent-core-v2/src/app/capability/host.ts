@@ -12,6 +12,21 @@ export interface CommandResult {
   readonly stderr: string;
 }
 
+export class CommandTimeoutError extends Error {
+  constructor(
+    readonly timeoutMs: number,
+    readonly command: string,
+  ) {
+    super(`command timed out after ${timeoutMs}ms: ${command}`);
+    this.name = 'CommandTimeoutError';
+  }
+}
+
+export function isCommandTimeout(error: unknown): boolean {
+  return error instanceof CommandTimeoutError ||
+    (error instanceof Error && error.message.startsWith('command timed out after '));
+}
+
 async function collect(stream: Readable): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) {
@@ -41,15 +56,16 @@ export async function runCommand(
       proc.wait().catch(() => -1),
     ] as const);
     let timer: NodeJS.Timeout | undefined;
-    const timed = options.timeout === undefined
+    const timeoutMs = options.timeout;
+    const timed = timeoutMs === undefined
       ? work
       : Promise.race([
           work,
           new Promise<never>((_resolve, reject) => {
             timer = setTimeout(() => {
               void proc.kill().catch(() => {});
-              reject(new Error(`command timed out after ${options.timeout}ms: ${command}`));
-            }, options.timeout);
+              reject(new CommandTimeoutError(timeoutMs, command));
+            }, timeoutMs);
             timer.unref?.();
           }),
         ]);

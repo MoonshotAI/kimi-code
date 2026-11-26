@@ -9,7 +9,7 @@ import { Error2 } from '#/errors';
 
 import { installResolvedMarketplacePlugin } from '../../plugin/pluginService';
 import { CapabilityErrors } from '../errors';
-import { downloadToFile, runCommand } from '../host';
+import { downloadToFile, isCommandTimeout, runCommand } from '../host';
 import type {
   CapabilityDetectResult,
   CapabilityEntry,
@@ -26,6 +26,7 @@ const APP_BUNDLE = 'KimiCU.app';
 const LAUNCHD_LABEL = 'ai.kimi.cu.service';
 const COMMAND_TIMEOUT_MS = 30_000;
 const PERMISSIONS_TIMEOUT_MS = 15_000;
+const EXPLICIT_PERMISSIONS_TIMEOUT_MS = 240_000;
 const DETECT_PROBE_TIMEOUT_MS = 3_000;
 const WINDOWS_INSTALLER_PROBE_TIMEOUT_MS = 10_000;
 const WINDOWS_INSTALL_TIMEOUT_MS = 180_000;
@@ -531,12 +532,12 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
       stepStates.get('permissions.screenRecording') !== 'ok'
     ) {
       report('permissions');
-      await requestPermissions().catch(() => undefined);
+      await runPermissionPrompt(PERMISSIONS_TIMEOUT_MS).catch(() => undefined);
     }
     return undefined;
   }
 
-  async function requestPermissions(): Promise<void> {
+  async function runPermissionPrompt(timeoutMs: number): Promise<void> {
     if (!(await exists(appBin)) || !(await executable(appBin))) {
       throw new Error2(
         CapabilityErrors.codes.CAPABILITY_UNSUPPORTED,
@@ -548,15 +549,22 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
       ctx.hostProcess,
       appBin,
       ['request-permissions', '--ax', '--screen'],
-      { timeout: PERMISSIONS_TIMEOUT_MS },
-    );
-    if (result.code !== 0) {
+      { timeout: timeoutMs },
+    ).catch((error: unknown) => {
+      if (isCommandTimeout(error)) return undefined;
+      throw error;
+    });
+    if (result !== undefined && result.code !== 0) {
       throw new Error2(
         CapabilityErrors.codes.CAPABILITY_PROCESS_CONTROL_FAILED,
         `kimi-cu request-permissions failed: ${result.stderr || result.stdout || `exit ${result.code}`}`,
         { details: { id: 'kimi-cu', code: result.code } },
       );
     }
+  }
+
+  async function requestPermissions(): Promise<void> {
+    await runPermissionPrompt(EXPLICIT_PERMISSIONS_TIMEOUT_MS);
   }
 
   return {

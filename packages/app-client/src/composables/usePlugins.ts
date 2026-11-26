@@ -827,6 +827,10 @@ async function refreshCapability(id: string): Promise<AppCapabilityStatus | unde
   }
 }
 
+function isCapabilityPermissionTimeout(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith('command timed out after ');
+}
+
 async function requestCapabilityPermissions(id: string): Promise<AppCapabilityStatus | undefined> {
   state.rowErrors[id] = undefined;
   const generation = (capabilityReadGenerations.get(id) ?? 0) + 1;
@@ -838,6 +842,9 @@ async function requestCapabilityPermissions(id: string): Promise<AppCapabilitySt
     syncExtensionHint();
     return status;
   } catch (error) {
+    if (isCapabilityPermissionTimeout(error)) {
+      return refreshCapability(id);
+    }
     state.rowErrors[id] = errorMessage(error);
     return undefined;
   }

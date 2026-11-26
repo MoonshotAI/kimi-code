@@ -221,7 +221,7 @@ async function settle(): Promise<void> {
 }
 
 async function hoverTooltipText(target: Element | null): Promise<string | undefined> {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
   try {
     document.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 10, clientY: 10 }));
     target?.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 24, clientY: 18 }));
@@ -1796,7 +1796,7 @@ describe('PluginsPanel', () => {
   });
 
   it('shows the macOS CU permission badge, enters waiting state on click, and clears after permissions are granted', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
     try {
       fakes.isMacosDesktop = true;
       rowData.push(row('kimi-cu', {
@@ -1909,6 +1909,61 @@ describe('PluginsPanel', () => {
     expect(host.querySelector('.plugin-details__status-waiting')).toBeNull();
     expect(host.querySelector('.plugin-details__status-badge')?.textContent).toContain('Permissions not enabled');
     expect(fakes.track).not.toHaveBeenCalledWith('cu_permission_result', expect.anything());
+  });
+
+  it('restores the CU permission badge without an error banner when the waiting window expires', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    try {
+      fakes.isMacosDesktop = true;
+      rowData.push(row('kimi-cu', {
+        installId: 'kimi-cu',
+        catalogEntry: entry('kimi-cu', 'Kimi Computer Use', { capabilityId: 'kimi-cu' }),
+        installedPlugin: installed('kimi-cu', 'marketplace', { version: '0.5.4' }),
+        capability: {
+          id: 'kimi-cu',
+          pluginId: 'kimi-cu',
+          displayName: 'Kimi Computer Use',
+          description: 'macOS GUI automation',
+          supported: true,
+          state: 'partial',
+          steps: [
+            { id: 'plugin', state: 'ok' },
+            { id: 'app', state: 'ok' },
+            { id: 'service', state: 'ok' },
+            { id: 'permissions', state: 'missing', detail: 'screenRecording' },
+            { id: 'permissions.accessibility', state: 'ok' },
+            { id: 'permissions.screenRecording', state: 'missing' },
+          ],
+          install: { running: false },
+        },
+        capabilityRequired: true,
+        displayName: 'Kimi Computer Use',
+      }));
+      await mountPanel();
+      vi.mocked(plugins.requestCapabilityPermissions).mockReturnValue(new Promise(() => {}));
+      vi.mocked(plugins.refreshCapability).mockImplementation(async () => rowData[0]!.capability!);
+      clickButton('Kimi Computer Use');
+      await settle();
+
+      host.querySelector<HTMLButtonElement>('.plugin-details__status-badge')!.click();
+      await flushAsync();
+      expect(host.querySelector('.plugin-details__status-waiting')?.textContent).toContain('Waiting for permissions…');
+
+      await vi.advanceTimersByTimeAsync(241_000);
+      await flushAsync();
+
+      expect(host.querySelector('.plugin-details__status-waiting')).toBeNull();
+      expect(host.querySelector('.plugin-details__status-badge')?.textContent).toContain('Permissions not enabled');
+      expect(host.querySelector('.plugin-status__error')).toBeNull();
+      expect(fakes.track).toHaveBeenCalledWith('cu_permission_result', {
+        plugin_id: 'kimi-cu',
+        accessibility_granted: true,
+        screen_granted: false,
+        result: 'partial',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not re-trigger native CU permission prompt after first install and hides CU badges off macOS or before install', async () => {

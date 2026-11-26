@@ -406,4 +406,30 @@ describe('CapabilityService', () => {
       (error: unknown) => expectErrorCode(error, CapabilityErrors.codes.CAPABILITY_UNSUPPORTED),
     );
   });
+
+  it('coalesces concurrent permission requests for the same capability', async () => {
+    let release!: () => void;
+    let calls = 0;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const entry = fakeEntry({
+      id: 'kimi-cu',
+      requestPermissions: () => {
+        calls += 1;
+        return gate;
+      },
+    });
+    const service = fakeService([entry]);
+
+    const first = service.requestCapabilityPermissions('kimi-cu');
+    const second = service.requestCapabilityPermissions('kimi-cu');
+    expect(calls).toBe(1);
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a.state).toBe('ready');
+    expect(b.state).toBe('ready');
+    expect(calls).toBe(1);
+
+    await service.requestCapabilityPermissions('kimi-cu');
+    expect(calls).toBe(2);
+  });
 });

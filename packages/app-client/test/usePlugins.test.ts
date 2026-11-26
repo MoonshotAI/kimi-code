@@ -2050,6 +2050,26 @@ describe('usePlugins', () => {
     expect(result).toBeUndefined();
     expect(state.rowErrors['kimi-cu']).toBe('helper launch failed');
   });
+
+  it('requestCapabilityPermissions treats helper wait timeouts as unfinished without row errors', async () => {
+    apiMock.listCapabilities.mockResolvedValue([capabilityCu]);
+    const { state, refresh, requestCapabilityPermissions } = usePlugins();
+    await refresh();
+
+    apiMock.requestCapabilityPermissions.mockRejectedValueOnce(
+      new Error('command timed out after 240000ms: /Applications/KimiCU.app/Contents/MacOS/kimi-cu'),
+    );
+    apiMock.getCapability.mockResolvedValueOnce({
+      ...capabilityCu,
+      state: 'partial',
+      steps: [{ id: 'permissions', state: 'missing' }],
+    });
+
+    const status = await requestCapabilityPermissions('kimi-cu');
+
+    expect(status?.state).toBe('partial');
+    expect(state.rowErrors['kimi-cu']).toBeUndefined();
+  });
 });
 
 

@@ -13,7 +13,7 @@ import { WEBBRIDGE_EXTENSION_LINKS, type WebBridgeBrowser } from './webBridgeExt
 const GUIDE_POLL_INTERVAL_MS = 2_000;
 const WEBBRIDGE_FOCUS_THROTTLE_MS = 3_000;
 const CU_FOCUS_THROTTLE_MS = 500;
-const CU_PERMISSION_TIMEOUT_MS = 60_000;
+const CU_PERMISSION_TIMEOUT_MS = 240_000;
 
 export type PluginGuideEntry = 'install' | 'detail';
 

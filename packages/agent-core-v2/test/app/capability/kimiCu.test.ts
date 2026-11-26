@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { InstallPluginInput, IPluginService } from '#/app/plugin/plugin';
 import type { IPluginMarketplaceService } from '#/app/plugin/marketplaceService';
@@ -956,6 +956,66 @@ describe('kimi-cu entry', () => {
     );
 
     await expect(entry.requestPermissions?.()).rejects.toThrow(/xpc service unavailable/);
+  });
+
+  it('waits up to 240s for explicit permission requests and treats timeout as unfinished', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const applicationsDir = await fakeAppBundle();
+      const host = fakeHostProcess([
+        { match: 'request-permissions', code: 0, hang: true },
+      ]);
+      const entry = createKimiCuEntry(
+        makeCtx({ applicationsDir, hostProcess: host.service }),
+      );
+
+      let state = 'pending';
+      const requesting = entry.requestPermissions!().then(
+        () => { state = 'resolved'; },
+        () => { state = 'rejected'; },
+      );
+      await vi.waitFor(() => {
+        expect(host.calls.length).toBe(1);
+      }, { interval: 5, timeout: 1_000 });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(state).toBe('pending');
+      await vi.advanceTimersByTimeAsync(180_000);
+      await requesting;
+      expect(state).toBe('resolved');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the 15s best-effort permission prompt timeout during install', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const applicationsDir = await fakeAppBundle();
+      const plugins = fakePlugins([
+        { id: 'kimi-cu', enabled: true, state: 'ok', version: '0.5.4' },
+      ]);
+      const host = fakeHostProcess([
+        { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
+        { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=false screenRecording=false' },
+        { match: 'request-permissions', code: 0, hang: true },
+      ]);
+      const entry = createKimiCuEntry(
+        makeCtx({ applicationsDir, plugins: plugins.service, hostProcess: host.service }),
+      );
+
+      let settled = false;
+      const installing = entry.install(() => {}).then(() => { settled = true; });
+      await vi.waitFor(() => {
+        expect(host.calls.some((call) => call.includes('request-permissions'))).toBe(true);
+      }, { interval: 5, timeout: 1_000 });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(5_100);
+      await installing;
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not expose direct permission requests on Windows', () => {
