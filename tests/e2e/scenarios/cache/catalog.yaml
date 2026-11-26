@@ -21,6 +21,8 @@ entries:
     operation: Compact the context by hand, then send the next message
     promise: keeps
     coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/manual-compaction-keeps-the-prefix-across-a-restart.spec.ts
       - kind: implicit
         test: tests/e2e/scenarios/conversation/compact-builds-the-next-turn-from-the-summary.spec.ts
       - kind: kap
