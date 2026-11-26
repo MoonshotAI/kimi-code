@@ -6,6 +6,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { ErrorCode } from '../src/protocol/error-codes';
 import type { Session } from '../src/protocol/session';
+import { repointSession } from '../src/services/worktrees/sessionRepoint';
 import { commit, git } from './helpers/gitRepo';
 import { useWorktreeServer } from './helpers/worktreeServer';
 
@@ -191,6 +192,24 @@ describe('server-v2 worktree inventory', () => {
     expect(removed.data).toEqual({ removed: true, branch_deleted: false });
     expect(git(root, 'branch', '--list', branch)).toContain(branch);
     expect(worktreeCount(root)).toBe(1);
+  });
+
+  it('counts a session in a subfolder of the worktree as using it', async () => {
+    const { workspaceId } = await project('delete-subfolder');
+    const first = await settledWorktree(workspaceId);
+    const path = first.worktree!.path!;
+    await mkdir(join(path, 'packages', 'app'), { recursive: true });
+    const nested = await post<Session>('/sessions', { workspace_id: workspaceId });
+    await repointSession(fixture.server.core, nested.data.id, join(path, 'packages', 'app'));
+    await post(`/sessions/${nested.data.id}:archive`);
+
+    const listed = await get<{ items: WorktreeWire[] }>('/worktrees');
+    expect(listed.data.items.find((item) => item.path === path)?.sessions.map((ref) => ref.id).toSorted()).toEqual(
+      [first.id, nested.data.id].toSorted(),
+    );
+    const kept = await post<Deletion>(`/sessions/${first.id}:delete`, { remove_worktree: true });
+    expect(kept.data).toEqual({ deleted: true, worktree: { outcome: 'kept_in_use', other_sessions: 1 } });
+    expect(existsSync(path)).toBe(true);
   });
 
   it('removes the worktree with its last session and keeps it while others use it', async () => {

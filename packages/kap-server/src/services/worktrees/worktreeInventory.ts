@@ -1,5 +1,5 @@
 import { lstat, readdir, realpath, stat } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, join, sep } from 'node:path';
 
 import {
   ErrorCodes,
@@ -38,7 +38,9 @@ interface KnownWorktree {
   readonly exists: boolean;
 }
 
-type SessionsByDirectory = ReadonlyMap<string, readonly WorktreeSessionRef[]>;
+interface SessionsByDirectory {
+  under(directory: string): WorktreeSessionRef[];
+}
 
 const IN_USE_OUTPUT = /resource busy|being used by another process|permission denied|directory not empty/i;
 const DU_TIMEOUT_MS = 10 * 60_000;
@@ -127,7 +129,7 @@ export class WorktreeInventory {
 
   private async sessionsByDirectory(): Promise<SessionsByDirectory> {
     const page = await this.core.accessor.get(ISessionIndex).listRecent({ includeArchived: true });
-    const sessions = new Map<string, WorktreeSessionRef[]>();
+    const entries: { readonly key: string; readonly ref: WorktreeSessionRef }[] = [];
     const canonicalByCwd = new Map<string, string>();
     for (const summary of page.items) {
       if (summary.cwd === undefined) continue;
@@ -138,19 +140,25 @@ export class WorktreeInventory {
       }
       const live = getLiveSessionById(this.core.accessor, summary.id);
       const activity = live?.accessor.get(ISessionActivityView).state();
-      const refs = sessions.get(key) ?? [];
-      refs.push({
-        id: summary.id,
-        title: summary.title ?? '',
-        archived: summary.archived,
-        busy:
-          activity?.busy === true ||
-          activity?.mainTurnActive === true ||
-          storedSessionWorktree(summary.custom)?.setup.status === 'running',
+      entries.push({
+        key,
+        ref: {
+          id: summary.id,
+          title: summary.title ?? '',
+          archived: summary.archived,
+          busy:
+            activity?.busy === true ||
+            activity?.mainTurnActive === true ||
+            storedSessionWorktree(summary.custom)?.setup.status === 'running',
+        },
       });
-      sessions.set(key, refs);
     }
-    return sessions;
+    return {
+      under: (directory) => {
+        const prefix = directory.endsWith(sep) ? directory : `${directory}${sep}`;
+        return entries.filter(({ key }) => key === directory || key.startsWith(prefix)).map(({ ref }) => ref);
+      },
+    };
   }
 
   private measure(worktree: KnownWorktree): Promise<void> {
@@ -187,7 +195,7 @@ export class WorktreeInventory {
         branch: worktree.branch,
         origin: worktree.origin,
         size_bytes: this.sizes.get(worktree.key),
-        sessions: [...(sessions.get(worktree.key) ?? [])],
+        sessions: sessions.under(worktree.key),
       }))
       .toSorted((a, b) => a.path.localeCompare(b.path));
     const sized = items.every((item) => item.size_bytes !== undefined);
@@ -216,7 +224,7 @@ export class WorktreeInventory {
         };
         continue;
       }
-      const refs = sessions.get(key) ?? [];
+      const refs = sessions.under(key);
       try {
         const check = await this.core.accessor.get(IWorktreeService).inspectRemoval({
           repoRoot: worktree.repoRoot,
@@ -241,7 +249,7 @@ export class WorktreeInventory {
 
   async remove(path: string, deleteBranch: boolean): Promise<RemoveWorktreeResponse> {
     const worktree = await this.find(path);
-    const sessions = (await this.sessionsByDirectory()).get(worktree.key) ?? [];
+    const sessions = (await this.sessionsByDirectory()).under(worktree.key);
     if (sessions.some((session) => session.busy)) {
       throw removeFailed(path, 'session_busy', 'a session that uses this worktree is running');
     }
@@ -283,7 +291,7 @@ export class WorktreeInventory {
     const key = await canonical(directory);
     const worktree = (await this.known()).find((candidate) => candidate.key === key);
     if (worktree === undefined) return undefined;
-    const others = (await this.sessionsByDirectory()).get(key) ?? [];
+    const others = (await this.sessionsByDirectory()).under(key);
     if (others.length > 0) return { outcome: 'kept_in_use', other_sessions: others.length };
     try {
       const branchDeleted = await this.discard(worktree, deleteBranch, []);
@@ -327,7 +335,7 @@ export class WorktreeInventory {
       repoRoot,
       branch: await headBranch(path),
       workspace,
-      sessionCount: ((await this.sessionsByDirectory()).get(key) ?? []).length,
+      sessionCount: (await this.sessionsByDirectory()).under(key).length,
     };
   }
 
