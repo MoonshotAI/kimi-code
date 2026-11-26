@@ -2,4 +2,4 @@
 "@moonshot-ai/pi-tui": minor
 ---
 
-Support per-instance keybindings and programmatic transcript search opening with optional query prefill in alternate-screen mode, add end-of-line cursor positioning for single-line inputs, display `↑ Previous` and `↓ Next` labels when search navigation uses arrow keys, defer search shortcuts to focused overlays and non-scroll layout roots, close active search when mouse focus moves to another component, and normalize Kitty Caps Lock + Ctrl letter sequences.
+Default alternate-screen transcript search to `Ctrl+F` (keeping `Ctrl+Shift+F`) and match navigation to `↑`/`↓` with `↑ Previous · ↓ Next` labels, add programmatic `openSearch(query?)` and single-line end-of-line cursor positioning, defer search shortcuts to focused overlays and non-scroll layout roots, close active search when non-wheel mouse focus moves to another component, and normalize Kitty Caps Lock modified letter sequences.

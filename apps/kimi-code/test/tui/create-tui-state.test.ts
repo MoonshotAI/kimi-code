@@ -251,7 +251,7 @@ describe('createTUIState', () => {
     expect(typeof internals.onRightClickPaste).toBe('function');
   });
 
-  it('injects fullscreen search keybindings without mutating global keybindings', async () => {
+  it('supports Ctrl+F, Ctrl+Shift+F, and Up/Down search navigation in fullscreen mode', async () => {
     const state = createTUIState({
       initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen' },
       startup: { continueLast: false, yolo: false, auto: false, plan: false },
@@ -297,12 +297,13 @@ describe('createTUIState', () => {
       await vt.waitForRender();
       expect(vt.getViewport().some((line) => line.includes('↑ Previous · ↓ Next'))).toBe(false);
 
-      expect(getKeybindings().getKeys('tui.altScreen.search')).toEqual(['ctrl+shift+f']);
+      expect(getKeybindings().getKeys('tui.altScreen.search')).toEqual(['ctrl+f', 'ctrl+shift+f']);
       expect(getKeybindings().getKeys('tui.altScreen.searchPrevious')).toEqual([
+        'up',
         'shift+enter',
         'ctrl+shift+g',
       ]);
-      expect(getKeybindings().getKeys('tui.altScreen.searchNext')).toEqual(['enter', 'ctrl+g']);
+      expect(getKeybindings().getKeys('tui.altScreen.searchNext')).toEqual(['down', 'enter', 'ctrl+g']);
       expect(getKeybindings().getKeys('tui.editor.cursorRight')).toEqual(['right', 'ctrl+f']);
     } finally {
       state.ui.stop();

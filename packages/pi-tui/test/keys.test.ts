@@ -672,11 +672,15 @@ describe("parseKey", () => {
 			assert.strictEqual(parseKey("\x1b[[5~"), "pageUp");
 		});
 
-		it("should match and parse Kitty Ctrl+letter sequences with Caps Lock active", () => {
+		it("should match and parse Kitty modified letter sequences with Caps Lock active", () => {
 			assert.strictEqual(matchesKey("\x1b[70;69u", "ctrl+f"), true);
 			assert.strictEqual(parseKey("\x1b[70;69u"), "ctrl+f");
 			assert.strictEqual(matchesKey("\x1b[71;69u", "ctrl+g"), true);
 			assert.strictEqual(parseKey("\x1b[71;69u"), "ctrl+g");
+			assert.strictEqual(matchesKey("\x1b[70;67u", "alt+f"), true);
+			assert.strictEqual(parseKey("\x1b[70;67u"), "alt+f");
+			assert.strictEqual(matchesKey("\x1b[70;73u", "super+f"), true);
+			assert.strictEqual(parseKey("\x1b[70;73u"), "super+f");
 			assert.strictEqual(matchesKey("\x1b[70;69u", "ctrl+shift+f"), false);
 			assert.strictEqual(matchesKey("\x1b[70;70u", "ctrl+shift+f"), true);
 			assert.strictEqual(matchesKey("\x1b[70;71u", "ctrl+alt+f"), true);

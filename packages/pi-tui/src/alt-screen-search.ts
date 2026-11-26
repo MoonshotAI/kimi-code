@@ -1,5 +1,5 @@
 import { Input } from "./components/input.ts";
-import { getKeybindings, type KeybindingsManager } from "./keybindings.ts";
+import { getKeybindings } from "./keybindings.ts";
 import type { KeyId } from "./keys.ts";
 import type { Component, Focusable, TuiMouseEvent, TuiMouseEventResult } from "./tui.ts";
 import { getGraphemeSegmenter, stripTerminalSequences, truncateToWidth, visibleWidth } from "./utils.ts";
@@ -221,7 +221,6 @@ export class AltScreenSearchComponent implements Component, Focusable {
 	});
 	private readonly onQueryChange: (query: string) => void;
 	private readonly navigationButtonStyle: (text: string, hovered: boolean) => string;
-	private readonly keybindings?: KeybindingsManager;
 	private resultCount = 0;
 	private resultIndex = -1;
 	private previousButtonStart = -1;
@@ -235,11 +234,9 @@ export class AltScreenSearchComponent implements Component, Focusable {
 	constructor(
 		onQueryChange: (query: string) => void,
 		navigationButtonStyle: (text: string, hovered: boolean) => string = (text) => text,
-		keybindings?: KeybindingsManager,
 	) {
 		this.onQueryChange = onQueryChange;
 		this.navigationButtonStyle = navigationButtonStyle;
-		this.keybindings = keybindings;
 	}
 
 	get focused(): boolean {
@@ -301,7 +298,7 @@ export class AltScreenSearchComponent implements Component, Focusable {
 	render(width: number): string[] {
 		const safeWidth = Math.max(1, width);
 		const innerWidth = Math.max(0, safeWidth - 2);
-		const keybindings = this.keybindings ?? getKeybindings();
+		const keybindings = getKeybindings();
 		const query = this.input.getValue();
 		const result = !query.trim()
 			? ""

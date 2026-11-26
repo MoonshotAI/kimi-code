@@ -1,8 +1,6 @@
 import {
   Container,
-  KeybindingsManager,
   ProcessTerminal,
-  TUI_KEYBINDINGS,
   type Component,
   TuiAltScreen,
   TuiMainScreen,
@@ -25,7 +23,6 @@ import { QueuePaneComponent } from './components/panes/queue-pane';
 import type { SessionRow, SessionsScope } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
 import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, resolveWheelScrollLines } from './config';
-import { KIMI_ALT_SCREEN_KEYBINDINGS } from './constant/keybindings';
 import { CHROME_GUTTER, DOCK_QUEUE_ROWS, DOCK_UPDATES_ROWS } from './constant/rendering';
 import { CLICK_GUARD_MS } from './constant/terminal';
 import type { TasksBrowserState } from './controllers/tasks-browser';
@@ -103,7 +100,6 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const fullscreen = (options.resolvedTuiMode ?? initialAppState.tuiMode) === 'fullscreen';
   const ui = fullscreen
       ? new TuiAltScreen(terminal, undefined, undefined, {
-          keybindings: new KeybindingsManager(TUI_KEYBINDINGS, KIMI_ALT_SCREEN_KEYBINDINGS),
           openUrl,
           refocusMouseGuardMs: CLICK_GUARD_MS,
           copyOnSelect:
