@@ -182,6 +182,12 @@ export class WorktreeCreation {
     return new WorktreeCreation(options, target, remote, dirty, copyIncludes);
   }
 
+  private stoppedAfterLastStep(progress: SetupProgress): StepOutcome<never> {
+    const step = progress.steps.at(-1)?.kind ?? 'create';
+    setStep(progress, step, { state: 'stopped' });
+    return { kind: 'stopped', step };
+  }
+
   private fetchArgs(remote: RemoteBranchRef): string[] {
     return ['fetch', '--no-tags', remote.remote, `+${remote.remoteRef}:${remote.trackingRef}`];
   }
@@ -233,9 +239,10 @@ export class WorktreeCreation {
     if (created.kind !== 'done') return created;
     const changes = await this.applyChanges(progress, signal, base);
     const included = changes.kind === 'done' ? await this.copyIncludedFiles(progress, signal) : changes;
-    if (included.kind !== 'done') {
+    const outcome = included.kind === 'done' && signal.aborted ? this.stoppedAfterLastStep(progress) : included;
+    if (outcome.kind !== 'done') {
       await removeWorktreeArtifacts(this.options.repoRoot, this.target, true);
-      return included;
+      return outcome;
     }
     return {
       kind: 'done',
@@ -511,12 +518,12 @@ export async function recreateWorktree(
       onOutput,
     });
   }).catch(commandFailure);
-  if (added.exitCode === 0) {
+  if (added.exitCode === 0 && !signal.aborted) {
     setStep(progress, 'create', { state: 'done', output: undefined });
     return { kind: 'done', value: undefined };
   }
   if (reserved) await removeWorktreeArtifacts(repoRoot, target, false);
-  if (added.aborted) {
+  if (added.aborted || signal.aborted) {
     setStep(progress, 'create', { state: 'stopped' });
     return { kind: 'stopped', step: 'create' };
   }

@@ -300,10 +300,18 @@ export class SessionWorktreeService {
       base: created.base,
       included_local_changes: created.includedLocalChanges,
     }));
+    if (signal.aborted) {
+      await this.discardCreated(recorder, created, { stopped: true });
+      return;
+    }
     try {
       await repointSession(this.core, recorder.sessionId, created.path);
     } catch (error) {
-      await this.discardCreated(recorder, created, error);
+      await this.discardCreated(recorder, created, { error });
+      return;
+    }
+    if (signal.aborted) {
+      await this.discardCreated(recorder, created, { stopped: true });
       return;
     }
     await recorder.update((stored) => ({ ...stored, setup: ended(stored.setup, 'ready') }));
@@ -312,25 +320,26 @@ export class SessionWorktreeService {
   private async discardCreated(
     recorder: SetupRecorder,
     created: CreatedWorktree,
-    error: unknown,
+    reason: { readonly stopped: true } | { readonly error: unknown },
   ): Promise<void> {
     await patchSessionMetadata(this.core.accessor, recorder.sessionId, (meta) =>
       meta.environmentCwd === created.path ? { environmentCwd: undefined } : undefined,
     ).catch(() => undefined);
     await removeWorktreeArtifacts(recorder.current.repo_root, created, true);
-    const step = recorder.steps.find((candidate) => candidate.kind === 'create');
+    const stopped = 'stopped' in reason;
+    const stoppedStep = stopped ? (recorder.steps.at(-1)?.kind ?? 'create') : 'create';
+    const step = recorder.steps.find((candidate) => candidate.kind === stoppedStep);
     if (step !== undefined) {
-      step.state = 'failed';
-      step.output = error instanceof Error ? error.message : String(error);
+      step.state = stopped ? 'stopped' : 'failed';
+      if (!stopped) step.output = reason.error instanceof Error ? reason.error.message : String(reason.error);
     }
     await recorder.update((stored) => {
       const { path: _path, branch: _branch, base: _base, included_local_changes: _included, ...rest } = stored;
       return {
         ...rest,
-        setup: ended(stored.setup, 'failed', {
-          stopped_step: 'create',
-          failure: { kind: 'create_failed' },
-        }),
+        setup: stopped
+          ? ended(stored.setup, 'stopped', { stopped_step: stoppedStep })
+          : ended(stored.setup, 'failed', { stopped_step: 'create', failure: { kind: 'create_failed' } }),
       };
     });
   }

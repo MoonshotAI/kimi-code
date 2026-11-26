@@ -158,6 +158,21 @@ describe('worktree setup engine', () => {
     expect(git(root, 'branch', '--list', creation.target.branch)).toBe('');
   });
 
+  it('stops and removes the worktree when cancelled as the checkout finishes', async () => {
+    const root = await createRepo('create-cancel');
+    const controller = new AbortController();
+    const creation = await plan(root, 'create-cancel');
+    const progress = progressOf(creation);
+    progress.notify = () => {
+      if (progress.steps.some((step) => step.kind === 'create' && step.state === 'done')) controller.abort();
+    };
+
+    expect(await creation.run(progress, controller.signal)).toEqual({ kind: 'stopped', step: 'create' });
+    expect(progress.steps).toMatchObject([{ kind: 'create', state: 'stopped' }]);
+    expect(existsSync(creation.target.path)).toBe(false);
+    expect(git(root, 'branch', '--list', creation.target.branch)).toBe('');
+  });
+
   it('starts from the branch when a tag has the same name', async () => {
     const root = await createRepo('ambiguous');
     git(root, 'tag', 'main', git(root, 'commit-tree', '-m', 'tagged', git(root, 'rev-parse', 'HEAD^{tree}')));
