@@ -4749,6 +4749,10 @@ kapTest('a session whose saved model was removed opens with history and a model 
   const session = await kap.createSession({ agentConfig: { model: 'old' } });
   await kap.prompt(session.id, 'history from removed model', { model: 'old' });
   await kap.waitIdle(session.id);
+  const live = await ensureMainAgent((await resumeSessionById(kap.server.core.accessor, session.id))!);
+  const liveState = readAgentState(live, false);
+  expect(liveState).toMatchObject({ model: 'old', profile_revision: expect.any(Number) });
+  expect(liveState.missing_model).toBeUndefined();
 
   await kap.writeConfig(baseConfig);
   modelFrames.length = 0;
@@ -4756,7 +4760,10 @@ kapTest('a session whose saved model was removed opens with history and a model 
   expect(JSON.stringify(await kap.turns(session.id))).toContain('history from removed model');
   const resumed = await resumeSessionById(kap.server.core.accessor, session.id);
   const main = await ensureMainAgent(resumed!);
-  expect(readAgentState(main, false).model).toBeUndefined();
+  const resumedState = readAgentState(main, false);
+  expect(resumedState.model).toBeUndefined();
+  expect(resumedState.missing_model).toBe('old');
+  expect(resumedState.profile_revision).toBeGreaterThan(liveState.profile_revision!);
   expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
 
   const first = await kap.connect();
@@ -4782,6 +4789,32 @@ kapTest('a session whose saved model was removed opens with history and a model 
   await kap.prompt(session.id, 'after fallback', { model: 'testkit' });
   await kap.waitIdle(session.id);
   expect(JSON.parse(model.requests().at(-1)!.rawBody).model).toBe('testkit-model');
+});
+
+kapTest('pushes missing_model to a connected client when the saved model is removed from the config', { timeout: 30_000 }, async ({ kap, model }) => {
+  const baseConfig = fakeModelConfig(model);
+  await kap.writeConfig({
+    ...baseConfig,
+    models: {
+      ...baseConfig.models,
+      old: { provider: 'testkit', model: 'old-model', maxContextSize: 100000 },
+    },
+  });
+  await kap.server.core.accessor.get(IConfigService).reload();
+  const session = await kap.createSession({ agentConfig: { model: 'old' } });
+  const isMainAgentFrame = (frame: Record<string, unknown>): boolean =>
+    frame['type'] === 'agent' && frame['session_id'] === session.id && frame['agent_id'] === 'main';
+  const socket = await kap.connect();
+  await socket.subscribe(session.id);
+  const live = await socket.waitFor((frame) => isMainAgentFrame(frame) && frame['model'] === 'old');
+
+  await kap.writeConfig(baseConfig);
+  await kap.server.core.accessor.get(IConfigService).reload();
+
+  const removed = await socket.waitFor((frame) => isMainAgentFrame(frame) && frame['missing_model'] === 'old');
+  expect(removed['model']).toBeUndefined();
+  expect(removed['profile_revision']).toBeGreaterThan(live['profile_revision'] as number);
+  await socket.close();
 });
 
 kapTest('a session with no default model opens with no displayed model and a model error notice', { timeout: 30_000 }, async ({ kap, model }) => {
