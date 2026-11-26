@@ -555,10 +555,10 @@ describe('finished process-group ownership', () => {
         internals.maybeClose(entry);
       }
       expect(internals.exitedGroups.size).toBe(4097);
-      await vi.advanceTimersByTimeAsync(5_000);
+      vi.advanceTimersByTime(5_000);
       expect(internals.exitedGroups.size).toBe(4097);
       kill.mockImplementation(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }); });
-      await vi.advanceTimersByTimeAsync(5_000);
+      vi.advanceTimersByTime(5_000);
       expect(internals.exitedGroups.size).toBe(0);
     } finally { manager.dispose(); kill.mockRestore(); vi.useRealTimers(); }
   });
