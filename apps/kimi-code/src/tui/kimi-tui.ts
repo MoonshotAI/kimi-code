@@ -60,18 +60,17 @@ import { BannerProvider } from './banner/banner-provider';
 import { resolveBannerAudienceContext, type BannerAudienceContext } from './banner/audience';
 import { readBannerDisplayState, writeBannerDisplayState } from './banner/state';
 import {
-  BUILTIN_SLASH_COMMANDS,
   buildPluginSlashCommands,
   buildSkillSlashCommands,
+  getVisibleBuiltInSlashCommands,
   goalObjectiveLengthWarning,
   isExperimentalFlagEnabled,
   setExperimentalFeatures,
-  sortSlashCommands,
   type KimiSlashCommand,
   type SkillListSession,
 } from './commands';
 import * as slashCommands from './commands/dispatch';
-import { resolveUserInput, skillVariantPathsForInput } from './commands/resolve';
+import { resolveHostUserInput, skillVariantPathsForInput } from './commands/resolve';
 import { applyTranscriptPresentation, runQueuedModelSwitch } from './commands/config';
 import { promptSshPassword } from './commands/prompts';
 import { CacheHintController } from './controllers/cache-hint-controller';
@@ -631,9 +630,7 @@ export class KimiTUI {
   }
 
   private getSlashCommands(): readonly KimiSlashCommand[] {
-    const builtins = sortSlashCommands(BUILTIN_SLASH_COMMANDS).filter((command) =>
-      isExperimentalFlagEnabled(command.experimentalFlag),
-    );
+    const builtins = getVisibleBuiltInSlashCommands(this.state.ui.mode);
     return [...builtins, ...this.skillCommands, ...this.pluginCommands];
   }
 
@@ -2043,16 +2040,7 @@ export class KimiTUI {
   private async persistInputHistory(text: string): Promise<void> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
-    const activations = text.startsWith('!') ? [] : resolveUserInput({
-      input: trimmed,
-      skillCommandMap: this.skillCommandMap,
-      pluginCommandMap: this.pluginCommandMap,
-      isStreaming: this.state.appState.streamingPhase !== 'idle',
-      isCompacting: this.state.appState.isCompacting,
-      skillVariantPathForCommand: (commandName, start) =>
-        this.skillVariantPathForCommand(commandName, start),
-      defaultSkillPathForCommand: (commandName) => this.defaultSkillPathForCommand(commandName),
-    }).activations;
+    const activations = text.startsWith('!') ? [] : resolveHostUserInput(this, trimmed).activations;
     const entry: InputHistoryEntry = {
       content: trimmed,
       inlineSkillActivations: activations.length === 0 ? undefined : activations,
@@ -3118,7 +3106,7 @@ export class KimiTUI {
     });
   }
 
-  private removeTranscriptEntries(entries: readonly TranscriptEntry[]): void {
+  removeTranscriptEntries(entries: readonly TranscriptEntry[]): void {
     const doomed = new Set(entries);
     const componentsToRemove = this.state.transcriptContainer.children.filter((child) => {
       const entry = getTranscriptComponentEntry(child);
@@ -5190,6 +5178,7 @@ export class KimiTUI {
         shortcuts: keyboardShortcuts(
           resolveFollowUpBehavior(this.state.appState.followUpBehavior),
           isKittyProtocolActive(),
+          this.state.ui.mode,
         ),
         onClose: () => {
           this.hideHelpPanel();

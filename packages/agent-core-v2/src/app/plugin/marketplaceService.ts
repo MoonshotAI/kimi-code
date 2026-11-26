@@ -13,7 +13,6 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IRegionService } from '#/app/region/region';
 import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes, PluginErrors } from '#/errors';
-import { IProviderService } from '#/llm-adapter/provider/provider';
 
 import { PluginAvailabilityStore, pluginAvailabilitySourceKey } from './availability';
 import {
@@ -29,6 +28,7 @@ import {
 } from './marketplace';
 import { resolveInstallSource } from './source';
 import type { PluginOrigin } from './types';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const MARKETPLACE_FETCH_TIMEOUT_MS = 10_000;
 
@@ -71,7 +71,7 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IProviderService private readonly providers: IProviderService,
+    @IProviderCatalogService private readonly providers: IProviderCatalogService,
     @IRegionService private readonly regions: IRegionService,
     availability?: PluginAvailabilityStore,
   ) {
@@ -178,7 +178,7 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
     const configuredSource = this.bootstrap.getEnv(KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV);
     if (configuredSource !== undefined) return { source: configuredSource, managed: false };
     await this.providers.ready;
-    const provider = this.providers.get(KIMI_CODE_PROVIDER_NAME);
+    const provider = this.providers.getProviderConfig(KIMI_CODE_PROVIDER_NAME);
     const regionBaseUrl = kimiRegionProfile(this.regions.current().region).baseUrl;
     const envBaseUrl = this.bootstrap.getEnv('KIMI_CODE_BASE_URL');
     const envOAuthHost =

@@ -1142,7 +1142,10 @@ describe('oauth logout remote-control cleanup', () => {
   it('serializes concurrent Kimi logouts so repeated logout stays idempotent', async () => {
     const events: string[] = [];
     const remoteControl = {
-      status: () => ({ enabled: false, state: 'off' }),
+      status: () => {
+        events.push('status');
+        return { enabled: false, state: 'off' };
+      },
     } as unknown as RemoteControlManager;
     const remoteControlDevices = {
       clear: () => {
@@ -1152,12 +1155,17 @@ describe('oauth logout remote-control cleanup', () => {
     };
     let logouts = 0;
     let resolveFirst!: () => void;
+    let markFirstLogoutHeld!: () => void;
+    const firstLogoutHeld = new Promise<void>((resolve) => {
+      markFirstLogoutHeld = resolve;
+    });
     const post = await logoutHandler(remoteControl, remoteControlDevices, async (provider) => {
       logouts += 1;
       events.push(`logout:${logouts}`);
       if (logouts === 1) {
         await new Promise<void>((resolve) => {
           resolveFirst = resolve;
+          markFirstLogoutHeld();
         });
       }
       return { logged_out: true, provider: provider ?? 'managed:kimi-code' };
@@ -1169,14 +1177,23 @@ describe('oauth logout remote-control cleanup', () => {
     const second = post({ provider: 'managed:kimi-code' }) as Promise<
       Envelope<{ logged_out: true }>
     >;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(events).toEqual(['clear', 'logout:1']);
+    await firstLogoutHeld;
+    expect(events).toEqual(['status', 'clear', 'logout:1']);
     resolveFirst();
     const [firstPayload, secondPayload] = await Promise.all([first, second]);
 
     expect(firstPayload.code).toBe(0);
     expect(secondPayload.code).toBe(0);
-    expect(events).toEqual(['clear', 'logout:1', 'clear', 'clear', 'logout:2', 'clear']);
+    expect(events).toEqual([
+      'status',
+      'clear',
+      'logout:1',
+      'clear',
+      'status',
+      'clear',
+      'logout:2',
+      'clear',
+    ]);
   });
 
   it('deactivates a lock held by another process before clearing OAuth credentials', async () => {

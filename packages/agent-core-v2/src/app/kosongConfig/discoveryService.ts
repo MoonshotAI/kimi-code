@@ -15,16 +15,15 @@ import { AuthErrors } from '#/app/auth/errors';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
-import { ModelCatalogErrors } from '#/llm-adapter/model/errors';
-import { type ModelRecord } from '#/llm-adapter/model/model';
-import { effectiveModelConfig } from '#/llm-adapter/model/model-auth';
+import { ModelCatalogErrors } from '#/provider-catalog/model/errors';
+import { type ModelRecord } from '#/provider-catalog/model/model';
+import { effectiveModelConfig } from '#/provider-catalog/model/model-auth';
 import {
-  IProviderService,
   type ModelSource,
   type OAuthRef,
   type ProviderConfig,
-} from '#/llm-adapter/provider/provider';
-import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
+} from '#/provider-catalog/provider/provider';
+import { getProviderDefinition } from '#/provider-catalog/provider/provider-definition';
 
 import {
   DEFAULT_MODEL_SECTION,
@@ -39,6 +38,7 @@ import {
   type RefreshProviderModelsResponse,
   type RetiredModel,
 } from './discovery';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 interface StaticExclusion {
   readonly providers: Readonly<Record<string, ProviderConfig>>;
@@ -59,7 +59,7 @@ export class ProviderDiscoveryService extends Disposable implements IProviderDis
   private readonly retiredModels = new Map<string, string>();
 
   constructor(
-    @IProviderService private readonly providerService: IProviderService,
+    @IProviderCatalogService private readonly providerService: IProviderCatalogService,
     @IConfigService private readonly config: IConfigService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IEventService private readonly events: IEventService,
@@ -91,7 +91,7 @@ export class ProviderDiscoveryService extends Disposable implements IProviderDis
   ): Promise<RefreshProviderModelsResponse> {
     await this.config.reload();
     if (options.providerId !== undefined) {
-      const provider = this.providerService.get(options.providerId);
+      const provider = this.providerService.getProviderConfig(options.providerId);
       if (provider === undefined) {
         throw new Error2(
           ModelCatalogErrors.codes.PROVIDER_NOT_FOUND,

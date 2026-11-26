@@ -7,6 +7,8 @@ export default {
   groupAccount: 'Account',
   sheetLabel: 'Sheet',
   closeSheet: 'Close',
+  back: 'Back',
+  clearSearch: 'Clear search',
   permManualSub: 'Auto-read only; everything else needs your approval first',
   permAutoSub: 'Everything runs and is decided automatically; only plans in Plan mode wait for your review',
   permYoloSub: 'Routine edits and commands run automatically; risky actions, questions, and plans still ask',

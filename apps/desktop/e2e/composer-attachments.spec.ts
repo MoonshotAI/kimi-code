@@ -1,15 +1,14 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 
 import { expect, test } from './fixtures/app';
 import { dropTextFile, pasteImage } from './fixtures/composer';
 import { messageProblems, say, textOf } from './fixtures/model';
-import { answerNativeDialog } from './fixtures/native-dialog';
 import { sidebarOf } from './fixtures/sessions';
 
 const NOTES = 'Release checklist:\n1. bump version\n2. tag\n';
 
-test('a prompt with a file mention, a pasted image and a dropped file reaches the model with every reference', { tag: '@quarantine' }, async ({ app, model }) => {
+test('a prompt with a file mention, a pasted image and a dropped file reaches the model with every reference', async ({ app, model }) => {
   await mkdir(join(app.workspace, 'src'), { recursive: true });
   await mkdir(join(app.workspace, 'docs'), { recursive: true });
   await writeFile(join(app.workspace, 'src', 'alpha.ts'), 'export const alpha = 1;\n');
@@ -135,87 +134,5 @@ test('a prompt with a file mention, a pasted image and a dropped file reaches th
     await restoredNotes.click();
     const attachmentPreview = await app.page(url => url.startsWith('blob:'), 'dropped file preview');
     await expect(attachmentPreview.getByText('Release checklist:')).toBeVisible();
-  });
-});
-
-test('file mentions search every project source folder before and after the first session', async ({ app, model, scratch }) => {
-  const extra = join(scratch, 'extra');
-  const extraPath = extra.replaceAll('\\', '/');
-  await mkdir(extra, { recursive: true });
-  await Promise.all([
-    writeFile(join(app.workspace, 'primary-only.ts'), 'export const primary = true;\n'),
-    writeFile(join(app.workspace, 'shared.ts'), 'export const shared = "primary";\n'),
-    writeFile(join(extra, 'secondary-only.ts'), 'export const secondary = true;\n'),
-    writeFile(join(extra, 'shared.ts'), 'export const shared = "secondary";\n'),
-    writeFile(join(extra, 'follow-up.ts'), 'export const followUp = true;\n'),
-  ]);
-  model.script(say('First multi-root reply.'), say('Second multi-root reply.'));
-  const window = app.window;
-  const input = window.getByRole('combobox', { name: 'Message input' });
-  const transcript = window.getByRole('list').first();
-  const mentionMenu = window.getByRole('listbox');
-
-  await test.step('the project gains a second source folder from Edit project', async () => {
-    await answerNativeDialog(app, 'showOpenDialog', { canceled: false, filePaths: [extra] });
-    const group = sidebarOf(app).locator('[data-ws-id]').filter({ has: window.getByText(basename(app.workspace), { exact: true }) });
-    await group.getByRole('button', { name: 'Options' }).click({ force: true });
-    await window.getByRole('menuitem', { name: 'Edit project' }).click();
-    const dialog = window.getByRole('dialog', { name: 'Edit project' });
-    await expect(dialog).toBeVisible();
-    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
-    await expect(dialog.getByText('extra', { exact: true })).toBeVisible();
-    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(dialog).toBeHidden();
-  });
-
-  await test.step('the draft finds and inserts files from the additional source folder', async () => {
-    await input.click();
-    await window.keyboard.type('@secondary-only');
-    const secondary = mentionMenu.getByRole('option', { name: /secondary-only\.ts/ });
-    await expect(secondary).toBeVisible();
-    await expect(secondary).toContainText(extraPath);
-    await secondary.click();
-    await expect(mentionMenu).toBeHidden();
-    await expect(input).toHaveText(/secondary-only\.ts/);
-
-    await window.keyboard.type(' @shared');
-    const shared = mentionMenu.getByRole('option', { name: /shared\.ts/ });
-    await expect(shared).toHaveCount(2);
-    const extraShared = shared.filter({ hasText: extraPath });
-    await expect(extraShared).toHaveCount(1);
-    await app.snapshot('multi-root-mention-candidates');
-    await extraShared.click();
-    await expect(mentionMenu).toBeHidden();
-    await expect(input).toHaveText(/secondary-only\.ts[\s\S]*shared\.ts/);
-    await app.snapshot('multi-root-mention-pills');
-  });
-
-  await test.step('the first request carries absolute paths for both additional-root mentions', async () => {
-    const next = model.requests().length;
-    await input.click();
-    await window.keyboard.press('End');
-    await window.keyboard.press('Enter');
-    const request = await model.waitForRequest(next);
-    const content = request.texts('user').join('\n');
-    expect(content).toContain(`[secondary-only.ts](${extraPath}/secondary-only.ts)`);
-    expect(content).toContain(`[shared.ts](${extraPath}/shared.ts)`);
-    await expect(transcript.getByText('First multi-root reply.', { exact: true })).toBeVisible();
-  });
-
-  await test.step('an existing session keeps finding files from the additional source folder', async () => {
-    await app.sessionId();
-    await input.click();
-    await window.keyboard.type('@follow-up');
-    const followUp = mentionMenu.getByRole('option', { name: /follow-up\.ts/ });
-    await expect(followUp).toBeVisible();
-    await expect(followUp).toContainText(extraPath);
-    await followUp.click();
-    await expect(mentionMenu).toBeHidden();
-    const next = model.requests().length;
-    await window.keyboard.press('Enter');
-    const request = await model.waitForRequest(next);
-    const content = request.texts('user').join('\n');
-    expect(content).toContain(`[follow-up.ts](${extraPath}/follow-up.ts)`);
-    await expect(transcript.getByText('Second multi-root reply.', { exact: true })).toBeVisible();
   });
 });

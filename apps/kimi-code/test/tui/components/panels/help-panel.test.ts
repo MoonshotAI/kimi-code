@@ -37,6 +37,39 @@ describe('HelpPanelComponent', () => {
     },
   );
 
+  it('includes Ctrl-F only in fullscreen mode', () => {
+    const regularShortcuts = keyboardShortcuts('queue', false, 'regular');
+    const fullscreenShortcuts = keyboardShortcuts('queue', false, 'fullscreen');
+
+    expect(regularShortcuts.some((shortcut) => shortcut.keys === 'Ctrl-F')).toBe(false);
+    expect(fullscreenShortcuts).toContainEqual({
+      keys: 'Ctrl-F',
+      description: 'Search conversation',
+    });
+
+    const regularOut = strip(
+      new HelpPanelComponent({
+        commands: [],
+        shortcuts: regularShortcuts,
+        onClose: () => {},
+      })
+        .render(80)
+        .join('\n'),
+    );
+    const fullscreenOut = strip(
+      new HelpPanelComponent({
+        commands: [],
+        shortcuts: fullscreenShortcuts,
+        onClose: () => {},
+      })
+        .render(80)
+        .join('\n'),
+    );
+    expect(regularOut).not.toMatch(/Ctrl-F/);
+    expect(fullscreenOut).toMatch(/Ctrl-F/);
+    expect(fullscreenOut).toMatch(/Search conversation/);
+  });
+
   it('renders keyboard shortcuts + slash commands sections', () => {
     const panel = new HelpPanelComponent({
       commands: [cmd('exit', 'Exit', ['quit', 'q'])],

@@ -116,7 +116,7 @@ function makeHost(
       livePane: { pendingApproval: null, pendingQuestion: null },
       notifyPanel: { setPrompt: vi.fn() },
       transcriptContainer,
-      ui: { requestRender: vi.fn() },
+      ui: { mode: overrides.fullscreen === true ? ('fullscreen' as const) : ('regular' as const), requestRender: vi.fn() },
       theme: { palette: getBuiltInPalette('dark') },
     },
     session: hasSession ? session : undefined,

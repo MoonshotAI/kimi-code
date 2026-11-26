@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { Error2, ErrorCodes, IEnvironmentService, IModelCatalog, ISessionManager, IProjectInstanceManager, ProjectFsService, getLiveSessionById } from '@moonshot-ai/agent-core-v2';
+import { Error2, ErrorCodes, IEnvironmentService, ISessionManager, IProjectInstanceManager, ProjectFsService, getLiveSessionById } from '@moonshot-ai/agent-core-v2';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { IProjectPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/projectPermissionRules';
 import { IProjectPersistence } from '@moonshot-ai/agent-core-v2/app/project/projectPersistence';
@@ -20,6 +20,7 @@ import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 import { fakeModelCatalog } from './helpers/fakeModelCatalog';
 import { initRepo } from './helpers/gitRepo';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 interface Envelope<T> {
   code: number;
@@ -54,7 +55,7 @@ describe('server-v2 /api/v1 fs routes', () => {
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      seeds: [[IModelCatalog, fakeModelCatalog()]],
+      seeds: [[IProviderCatalogService, fakeModelCatalog()]],
     });
     base = `http://127.0.0.1:${server.port}`;
   });

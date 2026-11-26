@@ -41,6 +41,10 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   continue: () => '用户点「继续」，让失败的回合接着做',
   restart: () => '用户关掉产品再打开，回到原来的会话',
   restartDuringTurn: () => '用户在回合进行中关掉产品，再打开，回到原来的会话',
+  undo: () => '用户撤销最近一条消息',
+  recallPrevious: () => '用户在输入框里按上键，调回上一条提示',
+  submit: (text) => `用户把输入框里的${quote(text)}发出去`,
+  expectComposer: (text) => (text === '' ? '检查输入框是空的' : `检查输入框里是${quote(text)}`),
   newSession: () => '用户新建一个会话',
   compact: () => '用户手动压缩上下文（/compact）',
   resize: (size) => (size === 'narrow' ? '用户把窗口拉窄' : '用户把窗口拉回原来的大小'),
@@ -55,8 +59,11 @@ export const DISK_TITLES = {
   missing: (path: string): string => `检查磁盘：${quote(path)}不存在`,
 };
 
+export const CLOCK_TITLE = (time: string): string => `本机的时间变成${quote(time)}`;
+
 export const MCP_TITLES = {
   addTool: (server: string, tool: string): string => `MCP 服务${quote(server)}新增工具${quote(tool)}，等产品重新读取工具清单`,
   updateTool: (server: string, tool: string): string => `MCP 服务${quote(server)}修改工具${quote(tool)}，等产品重新读取工具清单`,
   removeTool: (server: string, tool: string): string => `MCP 服务${quote(server)}删除工具${quote(tool)}，等产品重新读取工具清单`,
+  disconnect: (server: string): string => `MCP 服务${quote(server)}断开所有连接，等产品重新连上并读取工具清单`,
 };

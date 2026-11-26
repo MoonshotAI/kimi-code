@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { Error2 } from '#/_base/errors/errors';
+import { currentProcessLiveness } from '#/_base/utils/processLiveness';
 import { encodeWorkDirKey, toAbsoluteDir } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEnvironmentService } from '#/app/environment/environment';
@@ -1338,6 +1339,39 @@ describe('WorktreeService', () => {
       expect(existsSync(created.worktree.path)).toBe(false);
     });
 
+    it('counts a session whose marker pid was reused as closed', async () => {
+      const created = await create({ name: 'reused-pid' });
+      const markers = join(indexSession('reused-pid', created.worktree.path), SESSION_PRESENCE_DIR);
+      const reused = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        stdio: 'ignore',
+      });
+      try {
+        await new Promise<void>((resolve) => reused.once('spawn', () => resolve()));
+        mkdirSync(markers, { recursive: true });
+        writeFileSync(
+          join(markers, `${reused.pid}-stale.json`),
+          JSON.stringify({
+            version: 1,
+            pid: reused.pid,
+            hostname: hostname(),
+            startedAt: Date.now() - 60_000,
+            liveness: 'kimi-code-live-0-00000000000000000000000000000000',
+          }),
+        );
+
+        expect(
+          await service.inspectRemoval({
+            repoRoot: realRepo,
+            path: created.worktree.path,
+            deleteBranch: false,
+          }),
+        ).toMatchObject({ openSessionIds: [], closedSessionCount: 1 });
+        expect(readdirSync(markers)).toEqual([]);
+      } finally {
+        reused.kill('SIGKILL');
+      }
+    });
+
     it('counts a session opened in this process as open even when its marker cannot be written', async () => {
       const created = await create({ name: 'unmarked' });
       const sessionDir = indexSession('unmarked', created.worktree.path);
@@ -1361,11 +1395,18 @@ describe('WorktreeService', () => {
 
       const written = readdirSync(markers);
       expect(written).toHaveLength(2);
-      expect(JSON.parse(readFileSync(join(markers, written[0]!), 'utf8'))).toMatchObject({
+      const parsedMarker = JSON.parse(readFileSync(join(markers, written[0]!), 'utf8')) as {
+        version: number;
+        pid: number;
+        hostname: string;
+        liveness?: string;
+      };
+      expect(parsedMarker).toMatchObject({
         version: 1,
         pid: process.pid,
         hostname: hostname(),
       });
+      expect(parsedMarker.liveness).toBe(currentProcessLiveness());
       first.dispose();
       expect(readdirSync(markers)).toHaveLength(1);
       second.dispose();

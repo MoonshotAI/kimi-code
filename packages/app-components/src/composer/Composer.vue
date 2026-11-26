@@ -155,6 +155,7 @@ import ComposerScreenshotShortcut from './ComposerScreenshotShortcut.vue';
 import MentionMenu from './MentionMenu.vue';
 import SlashMenu from './SlashMenu.vue';
 import ModelQuickMenu from './ModelQuickMenu.vue';
+import ModelQuickSheet from './ModelQuickSheet.vue';
 import { clampModelMenuMaxHeight } from './modelMenuLayout';
 
 const props = defineProps<{
@@ -2405,11 +2406,13 @@ function toggleDropdown(targetSid?: string): void {
   if (opening) prepareModelMenu(targetSid);
   dropdownOpen.value = opening;
   if (opening) {
-    updateModelMenuPosition();
+    if (!isMobile.value) {
+      updateModelMenuPosition();
+      document.addEventListener('click', onDocClick, true);
+    }
     permDropdownOpen.value = false;
     ctxCardOpen.value = false;
     addMenuOpen.value = false;
-    document.addEventListener('click', onDocClick, true);
   } else if (!hasAnyToolbarMenuOpen()) {
     document.removeEventListener('click', onDocClick, true);
   }
@@ -3014,6 +3017,7 @@ const menuDraftModelId = ref<string | undefined>(status.value?.modelId);
 const menuDraftEffortSegment = ref<string>();
 let menuOpenedSessionId: string | null | undefined;
 let menuTargetSessionId: string | null | undefined;
+let menuOpenedInSheet = false;
 let discardMenuDraftOnClose = false;
 
 const menuModel = computed(() =>
@@ -3044,6 +3048,7 @@ function prepareModelMenu(targetSid?: string): void {
   const catalog = models.value ?? [];
   menuOpenedSessionId = sessionId.value;
   menuTargetSessionId = typeof targetSid === 'string' ? targetSid : sessionId.value;
+  menuOpenedInSheet = isMobile.value;
   discardMenuDraftOnClose = false;
   const isBackgroundTarget =
     menuTargetSessionId !== null && menuTargetSessionId !== undefined && menuTargetSessionId !== sessionId.value;
@@ -3247,7 +3252,7 @@ function clampCtxCardToViewport(): void {
 }
 
 function onViewportResize(): void {
-  closeDropdown();
+  if (!isMobile.value) closeDropdown();
   closePermDropdown();
   closeCtxCard();
 }
@@ -3278,7 +3283,7 @@ watch(ctxCardOpen, async (open) => {
 });
 
 watch(dropdownOpen, async (open) => {
-  if (!open) return;
+  if (!open || isMobile.value) return;
   updateModelMenuPosition();
   await nextTick();
   modelDropdownRef.value?.el?.focus();
@@ -3304,7 +3309,7 @@ watch(
     fontScale,
   ],
   () => {
-    if (dropdownOpen.value) void nextTick(clampModelMenuToViewport);
+    if (dropdownOpen.value && !isMobile.value) void nextTick(clampModelMenuToViewport);
     if (permDropdownOpen.value) void nextTick(clampPermissionMenuToViewport);
   },
 );
@@ -3339,7 +3344,7 @@ watch(permDropdownOpen, open => { if (!open) nativePermissionMenu?.close(); });
 watch(dropdownOpen, (open, wasOpen) => {
   if (open) return;
   nativeModelMenu?.close();
-  if (wasOpen && (!nativeModelMenu?.available || isMobile.value)) commitModelMenuDraft();
+  if (wasOpen && (!nativeModelMenu?.available || menuOpenedInSheet)) commitModelMenuDraft();
 });
 watch(() => status.value?.modelId, (modelId) => {
   if (!dropdownOpen.value) menuDraftModelId.value = modelId;
@@ -3637,7 +3642,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             type="button"
             class="model-pill"
             :class="{ open: dropdownOpen, 'icon-only': modelPillCollapsed, 'model-gone': modelPillGone }"
-            aria-haspopup="menu"
+            :aria-haspopup="isMobile ? 'dialog' : 'menu'"
             :aria-expanded="dropdownOpen"
             :aria-label="modelPillCollapsed ? modelIconLabel : undefined"
             @click.stop="toggleDropdown()"
@@ -3656,7 +3661,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             type="button"
             class="model-pill"
             :class="{ open: dropdownOpen, 'icon-only': modelPillCollapsed, 'model-gone': modelPillGone }"
-            aria-haspopup="menu"
+            :aria-haspopup="isMobile ? 'dialog' : 'menu'"
             :aria-expanded="dropdownOpen"
             :aria-label="modelPillCollapsed ? t('login.pickModelAction') : undefined"
             @click.stop="toggleDropdown()"
@@ -3730,7 +3735,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 
         <Transition name="ui-menu-pop">
           <ModelQuickMenu
-            v-if="dropdownOpen && status && (!nativeModelMenu?.available || isMobile)"
+            v-if="dropdownOpen && status && !nativeModelMenu?.available && !isMobile"
             ref="modelDropdownRef"
             class="model-dropdown"
             :style="modelMenuStyle"
@@ -3816,6 +3821,18 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
     </div>
   </div>
 
+  <Teleport to="body">
+    <ModelQuickSheet
+      v-if="status && isMobile"
+      :model-value="dropdownOpen"
+      :payload="() => quickModelMenuPayload"
+      @update:model-value="(open) => { if (!open) closeDropdown(); }"
+      @select-model="(modelId, effort, fromSearch) => onQuickModelAction({ type: 'select-model', modelId, ...(effort === undefined ? {} : { effort }), ...(fromSearch === true ? { fromSearch: true } : {}) })"
+      @select-effort="(effort) => onQuickModelAction({ type: 'select-effort', effort })"
+      @select-provider="(providerId) => onQuickModelAction({ type: 'select-provider', providerId })"
+      @dismiss="dismissModelMenu"
+    />
+  </Teleport>
   <!-- Mobile menu sheets: the slash / mention / add popups as grab-handle
        bottom sheets (the inline popups' viewport clamp is unreliable under
        the iOS software keyboard). Teleported to <body> — the composer card's

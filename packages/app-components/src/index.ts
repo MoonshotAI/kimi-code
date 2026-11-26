@@ -137,6 +137,7 @@ export {
 export { default as ManagedProviderView } from './settings/ManagedProviderView.vue';
 export { ComposerNativeMenuHostKey } from './composer/nativeMenus';
 export { default as ModelQuickMenu } from './composer/ModelQuickMenu.vue';
+export { default as ModelQuickSheet } from './composer/ModelQuickSheet.vue';
 export { default as PlanUpgradeCard } from './settings/PlanUpgradeCard.vue';
 export { default as ProviderBrandIcon } from './settings/ProviderBrandIcon.vue';
 export { default as ProviderForm } from './settings/ProviderForm.vue';

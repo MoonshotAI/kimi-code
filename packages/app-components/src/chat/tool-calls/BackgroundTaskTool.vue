@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { useHistoryState } from '../historyState';
-import { computed, watch } from 'vue';
+import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 import {
@@ -9,22 +8,18 @@ import {
   parseTaskStopResult,
   type TaskFields,
 } from '@moonshot-ai/app-core/lib';
-import type { ToolCall } from '@moonshot-ai/app-core/client/types';
-import { normalizeToolName, toolLabel } from '@moonshot-ai/app-components';
-import { parseArgRecord, str } from '@moonshot-ai/app-components';
+import { str } from '@moonshot-ai/app-components';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import OutputPanel from './OutputPanel.vue';
+import { useToolCard, useToolCardExpansion, type ToolCardProps } from './useToolCard';
 
-const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
+const props = withDefaults(defineProps<ToolCardProps>(), { mobile: false });
+const glyph = computed(() => {
+  if (kind.value === 'tasklist') return 'list';
+  return kind.value === 'taskstop' ? 'stop' : 'file-text';
+});
 
-const { t, te } = useI18n();
-
-const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
-const kind = computed(() => normalizeToolName(props.tool.name));
-const glyph = computed(() => (kind.value === 'tasklist' ? 'list' : kind.value === 'taskstop' ? 'stop' : 'file-text'));
-
-const args = computed(() => parseArgRecord(props.tool.arg));
 const taskId = computed(() => str(args.value?.task_id) ?? '');
 const activeOnly = computed(() => args.value?.active_only !== false);
 
@@ -68,22 +63,16 @@ const details = computed(() => {
 });
 
 const parsed = computed(() => list.value !== null || fields.value !== null);
-const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
+const { t, te } = useI18n();
+const { status, kind, args, hasOutput, toolNameLabel } = useToolCard(props);
 const canExpand = computed(() => (list.value?.tasks.length ?? 0) > 0 || details.value.length > 0 || hasOutput.value);
-const open = useHistoryState(`tool:${props.tool.id}:open`, props.tool.defaultExpanded === true && canExpand.value);
-
-watch(
-  () => [props.tool.defaultExpanded, props.tool.output?.length, props.tool.status] as const,
-  () => {
-    if (props.tool.defaultExpanded === true && canExpand.value) open.value = true;
-  },
-);
+const { open } = useToolCardExpansion(props, canExpand);
 </script>
 
 <template>
   <ToolDisclosure :status="status" :open="open" :expandable="canExpand" @toggle="open = !open">
     <template #leading><Icon :name="glyph" size="sm" /></template>
-    <span class="tl-name">{{ toolLabel(tool.name) }}</span>
+    <span class="tl-name">{{ toolNameLabel }}</span>
     <span v-if="subject" class="tl-dim">{{ subject }}</span>
     <span v-if="chip" class="tl-faint">{{ chip }}</span>
     <template #body>

@@ -7,7 +7,7 @@ import { OrderedHookSlot } from '#/hooks';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import type { LlmRequest, ModelCapability } from '@moonshot-ai/core/llm/request';
-import { fromLlmModelSpec, type ModelCapability as LegacyModelCapability } from '#/llm-adapter/contract/capability';
+import { fromLlmModelSpec, type ModelCapability as LegacyModelCapability } from '#/provider-catalog/capability';
 import type { Message, ToolCall, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
@@ -226,6 +226,10 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
   readonly requester = {} as IAgentLoopService['requester'];
   readonly started = false;
   readonly hasPersistedState = false;
+
+  resolveMaxOutputTokens(): undefined {
+    return undefined;
+  }
 
   async start(): Promise<void> {}
 

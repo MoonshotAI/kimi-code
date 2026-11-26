@@ -1,12 +1,14 @@
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import type { LlmRequest } from '@moonshot-ai/core/llm/request';
+import { contentsOf } from '@moonshot-ai/core/llm/requester';
+import type { Loop } from '@moonshot-ai/core/loop/index';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { LoopRequester } from '#/agent/loop/requesterContract';
-import { errorFromLlmMessage } from '#/llm-adapter/contract/errors';
+import { IConfigService } from '#/app/config/config';
+import { errorFromLlmMessage } from '#/provider-catalog/errors';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ModelRecord } from '#/llm-adapter/model/model';
+import type { ModelRecord } from '#/provider-catalog/model/model';
 import {
   configServices,
   createTestAgent,
@@ -19,6 +21,7 @@ import {
   type TestAgentContext,
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 type TestKimiConfig = ReturnType<Parameters<typeof configServices>[0]>;
 type TestProtocolModelConfig = NonNullable<TestKimiConfig['models']>[string] &
@@ -32,7 +35,7 @@ function defaultGenerate(): GenerateFn {
 describe('ConfigState model capabilities', () => {
   let ctx: TestAgentContext;
   let profile: IAgentLoopService;
-  let requester: LoopRequester;
+  let requester: IAgentLoopService;
   let kimiConfig: TestKimiConfig;
   let generate: GenerateFn;
   let records: TelemetryRecord[];
@@ -52,7 +55,7 @@ describe('ConfigState model capabilities', () => {
       telemetryServices(recordingTelemetry(records)),
     );
     profile = ctx.get(IAgentLoopService);
-    requester = ctx.get(IAgentLoopService).requester;
+    requester = ctx.get(IAgentLoopService);
   });
 
   afterEach(async () => {
@@ -246,13 +249,63 @@ describe('ConfigState model capabilities', () => {
       ),
     );
     try {
+      const loopService = resumed.get(IAgentLoopService) as unknown as {
+        requestConfigSnapshot(): unknown;
+        readonly loop?: Loop;
+      };
+      const configSnapshots = vi.spyOn(loopService, 'requestConfigSnapshot');
+      expect(configSnapshots).not.toHaveBeenCalled();
+
       await resumed.restorePersisted();
 
+      expect(configSnapshots).toHaveBeenCalledTimes(1);
       expect(resumed.get(ITelemetryService).getContext()).toMatchObject({
         model: 'kimi-code/kimi-for-coding',
         provider_type: 'kimi',
         protocol: 'openai',
       });
+      const coreLoop = loopService.loop;
+      if (coreLoop === undefined) throw new Error('Loop is not started');
+      const setRequester = vi.spyOn(coreLoop, 'setRequester');
+      const config = resumed.get(IConfigService);
+
+      await config.set('modelOverrides', { temperature: 0.4 });
+      expect(setRequester).toHaveBeenCalledTimes(1);
+      const firstBase = coreLoop.baseRequester;
+      if (firstBase === undefined || !('with' in firstBase)) {
+        throw new Error('Expected a full raw requester');
+      }
+      expect(firstBase).not.toHaveProperty('snapshot');
+      expect(contentsOf(firstBase).model?.sampling).toMatchObject({ temperature: 0.4 });
+
+      await config.set('modelOverrides', { temperature: 0.9 });
+      await config.set('thinking', { keep: 'all' });
+      await config.set('loopControl', { reservedContextSize: 128 });
+      expect(setRequester).toHaveBeenCalledTimes(4);
+
+      await config.set('models', {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+          maxOutputSize: 4_096,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
+        },
+      });
+      resumed.get(IProviderCatalogService).resync();
+      expect(setRequester).toHaveBeenCalledTimes(5);
+
+      const resumedProfile = resumed.get(IAgentLoopService);
+      resumedProfile.setThinking('low');
+      expect(setRequester).toHaveBeenCalledTimes(6);
+      await resumedProfile.setProfile({
+        ...resumedProfile.bindingSnapshot(),
+        thinkingLevel: 'high',
+      });
+      expect(setRequester).toHaveBeenCalledTimes(7);
+      expect(contentsOf(firstBase).model?.sampling).toMatchObject({ temperature: 0.4 });
+      expect(coreLoop.baseRequester).not.toBe(firstBase);
     } finally {
       await resumed.dispose();
     }
@@ -286,7 +339,7 @@ describe('ConfigState model capabilities', () => {
     });
   });
 
-  it('freezes model max output size, system prompt and params across operation preparation', async () => {
+  it('resolves the latest model, system prompt and params on each side request', async () => {
     let requestMaxTokens: unknown;
     let requestSystemPrompt: unknown;
     let requestTemperature: unknown;
@@ -343,14 +396,13 @@ describe('ConfigState model capabilities', () => {
       thinkingLevel: 'off',
     });
     const signal = new AbortController().signal;
-    const operation = await requester.prepareOperation({
-      source: () => ({ type: 'operation' }),
-    }, signal);
+    await requester.start();
+    const operation = requester.requester;
     profile.update({
       modelAlias: 'deepseek/deepseek-v4-mini',
       systemPrompt: 'changed-system',
     });
-    kimiConfig = { ...kimiConfig, modelOverrides: { temperature: 0.9 } };
+    await ctx.get(IConfigService).set('modelOverrides', { temperature: 0.9 });
     const outcome = await operation.generate(
       { content: {}, profile: {} },
       { signal },
@@ -361,9 +413,9 @@ describe('ConfigState model capabilities', () => {
       throw new DOMException(message, 'AbortError');
     }
 
-    expect(requestMaxTokens).toBe(384000);
-    expect(requestSystemPrompt).toBe('system');
-    expect(requestTemperature).toBe(0.2);
+    expect(requestMaxTokens).toBe(128000);
+    expect(requestSystemPrompt).toBe('changed-system');
+    expect(requestTemperature).toBe(0.9);
   });
 });
 
@@ -417,7 +469,7 @@ describe('ConfigState prompt cache hint', () => {
 describe('ConfigState thinking clamp for always-thinking models', () => {
   let ctx: TestAgentContext;
   let profile: IAgentLoopService;
-  let requester: LoopRequester;
+  let requester: IAgentLoopService;
   let kimiConfig: TestKimiConfig;
   let capturedThinking: unknown;
 
@@ -489,7 +541,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
       })),
     );
     profile = ctx.get(IAgentLoopService);
-    requester = ctx.get(IAgentLoopService).requester;
+    requester = ctx.get(IAgentLoopService);
   });
 
   afterEach(async () => {
@@ -610,7 +662,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
   let ctx: TestAgentContext | undefined;
   let profile: IAgentLoopService;
-  let requester: LoopRequester;
+  let requester: IAgentLoopService;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
   let capturedRequest: LlmRequest | undefined;
@@ -665,7 +717,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
       })),
     );
     profile = ctx.get(IAgentLoopService);
-    requester = ctx.get(IAgentLoopService).requester;
+    requester = ctx.get(IAgentLoopService);
   }
 
   it('injects KIMI_MODEL_TEMPERATURE into the per-turn sampling intent (the compaction request also uses)', async () => {
@@ -725,11 +777,9 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   });
 });
 
-async function generateOperation(requester: LoopRequester, signal: AbortSignal): Promise<void> {
-  const operation = await requester.prepareOperation({
-    source: () => ({ type: 'operation' }),
-  }, signal);
-  const outcome = await operation.generate(
+async function generateOperation(requester: IAgentLoopService, signal: AbortSignal): Promise<void> {
+  await requester.start();
+  const outcome = await requester.requester.generate(
     { content: {}, profile: {}, policy: { retry: { maxAttemptsPerStep: 1 } } },
     { signal },
   );

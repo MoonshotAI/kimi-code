@@ -48,6 +48,31 @@ export interface LlmRunControl {
   readonly onEvent?: (event: LlmRunEvent) => void;
 }
 
+function mergePolicyLists<T>(
+  base: LlmPolicyList<T> | undefined,
+  extra: LlmPolicyList<T> | undefined,
+): LlmPolicyList<T> | undefined {
+  if (base === undefined) return extra;
+  if (extra === undefined) return base;
+  return () => [...listOf(base), ...listOf(extra)];
+}
+
+export function mergeLlmPolicies(base: LlmPolicy | undefined, extra: LlmPolicy | undefined): LlmPolicy | undefined {
+  if (base === undefined) return extra;
+  if (extra === undefined) return base;
+  const retry = base.retry === undefined
+    ? extra.retry
+    : extra.retry === undefined
+      ? base.retry
+      : { ...base.retry, ...extra.retry };
+  return {
+    resolvers: mergePolicyLists(base.resolvers, extra.resolvers),
+    recoveries: mergePolicyLists(base.recoveries, extra.recoveries),
+    retryables: mergePolicyLists(base.retryables, extra.retryables),
+    ...(retry === undefined ? {} : { retry }),
+  };
+}
+
 export interface LlmRequesterExecution {
   readonly recoveries: LlmRecoveryMemory;
 }
@@ -129,12 +154,29 @@ export function llmStartedEvent(request: LlmRequest): LlmRunStarted {
   };
 }
 
+function requestedKindOf(kind: string | undefined): LlmRunRequested['kind'] {
+  if (kind === 'loop' || kind === 'compaction' || kind === 'prediction') return kind;
+  return undefined;
+}
+
 export function llmRequestedEvent(request: LlmRequest, attempt: number): LlmRunRequested {
   const { maxOutputTokens, ...summary } = llmStartedEvent(request);
   const encoder = new TextEncoder();
+  const attributes = request.attributes;
+  const kind = requestedKindOf(attributes?.kind);
+  const turnStep = attributes?.turnId === undefined
+    ? undefined
+    : attributes.step === undefined
+      ? undefined
+      : `${String(attributes.turnId)}.${String(attributes.step)}`;
+  const droppedCount = attributes?.logFields?.['droppedCount'];
   return {
     ...summary,
     type: 'llm.requested',
+    ...(kind === undefined ? {} : { kind }),
+    ...(attributes?.modelAlias === undefined ? {} : { modelAlias: attributes.modelAlias }),
+    ...(turnStep === undefined ? {} : { turnStep }),
+    ...(typeof droppedCount === 'number' ? { droppedCount } : {}),
     maxTokens: typeof maxOutputTokens === 'number' ? maxOutputTokens : undefined,
     systemPromptHash: summary.systemPromptHash ?? sha256Hex(encoder.encode('')),
     toolsHash: summary.toolsHash ?? sha256Hex(encoder.encode('[]')),

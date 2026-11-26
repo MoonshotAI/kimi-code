@@ -116,10 +116,6 @@ export const browserSection = (app: DesktopApp): Locator => app.window.getByRole
 export const addressBar = (app: DesktopApp): Locator => app.window.getByRole('combobox', { name: 'Web address' });
 export const agentBadge = (dialog: Locator): Locator => dialog.getByRole('note', { name: /^Agent / });
 
-export async function tabLabels(app: DesktopApp): Promise<string[]> {
-  return detailPanel(app).getByRole('tab').evaluateAll(tabs => tabs.map(tab => tab.getAttribute('aria-label') ?? ''));
-}
-
 export async function goTo(app: DesktopApp, address: string): Promise<void> {
   const bar = addressBar(app);
   await bar.click();
@@ -128,46 +124,8 @@ export async function goTo(app: DesktopApp, address: string): Promise<void> {
   await bar.blur();
 }
 
-export async function chooseOverlayItem(app: DesktopApp, item: string | RegExp, role: 'menuitem' | 'menuitemradio' = 'menuitem'): Promise<void> {
-  const overlay = await app.overlay();
-  const entry = overlay.getByRole(role, { name: item, exact: true });
-  await expect(entry).toBeVisible();
-  await entry.click();
-}
-
-export async function browserMenu(app: DesktopApp): Promise<Page> {
-  await browserSection(app).getByRole('button', { name: 'Browser menu' }).click();
-  const overlay = await app.overlay();
-  await expect(overlay.getByRole('menu')).toBeVisible();
-  return overlay;
-}
-
 export function pageAt(app: DesktopApp, url: string): Promise<Page> {
   return app.page(current => current === url, url);
-}
-
-export async function stubWebSearch(app: DesktopApp): Promise<void> {
-  await app.electron.evaluate(({ session }) => {
-    const browser = session.fromPartition('persist:kimi-browser');
-    browser.protocol.handle('https', (request) => {
-      const query = new URL(request.url).searchParams.get('q') ?? '';
-      const html = `<!doctype html><html><head><title>Search: ${query.replace(/[<&]/g, '')}</title><style>html,body{background:#fbfaf6;color:#1d232b;font:16px system-ui}</style></head><body><main><h1>Offline search stub</h1></main></body></html>`;
-      return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
-    });
-  });
-}
-
-export async function recordFindResults(app: DesktopApp, url: string): Promise<() => Promise<Array<{ matches: number; active: number }>>> {
-  await app.electron.evaluate(({ webContents }, target) => {
-    const contents = webContents.getAllWebContents().find(entry => entry.getURL() === target);
-    if (contents === undefined) throw new Error(`No web contents at ${target}`);
-    const results: Array<{ matches: number; active: number }> = [];
-    (globalThis as { __kimiE2eFindResults?: unknown }).__kimiE2eFindResults = results;
-    contents.on('found-in-page', (_event, result) => {
-      if (result.finalUpdate) results.push({ matches: result.matches, active: result.activeMatchOrdinal });
-    });
-  }, url);
-  return () => app.electron.evaluate(() => [...((globalThis as { __kimiE2eFindResults?: Array<{ matches: number; active: number }> }).__kimiE2eFindResults ?? [])]);
 }
 
 export interface BrowserToolResult {

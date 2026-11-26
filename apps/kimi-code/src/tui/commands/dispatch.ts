@@ -1,4 +1,4 @@
-import type { Component, Focusable } from '@moonshot-ai/pi-tui';
+import { TuiAltScreen, type Component, type Focusable } from '@moonshot-ai/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type { ReverseRpcModalOwner } from '../reverse-rpc/modal-coordinator';
 
@@ -59,7 +59,7 @@ import { handleReloadCommand, handleReloadTuiCommand } from './reload';
 import type { SkillListSession } from './skills';
 import {
   canRestoreSubmittedInput,
-  resolveUserInput,
+  resolveHostUserInput,
   type SlashCommandIntent,
   slashBusyMessage,
   slashCommandBusyReason,
@@ -207,19 +207,7 @@ export function dispatchInput(
   text: string,
   delivery: FollowUpDelivery = 'default',
 ): void {
-  const { intent, activations } = resolveUserInput({
-    input: text,
-    skillCommandMap: host.skillCommandMap,
-    pluginCommandMap: host.pluginCommandMap,
-    isStreaming: host.state.appState.streamingPhase !== 'idle',
-    isCompacting: host.state.appState.isCompacting,
-    skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
-      ? undefined
-      : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart),
-    defaultSkillPathForCommand: host.defaultSkillPathForCommand === undefined
-      ? undefined
-      : (commandName) => host.defaultSkillPathForCommand!(commandName),
-  });
+  const { intent, activations } = resolveHostUserInput(host, text);
   if (intent.kind === 'skill' || (activations.length > 0 && intent.kind !== 'builtin')) {
     const leading = activations[0];
     if (intent.kind === 'skill' && leading?.args !== undefined && host.state.appState.model.trim().length > 0) {
@@ -373,6 +361,13 @@ async function handleBuiltInSlashCommand(
     case 'help':
       host.showHelpPanel();
       return;
+    case 'find': {
+      if (host.state.ui instanceof TuiAltScreen) {
+        const query = args.trim();
+        host.state.ui.openSearch(query.length > 0 ? query : undefined);
+      }
+      return;
+    }
     case 'version':
       host.showStatus(`Kimi Code v${host.state.appState.version}`);
       return;

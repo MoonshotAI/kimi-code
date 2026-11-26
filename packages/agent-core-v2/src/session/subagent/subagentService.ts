@@ -22,7 +22,7 @@ import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnviro
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import type { Environment } from '#/environment/environment';
 import { IConfigService } from '#/app/config/config';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { type Model } from '#/provider-catalog/model/catalog';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
@@ -50,6 +50,7 @@ import {
   type SubagentSpawnPlan,
   type SubagentSpawnPlanInput,
 } from './spawn';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export class SessionSubagentService extends Service implements ISessionSubagentService {
   declare readonly _serviceBrand: undefined;
@@ -67,7 +68,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IConfigService private readonly configService: IConfigService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IProviderCatalogService private readonly modelCatalog: IProviderCatalogService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ILogService private readonly log: ILogService,
   ) {

@@ -9,7 +9,7 @@ import { scenarioFixtures, type ScenarioFixtures } from './support/scenario';
 
 const test = base.extend<ScenarioFixtures>(scenarioFixtures({ serverVersion: '0.0.0-fixture' }));
 
-test('[L0:kap.replay-recording] records a KAP first turn at visible stream checkpoints, with a second client that subscribes mid-turn', async ({ kap, model }) => {
+test('records a KAP first turn at visible stream checkpoints, with a second client that subscribes mid-turn', async ({ kap, model }) => {
   const socket = await kap.connect();
   const { id } = await kap.createSession();
   const page = () => kap.rest.get<KapTurnsPage>(`/api/v1/sessions/${id}/agents/main/turns`);

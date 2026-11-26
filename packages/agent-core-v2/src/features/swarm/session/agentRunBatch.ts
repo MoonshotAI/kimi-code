@@ -1,4 +1,4 @@
-import { isProviderRateLimitError } from '#/llm-adapter/contract/errors';
+import { isProviderRateLimitError } from '#/provider-catalog/errors';
 import { type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import * as retry from 'retry';
 

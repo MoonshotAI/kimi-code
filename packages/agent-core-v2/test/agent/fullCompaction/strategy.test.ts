@@ -1,7 +1,7 @@
 import { type Message } from '@moonshot-ai/core/llm/message';
 import { describe, expect, it } from 'vitest';
 
-import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import { estimateTokensForMessages } from '#/session/tokenCounting/tokens';
 import { DefaultCompactionStrategy } from '#/agent/fullCompaction/strategy';
 
 describe('DefaultCompactionStrategy', () => {
