@@ -136,6 +136,8 @@ export interface ToolCallReadSnapshot {
   readonly lines: number;
   readonly mediaKind?: 'image' | 'video';
   readonly mediaChip?: string;
+  readonly mediaUrl?: string;
+  readonly errorOutput?: string;
 }
 
 function backgroundFailureMessage(
@@ -1220,7 +1222,13 @@ export class ToolCallComponent extends Container {
       return { toolCallId: this.toolCall.id, filePath, phase: 'pending', lines: 0 };
     }
     if (this.result.is_error === true) {
-      return { toolCallId: this.toolCall.id, filePath, phase: 'failed', lines: 0 };
+      return {
+        toolCallId: this.toolCall.id,
+        filePath,
+        phase: 'failed',
+        lines: 0,
+        errorOutput: this.result.output,
+      };
     }
     const media = parseReadMediaOutput(this.result.output);
     if (media !== null) {
@@ -1231,6 +1239,7 @@ export class ToolCallComponent extends Container {
         lines: 0,
         mediaKind: media.kind,
         mediaChip: formatReadMediaChip(media),
+        mediaUrl: media.url,
       };
     }
     return {

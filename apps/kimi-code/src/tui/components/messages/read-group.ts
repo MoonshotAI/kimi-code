@@ -5,6 +5,7 @@ import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 
 import type { ToolCallComponent, ToolCallReadSnapshot } from './tool-call';
+import { TruncatedOutputComponent } from './tool-renderers/truncated';
 import { TruncatedHeaderLine, type HeaderContent } from './truncated-header-line';
 
 const THROTTLE_MS = 200;
@@ -128,6 +129,16 @@ export class ReadGroupComponent extends Container {
       visibleSnapshots.forEach((snap, idx) => {
         const isLast = idx === visibleSnapshots.length - 1;
         this.bodyContainer.addChild(new Text(this.buildBodyLine(snap, isLast), 0, 0));
+        if (snap.mediaUrl !== undefined) {
+          this.bodyContainer.addChild(new Text(currentTheme.dim(snap.mediaUrl), 5, 0));
+        }
+        if (snap.errorOutput) {
+          this.bodyContainer.addChild(new TruncatedOutputComponent(snap.errorOutput, {
+            expanded: true,
+            isError: true,
+            indent: 5,
+          }));
+        }
       });
     }
 

@@ -32,7 +32,7 @@ import {
   resolvePathAccessPath,
   type WorkspaceConfig,
 } from '#/tool/path-access';
-import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions } from '#/agent/media/file-type';
+import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions, sniffMediaFromMagic } from '#/agent/media/file-type';
 import {
   MAX_IMAGE_DECODE_BYTES,
   compressImageForModel,
@@ -445,7 +445,12 @@ export class ReadTool implements IReadTool {
       }
 
       const fileType = detectFileType(source.name, header, 'media');
-      if (fileType.kind === 'image' || fileType.kind === 'video') {
+      const detection = detectTextEncoding(header);
+      const isUtf16Text = !detection.seemsBinary && detection.encoding !== 'utf-8';
+      if (
+        fileType.kind === 'image' ||
+        (fileType.kind === 'video' && (!isUtf16Text || sniffMediaFromMagic(header) !== null))
+      ) {
         return await this.readMedia(
           source,
           args,
@@ -455,11 +460,10 @@ export class ReadTool implements IReadTool {
         );
       }
 
-      const detection = detectTextEncoding(header);
       let readLines: () => AsyncIterable<string>;
       let detectedEncoding: UtfTextEncoding | undefined;
       let lossyDecoding = false;
-      if (!detection.seemsBinary && detection.encoding !== 'utf-8') {
+      if (isUtf16Text) {
         if (stat.size > TRANSCODE_MAX_BYTES) {
           return {
             isError: true,
