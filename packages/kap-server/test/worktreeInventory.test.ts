@@ -17,7 +17,6 @@ interface WorktreeWire {
   workspace_name?: string;
   branch?: string;
   origin: 'product' | 'external';
-  created_at?: string;
   size_bytes?: number;
   sessions: { id: string; title: string; archived: boolean; busy: boolean }[];
 }
@@ -71,7 +70,6 @@ describe('server-v2 worktree inventory', () => {
       workspace_name: 'inventory',
       branch: session.worktree!.branch,
     });
-    expect(product.created_at).toBeDefined();
     expect(product.size_bytes).toBeGreaterThan(0);
     expect(product.sessions.toSorted((a, b) => a.title.localeCompare(b.title))).toEqual([
       { id: session.id, title: '', archived: false, busy: false },
@@ -235,25 +233,28 @@ describe('server-v2 worktree inventory', () => {
 
   it('keeps the session deletion when the worktree directory cannot be removed', async () => {
     const { workspaceId } = await project('delete-failure');
-    const session = await settledWorktree(workspaceId);
-    const path = session.worktree!.path!;
-    await mkdir(join(path, 'locked'));
-    await writeFile(join(path, 'locked', 'file.txt'), 'x\n');
-    await chmod(join(path, 'locked'), 0o500);
-    try {
-      const deleted = await post<Deletion>(`/sessions/${session.id}:delete`, { remove_worktree: true });
+    const lockedWorktree = async (): Promise<Session> => {
+      const session = await settledWorktree(workspaceId);
+      const locked = join(session.worktree!.path!, 'locked');
+      await mkdir(locked);
+      await writeFile(join(locked, 'file.txt'), 'x\n');
+      await chmod(locked, 0o500);
+      onTestFinished(() => chmod(locked, 0o700).catch(() => undefined));
+      return session;
+    };
 
-      expect(deleted.code).toBe(0);
-      expect(deleted.data.deleted).toBe(true);
-      expect(deleted.data.worktree?.outcome).toBe('failed');
-      expect(deleted.data.worktree?.output).toMatch(/locked|permission|EACCES/i);
-      expect((await get<Session>(`/sessions/${session.id}`)).code).toBe(ErrorCode.SESSION_NOT_FOUND);
-      const direct = await post('/worktrees:remove', { path });
-      expect(direct.code).toBe(ErrorCode.WORKTREE_REMOVE_FAILED);
-      expect(direct.details).toMatchObject({ reason: 'in_use' });
-    } finally {
-      await chmod(join(path, 'locked'), 0o700).catch(() => undefined);
-    }
+    const viaSession = await lockedWorktree();
+    const deleted = await post<Deletion>(`/sessions/${viaSession.id}:delete`, { remove_worktree: true });
+    expect(deleted.code).toBe(0);
+    expect(deleted.data.deleted).toBe(true);
+    expect(deleted.data.worktree?.outcome).toBe('failed');
+    expect(deleted.data.worktree?.output).toMatch(/locked|permission|EACCES/i);
+    expect((await get<Session>(`/sessions/${viaSession.id}`)).code).toBe(ErrorCode.SESSION_NOT_FOUND);
+
+    const direct = await lockedWorktree();
+    const removed = await post('/worktrees:remove', { path: direct.worktree!.path! });
+    expect(removed.code).toBe(ErrorCode.WORKTREE_REMOVE_FAILED);
+    expect(removed.details).toMatchObject({ reason: 'in_use' });
   });
 
   it('recognises a linked worktree directory and the workspace it belongs to', async () => {

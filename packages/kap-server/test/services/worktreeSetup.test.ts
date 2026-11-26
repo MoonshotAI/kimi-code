@@ -10,7 +10,6 @@ import {
   WorktreeCreation,
   abbreviateHome,
   displayCommand,
-  projectDirectoryName,
   type SetupProgress,
 } from '../../src/services/worktrees/worktreeSetup';
 import { createRepoTemplate, git, hangingRemote, type RepoTemplate } from '../helpers/gitRepo';
@@ -49,13 +48,6 @@ describe('worktree setup engine', () => {
     expect(displayCommand('git', ['worktree', 'add', '~/my project/x', "it's"])).toBe(
       `git worktree add '~/my project/x' 'it'\\''s'`,
     );
-  });
-
-  it('turns a workspace name into a directory name', () => {
-    expect(projectDirectoryName('kimi-code')).toBe('kimi-code');
-    expect(projectDirectoryName('  my app: v2/next  ')).toBe('my-app-v2-next');
-    expect(projectDirectoryName('项目 一')).toBe('项目-一');
-    expect(projectDirectoryName('..')).toBe('project');
   });
 
   it('avoids names taken by local branches, remote-tracking branches and directories', async () => {

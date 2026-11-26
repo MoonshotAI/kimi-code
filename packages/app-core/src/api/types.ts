@@ -110,7 +110,7 @@ export interface AppWorktreeSetupRequest {
   useRemote?: boolean;
 }
 
-export type AppWorktreeSetupStepKind = 'fetch' | 'prune' | 'create' | 'changes';
+export type AppWorktreeSetupStepKind = 'fetch' | 'prune' | 'create' | 'changes' | 'include';
 
 export type AppWorktreeSetupStepState = 'pending' | 'running' | 'done' | 'failed' | 'stopped' | 'skipped';
 
@@ -181,7 +181,6 @@ export interface AppWorktree {
   workspaceName?: string;
   branch?: string;
   origin: 'product' | 'external';
-  createdAt?: string;
   sizeBytes?: number;
   sessions: AppWorktreeSessionRef[];
 }

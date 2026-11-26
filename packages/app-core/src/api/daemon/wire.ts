@@ -98,7 +98,7 @@ export interface WireWorktreeSetupRequest {
   use_remote?: boolean;
 }
 
-export type WireWorktreeSetupStepKind = 'fetch' | 'prune' | 'create' | 'changes';
+export type WireWorktreeSetupStepKind = 'fetch' | 'prune' | 'create' | 'changes' | 'include';
 
 export interface WireWorktreeSetupStep {
   kind: WireWorktreeSetupStepKind;
@@ -158,7 +158,6 @@ export interface WireWorktree {
   workspace_name?: string;
   branch?: string;
   origin: 'product' | 'external';
-  created_at?: string;
   size_bytes?: number;
   sessions: WireWorktreeSessionRef[];
 }

@@ -16,7 +16,7 @@ export const worktreeSetupRequestSchema = z.object({
 });
 export type WorktreeSetupRequest = z.infer<typeof worktreeSetupRequestSchema>;
 
-export const worktreeSetupStepKindSchema = z.enum(['fetch', 'prune', 'create', 'changes']);
+export const worktreeSetupStepKindSchema = z.enum(['fetch', 'prune', 'create', 'changes', 'include']);
 export type WorktreeSetupStepKind = z.infer<typeof worktreeSetupStepKindSchema>;
 
 export const worktreeSetupStepStateSchema = z.enum([
@@ -105,7 +105,6 @@ export const worktreeSchema = z.object({
   workspace_name: z.string().min(1).optional(),
   branch: z.string().min(1).optional(),
   origin: z.enum(['product', 'external']),
-  created_at: isoDateTimeSchema.optional(),
   size_bytes: z.number().int().nonnegative().optional(),
   sessions: z.array(worktreeSessionRefSchema),
 });

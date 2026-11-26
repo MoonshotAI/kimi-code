@@ -1,10 +1,13 @@
-import { stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { realpath, stat } from 'node:fs/promises';
 
 import {
   IBootstrapService,
+  IFlagService,
   ISessionIndex,
   IProjectService,
+  IWorktreeService,
+  WORKTREE_FLAG_ENV,
+  WORKTREE_FLAG_ID,
   isError2,
   patchSessionMetadata,
   type Scope,
@@ -34,11 +37,9 @@ import {
 } from './sessionWorktreeState';
 import { WorktreeError, stateInvalid } from './worktreeError';
 import { WorktreeInventory } from './worktreeInventory';
-import { WorktreeRegistry } from './worktreeRegistry';
 import {
   WorktreeCreation,
   plannedRecreationSteps,
-  projectDirectoryName,
   recreateWorktree,
   removeWorktreeArtifacts,
   type CreatedWorktree,
@@ -147,7 +148,6 @@ function withoutPending(stored: StoredSessionWorktree): StoredSessionWorktree {
 }
 
 export class SessionWorktreeService {
-  readonly registry: WorktreeRegistry;
   readonly inventory: WorktreeInventory;
   private readonly runs = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private closed = false;
@@ -156,12 +156,7 @@ export class SessionWorktreeService {
     private readonly core: Scope,
     private readonly options: SessionWorktreeServiceOptions = {},
   ) {
-    this.registry = new WorktreeRegistry(this.worktreesHome);
-    this.inventory = new WorktreeInventory(core, this);
-  }
-
-  get worktreesHome(): string {
-    return join(this.core.accessor.get(IBootstrapService).homeDir, 'worktrees');
+    this.inventory = new WorktreeInventory(core);
   }
 
   private get osHomeDir(): string {
@@ -176,6 +171,12 @@ export class SessionWorktreeService {
     workspace: Pick<Project, 'id' | 'root' | 'name'>,
     request: WorktreeSetupRequest,
   ): Promise<PlannedWorktreeSetup> {
+    if (!this.core.accessor.get(IFlagService).enabled(WORKTREE_FLAG_ID)) {
+      throw new WorktreeError(
+        ErrorCode.WORKTREE_UNSUPPORTED,
+        `worktrees are experimental; set ${WORKTREE_FLAG_ENV}=1 or enable "${WORKTREE_FLAG_ID}" under [experimental] in config.toml`,
+      );
+    }
     if (!(await isRepoRoot(workspace.root))) {
       throw new WorktreeError(
         ErrorCode.WORKTREE_UNSUPPORTED,
@@ -188,9 +189,11 @@ export class SessionWorktreeService {
         `worktree.source_branch: branch ${request.source_branch} does not exist`,
       );
     }
+    const worktreeService = this.core.accessor.get(IWorktreeService);
     const creation = await WorktreeCreation.plan({
       repoRoot: workspace.root,
-      projectDir: join(this.worktreesHome, projectDirectoryName(workspace.name)),
+      copyIncludedFiles: (input, options) => worktreeService.copyIncludedFiles(input, options),
+      projectDir: worktreeService.worktreesDir(await realpath(workspace.root).catch(() => workspace.root)),
       osHomeDir: this.osHomeDir,
       request,
       fetchTimeoutMs: this.options.fetchTimeoutMs,
@@ -283,14 +286,6 @@ export class SessionWorktreeService {
       return;
     }
     const created = outcome.value;
-    const repoRoot = recorder.current.repo_root;
-    await this.registry.add({
-      path: created.path,
-      repo_root: repoRoot,
-      workspace_id: planned.workspaceId,
-      branch: created.branch,
-      created_at: new Date().toISOString(),
-    });
     await recorder.update((stored) => ({
       ...withoutPending(stored),
       path: created.path,
@@ -316,7 +311,6 @@ export class SessionWorktreeService {
       meta.environmentCwd === created.path ? { environmentCwd: undefined } : undefined,
     ).catch(() => undefined);
     await removeWorktreeArtifacts(recorder.current.repo_root, created, true);
-    await this.registry.remove(created.path).catch(() => undefined);
     const step = recorder.steps.find((candidate) => candidate.kind === 'create');
     if (step !== undefined) {
       step.state = 'failed';
@@ -523,7 +517,6 @@ export class SessionWorktreeService {
   }
 
   private recordBranch(sessionId: string, path: string, branch: string): void {
-    void this.registry.setBranch(path, branch).catch(() => undefined);
     void patchSessionMetadata(this.core.accessor, sessionId, (meta) => {
       const current = storedSessionWorktree(meta.custom);
       if (current === undefined || current.path !== path || current.branch === branch) return undefined;

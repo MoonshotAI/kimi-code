@@ -93,6 +93,15 @@ export default {
       stopped: '已终止带入本地改动',
       skipped: '已跳过带入本地改动',
     },
+    include: {
+      pending: '复制 .worktreeinclude 列出的文件',
+      running: '正在复制 .worktreeinclude 列出的文件',
+      done: '已复制 .worktreeinclude 列出的文件',
+      failed: '复制 .worktreeinclude 列出的文件失败',
+      timedOut: '复制 .worktreeinclude 列出的文件失败',
+      stopped: '已终止复制 .worktreeinclude 列出的文件',
+      skipped: '已跳过复制 .worktreeinclude 列出的文件',
+    },
   },
   card: {
     fetchFailedTitle: '拉取远端失败',

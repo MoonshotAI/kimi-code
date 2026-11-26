@@ -2694,7 +2694,8 @@
                                       "fetch",
                                       "prune",
                                       "create",
-                                      "changes"
+                                      "changes",
+                                      "include"
                                     ],
                                     "type": "string"
                                   },
@@ -2732,7 +2733,8 @@
                                 "fetch",
                                 "prune",
                                 "create",
-                                "changes"
+                                "changes",
+                                "include"
                               ],
                               "type": "string"
                             }

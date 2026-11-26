@@ -8,6 +8,7 @@ import {
   IAgentEnvironmentService,
   IAgentLoopService,
   IProjectTrust,
+  IWorktreeService,
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
@@ -104,9 +105,8 @@ describe('server-v2 session worktrees', () => {
     expect(worktree.setup.commands_ran).toBe(1);
     expect(worktree.setup.ended_at).toBeDefined();
     expect(worktree.branch).toMatch(/^kimi\/\d{4}-[0-9a-f]{4}$/);
-    expect(worktree.path).toBe(
-      join(fixture.home, 'worktrees', 'local-create', worktree.branch!.slice('kimi/'.length)),
-    );
+    const worktreeService = fixture.server.core.accessor.get(IWorktreeService);
+    expect(worktree.path).toBe(join(worktreeService.worktreesDir(root), worktree.branch!.slice('kimi/'.length)));
     expect(worktree.base).toEqual({ ref: 'main', remote: false, commit: git(root, 'rev-parse', 'main') });
     expect(worktree.included_local_changes).toBe(false);
     expect(worktree.missing).toBeUndefined();
@@ -140,14 +140,31 @@ describe('server-v2 session worktrees', () => {
 
     const listed = await get<{ items: Session[] }>(`/sessions?workspace_id=${workspaceId}`);
     expect(listed.data.items.find((item) => item.id === created.id)?.worktree?.path).toBe(worktree.path);
-    const registry = JSON.parse(await readFile(join(fixture.home, 'worktrees', 'registry.json'), 'utf-8')) as {
-      worktrees: { path: string; branch: string; workspace_id: string; repo_root: string }[];
-    };
-    expect(registry.worktrees.find((entry) => entry.path === worktree.path)).toMatchObject({
+    expect((await worktreeService.list(root)).worktrees.find((entry) => entry.path === worktree.path)).toMatchObject({
       branch: worktree.branch,
-      workspace_id: workspaceId,
-      repo_root: root,
+      managed: true,
+      missing: false,
     });
+  });
+
+  it('copies the ignored files listed in .worktreeinclude into the new worktree', async () => {
+    const { root, workspaceId } = await project('include-files');
+    await writeFile(join(root, '.gitignore'), '.env\nbuild/\n');
+    await writeFile(join(root, '.worktreeinclude'), '.env\n');
+    commitAll(root, 'ignore local files');
+    await writeFile(join(root, '.env'), 'TOKEN=local\n');
+    await mkdir(join(root, 'build'));
+    await writeFile(join(root, 'build', 'out.js'), 'built\n');
+
+    const created = await createWorktreeSession(workspaceId);
+    expect(created.worktree?.setup.steps.map((step) => step.kind)).toEqual(['create', 'include']);
+    const ready = await settled(created.id);
+    const path = ready.worktree!.path!;
+
+    expect(ready.worktree!.setup.status).toBe('ready');
+    expect(ready.worktree!.setup.steps.at(-1)).toEqual({ kind: 'include', state: 'done' });
+    expect(await readFile(join(path, '.env'), 'utf-8')).toBe('TOKEN=local\n');
+    expect(existsSync(join(path, 'build'))).toBe(false);
   });
 
   it('starts from the freshly fetched remote branch without moving the local branch', async () => {

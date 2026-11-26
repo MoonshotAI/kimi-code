@@ -94,6 +94,15 @@ export default {
       stopped: 'Stopped including local changes',
       skipped: 'Skipped including local changes',
     },
+    include: {
+      pending: 'Copy files listed in .worktreeinclude',
+      running: 'Copying files listed in .worktreeinclude',
+      done: 'Files listed in .worktreeinclude copied',
+      failed: 'Failed to copy files listed in .worktreeinclude',
+      timedOut: 'Failed to copy files listed in .worktreeinclude',
+      stopped: 'Stopped copying files listed in .worktreeinclude',
+      skipped: 'Skipped copying files listed in .worktreeinclude',
+    },
   },
   card: {
     fetchFailedTitle: 'Remote fetch failed',

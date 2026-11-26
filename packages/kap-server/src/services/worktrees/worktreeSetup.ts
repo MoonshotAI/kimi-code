@@ -65,15 +65,6 @@ export function displayCommand(program: string, args: readonly string[]): string
   return [program, ...args].map(quoteArg).join(' ');
 }
 
-export function projectDirectoryName(name: string): string {
-  const cleaned = name
-    .normalize('NFC')
-    .replaceAll(/[\\/:*?"<>|\s\p{Cc}]+/gu, '-')
-    .replaceAll(/^[-.]+|[-.]+$/g, '')
-    .slice(0, 64);
-  return cleaned.length === 0 ? 'project' : cleaned;
-}
-
 export function randomBranchSuffix(): string {
   return randomBytes(2).toString('hex');
 }
@@ -142,8 +133,16 @@ export async function removeWorktreeArtifacts(
   if (deleteBranch) await runGit(repoRoot, ['branch', '-D', target.branch]);
 }
 
+export type CopyIncludedFiles = (
+  input: { readonly sourceRoot: string; readonly worktreePath: string },
+  options: { readonly signal?: AbortSignal },
+) => Promise<readonly string[]>;
+
+export const WORKTREE_INCLUDE_FILE = '.worktreeinclude';
+
 export interface WorktreeCreationOptions {
   readonly repoRoot: string;
+  readonly copyIncludedFiles?: CopyIncludedFiles;
   readonly projectDir: string;
   readonly osHomeDir: string;
   readonly request: WorktreeSetupRequest;
@@ -158,6 +157,7 @@ export class WorktreeCreation {
     readonly target: WorktreeTarget,
     private readonly remote: RemoteBranchRef | undefined,
     private readonly includeChanges: boolean,
+    private readonly copyIncludes: CopyIncludedFiles | undefined,
   ) {}
 
   static async plan(options: WorktreeCreationOptions): Promise<WorktreeCreation> {
@@ -173,7 +173,11 @@ export class WorktreeCreation {
       (options.now ?? (() => new Date()))(),
       (options.randomSuffix ?? randomBranchSuffix)(),
     );
-    return new WorktreeCreation(options, target, remote, dirty);
+    const copyIncludes =
+      options.copyIncludedFiles !== undefined && existsSync(join(repoRoot, WORKTREE_INCLUDE_FILE))
+        ? options.copyIncludedFiles
+        : undefined;
+    return new WorktreeCreation(options, target, remote, dirty, copyIncludes);
   }
 
   private fetchArgs(remote: RemoteBranchRef): string[] {
@@ -204,6 +208,7 @@ export class WorktreeCreation {
     const start = this.remote?.ref ?? this.options.request.source_branch;
     steps.push({ kind: 'create', state: 'pending', ref: start, command: this.createCommand(start) });
     if (this.includeChanges) steps.push({ kind: 'changes', state: 'pending' });
+    if (this.copyIncludes !== undefined) steps.push({ kind: 'include', state: 'pending' });
     return steps;
   }
 
@@ -214,9 +219,10 @@ export class WorktreeCreation {
     const created = await this.create(progress, signal, base);
     if (created.kind !== 'done') return created;
     const changes = await this.applyChanges(progress, signal, base);
-    if (changes.kind !== 'done') {
+    const included = changes.kind === 'done' ? await this.copyIncludedFiles(progress, signal) : changes;
+    if (included.kind !== 'done') {
       await removeWorktreeArtifacts(this.options.repoRoot, this.target, true);
-      return changes;
+      return included;
     }
     return {
       kind: 'done',
@@ -310,6 +316,25 @@ export class WorktreeCreation {
       step: 'create',
       failure: { kind: isDiskFull(result) ? 'disk_full' : 'create_failed' },
     };
+  }
+
+  private async copyIncludedFiles(progress: SetupProgress, signal: AbortSignal): Promise<StepOutcome<void>> {
+    const copy = this.copyIncludes;
+    if (copy === undefined) return { kind: 'done', value: undefined };
+    setStep(progress, 'include', { state: 'running', output: undefined });
+    try {
+      await copy({ sourceRoot: this.options.repoRoot, worktreePath: this.target.path }, { signal });
+    } catch (error) {
+      if (signal.aborted) {
+        setStep(progress, 'include', { state: 'stopped' });
+        return { kind: 'stopped', step: 'include' };
+      }
+      const output = error instanceof Error ? error.message : String(error);
+      setStep(progress, 'include', { state: 'failed', output });
+      return { kind: 'failed', step: 'include', failure: { kind: 'create_failed' } };
+    }
+    setStep(progress, 'include', { state: 'done', output: undefined });
+    return { kind: 'done', value: undefined };
   }
 
   private async applyChanges(

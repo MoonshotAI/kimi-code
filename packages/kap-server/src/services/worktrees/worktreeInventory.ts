@@ -1,11 +1,14 @@
-import { lstat, readdir, realpath, rm, stat } from 'node:fs/promises';
+import { lstat, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 import {
+  ErrorCodes,
   ISessionActivityView,
   ISessionIndex,
   IProjectService,
+  IWorktreeService,
   getLiveSessionById,
+  isError2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import type { Project } from '@moonshot-ai/agent-core-v2/app/project/project';
@@ -19,10 +22,9 @@ import type {
   WorktreeRemoveFailedDetails,
 } from '../../protocol/rest-worktree';
 import type { Worktree, WorktreeSessionRef } from '../../protocol/worktree';
-import { gitText, runCommand, runGit } from './command';
+import { gitText, runCommand } from './command';
 import { headBranch, listWorktrees } from './gitRefs';
 import { publishSessionUpdated } from './sessionUpdates';
-import type { SessionWorktreeService } from './sessionWorktreeService';
 import { forgetWorktreeFacts, storedSessionWorktree } from './sessionWorktreeState';
 import { WorktreeError } from './worktreeError';
 
@@ -32,14 +34,13 @@ interface KnownWorktree {
   readonly repoRoot: string;
   readonly branch?: string;
   readonly origin: Worktree['origin'];
-  readonly createdAt?: string;
   readonly workspace?: Project;
   readonly exists: boolean;
 }
 
 type SessionsByDirectory = ReadonlyMap<string, readonly WorktreeSessionRef[]>;
 
-const IN_USE_CODES: ReadonlySet<string> = new Set(['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY']);
+const IN_USE_OUTPUT = /resource busy|being used by another process|permission denied|directory not empty/i;
 const DU_TIMEOUT_MS = 10 * 60_000;
 
 async function canonical(path: string): Promise<string> {
@@ -81,63 +82,38 @@ export class WorktreeInventory {
   private readonly sizes = new Map<string, number>();
   private readonly sizing = new Map<string, Promise<void>>();
 
-  constructor(
-    private readonly core: Scope,
-    private readonly sessionWorktrees: SessionWorktreeService,
-  ) {}
+  constructor(private readonly core: Scope) {}
 
   private async known(): Promise<readonly KnownWorktree[]> {
-    const workspaces = await this.core.accessor.get(IProjectService).list();
-    const workspaceByRoot = new Map<string, Project>();
-    for (const workspace of workspaces) {
-      const key = await canonical(workspace.root);
-      if (!workspaceByRoot.has(key)) workspaceByRoot.set(key, workspace);
+    const projects = await this.core.accessor.get(IProjectService).list();
+    const projectByRoot = new Map<string, Project>();
+    for (const project of projects) {
+      const key = await canonical(project.root);
+      if (!projectByRoot.has(key)) projectByRoot.set(key, project);
     }
-    const linked = new Map<string, KnownWorktree>();
-    const scannedRepos = new Set<string>();
-    const scan = async (directory: string): Promise<void> => {
-      const worktrees = await listWorktrees(directory);
-      const main = worktrees[0];
-      if (main === undefined) return;
-      const repoRoot = await canonical(main.path);
-      if (scannedRepos.has(repoRoot)) return;
-      scannedRepos.add(repoRoot);
-      for (const worktree of worktrees.slice(1)) {
+    const service = this.core.accessor.get(IWorktreeService);
+    const listings = await Promise.all(
+      [...projectByRoot.keys()].map((root) => service.list(root).catch(() => undefined)),
+    );
+    const found = new Map<string, KnownWorktree>();
+    const scanned = new Set<string>();
+    for (const listing of listings) {
+      if (listing === undefined || scanned.has(listing.repoRoot)) continue;
+      scanned.add(listing.repoRoot);
+      for (const worktree of listing.worktrees) {
         const key = await canonical(worktree.path);
-        linked.set(key, {
+        found.set(key, {
           path: worktree.path,
           key,
-          repoRoot,
+          repoRoot: listing.repoRoot,
           branch: worktree.branch,
-          origin: 'external',
-          workspace: workspaceByRoot.get(repoRoot),
-          exists: await isDirectory(worktree.path),
+          origin: worktree.managed ? 'product' : 'external',
+          workspace: projectByRoot.get(listing.repoRoot),
+          exists: !worktree.missing,
         });
       }
-    };
-    for (const root of workspaceByRoot.keys()) await scan(root);
-    const registered = await this.sessionWorktrees.registry.list();
-    for (const entry of registered) {
-      if (!scannedRepos.has(await canonical(entry.repo_root))) await scan(entry.repo_root);
     }
-    for (const entry of registered) {
-      const key = await canonical(entry.path);
-      const found = linked.get(key);
-      const repoRoot = found?.repoRoot ?? (await canonical(entry.repo_root));
-      linked.set(key, {
-        path: entry.path,
-        key,
-        repoRoot,
-        branch: found?.branch ?? entry.branch,
-        origin: 'product',
-        createdAt: entry.created_at,
-        workspace:
-          workspaces.find((workspace) => workspace.id === entry.workspace_id) ??
-          workspaceByRoot.get(repoRoot),
-        exists: found?.exists ?? (await isDirectory(entry.path)),
-      });
-    }
-    return [...linked.values()];
+    return [...found.values()];
   }
 
   private async find(path: string): Promise<KnownWorktree> {
@@ -210,7 +186,6 @@ export class WorktreeInventory {
         workspace_name: worktree.workspace?.name,
         branch: worktree.branch,
         origin: worktree.origin,
-        created_at: worktree.createdAt,
         size_bytes: this.sizes.get(worktree.key),
         sessions: [...(sessions.get(worktree.key) ?? [])],
       }))
@@ -241,22 +216,25 @@ export class WorktreeInventory {
         };
         continue;
       }
-      const [status, unpushed, branch] = await Promise.all([
-        runGit(worktree.path, ['status', '--porcelain', '--untracked-files=all']),
-        gitText(worktree.path, ['rev-list', '--count', 'HEAD', '--not', '--remotes']),
-        headBranch(worktree.path),
-      ]);
-      if (status.exitCode !== 0) {
-        errors[path] = { code: ErrorCode.FS_GIT_UNAVAILABLE, msg: status.output.trim() };
-        continue;
+      const refs = sessions.get(key) ?? [];
+      try {
+        const check = await this.core.accessor.get(IWorktreeService).inspectRemoval({
+          repoRoot: worktree.repoRoot,
+          path: worktree.path,
+          deleteBranch: true,
+          excludeSessionIds: refs.map((ref) => ref.id),
+        });
+        const openElsewhere = new Set(check.openSessionIds);
+        items.push({
+          path,
+          branch: check.branch,
+          uncommitted_files: check.uncommittedFiles,
+          unpushed_commits: check.uniqueCommits,
+          sessions: refs.map((ref) => (openElsewhere.has(ref.id) ? { ...ref, busy: true } : ref)),
+        });
+      } catch (error) {
+        errors[path] = { code: ErrorCode.FS_GIT_UNAVAILABLE, msg: errorMessage(error) };
       }
-      items.push({
-        path,
-        branch,
-        uncommitted_files: status.stdout.split('\n').filter((line) => line.length > 0).length,
-        unpushed_commits: Number.parseInt(unpushed ?? '0', 10) || 0,
-        sessions: [...(sessions.get(key) ?? [])],
-      });
     }
     return { items, errors };
   }
@@ -267,37 +245,35 @@ export class WorktreeInventory {
     if (sessions.some((session) => session.busy)) {
       throw removeFailed(path, 'session_busy', 'a session that uses this worktree is running');
     }
-    const branchDeleted = await this.discard(worktree, deleteBranch);
+    const branchDeleted = await this.discard(
+      worktree,
+      deleteBranch,
+      sessions.map((session) => session.id),
+    );
     for (const session of sessions) publishSessionUpdated(this.core, session.id);
     return { removed: true, branch_deleted: branchDeleted };
   }
 
-  private async discard(worktree: KnownWorktree, deleteBranch: boolean): Promise<boolean> {
-    const branch = worktree.exists
-      ? ((await headBranch(worktree.path)) ?? worktree.branch)
-      : worktree.branch;
-    if (worktree.exists) {
-      const removed = await runGit(worktree.repoRoot, ['worktree', 'remove', '--force', worktree.path]);
-      if (removed.exitCode !== 0 || (await isDirectory(worktree.path))) {
-        try {
-          await rm(worktree.path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-        } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code ?? '';
-          throw removeFailed(
-            worktree.path,
-            IN_USE_CODES.has(code) ? 'in_use' : 'unknown',
-            `${removed.output}${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      }
+  private async discard(
+    worktree: KnownWorktree,
+    deleteBranch: boolean,
+    sessionIds: readonly string[],
+  ): Promise<boolean> {
+    try {
+      await this.core.accessor.get(IWorktreeService).remove({
+        repoRoot: worktree.repoRoot,
+        path: worktree.path,
+        deleteBranch,
+        discard: 'all',
+        force: true,
+        excludeSessionIds: sessionIds,
+      });
+    } catch (error) {
+      throw removalError(worktree.path, error);
     }
-    await runGit(worktree.repoRoot, ['worktree', 'prune']);
-    await this.sessionWorktrees.registry.remove(worktree.path);
     this.sizes.delete(worktree.key);
-    forgetWorktreeFacts({ repo_root: worktree.repoRoot, path: worktree.path, branch });
-    if (!deleteBranch || branch === undefined) return false;
-    const deleted = await runGit(worktree.repoRoot, ['branch', '-D', branch]);
-    return deleted.exitCode === 0;
+    forgetWorktreeFacts({ repo_root: worktree.repoRoot, path: worktree.path, branch: worktree.branch });
+    return deleteBranch && worktree.branch !== undefined;
   }
 
   async removeAfterSessionDeletion(
@@ -310,7 +286,7 @@ export class WorktreeInventory {
     const others = (await this.sessionsByDirectory()).get(key) ?? [];
     if (others.length > 0) return { outcome: 'kept_in_use', other_sessions: others.length };
     try {
-      const branchDeleted = await this.discard(worktree, deleteBranch);
+      const branchDeleted = await this.discard(worktree, deleteBranch, []);
       return { outcome: worktree.exists ? 'removed' : 'missing', branch_deleted: branchDeleted };
     } catch (error) {
       const details = error instanceof WorktreeError ? (error.details as WorktreeRemoveFailedDetails) : undefined;
@@ -362,6 +338,26 @@ export class WorktreeInventory {
     const root = await canonical(top);
     return root === (await canonical(path)) ? undefined : root;
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function removalError(path: string, error: unknown): WorktreeError {
+  if (!isError2(error)) return removeFailed(path, 'unknown', errorMessage(error));
+  if (error.code === ErrorCodes.WORKTREE_IN_USE) {
+    return removeFailed(path, 'session_busy', 'a session that uses this worktree is open in another window or in the CLI');
+  }
+  if (error.code === ErrorCodes.WORKTREE_NOT_FOUND) {
+    return new WorktreeError(ErrorCode.WORKTREE_NOT_FOUND, error.message);
+  }
+  if (error.code === ErrorCodes.WORKTREE_DISABLED) {
+    return new WorktreeError(ErrorCode.WORKTREE_UNSUPPORTED, error.message);
+  }
+  const stderr = error.details?.['stderr'];
+  const output = typeof stderr === 'string' && stderr.length > 0 ? stderr : error.message;
+  return removeFailed(path, IN_USE_OUTPUT.test(output) ? 'in_use' : 'unknown', output);
 }
 
 function removeFailed(

@@ -231,7 +231,6 @@ export function toAppWorktree(wire: WireWorktree): AppWorktree {
     workspaceName: wire.workspace_name,
     branch: wire.branch,
     origin: wire.origin,
-    createdAt: wire.created_at,
     sizeBytes: wire.size_bytes,
     sessions: (wire.sessions ?? []).map(toAppWorktreeSessionRef),
   };
