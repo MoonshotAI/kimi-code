@@ -302,6 +302,7 @@ describe('projectHistoryToSessionUpdates replays what the user saw', () => {
           { type: 'function', id: 'r2', name: 'Read', arguments: '{"path":"/elsewhere/b.txt"}' },
           { type: 'function', id: 'b1', name: 'Bash', arguments: '{"command":"cat notes/a.txt"}' },
           { type: 'function', id: 'r3', name: 'Read', arguments: '{"path":"~/notes/c.txt"}' },
+          { type: 'function', id: 'r4', name: 'Read', arguments: '{"path":"kimi-file://abc"}' },
         ],
       },
     ];
@@ -311,8 +312,8 @@ describe('projectHistoryToSessionUpdates replays what the user saw', () => {
         .map((u) => (u.update as { locations?: unknown }).locations);
 
     const cwd = resolve('/work');
-    expect(locations(cwd)).toEqual([[{ path: resolve(cwd, 'notes/a.txt') }], [{ path: '/elsewhere/b.txt' }], undefined, undefined]);
-    expect(locations()).toEqual([undefined, [{ path: '/elsewhere/b.txt' }], undefined, undefined]);
+    expect(locations(cwd)).toEqual([[{ path: resolve(cwd, 'notes/a.txt') }], [{ path: '/elsewhere/b.txt' }], undefined, undefined, undefined]);
+    expect(locations()).toEqual([undefined, [{ path: '/elsewhere/b.txt' }], undefined, undefined, undefined]);
   });
 
   it('locates a file tool call from the display it recorded, as the live card does', () => {

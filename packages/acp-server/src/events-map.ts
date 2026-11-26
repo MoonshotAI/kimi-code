@@ -11,6 +11,7 @@ import {
   type ToolCallLocation,
   type ToolKind,
 } from '@agentclientprotocol/sdk';
+import { isDaemonFileUrl } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
   AssistantDeltaEvent,
@@ -144,7 +145,11 @@ export function toolCallLocations(
       : undefined;
   const requested = argsPath(name, args);
   const argsLocation =
-    requested === undefined || cwd === undefined || isAbsolute(requested) || requested.startsWith('~')
+    requested === undefined ||
+    cwd === undefined ||
+    isAbsolute(requested) ||
+    requested.startsWith('~') ||
+    isDaemonFileUrl(requested)
       ? requested
       : resolve(cwd, requested);
   const path = [displayPath, argsLocation].find(
