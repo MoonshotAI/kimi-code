@@ -30,6 +30,6 @@ export {
   type SessionFolderInfoRow,
   type SessionInfoRefreshError,
 } from './sessionInfo';
-export { useNewSessionEnvironmentStore, newSessionEnvironmentStore, type NewSessionEnvironmentView, type WorkspaceBranchesState } from './newSessionEnvironment';
+export { useNewSessionEnvironmentStore, newSessionEnvironmentStore, type NewSessionEnvironmentHost, type NewSessionEnvironmentView, type WorkspaceBranchesState } from './newSessionEnvironment';
 export { useWorktreesStore, worktreesStore, type WorktreeRemovalItem, type WorktreeRemovalRequest, type WorktreeRemovalState, type WorktreeSessionRemovalFailure } from './worktrees';
 export { usePinnedOrderStore, pinnedOrderStore } from './pinnedOrder';

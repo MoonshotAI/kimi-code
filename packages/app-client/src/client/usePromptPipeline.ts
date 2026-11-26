@@ -32,10 +32,10 @@ import { sideChatDrafts } from './sideChatDrafts';
 import { submitWithNetworkRetry } from './submitRetry';
 import type { ChatGateVerdict } from '../lib/chatGate';
 import { track } from '../contracts';
+import { useNewSessionEnvironment } from '../composables/useNewSessionEnvironment';
 import { modeStore } from '../stores/mode';
 import { modelsStore } from '../stores/models';
 import { modelSwitchConfirmStore } from '../stores/modelSwitchConfirm';
-import { newSessionEnvironmentStore } from '../stores/newSessionEnvironment';
 import { permissionsStore } from '../stores/permissions';
 import { chainSteer, isCurrentSteerChain, promptStore } from '../stores/prompt';
 import { sessionListStore } from '../stores/sessionList';
@@ -238,7 +238,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     opts?: { local?: boolean },
   ): Promise<{ session: AppSession; workspaceId: string | undefined }> {
     const api = getKimiWebApi();
-    const worktree = opts?.local === true ? undefined : newSessionEnvironmentStore().worktreeRequest(ws.id);
+    const worktree = opts?.local === true ? undefined : useNewSessionEnvironment().worktreeRequest(ws.id);
     const request = worktree === undefined ? { cwd: ws.root, model } : { cwd: ws.root, model, worktree };
     const workspaceId = ws.id === ws.root ? undefined : ws.id;
     const rootIsListed = workspacesStore().workspaces.some((w) => w.id === ws.id);
@@ -257,7 +257,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
         isDaemonApiError(err) &&
         (err.code === VALIDATION_FAILED_CODE || err.code === WORKTREE_UNSUPPORTED_CODE)
       ) {
-        void newSessionEnvironmentStore().refreshBranches(ws.id);
+        void useNewSessionEnvironment().refreshBranches(ws.id);
       }
       throw err;
     }

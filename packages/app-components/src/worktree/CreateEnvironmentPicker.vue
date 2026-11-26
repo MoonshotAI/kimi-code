@@ -2,9 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { NewSessionEnvironment } from '@moonshot-ai/app-core/lib';
-import { toastWithManage } from '@moonshot-ai/app-client/composables';
+import { toastWithManage, useNewSessionEnvironment } from '@moonshot-ai/app-client/composables';
 import { formatWorktreeSize } from '@moonshot-ai/app-client/lib';
-import { newSessionEnvironmentStore, worktreesStore } from '@moonshot-ai/app-client/stores';
+import { worktreesStore } from '@moonshot-ai/app-client/stores';
 import { Icon, Spinner, menuNavigationIndex } from '@moonshot-ai/app-ui';
 import CreatePicker from './CreatePicker.vue';
 
@@ -22,7 +22,7 @@ interface EnvironmentOption {
 }
 
 const { t } = useI18n();
-const store = newSessionEnvironmentStore();
+const store = useNewSessionEnvironment();
 
 const view = computed(() => store.view(props.workspaceId));
 

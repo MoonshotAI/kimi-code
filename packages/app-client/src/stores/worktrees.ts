@@ -18,7 +18,6 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { getKimiWebApi } from '../client/deps';
 import { clientPinia } from './pinia';
-import { sessionsStore } from './sessions';
 
 export type WorktreeRemovalState = 'waiting' | 'deleting' | 'deleted' | 'failed';
 
@@ -200,7 +199,6 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
           const result = await getKimiWebApi().removeWorktree({ path: next.path, deleteBranch: next.deleteBranch });
           patchRemoval(next.path, { state: 'deleted', branchDeleted: result.branchDeleted });
           forgetWorktree(next.path);
-          markSessionsMissing(next.path, result.branchDeleted);
           removedAny = true;
         } catch (error) {
           const failure = worktreeRemoveFailure(error);
@@ -250,26 +248,6 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
 
   function removalFor(path: string): WorktreeRemovalItem | undefined {
     return removals.value.find((item) => item.path === path);
-  }
-
-  function markSessionsMissing(path: string, branchDeleted: boolean): void {
-    const sessions = sessionsStore();
-    for (const session of sessions.sessions) {
-      const worktree = session.worktree;
-      if (worktree === undefined || worktree.path !== path || worktree.setup.status === 'local') continue;
-      sessions.updateSession(session.id, (current) =>
-        current.worktree === undefined
-          ? current
-          : {
-              ...current,
-              worktree: {
-                ...current.worktree,
-                missing: true,
-                branchMissing: branchDeleted ? true : current.worktree.branchMissing,
-              },
-            },
-      );
-    }
   }
 
   function dismissRemovals(paths: readonly string[], states: readonly WorktreeRemovalState[] = ['deleted', 'failed']): void {

@@ -5,6 +5,7 @@ import type { AppWorkspace, WorkspaceGitBranches } from '@moonshot-ai/app-core/a
 import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { configStore } from '../src/stores/config';
+import { clientNewSessionEnvironmentHost } from '../src/composables/useNewSessionEnvironment';
 import { useNewSessionEnvironmentStore } from '../src/stores/newSessionEnvironment';
 import { workspacesStore } from '../src/stores/workspaces';
 import { memoryStorage } from '../src/testing/worktreeFixtures';
@@ -30,7 +31,9 @@ function repo(overrides: Partial<WorkspaceGitBranches> = {}): WorkspaceGitBranch
 }
 
 function freshStore() {
-  return useNewSessionEnvironmentStore(createPinia());
+  const store = useNewSessionEnvironmentStore(createPinia());
+  store.bindHost(clientNewSessionEnvironmentHost);
+  return store;
 }
 
 let storage: Map<string, string>;

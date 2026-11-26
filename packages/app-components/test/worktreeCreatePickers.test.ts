@@ -5,8 +5,8 @@ import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey, type ToastOptions } from '@moonshot-ai/app-ui';
 import type { AppWorkspace, WorkspaceGitBranches } from '@moonshot-ai/app-core/api';
 import { onToast, resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
-import { registerWorktreeSettingsOpener } from '@moonshot-ai/app-client/composables';
-import { configStore, newSessionEnvironmentStore, workspacesStore, worktreesStore } from '@moonshot-ai/app-client/stores';
+import { registerWorktreeSettingsOpener, useNewSessionEnvironment } from '@moonshot-ai/app-client/composables';
+import { configStore, workspacesStore, worktreesStore } from '@moonshot-ai/app-client/stores';
 import { memoryStorage } from '@moonshot-ai/app-client/testing';
 import CreateEnvironmentPicker from '../src/worktree/CreateEnvironmentPicker.vue';
 import CreateSourceBranchPicker from '../src/worktree/CreateSourceBranchPicker.vue';
@@ -68,7 +68,7 @@ async function settle(): Promise<void> {
 }
 
 function setBranches(workspaceId: string, info: WorkspaceGitBranches): void {
-  const store = newSessionEnvironmentStore();
+  const store = useNewSessionEnvironment();
   store.branchesByWorkspace = { ...store.branchesByWorkspace, [workspaceId]: { status: 'ready', info } };
 }
 
@@ -88,7 +88,7 @@ beforeEach(() => {
   setKimiClientDeps({ api: () => api as never, t: (key, params) => i18n.global.t(key, params ?? {}) });
   configStore().experimentalFlags = { worktree: true };
   workspacesStore().workspaces = [workspace('ws1'), workspace('ws2'), workspace('remote', { hostId: 'h1' })];
-  newSessionEnvironmentStore().reset();
+  useNewSessionEnvironment().reset();
   worktreesStore().reset();
   toasts = [];
   stopToasts = onToast((event) => {
@@ -125,7 +125,7 @@ describe('CreateEnvironmentPicker', () => {
     expect(worktreeRow().querySelector('.ui-spinner')).not.toBeNull();
     expect(worktreeRow().querySelector('.wce-row-desc')?.textContent).toBe('Create an independent Worktree for this session');
     worktreeRow().click();
-    expect(newSessionEnvironmentStore().preferred).toBe('local');
+    expect(useNewSessionEnvironment().preferred).toBe('local');
 
     branches.resolve(repo);
     await settle();
@@ -134,7 +134,7 @@ describe('CreateEnvironmentPicker', () => {
 
     worktreeRow().click();
     await settle();
-    expect(newSessionEnvironmentStore().preferred).toBe('worktree');
+    expect(useNewSessionEnvironment().preferred).toBe('worktree');
     expect(q('.wce')?.dataset.environment).toBe('worktree');
     expect(q('.wce-panel')).toBeNull();
   });
@@ -143,7 +143,7 @@ describe('CreateEnvironmentPicker', () => {
     const plain = { isRepo: false, dirty: false, remotes: [], branches: [] };
     setBranches('ws1', plain);
     api.getWorkspaceGitBranches.mockResolvedValue(plain);
-    newSessionEnvironmentStore().selectEnvironment('worktree');
+    useNewSessionEnvironment().selectEnvironment('worktree');
     mount(CreateEnvironmentPicker, { workspaceId: 'ws1' });
     await nextTick();
 
@@ -188,7 +188,7 @@ describe('CreateEnvironmentPicker', () => {
     expect(q('.wce-row[data-option="worktree"]')?.classList.contains('active')).toBe(true);
     pressKey(panel, 'Enter');
     await settle();
-    expect(newSessionEnvironmentStore().preferred).toBe('worktree');
+    expect(useNewSessionEnvironment().preferred).toBe('worktree');
     expect(q('.wce-panel')).toBeNull();
 
     q('.wce-chip')!.click();
@@ -196,7 +196,7 @@ describe('CreateEnvironmentPicker', () => {
     pressKey(document.body, 'Escape');
     await nextTick();
     expect(q('.wce-panel')).toBeNull();
-    expect(newSessionEnvironmentStore().preferred).toBe('worktree');
+    expect(useNewSessionEnvironment().preferred).toBe('worktree');
   });
 
   it('reminds about disk usage for 8 seconds with a Manage action after choosing Worktree', async () => {
@@ -225,7 +225,7 @@ describe('CreateSourceBranchPicker', () => {
   async function mountOpen(info: WorkspaceGitBranches = repo): Promise<void> {
     setBranches('ws1', info);
     api.getWorkspaceGitBranches.mockResolvedValue(info);
-    newSessionEnvironmentStore().selectEnvironment('worktree');
+    useNewSessionEnvironment().selectEnvironment('worktree');
     mount(CreateSourceBranchPicker, { workspaceId: 'ws1' });
     await settle();
     q('.wsb-chip')!.click();
@@ -238,7 +238,7 @@ describe('CreateSourceBranchPicker', () => {
     await nextTick();
     expect(q('.wsb')).toBeNull();
 
-    newSessionEnvironmentStore().selectEnvironment('worktree');
+    useNewSessionEnvironment().selectEnvironment('worktree');
     await settle();
     expect(q('.wsb-chip-name')?.textContent).toBe('main');
     expect(q('.wsb-chip .wsb-glyph')?.dataset.glyph).toBe('worktree-branch');
@@ -311,7 +311,7 @@ describe('CreateSourceBranchPicker', () => {
     expect(q('.wsb-panel')).not.toBeNull();
     expect(q('.wsb-row.on')?.dataset.row).toBe('local');
     expect(q('.wsb-chip .wsb-glyph')?.classList.contains('has-dot')).toBe(true);
-    expect(newSessionEnvironmentStore().worktreeRequest('ws1')).toMatchObject({ sourceBranch: 'main', includeLocalChanges: true });
+    expect(useNewSessionEnvironment().worktreeRequest('ws1')).toMatchObject({ sourceBranch: 'main', includeLocalChanges: true });
   });
 
   it('filters while typing and reports no matches', async () => {
@@ -371,7 +371,7 @@ describe('CreateSourceBranchPicker', () => {
     expect(q('.wsb-panel')).not.toBeNull();
     expect(q('[data-foot="remote"] .ui-switch')?.getAttribute('aria-checked')).toBe('true');
     expect(q('.wsb-chip .wsb-glyph')?.dataset.glyph).toBe('git-branch-cloud');
-    expect(newSessionEnvironmentStore().worktreeRequest('ws1')).toMatchObject({ sourceBranch: 'main', useRemote: true });
+    expect(useNewSessionEnvironment().worktreeRequest('ws1')).toMatchObject({ sourceBranch: 'main', useRemote: true });
   });
 
   it('replaces the toggle with a note for a branch that has no remote', async () => {
@@ -411,7 +411,7 @@ describe('CreateSourceBranchPicker', () => {
     vi.useFakeTimers();
     try {
       setBranches('ws1', repo);
-      const store = newSessionEnvironmentStore();
+      const store = useNewSessionEnvironment();
       store.selectEnvironment('worktree');
       store.selectSource('ws1', { branch: 'main', includeLocalChanges: true });
       store.setUseRemote('ws1', true);

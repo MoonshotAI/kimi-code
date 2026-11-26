@@ -9,7 +9,7 @@ import { appSession, sessionWorktree as worktree } from '../src/testing/worktree
 import { configStore } from '../src/stores/config';
 import { modelsStore } from '../src/stores/models';
 import { modeStore } from '../src/stores/mode';
-import { newSessionEnvironmentStore } from '../src/stores/newSessionEnvironment';
+import { useNewSessionEnvironment } from '../src/composables/useNewSessionEnvironment';
 import { permissionsStore } from '../src/stores/permissions';
 import { promptStore } from '../src/stores/prompt';
 import { sessionsStore } from '../src/stores/sessions';
@@ -50,7 +50,7 @@ function resetStores(): void {
   prompt.heldFirstPromptBySession = {};
   prompt.forgetPromptState(SID);
   prompt.setDraftEntry('newChat');
-  newSessionEnvironmentStore().reset();
+  useNewSessionEnvironment().reset();
   warningsStore().resetWarnings();
 }
 
@@ -143,8 +143,8 @@ async function createRig(options: { worktree?: boolean } = {}) {
   store.storedActiveWorkspaceId = 'workspace';
 
   if (options.worktree !== false) {
-    newSessionEnvironmentStore().selectEnvironment('worktree');
-    await newSessionEnvironmentStore().ensureBranches('workspace');
+    useNewSessionEnvironment().selectEnvironment('worktree');
+    await useNewSessionEnvironment().ensureBranches('workspace');
   }
 
   return { api, modelProvider, ws: createWorkspaceRig(rawState as never, deps as never) };
@@ -339,7 +339,7 @@ describe('worktree first-prompt hold', () => {
 
   it('surfaces a rejected source branch as an error, holds nothing and restores the default branch', async () => {
     const { api, ws } = await createRig();
-    const environment = newSessionEnvironmentStore();
+    const environment = useNewSessionEnvironment();
     api.getWorkspaceGitBranches.mockResolvedValueOnce({
       ...BRANCHES,
       branches: [...BRANCHES.branches, { name: 'gone', committedAt: '2026-11-17T00:00:00.000Z' }],
@@ -365,7 +365,7 @@ describe('worktree first-prompt hold', () => {
 
   it('stops offering Worktree after the server says the project cannot have one', async () => {
     const { api, ws } = await createRig();
-    const environment = newSessionEnvironmentStore();
+    const environment = useNewSessionEnvironment();
     api.createSession.mockRejectedValueOnce(
       new DaemonApiError({ code: 40938, msg: 'workspace root is not a repository root', requestId: 'r1' }),
     );

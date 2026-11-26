@@ -1,4 +1,4 @@
-import { ref, watch } from 'vue';
+import { ref, shallowRef, watch } from 'vue';
 import { defineStore } from 'pinia';
 
 import type {
@@ -20,9 +20,7 @@ import {
   type WorktreeSourceSelection,
 } from '@moonshot-ai/app-core/lib';
 import { getKimiWebApi } from '../client/deps';
-import { configStore } from './config';
 import { clientPinia } from './pinia';
-import { workspacesStore } from './workspaces';
 
 export interface WorkspaceBranchesState {
   status: 'loading' | 'ready' | 'failed';
@@ -63,7 +61,20 @@ function acceptSource(value: unknown): WorktreeSourcePreference | undefined {
     : { branch: candidate.branch };
 }
 
+export interface NewSessionEnvironmentHost {
+  readonly worktreeEnabled: () => boolean;
+  readonly workspace: (workspaceId: string) => { readonly hostId?: string } | undefined;
+  readonly activeWorkspaceId: () => string | null;
+}
+
+const detachedHost: NewSessionEnvironmentHost = {
+  worktreeEnabled: () => false,
+  workspace: () => undefined,
+  activeWorkspaceId: () => null,
+};
+
 export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnvironment', () => {
+  const host = shallowRef<NewSessionEnvironmentHost>(detachedHost);
   const preferred = ref<NewSessionEnvironment>('local');
   const branchesByWorkspace = ref<Record<string, WorkspaceBranchesState>>({});
   const sourceByWorkspace = ref<Record<string, WorktreeSourcePreference>>(
@@ -75,12 +86,16 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
   const requestSeqByWorkspace = new Map<string, number>();
   const inFlightByWorkspace = new Map<string, Promise<void>>();
 
+  function bindHost(next: NewSessionEnvironmentHost): void {
+    if (host.value !== next) host.value = next;
+  }
+
   function workspaceOf(workspaceId: string) {
-    return workspacesStore().mergedWorkspaces.find((workspace) => workspace.id === workspaceId);
+    return host.value.workspace(workspaceId);
   }
 
   function worktreeEnabled(): boolean {
-    return configStore().experimentalFlags?.['worktree'] === true;
+    return host.value.worktreeEnabled();
   }
 
   function supportsWorktree(workspaceId: string): boolean {
@@ -208,7 +223,7 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
   }
 
   watch(
-    () => (preferred.value === 'worktree' ? workspacesStore().activeWorkspaceId : null),
+    () => (preferred.value === 'worktree' ? host.value.activeWorkspaceId() : null),
     (workspaceId) => void ensureBranches(workspaceId),
   );
 
@@ -226,6 +241,7 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
     branchesByWorkspace,
     sourceByWorkspace,
     useRemoteByWorkspace,
+    bindHost,
     selectEnvironment,
     ensureBranches,
     refreshBranches,

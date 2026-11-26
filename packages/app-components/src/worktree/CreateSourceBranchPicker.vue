@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { newSessionEnvironmentStore } from '@moonshot-ai/app-client/stores';
+import { useNewSessionEnvironment } from '@moonshot-ai/app-client/composables';
 import { Icon, MenuItem, MenuSearch, Switch, menuNavigationIndex, useImeComposition } from '@moonshot-ai/app-ui';
 import CreatePicker from './CreatePicker.vue';
 
@@ -21,7 +21,7 @@ const HOVER_DELAY_MS = 150;
 const PANEL_WIDTH_PX = 320;
 
 const { t } = useI18n();
-const store = newSessionEnvironmentStore();
+const store = useNewSessionEnvironment();
 
 const view = computed(() => store.view(props.workspaceId));
 const selection = computed(() => view.value.selection);

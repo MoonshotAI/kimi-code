@@ -6,7 +6,8 @@ import { IconResolverKey } from '@moonshot-ai/app-ui';
 import type { AppHost, AppWorkspace, WorkspaceGitBranches } from '@moonshot-ai/app-core/api';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import { ModelDisplayKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
-import { configStore, hostsStore, newSessionEnvironmentStore, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { configStore, hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { useNewSessionEnvironment } from '@moonshot-ai/app-client/composables';
 
 const mockWorkspacesView = ref<WorkspaceView[]>([]);
 const mockActiveWorkspaceId = ref<string | null>(null);
@@ -112,7 +113,7 @@ beforeEach(() => {
   mockTrustReadPending.value = false;
   configStore().experimentalFlags = { worktree: true };
   workspacesStore().workspaces = [];
-  newSessionEnvironmentStore().reset();
+  useNewSessionEnvironment().reset();
   hostsStore().byId = {};
   hostsStore().loaded = true;
   hostsStore().connecting = {};
@@ -266,7 +267,7 @@ describe.each([['desktop', DesktopConversationPane]])('%s ConversationPane proje
 describe('desktop ConversationPane worktree create flow', () => {
   it('places the Environment button right of the project selector and the branch button after it', async () => {
     showLocalProject();
-    const store = newSessionEnvironmentStore();
+    const store = useNewSessionEnvironment();
     store.branchesByWorkspace = { 'ws-local': { status: 'ready', info: repo } };
 
     const { el } = mountPane(DesktopConversationPane);

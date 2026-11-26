@@ -13,6 +13,7 @@ import {
   type WorktreeRemovalProgress,
   type WorktreeRemovalProgressItem,
 } from '../lib/worktreeManage';
+import { sessionsStore } from '../stores/sessions';
 import { worktreesStore } from '../stores/worktrees';
 import { registerConfirmSurface } from './useConfirmDialog';
 import {
@@ -159,6 +160,26 @@ function settleBatch(batch: RemovalBatch): void {
   dropBatch(batch.id);
 }
 
+function markSessionsMissing(path: string, branchDeleted: boolean): void {
+  const sessions = sessionsStore();
+  for (const session of sessions.sessions) {
+    const worktree = session.worktree;
+    if (worktree === undefined || worktree.path !== path || worktree.setup.status === 'local') continue;
+    sessions.updateSession(session.id, (current) =>
+      current.worktree === undefined
+        ? current
+        : {
+            ...current,
+            worktree: {
+              ...current.worktree,
+              missing: true,
+              branchMissing: branchDeleted ? true : current.worktree.branchMissing,
+            },
+          },
+    );
+  }
+}
+
 function syncBatches(): void {
   const store = worktreesStore();
   for (const batch of batches.value) {
@@ -166,6 +187,9 @@ function syncBatches(): void {
     batch.items = batch.items.map((item) => {
       const removal = store.removalFor(item.path);
       if (removal === undefined) return item;
+      if (item.state !== 'deleted' && removal.state === 'deleted') {
+        markSessionsMissing(item.path, removal.branchDeleted === true);
+      }
       return { ...item, state: removal.state, branchDeleted: removal.branchDeleted };
     });
     if (batch.items.every((item) => item.state === 'deleted' || item.state === 'failed')) settleBatch(batch);

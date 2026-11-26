@@ -118,13 +118,13 @@ describe('useKimiWebClient worktree session', () => {
     setKimiClientDeps({ api: () => api as KimiWebApi, t: (key) => key });
 
     const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
-    const { newSessionEnvironmentStore } = await import('../src/stores/newSessionEnvironment');
+    const { useNewSessionEnvironment } = await import('../src/composables/useNewSessionEnvironment');
     const { promptStore } = await import('../src/stores/prompt');
     const { workspacesStore } = await import('../src/stores/workspaces');
     const client = useKimiWebClient();
     await client.load();
-    newSessionEnvironmentStore().selectEnvironment('worktree');
-    await newSessionEnvironmentStore().ensureBranches('workspace-1');
+    useNewSessionEnvironment().selectEnvironment('worktree');
+    await useNewSessionEnvironment().ensureBranches('workspace-1');
 
     const started = await client.startSessionAndSendPrompt('workspace-1', client.createPromptEnvelope({ text: 'hello' }));
 
