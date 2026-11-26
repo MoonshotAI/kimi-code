@@ -6,7 +6,7 @@ import { Markdown } from '@moonshot-ai/app-markdown';
 import { Tooltip } from '@moonshot-ai/app-ui';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
-import { toolGlyph, toolLabel } from '@moonshot-ai/app-components';
+import { toolGlyph, toolLabel } from '../../lib/toolMeta';
 import OutputPanel from './OutputPanel.vue';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';

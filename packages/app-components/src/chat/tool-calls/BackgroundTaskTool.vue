@@ -8,7 +8,7 @@ import {
   parseTaskStopResult,
   type TaskFields,
 } from '@moonshot-ai/app-core/lib';
-import { str } from '@moonshot-ai/app-components';
+import { str } from './toolArgs';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import OutputPanel from './OutputPanel.vue';
