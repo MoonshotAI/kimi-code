@@ -222,8 +222,21 @@ describe('prompt cache ledger', () => {
     await ask({ messages: [...task, { role: 'assistant', content: 'Counting src.' }, { role: 'user', content: 'src has 4 files.' }], role: 'subagent', step: 'tool_results' });
     await ask({ messages: [...task, { role: 'assistant', content: 'Counting test.' }, { role: 'user', content: 'test has 2 files.' }], role: 'subagent', step: 'tool_results' });
 
-    expect(model.promptCache().map((entry) => entry.baseline)).toEqual([undefined, undefined, 1, 1]);
+    expect(model.promptCache().map((entry) => entry.baseline)).toEqual([undefined, undefined, 1, 0]);
     expect(problemsOf(model)).toEqual([]);
+  });
+
+  it("compares a subagent's third step with its second, so an earlier step cannot hide a rewrite", async () => {
+    const model = fakeModel();
+    const ask = openai(model);
+    const task: ChatCompletionMessageParam[] = [SYSTEM, { role: 'user', content: 'Count the files.' }];
+
+    await ask({ messages: task, role: 'subagent' });
+    await ask({ messages: [...task, { role: 'assistant', content: 'Counting src.' }, { role: 'user', content: 'src has 4 files.' }], role: 'subagent', step: 'tool_results' });
+    await ask({ messages: [...task, { role: 'assistant', content: 'Counting test.' }, { role: 'user', content: 'test has 2 files.' }], role: 'subagent', step: 'tool_results' });
+
+    expect(model.promptCache().map((entry) => entry.baseline)).toEqual([undefined, 0, 1]);
+    expect(problemsOf(model)).toEqual([expect.stringContaining('request #2 (every request) does not extend request #1')]);
   });
 
   it("accepts a declared break in a subagent's own history", async () => {

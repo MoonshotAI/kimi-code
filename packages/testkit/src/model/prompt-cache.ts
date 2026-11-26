@@ -154,6 +154,7 @@ export class PromptCacheLedger {
   }
 
   private compare(): readonly Comparison[] {
+    const continued = new Set<Observation>();
     return this.observations.map((observation, position) => {
       const role = observation.source.role;
       if (role === 'side') return { observation };
@@ -161,8 +162,10 @@ export class PromptCacheLedger {
       const pool = this.observations.slice(0, position).filter((earlier) => !earlier.rejected && sameThread(earlier, thread));
       if (role === 'subagent') {
         if (observation.source.continues !== true) return { observation };
-        const own = previousStepOf(observation, pool);
-        return own === undefined ? { observation } : { observation, baseline: own.source.request, break: breakBetween(own.segments, observation.segments) };
+        const own = previousStepOf(observation, pool, continued);
+        if (own === undefined) return { observation };
+        if (!observation.rejected) continued.add(own);
+        return { observation, baseline: own.source.request, break: breakBetween(own.segments, observation.segments) };
       }
       const baseline = pool.findLast((earlier) => earlier.source.role === 'main');
       if (baseline === undefined) return { observation };
@@ -213,10 +216,14 @@ function sameThread(observation: Observation, thread: Thread): boolean {
   return observation.source.protocol === thread.protocol && observation.cacheKey === thread.cacheKey && observation.model === thread.model;
 }
 
-function previousStepOf(observation: Observation, pool: readonly Observation[]): Observation | undefined {
+function previousStepOf(observation: Observation, pool: readonly Observation[], continued: ReadonlySet<Observation>): Observation | undefined {
   const candidates = pool.filter((earlier) => earlier.source.role === 'subagent' && earlier.source.agent === observation.source.agent);
-  const extended = candidates.findLast((earlier) => breakBetween(earlier.segments, observation.segments) === undefined);
-  if (extended !== undefined) return extended;
+  const heads = candidates.filter((earlier) => !continued.has(earlier));
+  const extended = heads.findLast((earlier) => breakBetween(earlier.segments, observation.segments) === undefined);
+  return extended ?? mostSharedHistory(observation, heads) ?? mostSharedHistory(observation, candidates);
+}
+
+function mostSharedHistory(observation: Observation, candidates: readonly Observation[]): Observation | undefined {
   const history = observation.segments.filter((segment) => segment.region === 'messages');
   let best: Observation | undefined;
   let bestShared = 0;
