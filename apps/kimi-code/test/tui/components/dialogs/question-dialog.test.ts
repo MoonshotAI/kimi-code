@@ -1,6 +1,7 @@
-import { CURSOR_MARKER } from '@moonshot-ai/pi-tui';
+import { CURSOR_MARKER, TuiAltScreen } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import chalk from 'chalk';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
   QuestionDialogComponent,
@@ -592,4 +593,104 @@ describe('QuestionDialogComponent', () => {
     });
   });
 
+  it('supports fullscreen mouse clicks on tabs, single/multi options, inline Other caret positioning, and Submit', async () => {
+    let now = 60_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const pending = makePending([
+      {
+        header: 'Mode',
+        question: 'Choose mode?',
+        multi_select: false,
+        options: [
+          { label: 'Fast', description: 'Quick run' },
+          { label: 'Thorough', description: 'Deep check' },
+        ],
+      },
+      {
+        header: 'Extras',
+        question: 'Select extras?',
+        multi_select: true,
+        other_label: 'Custom',
+        options: [{ label: 'Logs' }, { label: 'Metrics' }],
+      },
+    ]);
+    const { dialog, collected } = makeDialog(pending, undefined, {
+      layout: { maxBodyRows: 10 },
+    });
+    const vt = new VirtualTerminal(90, 22);
+    const ui = new TuiAltScreen(vt);
+    ui.setLayoutRoot(dialog);
+    ui.start();
+    ui.setFocus(dialog);
+    await vt.waitForRender();
+    try {
+      now += 500;
+      let screen = vt.getViewport().map(strip);
+      const thoroughDescRow = screen.findIndex((line) => line.includes('Deep check'));
+      expect(thoroughDescRow).toBeGreaterThan(0);
+
+      vt.sendInput(`\u001B[<0;12;${String(thoroughDescRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;12;${String(thoroughDescRow + 1)}m`);
+      await vt.waitForRender();
+
+      screen = vt.getViewport().map(strip);
+      expect(screen.join('\n')).toContain('Select extras?');
+      const logsRow = screen.findIndex((line) => line.includes('Logs'));
+      vt.sendInput(`\u001B[<0;10;${String(logsRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(logsRow + 1)}m`);
+      await vt.waitForRender();
+
+      screen = vt.getViewport().map(strip);
+      const customRow = screen.findIndex((line) => line.includes('Custom'));
+      vt.sendInput(`\u001B[<0;10;${String(customRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(customRow + 1)}m`);
+      await vt.waitForRender();
+
+      vt.sendInput('a');
+      vt.sendInput('c');
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      const metricsRow = screen.findIndex((line) => line.includes('Metrics'));
+      vt.sendInput(`\u001B[<0;10;${String(metricsRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(metricsRow + 1)}m`);
+      await vt.waitForRender();
+      vt.sendInput(' ');
+      await vt.waitForRender();
+
+      screen = vt.getViewport().map(strip);
+      const customAgainRow = screen.findIndex((line) => line.includes('Custom'));
+      vt.sendInput(`\u001B[<0;10;${String(customAgainRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(customAgainRow + 1)}m`);
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      const editingRow = screen.findIndex((line) => line.includes('Custom: ac'));
+      expect(editingRow).toBeGreaterThan(0);
+      const cCol = screen[editingRow]!.indexOf('Custom: ac') + 'Custom: a'.length + 1;
+      vt.sendInput(`\u001B[<0;${String(cCol)};${String(editingRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(cCol)};${String(editingRow + 1)}m`);
+      await vt.waitForRender();
+      vt.sendInput('b');
+      vt.sendInput('\r');
+      await vt.waitForRender();
+
+      screen = vt.getViewport().map(strip);
+      const tabRow = screen.findIndex((line) => line.includes('Mode') && line.includes('Submit'));
+      const submitTabCol = screen[tabRow]!.indexOf('Submit') + 2;
+      vt.sendInput(`\u001B[<0;${String(submitTabCol)};${String(tabRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(submitTabCol)};${String(tabRow + 1)}m`);
+      await vt.waitForRender();
+
+      screen = vt.getViewport().map(strip);
+      const submitActionRow = screen.findIndex((line) => line.includes('[1] Submit'));
+      expect(submitActionRow).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<0;10;${String(submitActionRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(submitActionRow + 1)}m`);
+      await vt.waitForRender();
+
+      expect(collected).toEqual([['Thorough', 'Logs, abc']]);
+    } finally {
+      ui.stop();
+      vi.restoreAllMocks();
+    }
+  });
 });

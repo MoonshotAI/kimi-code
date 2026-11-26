@@ -1,5 +1,6 @@
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
-import { visibleWidth } from '@moonshot-ai/pi-tui';
+import { ScrollView, Text, TuiAltScreen, visibleWidth, VStack } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
@@ -568,5 +569,79 @@ describe('ModelSelectorComponent overrides', () => {
     expect(out).toContain('Low');
     expect(out).toContain('High');
     expect(out).not.toContain('Max');
+  });
+
+  it('supports fullscreen wheel scrolling, footer thinking segment clicks, and Alt+click session-only model selection', async () => {
+    let now = 40_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const onSelect = vi.fn();
+    const onSessionOnlySelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        m1: effortModel('Model One', ['low', 'high'], 'low'),
+        m2: effortModel('Model Two', ['low', 'high'], 'low'),
+        m3: effortModel('Model Three', ['low', 'high'], 'low'),
+        m4: effortModel('Model Four', ['low', 'high'], 'low'),
+        m5: effortModel('Model Five', ['low', 'high'], 'low'),
+      },
+      currentValue: 'm1',
+      currentThinkingEffort: 'low',
+      layout: { maxBodyRows: 3 },
+      onSelect,
+      onSessionOnlySelect,
+      onCancel: vi.fn(),
+    });
+    const transcript = new ScrollView(
+      new Text(Array.from({ length: 12 }, (_, i) => `chat-${String(i + 1)}`).join('\n'), 0, 0),
+      { follow: 'end', primary: true },
+    );
+    const vt = new VirtualTerminal(90, 20);
+    const ui = new TuiAltScreen(vt);
+    ui.setLayoutRoot(
+      new VStack([
+        { component: transcript, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+        { component: picker, shrink: 1, minSize: 3 },
+      ]),
+    );
+    ui.start();
+    ui.setFocus(picker);
+    await vt.waitForRender();
+    try {
+      now += 500;
+      let screen = vt.getViewport().map(strip);
+      const segRow = screen.findIndex((line) => line.includes('[ Low ]') && line.includes('High'));
+      expect(segRow).toBeGreaterThan(0);
+      const highCol = screen[segRow]!.indexOf('High') + 1;
+
+      vt.sendInput(`\u001B[<0;${String(highCol)};${String(segRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(highCol)};${String(segRow + 1)}m`);
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(screen[segRow]).toContain('[ High ]');
+
+      const m1Row = screen.findIndex((line) => line.includes('Model One'));
+      vt.sendInput(`\u001B[<0;10;${String(m1Row + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(m1Row + 1)}m`);
+      await vt.waitForRender();
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith({ alias: 'm1', thinking: 'high' });
+
+      const initialTop = transcript.scrollTop;
+      for (let i = 0; i < 8; i++) {
+        vt.sendInput(`\u001B[<65;10;${String(m1Row + 1)}M`);
+      }
+      await vt.waitForRender();
+      expect(transcript.scrollTop).toBe(initialTop);
+
+      screen = vt.getViewport().map(strip);
+      const m5Row = screen.findIndex((line) => line.includes('Model Five'));
+      expect(m5Row).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<8;10;${String(m5Row + 1)}M`);
+      vt.sendInput(`\u001B[<8;10;${String(m5Row + 1)}m`);
+      await vt.waitForRender();
+      expect(onSessionOnlySelect).toHaveBeenCalledExactlyOnceWith({ alias: 'm5', thinking: 'low' });
+    } finally {
+      ui.stop();
+      vi.restoreAllMocks();
+    }
   });
 });

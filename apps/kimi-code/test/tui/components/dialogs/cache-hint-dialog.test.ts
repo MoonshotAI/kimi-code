@@ -1,3 +1,5 @@
+import { TuiAltScreen } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CacheHintDialogComponent } from '#/tui/components/dialogs/cache-hint-dialog';
@@ -83,5 +85,49 @@ describe('CacheHintDialogComponent', () => {
     dialog.handleInput('\u001B');
     expect(onCancel).toHaveBeenCalled();
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('guards unfocused first click, cancels dragged presses, and activates clicked option rows in fullscreen', async () => {
+    let now = 10_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const onSelect = vi.fn();
+    const dialog = new CacheHintDialogComponent({
+      idleSeconds: 7200,
+      totalTokens: 120_000,
+      onSelect,
+      onCancel: vi.fn(),
+    });
+    const vt = new VirtualTerminal(100, 14);
+    const ui = new TuiAltScreen(vt);
+    ui.setLayoutRoot(dialog);
+    ui.start();
+    await vt.waitForRender();
+    try {
+      const screen = vt.getViewport().map(strip);
+      const newRow = screen.findIndex((line) => line.includes('Start a new session'));
+      expect(newRow).toBeGreaterThan(0);
+
+      now += 500;
+      vt.sendInput(`\u001B[<0;10;${String(newRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(newRow + 1)}m`);
+      await vt.waitForRender();
+      expect(dialog.focused).toBe(true);
+      expect(onSelect).not.toHaveBeenCalled();
+
+      vt.sendInput(`\u001B[<0;10;${String(newRow + 1)}M`);
+      vt.sendInput(`\u001B[<32;10;${String(newRow + 2)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(newRow + 2)}m`);
+      await vt.waitForRender();
+      expect(onSelect).not.toHaveBeenCalled();
+
+      const descCol = screen[newRow]!.indexOf('zero context cost') + 2;
+      vt.sendInput(`\u001B[<0;${String(descCol)};${String(newRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(descCol)};${String(newRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith('new');
+    } finally {
+      ui.stop();
+      vi.restoreAllMocks();
+    }
   });
 });

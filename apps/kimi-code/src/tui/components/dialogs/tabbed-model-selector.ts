@@ -1,14 +1,17 @@
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import {
-  Container,
   Key,
   matchesKey,
   truncateToWidth,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
+import { DockSection, type DockLayout, type DockPart } from '#/tui/components/chrome/dock-section';
 import { currentTheme } from '#/tui/theme';
-import { renderTabStrip } from '#/tui/utils/tab-strip';
+import { focusOnUnfocusedMouse, handleSegmentedMouse } from '#/tui/utils/dialog-mouse';
+import { layoutTabStrip, type TabStripHitRange } from '#/tui/utils/tab-strip';
 
 import {
   ModelSelectorComponent,
@@ -27,6 +30,7 @@ export interface TabbedModelSelectorOptions {
   readonly currentThinkingEffort: string;
   readonly title?: string;
   readonly initialTabId?: string;
+  readonly layout?: DockLayout;
   readonly warning?: string;
   readonly thinkingControl?: boolean;
   readonly effortDescriptions?: Readonly<Record<string, string>>;
@@ -41,15 +45,16 @@ interface ModelTab {
   readonly selector: ModelSelectorComponent;
 }
 
-export class TabbedModelSelectorComponent extends Container implements Focusable {
-  focused = false;
-  private readonly opts: TabbedModelSelectorOptions;
+export class TabbedModelSelectorComponent extends DockSection implements Focusable {
+  private _focused = false;
   private readonly tabs: readonly ModelTab[];
   private activeIndex: number;
+  private readonly shownAt = Date.now();
+  private tabStripRow = -1;
+  private tabHitRanges: readonly TabStripHitRange[] = [];
 
   constructor(opts: TabbedModelSelectorOptions) {
-    super();
-    this.opts = opts;
+    super(opts.layout);
     this.tabs = buildTabs(opts);
 
     const initialTabIdx = opts.initialTabId
@@ -57,42 +62,103 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
       : -1;
     this.activeIndex = Math.max(initialTabIdx, 0);
     this.syncFocusToActive();
+    this.ensureActiveSelectionVisible();
+  }
+
+  get focused(): boolean {
+    return this._focused;
+  }
+
+  set focused(value: boolean) {
+    this._focused = value;
+    this.syncFocusToActive();
   }
 
   handleInput(data: string): void {
     if (this.tabs.length > 1) {
       if (matchesKey(data, Key.tab)) {
-        this.activeIndex = (this.activeIndex + 1) % this.tabs.length;
-        this.syncFocusToActive();
+        this.switchToTab((this.activeIndex + 1) % this.tabs.length);
         return;
       }
       if (matchesKey(data, Key.shift('tab'))) {
-        this.activeIndex = (this.activeIndex - 1 + this.tabs.length) % this.tabs.length;
-        this.syncFocusToActive();
+        this.switchToTab((this.activeIndex - 1 + this.tabs.length) % this.tabs.length);
         return;
       }
     }
-    this.tabs[this.activeIndex]?.selector.handleInput(data);
+    const active = this.tabs[this.activeIndex];
+    if (active === undefined) return;
+    active.selector.handleInput(data);
+    this.ensureActiveSelectionVisible();
   }
 
-  override render(width: number): string[] {
+  protected override handlePartMouse(
+    part: DockPart,
+    event: TuiMouseEvent,
+  ): TuiMouseEventResult | undefined {
+    if (!this.focused) return focusOnUnfocusedMouse(event);
+    const active = this.tabs[this.activeIndex];
+    if (active === undefined) return undefined;
+
+    if (this.layout === undefined && event.type === 'wheel') {
+      return active.selector.handleWheelPaging(event);
+    }
+
+    if (part === 'head') {
+      if (this.tabs.length <= 1) return undefined;
+      return handleSegmentedMouse({
+        event,
+        focused: this.focused,
+        shownAt: this.shownAt,
+        row: this.tabStripRow,
+        regions: this.tabHitRanges,
+        select: (index) => {
+          if (index === this.activeIndex) return false;
+          this.switchToTab(index);
+          return true;
+        },
+      });
+    }
+
+    if (part === 'body') {
+      return active.selector.handleBodyMouse(event, this.focused, this.shownAt);
+    }
+
+    if (part === 'foot') {
+      return active.selector.handleFootMouse(event, this.focused, this.shownAt);
+    }
+
+    return undefined;
+  }
+
+  protected renderPart(part: DockPart, width: number): string[] {
     const active = this.tabs[this.activeIndex];
     if (active === undefined) return [];
-    const inner = active.selector.render(width);
-    if (this.tabs.length <= 1) {
-      return inner.map((line) => truncateToWidth(line, width));
+    const unpaged = this.layout !== undefined;
+
+    switch (part) {
+      case 'head': {
+        if (this.tabs.length <= 1) {
+          this.tabStripRow = -1;
+          this.tabHitRanges = [];
+          return active.selector.renderHeadLines(width);
+        }
+        const strip = layoutTabStrip({
+          labels: this.tabs.map((tab) => tab.label),
+          activeIndex: this.activeIndex,
+          width,
+          colors: currentTheme.palette,
+        });
+        const baseHead = active.selector.renderHeadLines(width, [strip.line, '']);
+        const stripIdx = baseHead.findIndex((line) => line === truncateToWidth(strip.line, width));
+        this.tabStripRow = stripIdx;
+        this.tabHitRanges = strip.hitRanges;
+        return baseHead;
+      }
+      case 'body':
+        return active.selector.renderBodyLines(width, unpaged);
+      case 'foot':
+        return active.selector.renderFootLines(width, unpaged);
     }
-    const stripLine = renderTabStrip({
-      labels: this.tabs.map((tab) => tab.label),
-      activeIndex: this.activeIndex,
-      width,
-      colors: currentTheme.palette,
-    });
-    const headerEnd = inner.findIndex((line) => line === '');
-    const splitAt = headerEnd === -1 ? 3 : headerEnd;
-    const out: string[] = [...inner.slice(0, splitAt + 1), stripLine, ''];
-    for (let i = splitAt + 1; i < inner.length; i++) out.push(inner[i]!);
-    return out.map((line) => truncateToWidth(line, width));
   }
 
   override invalidate(): void {
@@ -102,10 +168,24 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
     }
   }
 
+  private switchToTab(nextIndex: number): void {
+    this.activeIndex = nextIndex;
+    this.syncFocusToActive();
+    this.scrollBodyToTop();
+    this.ensureActiveSelectionVisible();
+  }
+
+  private ensureActiveSelectionVisible(): void {
+    const active = this.tabs[this.activeIndex];
+    if (active === undefined) return;
+    const idx = active.selector.selectedRowIndex();
+    this.ensureBodyVisible(idx, idx + 1);
+  }
+
   private syncFocusToActive(): void {
     for (let i = 0; i < this.tabs.length; i++) {
       const tab = this.tabs[i]!;
-      tab.selector.focused = this.focused && i === this.activeIndex;
+      tab.selector.focused = this._focused && i === this.activeIndex;
     }
   }
 }

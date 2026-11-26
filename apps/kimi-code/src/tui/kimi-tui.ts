@@ -142,7 +142,7 @@ import {
   SHUTTING_DOWN_HINT,
 } from './constant/kimi-tui';
 import { MEDIA_INGESTION_SUBMIT_WAIT_MS } from './constant/media';
-import { CHROME_GUTTER, DETACH_HINT_TEXT, DOCK_APPROVAL_ROWS, DOCK_SESSION_PICKER_ROWS } from './constant/rendering';
+import { CHROME_GUTTER, DETACH_HINT_TEXT, DOCK_APPROVAL_ROWS, DOCK_QUESTION_ROWS, DOCK_SESSION_PICKER_ROWS } from './constant/rendering';
 import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
 import { AuthFlowController } from './controllers/auth-flow';
 import { BtwPanelController } from './controllers/btw-panel';
@@ -5531,6 +5531,10 @@ export class KimiTUI {
         this.toggleToolOutputExpansion();
       },
       {
+        layout:
+          this.state.dockContainer === undefined
+            ? undefined
+            : { maxBodyRows: DOCK_QUESTION_ROWS },
         isTerminalFocused: () => this.state.terminalState.focused,
         onFocusUpdates: () => this.focusNotifyPanel(),
       },
