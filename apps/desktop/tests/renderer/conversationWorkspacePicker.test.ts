@@ -161,7 +161,7 @@ describe.each([['desktop', DesktopConversationPane]])('%s ConversationPane proje
     const { el } = mountPane(Pane);
     await nextTick();
     const composer = () => el.querySelector('[data-test-composer]');
-    expect(composer()?.textContent).toBe('正在检查项目信任状态…');
+    expect(composer()?.textContent).toBe('正在检查信任状态…');
 
     mockTrustReadPending.value = false;
     await nextTick();

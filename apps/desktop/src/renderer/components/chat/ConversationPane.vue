@@ -161,6 +161,9 @@ const {
 const trustSubmitBlockedReason = computed(() =>
   trustReadPending.value && !hostBlocked.value ? t('workspace.trust.checking') : undefined,
 );
+const trustSubmitBlockedTooltip = computed(() =>
+  trustReadPending.value && !hostBlocked.value ? t('workspace.trust.checkingHint') : undefined,
+);
 
 function gateSubmit(): boolean {
   return !hostBlocked.value && gateSubmitForTrust();
@@ -971,6 +974,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               class="empty-composer"
               hide-context
               :session-submit-blocked-reason="trustSubmitBlockedReason"
+              :session-submit-blocked-tooltip="trustSubmitBlockedTooltip"
               :before-submit="gateSubmit"
               :defer-submit-reset="true"
               :extra-builtin-commands="feedbackCommands"
@@ -1066,6 +1070,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :approval-busy="approvalBusy"
         :mobile="mobile"
         :session-submit-blocked-reason="trustSubmitBlockedReason"
+        :session-submit-blocked-tooltip="trustSubmitBlockedTooltip"
         :before-submit="gateSubmit"
         :defer-submit-reset="true"
         :extra-builtin-commands="feedbackCommands"
