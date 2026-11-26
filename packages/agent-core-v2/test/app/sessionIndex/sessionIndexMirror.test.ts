@@ -199,6 +199,62 @@ describe('SessionIndexMirror', () => {
     expect(counters.get(WORKSPACE)).toEqual({ active: 1, archived: 0 });
   });
 
+  it('keeps a written summary pending when the manifest cannot be read back after the flush', async () => {
+    build();
+    await publishGeneration();
+    const batch = queryStore.batch.bind(queryStore);
+    const getCheckpoint = queryStore.getCheckpoint.bind(queryStore);
+    let failReadBack = true;
+    let batchLanded = false;
+    queryStore.batch = async (ops) => {
+      await batch(ops);
+      batchLanded = true;
+    };
+    queryStore.getCheckpoint = async (source) => {
+      if (batchLanded && failReadBack) {
+        failReadBack = false;
+        throw new Error('injected checkpoint read failure');
+      }
+      return getCheckpoint(source);
+    };
+
+    mirror.record(summary('a', { updatedAt: 5 }));
+    await mirror.drain();
+    expect(mirror.pending().map((s) => s.id)).toEqual(['a']);
+
+    await mirror.drain();
+    expect(mirror.pending()).toEqual([]);
+    const counters = await queryStore.getMany<SessionProjectCounts>(
+      sessionCountersCollection(GENERATION),
+      [WORKSPACE],
+    );
+    expect(counters.get(WORKSPACE)).toEqual({ active: 1, archived: 0 });
+  });
+
+  it('stops draining when every flush keeps landing in a generation that was just replaced', async () => {
+    build();
+    await publishGeneration();
+    const batch = queryStore.batch.bind(queryStore);
+    const getCheckpoint = queryStore.getCheckpoint.bind(queryStore);
+    let batches = 0;
+    queryStore.batch = async (ops) => {
+      await batch(ops);
+      batches += 1;
+    };
+    let reads = 0;
+    queryStore.getCheckpoint = async (source) => {
+      const checkpoint = await getCheckpoint(source);
+      reads += 1;
+      return reads % 2 === 0 && checkpoint !== undefined ? { ...checkpoint, seq: checkpoint.seq + 1 } : checkpoint;
+    };
+
+    mirror.record(summary('a'));
+    await mirror.drain();
+
+    expect(mirror.pending().map((s) => s.id)).toEqual(['a']);
+    expect(batches).toBe(4);
+  });
+
   it('keeps a summary pending when the retention ends while its flush is finishing', async () => {
     build();
     await publishGeneration();

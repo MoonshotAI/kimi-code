@@ -27,6 +27,7 @@ const FLUSH_BATCH_SIZE = 500;
 const MAX_PENDING = 10_000;
 const MAX_CONSECUTIVE_FAILURES = 5;
 const CONSISTENT_READ_ATTEMPTS = 3;
+const MAX_SUPERSEDED_DRAIN_ROUNDS = 3;
 
 const pendingDrains = new Set<Promise<void>>();
 
@@ -112,8 +113,13 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
       await this.flushing;
       const writes = this.writes;
       const value = await read();
-      const settled = writes % 2 === 0 && writes === this.writes;
-      if (settled || attempt === CONSISTENT_READ_ATTEMPTS) return value;
+      if (writes % 2 === 0 && writes === this.writes) return value;
+      if (attempt === CONSISTENT_READ_ATTEMPTS) {
+        this.log.debug('session index mirror writes overlapped every consistent read attempt', {
+          attempts: attempt,
+        });
+        return value;
+      }
     }
   }
 
@@ -144,16 +150,23 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
 
   async drain(): Promise<void> {
     this.timer.cancel();
+    let supersededRounds = 0;
     while (this.pendingMap.size > 0) {
       const before = this.pendingMap.size;
       const supersededBefore = this.supersededChunks;
       await this.flush();
-      if (this.pendingMap.size >= before && this.supersededChunks === supersededBefore) {
-        this.log.warn('session index mirror drain made no progress; leaving the rest dirty', {
-          pending: this.pendingMap.size,
-        });
-        return;
+      if (this.pendingMap.size < before) {
+        supersededRounds = 0;
+        continue;
       }
+      if (this.supersededChunks !== supersededBefore && supersededRounds < MAX_SUPERSEDED_DRAIN_ROUNDS) {
+        supersededRounds += 1;
+        continue;
+      }
+      this.log.warn('session index mirror drain made no progress; leaving the rest dirty', {
+        pending: this.pendingMap.size,
+      });
+      return;
     }
   }
 
@@ -222,9 +235,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
       this.writes += 1;
       try {
         await this.queryStore.batch(ops);
-        const published = await this.queryStore
-          .getCheckpoint(SESSION_INDEX_MANIFEST)
-          .catch(() => undefined);
+        const published = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
         if (published?.seq === manifest.seq && this.retentionReleases === releasesAtStart) {
           for (const [id, summary] of chunk) {
             if (this.pendingMap.get(id) !== summary) continue;

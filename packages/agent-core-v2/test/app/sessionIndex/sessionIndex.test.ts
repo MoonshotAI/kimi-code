@@ -1129,7 +1129,6 @@ describe('FileSessionIndex (read model)', () => {
     await store.prepare();
     store.stopReconcileLoop();
     await seedSession('fresh', written);
-    mirror.record(summary('fresh', written));
 
     const getMany = queryStore.getMany.bind(queryStore);
     let flushedMidCount = false;
@@ -1137,6 +1136,7 @@ describe('FileSessionIndex (read model)', () => {
       const values = await getMany(collection, keys);
       if (!flushedMidCount && collection === sessionCountersCollection(1)) {
         flushedMidCount = true;
+        mirror.record(summary('fresh', written));
         await mirror.drain();
       }
       return values as never;
@@ -1145,6 +1145,49 @@ describe('FileSessionIndex (read model)', () => {
     await expect(store.count({ workspaceIds: [workspaceId] })).resolves.toBe(active);
     expect(flushedMidCount).toBe(true);
     expect(mirror.pending()).toEqual([]);
+  });
+
+  it('counts against the generation published while the count waited for a mirror flush', async () => {
+    await seedSession('kept', { createdAt: 1, updatedAt: 2 });
+    const store = build();
+    await store.prepare();
+    store.stopReconcileLoop();
+    await seedSession('fresh', { createdAt: 3, updatedAt: 10 });
+
+    const entered = deferred();
+    const release = deferred();
+    const batch = queryStore.batch.bind(queryStore);
+    vi.spyOn(queryStore, 'batch').mockImplementation(async (ops) => {
+      if (ops.some((op) => op.collection === sessionCollection(1) && op.key === 'fresh')) {
+        entered.resolve();
+        await release.promise;
+      }
+      return batch(ops);
+    });
+    const drops: Promise<void>[] = [];
+    const dropCollection = queryStore.dropCollection.bind(queryStore);
+    vi.spyOn(queryStore, 'dropCollection').mockImplementation((collection) => {
+      const dropping = dropCollection(collection);
+      drops.push(dropping);
+      return dropping;
+    });
+    const query = { workspaceIds: [workspaceId] };
+
+    mirror.record(summary('fresh', { createdAt: 3, updatedAt: 10 }));
+    const draining = mirror.drain();
+    await entered.promise;
+    const counting = store.count(query);
+    try {
+      await seedSession('other', { createdAt: 4, updatedAt: 11 });
+      await store.reprojectNow();
+      await Promise.all(drops);
+    } finally {
+      release.resolve();
+    }
+
+    await expect(counting).resolves.toBe(3);
+    await draining;
+    await expect(store.count(query)).resolves.toBe(3);
   });
 
   it('keeps a session deleted while the index re-projects out of the published generation', async () => {

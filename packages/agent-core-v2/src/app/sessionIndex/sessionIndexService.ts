@@ -460,7 +460,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
 
   async count(query: SessionCountQuery): Promise<number> {
     return this.withReadModel(
-      (generation) => this.countFromReadModel(generation, query),
+      (generation) => this.mirror.readConsistently(() => this.countFromReadModel(generation, query)),
       () => this.countLegacy(query),
     );
   }
@@ -607,13 +607,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private async countFromReadModel(
-    generation: number,
+    resolvedGeneration: number,
     query: SessionCountQuery,
   ): Promise<number> {
-    return this.mirror.readConsistently(() => this.readCount(generation, query));
-  }
-
-  private async readCount(generation: number, query: SessionCountQuery): Promise<number> {
+    const generation =
+      (await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST))?.seq ?? resolvedGeneration;
     const counters = sessionCountersCollection(generation);
     const restricted = query.workspaceIds;
     const workspaceIds = restricted ?? (await this.queryStore.listKeys(counters));
