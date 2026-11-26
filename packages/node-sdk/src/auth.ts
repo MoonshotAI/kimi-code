@@ -15,13 +15,18 @@ import {
   resolveKimiCodeLoginAuth,
   resolveKimiCodeRuntimeAuth,
   type AuthManagedUsageResult,
+  type AuthManagedUserInfoResult,
   type AuthStatus,
   type BearerTokenProvider,
   type KimiHostIdentity,
   type KimiOAuthLoginOptions,
   type KimiRegion,
+  type ManagedAccountProfile,
+  type ManagedAccountProfileResult,
   type ManagedKimiConfigShape,
+  type ManagedWorkspacesResult,
   type OAuthRefreshOutcome,
+  type WorkspaceTarget,
 } from '@moonshot-ai/kimi-code-oauth';
 
 import { mapOAuthTokenError } from '#/oauth-error';
@@ -48,6 +53,17 @@ export interface KimiAuthLoginResult {
 export interface KimiAuthLogoutResult {
   readonly providerName: string;
   readonly ok: true;
+}
+
+export interface KimiAuthWorkspaceSwitchResult {
+  readonly providerName: string;
+  readonly ok: true;
+  readonly target: WorkspaceTarget;
+  readonly defaultModel?: string;
+  readonly defaultThinking?: boolean;
+  readonly configPath?: string;
+  readonly profile?: ManagedAccountProfile;
+  readonly warning?: string;
 }
 
 export interface KimiAuthFacadeOptions {
@@ -139,6 +155,63 @@ export class KimiAuthFacade {
     });
   }
 
+  async getManagedUserInfo(providerName?: string): Promise<AuthManagedUserInfoResult> {
+    const auth = this.resolveRuntimeManagedAuth(providerName);
+    return this.toolkit.getManagedUserInfo(providerName, {
+      oauthRef: auth.oauthRef,
+      baseUrl: auth.baseUrl,
+    });
+  }
+
+  async listWorkspaces(providerName?: string): Promise<ManagedWorkspacesResult> {
+    const auth = this.resolveRuntimeManagedAuth(providerName);
+    return this.toolkit.listWorkspaces(providerName, {
+      oauthRef: auth.oauthRef,
+      ...(auth.baseUrl !== undefined ? { baseUrl: auth.baseUrl } : {}),
+    });
+  }
+
+  async getAccountProfile(providerName?: string): Promise<ManagedAccountProfileResult> {
+    const auth = this.resolveRuntimeManagedAuth(providerName);
+    return this.toolkit.getAccountProfile(providerName, {
+      oauthRef: auth.oauthRef,
+      ...(auth.baseUrl !== undefined ? { baseUrl: auth.baseUrl } : {}),
+    });
+  }
+
+  async switchWorkspace(
+    target: WorkspaceTarget,
+    providerName: string | undefined = KIMI_CODE_PROVIDER_NAME,
+  ): Promise<KimiAuthWorkspaceSwitchResult> {
+    const auth = this.resolveRuntimeManagedAuth(providerName);
+    const result = await this.toolkit.switchWorkspace(target, providerName, {
+      oauthRef: auth.oauthRef,
+      ...(auth.baseUrl !== undefined ? { baseUrl: auth.baseUrl } : {}),
+      ...(auth.oauthRef.oauthHost !== undefined ? { oauthHost: auth.oauthRef.oauthHost } : {}),
+      provisionConfig: true,
+    });
+    if (result.provision !== undefined) {
+      const updated = readConfigFile(this.options.configPath);
+      this.options.onConfigUpdated?.(updated);
+    }
+    return {
+      providerName: result.providerName,
+      ok: true,
+      target: result.target,
+      ...(result.provision !== undefined
+        ? {
+            defaultModel: result.provision.defaultModel,
+            defaultThinking: result.provision.defaultThinking,
+            ...(result.provision.configPath !== undefined
+              ? { configPath: result.provision.configPath }
+              : {}),
+          }
+        : {}),
+      ...(result.profile !== undefined ? { profile: result.profile } : {}),
+      ...(result.warning !== undefined ? { warning: result.warning } : {}),
+    };
+  }
+
   async getCachedAccessToken(
     providerName?: string,
     oauthRef?: OAuthRef,
@@ -165,6 +238,9 @@ export class KimiAuthFacade {
           throw mapOAuthTokenError(error, providerName) ?? error;
         }
       },
+      ...(provider.isNonRecoverableErrorCode !== undefined
+        ? { isNonRecoverableErrorCode: (code: string) => provider.isNonRecoverableErrorCode?.(code) === true }
+        : {}),
     };
   };
 

@@ -1,5 +1,7 @@
 import {
+  BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
   createKimiDefaultHeaders,
+  isBusinessMembershipRevokedCode,
   KIMI_CODE_FLOW_CONFIG,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
@@ -112,6 +114,18 @@ export class KimiForCodingProvider implements ModelProvider {
         } catch (error) {
           const is401 = error instanceof APIStatusError && error.statusCode === 401;
           if (!is401) throw error;
+          const providerCode = (error as { readonly providerErrorCode?: unknown }).providerErrorCode ?? error.code;
+          if (isBusinessMembershipRevokedCode(providerCode)) {
+            throw new KimiError(
+              ErrorCodes.PROVIDER_AUTH_ERROR,
+              BUSINESS_MEMBERSHIP_REVOKED_MESSAGE,
+              {
+                details: { statusCode: 401, providerErrorCode: providerCode },
+                retryable: false,
+                cause: error,
+              },
+            );
+          }
           if (refreshed) {
             throw new KimiError(
               ErrorCodes.AUTH_LOGIN_REQUIRED,
