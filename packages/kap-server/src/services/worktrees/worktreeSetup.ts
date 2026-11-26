@@ -14,7 +14,7 @@ import type {
 import { gitText, runGit, type CommandResult } from './command';
 import {
   branchExists,
-  isDirty,
+  isKnownClean,
   resolveRemoteRef,
   takenBranchNames,
   type RemoteBranchRef,
@@ -166,7 +166,7 @@ export class WorktreeCreation {
     const { repoRoot, request } = options;
     const [remote, dirty, taken] = await Promise.all([
       request.use_remote === true ? resolveRemoteRef(repoRoot, request.source_branch) : undefined,
-      request.include_local_changes === true ? isDirty(repoRoot) : false,
+      request.include_local_changes === true ? isKnownClean(repoRoot).then((clean) => !clean) : false,
       takenBranchNames(repoRoot),
     ]);
     const target = pickWorktreeTarget(

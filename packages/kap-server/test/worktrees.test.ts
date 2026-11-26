@@ -342,6 +342,25 @@ describe('server-v2 session worktrees', () => {
     expect(again.code).toBe(ErrorCode.WORKTREE_STATE_INVALID);
   });
 
+  it('fails the changes step instead of skipping it when git cannot read the local changes', async () => {
+    const { root, workspaceId } = await project('unreadable-changes');
+    await writeFile(join(root, '.gitattributes'), 'notes.txt filter=broken\n');
+    commitAll(root, 'route notes through a filter');
+    git(root, 'config', 'filter.broken.clean', 'false');
+    git(root, 'config', 'filter.broken.smudge', 'cat');
+    git(root, 'config', 'filter.broken.required', 'true');
+    await writeFile(join(root, 'notes.txt'), 'local rewrite\n');
+    const before = await worktreeDirectories();
+
+    const created = await createWorktreeSession(workspaceId, { include_local_changes: true });
+    const failed = await settled(created.id);
+
+    expect(failed.worktree?.setup).toMatchObject({ status: 'failed', stopped_step: 'changes' });
+    expect(failed.worktree?.path).toBeUndefined();
+    expect(failed.cwd).toBe(root);
+    await expectNothingLeft(root, before);
+  });
+
   it('cancels a running setup, leaving nothing behind', async () => {
     const { root, workspaceId } = await project('cancel');
     hangingRemote(root);

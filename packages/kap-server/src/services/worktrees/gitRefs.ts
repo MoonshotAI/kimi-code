@@ -42,9 +42,17 @@ export async function isRepoRoot(directory: string): Promise<boolean> {
   return (await realpathOrSelf(top)) === (await realpathOrSelf(directory));
 }
 
-export async function isDirty(directory: string): Promise<boolean> {
+async function porcelainStatus(directory: string): Promise<string | undefined> {
   const status = await runGit(directory, ['status', '--porcelain', '--untracked-files=normal']);
-  return status.exitCode === 0 && status.stdout.trim().length > 0;
+  return status.exitCode === 0 ? status.stdout.trim() : undefined;
+}
+
+export async function isDirty(directory: string): Promise<boolean> {
+  return ((await porcelainStatus(directory)) ?? '').length > 0;
+}
+
+export async function isKnownClean(directory: string): Promise<boolean> {
+  return (await porcelainStatus(directory)) === '';
 }
 
 export async function headBranch(directory: string): Promise<string | undefined> {
