@@ -518,7 +518,13 @@ export class SessionWorktreeService {
       return;
     }
     forgetWorktreeFacts(recorder.current);
-    await recorder.update((stored) => ({ ...withoutPending(stored), setup: ended(stored.setup, 'ready') }));
+    try {
+      await recorder.update((stored) => ({ ...withoutPending(stored), setup: ended(stored.setup, 'ready') }));
+    } catch (error) {
+      await removeWorktreeArtifacts(repoRoot, { path, branch }, false);
+      forgetWorktreeFacts(recorder.current);
+      throw error;
+    }
     void this.releaseHeld(recorder.sessionId);
   }
 

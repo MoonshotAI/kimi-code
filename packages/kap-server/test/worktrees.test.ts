@@ -960,6 +960,41 @@ describe('server-v2 session worktrees', () => {
     expect(await branchOf(session.id)).toBe(branch);
   });
 
+  it('leaves the worktree missing and recreatable when recording a recreation as ready fails', async () => {
+    const { workspaceId } = await project('recreate-ready-write-fails');
+    const session = await settledWorktree(workspaceId);
+    const { path, branch } = session.worktree as { path: string; branch: string };
+    await rm(path, { recursive: true, force: true });
+    const originalUpdate = SessionMetadata.prototype.update;
+    let failed = false;
+    vi.spyOn(SessionMetadata.prototype, 'update').mockImplementation(function (
+      this: SessionMetadata,
+      ...args: Parameters<SessionMetadata['update']>
+    ) {
+      const setup = storedSessionWorktree(args[0].custom)?.setup;
+      if (!failed && setup?.purpose === 'recreate' && setup.status === 'ready') {
+        failed = true;
+        return Promise.reject(new Error('metadata write failed'));
+      }
+      return originalUpdate.apply(this, args);
+    });
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+
+    expect((await post<Session>(`/sessions/${session.id}/worktree:recreate`)).code).toBe(0);
+    const stuck = await settled(session.id);
+
+    expect(failed).toBe(true);
+    expect(stuck.worktree).toMatchObject({ path, branch, missing: true, setup: { status: 'failed' } });
+    expect(existsSync(path)).toBe(false);
+
+    expect((await post<Session>(`/sessions/${session.id}/worktree:recreate`)).code).toBe(0);
+    const ready = await settled(session.id);
+    expect(ready.worktree?.setup).toMatchObject({ status: 'ready', purpose: 'recreate' });
+    expect(existsSync(path)).toBe(true);
+  });
+
   it('falls back to the workspace root when a missing worktree cannot be recreated', async () => {
     const { root, workspaceId } = await project('recreate-failure');
     const session = await settledWorktree(workspaceId);
