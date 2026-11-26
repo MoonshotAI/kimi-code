@@ -128,7 +128,7 @@ defaultCwd = 'C:\work\project'
 - `WebSearch` and `FetchURL` always run from your machine.
 - Hooks and stdio MCP servers without `environment_id` run on your machine by default.
 - Remote sessions do not load project-level Agent files from the target.
-- Remote `AGENTS.md` and project Skills do not hot reload. They are read again when you create or resume a session, or run `/reload`.
+- Remote `AGENTS.md` and project Skills do not hot reload. They are read again when you create or resume a session, or run `/reload`. Changes to `AGENTS.md` are still announced to the agent at the start of its next turn.
 - File paths in prompts resolve on the target. Local paths cannot be read directly, but pasted images are unaffected.
 - Tower mode is unavailable in remote workspaces.
 

@@ -128,7 +128,7 @@ defaultCwd = 'C:\work\project'
 - `WebSearch` 和 `FetchURL` 始终从本机发起。
 - Hooks 和未设置 `environment_id` 的 stdio MCP server 默认在本机运行。
 - 远程会话不读取目标环境的项目级 Agent 文件。
-- 远程 `AGENTS.md` 和项目级 Skills 不热重载；新建、恢复会话或执行 `/reload` 时重新读取。
+- 远程 `AGENTS.md` 和项目级 Skills 不热重载；新建、恢复会话或执行 `/reload` 时重新读取。`AGENTS.md` 的变化仍会在 Agent 下一回合开始时告诉它。
 - 提示词中的文件路径按远程环境解析；本机路径不能直接读取，粘贴图片不受影响。
 - 远程工作区不支持 Tower 模式。
 

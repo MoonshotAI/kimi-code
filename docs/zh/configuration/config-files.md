@@ -496,7 +496,7 @@ max_chars = 100000
 
 ## `watch`
 
-`watch` 控制 local.toml、AGENTS.md、skills、MCP 配置以及 `config.toml` 自身的文件系统热更新。默认开启。把 `enabled` 设为 `false` 后进程内不再挂任何 watcher；之后改文件要重启才会再读。
+`watch` 控制 local.toml、AGENTS.md、skills、MCP 配置以及 `config.toml` 自身的文件系统热更新。默认开启。把 `enabled` 设为 `false` 后进程内不再挂任何 watcher；之后改文件要重启才会再读。AGENTS.md 的变化仍会在 Agent 下一回合开始时告诉它。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |

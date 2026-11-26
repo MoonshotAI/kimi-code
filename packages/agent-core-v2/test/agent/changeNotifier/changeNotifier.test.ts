@@ -21,7 +21,7 @@ import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/envi
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
 import type { ProfileData } from '#/agent/profile/profile';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderStub } from '../../features/reminder/stubs';
@@ -100,6 +100,7 @@ interface Harness {
   };
   readonly sessionDisabledTools: { value: readonly string[] };
   readonly secondaryModel: { value: SecondaryModelConfig | undefined };
+  beginStep(firstStepOfTurn?: boolean): Promise<void>;
 }
 
 function makeProfileData(overrides: Partial<ProfileData>): ProfileData {
@@ -173,6 +174,7 @@ function createHarness(options: {
     pathClass: 'posix',
   } as unknown as IHostEnvironment;
   const agentState = new AgentStateService();
+  const onWillBeginStep = new OrderedHookSlot<BeforeStepContext>();
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
       registerLogServices(reg);
@@ -184,6 +186,7 @@ function createHarness(options: {
       } satisfies IAgentScopeContext);
       reg.defineInstance(IAgentLoopService, {
         data: () => options.profile,
+        hooks: { onWillBeginStep },
       } as unknown as IAgentLoopService);
       reg.defineInstance(ISessionInstructionsProvider, {
         _serviceBrand: undefined,
@@ -345,6 +348,13 @@ function createHarness(options: {
     profileMeta,
     sessionDisabledTools,
     secondaryModel,
+    beginStep: (firstStepOfTurn = true) =>
+      onWillBeginStep.run({
+        turnId: 1,
+        step: firstStepOfTurn ? 1 : 2,
+        firstStepOfTurn,
+        signal: new AbortController().signal,
+      }),
   };
 }
 
@@ -591,6 +601,89 @@ describe('notifyAgentsMdChanges', () => {
     h.instructionsChange.fire([{ path: agentsMdPath, action: 'modified', kind: 'file' }]);
     await flushWatch();
     expect(h.reminders).toHaveLength(0);
+  });
+
+  function v1Profile(agentsMdPath: string): ProfileData {
+    return makeProfileData({
+      profileName: 'default',
+      systemPrompt: agentsMdPrompt(agentsMdPath, 'v1 content'),
+      agentsMdPaths: [agentsMdPath],
+    });
+  }
+
+  it('reminds at the start of the next turn about an AGENTS.md changed without a file event', async () => {
+    const agentsMdPath = join(workDir, 'AGENTS.md');
+    await writeFile(agentsMdPath, 'v1 content');
+    const h = createHarness({ profile: v1Profile(agentsMdPath) });
+
+    await h.beginStep();
+    expect(h.reminders).toHaveLength(0);
+
+    await writeFile(agentsMdPath, 'v2 content');
+    await h.beginStep();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.variant).toBe('agents_md_change');
+    expect(h.reminders[0]?.content).toContain(agentsMdPath);
+
+    await h.beginStep();
+    expect(h.reminders).toHaveLength(1);
+  });
+
+  it('reminds at the first turn after a restart about an AGENTS.md changed while the product was down', async () => {
+    const agentsMdPath = join(workDir, 'AGENTS.md');
+    await writeFile(agentsMdPath, 'v1 content');
+    const before = createHarness({ profile: v1Profile(agentsMdPath) });
+    await before.beginStep();
+    const restoredSnapshot = before.ix.get(IAgentStateService).get(changeNotifierSnapshotKey);
+
+    await writeFile(agentsMdPath, 'v2 content');
+    const after = createHarness({ profile: v1Profile(agentsMdPath) });
+    after.ix.get(IAgentStateService).set(changeNotifierSnapshotKey, restoredSnapshot);
+    await after.beginStep();
+
+    expect(after.reminders).toHaveLength(1);
+    expect(after.reminders[0]?.content).toContain(agentsMdPath);
+  });
+
+  it('leaves the later steps of a turn to the file watcher', async () => {
+    const agentsMdPath = join(workDir, 'AGENTS.md');
+    await writeFile(agentsMdPath, 'v1 content');
+    const h = createHarness({ profile: v1Profile(agentsMdPath) });
+
+    await writeFile(agentsMdPath, 'v2 content');
+    await h.beginStep(false);
+
+    expect(h.reminders).toHaveLength(0);
+  });
+
+  it('reminds once when the file watcher fires while the turn-start check is still recording', async () => {
+    const agentsMdPath = join(workDir, 'AGENTS.md');
+    await writeFile(agentsMdPath, 'v1 content');
+    const h = createHarness({ profile: v1Profile(agentsMdPath) });
+    await writeFile(agentsMdPath, 'v2 content');
+    let releaseFirstRecord = (): void => {};
+    const firstRecordReleased = new Promise<void>((resolve) => {
+      releaseFirstRecord = resolve;
+    });
+    let firstRecordHeld = false;
+    h.beforeSnapshotDispatch.handler = async () => {
+      if (firstRecordHeld) return;
+      firstRecordHeld = true;
+      await firstRecordReleased;
+    };
+
+    const step = h.beginStep();
+    await vi.waitFor(() => {
+      expect(firstRecordHeld).toBe(true);
+    });
+    h.instructionsChange.fire([{ path: agentsMdPath, action: 'modified', kind: 'file' }]);
+    await flushWatch();
+    releaseFirstRecord();
+    await step;
+    await flushWatch();
+    await h.notifier.notifyAgentsMdChanges();
+
+    expect(h.reminders).toHaveLength(1);
   });
 });
 

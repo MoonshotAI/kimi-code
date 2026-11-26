@@ -497,7 +497,7 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 
 ## `watch`
 
-`watch` controls filesystem watchers that reload local.toml, AGENTS.md, skills, MCP config, and `config.toml` itself. It defaults to on. Set `enabled` to `false` to start with no watchers; changing the file later will not be picked up until restart.
+`watch` controls filesystem watchers that reload local.toml, AGENTS.md, skills, MCP config, and `config.toml` itself. It defaults to on. Set `enabled` to `false` to start with no watchers; changing the file later will not be picked up until restart. Changes to AGENTS.md are still announced to the agent at the start of its next turn.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |

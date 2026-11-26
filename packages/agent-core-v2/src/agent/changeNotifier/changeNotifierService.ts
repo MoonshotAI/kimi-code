@@ -74,7 +74,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
   declare readonly _serviceBrand: undefined;
 
   private muted = false;
-  private workspaceDirsNotificationTail: Promise<void> = Promise.resolve();
+  private snapshotWorkTail: Promise<void> = Promise.resolve();
 
   private legacySubagentBaseline: { readonly names: readonly string[] } | undefined;
 
@@ -121,6 +121,14 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         void this.notifyWorkspaceDirsChanges();
       }),
     );
+    if (this.scopeContext.agentId === MAIN_AGENT_ID) {
+      this._register(
+        this.profile.hooks.onWillBeginStep.register('agents-md-change-check', async (context, next) => {
+          if (context.firstStepOfTurn) await this.notifyAgentsMdChanges();
+          await next();
+        }),
+      );
+    }
     void this.agentCatalog.ready.then(() => {
       if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
       if (this.snapshot.subagentNames !== undefined) return;
@@ -161,7 +169,11 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     await this.notifyWorkspaceDirsChanges();
   }
 
-  async notifyAgentsMdChanges(): Promise<void> {
+  notifyAgentsMdChanges(): Promise<void> {
+    return this.enqueueSnapshotWork(() => this.notifyAgentsMdChangesNow());
+  }
+
+  private async notifyAgentsMdChangesNow(): Promise<void> {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID || this.muted) return;
     try {
       const profileData = this.profile.data();
@@ -310,12 +322,12 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
   }
 
   notifyWorkspaceDirsChanges(): Promise<void> {
-    return this.enqueueWorkspaceDirsNotification(() => this.notifyWorkspaceDirsChangesNow());
+    return this.enqueueSnapshotWork(() => this.notifyWorkspaceDirsChangesNow());
   }
 
-  private enqueueWorkspaceDirsNotification<T>(work: () => Promise<T>): Promise<T> {
-    const run = this.workspaceDirsNotificationTail.then(work, work);
-    this.workspaceDirsNotificationTail = run.then(
+  private enqueueSnapshotWork<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.snapshotWorkTail.then(work, work);
+    this.snapshotWorkTail = run.then(
       () => undefined,
       () => undefined,
     );
@@ -385,7 +397,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
 
   seedBeliefs(seed: BeliefsSeed): Promise<void> {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return Promise.resolve();
-    return this.enqueueWorkspaceDirsNotification(() => this.seedBeliefsNow(seed));
+    return this.enqueueSnapshotWork(() => this.seedBeliefsNow(seed));
   }
 
   private async seedBeliefsNow(seed: BeliefsSeed): Promise<void> {
