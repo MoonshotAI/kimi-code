@@ -60,6 +60,7 @@ import {
   type SessionAction,
 } from '../protocol/rest-session';
 import { deleteSessionRequestSchema } from '../protocol/rest-worktree';
+import { shareSchemas } from './sharedSchemas';
 
 const binarySchema = {
   type: 'string',
@@ -165,6 +166,7 @@ export function transformOpenApiDocument(
   patchFsAction(paths);
   patchFsDownload(paths);
   patchWorkspaceFsContent(paths);
+  shareSchemas(document);
 
   return document;
 }
