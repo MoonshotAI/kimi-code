@@ -88,6 +88,8 @@ export default {
     contextInspectorHint: 'Show context usage and composition in the composer ring and session info, and inspect each item the model receives.',
     promptPrediction: 'Prompt prediction',
     promptPredictionHint: 'After a turn completes, predict what you might type next and show it as the composer placeholder. Press Tab or Right Arrow to insert it.',
+    quotaAutoResume: 'Auto-continue when credits reset',
+    quotaAutoResumeHint: 'Only for Kimi subscriptions. Automatically send a message to continue an interrupted session once your credits reset. This uses credits from the new window.',
   },
   plugins: {
     localOnlyHint: 'Plugins and MCP servers apply to projects on this machine only. Projects on SSH hosts use what is set up on each host',

@@ -88,6 +88,8 @@ export default {
     contextInspectorHint: '在输入框圆环和会话信息中显示上下文的用量和组成，并可逐条查看模型收到的内容',
     promptPrediction: '提示词预测',
     promptPredictionHint: '回合完成后预测你接下来可能输入的内容，显示在输入框占位提示中，按 Tab 或右方向键填入',
+    quotaAutoResume: '额度恢复后自动继续',
+    quotaAutoResumeHint: '仅支持 Kimi 订阅：因额度耗尽中断的会话，会在额度恢复后自动发送消息继续，并消耗恢复后的额度。',
   },
   plugins: {
     localOnlyHint: '插件和 MCP 服务器仅对本机项目生效，SSH 主机上的项目使用各主机自己的配置',

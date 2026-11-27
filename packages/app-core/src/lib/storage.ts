@@ -66,6 +66,7 @@ export const STORAGE_KEYS = {
   contextInspector: 'kimi-web.context-inspector',
   browserTabTitle: 'kimi-web.browser-tab-title',
   sessionMentions: 'kimi-web.session-mentions',
+  quotaAutoResume: 'kimi-web.quota-auto-resume',
 } as const;
 
 export const NEW_SESSION_SCOPE = '__new__';

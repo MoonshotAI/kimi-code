@@ -41,6 +41,7 @@ export default {
   turnFailedMaxSteps: '达到本轮步数上限，对话已中断',
   turnFailedResume: '继续',
   turnFailedResumeText: '继续',
+  quotaAutoResumePrompt: '刚才因额度限制中断，现在额度已恢复，请继续',
   sessionRatingQuestion: '这次会话中，Kimi 表现如何？',
   sessionRatingBad: '差',
   sessionRatingFine: '一般',

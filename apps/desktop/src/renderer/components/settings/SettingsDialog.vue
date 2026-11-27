@@ -32,7 +32,7 @@ import { track } from '../../lib/track';
 import DockIconPicker from './DockIconPicker.vue';
 import BrowserSettingsTab from '../browser/BrowserSettingsTab.vue';
 import { copyTextToClipboard, hasDesktopBridge, isLinuxDesktop, isMacosDesktop, isRcLocation, prefersNativeTitleBar, providerDisplayName } from '@moonshot-ai/app-core/lib';
-import { useContextInspector, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
+import { useContextInspector, useQuotaAutoResume, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
 import { configStore, hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { useActivityRunFolding, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client';
 import { useVibrancy } from '../../composables/useVibrancy';
@@ -87,6 +87,13 @@ const { sessionMentions, setSessionMentions } = useSessionMentions();
 function onSessionMentionsChange(on: boolean): void {
   setSessionMentions(on);
   track('settings_changed', { key: 'session-mentions', value: on ? 'on' : 'off', source_panel: 'settings' });
+}
+
+const { quotaAutoResumeEnabled, setQuotaAutoResumeEnabled } = useQuotaAutoResume();
+
+function onQuotaAutoResumeChange(on: boolean): void {
+  setQuotaAutoResumeEnabled(on);
+  track('settings_changed', { key: 'quota-auto-resume', value: on ? 'on' : 'off', source_panel: 'settings' });
 }
 
 const notifyUserEnabled = computed(() => configStore().experimentalFlags['notify_user'] === true);
@@ -1500,6 +1507,17 @@ defineExpose({ confirmDiscard });
                 :model-value="promptPredictionEnabled"
                 :label="t('settings.lab.promptPrediction')"
                 @update:model-value="onPromptPredictionChange"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.lab.quotaAutoResume') }}
+                <span class="hint">{{ t('settings.lab.quotaAutoResumeHint') }}</span>
+              </span>
+              <Switch
+                :model-value="quotaAutoResumeEnabled"
+                :label="t('settings.lab.quotaAutoResume')"
+                @update:model-value="onQuotaAutoResumeChange"
               />
             </div>
             </div>
