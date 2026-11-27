@@ -610,19 +610,27 @@ describe('verifyKapSchemas', () => {
     type: 'object',
     additionalProperties: false,
     required: ['id', 'created_at'],
-    properties: { id: { type: 'string' }, created_at: { type: 'string' }, title: { type: 'string', nullable: true }, count: { type: 'integer', minimum: 0, exclusiveMinimum: true } },
+    properties: {
+      id: { type: 'string' },
+      created_at: { type: 'string' },
+      title: { type: 'string', nullable: true },
+      count: { type: 'integer', minimum: 0, exclusiveMinimum: true },
+      thread: { $ref: '#/components/schemas/Thread' },
+    },
   };
+  const threadSchema = { type: 'object', additionalProperties: false, properties: { text: { type: 'string' }, reply: { $ref: '#/components/schemas/Thread' } } };
   const openapi = {
     openapi: '3.0.3',
     paths: {
       '/api/v1/sessions/{session_id}': {
-        get: { responses: { '200': json({ oneOf: [envelope(0, sessionSchema), envelope(40401, { type: 'string', nullable: true, enum: [null] })] }) } },
+        get: { responses: { '200': json({ oneOf: [envelope(0, { $ref: '#/components/schemas/Session' }), envelope(40401, { type: 'string', nullable: true, enum: [null] })] }) } },
       },
       '/api/v1/sessions/{session_id}:cancel': {
         post: { responses: { '200': json(envelope(0, { type: 'object', additionalProperties: false, required: ['cancelled'], properties: { cancelled: { type: 'boolean' } } })) } },
       },
       '/api/v1/kap.md': { get: { responses: { '200': { content: { 'text/markdown': { schema: { type: 'string' } } } } } } },
     },
+    components: { schemas: { Session: sessionSchema, Thread: threadSchema } },
   };
   const asyncapi = {
     asyncapi: '3.1.0',
@@ -695,7 +703,7 @@ describe('verifyKapSchemas', () => {
   it('passes when every REST body and frame matches the published schema', async () => {
     const client = await stubKap(
       {
-        'GET /api/v1/sessions/s1': ok({ id: 's1', created_at: FIXED_TIME, title: null, count: 1 }),
+        'GET /api/v1/sessions/s1': ok({ id: 's1', created_at: FIXED_TIME, title: null, count: 1, thread: { text: 'a', reply: { text: 'b', reply: {} } } }),
         'GET /api/v1/sessions/gone': { body: { code: 40401, msg: 'not found', data: null, request_id: 'r2' } },
         'POST /api/v1/sessions/s1:cancel': ok({ cancelled: true }),
         'GET /api/v1/kap.md': { contentType: 'text/markdown', body: '# KAP' },

@@ -30,6 +30,8 @@ interface Finding {
 const API_PREFIX = '/api/';
 const OPENAPI_PATH = '/openapi.json';
 const ASYNCAPI_PATH = '/asyncapi.json';
+const COMPONENTS_ID = 'kap-openapi-components.json';
+const COMPONENT_REF = '#/components/schemas/';
 const HTTP_METHODS = new Set(['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace']);
 const MAX_FINDINGS = 40;
 const EXCERPT_LENGTH = 300;
@@ -75,12 +77,16 @@ async function documentText(kap: KapClient, path: string): Promise<string> {
 
 class KapContract {
   private readonly ajv = new Ajv({ strict: false, allErrors: true });
+  private readonly validators = new Map<Schema, ValidateFunction>();
   private readonly routes: readonly Route[];
   private readonly frameSchemas: ReadonlyMap<string, readonly Schema[]>;
+  private readonly components: Readonly<Record<string, unknown>>;
 
   constructor(openapi: Schema, asyncapi: Schema) {
     addFormats(this.ajv);
     toDraft7(openapi);
+    this.components = asRecord(asRecord(openapi['components'])['schemas']);
+    this.ajv.addSchema({ $id: COMPONENTS_ID, components: { schemas: this.components } });
     this.routes = routesOf(openapi);
     this.frameSchemas = frameSchemasOf(asyncapi);
   }
@@ -115,9 +121,25 @@ class KapContract {
   }
 
   private problems(where: string, schema: Schema, value: unknown): readonly Problem[] {
-    const validate: ValidateFunction = this.ajv.compile(schema);
+    let validate = this.validators.get(schema);
+    if (validate === undefined) {
+      validate = this.ajv.compile(asRecord(this.inline(schema, new Set())));
+      this.validators.set(schema, validate);
+    }
     if (validate(value)) return [];
     return narrowUnions(validate.errors ?? []).map((error) => ({ problem: `${where}: ${describeError(error)}`, example: valueAt(value, error.instancePath) ?? null }));
+  }
+
+  private inline(node: unknown, expanding: ReadonlySet<string>): unknown {
+    if (Array.isArray(node)) return node.map((child) => this.inline(child, expanding));
+    if (node === null || typeof node !== 'object') return node;
+    const reference = (node as Schema)['$ref'];
+    if (typeof reference === 'string' && reference.startsWith(COMPONENT_REF)) {
+      const name = reference.slice(COMPONENT_REF.length);
+      if (expanding.has(name) || this.components[name] === undefined) return { ...node, $ref: `${COMPONENTS_ID}${reference}` };
+      return this.inline(this.components[name], new Set([...expanding, name]));
+    }
+    return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, this.inline(child, expanding)]));
   }
 }
 
