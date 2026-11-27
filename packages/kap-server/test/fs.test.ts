@@ -1,10 +1,10 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { Error2, ErrorCodes, IEnvironmentService, ISessionManager, IProjectInstanceManager, ProjectFsService, getLiveSessionById } from '@moonshot-ai/agent-core-v2';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { IProjectPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/projectPermissionRules';
 import { IProjectPersistence } from '@moonshot-ai/agent-core-v2/app/project/projectPersistence';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
@@ -86,12 +86,19 @@ describe('server-v2 /api/v1 fs routes', () => {
   }
 
   function hasFd(): boolean {
-    try {
-      execFileSync('fd', ['--version'], { stdio: 'ignore' });
-      return true;
-    } catch {
-      return false;
-    }
+    const override = process.env['KIMI_CODE_HOME'];
+    const shareHome = override !== undefined && override !== '' ? override : join(homedir(), '.kimi-code');
+    const cached = join(shareHome, 'bin', process.platform === 'win32' ? 'fd.exe' : 'fd');
+    return ['fd', 'fdfind', cached].some((binary) => {
+      const version = spawnSync(binary, ['--version'], { stdio: 'ignore' });
+      if (version.status !== 0) return false;
+      const probe = spawnSync(
+        binary,
+        ['--base-directory', work!, '--max-results', '1', '--hidden', '--no-require-git'],
+        { stdio: 'ignore' },
+      );
+      return probe.status === 0;
+    });
   }
 
   async function createWorkspaceSession(root: string, additionalDirs: string[]): Promise<string> {
