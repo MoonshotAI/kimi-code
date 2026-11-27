@@ -42,6 +42,12 @@ const ONLY_THE_TERMINAL_UI_INITS = {
 };
 const NO_SIDE_QUESTION_OVER_ACP =
   'ACP has no side question: an editor can only send /btw as a prompt, and the agent answers it with "Unknown ACP command: /btw" without asking the model.';
+const NO_SESSION_LIST = 'The terminal UI and an ACP editor show one conversation and have no session list to pin it in.';
+const ONLY_THE_WEB_UI_HAS_AN_ADDRESS = {
+  tui: 'The terminal UI runs in the terminal; there is no address a user opens it at.',
+  acp: 'An ACP editor starts the agent over stdio; there is no address a user opens it at.',
+  desktop: 'Desktop opens its own window on the server it starts and gives that server a new port on every launch, so restart() already reopens it on another port.',
+};
 const NO_CONTINUE = {
   tui: 'The terminal UI has no way to continue a failed turn; a user sends another message instead.',
   acp: 'ACP has no request to continue a failed turn.',
@@ -79,6 +85,9 @@ export const VERBS = {
   recallPrevious: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: false },
   submit: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: false },
   expectComposer: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: true },
+  reopenOnAnotherPort: { on: ['web'], absentBecause: ONLY_THE_WEB_UI_HAS_AN_ADDRESS, checksInterface: false, bySession: true },
+  pinSession: { on: ['desktop', 'web'], absentBecause: NO_SESSION_LIST, checksInterface: false },
+  expectPinned: { on: ['desktop', 'web'], absentBecause: NO_SESSION_LIST, checksInterface: true },
   newSession: { on: SURFACES, checksInterface: false },
   compact: { on: SURFACES, checksInterface: false },
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
@@ -246,6 +255,9 @@ interface VerbSignatures {
   recallPrevious(): Promise<void>;
   submit(text: string): Promise<void>;
   expectComposer(text: string): Promise<void>;
+  reopenOnAnotherPort(): Promise<void>;
+  pinSession(): Promise<void>;
+  expectPinned(): Promise<void>;
   newSession(): Promise<void>;
   compact(): Promise<void>;
   resize(size: WindowSize): Promise<void>;
@@ -295,6 +307,7 @@ export interface Reopen {
   readonly launch: number;
   readonly lastPrompt: string | undefined;
   readonly state: ReopenState;
+  readonly anotherPort?: true;
 }
 
 export interface SurfaceControls {

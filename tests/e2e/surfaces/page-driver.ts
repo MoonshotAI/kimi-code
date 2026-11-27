@@ -173,6 +173,14 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().newSession();
   }
 
+  pinSession(): Promise<void> {
+    return this.window().pinSession();
+  }
+
+  expectPinned(): Promise<void> {
+    return this.window().expectPinned();
+  }
+
   compact(): Promise<void> {
     return this.window().compact();
   }
