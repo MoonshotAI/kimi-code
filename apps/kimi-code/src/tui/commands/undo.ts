@@ -8,6 +8,7 @@ import {
   UndoSelectorComponent,
   type UndoChoice,
 } from '../components/dialogs/undo-selector';
+import { DOCK_UNDO_ROWS } from '../constant/rendering';
 import { AgentGroupComponent } from '../components/messages/agent-group';
 import { AgentSwarmProgressComponent } from '../components/messages/agent-swarm-progress';
 import { AssistantMessageComponent } from '../components/messages/assistant-message';
@@ -174,6 +175,10 @@ async function showUndoSelector(host: SlashCommandHost): Promise<void> {
   host.mountEditorReplacement(
     new UndoSelectorComponent({
       choices,
+      layout:
+        host.state.dockContainer === undefined
+          ? undefined
+          : { maxBodyRows: DOCK_UNDO_ROWS, follow: 'end' },
       onSelect: (choice) => {
         void undoByCount(host, choice.count).then((undone) => {
           if (undone) {
