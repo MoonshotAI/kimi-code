@@ -7,6 +7,7 @@ import {
   DEFAULT_CATALOG_URL,
   resolveCatalogImport,
   type Catalog,
+  type ModelAlias,
   type RefreshProviderModelsResponse,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -25,6 +26,7 @@ import {
   type ProviderManagerOptions,
 } from '../components/dialogs/provider-manager';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
+import { DOCK_MODEL_SELECTOR_ROWS } from '../constant/rendering';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
@@ -320,23 +322,12 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   }
 
   const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
-  const selector = new TabbedModelSelectorComponent({
-    models: stateModels,
-    currentValue: host.state.appState.model,
-    selectedValue: Object.keys(stateModels).find((a) => a.startsWith(`${providerId}/`)),
-    currentThinkingEffort: host.state.appState.thinkingEffort,
-    initialTabId: providerId,
-    onSelect: ({ alias, thinking }) => {
-      host.restoreEditor();
-      void setDefaultModel(host, alias, thinking).catch((error: unknown) => {
-        host.showError(`Set default model failed: ${formatErrorMessage(error)}`);
-      });
-    },
-    onCancel: () => {
-      host.restoreEditor();
-    },
-  });
-  host.mountEditorReplacement(selector);
+  mountProviderDefaultModelSelector(
+    host,
+    stateModels,
+    Object.keys(stateModels).find((alias) => alias.startsWith(`${providerId}/`)),
+    providerId,
+  );
 }
 
 export async function setDefaultModel(
@@ -424,12 +415,26 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
   const firstNewProvider = firstNewAlias
     ? stateModels[firstNewAlias]?.provider
     : addedProviderIds[0];
+  mountProviderDefaultModelSelector(host, stateModels, firstNewAlias, firstNewProvider);
+  return true;
+}
+
+function mountProviderDefaultModelSelector(
+  host: SlashCommandHost,
+  models: Record<string, ModelAlias>,
+  selectedValue: string | undefined,
+  initialTabId: string | undefined,
+): void {
   const selector = new TabbedModelSelectorComponent({
-    models: stateModels,
+    models,
     currentValue: host.state.appState.model,
-    selectedValue: firstNewAlias,
+    selectedValue,
     currentThinkingEffort: host.state.appState.thinkingEffort,
-    initialTabId: firstNewProvider,
+    initialTabId,
+    layout:
+      host.state.dockContainer === undefined
+        ? undefined
+        : { maxBodyRows: DOCK_MODEL_SELECTOR_ROWS },
     onSelect: ({ alias, thinking }) => {
       host.restoreEditor();
       void setDefaultModel(host, alias, thinking).catch((error: unknown) => {
@@ -441,7 +446,6 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     },
   });
   host.mountEditorReplacement(selector);
-  return true;
 }
 
 function promptCustomRegistryImport(

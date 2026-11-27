@@ -283,6 +283,7 @@ import {
   type ActivateSkillRpcInput,
   type ConfigSectionChange,
   type ImportContextRpcInput,
+  type MoveSessionRpcInput,
   type ReconnectMcpServerRpcInput,
   type ReloadSessionRpcInput,
   type RunCommandRpcInput,
@@ -1975,6 +1976,22 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       await main
         ?.accessor.get(IAgentChangeNotifierService)
         .notifyAllChanges({ previousSubagentNames: reloadGuard?.previousSubagentNames });
+      this.wireSession(handle);
+      return this.resumedSessionSummary(handle);
+    });
+  }
+
+  override async moveSession(input: MoveSessionRpcInput): Promise<ResumedSessionSummary> {
+    const sessionId = input.sessionId;
+    const workDir = normalizeRequiredWorkDir('moveSession', input.workDir);
+    return this.runSessionAccess(sessionId, async () => {
+      await this.configReady;
+      const handle = await withKimiErrors(
+        this.engineAccessor.get(ISessionManager).move({
+          sessionId,
+          workDir,
+        }),
+      );
       this.wireSession(handle);
       return this.resumedSessionSummary(handle);
     });

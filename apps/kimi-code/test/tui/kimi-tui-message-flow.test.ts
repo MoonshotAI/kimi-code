@@ -250,6 +250,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
   let thinkingEffort = 'off';
   return {
     id: 'ses-1',
+    workDir: '/tmp/proj-a',
     model: 'k2',
     summary: { title: null },
     prompt: vi.fn(async (_input: unknown) => {}),
@@ -270,6 +271,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
       contextUsage: 0,
     })),
     getGoal: vi.fn(async () => ({ goal: null })),
+    getCronTasks: vi.fn(async () => ({ tasks: [] })),
     getEnvironment: vi.fn(async () => ({ environmentId: 'local' })),
     listEnvironments: vi.fn(async () => ({ environments: [] })),
     getEnvironmentState: vi.fn(async () => ({ environmentId: 'local', type: 'local', status: 'ready' })),
@@ -371,6 +373,10 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     })),
     setConfig: vi.fn(async () => ({ providers: {} })),
     resolveSessionEnvironment: vi.fn(async (options: { environmentId?: string; environmentCwd?: string }) => ({ environmentId: options.environmentId ?? 'local', cwd: options.environmentCwd })),
+    resolveWorkLocation: vi.fn(async (cwd: string) => ({ cwd, projectRoot: '/tmp/proj-a', isGitRepo: true })),
+    getWorkspaceAdditionalDirs: vi.fn(async () => []),
+    getGitStatus: vi.fn(async () => null),
+    getGitPullRequest: vi.fn(async () => null),
     onConfigSectionChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(async () => session),
     resumeSession: vi.fn(async () => session),
@@ -1527,6 +1533,40 @@ describe('KimiTUI message flow', () => {
     expect(session.close).not.toHaveBeenCalled();
     expect(session.prompt).toHaveBeenCalledTimes(1);
     releasePrompt();
+  });
+
+  it('applies the relocated work location when a stale reload moves the session into a worktree', async () => {
+    let staleReload!: () => Promise<void>;
+    const movedDir = await mkdtemp(join(tmpdir(), 'kimi-stale-wt-'));
+    try {
+      const session = makeSession({
+        id: 'ses-moved',
+        setStaleReloadHandler: vi.fn((handler: () => Promise<void>) => {
+          staleReload = handler;
+        }),
+      });
+      const { driver, harness } = await makeDriver(session, {
+        resolveWorkLocation: vi.fn(async (cwd: string) => ({
+          cwd,
+          projectRoot: '/tmp/proj-a',
+          isGitRepo: true,
+          worktree: { root: cwd, name: 'wt-moved', repoRoot: '/tmp/proj-a' },
+        })),
+      });
+
+      session.workDir = movedDir;
+      await staleReload();
+
+      expect(driver.state.appState.workDir).toBe(movedDir);
+      expect(driver.state.appState.worktree).toEqual({
+        root: movedDir,
+        name: 'wt-moved',
+        repoRoot: '/tmp/proj-a',
+      });
+      expect(harness.resolveWorkLocation).toHaveBeenCalledWith(movedDir);
+    } finally {
+      await rm(movedDir, { recursive: true, force: true });
+    }
   });
 
   it('asks to rerun /undo after the SDK reloaded a stale session (v2 engine)', async () => {

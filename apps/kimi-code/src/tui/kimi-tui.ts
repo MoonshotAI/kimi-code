@@ -143,7 +143,7 @@ import {
   SHUTTING_DOWN_HINT,
 } from './constant/kimi-tui';
 import { MEDIA_INGESTION_SUBMIT_WAIT_MS } from './constant/media';
-import { CHROME_GUTTER, DETACH_HINT_TEXT, DOCK_APPROVAL_ROWS, DOCK_SESSION_PICKER_ROWS } from './constant/rendering';
+import { CHROME_GUTTER, DETACH_HINT_TEXT, DOCK_APPROVAL_ROWS, DOCK_QUESTION_ROWS, DOCK_SESSION_PICKER_ROWS } from './constant/rendering';
 import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
 import { AuthFlowController } from './controllers/auth-flow';
 import { BtwPanelController } from './controllers/btw-panel';
@@ -1135,7 +1135,7 @@ export class KimiTUI {
     void this.migrateLegacySurveySetting();
     void this.showConfigWarningsIfAny();
     if (this.state.startupState === 'picker') {
-      void this.bootstrapFromPicker();
+      await this.bootstrapFromPicker();
       void this.backgroundRefreshPromise?.then(() => {
         this.modelMigration.request();
       });
@@ -2614,9 +2614,31 @@ export class KimiTUI {
     const pending = this.state.transcriptEntries.filter((entry) =>
       this.pendingPromptEntries.has(entry),
     );
+    if (
+      this.environmentIdOf(this.state.appState.environment) === 'local' &&
+      !sameDir(session.workDir, this.state.appState.workDir)
+    ) {
+      const exists = await isDirectoryAsync(session.workDir);
+      const fallback: WorkLocation = {
+        cwd: session.workDir,
+        projectRoot: this.state.appState.projectRoot ?? session.workDir,
+        isGitRepo: this.state.appState.isGitRepo ?? false,
+      };
+      const location = exists
+        ? ((await this.harness.resolveWorkLocation(session.workDir).catch(() => undefined)) ??
+          fallback)
+        : fallback;
+      if (this.session === session) {
+        await this.applyWorkLocation(location, {
+          resolveEnvironment: exists,
+          environmentId: 'local',
+        });
+      }
+    }
     await this.reloadCurrentSessionView(session, 'Loaded updates from another client.', {
       replayHistory: true,
     });
+    this.syncAdditionalDirs(session);
     for (const entry of pending) this.appendTranscriptEntry(entry);
     this.track('session_stale_reload');
   }
@@ -3346,6 +3368,69 @@ export class KimiTUI {
     });
   }
 
+  canMoveSessionToWorktree(): boolean {
+    return (
+      this.session !== undefined &&
+      !this.session.isClosed &&
+      this.hasSessionContent() &&
+      this.environmentIdOf(this.state.appState.environment) === 'local'
+    );
+  }
+
+  async precheckMoveSession(): Promise<void> {
+    const { isReplaying, streamingPhase, isCompacting } = this.state.appState;
+    if (isReplaying) {
+      throw new Error('Cannot move the session while history is replaying.');
+    }
+    if (streamingPhase !== 'idle' || isCompacting || this.sessionReplacementInFlight) {
+      throw new Error('Cannot move the session while a turn or compaction is running.');
+    }
+    if (this.state.queuedMessages.length > 0) {
+      throw new Error('Cannot move the session while queued messages are waiting.');
+    }
+    for (const info of this.backgroundTasks.values()) {
+      if (info.status === 'running') {
+        throw new Error(
+          'Cannot move the session while background tasks are running. Wait for them to finish or choose Start new.',
+        );
+      }
+    }
+    const active = this.session;
+    if (active !== undefined && !active.isClosed && (await active.getCronTasks()).tasks.length > 0) {
+      throw new Error(
+        'Cannot move the session while scheduled tasks are active. Cancel them first or choose Start new.',
+      );
+    }
+  }
+
+  moveSessionTo(location: WorkLocation): Promise<boolean> {
+    return this.programResume.runHeld(async () => {
+      await this.waitForSessionAssembly();
+      const active = this.session;
+      if (active === undefined || active.isClosed) {
+        return this.startSessionAt(location);
+      }
+      await this.precheckMoveSession();
+      const moved = await this.harness.moveSession({
+        id: active.id,
+        workDir: location.cwd,
+      });
+      try {
+        await this.applyWorkLocation(location, { environmentId: 'local' });
+        await this.reloadCurrentSessionView(moved);
+        this.syncAdditionalDirs(moved);
+      } catch (error) {
+        this.session = moved;
+        this.registerSessionHandlers(moved);
+        if (this.sessionEventUnsubscribe === undefined) {
+          this.sessionEventHandler.startSubscription();
+        }
+        this.showError(`Moved session, but failed to refresh view: ${formatErrorMessage(error)}`);
+      }
+      return true;
+    });
+  }
+
   patchLivePane(patch: Partial<LivePaneState>): void {
     if (!hasPatchChanges(this.state.livePane, patch)) return;
     Object.assign(this.state.livePane, patch);
@@ -3973,7 +4058,7 @@ export class KimiTUI {
 
   reloadCurrentSessionView(
     session: Session,
-    statusMessage: string,
+    statusMessage?: string,
     options?: { readonly replayHistory?: boolean },
   ): Promise<void> {
     return this.programResume.runHeld(async () => {
@@ -3992,23 +4077,28 @@ export class KimiTUI {
       );
       this.harness.setTelemetryContext({ sessionId: session.id });
       this.registerSessionHandlers(session);
-      await this.syncRuntimeState(session);
-      this.updateTerminalTitle();
       try {
-        await this.refreshSkillCommands(session);
-        await this.refreshPluginCommands(session);
-      } catch {}
-      if (options?.replayHistory === true) {
-        this.clearTranscriptView();
+        await this.syncRuntimeState(session);
+        this.updateTerminalTitle();
         try {
-          await this.sessionReplay.hydrateFromReplay(session);
-        } catch (error) {
-          this.showError(`Failed to replay session history: ${formatErrorMessage(error)}`);
+          await this.refreshSkillCommands(session);
+          await this.refreshPluginCommands(session);
+        } catch {}
+        if (options?.replayHistory === true) {
+          this.clearTranscriptView();
+          try {
+            await this.sessionReplay.hydrateFromReplay(session);
+          } catch (error) {
+            this.showError(`Failed to replay session history: ${formatErrorMessage(error)}`);
+          }
         }
+      } finally {
+        this.sessionEventHandler.startSubscription();
       }
-      this.sessionEventHandler.startSubscription();
       this.applyResumedSessionState(session);
-      this.showStatus(statusMessage);
+      if (statusMessage !== undefined && statusMessage !== '') {
+        this.showStatus(statusMessage);
+      }
       void this.showSessionWarnings(session);
     });
   }
@@ -5601,6 +5691,10 @@ export class KimiTUI {
         this.toggleToolOutputExpansion();
       },
       {
+        layout:
+          this.state.dockContainer === undefined
+            ? undefined
+            : { maxBodyRows: DOCK_QUESTION_ROWS },
         isTerminalFocused: () => this.state.terminalState.focused,
         onFocusUpdates: () => this.focusNotifyPanel(),
       },

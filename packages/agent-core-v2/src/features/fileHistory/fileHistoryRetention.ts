@@ -37,6 +37,15 @@ export interface FileHistoryRetentionInput extends FileHistorySession {
   readonly sessionDir: string;
 }
 
+export interface RelocateFileHistorySessionInput {
+  readonly docs: IAtomicDocumentStore;
+  readonly workspaceId: string;
+  readonly projectRoot?: string;
+  readonly sessionId: string;
+  readonly fromPlacement: Pick<SessionMeta, 'environmentId' | 'environmentCwd'>;
+  readonly toPlacement: Pick<SessionMeta, 'environmentId' | 'environmentCwd'>;
+}
+
 const touchQueues = new Map<string, Promise<void>>();
 
 function listKeyOf({ workspaceId, projectRoot, placement }: FileHistorySession): string {
@@ -110,6 +119,46 @@ async function removeSessionBlobs(hostFs: IHostFileSystem, agentsDir: string): P
 export function dropFileHistorySession(input: FileHistorySession): Promise<void> {
   const listKey = listKeyOf(input);
   return enqueue(listKey, () => removeFromList(input, listKey)).catch(onUnexpectedError);
+}
+
+export async function relocateFileHistorySession(
+  input: RelocateFileHistorySessionInput,
+): Promise<void> {
+  const fromKey = listKeyOf({
+    docs: input.docs,
+    workspaceId: input.workspaceId,
+    projectRoot: input.projectRoot,
+    placement: input.fromPlacement,
+    sessionId: input.sessionId,
+  });
+  const toKey = listKeyOf({
+    docs: input.docs,
+    workspaceId: input.workspaceId,
+    projectRoot: input.projectRoot,
+    placement: input.toPlacement,
+    sessionId: input.sessionId,
+  });
+  if (fromKey === toKey) return;
+  let movedEntry: RetentionEntry | undefined;
+  await enqueue(fromKey, async () => {
+    const doc = await input.docs.get<RetentionDoc>(RETENTION_DOC_SCOPE, fromKey);
+    if (doc === undefined) return;
+    movedEntry = doc.sessions.find((entry) => entry.id === input.sessionId);
+    if (movedEntry === undefined) return;
+    const sessions = doc.sessions.filter((entry) => entry.id !== input.sessionId);
+    await input.docs.set(RETENTION_DOC_SCOPE, fromKey, { sessions });
+  }).catch(onUnexpectedError);
+  if (movedEntry === undefined) return;
+  const entryToInsert = movedEntry;
+  await enqueue(toKey, async () => {
+    const doc = (await input.docs.get<RetentionDoc>(RETENTION_DOC_SCOPE, toKey)) ?? {
+      sessions: [],
+    };
+    const sessions = doc.sessions.filter((entry) => entry.id !== input.sessionId);
+    sessions.push(entryToInsert);
+    sessions.sort((left, right) => left.touchedAt - right.touchedAt);
+    await input.docs.set(RETENTION_DOC_SCOPE, toKey, { sessions });
+  }).catch(onUnexpectedError);
 }
 
 async function removeFromList(input: FileHistorySession, listKey: string): Promise<void> {

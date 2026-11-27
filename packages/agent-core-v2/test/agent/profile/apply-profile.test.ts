@@ -184,6 +184,7 @@ describe('AgentLoopService.applyProfile', () => {
           restoreAfterFailure: async () => {},
         }),
         seedBeliefs,
+        syncAgentsMdSnapshot: async () => {},
         mute: () => {},
         unmute: () => {},
       }),

@@ -71,7 +71,7 @@ import {
 } from '#/utils/effort-switch-config';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { MAIN_AGENT_ID, NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
-import { DOCK_PREVIEW_ROWS } from '../constant/rendering';
+import { DOCK_MODEL_SELECTOR_ROWS, DOCK_PREVIEW_ROWS } from '../constant/rendering';
 import type { QueuedModelSwitch } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
@@ -459,6 +459,10 @@ export async function showModelPicker(host: SlashCommandHost, selectedValue: str
       currentValue: host.state.appState.model,
       selectedValue,
       currentThinkingEffort: host.state.appState.thinkingEffort,
+      layout:
+        host.state.dockContainer === undefined
+          ? undefined
+          : { maxBodyRows: DOCK_MODEL_SELECTOR_ROWS },
       warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
       effortDescriptions: effortDescriptions(),
       onSelect: ({ alias, thinking }) => {
@@ -691,6 +695,10 @@ function showSecondaryModelPicker(
       currentThinkingEffort: 'off',
       thinkingControl: false,
       title: ' Select a secondary model (subagents)',
+      layout:
+        host.state.dockContainer === undefined
+          ? undefined
+          : { maxBodyRows: DOCK_MODEL_SELECTOR_ROWS },
       onSelect: ({ alias }) => {
         host.restoreEditor();
         void performSecondaryModelSave(host, alias);

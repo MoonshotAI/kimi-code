@@ -23,8 +23,24 @@ import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
 import { FILE_HISTORY_BLOB_PREFIX } from '#/features/fileHistory/fileHistoryService';
 import {
   dropFileHistorySession,
+  relocateFileHistorySession,
   touchForkedFileHistory,
 } from '#/features/fileHistory/fileHistoryRetention';
+import { sameDir } from '#/_base/utils/workdir-slug';
+import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import {
+  EnvironmentSetBinding,
+  type WorkdirMoveBaseline,
+} from '#/agent/environmentBinding/environmentBindingOps';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { IAgentTaskService } from '#/agent/task/task';
+import {
+  IAgentWorkdirMoveService,
+  type PreparedWorkdirRelocation,
+} from '#/agent/workdirMove/workdirMove';
+import { IAgentCronService } from '#/features/cron/cronService';
+import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { readUserPermissionRules } from '#/agent/permissionRules/configSection';
 import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
@@ -65,7 +81,10 @@ import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
+import {
+  ISessionEphemeralMcpServers,
+  sessionEphemeralMcpServersSeed,
+} from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import {
   ISessionMetadata,
@@ -75,7 +94,11 @@ import {
 } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
-import { sessionDisabledMcpSourcesSeed, sessionMcpSourcesSeed } from '#/session/mcp/mcpSource';
+import {
+  ISessionDisabledMcpSources,
+  sessionDisabledMcpSourcesSeed,
+  sessionMcpSourcesSeed,
+} from '#/session/mcp/mcpSource';
 import { ISessionMcpService, SessionMcpService } from '#/session/mcp/sessionMcpService';
 import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
@@ -118,6 +141,7 @@ import {
   type CreateChildSessionOptions,
   type CreateSessionOptions,
   type ForkSessionOptions,
+  type MoveSessionOptions,
   type ResumeSessionOptions,
   type SessionArchivedEvent,
   type SessionClosedEvent,
@@ -283,6 +307,459 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
     await this.announceCreated({ sessionId, handle, source: 'startup' });
     return handle;
+  }
+
+  async move(opts: MoveSessionOptions): Promise<ISessionScopeHandle> {
+    const { sessionId } = opts;
+    const inflight = this.resuming.get(sessionId);
+    if (inflight !== undefined) {
+      await inflight.catch(() => undefined);
+    }
+    const existingHandle = this.sessions.get(sessionId);
+    const summary = await this.index.get(sessionId);
+    const persistedHere = summary !== undefined && summary.workspaceId === this.workspaceId;
+    if (existingHandle === undefined && !persistedHere) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+    }
+
+    const lease = this.sessionLocks.lease(sessionId);
+    try {
+      const persisted = await this.readMetaFromDisk(sessionId);
+      const currentEnvId = persisted?.environmentId ?? summary?.environmentId;
+      if (currentEnvId !== undefined && currentEnvId !== LOCAL_ENVIRONMENT_ID) {
+        throw new Error2(
+          ErrorCodes.REQUEST_INVALID,
+          `Session "${sessionId}" runs in remote environment "${currentEnvId}" and cannot be moved to a local worktree`,
+          { details: { sessionId, environmentId: currentEnvId } },
+        );
+      }
+
+      const nextEnv = sessionEnvironment(LOCAL_ENVIRONMENT_ID, opts.environmentCwd);
+      const nextWorkDir = this.sessionWorkDir(opts.workDir, nextEnv);
+      await this.requireReadableCwd({ environmentId: LOCAL_ENVIRONMENT_ID, cwd: nextWorkDir });
+
+      const oldHandle = existingHandle ?? (await this.doResume(sessionId, 'reclaimed'));
+      if (oldHandle === undefined) {
+        throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+      }
+
+      const oldMeta = await oldHandle.accessor.get(ISessionMetadata).read();
+      const oldEnv = sessionEnvironment(oldMeta.environmentId, oldMeta.environmentCwd);
+      const oldWorkDir = this.sessionWorkDir(
+        oldMeta.cwd ?? oldHandle.accessor.get(ISessionContext).cwd,
+        oldEnv,
+      );
+      if (sameDir(oldWorkDir, nextWorkDir) && oldMeta.environmentCwd === opts.environmentCwd) {
+        return oldHandle;
+      }
+
+      this.assertSessionIdleForMove(sessionId, oldHandle);
+
+      const nextWorkdir = await this.openWorkdir(nextEnv, nextWorkDir, true);
+      await nextWorkdir.skills
+        .reloadSources(SESSION_CREATE_RELOAD_SKILL_SOURCES)
+        .catch(() => undefined);
+
+      const additionalDirs = [...oldHandle.accessor.get(ISessionProjectInfo).additionalDirs];
+      const mcpServers = { ...oldHandle.accessor.get(ISessionEphemeralMcpServers) };
+      const disabledMcpSources = [...oldHandle.accessor.get(ISessionDisabledMcpSources)];
+      const hadMainAgent =
+        oldMeta.agents?.[MAIN_AGENT_ID] !== undefined ||
+        oldHandle.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID) !== undefined;
+
+      const relocation = await this.rebindAgentsForRelocation({
+        sessionId,
+        oldHandle,
+        oldMeta,
+        oldWorkDir,
+        nextWorkDir,
+        nextEnvironmentCwd: opts.environmentCwd,
+      });
+
+      await oldHandle.accessor.get(ISessionMetadata).update(
+        {
+          cwd: nextWorkDir,
+          environmentCwd: opts.environmentCwd,
+        },
+        { touchUpdatedAt: false },
+      );
+      await drainSessionMetadataWrites();
+      await this.appendSessionIndexEntry(sessionId, nextWorkDir);
+      await relocateFileHistorySession({
+        docs: this.docs,
+        workspaceId: this.workspaceId,
+        projectRoot: this.projectContext.meta.root,
+        sessionId,
+        fromPlacement: {
+          environmentId: oldMeta.environmentId,
+          environmentCwd: oldMeta.environmentCwd,
+        },
+        toPlacement: {
+          environmentId: oldMeta.environmentId,
+          environmentCwd: opts.environmentCwd,
+        },
+      });
+      await this.indexMirror.drain();
+
+      await this.teardownLiveSession(sessionId, oldHandle, 'reclaim', true);
+
+      try {
+        return await this.rematerializeRelocatedSession({
+          sessionId,
+          nextWorkDir,
+          nextEnv,
+          nextWorkdir,
+          additionalDirs,
+          mcpServers,
+          disabledMcpSources,
+          hadMainAgent,
+        });
+      } catch (error) {
+        await this.rollbackFailedRelocation({
+          sessionId,
+          oldMeta,
+          oldWorkDir,
+          failedEnvironmentCwd: opts.environmentCwd,
+          relocation,
+          additionalDirs,
+          mcpServers,
+          disabledMcpSources,
+        }).catch(() => undefined);
+        throw error;
+      }
+    } finally {
+      lease.release();
+    }
+  }
+
+  private async rebindAgentsForRelocation(input: {
+    readonly sessionId: string;
+    readonly oldHandle: ISessionScopeHandle;
+    readonly oldMeta: SessionMeta;
+    readonly oldWorkDir: string;
+    readonly nextWorkDir: string;
+    readonly nextEnvironmentCwd: string | undefined;
+  }): Promise<PreparedWorkdirRelocation> {
+    const agents = input.oldHandle.accessor.get(IAgentLifecycleService);
+    const mainHandle = agents.handleOf(MAIN_AGENT_ID);
+    const changeNotifier = mainHandle?.accessor.get(IAgentChangeNotifierService);
+    changeNotifier?.mute();
+    try {
+      let relocation: PreparedWorkdirRelocation = {};
+      if (mainHandle !== undefined) {
+        relocation = await mainHandle.accessor
+          .get(IAgentWorkdirMoveService)
+          .prepareRelocation({ oldWorkDir: input.oldWorkDir, nextWorkDir: input.nextWorkDir });
+        await mainHandle.accessor.get(IAgentEnvironmentBindingService).rebindLocalWorkDir({
+          cwd: input.nextEnvironmentCwd,
+          originCwd: relocation.originCwd,
+          pendingBaseline: relocation.pendingBaseline,
+        });
+      }
+      const liveAgentIds = new Set<string>();
+      for (const agent of agents.list()) {
+        liveAgentIds.add(agent.agentId);
+        if (agent.agentId === MAIN_AGENT_ID) continue;
+        const subHandle = agents.handleOf(agent.agentId);
+        if (subHandle !== undefined) {
+          await subHandle.accessor
+            .get(IAgentEnvironmentBindingService)
+            .rebindLocalWorkDir({ cwd: input.nextEnvironmentCwd });
+        }
+      }
+      for (const agent of agents.list()) {
+        const handle = agents.handleOf(agent.agentId);
+        if (handle !== undefined) {
+          await handle.accessor.get(IEventDispatcher).flush();
+        }
+      }
+      for (const agentId of Object.keys(input.oldMeta.agents ?? {})) {
+        if (agentId === MAIN_AGENT_ID || liveAgentIds.has(agentId)) continue;
+        await this.appendColdAgentLocalBinding(input.sessionId, agentId, {
+          cwd: input.nextEnvironmentCwd,
+        });
+      }
+      await this.appendLogStore.flush();
+      return relocation;
+    } catch (error) {
+      changeNotifier?.unmute();
+      throw error;
+    }
+  }
+
+  private async rematerializeRelocatedSession(input: {
+    readonly sessionId: string;
+    readonly nextWorkDir: string;
+    readonly nextEnv: ReturnType<typeof sessionEnvironment>;
+    readonly nextWorkdir: WorkdirWithMcp;
+    readonly additionalDirs: readonly string[];
+    readonly mcpServers: ResumeSessionOptions['mcpServers'];
+    readonly disabledMcpSources: readonly string[];
+    readonly hadMainAgent: boolean;
+  }): Promise<ISessionScopeHandle> {
+    const newHandle = await this.materializeSession(
+      {
+        sessionId: input.sessionId,
+        workDir: input.nextWorkDir,
+        additionalDirs: [...input.additionalDirs],
+        mcpServers: { ...input.mcpServers },
+        disabledMcpSources: [...input.disabledMcpSources],
+      },
+      input.nextEnv,
+      input.nextWorkdir,
+    );
+    try {
+      if (input.hadMainAgent) {
+        const newAgents = newHandle.accessor.get(IAgentLifecycleService);
+        if (newAgents.get(MAIN_AGENT_ID) === undefined) {
+          await newAgents.create({
+            agentId: MAIN_AGENT_ID,
+            environmentId: input.nextEnv?.environmentId,
+            environmentCwd: input.nextEnv?.cwd,
+          });
+        }
+        const mainHandle = newAgents.handleOf(MAIN_AGENT_ID);
+        if (mainHandle !== undefined) {
+          await mainHandle.accessor.get(IAgentChangeNotifierService).notifyAgentsMdChanges();
+          mainHandle.accessor.get(IAgentLoopService).flushReminders();
+        }
+      }
+      await this._onDidCreateSession.fireAsync(
+        { sessionId: input.sessionId, handle: newHandle, source: 'reclaimed' },
+        NO_ABORT,
+      );
+      return newHandle;
+    } catch (error) {
+      this.sessions.delete(input.sessionId);
+      await newHandle.dispose();
+      throw error;
+    }
+  }
+
+  private assertSessionIdleForMove(sessionId: string, handle: ISessionScopeHandle): void {
+    const activity = handle.accessor.get(ISessionActivityView).state();
+    if (activity.busy || activity.pendingInteraction !== 'none') {
+      throw new Error2(
+        ErrorCodes.TURN_AGENT_BUSY,
+        `Session "${sessionId}" cannot be moved while a turn or interaction is active`,
+        { details: { sessionId } },
+      );
+    }
+    const agents = handle.accessor.get(IAgentLifecycleService);
+    for (const agent of agents.list()) {
+      const agentHandle = agents.handleOf(agent.agentId);
+      if (agentHandle === undefined) continue;
+      const snapshot = agentHandle.accessor.get(IAgentLoopService).snapshot();
+      if (
+        snapshot.state === 'running' ||
+        snapshot.activeTurnId !== undefined ||
+        snapshot.turn !== undefined ||
+        snapshot.queue.length > 0 ||
+        snapshot.hasPendingRequests
+      ) {
+        throw new Error2(
+          ErrorCodes.TURN_AGENT_BUSY,
+          `Session "${sessionId}" cannot be moved while a turn or queued message is pending`,
+          { details: { sessionId, agentId: agent.agentId } },
+        );
+      }
+      if (agentHandle.accessor.get(IAgentFullCompactionService).compacting !== null) {
+        throw new Error2(
+          ErrorCodes.TURN_AGENT_BUSY,
+          `Session "${sessionId}" cannot be moved while compaction is running`,
+          { details: { sessionId, agentId: agent.agentId } },
+        );
+      }
+      if (agentHandle.accessor.get(IAgentTaskService).list(true).length > 0) {
+        throw new Error2(
+          ErrorCodes.TURN_AGENT_BUSY,
+          `Session "${sessionId}" cannot be moved while background tasks are running`,
+          { details: { sessionId, agentId: agent.agentId } },
+        );
+      }
+      if (agentHandle.accessor.get(IAgentCronService).list().length > 0) {
+        throw new Error2(
+          ErrorCodes.TURN_AGENT_BUSY,
+          `Session "${sessionId}" cannot be moved while scheduled cron tasks are active`,
+          { details: { sessionId, agentId: agent.agentId } },
+        );
+      }
+    }
+  }
+
+  private async teardownLiveSession(
+    sessionId: string,
+    handle: ISessionScopeHandle,
+    reason: Exclude<SessionCloseReason, 'archive'>,
+    awaitDispose: boolean,
+  ): Promise<void> {
+    await this.announceWillClose({ sessionId, handle, reason });
+    this.sessions.delete(sessionId);
+    await this.drainAgents(handle);
+    await this.appendLogStore.drainRetirements();
+    await drainSessionMetadataWrites();
+    await this.indexMirror.drain();
+    const disposePromise = handle.dispose();
+    if (awaitDispose) {
+      await disposePromise;
+    } else {
+      void disposePromise;
+    }
+    await this.environments.drainSession(sessionId);
+    await drainLogCloses();
+    this._onDidCloseSession.fire({ sessionId });
+  }
+
+  private async rollbackFailedRelocation(input: {
+    readonly sessionId: string;
+    readonly oldMeta: SessionMeta;
+    readonly oldWorkDir: string;
+    readonly failedEnvironmentCwd: string | undefined;
+    readonly relocation: PreparedWorkdirRelocation;
+    readonly additionalDirs: readonly string[];
+    readonly mcpServers: ResumeSessionOptions['mcpServers'];
+    readonly disabledMcpSources: readonly string[];
+  }): Promise<void> {
+    const { sessionId, oldMeta, oldWorkDir } = input;
+    const restoredMeta: SessionMeta = {
+      ...oldMeta,
+      cwd: oldWorkDir,
+      environmentCwd: oldMeta.environmentCwd,
+    };
+    await this.docs.set(
+      sessionScopeOf(this.handlerScope, sessionId),
+      'state.json',
+      encodeSessionMeta(restoredMeta),
+    );
+    this.indexMirror.record(
+      buildSessionSummary({
+        id: sessionId,
+        workspaceId: this.workspaceId,
+        cwd: oldWorkDir,
+        environmentId: restoredMeta.environmentId,
+        environmentCwd: restoredMeta.environmentCwd,
+        title: restoredMeta.title,
+        lastPrompt: restoredMeta.lastPrompt,
+        createdAt: restoredMeta.createdAt,
+        updatedAt: restoredMeta.updatedAt,
+        archived: restoredMeta.archived,
+        archivedAt: restoredMeta.archivedAt,
+        custom: restoredMeta.custom,
+        lastTurnReason: restoredMeta.lastTurnReason,
+      }),
+    );
+    await this.appendSessionIndexEntry(sessionId, oldWorkDir);
+    await relocateFileHistorySession({
+      docs: this.docs,
+      workspaceId: this.workspaceId,
+      projectRoot: this.projectContext.meta.root,
+      sessionId,
+      fromPlacement: {
+        environmentId: oldMeta.environmentId,
+        environmentCwd: input.failedEnvironmentCwd,
+      },
+      toPlacement: {
+        environmentId: oldMeta.environmentId,
+        environmentCwd: oldMeta.environmentCwd,
+      },
+    });
+    const agentIds = new Set<string>([MAIN_AGENT_ID, ...Object.keys(oldMeta.agents ?? {})]);
+    for (const agentId of agentIds) {
+      await this.appendColdAgentLocalBinding(
+        sessionId,
+        agentId,
+        agentId === MAIN_AGENT_ID
+          ? {
+              cwd: oldMeta.environmentCwd,
+              originCwd: input.relocation.previousOriginCwd ?? null,
+              pendingBaseline: input.relocation.previousPendingBaseline ?? null,
+            }
+          : { cwd: oldMeta.environmentCwd },
+      );
+    }
+    await this.appendLogStore.flush();
+    const resumed = await this.doResume(sessionId, 'reclaimed', {
+      additionalDirs: [...input.additionalDirs],
+      mcpServers: { ...input.mcpServers },
+      disabledMcpSources: [...input.disabledMcpSources],
+    });
+    const resumedMain = resumed?.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+    if (resumedMain !== undefined) {
+      await resumedMain.accessor
+        .get(IAgentWorkdirMoveService)
+        .restoreAgentsMdSnapshot(oldWorkDir)
+        .catch(() => undefined);
+      await resumedMain.accessor.get(IEventDispatcher).flush();
+      await this.appendLogStore.flush();
+    }
+  }
+
+  private async appendColdAgentLocalBinding(
+    sessionId: string,
+    agentId: string,
+    binding: {
+      readonly cwd?: string;
+      readonly originCwd?: string | null;
+      readonly pendingBaseline?: WorkdirMoveBaseline | null;
+    },
+  ): Promise<void> {
+    const bindingRecord: WireRecord = {
+      type: EnvironmentSetBinding.type,
+      time: Date.now(),
+      agentId,
+      environmentId: LOCAL_ENVIRONMENT_ID,
+      ...(binding.cwd === undefined ? {} : { cwd: binding.cwd }),
+      ...(binding.originCwd === undefined ? {} : { originCwd: binding.originCwd }),
+      ...(binding.pendingBaseline === undefined
+        ? {}
+        : { pendingBaseline: binding.pendingBaseline }),
+    };
+    await this.appendRecordToColdAgentLog(sessionId, agentId, bindingRecord, {
+      createIfEmpty: false,
+      checkReaderVersion: false,
+    });
+  }
+
+  private async appendRecordToColdAgentLog(
+    sessionId: string,
+    agentId: string,
+    nextRecord: WireRecord,
+    options: { readonly createIfEmpty: boolean; readonly checkReaderVersion: boolean },
+  ): Promise<void> {
+    const scope = agentScopeOf(sessionScopeOf(this.handlerScope, sessionId), agentId);
+    const tolerate = { onTruncate: () => {} };
+    let first: WireRecord | undefined;
+    for await (const record of this.appendLogStore.read<WireRecord>(
+      scope,
+      AGENT_WIRE_RECORD_KEY,
+      tolerate,
+    )) {
+      first = record;
+      break;
+    }
+    if (first === undefined) {
+      if (!options.createIfEmpty) return;
+      this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, createWireMetadataRecord());
+      this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, nextRecord);
+      return;
+    }
+    if (first.type === 'metadata') {
+      if (options.checkReaderVersion) {
+        assertWireRecordsReaderVersion([first]);
+      }
+      this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, nextRecord);
+      return;
+    }
+    const records: WireRecord[] = [createWireMetadataRecord()];
+    for await (const record of this.appendLogStore.read<WireRecord>(
+      scope,
+      AGENT_WIRE_RECORD_KEY,
+      tolerate,
+    )) {
+      records.push(record);
+    }
+    records.push(nextRecord);
+    await this.appendLogStore.rewrite(scope, AGENT_WIRE_RECORD_KEY, records);
   }
 
   private async materializeSession(
@@ -571,16 +1048,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async close(sessionId: string, reason: Exclude<SessionCloseReason, 'archive'> = 'exit'): Promise<void> {
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return;
-    await this.announceWillClose({ sessionId, handle, reason });
-    this.sessions.delete(sessionId);
-    await this.drainAgents(handle);
-    await this.appendLogStore.drainRetirements();
-    await drainSessionMetadataWrites();
-    await this.indexMirror.drain();
-    void handle.dispose();
-    await this.environments.drainSession(sessionId);
-    await drainLogCloses();
-    this._onDidCloseSession.fire({ sessionId });
+    await this.teardownLiveSession(sessionId, handle, reason, false);
     const ended: SessionEndedEvent = { reason };
     this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', ended);
   }
@@ -960,37 +1428,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async appendForkedMarker(targetSessionId: string, agentId: string): Promise<void> {
-    const scope = agentScopeOf(sessionScopeOf(this.handlerScope, targetSessionId), agentId);
-    const tolerate = { onTruncate: () => {} };
-    let first: WireRecord | undefined;
-    for await (const record of this.appendLogStore.read<WireRecord>(
-      scope,
-      AGENT_WIRE_RECORD_KEY,
-      tolerate,
-    )) {
-      first = record;
-      break;
-    }
-    if (first === undefined) {
-      this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, createWireMetadataRecord());
-      this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, forkedRecord(agentId));
-      return;
-    }
-    if (first.type === 'metadata') {
-      assertWireRecordsReaderVersion([first]);
-      this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, forkedRecord(agentId));
-      return;
-    }
-    const records: WireRecord[] = [createWireMetadataRecord()];
-    for await (const record of this.appendLogStore.read<WireRecord>(
-      scope,
-      AGENT_WIRE_RECORD_KEY,
-      tolerate,
-    )) {
-      records.push(record);
-    }
-    records.push(forkedRecord(agentId));
-    await this.appendLogStore.rewrite(scope, AGENT_WIRE_RECORD_KEY, records);
+    await this.appendRecordToColdAgentLog(targetSessionId, agentId, forkedRecord(agentId), {
+      createIfEmpty: true,
+      checkReaderVersion: true,
+    });
   }
 
   private async readSourceWireRecords(

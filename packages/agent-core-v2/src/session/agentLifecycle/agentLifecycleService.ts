@@ -51,6 +51,7 @@ import { historyFromContextPreservingToolNotes } from '#/agent/loop/history';
 import { closeTrailingOpenToolExchange } from '#/agent/contextMemory/openToolExchange';
 import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import '#/agent/environmentBinding/environmentBindingService';
+import '#/agent/workdirMove/workdirMoveService';
 import { EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';

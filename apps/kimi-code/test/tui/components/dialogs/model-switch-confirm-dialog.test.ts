@@ -1,4 +1,5 @@
-import { visibleWidth } from '@moonshot-ai/pi-tui';
+import { TuiAltScreen, visibleWidth } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ModelSwitchConfirmDialogComponent } from '#/tui/components/dialogs/model-switch-confirm-dialog';
@@ -176,5 +177,43 @@ describe('ModelSwitchConfirmDialogComponent', () => {
       32,
     );
     for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(32);
+  });
+
+  it('activates clicked confirmation options after focusing in fullscreen', async () => {
+    let now = 20_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const onSelect = vi.fn();
+    const dialog = new ModelSwitchConfirmDialogComponent({
+      fromModel: 'Kimi K2.5',
+      toModel: 'Kimi K2 Turbo',
+      sessionType: 'old',
+      hint: DEFAULT_HINT,
+      onSelect,
+      onCancel: vi.fn(),
+    });
+    const vt = new VirtualTerminal(100, 14);
+    const ui = new TuiAltScreen(vt);
+    ui.setLayoutRoot(dialog);
+    ui.start();
+    await vt.waitForRender();
+    try {
+      const screen = vt.getViewport().map(strip);
+      const continueRow = screen.findIndex((line) => line.includes('Continue as-is'));
+      expect(continueRow).toBeGreaterThan(0);
+
+      now += 500;
+      vt.sendInput(`\u001B[<0;8;${String(continueRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;8;${String(continueRow + 1)}m`);
+      await vt.waitForRender();
+      expect(dialog.focused).toBe(true);
+      expect(onSelect).not.toHaveBeenCalled();
+
+      vt.sendInput(`\u001B[<0;8;${String(continueRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;8;${String(continueRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith('continue');
+    } finally {
+      ui.stop();
+    }
   });
 });

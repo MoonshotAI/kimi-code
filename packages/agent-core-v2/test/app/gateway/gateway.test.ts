@@ -105,6 +105,7 @@ describe('RestGateway', () => {
       onDidArchiveSession: () => ({ dispose: () => {} }),
       onDidForkSession: () => ({ dispose: () => {} }),
       create: () => Promise.resolve(sessionHandle),
+      move: () => Promise.resolve(sessionHandle),
       get: (id: string) => (id === 's1' ? sessionHandle : undefined),
       list: () => [sessionHandle],
       resume: () => Promise.resolve(sessionHandle),

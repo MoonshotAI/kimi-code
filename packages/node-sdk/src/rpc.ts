@@ -130,6 +130,10 @@ export interface ReloadSessionRpcInput extends SessionIdRpcInput {
   readonly forcePluginSessionStartReminder?: boolean;
 }
 
+export interface MoveSessionRpcInput extends SessionIdRpcInput {
+  readonly workDir: string;
+}
+
 export interface SetSessionModelRpcInput extends SessionIdRpcInput {
   readonly model: string;
 }
@@ -222,6 +226,13 @@ export abstract class SDKRpcClientBase {
   abstract resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary>;
 
   abstract reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary>;
+
+  async moveSession(_input: MoveSessionRpcInput): Promise<ResumedSessionSummary> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Moving a session is not implemented for this engine',
+    );
+  }
 
   abstract forkSession(input: ForkSessionInput): Promise<SessionSummary>;
 
