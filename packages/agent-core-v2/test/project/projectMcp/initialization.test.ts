@@ -10,7 +10,6 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { IMcpConfigStore, type McpConfigWriteEvent } from '#/app/mcpConfig/configStore';
@@ -32,9 +31,11 @@ import { IProjectMcpConfigService } from '#/project/projectMcpConfig/projectMcpC
 import { ProjectMcpConfigService } from '#/project/projectMcpConfig/projectMcpConfigService';
 import { IProjectMcpService } from '#/project/projectMcp/projectMcp';
 import { ProjectMcpService } from '#/project/projectMcp/projectMcpService';
+import { SessionMcpService } from '#/session/mcp/sessionMcpService';
+import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 
 import { stubLog } from '../../_base/log/stubs';
-import { registerAgentIdentityStub } from '../../app/agentIdentity/stubs';
+import { registerAgentIdentityStub, stubAgentIdentity } from '../../app/agentIdentity/stubs';
 import {
   createMemoryMcpOAuthStore,
   hostPathClass,
@@ -46,17 +47,25 @@ describe('Workspace MCP initialization', () => {
   let cwd: string;
   let homeDir: string;
   let disposables: DisposableStore;
-  let manager: McpConnectionManager | undefined;
+  let service: ProjectMcpService | undefined;
+  let sessions: SessionMcpService[];
+  let sessionConfigs: IConfigService[];
+  let environmentServices: IEnvironmentService;
+  let oauthService: McpOAuthService | undefined;
 
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-cwd-'));
     homeDir = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-home-'));
     disposables = new DisposableStore();
-    manager = undefined;
+    service = undefined;
+    sessions = [];
+    sessionConfigs = [];
+    oauthService = undefined;
   });
 
   afterEach(async () => {
-    await manager?.shutdown();
+    await Promise.all(sessions.map((session) => session.disposeAsync()));
+    await service?.disposeAsync();
     disposables.dispose();
     await Promise.all([
       rm(cwd, { recursive: true, force: true }),
@@ -83,10 +92,8 @@ describe('Workspace MCP initialization', () => {
           mcpServerEntries: async () => [],
           onDidReload: Event.None as Event<PluginReloadEvent>,
         });
-        reg.definePartialInstance(
-          IMcpOAuthService,
-          new McpOAuthService({ store: createMemoryMcpOAuthStore() }),
-        );
+        oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+        reg.definePartialInstance(IMcpOAuthService, oauthService);
         reg.definePartialInstance(IMcpConfigStore, {
           onDidWrite: Event.None as Event<McpConfigWriteEvent>,
         });
@@ -96,13 +103,16 @@ describe('Workspace MCP initialization', () => {
           new FakeEnvironment({ environmentId: 'local', generation: 'test-generation' }, { capabilities: ['process'], pathClass: hostPathClass }),
           { process: new HostProcessService() },
         );
-        reg.definePartialInstance(IEnvironmentService, { _serviceBrand: undefined, inspect: () => environment, acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }), acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }) });
-        reg.definePartialInstance(IConfigService, {
+        environmentServices = { _serviceBrand: undefined, inspect: () => environment, acquire: () => ({ environment, track: <T,>(resource: T): T => resource, dispose: () => {} }), acquireWhenReady: async () => ({ environment, track: <T,>(resource: T): T => resource, dispose: () => {} }) } as unknown as IEnvironmentService;
+        reg.defineInstance(IEnvironmentService, environmentServices);
+        const configStub: IConfigService = {
           ready,
           onDidSectionChange: Event.None as IConfigService['onDidSectionChange'],
           get: (<T = unknown>(domain: string): T =>
             (domain === MCP_SECTION ? mcpSection : undefined) as T),
-        });
+        } as unknown as IConfigService;
+        reg.defineInstance(IConfigService, configStub);
+        sessionConfigs.push(configStub);
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
         reg.definePartialInstance(IProjectTrust, {
           ready: Promise.resolve(),
@@ -115,7 +125,22 @@ describe('Workspace MCP initialization', () => {
         reg.define(IProjectMcpService, ProjectMcpService);
       },
     });
-    return ix.get(IProjectMcpService);
+    service = ix.get(IProjectMcpService) as ProjectMcpService;
+    const sessionId = `init-${sessions.length}`;
+    sessions.push(
+      new SessionMcpService(
+        makeSessionContext({ sessionId, workspaceId: 'test-workspace', sessionDir: cwd, sessionScope: 'ws', cwd }),
+        {},
+        service.sources(),
+        [],
+        sessionConfigs[sessionConfigs.length - 1]!,
+        oauthService!,
+        environmentServices,
+        stubAgentIdentity(),
+        stubLog(),
+      ),
+    );
+    return service;
   }
 
   it('exposes the connection manager before config is ready and starts connecting once ready', async () => {
@@ -130,16 +155,18 @@ describe('Workspace MCP initialization', () => {
         environment_id: 'local',
       },
     });
-    const service = createWorkspaceMcpService(ready);
-    manager = service.connectionManager();
-    expect(manager.list()).toEqual([]);
+    const created = createWorkspaceMcpService(ready);
+    const session = sessions[sessions.length - 1]!;
+    const view = session.connectionManager;
+    expect(view.list()).toEqual([]);
 
     await sleep(50);
-    expect(manager.list()).toEqual([]);
+    expect(view.list()).toEqual([]);
 
     resolveConfigReady();
-    await service.ready;
-    expect(manager.get('alpha')?.status).toBe('connected');
+    await created.ready;
+    await session.ready;
+    expect(view.get('alpha')?.status).toBe('connected');
   }, 15000);
 
   it('times out tool calls using the session MCP timeout preference', async () => {
@@ -150,10 +177,11 @@ describe('Workspace MCP initialization', () => {
         environment_id: 'local',
       },
     });
-    const service = createWorkspaceMcpService(Promise.resolve(), { toolTimeoutMs: 1 });
-    await service.ready;
-    manager = service.connectionManager();
-    const client = manager.resolved('slowTool')?.client;
+    const created = createWorkspaceMcpService(Promise.resolve(), { toolTimeoutMs: 1 });
+    const session = sessions[sessions.length - 1]!;
+    await created.ready;
+    await session.ready;
+    const client = session.connectionManager.resolved('slowTool')?.client;
     if (client === undefined) throw new Error('expected a connected client');
     await expect(client.callTool('slow_echo', { text: 'hi' })).rejects.toThrow(/timed out/i);
   }, 15000);

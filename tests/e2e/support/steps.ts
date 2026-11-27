@@ -101,6 +101,7 @@ export const DISK_TITLES = {
 
 export const CLOCK_TITLE = (time: string): string => `本机的时间变成${quote(time)}`;
 
+export const CONFIG_TITLE = '用户编辑配置文件';
 export const GIT_TITLE = (args: readonly string[]): string => `用户在终端里运行${quote(['git', ...args].join(' '))}`;
 
 export const MCP_TITLES = {

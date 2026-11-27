@@ -1,12 +1,4 @@
 {
-  "runtime-cycle": {
-    "packages/app-client/src/stores/files.ts": 6,
-    "packages/app-client/src/stores/pinnedOrder.ts": 6,
-    "packages/app-client/src/stores/prompt.ts": 6,
-    "packages/app-client/src/stores/sessions.ts": 6,
-    "packages/app-client/src/stores/warnings.ts": 6,
-    "packages/app-client/src/stores/workspaces.ts": 6
-  },
   "store-cross-import": {
     "packages/app-client/src/stores/approvals.ts": 1,
     "packages/app-client/src/stores/auth.ts": 2,

@@ -2016,6 +2016,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-archive-mcp-'));
     const spawned: IHostProcess[] = [];
     let disposeReplacement: (() => void) | undefined;
+    let releaseReplacementMcp: (() => Promise<void>) | undefined;
     const hostProcesses = (server as RunningServer).core.accessor.get(IHostProcessService);
     const spawn = hostProcesses.spawn.bind(hostProcesses);
     const spawnSpy = vi.spyOn(hostProcesses, 'spawn').mockImplementation(async (command, args, options) => {
@@ -2083,6 +2084,7 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(replacement).not.toBe(workspace);
       const replacementMcp = (await replacement.program.acquireMcp()).service;
       await replacementMcp.ready;
+      releaseReplacementMcp = await replacementMcp.acquire();
       const replacementConnections = replacementMcp.connectionManager();
       await vi.waitFor(() => {
         expect(replacementConnections.list().some((entry) => entry.name === 'fixture' && entry.status === 'connected')).toBe(true);
@@ -2101,11 +2103,14 @@ describe('server-v2 /api/v1/sessions', () => {
           subscription.dispose();
         };
       });
+      await releaseReplacementMcp();
+      releaseReplacementMcp = undefined;
       replacementLease.dispose();
       await replacementClosed;
       disposeReplacementSubscription?.();
       expect(replacementChild.exitCode).not.toBeNull();
     } finally {
+      await releaseReplacementMcp?.();
       disposeReplacement?.();
       spawnSpy.mockRestore();
       for (const child of spawned) {

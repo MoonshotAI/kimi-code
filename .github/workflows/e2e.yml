@@ -5,17 +5,17 @@ name: E2E
 # itself, so the shared runner pool is not spent on every push of every PR.
 # The Windows jobs run on those pull requests, on manual runs and every night,
 # not on pushes to main, so each merge does not take another six runners.
-# The macOS jobs run only on manual runs with the macos input and on pull
-# requests that carry the e2e-macos label, which also runs the rest of the
-# suite. Each run starts at most two of them at once: the organization runs
-# at most five macOS jobs at once, and the release and desktop builds need
-# them too. They are new, so they stay off pushes to main and the nightly run
-# until manual runs show them green.
+# The macOS jobs run every night, on manual runs with the macos input and on
+# pull requests that carry the e2e-macos label, which also runs the rest of
+# the suite; they stay off pushes to main and other pull requests. Each run
+# starts at most two of them at once: the organization runs at most five
+# macOS jobs at once, and the release and desktop builds need them too.
 # Every night at 04:07 Beijing time the whole suite runs on main. The few
 # minutes past the hour keep it off the top of the hour, when GitHub delays
 # and sometimes drops scheduled runs. If any job does not pass, the notify
 # job posts the failed jobs and cases to the team's Feishu group, with the
-# commits since the last run on main that passed, and asks the person on
+# commits since the last run on main that passed (the last nightly run when
+# a Windows or macOS job failed, as pushes run neither), and asks the person on
 # triage to find the pull request behind them; a passing night posts
 # nothing. On those nights a job whose suite failed reruns its first three
 # failed cases five times each on the same commit and machine, within ten
@@ -94,7 +94,7 @@ jobs:
             echo "E2E skipped: this run only posts a test card to Feishu about run $NOTIFY_RUN_ID." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          if [[ "$MACOS_INPUT" == true || "$HAS_MACOS_LABEL" == true ]]; then
+          if [[ "$EVENT" == schedule || "$MACOS_INPUT" == true || "$HAS_MACOS_LABEL" == true ]]; then
             echo "macos=true" >> "$GITHUB_OUTPUT"
           else
             echo "macos=false" >> "$GITHUB_OUTPUT"

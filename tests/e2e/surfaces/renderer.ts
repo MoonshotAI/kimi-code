@@ -95,6 +95,7 @@ const FEEDBACK_BOX = 'Explain why you are rejecting…';
 const MANUALLY_STOPPED = 'Manually stopped';
 const CONTINUE = 'Continue';
 const QUEUE_WAITING = /\d+ waiting to send$/;
+const STEER_RECEIPT = /^(?:Unread|Read)$/;
 const QUESTION_MAIN = /^(?:Submit|Next question)$/;
 const QUESTION_STEPS = /^(?:Next question|Back)$/;
 const SUBMIT = 'Submit';
@@ -321,7 +322,13 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     await this.page.keyboard.type(text);
     await this.page.keyboard.press('Enter');
     this.steered.push(text);
-    const reached = async (): Promise<boolean> => (await this.userMessages(latest + 1, text).count()) > 0 && (await this.queuedMessage(text).count()) === 0;
+    const reached = async (): Promise<boolean> => {
+      const message = this.userMessages(latest + 1, text).last();
+      if ((await message.count()) === 0 || (await this.queuedMessage(text).count()) > 0) return false;
+      const receipt = message.getByRole('status').and(this.page.locator(SHOWN)).filter({ hasText: STEER_RECEIPT });
+      const continuation = message.locator('xpath=following-sibling::*[@role="listitem"]');
+      return (await receipt.count()) > 0 || (await continuation.count()) > 0;
+    };
     if ((await this.settle(`the message ${JSON.stringify(text)} to reach the running turn`, reached)) === 'over') {
       throw new Error(`steer() did not see ${JSON.stringify(text)} reach the turn before it ended.\n${await this.describe()}`);
     }
