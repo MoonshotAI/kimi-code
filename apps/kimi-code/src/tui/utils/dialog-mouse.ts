@@ -66,12 +66,17 @@ export function handleSegmentedMouse(input: {
   readonly regions: readonly MouseColRegion[];
   readonly select: (index: number) => boolean;
   readonly activate: (index: number, event: TuiMouseEvent) => void;
+  readonly selectOnHover?: boolean;
 }): TuiMouseEventResult | undefined {
-  const { event, focused, shownAt, row, regions, select, activate } = input;
+  const { event, focused, shownAt, row, regions, select, activate, selectOnHover = false } = input;
   if (!focused) return focusOnUnfocusedMouse(event);
-  if (event.button !== 'left' || event.y !== row) return undefined;
+  if (event.y !== row) return undefined;
   const index = colIndexAt(regions, event.x);
-  if (index === undefined) return undefined;
+  if (event.type === 'move') {
+    if (!selectOnHover || index === undefined) return undefined;
+    return { handled: true, render: select(index) };
+  }
+  if (event.button !== 'left' || index === undefined) return undefined;
   if (event.type === 'press') return { handled: true };
   if (event.type === 'click' && !isSettlingClick(shownAt)) {
     select(index);

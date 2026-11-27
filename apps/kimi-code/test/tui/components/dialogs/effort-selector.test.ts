@@ -171,7 +171,7 @@ describe('EffortSelectorComponent', () => {
     expect(squashed).toContain(warning.replaceAll(/\s+/g, ''));
   });
 
-  it('selects effort segments on mouse click, tolerates 1-col horizontal drift, supports Alt+click session-only, and guards unfocused first click', async () => {
+  it('updates highlighted effort on mouse move, selects on click, tolerates 1-col horizontal drift, supports Alt+click session-only, and guards unfocused first click', async () => {
     let now = 10_000;
     vi.spyOn(Date, 'now').mockImplementation(() => now);
     const onSelect = vi.fn();
@@ -179,6 +179,12 @@ describe('EffortSelectorComponent', () => {
     const picker = new EffortSelectorComponent({
       efforts: ['off', 'low', 'high', 'max'],
       currentValue: 'high',
+      descriptions: {
+        off: 'No extra thinking.',
+        low: 'Light reasoning.',
+        high: 'Deeper reasoning.',
+        max: 'Maximum reasoning.',
+      },
       onSelect,
       onSessionOnlySelect,
       onCancel: vi.fn(),
@@ -192,16 +198,34 @@ describe('EffortSelectorComponent', () => {
       const viewport = vt.getViewport().map(strip);
       const segRow = viewport.findIndex((line) => line.includes('[ High ]'));
       expect(segRow).toBeGreaterThan(0);
+      const offCol = viewport[segRow]!.indexOf('Off') + 1;
       const lowCol = viewport[segRow]!.indexOf('Low') + 1;
       const lowRightEdgeCol = viewport[segRow]!.indexOf('Low') + 5;
+      const highCol = viewport[segRow]!.indexOf('High') + 1;
       const maxCol = viewport[segRow]!.indexOf('Max') + 1;
 
       now += 500;
+      vt.sendInput(`\u001B[<35;${String(offCol)};${String(segRow + 1)}M`);
+      expect(vt.getViewport().map(strip)[segRow]).toContain('[ High ]');
+
       vt.sendInput(`\u001B[<0;${String(lowCol)};${String(segRow + 1)}M`);
       vt.sendInput(`\u001B[<0;${String(lowCol)};${String(segRow + 1)}m`);
       await vt.waitForRender();
       expect(picker.focused).toBe(true);
       expect(onSelect).not.toHaveBeenCalled();
+
+      vt.sendInput(`\u001B[<35;${String(offCol)};${String(segRow + 1)}M`);
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip)[segRow]).toContain('[ Off ]');
+      expect(vt.getViewport().map(strip).join('\n')).toContain('No extra thinking.');
+      expect(onSelect).not.toHaveBeenCalled();
+
+      vt.sendInput(`\u001B[<35;${String(offCol)};1M`);
+      expect(vt.getViewport().map(strip)[segRow]).toContain('[ Off ]');
+
+      vt.sendInput(`\u001B[<35;${String(highCol)};${String(segRow + 1)}M`);
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip)[segRow]).toContain('[ High ]');
 
       vt.sendInput(`\u001B[<0;${String(lowCol)};${String(segRow + 1)}M`);
       vt.sendInput(`\u001B[<32;${String(lowCol + 10)};${String(segRow + 1)}M`);
