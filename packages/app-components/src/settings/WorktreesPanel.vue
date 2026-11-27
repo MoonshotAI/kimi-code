@@ -135,7 +135,7 @@ onBeforeUnmount(() => {
   <div class="worktrees-panel">
     <header class="wtp-head">
       <div class="wtp-heading">
-        <h4 class="wtp-title">{{ t('worktreeManage.title') }}</h4>
+        <h3 class="sec-title wtp-title">{{ t('worktreeManage.title') }}</h3>
         <p v-if="totalText" class="wtp-total" :class="{ 'is-reminder': reminder }">
           <Icon v-if="reminder" name="alert-triangle" size="sm" />
           <span>{{ totalText }}</span>
@@ -184,24 +184,27 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <div v-if="!store.loaded && store.loadError !== null" class="wtp-state">
+    <div v-if="!store.loaded && store.loadError !== null" class="settings-group wtp-state">
       <span>{{ t('worktreeManage.loadFailed') }}</span>
       <Button variant="secondary" size="sm" @click="store.load()">{{ t('worktreeManage.retryLoad') }}</Button>
     </div>
-    <div v-else-if="!store.loaded" class="wtp-state">{{ t('worktreeManage.loading') }}</div>
-    <div v-else-if="groups.length === 0" class="wtp-state">{{ t('worktreeManage.empty') }}</div>
+    <div v-else-if="!store.loaded" class="settings-loading">
+      <Spinner size="sm" />
+      <span>{{ t('worktreeManage.loading') }}</span>
+    </div>
+    <div v-else-if="groups.length === 0" class="settings-group wtp-state">{{ t('worktreeManage.empty') }}</div>
 
-    <section v-for="group in groups" :key="group.key" class="wtp-card">
+    <section v-for="group in groups" :key="group.key" class="settings-group wtp-card">
       <div class="wtp-card-head">
         <span v-if="batchMode" class="wtp-card-check">
           <Checkbox
             :model-value="groupSelected(group)"
             :disabled="group.deletable.length === 0"
-            :aria-label="t('worktreeManage.selectProject', { project: group.name })"
+            :label="t('worktreeManage.selectProject', { project: group.name })"
             @update:model-value="toggleGroupSelection(group)"
           />
         </span>
-        <button type="button" class="wtp-card-toggle" :aria-expanded="isExpanded(group.key)" @click="toggleIn(collapsed, group.key)">
+        <button type="button" class="disclosure-head wtp-card-toggle" :aria-expanded="isExpanded(group.key)" @click="toggleIn(collapsed, group.key)">
           <span class="wtp-card-name">{{ group.name }}</span>
           <span class="wtp-card-summary">{{ group.summary }}</span>
           <Icon class="wtp-card-chevron" :class="{ 'is-expanded': isExpanded(group.key) }" name="chevron-right" size="md" />
@@ -228,6 +231,8 @@ onBeforeUnmount(() => {
   </div>
 </template>
 
+<style scoped src="./settings-common.css"></style>
+<style scoped src="../lib/disclosure-head.css"></style>
 <style scoped>
 .worktrees-panel {
   display: flex;
@@ -243,10 +248,6 @@ onBeforeUnmount(() => {
 .wtp-heading { min-width: 0; }
 .wtp-title {
   margin: 0;
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  color: var(--color-text);
 }
 .wtp-total {
   display: flex;
@@ -278,16 +279,11 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: var(--space-3);
   padding: var(--space-6) var(--space-4);
-  border-radius: var(--radius-xl);
-  background: var(--color-surface);
   font-size: var(--text-xs);
   color: var(--color-text-faint);
 }
 .wtp-card {
   border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-xl);
-  background: var(--color-surface);
-  overflow: hidden;
 }
 .wtp-card-head {
   display: flex;
@@ -300,22 +296,13 @@ onBeforeUnmount(() => {
   flex: none;
 }
 .wtp-card-toggle {
-  display: flex;
-  align-items: center;
   flex: 1;
-  gap: var(--space-2);
-  min-width: 0;
   padding: var(--space-3) 0;
-  border: none;
-  background: none;
-  font: inherit;
-  text-align: left;
+  font-family: inherit;
   color: var(--color-text-faint);
-  cursor: pointer;
 }
 .wtp-card-toggle:focus-visible {
   outline: none;
-  border-radius: var(--radius-sm);
   box-shadow: var(--p-focus-ring);
 }
 .wtp-card-name {

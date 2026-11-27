@@ -56,7 +56,7 @@ function onSelect(): void {
         <Checkbox
           :model-value="selected && row.deletable"
           :disabled="!row.deletable"
-          :aria-label="t('worktreeManage.selectWorktree', { name: row.title })"
+          :label="t('worktreeManage.selectWorktree', { name: row.title })"
           @update:model-value="onSelect"
         />
       </span>
