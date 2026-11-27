@@ -13,9 +13,14 @@ on:
 permissions:
   contents: read
 
+# Only a newer push to a pull request cancels the run in progress. Pushes to
+# main and manual runs never cancel one, so every merged commit gets a
+# finished result and main's state is always known. A newer run on the same
+# branch waits, and GitHub keeps only the latest waiting run. Release branches
+# group by commit, so their runs never wait on each other.
 concurrency:
   group: ci-${{ github.ref }}-${{ startsWith(github.ref, 'refs/heads/release/') && github.sha || '' }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/heads/release/') }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
