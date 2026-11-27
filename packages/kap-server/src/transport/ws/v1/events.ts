@@ -72,13 +72,21 @@ export interface HostChangedEvent {
   readonly hosts: readonly HostSnapshot[];
 }
 
+export interface UiPreferencesGlobalEvent {
+  readonly type: 'ui_preferences';
+  readonly revision: number;
+  readonly changed: Readonly<Record<string, unknown>>;
+  readonly client_id?: string;
+}
+
 export type PushEvent =
   | SessionGlobalEvent
   | WorkspaceGlobalEvent
   | ConfigGlobalEvent
   | InvalidatedGlobalEvent
   | CapabilityChangedEvent
-  | HostChangedEvent;
+  | HostChangedEvent
+  | UiPreferencesGlobalEvent;
 
 export type Event = PushEvent & {
   readonly agentId?: string;

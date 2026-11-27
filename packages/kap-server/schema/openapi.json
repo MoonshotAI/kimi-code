@@ -1417,6 +1417,38 @@
         ],
         "type": "object"
       },
+      "ErrorPersistenceFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              50003
+            ],
+            "type": "number"
+          },
+          "data": {
+            "enum": [
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "details": {},
+          "msg": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "msg",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ErrorPluginCatalogChanged": {
         "additionalProperties": false,
         "properties": {
@@ -1999,6 +2031,70 @@
           "code": {
             "enum": [
               40421
+            ],
+            "type": "number"
+          },
+          "data": {
+            "enum": [
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "details": {},
+          "msg": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "msg",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ErrorUiPreferenceTypeMismatch": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              40942
+            ],
+            "type": "number"
+          },
+          "data": {
+            "enum": [
+              null
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "details": {},
+          "msg": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "msg",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ErrorUiPreferencesTooLarge": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              41306
             ],
             "type": "number"
           },
@@ -20002,6 +20098,445 @@
         },
         "tags": [
           "tools"
+        ]
+      }
+    },
+    "/api/v1/ui-preferences": {
+      "get": {
+        "description": "Read the UI preferences shared by every client of this home",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "revision": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "values": {
+                              "additionalProperties": {},
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "revision",
+                            "values"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorPersistenceFailure"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "ui-preferences"
+        ]
+      },
+      "patch": {
+        "description": "Apply set / unset / add / remove / set_field / unset_field operations to UI preferences atomically; changes are broadcast as a ui_preferences global event",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "client_id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "ops": {
+                    "items": {
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "key": {
+                              "maxLength": 128,
+                              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                              "type": "string"
+                            },
+                            "op": {
+                              "enum": [
+                                "set"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {}
+                          },
+                          "required": [
+                            "op",
+                            "key",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "key": {
+                              "maxLength": 128,
+                              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                              "type": "string"
+                            },
+                            "op": {
+                              "enum": [
+                                "unset"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "key"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "key": {
+                              "maxLength": 128,
+                              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                              "type": "string"
+                            },
+                            "op": {
+                              "enum": [
+                                "add"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {}
+                          },
+                          "required": [
+                            "op",
+                            "key",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "key": {
+                              "maxLength": 128,
+                              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                              "type": "string"
+                            },
+                            "op": {
+                              "enum": [
+                                "remove"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {}
+                          },
+                          "required": [
+                            "op",
+                            "key",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "field": {
+                              "maxLength": 512,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "key": {
+                              "maxLength": 128,
+                              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                              "type": "string"
+                            },
+                            "op": {
+                              "enum": [
+                                "set_field"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {}
+                          },
+                          "required": [
+                            "op",
+                            "key",
+                            "field",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "field": {
+                              "maxLength": 512,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "key": {
+                              "maxLength": 128,
+                              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                              "type": "string"
+                            },
+                            "op": {
+                              "enum": [
+                                "unset_field"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "key",
+                            "field"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "maxItems": 200,
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "ops"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "changed": {
+                              "additionalProperties": {},
+                              "type": "object"
+                            },
+                            "revision": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "revision",
+                            "changed"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorValidationFailed"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorUiPreferenceTypeMismatch"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorUiPreferencesTooLarge"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorPersistenceFailure"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "ui-preferences"
+        ]
+      }
+    },
+    "/api/v1/ui-preferences{action}": {
+      "post": {
+        "description": "Use `:import` to merge preferences a client kept in local storage before this server stored them. Keys the user already changed here are skipped",
+        "operationId": "importUiPreferences",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "action",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "client_id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "values": {
+                    "additionalProperties": {},
+                    "propertyNames": {
+                      "maxLength": 128,
+                      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "values"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "imported": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "revision": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "skipped": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "revision",
+                            "imported",
+                            "skipped"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorValidationFailed"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorUiPreferenceTypeMismatch"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorUiPreferencesTooLarge"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorPersistenceFailure"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "ui-preferences"
         ]
       }
     },

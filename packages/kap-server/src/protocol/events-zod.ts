@@ -4,6 +4,7 @@ import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDat
 
 import { capabilityInstallProgressSchema } from './rest-capability';
 import { configResponseSchema } from './rest-config';
+import { uiPreferencesChangedSchema } from './rest-ui-preferences';
 import { sessionSchema } from './session';
 import { workspaceSchema } from './workspace';
 
@@ -111,6 +112,14 @@ export const hostChangedEventSchema = z.object({
 
 export const hostGlobalEventSchema = hostChangedEventSchema.extend(eventCreatedAt);
 
+export const uiPreferencesGlobalEventSchema = z.object({
+  type: z.literal('ui_preferences'),
+  revision: z.number().int().min(0),
+  changed: uiPreferencesChangedSchema,
+  client_id: z.string().optional(),
+  ...eventCreatedAt,
+});
+
 export const pushEventSchema = z.discriminatedUnion('type', [
   sessionGlobalEventSchema,
   workspaceGlobalEventSchema,
@@ -118,4 +127,5 @@ export const pushEventSchema = z.discriminatedUnion('type', [
   invalidatedGlobalEventSchema,
   capabilityGlobalEventSchema,
   hostGlobalEventSchema,
+  uiPreferencesGlobalEventSchema,
 ]);

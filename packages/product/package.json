@@ -29,6 +29,10 @@
     "./session-rating/node": {
       "types": "./src/session-rating/node/index.ts",
       "default": "./src/session-rating/node/index.ts"
+    },
+    "./ui-preferences": {
+      "types": "./src/ui-preferences/common/index.ts",
+      "default": "./src/ui-preferences/common/index.ts"
     }
   },
   "devDependencies": {
