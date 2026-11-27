@@ -162,11 +162,14 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
         const heading = item.group === 'beta' ? ' Beta' : ' Experimental';
         const groupHint =
           item.group === 'beta'
-            ? '  Mostly finalized, being polished for release'
-            : '  In early exploration, behavior and design may change';
+            ? '  Coming soon — try them early'
+            : '  Agent explorations — may change anytime and have broader impact';
         lines.push(
-          currentTheme.boldFg('textStrong', heading) +
-            currentTheme.fg('textMuted', groupHint),
+          truncateToWidth(
+            currentTheme.boldFg('textStrong', heading) +
+              currentTheme.fg('textMuted', groupHint),
+            Math.max(1, width),
+          ),
         );
       }
       const selected = i === view.selectedIndex;

@@ -169,9 +169,9 @@ describe('SettingsDialog Lab two-tier layout', () => {
 
     const bodyText = document.body.textContent ?? '';
     expect(bodyText).toContain('Beta 功能');
-    expect(bodyText).toContain('功能已基本定型，正在做正式发布前的打磨');
+    expect(bodyText).toContain('即将推出，欢迎尝鲜');
     expect(bodyText).toContain('实验性功能');
-    expect(bodyText).toContain('仍在早期探索阶段，体验和形态可能随时调整');
+    expect(bodyText).toContain('Agent 体验与形态探索，可能随时调整，影响也更大');
     expect(bodyText).not.toContain('抢先体验');
     expect(bodyText).not.toContain('先锋探索');
     expect(bodyText).toContain('重启 Kimi Code 后生效');

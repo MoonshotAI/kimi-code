@@ -79,9 +79,9 @@ export default {
   },
   lab: {
     betaGroup: 'Beta',
-    betaGroupHint: 'Mostly finalized, being polished for release',
+    betaGroupHint: 'Coming soon — try them early',
     experimentalGroup: 'Experimental',
-    experimentalGroupHint: 'In early exploration, behavior and design may change',
+    experimentalGroupHint: 'Agent explorations — may change anytime and have broader impact',
     enableAll: 'Enable all',
     enableAllBeta: 'Enable all Beta features',
     lockedByEnv: 'Controlled by environment variable {env}',
