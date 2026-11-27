@@ -2959,6 +2959,33 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.appState.planMode).toBe(true);
   });
 
+  it('clears tower state when /plan on enables plan mode', async () => {
+    const session = makeSession({
+      getPlan: vi.fn(async () => null),
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingEffort: 'off',
+        permission: 'auto',
+        planMode: false,
+        swarmMode: false,
+        towerMode: true,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    expect(driver.state.appState.towerMode).toBe(true);
+
+    driver.handleUserInput('/plan on');
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.planMode).toBe(true);
+    });
+    expect(session.setPlanMode).toHaveBeenCalledWith(true);
+    expect(driver.state.appState.towerMode).toBe(false);
+  });
+
   it('clears the stale permission default when it is removed from config (v2 engine)', async () => {
     const homeDir = await makeTempHome();
     process.env['KIMI_CODE_HOME'] = homeDir;

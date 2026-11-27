@@ -154,7 +154,7 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
 async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: boolean): Promise<void> {
   try {
     await session.setPlanMode(enabled);
-    host.setAppState({ planMode: enabled });
+    host.setAppState(enabled ? { planMode: true, towerMode: false } : { planMode: false });
     if (enabled) {
       const plan = await session.getPlan().catch(() => null);
       host.showNotice(

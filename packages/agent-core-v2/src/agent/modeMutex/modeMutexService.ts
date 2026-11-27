@@ -1,3 +1,4 @@
+import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -7,11 +8,9 @@ import { LifecycleScope } from '#/app/scopes';
 import { GoalUpdated } from '#/features/goal/goalOps';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { PlanModeEnter, planKey } from '#/features/plan/planOps';
+import { planKey } from '#/features/plan/planOps';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
-import { SwarmModeEnter } from '#/features/swarm/swarmOps';
 import { IAgentTowerService } from '#/features/tower/tower';
-import { TowerModeEnter } from '#/features/tower/towerOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentModeMutexService } from './modeMutex';
@@ -20,34 +19,13 @@ export class AgentModeMutexService extends Disposable implements IAgentModeMutex
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentPlanService private readonly plan: IAgentPlanService,
-    @IAgentSwarmService private readonly swarm: IAgentSwarmService,
     @IAgentTowerService private readonly tower: IAgentTowerService,
-    @IAgentGoalService private readonly goal: IAgentGoalService | undefined,
+    @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentStateService private readonly agentState: IAgentStateService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IEventBus eventBus: IEventBus,
   ) {
     super();
-    this._register(
-      eventBus.subscribe(PlanModeEnter, () => {
-        if (this.tower.isActive) void this.tower.exit('mode-mutex');
-      }),
-    );
-    this._register(
-      eventBus.subscribe(SwarmModeEnter, () => {
-        if (this.tower.isActive) void this.tower.exit('mode-mutex');
-      }),
-    );
-    this._register(
-      eventBus.subscribe(TowerModeEnter, () => {
-        if (this.agentState.get(planKey).active) this.plan.exit();
-        if (this.swarm.isActive) this.swarm.exit();
-        if (this.goal?.getGoal().goal?.status === 'active') {
-          void this.goal.pauseGoal({ reason: 'Paused after tower mode entered' }, 'system');
-        }
-      }),
-    );
     this._register(
       eventBus.subscribe(GoalUpdated, (event) => {
         if (event.snapshot?.status !== 'active') return;
@@ -62,6 +40,36 @@ export class AgentModeMutexService extends Disposable implements IAgentModeMutex
         void this.tower.exit('mode-mutex');
       }),
     );
+    this._register(
+      this.dispatcher.hooks.onDidRestore.register('modeMutex', async (_ctx, next) => {
+        if (this.tower.isActive) await this.beforeTowerEnter();
+        await next();
+      }),
+    );
+  }
+
+  async beforePlanEnter(): Promise<void> {
+    if (this.tower.isActive) await this.tower.exit('mode-mutex');
+  }
+
+  beforeSwarmEnter(): void {
+    if (this.tower.isActive) void this.tower.exit('mode-mutex');
+  }
+
+  async beforeTowerEnter(): Promise<void> {
+    if (this.agentState.get(planKey).active) {
+      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentPlanService)).exit();
+    }
+    const swarm = this.instantiation.invokeFunction((accessor) =>
+      accessor.get(IAgentSwarmService),
+    );
+    if (swarm.isActive) swarm.exit();
+    const goal = this.instantiation.invokeFunction((accessor) =>
+      accessor.get(IAgentGoalService),
+    );
+    if (goal?.getGoal().goal?.status === 'active') {
+      await goal.pauseGoal({ reason: 'Paused after tower mode entered' }, 'system');
+    }
   }
 }
 

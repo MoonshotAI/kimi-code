@@ -71,14 +71,23 @@ async function setTowerMode(
       );
       return false;
     }
+    if (enabled) {
+      host.setAppState({
+        towerMode: true,
+        planMode: status.planMode,
+        swarmMode: status.swarmMode ?? false,
+      });
+      if (status.swarmMode !== true) host.state.swarmModeEntry = undefined;
+    } else {
+      host.setAppState({ towerMode: false });
+    }
+    return true;
   } catch (error) {
     host.showError(
       `Failed to ${enabled ? 'enable' : 'disable'} tower mode: ${formatErrorMessage(error)}`,
     );
     return false;
   }
-  host.setAppState({ towerMode: enabled });
-  return true;
 }
 
 async function requireSessionEnsured(host: SlashCommandHost): Promise<Session | undefined> {

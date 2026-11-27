@@ -10,6 +10,8 @@ function makeHost(
   overrides: {
     hasSession?: boolean;
     towerMode?: boolean;
+    planMode?: boolean;
+    swarmMode?: boolean;
     refuseTowerEntry?: boolean;
     model?: string;
   } = {},
@@ -19,7 +21,11 @@ function makeHost(
     setTowerMode: vi.fn(async (enabled: boolean) => {
       if (!(overrides.refuseTowerEntry && enabled)) engineMode = enabled;
     }),
-    getStatus: vi.fn(async () => ({ towerMode: engineMode })),
+    getStatus: vi.fn(async () => ({
+      towerMode: engineMode,
+      planMode: engineMode ? false : (overrides.planMode ?? false),
+      swarmMode: engineMode ? false : (overrides.swarmMode ?? false),
+    })),
     getTowerStatus: vi.fn(async (): Promise<string> =>
       engineMode ? 'Tower mode: ON\nTower is not initialized.' : 'Tower mode: OFF',
     ),
@@ -29,8 +35,11 @@ function makeHost(
     state: {
       appState: {
         towerMode: overrides.towerMode ?? false,
+        planMode: overrides.planMode ?? false,
+        swarmMode: overrides.swarmMode ?? false,
         model: overrides.model ?? 'test-model',
       },
+      swarmModeEntry: overrides.swarmMode ? ('manual' as const) : undefined,
     },
     session: hasSession ? session : undefined,
     ensureSession: vi.fn(async () => {
@@ -152,10 +161,25 @@ describe('handleTowerCommand', () => {
     await handleTowerCommand(host, 'on');
 
     expect(session.setTowerMode).toHaveBeenCalledWith(true, undefined);
-    expect(host.setAppState).toHaveBeenCalledWith({ towerMode: true });
+    expect(host.setAppState).toHaveBeenCalledWith({
+      towerMode: true,
+      planMode: false,
+      swarmMode: false,
+    });
     expect(host.showNotice).toHaveBeenCalledWith('Tower mode: ON');
     expect(host.showError).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
+  it('clears plan and swarm state when tower mode turns on', async () => {
+    const { host } = makeHost({ towerMode: false, planMode: true, swarmMode: true });
+
+    await handleTowerCommand(host, 'on');
+
+    expect(host.state.appState.towerMode).toBe(true);
+    expect(host.state.appState.planMode).toBe(false);
+    expect(host.state.appState.swarmMode).toBe(false);
+    expect(host.state.swarmModeEntry).toBeUndefined();
   });
 
   it('turns tower mode off with an explicit off subcommand', async () => {
@@ -195,7 +219,11 @@ describe('handleTowerCommand', () => {
     await handleTowerCommand(host, 'develop');
 
     expect(session.setTowerMode).toHaveBeenCalledWith(true, 'develop');
-    expect(host.setAppState).toHaveBeenCalledWith({ towerMode: true });
+    expect(host.setAppState).toHaveBeenCalledWith({
+      towerMode: true,
+      planMode: false,
+      swarmMode: false,
+    });
     expect(host.showNotice).toHaveBeenCalledWith('Tower mode: ON (base: develop)');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });

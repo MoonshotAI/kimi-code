@@ -86,6 +86,7 @@ describe('goalStore createGoalObjective', () => {
     expect(apiMock.updateSession).toHaveBeenCalledExactlyOnceWith('s1', {
       goalObjective: 'improve coverage',
       planMode: false,
+      towerMode: false,
     });
     expect(modeStore().planModeBySession.s1).toBe(false);
     expect(modeStore().goalModeBySession.s1).toBe(false);
@@ -98,6 +99,20 @@ describe('goalStore createGoalObjective', () => {
 
     expect(created).toBe(true);
     expect(modeStore().planModeBySession.s1).toBe(false);
+  });
+
+  it('atomically disables tower in the same write when creating a goal on a tower session', async () => {
+    modeStore().towerModeBySession = { s1: true };
+
+    const created = await goalStore().createGoalObjective('s1', 'improve coverage');
+
+    expect(created).toBe(true);
+    expect(apiMock.updateSession).toHaveBeenCalledExactlyOnceWith('s1', {
+      goalObjective: 'improve coverage',
+      planMode: false,
+      towerMode: false,
+    });
+    expect(modeStore().towerModeBySession.s1).toBe(false);
   });
 
   it('reports an existing goal without creating a duplicate', async () => {
@@ -146,6 +161,21 @@ describe('goalStore controlGoal', () => {
   it('is a no-op without an active session', () => {
     goalStore().controlGoal('cancel');
     expect(apiMock.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('clears tower mode locally when resuming a goal on a tower session', async () => {
+    sessionsStore().setActiveSessionId('s1');
+    modeStore().towerModeBySession = { s1: true };
+
+    goalStore().controlGoal('resume');
+
+    await vi.waitFor(() =>
+      expect(apiMock.updateSession).toHaveBeenCalledExactlyOnceWith('s1', {
+        goalControl: 'resume',
+        towerMode: false,
+      }),
+    );
+    expect(modeStore().towerModeBySession.s1).toBe(false);
   });
 
   it('reports a control failure', async () => {

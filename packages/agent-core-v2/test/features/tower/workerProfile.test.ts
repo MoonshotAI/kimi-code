@@ -11,16 +11,17 @@ function builtinProfile(name: string) {
 }
 
 describe('tower-worker profile', () => {
-  it('gives tower-worker the coder tools (minus Agent and AgentSwarm) plus the seven shared tower tools', () => {
+  it('gives tower-worker the coder tools (minus Agent, AgentSwarm, and NotifyUser) plus the seven shared tower tools', () => {
     const coder = builtinProfile('coder');
     const tools = TOWER_WORKER_PROFILE_DEF.tools ?? [];
 
     for (const name of coder.tools ?? []) {
-      if (name === 'Agent' || name === 'AgentSwarm') continue;
+      if (name === 'Agent' || name === 'AgentSwarm' || name === 'NotifyUser') continue;
       expect(tools).toContain(name);
     }
     expect(tools).not.toContain('Agent');
     expect(tools).not.toContain('AgentSwarm');
+    expect(tools).not.toContain('NotifyUser');
     for (const name of [
       'TowerComplete',
       'TowerSend',

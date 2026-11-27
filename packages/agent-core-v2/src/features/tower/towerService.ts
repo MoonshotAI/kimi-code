@@ -1,6 +1,6 @@
 import { isAbsolute, join, resolve } from 'node:path';
 
-import { IInstantiationService } from '#/_base/di/instantiation';
+import { IInstantiationService, ref, type LiveRef } from '#/_base/di/instantiation';
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
@@ -8,6 +8,7 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
+import { IAgentModeMutexService } from '#/agent/modeMutex/modeMutex';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptSubmitted } from '#/agent/prompt/promptEvents';
@@ -129,6 +130,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext | undefined,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
+    @ref(IAgentModeMutexService) private readonly modeMutex: LiveRef<IAgentModeMutexService>,
   ) {
     super();
     this.agentState.contributeState(towerKey);
@@ -455,6 +457,12 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     }
     await this.adoptTowerRoster();
     this.registerTowerTools();
+    try {
+      await this.modeMutex.current?.beforeTowerEnter();
+    } catch (error) {
+      this.unregisterTowerTools();
+      throw error;
+    }
     this.lastPublished = true;
     this.dispatchEnter();
     return { entered: true };
