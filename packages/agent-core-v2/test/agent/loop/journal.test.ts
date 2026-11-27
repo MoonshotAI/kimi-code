@@ -401,4 +401,58 @@ describe('loop journal restore', () => {
     expect(Object.isFrozen(restored.input.messages![0]!.content)).toBe(true);
     expect(Object.isFrozen(restored.input.messages![3]!.content)).toBe(true);
   });
+
+  it('restores settled baseline tools verbatim and deduplicates settled writes', () => {
+    const baselineTools = [
+      {
+        name: 'Read',
+        description: 'Persisted Read schema',
+        parameters: { type: 'object', properties: { path: { type: 'string' } } },
+      },
+      {
+        name: 'mcp__srv__echo',
+        description: 'Persisted deferred echo schema',
+        parameters: { type: 'object', properties: {} },
+        deferred: true as const,
+      },
+    ];
+    const restored = restoreLoopJournal([
+      { type: 'profile.bind', agentId: 'main', systemPrompt: 'sp', disallowedTools: [] },
+      { type: 'tools.settled', agentId: 'main', tools: baselineTools },
+      { type: 'context.append_message', message: contextFromHistoryEntry(prompt('hello')) },
+    ]);
+    expect(restored.input.profile?.tools).toEqual(baselineTools);
+
+    const legacy = restoreLoopJournal([
+      {
+        type: 'tool_select.initialized',
+        agentId: 'main',
+        tools: [
+          { name: 'Read', description: 'Legacy Read', parameters: { type: 'object' }, source: 'builtin', origin: 'initial' },
+          {
+            name: 'mcp__srv__echo',
+            description: 'Legacy echo',
+            parameters: { type: 'object' },
+            source: 'mcp',
+            disclosure: 'deferred',
+            origin: 'initial',
+          },
+        ],
+      },
+    ]);
+    expect(legacy.input.profile?.tools).toBeUndefined();
+    expect(restoreLoopJournal([]).input.profile?.tools).toBeUndefined();
+
+    const records: WireRecord[] = [];
+    const journal = new LoopJournal(memoryWire(records), 'main');
+    journal.settleTools(baselineTools);
+    journal.append({ type: 'tools.settled', tools: [...baselineTools] });
+    journal.append({ type: 'tools.settled', tools: [...baselineTools] });
+    expect(records.filter((record) => record.type === 'tools.settled')).toHaveLength(1);
+    expect(journal.snapshot().input.profile?.tools).toEqual(baselineTools);
+
+    journal.settleTools([baselineTools[0]!]);
+    expect(records.filter((record) => record.type === 'tools.settled')).toHaveLength(2);
+    expect(journal.snapshot().input.profile?.tools).toEqual([baselineTools[0]!]);
+  });
 });

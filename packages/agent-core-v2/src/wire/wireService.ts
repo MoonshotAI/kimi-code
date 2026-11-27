@@ -706,7 +706,9 @@ function isLoopProfileRecordType(type: string): boolean {
   return type === 'profile.bind' ||
     type === 'config.update' ||
     type === 'tools.set_active_tools' ||
-    type === 'tools.reset_active_tools';
+    type === 'tools.reset_active_tools' ||
+    type === 'tools.settled' ||
+    type === 'tool_select.initialized';
 }
 
 type UnknownRecord = Record<string, unknown>;

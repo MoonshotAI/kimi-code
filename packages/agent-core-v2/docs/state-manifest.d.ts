@@ -983,7 +983,7 @@ export interface AgentStateSnapshot {
     readonly historyHash: string;
   } | undefined;
   // src/agent/loop/turnOps.ts
-  // replayable · durable — folds: ContextAppendLoopEvent, TurnPrompt, TurnSteer, ContextUndo, ContextApplyCompaction, ContextClear, TurnCancel, TurnEnded
+  // replayable · durable — folds: ContextAppendLoopEvent, TurnPrompt, TurnSteer, ToolsSettled, ContextUndo, ContextApplyCompaction, ContextClear, TurnCancel, TurnEnded
   'turn': /* TurnModelState — packages/agent-core-v2/src/agent/loop/turnOps.ts */ {
     readonly nextTurnId: number;
     readonly cancelledTurnIds: readonly number[];
@@ -1170,7 +1170,7 @@ export interface AgentStateSnapshot {
       readonly description: string;
       readonly parameters: Record<string, unknown>;
       readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
-      readonly disclosure?: 'inline' | 'deferred';
+      readonly disclosure?: 'deferred' | 'inline';
       readonly origin: 'initial' | 'runtime';
     }[] | undefined;
     readonly current: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
@@ -1178,7 +1178,7 @@ export interface AgentStateSnapshot {
       readonly description: string;
       readonly parameters: Record<string, unknown>;
       readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
-      readonly disclosure?: 'inline' | 'deferred';
+      readonly disclosure?: 'deferred' | 'inline';
       readonly origin: 'initial' | 'runtime';
     }[];
     readonly changes: readonly /* ToolSelectChange — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
@@ -1187,7 +1187,7 @@ export interface AgentStateSnapshot {
         readonly description: string;
         readonly parameters: Record<string, unknown>;
         readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
-        readonly disclosure?: 'inline' | 'deferred';
+        readonly disclosure?: 'deferred' | 'inline';
         readonly origin: 'initial' | 'runtime';
       }[];
       readonly removed: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
@@ -1195,7 +1195,7 @@ export interface AgentStateSnapshot {
         readonly description: string;
         readonly parameters: Record<string, unknown>;
         readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
-        readonly disclosure?: 'inline' | 'deferred';
+        readonly disclosure?: 'deferred' | 'inline';
         readonly origin: 'initial' | 'runtime';
       }[];
     }[];
@@ -1206,7 +1206,7 @@ export interface AgentStateSnapshot {
     readonly name: string;
     readonly description: string;
     readonly parameters: Record<string, unknown>;
-    readonly disclosure?: 'inline' | 'deferred';
+    readonly disclosure?: 'deferred' | 'inline';
   }>;
   // src/features/fileHistory/fileHistoryOps.ts
   // replayable · durable — folds: FileHistoryCheckpointed, FileHistoryTracked
