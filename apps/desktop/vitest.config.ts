@@ -6,7 +6,7 @@ import { KIMI_CORE_VERSION } from './scripts/kimi-core-version.mjs';
 const preset = kimiRendererViteConfig({
   root: fileURLToPath(new URL('./src/renderer', import.meta.url)),
   iconsDir: fileURLToPath(
-    new URL('./src/icons/kimi', import.meta.resolve('@moonshot-ai/app-client/package.json')),
+    new URL('./src/icons/kimi', import.meta.resolve('@moonshot-ai/app-ui/package.json')),
   ),
 });
 
@@ -24,6 +24,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
+    globalSetup: ['tests/globalSetup.ts'],
     server: {
       deps: {
         inline: [/markstream-vue/],

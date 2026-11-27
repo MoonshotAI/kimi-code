@@ -13,7 +13,6 @@ import {
   IConfigService,
   IEventBus,
   IEventDispatcher,
-  IFlagService,
   IOAuthToolkit,
   IProjectAliases,
   IProjectService,
@@ -24,7 +23,6 @@ import {
   IProjectSessions,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
-  WORKTREE_FLAG_ID,
   applyPrintModeConfigDefaults,
   createCloudAppender,
   ensureMainAgent,
@@ -103,7 +101,7 @@ import {
 import { createKimiCodeHostIdentity } from '../host-identity';
 
 import { resolveAdditionalDirs, resolveLaunchPaths } from '../launch-paths';
-import { resolveOutputFormat, worktreeFlagOffError } from '../options';
+import { resolveOutputFormat } from '../options';
 import type { CLIOptions, PromptOutputFormat } from '../options';
 import {
   type PromptOutput,
@@ -163,10 +161,6 @@ export async function runV2Print(
   const telemetryEnabled = shouldEnableTelemetry({ enabled: configTelemetryEnabled });
   for (const diagnostic of configService.diagnostics()) {
     stderr.write(`${diagnostic.severity === 'error' ? 'Error' : 'Warning'}: ${diagnostic.message}\n`);
-  }
-  if (opts.worktree !== undefined && !services.get(IFlagService).enabled(WORKTREE_FLAG_ID)) {
-    await client.close();
-    throw worktreeFlagOffError();
   }
 
   let restorePermission = async (): Promise<void> => {};
@@ -815,9 +809,6 @@ function dispatchNativeEvent(
       }
       return;
     }
-    case 'auto_review.started':
-    case 'auto_review.decision':
-      return;
   }
 }
 

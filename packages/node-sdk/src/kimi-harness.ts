@@ -40,6 +40,7 @@ import type {
   RenameSessionInput,
   ResumeSessionInput,
   ReloadSessionInput,
+  MoveSessionInput,
   RefreshProviderModelsOptions,
   RefreshProviderModelsResponse,
   SessionPlacement,
@@ -168,18 +169,7 @@ export class KimiHarness {
   async createSession(options: CreateSessionOptions): Promise<Session> {
     const { planMode, sessionStartedProperties, ...coreOptions } = stripLegacyKaosOptions(options);
     const summary = await this.rpc.createSession(coreOptions);
-    const session = new Session({
-      id: summary.id,
-      workDir: summary.workDir,
-      summary,
-      rpc: this.rpc,
-      onClose: () => {
-        if (this.activeSessions.get(summary.id) === session) {
-          this.activeSessions.delete(summary.id);
-        }
-      },
-    });
-    this.activeSessions.set(session.id, session);
+    const session = this.bindSessionInstance(summary);
     if (planMode === true) {
       await session.setPlanMode(true);
     }
@@ -214,9 +204,7 @@ export class KimiHarness {
     }
   }
 
-  private async doResumeSession(input: ResumeSessionInput, id: string): Promise<Session> {
-    const { sessionStartedProperties, ...resumeInput } = stripLegacyKaosOptions(input);
-    const summary = await this.rpc.resumeSession({ ...resumeInput, id });
+  private bindSessionInstance(summary: SessionSummary): Session {
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -228,8 +216,24 @@ export class KimiHarness {
         }
       },
     });
+    session.setStaleReloadHandler(undefined);
     this.activeSessions.set(session.id, session);
+    return session;
+  }
+
+  private registerActiveSession(
+    summary: SessionSummary,
+    sessionStartedProperties?: ResumeSessionInput['sessionStartedProperties'],
+  ): Session {
+    const session = this.bindSessionInstance(summary);
     this.trackSessionStarted(summary.id, true, sessionStartedProperties);
+    return session;
+  }
+
+  private async doResumeSession(input: ResumeSessionInput, id: string): Promise<Session> {
+    const { sessionStartedProperties, ...resumeInput } = stripLegacyKaosOptions(input);
+    const summary = await this.rpc.resumeSession({ ...resumeInput, id });
+    const session = this.registerActiveSession(summary, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_resume');
     return session;
   }
@@ -249,21 +253,23 @@ export class KimiHarness {
       sessionId: id,
       forcePluginSessionStartReminder: input.forcePluginSessionStartReminder,
     });
-    const session = new Session({
-      id: summary.id,
-      workDir: summary.workDir,
-      summary,
-      rpc: this.rpc,
-      onClose: () => {
-        if (this.activeSessions.get(summary.id) === session) {
-          this.activeSessions.delete(summary.id);
-        }
-      },
-    });
-    this.activeSessions.set(session.id, session);
-    this.trackSessionStarted(summary.id, true);
+    const session = this.registerActiveSession(summary);
     this.trackSessionEvent(session.id, 'session_reload');
     return session;
+  }
+
+  async moveSession(input: MoveSessionInput): Promise<Session> {
+    const id = normalizeSessionId(input.id);
+    const active = this.activeSessions.get(id);
+    if (active !== undefined && !active.isClosed) {
+      await active.moveSession(input.workDir);
+      return active;
+    }
+    const summary = await this.rpc.moveSession({
+      sessionId: id,
+      workDir: input.workDir,
+    });
+    return this.registerActiveSession(summary);
   }
 
   async forkSession(input: ForkSessionInput): Promise<Session> {
@@ -274,19 +280,7 @@ export class KimiHarness {
       metadata: input.metadata,
       turnIndex: input.turnIndex,
     });
-    const session = new Session({
-      id: summary.id,
-      workDir: summary.workDir,
-      summary,
-      rpc: this.rpc,
-      onClose: () => {
-        if (this.activeSessions.get(summary.id) === session) {
-          this.activeSessions.delete(summary.id);
-        }
-      },
-    });
-    this.activeSessions.set(session.id, session);
-    this.trackSessionStarted(summary.id, true);
+    const session = this.registerActiveSession(summary);
     this.trackSessionEvent(session.id, 'session_fork');
     return session;
   }

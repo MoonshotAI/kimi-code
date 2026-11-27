@@ -159,7 +159,7 @@ describe('manual check', () => {
     await expect(tracker.check()).resolves.toEqual({ outcome: 'error', message: 'bridge call failed' });
   });
 
-  it('lifts a previous version skip when a manual check finds that version', async () => {
+  it('lifts a previous version skip and opens the dialog without downloading when a manual check finds that version', async () => {
     globalThis.localStorage?.removeItem('kimi-web.update-skipped-version');
     const { bridge } = fakeBridge({ state: 'available', version: '1.2.3' });
     const capable = {
@@ -171,11 +171,27 @@ describe('manual check', () => {
 
     tracker.skipVersion();
     expect(tracker.visible.value).toBe(false);
+    expect(tracker.dialogOpen.value).toBe(false);
 
-    await expect(tracker.check()).resolves.toEqual({ outcome: 'available', version: '1.2.3' });
+    await expect(tracker.checkAndOpen()).resolves.toEqual({ outcome: 'available', version: '1.2.3' });
     expect(tracker.visible.value).toBe(true);
+    expect(tracker.dialogOpen.value).toBe(true);
+    expect(bridge.downloadUpdate).not.toHaveBeenCalled();
     expect(globalThis.localStorage?.getItem('kimi-web.update-skipped-version') ?? null).toBeNull();
     globalThis.localStorage?.removeItem('kimi-web.update-skipped-version');
+  });
+
+  it('does not open the dialog or start a download when no update is available', async () => {
+    const { bridge } = fakeBridge({ state: 'idle' });
+    const capable = {
+      ...bridge,
+      checkForUpdates: vi.fn().mockResolvedValue({ outcome: 'latest' }),
+    };
+    const tracker = createUpdateTracker(capable);
+
+    await expect(tracker.checkAndOpen()).resolves.toEqual({ outcome: 'latest' });
+    expect(tracker.dialogOpen.value).toBe(false);
+    expect(bridge.downloadUpdate).not.toHaveBeenCalled();
   });
 });
 
@@ -207,6 +223,19 @@ describe('visibility & version skip', () => {
 
     emit({ state: 'available', version: '1.2.4' });
     expect(tracker.visible.value).toBe(true);
+  });
+
+  it('lifts a skipped version when the dialog is opened directly', async () => {
+    const { bridge } = fakeBridge({ state: 'available', version: '1.2.3' });
+    const tracker = createUpdateTracker(bridge);
+    await flush();
+
+    tracker.skipVersion();
+    expect(tracker.visible.value).toBe(false);
+
+    tracker.openDialog();
+    expect(tracker.visible.value).toBe(true);
+    expect(tracker.dialogOpen.value).toBe(true);
   });
 
   it('does not skip non-available states', async () => {

@@ -155,15 +155,89 @@ interface NativeLegInput {
   readonly recursive: boolean;
 }
 
+interface NativeWatchSubscriber {
+  readonly change: (eventType: string, filename: string | null) => void;
+  readonly errors: Set<(error: NodeJS.ErrnoException) => void>;
+}
+
+interface SharedNativeWatch {
+  readonly watcher: NativeFsWatcher;
+  readonly subscribers: Set<NativeWatchSubscriber>;
+  closed: boolean;
+  error?: NodeJS.ErrnoException;
+}
+
+const sharedNativeWatches = new WeakMap<WatchRuntime, Map<string, SharedNativeWatch>>();
+
+function subscribeNativeWatch(
+  input: NativeLegInput,
+  change: NativeWatchSubscriber['change'],
+): NativeFsWatcher {
+  const { runtime, root, recursive } = input;
+  const key = `${recursive}:${root}`;
+  let watches = sharedNativeWatches.get(runtime);
+  if (watches === undefined) {
+    watches = new Map();
+    sharedNativeWatches.set(runtime, watches);
+  }
+  let shared = watches.get(key);
+  const subscriber: NativeWatchSubscriber = { change, errors: new Set() };
+  if (shared === undefined) {
+    const subscribers = new Set([subscriber]);
+    const watcher = runtime.watchNative(root, (eventType, filename) => {
+      const currentSubscribers = [...subscribers];
+      for (const current of currentSubscribers) {
+        if (subscribers.has(current)) current.change(eventType, filename);
+      }
+    }, { recursive });
+    shared = { watcher, subscribers, closed: false };
+    watches.set(key, shared);
+    const entry = shared;
+    const registry = watches;
+    watcher.on('error', (error) => {
+      if (entry.closed) return;
+      entry.closed = true;
+      entry.error = error;
+      if (registry.get(key) === entry) registry.delete(key);
+      watcher.close();
+      const currentSubscribers = [...subscribers];
+      for (const current of currentSubscribers) {
+        const listeners = [...current.errors];
+        for (const listener of listeners) listener(error);
+      }
+    });
+  } else {
+    shared.subscribers.add(subscriber);
+  }
+  const entry = shared;
+  const registry = watches;
+  return {
+    close() {
+      if (!entry.subscribers.delete(subscriber)) return;
+      subscriber.errors.clear();
+      if (entry.subscribers.size !== 0 || entry.closed) return;
+      entry.closed = true;
+      if (registry.get(key) === entry) registry.delete(key);
+      entry.watcher.close();
+    },
+    on(_event, listener) {
+      if (entry.subscribers.has(subscriber)) {
+        if (entry.error === undefined) subscriber.errors.add(listener);
+        else listener(entry.error);
+      }
+      return this;
+    },
+  };
+}
+
 const nativeLeg = fromCallback<WatchEvent, NativeLegInput>(({ input, sendBack }) => {
   let watcher: NativeFsWatcher;
   try {
-    watcher = input.runtime.watchNative(
-      input.root,
+    watcher = subscribeNativeWatch(
+      input,
       (_eventType, filename) => {
         sendBack({ type: 'leg.nativeEvent', filename });
       },
-      { recursive: input.recursive },
     );
   } catch (error) {
     sendBack({ type: 'leg.nativeError', error: error as NodeJS.ErrnoException });

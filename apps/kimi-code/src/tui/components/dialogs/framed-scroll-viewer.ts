@@ -8,10 +8,13 @@ import {
   type Component,
   type Focusable,
   type Terminal,
+  type TuiMouseDispatchResult,
+  type TuiMouseEvent,
 } from '@moonshot-ai/pi-tui';
 
 import {
   createInteractiveChildView,
+  mouseTarget,
   OverflowScrollView,
 } from '#/tui/components/chrome/dock-section';
 import { currentTheme } from '#/tui/theme';
@@ -20,6 +23,71 @@ import { printableChar } from '#/tui/utils/printable-key';
 
 const ELLIPSIS = '…';
 const paintPrimary = (text: string): string => currentTheme.fg('primary', text);
+
+export type ActionHintState = 'passive' | 'clickable' | 'hovered';
+
+export function formatActionHint(keys: string, label: string, state: ActionHintState): string {
+  const keyPart = currentTheme.boldFg('primary', keys);
+  if (state === 'passive') {
+    return `${keyPart} ${currentTheme.fg('textMuted', label)}`;
+  }
+  if (state === 'hovered') {
+    return currentTheme.underline(`${keyPart} ${currentTheme.boldFg('textStrong', label)}`);
+  }
+  return `${keyPart} ${currentTheme.fg('text', label)}`;
+}
+
+export interface ScrollFrameBoxOptions {
+  readonly borderColor?: (text: string) => string;
+  readonly title?: string;
+  readonly paddingLeft?: number;
+  readonly onPointerEnter?: () => boolean;
+}
+
+export class ScrollFrameBox extends Box {
+  private readonly leftInset: number;
+  private readonly onPointerEnter: (() => boolean) | undefined;
+
+  constructor(
+    private readonly scrollView: OverflowScrollView,
+    options: ScrollFrameBoxOptions = {},
+  ) {
+    const paddingLeft = options.paddingLeft ?? 0;
+    super({
+      border: true,
+      borderColor: options.borderColor,
+      title: options.title,
+      ...(paddingLeft > 0 ? { padding: { left: paddingLeft } } : {}),
+    });
+    this.leftInset = 1 + paddingLeft;
+    this.onPointerEnter = options.onPointerEnter;
+    this.addChild(scrollView);
+  }
+
+  override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+    if (event.type === 'move') {
+      if (this.onPointerEnter?.() === true) {
+        return { handled: true, render: true, target: mouseTarget(this, event) };
+      }
+      return undefined;
+    }
+    if (event.type === 'wheel' && this.isEdge(event)) {
+      const delta = event.wheelDelta ?? 0;
+      const moved = delta !== 0 && this.scrollView.scrollBy(delta) !== delta;
+      return { handled: true, render: moved, target: mouseTarget(this, event) };
+    }
+    return undefined;
+  }
+
+  private isEdge(event: TuiMouseEvent): boolean {
+    return (
+      event.y < 1 ||
+      event.y >= event.height - 1 ||
+      event.x < this.leftInset ||
+      event.x >= event.width - 1
+    );
+  }
+}
 
 export interface ViewerFooterItem {
   readonly keys: string;
@@ -58,6 +126,7 @@ export abstract class FramedScrollViewer extends VStack implements Focusable {
   private lastBodyCount = 0;
   private readonly bodyScroll: OverflowScrollView;
   private footerSpans: readonly MouseActionSpan[] = [];
+  private hoveredFooterIndex: number | undefined;
 
   protected constructor(options: FramedScrollViewerOptions) {
     super();
@@ -67,10 +136,19 @@ export abstract class FramedScrollViewer extends VStack implements Focusable {
     this.enableHalfPageCtrlKeys = options.enableHalfPageCtrlKeys === true;
     this.onScrollRequestRender = options.requestRender;
 
-    const headerView: Component = {
-      render: (width) => [this.renderHeaderLine(width)],
-      invalidate: () => {},
-    };
+    const headerView = createInteractiveChildView(
+      this,
+      (width) => [this.renderHeaderLine(width)],
+      (event) => {
+        if (event.type === 'wheel') {
+          return { handled: true, render: this.wheelViewerBy(event.wheelDelta ?? 0) };
+        }
+        if (event.type === 'move') {
+          return this.setHoveredFooter(undefined) ? { handled: true, render: true } : undefined;
+        }
+        return undefined;
+      },
+    );
     const bodyView: Component = {
       render: (width) => {
         this.lastInnerWidth = Math.max(1, width);
@@ -101,12 +179,11 @@ export abstract class FramedScrollViewer extends VStack implements Focusable {
         this.scrollTop = this.bodyScroll.scrollTop;
       },
     });
-    const frame = new Box({
-      border: true,
+    const frame = new ScrollFrameBox(this.bodyScroll, {
       borderColor: paintPrimary,
-      padding: { left: 1 },
+      paddingLeft: 1,
+      onPointerEnter: () => this.setHoveredFooter(undefined),
     });
-    frame.addChild(this.bodyScroll);
     const footerView = createInteractiveChildView(
       this,
       (width) => [this.renderFooterLine(width, this.currentBodyHeight(), this.lastBodyCount)],
@@ -116,6 +193,8 @@ export abstract class FramedScrollViewer extends VStack implements Focusable {
           focused: this.focused,
           shownAt: this.shownAt,
           spans: this.footerSpans,
+          onHover: (index) => this.setHoveredFooter(index),
+          onWheel: (delta) => this.wheelViewerBy(delta),
         }),
     );
 
@@ -236,6 +315,21 @@ export abstract class FramedScrollViewer extends VStack implements Focusable {
     return [header, ...box.render(width), footer];
   }
 
+  private setHoveredFooter(index: number | undefined): boolean {
+    if (this.hoveredFooterIndex === index) return false;
+    this.hoveredFooterIndex = index;
+    this.invalidate();
+    return true;
+  }
+
+  private wheelViewerBy(delta: number): boolean {
+    if (delta === 0) return false;
+    const before = this.bodyScroll.viewportHeight > 0 ? this.bodyScroll.scrollTop : this.scrollTop;
+    this.scrollViewerBy(delta);
+    const after = this.bodyScroll.viewportHeight > 0 ? this.bodyScroll.scrollTop : this.scrollTop;
+    return after !== before;
+  }
+
   private scrollViewerBy(delta: number): void {
     this.pendingPinToBottom = false;
     if (this.bodyScroll.viewportHeight > 0) {
@@ -299,9 +393,6 @@ export abstract class FramedScrollViewer extends VStack implements Focusable {
   }
 
   private renderFooterLine(width: number, bodyHeight: number, total: number): string {
-    const keyStyle = (text: string): string => currentTheme.boldFg('primary', text);
-    const dimStyle = (text: string): string => currentTheme.fg('textMuted', text);
-
     const viewRows = Math.max(1, bodyHeight - 2);
     const activeTop =
       this.bodyScroll.viewportHeight > 0 ? this.bodyScroll.scrollTop : this.scrollTop;
@@ -320,7 +411,14 @@ export abstract class FramedScrollViewer extends VStack implements Focusable {
     let col = 1;
     const chunks: string[] = [];
     for (const item of this.getFooterItems()) {
-      const rendered = `${keyStyle(item.keys)} ${dimStyle(item.label)}`;
+      const spanIndex = spans.length;
+      const state: ActionHintState =
+        item.onClick === undefined
+          ? 'passive'
+          : this.hoveredFooterIndex === spanIndex
+            ? 'hovered'
+            : 'clickable';
+      const rendered = formatActionHint(item.keys, item.label, state);
       const itemWidth = visibleWidth(rendered);
       if (item.onClick !== undefined && col < width) {
         spans.push({

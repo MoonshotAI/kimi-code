@@ -165,7 +165,9 @@ describe('ApprovalPreviewViewer', () => {
     expect(first).toBe(second);
   });
 
-  it('supports fullscreen mouse wheel scrolling, clean diff copy without borders, and footer cancel click', async () => {
+  it('supports fullscreen mouse wheel on body and chrome edges, footer hover, clean diff copy, and cancel click', async () => {
+    const prevChalkLevel = (await import('chalk')).default.level;
+    (await import('chalk')).default.level = 3;
     let copied = '';
     const onClose = vi.fn();
     const vt = new VirtualTerminal(90, 12);
@@ -196,9 +198,9 @@ describe('ApprovalPreviewViewer', () => {
       expect(screen.join('\n')).toContain('preview-line-1');
       expect(screen.at(-1)).toContain('1-8 / 40');
 
-      vt.sendInput('\u001B[<65;10;5M');
-      vt.sendInput('\u001B[<65;10;5M');
-      vt.sendInput('\u001B[<65;10;5M');
+      vt.sendInput('\u001B[<65;10;1M');
+      vt.sendInput('\u001B[<65;10;2M');
+      vt.sendInput('\u001B[<65;10;12M');
       await vt.waitForRender();
       screen = vt.getViewport().map(strip);
       expect(screen.join('\n')).toContain('preview-line-4');
@@ -213,6 +215,14 @@ describe('ApprovalPreviewViewer', () => {
 
       const footerLine = screen.at(-1)!;
       const cancelCol = footerLine.indexOf('cancel') + 2;
+      vt.sendInput(`\u001B[<35;${String(cancelCol)};12M`);
+      await vt.waitForRender();
+      expect(viewer.render(90).at(-1)).toContain('\u001B[4m');
+
+      vt.sendInput('\u001B[<35;10;5M');
+      await vt.waitForRender();
+      expect(viewer.render(90).at(-1)).not.toContain('\u001B[4m');
+
       vt.sendInput(`\u001B[<0;${String(cancelCol)};12M`);
       vt.sendInput(`\u001B[<0;${String(cancelCol)};12m`);
       await vt.waitForRender();
@@ -220,6 +230,7 @@ describe('ApprovalPreviewViewer', () => {
     } finally {
       nowSpy.mockRestore();
       ui.stop();
+      (await import('chalk')).default.level = prevChalkLevel;
     }
   });
 });

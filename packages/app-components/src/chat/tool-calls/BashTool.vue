@@ -5,8 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { Icon, IconButton, Tooltip } from '@moonshot-ai/app-ui';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
 import { ResolveDetachableTaskKey } from '@moonshot-ai/app-client/contracts';
-import { useAutoReviewHint } from '@moonshot-ai/app-client/composables';
-import { argFallbackText, parseArgRecord, str } from '@moonshot-ai/app-components';
+import { argFallbackText, parseArgRecord, str } from './toolArgs';
 import { createCodeScrollbars } from '@moonshot-ai/app-markdown/lib/codeScrollbars';
 import '@moonshot-ai/app-markdown/codeScrollbars.css';
 import ToolDisclosure from './ToolDisclosure.vue';
@@ -36,7 +35,6 @@ const cwd = computed(() => {
 const panelTitle = computed(() => props.tool.name?.trim() || 'Bash');
 
 const isRunning = computed(() => props.tool.status === 'running');
-const reviewHint = useAutoReviewHint(() => props.tool.autoReviewing === true);
 const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
 const outputText = computed(() => (props.tool.output ?? []).join('\n'));
 const canExpand = computed(() => hasOutput.value || isRunning.value || command.value.length > 0);
@@ -101,8 +99,7 @@ watch(
           <Icon name="pip" size="sm" aria-hidden="true" />
         </button>
       </Tooltip>
-      <span v-if="reviewHint" class="tl-chip">{{ t('tools.activity.autoReviewing') }}</span>
-      <span v-else-if="tool.timing" class="tl-chip">{{ tool.timing }}</span>
+      <span v-if="tool.timing" class="tl-chip">{{ tool.timing }}</span>
     </template>
     <template #body>
       <div ref="boxesEl" class="bash-boxes" :class="{ 'bash-out-nowrap': !outputWrap }">
@@ -136,7 +133,7 @@ watch(
           </template>
           <OutputPanel
             :lines="tool.output"
-            :empty-text="reviewHint ? t('tools.activity.autoReviewing') : isRunning ? t('tools.output.waiting') : t('tools.output.empty')"
+            :empty-text="isRunning ? t('tools.output.waiting') : t('tools.output.empty')"
           />
         </ToolPanel>
       </div>

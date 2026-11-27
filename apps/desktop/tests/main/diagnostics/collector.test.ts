@@ -70,7 +70,7 @@ vi.mock('../../../src/main/diagnostics/system-metrics', async (importOriginal) =
   readRendererJsHeap: mocks.readRendererJsHeap,
 }));
 vi.mock('../../../src/main/app/ui-state', () => ({ isVibrancyEnabled: () => true, isLinuxNativeTitleBar: () => false }));
-vi.mock('../../../src/main/window/main-window', () => ({ getMainWindow: mocks.getMainWindow }));
+vi.mock('../../../src/main/window/window-registry', () => ({ getMainWindow: mocks.getMainWindow }));
 
 import {
   bitmapStats,

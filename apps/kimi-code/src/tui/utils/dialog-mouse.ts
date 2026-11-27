@@ -40,50 +40,27 @@ export function colIndexAt(regions: readonly MouseColRegion[], x: number): numbe
   return regions.find((region) => x >= region.start && x < region.end)?.index;
 }
 
-export function handleSelectableListMouse(input: {
+function dispatchIndexedMouse(input: {
   readonly event: TuiMouseEvent;
   readonly focused: boolean;
   readonly shownAt: number;
-  readonly regions: readonly MouseRowRegion[];
+  readonly index: number | undefined;
+  readonly selectOnHover: boolean;
+  readonly selectOnPress: boolean;
   readonly select: (index: number) => boolean;
-  readonly activate: (index: number, event: TuiMouseEvent) => void;
-  readonly selectOnHover?: boolean;
+  readonly activate?: (index: number, event: TuiMouseEvent) => void;
 }): TuiMouseEventResult | undefined {
-  const { event, focused, shownAt, regions, select, activate, selectOnHover = true } = input;
+  const { event, focused, shownAt, index, selectOnHover, selectOnPress, select, activate } = input;
   if (!focused) return focusOnUnfocusedMouse(event);
   if (event.type === 'wheel') return undefined;
-  const index = rowIndexAt(regions, event.y);
   if (event.type === 'move') {
     if (!selectOnHover || index === undefined) return undefined;
     return { handled: true, render: select(index) };
   }
   if (event.button !== 'left' || index === undefined) return undefined;
   if (event.type === 'press') {
-    return selectOnHover ? { handled: true, render: select(index) } : { handled: true };
+    return selectOnPress ? { handled: true, render: select(index) } : { handled: true };
   }
-  if (event.type === 'click' && !isSettlingClick(shownAt)) {
-    select(index);
-    activate(index, event);
-    return { handled: true, render: true };
-  }
-  return { handled: true };
-}
-
-export function handleSegmentedMouse(input: {
-  readonly event: TuiMouseEvent;
-  readonly focused: boolean;
-  readonly shownAt: number;
-  readonly row: number;
-  readonly regions: readonly MouseColRegion[];
-  readonly select: (index: number) => boolean;
-  readonly activate?: (index: number, event: TuiMouseEvent) => void;
-}): TuiMouseEventResult | undefined {
-  const { event, focused, shownAt, row, regions, select, activate } = input;
-  if (!focused) return focusOnUnfocusedMouse(event);
-  if (event.button !== 'left' || event.y !== row) return undefined;
-  const index = colIndexAt(regions, event.x);
-  if (index === undefined) return undefined;
-  if (event.type === 'press') return { handled: true };
   if (event.type === 'click' && !isSettlingClick(shownAt)) {
     const changed = select(index);
     if (activate !== undefined) {
@@ -95,20 +72,78 @@ export function handleSegmentedMouse(input: {
   return { handled: true };
 }
 
+export function handleSelectableListMouse(input: {
+  readonly event: TuiMouseEvent;
+  readonly focused: boolean;
+  readonly shownAt: number;
+  readonly regions: readonly MouseRowRegion[];
+  readonly select: (index: number) => boolean;
+  readonly activate: (index: number, event: TuiMouseEvent) => void;
+  readonly selectOnHover?: boolean;
+}): TuiMouseEventResult | undefined {
+  const selectOnHover = input.selectOnHover ?? true;
+  return dispatchIndexedMouse({
+    event: input.event,
+    focused: input.focused,
+    shownAt: input.shownAt,
+    index: rowIndexAt(input.regions, input.event.y),
+    selectOnHover,
+    selectOnPress: selectOnHover,
+    select: input.select,
+    activate: input.activate,
+  });
+}
+
+export function handleSegmentedMouse(input: {
+  readonly event: TuiMouseEvent;
+  readonly focused: boolean;
+  readonly shownAt: number;
+  readonly row: number;
+  readonly regions: readonly MouseColRegion[];
+  readonly select: (index: number) => boolean;
+  readonly activate?: (index: number, event: TuiMouseEvent) => void;
+  readonly selectOnHover?: boolean;
+}): TuiMouseEventResult | undefined {
+  return dispatchIndexedMouse({
+    event: input.event,
+    focused: input.focused,
+    shownAt: input.shownAt,
+    index: input.event.y === input.row ? colIndexAt(input.regions, input.event.x) : undefined,
+    selectOnHover: input.selectOnHover ?? false,
+    selectOnPress: false,
+    select: input.select,
+    activate: input.activate,
+  });
+}
+
 export function handleActionBarMouse(input: {
   readonly event: TuiMouseEvent;
   readonly focused: boolean;
   readonly shownAt: number;
   readonly spans: readonly MouseActionSpan[];
+  readonly onHover?: (index: number | undefined) => boolean;
+  readonly onWheel?: (delta: number) => boolean;
 }): TuiMouseEventResult | undefined {
-  const { event, focused, shownAt, spans } = input;
+  const { event, focused, shownAt, spans, onHover, onWheel } = input;
+  if (event.type === 'wheel') {
+    if (onWheel === undefined) return undefined;
+    const delta = event.wheelDelta ?? 0;
+    return { handled: true, render: delta !== 0 && onWheel(delta) };
+  }
   if (!focused) return focusOnUnfocusedMouse(event);
-  if (event.button !== 'left' || event.y !== 0) return undefined;
-  const hit = spans.find((span) => event.x >= span.start && event.x < span.end);
-  if (hit === undefined) return undefined;
-  if (event.type === 'press') return { handled: true };
+  const rawIndex =
+    event.y === 0 ? spans.findIndex((span) => event.x >= span.start && event.x < span.end) : -1;
+  const hitIndex = rawIndex >= 0 ? rawIndex : undefined;
+  if (event.type === 'move') {
+    if (onHover === undefined) return undefined;
+    return { handled: true, render: onHover(hitIndex) };
+  }
+  if (event.button !== 'left' || hitIndex === undefined) return undefined;
+  if (event.type === 'press') {
+    return { handled: true, render: onHover?.(hitIndex) ?? false };
+  }
   if (event.type === 'click' && !isSettlingClick(shownAt)) {
-    hit.onClick();
+    spans[hitIndex]!.onClick();
     return { handled: true, render: true };
   }
   return { handled: true };

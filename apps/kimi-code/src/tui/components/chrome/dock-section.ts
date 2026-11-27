@@ -99,7 +99,16 @@ export abstract class DockSection extends VStack {
       createInteractiveChildView(
         this,
         (width) => this.renderPart(part, width),
-        (event) => this.handlePartMouse(part, event),
+        (event) => {
+          const result = this.handlePartMouse(part, event);
+          if (result !== undefined) return result;
+          if (part !== 'body' && this.bodyScroll !== undefined && event.type === 'wheel') {
+            const delta = event.wheelDelta ?? 0;
+            const moved = delta !== 0 && this.scrollBody(delta);
+            return { handled: true, render: moved };
+          }
+          return undefined;
+        },
       );
     if (layout === undefined) {
       this.addChild(view('head'));

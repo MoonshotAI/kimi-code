@@ -1,5 +1,5 @@
 import { nextTick, onMounted, onUnmounted, provide, ref, shallowRef, watch, type Ref } from 'vue';
-import { TranscriptScrollKey, type TranscriptListHandle, type TranscriptScrollHost } from '@moonshot-ai/app-core/contracts';
+import { PinScrollKey, TranscriptScrollKey, type TranscriptListHandle, type TranscriptScrollHost } from '@moonshot-ai/app-core/contracts';
 import {
   createDomScrollAdapter,
   createScrollController,
@@ -14,7 +14,6 @@ import {
   type ScrollState,
   type TranscriptLayout,
 } from '@moonshot-ai/app-core/lib';
-import { PinScrollKey } from '../contracts';
 
 export const TRANSCRIPT_DOCK_FADE_PX = 48;
 export const TRANSCRIPT_FOLLOW_THRESHOLD_PX = 80;

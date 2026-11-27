@@ -2,7 +2,6 @@ import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import {
   Key,
   matchesKey,
-  truncateToWidth,
   type Focusable,
   type TuiMouseEvent,
   type TuiMouseEventResult,
@@ -105,6 +104,15 @@ export class TabbedModelSelectorComponent extends DockSection implements Focusab
 
     if (part === 'head') {
       if (this.tabs.length <= 1) return undefined;
+      if (event.type === 'wheel' && event.y === this.tabStripRow && event.wheelDelta !== undefined) {
+        if (event.wheelDelta === 0) return { handled: true };
+        const next =
+          (this.activeIndex + (event.wheelDelta > 0 ? 1 : -1) + this.tabs.length) %
+          this.tabs.length;
+        if (next === this.activeIndex) return { handled: true, render: false };
+        this.switchToTab(next);
+        return { handled: true, render: true };
+      }
       return handleSegmentedMouse({
         event,
         focused: this.focused,
@@ -149,8 +157,7 @@ export class TabbedModelSelectorComponent extends DockSection implements Focusab
           colors: currentTheme.palette,
         });
         const baseHead = active.selector.renderHeadLines(width, [strip.line, '']);
-        const stripIdx = baseHead.findIndex((line) => line === truncateToWidth(strip.line, width));
-        this.tabStripRow = stripIdx;
+        this.tabStripRow = baseHead.length - (active.selector.hasSearchQuery() ? 3 : 2);
         this.tabHitRanges = strip.hitRanges;
         return baseHead;
       }
@@ -192,6 +199,8 @@ export class TabbedModelSelectorComponent extends DockSection implements Focusab
 
 function buildTabs(opts: TabbedModelSelectorOptions): readonly ModelTab[] {
   const entries = Object.entries(opts.models);
+  const minBodyRows =
+    opts.layout !== undefined ? Math.min(opts.layout.maxBodyRows, entries.length) : undefined;
   const providerIds: string[] = [];
   const seen = new Set<string>();
   for (const [, model] of entries) {
@@ -206,7 +215,7 @@ function buildTabs(opts: TabbedModelSelectorOptions): readonly ModelTab[] {
     {
       id: ALL_TAB_ID,
       label: ALL_TAB_LABEL,
-      selector: makeSelector(opts, opts.models),
+      selector: makeSelector(opts, opts.models, minBodyRows),
     },
   ];
   for (const providerId of providerIds) {
@@ -217,7 +226,7 @@ function buildTabs(opts: TabbedModelSelectorOptions): readonly ModelTab[] {
     tabs.push({
       id: providerId,
       label: providerDisplayName(providerId),
-      selector: makeSelector(opts, subset),
+      selector: makeSelector(opts, subset, minBodyRows),
     });
   }
   return tabs;
@@ -226,6 +235,7 @@ function buildTabs(opts: TabbedModelSelectorOptions): readonly ModelTab[] {
 function makeSelector(
   opts: TabbedModelSelectorOptions,
   subset: Record<string, ModelAlias>,
+  minBodyRows: number | undefined,
 ): ModelSelectorComponent {
   const candidate = opts.selectedValue ?? opts.currentValue;
   const selectedValue = subset[candidate] !== undefined ? candidate : undefined;
@@ -236,6 +246,7 @@ function makeSelector(
     currentThinkingEffort: opts.currentThinkingEffort,
     title: opts.title,
     searchable: true,
+    minBodyRows,
     providerSwitchHint: true,
     warning: opts.warning,
     thinkingControl: opts.thinkingControl,

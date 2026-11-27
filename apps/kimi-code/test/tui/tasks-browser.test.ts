@@ -880,7 +880,10 @@ describe('TasksBrowserController — opening an agent task', () => {
     controller.close();
   });
 
-  it('supports fullscreen mouse selection, second-click output open, borderless preview copy, header filter click, and footer stop confirmation', async () => {
+  it('supports fullscreen mouse hover, single-click selection, double-click output open, border wheel, borderless preview copy, and action-bar clicks', async () => {
+    const chalk = (await import('chalk')).default;
+    const prevChalkLevel = chalk.level;
+    chalk.level = 3;
     let now = 70_000;
     vi.spyOn(Date, 'now').mockImplementation(() => now);
     let copied = '';
@@ -923,19 +926,53 @@ describe('TasksBrowserController — opening an agent task', () => {
     try {
       now += 500;
       let screen = vt.getViewport().map(strip);
+      const firstRow = screen.findIndex((line) => line.includes('bash-aaaaaaaa'));
       const secondRow = screen.findIndex((line) => line.includes('bash-bbbbbbbb'));
+      expect(firstRow).toBeGreaterThan(0);
       expect(secondRow).toBeGreaterThan(0);
 
+      vt.sendInput(`\u001B[<0;8;${String(firstRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;8;${String(firstRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(onOpenOutput).not.toHaveBeenCalled();
+
+      vt.sendInput(`\u001B[<35;8;${String(secondRow + 1)}M`);
+      await vt.waitForRender();
+      expect(app.render(100)[secondRow]).toContain('\u001B[4m');
+      expect(onSelect).not.toHaveBeenCalled();
+
+      vt.sendInput('\u001B[<35;70;12M');
+      await vt.waitForRender();
+      expect(app.render(100)[secondRow]).not.toContain('\u001B[4m');
+
+      now += 1000;
       vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}M`);
       vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}m`);
       await vt.waitForRender();
       expect(onSelect).toHaveBeenCalledExactlyOnceWith('bash-bbbbbbbb');
       expect(onOpenOutput).not.toHaveBeenCalled();
 
+      now += 1000;
+      vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onOpenOutput).not.toHaveBeenCalled();
+
+      now += 100;
       vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}M`);
       vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}m`);
       await vt.waitForRender();
       expect(onOpenOutput).toHaveBeenCalledExactlyOnceWith('bash-bbbbbbbb');
+
+      screen = vt.getViewport().map(strip);
+      const previewBorderRow = screen.findIndex((line) => line.includes('Preview Output'));
+      expect(previewBorderRow).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<64;70;${String(previewBorderRow + 1)}M`);
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).not.toContain('tail-line-16');
+      vt.sendInput(`\u001B[<65;70;${String(previewBorderRow + 1)}M`);
+      await vt.waitForRender();
 
       screen = vt.getViewport().map(strip);
       const previewRow = screen.findIndex((line) => line.includes('tail-line-16'));
@@ -949,6 +986,10 @@ describe('TasksBrowserController — opening an agent task', () => {
       expect(copied).toContain('tail-line-16');
 
       const filterCol = screen[0]!.indexOf('filter=ALL') + 2;
+      vt.sendInput(`\u001B[<35;${String(filterCol)};1M`);
+      await vt.waitForRender();
+      expect(app.render(100)[0]).toContain('\u001B[4m');
+
       vt.sendInput(`\u001B[<0;${String(filterCol)};1M`);
       vt.sendInput(`\u001B[<0;${String(filterCol)};1m`);
       await vt.waitForRender();
@@ -977,6 +1018,7 @@ describe('TasksBrowserController — opening an agent task', () => {
     } finally {
       ui.stop();
       vi.restoreAllMocks();
+      chalk.level = prevChalkLevel;
     }
   });
 

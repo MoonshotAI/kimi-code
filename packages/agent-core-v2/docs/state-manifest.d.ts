@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 63 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 61 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/project/projectDirs/projectDirsService.ts
@@ -53,8 +53,6 @@
 //     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
-//     autoReview.ancestry                             src/features/autoReview/autoReviewEvents.ts
-//     autoReview.approvedToolCallIds                  src/features/autoReview/autoReviewEvents.ts
 //     changeNotifier.snapshot                         src/agent/changeNotifier/changeNotifierOps.ts
 //     contextProjector.lastRepairSignature            src/agent/loop/requestObservation.ts
 //     environmentBinding                              src/agent/environmentBinding/environmentBindingOps.ts
@@ -93,7 +91,6 @@
 //     profile.emittedToolPatternWarnings              src/agent/profile/profileService.ts
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
 //     swarm                                           src/features/swarm/swarmOps.ts
-//     swarmReminderDelivered                          src/features/swarm/swarmOps.ts
 //     task                                            src/agent/task/taskOps.ts
 //     toolDedupe.activeStep                           src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.activeTurnId                         src/agent/toolDedupe/toolDedupeService.ts
@@ -112,6 +109,7 @@
 //     tower.owner                                     src/features/tower/towerOps.ts
 //     turn                                            src/agent/loop/turnOps.ts
 //     userTool                                        src/agent/userTool/userToolOps.ts
+//     workdirMove                                     src/agent/workdirMove/workdirMoveOps.ts
 
 /** App-scope keys registered into IAppStateService. */
 export interface AppStateSnapshot {
@@ -1211,26 +1209,20 @@ export interface AgentStateSnapshot {
     readonly parameters: Record<string, unknown>;
     readonly disclosure?: 'inline' | 'deferred';
   }>;
-  // src/features/autoReview/autoReviewEvents.ts
-  // replayable · durable — folds: AutoReviewAncestryRecorded
-  'autoReview.ancestry': /* AutoReviewAncestry — packages/agent-core-v2/src/features/autoReview/autoReviewEvents.ts */ {
-    readonly authorization: readonly /* ReviewText — packages/agent-core-v2/src/features/autoReview/context.ts */ {
-      readonly role: 'human-instruction' | 'direct-parent-instruction' | 'constraint' | 'fact';
-      readonly replyTo?: string;
-      readonly content: readonly /* TextPart — packages/core/src/llm/message.ts */ {
-        type: 'text';
-        text: string;
-        contentType?: string;
-        meta?: /* ContentPartMeta — packages/core/src/llm/message.ts */ {
-          readonly kind?: string;
-          [key: string]: unknown;
-        };
+  // src/agent/workdirMove/workdirMoveOps.ts
+  // replayable · durable — folds: EnvironmentSetBinding
+  'workdirMove': /* WorkdirMoveState — packages/agent-core-v2/src/agent/workdirMove/workdirMoveOps.ts */ {
+    readonly originCwd?: string;
+    readonly pendingBaseline?: /* WorkdirMoveBaseline — packages/agent-core-v2/src/agent/environmentBinding/environmentBindingOps.ts */ {
+      readonly cwd: string;
+      readonly checkoutRoot: string;
+      readonly projectAgentsMd: readonly /* ProjectAgentsMdBelief — packages/agent-core-v2/src/agent/environmentBinding/environmentBindingOps.ts */ {
+        readonly relativePath: string;
+        readonly path: string;
+        readonly hash: string;
       }[];
-    }[];
-    readonly approvedToolCallIds: readonly string[];
-  } | undefined;
-  // replayable · durable · undoable — folds: ContextClear, PermissionRecordApprovalResult
-  'autoReview.approvedToolCallIds': readonly string[];
+    };
+  };
   // src/features/fileHistory/fileHistoryOps.ts
   // replayable · durable — folds: FileHistoryCheckpointed, FileHistoryTracked
   'fileHistory': /* FileHistoryState — packages/agent-core-v2/src/features/fileHistory/fileHistory.ts */ {
@@ -1261,8 +1253,6 @@ export interface AgentStateSnapshot {
   // src/features/swarm/swarmOps.ts
   // replayable · durable — folds: SwarmModeEnter, SwarmModeExit
   'swarm': 'manual' | 'task' | 'tool' | null;
-  // replayable · durable — folds: SwarmModeEnter, SwarmModeExit, ContextAppendMessage, ContextSpliced
-  'swarmReminderDelivered': boolean;
   // src/features/tower/towerOps.ts
   // replayable · durable — folds: TowerModeEnter, TowerModeExit
   'tower': boolean;

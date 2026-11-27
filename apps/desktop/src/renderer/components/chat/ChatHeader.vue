@@ -5,7 +5,7 @@ import { registerBrowserOverlayMenu } from '../../lib/browserOverlayMenu';
 import type { BrowserOverlayMenuItem } from '../../../shared/browser-overlay';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard, sessionLink } from '@moonshot-ai/app-core/lib';
-import { useSidebarTabs } from '@moonshot-ai/app-core';
+import { useSidebarTabs } from '@moonshot-ai/app-core/composables';
 import { isMacosDesktop, sessionLinksSupported } from '@moonshot-ai/app-core/lib';
 import { OpenInMenu } from '@moonshot-ai/app-components';
 import { track } from '@moonshot-ai/app-client/contracts';

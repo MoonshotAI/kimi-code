@@ -15,6 +15,7 @@ import { DockSection, type DockLayout, type DockPart } from '#/tui/components/ch
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import {
+  finishDialogLines,
   focusOnUnfocusedMouse,
   handleSearchableListMouse,
   handleSearchableListWheel,
@@ -73,6 +74,7 @@ export interface ModelSelectorOptions {
   readonly searchable?: boolean;
   readonly pageSize?: number;
   readonly layout?: DockLayout;
+  readonly minBodyRows?: number;
   readonly providerSwitchHint?: boolean;
   readonly warning?: string;
   readonly thinkingControl?: boolean;
@@ -137,6 +139,7 @@ export class ModelSelectorComponent extends DockSection implements Focusable {
   private readonly opts: ModelSelectorOptions;
   private readonly list: SearchableList<ModelChoice>;
   private readonly thinkingOverrides = new Map<string, string>();
+  private readonly minBodyRows: number;
   private readonly shownAt = Date.now();
   private choiceRegions: readonly MouseRowRegion[] = [];
   private thinkingRow = -1;
@@ -146,6 +149,9 @@ export class ModelSelectorComponent extends DockSection implements Focusable {
     super(opts.layout);
     this.opts = opts;
     const choices = createModelChoices(opts.models);
+    this.minBodyRows =
+      opts.minBodyRows ??
+      (opts.layout !== undefined ? Math.min(opts.layout.maxBodyRows, choices.length) : 0);
     const selectedValue = opts.selectedValue ?? opts.currentValue;
     const selectedIdx = choices.findIndex((choice) => choice.alias === selectedValue);
     const initialIndex = Math.max(selectedIdx, 0);
@@ -161,6 +167,10 @@ export class ModelSelectorComponent extends DockSection implements Focusable {
 
   selectedRowIndex(): number {
     return this.list.view().selectedIndex;
+  }
+
+  hasSearchQuery(): boolean {
+    return this.opts.searchable === true && this.list.view().query.length > 0;
   }
 
   private draftFor(choice: ModelChoice): string {
@@ -269,7 +279,6 @@ export class ModelSelectorComponent extends DockSection implements Focusable {
       focused,
       shownAt,
       regions: this.choiceRegions,
-      selectOnHover: false,
       activate: (choice, clickEvent) => {
         this.commitChoice(choice, clickEvent.alt);
       },
@@ -352,14 +361,18 @@ export class ModelSelectorComponent extends DockSection implements Focusable {
     if (searchable && view.query.length > 0) {
       lines.push(currentTheme.fg('primary', ' Search: ') + currentTheme.fg('text', view.query));
     }
-    return lines.map((line) => truncateToWidth(line, width));
+    return finishDialogLines(lines, width, this.focused);
   }
 
   renderBodyLines(width: number, unpaged: boolean): string[] {
     const view = this.list.view();
     if (view.items.length === 0) {
       this.choiceRegions = [];
-      return [truncateToWidth(currentTheme.fg('textMuted', '   No matches'), width)];
+      const emptyLines = [currentTheme.fg('textMuted', '   No matches')];
+      if (unpaged) {
+        while (emptyLines.length < this.minBodyRows) emptyLines.push('');
+      }
+      return finishDialogLines(emptyLines, width, this.focused);
     }
 
     const start = unpaged ? 0 : view.page.start;
@@ -393,11 +406,14 @@ export class ModelSelectorComponent extends DockSection implements Focusable {
       if (isCurrent) {
         line += ' ' + currentTheme.fg('success', CURRENT_MARK);
       }
-      lines.push(truncateToWidth(line, width));
+      lines.push(line);
       regions.push({ start: row, end: lines.length, index: i });
     }
     this.choiceRegions = regions;
-    return lines;
+    if (unpaged) {
+      while (lines.length < this.minBodyRows) lines.push('');
+    }
+    return finishDialogLines(lines, width, this.focused);
   }
 
   renderFootLines(width: number, unpaged: boolean): string[] {
@@ -428,18 +444,31 @@ export class ModelSelectorComponent extends DockSection implements Focusable {
       this.thinkingRow = canSwitch ? lines.length : -1;
       this.thinkingRegions = canSwitch ? regions : [];
       lines.push(controlLine);
-      const description =
-        selected.model.provider === DEFAULT_OAUTH_PROVIDER_NAME
-          ? this.opts.effortDescriptions?.[this.effectiveEffort(selected)]
-          : undefined;
-      if (description !== undefined) lines.push(currentTheme.fg('textMuted', ` ${description}`));
+      if (this.hasEffortDescriptions()) {
+        const description =
+          selected.model.provider === DEFAULT_OAUTH_PROVIDER_NAME
+            ? this.opts.effortDescriptions?.[this.effectiveEffort(selected)]
+            : undefined;
+        lines.push(
+          description !== undefined && description.length > 0
+            ? currentTheme.fg('textMuted', ` ${description}`)
+            : '',
+        );
+      }
       lines.push('');
     } else {
       this.thinkingRow = -1;
       this.thinkingRegions = [];
     }
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));
-    return lines.map((line) => truncateToWidth(line, width));
+    return finishDialogLines(lines, width, this.focused);
+  }
+
+  private hasEffortDescriptions(): boolean {
+    return (
+      this.opts.effortDescriptions !== undefined &&
+      Object.keys(this.opts.effortDescriptions).length > 0
+    );
   }
 
   private commitChoice(choice: ModelChoice, sessionOnly: boolean): void {

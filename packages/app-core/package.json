@@ -8,6 +8,7 @@
     "./api": "./src/api/index.ts",
     "./client": "./src/client/index.ts",
     "./client/types": "./src/client/types.ts",
+    "./composables": "./src/composables/index.ts",
     "./contracts": "./src/contracts.ts",
     "./conversation": "./src/conversation/index.ts",
     "./lib": "./src/lib/index.ts",

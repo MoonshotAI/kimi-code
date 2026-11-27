@@ -33,10 +33,25 @@ const NO_WINDOW_TO_RESIZE = {
   acp: 'An editor shows the conversation in its own window; the agent behind ACP has no window to resize.',
   desktop: "The Desktop window cannot be made narrower than 900 pixels, so a user cannot give it a phone width, and Playwright can only resize it by running code in Electron's main process.",
 };
+const NO_RELOAD_OVER_ACP =
+  'ACP has no request to reload a session, and kimi acp does not publish /reload among its commands, so an editor that sends it gets "Unknown ACP command".';
+const ONLY_THE_TERMINAL_UI_INITS = {
+  acp: 'kimi acp does not publish /init among its commands, so an editor that sends it gets "Unknown ACP command".',
+  desktop: 'The Desktop slash menu has no /init, and KAP has no request that generates AGENTS.md.',
+  web: 'The Web slash menu has no /init, and KAP has no request that generates AGENTS.md.',
+};
+const NO_SIDE_QUESTION_OVER_ACP =
+  'ACP has no side question: an editor can only send /btw as a prompt, and the agent answers it with "Unknown ACP command: /btw" without asking the model.';
 const NO_CONTINUE = {
   tui: 'The terminal UI has no way to continue a failed turn; a user sends another message instead.',
   acp: 'ACP has no request to continue a failed turn.',
 };
+const NO_ADD_DIR = {
+  acp: 'ACP has no request that adds a directory to a running session; the agent reads additionalDirectories only from session/new.',
+  desktop: 'Desktop has no /add-dir: it adds a directory to the whole project in the project dialog, through the system folder picker that Playwright cannot drive.',
+  web: 'The web UI has no /add-dir: it adds a directory to the whole project in the project dialog, which changes every session of the project rather than this one.',
+};
+const ONLY_DESKTOP_HAS_A_BROWSER = 'Only the Desktop app has a built-in browser that agents control, and only its settings have a Browser page that turns that control off.';
 
 export const VERBS = {
   send: { on: SURFACES, checksInterface: false },
@@ -77,6 +92,16 @@ export const VERBS = {
     },
     checksInterface: true,
   },
+  openSession: { on: SURFACES, checksInterface: false },
+  reload: { on: ['tui', 'desktop', 'web'], absentBecause: NO_RELOAD_OVER_ACP, checksInterface: false },
+  init: { on: ['tui'], absentBecause: ONLY_THE_TERMINAL_UI_INITS, checksInterface: false },
+  useSkill: { on: SURFACES, checksInterface: false },
+  switchModel: { on: SURFACES, checksInterface: false },
+  setThinkingEffort: { on: SURFACES, checksInterface: false },
+  addDir: { on: ['tui'], absentBecause: NO_ADD_DIR, checksInterface: false },
+  setBrowserControl: { on: ['desktop'], absentBecause: ONLY_DESKTOP_HAS_A_BROWSER, checksInterface: false },
+  setPlanMode: { on: SURFACES, checksInterface: false },
+  btw: { on: ['tui', 'desktop', 'web'], absentBecause: NO_SIDE_QUESTION_OVER_ACP, checksInterface: false },
 } as const satisfies Readonly<Record<string, VerbSpec>>;
 
 export type Verb = keyof typeof VERBS;
@@ -186,6 +211,9 @@ export type PermissionMode = 'manual' | 'yolo' | 'auto';
 
 export type WindowSize = 'normal' | 'narrow';
 
+export type BrowserControl = 'on' | 'off';
+export type PlanModeState = 'on' | 'off';
+
 export const PERMISSION_MODE_NAMES: Readonly<Record<PermissionMode, string>> = {
   manual: 'Always Ask',
   yolo: 'Ask When Needed',
@@ -224,6 +252,16 @@ interface VerbSignatures {
   expectTranscript(text: string): Promise<void>;
   exit(): Promise<void>;
   expectTerminalRestored(): Promise<void>;
+  openSession(title: string): Promise<void>;
+  reload(): Promise<void>;
+  init(): Promise<void>;
+  useSkill(name: string): Promise<void>;
+  switchModel(name: string): Promise<void>;
+  setThinkingEffort(effort: string): Promise<void>;
+  addDir(path: string): Promise<void>;
+  setBrowserControl(state: BrowserControl): Promise<void>;
+  setPlanMode(state: PlanModeState): Promise<void>;
+  btw(question: string, reply: string): Promise<void>;
 }
 
 export type Actions = { readonly [Name in Verb]: VerbSignatures[Name] };

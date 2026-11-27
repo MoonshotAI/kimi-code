@@ -1,4 +1,4 @@
-import { CURSOR_MARKER, TuiAltScreen } from '@moonshot-ai/pi-tui';
+import { CURSOR_MARKER, ScrollView, Text, TuiAltScreen, VStack } from '@moonshot-ai/pi-tui';
 import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import chalk from 'chalk';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -626,8 +626,29 @@ describe('QuestionDialogComponent', () => {
     try {
       now += 500;
       let screen = vt.getViewport().map(strip);
+      const modeOtherRow = screen.findIndex((line) => line.includes('Other'));
+      expect(modeOtherRow).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<0;10;${String(modeOtherRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(modeOtherRow + 1)}m`);
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).toContain('Type your answer');
+
+      screen = vt.getViewport().map(strip);
+      const fastRowWhileOther = screen.findIndex((line) => line.includes('Fast'));
+      vt.sendInput(`\u001B[<0;10;${String(fastRowWhileOther + 1)}M`);
+      vt.sendInput(`\u001B[<0;10;${String(fastRowWhileOther + 1)}m`);
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(screen.join('\n')).toContain('Choose mode?');
+      expect(screen.join('\n')).not.toContain('Type your answer');
+      expect(screen.join('\n')).toContain('→ [1] Fast');
+
       const thoroughDescRow = screen.findIndex((line) => line.includes('Deep check'));
       expect(thoroughDescRow).toBeGreaterThan(0);
+
+      vt.sendInput(`\u001B[<35;12;${String(thoroughDescRow + 1)}M`);
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).toContain('→ [2] Thorough');
 
       vt.sendInput(`\u001B[<0;12;${String(thoroughDescRow + 1)}M`);
       vt.sendInput(`\u001B[<0;12;${String(thoroughDescRow + 1)}m`);
@@ -647,6 +668,7 @@ describe('QuestionDialogComponent', () => {
       await vt.waitForRender();
 
       vt.sendInput('a');
+      vt.sendInput(`\u001B[<35;10;${String(logsRow + 1)}M`);
       vt.sendInput('c');
       await vt.waitForRender();
       screen = vt.getViewport().map(strip);
@@ -654,8 +676,7 @@ describe('QuestionDialogComponent', () => {
       vt.sendInput(`\u001B[<0;10;${String(metricsRow + 1)}M`);
       vt.sendInput(`\u001B[<0;10;${String(metricsRow + 1)}m`);
       await vt.waitForRender();
-      vt.sendInput(' ');
-      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).not.toContain('[✓] Metrics');
 
       screen = vt.getViewport().map(strip);
       const customAgainRow = screen.findIndex((line) => line.includes('Custom'));
@@ -830,6 +851,80 @@ describe('QuestionDialogComponent', () => {
       await vt.waitForRender();
 
       expect(collected[0]?.[0]).toBe('Module 8');
+    } finally {
+      ui.stop();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('keeps bottom-anchored question tab strip stationary across uneven question and Submit tabs', async () => {
+    let now = 95_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const pending = makePending([
+      {
+        header: 'Detailed',
+        question: 'Choose detailed strategy?',
+        multi_select: false,
+        options: [
+          { label: 'Option A', description: 'First detailed explanation' },
+          { label: 'Option B', description: 'Second detailed explanation' },
+          { label: 'Option C', description: 'Third detailed explanation' },
+          { label: 'Option D', description: 'Fourth detailed explanation' },
+        ],
+      },
+      {
+        header: 'Brief',
+        question: 'Proceed?',
+        multi_select: false,
+        options: [{ label: 'Yes' }, { label: 'No' }],
+      },
+    ]);
+    const { dialog } = makeDialog(pending, undefined, { layout: { maxBodyRows: 16 } });
+    const vt = new VirtualTerminal(90, 24);
+    const ui = new TuiAltScreen(vt);
+    ui.setLayoutRoot(
+      new VStack([
+        {
+          component: new ScrollView(new Text('chat-1\nchat-2', 0, 0), {
+            follow: 'end',
+            primary: true,
+          }),
+          basis: 0,
+          grow: 1,
+          shrink: 1,
+          minSize: 1,
+        },
+        { component: dialog, shrink: 1, minSize: 3 },
+      ]),
+    );
+    ui.start();
+    ui.setFocus(dialog);
+    await vt.waitForRender();
+    try {
+      now += 500;
+      const onDetailed = vt.getViewport().map(strip);
+      const tabRowBefore = onDetailed.findIndex(
+        (line) => line.includes('Detailed') && line.includes('Brief') && line.includes('Submit'),
+      );
+      expect(tabRowBefore).toBeGreaterThan(0);
+      const briefCol = onDetailed[tabRowBefore]!.indexOf('Brief') + 2;
+      const submitCol = onDetailed[tabRowBefore]!.indexOf('Submit') + 2;
+
+      vt.sendInput(`\u001B[<0;${String(briefCol)};${String(tabRowBefore + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(briefCol)};${String(tabRowBefore + 1)}m`);
+      await vt.waitForRender();
+      const onBrief = vt.getViewport().map(strip);
+      expect(
+        onBrief.findIndex((line) => line.includes('Detailed') && line.includes('Brief')),
+      ).toBe(tabRowBefore);
+
+      vt.sendInput(`\u001B[<0;${String(submitCol)};${String(tabRowBefore + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(submitCol)};${String(tabRowBefore + 1)}m`);
+      await vt.waitForRender();
+      const onSubmit = vt.getViewport().map(strip);
+      expect(
+        onSubmit.findIndex((line) => line.includes('Detailed') && line.includes('Submit')),
+      ).toBe(tabRowBefore);
     } finally {
       ui.stop();
       vi.restoreAllMocks();

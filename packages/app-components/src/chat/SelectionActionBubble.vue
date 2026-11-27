@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Button, Icon, Kbd, Menu, MenuItem, useImeComposition } from '@moonshot-ai/app-ui';
-import { clampOverlayAxis, constrainOverlayViewport, installImeCompositionLatch, isContextClick, isImeKeyEvent, nextMenuIndex, selectionHitByPointer, type SelectionActionKind, type SelectionActionPayload } from '@moonshot-ai/app-client/lib';
+import { Button, Icon, installImeCompositionLatch, isImeKeyEvent, Kbd, Menu, MenuItem, useImeComposition } from '@moonshot-ai/app-ui';
+import { clampOverlayAxis, constrainOverlayViewport, isContextClick, nextMenuIndex, selectionHitByPointer, type SelectionActionKind, type SelectionActionPayload } from '@moonshot-ai/app-client/lib';
 import { resolveComposerBinding } from '@moonshot-ai/app-client/contracts';
 import { isApplePlatform, isSelectAllKeyEvent } from '@moonshot-ai/app-core/lib';
 import { useIsMobile } from '@moonshot-ai/app-client/composables';

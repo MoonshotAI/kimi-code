@@ -77,6 +77,7 @@ export class EffortSelectorComponent implements Component, Focusable {
       shownAt: this.shownAt,
       row: this.segmentRow,
       regions: this.segmentRegions,
+      selectOnHover: true,
       select: (index) => {
         const changed = this.activeIndex !== index;
         this.activeIndex = index;
@@ -126,8 +127,14 @@ export class EffortSelectorComponent implements Component, Focusable {
     this.segmentRow = lines.length;
     this.segmentRegions = regions;
     lines.push(`  ${segments.join('  ')}`);
-    const description = this.opts.descriptions?.[this.opts.efforts[this.activeIndex]!];
-    if (description !== undefined) lines.push(currentTheme.fg('textMuted', ` ${description}`));
+    if (this.opts.descriptions !== undefined && Object.keys(this.opts.descriptions).length > 0) {
+      const description = this.opts.descriptions[this.opts.efforts[this.activeIndex]!];
+      lines.push(
+        description !== undefined && description.length > 0
+          ? currentTheme.fg('textMuted', ` ${description}`)
+          : '',
+      );
+    }
 
     lines.push('');
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));

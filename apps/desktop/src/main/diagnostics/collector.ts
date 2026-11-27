@@ -8,7 +8,7 @@ import { scheduleDiagnosticPruning } from './log-retention';
 import { releaseChannelName } from '../release/release-channel';
 import { aggregateProcessMetrics, readRendererJsHeap } from './system-metrics';
 import { isLinuxNativeTitleBar, isVibrancyEnabled } from '../app/ui-state';
-import { getMainWindow } from '../window/main-window';
+import { getMainWindow } from '../window/window-registry';
 
 const MIB = 1024 * 1024;
 const HEALTH_FIRST_SAMPLE_MS = 60_000;

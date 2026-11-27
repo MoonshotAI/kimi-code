@@ -43,10 +43,6 @@ export type {
   ToolCallDeltaEvent,
   ToolUpdatedEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-export type {
-  AutoReviewCompletedEvent,
-  AutoReviewStartedEvent,
-} from '@moonshot-ai/agent-core-v2/features/autoReview/autoReviewEvents';
 export type { McpOAuthAuthorizationUrlUpdateData } from '@moonshot-ai/agent-core-v2/agent/mcp/tools/auth';
 
 export type { ToolCallRequest, ToolCallResponse } from '#/interaction';
@@ -60,8 +56,7 @@ export type {
   McpServerStatusPayload,
 } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 
-export { formatApprovalReviewTitle } from '#/interaction';
-export type { ApprovalRequest, ApprovalReviewDetail, ApprovalScope } from '#/interaction';
+export type { ApprovalRequest, ApprovalScope } from '#/interaction';
 export type { ApprovalDecision, ApprovalResponse } from '#/interaction';
 
 export type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';

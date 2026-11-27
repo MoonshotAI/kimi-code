@@ -1,6 +1,6 @@
 import type { Component } from 'vue';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
-import { normalizeToolName } from '@moonshot-ai/app-components';
+import { normalizeToolName } from '@moonshot-ai/app-core/lib';
 import AgentTool from './AgentTool.vue';
 import AskUserTool from './AskUserTool.vue';
 import BashTool from './BashTool.vue';

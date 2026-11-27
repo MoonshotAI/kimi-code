@@ -1,7 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
-import { AgentEvent2 } from '#/app/event/event2';
+import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
 
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
@@ -25,6 +25,8 @@ export interface ContextAppendMessage {
   readonly agentId: string;
   readonly message: ContextMessage;
 }
+
+registerEvent2Class(ContextAppendMessage);
 
 const contextAppendLoopEventSchema = z.object({
   agentId: z.string(),

@@ -2,6 +2,8 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
+import * as mainHistory from '../../../../scripts/main-history.mjs';
+
 export const TITLE = 'Desktop E2E journeys are failing on main';
 export const WORKFLOW = 'desktop-e2e.yml';
 
@@ -96,6 +98,9 @@ export function githubClient({ token, repo, apiUrl = 'https://api.github.com', f
     if (!response.ok) throw new Error(`${method} ${path} failed with HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
     return response;
   }
+  async function json(path) {
+    return (await request(path)).json();
+  }
   return {
     async findOpenIssue(title) {
       const issues = await (await request(`repos/${repo}/issues?state=open&creator=${encodeURIComponent(BOT)}&per_page=100`)).json();
@@ -106,14 +111,11 @@ export function githubClient({ token, repo, apiUrl = 'https://api.github.com', f
       const failed = jobs.filter(job => SHARD_JOB.test(job.name) && job.conclusion === 'failure');
       return Promise.all(failed.map(async job => (await request(`repos/${repo}/actions/jobs/${job.id}/logs`)).text()));
     },
-    async lastPassingRun(currentRunId) {
-      const { workflow_runs: runs } = await (await request(`repos/${repo}/actions/workflows/${WORKFLOW}/runs?branch=main&status=success&per_page=20`)).json();
-      const run = runs.find(entry => String(entry.id) !== String(currentRunId) && (entry.event === 'push' || entry.event === 'schedule'));
-      return run === undefined ? undefined : { sha: run.head_sha, url: run.html_url };
+    lastPassingRun(currentRunId) {
+      return mainHistory.lastPassingRun({ get: json, repo, workflow: WORKFLOW, events: ['push', 'schedule'], currentRunId });
     },
     async commitsBetween(base, head) {
-      const { commits } = await (await request(`repos/${repo}/compare/${base}...${head}`)).json();
-      return commits.map(entry => ({ sha: entry.sha, subject: entry.commit.message.split('\n')[0] }));
+      return (await mainHistory.commitsBetween({ get: json, repo, base, head })).commits;
     },
     async openIssue(title, body) {
       return (await (await request(`repos/${repo}/issues`, { method: 'POST', body: { title, body } })).json()).number;

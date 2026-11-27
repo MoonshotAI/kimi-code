@@ -1,5 +1,5 @@
 import { computed, nextTick, ref, watch, type Ref } from 'vue';
-import { useOverlayScrollbar } from '@moonshot-ai/app-client/composables';
+import { useOverlayScrollbar } from '@moonshot-ai/app-ui';
 
 export function useModelMenuScrollbar(scrollEl: Ref<HTMLElement | null | undefined>) {
   const target = computed(() => scrollEl.value ?? null);

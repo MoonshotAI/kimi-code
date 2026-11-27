@@ -3,7 +3,7 @@ import { createApp, defineComponent, h, nextTick, type App } from 'vue';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import { useFontPrefs, type FontTarget } from '@moonshot-ai/app-core';
+import { useFontPrefs, type FontTarget } from '@moonshot-ai/app-core/composables';
 const platform = vi.hoisted(() => ({ windows: false }));
 vi.mock('@moonshot-ai/app-core/lib', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/app-core/lib')>();
