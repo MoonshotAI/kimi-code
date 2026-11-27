@@ -163,7 +163,7 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
         const groupHint =
           item.group === 'beta'
             ? '  Coming soon — try them early'
-            : '  Agent explorations — may change anytime and have broader impact';
+            : '  Agent explorations — still evolving, review and enable as needed';
         lines.push(
           truncateToWidth(
             currentTheme.boldFg('textStrong', heading) +
@@ -310,12 +310,8 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
     if (feature.source === 'env') {
       return `id ${feature.id} · locked by ${feature.env}${timingSuffix}`;
     }
-    if (feature.stage === 'beta' && this.effectiveBetaMasterEnabled()) {
-      const lockLabel =
-        this.betaState.source === 'env'
-          ? `locked by ${this.betaState.env}`
-          : 'locked by Enable all Beta features';
-      return `id ${feature.id} · ${lockLabel}${timingSuffix}`;
+    if (feature.stage === 'beta' && this.betaState.source === 'env') {
+      return `id ${feature.id} · locked by ${this.betaState.env}${timingSuffix}`;
     }
     const baseSource = feature.configValue !== undefined ? 'config' : 'default';
     return `id ${feature.id} · ${baseSource} · ${feature.env}${timingSuffix}`;

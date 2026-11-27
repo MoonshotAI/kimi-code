@@ -171,7 +171,7 @@ describe('SettingsDialog Lab two-tier layout', () => {
     expect(bodyText).toContain('Beta 功能');
     expect(bodyText).toContain('即将推出，欢迎尝鲜');
     expect(bodyText).toContain('实验性功能');
-    expect(bodyText).toContain('Agent 体验与形态探索，可能随时调整，影响也更大');
+    expect(bodyText).toContain('Agent 体验与形态探索，尚未定型，建议了解后按需开启');
     expect(bodyText).not.toContain('抢先体验');
     expect(bodyText).not.toContain('先锋探索');
     expect(bodyText).toContain('重启 Kimi Code 后生效');
@@ -226,6 +226,7 @@ describe('SettingsDialog Lab two-tier layout', () => {
     expect(contextSwitch.disabled).toBe(true);
     expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('true');
     expect(promptPredictionSwitch.disabled).toBe(true);
+    expect(document.body.textContent).not.toContain('已随「开启全部 Beta 功能」开启');
     expect(notifySwitch.getAttribute('aria-checked')).toBe('false');
     expect(notifySwitch.disabled).toBe(false);
     expect(sessionMentionsSwitch.getAttribute('aria-checked')).toBe('false');

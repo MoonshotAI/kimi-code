@@ -1474,9 +1474,6 @@ defineExpose({ confirmDiscard });
                 <span v-if="contextInspectorLockedByEnv && contextInspectorFeature" class="hint">
                   {{ t('settings.lab.lockedByEnv', { env: contextInspectorFeature.env }) }}
                 </span>
-                <span v-else-if="betaMasterEnabled" class="hint">
-                  {{ t('settings.lab.lockedByBetaMaster') }}
-                </span>
               </span>
               <Switch
                 :model-value="contextInspectorToggleEnabled"
@@ -1491,9 +1488,6 @@ defineExpose({ confirmDiscard });
                 <span class="hint">{{ t('settings.lab.promptPredictionHint') }}</span>
                 <span v-if="promptPredictionLockedByEnv && promptPredictionFeature" class="hint">
                   {{ t('settings.lab.lockedByEnv', { env: promptPredictionFeature.env }) }}
-                </span>
-                <span v-else-if="betaMasterEnabled" class="hint">
-                  {{ t('settings.lab.lockedByBetaMaster') }}
                 </span>
               </span>
               <Switch

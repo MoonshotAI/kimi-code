@@ -87,7 +87,7 @@ describe('ExperimentsSelectorComponent', () => {
     expect(out).toContain(' Beta  Coming soon — try them early');
     expect(out).toContain('  ❯ Enable all Beta features  disabled');
     expect(out).toContain(
-      ' Experimental  Agent explorations — may change anytime and have broader impact',
+      ' Experimental  Agent explorations — still evolving, review and enable as needed',
     );
     expect(out).toContain('    Tower mode  enabled');
     expect(out).toContain('    id tower · config · KIMI_CODE_EXPERIMENTAL_TOWER · restart required');
@@ -122,8 +122,9 @@ describe('ExperimentsSelectorComponent', () => {
     expect(afterMasterOn).toContain('  ❯ Enable all Beta features  enabled');
     expect(afterMasterOn).toContain('    Context preview  enabled');
     expect(afterMasterOn).toContain(
-      '    id context_preview · locked by Enable all Beta features · new sessions',
+      '    id context_preview · config · KIMI_CODE_EXPERIMENTAL_CONTEXT_PREVIEW · new sessions',
     );
+    expect(afterMasterOn).not.toContain('locked by Enable all Beta features');
     expect(afterMasterOn).toContain('    Prompt prediction  disabled');
 
     selector.handleInput(DOWN);
