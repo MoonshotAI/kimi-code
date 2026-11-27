@@ -13,7 +13,6 @@ import {
   promptMetadataTextFromSkill,
   skillCommandLabel,
 } from '#/features/skill/prompt';
-import { IWireService } from '#/wire/wire';
 
 import {
   IAgentTitlePromptSource,
@@ -28,7 +27,6 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
   constructor(
     @IAgentLoopService private readonly context: IAgentLoopService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IWireService private readonly wire: IWireService,
   ) {}
 
   async firstUserPrompts(limit: number): Promise<readonly string[]> {
@@ -56,14 +54,9 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
     const firstUserIndex = all.findIndex(isUserTitlePrompt);
     if (firstUserIndex < 0) return {};
     const user = promptMetadataTextFromUserMessage(all[firstUserIndex]!);
-    const rest = all.slice(firstUserIndex + 1);
-    const hasSkillActivation = rest.some(
-      (message) => message.origin?.kind === 'skill_activation' && message.origin.trigger === 'user-slash',
-    );
-    const continuationIds = hasSkillActivation ? this.turnContinuationPromptIds() : undefined;
     const span: ContextMessage[] = [];
-    for (const message of rest) {
-      if (isNextTurnPrompt(message, continuationIds)) break;
+    for (const message of all.slice(firstUserIndex + 1)) {
+      if (isUserTitlePrompt(message)) break;
       span.push(message);
     }
     return { user, assistant: finalAssistantText(span) };
@@ -112,31 +105,6 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
     }
     return all;
   }
-
-  private turnContinuationPromptIds(): ReadonlySet<string> | undefined {
-    let hasTurnPrompts = false;
-    const ids = new Set<string>();
-    let continuesTurn = false;
-    for (const { record } of this.wire.readLoopChain()) {
-      if (record.type === 'turn.ended') {
-        continuesTurn = record['continuation'] === 'turn';
-        continue;
-      }
-      if (record.type === 'turn.steer') {
-        const promptIds = record['promptIds'];
-        const firstPromptId =
-          Array.isArray(promptIds) && typeof promptIds[0] === 'string' ? promptIds[0] : undefined;
-        const id = typeof record['messageId'] === 'string' ? record['messageId'] : firstPromptId;
-        if (id !== undefined) ids.add(id);
-        continue;
-      }
-      if (record.type !== 'turn.prompt') continue;
-      hasTurnPrompts = true;
-      if (continuesTurn && typeof record['promptId'] === 'string') ids.add(record['promptId']);
-      continuesTurn = false;
-    }
-    return hasTurnPrompts ? ids : undefined;
-  }
 }
 
 function isUserTitlePrompt(message: ContextMessage): boolean {
@@ -144,15 +112,6 @@ function isUserTitlePrompt(message: ContextMessage): boolean {
   const origin = message.origin;
   if (origin === undefined || origin.kind === 'user') return true;
   return origin.kind === 'skill_activation' && origin.trigger === 'user-slash';
-}
-
-function isNextTurnPrompt(
-  message: ContextMessage,
-  continuationIds: ReadonlySet<string> | undefined,
-): boolean {
-  if (!isUserTitlePrompt(message)) return false;
-  if (message.origin?.kind !== 'skill_activation' || continuationIds === undefined) return true;
-  return message.id === undefined || !continuationIds.has(message.id);
 }
 
 function promptMetadataTextFromUserMessage(message: ContextMessage): string | undefined {
