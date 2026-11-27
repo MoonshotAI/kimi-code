@@ -113,6 +113,46 @@ describe('loop-event fold parity', () => {
     expect(folded).toEqual(baseline);
   });
 
+  it('puts the tool calls of a step back in the order the model sent them, whatever order they were recorded in', () => {
+    const toolCall = (id: string, callIndex?: number): LoopRecordedEvent => ({
+      type: 'tool.call',
+      stepUuid: 's1',
+      toolCallId: id,
+      name: 'Bash',
+      args: { command: id },
+      ...(callIndex === undefined ? {} : { callIndex }),
+    });
+    const callIds = (events: readonly LoopRecordedEvent[]): readonly string[] => {
+      const assistant = foldAll([], [{ type: 'step.begin', uuid: 's1' }, ...events, { type: 'step.end', uuid: 's1' }])[0];
+      if (assistant?.role !== 'assistant') throw new Error('expected assistant message');
+      return assistant.toolCalls.map((call) => call.id);
+    };
+
+    expect(callIds([toolCall('b', 1), toolCall('c', 2), toolCall('a', 0)])).toEqual(['a', 'b', 'c']);
+    expect(callIds([toolCall('b'), toolCall('c'), toolCall('a')])).toEqual(['b', 'c', 'a']);
+  });
+
+  it('puts the tool results of a step in the order of its calls, and closes a call without a result in its place', () => {
+    const toolCall = (id: string, callIndex?: number): LoopRecordedEvent => ({
+      type: 'tool.call',
+      stepUuid: 's1',
+      toolCallId: id,
+      name: 'Bash',
+      args: { command: id },
+      ...(callIndex === undefined ? {} : { callIndex }),
+    });
+    const toolResult = (id: string): LoopRecordedEvent => ({ type: 'tool.result', toolCallId: id, result: { output: `${id} output` } });
+    const resultIds = (events: readonly LoopRecordedEvent[]): readonly (string | undefined)[] =>
+      foldAll([], [{ type: 'step.begin', uuid: 's1' }, ...events, { type: 'step.end', uuid: 's1' }])
+        .filter((message) => message.role === 'tool')
+        .map((message) => (message.role === 'tool' ? message.toolCallId : undefined));
+
+    expect(
+      resultIds([toolCall('b', 1), toolResult('b'), toolCall('a', 0), toolCall('c', 2), toolResult('a')]),
+    ).toEqual(['a', 'b', 'c']);
+    expect(resultIds([toolCall('b'), toolResult('b'), toolCall('a'), toolResult('a')])).toEqual(['b', 'a']);
+  });
+
   it('rebuilds tool call arguments byte-for-byte from argsRaw', () => {
     const raw = '{ "q":  "moon", "limit": 1e3, "big": 9007199254740993, "esc": "\\u0041", "q": "dup" }';
     const folded = foldAll([], [

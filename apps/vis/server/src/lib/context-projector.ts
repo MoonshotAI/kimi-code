@@ -156,12 +156,11 @@ export function projectContext(
         content: [...openMessage.message.content, part],
       };
     },
-    appendOpenToolCall: (call) => {
+    insertOpenToolCall: (call, _display, position) => {
       if (openMessage === undefined || openMessage.message.role !== 'assistant') return;
-      openMessage.message = {
-        ...openMessage.message,
-        toolCalls: [...openMessage.message.toolCalls, call],
-      };
+      const toolCalls = [...openMessage.message.toolCalls];
+      toolCalls.splice(position ?? toolCalls.length, 0, call);
+      openMessage.message = { ...openMessage.message, toolCalls };
     },
     dropOpenAssistant: () => {
       if (openMessage === undefined) return;

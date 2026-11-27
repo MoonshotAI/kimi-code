@@ -57,6 +57,7 @@ export type LoopRecordedEvent =
       readonly type: 'tool.call';
       readonly stepUuid: string;
       readonly toolCallId: string;
+      readonly callIndex?: number;
       readonly rawId?: string;
       readonly name: string;
       readonly args?: unknown;
@@ -82,7 +83,7 @@ export type LoopRecordedEvent =
 export interface LoopEventFoldSink {
   openAssistant(time: number | undefined): void;
   appendOpenContent(part: ContentPart): void;
-  appendOpenToolCall(call: ToolCall, display?: ToolInputDisplay): void;
+  insertOpenToolCall(call: ToolCall, display?: ToolInputDisplay, position?: number): void;
   dropOpenAssistant(): void;
   sealOpenAssistant(meta?: AssistantSealMeta): void;
   pushToolMessage(message: ContextMessage, time: number | undefined): void;
@@ -94,6 +95,13 @@ export interface LoopEventFold {
   loopEvent(event: LoopRecordedEvent, time?: number): void;
   settle(time?: number): void;
   reset(): void;
+}
+
+export function placeToolCall(placed: number[], callIndex: number): number {
+  const later = placed.findIndex((known) => known > callIndex);
+  const position = later < 0 ? placed.length : later;
+  placed.splice(position, 0, callIndex);
+  return position;
 }
 
 export function createLoopEventFold(sink: LoopEventFoldSink): LoopEventFold {
@@ -113,24 +121,53 @@ function createLoopEventFoldWithState(
   let openStepUuid: string | null | undefined = initial === undefined ? undefined : null;
   let openHasToolCalls = initial?.openHasToolCalls ?? false;
   let openVacuous = initial?.openVacuous ?? true;
+  let openCallIndexes: number[] | undefined = initial === undefined ? [] : undefined;
+  let openCallIds: string[] = [];
+  let nextResultIndex = 0;
+  const heldResults = new Map<string, { message: ContextMessage; time: number | undefined }>();
   const pending = new Map<string, string>(
     initial?.pendingToolCalls.map((call) => [call.id, call.name]),
   );
   let deferred: { message: ContextMessage; time: number | undefined }[] = [];
 
   const flushDeferred = (): void => {
-    if (pending.size > 0 || deferred.length === 0) return;
+    if (pending.size > 0 || heldResults.size > 0 || deferred.length === 0) return;
     for (const entry of deferred) sink.pushMessage(entry.message, entry.time);
     deferred = [];
   };
+  const releaseHeldResults = (): void => {
+    for (const toolCallId of openCallIds) {
+      const held = heldResults.get(toolCallId);
+      if (held !== undefined) sink.pushToolMessage(held.message, held.time);
+    }
+    heldResults.clear();
+  };
+  const releaseResultsInOrder = (): void => {
+    while (openCallIndexes !== undefined) {
+      const toolCallId = openCallIds[openCallIndexes.indexOf(nextResultIndex)];
+      const held = toolCallId === undefined ? undefined : heldResults.get(toolCallId);
+      if (toolCallId === undefined || held === undefined) return;
+      sink.pushToolMessage(held.message, held.time);
+      heldResults.delete(toolCallId);
+      nextResultIndex += 1;
+    }
+  };
   const closePending = (time: number | undefined): void => {
-    if (pending.size === 0) return;
-    for (const toolCallId of pending.keys()) {
+    if (pending.size === 0 && heldResults.size === 0) return;
+    const order = openCallIndexes === undefined ? [...pending.keys()] : openCallIds;
+    for (const toolCallId of order) {
+      const held = heldResults.get(toolCallId);
+      if (held !== undefined) {
+        sink.pushToolMessage(held.message, held.time);
+        continue;
+      }
+      if (!pending.has(toolCallId)) continue;
       const hasRecordedResult = deferred.some(
         (entry) => entry.message.role === 'tool' && entry.message.toolCallId === toolCallId,
       );
       if (!hasRecordedResult) sink.pushToolMessage(interruptedToolMessage(toolCallId), time);
     }
+    heldResults.clear();
     pending.clear();
     flushDeferred();
   };
@@ -144,6 +181,16 @@ function createLoopEventFoldWithState(
     }
     openStepUuid = undefined;
   };
+  const placeOpenCall = (toolCallId: string, callIndex: number | undefined): number | undefined => {
+    if (openCallIndexes === undefined || callIndex === undefined) {
+      releaseHeldResults();
+      openCallIndexes = undefined;
+      return undefined;
+    }
+    const position = placeToolCall(openCallIndexes, callIndex);
+    openCallIds.splice(position, 0, toolCallId);
+    return position;
+  };
   const acceptsOpenStep = (stepUuid: string): boolean => {
     if (openStepUuid === undefined) return false;
     if (openStepUuid === null) {
@@ -155,7 +202,7 @@ function createLoopEventFoldWithState(
 
   return {
     appendMessage(message, time) {
-      if (pending.size > 0) {
+      if (pending.size > 0 || heldResults.size > 0) {
         deferred.push({ message, time });
         return;
       }
@@ -169,6 +216,9 @@ function createLoopEventFoldWithState(
           openStepUuid = event.uuid;
           openHasToolCalls = false;
           openVacuous = true;
+          openCallIndexes = [];
+          openCallIds = [];
+          nextResultIndex = 0;
           return;
         }
         case 'step.end': {
@@ -193,7 +243,7 @@ function createLoopEventFoldWithState(
             extras: event.extras,
             rawId: event.rawId,
           };
-          sink.appendOpenToolCall(call, event.display);
+          sink.insertOpenToolCall(call, event.display, placeOpenCall(event.toolCallId, event.callIndex));
           pending.set(event.toolCallId, event.name);
           openHasToolCalls = true;
           return;
@@ -202,18 +252,21 @@ function createLoopEventFoldWithState(
           if (!pending.has(event.toolCallId)) return;
           pending.delete(event.toolCallId);
           const output = event.result.output;
-          sink.pushToolMessage(
-            {
-              ...createToolMessage(
-                event.toolCallId,
-                typeof output === 'string' ? output : [...output],
-              ),
-              isError: event.result.isError,
-              note: event.result.note,
-              durationMs: event.result.durationMs,
-            },
-            time,
-          );
+          const message: ContextMessage = {
+            ...createToolMessage(
+              event.toolCallId,
+              typeof output === 'string' ? output : [...output],
+            ),
+            isError: event.result.isError,
+            note: event.result.note,
+            durationMs: event.result.durationMs,
+          };
+          if (openCallIndexes === undefined) {
+            sink.pushToolMessage(message, time);
+          } else {
+            heldResults.set(event.toolCallId, { message, time });
+            releaseResultsInOrder();
+          }
           flushDeferred();
           return;
         }
@@ -336,12 +389,14 @@ function createFoldSink(initial: readonly ContextMessage[], initialMutable: bool
     appendOpenContent: (part) => {
       updateOpen((message) => ({ ...message, content: [...message.content, part] }));
     },
-    appendOpenToolCall: (call, display) => {
+    insertOpenToolCall: (call, display, position) => {
       updateOpen((message) => {
         if (message.role !== 'assistant') return message;
+        const toolCalls = [...message.toolCalls];
+        toolCalls.splice(position ?? toolCalls.length, 0, call);
         return {
           ...message,
-          toolCalls: [...message.toolCalls, call],
+          toolCalls,
           toolCallDisplays:
             display === undefined
               ? message.toolCallDisplays

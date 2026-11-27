@@ -306,6 +306,11 @@ function toolArguments(entry: AssistantMessage, toolCallId: string): { args: unk
   }
 }
 
+function callIndexOf(entry: AssistantMessage, toolCallId: string): { callIndex?: number } {
+  const callIndex = entry.toolCalls.findIndex((call) => call.id === toolCallId);
+  return callIndex < 0 ? {} : { callIndex };
+}
+
 export class LoopJournal {
   private readonly normal: UserMessage[] = [];
   private readonly notify: UserMessage[] = [];
@@ -433,6 +438,7 @@ export class LoopJournal {
           step: event.step,
           stepUuid: step.uuid,
           toolCallId: event.toolCall.id,
+          ...callIndexOf(assistant, event.toolCall.id),
           rawId: event.toolCall.rawId,
           name: event.toolCall.name,
           ...toolArguments(assistant, event.toolCall.id),
@@ -573,6 +579,7 @@ export class LoopJournal {
           step: event.step,
           stepUuid: step.uuid,
           toolCallId,
+          ...callIndexOf(assistant, toolCallId),
           rawId: toolCall?.rawId,
           name: toolCall?.name ?? toolCallId,
           ...toolArguments(assistant, toolCallId),
