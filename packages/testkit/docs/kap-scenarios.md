@@ -88,9 +88,9 @@ test('取消正在准备的回复后，同一会话仍能继续', async ({ kap, 
 - **打开 `verifyInvariants` 时**，用例通过后夹具再调用 `verifyKapInvariants(kap)`，按客户端能看到的协议状态检查每个会话，之后再验证一次模型，会话落定期间发出的请求也会被检查。检查的会话包括用 `kap.createSession()`、`kap.fork()` 创建的，和任一 WebSocket 上出现过的。`tests/scenarios` 的每个场景都打开了这项检查。出现下面任一情况，用例失败，错误里逐条列出：
   - 到截止时间，会话还没回到空闲：`activity` 不是 `idle`、还有待回答的交互，或提示队列不空。截止时间是整次检查共用的 `TIMEOUTS.wait`，可用 `timeoutMs` 改。后台命令也算，场景结束前要等它结束，或用 `kap.cancel(id, { includeBackground: true })` 停掉。
   - 会话空闲后，还有回合或条目的 `status` 是 `running`。查的范围是主 agent、客户端订阅过的 agent，以及工具调用的 `agent_refs` 指向的子 agent。
-  - 订阅了某个 agent 的客户端，把帧折叠出的回合和 REST 返回的不一样。订阅快照分了页（`has_more`）时，只比较从这一页起的回合。
+  - 订阅了某个 agent 的客户端，把帧折叠出的回合和 REST 返回的不一样。agent 结束、帧流随之结束的也照样比较，客户端主动取消订阅的不比较。订阅快照分了页（`has_more`）时，这一页之前的回合不比较，但快照之后才开始的回合（例如撤销之后重发的）照样比较。
   - 客户端最后收到的 `session` 帧，在 `activity`、`pending_interaction`、`last_turn_outcome`、`archived` 上和 REST 不一致。帧里没有 `pending_interaction`（例如 `archived` 帧）时按 `none` 算。
   - 客户端收到某条交互的 `pending` 帧之后、结束帧之前，又收到同一会话说没有待处理交互的 `session` 帧。相信这一帧的客户端会把还开着的审批或提问清掉。客户端取消订阅这个会话、或收到它的 `archived`、`deleted` 帧之后，不再按之前的交互判断。
 
-  自己用 `startKap()` 时可以直接调用它。直接调用 `kap` 夹具函数的测试，要把测试上下文和模型一起传进去：`fixtures.kap({ ...context, model }, run)`。[协议不变量](../src/kap/invariants.ts) · [接线自测](../../../tests/scenarios/verification.test.ts)
+  REST 已经不认识的会话和 agent（HTTP 404 或 `404xx` 错误码），例如删掉的会话、关掉的 side agent，直接跳过。自己用 `startKap()` 时可以直接调用它。直接调用 `kap` 夹具函数的测试，要把测试上下文和模型一起传进去：`fixtures.kap({ ...context, model }, run)`。[协议不变量](../src/kap/invariants.ts) · [接线自测](../../../tests/scenarios/verification.test.ts)
 - **定位失败时**，先看失败输出里的请求编号、通道、状态和步骤。若模型已响应但客户端卡住，再结合最近的 WebSocket 帧和服务日志判断停在哪个回合。夹具各保留最近 32 条帧与日志摘要，客户端连接后才有帧可看。`scenarioFixtures()` 默认采集服务日志，自定义 logger 或 logLevel 时，夹具会提示其诊断日志不可用。[失败诊断与快照错误示例](../../../tests/scenarios/verification.test.ts)

@@ -320,12 +320,13 @@ describe('verifyKapInvariants', () => {
     readonly session: Readonly<Record<string, unknown>>;
     readonly turns: readonly KapTurn[];
     readonly agents?: Readonly<Record<string, readonly KapTurn[]>>;
-    readonly snapshot?: { readonly turns: readonly KapTurn[]; readonly has_more: boolean };
+    readonly snapshot?: Readonly<Record<string, unknown>>;
     readonly frames?: readonly Readonly<Record<string, unknown>>[];
     readonly afterUnsubscribe?: readonly Readonly<Record<string, unknown>>[];
     readonly queued?: readonly unknown[];
     readonly deleted?: boolean;
     readonly broken?: boolean;
+    readonly notFoundStatus?: number;
   }
 
   const idle = { id: 's1', activity: 'idle', pending_interaction: 'none', last_turn_outcome: 'completed', archived: false };
@@ -348,7 +349,7 @@ describe('verifyKapInvariants', () => {
     for (const frame of frames) peer.send(JSON.stringify(frame));
   }
 
-  async function stubKap(stub: StubKap, options: { readonly subscribe?: boolean } = {}): Promise<KapClient> {
+  async function stubKap(stub: StubKap, options: { readonly subscribe?: boolean; readonly agentIds?: readonly string[] } = {}): Promise<KapClient> {
     const server = createServer((request, response) => {
       const path = new URL(request.url ?? '/', 'http://kap.test').pathname;
       const routes: Readonly<Record<string, unknown>> = {
@@ -361,7 +362,7 @@ describe('verifyKapInvariants', () => {
       const creating = path === '/api/v1/sessions';
       const found = creating || stub.deleted !== true ? routes[path] : undefined;
       const status = stub.broken === true && !creating ? 500 : found === undefined ? 404 : 200;
-      response.writeHead(status, { 'content-type': 'application/json' });
+      response.writeHead(status === 404 ? (stub.notFoundStatus ?? 404) : status, { 'content-type': 'application/json' });
       response.end(JSON.stringify(status === 200 ? { code: 0, data: found } : { code: status === 500 ? 50001 : 40401, msg: status === 500 ? 'internal error' : 'not found' }));
     });
     const sockets = new WebSocketServer({ server });
@@ -374,7 +375,9 @@ describe('verifyKapInvariants', () => {
           send(peer, stub.afterUnsubscribe ?? []);
           return;
         }
-        send(peer, [live({ type: 'turns', ...(stub.snapshot ?? { turns: [], has_more: false }) }), ...(stub.frames ?? [])]);
+        const agentIds = command['agent_ids'] as readonly string[];
+        const snapshots = agentIds.map((agentId) => live({ type: 'turns', agent_id: agentId, turns: [], has_more: false, ...(agentId === 'main' ? stub.snapshot : {}) }));
+        send(peer, [...snapshots, ...(stub.frames ?? [])]);
       });
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -388,8 +391,9 @@ describe('verifyKapInvariants', () => {
     await client.createSession();
     if (options.subscribe === false) return client;
     const socket = await client.connect();
-    await socket.subscribe('s1');
-    await socket.waitFor(() => socket.frames.length === 2 + (stub.frames ?? []).length);
+    const agentIds = options.agentIds ?? ['main'];
+    await socket.subscribe('s1', { agentIds });
+    await socket.waitFor(() => socket.frames.length === 1 + agentIds.length + (stub.frames ?? []).length);
     return client;
   }
 
@@ -458,6 +462,41 @@ describe('verifyKapInvariants', () => {
     await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
   });
 
+  it('compares the stream of a subagent that ended with what REST returns for it', async () => {
+    const child = (frame: Readonly<Record<string, unknown>>) => ({ ...live(frame), agent_id: 'child' });
+    const childTurn: KapTurn = { ...answered, turn_id: 'c1' };
+    const ended = child({ type: 'agent', status: 'ended' });
+    const streamed = [child({ type: 'turn.started', turn: { ...header, turn_id: 'c1', status: 'running', outcome: undefined } }), child({ type: 'turn.ended', turn: { ...header, turn_id: 'c1' } })];
+    const complete = await stubKap(
+      { session: idle, turns: [], agents: { child: [childTurn] }, frames: [streamed[0]!, child({ type: 'item.ended', turn_id: 'c1', item: reply }), streamed[1]!, ended] },
+      { agentIds: ['main', 'child'] },
+    );
+    await expect(verifyKapInvariants(complete)).resolves.toBeUndefined();
+    const missingReply = await stubKap({ session: idle, turns: [], agents: { child: [childTurn] }, frames: [...streamed, ended] }, { agentIds: ['main', 'child'] });
+    await expect(verifyKapInvariants(missingReply, { timeoutMs: 50 })).rejects.toMatchObject({
+      problems: ['client #1 subscribed to agent child of session s1 folds its frames into turns that differ from REST: turn c1: the client has 0 item(s), REST has 1'],
+    });
+  });
+
+  it('compares turns that started after a paged snapshot even when an undo gave them lower ordinals', async () => {
+    const at = (second: number) => `2026-01-01T00:00:0${second}.000Z`;
+    const paged: KapTurn = { ...answered, turn_id: 't50', ordinal: 50, started_at: at(0) };
+    const kept: KapTurn = { ...answered, turn_id: 't10', ordinal: 10, started_at: at(0) };
+    const resent = { ...header, turn_id: 't11', ordinal: 11, started_at: at(2) };
+    const client = await stubKap({
+      session: idle,
+      turns: [kept, { ...resent, items: [reply] }],
+      snapshot: { turns: [paged], has_more: true, event_created_at: at(1) },
+      frames: [
+        live({ type: 'turns.removed', turn_ids: ['t50'] }),
+        live({ type: 'turn.started', turn: { ...resent, status: 'running', outcome: undefined } }),
+        live({ type: 'item.ended', turn_id: 't11', item: reply }),
+        live({ type: 'turn.ended', turn: resent }),
+      ],
+    });
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
   it('reports a latest session frame that drops a field REST still has', async () => {
     const archived = { ...idle, archived: true };
     const { last_turn_outcome: _outcome, pending_interaction: _pending, ...withoutOutcome } = archived;
@@ -503,6 +542,12 @@ describe('verifyKapInvariants', () => {
     const [socket] = client.connectedSockets;
     await socket!.command({ type: 'unsubscribe', session_id: 's1', agent_ids: ['main'] });
     await socket!.waitFor((frame) => frame.type === 'session');
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('skips an agent that REST no longer knows, as a closed side agent answers with code 40401', async () => {
+    const delegation = { item_id: 'c1', type: 'tool_call', status: 'ended', outcome: 'completed', name: 'Agent', agent_refs: [{ agent_id: 'closed', role: 'child' }] };
+    const client = await stubKap({ session: idle, turns: [{ ...header, items: [delegation] }], notFoundStatus: 200 }, { subscribe: false });
     await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
   });
 

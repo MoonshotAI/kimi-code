@@ -48,7 +48,7 @@ async function sessionProblems(kap: KapClient, sessionId: string, clients: reado
   const problems: string[] = [];
   for (const [agentId, turns] of await agentTurns(kap, sessionId, open)) {
     problems.push(...unfinishedProblems(sessionId, agentId, turns));
-    for (const client of open.filter((candidate) => candidate.socket.subscribedAgents(sessionId).includes(agentId))) {
+    for (const client of open.filter((candidate) => streamedAgents(candidate.socket, sessionId).includes(agentId))) {
       problems.push(...(await foldedTurnsProblems(client, sessionId, agentId, turns, deadline)));
     }
   }
@@ -108,7 +108,7 @@ function busyProblem({ session, queue }: SessionState): string {
 
 async function agentTurns(kap: KapClient, sessionId: string, clients: readonly Client[]): Promise<Map<string, KapTurn[]>> {
   const found = new Map<string, KapTurn[]>();
-  const queue = ['main', ...clients.flatMap((client) => client.socket.subscribedAgents(sessionId))];
+  const queue = ['main', ...clients.flatMap((client) => streamedAgents(client.socket, sessionId))];
   for (let agentId = queue.shift(); agentId !== undefined; agentId = queue.shift()) {
     if (found.has(agentId)) continue;
     const turns = await restTurns(kap, sessionId, agentId);
@@ -117,6 +117,10 @@ async function agentTurns(kap: KapClient, sessionId: string, clients: readonly C
     queue.push(...turns.flatMap((turn) => turn.items.flatMap(childAgentIdsOf)));
   }
   return found;
+}
+
+function streamedAgents(socket: KapSocket, sessionId: string): readonly string[] {
+  return [...socket.subscribedAgents(sessionId), ...socket.endedAgents(sessionId)];
 }
 
 function childAgentIdsOf(item: KapItem): string[] {
@@ -159,8 +163,9 @@ async function foldedTurnsProblems({ socket, label }: Client, sessionId: string,
 function visibleTurns(socket: KapSocket, sessionId: string, agentId: string, rest: readonly KapTurn[]): readonly KapTurn[] {
   const snapshot = socket.conversation(sessionId, agentId).findLast((frame) => frame.type === 'turns');
   if (snapshot?.['has_more'] !== true) return rest;
-  const first = (snapshot['turns'] as readonly KapTurn[] | undefined)?.[0]?.ordinal;
-  return first === undefined ? rest : rest.filter((turn) => turn.ordinal >= first);
+  const first = (snapshot['turns'] as readonly KapTurn[] | undefined)?.[0]?.ordinal ?? Number.POSITIVE_INFINITY;
+  const takenAt = Date.parse(describe(snapshot['event_created_at']));
+  return rest.filter((turn) => turn.ordinal >= first || Date.parse(describe(turn['started_at'])) > takenAt);
 }
 
 async function sessionFrameProblems({ socket, label }: Client, session: KapSession, deadline: Deadline): Promise<string[]> {
@@ -244,7 +249,7 @@ function sessionIdOf(frame: KapFrame): string | undefined {
 }
 
 function isNotFound(error: unknown): boolean {
-  return error instanceof KapEnvelopeError && error.status === 404;
+  return error instanceof KapEnvelopeError && (error.status === 404 || Math.trunc((error.code ?? 0) / 100) === 404);
 }
 
 function describe(value: unknown): string {
