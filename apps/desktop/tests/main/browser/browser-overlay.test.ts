@@ -324,7 +324,7 @@ describe('browser overlay lifecycle', () => {
     expect(host.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayAction, { menuId: 'site-b', itemId: 'browser' });
   });
 
-  it('[L0:desktop.overlay-menu-stays-closed] keeps a menu closed by Escape when the renderer refreshes it before the close reaches the renderer', async () => {
+  it('keeps a menu closed by Escape when the renderer refreshes it before the close reaches the renderer', async () => {
     const host = createHost();
     attachBrowserOverlayWindow(host as never);
     const view = mocks.FakeWebContentsView.instances[0]!;

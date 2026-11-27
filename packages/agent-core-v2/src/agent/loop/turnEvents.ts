@@ -270,6 +270,10 @@ export interface TurnStepInterruptedEvent extends Omit<TurnStepInterruptedPayloa
   readonly type: 'turn.step.interrupted';
 }
 
+export interface TurnStepStreamResetEvent extends Omit<TurnStepStreamResetPayload, 'agentId'> {
+  readonly type: 'turn.step.stream_reset';
+}
+
 export interface AssistantDeltaEvent extends Omit<AssistantDeltaPayload, 'agentId'> {
   readonly type: 'assistant.delta';
 }

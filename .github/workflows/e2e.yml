@@ -3,10 +3,36 @@ name: E2E
 # Every push to main runs the suite. A pull request runs it only when it is
 # ready for review and either carries the e2e label or changes the suite
 # itself, so the shared runner pool is not spent on every push of every PR.
-# The Windows jobs run on those pull requests and on manual runs, not on
-# pushes to main, so each merge does not take another six runners.
+# The Windows jobs run on those pull requests, on manual runs and every night,
+# not on pushes to main, so each merge does not take another six runners.
+# Every night at 04:07 Beijing time the whole suite runs on main. The few
+# minutes past the hour keep it off the top of the hour, when GitHub delays
+# and sometimes drops scheduled runs. If any job does not pass, the notify
+# job posts the failed jobs and cases to the team's Feishu group, with the
+# commits since the last run on main that passed, and asks the person on
+# triage to find the pull request behind them; a passing night posts
+# nothing. On those nights a job whose suite failed reruns its first three
+# failed cases five times each on the same commit and machine, within ten
+# minutes, so the card can say whether a case fails every time or only now
+# and then. The reruns only sort the failures: the job stays failed whatever
+# they show, and retries stay at 0. Those runs give each surface job twenty
+# more minutes for the reruns. A manual run with the notify input does the
+# same. A manual run given notify_run_id skips the suite and posts a card
+# marked as a test about that earlier run, which checks the webhook, the
+# signature and the card in a minute.
 on:
   workflow_dispatch:
+    inputs:
+      notify:
+        description: Post to Feishu if any job does not pass, as the nightly run does
+        type: boolean
+        default: false
+      notify_run_id:
+        description: Skip the suite and post a test card to Feishu about this earlier run (its run ID)
+        type: string
+        default: ''
+  schedule:
+    - cron: '7 20 * * *'
   push:
     branches: [main]
   pull_request:
@@ -15,10 +41,13 @@ on:
 permissions:
   contents: read
 
-# Each main commit gets its own group so every merge is tested. Adding an
-# unrelated label gets a throwaway group so it cannot cancel a running suite.
+# Each main commit gets its own group so every merge is tested, and so do
+# each nightly run and each test card, so a manual run on the same branch
+# cannot hold them up or push them out of the queue.
+# Adding an unrelated label gets a throwaway group so it cannot cancel a
+# running suite.
 concurrency:
-  group: e2e-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'push' && github.sha || (github.event.action == 'labeled' && github.event.label.name != 'e2e') && github.run_id || '' }}
+  group: e2e-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'push' && github.sha || (github.event_name == 'schedule' || inputs.notify_run_id != '') && github.run_id || (github.event.action == 'labeled' && github.event.label.name != 'e2e') && github.run_id || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -43,8 +72,14 @@ jobs:
           HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e') }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          NOTIFY_RUN_ID: ${{ inputs.notify_run_id }}
         run: |
           set -euo pipefail
+          if [[ -n "$NOTIFY_RUN_ID" ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "E2E skipped: this run only posts a test card to Feishu about run $NOTIFY_RUN_ID." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [[ "$EVENT" != pull_request || "$HAS_LABEL" == true ]]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -94,7 +129,7 @@ jobs:
     name: TUI (optional)
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.notify) && 35 || 15 }}
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -108,9 +143,11 @@ jobs:
           name: e2e-cli
           path: apps/kimi-code
       - name: Run the scenarios and driver self-tests on the TUI
+        id: suite
         run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=tui --project=tui-kitty
         env:
           TESTKIT_CLI_BUILD: dist
+          E2E_RESULTS_FILE: ${{ runner.temp }}/e2e-results.json
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
@@ -123,12 +160,24 @@ jobs:
           name: e2e-tui-failure
           path: tests/e2e/test-results/
           retention-days: 7
+      - name: Rerun each failed case five times on this commit to see whether it fails every time
+        if: ${{ failure() && steps.suite.outcome == 'failure' && (github.event_name == 'schedule' || inputs.notify) }}
+        timeout-minutes: 15
+        run: node scripts/e2e-rerun-failures.mjs --results "${{ runner.temp }}/e2e-results.json"
+        env:
+          TESTKIT_CLI_BUILD: dist
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.notify) }}
+        with:
+          name: e2e-results-tui
+          path: ${{ runner.temp }}/e2e-results.json
+          retention-days: 7
 
   acp:
     name: ACP (optional)
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.notify) && 35 || 15 }}
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -142,9 +191,11 @@ jobs:
           name: e2e-cli
           path: apps/kimi-code
       - name: Run the scenarios and driver self-tests over ACP
+        id: suite
         run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=acp --project=acp-bare
         env:
           TESTKIT_CLI_BUILD: dist
+          E2E_RESULTS_FILE: ${{ runner.temp }}/e2e-results.json
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
@@ -157,12 +208,24 @@ jobs:
           name: e2e-acp-failure
           path: tests/e2e/test-results/
           retention-days: 7
+      - name: Rerun each failed case five times on this commit to see whether it fails every time
+        if: ${{ failure() && steps.suite.outcome == 'failure' && (github.event_name == 'schedule' || inputs.notify) }}
+        timeout-minutes: 15
+        run: node scripts/e2e-rerun-failures.mjs --results "${{ runner.temp }}/e2e-results.json"
+        env:
+          TESTKIT_CLI_BUILD: dist
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.notify) }}
+        with:
+          name: e2e-results-acp
+          path: ${{ runner.temp }}/e2e-results.json
+          retention-days: 7
 
   desktop:
     name: Desktop (optional, ${{ matrix.shard }}/2)
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.notify) && 40 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -186,7 +249,10 @@ jobs:
       - name: Download the Electron binary before parallel cases start it
         run: pnpm --filter kimi-code-app exec node -e "require('electron')"
       - name: Run the scenarios and driver self-tests on Desktop
+        id: suite
         run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" pnpm --filter @moonshot-ai/e2e exec playwright test --project=desktop --shard=${{ matrix.shard }}/2
+        env:
+          E2E_RESULTS_FILE: ${{ runner.temp }}/e2e-results.json
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
@@ -199,12 +265,22 @@ jobs:
           name: e2e-desktop-failure-${{ matrix.shard }}
           path: tests/e2e/test-results/
           retention-days: 7
+      - name: Rerun each failed case five times on this commit to see whether it fails every time
+        if: ${{ failure() && steps.suite.outcome == 'failure' && (github.event_name == 'schedule' || inputs.notify) }}
+        timeout-minutes: 15
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" node scripts/e2e-rerun-failures.mjs --results "${{ runner.temp }}/e2e-results.json"
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.notify) }}
+        with:
+          name: e2e-results-desktop-${{ matrix.shard }}
+          path: ${{ runner.temp }}/e2e-results.json
+          retention-days: 7
 
   web:
     name: Web (optional, ${{ matrix.shard }}/2)
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.notify) && 40 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -224,9 +300,11 @@ jobs:
       - name: Install the browser the Web scenarios run in
         run: pnpm --filter @moonshot-ai/e2e exec playwright install --with-deps chromium
       - name: Run the scenarios and driver self-tests on the Web interface
+        id: suite
         run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=web --shard=${{ matrix.shard }}/2
         env:
           TESTKIT_CLI_BUILD: dist
+          E2E_RESULTS_FILE: ${{ runner.temp }}/e2e-results.json
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
@@ -239,13 +317,25 @@ jobs:
           name: e2e-web-failure-${{ matrix.shard }}
           path: tests/e2e/test-results/
           retention-days: 7
+      - name: Rerun each failed case five times on this commit to see whether it fails every time
+        if: ${{ failure() && steps.suite.outcome == 'failure' && (github.event_name == 'schedule' || inputs.notify) }}
+        timeout-minutes: 15
+        run: node scripts/e2e-rerun-failures.mjs --results "${{ runner.temp }}/e2e-results.json"
+        env:
+          TESTKIT_CLI_BUILD: dist
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.notify) }}
+        with:
+          name: e2e-results-web-${{ matrix.shard }}
+          path: ${{ runner.temp }}/e2e-results.json
+          retention-days: 7
 
   windows:
     name: Windows ${{ matrix.surface }} (optional${{ matrix.shards > 1 && format(', {0}/{1}', matrix.shard, matrix.shards) || '' }})
     if: ${{ github.event_name != 'push' }}
     needs: build
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.notify) && 60 || 40 }}
     strategy:
       fail-fast: false
       matrix:
@@ -280,9 +370,11 @@ jobs:
         if: ${{ matrix.surface == 'web' }}
         run: pnpm --filter @moonshot-ai/e2e exec playwright install chromium
       - name: Run the scenarios and driver self-tests on Windows
+        id: suite
         run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=${{ matrix.surface }} --shard=${{ matrix.shard }}/${{ matrix.shards }}
         env:
           TESTKIT_CLI_BUILD: dist
+          E2E_RESULTS_FILE: ${{ runner.temp }}/e2e-results.json
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
@@ -295,3 +387,54 @@ jobs:
           name: e2e-windows-${{ matrix.surface }}-failure${{ matrix.shards > 1 && format('-{0}', matrix.shard) || '' }}
           path: tests/e2e/test-results/
           retention-days: 7
+      - name: Rerun each failed case five times on this commit to see whether it fails every time
+        if: ${{ failure() && steps.suite.outcome == 'failure' && (github.event_name == 'schedule' || inputs.notify) }}
+        timeout-minutes: 15
+        run: node scripts/e2e-rerun-failures.mjs --results "${{ runner.temp }}/e2e-results.json"
+        env:
+          TESTKIT_CLI_BUILD: dist
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.notify) }}
+        with:
+          name: e2e-results-windows-${{ matrix.surface }}${{ matrix.shards > 1 && format('-{0}', matrix.shard) || '' }}
+          path: ${{ runner.temp }}/e2e-results.json
+          retention-days: 7
+
+  notify:
+    name: Notify Feishu about nightly failures
+    needs: [gate, build, tui, acp, desktop, web, windows]
+    if: ${{ always() && (github.event_name == 'schedule' || inputs.notify || inputs.notify_run_id != '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Download the failed cases each job wrote
+        id: results
+        uses: actions/download-artifact@v8
+        with:
+          pattern: e2e-results-*
+          path: ${{ runner.temp }}/e2e-results
+          run-id: ${{ inputs.notify_run_id || github.run_id }}
+          github-token: ${{ inputs.notify_run_id != '' && github.token || '' }}
+      - name: Post the jobs and cases that did not pass to Feishu
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FEISHU_E2E_WEBHOOK: ${{ secrets.FEISHU_E2E_WEBHOOK }}
+          FEISHU_E2E_SECRET: ${{ secrets.FEISHU_E2E_SECRET }}
+          FEISHU_E2E_TRIAGE_USER: ${{ secrets.FEISHU_E2E_TRIAGE_USER }}
+          NOTIFY_RUN_ID: ${{ inputs.notify_run_id }}
+          RESULTS_DOWNLOAD: ${{ steps.results.outcome }}
+        run: |
+          args=(--results-dir "$RUNNER_TEMP/e2e-results")
+          if [[ "$RESULTS_DOWNLOAD" != success ]]; then args+=(--results-download-failed); fi
+          if [[ -n "$NOTIFY_RUN_ID" ]]; then args+=(--run-id "$NOTIFY_RUN_ID" --rehearsal); fi
+          node scripts/e2e-nightly-notify.mjs "${args[@]}"

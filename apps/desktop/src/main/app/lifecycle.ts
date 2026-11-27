@@ -268,6 +268,7 @@ export function main(): void {
       initAutoUpdater({
         confirmRestart: () => confirmUpdateRestart(getMainWindow()),
         prepareSessionContinue,
+        beforeRestart: closeServerHandle,
       });
     }
     const startupDeepLink = process.platform === 'darwin' ? undefined : extractDeepLink(process.argv);

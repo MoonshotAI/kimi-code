@@ -70,6 +70,7 @@ import {
   TRANSCRIPT_MAX_TURNS,
 } from '#/tui/utils/transcript-window';
 import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
+import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
@@ -9995,6 +9996,174 @@ capabilities = ["image_in", "video_in"]
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe('when a step stream is cut and retried', () => {
+    async function makeStreamingDriver() {
+      const { driver } = await makeDriver();
+      const emit = (event: Record<string, unknown>): void => {
+        driver.sessionEventHandler.handleEvent(
+          { agentId: 'main', sessionId: 'ses-1', turnId: 1, ...event } as Event,
+          vi.fn(),
+        );
+      };
+      const transcript = (): string => stripSgr(renderTranscript(driver));
+      const count = (type: abstract new (...args: never[]) => unknown): number =>
+        driver.state.transcriptContainer.children.filter((child) => child instanceof type).length;
+      const replies = (): string[] =>
+        driver.state.transcriptEntries.filter((entry) => entry.kind === 'assistant').map((entry) => entry.content);
+      return { driver, emit, transcript, count, replies };
+    }
+
+    function retryStep(emit: (event: Record<string, unknown>) => void, step: number, stepId: string): void {
+      emit({ type: 'turn.step.stream_reset', step, stepId });
+      emit({
+        type: 'turn.step.retrying',
+        step,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 3,
+        delayMs: 0,
+        errorName: 'APIConnectionError',
+        errorMessage: 'stream ended early',
+      });
+      emit({ type: 'turn.step.started', step, stepId });
+    }
+
+    it('keeps only the retried reply', async () => {
+      vi.useFakeTimers();
+      try {
+        const { emit, transcript, count, replies } = await makeStreamingDriver();
+        emit({ type: 'turn.started', origin: { kind: 'user' } });
+        emit({ type: 'turn.step.started', step: 1, stepId: 'step-1' });
+        emit({ type: 'thinking.delta', delta: 'Planning the draft.' });
+        emit({ type: 'assistant.delta', delta: 'Draft answer ' });
+        emit({ type: 'assistant.delta', delta: 'that gets cut' });
+        await vi.runOnlyPendingTimersAsync();
+        expect(transcript()).toContain('Draft answer that gets cut');
+        expect(count(ThinkingComponent)).toBe(1);
+
+        retryStep(emit, 1, 'step-1');
+        emit({ type: 'assistant.delta', delta: 'Final answer after the retry.' });
+        emit({ type: 'turn.step.completed', step: 1, stepId: 'step-1' });
+        emit({ type: 'turn.ended', reason: 'completed' });
+
+        expect(transcript()).toContain('Final answer after the retry.');
+        expect(transcript()).not.toContain('Draft answer');
+        expect(count(ThinkingComponent)).toBe(0);
+        expect(count(AssistantMessageComponent)).toBe(1);
+        expect(replies()).toEqual(['Final answer after the retry.']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('drops a tool call the cut stream was still writing', async () => {
+      vi.useFakeTimers();
+      try {
+        const { driver, emit, transcript, count } = await makeStreamingDriver();
+        emit({ type: 'turn.started', origin: { kind: 'user' } });
+        emit({ type: 'turn.step.started', step: 1, stepId: 'step-1' });
+        emit({ type: 'assistant.delta', delta: 'Writing the notes.' });
+        const cutCall = 'call_cut';
+        assert(isToolCallId(cutCall));
+        emit({ type: 'tool.call.delta', toolCallId: cutCall, name: 'Write', argumentsPart: '{"path":"notes.md"' });
+        await vi.runOnlyPendingTimersAsync();
+        expect(count(ToolCallComponent)).toBe(1);
+        expect(driver.streamingUI.timeline.call(cutCall)).toBeDefined();
+
+        retryStep(emit, 1, 'step-1');
+        emit({ type: 'assistant.delta', delta: 'Nothing to write after all.' });
+        emit({ type: 'turn.step.completed', step: 1, stepId: 'step-1' });
+        emit({ type: 'turn.ended', reason: 'completed' });
+
+        expect(transcript()).toContain('Nothing to write after all.');
+        expect(transcript()).not.toContain('Writing the notes.');
+        expect(transcript()).not.toContain('notes.md');
+        expect(count(ToolCallComponent)).toBe(0);
+        expect(driver.streamingUI.timeline.call(cutCall)).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('drops reads the cut stream had already grouped', async () => {
+      vi.useFakeTimers();
+      try {
+        const { emit, transcript, count } = await makeStreamingDriver();
+        emit({ type: 'turn.started', origin: { kind: 'user' } });
+        emit({ type: 'turn.step.started', step: 1, stepId: 'step-1' });
+        emit({ type: 'tool.call.delta', toolCallId: 'call_read_a', name: 'Read', argumentsPart: '{"path":"first.txt"}' });
+        await vi.runOnlyPendingTimersAsync();
+        emit({ type: 'tool.call.delta', toolCallId: 'call_read_b', name: 'Read', argumentsPart: '{"path":"second.txt"}' });
+        await vi.runOnlyPendingTimersAsync();
+        expect(count(ReadGroupComponent)).toBe(1);
+
+        retryStep(emit, 1, 'step-1');
+        emit({ type: 'assistant.delta', delta: 'No files needed.' });
+        emit({ type: 'turn.step.completed', step: 1, stepId: 'step-1' });
+        emit({ type: 'turn.ended', reason: 'completed' });
+
+        expect(transcript()).toContain('No files needed.');
+        expect(transcript()).not.toContain('first.txt');
+        expect(transcript()).not.toContain('second.txt');
+        expect(count(ReadGroupComponent)).toBe(0);
+        expect(count(ToolCallComponent)).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps what earlier steps showed', async () => {
+      vi.useFakeTimers();
+      try {
+        const { emit, transcript, count, replies } = await makeStreamingDriver();
+        emit({ type: 'turn.started', origin: { kind: 'user' } });
+        emit({ type: 'turn.step.started', step: 1, stepId: 'step-1' });
+        emit({ type: 'thinking.delta', delta: 'Look at the file first.' });
+        emit({ type: 'assistant.delta', delta: 'Checking the file.' });
+        emit({ type: 'tool.call.delta', toolCallId: 'call_read', name: 'Read', argumentsPart: '{"path":"a.txt"}' });
+        emit({ type: 'tool.call.started', toolCallId: 'call_read', name: 'Read', args: { path: 'a.txt' } });
+        emit({ type: 'tool.result', toolCallId: 'call_read', output: 'hello' });
+        emit({ type: 'turn.step.completed', step: 1, stepId: 'step-1' });
+        emit({ type: 'turn.step.started', step: 2, stepId: 'step-2' });
+        emit({ type: 'assistant.delta', delta: 'It says hel' });
+        await vi.runOnlyPendingTimersAsync();
+
+        retryStep(emit, 2, 'step-2');
+        emit({ type: 'assistant.delta', delta: 'It says hello.' });
+        emit({ type: 'turn.step.completed', step: 2, stepId: 'step-2' });
+        emit({ type: 'turn.ended', reason: 'completed' });
+
+        expect(transcript()).toContain('Checking the file.');
+        expect(transcript()).toContain('It says hello.');
+        expect(replies()).toEqual(['Checking the file.', 'It says hello.']);
+        expect(count(ThinkingComponent)).toBe(1);
+        expect(count(ToolCallComponent)).toBe(1);
+        expect(count(AssistantMessageComponent)).toBe(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('ignores a reset for another step', async () => {
+      vi.useFakeTimers();
+      try {
+        const { emit, transcript, replies } = await makeStreamingDriver();
+        emit({ type: 'turn.started', origin: { kind: 'user' } });
+        emit({ type: 'turn.step.started', step: 2, stepId: 'step-2' });
+        emit({ type: 'assistant.delta', delta: 'Still streaming.' });
+        await vi.runOnlyPendingTimersAsync();
+
+        emit({ type: 'turn.step.stream_reset', step: 1, stepId: 'step-1' });
+        await vi.runOnlyPendingTimersAsync();
+
+        expect(transcript()).toContain('Still streaming.');
+        expect(replies()).toEqual(['Still streaming.']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('flushes pending assistant deltas before turn completion', async () => {

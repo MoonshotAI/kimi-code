@@ -603,12 +603,7 @@ export class SubagentTool implements ISubagentTool {
         if (signal.aborted && (isAbortError(error) || error === signal.reason)) {
           writePartialOutput();
           status = 'killed';
-          const reason = signal.reason;
-          stopReason = typeof reason === 'string'
-            ? reason
-            : reason instanceof Error
-              ? reason.message
-              : String(reason);
+          stopReason = errorMessage(signal.reason);
         } else {
           stopCode = stopCodeOf(error);
           writePartialOutput();

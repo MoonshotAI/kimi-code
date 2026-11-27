@@ -16,7 +16,6 @@
     "apps/desktop/e2e/composer-commands.spec.ts": 2,
     "apps/desktop/e2e/composer-drafts-models.spec.ts": 2,
     "apps/desktop/e2e/composer-writing.spec.ts": 2,
-    "apps/desktop/e2e/core-turn.spec.ts": 2,
     "apps/desktop/e2e/downloads-and-print.spec.ts": 2,
     "apps/desktop/e2e/files-git-changes.spec.ts": 1,
     "apps/desktop/e2e/files-turn-changes.spec.ts": 1,

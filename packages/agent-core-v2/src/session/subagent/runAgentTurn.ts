@@ -99,13 +99,14 @@ async function awaitRunCompletion(
   initialResult: Promise<TurnResult | undefined>,
   options: RunAgentTurnOptions,
 ): Promise<AgentRunCompletion> {
+  const tasks = target.accessor.get(IAgentTaskService);
   const controller = new AbortController();
   const unlink = linkAbortSignal(options.signal, controller);
   let abortCleanup: Promise<void> | undefined;
   const onAbort = (): void => {
     const reason = controller.signal.reason ?? userCancellationReason();
     loop.cancel(undefined, reason);
-    abortCleanup ??= stopChildTasks(target, loop, reason);
+    abortCleanup ??= stopChildTasks(tasks, loop, reason);
   };
   controller.signal.addEventListener('abort', onAbort, { once: true });
   try {
@@ -113,12 +114,12 @@ async function awaitRunCompletion(
     const first = await initialResult;
     if (first === undefined) throw new Error2(ErrorCodes.INTERNAL, 'Agent turn could not be started');
     if (controller.signal.aborted) await abortCleanup;
-    let lastResult = await awaitQuiescent(target, loop);
+    let lastResult = await awaitQuiescent(tasks, loop);
     if (controller.signal.aborted) {
       const reason = controller.signal.reason ?? userCancellationReason();
       await abortCleanup;
-      await stopChildTasks(target, loop, reason);
-      lastResult = await awaitQuiescent(target, loop);
+      await stopChildTasks(tasks, loop, reason);
+      lastResult = await awaitQuiescent(tasks, loop);
       controller.signal.throwIfAborted();
     }
     const initial = classifyTurnResult(first);
@@ -142,10 +143,9 @@ async function awaitRunCompletion(
 }
 
 async function awaitQuiescent(
-  target: IAgentScopeHandle,
+  tasks: IAgentTaskService,
   loop: IAgentLoopService,
 ): Promise<TurnResult | undefined> {
-  const tasks = target.accessor.get(IAgentTaskService);
   for (;;) {
     const result = await loop.settled();
     const active = tasks.list(true);
@@ -155,11 +155,10 @@ async function awaitQuiescent(
 }
 
 async function stopChildTasks(
-  target: IAgentScopeHandle,
+  tasks: IAgentTaskService,
   loop: IAgentLoopService,
   reason: unknown,
 ): Promise<void> {
-  const tasks = target.accessor.get(IAgentTaskService);
   const active = tasks.list(true);
   if (active.length === 0) return;
   loop.suppressTaskNotifications(active.map((task) => task.taskId));

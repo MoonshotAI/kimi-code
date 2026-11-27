@@ -17,7 +17,6 @@
     "apps/desktop/e2e/composer-commands.spec.ts": 1,
     "apps/desktop/e2e/composer-drafts-models.spec.ts": 1,
     "apps/desktop/e2e/composer-writing.spec.ts": 1,
-    "apps/desktop/e2e/core-turn.spec.ts": 3,
     "apps/desktop/e2e/desktop-feedback.spec.ts": 1,
     "apps/desktop/e2e/downloads-and-print.spec.ts": 1,
     "apps/desktop/e2e/files-git-changes.spec.ts": 1,
@@ -39,7 +38,6 @@
     "apps/desktop/e2e/undelivered-records-and-session-cleanup.spec.ts": 1,
     "apps/desktop/e2e/undetermined-and-history-leave.spec.ts": 1,
     "apps/desktop/e2e/upload-approval.spec.ts": 1,
-    "apps/desktop/e2e/user-answers-and-takeover.spec.ts": 1,
-    "apps/kimi-code/test/e2e/tui/conversation/first-turn.test.ts": 1
+    "apps/desktop/e2e/user-answers-and-takeover.spec.ts": 1
   }
 }

@@ -22,7 +22,7 @@ function failedBadge(app: DesktopApp) {
   return sidebarOf(app).getByText('Failed', { exact: true });
 }
 
-test('model errors fail the turn with diagnostics, retry when allowed and Continue recovers', { tag: '@quarantine' }, async ({ app, model }) => {
+test('model errors fail the turn with diagnostics, retry when allowed and Continue recovers', async ({ app, model }) => {
   const transcript = () => app.window.getByRole('list').first();
   let sessionId = '';
 
