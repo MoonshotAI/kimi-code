@@ -88,6 +88,7 @@ export * from './transcriptScroll';
 export * from './transcriptSearch';
 export * from './transcriptSelectAll';
 export * from './transcriptStability';
+export * from './uiPreferences';
 export * from './upgrade';
 export * from './workspaceOrder';
 export * from './workspacePathInput';

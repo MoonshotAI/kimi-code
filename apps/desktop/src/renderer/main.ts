@@ -1,3 +1,4 @@
+import './uiPreferencesBoot';
 import { createApp } from 'vue';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
 import { KimiI18nKey, type KimiI18nApi } from '@moonshot-ai/app-i18n';

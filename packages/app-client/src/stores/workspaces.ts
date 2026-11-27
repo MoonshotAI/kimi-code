@@ -9,6 +9,7 @@ import { createRowMemo, errorInfo } from '@moonshot-ai/app-core/client';
 import {
   buildWorkspaceRecencyKeys,
   currentActivityKeys,
+  followUiPreferences,
   loadActiveWorkspace,
   loadHiddenWorkspaceIds,
   loadPinnedWorkspaces,
@@ -38,6 +39,7 @@ import {
   sortWorkspacesByRecent,
   STORAGE_KEYS,
   stripSurroundingQuotes,
+  UI_PREFERENCE_KEYS,
   workspaceRootKey,
   type PanelRoots,
   type PinnedInsertTarget,
@@ -182,6 +184,21 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   const pinnedWorkspaceIds = ref<string[]>(loadPinnedWorkspaces());
   const workspaceSortMode = ref<WorkspaceSortMode>(loadWorkspaceSort());
   const workspaceRecencyFloor = ref<Record<string, number>>(loadWorkspaceRecencyFloor());
+  followUiPreferences([UI_PREFERENCE_KEYS.sidebarHiddenWorkspaceIds], () => {
+    hiddenWorkspaceIds.value = loadHiddenWorkspaceIds();
+  });
+  followUiPreferences([UI_PREFERENCE_KEYS.sidebarWorkspaceOrder], () => {
+    workspaceOrder.value = loadWorkspaceOrder();
+  });
+  followUiPreferences([UI_PREFERENCE_KEYS.sidebarPinnedWorkspaces], () => {
+    pinnedWorkspaceIds.value = loadPinnedWorkspaces();
+  });
+  followUiPreferences([UI_PREFERENCE_KEYS.sidebarWorkspaceSort], () => {
+    workspaceSortMode.value = loadWorkspaceSort();
+  });
+  followUiPreferences([UI_PREFERENCE_KEYS.sidebarWorkspaceRecencyFloor], () => {
+    workspaceRecencyFloor.value = loadWorkspaceRecencyFloor();
+  });
   const sessionsHasMoreByWorkspace = ref<Record<string, boolean>>({});
   const sessionsLoadingMoreByWorkspace = ref<Record<string, boolean>>({});
   const sessionsCursorByWorkspace = ref<Record<string, string | undefined>>({});

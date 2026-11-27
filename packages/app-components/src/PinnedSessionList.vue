@@ -10,6 +10,7 @@ import type {
   SessionListRowMeasure,
 } from '@moonshot-ai/app-core/lib';
 import {
+  followUiPreferences,
   loadPinnedCollapsed,
   loadPinnedSessionDisplayMode,
   isNoopGesture,
@@ -26,6 +27,7 @@ import {
   savePinnedSessionDisplayMode,
   sessionsListMinHeight,
   STORAGE_KEYS,
+  UI_PREFERENCE_KEYS,
 } from '@moonshot-ai/app-core/lib';
 import { useAppearance } from '@moonshot-ai/app-core/composables';
 import { useResizable } from '@moonshot-ai/app-client/composables';
@@ -67,6 +69,15 @@ const emit = defineEmits<{
 
 const collapsed = ref(loadPinnedCollapsed());
 const displayMode = ref<PinnedSessionDisplayMode>(loadPinnedSessionDisplayMode());
+onBeforeUnmount(
+  followUiPreferences(
+    [UI_PREFERENCE_KEYS.sidebarPinnedCollapsed, UI_PREFERENCE_KEYS.sidebarPinnedSessionDisplayMode],
+    () => {
+      collapsed.value = loadPinnedCollapsed();
+      displayMode.value = loadPinnedSessionDisplayMode();
+    },
+  ),
+);
 const showPinnedWorkspace = computed(() => displayMode.value === 'workspace');
 
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);

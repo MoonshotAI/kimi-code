@@ -3,6 +3,12 @@ import type { ToolMedia } from '../client/types';
 import type { AppNoticeCopyLink, AppNoticeDetail, AppNoticePosition } from '../contracts';
 import type { ConversationFrame, ConversationTurnsPage } from '../conversation/types';
 import type { RcDeviceList } from '../lib/rcDevicesApi';
+import type { UiPreferenceOperation } from '@moonshot-ai/kimi-code-product/ui-preferences';
+
+export interface AppUiPreferences {
+  readonly revision: number;
+  readonly values: Record<string, unknown>;
+}
 
 export interface AgentRef {
   readonly agentId: string;
@@ -569,6 +575,7 @@ export type AppEvent =
   | { type: 'pluginsChanged' }
   | { type: 'capabilityChanged'; capabilityId: string; install: AppCapabilityInstallProgress }
   | { type: 'hostsChanged'; hosts: AppHost[] }
+  | { type: 'uiPreferencesChanged'; revision: number; changed: Record<string, unknown> }
   | {
       type: 'modelCatalogChanged';
       changed: { providerId: string; providerName: string; added: number; removed: number }[];
@@ -1220,6 +1227,15 @@ export interface KimiWebApi {
   getUserInfo(): Promise<ManagedUserInfoResult>;
   getOAuthRegion(): Promise<OAuthRegion | null>;
   getClientConfig(name: string, options?: ReadRequestOptions): Promise<unknown>;
+  getUiPreferences(): Promise<AppUiPreferences>;
+  patchUiPreferences(
+    ops: readonly UiPreferenceOperation[],
+    clientId: string,
+  ): Promise<{ revision: number; changed: Record<string, unknown> }>;
+  importUiPreferences(
+    values: Readonly<Record<string, unknown>>,
+    clientId: string,
+  ): Promise<{ revision: number; imported: string[]; skipped: string[] }>;
   getSessionContextSummary(sessionId: string, agentId?: string, options?: ReadRequestOptions): Promise<SessionContextSummary>;
   getSessionContextItems(
     sessionId: string,

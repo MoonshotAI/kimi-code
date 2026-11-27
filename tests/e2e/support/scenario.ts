@@ -508,6 +508,10 @@ class ScenarioSession {
         `${verb}() does not exist on ${this.surface}: ${absenceReason(verb, this.surface)} Leave ${this.surface} out of the scenario with except or onlyOn.`,
       );
     }
+    if (verb === 'reopenOnAnotherPort') {
+      await this.reopenOnAnotherPort();
+      return;
+    }
     const driver = this.driver;
     if (driver === undefined) throw new Error(`${verb}() was called while the product is not running.`);
     const method: unknown = Reflect.get(driver, verb);
@@ -571,13 +575,23 @@ class ScenarioSession {
     await this.reopen('restartDuringTurn', running, () => running.driver.quitDuringTurn());
   }
 
+  private async reopenOnAnotherPort(): Promise<void> {
+    const running = this.running('reopenOnAnotherPort');
+    if (!(await running.driver.idle())) {
+      throw new Error(
+        'reopenOnAnotherPort() needs an idle product: a user lets the turn end, or stops it, and answers any approval before closing the app.',
+      );
+    }
+    await this.reopen('reopenOnAnotherPort', running, () => running.driver.close(), true);
+  }
+
   private running(verb: string): RunningProduct {
     const { home, model, driver } = this;
     if (home === undefined || model === undefined || driver === undefined) throw new Error(`${verb}() was called while the product is not running.`);
     return { home, model, driver };
   }
 
-  private async reopen(verb: string, { home, model, driver }: RunningProduct, quit: () => Promise<void>): Promise<void> {
+  private async reopen(verb: string, { home, model, driver }: RunningProduct, quit: () => Promise<void>, anotherPort = false): Promise<void> {
     const state = driver.reopenState();
     const problems = await this.shutdownProblems(driver, quit);
     for (const diagnostic of await driver.diagnostics()) this.earlierDiagnostics.push({ ...diagnostic, name: `launch-${this.launches}-${diagnostic.name}` });
@@ -589,7 +603,7 @@ class ScenarioSession {
       home,
       model,
       workspaceTrust: this.workspaceTrust,
-      reopen: { launch: this.launches, lastPrompt: this.conversation.lastPrompt, state },
+      reopen: { launch: this.launches, lastPrompt: this.conversation.lastPrompt, state, ...(anotherPort ? { anotherPort: true as const } : {}) },
       ...this.launchOptions(),
     });
   }

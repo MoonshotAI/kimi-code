@@ -3,11 +3,13 @@ import { ref } from 'vue';
 import { defineStore } from 'pinia';
 import type { AppSession } from '@moonshot-ai/app-core/api';
 import {
+  followUiPreferences,
   insertSessionByRecency,
   loadPinnedSessions,
   pinSessionId,
   pinnedSessionKey,
   savePinnedSessions,
+  UI_PREFERENCE_KEYS,
   unpinSessionId,
   type PinnedInsertTarget,
 } from '@moonshot-ai/app-core/lib';
@@ -18,6 +20,9 @@ export const useSessionsStore = defineStore('kimi.sessions', () => {
   const sessions = ref<AppSession[]>([]);
   const activeSessionId = ref<string | undefined>(undefined);
   const pinnedSessionIds = ref<string[]>(loadPinnedSessions());
+  followUiPreferences([UI_PREFERENCE_KEYS.sidebarPinnedSessions], () => {
+    pinnedSessionIds.value = loadPinnedSessions();
+  });
 
   function setSessions(next: AppSession[]): void {
     sessions.value = next;

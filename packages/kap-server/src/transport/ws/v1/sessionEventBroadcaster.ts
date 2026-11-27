@@ -41,6 +41,7 @@ import type {
   ModelCatalogRetiredDefault,
   SessionCreatedEvent,
   SessionMetaUpdatedEvent,
+  UiPreferencesGlobalEvent,
   Event,
   PushEvent,
 } from './events';
@@ -201,6 +202,10 @@ export class SessionEventBroadcaster {
       type: 'event.host.changed',
       hosts,
     }));
+  }
+
+  publishUiPreferencesChanged(event: Omit<UiPreferencesGlobalEvent, 'type'>): void {
+    this.enqueueGlobal('ui_preferences', () => ({ type: 'ui_preferences', ...event }));
   }
 
   addGlobalTarget(target: BroadcastTarget): void {

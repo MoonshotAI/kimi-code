@@ -51,11 +51,14 @@ import {
   composerSessionScope,
   draftSnapshotStorageKey,
   draftStorageKey,
+  followUiPreferences,
+  loadOnboarded,
   safeGetJson,
   safeGetString,
   safeRemove,
-  safeSetString,
+  saveOnboarded,
   STORAGE_KEYS,
+  UI_PREFERENCE_KEYS,
 } from '@moonshot-ai/app-core/lib';
 import { liveComposerEditorFor } from '@moonshot-ai/app-composer/runtime';
 import { createPromptPrediction } from './promptPrediction';
@@ -116,6 +119,7 @@ import { modeStore } from '../stores/mode';
 import { warningsStore, warningDetail } from '../stores/warnings';
 import { goalStore } from '../stores/goal';
 import { configStore, setConfigHooks } from '../stores/config';
+import { setUiPreferencesHooks, uiPreferencesStore } from '../stores/uiPreferences';
 import { hostsStore, setHostsHooks } from '../stores/hosts';
 import { tasksStore, setTasksHooks } from '../stores/tasks';
 import { agentStatesStore } from '../stores/agentStates';
@@ -199,8 +203,6 @@ import type {
   WorkspaceGroup,
   WorkspaceView,
 } from '@moonshot-ai/app-core/client/types';
-
-const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 
 export type { ColorScheme, FontScale } from '@moonshot-ai/app-core/composables';
 
@@ -685,31 +687,19 @@ async function whenSessionProfileSettled(sid: string): Promise<boolean> {
   }
 }
 
-function loadStringFromStorage(key: string): string {
-  try {
-    return safeGetString(key) ?? '';
-  } catch {
-    return '';
-  }
-}
 function readInjectedOnboarded(): boolean {
   if (typeof window === 'undefined') return false;
   return new URLSearchParams(window.location.search).get('kimi_onboarded') === '1';
 }
 const injectedOnboarded = readInjectedOnboarded();
-if (injectedOnboarded && loadStringFromStorage(ONBOARDED_STORAGE_KEY) !== '1') {
-  try {
-    safeSetString(ONBOARDED_STORAGE_KEY, '1');
-  } catch {}
-}
-const onboarded = ref<boolean>(
-  injectedOnboarded || loadStringFromStorage(ONBOARDED_STORAGE_KEY) === '1',
-);
+if (injectedOnboarded && !loadOnboarded()) saveOnboarded(true);
+const onboarded = ref<boolean>(injectedOnboarded || loadOnboarded());
+followUiPreferences([UI_PREFERENCE_KEYS.onboardingCompleted], () => {
+  onboarded.value = injectedOnboarded || loadOnboarded();
+});
 function setOnboarded(done: boolean): void {
   onboarded.value = done;
-  try {
-    safeSetString(ONBOARDED_STORAGE_KEY, done ? '1' : '0');
-  } catch {}
+  saveOnboarded(done);
   if (done) {
     (window as { kimiDesktop?: { setOnboarded?: () => void } }).kimiDesktop?.setOnboarded?.();
   }
@@ -1283,6 +1273,10 @@ function applyHostAccountEvent(hostId: string, event: AppEvent): boolean {
 
 function createOnEventHandler(): KimiEventHandlers['onEvent'] {
   return (appEvent, meta) => {
+    if (appEvent.type === 'uiPreferencesChanged') {
+      if (meta.hostId === undefined) uiPreferencesStore().applyServerEvent(appEvent.revision, appEvent.changed);
+      return;
+    }
     if (meta.hostId !== undefined && applyHostAccountEvent(meta.hostId, appEvent)) return;
     if (appEvent.type === 'hostsChanged') {
       const { becameReady: ready } = hostsStore().applySnapshot(appEvent.hosts);
@@ -1405,6 +1399,7 @@ function createOnConnectionChangeHandler(): KimiEventHandlers['onConnectionChang
       }
       warningsStore().dismissWsError();
       void configStore().refreshServerMeta();
+      void uiPreferencesStore().refresh();
       sideChat.flushPendingCloses();
       if (connectionStore().connectionGeneration > 1) {
         void workspacesStore().loadWorkspaces();
@@ -3016,6 +3011,7 @@ setFilesHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setConfigHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setApprovalsHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setTasksHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
+setUiPreferencesHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setAuthHooks({ reload: () => workspaceBoot.load() });
 setHostsHooks({
   onHostsChanged: ({ removed, becameDisabled }) => {

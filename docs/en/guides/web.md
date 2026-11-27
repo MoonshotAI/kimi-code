@@ -70,6 +70,8 @@ The Remote Control link grants access to your machine upon signing into the same
 
 The web UI and the CLI share the same login state, configuration (`config.toml`), and session data.
 
+Sidebar pins, order and layout, and whether you finished onboarding are kept in `ui-preferences.json` in your data directory (`~/.kimi-code/ui-preferences.json` by default) rather than in the browser, so Web on another port, Desktop, and Remote Control all show the same ones. Settings a browser already had are carried over the first time it connects.
+
 When Web shows **Checking project trust…**, your draft and attachments stay in the composer. You can send the message once the project is trusted.
 
 ### Common slash commands

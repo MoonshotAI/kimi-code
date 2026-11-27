@@ -122,6 +122,11 @@ const SIDE_CHAT = /^Side Chat(?: \d+)?$/;
 const CLOSE_TAB = 'Close tab';
 const CLOSE_SIDE_CHAT_DIALOG = 'Close side chat?';
 const CLOSE_SIDE_CHAT = 'Close side chat';
+const SESSION_OPTIONS = 'Options';
+const PIN = 'Pin';
+const UNPIN = 'Unpin';
+const PINNED_SECTION = /^(?:Collapse|Expand) pinned$/;
+const OUTSIDE_SIDEBARS = ':not(aside *, [role="complementary"] *)';
 
 export type MenuPage = () => Promise<Page>;
 
@@ -657,6 +662,27 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     await card.waitForElementState('hidden', { timeout: TIMEOUTS.server });
   }
 
+  async pinSession(): Promise<void> {
+    const offered = await this.openPinChoice('pinSession()');
+    if (offered === UNPIN) {
+      await this.closeSessionMenu();
+      throw new Error(`pinSession() found the open session already pinned: its ${SESSION_OPTIONS} menu offers ${UNPIN}.\n${await this.describe()}`);
+    }
+    await this.press('pinSession()', PIN, (await this.menus()).getByRole('menuitem', { name: PIN, exact: true }));
+    await this.wait('the sidebar to show the Pinned section', async () => ((await this.pinnedSection().isVisible()) ? true : undefined));
+  }
+
+  async expectPinned(): Promise<void> {
+    const offered = await this.openPinChoice('expectPinned()');
+    await this.closeSessionMenu();
+    if (offered === PIN) {
+      throw new Error(`expectPinned() found the open session not pinned: its ${SESSION_OPTIONS} menu offers ${PIN}.\n${await this.describe()}`);
+    }
+    if (!(await this.pinnedSection().isVisible())) {
+      throw new Error(`expectPinned() found the open session marked pinned, but the sidebar shows no Pinned section.\n${await this.describe()}`);
+    }
+  }
+
   async expectTranscript(text: string): Promise<void> {
     const settled = await this.settle(`${JSON.stringify(text)} in the conversation`, async () => (await this.transcriptCount(text)) > 0);
     if (settled === 'over') {
@@ -1145,6 +1171,30 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
 
   private expandButton(): Locator {
     return this.page.getByRole('button', { name: 'Expand', exact: true });
+  }
+
+  private async openPinChoice(verb: string): Promise<typeof PIN | typeof UNPIN> {
+    const options = this.page.getByRole('button', { name: SESSION_OPTIONS, exact: true }).and(this.page.locator(OUTSIDE_SIDEBARS));
+    await this.press(verb, `the ${SESSION_OPTIONS} button of the conversation`, options);
+    const menus = await this.menus();
+    const pin = menus.getByRole('menuitem', { name: PIN, exact: true });
+    const unpin = menus.getByRole('menuitem', { name: UNPIN, exact: true });
+    return this.wait(`the ${SESSION_OPTIONS} menu to offer ${PIN} or ${UNPIN}`, async () => {
+      if (await pin.isVisible()) return PIN;
+      if (await unpin.isVisible()) return UNPIN;
+      return undefined;
+    });
+  }
+
+  private async closeSessionMenu(): Promise<void> {
+    const menus = await this.menus();
+    await menus.keyboard.press('Escape');
+    const items = menus.getByRole('menuitem', { name: new RegExp(`^(?:${PIN}|${UNPIN})$`) });
+    await this.wait(`the ${SESSION_OPTIONS} menu to close`, async () => ((await items.isVisible()) ? undefined : true));
+  }
+
+  private pinnedSection(): Locator {
+    return this.page.getByRole('button', { name: PINNED_SECTION });
   }
 
   private modeButton(name: string): Locator {

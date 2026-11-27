@@ -221,6 +221,14 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().addWorkspace();
   }
 
+  pinSession(): Promise<void> {
+    return this.window().pinSession();
+  }
+
+  expectPinned(): Promise<void> {
+    return this.window().expectPinned();
+  }
+
   compact(): Promise<void> {
     return this.window().compact();
   }

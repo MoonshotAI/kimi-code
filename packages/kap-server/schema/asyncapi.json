@@ -2943,6 +2943,41 @@
                 "event_created_at"
               ],
               "type": "object"
+            },
+            {
+              "properties": {
+                "changed": {
+                  "additionalProperties": {},
+                  "propertyNames": {
+                    "maxLength": 128,
+                    "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "client_id": {
+                  "type": "string"
+                },
+                "event_created_at": {
+                  "type": "string"
+                },
+                "revision": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": {
+                  "const": "ui_preferences",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "revision",
+                "changed",
+                "event_created_at"
+              ],
+              "type": "object"
             }
           ]
         },

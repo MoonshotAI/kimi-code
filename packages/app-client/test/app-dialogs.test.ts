@@ -6,8 +6,14 @@ import { useComposerDraft } from '../src/composables/useComposerDraft';
 import { restoreSendDraftAtOrigin } from '../src/lib/draftRestore';
 import type { PromptEnvelope } from '../src/client';
 
+const onboardedSource = vi.hoisted(() => ({ read: (): boolean => true }));
+
 const client = vi.hoisted(() => ({
-  onboarded: { value: true },
+  onboarded: {
+    get value(): boolean {
+      return onboardedSource.read();
+    },
+  },
   activeWorkspaceId: { value: 'workspace:new' },
   activeSessionId: { value: '' as string },
   activeWorkspaceTrust: { value: undefined as boolean | undefined },
@@ -193,4 +199,51 @@ it('sets and clears settingsHighlightKey across desktop and mobile agent setting
   dialogs.showMobileSettings.value = false;
   await nextTick();
   expect(dialogs.settingsHighlightKey.value).toBeUndefined();
+});
+
+async function dialogsOnFreshServer(serverValues: Record<string, unknown>) {
+  vi.resetModules();
+  const storage = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
+  });
+  const lib = await import('@moonshot-ai/app-core/lib');
+  lib.uiPreferences.bind('http://127.0.0.1:58627');
+  onboardedSource.read = () => lib.loadOnboarded();
+  const deps = await import('../src/client/deps');
+  deps.setKimiClientDeps({
+    api: () => ({ getUiPreferences: async () => ({ revision: 3, values: serverValues }) }) as never,
+    t: (key) => key,
+  });
+  const { useAppDialogs: freshAppDialogs } = await import('../src/composables/useAppDialogs');
+  const { uiPreferencesStore } = await import('../src/stores/uiPreferences');
+  return { dialogs: freshAppDialogs(), sync: () => uiPreferencesStore().refresh(), done: () => deps.resetKimiClientDeps() };
+}
+
+it('does not show onboarding to a new browser when this server says it was completed elsewhere', async () => {
+  const { dialogs, sync, done } = await dialogsOnFreshServer({ 'onboarding.completed': true });
+  try {
+    expect(dialogs.showOnboarding.value).toBe(false);
+    await sync();
+    await nextTick();
+    expect(dialogs.showOnboarding.value).toBe(false);
+  } finally {
+    done();
+    onboardedSource.read = () => true;
+  }
+});
+
+it('shows onboarding once the server confirms it was never completed', async () => {
+  const { dialogs, sync, done } = await dialogsOnFreshServer({});
+  try {
+    expect(dialogs.showOnboarding.value).toBe(false);
+    await sync();
+    await nextTick();
+    expect(dialogs.showOnboarding.value).toBe(true);
+  } finally {
+    done();
+    onboardedSource.read = () => true;
+  }
 });

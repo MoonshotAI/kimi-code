@@ -9,7 +9,7 @@ import { productEnv } from './environment';
 import { offlineStubs } from './offline';
 import { OFFLINE_NAMES, PageDriver, reasonOf, WELCOME_DIALOG } from './page-driver';
 import { TerminalProcess } from './terminal-process';
-import { dynamicPorts, workerWebPorts } from './web-port';
+import { dynamicPorts, workerWebPorts, type PortRange } from './web-port';
 
 const ADDRESS = /^\s*Local:\s+(http:\/\/127\.0\.0\.1:(\d+)\/#token=\S+)\s*$/;
 const SERVER_TERMINAL = { columns: 400, rows: 50 };
@@ -177,14 +177,23 @@ class WebDriver extends PageDriver {
   }
 }
 
+function launchPort(reopen: SurfaceLaunch['reopen'], ownPorts: PortRange): string {
+  const previous = reopen?.state.port;
+  if (previous === undefined) return String(ownPorts.low);
+  if (reopen?.anotherPort !== true) return previous;
+  const count = ownPorts.high - ownPorts.low + 1;
+  return String(ownPorts.low + ((Number(previous) - ownPorts.low + 1) % count));
+}
+
 export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'web'>> {
   const assets = repoPath('apps', 'kimi-code', 'web-dist', 'index.html');
   if (!existsSync(assets)) throw new Error(`${assets} does not exist; build the web assets first with "pnpm sync:web".`);
   const ownPorts = workerWebPorts(test.info().parallelIndex);
+  const wanted = reopen === undefined ? undefined : launchPort(reopen, ownPorts);
   const server = await TerminalProcess.start({
     label: 'kimi web',
     command: kimiCliCommand(),
-    args: ['web', '--port', reopen?.state.port ?? String(ownPorts.low), '--no-open'],
+    args: ['web', '--port', wanted ?? String(ownPorts.low), '--no-open'],
     cwd: home.workspace,
     env: productEnv(home, { FORCE_COLOR: '0' }),
     logDir: home.root,
@@ -197,10 +206,11 @@ export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<Surface
     const line = await server.waitForLine((text) => ADDRESS.test(text), 'the address of the web interface');
     const [, address, port] = ADDRESS.exec(line) ?? [];
     if (address === undefined || port === undefined) throw new Error(`The web server printed an address the driver could not read: ${line}`);
-    const wanted = reopen?.state.port;
     if (wanted !== undefined && port !== wanted) {
       throw new Error(
-        `The restarted web server listens on port ${port} instead of ${wanted}, so the page would open on a different origin and lose the browser state a returning user keeps. Another process probably took the port.`,
+        reopen?.anotherPort === true
+          ? `The web server reopened on port ${port} instead of ${wanted}, the other port this worker keeps for it. Another process probably took that port.`
+          : `The restarted web server listens on port ${port} instead of ${wanted}, so the page would open on a different origin and lose the browser state a returning user keeps. Another process probably took the port.`,
       );
     }
     if (Number(port) < ownPorts.low || Number(port) > ownPorts.high) {

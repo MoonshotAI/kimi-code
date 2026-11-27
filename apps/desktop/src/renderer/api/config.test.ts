@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { readKimiApiConfig, serverEndpointLabel } from './config';
+import { EMBEDDED_UI_PREFERENCES_KEY, readKimiApiConfig, serverEndpointLabel, uiPreferencesServerKey } from './config';
 
 function setWindowLocation(search: string, origin = 'app://renderer'): void {
   vi.stubGlobal('window', { location: { search, origin } });
@@ -72,5 +72,36 @@ describe('kimi_origin query injection (desktop app:// renderer)', () => {
     setWindowLocationWithSession('?kimi_origin=http%3A%2F%2F127.0.0.1%3A2222', session);
     expect(readKimiApiConfig().serverHttpUrl).toBe('http://127.0.0.1:2222');
     expect(session['kimi-desktop-server-origin']).toBe('http://127.0.0.1:2222');
+  });
+});
+
+describe('UI preferences server key', () => {
+  it('stays the same for the embedded server whatever port it got this launch', () => {
+    setWindowLocation('?kimi_origin=http%3A%2F%2F127.0.0.1%3A4242&kimi_embedded=1');
+    const first = uiPreferencesServerKey();
+    setWindowLocation('?kimi_origin=http%3A%2F%2F127.0.0.1%3A5353&kimi_embedded=1');
+
+    expect(first).toBe(EMBEDDED_UI_PREFERENCES_KEY);
+    expect(uiPreferencesServerKey()).toBe(first);
+  });
+
+  it('keeps the embedded key after a reload that dropped the query string', () => {
+    const session: Record<string, string> = {};
+    setWindowLocationWithSession('?kimi_origin=http%3A%2F%2F127.0.0.1%3A4242&kimi_embedded=1', session);
+    uiPreferencesServerKey();
+    setWindowLocationWithSession('', session);
+
+    expect(uiPreferencesServerKey()).toBe(EMBEDDED_UI_PREFERENCES_KEY);
+  });
+
+  it('uses the server address for an external server, even after an embedded launch in this window', () => {
+    const session: Record<string, string> = {};
+    setWindowLocationWithSession('?kimi_origin=http%3A%2F%2F127.0.0.1%3A4242&kimi_embedded=1', session);
+    uiPreferencesServerKey();
+    setWindowLocationWithSession('?kimi_origin=https%3A%2F%2Fremote.example.com', session);
+
+    expect(uiPreferencesServerKey()).toBe('https://remote.example.com');
+    setWindowLocationWithSession('', session);
+    expect(uiPreferencesServerKey()).toBe('https://remote.example.com');
   });
 });

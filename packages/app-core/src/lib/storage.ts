@@ -1,6 +1,12 @@
 
+import { UI_PREFERENCE_KEYS, type UiPreferenceKey } from '@moonshot-ai/kimi-code-product/ui-preferences';
+
 import type { WorkspaceSortMode } from './workspaceOrder';
 import { workspaceRootKey } from './rootKey';
+import { uiPreferences } from './uiPreferences';
+import { safeGetString, safeRemove, safeSetJson, safeSetString } from './safeStorage';
+
+export { safeGetString, safeRemove, safeSetJson, safeSetString } from './safeStorage';
 
 export const STORAGE_KEYS = {
   permission: 'kimi-web.permission',
@@ -90,26 +96,6 @@ export function draftSnapshotStorageKey(sid: string | undefined): string {
   return `kimi-web.draft-snapshot.${composerSessionScope(sid)}`;
 }
 
-export function safeGetString(key: string): string | null {
-  try {
-    return globalThis.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-export function safeSetString(key: string, value: string): void {
-  try {
-    globalThis.localStorage.setItem(key, value);
-  } catch {}
-}
-
-export function safeRemove(key: string): void {
-  try {
-    globalThis.localStorage.removeItem(key);
-  } catch {}
-}
-
 export function safeGetJson<T>(key: string): T | null {
   const raw = safeGetString(key);
   if (raw === null) return null;
@@ -120,10 +106,136 @@ export function safeGetJson<T>(key: string): T | null {
   }
 }
 
-export function safeSetJson(key: string, value: unknown): void {
-  try {
-    globalThis.localStorage.setItem(key, JSON.stringify(value));
-  } catch {}
+interface UiPreferenceBinding<T> {
+  readonly key: UiPreferenceKey;
+  readonly legacyKey: string;
+  readonly legacy: 'json' | 'string';
+  readonly decode: (value: unknown) => T | undefined;
+  readonly fromLegacyString?: (raw: string) => unknown;
+  readonly toLegacyString?: (value: T) => string;
+}
+
+function decodeStringList(value: unknown): string[] | undefined {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : undefined;
+}
+
+function decodeBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function decodeOneOf<T extends string>(...allowed: readonly T[]): (value: unknown) => T | undefined {
+  return (value) => ((allowed as readonly unknown[]).includes(value) ? (value as T) : undefined);
+}
+
+function decodeRecencyFloor(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const out: Record<string, number> = {};
+  for (const [id, at] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof at === 'number' && Number.isFinite(at)) out[id] = at;
+  }
+  return out;
+}
+
+function decodePinnedOrder(value: unknown): string[] | undefined {
+  return decodeStringList(value)?.filter((key) => key.startsWith('ws:') || key.startsWith('session:'));
+}
+
+function binding<T>(
+  key: UiPreferenceKey,
+  legacyKey: string,
+  legacy: 'json' | 'string',
+  decode: (value: unknown) => T | undefined,
+  legacyString: Pick<UiPreferenceBinding<T>, 'fromLegacyString' | 'toLegacyString'> = {},
+): UiPreferenceBinding<T> {
+  return { key, legacyKey, legacy, decode, ...legacyString };
+}
+
+const PREF = {
+  pinnedSessions: binding(UI_PREFERENCE_KEYS.sidebarPinnedSessions, STORAGE_KEYS.pinnedSessions, 'json', decodeStringList),
+  pinnedWorkspaces: binding(UI_PREFERENCE_KEYS.sidebarPinnedWorkspaces, STORAGE_KEYS.pinnedWorkspaces, 'json', decodeStringList),
+  pinnedOrder: binding(UI_PREFERENCE_KEYS.sidebarPinnedOrder, STORAGE_KEYS.pinnedOrder, 'json', decodePinnedOrder),
+  workspaceOrder: binding(UI_PREFERENCE_KEYS.sidebarWorkspaceOrder, STORAGE_KEYS.workspaceOrder, 'json', decodeStringList),
+  workspaceSort: binding(
+    UI_PREFERENCE_KEYS.sidebarWorkspaceSort,
+    STORAGE_KEYS.workspaceSort,
+    'string',
+    decodeOneOf<WorkspaceSortMode>('manual', 'recent'),
+  ),
+  workspaceRecencyFloor: binding(
+    UI_PREFERENCE_KEYS.sidebarWorkspaceRecencyFloor,
+    STORAGE_KEYS.workspaceRecencyFloor,
+    'json',
+    decodeRecencyFloor,
+  ),
+  hiddenWorkspaceIds: binding(UI_PREFERENCE_KEYS.sidebarHiddenWorkspaceIds, STORAGE_KEYS.hiddenWorkspaceIds, 'json', decodeStringList),
+  collapsedWorkspaces: binding(UI_PREFERENCE_KEYS.sidebarCollapsedWorkspaces, STORAGE_KEYS.collapsedWorkspaces, 'json', decodeStringList),
+  pinnedCollapsed: binding(UI_PREFERENCE_KEYS.sidebarPinnedCollapsed, STORAGE_KEYS.pinnedCollapsed, 'json', decodeBoolean),
+  sessionsSectionCollapsed: binding(
+    UI_PREFERENCE_KEYS.sidebarSessionsSectionCollapsed,
+    STORAGE_KEYS.sessionsSectionCollapsed,
+    'json',
+    decodeBoolean,
+  ),
+  pinnedSessionDisplayMode: binding(
+    UI_PREFERENCE_KEYS.sidebarPinnedSessionDisplayMode,
+    STORAGE_KEYS.pinnedSessionDisplayMode,
+    'string',
+    decodeOneOf<PinnedSessionDisplayMode>('compact', 'workspace'),
+  ),
+  sidebarViewMode: binding(
+    UI_PREFERENCE_KEYS.sidebarViewMode,
+    STORAGE_KEYS.sidebarViewMode,
+    'string',
+    decodeOneOf<SidebarViewMode>('flat', 'grouped'),
+  ),
+  onboarded: binding(UI_PREFERENCE_KEYS.onboardingCompleted, STORAGE_KEYS.onboarded, 'string', decodeBoolean, {
+    fromLegacyString: (raw) => (raw === '1' ? true : raw === '0' ? false : undefined),
+    toLegacyString: (done) => (done ? '1' : '0'),
+  }),
+} as const;
+
+function readLegacyPreference<T>(pref: UiPreferenceBinding<T>): T | undefined {
+  if (pref.legacy === 'json') {
+    const parsed = safeGetJson<unknown>(pref.legacyKey);
+    return parsed === null ? undefined : pref.decode(parsed);
+  }
+  const raw = safeGetString(pref.legacyKey);
+  if (raw === null) return undefined;
+  return pref.decode(pref.fromLegacyString === undefined ? raw : pref.fromLegacyString(raw));
+}
+
+function readPreference<T>(pref: UiPreferenceBinding<T>): T | undefined {
+  if (uiPreferences.mode !== 'server') return readLegacyPreference(pref);
+  const value = uiPreferences.value(pref.key);
+  return value === undefined ? undefined : pref.decode(value);
+}
+
+function writeLegacyPreference<T>(pref: UiPreferenceBinding<T>, value: T | undefined): void {
+  if (value === undefined) safeRemove(pref.legacyKey);
+  else if (pref.legacy === 'json') safeSetJson(pref.legacyKey, value);
+  else safeSetString(pref.legacyKey, pref.toLegacyString === undefined ? String(value) : pref.toLegacyString(value));
+}
+
+function writePreference<T>(pref: UiPreferenceBinding<T>, value: T): void {
+  if (uiPreferences.write(pref.key, value)) return;
+  writeLegacyPreference(pref, value);
+}
+
+uiPreferences.onChange((keys) => {
+  if (uiPreferences.mode !== 'server') return;
+  const changed = new Set(keys);
+  for (const pref of Object.values(PREF) as readonly UiPreferenceBinding<unknown>[]) {
+    if (changed.has(pref.key)) writeLegacyPreference(pref, readPreference(pref));
+  }
+});
+
+export function legacyUiPreferenceValues(): Record<string, unknown> {
+  const values: Record<string, unknown> = {};
+  for (const pref of Object.values(PREF) as readonly UiPreferenceBinding<unknown>[]) {
+    const value = readLegacyPreference(pref);
+    if (value !== undefined) values[pref.key] = value;
+  }
+  return values;
 }
 
 export function loadUnread(key: string = STORAGE_KEYS.unread): Record<string, boolean> {
@@ -153,49 +265,47 @@ export function saveUnread(changes: Record<string, boolean>, key: string = STORA
 }
 
 export function loadCollapsedWorkspaces(): string[] {
-  const parsed = safeGetJson<unknown>(STORAGE_KEYS.collapsedWorkspaces);
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((id): id is string => typeof id === 'string');
+  return readPreference(PREF.collapsedWorkspaces) ?? [];
 }
 
 export function saveCollapsedWorkspaces(ids: Iterable<string>): void {
-  safeSetJson(STORAGE_KEYS.collapsedWorkspaces, Array.from(ids));
+  writePreference(PREF.collapsedWorkspaces, Array.from(ids));
 }
 
 export function loadPinnedCollapsed(): boolean {
-  return safeGetJson<boolean>(STORAGE_KEYS.pinnedCollapsed) === true;
+  return readPreference(PREF.pinnedCollapsed) === true;
 }
 
 export function savePinnedCollapsed(collapsed: boolean): void {
-  safeSetJson(STORAGE_KEYS.pinnedCollapsed, collapsed);
+  writePreference(PREF.pinnedCollapsed, collapsed);
 }
 
 export function loadSessionsSectionCollapsed(): boolean {
-  return safeGetJson<boolean>(STORAGE_KEYS.sessionsSectionCollapsed) === true;
+  return readPreference(PREF.sessionsSectionCollapsed) === true;
 }
 
 export function saveSessionsSectionCollapsed(collapsed: boolean): void {
-  safeSetJson(STORAGE_KEYS.sessionsSectionCollapsed, collapsed);
+  writePreference(PREF.sessionsSectionCollapsed, collapsed);
 }
 
 export type PinnedSessionDisplayMode = 'compact' | 'workspace';
 
 export function loadPinnedSessionDisplayMode(): PinnedSessionDisplayMode {
-  return safeGetString(STORAGE_KEYS.pinnedSessionDisplayMode) === 'workspace' ? 'workspace' : 'compact';
+  return readPreference(PREF.pinnedSessionDisplayMode) ?? 'compact';
 }
 
 export function savePinnedSessionDisplayMode(mode: PinnedSessionDisplayMode): void {
-  safeSetString(STORAGE_KEYS.pinnedSessionDisplayMode, mode);
+  writePreference(PREF.pinnedSessionDisplayMode, mode);
 }
 
 export type SidebarViewMode = 'flat' | 'grouped';
 
 export function loadSidebarViewMode(): SidebarViewMode {
-  return safeGetString(STORAGE_KEYS.sidebarViewMode) === 'flat' ? 'flat' : 'grouped';
+  return readPreference(PREF.sidebarViewMode) ?? 'grouped';
 }
 
 export function saveSidebarViewMode(mode: SidebarViewMode): void {
-  safeSetString(STORAGE_KEYS.sidebarViewMode, mode);
+  writePreference(PREF.sidebarViewMode, mode);
 }
 
 export function loadMobileSwitcherViewMode(): SidebarViewMode {
@@ -293,35 +403,27 @@ export function formatBrowserTabTitleMode(
 }
 
 export function loadWorkspaceOrder(): string[] {
-  const parsed = safeGetJson<unknown>(STORAGE_KEYS.workspaceOrder);
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((id): id is string => typeof id === 'string');
+  return readPreference(PREF.workspaceOrder) ?? [];
 }
 
 export function saveWorkspaceOrder(ids: Iterable<string>): void {
-  safeSetJson(STORAGE_KEYS.workspaceOrder, Array.from(ids));
+  writePreference(PREF.workspaceOrder, Array.from(ids));
 }
 
 export function loadWorkspaceSort(): WorkspaceSortMode {
-  return safeGetString(STORAGE_KEYS.workspaceSort) === 'recent' ? 'recent' : 'manual';
+  return readPreference(PREF.workspaceSort) ?? 'manual';
 }
 
 export function saveWorkspaceSort(mode: WorkspaceSortMode): void {
-  safeSetString(STORAGE_KEYS.workspaceSort, mode);
+  writePreference(PREF.workspaceSort, mode);
 }
 
 export function loadWorkspaceRecencyFloor(): Record<string, number> {
-  const parsed = safeGetJson<unknown>(STORAGE_KEYS.workspaceRecencyFloor);
-  if (!parsed || typeof parsed !== 'object') return {};
-  const out: Record<string, number> = {};
-  for (const [id, at] of Object.entries(parsed as Record<string, unknown>)) {
-    if (typeof at === 'number' && Number.isFinite(at)) out[id] = at;
-  }
-  return out;
+  return readPreference(PREF.workspaceRecencyFloor) ?? {};
 }
 
 export function saveWorkspaceRecencyFloor(floor: Record<string, number>): void {
-  safeSetJson(STORAGE_KEYS.workspaceRecencyFloor, floor);
+  writePreference(PREF.workspaceRecencyFloor, floor);
 }
 
 export function loadActiveWorkspace(): string | null {
@@ -339,46 +441,43 @@ export function saveActiveWorkspace(id: string): void {
 }
 
 export function loadHiddenWorkspaceIds(): string[] {
-  const parsed = safeGetJson<unknown>(STORAGE_KEYS.hiddenWorkspaceIds);
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((id): id is string => typeof id === 'string');
+  return readPreference(PREF.hiddenWorkspaceIds) ?? [];
 }
 
 export function saveHiddenWorkspaceIds(ids: string[]): void {
-  safeSetJson(STORAGE_KEYS.hiddenWorkspaceIds, ids);
+  writePreference(PREF.hiddenWorkspaceIds, ids);
 }
 
 export function loadPinnedSessions(): string[] {
-  const parsed = safeGetJson<unknown>(STORAGE_KEYS.pinnedSessions);
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((id): id is string => typeof id === 'string');
+  return readPreference(PREF.pinnedSessions) ?? [];
 }
 
 export function savePinnedSessions(ids: Iterable<string>): void {
-  safeSetJson(STORAGE_KEYS.pinnedSessions, Array.from(ids));
+  writePreference(PREF.pinnedSessions, Array.from(ids));
 }
 
 export function loadPinnedWorkspaces(): string[] {
-  const parsed = safeGetJson<unknown>(STORAGE_KEYS.pinnedWorkspaces);
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((id): id is string => typeof id === 'string');
+  return readPreference(PREF.pinnedWorkspaces) ?? [];
 }
 
 export function savePinnedWorkspaces(ids: Iterable<string>): void {
-  safeSetJson(STORAGE_KEYS.pinnedWorkspaces, Array.from(ids));
+  writePreference(PREF.pinnedWorkspaces, Array.from(ids));
 }
 
 export function loadPinnedOrder(): string[] {
-  const parsed = safeGetJson<unknown>(STORAGE_KEYS.pinnedOrder);
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter(
-    (key): key is string =>
-      typeof key === 'string' && (key.startsWith('ws:') || key.startsWith('session:')),
-  );
+  return readPreference(PREF.pinnedOrder) ?? [];
 }
 
 export function savePinnedOrder(keys: Iterable<string>): void {
-  safeSetJson(STORAGE_KEYS.pinnedOrder, Array.from(keys));
+  writePreference(PREF.pinnedOrder, Array.from(keys));
+}
+
+export function loadOnboarded(): boolean {
+  return readPreference(PREF.onboarded) === true;
+}
+
+export function saveOnboarded(done: boolean): void {
+  writePreference(PREF.onboarded, done);
 }
 
 export function loadWorkspaceNameOverridesById(): Record<string, string> {

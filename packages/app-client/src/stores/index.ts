@@ -30,3 +30,4 @@ export {
   type SessionFolderInfoRow,
 } from './sessionInfo';
 export { usePinnedOrderStore, pinnedOrderStore } from './pinnedOrder';
+export { useUiPreferencesStore, uiPreferencesStore } from './uiPreferences';

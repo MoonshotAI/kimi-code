@@ -4,10 +4,12 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { buildRestUrl, buildWsUrl } from '../config';
 import { noopTracer } from '../../contracts';
 import type { ClientIdentity, CredentialStore, Tracer } from '../../contracts';
+import type { UiPreferenceOperation } from '@moonshot-ai/kimi-code-product/ui-preferences';
 import type {
   AddProviderInput,
   AppCatalogProvider,
   AppConfig,
+  AppUiPreferences,
   EditableTextFile,
   AppHost,
   AppHostConnectFailure,
@@ -2032,6 +2034,24 @@ export class DaemonKimiWebApi implements KimiWebApi {
       { ...options, background: options?.background ?? true },
     );
     return data.config ?? null;
+  }
+
+  getUiPreferences(): Promise<AppUiPreferences> {
+    return this.http.get<AppUiPreferences>('/ui-preferences', undefined, { background: true });
+  }
+
+  patchUiPreferences(
+    ops: readonly UiPreferenceOperation[],
+    clientId: string,
+  ): Promise<{ revision: number; changed: Record<string, unknown> }> {
+    return this.http.patch('/ui-preferences', { ops, client_id: clientId });
+  }
+
+  importUiPreferences(
+    values: Readonly<Record<string, unknown>>,
+    clientId: string,
+  ): Promise<{ revision: number; imported: string[]; skipped: string[] }> {
+    return this.http.post('/ui-preferences:import', { values, client_id: clientId });
   }
 
   async uploadFile(input: { file: Blob; name?: string; onProgress?: (loaded: number, total: number) => void; signal?: AbortSignal }): Promise<{ id: string; name: string; mediaType: string; size: number }> {

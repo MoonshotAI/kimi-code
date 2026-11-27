@@ -236,6 +236,7 @@ export function reduceAppEvent(
     case 'pluginsChanged':
     case 'capabilityChanged':
     case 'hostsChanged':
+    case 'uiPreferencesChanged':
       break;
 
     default: {

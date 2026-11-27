@@ -91,6 +91,8 @@ import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from 
 import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
 import { SessionIdleReaper, closeIdleSessions, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
+import { UiPreferencesStore } from './services/uiPreferences/uiPreferencesStore';
+import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
 import {
   createRemoteControlManager,
@@ -459,6 +461,14 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     hostNotifyTimer.unref?.();
   };
 
+  const uiPreferences = new UiPreferencesStore({
+    docs: core.accessor.get(IAtomicDocumentStore),
+    homeDir,
+    publish: (event) => broadcaster.publishUiPreferencesChanged(event),
+    onRecovered: (backupPath) =>
+      logger.warn({ backupPath }, 'ui preferences file was corrupted; kept it as a backup and started over'),
+  });
+
   const configService = core.accessor.get(IConfigService);
   const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {
     const warnings: ConfigWarningItem[] = diagnostics.map((diagnostic) =>
@@ -661,6 +671,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       hostBridges,
       conversations,
       sessionRating,
+      uiPreferences,
       dangerousBypassAuth: opts.disableAuth === true,
       managedHost: opts.managedBy === 'ensure-daemon',
       webTitle: opts.webTitle,

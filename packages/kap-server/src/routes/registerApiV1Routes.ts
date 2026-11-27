@@ -41,6 +41,8 @@ import { registerHostsRoutes } from './hosts';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSkillsRoutes } from './skills';
 import { registerToolsRoutes } from './tools';
+import { registerUiPreferencesRoutes } from './uiPreferences';
+import type { UiPreferencesStore } from '../services/uiPreferences/uiPreferencesStore';
 import { registerConversationRoutes } from './conversation';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
@@ -73,6 +75,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly conversations: ConversationService;
   readonly sessionRating: SessionRatingHost;
   readonly remoteControl: RemoteControlRouteOptions;
+  readonly uiPreferences: UiPreferencesStore;
   readonly dangerousBypassAuth?: boolean;
   readonly managedHost?: boolean;
   readonly webTitle?: string;
@@ -200,6 +203,10 @@ export async function registerApiV1Routes(
         core,
       );
       registerFsRoutes(apiV1 as unknown as Parameters<typeof registerFsRoutes>[0], core);
+      registerUiPreferencesRoutes(
+        apiV1 as unknown as Parameters<typeof registerUiPreferencesRoutes>[0],
+        opts.uiPreferences,
+      );
       registerToolsRoutes(apiV1 as unknown as Parameters<typeof registerToolsRoutes>[0], core);
       registerMcpRoutes(apiV1 as unknown as Parameters<typeof registerMcpRoutes>[0], core);
       registerFileHistoryRoutes(
