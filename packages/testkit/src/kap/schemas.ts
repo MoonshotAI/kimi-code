@@ -92,7 +92,7 @@ class KapContract {
   }
 
   exchangeProblems(exchange: KapExchange): readonly Problem[] {
-    if (!exchange.path.startsWith(API_PREFIX) || !exchange.json || exchange.body === undefined || exchange.body === '') return [];
+    if (!exchange.path.startsWith(API_PREFIX) || !exchange.json) return [];
     const method = exchange.method.toLowerCase();
     const request = `${exchange.method.toUpperCase()} ${exchange.path}`;
     const route = this.routes.find((candidate) => candidate.pattern.test(exchange.path) && candidate.operations[method] !== undefined);
@@ -102,6 +102,8 @@ class KapContract {
     const response = responses[String(exchange.status)] ?? responses['default'];
     if (response === undefined) return [{ problem: `${where}: ${OPENAPI_PATH} declares only HTTP ${Object.keys(responses).join(', ')} for this route`, example: exchange.body }];
     const schema = jsonSchemaOf(response);
+    if (exchange.body === undefined) return [{ problem: `${where}: the body is labelled JSON but could not be read` }];
+    if (exchange.body === '') return schema === undefined ? [] : [{ problem: `${where}: the body is empty, but ${OPENAPI_PATH} declares a JSON body for this response` }];
     if (schema === undefined) return [{ problem: `${where}: the server answered with JSON, but ${OPENAPI_PATH} declares no JSON body for this response`, example: exchange.body }];
     let body: unknown;
     try {

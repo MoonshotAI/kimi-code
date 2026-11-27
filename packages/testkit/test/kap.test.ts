@@ -624,6 +624,7 @@ describe('verifyKapSchemas', () => {
     paths: {
       '/api/v1/sessions/{session_id}': {
         get: { responses: { '200': json({ oneOf: [envelope(0, { $ref: '#/components/schemas/Session' }), envelope(40401, { type: 'string', nullable: true, enum: [null] })] }) } },
+        delete: { responses: { '204': { description: 'deleted' } } },
       },
       '/api/v1/sessions/{session_id}:cancel': {
         post: { responses: { '200': json(envelope(0, { type: 'object', additionalProperties: false, required: ['cancelled'], properties: { cancelled: { type: 'boolean' } } })) } },
@@ -739,6 +740,18 @@ describe('verifyKapSchemas', () => {
     expect(await problemsOf(client)).toEqual([
       `GET /api/v1/sessions/{session_id} → HTTP 200: /data must NOT have additional properties ("extra"); first offending value: {"id":"s1","created_at":"${FIXED_TIME}","count":0,"extra":true}`,
       'GET /api/v1/sessions/{session_id} → HTTP 200: /data/count must be > 0; first offending value: 0',
+    ]);
+  });
+
+  it('accepts an empty body only where the contract declares none', async () => {
+    const empty: StubAnswer = { body: '' };
+    const client = await stubKap({ 'DELETE /api/v1/sessions/s1': { status: 204, body: '' }, 'POST /api/v1/sessions/s1:cancel': empty, 'GET /api/v1/unknown': empty }, []);
+    await client.rest.raw('/api/v1/sessions/s1', { method: 'DELETE' });
+    await client.rest.raw('/api/v1/sessions/s1:cancel', { method: 'POST', body: {} });
+    await client.rest.raw('/api/v1/unknown');
+    expect(await problemsOf(client)).toEqual([
+      'POST /api/v1/sessions/{session_id}:cancel → HTTP 200: the body is empty, but /openapi.json declares a JSON body for this response',
+      'GET /api/v1/unknown answered, but /openapi.json declares no such route',
     ]);
   });
 
