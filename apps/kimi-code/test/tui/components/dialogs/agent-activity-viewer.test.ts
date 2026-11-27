@@ -1,4 +1,5 @@
-import type { Terminal } from '@moonshot-ai/pi-tui';
+import { TuiAltScreen, type Terminal } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import type { BackgroundTaskInfo } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -226,6 +227,73 @@ describe('AgentActivityViewer', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     viewer.handleInput('\u001B');
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('supports fullscreen mouse wheel, footer expand/collapse click, and cancel click', async () => {
+    const onClose = vi.fn();
+    const vt = new VirtualTerminal(100, 12);
+    const ui = new TuiAltScreen(vt);
+    const longOutput = Array.from({ length: 12 }, (_, i) => `out-${String(i + 1)}`).join('\n');
+    const viewer = new AgentActivityViewer(
+      {
+        taskId: 'agent-task-1',
+        info: agentTask(),
+        record: record({
+          steps: [
+            {
+              step: 1,
+              textTail: '',
+              toolCalls: [
+                {
+                  id: 't1',
+                  name: 'Bash',
+                  args: { command: 'ls' },
+                  status: 'done',
+                  startedAt: 0,
+                  result: { tool_call_id: 't1', output: longOutput, is_error: false },
+                },
+              ],
+            },
+          ],
+          totalSteps: 1,
+        }),
+        onClose,
+        requestRender: () => {
+          ui.requestRender();
+        },
+      },
+      vt,
+    );
+    ui.setLayoutRoot(viewer);
+    ui.start();
+    ui.setFocus(viewer);
+    await vt.waitForRender();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 500);
+    try {
+      let screen = vt.getViewport().map(strip);
+      expect(screen.join('\n')).not.toContain('out-2');
+      const expandCol = screen.at(-1)!.indexOf('expand') + 2;
+      vt.sendInput(`\u001B[<0;${String(expandCol)};12M`);
+      vt.sendInput(`\u001B[<0;${String(expandCol)};12m`);
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(screen.at(-1)).toContain('collapse');
+
+      vt.sendInput('\u001B[<64;10;5M');
+      vt.sendInput('\u001B[<64;10;5M');
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(screen.join('\n')).toContain('out-');
+
+      const cancelCol = screen.at(-1)!.indexOf('cancel') + 2;
+      vt.sendInput(`\u001B[<0;${String(cancelCol)};12M`);
+      vt.sendInput(`\u001B[<0;${String(cancelCol)};12m`);
+      await vt.waitForRender();
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      nowSpy.mockRestore();
+      ui.stop();
+    }
   });
 });
 

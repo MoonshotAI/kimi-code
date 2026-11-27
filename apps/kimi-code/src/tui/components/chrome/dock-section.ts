@@ -72,22 +72,36 @@ export function mouseTarget(component: Component, event: TuiMouseEvent): TuiMous
   };
 }
 
+export function createInteractiveChildView(
+  owner: Component,
+  render: (width: number) => string[],
+  handleMouse: (event: TuiMouseEvent) => TuiMouseEventResult | undefined,
+): Component {
+  const component: Component = {
+    render,
+    invalidate: () => {},
+    handleMouse: (event) => {
+      const result = handleMouse(event);
+      if (result?.focus !== true) return result;
+      return { ...result, handled: true, focusTarget: owner, target: mouseTarget(component, event) };
+    },
+  };
+  return component;
+}
+
 export abstract class DockSection extends VStack {
   private readonly bodyScroll: OverflowScrollView | undefined;
   private pendingEnsureRange: { readonly start: number; readonly end: number } | undefined;
 
   constructor(readonly layout?: DockLayout) {
     super();
-    const view = (part: DockPart): Component => {
-      const component: Component = {
-        render: (width) => this.renderPart(part, width),
-        invalidate: () => {},
-        handleMouse: (event) => {
+    const view = (part: DockPart): Component =>
+      createInteractiveChildView(
+        this,
+        (width) => this.renderPart(part, width),
+        (event) => {
           const result = this.handlePartMouse(part, event);
-          if (result !== undefined) {
-            if (result.focus !== true) return result;
-            return { ...result, handled: true, focusTarget: this, target: mouseTarget(component, event) };
-          }
+          if (result !== undefined) return result;
           if (part !== 'body' && this.bodyScroll !== undefined && event.type === 'wheel') {
             const delta = event.wheelDelta ?? 0;
             const moved = delta !== 0 && this.scrollBody(delta);
@@ -95,9 +109,7 @@ export abstract class DockSection extends VStack {
           }
           return undefined;
         },
-      };
-      return component;
-    };
+      );
     if (layout === undefined) {
       this.addChild(view('head'));
       this.addChild(view('body'));
