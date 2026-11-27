@@ -29,7 +29,6 @@
     "apps/desktop/e2e/terminal-panel.spec.ts": 1,
     "apps/desktop/e2e/terminal-quote.spec.ts": 1,
     "apps/desktop/e2e/transcript-failures.spec.ts": 2,
-    "apps/desktop/e2e/turn-steer-into-wait.spec.ts": 1,
     "apps/desktop/e2e/turn-steer.spec.ts": 1,
     "apps/desktop/e2e/undelivered-records-and-session-cleanup.spec.ts": 1,
     "apps/desktop/e2e/undetermined-and-history-leave.spec.ts": 1,

@@ -55,6 +55,11 @@ const NO_PAGE_TO_RELOAD = {
   acp: 'An editor shows the conversation in its own interface; there is no page of the agent to reload.',
   desktop: "Desktop reloads its window only from the Force Reload item of its native View menu, which the driver cannot reach.",
 };
+const PROJECTS_ON_THE_WEB = {
+  tui: 'The terminal UI works in the folder it was started in; it has no list of projects.',
+  acp: 'An ACP editor opens its own folder; the agent keeps no list of projects for it.',
+  desktop: 'Desktop adds a project through the native folder picker; E2E leaves native dialogs to the main process unit tests.',
+};
 const NO_CONTINUE = {
   tui: 'The terminal UI has no way to continue a failed turn; a user sends another message instead.',
   acp: 'ACP has no request to continue a failed turn.',
@@ -101,6 +106,8 @@ export const VERBS = {
   archiveSession: { on: ['desktop', 'web'], absentBecause: NO_ARCHIVE, checksInterface: false },
   expectSessions: { on: SURFACES, checksInterface: true },
   expectSessionBadge: { on: ['desktop', 'web'], absentBecause: NO_SESSION_BADGES, checksInterface: true },
+  removeWorkspace: { on: ['web'], absentBecause: PROJECTS_ON_THE_WEB, checksInterface: false },
+  addWorkspace: { on: ['web'], absentBecause: PROJECTS_ON_THE_WEB, checksInterface: false },
   compact: { on: SURFACES, checksInterface: false },
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
   reload: { on: ['web'], absentBecause: NO_PAGE_TO_RELOAD, checksInterface: false },
@@ -142,7 +149,9 @@ export function absenceReason(verb: Verb, surface: Surface): string {
 
 type FileToolName = 'Read' | 'Edit' | 'Write';
 
-export type ToolName = FileToolName | 'Bash' | 'AskUserQuestion';
+export type ToolName = FileToolName | 'Bash' | 'AskUserQuestion' | 'WaitFor';
+
+export type WaitOutcome = 'finished' | 'interrupted' | 'timed out';
 
 export type ToolStatus = 'done' | 'failed' | 'rejected' | 'running';
 
@@ -178,13 +187,36 @@ interface RunningCommandExpectation {
   readonly output: string;
 }
 
-export type ToolExpectation = FileToolExpectation | QuestionExpectation | RejectedCommandExpectation | EndedCommandExpectation | RunningCommandExpectation;
+interface RunningWaitExpectation {
+  readonly name: 'WaitFor';
+  readonly status: 'running';
+}
+
+interface EndedWaitExpectation {
+  readonly name: 'WaitFor';
+  readonly status: 'done';
+  readonly outcome: WaitOutcome;
+}
+
+export type WaitExpectation = RunningWaitExpectation | EndedWaitExpectation;
+
+export type TargetedToolExpectation = FileToolExpectation | QuestionExpectation | RejectedCommandExpectation | EndedCommandExpectation | RunningCommandExpectation;
+
+export type ToolExpectation = TargetedToolExpectation | WaitExpectation;
+
+export function waitOutcome(expectation: WaitExpectation): WaitOutcome | undefined {
+  return expectation.status === 'done' ? expectation.outcome : undefined;
+}
 
 export function wantedOutput(expectation: ToolExpectation): string | undefined {
   return 'output' in expectation ? expectation.output : undefined;
 }
 
 export function describeTool(expectation: ToolExpectation): string {
+  if (expectation.name === 'WaitFor') {
+    const outcome = waitOutcome(expectation);
+    return outcome === undefined ? 'WaitFor still waiting' : `WaitFor that ended ${outcome === 'finished' ? 'when a task finished' : outcome}`;
+  }
   const output = wantedOutput(expectation);
   const printed = output === undefined ? '' : ` and output ${JSON.stringify(output)}`;
   return `${expectation.name} on ${JSON.stringify(expectation.target)} with status ${expectation.status}${printed}`;
@@ -200,7 +232,7 @@ export interface TaskExpectation {
   readonly output?: string;
 }
 
-export type ApprovalToolName = Exclude<ToolName, 'Read' | 'AskUserQuestion'>;
+export type ApprovalToolName = Exclude<ToolName, 'Read' | 'AskUserQuestion' | 'WaitFor'>;
 
 export const QUESTION_PENDING = 'a question is pending; answer it with answer() or dismissQuestion() first';
 
@@ -313,6 +345,8 @@ interface VerbSignatures {
   archiveSession(title: string): Promise<void>;
   expectSessions(titles: readonly string[]): Promise<void>;
   expectSessionBadge(title: string, badge: SessionBadge): Promise<void>;
+  removeWorkspace(): Promise<void>;
+  addWorkspace(): Promise<void>;
   compact(): Promise<void>;
   resize(size: WindowSize): Promise<void>;
   reload(): Promise<void>;

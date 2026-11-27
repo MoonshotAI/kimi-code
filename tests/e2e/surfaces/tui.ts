@@ -24,13 +24,17 @@ import {
   namesFile,
   PERMISSION_MODE_NAMES,
   QUESTION_PENDING,
+  waitOutcome,
   wantedOutput,
   describeChanges,
   missingChanges,
   type ApprovalExpectation,
   type ChangedLines,
+  type TargetedToolExpectation,
   type TaskExpectation,
   type TaskStatus,
+  type WaitExpectation,
+  type WaitOutcome,
   type ApprovalToolName,
   type ApproveOptions,
   type Diagnostic,
@@ -127,7 +131,7 @@ const UNDO_FAILED = 'Failed to undo:';
 const ACTIVITY = /^[\u{1F311}-\u{1F318}\u2800-\u28FF]/u;
 const READ_GROUP = /^Read(?:ing)? \d+ files?…?(?: · .*)?$/;
 const TOOL_CARD =
-  /^(?:(?:Used|Using|Truncated) [A-Za-z][\w.-]*(?: \(.*\))?|Ran a command|Running a command|Read(?:ing)? \d+ files?…?|Collected your answers|Waiting for your input|Could not collect your input|Start(?:ed|ing) background question)(?: · .*)?$/;
+  /^(?:(?:Used|Using|Truncated) [A-Za-z][\w.-]*(?: \(.*\))?|Ran a command|Running a command|Read(?:ing)? \d+ files?…?|Collected your answers|Waiting for your input|Could not collect your input|Start(?:ed|ing) background question|(?:Waiting for (?:any )?background task|Waited for (?:a )?background task|Wait interrupted by new input|Wait timed out)(?: \([^)]*\))?|No background tasks running)(?: · .*)?$/;
 const READ_GROUP_FILE = /^[├└]─ (.+?)(?: · (.+))?$/;
 const READ_GROUP_PENDING = 'reading…';
 const READ_GROUP_FAILED = 'failed';
@@ -151,7 +155,13 @@ const PERMISSION_PICKER_ITEM = /^(❯ )?(.+?)( ← current)?$/;
 const PERMISSION_SET = 'Permission mode: ';
 const PERMISSION_NOTICES = ['Permission mode', 'Failed to set permission mode'] as const;
 const REJECTION_NOTICE = 'was not run because the user rejected the approval request';
-const UNFINISHED_TOOL = /^(?:Running a command|Using [A-Za-z])/;
+const UNFINISHED_TOOL = /^(?:Running a command|Using [A-Za-z]|Waiting for (?:any )?background task)/;
+const WAIT_HEADS: { readonly [O in WaitOutcome | 'running']: readonly string[] } = {
+  running: ['Waiting for any background task', 'Waiting for background task'],
+  finished: ['Waited for a background task', 'Waited for background task'],
+  interrupted: ['Wait interrupted by new input'],
+  'timed out': ['Wait timed out'],
+};
 const TRANSCRIPT_NOTES = [APPROVED, APPROVED_FOR_SESSION, REJECTED, TURN_STOPPED, TURN_FAILED, PERMISSION_SET] as const;
 const EARLIER_LINES_HIDDEN = '… ';
 const QUEUED_ITEM = `${USER_MARK} `;
@@ -659,7 +669,22 @@ function queuedCutShort(screen: Screen, text: string): boolean {
   return queuedMessages(screen).some((line) => line.endsWith(CUT_SHORT) && text.startsWith(line.slice(0, -CUT_SHORT.length)));
 }
 
-function toolHead({ name, target, status }: ToolExpectation): string {
+function waitHeads(expectation: WaitExpectation): readonly string[] {
+  return WAIT_HEADS[waitOutcome(expectation) ?? 'running'];
+}
+
+function turnWithSteered(screen: Screen, steered: readonly string[]): Block[] {
+  const blocks = blocksOf(screen);
+  const start = blocks.findLastIndex((block) => block.mark === USER_MARK && !steered.some((text) => squash(block.text) === squash(text)));
+  return blocks.slice(start + 1);
+}
+
+function showsWait(screen: Screen, expectation: WaitExpectation, steered: readonly string[]): boolean {
+  const heads = waitHeads(expectation);
+  return turnWithSteered(screen, steered).some((block) => block.mark === DONE_MARK && heads.some((head) => block.head === head || block.head.startsWith(`${head} `)));
+}
+
+function toolHead({ name, target, status }: TargetedToolExpectation): string {
   if (name === 'AskUserQuestion') return ASKED;
   if (name === 'Bash') return `${status === 'running' ? 'Running' : 'Ran'} a command · $ ${target}`;
   return `Used ${name} (${target})`;
@@ -677,7 +702,8 @@ function printedLines(block: Block): string[] {
   return (note < 0 ? lines : lines.slice(0, note)).map((line) => (line.startsWith(EARLIER_LINES_HIDDEN) ? line.slice(EARLIER_LINES_HIDDEN.length) : line));
 }
 
-function showsTool(screen: Screen, expectation: ToolExpectation): boolean {
+function showsTool(screen: Screen, expectation: ToolExpectation, steered: readonly string[]): boolean {
+  if (expectation.name === 'WaitFor') return showsWait(screen, expectation, steered);
   const head = toolHead(expectation);
   const output = wantedOutput(expectation);
   return latestTurn(screen).some(
@@ -709,7 +735,7 @@ function showsReadGroup(screen: Screen): boolean {
   return latestTurn(screen).some((block) => READ_GROUP.test(block.head));
 }
 
-function showsGroupedRead(screen: Screen, expectation: ToolExpectation): boolean {
+function showsGroupedRead(screen: Screen, expectation: TargetedToolExpectation): boolean {
   return groupedReads(screen).some((file) => file.path === expectation.target && file.status === expectation.status);
 }
 
@@ -777,6 +803,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private keyboardProblem: string | undefined;
   private turn: Turn | undefined;
   private queued: QueuedMessage[] = [];
+  private steered: string[] = [];
 
   constructor(
     pty: IPty,
@@ -1124,6 +1151,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     this.assertEmptyInput('send()', screen);
     this.write(paste(text));
     await this.enter(text, screen);
+    this.steered = [];
   }
 
   async submit(text: string): Promise<void> {
@@ -1134,6 +1162,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const held = composerText(screen);
     if (held !== text) throw this.failure(`submit() expected the input box to hold ${JSON.stringify(text)}, but it holds ${JSON.stringify(held)}.`, screen);
     await this.enter(text, screen);
+    this.steered = [];
   }
 
   async expectComposer(text: string): Promise<void> {
@@ -1246,6 +1275,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const shown = userMessages(screen, text);
     this.write(paste(text));
     this.write(KEYS.steer);
+    this.steered.push(text);
     const settled = await this.settle(`the message ${JSON.stringify(text)} to reach the running turn`, (current) =>
       userMessages(current, text) > shown && !queuedMessages(current).includes(text) ? true : undefined,
     );
@@ -1348,6 +1378,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const text = queued[0] ?? '';
     const shown = userMessages(screen, text);
     this.write(KEYS.steer);
+    this.steered.push(text);
     const settled = await this.settle(`the queued message ${JSON.stringify(text)} to reach the running turn`, (current) =>
       userMessages(current, text) > shown && queuedMessages(current).length === 0 ? true : undefined,
     );
@@ -1515,14 +1546,14 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const wanted = describeTool(expectation);
     const settled = await this.settle(`the tool ${wanted}`, (screen) => {
       if (expectation.status === 'running' && this.turnOver(screen)) return undefined;
-      if (showsTool(screen, expectation)) return 'card' as const;
+      if (showsTool(screen, expectation, this.steered)) return 'card' as const;
       if (showsApproval(screen)) return expectation.status === 'running' ? ('approval' as const) : undefined;
       return expectation.name === 'Read' && showsReadGroup(screen) ? ('group' as const) : undefined;
     });
     if ('found' in settled && settled.found === 'approval') {
       throw this.failure(`expectTool() cannot find a running command while an approval is pending; answer it with approve() or reject() first.`, await this.read());
     }
-    const missing = 'over' in settled ? settled.over : settled.found === 'group' ? await this.missingGroupedRead(expectation, wanted) : undefined;
+    const missing = 'over' in settled ? settled.over : settled.found === 'group' && expectation.name === 'Read' ? await this.missingGroupedRead(expectation, wanted) : undefined;
     if (missing !== undefined) {
       const unnamed =
         expectation.name === 'AskUserQuestion' && dismissedQuestions(missing) > 0
@@ -1656,7 +1687,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     ];
   }
 
-  private async missingGroupedRead(expectation: ToolExpectation, wanted: string): Promise<Screen | undefined> {
+  private async missingGroupedRead(expectation: TargetedToolExpectation, wanted: string): Promise<Screen | undefined> {
     this.write(KEYS.toggleDetails);
     try {
       await this.wait('the grouped reads to list their files', (screen) => (groupedReads(screen).length > 0 ? true : undefined));

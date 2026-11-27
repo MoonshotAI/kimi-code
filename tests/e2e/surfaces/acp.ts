@@ -37,6 +37,7 @@ import {
   namesFile,
   PERMISSION_MODE_NAMES,
   QUESTION_PENDING,
+  waitOutcome,
   wantedOutput,
   describeChanges,
   missingChanges,
@@ -51,8 +52,10 @@ import {
   StartupFailure,
   type EditorMcpServer,
   type SurfaceLaunch,
+  type TargetedToolExpectation,
   type ToolExpectation,
   type ToolStatus,
+  type WaitOutcome,
 } from '../support/verbs';
 import { productEnv } from './environment';
 import { offlineStubs } from './offline';
@@ -217,6 +220,9 @@ function entriesOf(updates: readonly SessionUpdate[]): Entry[] {
   }
   return entries;
 }
+
+const WAIT_STATUS = 'wait_status: ';
+const ACP_WAIT_STATUS: { readonly [O in WaitOutcome]: string } = { finished: 'completed', interrupted: 'interrupted', 'timed out': 'timed_out' };
 
 function offered(capability: object | null | undefined): boolean {
   return capability !== undefined && capability !== null;
@@ -1095,7 +1101,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private missingEditorEvidence(tool: ToolView, expectation: ToolExpectation): string | undefined {
-    if (expectation.status === 'rejected' || this.replayedTurn() || this.bare) return undefined;
+    if (expectation.name === 'WaitFor' || expectation.status === 'rejected' || this.replayedTurn() || this.bare) return undefined;
     if (expectation.name === 'AskUserQuestion') {
       const reply = this.questionReplies.get(tool.id);
       return reply !== undefined && this.served.has(reply) ? undefined : 'the editor never answered a question for it';
@@ -1112,7 +1118,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     return during.some((event) => event.write === path) ? undefined : 'the agent did not send the file to the editor with fs/write_text_file while that tool ran';
   }
 
-  private missingTerminalEvidence(tool: ToolView, expectation: ToolExpectation): string | undefined {
+  private missingTerminalEvidence(tool: ToolView, expectation: TargetedToolExpectation): string | undefined {
     const foreign = tool.terminals.filter((id) => !this.spawned.has(id));
     if (foreign.length > 0) return `it refers to terminal(s) the editor never created: ${foreign.join(', ')}`;
     if (expectation.status !== 'done') return undefined;
@@ -1126,6 +1132,10 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     const output = wantedOutput(expectation);
     return toolsOf(this.turnUpdates()).filter((tool) => {
       if (tool.name !== expectation.name || tool.status !== expectation.status) return false;
+      if (expectation.name === 'WaitFor') {
+        const outcome = waitOutcome(expectation);
+        return outcome === undefined || tool.shownText.split('\n').some((line) => line.trim() === `${WAIT_STATUS}${ACP_WAIT_STATUS[outcome]}`);
+      }
       if (expectation.name === 'AskUserQuestion') return tool.questions.includes(expectation.target);
       if (expectation.name !== 'Bash') return tool.path !== undefined && this.workspacePath(tool.path) === expectation.target;
       if (tool.command !== expectation.target || output === undefined) return tool.command === expectation.target;

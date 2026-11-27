@@ -8,6 +8,7 @@ import {
   namesFile,
   PERMISSION_MODE_NAMES,
   QUESTION_PENDING,
+  waitOutcome,
   wantedOutput,
   describeChanges,
   missingChanges,
@@ -15,6 +16,8 @@ import {
   type ChangedLines,
   type SessionBadge,
   type TaskExpectation,
+  type WaitExpectation,
+  type WaitOutcome,
   type TaskStatus,
   type ApprovalToolName,
   type ApproveOptions,
@@ -26,7 +29,13 @@ import {
 } from '../support/verbs';
 
 const REJECTION_NOTICE = 'was not run because the user rejected the approval request';
-const TOOL_LABELS: Readonly<Record<Exclude<ToolName, 'AskUserQuestion'>, string>> = { Read: 'Read', Edit: 'Edit', Write: 'Write', Bash: 'Run' };
+const TOOL_LABELS: Readonly<Record<Exclude<ToolName, 'AskUserQuestion'>, string>> = { Read: 'Read', Edit: 'Edit', Write: 'Write', Bash: 'Run', WaitFor: 'Wait' };
+const WAIT_SHOWS: { readonly [O in WaitOutcome | 'running']: RegExp } = {
+  running: /^Waiting for /,
+  finished: /^A task finished$/,
+  interrupted: /^Wait interrupted by new input$/,
+  'timed out': /^(?:Timed out|\d+ still running)$/,
+};
 const OUTPUT_PANEL = 'Output';
 const PANEL_BODY = 'xpath=ancestor::*[2]/following-sibling::*[1]';
 const INTERRUPT = /^(?:Interrupt|Press Esc again to interrupt)$/;
@@ -40,6 +49,15 @@ const TO_BACKGROUND = 'To background';
 const SESSION_ID = 'data-session-id';
 const SESSION_TITLE = '.t';
 const UNREAD_MARK = 'session-unread';
+const PROJECT_ID = 'data-ws-id';
+const REMOVE_PROJECT = 'Remove project';
+const NEW_PROJECT = 'New Project';
+const NEW_PROJECT_DIALOG = 'New project';
+const ADD_FOLDERS = 'Click to add folders you can read and write';
+const ADD_PROJECT_DIALOG = 'Add project';
+const PROJECT_PATH = 'Path or folder search';
+const ADD_ONE_FOLDER = 'Add folder (1)';
+const LOADING_FOLDERS = 'Loading directories…';
 const SESSION_BADGE_LABELS = { approval: 'Approve', question: 'Answer' } as const;
 const OPEN_SESSION = /\/sessions\/([^/?#]+)/;
 const FORK_SESSION = 'Fork session';
@@ -154,6 +172,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
   private readonly workspace: string;
   private readonly menus: MenuPage;
   private recalled: string | undefined;
+  private steered: string[] = [];
 
   constructor(page: Page, workspace: string, menus: MenuPage) {
     this.page = page;
@@ -170,6 +189,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     await this.press('send()', 'the message input', this.composer());
     await this.page.keyboard.type(text);
     await this.enter(text, before);
+    this.steered = [];
   }
 
   async submit(text: string): Promise<void> {
@@ -181,6 +201,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     const before = await this.conversationSize();
     await this.focusComposer('submit()');
     await this.enter(text, before);
+    this.steered = [];
   }
 
   async expectComposer(text: string): Promise<void> {
@@ -287,6 +308,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     await this.press('steer()', 'the message input', this.composer());
     await this.page.keyboard.type(text);
     await this.page.keyboard.press('Enter');
+    this.steered.push(text);
     const reached = async (): Promise<boolean> => (await this.userMessages(latest + 1, text).count()) > 0 && (await this.queuedMessage(text).count()) === 0;
     if ((await this.settle(`the message ${JSON.stringify(text)} to reach the running turn`, reached)) === 'over') {
       throw new Error(`steer() did not see ${JSON.stringify(text)} reach the turn before it ended.\n${await this.describe()}`);
@@ -367,6 +389,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     const latest = await this.latestUserPosition();
     await this.press('steerQueued()', 'the message input', this.composer());
     await this.page.keyboard.press('ControlOrMeta+s');
+    this.steered.push(text);
     const reached = async (): Promise<boolean> => (await this.userMessages(latest + 1, text).count()) > 0 && !(await this.queueShown());
     if ((await this.settle(`the queued message ${JSON.stringify(text)} to reach the running turn`, reached)) === 'over') {
       throw new Error(`steerQueued() did not see ${JSON.stringify(text)} reach the turn before it ended.\n${await this.describe()}`);
@@ -564,7 +587,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     let waitingForApproval = false;
     const settled = await this.settle(`the tool ${wanted}`, async () => {
       if (expectation.status === 'running' && (await this.idle()) && !(await this.approvalShown())) return false;
-      stuck.push(...(await this.unfoldGroups()));
+      stuck.push(...(await this.unfoldGroups(expectation.name === 'WaitFor' ? this.turnWithSteered() : this.turnItems())));
       if (await this.showsTool(expectation, stuck)) return true;
       waitingForApproval = expectation.status === 'running' && (await this.approvalShown());
       return waitingForApproval;
@@ -776,6 +799,53 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
       const listed = shown.length === 0 ? 'no mark' : shown.join(' and ');
       throw new Error(`expectSessionBadge() wanted the session ${JSON.stringify(title)} to show ${badge === 'none' ? 'no mark' : `the ${badge} mark`}, but it shows ${listed}.\n${await this.describe()}`);
     }
+  }
+
+  async removeWorkspace(): Promise<void> {
+    const name = this.workspaceName();
+    const group = this.projectGroup(name);
+    if ((await group.count()) !== 1) throw new Error(`removeWorkspace() found no project ${JSON.stringify(name)} in the sidebar.\n${await this.describe()}`);
+    await group.getByText(name, { exact: true }).first().hover({ timeout: TIMEOUTS.wait });
+    await this.press('removeWorkspace()', 'the project options', group.getByRole('button', { name: 'Options', exact: true }).first());
+    await this.press('removeWorkspace()', REMOVE_PROJECT, this.page.getByRole('menuitem', { name: REMOVE_PROJECT, exact: true }));
+    const confirm = this.page.getByRole('dialog').filter({ hasText: `Remove "${name}" from the sidebar?` });
+    await this.press('removeWorkspace()', 'Remove', confirm.getByRole('button', { name: 'Remove', exact: true }));
+    await this.wait(`the sidebar to drop the project ${JSON.stringify(name)}`, async () => ((await group.count()) === 0 ? true : undefined));
+  }
+
+  async addWorkspace(): Promise<void> {
+    const name = this.workspaceName();
+    if ((await this.projectGroup(name).count()) > 0) throw new Error(`addWorkspace() found the project ${JSON.stringify(name)} already in the sidebar; remove it first.\n${await this.describe()}`);
+    await this.press('addWorkspace()', NEW_PROJECT, this.sidebar().getByRole('button', { name: NEW_PROJECT, exact: true }));
+    const dialog = this.page.getByRole('dialog', { name: NEW_PROJECT_DIALOG });
+    await this.press('addWorkspace()', ADD_FOLDERS, dialog.getByRole('button', { name: ADD_FOLDERS, exact: true }));
+    const picker = this.page.getByRole('dialog', { name: ADD_PROJECT_DIALOG });
+    const path = picker.getByRole('combobox', { name: PROJECT_PATH, exact: true });
+    const add = picker.getByRole('button', { name: 'Add', exact: true });
+    await this.wait(`${ADD_PROJECT_DIALOG} to open its first folder`, async () =>
+      (await path.inputValue({ timeout: TIMEOUTS.wait }).catch(() => '')) !== '' && (await picker.getByText(LOADING_FOLDERS, { exact: true }).count()) === 0 ? true : undefined,
+    );
+    try {
+      await path.fill(this.workspace, { timeout: TIMEOUTS.wait });
+    } catch (cause) {
+      throw new Error(`addWorkspace() could not type the folder into ${ADD_PROJECT_DIALOG}: ${reasonOf(cause)}\n${await this.describe()}`, { cause });
+    }
+    await this.wait(`${ADD_PROJECT_DIALOG} to accept the typed folder`, async () =>
+      (await path.inputValue({ timeout: TIMEOUTS.wait }).catch(() => '')) === this.workspace && (await add.isVisible()) ? true : undefined,
+    );
+    await this.press('addWorkspace()', 'Add', add);
+    await this.press('addWorkspace()', ADD_ONE_FOLDER, picker.getByRole('button', { name: ADD_ONE_FOLDER, exact: true }));
+    await this.wait(`${ADD_PROJECT_DIALOG} to hand the folder to ${NEW_PROJECT_DIALOG}`, async () => ((await picker.count()) === 0 ? true : undefined));
+    await this.press('addWorkspace()', 'Create', dialog.getByRole('button', { name: 'Create', exact: true }));
+    await this.wait(`the sidebar to list the project ${JSON.stringify(name)}`, async () => ((await this.projectGroup(name).count()) === 1 && !(await dialog.isVisible()) ? true : undefined));
+  }
+
+  private workspaceName(): string {
+    return this.workspace.slice(Math.max(this.workspace.lastIndexOf('/'), this.workspace.lastIndexOf('\\')) + 1);
+  }
+
+  private projectGroup(name: string): Locator {
+    return this.sidebar().locator(`[${PROJECT_ID}]`).filter({ has: this.page.getByText(name, { exact: true }) });
   }
 
   private sidebar(): Locator {
@@ -1048,6 +1118,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
   }
 
   private async showsTool(expectation: ToolExpectation, stuck: string[]): Promise<boolean> {
+    if (expectation.name === 'WaitFor') return this.showsWait(expectation);
     if (expectation.name === 'AskUserQuestion') {
       const asked = [...(await this.askedAnswers()).map((row) => row.question), ...(await this.unansweredQuestions())];
       return asked.includes(expectation.target);
@@ -1059,6 +1130,23 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
       const card = cards.nth(index);
       if ((await this.toolStatus(card)) !== expectation.status) continue;
       if (output === undefined || (await this.showsOutput(card, output, stuck))) return true;
+    }
+    return false;
+  }
+
+  private turnWithSteered(): Locator {
+    const sent = this.steered.reduce((rows, text) => rows.filter({ hasNotText: containing(text) }), this.userRows());
+    return sent.last().locator('xpath=following-sibling::*[@role="listitem"]');
+  }
+
+  private async showsWait(expectation: WaitExpectation): Promise<boolean> {
+    const cards = this.turnWithSteered()
+      .locator(`${BLOCK}:not(${REPLY})`)
+      .filter({ has: this.page.getByText(TOOL_LABELS.WaitFor, { exact: true }).and(this.page.locator(ON_A_CARD)) })
+      .filter({ has: this.page.getByText(WAIT_SHOWS[waitOutcome(expectation) ?? 'running']) });
+    const count = await cards.count();
+    for (let index = 0; index < count; index += 1) {
+      if ((await this.toolStatus(cards.nth(index))) === expectation.status) return true;
     }
     return false;
   }
@@ -1100,8 +1188,8 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     return [];
   }
 
-  private async unfoldGroups(): Promise<string[]> {
-    const folded = this.turnItems()
+  private async unfoldGroups(scope: Locator = this.turnItems()): Promise<string[]> {
+    const folded = scope
       .locator(`${FOLDED}${SHOWN}`)
       .filter({ has: this.page.locator(STATE) });
     const failures: string[] = [];

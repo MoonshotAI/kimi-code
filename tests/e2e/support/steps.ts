@@ -1,4 +1,4 @@
-import { PERMISSION_MODE_NAMES, wantedChanges, wantedOutput, type Actions, type ApprovalExpectation, type SessionBadge, type TaskStatus, type ToolExpectation, type ToolStatus, type Verb } from './verbs';
+import { PERMISSION_MODE_NAMES, waitOutcome, wantedChanges, wantedOutput, type Actions, type ApprovalExpectation, type SessionBadge, type WaitOutcome, type TaskStatus, type ToolExpectation, type ToolStatus, type Verb } from './verbs';
 
 const LONGEST_QUOTE = 60;
 
@@ -8,6 +8,8 @@ export const TOOL_STATUS_WORDS: Readonly<Record<ToolStatus, string>> = {
   rejected: '被拒绝',
   running: '运行中',
 };
+
+const WAIT_OUTCOME_WORDS: { readonly [O in WaitOutcome]: string } = { finished: '等到了一个任务结束', interrupted: '被新输入打断', 'timed out': '超时' };
 
 const SESSION_BADGE_WORDS: { readonly [B in SessionBadge]: string } = { unread: '标着未读', approval: '标着待审批', question: '标着待回答', none: '没有任何标记' };
 
@@ -24,6 +26,10 @@ function approvalCheck(expectation: ApprovalExpectation): string {
 }
 
 function toolCheck(expectation: ToolExpectation): string {
+  if (expectation.name === 'WaitFor') {
+    const outcome = waitOutcome(expectation);
+    return `检查工具卡：WaitFor ${outcome === undefined ? '正在等后台任务' : `等待结束，${WAIT_OUTCOME_WORDS[outcome]}`}`;
+  }
   const output = wantedOutput(expectation);
   const printed = output === undefined ? '' : `，输出里有${quote(output)}`;
   return `检查工具卡：${expectation.name}${quote(expectation.target)}${TOOL_STATUS_WORDS[expectation.status]}${printed}`;
@@ -69,6 +75,8 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   deleteSession: (title) => `用户删除会话${quote(title)}`,
   archiveSession: (title) => `用户归档会话${quote(title)}`,
   expectSessionBadge: (title, badge) => `检查侧栏里会话${quote(title)}${SESSION_BADGE_WORDS[badge]}`,
+  removeWorkspace: () => '用户把工作区从侧栏的项目里移除',
+  addWorkspace: () => '用户把同一个文件夹重新加成项目',
   expectSessions: (titles) => `检查会话列表：${titles.map((title) => quote(title)).join('、')}`,
   compact: () => '用户手动压缩上下文（/compact）',
   resize: (size) => (size === 'narrow' ? '用户把窗口拉窄' : '用户把窗口拉回原来的大小'),

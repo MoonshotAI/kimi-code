@@ -209,6 +209,7 @@ function promptCheck(verb: 'send' | 'queue' | 'steer'): (text: string) => void {
 }
 
 function assertToolExpectation(expectation: ToolExpectation): void {
+  if (expectation.name === 'WaitFor') return;
   const asked: { readonly name: string; readonly status: string; readonly output?: unknown } = expectation;
   if (asked.name !== 'Bash' && (asked.status === 'running' || asked.output !== undefined)) {
     throw new Error(`expectTool() can expect a running tool, or the output of a tool, only for Bash, not for ${asked.name}.`);
@@ -459,8 +460,8 @@ class ScenarioSession {
     await Reflect.apply(method, driver, args);
     if (verb === 'send' || verb === 'queue' || verb === 'steer' || verb === 'submit') this.lastPrompt = String(args[0]);
     if (verb === 'undo') this.lastPrompt = undefined;
-    if (verb === 'newSession' || verb === 'openSession') this.lastPrompt = undefined;
-    if (verb === 'newSession' || verb === 'fork') this.sessions += 1;
+    if (verb === 'newSession' || verb === 'openSession' || verb === 'removeWorkspace' || verb === 'addWorkspace') this.lastPrompt = undefined;
+    if (verb === 'newSession' || verb === 'fork' || verb === 'addWorkspace') this.sessions += 1;
   }
 
   private async launch(launch: SurfaceLaunch): Promise<SurfaceDriver<Surface>> {
