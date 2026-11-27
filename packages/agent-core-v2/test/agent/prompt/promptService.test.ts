@@ -6,7 +6,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IFileService } from '#/app/file/fileService';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
-import { TurnStarted, TurnStepInterrupted } from '#/agent/loop/turnEvents';
+import { AssistantDelta, ToolCallDelta, TurnStarted, TurnStepInterrupted } from '#/agent/loop/turnEvents';
 import { TurnPrompt } from '#/agent/loop/turnOps';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
@@ -19,6 +19,7 @@ import {
   PromptSubmitted,
 } from '#/agent/prompt/promptEvents';
 import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
+import { call, held, reply, say, unitsOf } from '@moonshot-ai/testkit/model';
 
 import {
   appService,
@@ -100,6 +101,15 @@ describe('prompt queue', () => {
     loop = ctx.get(IAgentLoopService);
   }
 
+  function nextEvent(type: string): Promise<void> {
+    return new Promise((resolve) => {
+      const subscription = ctx.get(IEventBus).subscribe(type, () => {
+        subscription.dispose();
+        resolve();
+      });
+    });
+  }
+
   function holdNextStep(): { readonly started: Promise<void>; readonly release: () => void } {
     let releaseGate!: () => void;
     let markStarted!: () => void;
@@ -158,7 +168,6 @@ describe('prompt queue', () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
-    ctx.mockNextResponse({ type: 'text', text: 'waiting' });
     const queued: Array<{ promptId: string; queueLength: number }> = [];
     ctx.get(IEventBus).subscribe(PromptQueued, (event) => {
       queued.push({ promptId: event.promptId, queueLength: event.queueLength });
@@ -171,16 +180,42 @@ describe('prompt queue', () => {
     await enqueue(loop, { id: 'waiting', message: message('waiting') });
     expect(queued).toEqual([{ promptId: 'waiting', queueLength: 1 }]);
 
+    let settled = false;
+    const pending = loop.notifyClient({
+      role: 'user',
+      content: [{ type: 'text', text: 'steer' }],
+      attributes: { promptId: 'client-steer', origin: { kind: 'user' } },
+    });
+    void pending.then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => {
+      expect(queued.map((event) => event.promptId)).toContain('client-steer');
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
     hold.release();
+    await expect(pending).resolves.toMatchObject({
+      prompt_id: 'client-steer',
+      state: 'running',
+      steered: true,
+    });
     await loop.settled();
   });
 
-  it('publishes prompt.submitted for every user prompt and prompt.started on launch', async () => {
+  it('publishes prompt.submitted with its origin and prompt.started on launch', async () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
     ctx.mockNextResponse({ type: 'text', text: 'waiting' });
-    const submitted: Array<{ promptId: string; userMessageId: string; status: string; content: readonly ContentPart[] }> = [];
+    const submitted: Array<{
+      promptId: string;
+      userMessageId: string;
+      status: string;
+      content: readonly ContentPart[];
+      origin: PromptSubmitted['origin'];
+    }> = [];
     const started: string[] = [];
     ctx.get(IEventBus).subscribe(PromptSubmitted, (event) => {
       submitted.push({
@@ -188,6 +223,7 @@ describe('prompt queue', () => {
         userMessageId: event.userMessageId,
         status: event.status,
         content: event.content,
+        origin: event.origin,
       });
     });
     ctx.get(IEventBus).subscribe(PromptStarted, (event) => {
@@ -196,20 +232,44 @@ describe('prompt queue', () => {
 
     const active = await enqueue(loop, { id: 'active', message: message('active') });
     expect(submitted).toEqual([
-      { promptId: 'active', userMessageId: 'active', status: 'running', content: [{ type: 'text', text: 'active' }] },
+      { promptId: 'active', userMessageId: 'active', status: 'running', content: [{ type: 'text', text: 'active' }], origin: { kind: 'user' } },
     ]);
     await active.launched;
     expect(started).toEqual(['active']);
 
     await enqueue(loop, { id: 'waiting', message: message('waiting') });
     expect(submitted).toEqual([
-      { promptId: 'active', userMessageId: 'active', status: 'running', content: [{ type: 'text', text: 'active' }] },
-      { promptId: 'waiting', userMessageId: 'waiting', status: 'queued', content: [{ type: 'text', text: 'waiting' }] },
+      { promptId: 'active', userMessageId: 'active', status: 'running', content: [{ type: 'text', text: 'active' }], origin: { kind: 'user' } },
+      { promptId: 'waiting', userMessageId: 'waiting', status: 'queued', content: [{ type: 'text', text: 'waiting' }], origin: { kind: 'user' } },
+    ]);
+    expect(started).toEqual(['active']);
+
+    const taskOrigin = {
+      kind: 'task',
+      taskId: 'task-1',
+      status: 'completed',
+      notificationId: 'task:task-1:completed',
+    } as const;
+    loop.notify({
+      message: {
+        id: 'task-notification',
+        role: 'user',
+        content: [{ type: 'text', text: 'task completed' }],
+        origin: taskOrigin,
+      },
+    });
+    expect(submitted).toEqual([
+      { promptId: 'active', userMessageId: 'active', status: 'running', content: [{ type: 'text', text: 'active' }], origin: { kind: 'user' } },
+      { promptId: 'waiting', userMessageId: 'waiting', status: 'queued', content: [{ type: 'text', text: 'waiting' }], origin: { kind: 'user' } },
+      { promptId: 'task-notification', userMessageId: 'task-notification', status: 'queued', content: [{ type: 'text', text: 'task completed' }], origin: taskOrigin },
     ]);
     expect(started).toEqual(['active']);
 
     hold.release();
     await loop.settled();
+    expect(started).toHaveLength(3);
+    expect(started).toContain('waiting');
+    expect(started).toContain('task-notification');
   });
 
   it('atomically rejects steer when any id is not pending', async () => {
@@ -285,6 +345,8 @@ describe('prompt queue', () => {
   it('keeps each steered prompt client metadata in FIFO order without adding it to model content', async () => {
     setup();
     const hold = holdNextStep();
+    ctx.mockNextResponse({ type: 'text', text: 'active' });
+    ctx.mockNextResponse({ type: 'text', text: 'merged' });
     const eventBus = ctx.get(IEventBus);
     const events: TurnPrompt[] = [];
     const submitted: PromptSubmitted[] = [];
@@ -335,6 +397,8 @@ describe('prompt queue', () => {
   it('keeps plain inputs beside composer metadata in a mixed steer', async () => {
     setup();
     const hold = holdNextStep();
+    ctx.mockNextResponse({ type: 'text', text: 'active' });
+    ctx.mockNextResponse({ type: 'text', text: 'merged' });
     const eventBus = ctx.get(IEventBus);
     const events: TurnPrompt[] = [];
     eventBus.subscribe(TurnPrompt, (event) => events.push(event));
@@ -372,7 +436,7 @@ describe('prompt queue', () => {
   });
 
   it('publishes prompt identities before each steered user message', async () => {
-    setup();
+    setup({ scriptedModelChecks: { checkMessages: false } });
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
     ctx.mockNextResponse({ type: 'text', text: 'merged' });
@@ -409,36 +473,13 @@ describe('prompt queue', () => {
   });
 
   it('returns the prompt identity and delivery state for an accepted steer', async () => {
-    let requestStarted!: () => void;
-    const started = new Promise<void>((resolve) => { requestStarted = resolve; });
     let requests = 0;
     const histories: (readonly Message[])[] = [];
-    const generate = createMockProvider(async (request, signal) => {
-      const history = [...request.content.messages];
-      const options = {
-        signal,
-        cacheKey: request.model.cacheKey,
-        sampling: request.model.sampling,
-        thinking: request.model.thinking,
-        maxOutputTokens: request.model.maxOutputTokens,
-        maxContextSize: request.model.spec.maxContextSize,
-        usedTokens: request.content.usedTokens,
-      };
-      histories.push(structuredClone(history));
+    const generate = createMockProvider(async (request) => {
+      histories.push(structuredClone([...request.content.messages]));
       requests += 1;
       if (requests === 1) {
-        return {
-          id: 'mock-1',
-          parts: [{ type: 'text', text: 'partial answer' }],
-          error: new Promise<unknown>((resolve) => {
-            if (options.signal.aborted) {
-              resolve(options.signal.reason);
-              return;
-            }
-            options.signal.addEventListener('abort', () => resolve(options.signal.reason), { once: true });
-          }),
-          onStream: requestStarted,
-        };
+        return { step: held('steered-reply', reply(say('partial answer'), say(' never sent')), 1) };
       }
       return {
         id: 'mock-1',
@@ -449,6 +490,7 @@ describe('prompt queue', () => {
       };
     });
     setup({ generate });
+    const started = nextEvent(AssistantDelta.type);
     const interrupted: TurnStepInterrupted[] = [];
     ctx.get(IEventBus).subscribe(TurnStepInterrupted, (event) => interrupted.push(event));
     const active = await enqueue(loop, { message: message('active') });
@@ -574,6 +616,7 @@ describe('prompt queue', () => {
       await next();
     });
     ctx.mockNextResponse({ type: 'text', text: 'active' });
+    ctx.mockNextResponse({ type: 'text', text: 'stopped' });
     const steerEvents: TurnPrompt[] = [];
     ctx.get(IEventBus).subscribe(TurnPrompt, (event) => {
       if (event.trigger === 'notify') steerEvents.push(event);
@@ -868,7 +911,6 @@ describe('prompt queue', () => {
     );
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
-    ctx.mockNextResponse({ type: 'text', text: 'merged' });
 
     await enqueue(loop, { message: message('active') });
     await hold.started;
@@ -920,6 +962,7 @@ describe('prompt queue', () => {
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
     ctx.mockNextResponse({ type: 'text', text: 'bundled' });
+    ctx.mockNextResponse({ type: 'text', text: 'marked bundled' });
     const queued: Array<{ promptId: string; content: ContentPart[] }> = [];
     ctx.get(IEventBus).subscribe(PromptQueued, (event) => {
       queued.push({ promptId: event.promptId, content: event.content });
@@ -1080,38 +1123,14 @@ describe('prompt queue', () => {
   });
 
   it('launches and settles a fresh steered submission in the next turn', async () => {
-    let requestStarted!: () => void;
-    const started = new Promise<void>((resolve) => { requestStarted = resolve; });
-    let releaseRequest!: () => void;
-    const requestGate = new Promise<void>((resolve) => { releaseRequest = resolve; });
     let requests = 0;
     let aborted = false;
-    const generate = createMockProvider(async (request, signal) => {
-      const options = {
-        signal,
-        cacheKey: request.model.cacheKey,
-        sampling: request.model.sampling,
-        thinking: request.model.thinking,
-        maxOutputTokens: request.model.maxOutputTokens,
-        maxContextSize: request.model.spec.maxContextSize,
-        usedTokens: request.content.usedTokens,
-      };
+    const generate = createMockProvider(async (_request, signal) => {
       requests += 1;
       if (requests === 1) {
-        const toolCall = { type: 'function' as const, id: 'call-work', name: 'Work', arguments: '{}' };
-        options.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
-        return {
-          id: 'mock-tool-call',
-          message: { role: 'assistant', content: [], toolCalls: [toolCall] },
-          parts: [toolCall],
-          usage: emptyUsage(),
-          finishReason: 'tool_calls',
-          rawFinishReason: 'tool_calls',
-          onStream: async () => {
-            requestStarted();
-            await requestGate;
-          },
-        };
+        signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+        const workCall = call('Work', {}, { id: 'call-work' });
+        return { step: held('work-call', workCall, unitsOf(workCall)) };
       }
       
       return {
@@ -1127,6 +1146,7 @@ describe('prompt queue', () => {
       };
     });
     setup({ generate });
+    const started = nextEvent(ToolCallDelta.type);
     const steered: PromptSteered[] = [];
     ctx.get(IEventBus).subscribe(PromptSteered, (event) => steered.push(event));
 
@@ -1151,7 +1171,7 @@ describe('prompt queue', () => {
     expect(launched).toBe(false);
     expect(aborted).toBe(false);
 
-    releaseRequest();
+    generate.hold('work-call').release();
     await expect(handle.launched).resolves.toMatchObject({ id: 1, state: 'running' });
     await expect(handle.completion).resolves.toMatchObject({ state: 'completed' });
     await loop.settled();
@@ -1162,6 +1182,7 @@ describe('prompt queue', () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
+    ctx.mockNextResponse({ type: 'text', text: 'meta' });
 
     await enqueue(loop, { message: message('active') });
     await hold.started;

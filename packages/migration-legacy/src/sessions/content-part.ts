@@ -51,9 +51,6 @@ function asMediaRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-/** Safely coerce an unknown value to string for text fields. Avoids
- * `[object Object]` from accidental object stringification — those become
- * JSON instead. Strings pass through unchanged; null/undefined → ''. */
 function coerceToString(v: unknown): string {
   if (typeof v === 'string') return v;
   if (v === null || v === undefined) return '';
@@ -77,7 +74,6 @@ function convertMediaPart(
   if (typeof url !== 'string' || url.length === 0) {
     return { type: 'text', text: `[${kind} missing url]` };
   }
-  // If url is a local file path (no scheme) and file is gone, mark expired.
   if (!/^[a-z]+:\/\//i.test(url) && url.startsWith('/') && !existsSync(url)) {
     return { type: 'text', text: `[${kind} expired]` };
   }

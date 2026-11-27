@@ -1,4 +1,4 @@
-import type { HostUiCapability } from '@moonshot-ai/agent-core-v2';
+import type { HostUiCapability, ContentPart } from '@moonshot-ai/agent-core-v2';
 import type {
   ExportSessionManifest,
   ShellEnvironment,
@@ -6,7 +6,6 @@ import type {
 import type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
 import type { RemoteEnvironmentEntry } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 
 import type { ResumeSessionResult } from '#/replay';
 import type { PermissionMode } from '#/permission';
@@ -161,13 +160,9 @@ export interface GetCronTasksResult {
 }
 
 export type { KimiHostIdentity, OAuthRefreshOutcome };
-// Host UI capabilities are an agent-core-v2 seam (`BootstrapInput.args.uiCapabilities`);
-// hosts name them through `KimiHarnessOptions.uiCapabilities`, so the type is public here.
 export type { HostUiCapability };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
 export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/agent-core-v2';
-// Contributed commands are an agent-core-v2 seam; the type is re-exported
-// from the v2 engine (v1 sessions report an empty command set).
 export type { AgentCommandInfo } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 
 export type { PermissionMode };
@@ -199,6 +194,12 @@ export interface WorkspaceTrustInstructionSources {
 /** Trust state of a workspace directory, plus everything trusting it would activate. */
 export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
+  /**
+   * Primary directory of the project the queried directory or session belongs
+   * to. Trust is recorded for this directory, and a worktree or subdirectory
+   * of a repository reports the repository's main checkout here.
+   */
+  readonly projectRoot: string;
   /** Project-level MCP servers that trusting would start. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
   /** Directories outside the project that trusting grants access to (symlink-resolved). */
@@ -209,8 +210,27 @@ export interface WorkspaceTrustInfo {
 }
 
 export interface WorkspaceTrustInfoOptions {
+  /**
+   * Ask about the project this session belongs to, whichever project `workDir`
+   * resolves to, and about what the session's own directory would activate.
+   * Rejects with `session.not_found` when the session or its project no longer
+   * exists.
+   */
+  readonly sessionId?: string;
   readonly additionalDirs?: readonly string[];
   readonly environmentId?: string;
+  readonly environmentCwd?: string;
+}
+
+/** Where a session started in a directory is kept. */
+export interface SessionPlacement {
+  /** Project the session belongs to; its sessions live in `sessions/<projectId>`. */
+  readonly projectId: string;
+  /** The primary directory of that project. */
+  readonly projectRoot: string;
+  /** The directory in the spelling a session records. */
+  readonly workDir: string;
+  /** Set when the session stays in `workDir`; a session without it follows the project's primary directory. */
   readonly environmentCwd?: string;
 }
 
@@ -453,6 +473,7 @@ export interface ExportSessionResult {
 
 export interface ListSessionsOptions {
   readonly workDir?: string;
+  readonly scope?: 'workdir' | 'project';
   readonly sessionId?: string;
   /**
    * Include archived sessions in the listing. Defaults to non-archived only.
@@ -534,6 +555,7 @@ export interface SessionStatus {
   readonly planMode: boolean;
   readonly swarmMode?: boolean;
   readonly towerMode?: boolean;
+  readonly loopLifecycleEvents?: boolean;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly contextUsage: number;
@@ -556,6 +578,7 @@ export interface SessionSummary {
   readonly titleKind?: SessionTitleKind;
   readonly lastPrompt?: string;
   readonly workDir: string;
+  readonly projectWorkDir?: string;
   readonly sessionDir: string;
   readonly createdAt: number;
   readonly updatedAt: number;

@@ -1,0 +1,31 @@
+export default {
+  new: { desc: '创建新会话' },
+  clear: { desc: '清空并新建会话' },
+  login: { desc: '在浏览器中登录 Kimi' },
+  plan: { desc: '切换计划模式 开/关' },
+  swarm: { desc: '切换 swarm 模式；/swarm <任务> 直接在 swarm 下执行' },
+  tower: { desc: '切换 tower 模式；/tower <base 分支> 以指定 base 分支开启' },
+  goal: { desc: "创建/控制目标：/goal <目标>、/goal pause{'|'}resume{'|'}cancel" },
+  btw: { desc: '侧边聊天：/btw <问题> 向 fork 的侧边会话提问', argHint: '[问题]' },
+  compact: { desc: '压缩会话历史', argHint: '[说明]', requiresSession: '请先打开一个会话，再压缩会话历史' },
+  compactQueue: {
+    alreadyQueued: '已有排队中的 /compact',
+    compacting: '正在压缩上下文，请等待完成后再试',
+    skippedAuto: '已跳过排队的 /compact：上下文刚被自动压缩',
+  },
+  fork: { desc: '把当前会话 fork 出一个新会话' },
+  reload: {
+    desc: '重新加载会话以应用外部变更（AGENTS.md / skills / 配置）',
+    busy: '会话正在生成中，请等待当前回合完成后再重新加载。',
+    archived: '已归档的会话不能重新加载，请先恢复会话。',
+  },
+  export: {
+    desc: '将当前会话和排障日志下载为 ZIP 压缩包',
+    noSession: '请先打开一个会话再导出。',
+    started: '正在导出会话…',
+    done: '会话导出完成。',
+    tooLarge: '会话数据超过导出大小限制,可在终端用 CLI 导出:kimi export {sessionId} -o session.zip',
+  },
+  status: { desc: '查看会话状态' },
+  undo: { desc: '撤销上一条消息' },
+};

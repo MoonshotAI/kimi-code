@@ -10,9 +10,6 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
   let session = host.session;
 
   if (input.length === 0 || input.toLowerCase() === 'list') {
-    // With no session yet (v2 session-less startup) the pending startup
-    // directories live in appState and will be passed to the lazy-created
-    // session; reflect them instead of reporting an empty list.
     const additionalDirs = session?.summary?.additionalDirs ?? host.state.appState.additionalDirs;
     if (additionalDirs.length === 0) {
       host.showStatus('No additional directories configured.');
@@ -23,12 +20,8 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
   }
 
   if (session === undefined) {
-    // The path-adding form needs a live session; lazy-create it on first use
-    // (the read-only `list`/bare forms above tolerate a missing session).
     session = await host.ensureSession();
     if (session === undefined) return;
-    // A first prompt may have started a turn during the await; /add-dir is
-    // idle-only, so re-check the busy gate resolved before it.
     const busyReason = slashCommandBusyReason({
       isStreaming: host.state.appState.streamingPhase !== 'idle',
       isCompacting: host.state.appState.isCompacting,
@@ -96,7 +89,7 @@ async function handleAddDirChoice(
     host.setAppState({ additionalDirs: result.additionalDirs });
     host.refreshSlashCommandAutocomplete();
     host.showStatus(
-      choice === 'remember'
+      result.persisted
         ? `Added workspace directory:\n  ${path}\n  Remembered in the workspace registry`
         : `Added workspace directory:\n  ${path}\n  For this session only`,
       'success',

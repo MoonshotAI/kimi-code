@@ -24,6 +24,12 @@ export function contrastRatio(firstHex: string, secondHex: string): number {
   return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
 }
 
+export function contrastingTextColor(backgroundHex: string): '#000000' | '#FFFFFF' {
+  return contrastRatio(backgroundHex, '#FFFFFF') >= contrastRatio(backgroundHex, '#000000')
+    ? '#FFFFFF'
+    : '#000000';
+}
+
 function relativeLuminance({ red, green, blue }: Rgb): number {
   return 0.2126 * linearChannel(red) + 0.7152 * linearChannel(green) + 0.0722 * linearChannel(blue);
 }

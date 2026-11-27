@@ -29,7 +29,6 @@ export {
   toolCallStartToSessionUpdate,
   toolUpdatedToSessionUpdate,
   toolResultToSessionUpdate,
-  turnEndReasonToStopReason,
 } from './events-map';
 export {
   acpBlocksToContentParts,

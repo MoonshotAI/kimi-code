@@ -1,0 +1,3 @@
+export const WORKTREE_ERROR_OUTPUT_LINES = 8;
+export const WORKTREE_PANEL_PAGE_SIZE = 8;
+export const WORKTREE_PANEL_MAX_BODY_ROWS = 12;

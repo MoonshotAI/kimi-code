@@ -1,10 +1,3 @@
-/**
- * The TodoList card body: a snapshot of the list the call reported, whether it
- * wrote the list or only read it. A collapsed card keeps a short list whole
- * and otherwise shows the two most telling items plus a summary of the rest;
- * ctrl+o (or a click) shows every item.
- */
-
 import { truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
 
 import { OUTCOME_ROW_INDENT, TRUNCATION_ELLIPSIS } from '#/tui/constant/rendering';
@@ -25,19 +18,9 @@ export interface VisibleTodos {
   readonly hiddenCounts: Record<TodoStatus, number>;
 }
 
-// A TodoList result prints the list as a header line followed by one
-// `  [status] title` row per item, for reads and writes alike; a resumed
-// session keeps only this text, not the structured display, so the card
-// parses it for both. Rows end at the first blank line (a write appends a
-// hint after one).
 const LIST_HEADER = 'Current todo list:';
 const RESULT_ROW = /^ {2}\[(pending|in_progress|done)\] (.+)$/;
 
-/**
- * The list a successful TodoList result reports. Empty when it reports none
- * (a cleared list) or when a row does not parse (e.g. a title spanning lines),
- * so the card falls back to its headline instead of showing a wrong list.
- */
 export function todoListFromResult(output: string): TodoItem[] {
   const lines = output.split('\n');
   const start = lines.indexOf(LIST_HEADER);
@@ -52,28 +35,14 @@ export function todoListFromResult(output: string): TodoItem[] {
   return todos;
 }
 
-/** A TodoList call without `todos` only reads the list. */
 export function isTodoListRead(args: Record<string, unknown>): boolean {
   return args['todos'] === undefined;
 }
 
-/** Whether the collapsed card leaves items out, i.e. ctrl+o would reveal more. */
 export function todoCardHidesItems(todos: readonly TodoItem[]): boolean {
   return todos.length > COLLAPSED_ROWS + 1;
 }
 
-/**
- * Pick which todos a collapsed card shows. A list that is at most one item
- * longer than the cap is kept whole: the summary row would replace the single
- * hidden item and save nothing.
- *
- * The selector is order-agnostic — the TodoList tool keeps whatever order the
- * model produced and does not group items by status. Every `in_progress` item
- * goes first (capped); the remaining slots go to "what's next" — the earliest
- * `pending` items — while reserving one slot for "what just finished" — the
- * latest `done` item — when both kinds exist. If one side has too few
- * candidates, the other expands. Items are returned in their original order.
- */
 export function selectVisibleTodos(todos: readonly TodoItem[]): VisibleTodos {
   if (!todoCardHidesItems(todos)) {
     return {

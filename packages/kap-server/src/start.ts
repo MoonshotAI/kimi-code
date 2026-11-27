@@ -17,7 +17,7 @@ import {
   ICapabilityService,
   IPluginService,
   IEnvironmentService,
-  IWorkspaceService,
+  IProjectService,
   IAgentLifecycleService,
   IAgentEnvironmentBindingService,
   ISessionContext,
@@ -47,7 +47,7 @@ import { transformOpenApiDocument } from './openapi/transforms';
 import { registerRequestLogging } from './requestLogging';
 import { resolveRequestId } from './request-id';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
-import { registerWebAssetRoutes } from './routes/webAssets';
+import { assertWebAssets, registerWebAssetRoutes } from './routes/webAssets';
 import {
   createServerLogger,
   type ServerLogger,
@@ -67,6 +67,7 @@ import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcast
 import type { ConfigWarningItem } from './transport/ws/v1/events';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { registerWsDebug, WS_DEBUG_PATH } from './transport/ws/debug/registerWsDebug';
+import { startUnixRpcServer } from './transport/stdioRpc';
 import { getServerVersion } from './version';
 import { classify } from './security/bindClassify';
 import {
@@ -77,7 +78,6 @@ import {
 import { createOriginHook, isOriginAllowed, parseCorsOrigins } from './middleware/origin';
 import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
-import { GuiStoreService } from './services/guiStore/guiStoreService';
 import {
   initializeServerTelemetry,
   type ServerTelemetry,
@@ -86,7 +86,10 @@ import {
 import { createServerSessionRating } from './services/sessionRating';
 import { ConversationService } from './services/conversation/conversationService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
-import { SessionIdleReaper, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
+import { HostBridgeManager, hostSnapshots } from './services/hosts/hostBridgeManager';
+import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from './services/hosts/hostProxy';
+import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
+import { SessionIdleReaper, closeIdleSessions, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
 import {
@@ -114,6 +117,7 @@ export interface ServerStartOptions {
   readonly pluginMarketplaceUrl?: string;
   readonly configPath?: string;
   readonly instancesDir?: string;
+  readonly skipInstanceRegistry?: boolean;
   readonly logLevel?: ServerLogLevel;
   readonly logger?: ServerLogger;
   readonly debugEndpoints?: boolean;
@@ -133,6 +137,9 @@ export interface ServerStartOptions {
   readonly webAssetsDir?: string;
   readonly serverVersion?: string;
   readonly telemetry?: boolean;
+  readonly socketPath?: string;
+  readonly managedBy?: string;
+  readonly managedIdleExitMs?: number;
 }
 
 export interface RunningServer {
@@ -140,6 +147,7 @@ export interface RunningServer {
   readonly core: Scope;
   readonly connectionRegistry: IConnectionRegistry;
   readonly authTokenService: IAuthTokenService;
+  readonly hostBridges: HostBridgeManager;
   readonly host: string;
   readonly port: number;
   close(): Promise<void>;
@@ -154,22 +162,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const homeDir = resolveKimiHome(opts.homeDir);
   const serverVersion = opts.serverVersion ?? getServerVersion();
   const idleReclaimMs = resolveSessionIdleReclaimMs(opts.env ?? process.env);
-  const registry = createInstanceRegistry({
-    instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
-  });
-  const registration: InstanceRegistration = await registry.register({
-    pid: process.pid,
-    host,
-    port,
-    startedAt: Date.now(),
-    serverVersion,
-  });
+  const disableAuth = opts.disableAuth === true || opts.socketPath !== undefined;
   const exposureClass = classify(host, { bindClass: opts.bindClass });
   if (exposureClass !== 'loopback' && opts.insecureNoTls !== true) {
-    await registration.release();
     throw new Error(
       `Refusing to bind ${host} (${exposureClass}) without TLS; terminate TLS at a reverse proxy or pass --insecure-no-tls.`,
     );
+  }
+  if (opts.webAssetsDir !== undefined) {
+    await assertWebAssets(opts.webAssetsDir);
   }
   const enableShutdown = exposureClass === 'loopback' || opts.allowRemoteShutdown === true;
   const debugEndpoints = exposureClass === 'loopback' && opts.debugEndpoints === true;
@@ -186,11 +187,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       'uncaughtException',
     );
   };
-  const authFailureLimiter =
-    exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
 
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
-  const guiStore = new GuiStoreService(homeDir, logger);
   let authTokenService: IAuthTokenService;
   let passwordConfigured = false;
   if (opts.authTokenService !== undefined) {
@@ -202,6 +200,21 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     authTokenService = createAuthTokenService({ tokenStore, passwordHash });
   }
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
+  const registration: InstanceRegistration =
+    opts.socketPath !== undefined || opts.skipInstanceRegistry === true
+      ? { serverId: 'socket', update: async () => {}, release: async () => {} }
+      : await createInstanceRegistry({
+          instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
+        }).register({
+          pid: process.pid,
+          host,
+          port,
+          startedAt: Date.now(),
+          serverVersion,
+          product: opts.hostIdentity.productName,
+        });
+  const authFailureLimiter =
+    exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   let boundPort = port;
   const localOriginHost = host.includes(':') ? `[${host}]` : host;
@@ -228,11 +241,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
   const environments = core.accessor.get(IEnvironmentService);
-  const remoteEnvironmentProvider = await environments.addProvider(
-    new RemoteEnvironmentProviderFactory({
-      clientVersion: serverVersion,
-    }),
-  );
   const legacyAcpBindingSubscription = core.accessor.get(ISessionManager).onDidCreateSession?.((event) => {
     const main = event.handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
     if (main === undefined) return;
@@ -304,7 +312,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   );
 
   try {
-    await core.accessor.get(IWorkspaceService).list();
+    await core.accessor.get(IProjectService).list();
   } catch (error) {
     logger.warn(
       { err: error instanceof Error ? error.message : String(error) },
@@ -339,12 +347,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const allowedOrigins = opts.corsOrigins ?? parseCorsOrigins();
   app.addHook('onRequest', hostCheck.onRequest);
   app.addHook('onRequest', createOriginHook({ allowedOrigins }));
-  if (opts.disableAuth !== true) {
+  if (!disableAuth) {
     app.addHook(
       'onRequest',
       createAuthHook(authTokenService, { limiter: authFailureLimiter, validateCredential }),
     );
-  } else {
+  } else if (opts.disableAuth === true) {
     logger.warn(
       { host, exposureClass },
       'DANGEROUS: bearer-token auth is DISABLED (--dangerous-bypass-auth) — every REST and WebSocket route accepts unauthenticated requests',
@@ -354,7 +362,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     app.addHook('onSend', createSecurityHeadersHook({ tls: false }));
   }
 
+  let rpcServer: { close(): Promise<void> } | undefined;
+  let remoteEnvironmentProvider: { dispose(): Promise<void> } | undefined;
+
   const close = async (): Promise<void> => {
+    await rpcServer?.close();
     if (wssDebug !== undefined) {
       for (const client of wssDebug.clients) client.terminate();
     }
@@ -368,6 +380,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     capabilityInstallSubscription.dispose();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
+    if (hostNotifyTimer !== undefined) {
+      clearTimeout(hostNotifyTimer);
+      hostNotifyTimer = undefined;
+    }
+    await managedIdleExit?.close();
+    hostBridges.close();
     await sessionIdleReaper.close();
     try {
       await shutdownServerTelemetry(telemetry);
@@ -383,8 +401,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await core.accessor.get(IMcpOAuthService).shutdown();
       const appendLogStore = core.accessor.get(IAppendLogStore);
       legacyAcpBindingSubscription?.dispose();
-      await remoteEnvironmentProvider.dispose();
+      await remoteEnvironmentProvider?.dispose();
       core.dispose();
+      await core.instantiation.disposeAsync();
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
       await drainGlobalSearchDisposals();
@@ -402,6 +421,27 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   };
 
   const connectionRegistry = new ConnectionRegistry();
+  let notifyHosts = (): void => {};
+  let hostNotifyTimer: ReturnType<typeof setTimeout> | undefined;
+  const hostBridges = new HostBridgeManager(core, () => notifyHosts());
+  const requestClose = (): void => {
+    void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
+  };
+  const sessionManager = core.accessor.get(ISessionManager);
+  const drainIdleSessions = async (): Promise<boolean> => {
+    if (connectionRegistry.size() > 0) return false;
+    await closeIdleSessions(sessionManager, 0);
+    return connectionRegistry.size() === 0 && sessionManager.list().length === 0;
+  };
+  const managedIdleExit =
+    opts.managedBy === undefined
+      ? undefined
+      : new ManagedIdleExit(
+          sessionManager,
+          connectionRegistry,
+          opts.managedIdleExitMs ?? DEFAULT_MANAGED_IDLE_EXIT_MS,
+          requestClose,
+        );
   const conversations = new ConversationService(core);
   const sessionRating = createServerSessionRating(core, { debugEndpoints, logger });
   core.accessor.get(IGlobalSearchService);
@@ -410,16 +450,22 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     logger,
     conversations,
   });
+  notifyHosts = () => {
+    if (hostNotifyTimer !== undefined) clearTimeout(hostNotifyTimer);
+    hostNotifyTimer = setTimeout(() => {
+      hostNotifyTimer = undefined;
+      broadcaster.publishHostChanged(hostSnapshots(hostBridges));
+    }, 10);
+    hostNotifyTimer.unref?.();
+  };
 
   const configService = core.accessor.get(IConfigService);
   const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {
-    const warnings: ConfigWarningItem[] = diagnostics
-      .filter((diagnostic) => diagnostic.severity === 'warning')
-      .map((diagnostic) =>
-        diagnostic.domain === undefined
-          ? { message: diagnostic.message }
-          : { domain: diagnostic.domain, message: diagnostic.message },
-      );
+    const warnings: ConfigWarningItem[] = diagnostics.map((diagnostic) =>
+      diagnostic.domain === undefined
+        ? { message: diagnostic.message }
+        : { domain: diagnostic.domain, message: diagnostic.message },
+    );
     core.accessor.get(IEventService).publish(new ConfigWarning({ payload: { warnings } }));
   };
   const configWarningSubscription = configService.onDidChangeDiagnostics(publishConfigWarnings);
@@ -439,7 +485,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   });
   void configService.ready
     .then(() => {
-      if (configService.diagnostics().some((diagnostic) => diagnostic.severity === 'warning')) {
+      if (configService.diagnostics().length > 0) {
         publishConfigWarnings(configService.diagnostics());
       }
     })
@@ -484,35 +530,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     });
   }
 
-  await registerOpenApi();
-
-  await registerApiV1Routes(app, core, {
-    serverVersion,
-    hostIdentity: opts.hostIdentity,
-    debugEndpoints,
-    enableShutdown,
-    guiStore,
-    remoteControl: {
-      service: remoteControlManager,
-      devices: remoteControlDevices,
-      homeDir,
-      staticEnableError:
-        exposureClass !== 'loopback'
-          ? 'Remote Control requires a loopback host.'
-          : opts.disableAuth === true
-            ? 'Remote Control cannot be combined with --dangerous-bypass-auth.'
-            : undefined,
-    },
-    onShutdown: () => {
-      void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
-    },
-    connectionRegistry,
-    conversations,
-    sessionRating,
-    dangerousBypassAuth: opts.disableAuth === true,
-    webTitle: opts.webTitle,
-  });
-
   const wssV1 = registerWsV1(core, {
     registry: connectionRegistry,
     broadcaster,
@@ -528,7 +545,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
     const isDebug = url === WS_DEBUG_PATH || url.startsWith(`${WS_DEBUG_PATH}?`);
     const wss = isV1 ? wssV1 : isDebug ? wssDebug : undefined;
-    if (wss === undefined) {
+    const hostProxyTarget = matchHostProxyPath(url);
+    if (wss === undefined && hostProxyTarget === undefined) {
       socket.destroy();
       return;
     }
@@ -590,6 +608,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
 
     (socket as Socket).setNoDelay(true);
+    if (wss === undefined) {
+      await proxyHostWebSocket(hostBridges, hostProxyTarget!, req, socket, head);
+      return;
+    }
+    if (isV1) hostBridges.activate();
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   };
   app.server.on('upgrade', (req, socket, head) => {
@@ -605,28 +628,76 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     await broadcaster.close();
   });
 
-  app.get('/asyncapi.json', async (_req, reply) => {
-    return reply
-      .type('application/json')
-      .send(createAsyncApiDocument({ version: serverVersion, serverHost: host }));
-  });
-
-  app.get('/openapi.json', async (_req, reply) => {
-    const openApiDocument = (app as unknown as { swagger(): unknown }).swagger();
-    return reply.type('application/json').send(openApiDocument);
-  });
-
-  if (opts.webAssetsDir !== undefined) {
-    await registerWebAssetRoutes(app, opts.webAssetsDir);
-  }
-
   try {
-    await listenWithPortRetry({
-      listen: (h, p) => app.listen({ host: h, port: p }),
-      host,
-      port,
-      logger,
+    remoteEnvironmentProvider = await environments.addProvider(
+      new RemoteEnvironmentProviderFactory({
+        clientVersion: serverVersion,
+      }),
+    );
+
+    await registerOpenApi();
+
+    await registerApiV1Routes(app, core, {
+      serverId: registration.serverId,
+      serverVersion,
+      hostIdentity: opts.hostIdentity,
+      debugEndpoints,
+      enableShutdown,
+      remoteControl: {
+        service: remoteControlManager,
+        devices: remoteControlDevices,
+        homeDir,
+        staticEnableError:
+          opts.socketPath !== undefined
+            ? 'Remote Control requires a TCP listener.'
+            : exposureClass !== 'loopback'
+              ? 'Remote Control requires a loopback host.'
+              : opts.disableAuth === true
+                ? 'Remote Control cannot be combined with --dangerous-bypass-auth.'
+                : undefined,
+      },
+      onShutdown: requestClose,
+      drainIdleSessions,
+      hostBridges,
+      conversations,
+      sessionRating,
+      dangerousBypassAuth: opts.disableAuth === true,
+      managedHost: opts.managedBy === 'ensure-daemon',
+      webTitle: opts.webTitle,
     });
+
+    registerHostProxyRoutes(app, hostBridges);
+
+    app.get('/asyncapi.json', async (_req, reply) => {
+      return reply
+        .type('application/json')
+        .send(createAsyncApiDocument({ version: serverVersion, serverHost: host }));
+    });
+
+    app.get('/openapi.json', async (_req, reply) => {
+      const openApiDocument = (app as unknown as { swagger(): unknown }).swagger();
+      return reply.type('application/json').send(openApiDocument);
+    });
+
+    if (opts.webAssetsDir !== undefined) {
+      registerWebAssetRoutes(app, opts.webAssetsDir);
+    }
+
+    if (opts.socketPath !== undefined) {
+      await app.ready();
+      rpcServer = await startUnixRpcServer(opts.socketPath, { app, wssV1, wssDebug });
+      boundPort = 0;
+    } else {
+      await listenWithPortRetry({
+        listen: (h, p) => app.listen({ host: h, port: p }),
+        host,
+        port,
+        logger,
+      });
+      const address = app.server.address();
+      boundPort = typeof address === 'object' && address !== null ? address.port : port;
+      await registration.update({ port: boundPort });
+    }
   } catch (error) {
     try {
       await close();
@@ -635,10 +706,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     throw error;
   }
 
-  const address = app.server.address();
-  boundPort = typeof address === 'object' && address !== null ? address.port : port;
-  await registration.update({ port: boundPort });
-
   void modelCatalogRefreshScheduler.start().catch((error) => {
     logger.warn(
       { err: error instanceof Error ? error.message : String(error) },
@@ -646,11 +713,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     );
   });
   sessionIdleReaper.start();
+  managedIdleExit?.start();
 
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);
 
-  return { app, core, connectionRegistry, authTokenService, host, port: boundPort, close };
+  return { app, core, connectionRegistry, authTokenService, hostBridges, host, port: boundPort, close };
 }
 
 export const PORT_RETRY_LIMIT = 100;

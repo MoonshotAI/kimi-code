@@ -1,15 +1,19 @@
 import {
   BUILTIN_SLASH_COMMANDS,
   findBuiltInSlashCommand,
+  findVisibleBuiltInSlashCommand,
+  getVisibleBuiltInSlashCommands,
+  isSlashCommandVisible,
   parseSlashInput,
   resolveSlashCommandAvailability,
+  setExperimentalFeatures,
   addDirArgumentCompletions,
   sortSlashCommands,
   swarmArgumentCompletions,
   towerArgumentCompletions,
   type KimiSlashCommand,
 } from '#/tui/commands/index';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 describe('parseSlashInput', () => {
   it('parses command names and trimmed args', () => {
@@ -153,7 +157,6 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(goal!, 'status report')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(goal!, 'pause the rollout')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(goal!, 'cancel the migration')).toBe('idle-only');
-    // `clear` is no longer a subcommand; it parses as an objective -> idle-only.
     expect(resolveSlashCommandAvailability(goal!, 'clear')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(goal!, 'resume')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(goal!, 'Ship feature X')).toBe('idle-only');
@@ -173,6 +176,7 @@ describe('built-in slash command registry', () => {
         'editor',
         'exit',
         'export-debug-zip',
+        'find',
         'fork',
         'help',
         'import-sessions',
@@ -196,6 +200,7 @@ describe('built-in slash command registry', () => {
         'undo',
         'usage',
         'version',
+        'worktree',
         'yolo',
         'auto',
       ]),
@@ -225,6 +230,13 @@ describe('built-in slash command registry', () => {
     expect((command as KimiSlashCommand).experimentalFlag).toBe('tower');
   });
 
+  it('gates worktree behind the worktree experiment and keeps it idle-only', () => {
+    const command = findBuiltInSlashCommand('worktree');
+    expect(command).toBeDefined();
+    expect((command as KimiSlashCommand).experimentalFlag).toBe('worktree');
+    expect(resolveSlashCommandAvailability(command!, '')).toBe('idle-only');
+  });
+
   it('keeps every tower subcommand always available, including objectives', () => {
     const command = findBuiltInSlashCommand('tower');
     expect(command).toBeDefined();
@@ -241,6 +253,35 @@ describe('built-in slash command registry', () => {
     expect(command).toBeDefined();
     expect((command as KimiSlashCommand).experimentalFlag).toBeUndefined();
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
+  });
+
+  describe('command visibility', () => {
+    afterEach(() => {
+      setExperimentalFeatures([]);
+    });
+
+    it('registers find as always available and visible only in fullscreen mode', () => {
+      const command = findBuiltInSlashCommand('find');
+      expect(command).toBeDefined();
+      expect((command as KimiSlashCommand).argumentHint).toBe('[query]');
+      expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
+      expect(isSlashCommandVisible(command!, 'regular')).toBe(false);
+      expect(isSlashCommandVisible(command!, 'fullscreen')).toBe(true);
+    });
+
+    it('filters visible built-in commands by tuiMode and experimental flags', () => {
+      expect(findVisibleBuiltInSlashCommand('find', 'regular')).toBeUndefined();
+      expect(findVisibleBuiltInSlashCommand('find', 'fullscreen')?.name).toBe('find');
+      expect(getVisibleBuiltInSlashCommands('regular').map((command) => command.name)).not.toContain('find');
+      expect(getVisibleBuiltInSlashCommands('fullscreen').map((command) => command.name)).toContain('find');
+
+      expect(findVisibleBuiltInSlashCommand('tower', 'fullscreen')).toBeUndefined();
+      expect(getVisibleBuiltInSlashCommands('fullscreen').map((command) => command.name)).not.toContain('tower');
+
+      setExperimentalFeatures([{ id: 'tower', enabled: true }]);
+      expect(findVisibleBuiltInSlashCommand('tower', 'regular')?.name).toBe('tower');
+      expect(getVisibleBuiltInSlashCommands('regular').map((command) => command.name)).toContain('tower');
+    });
   });
 
 });

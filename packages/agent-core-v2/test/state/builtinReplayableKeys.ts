@@ -17,6 +17,7 @@ import { environmentBindingKey } from '#/agent/environmentBinding/environmentBin
 import { taskKey } from '#/agent/task/taskOps';
 import { toolSelectKey } from '#/agent/toolSelect/toolSelectOps';
 import { userToolKey } from '#/agent/userTool/userToolOps';
+import { autoReviewAncestryKey, autoReviewApprovedCallsKey } from '#/features/autoReview/autoReviewEvents';
 import { fileHistoryKey } from '#/features/fileHistory/fileHistoryOps';
 import { planKey } from '#/features/plan/planOps';
 import { swarmKey, swarmReminderDeliveredKey } from '#/features/swarm/swarmOps';
@@ -39,6 +40,8 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   taskKey,
   toolSelectKey,
   userToolKey,
+  autoReviewAncestryKey,
+  autoReviewApprovedCallsKey,
   fileHistoryKey,
   planKey,
   swarmKey, swarmReminderDeliveredKey,

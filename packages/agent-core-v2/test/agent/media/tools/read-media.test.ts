@@ -1,19 +1,20 @@
 import * as posixPath from 'node:path/posix';
 import { Readable } from 'node:stream';
 
-import type { ModelCapability } from '@moonshot-ai/core/llm/request';
+import type { ModelCapability, LlmFiles } from '@moonshot-ai/core/llm/request';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { Emitter } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import { OrderedHookSlot } from '#/hooks';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import type { Environment } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID, type Environment } from '#/environment/environment';
+import type { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { stubAgentEnvironment } from '../../../environment/stubs';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import {
@@ -21,7 +22,7 @@ import {
   type ReadMediaFileInput,
 } from '#/agent/tools/read-media-file/read-media-file';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
-import type { VideoUploader } from '#/llm-adapter/model/media';
+import type { VideoUploader } from '#/provider-catalog/model/media';
 import {
   MAX_IMAGE_DECODE_BYTES,
   setConfiguredReadImageByteBudget,
@@ -34,8 +35,6 @@ import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
 import type { IFileService } from '#/app/file/fileService';
 import type { IBlobStore } from '#/persistence/interface/blobStore';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
-import type { LlmFiles } from '@moonshot-ai/core/llm/request';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
@@ -49,11 +48,12 @@ import {
 } from '#/tool/toolContract';
 import { EventBusService } from '#/app/event/eventBusService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
-import type { Model } from '#/llm-adapter/model/catalog';
+import type { Model } from '#/provider-catalog/model/catalog';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { WorkspaceConfig } from '#/tool/path-access';
 import { sniffImageDimensions } from '#/agent/media/file-type';
 import { stubAgentContext } from '../../agentContext/stubs';
+import { ProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
 
@@ -788,17 +788,24 @@ describe('ReadMediaFileTool', () => {
     };
     const resolver = new AgentMediaResolverService(
       {} as IFileService,
-      { get: async () => undefined, put: async () => {} } as unknown as IBlobStore,
+      { get: async () => undefined, put: async () => {}, has: async () => false } as unknown as IBlobStore,
       telemetry,
       new AgentStateService(),
       store,
       { dispatch: async () => {} } as unknown as IEventDispatcher,
       makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+      {
+        _serviceBrand: undefined,
+        current: { environmentId: LOCAL_ENVIRONMENT_ID },
+        onDidChange: Event.None,
+        bind: () => {
+          throw new Error('unused');
+        },
+      } as IAgentEnvironmentBindingService,
     );
     const resolved = await resolver.resolve(
-      [{ role: 'user', content: outputParts(result) }],
-      model,
-      new ProtocolAdapterRegistry().request(model).with({ endpoint: { files } }),
+      [{ role: 'tool', toolCallId: 'call_media', content: outputParts(result) }],
+      new ProviderCatalogService().createRequester(model).with({ endpoint: { files } }).request({ content: { messages: [] } }),
     );
 
     expect(upload).toHaveBeenCalledOnce();
@@ -1235,7 +1242,8 @@ describe('createVideoUploader', () => {
 
     expect(result.isError).toBeFalsy();
     const stored = await store.get(mediaUrl(outputParts(result)[1]));
-    expect(Buffer.from(stored!.bytes)).toEqual(heic);
+    expect(stored!.bytes.byteLength).toBe(heic.byteLength);
+    expect(Buffer.compare(Buffer.from(stored!.bytes), heic)).toBe(0);
   });
 
   it('preserves a HEIC above the former provider inline budget', async () => {
@@ -1247,7 +1255,8 @@ describe('createVideoUploader', () => {
 
     expect(result.isError).toBeFalsy();
     const stored = await store.get(mediaUrl(outputParts(result)[1]));
-    expect(Buffer.from(stored!.bytes)).toEqual(heic);
+    expect(stored!.bytes.byteLength).toBe(heic.byteLength);
+    expect(Buffer.compare(Buffer.from(stored!.bytes), heic)).toBe(0);
   });
 
   it('puts AVIF for capability and format handling during resolution', async () => {

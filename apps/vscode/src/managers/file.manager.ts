@@ -57,7 +57,6 @@ export class FileManager {
     private readonly baselineManager: BaselineManager,
     private broadcast: BroadcastFn,
   ) {
-    // Watch for file changes
     const watcher = vscode.workspace.createFileSystemWatcher("**/*");
 
     const refresh = (uri: vscode.Uri) => {

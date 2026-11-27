@@ -45,6 +45,11 @@ export interface HookResult {
   readonly errored?: boolean;
   readonly structuredOutput?: boolean;
   readonly error?: string;
+  readonly additionalContext?: string;
+  readonly updatedInput?: Record<string, unknown>;
+  readonly invalidUpdatedInput?: string;
+  readonly updatedToolOutput?: string | readonly unknown[];
+  readonly invalidUpdatedToolOutput?: string;
 }
 
 export interface HookBlockDecision {

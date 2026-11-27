@@ -1,22 +1,21 @@
-/**
- * Compile-time parity checks between klient wire schemas and the engine
- * types they mirror. Plain `.ts` (not `.test.ts`) — vitest must not pick it
- * up; `tsc -p tsconfig.json --noEmit` is the check.
- *
- * Wire shapes are reached through indexed access on the engine service
- * interfaces, so klient needs no direct dependency for most of them.
- */
-
 import type { z } from 'zod';
 
 import type { AgentContextData } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import type { IAgentEnvironmentBindingService } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBinding';
-import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type {
+  TurnEndReason,
+  AssistantDeltaEvent,
+  ThinkingDeltaEvent,
+  TurnStartedEvent,
+} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { SessionActivityState } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
-import type { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
-import type { PromptLaunchResult, SteerResult } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import type {
+  IAgentLoopService,
+  PromptLaunchResult,
+  SteerResult,
+} from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/message';
@@ -51,7 +50,7 @@ import type {
   CreateSessionOptions,
   ForkSessionOptions,
   ResumeSessionOptions,
-} from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
+} from '@moonshot-ai/agent-core-v2/project/sessionLifecycle/sessionLifecycle';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -100,8 +99,7 @@ import type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import type { ModelRecord } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
-import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import type { ModelRecord } from '@moonshot-ai/agent-core-v2/provider-catalog/model/model';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import type {
   ImportCustomRegistryOptions,
@@ -129,17 +127,15 @@ import type {
   PluginUpdateStatus,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
+import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/provider-catalog/provider/provider';
 import type {
   SessionListQuery,
   SessionSummary,
 } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
 import type {
-  Workspace,
-  WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
-// Test-only: the v1 wire event types now live in agent-core-v2; importing
-// them here (never in `src/`) strengthens parity for the agent event stream.
+  Project,
+  ProjectUpdate,
+} from '@moonshot-ai/agent-core-v2/app/project/project';
 import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
   CompactionBlockedEvent,
@@ -147,11 +143,6 @@ import type {
   CompactionCompletedEvent,
   CompactionStartedEvent,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
-import type {
-  AssistantDeltaEvent,
-  ThinkingDeltaEvent,
-  TurnStartedEvent,
-} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { TurnEndedEvent } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type {
   PromptAbortedEvent,
@@ -338,15 +329,14 @@ import {
 
 import type { AssertWire, MutableDeep } from './helpers/typeAssert.js';
 import type { AgentFacade, AgentSteerEntry } from '../src/core/facade/agent.js';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
-/** One-directional: the engine type must be assignable TO the schema's infer. */
 type AssertEngineToWire<TSchema extends z.ZodType, TEngine> = [MutableDeep<TEngine>] extends [
   z.infer<TSchema>,
 ]
   ? true
   : never;
 
-/** One-directional: the schema's infer must be assignable TO the engine type. */
 type AssertWireToEngine<TSchema extends z.ZodType, TEngine> = [z.infer<TSchema>] extends [
   MutableDeep<TEngine>,
 ]
@@ -360,7 +350,6 @@ const _registryImportResult: AssertWire<
   typeof importCustomRegistryResultSchema, ImportCustomRegistryResult
 > = true;
 
-// Wire shapes, derived from the engine interfaces.
 type OAuthFlowStart = Awaited<ReturnType<IOAuthService['startLogin']>>;
 type OAuthFlowSnapshot = NonNullable<ReturnType<IOAuthService['getFlow']>>;
 type OAuthLoginCancelResponse = Awaited<ReturnType<IOAuthService['cancelLogin']>>;
@@ -368,28 +357,19 @@ type OAuthLogoutResponse = Awaited<ReturnType<IOAuthService['logout']>>;
 type RefreshOAuthProviderModelsResponse = Awaited<
   ReturnType<IOAuthService['refreshOAuthProviderModels']>
 >;
-/** String-enum value union (`'user' | 'memory'`). */
 type ConfigTargetValues = `${ConfigTarget}`;
 
-// sessions.ts
 const _sessionSummary: AssertWire<typeof sessionSummarySchema, SessionSummary> = true;
 const _sessionListQuery: AssertWire<typeof sessionListQuerySchema, SessionListQuery> = true;
 
-// workspaces.ts
-const _workspace: AssertWire<typeof workspaceSchema, Workspace> = true;
-const _workspaceUpdate: AssertWire<typeof workspaceUpdateSchema, WorkspaceUpdate> = true;
+const _workspace: AssertWire<typeof workspaceSchema, Project> = true;
+const _workspaceUpdate: AssertWire<typeof workspaceUpdateSchema, ProjectUpdate> = true;
 
-// config.ts
-// One-directional: the engine declares the `ConfigInspectValue` keys as
-// required with `| undefined` values, while the wire schema marks them
-// `.optional()`; optional → required is not assignable, so only the
-// engine → wire direction holds.
 const _configInspectValue: AssertEngineToWire<typeof configInspectValueSchema, ConfigInspectValue> =
   true;
 const _configDiagnostic: AssertWire<typeof configDiagnosticSchema, ConfigDiagnostic> = true;
 const _configTarget: AssertWire<typeof configTargetSchema, ConfigTargetValues> = true;
 
-// capabilities.ts
 const _capabilityStep: AssertWire<typeof capabilityStepSchema, CapabilityStep> = true;
 const _capabilityInstallProgress: AssertWire<
   typeof capabilityInstallProgressSchema,
@@ -397,10 +377,8 @@ const _capabilityInstallProgress: AssertWire<
 > = true;
 const _capabilityStatus: AssertWire<typeof capabilityStatusSchema, CapabilityStatus> = true;
 
-// providers.ts
 const _providerConfig: AssertWire<typeof providerConfigSchema, ProviderConfig> = true;
 
-// auth.ts
 const _oAuthFlowStart: AssertWire<typeof oAuthFlowStartSchema, OAuthFlowStart> = true;
 const _oAuthFlowSnapshot: AssertWire<typeof oAuthFlowSnapshotSchema, OAuthFlowSnapshot> = true;
 const _oAuthLoginCancelResponse: AssertWire<
@@ -415,26 +393,20 @@ const _refreshOAuthProviderModelsResponse: AssertWire<
   RefreshOAuthProviderModelsResponse
 > = true;
 
-// flags.ts
 const _experimentalFeatureState: AssertWire<
   typeof experimentalFeatureStateSchema,
   ExperimentalFeatureState
 > = true;
 
-// hostFs.ts
 const _fsBrowseResponse: AssertWire<typeof fsBrowseResponseSchema, FsBrowseResponse> = true;
 const _fsHomeResponse: AssertWire<typeof fsHomeResponseSchema, FsHomeResponse> = true;
 
-// files.ts (`fileGetResultSchema` has no engine counterpart — the wire
-// adaptation replaces `GetResult.stream` with base64 `data`).
 const _fileMeta: AssertWire<typeof fileMetaSchema, FileMeta> = true;
 const _fileSaveOptions: AssertWire<typeof fileSaveOptionsSchema, SaveOptions> = true;
 
-// catalog.ts / providerDiscovery.ts — protocol wire shapes derived through the
-// catalog and discovery service interfaces.
-type ModelCatalogItem = Awaited<ReturnType<IModelCatalog['listModels']>>[number];
-type ProviderCatalogItem = Awaited<ReturnType<IModelCatalog['listProviders']>>[number];
-type SetDefaultModelResponse = Awaited<ReturnType<IModelCatalog['setDefaultModel']>>;
+type ModelCatalogItem = Awaited<ReturnType<IProviderCatalogService['listModels']>>[number];
+type ProviderCatalogItem = Awaited<ReturnType<IProviderCatalogService['listProviders']>>[number];
+type SetDefaultModelResponse = Awaited<ReturnType<IProviderCatalogService['setDefaultModel']>>;
 type RefreshProviderModelsOptions = NonNullable<
   Parameters<IProviderDiscoveryService['refreshProviderModels']>[0]
 >;
@@ -457,10 +429,8 @@ const _refreshProviderModelsResponse: AssertWire<
   RefreshProviderModelsResponse
 > = true;
 
-// models.ts
 const _modelConfig: AssertWire<typeof modelConfigSchema, ModelRecord> = true;
 
-// plugins.ts
 const _pluginSummary: AssertWire<typeof pluginSummarySchema, PluginSummary> = true;
 const _pluginInfo: AssertWire<typeof pluginInfoSchema, PluginInfo> = true;
 const _pluginManifest: AssertWire<typeof pluginManifestSchema, PluginManifest> = true;
@@ -484,11 +454,6 @@ const _setPluginMcpServerEnabledInput: AssertWire<
 const _removePluginInput: AssertWire<typeof removePluginInputSchema, RemovePluginInput> = true;
 const _getPluginInfoInput: AssertWire<typeof getPluginInfoInputSchema, GetPluginInfoInput> = true;
 
-// global/mcpManagement.ts — the `McpServerConfig | McpServerConfigView` union
-// a managed server's `config` carries (full for mutable entries, redacted for
-// read-only ones) is mirrored by one schema covering both shapes; the
-// inspection's `config` is always the redacted view, and both assignability
-// directions hold against either engine type.
 const _mcpServerSource: AssertWire<typeof mcpServerSourceSchema, McpServerSource> = true;
 const _mcpRegistryPluginOrigin: AssertWire<
   typeof mcpRegistryPluginOriginSchema,
@@ -528,9 +493,6 @@ const _mcpServerAuthFlowHandle: AssertWire<
   McpServerAuthFlowHandle
 > = true;
 
-// env.ts has no named schemas; `platform` narrows to `NodeJS.Platform` in the
-// engine — assert the bootstrap properties are all strings instead. The
-// object-typed `clientIdentity` is intentionally not in this list.
 type _bootstrapStringProps = AssertStringProps<
   Pick<
     IBootstrapService,
@@ -550,9 +512,6 @@ type _bootstrapStringProps = AssertStringProps<
 type AssertStringProps<T> = T extends Record<string, string> ? true : never;
 const _envProps: _bootstrapStringProps = true;
 
-// ── session scope ───────────────────────────────────────────────────────────
-
-// session/metadata.ts
 const _sessionMeta: AssertWire<typeof sessionMetaSchema, SessionMeta> = true;
 const _agentMeta: AssertWire<typeof agentMetaSchema, AgentMeta> = true;
 const _sessionMetaPatch: AssertWire<typeof sessionMetaPatchSchema, SessionMetaPatch> = true;
@@ -561,7 +520,6 @@ const _sessionMetadataChangedEvent: AssertWire<
   SessionMetadataChangedEvent
 > = true;
 
-// session/lifecycle.ts
 const _createSessionOptions: AssertWire<typeof createSessionOptionsSchema, CreateSessionOptions> =
   true;
 const _forkSessionOptions: AssertWire<typeof forkSessionOptionsSchema, ForkSessionOptions> = true;
@@ -571,26 +529,17 @@ const _createChildSessionOptions: AssertWire<
   typeof createChildSessionOptionsSchema,
   CreateChildSessionOptions
 > = true;
-// One-directional: the wire handle is `z.looseObject` — the in-process
-// `ISessionScopeHandle` carries an `accessor` and `dispose()` that JSON
-// drops, so only the engine → wire direction holds.
 const _handleWire: AssertEngineToWire<typeof handleWireSchema, ISessionScopeHandle> = true;
 
-// session/interaction.ts
 const _interaction: AssertWire<typeof interactionSchema, Interaction> = true;
 const _interactionResolution: AssertWire<
   typeof interactionResolutionSchema,
   InteractionResolution
 > = true;
 
-// session/approval.ts
-// One-directional: `display` is the protocol `ToolInputDisplay` union (huge)
-// and crosses the wire as `unknown`; the wire schema cannot be assignable
-// back to the engine type.
 const _approvalRequest: AssertEngineToWire<typeof approvalRequestSchema, ApprovalRequest> = true;
 const _approvalResponse: AssertWire<typeof approvalResponseSchema, ApprovalResponse> = true;
 
-// session/question.ts
 const _questionRequest: AssertWire<typeof questionRequestSchema, QuestionRequest> = true;
 const _questionItem: AssertWire<typeof questionItemSchema, QuestionItem> = true;
 const _questionOption: AssertWire<typeof questionOptionSchema, QuestionOption> = true;
@@ -598,10 +547,8 @@ const _questionAnswers: AssertWire<typeof questionAnswersSchema, QuestionAnswers
 const _questionResponse: AssertWire<typeof questionResponseSchema, QuestionResponse> = true;
 const _questionResult: AssertWire<typeof questionResultSchema, QuestionResult> = true;
 
-// session/skills.ts
 const _skillSummary: AssertWire<typeof skillSummarySchema, SkillSummary> = true;
 
-// session/title.ts
 const _generateTitleOutput: AssertWire<
   (typeof sessionTitleContract)['generateTitle']['output'],
   Awaited<ReturnType<ISessionTitleService['generateTitle']>>
@@ -627,15 +574,9 @@ const _cancelPromptPredictionOutput: AssertWire<
   ReturnType<ISessionPromptPredictionService['cancel']>
 > = true;
 
-// session/activity.ts
 const _sessionActivityState: AssertWire<typeof sessionActivityStateSchema, SessionActivityState> =
   true;
 
-// ── agent scope (services.ts / schemas.ts) ──────────────────────────────────
-// Payload/result types are derived from the domain service interfaces the
-// facade calls, so the assertions track the exact methods the contract
-// mirrors; facade-only payload shapes (cancel / setPermission / plan / task /
-// command) derive from the `AgentFacade` input types.
 type ActivateSkillPayload = Parameters<IAgentSkillService['activate']>[0];
 type PromptWithSkillsPayload = Parameters<AgentFacade['promptWithSkills']>[0];
 type PromptSkillActivation = PromptWithSkillsPayload['skills'][number];
@@ -661,16 +602,11 @@ type GetTaskOutputPayload = Parameters<AgentFacade['getTaskOutput']>[0];
 
 const _emptyPayload: AssertWire<typeof emptyPayloadSchema, EmptyPayload> = true;
 const _promptPart: AssertWire<typeof promptPartSchema, PromptPart> = true;
-// One-directional (wire → engine): the engine's `PromptPayload.input` accepts
-// the full `ContentPart` union (also think/audio parts); the wire mirrors the
-// `PromptPart` subset clients may send, so the reverse direction fails.
 const _promptPayload: AssertWireToEngine<typeof promptPayloadSchema, PromptPayload> = true;
 const _promptSkillActivation: AssertWire<
   typeof promptSkillActivationSchema,
   PromptSkillActivation
 > = true;
-// Same one-directional rule as `promptPayload`: the engine's `input` accepts
-// the full `ContentPart` union; the wire mirrors the `PromptPart` subset.
 const _promptWithSkillsPayload: AssertWireToEngine<
   typeof promptWithSkillsPayloadSchema,
   PromptWithSkillsPayload
@@ -701,8 +637,6 @@ const _setPermissionPayload: AssertWire<typeof setPermissionPayloadSchema, SetPe
   true;
 const _tokenUsage: AssertWire<typeof tokenUsageSchema, TokenUsage> = true;
 const _usageStatus: AssertWire<typeof usageStatusSchema, UsageStatus> = true;
-// One-directional: `history` entries are full `ContextMessage`s (deep
-// `Message`/`Tool`/`PromptOrigin` unions) mirrored as `unknown`.
 const _agentContextData: AssertEngineToWire<typeof agentContextDataSchema, AgentContextData> = true;
 const _agentCommandInfo: AssertWire<typeof agentCommandInfoSchema, AgentCommandInfo> = true;
 const _environmentBinding: AssertWire<typeof environmentBindingSchema, EnvironmentBinding> = true;
@@ -710,23 +644,15 @@ const _runCommandPayload: AssertWire<typeof runCommandPayloadSchema, RunCommandP
 const _planData: AssertWire<typeof planDataSchema, PlanData> = true;
 const _cancelPlanPayload: AssertWire<typeof cancelPlanPayloadSchema, CancelPlanPayload> = true;
 const _getTasksPayload: AssertWire<typeof getTasksPayloadSchema, GetTasksPayload> = true;
-// The wire task union mirrors the protocol `TaskInfo`; the engine's
-// declaration-merged `AgentTaskInfo` is structurally identical but depends on
-// tool-module augmentation, so parity is pinned to the protocol type.
 const _agentTaskInfo: AssertWire<typeof agentTaskInfoSchema, TaskInfo> = true;
 const _stopTaskPayload: AssertWire<typeof stopTaskPayloadSchema, StopTaskPayload> = true;
 const _getTaskOutputPayload: AssertWire<typeof getTaskOutputPayloadSchema, GetTaskOutputPayload> =
   true;
 
-// agent/services.ts (mcp / fullCompaction)
 const _mcpServerEntry: AssertWire<typeof mcpServerEntrySchema, McpServerEntry> = true;
 const _fullCompactionInput: AssertWire<typeof fullCompactionInputSchema, FullCompactionInput> =
   true;
 
-// ── agent scope (events.ts) ─────────────────────────────────────────────────
-// Parity against the protocol event types (the stream carries flat
-// `{ type, ... }` events; schemas keep the `type` literal). One-directional
-// where a field is mirrored as `unknown`.
 const _turnStartedEvent: AssertEngineToWire<typeof turnStartedEventSchema, TurnStartedEvent> = true;
 const _turnEndedEvent: AssertEngineToWire<typeof turnEndedEventSchema, TurnEndedEvent> = true;
 const _assistantDeltaEvent: AssertWire<typeof assistantDeltaEventSchema, AssistantDeltaEvent> =
@@ -759,7 +685,3 @@ const _compactionCompletedEvent: AssertWire<
   CompactionCompletedEvent
 > = true;
 const _warningEvent: AssertWire<typeof warningEventSchema, WarningEvent> = true;
-// No parity assertions for `errorEventSchema`, `permissionApproval*Schema`,
-// and `agentStatusUpdatedEventSchema`: they are deliberately `z.looseObject`s
-// (index signature breaks both-ways assignability) — `permission.approval.*`
-// is not part of the protocol event union at all.

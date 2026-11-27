@@ -1,20 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
 import { createUserMessage, extractText, type ToolCall } from '@moonshot-ai/core/llm/message';
+import type { LoopToolExecutor } from '@moonshot-ai/core/loop/create-loop';
 import {
   loopProjection,
   toLoopRecord,
   type Loop,
   type LoopEmitted,
-  type LoopLlmRequester,
+  type FullLoopLlmRequester,
   type LoopRecord,
 } from '@moonshot-ai/core/loop/index';
 import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
-import type { ToolExecuteInput, ToolResult } from '@moonshot-ai/core/tool/executor';
+import { textToolContent, type ToolReturn } from '#/tool/executor';
 import { executorFrom, successfulExecutor } from './executor';
 
-function requester(responses: MockProviderResponse[]): LoopLlmRequester {
+function requester(responses: MockProviderResponse[]): FullLoopLlmRequester {
   return createMockProviderRequester(() => {
     const next = responses.shift();
     if (next === undefined) throw new Error('boom');
@@ -66,7 +67,7 @@ describe('loop record', () => {
     expect((await loop.runTurn(prompt('hello'))).type).toBe('done');
     expect((await loop.runTurn(prompt('again'))).type).toBe('failed');
     const types = records.map((item) => item.type);
-    expect(types).not.toContain('llm.streaming.part');
+    expect(types).not.toContain('llm.delta.part');
     expect(types).not.toContain('prompt.submitted');
     const ended = records.findLast((item) => item.type === 'turn.ended');
     expect(ended).toMatchObject({ outcome: { type: 'failed', error: { message: 'boom' } } });
@@ -85,16 +86,17 @@ describe('loop record', () => {
     });
     expect(restored.state.messages).toEqual(loop.state.messages);
 
-    let settleBackground: ((result: ToolResult) => void) | undefined;
-    let settleSlow: ((result: ToolResult) => void) | undefined;
-    const executor = executorFrom(['bg', 'slow'], ({ toolCall, detach }: ToolExecuteInput) => {
-        if (toolCall.name === 'bg') {
-          detach?.('bg ack');
-          return new Promise<ToolResult>((resolve) => {
+    let settleBackground: ((result: ToolReturn) => void) | undefined;
+    let settleSlow: ((result: ToolReturn) => void) | undefined;
+    const executor = executorFrom(['bg', 'slow'], (context) => {
+        if (context.call.name === 'bg') {
+          context.onDetach(() => ({ content: textToolContent('bg ack') }));
+          context.detach('bg ack');
+          return new Promise<ToolReturn>((resolve) => {
             settleBackground = resolve;
           });
         }
-        return new Promise<ToolResult>((resolve) => {
+        return new Promise<ToolReturn>((resolve) => {
           settleSlow = resolve;
         });
       },
@@ -114,10 +116,16 @@ describe('loop record', () => {
     expect(crashed.unfinished).toEqual({ turnId: 2, trigger: 'normal', step: 1, stepUnfinished: true, appended: true });
     expect(crashed.nextTurnId).toBe(3);
 
+    const turnEndEvents: Extract<LoopEmitted, { type: 'turn.ended' }>[] = [];
+    working.subscribe((event) => {
+      if (event.type === 'turn.ended') turnEndEvents.push(event);
+    });
+    let closingIdle: Promise<void> | undefined;
     let closes: { first: Promise<void>; second: Promise<void> } | undefined;
     const stop = working.subscribe((event) => {
       if (event.type !== 'prompt.reminded') return;
       stop();
+      closingIdle = working.waitForIdle();
       closes = { first: working.close(), second: working.close() };
     });
     working.remind(prompt('reentrant close'));
@@ -126,6 +134,8 @@ describe('loop record', () => {
     settleSlow?.({ content: [{ type: 'text', text: 'slow stopped' }] });
     settleBackground?.({ content: [{ type: 'text', text: 'background stopped' }] });
     await first;
+    await closingIdle;
+    expect(turnEndEvents.every((ended) => ended.continuation === undefined)).toBe(true);
     const closed = fold([...records, ...live]);
     expect(closed.unfinished).toBeUndefined();
     expect(closed.turns.at(-1)).toMatchObject({ turnId: 2, outcome: { type: 'aborted', reason: { reason: 'closed' } } });
@@ -143,9 +153,17 @@ describe('loop record', () => {
     const recovered = createLoop({
       requester: answering,
       executor,
-      input: { messages: crashed.messages, nextTurnId: crashed.nextTurnId, unfinished: crashed.unfinished },
+      input: {
+        messages: crashed.messages,
+        nextTurnId: crashed.nextTurnId,
+        unfinished: crashed.unfinished,
+      },
     });
     expect(recovered.state).toMatchObject({ status: 'interrupted', turn: { id: 2, step: 1 } });
+    const recoveredEnds: Extract<LoopEmitted, { type: 'turn.ended' }>[] = [];
+    recovered.subscribe((event) => {
+      if (event.type === 'turn.ended') recoveredEnds.push(event);
+    });
     const after = record(recovered);
     expect((await recovered.runTurn(prompt('next'))).type).toBe('done');
     expect(after.slice(0, 7).map((item) => item.type)).toEqual([
@@ -159,6 +177,11 @@ describe('loop record', () => {
     ]);
     expect(after[4]).toMatchObject({ turnId: 2, outcome: { type: 'aborted', reason: { reason: 'crashed' } } });
     expect(after[6]).toMatchObject({ type: 'turn.started' });
+    await recovered.waitForIdle();
+    expect(recoveredEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([
+      [2, 'turn'],
+      [3, 'none'],
+    ]);
     const resumed = fold([...prefix, ...after]);
     expect(resumed.unfinished).toBeUndefined();
     expect(resumed.nextTurnId).toBe(4);
@@ -169,5 +192,71 @@ describe('loop record', () => {
       [2, 'aborted'],
       [3, 'done'],
     ]);
+  });
+
+  it('force abort settles only unfinished foreground tool calls and ignores late results', async () => {
+    let settleStuck!: (result: ToolReturn) => void;
+    let stuckCompletion: Promise<unknown> | undefined;
+    const delegated = executorFrom(['fast', 'stuck'], (context) => {
+      if (context.call.name === 'fast') {
+        return Promise.resolve({ content: textToolContent('fast ok') });
+      }
+      return new Promise<ToolReturn>((resolve) => {
+        settleStuck = resolve;
+      });
+    });
+    const executor: LoopToolExecutor = {
+      execute: (toolCall, context) => {
+        const handler = delegated.execute(toolCall, context);
+        if (toolCall.name === 'stuck') stuckCompletion = handler.wait();
+        return handler;
+      },
+    };
+    const loop = createLoop({
+      requester: requester([done('', [call('call-fast', 'fast'), call('call-stuck', 'stuck')])]),
+      executor,
+    });
+    const events: LoopEmitted[] = [];
+    loop.subscribe((event) => events.push(event));
+    const fastEnded = once(loop, (event) => event.type === 'tool.ended' && event.toolCallId === 'call-fast');
+    const stuckStarted = once(loop, (event) => event.type === 'tool.started' && event.toolCall.id === 'call-stuck');
+    const running = loop.runTurn(prompt('work'));
+    await Promise.all([fastEnded, stuckStarted]);
+
+    loop.abort('graceful');
+    loop.abort('force');
+
+    await expect(running).resolves.toMatchObject({ type: 'aborted', reason: 'graceful' });
+    await loop.waitForIdle();
+    expect(events.filter((event) => event.type === 'tool.ended' && event.toolCallId === 'call-fast')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'tool.ended' && event.toolCallId === 'call-stuck')).toHaveLength(1);
+    expect(events.find((event) => event.type === 'tool.ended' && event.toolCallId === 'call-fast')).toMatchObject({
+      outcome: { type: 'succeeded' },
+    });
+    expect(events.find((event) => event.type === 'tool.ended' && event.toolCallId === 'call-stuck')).toMatchObject({
+      outcome: { type: 'aborted', reason: 'graceful' },
+    });
+    expect(events.filter((event) => event.type === 'turn.ended')).toHaveLength(1);
+    const toolMessages = loop.state.messages.filter((message) => message.role === 'tool');
+    expect(toolMessages.map((message) => extractText(message))).toEqual(['fast ok', 'Tool "stuck" was aborted']);
+
+    const terminalEventCount = events.filter((event) =>
+      event.type === 'tool.started' ||
+      event.type === 'tool.ended' ||
+      event.type === 'message.appended' ||
+      event.type === 'step.ended' ||
+      event.type === 'turn.ended'
+    ).length;
+    settleStuck({ content: textToolContent('late result') });
+    await stuckCompletion;
+    await Promise.resolve();
+    expect(events.filter((event) =>
+      event.type === 'tool.started' ||
+      event.type === 'tool.ended' ||
+      event.type === 'message.appended' ||
+      event.type === 'step.ended' ||
+      event.type === 'turn.ended'
+    )).toHaveLength(terminalEventCount);
+    await loop.close();
   });
 });

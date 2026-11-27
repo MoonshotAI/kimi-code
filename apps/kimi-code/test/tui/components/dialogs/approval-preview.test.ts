@@ -63,8 +63,6 @@ describe('ApprovalPreviewViewer', () => {
     expect(viewer.render(100).length).toBe(24);
   });
 
-  // The whole point of the viewer: a long Write file content stays accessible
-  // by paging, not by inflating the approval panel inline.
   it('reveals later lines of a long file_content after PageDown', () => {
     const lines: string[] = [];
     for (let i = 1; i <= 200; i++) lines.push(`row-${String(i)}`);
@@ -77,12 +75,12 @@ describe('ApprovalPreviewViewer', () => {
     expect(initial).toContain('row-1');
     expect(initial).not.toContain('row-150');
 
-    viewer.handleInput('[6~'); // PageDown
+    viewer.handleInput('[6~');
     viewer.handleInput('[6~');
     viewer.handleInput('[6~');
 
     const scrolled = strip(viewer.render(100).join('\n'));
-    expect(scrolled).not.toContain('row-1\n'); // start of file is gone
+    expect(scrolled).not.toContain('row-1\n');
     expect(scrolled).toMatch(/row-\d{2,}/);
   });
 
@@ -104,8 +102,6 @@ describe('ApprovalPreviewViewer', () => {
     expect(atTop).not.toContain('L100');
   });
 
-  // Both esc and ctrl+e close — ctrl+e is the same key that opened the
-  // viewer, so making it a toggle keeps the muscle memory simple.
   it.each([
     ['escape', ''],
     ['ctrl+e', ''],
@@ -159,8 +155,6 @@ describe('ApprovalPreviewViewer', () => {
     expect(text).toContain('after2');
   });
 
-  // Sanity: rendering is a pure slice — repeated render() calls without
-  // input changes produce the same output, no incremental state drift.
   it('renders deterministically across repeated calls', () => {
     const viewer = makeViewer({
       block: { type: 'file_content', path: 'a.ts', content: 'one\ntwo\nthree' },

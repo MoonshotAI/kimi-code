@@ -26,7 +26,7 @@ function walk(dir: string, files: string[] = []): string[] {
         files.push(p);
       }
     }
-  } catch { /* skip */ }
+  } catch {}
   return files;
 }
 

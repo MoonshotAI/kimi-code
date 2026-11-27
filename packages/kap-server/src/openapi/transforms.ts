@@ -21,13 +21,15 @@ import {
   fsStatManyResponseSchema,
   fsStatRequestSchema,
   fsStatResponseSchema,
-} from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
+} from '@moonshot-ai/agent-core-v2/project/projectFs/fs';
 import { z } from 'zod';
 
+import { buildErrorEnvelopeSchema, buildSuccessEnvelopeSchema } from '../middleware/defineRoute';
 import {
   openApiDocumentEnvelopeJsonSchema,
   openApiDocumentJsonSchema,
 } from '../middleware/schema';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   fsOpenInRequestSchema,
   fsOpenInResponseSchema,
@@ -38,9 +40,24 @@ import {
 } from '../protocol/rest-fs';
 import {
   archiveSessionResponseSchema,
-  takeoverSessionResponseSchema,
+  cancelSessionBodySchema,
+  compactSessionBodySchema,
+  compactSessionResponseSchema,
   deleteSessionResponseSchema,
+  forkSessionRequestSchema,
+  forkSessionResponseSchema,
   getSessionResponseSchema,
+  restoreSessionResponseSchema,
+  sessionCancelResponseSchema,
+  sessionContinueResponseSchema,
+  startBtwSessionResponseSchema,
+  takeoverSessionResponseSchema,
+  undoSessionRequestSchema,
+  undoSessionResponseSchema,
+  undoUnavailableDataSchema,
+  waitSessionBodySchema,
+  waitSessionResponseSchema,
+  type SessionAction,
 } from '../protocol/rest-session';
 
 const binarySchema = {
@@ -96,21 +113,72 @@ const fsActionResponseSchema = {
   ],
 } as const;
 
+interface SessionActionDoc {
+  readonly response: z.ZodType;
+  readonly body?: z.ZodType;
+  readonly bodyRequired?: boolean;
+  readonly errorData?: Readonly<Record<number, z.ZodType>>;
+}
+
+type ExperimentalSessionAction = 'predict-prompt' | 'cancel-prompt-prediction';
+
+const sessionActionDocs: Readonly<
+  Record<Exclude<SessionAction, ExperimentalSessionAction>, SessionActionDoc>
+> = {
+  fork: { response: forkSessionResponseSchema, body: forkSessionRequestSchema },
+  compact: { response: compactSessionResponseSchema, body: compactSessionBodySchema },
+  undo: {
+    response: undoSessionResponseSchema,
+    body: undoSessionRequestSchema,
+    bodyRequired: true,
+    errorData: { [ErrorCode.SESSION_UNDO_UNAVAILABLE]: undoUnavailableDataSchema.nullable() },
+  },
+  cancel: { response: sessionCancelResponseSchema, body: cancelSessionBodySchema },
+  wait: { response: waitSessionResponseSchema, body: waitSessionBodySchema },
+  continue: { response: sessionContinueResponseSchema },
+  btw: { response: startBtwSessionResponseSchema },
+  restore: { response: restoreSessionResponseSchema },
+  archive: { response: archiveSessionResponseSchema },
+  delete: { response: deleteSessionResponseSchema },
+  reload: { response: getSessionResponseSchema },
+  takeover: { response: takeoverSessionResponseSchema },
+};
+
 export function transformOpenApiDocument(
   document: Record<string, unknown>,
 ): Record<string, unknown> {
   const paths = asRecord(document['paths']);
   if (paths === undefined) return document;
 
-  patchFileUpload(paths);
+  patchFileUpload(paths, '/api/v1/files', fileUploadMultipartSchema);
+  patchFileUpload(paths, '/api/v1/feedback/{feedback_id}/attachments', {
+    type: 'object',
+    properties: { file: binarySchema },
+    required: ['file'],
+  });
   patchFileDownload(paths);
+  patchKapSpec(paths);
   patchSessionExport(paths);
   patchSessionAction(paths);
+  patchAgentAction(paths);
   patchFsAction(paths);
   patchFsDownload(paths);
   patchWorkspaceFsContent(paths);
 
   return document;
+}
+
+function patchKapSpec(paths: Record<string, unknown>): void {
+  const operation = getOperation(paths, '/api/v1/kap.md', 'get');
+  if (operation === undefined) return;
+  setResponse(operation, '200', {
+    description: 'Built-in Kimi Agent Protocol (KAP) Markdown specification',
+    content: {
+      'text/markdown': {
+        schema: { type: 'string' },
+      },
+    },
+  });
 }
 
 function patchSessionExport(paths: Record<string, unknown>): void {
@@ -133,15 +201,19 @@ function patchSessionExport(paths: Record<string, unknown>): void {
   });
 }
 
-function patchFileUpload(paths: Record<string, unknown>): void {
-  const operation = getOperation(paths, '/api/v1/files', 'post');
+function patchFileUpload(
+  paths: Record<string, unknown>,
+  path: string,
+  schema: Record<string, unknown>,
+): void {
+  const operation = getOperation(paths, path, 'post');
   if (operation === undefined) return;
 
   operation['requestBody'] = {
     required: true,
     content: {
       'multipart/form-data': {
-        schema: fileUploadMultipartSchema,
+        schema,
       },
     },
   };
@@ -176,22 +248,9 @@ function patchSessionAction(paths: Record<string, unknown>): void {
   const operation = asRecord(pathItem?.['post']);
   if (pathItem === undefined || operation === undefined) return;
 
-  projectSessionAction(paths, pathItem, 'archive', 'runSessionArchiveAction', {
-    description: 'Session archive response',
-    content: jsonContent(openApiDocumentEnvelopeJsonSchema(archiveSessionResponseSchema)),
-  });
-  projectSessionAction(paths, pathItem, 'delete', 'runSessionDeleteAction', {
-    description: 'Session delete response',
-    content: jsonContent(openApiDocumentEnvelopeJsonSchema(deleteSessionResponseSchema)),
-  });
-  projectSessionAction(paths, pathItem, 'reload', 'runSessionReloadAction', {
-    description: 'Session reload response',
-    content: jsonContent(openApiDocumentEnvelopeJsonSchema(getSessionResponseSchema)),
-  });
-  projectSessionAction(paths, pathItem, 'takeover', 'runSessionTakeoverAction', {
-    description: 'Session lock takeover response',
-    content: jsonContent(openApiDocumentEnvelopeJsonSchema(takeoverSessionResponseSchema)),
-  });
+  for (const [action, doc] of Object.entries(sessionActionDocs)) {
+    projectSessionAction(paths, pathItem, action, doc);
+  }
   delete paths[internalPath];
 }
 
@@ -199,17 +258,64 @@ function projectSessionAction(
   paths: Record<string, unknown>,
   pathItem: Record<string, unknown>,
   action: string,
-  operationId: string,
-  okResponse: Record<string, unknown>,
+  doc: SessionActionDoc,
 ): void {
   const cloned = cloneRecord(pathItem);
   replacePathParamName(cloned, 'tail', 'session_id');
   const clonedOperation = asRecord(cloned['post']);
   if (clonedOperation !== undefined) {
-    clonedOperation['operationId'] = operationId;
-    setResponse(clonedOperation, '200', okResponse);
+    clonedOperation['operationId'] = `runSession${action.charAt(0).toUpperCase()}${action.slice(1)}Action`;
+    if (doc.body !== undefined) {
+      clonedOperation['requestBody'] = {
+        required: doc.bodyRequired ?? false,
+        content: jsonContent(openApiDocumentJsonSchema(doc.body)),
+      };
+    } else {
+      delete clonedOperation['requestBody'];
+    }
+    const existingResponses = asRecord(clonedOperation['responses']);
+    const existing200 = asRecord(existingResponses?.['200']);
+    const existingContent = asRecord(existing200?.['content']);
+    const existingSchema = asRecord(asRecord(existingContent?.['application/json'])?.['schema']);
+    const existingOneOf = existingSchema?.['oneOf'];
+    const okVariant = openApiDocumentJsonSchema(
+      buildSuccessEnvelopeSchema(doc.response),
+      'output',
+    );
+    const mergedSchema = Array.isArray(existingOneOf) && existingOneOf.length > 1
+      ? { oneOf: [okVariant, ...existingOneOf.slice(1).map((variant) => withErrorData(variant, doc.errorData))] }
+      : okVariant;
+    setResponse(clonedOperation, '200', {
+      description: `Session ${action} response`,
+      content: jsonContent(mergedSchema),
+    });
   }
   paths[`/api/v1/sessions/{session_id}:${action}`] = cloned;
+}
+
+function withErrorData(variant: unknown, errorData: SessionActionDoc['errorData']): unknown {
+  const codeEnum = asRecord(asRecord(asRecord(variant)?.['properties'])?.['code'])?.['enum'];
+  const code: unknown = Array.isArray(codeEnum) ? codeEnum[0] : undefined;
+  if (typeof code !== 'number') return variant;
+  const dataSchema = errorData?.[code];
+  if (dataSchema === undefined) return variant;
+  return openApiDocumentJsonSchema(buildErrorEnvelopeSchema(code, dataSchema), 'output');
+}
+
+function patchAgentAction(paths: Record<string, unknown>): void {
+  const internalPath = '/api/v1/sessions/{session_id}/agents/{tail}';
+  const pathItem = asRecord(paths[internalPath]);
+  const operation = asRecord(pathItem?.['post']);
+  if (pathItem === undefined || operation === undefined) return;
+
+  const cloned = cloneRecord(pathItem);
+  replacePathParamName(cloned, 'tail', 'agent_id');
+  const clonedOperation = asRecord(cloned['post']);
+  if (clonedOperation !== undefined) {
+    clonedOperation['operationId'] = 'runAgentCloseAction';
+  }
+  paths['/api/v1/sessions/{session_id}/agents/{agent_id}:close'] = cloned;
+  delete paths[internalPath];
 }
 
 function patchFsAction(paths: Record<string, unknown>): void {

@@ -72,21 +72,11 @@ export type ParsedGoalCommand =
       readonly kind: 'error';
       readonly message: string;
       readonly severity?: 'error' | 'hint';
-      /** Restore the typed `/goal ...` line into the editor so the input is not lost. */
       readonly restoreInput?: boolean;
     };
 
 const CONTROL_SUBCOMMANDS = new Set(['pause', 'resume', 'cancel']);
 
-/**
- * Parses the deterministic `/goal` command grammar. Reserved subcommands
- * (`pause`/`resume`/`cancel`/`status`/`replace`) are only honored as the first
- * token; use `/goal -- <objective>` to start a goal whose text begins with one
- * of those words. (`cancel` is the single discard action — it removes the
- * current goal.) Stop conditions are expressed in the objective in natural
- * language (e.g. "…or stop after 20 turns"); the model honors them when it
- * self-audits each turn and reports `complete`/`blocked` via UpdateGoal.
- */
 export function parseGoalCommand(rawArgs: string): ParsedGoalCommand {
   const args = rawArgs.trim();
   if (args.length === 0 || args === 'status') return { kind: 'status' };
@@ -106,16 +96,12 @@ export function parseGoalCommand(rawArgs: string): ParsedGoalCommand {
     replace = true;
     index += 1;
   }
-  // `--` ends subcommand parsing so an objective can begin with a reserved word
-  // (e.g. `/goal -- pause the rollout`).
   if (tokens[index] === '--') {
     index += 1;
   }
 
   const objective = tokens.slice(index).join(' ').trim();
   if (objective.length === 0) {
-    // A usage hint, not a failure — shown in the same calm style as the other
-    // "nothing to act on" messages (no goal to pause/resume/cancel).
     return {
       kind: 'error',
       severity: 'hint',
@@ -138,10 +124,6 @@ export async function handleGoalCommand(host: SlashCommandHost, args: string): P
     case 'error':
       if (parsed.severity === 'hint') host.showStatus(parsed.message);
       else host.showError(parsed.message);
-      // Give rejected input back so a long hand-typed objective is not
-      // lost — unless the user already moved on (a newer draft or an
-      // opened panel), which is possible after the async lazy-session
-      // creation on the v2 engine.
       if (parsed.restoreInput === true && canRestoreSubmittedInput(host))
         host.restoreInputText(`/goal ${args}`);
       return;
@@ -192,31 +174,16 @@ function parseNextGoalCommand(tokens: readonly string[]): ParsedGoalCommand {
   return { kind: 'next-add', objective };
 }
 
-/**
- * Live pre-send check for the main editor: when the typed text is a `/goal`
- * create/next command whose objective already exceeds the length limit,
- * returns a warning to show while typing — before anything is submitted or
- * sent to the server. Returns undefined for non-goal input and for control
- * forms (`status`/`pause`/`resume`/`cancel`/`next manage`).
- */
 export function goalObjectiveLengthWarning(text: string): string | undefined {
-  // Submitted text is trimmed before dispatch, so match leading whitespace.
   const trimmed = text.trimStart();
   if (!trimmed.startsWith('/goal')) return undefined;
   const args = trimmed.slice('/goal'.length);
-  // parseSlashInput splits the command name at a literal space only, so a
-  // newline/tab boundary (`/goal⏎…`, `/goalfoo`) is not the goal command.
   if (args.length > 0 && args.charAt(0) !== ' ') return undefined;
   const objective = extractGoalObjective(args);
   if (objective === undefined || objective.length <= MAX_GOAL_OBJECTIVE_LENGTH) return undefined;
   return `Goal objective is too long (${objective.length}/${MAX_GOAL_OBJECTIVE_LENGTH} characters); put long content in a file and reference the file path.`;
 }
 
-/**
- * Mirrors the parse grammar above: strips `next` / `replace` / `--` and
- * returns the objective text, or undefined when the args form a control
- * command that carries no objective.
- */
 function extractGoalObjective(rawArgs: string): string | undefined {
   const args = rawArgs.trim();
   if (args.length === 0 || args === 'status') return undefined;
@@ -385,7 +352,6 @@ export async function createGoal(
   rawArgs?: string,
   options: GoalStartOptions = {},
 ): Promise<boolean> {
-  // A goal must be able to start a model turn; refuse to create one otherwise.
   if (host.state.appState.model.trim().length === 0 || host.session === undefined) {
     host.showError(LLM_NOT_SET_MESSAGE);
     return false;
@@ -453,16 +419,10 @@ async function startGoalWithPermission(
     if (!(await setPermissionForGoal(host, choice))) return;
   }
   const started = await startGoal(host, parsed, options);
-  // The permission switch only exists to run this goal. If creation fails
-  // (e.g. a goal already exists and `replace` was not given), restore the
-  // previous mode so the session is not left more permissive than before.
   if (!started && switched) {
     await setPermissionForGoal(host, previousMode);
     return;
   }
-  // Announce the switch only once the goal actually starts: shown earlier, a
-  // failed creation would leave a stale permissive-mode notice in the
-  // transcript even though the rollback above restored the previous mode.
   if (switched) {
     host.showNotice(`Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[choice]}`);
     host.showStatus(PERMISSION_MODE_DESCRIPTIONS[choice], 'warning');

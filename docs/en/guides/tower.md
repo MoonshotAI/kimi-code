@@ -60,9 +60,11 @@ Tower may snapshot uncommitted and untracked files into worker branches; when cr
 
    If HEAD is detached (no branch is checked out), or you need to change the base, run `/tower <base-branch>` instead, for example `/tower feature/my-objective`.
 
+   You can toggle Tower at any time, including in the middle of a session. On models that support dynamic tool loading, the Tower tools arrive through a `<tools_added>` announcement and load with `select_tools` after `/tower on`; on models without dynamic tool loading, tools registered mid-session do not reach the model — create a new session there to use Tower.
+
 2. **Send the development objective.** Enter the task as a normal chat message, for example: "Split the checkout documentation update into independent missions, test each one, and merge only branches that pass independent review." It is best to include how to verify the work and what completion means. Tower initializes `.tower/`, plans missions, and starts workers whose dependencies are satisfied in the background. When a worker finishes or Tower receives an inbox message, Tower resumes automatically, so you do not need to poll repeatedly.
 
-3. **Let the work proceed in the background.** Workers commit changes on their branches. For build missions, Tower assigns independent reviewers; for artifact missions, it waits for your explicit acceptance. Tower rebases when needed and merges approved missions in dependency order. Handle approval prompts and questions about scope or priority when they appear.
+3. **Let the work proceed in the background.** Workers commit changes on their branches. For build missions, Tower assigns independent reviewers; for artifact missions, it presents the deliverables for acceptance. Tower rebases when needed and merges approved missions in dependency order. Handle approval prompts and questions about scope or priority when they appear.
 
 4. **Verify the merged result.** Inspect `git status`, the base branch history, and the final diff, and run the tests or acceptance checks you care about. These checks are only a baseline safeguard and do not replace human acceptance.
 
@@ -73,12 +75,12 @@ Tower may snapshot uncommitted and untracked files into worker branches; when cr
 Tower supports three mission kinds. Choose according to what the worker may write and what must happen before the mission closes.
 
 - **Build (`kind: "build"`)**: reserves its scope for code changes, requires a committed diff and independent clean review, and performs a real merge.
-- **Artifact (`kind: "artifact"`)**: reserves its scope for business deliverables such as rendered results, training outputs, or analysis reports. It requires key committed deliverables and your explicit acceptance of the entire committed tip, but no independent reviewer, followed by a real merge.
+- **Artifact (`kind: "artifact"`)**: typically for one-off deliverables such as training outputs or industry analysis. Deliverables are committed first, then merged once the user confirms — no independent reviewer required.
 - **Survey (`kind: "survey"`)**: treats its scope as informational, remains read-only, and closes with zero diff, no review, and no Git merge.
 
 Use `artifact` when the work reads business inputs but must write deliverables. For example: "Create an artifact mission for the quarterly analysis. Commit `reports/q3/summary.html` and `reports/q3/data.csv`, then show me those files for acceptance."
 
-The worker commits all deliverables inside the reserved scope and marks `reports/q3/summary.html` and `reports/q3/data.csv` as key artifacts; uncommitted files are not accepted or merged. Tower presents the key artifacts and the number of additional committed files, with an optional full manifest when you want more detail. Your approval authorizes the entire current tip, including changes not shown in the key-artifact list. Requested changes trigger rework, and any new commit or rebase requires fresh acceptance. In automatic or noninteractive runs, Tower leaves the artifact waiting rather than approving it for you.
+The worker commits all deliverables inside the reserved scope and marks `reports/q3/summary.html` and `reports/q3/data.csv` as key artifacts; uncommitted files are not accepted or merged. Tower presents the key artifacts and the number of additional committed files, with an optional full manifest when you want more detail. The acceptance authorizes the entire current tip, including changes not shown in the key-artifact list. Requested changes trigger rework, and any new commit or rebase requires fresh acceptance. Acceptance depends on the user's merge intent; the permission mode only determines how Tower handles unclear intent.
 
 ## Check status and intervene
 
@@ -93,7 +95,7 @@ Each workspace can have only one tower coordinator. If another session is alread
 
 ## Understand merges and rebases
 
-Before merging a mission, Tower confirms that it is complete and that its branch is up to date with the base. A build mission requires a valid clean review and merge approval, usually from an independent reviewer. An artifact mission instead requires your explicit acceptance on the exact branch tip; an independent review cannot substitute for it. A survey remains zero-diff and needs no review. Changes must stay within the mission scope, the main checkout must be on the recorded base, and there must be no conflicting uncommitted changes.
+Before merging a mission, Tower confirms that it is complete and that its branch is up to date with the base. A build mission requires a valid clean review and merge approval, usually from an independent reviewer. An artifact mission instead requires tower-recorded acceptance on the exact branch tip; an independent review cannot substitute for it. A survey remains zero-diff and needs no review. Changes must stay within the mission scope, the main checkout must be on the recorded base, and there must be no conflicting uncommitted changes.
 
 For a build or artifact mission, after the base advances, if the worker is idle and the worktree is clean, Tower can rebase the mission branch onto the new base in the corresponding worktree. If there are no conflicts, a build mission's existing clean review binding is preserved; an artifact mission always requires fresh acceptance after the tip moves. If a conflict occurs, the rebase is aborted and the worker resolves it.
 
@@ -115,16 +117,16 @@ After Kimi Code restarts, if another session takes over the current project, the
 
 Tower is mutually exclusive with Goal, Plan, and swarm modes. Entering Tower exits Plan or swarm and pauses the active goal; activating a goal or entering Plan or swarm also exits Tower. Tower state remains on disk, and you can return later with `/tower on`.
 
-Workers and reviewers follow the same model-selection rules as Agent and AgentSwarm. Without `[secondary_model]`, both inherit Tower's current model. Once it is configured, newly spawned workers and reviewers use `default_model`. See [Subagent model pool](../configuration/config-files.md#subagent-model-pool) for configuration details.
+Without `[secondary_model]`, workers inherit Tower's current model; once it is configured, newly spawned workers use `default_model`. Reviewers always inherit Tower's current model by default, so the merge-gate review runs on the same model as the tower; a reviewer switches to another model only when an explicit pool alias is passed. See [Subagent model pool](../configuration/config-files.md#subagent-model-pool) for configuration details.
 
 You can explicitly choose the model for an individual new spawn in a normal message. For example, assuming `smart/slow` is configured in the pool:
 
 - "Spawn the worker agent-docs with smart/slow."
 - "Use smart/slow for the reviewer of feat/build-gemm."
 
-The only allowed choices are the pool aliases (`[secondary_model.models]` keys, or a lone `default_model`); aliases that exist only in `[models]` are not accepted. The `model` parameter is available only when the pool has two or more entries. The choice applies only to that new agent: it does not change running or resumed agents and is not saved for future spawns.
+When a pool is configured, the only allowed choices are the pool aliases (`[secondary_model.models]` keys, or a lone `default_model`); without a pool, any explicit `model` is rejected, and aliases that exist only in `[models]` are rejected as well. The `model` parameter is always present, including with single-entry pools, so a reviewer can explicitly use the pool model.
 
-To control token costs, set the pool default to a cheaper model; workers and reviewers use it by default, and an explicit pool alias can override it for one spawn.
+To control token costs, set the pool default to a cheaper model: workers use it by default, and either workers or reviewers can override their own default for a single spawn by passing an explicit pool alias.
 
 ## Safety and resource cost
 

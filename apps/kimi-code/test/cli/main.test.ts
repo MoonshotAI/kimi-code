@@ -186,7 +186,6 @@ async function waitForAssertion(assertion: () => void): Promise<void> {
   throw lastError;
 }
 
-/** main() now boots asynchronously (after the staged-swap check resolves). */
 async function waitForProgramArgs(): Promise<unknown[]> {
   await waitForAssertion(() => {
     expect(mocks.createProgram).toHaveBeenCalled();
@@ -283,6 +282,22 @@ describe('main entry command handling', () => {
     expect(runShell).not.toHaveBeenCalled();
   });
 
+  it('prints an option error raised after startup checks and exits 1', async () => {
+    const { OptionConflictError } = await vi.importActual<typeof OptionsModule>('../../src/cli/options.js');
+    const opts: CLIOptions = { ...defaultOpts(), worktree: 'fix-login' };
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'shell' });
+    mocks.runUpdatePreflight.mockResolvedValue('continue');
+    mocks.runShell.mockRejectedValueOnce(new OptionConflictError('-w/--worktree is experimental.'));
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    try {
+      expect(await runHandleMainCommand(opts)).toBe(1);
+      expect(stderr).toHaveBeenCalledWith('error: -w/--worktree is experimental.\n');
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
   it('does not force-exit from the reusable handler in print mode', async () => {
     const opts: CLIOptions = { ...defaultOpts(), prompt: 'explain the repo' };
     mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'print' });
@@ -291,9 +306,6 @@ describe('main entry command handling', () => {
 
     const outcome = await handleMainCommand(opts, '0.0.1-alpha.2');
 
-    // Process disposition belongs to the entrypoint, never to this reusable,
-    // unit-tested handler: arming a process.exit here would kill the test runner
-    // or any embedding host. The handler only reports what ran.
     expect(mocks.finalizeHeadlessRun).not.toHaveBeenCalled();
     expect(outcome).toEqual({ headlessCompleted: true });
   });
@@ -325,7 +337,6 @@ describe('main entry command handling', () => {
     await waitForAssertion(() => {
       expect(mocks.finalizeHeadlessRun).toHaveBeenCalledTimes(1);
     });
-    // The exit code is resolved lazily so a goal turn that sets process.exitCode wins.
     const forceExitArgs = mocks.finalizeHeadlessRun.mock.calls[0] as unknown as unknown[];
     expect(typeof forceExitArgs[2]).toBe('function');
   });
@@ -393,7 +404,6 @@ describe('main entry command handling', () => {
     await waitForAssertion(() => {
       expect(mocks.maybeRelaunch).toHaveBeenCalledTimes(1);
     });
-    // Relaunched → the parent must sit on the child, never bootstrap.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(mocks.createProgram).not.toHaveBeenCalled();
   });

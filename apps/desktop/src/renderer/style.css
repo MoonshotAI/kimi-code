@@ -1,0 +1,635 @@
+@import '@moonshot-ai/app-ui/style.css';
+
+/* ---- Minimal reset (replaces Tailwind preflight) ----
+   Just enough normalization so UA defaults don't leak through; the app's own
+   token-driven styles layer on top. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  tab-size: 4;
+}
+body {
+  margin: 0;
+}
+html.custom-titlebar {
+  --titlebar-height: env(titlebar-area-height, 40px);
+  --media-preview-top-inset: var(--titlebar-height);
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-size: inherit;
+  font-weight: inherit;
+  margin: 0;
+}
+p,
+blockquote,
+dl,
+dd,
+figure,
+pre {
+  margin: 0;
+}
+ol,
+ul,
+menu {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+a {
+  color: inherit;
+  text-decoration: inherit;
+}
+b,
+strong {
+  /* Pin <b>/<strong> to our bold token instead of the UA `bolder` keyword, so
+     bold emphasis always lands on the token weight (and lightens with it)
+     rather than jumping a fixed heavier step above the parent. */
+  font-weight: var(--weight-medium);
+}
+small {
+  font-size: 80%;
+}
+sub,
+sup {
+  position: relative;
+  font-size: 75%;
+  line-height: 0;
+  vertical-align: baseline;
+}
+sub {
+  bottom: -0.25em;
+}
+sup {
+  top: -0.5em;
+}
+button,
+input,
+optgroup,
+select,
+textarea {
+  margin: 0;
+  padding: 0;
+  font-family: inherit;
+  font-size: 100%;
+  line-height: inherit;
+  color: inherit;
+}
+button,
+select {
+  text-transform: none;
+}
+button,
+[type="button"],
+[type="reset"],
+[type="submit"] {
+  -webkit-appearance: button;
+  background: transparent;
+  background-image: none;
+}
+button,
+[role="button"] {
+  cursor: pointer;
+}
+:disabled {
+  cursor: default;
+}
+img,
+svg,
+video,
+canvas,
+audio,
+iframe,
+embed,
+object {
+  display: block;
+}
+img,
+video {
+  max-width: 100%;
+  height: auto;
+}
+textarea {
+  resize: vertical;
+}
+input::placeholder,
+textarea::placeholder {
+  opacity: 1;
+}
+table {
+  border-collapse: collapse;
+  border-color: inherit;
+  text-indent: 0;
+}
+hr {
+  height: 0;
+  color: inherit;
+  border-top-width: 1px;
+}
+fieldset {
+  margin: 0;
+  padding: 0;
+}
+legend {
+  padding: 0;
+}
+dialog {
+  padding: 0;
+}
+summary {
+  display: list-item;
+}
+[hidden] {
+  display: none;
+}
+
+/* Opt in to animating between a length and an intrinsic sizing keyword
+   (e.g. `height: 0` → `height: auto`, `width` → `max-content`). Inherited, so
+   setting it once on :root enables it everywhere. Progressive enhancement:
+   unsupported browsers (non-Chromium today) simply keep snapping with no
+   transition. */
+@supports (interpolate-size: allow-keywords) {
+  :root {
+    interpolate-size: allow-keywords;
+  }
+}
+
+/* Safe-area insets + chat-dock metrics ---------------------------------------
+   Centralised so mobile layout reads one consistent source instead of each
+   component calling env(safe-area-inset-*) with its own fallback. Falls back to
+   0px where the UA doesn't expose insets (most desktops, older Android);
+   pair with max(min, var(--safe-bottom)) so gestures / home indicators keep a
+   minimum gutter even when the inset reports 0. The mobile footer (composer),
+   bottom sheets and the toast layer all consume these. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  /* Top clearance reserved above dock cards: the approval/question card
+     max-height budgets are calc(var(--app-height, 100dvh) - <this>) so a tall
+     card always stops below the chat header. Single source for
+     ApprovalCard.vue, QuestionCard.vue and ChatDock.vue's dock-level budget —
+     adjust here and all three move together. */
+  --dock-card-top-clearance: 72px;
+  /* Operable-height floor for the question card's scrolling body: when the
+     card's fixed chrome (a very long title plus the footer) exhausts the
+     viewport budget on its own, the body never collapses below this and the
+     card-level scroller takes over. */
+  --question-card-body-min-h: 120px;
+  /* Left clearance for top-strip headers while the sidebar is collapsed:
+     clears the floating sidebar toggle plus the new-chat shortcut beside
+     it; the macOS variant adds the hidden-titlebar traffic-light inset
+     (the toggle sits at 72px there, and moves to the window edge in
+     fullscreen — the fullscreen rules fall back to the base value).
+     Single source for the conversation header, the session admin head,
+     and the focus-mode panel tab bar (all in App.vue) — adjust here and
+     all three move together. */
+  --header-collapsed-clearance: 78px;
+  --header-collapsed-clearance-macos: 146px;
+}
+
+/* -- icon primitive ------------------------------------------------------------
+   Applied to every product icon: the <Icon> component output
+   (components/ui/Icon.vue) and the iconSvg() v-html strings (lib/icons.ts).
+   Both source their SVG from the Remix Icon registry in lib/icons.ts, bundled
+   by unplugin-icons at build time — so only registered icons ship. Colour
+   follows text via fill="currentColor". */
+.kw-icon {
+  display: inline-block;
+  flex: none;
+  vertical-align: -0.15em;
+}
+
+/* Render code literally: disable the ligatures coding fonts enable by default
+   (e.g. `!=` collapsing to `≠`, `=>` to `⇒`). */
+code,
+pre,
+samp,
+tt {
+  font-feature-settings: "liga" 0, "calt" 0, "ss01" 0;
+  font-variant-ligatures: none;
+}
+
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  /* Explicit light background on the root: a transparent <html> gets sampled as
+     "dark" by some extensions, which then repaint it. Keep it solid white. */
+  background: var(--color-bg);
+}
+
+/* Pin the app to the viewport so it always fills the screen even if a dark-mode
+   browser extension collapses <html>'s height — the opaque app then fully covers
+   any colour the extension paints on the root, and child height:100% resolves
+   against the viewport-sized app rather than the (possibly broken) document. */
+#app {
+  position: fixed;
+  inset: 0;
+}
+
+/* The app is a fixed full-viewport shell with its own internal scrollers; the
+   document itself must never scroll. Without this, any transient overflow
+   (e.g. the composer growing for a frame on a multi-line paste) pops a window
+   scrollbar in and out and jolts the whole layout. */
+html,
+body {
+  overflow: hidden;
+}
+
+/* macOS desktop: the BrowserWindow carries a native vibrancy material
+   (NSVisualEffectView 'menu', see
+   src/main/window/main-window.ts) behind the whole content area. The root chain must stay
+   unpainted so the material can read through the sidebar column; every
+   reading surface (conversation pane, chat header, right preview, floating
+   layers) keeps its own opaque background. The material follows the in-app
+   light/dark scheme via the nativeTheme mirror in main.ts. The `vibrancy`
+   class is the settings switch (composables/useVibrancy.ts): without it the
+   root chain repaints and the sidebar falls back to --color-sidebar-bg. */
+html.macos-desktop.vibrancy,
+html.macos-desktop.vibrancy body,
+html.macos-desktop.vibrancy #app {
+  background: transparent;
+}
+
+html.browser-see-through,
+html.browser-see-through body {
+  background: transparent;
+}
+
+html.browser-see-through #app {
+  -webkit-mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: 0 0, var(--browser-hole-x) var(--browser-hole-y);
+  mask-position: 0 0, var(--browser-hole-x) var(--browser-hole-y);
+  -webkit-mask-size: 100% 100%, var(--browser-hole-w) var(--browser-hole-h);
+  mask-size: 100% 100%, var(--browser-hole-w) var(--browser-hole-h);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+/* ---------------------------------------------------------------------------
+   Global scrollbars: thin + faint on every scroller (chat, tasks, file tree,
+   terminal, dialogs…). Firefox reads scrollbar-width/color; WebKit/Blink read
+   the ::-webkit-scrollbar pseudo-elements. The track stays transparent so the
+   bar floats; the thumb matches the sidebar's — a text-derived 12% fill (25%
+   on hover), no border, adapting to both schemes via the text token.
+   Components may still override locally (e.g. the sidebar's even-thinner rule).
+   --------------------------------------------------------------------------- */
+/* Firefox-only fallback: the standard scrollbar properties DISABLE the whole
+   ::-webkit-scrollbar customisation in Chromium 121+ (any non-auto value wins
+   over the pseudo-element styles), silently replacing the 6px/4px custom bars
+   with the ~11px native thin gutter. Scope them to engines that don't know
+   the webkit pseudo-element instead. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--color-text) 12%, transparent) transparent;
+  }
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-text) 12%, transparent);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text) 25%, transparent);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+body {
+  font-family: var(--font-ui);
+  color: var(--color-text);
+  background: var(--color-bg);
+  font-size: var(--text-base);
+  font-weight: 400;
+  line-height: 1.6;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: auto;
+  font-synthesis: none;
+  text-size-adjust: 100%;
+  /* Never insert a hyphen glyph at line breaks (the page is `lang="en"`);
+     word-break/overflow-wrap still decide where lines wrap. */
+  -webkit-hyphens: none;
+  hyphens: none;
+}
+
+/* ---- Entrance / micro keyframes (shared by component-scoped rules) ---- */
+@keyframes kimi-card-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.995); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes kimi-check-in {
+  from { opacity: 0; transform: scale(0.4); }
+  60% { opacity: 1; transform: scale(1.15); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* ---- Reduced-motion: disable ALL entrance/micro animations. Iteration count
+   must drop to 1 too: an infinite animation at 0.001ms otherwise keeps
+   ticking forever (invisible but never idle). Pseudo-elements need their own
+   selectors — `*` alone never matches them, so pseudo animations (the running
+   dots' pulse rings) would keep running. ---- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+/* ---- Kimi Code logo (sidebar header): lively eyes — glance left/right + the
+   occasional blink. The two bars are mask cutouts, so animating them moves /
+   squishes the transparent holes (adapts to whatever's behind the logo). The
+   look (6s) and blink (5.4s) run on different periods so they drift in and out
+   of sync, which reads as more organic. ---- */
+.ch-eyes {
+  animation: kimi-eye-look 16s ease-in-out infinite;
+}
+.ch-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: kimi-eye-blink 11s ease-in-out infinite;
+}
+@keyframes kimi-eye-look {
+  /* Rest centered most of the time; a quick glance right (~7.5s) then a glance
+     left (~13.5s), with long still holds between — calm, not busy. */
+  0%, 42% { transform: translateX(0); }
+  47%, 53% { transform: translateX(2px); }
+  58%, 80% { transform: translateX(0); }
+  84%, 90% { transform: translateX(-2px); }
+  95%, 100% { transform: translateX(0); }
+}
+@keyframes kimi-eye-blink {
+  /* one quick blink per cycle (~10.6s) */
+  0%, 94%, 100% { transform: scaleY(1); }
+  96.5%, 98% { transform: scaleY(0.12); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ch-eyes,
+  .ch-eye { animation: none; }
+}
+
+/* Click-to-blink: a single quick blink on click (overrides the idle 11s blink
+   while the .blink-now class is present, ~300ms). */
+.blink-now .ch-eye {
+  animation: kimi-eye-blink-once 0.24s ease-in-out;
+}
+@keyframes kimi-eye-blink-once {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.1); }
+}
+
+/* Markdown images at natural size. markstream enforces a min-width/min-height
+   floor (--ms-size-image-*, ~33px) that scales small inline images UP — README
+   shields.io badges (78×20) were rendered at 128×33. Higher specificity than
+   markstream's `.image-node__img[data-v]` (0,2,0) so the floor is removed. */
+.md .markdown-renderer img {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* User-controlled UI font size. Components still set explicit sizes for compact
+   surfaces; these shared chat/input/tool selectors keep readable content and
+   code in lockstep with the setting. */
+.app {
+  font-size: var(--text-base);
+}
+
+.u-bub,
+.u-bub .u-text,
+.a-msg .msg,
+.ph {
+  font-size: var(--content-font-size);
+}
+
+/* Transcript prose uses Chromium's CJK/Latin spacing for mixed-language text. */
+.md,
+.u-bub .u-text,
+.a-msg .msg {
+  text-autospace: normal;
+}
+
+.u-bub .u-text,
+.u-bub .skill-act-args,
+.a-msg .msg {
+  font-family: var(--font-transcript);
+}
+
+.a-msg code {
+  font-size: var(--md-b3);
+}
+
+.queue-item,
+.queue-text,
+.ctx-num,
+.model-pill,
+.perm-pill,
+.mode-pill,
+.qcard,
+.qtext,
+.qopt,
+.qbtn,
+.srow,
+.srow-val {
+  font-size: var(--text-base);
+}
+.qopt-desc,
+.srow-label {
+  font-size: var(--text-sm);
+}
+.queue-label,
+.qopt-key,
+.qstep,
+.srow-sub {
+  font-size: var(--text-xs);
+}
+
+@media (max-width: 640px) {
+  :root {
+    --content-font-size: calc(var(--md-b1) + 2px);
+  }
+}
+
+/* Animated icon tracks. */
+:root {
+  --anim-rive-spin: 416.7ms;
+  --anim-leftbar: 533.3ms;
+  --anim-leftbar-shrink: 200ms;
+}
+
+/* Sidebar toggle: on hover the divider shrinks and the arrow flies in. */
+#bar-divider {
+  transform-box: view-box;
+  transform-origin: 9.3px 12px;
+  transition: transform var(--anim-leftbar-shrink) linear;
+}
+svg:hover #bar-divider,
+button:hover #bar-divider {
+  transform: translateX(-1.5px) scaleY(0.5);
+}
+#bar-arrow {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  transform: translate(63.95833%, 50.625%) scale(0);
+}
+svg:hover #bar-arrow,
+button:hover #bar-arrow {
+  animation: leftbar-arrow var(--anim-leftbar) linear 1 forwards;
+}
+@keyframes leftbar-arrow {
+  0% { transform: translate(62.97083%, 50.625%) matrix(-0.6, 0, 0, -0.6, 0, 0); opacity: 0; }
+  3.125% { transform: translate(62.97083%, 50.625%) matrix(-0.6, 0, 0, -0.6, 0, 0); opacity: 1; }
+  15.625% { transform: translate(59.0125%, 50.625%) matrix(-1, 0, 0, -1, 0, 0); opacity: 1; }
+  37.5% { transform: translate(52.08333%, 50.625%) matrix(-1, 0, 0, -1, 0, 0); opacity: 1; }
+  100% { transform: translate(52.08333%, 50.625%) matrix(-1, 0, 0, -1, 0, 0); opacity: 1; }
+}
+
+/* Expand variant: the arrow flies in from the left instead. */
+#bar-arrow-expand {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  transform: translate(52.08333%, 50.625%) scale(0);
+}
+svg:hover #bar-arrow-expand,
+button:hover #bar-arrow-expand {
+  animation: leftbar-arrow-expand var(--anim-leftbar) linear 1 forwards;
+}
+@keyframes leftbar-arrow-expand {
+  0% { transform: translate(37.02917%, 50.625%) scale(0.6); opacity: 0; }
+  3.125% { transform: translate(37.02917%, 50.625%) scale(0.6); opacity: 1; }
+  15.625% { transform: translate(40.9875%, 50.625%) scale(1); opacity: 1; }
+  37.5% { transform: translate(52.08333%, 50.625%) scale(1); opacity: 1; }
+  100% { transform: translate(52.08333%, 50.625%) scale(1); opacity: 1; }
+}
+
+/* Right-panel toggle: the same hover language mirrored — the divider (at
+   x=14.7 in the `#rbar-*` glyphs) shrinks toward the right edge while the
+   arrow flies the mirrored trajectory and settles at the mirrored x
+   (100 − 52.08333 = 47.91667%). */
+#rbar-divider {
+  transform-box: view-box;
+  transform-origin: 14.7px 12px;
+  transition: transform var(--anim-leftbar-shrink) linear;
+}
+svg:hover #rbar-divider,
+button:hover #rbar-divider {
+  transform: translateX(1.5px) scaleY(0.5);
+}
+#rbar-arrow {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  transform: translate(47.91667%, 50.625%) scale(0);
+}
+svg:hover #rbar-arrow,
+button:hover #rbar-arrow {
+  animation: rightbar-arrow var(--anim-leftbar) linear 1 forwards;
+}
+@keyframes rightbar-arrow {
+  0% { transform: translate(37.02917%, 50.625%) scale(0.6); opacity: 0; }
+  3.125% { transform: translate(37.02917%, 50.625%) scale(0.6); opacity: 1; }
+  15.625% { transform: translate(40.9875%, 50.625%) scale(1); opacity: 1; }
+  37.5% { transform: translate(47.91667%, 50.625%) scale(1); opacity: 1; }
+  100% { transform: translate(47.91667%, 50.625%) scale(1); opacity: 1; }
+}
+
+/* Right-panel expand variant: the rotated arrow flies in from the right and
+   settles pointing left (pull the panel in from the right edge). */
+#rbar-arrow-expand {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  transform: translate(47.91667%, 50.625%) scale(0);
+}
+svg:hover #rbar-arrow-expand,
+button:hover #rbar-arrow-expand {
+  animation: rightbar-arrow-expand var(--anim-leftbar) linear 1 forwards;
+}
+@keyframes rightbar-arrow-expand {
+  0% { transform: translate(62.97083%, 50.625%) matrix(-0.6, 0, 0, -0.6, 0, 0); opacity: 0; }
+  3.125% { transform: translate(62.97083%, 50.625%) matrix(-0.6, 0, 0, -0.6, 0, 0); opacity: 1; }
+  15.625% { transform: translate(59.0125%, 50.625%) matrix(-1, 0, 0, -1, 0, 0); opacity: 1; }
+  37.5% { transform: translate(47.91667%, 50.625%) matrix(-1, 0, 0, -1, 0, 0); opacity: 1; }
+  100% { transform: translate(47.91667%, 50.625%) matrix(-1, 0, 0, -1, 0, 0); opacity: 1; }
+}
+
+/* New chat: the plus spins once on hover (keyed to #p1 in the glyph). */
+#p1 {
+  transform-box: view-box;
+  transform-origin: 0 0;
+}
+svg:hover #p1,
+button:hover #p1 {
+  animation: nc-plus-spin var(--anim-rive-spin) linear 1 forwards;
+}
+@keyframes nc-plus-spin {
+  0% { transform: translate(11.5px, 11.5px); }
+  8% { transform: translate(11.501px, 11.48px) rotate(1.1795deg) scale(1.02022); }
+  12% { transform: translate(11.511px, 11.46px) rotate(2.8374deg) scale(1.03026); }
+  20% { transform: translate(11.562px, 11.401px) rotate(8.8167deg) scale(1.05041); }
+  24% { transform: translate(11.608px, 11.361px) rotate(13.4726deg) scale(1.06017); }
+  32% { transform: translate(11.751px, 11.278px) rotate(25.9719deg) scale(1.08008); }
+  48% { transform: translate(12.149px, 11.222px) rotate(55.8418deg) scale(1.12025); }
+  52% { transform: translate(12.235px, 11.236px) rotate(62.0737deg) scale(1.12953); }
+  60% { transform: translate(12.371px, 11.276px) rotate(72.1167deg) scale(1.14954); }
+  68% { transform: translate(12.446px, 11.346px) rotate(79.3018deg) scale(1.12048); }
+  76% { transform: translate(12.488px, 11.403px) rotate(84.2633deg) scale(1.09046); }
+  88% { transform: translate(12.509px, 11.464px) rotate(88.52deg) scale(1.04535); }
+  100% { transform: translate(12.5px, 11.5px) rotate(90deg); }
+}
+
+/* Folder-plus: the same spin on #af-p1. */
+#af-p1 {
+  transform-box: view-box;
+  transform-origin: 18.4px 16.3px;
+}
+svg:hover #af-p1,
+button:hover #af-p1 {
+  animation: folder-plus-spin var(--anim-rive-spin) linear 1 forwards;
+}
+@keyframes folder-plus-spin {
+  0% { transform: none; }
+  8% { transform: rotate(1.1795deg) scale(1.02022); }
+  12% { transform: rotate(2.8374deg) scale(1.03026); }
+  20% { transform: rotate(8.8167deg) scale(1.05041); }
+  24% { transform: rotate(13.4726deg) scale(1.06017); }
+  32% { transform: rotate(25.9719deg) scale(1.08008); }
+  48% { transform: rotate(55.8418deg) scale(1.12025); }
+  52% { transform: rotate(62.0737deg) scale(1.12953); }
+  60% { transform: rotate(72.1167deg) scale(1.14954); }
+  68% { transform: rotate(79.3018deg) scale(1.12048); }
+  76% { transform: rotate(84.2633deg) scale(1.09046); }
+  88% { transform: rotate(88.52deg) scale(1.04535); }
+  100% { transform: rotate(90deg); }
+}
+
+html[data-menu-open],
+html[data-menu-open] *,
+html[data-menu-open] *::before,
+html[data-menu-open] *::after {
+  -webkit-app-region: no-drag !important;
+}

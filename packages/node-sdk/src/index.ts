@@ -1,4 +1,3 @@
-import type { KimiHarnessEnvironmentOptions } from '#/kimi-harness';
 export { KimiHarness } from '#/kimi-harness';
 export type { KimiHarnessEnvironmentOptions, KimiHarnessRuntimeOptions } from '#/kimi-harness';
 export { Session } from '#/session';
@@ -83,6 +82,7 @@ export {
 } from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
 export { PluginAvailabilityStore } from '@moonshot-ai/agent-core-v2/app/plugin/availability';
 export { resolveKimiHome } from '@moonshot-ai/agent-core-v2';
+export { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 export type { LogContext, LogLevel, LogPayload, Logger } from '#/logging/index';
 
 export { effectiveModelAlias, loadRuntimeConfigSafe } from '#/config/index';
@@ -123,6 +123,20 @@ export type {
   FlagId,
   FlagSurface,
 } from '#/flag';
+
+export type {
+  CreatedWorktree,
+  CreateWorktreeInput,
+  CreateWorktreeOptions,
+  InspectWorktreeRemovalInput,
+  KimiWorktree,
+  RemoveWorktreeInput,
+  WorkLocation,
+  WorktreeCreateEvent,
+  WorktreeCreateStep,
+  WorktreeListing,
+  WorktreeRemovalCheck,
+} from '#/worktree';
 
 export {
   buildDaemonFileUrl,

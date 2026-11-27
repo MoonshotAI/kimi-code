@@ -1,10 +1,3 @@
-/**
- * Scenario: persisted Node SDK sessions are reopened and rendered by the VS Code replay adapter.
- * Responsibilities: restored tool displays and child-agent steps through the public resume state.
- * Wiring: Node SDK, core, storage, and HTTP provider adapter are real; only the remote provider is local.
- * Run: pnpm --filter kimi-code exec vitest run --config vitest.config.ts test/replay-resume.integration.test.ts
- */
-
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,9 +12,13 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  createFakeProviderHarness,
-  type FakeProviderHarness,
-} from "./fake-provider-harness";
+  call,
+  reply,
+  say,
+  startFakeModel,
+  type FakeModel,
+  type Lane,
+} from "@moonshot-ai/testkit/model";
 import { replaySessionToWebviewEvents } from "../src/runtime/replay-adapter";
 
 const MODEL_ALIAS = "vscode-replay-test";
@@ -30,7 +27,8 @@ interface ReplayRig {
   readonly rootDir: string;
   readonly workDir: string;
   readonly harness: KimiHarness;
-  readonly provider: FakeProviderHarness;
+  readonly provider: FakeModel;
+  readonly replies: Lane;
 }
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -44,7 +42,8 @@ async function createReplayRig(): Promise<ReplayRig> {
   const homeDir = join(rootDir, "home");
   const workDir = join(rootDir, "workspace");
   await Promise.all([mkdir(homeDir), mkdir(workDir)]);
-  const provider = await createFakeProviderHarness();
+  const provider = await startFakeModel();
+  const replies = provider.route("replay", () => true);
   const harness = createKimiHarness({
     homeDir,
     identity: { productName: "kimi-code-vscode", version: "test", platform: "kimi_code_vscode" },
@@ -53,7 +52,7 @@ async function createReplayRig(): Promise<ReplayRig> {
     providers: {
       local: {
         type: "kimi",
-        baseUrl: `${provider.baseUrl}/v1`,
+        baseUrl: provider.baseUrl,
         apiKey: "sk-test",
       },
     },
@@ -71,13 +70,17 @@ async function createReplayRig(): Promise<ReplayRig> {
       await harness.close();
     } finally {
       try {
-        await provider.close();
+        provider.verify();
       } finally {
-        await removeTempDir(rootDir);
+        try {
+          await provider.close();
+        } finally {
+          await removeTempDir(rootDir);
+        }
       }
     }
   });
-  return { rootDir, workDir, harness, provider };
+  return { rootDir, workDir, harness, provider, replies };
 }
 
 async function removeTempDir(dir: string): Promise<void> {
@@ -95,19 +98,6 @@ async function removeTempDir(dir: string): Promise<void> {
   }
 
   await rm(dir, { recursive: true, force: true });
-}
-
-function completionChunk(
-  delta: Record<string, unknown>,
-  finishReason: string | null = null,
-): Record<string, unknown> {
-  return {
-    id: "chatcmpl-vscode-replay",
-    object: "chat.completion.chunk",
-    created: 1,
-    model: "mock-model",
-    choices: [{ index: 0, delta, finish_reason: finishReason }],
-  };
 }
 
 async function runPrompt(session: Session, prompt: string): Promise<void> {
@@ -142,60 +132,22 @@ describe("VS Code replay from a public Node SDK resume state", () => {
     const rig = await createReplayRig();
     const filePath = join(rig.workDir, "sample.txt");
     await writeFile(filePath, "before\n", "utf8");
-    let requestCount = 0;
-    rig.provider.route("POST", "/v1/chat/completions", async (_request, reply) => {
-      requestCount += 1;
-      if (requestCount === 1) {
-        await reply.sseJson(200, [
-          completionChunk({
-            tool_calls: [
-              {
-                index: 0,
-                id: "edit-call-1",
-                type: "function",
-                function: {
-                  name: "Edit",
-                  arguments: JSON.stringify({
-                    path: "sample.txt",
-                    old_string: "before",
-                    new_string: "after",
-                  }),
-                },
-              },
-              {
-                index: 1,
-                id: "write-call-1",
-                type: "function",
-                function: {
-                  name: "Write",
-                  arguments: JSON.stringify({
-                    path: "created.txt",
-                    content: "created content\n",
-                  }),
-                },
-              },
-              {
-                index: 2,
-                id: "todo-call-1",
-                type: "function",
-                function: {
-                  name: "TodoList",
-                  arguments: JSON.stringify({
-                    todos: [{ title: "Verify resume", status: "done" }],
-                  }),
-                },
-              },
-            ],
-          }),
-          completionChunk({}, "tool_calls"),
-        ]);
-        return;
-      }
-      await reply.sseJson(200, [
-        completionChunk({ content: "Changes complete." }),
-        completionChunk({}, "stop"),
-      ]);
-    });
+    rig.replies.script(
+      reply(
+        call(
+          "Edit",
+          { path: "sample.txt", old_string: "before", new_string: "after" },
+          { id: "edit-call-1" },
+        ),
+        call("Write", { path: "created.txt", content: "created content\n" }, { id: "write-call-1" }),
+        call(
+          "TodoList",
+          { todos: [{ title: "Verify resume", status: "done" }] },
+          { id: "todo-call-1" },
+        ),
+      ),
+      say("Changes complete."),
+    );
     const session = await rig.harness.createSession({
       id: "ses_vscode_replay_displays",
       workDir: rig.workDir,
@@ -259,43 +211,20 @@ describe("VS Code replay from a public Node SDK resume state", () => {
   it("restores a child step under its original Agent tool call", async () => {
     const rig = await createReplayRig();
     const childAnswer = `Subagent restored evidence. ${"Detailed persisted finding. ".repeat(10)}`;
-    let requestCount = 0;
-    rig.provider.route("POST", "/v1/chat/completions", async (_request, reply) => {
-      requestCount += 1;
-      if (requestCount === 1) {
-        await reply.sseJson(200, [
-          completionChunk({
-            tool_calls: [{
-              index: 0,
-              id: "agent-call-1",
-              type: "function",
-              function: {
-                name: "Agent",
-                arguments: JSON.stringify({
-                  prompt: "Inspect the workspace and report one finding.",
-                  description: "inspect workspace",
-                  subagent_type: "coder",
-                  run_in_background: false,
-                }),
-              },
-            }],
-          }),
-          completionChunk({}, "tool_calls"),
-        ]);
-        return;
-      }
-      if (requestCount === 2) {
-        await reply.sseJson(200, [
-          completionChunk({ content: childAnswer }),
-          completionChunk({}, "stop"),
-        ]);
-        return;
-      }
-      await reply.sseJson(200, [
-        completionChunk({ content: "Parent received the finding." }),
-        completionChunk({}, "stop"),
-      ]);
-    });
+    rig.replies.script(
+      call(
+        "Agent",
+        {
+          prompt: "Inspect the workspace and report one finding.",
+          description: "inspect workspace",
+          subagent_type: "coder",
+          run_in_background: false,
+        },
+        { id: "agent-call-1" },
+      ),
+      say(childAnswer),
+      say("Parent received the finding."),
+    );
     const session = await rig.harness.createSession({
       id: "ses_vscode_replay_subagent",
       workDir: rig.workDir,

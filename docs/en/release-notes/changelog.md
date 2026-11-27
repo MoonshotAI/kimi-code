@@ -6,6 +6,74 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.8.1 (2026-11-26)
+
+### Bug Fixes
+
+- Fix some issues with the Gemini provider.
+- Fix `unloaded_tool` session errors when tools change or a session resumes.
+
+## 2.8.0 (2026-11-25)
+
+### Polish
+
+- Improve prompt prediction; enable it in `/experiments`.
+- In the TUI, consecutive queued turns skip intermediate completion alerts; background tasks still notify.
+
+### Bug Fixes
+
+- Fix sessions that could not be restored after their model became unavailable.
+- Fix several known issues and make refinements. See [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for technical entries.
+
+## 2.7.3 (2026-11-24)
+
+### Bug Fixes
+
+- Fix sessions that could not open after their model became unavailable.
+
+## 2.7.2 (2026-11-20)
+
+### Bug Fixes
+
+- Web: Fix the draft thinking effort inherited from the global thinking setting reverting to the model default after sending.
+
+## 2.7.1 (2026-11-20)
+
+### Bug Fixes
+
+- Fix turn-specific fork failures after restoring sessions with in-turn steering.
+- Keep queued prompts pending until background notification turns finish.
+- Web: Fix draft thinking effort selections reverting to the model default after sending.
+- Web: Fix the input composer disappearing when accessed over insecure HTTP.
+
+## 2.7.0 (2026-11-19)
+
+### Features
+
+- Add a Follow-up behavior setting under `/settings`; choose Steer to make Enter steer your message into the running turn instead of queueing it.
+- View running foreground agents and their activity in `/tasks`.
+- Web: Show project and session titles in browser tab titles.
+- Support configuring SSH hosts for Kimi Code projects, with each host using its own Kimi login and optional copied custom model providers.
+- Allow resuming sessions that are open in another client.
+- Support Amazon Bedrock models. See the [Amazon Bedrock configuration guide](https://moonshotai.github.io/kimi-code/en/configuration/providers.html#bedrock).
+- Add experimental next-prompt predictions in the TUI after completed turns. Enable with `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1` and press Tab or Right Arrow to accept.
+
+### Bug Fixes
+
+- Fix subagents timing out immediately in `kimi -p` and when `[subagent] timeout_ms = 0` is set.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 2.6.3 (2026-11-17)
+
+### Bug Fixes
+
+- Fix duplicate output and a lingering loading spinner after foreground shell commands.
+- Fix background notifications incorrectly stopping Tower tasks.
+- Fix external Stop hooks not running after each completed turn.
+- Prevent restored background task notifications from starting model requests when sessions are resumed or forked.
+- Fix Windows WebBridge updates failing while the daemon is running.
+- Fix several known issues.
+
 ## 2.6.2 (2026-11-14)
 
 ### Features

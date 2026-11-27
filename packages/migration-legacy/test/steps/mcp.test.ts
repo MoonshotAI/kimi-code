@@ -88,9 +88,7 @@ describe('migrateMcpStep', () => {
     await writeFile(join(tgt, 'mcp.json'), 'this is not json {{{');
     const r = await migrateMcpStep({ sourceHome: src, targetHome: tgt });
     expect(r.wroteSiblingDueToConflict).toBe(true);
-    // The user's malformed file is left untouched — no data loss.
     expect(await readFile(join(tgt, 'mcp.json'), 'utf-8')).toBe('this is not json {{{');
-    // Migrated servers land in the sibling instead.
     const sibling = JSON.parse(
       await readFile(join(tgt, 'mcp.migrated-from-kimi-cli.json'), 'utf-8'),
     );

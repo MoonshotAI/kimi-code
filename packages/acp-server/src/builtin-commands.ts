@@ -8,12 +8,6 @@ import type {
   UsageStatus,
 } from '@moonshot-ai/klient';
 
-/**
- * ACP-owned built-in slash commands. Advertised in
- * `available_commands_update` and executed locally by the host (see
- * {@link runBuiltinSlashCommand}) — they never reach the model as prompt
- * text.
- */
 export const ACP_BUILTIN_SLASH_COMMANDS = [
   {
     name: 'compact',
@@ -52,11 +46,6 @@ export function isAcpBuiltinSlashCommand(name: string): name is AcpBuiltinSlashC
   return ACP_BUILTIN_SLASH_COMMAND_NAMES.has(name);
 }
 
-/**
- * Everything a builtin command needs from the session: live klient handles
- * plus the ACP-side session snapshot (model / thinking / mode are seeded and
- * maintained by `AcpSession`, not re-queried here).
- */
 export interface BuiltinCommandDeps {
   readonly klient: Klient;
   readonly session: SessionHandle;
@@ -65,17 +54,9 @@ export interface BuiltinCommandDeps {
   readonly modelId: string;
   readonly thinkingEnabled: boolean;
   readonly modeId: string;
-  /** Current merged palette (builtins + engine skills + host commands). */
   readonly availableCommands: readonly AvailableCommand[];
 }
 
-/**
- * Execute an ACP builtin slash command and return the text to send back to
- * the client as one `agent_message_chunk`. No LLM turn is launched — the
- * text is rendered from live engine/klient state. `args` is the raw text
- * after the command name (only `/compact` consumes it, as the optional
- * summarization instruction).
- */
 export async function runBuiltinSlashCommand(
   name: AcpBuiltinSlashCommandName,
   deps: BuiltinCommandDeps,
@@ -98,10 +79,6 @@ export async function runBuiltinSlashCommand(
     case 'mcp':
       return mcpText(await deps.agent.getMcpServers());
     case 'compact': {
-      // `begin` is fire-and-forget: the compaction runs as a background LLM
-      // task on the engine side, so confirm the trigger instead of awaiting
-      // the result. Engine refusals (empty history, active turn) throw and
-      // are surfaced by the caller as `/compact failed: …`.
       const started = await deps.agent.compact({
         instruction: args === '' ? undefined : args,
       });

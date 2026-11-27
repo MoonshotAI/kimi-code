@@ -1,13 +1,3 @@
-/**
- * ChoicePicker — modal single-select list for slash commands that ask
- * the user to pick from a small set of preset values.
- *
- * Mirrors SessionPickerComponent's container-replacement pattern: host
- * calls `showChoicePicker(...)` which clears the editor container,
- * addChild(picker), setFocus(picker); the picker invokes `onSelect` or
- * `onCancel`, and the host tears it down.
- */
-
 import {
   matchesKey,
   Key,
@@ -24,51 +14,44 @@ import { currentTheme, type ColorToken } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
 import { Markdown } from '#/tui/components/markdown/markdown';
+import {
+  finishDialogLines,
+  focusOnUnfocusedMouse,
+  handleSelectableListMouse,
+  type MouseRowRegion,
+} from '#/tui/utils/dialog-mouse';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
-import { isSettlingClick } from '#/tui/utils/terminal-focus';
 
 export interface ChoiceOption {
-  /** Value passed to onSelect (e.g. the actual editor command string). */
   readonly value: string;
-  /** Display text shown in the list. */
   readonly label: string;
-  /** Optional semantic tone for labels that need stronger visual treatment. */
   readonly tone?: 'danger';
-  /** Optional explanatory text shown below the label. */
   readonly description?: string | undefined;
-  /** Color token applied to the description while this option is selected, drawing
-   *  attention to important details. Falls back to `textMuted` when unset or not selected. */
   readonly descriptionTone?: ColorToken;
+}
+
+export interface ChoiceNoticeLine {
+  readonly text: string;
+  readonly tone: ColorToken;
 }
 
 export interface ChoicePickerOptions {
   readonly title: string;
   readonly hint?: string;
   readonly formatHint?: (text: string) => string;
-  /** Plain text shown in `noticeTone`, or Markdown rendered with the Markdown theme. */
-  readonly notice?: string | { readonly markdown: string };
-  /** Color tone for a plain-text notice. Defaults to 'success'. */
-  readonly noticeTone?: 'success' | 'warning';
+  readonly notice?: string | { readonly markdown: string } | { readonly lines: readonly ChoiceNoticeLine[] };
+  readonly noticeTone?: 'success' | 'warning' | 'text';
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
   readonly initialValue?: string;
-  /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
   readonly searchable?: boolean;
   readonly spaceSelect?: boolean;
-  /** Items per page. Lists longer than this paginate. */
   readonly pageSize?: number;
   readonly onSelect: (value: string) => void;
-  /** When provided, Alt+S invokes this with the selected value instead of
-   * onSelect — used to apply the choice to the current session only. */
   readonly onSessionOnlySelect?: (value: string) => void;
   readonly onCancel: () => void;
-}
-
-interface ChoiceRegion {
-  readonly start: number;
-  readonly end: number;
-  readonly index: number;
+  readonly onExitKey?: () => void;
 }
 
 function wrapDescription(text: string, width: number): string[] {
@@ -99,7 +82,7 @@ export class ChoicePickerComponent implements Component, Focusable {
   private readonly opts: ChoicePickerOptions;
   private readonly list: SearchableList<ChoiceOption>;
   private readonly shownAt = Date.now();
-  private choiceRegions: readonly ChoiceRegion[] = [];
+  private choiceRegions: readonly MouseRowRegion[] = [];
 
   constructor(opts: ChoicePickerOptions) {
     this.opts = opts;
@@ -123,12 +106,15 @@ export class ChoicePickerComponent implements Component, Focusable {
       this.opts.onCancel();
       return;
     }
+    if (this.opts.onExitKey !== undefined && (matchesKey(data, Key.ctrl('c')) || matchesKey(data, Key.ctrl('d')))) {
+      this.opts.onExitKey();
+      return;
+    }
     if (matchesKey(data, Key.alt('s')) && this.opts.onSessionOnlySelect !== undefined) {
       const chosen = this.list.selected();
       if (chosen !== undefined) this.opts.onSessionOnlySelect(chosen.value);
       return;
     }
-    // Left/Right page through the list (this picker has no horizontal control).
     if (matchesKey(data, Key.left)) {
       this.list.pageUp();
       return;
@@ -137,7 +123,6 @@ export class ChoicePickerComponent implements Component, Focusable {
       this.list.pageDown();
       return;
     }
-    // Space confirmation is opt-out; searchable lists always route it to the query.
     const isSpace = matchesKey(data, Key.space) || printableChar(data) === ' ';
     if (
       matchesKey(data, Key.enter) ||
@@ -151,11 +136,7 @@ export class ChoicePickerComponent implements Component, Focusable {
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    if (!this.focused) {
-      if (event.type === 'press') return { handled: true };
-      if (event.type === 'click') return { handled: true, focus: true };
-      return undefined;
-    }
+    if (!this.focused) return focusOnUnfocusedMouse(event);
     if (event.type === 'wheel') {
       const view = this.list.view();
       if (view.page.pageCount > 1 && event.wheelDelta !== undefined) {
@@ -166,27 +147,17 @@ export class ChoicePickerComponent implements Component, Focusable {
       }
       return { handled: true };
     }
-    if (event.type === 'move') {
-      const index = this.choiceIndexAt(event.y);
-      if (index === undefined) return undefined;
-      return { handled: true, render: this.selectIndex(index) };
-    }
-    if (event.button !== 'left') return undefined;
-    const index = this.choiceIndexAt(event.y);
-    if (index === undefined) return undefined;
-    if (event.type === 'press') {
-      return { handled: true, render: this.selectIndex(index) };
-    }
-    if (event.type === 'click' && !isSettlingClick(this.shownAt)) {
-      this.selectIndex(index);
-      const chosen = this.list.view().items[index];
-      if (chosen !== undefined) this.opts.onSelect(chosen.value);
-    }
-    return { handled: true };
-  }
-
-  private choiceIndexAt(y: number): number | undefined {
-    return this.choiceRegions.find((region) => y >= region.start && y < region.end)?.index;
+    return handleSelectableListMouse({
+      event,
+      focused: this.focused,
+      shownAt: this.shownAt,
+      regions: this.choiceRegions,
+      select: (index) => this.selectIndex(index),
+      activate: (index) => {
+        const chosen = this.list.view().items[index];
+        if (chosen !== undefined) this.opts.onSelect(chosen.value);
+      },
+    });
   }
 
   private selectIndex(index: number): boolean {
@@ -208,9 +179,6 @@ export class ChoicePickerComponent implements Component, Focusable {
     const view = this.list.view();
     const options = view.items;
 
-    // Header mirrors the model dialog (see model-selector.ts): border, title
-    // with a "(type to search)" suffix until you type, the hint, a blank, then
-    // the search line. Key vocabulary is lowercase to match every list dialog.
     const navParts = ['↑↓ navigate'];
     if (view.page.pageCount > 1) navParts.push('←→ page');
     navParts.push('Enter select', 'Esc cancel');
@@ -231,7 +199,15 @@ export class ChoicePickerComponent implements Component, Focusable {
       );
     }
     const notice = this.opts.notice;
-    if (typeof notice === 'object') {
+    if (typeof notice === 'object' && 'lines' in notice) {
+      const noticeWidth = Math.max(1, width - 1);
+      lines.push('');
+      for (const noticeLine of notice.lines) {
+        for (const wrapped of wrapDescription(noticeLine.text, noticeWidth)) {
+          lines.push(currentTheme.fg(noticeLine.tone, ` ${wrapped}`));
+        }
+      }
+    } else if (typeof notice === 'object') {
       const markdown = new Markdown(
         notice.markdown,
         0,
@@ -260,7 +236,7 @@ export class ChoicePickerComponent implements Component, Focusable {
     if (options.length === 0) {
       lines.push(currentTheme.fg('textMuted', '   No matches'));
     }
-    const choiceRegions: ChoiceRegion[] = [];
+    const choiceRegions: MouseRowRegion[] = [];
     for (let i = view.page.start; i < view.page.end; i++) {
       const start = lines.length;
       const opt = options[i]!;
@@ -301,8 +277,7 @@ export class ChoicePickerComponent implements Component, Focusable {
   }
 
   private finishLines(lines: readonly string[], width: number): string[] {
-    const rendered = lines.map((line) => truncateToWidth(line, width));
-    return this.focused ? rendered : rendered.map((line) => currentTheme.fade(line));
+    return finishDialogLines(lines, width, this.focused);
   }
 }
 

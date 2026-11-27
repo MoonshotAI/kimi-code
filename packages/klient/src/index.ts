@@ -1,11 +1,3 @@
-/**
- * `@moonshot-ai/klient` public surface — the transport-agnostic client facade
- * over the agent-core-v2 engine. Create a klient with one of the transport
- * entry points (`@moonshot-ai/klient/ipc` or `/memory`); everything
- * exported here behaves identically regardless of which one carried the
- * bytes.
- */
-
 export type {
   CallOptions,
   EventSourceRef,
@@ -99,22 +91,20 @@ export type {
 export type { SessionEventPayloads } from './contract/session/events.js';
 export type { AgentEventPayloads } from './contract/agent/events.js';
 
-// Wire types re-exported for consumer convenience (type-only; the engine is
-// not pulled in at runtime for http consumers).
 export type {
   SessionListQuery,
   SessionSummary,
 } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
 export type { Page } from '@moonshot-ai/agent-core-v2/persistence/interface/queryStore';
 export type {
-  Workspace,
-  WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
+  Project as Workspace,
+  ProjectUpdate as WorkspaceUpdate,
+} from '@moonshot-ai/agent-core-v2/app/project/project';
 export type {
   ConfigDiagnostic,
   ConfigInspectValue,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
-export type { ProviderConfig } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
+export type { ProviderConfig } from '@moonshot-ai/agent-core-v2/provider-catalog/provider/provider';
 export type { AuthStatus } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 export type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 export type {

@@ -1,7 +1,3 @@
-/**
- * `waitForTasks`: waits until one or all detached tool calls finish, or until a timeout.
- */
-
 export interface TaskWaitInput {
   taskId?: string;
   timeoutMs: number;

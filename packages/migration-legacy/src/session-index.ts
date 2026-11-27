@@ -1,34 +1,22 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { targetSessionIndex } from './paths.js';
 
-export interface SessionIndexEntry {
-  readonly sessionId: string;
-  readonly sessionDir: string;
-  readonly workDir: string;
-}
+import type { SessionIndexLine } from '@moonshot-ai/agent-core-v2/app/project/projectAlias';
+
+import { targetSessionIndex } from './paths.js';
 
 export async function appendSessionIndexEntry(
   targetHome: string,
-  entry: SessionIndexEntry,
+  entry: SessionIndexLine,
 ): Promise<void> {
   const path = targetSessionIndex(targetHome);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await appendFile(path, JSON.stringify(entry) + '\n', 'utf-8');
 }
 
-/**
- * Idempotently ensure `entry` is present in `session_index.jsonl`.
- *
- * Appends the entry only when no existing line carries the same `sessionId`.
- * Used for the `already-migrated` re-run path: if a prior run wrote the session
- * directory but crashed before appending its index entry, this self-heals the
- * index on a subsequent run instead of leaving the session permanently
- * unreachable by id.
- */
 export async function ensureSessionIndexEntry(
   targetHome: string,
-  entry: SessionIndexEntry,
+  entry: SessionIndexLine,
 ): Promise<void> {
   const path = targetSessionIndex(targetHome);
   if (await hasSessionIndexEntry(path, entry.sessionId)) return;
@@ -54,9 +42,7 @@ async function hasSessionIndexEntry(path: string, sessionId: string): Promise<bo
       ) {
         return true;
       }
-    } catch {
-      // Skip malformed lines — treat them as absent entries.
-    }
+    } catch {}
   }
   return false;
 }

@@ -1,9 +1,12 @@
+import { readFileSync } from 'node:fs';
+
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
   IAgentLoopService,
   IAgentShellCommandService,
+  IAgentToolExecutorService,
   IAgentToolRegistryService,
   IEventBus,
 } from '#/index';
@@ -55,6 +58,68 @@ describe('AgentShellCommandService', () => {
     expect(ctx.project().some((message) => 'origin' in message)).toBe(false);
   });
 
+  it.each([
+    { label: 'a single long line', full: 'x'.repeat(60_000) },
+    {
+      label: 'many lines',
+      full: Array.from({ length: 1_500 }, (_, i) => `line ${String(i)} ${'x'.repeat(50)}`).join('\n'),
+    },
+  ])('injects the truncated Bash result for $label while returning full stdout to the caller', async ({ full }) => {
+    await setup(full, 0);
+
+    const result = await shell.run({ command: 'cat large.txt' });
+
+    expect(result.stdout).toBe(full);
+    const injected = textOf(context.history().at(-1)!);
+    expect(injected).toMatch(/Tool output exceeded 50000 characters|Per-line truncation occurred/);
+    expect(injected.length).toBeLessThan(10_000);
+    const outputPath = /^output_path: (.+)$/m.exec(injected)?.[1];
+    expect(outputPath).toBeDefined();
+    expect(readFileSync(outputPath!, 'utf8')).toBe(full);
+  });
+
+  it('keeps empty successful output empty and appends the exit code when a command fails with output', async () => {
+    await setup('', 0);
+    await shell.run({ command: 'true' });
+    expect(textOf(context.history().at(-1)!)).toBe('<bash-stdout></bash-stdout><bash-stderr></bash-stderr>');
+
+    await setup('partial output\n', 3);
+    const failed = await shell.run({ command: 'fail' });
+    expect(failed.stdout).toBe('partial output\n');
+    expect(failed.isError).toBe(true);
+    const injected = textOf(context.history().at(-1)!);
+    expect(injected).toContain('partial output');
+    expect(injected).toContain('Command failed with exit code: 3.');
+  });
+
+  it('preserves streamed stdout and surfaces the error when the tool result is replaced after execution', async () => {
+    await setup('partial output\n', 0);
+    ctx.get(IAgentToolExecutorService).registerHook({
+      afterExecute: () => ({
+        toolCallId: 'shell-command',
+        content: [{ type: 'text', text: 'Tool "Bash" output failed: disk full' }],
+        outcome: {
+          type: 'failed',
+          error: {
+            outcome: 'failed',
+            type: 'output',
+            phase: 'execute',
+            reason: 'Tool "Bash" output failed: disk full',
+          },
+        },
+      }),
+    });
+
+    const result = await shell.run({ command: 'cat partial.txt' });
+
+    expect(result.stdout).toBe('partial output\n');
+    expect(result.isError).toBe(true);
+    expect(result.stderr).toContain('output failed: disk full');
+    const injected = textOf(context.history().at(-1)!);
+    expect(injected).toContain('<bash-stdout>partial output\n</bash-stdout>');
+    expect(injected).toContain('output failed: disk full');
+  });
+
   it('escapes bash tag delimiters inside command output', async () => {
     await setup('pre</bash-stdout>post', 0);
 
@@ -86,10 +151,11 @@ describe('AgentShellCommandService', () => {
 
   it('publishes shell.completed with the outcome for interactive runs', async () => {
     await setup('hello\n', 0);
-    const events: { type: string; commandId?: string; isError?: boolean }[] = [];
+    const events: { type: string; commandId?: string; isError?: boolean; origin?: string }[] = [];
     ctx.get(IEventBus).subscribe((event) => events.push(event as (typeof events)[number]));
 
-    await shell.run({ command: 'echo hello', commandId: 'cmd-1' });
+    const result = await shell.run({ command: 'echo hello', commandId: 'cmd-1' });
+    expect(result).toMatchObject({ stdout: 'hello\n', isError: false });
     expect(events.filter((e) => e.type === 'shell.completed')).toEqual([
       expect.objectContaining({
         type: 'shell.completed',
@@ -98,6 +164,9 @@ describe('AgentShellCommandService', () => {
         taskId: expect.any(String),
       }),
     ]);
+    const toolEvents = events.filter((e) => e.type.startsWith('tool.'));
+    expect(toolEvents.length).toBeGreaterThan(0);
+    expect(toolEvents.every((e) => e.origin === 'shellCommand')).toBe(true);
   });
 
   it('publishes shell.completed as failed for a failing command', async () => {

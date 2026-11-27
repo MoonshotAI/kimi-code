@@ -9,7 +9,8 @@ import {
   type ResolvedConfig,
 } from '#/app/config/config';
 import type { IProviderDiscoveryService, RetiredModel } from '#/app/kosongConfig/discovery';
-import type { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
+import type { IModelOAuthTokens } from '#/provider-catalog/model/model-oauth';
+import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { ErrorCodes } from '#/errors';
 import type { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
@@ -39,6 +40,7 @@ export class StubConfigService implements IConfigService {
     return {
       value: this._values.get(domain) as T | undefined,
       defaultValue: undefined,
+      envValue: undefined,
       userValue: this._values.get(domain) as T | undefined,
       memoryValue: undefined,
     };
@@ -194,4 +196,8 @@ export function stubSessionRunGate(
       return locks.lease(sessionId);
     },
   };
+}
+
+export function stubHostEnvironment(homeDir: string): IHostEnvironment {
+  return { _serviceBrand: undefined, ready: Promise.resolve(), homeDir } as IHostEnvironment;
 }

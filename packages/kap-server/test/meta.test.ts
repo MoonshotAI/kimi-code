@@ -7,13 +7,18 @@ import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureM
 import { getFeatureRecipes } from '@moonshot-ai/agent-core-v2/features/featureRegistry';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { metaCapabilitiesSchema } from '../src/protocol/rest-meta';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authedFetch } from './helpers/auth';
 
 interface MetaBody {
   code: number;
-  data: { experimental_flags?: Record<string, boolean> };
+  data: {
+    kimi_agent_protocol_version?: string;
+    home_dir?: string;
+    experimental_flags?: Record<string, boolean>;
+  };
 }
 
 describe('/api/v1/meta experimental_flags', () => {
@@ -33,7 +38,7 @@ describe('/api/v1/meta experimental_flags', () => {
 
   beforeEach(() => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOOL_SELECT', undefined);
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', undefined);
   });
 
   afterEach(async () => {
@@ -62,6 +67,8 @@ describe('/api/v1/meta experimental_flags', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as MetaBody;
     expect(body.code).toBe(0);
+    expect(body.data.kimi_agent_protocol_version).toBe('1.0.0');
+    expect(body.data).not.toHaveProperty('backend');
     expect(body.data.experimental_flags).toBeDefined();
     return body.data.experimental_flags as Record<string, boolean>;
   }
@@ -69,48 +76,55 @@ describe('/api/v1/meta experimental_flags', () => {
   it('reports registered flags as off by default', async () => {
     const base = await boot();
     const flags = await getMetaFlags(base);
-    expect(flags['tool-select']).toBe(false);
+    expect(flags['notify_user']).toBe(false);
+  });
+
+  it('reports the data directory the server runs on as home_dir', async () => {
+    const base = await boot();
+    const res = await authedFetch(server as RunningServer, base, '/api/v1/meta');
+    const body = (await res.json()) as MetaBody;
+    expect(body.data.home_dir).toBe(home);
   });
 
   it('reports a config-enabled flag from the very first response', async () => {
-    const base = await boot('[experimental]\ntool-select = true\n');
+    const base = await boot('[experimental]\nnotify_user = true\n');
     const flags = await getMetaFlags(base);
-    expect(flags['tool-select']).toBe(true);
+    expect(flags['notify_user']).toBe(true);
   });
 
   it('reflects a flag enabled via its KIMI_CODE_EXPERIMENTAL_* env var', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOOL_SELECT', '1');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '1');
     const base = await boot();
     const flags = await getMetaFlags(base);
-    expect(flags['tool-select']).toBe(true);
+    expect(flags['notify_user']).toBe(true);
   });
 
   it('flips live when the [experimental] config section is written via POST /config', async () => {
     const base = await boot();
-    expect((await getMetaFlags(base))['tool-select']).toBe(false);
+    expect((await getMetaFlags(base))['notify_user']).toBe(false);
 
     const res = await authedFetch(server as RunningServer, base, '/api/v1/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ experimental: { 'tool-select': true } }),
+      body: JSON.stringify({ experimental: { 'notify_user': true } }),
     });
     expect(res.status).toBe(200);
 
-    expect((await getMetaFlags(base))['tool-select']).toBe(true);
+    expect((await getMetaFlags(base))['notify_user']).toBe(true);
   });
 
   it('keeps an env-forced flag on when the config section disables it', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOOL_SELECT', '1');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '1');
     const base = await boot();
 
     const res = await authedFetch(server as RunningServer, base, '/api/v1/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ experimental: { 'tool-select': false } }),
+      body: JSON.stringify({ experimental: { 'notify_user': false } }),
     });
     expect(res.status).toBe(200);
 
-    expect((await getMetaFlags(base))['tool-select']).toBe(true);
+    expect((await getMetaFlags(base))['notify_user']).toBe(true);
   });
 });
 
@@ -210,8 +224,8 @@ describe('/api/v1/meta features', () => {
     const features = await getMetaFeatures(base);
     const expected = getFeatureRecipes()
       .map((recipe) => recipe.name)
-      .sort();
-    expect(features.map((feature) => feature.name).sort()).toEqual(expected);
+      .toSorted();
+    expect(features.map((feature) => feature.name).toSorted()).toEqual(expected);
     for (const feature of features) {
       expect(feature.state).toBe('Active');
       expect(feature.meta).toEqual({});
@@ -228,5 +242,40 @@ describe('/api/v1/meta features', () => {
     const after = await getMetaFeatures(base);
     expect(after.some((feature) => feature.name === 'plan')).toBe(false);
     expect(after).toHaveLength(before.length - 1);
+  });
+
+  it('surfaces hostIdentity.productName as product on /api/v1/meta', async () => {
+    const base = await boot();
+    const res = await authedFetch(server as RunningServer, base, '/api/v1/meta');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { code: number; data: { product?: string } };
+    expect(body.code).toBe(0);
+    expect(body.data.product).toBe(TEST_HOST_IDENTITY.productName);
+  });
+
+  it('advertises supported capabilities, accepts older hosts, and serves authenticated GET /api/v1/kap.md', async () => {
+    const base = await boot();
+    const metaRes = await authedFetch(server as RunningServer, base, '/api/v1/meta');
+    const metaBody = (await metaRes.json()) as {
+      code: number;
+      data: { capabilities: Record<string, boolean> };
+    };
+    expect(metaBody.code).toBe(0);
+    expect(metaBody.data.capabilities['interactions_list']).toBe(true);
+    expect(metaBody.data.capabilities['session_wait']).toBe(true);
+    const { feedback, ...olderHost } = metaBody.data.capabilities;
+    expect(feedback).toBe(true);
+    expect(metaCapabilitiesSchema.parse(olderHost)).toEqual(olderHost);
+
+    const unauthed = await fetch(`${base}/api/v1/kap.md`);
+    expect(unauthed.status).toBe(401);
+
+    const specRes = await authedFetch(server as RunningServer, base, '/api/v1/kap.md');
+    expect(specRes.status).toBe(200);
+    expect(specRes.headers.get('content-type')).toContain('text/markdown');
+    const text = await specRes.text();
+    expect(text.startsWith('# Kimi Agent Protocol (KAP) Runtime Guide')).toBe(true);
+    expect(text).toContain('POST /api/v1/sessions/{session_id}:wait');
+    expect(text).toContain('POST /api/v1/feedback');
   });
 });

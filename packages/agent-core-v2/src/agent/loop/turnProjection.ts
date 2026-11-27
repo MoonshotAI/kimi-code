@@ -21,7 +21,7 @@ import type { IAgentStateService } from '#/agent/state/agentState';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { legacyToolDurationMs } from '#/tool/executor';
-import type { AgentLoopService } from './loopService';
+import type { AgentLoopService, LoopInterruptReason } from './loopService';
 import type { AgentPromptProjection, ActivePrompt, PendingTurn } from './promptProjection';
 import {
   MAX_STEPS_REASON,
@@ -32,7 +32,7 @@ import {
   type StepStoppingEvent,
   type TurnTrigger,
 } from '@moonshot-ai/core/loop/index';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import { apiRequestId, type LLMRequestTrace } from '#/agent/loop/requestObservation';
 import type { FinishReason, LlmTiming } from '@moonshot-ai/core/llm/response';
 import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import { emptyUsage, type TokenUsage } from '@moonshot-ai/core/llm/usage';
@@ -55,7 +55,8 @@ import {
   type TurnInterruptReason,
 } from './turnEvents';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
-import { TurnEnded, TurnPrompt } from './turnOps';
+import { TurnEnded, TurnPrompt, type TurnReplyModel } from './turnOps';
+import type { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
 import type {
   AfterStepContext,
@@ -70,7 +71,6 @@ import type {
 } from './loop';
 import { createMaxStepsExceededError, isMaxStepsExceededError } from './loop';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
-import type { LoopInterruptReason } from './loopService';
 
 export const loopLastRequestIdKey = defineState<string | undefined>(
   'loop.lastRequestId',
@@ -129,13 +129,17 @@ interface ActiveTurn {
   mode: 'agent' | 'plan' | undefined;
   providerType: string | undefined;
   protocol: string | undefined;
+  replyModel?: { requestId?: string; model: TurnReplyModel };
 }
 
 type MutableTurn = {
   -readonly [K in keyof Turn]: Turn[K];
 };
 
+type TurnContinuation = Extract<LoopEmitted, { type: 'turn.ended' }>['continuation'];
+
 export interface TurnProjectionOptions {
+  readonly attribution: ISessionRequestAttributionService;
   readonly dispatcher: IEventDispatcher;
   readonly events: IEventBus;
   readonly scopeContext: IAgentScopeContext;
@@ -154,7 +158,7 @@ export interface TurnProjectionOptions {
 export class AgentTurnProjection {
   private active: ActiveTurn | undefined;
   private lastResultValue: TurnResult | undefined;
-  private activeRequestTrace: LLMRequestTrace | undefined;
+  private activeRequestId: string | undefined;
   private turnWatch: { timer: NodeJS.Timeout; signature: string; since: number; lastWarnAt: number } | undefined;
   private readonly promptOnlyTurnIds = new Set<number>();
   private readonly publishedPromptTurns = new Set<number>();
@@ -173,11 +177,7 @@ export class AgentTurnProjection {
   }
 
   get requestTrace(): LLMRequestTrace | undefined {
-    return this.activeRequestTrace;
-  }
-
-  set requestTrace(trace: LLMRequestTrace | undefined) {
-    this.activeRequestTrace = trace;
+    return this.activeRequestId === undefined ? undefined : { requestId: this.activeRequestId };
   }
 
   thinkingEffort: ThinkingEffort | undefined;
@@ -203,7 +203,7 @@ export class AgentTurnProjection {
 
   private turnRequestId(promptOnly: boolean, cancelled: boolean, completed: boolean): string | undefined {
     if (promptOnly || cancelled) return undefined;
-    return completed ? this.lastRequestId : (this.activeRequestTrace?.requestId ?? this.lastRequestId);
+    return completed ? this.lastRequestId : (this.activeRequestId ?? this.lastRequestId);
   }
 
   history(source: readonly Message[]): readonly ContextMessage[] {
@@ -251,7 +251,7 @@ export class AgentTurnProjection {
     const current = active?.current;
     const retry = active?.retry;
     return {
-      state: loop?.state.turn === undefined && active === undefined ? 'idle' : 'running',
+      state: loop?.state.status === 'running' || active !== undefined ? 'running' : 'idle',
       activeTurnId: loop?.state.turn?.id ?? active?.id,
       activePromptId: this.options.prompts.activePrompt()?.id,
       queue,
@@ -270,16 +270,8 @@ export class AgentTurnProjection {
             activeToolCalls: (loop?.state.calls ?? []).map((call) => ({ toolCallId: call.toolCall.id, name: call.toolCall.name })),
             since: active.startedAt,
           },
-      activeRequestId: this.activeRequestTrace?.requestId,
+      activeRequestId: this.activeRequestId,
     };
-  }
-
-  recordOutcome(outcome: { readonly timing?: LlmTiming }, source: { readonly type: string; readonly turnId?: number; readonly step?: number }): void {
-    if (source.type !== 'turn') return;
-    const active = this.active;
-    const step = active?.current;
-    if (active?.id !== source.turnId || step === undefined || step.number !== source.step) return;
-    step.timing = outcome.timing;
   }
 
   stepStarting(event: StepStartingEvent): StepStartingDecision | Promise<StepStartingDecision | undefined> | undefined {
@@ -289,7 +281,7 @@ export class AgentTurnProjection {
     turn.gatedSteps = event.step;
     if (!this.promptOnlyTurnIds.has(turn.id)) turn.steps = Math.max(turn.steps, event.step);
     turn.retry = undefined;
-    this.activeRequestTrace = undefined;
+    this.activeRequestId = undefined;
     this.options.telemetry.setContext({ request_id: undefined });
     const step = turn.current ?? createStepState(event.step, turn.controller.signal);
     turn.current = step;
@@ -327,6 +319,7 @@ export class AgentTurnProjection {
     if (turn === undefined) return undefined;
     const step = turn.current;
     if (step === undefined) return undefined;
+    if (event.draft.type === 'aborted') return undefined;
     if (event.draft.type !== 'failed') {
       const finishReason = step.providerFinishReason ?? 'completed';
       const context: AfterStepContext = {
@@ -522,20 +515,25 @@ export class AgentTurnProjection {
         }));
         return;
       }
-      case 'llm.sent': {
+      case 'llm.requested': {
         const turn = this.active;
-        if (turn === undefined || turn.retry === undefined) return;
-        const step = turn.current?.number ?? turn.gatedSteps;
+        if (turn === undefined) return;
+        this.activeRequestId = undefined;
+        if (turn.retry === undefined && turn.current !== undefined) return;
+        const stepNumber = turn.current?.number ?? turn.gatedSteps;
+        const step = createStepState(stepNumber, turn.controller.signal, turn.stepIds.get(stepNumber));
+        turn.current = step;
+        turn.stepIds.set(step.number, step.uuid);
         turn.retry = undefined;
         void this.options.dispatcher.dispatch(new TurnStepStarted({
           agentId: this.options.scopeContext.agentId,
           turnId: turn.id,
-          step,
-          stepId: turn.current?.uuid ?? turn.stepIds.get(step),
+          step: step.number,
+          stepId: step.uuid,
         }));
         return;
       }
-      case 'llm.streaming.part': {
+      case 'llm.delta.part': {
         const turn = this.active;
         if (turn === undefined) return;
         const part = event.part;
@@ -576,12 +574,24 @@ export class AgentTurnProjection {
             return;
         }
       }
-      case 'llm.streaming.usage': {
+      case 'llm.delta.request_id': {
+        this.activeRequestId = event.requestId;
+        return;
+      }
+      case 'llm.ended': {
+        const outcome = event.outcome;
+        const errorRequestId = outcome.type === 'failed' ? apiRequestId(outcome.error) : undefined;
+        this.activeRequestId = outcome.requestId ?? errorRequestId ?? this.activeRequestId;
+        const step = this.active?.current;
+        if (step !== undefined && outcome.type === 'done') step.timing = outcome.timing;
+        return;
+      }
+      case 'llm.delta.usage': {
         const step = this.active?.current;
         if (step !== undefined) step.usage = mergeUsage(step.usage, event.usage);
         return;
       }
-      case 'llm.streaming.finish': {
+      case 'llm.delta.finish': {
         const step = this.active?.current;
         if (step !== undefined) {
           step.providerFinishReason = event.finish.finishReason ?? undefined;
@@ -589,15 +599,23 @@ export class AgentTurnProjection {
         }
         return;
       }
-      case 'llm.streaming.message_id': {
+      case 'llm.delta.message_id': {
         const step = this.active?.current;
         if (step !== undefined) step.messageId = event.messageId;
         return;
       }
-      case 'llm.retrying': {
+      case 'llm.retry': {
         const turn = this.active;
         if (turn === undefined) return;
         const step = turn.current;
+        if (step !== undefined) {
+          void this.options.dispatcher.dispatch(new TurnStepStreamReset({
+            agentId: this.options.scopeContext.agentId,
+            turnId: turn.id,
+            step: step.number,
+            stepId: step.uuid,
+          }));
+        }
         if (event.reason === 'recovery') {
           turn.current = undefined;
           return;
@@ -611,14 +629,6 @@ export class AgentTurnProjection {
           errorName: fields.errorName,
           statusCode: fields.statusCode,
         };
-        if (step !== undefined) {
-          void this.options.dispatcher.dispatch(new TurnStepStreamReset({
-            agentId: this.options.scopeContext.agentId,
-            turnId: turn.id,
-            step: step.number,
-            stepId: step.uuid,
-          }));
-        }
         void this.options.dispatcher.dispatch(new TurnStepRetrying({
           agentId: this.options.scopeContext.agentId,
           turnId: turn.id,
@@ -658,7 +668,9 @@ export class AgentTurnProjection {
         step.providerFinishReason = attributes?.finish?.finishReason ?? step.providerFinishReason;
         step.rawFinishReason = attributes?.finish?.rawFinishReason ?? step.rawFinishReason;
         step.messageId = attributes?.messageId ?? step.messageId;
-        this.lastRequestId = this.activeRequestTrace?.requestId;
+        const requestId = this.activeRequestId;
+        this.lastRequestId = requestId;
+        turn.replyModel = attributes?.model === undefined ? undefined : { requestId, model: attributes.model };
         const toolCalls = step.entry.toolCalls;
         if (toolCalls.length === 0 && attributes?.partial !== true) this.endOrInterruptStep(turn, step, step.providerFinishReason ?? 'completed');
         else if (toolCalls.length > 0) step.pendingToolIds = new Set(toolCalls.map((call) => call.id));
@@ -705,7 +717,7 @@ export class AgentTurnProjection {
         }
         const turn = this.active;
         if (turn === undefined) return;
-        return this.finishTurn(turn, outcome);
+        return this.finishTurn(turn, outcome, event.continuation);
       }
       case 'prompt.notified':
       case 'prompt.steered': {
@@ -837,12 +849,12 @@ export class AgentTurnProjection {
     }));
   }
 
-  private async finishTurn(turn: ActiveTurn, outcome: Extract<LoopEmitted, { type: 'turn.ended' }>['outcome']): Promise<void> {
+  private async finishTurn(turn: ActiveTurn, outcome: Extract<LoopEmitted, { type: 'turn.ended' }>['outcome'], continuation?: TurnContinuation): Promise<void> {
     if (this.active !== turn) return;
     if (turn.abortReason !== undefined || turn.controller.signal.aborted || outcome.type === 'aborted') {
       const reason = turn.abortReason ?? (turn.controller.signal.aborted ? turn.controller.signal.reason : undefined) ?? abortError('Turn aborted');
       this.interruptRunForCancel(turn, reason);
-      await this.endTurn(turn, { type: 'cancelled', steps: turn.steps, reason });
+      await this.endTurn(turn, { type: 'cancelled', steps: turn.steps, reason }, undefined, continuation);
       return;
     }
     if (turn.filtered) {
@@ -853,25 +865,25 @@ export class AgentTurnProjection {
           name: 'ProviderFilteredError',
           details: { finishReason: 'filtered' },
         }),
-      });
+      }, undefined, continuation);
       return;
     }
     if (turn.maxStepsError !== undefined || (outcome.type !== 'failed' && outcome.cause?.reason === MAX_STEPS_REASON)) {
       const error = turn.maxStepsError ?? createMaxStepsExceededError(this.options.maxSteps() ?? 0);
       this.failStep(turn.id, turn.interruptStep, error);
-      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error });
+      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, continuation);
       return;
     }
     if (outcome.type === 'failed' || turn.failedStep !== undefined) {
       const error = turn.failedStep?.error ?? (outcome.type === 'failed' ? outcome.error : undefined) ?? new Error('Turn failed');
       this.failStep(turn.id, turn.interruptStep, error);
-      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error });
+      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, continuation);
       return;
     }
     if (outcome.type === 'blocked') {
       const error = new Error2(ErrorCodes.INTERNAL, outcome.cause.message ?? outcome.cause.reason);
       this.failStep(turn.id, turn.interruptStep, error);
-      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error });
+      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, continuation);
       return;
     }
     const result: LoopRunResult = {
@@ -880,7 +892,7 @@ export class AgentTurnProjection {
       truncated: turn.lastStopReason === 'truncated',
       stopReason: this.promptOnlyTurnIds.has(turn.id) ? 'prompt_only' : turn.forcedStopReason,
     };
-    await this.endTurn(turn, result, this.promptOnlyTurnIds.has(turn.id));
+    await this.endTurn(turn, result, this.promptOnlyTurnIds.has(turn.id), continuation);
   }
 
   private failStep(turnId: number, step: number | undefined, error: unknown): void {
@@ -898,7 +910,7 @@ export class AgentTurnProjection {
     }
   }
 
-  private async endTurn(turn: ActiveTurn, result: TurnResult, promptOnly = false): Promise<void> {
+  private async endTurn(turn: ActiveTurn, result: TurnResult, promptOnly = false, continuation?: TurnContinuation): Promise<void> {
     if (this.active !== turn) return;
     this.lastResultValue = result;
     this.active = undefined;
@@ -913,6 +925,7 @@ export class AgentTurnProjection {
     const durationMs = promptOnly ? 0 : Date.now() - turn.startedAt;
     const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
     const requestId = this.turnRequestId(promptOnly, result.type === 'cancelled', result.type === 'completed');
+    const modelSteps = this.options.attribution.finishModelSteps(this.options.scopeContext.agentId, turn.id);
     const interruptReason = result.type === 'completed' ? undefined : interruptReasonFor(result);
     const turnEnded = this.options.dispatcher.dispatch(new TurnEnded({
       agentId: this.options.scopeContext.agentId,
@@ -923,6 +936,9 @@ export class AgentTurnProjection {
       interruptReason,
       stopReason: result.type === 'completed' ? result.stopReason : undefined,
       requestId,
+      replyModel: modelSteps !== undefined && turn.replyModel?.requestId === requestId ? turn.replyModel?.model : undefined,
+      modelSteps,
+      continuation,
     }));
     if (error !== undefined) void this.options.dispatcher.dispatch(new AgentErrorEvent({ ...error, agentId: this.options.scopeContext.agentId }));
     this.options.prompts.complete(turn.id, result);
@@ -951,7 +967,7 @@ export class AgentTurnProjection {
     };
     this.options.telemetry.track2('turn_ended', ended);
     this.options.telemetry.setContext({ turn_id: undefined, request_id: undefined, thinking_effort: undefined });
-    this.activeRequestTrace = undefined;
+    this.activeRequestId = undefined;
     this.lastRequestId = undefined;
     await turnEnded;
     await this.options.dispatcher.flush();
@@ -1024,8 +1040,8 @@ export class AgentTurnProjection {
   }
 }
 
-function createStepState(number: number, signal: AbortSignal): CoreStepState {
-  return { number, uuid: randomUUID(), signal, pendingToolIds: new Set(), tools: [] };
+function createStepState(number: number, signal: AbortSignal, uuid: string = randomUUID()): CoreStepState {
+  return { number, uuid, signal, pendingToolIds: new Set(), tools: [] };
 }
 
 function mergeUsage(base: TokenUsage | undefined, patch: Partial<TokenUsage>): TokenUsage {

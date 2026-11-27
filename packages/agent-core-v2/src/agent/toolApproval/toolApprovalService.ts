@@ -1,4 +1,4 @@
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { randomUUID } from 'node:crypto';
 
 import { Service } from '#/_base/di/service';
@@ -140,6 +140,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
       toolName: name,
       action,
       display,
+      approvalDetail: result.approvalDetail,
     };
     const approvalContext = {
       ...approvalRequest,

@@ -1,8 +1,3 @@
-/**
- * `configService` — layered global config service. Mirrors
- * `agent-core-v2/app/config/config.ts`.
- */
-
 import { z } from 'zod';
 
 import { noResult } from '../helpers.js';
@@ -13,6 +8,7 @@ export const configTargetSchema = z.enum(['user', 'memory']);
 export const configInspectValueSchema = z.object({
   value: z.unknown().optional(),
   defaultValue: z.unknown().optional(),
+  envValue: z.unknown().optional(),
   userValue: z.unknown().optional(),
   memoryValue: z.unknown().optional(),
 });

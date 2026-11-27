@@ -70,8 +70,6 @@ export class KimiAuthFacade {
       onRefresh: options.onRefresh,
       configAdapter: {
         configPath: options.configPath,
-        // Write-path base read: strict (a salvaged base would drop the user's
-        // broken-but-fixable sections on rewrite) with an actionable message.
         read: () => readConfigFileForUpdate(options.configPath) as SDKManagedConfig,
         write: async (config) => {
           await writeConfigFile(options.configPath, config);
@@ -82,7 +80,7 @@ export class KimiAuthFacade {
     });
   }
 
-  async status(providerName?: string | undefined): Promise<AuthStatus> {
+  async status(providerName?: string): Promise<AuthStatus> {
     return this.toolkit.status(providerName, this.resolveRuntimeManagedAuth(providerName).oauthRef);
   }
 
@@ -120,7 +118,7 @@ export class KimiAuthFacade {
     };
   }
 
-  async logout(providerName?: string | undefined): Promise<KimiAuthLogoutResult> {
+  async logout(providerName?: string): Promise<KimiAuthLogoutResult> {
     const result = await this.toolkit.logout(
       providerName,
       this.resolveRuntimeManagedAuth(providerName).oauthRef,
@@ -133,7 +131,7 @@ export class KimiAuthFacade {
     };
   }
 
-  async getManagedUsage(providerName?: string | undefined): Promise<AuthManagedUsageResult> {
+  async getManagedUsage(providerName?: string): Promise<AuthManagedUsageResult> {
     const auth = this.resolveRuntimeManagedAuth(providerName);
     return this.toolkit.getManagedUsage(providerName, {
       oauthRef: auth.oauthRef,
@@ -143,7 +141,7 @@ export class KimiAuthFacade {
 
   async getCachedAccessToken(
     providerName?: string,
-    oauthRef?: OAuthRef | undefined,
+    oauthRef?: OAuthRef,
   ): Promise<string | undefined> {
     return this.toolkit.getCachedAccessToken(
       providerName,
@@ -153,7 +151,7 @@ export class KimiAuthFacade {
 
   readonly resolveOAuthTokenProvider = (
     providerName: string,
-    oauthRef?: OAuthRef | undefined,
+    oauthRef?: OAuthRef,
   ): BearerTokenProvider => {
     const provider = this.toolkit.tokenProvider(
       providerName,
@@ -164,22 +162,17 @@ export class KimiAuthFacade {
         try {
           return await provider.getAccessToken(options);
         } catch (error) {
-          // Classify OAuth token failures into the public KimiError protocol;
-          // unrecognized errors are rethrown raw (see mapOAuthTokenError).
           throw mapOAuthTokenError(error, providerName) ?? error;
         }
       },
     };
   };
 
-  private resolveManagedAuth(providerName?: string | undefined): {
+  private resolveManagedAuth(providerName?: string): {
     readonly oauthRef?: OAuthRef | undefined;
     readonly baseUrl?: string | undefined;
   } {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
-    // Read path: token/status resolution must work off a degraded config
-    // instead of failing the session when an unrelated section is broken.
-    // Write paths (the toolkit's configAdapter.read) stay strict.
     const config = loadRuntimeConfigSafe(this.options.configPath).config;
     const provider = config.providers[name];
     return {
@@ -188,7 +181,7 @@ export class KimiAuthFacade {
     };
   }
 
-  private resolveRuntimeManagedAuth(providerName?: string | undefined): {
+  private resolveRuntimeManagedAuth(providerName?: string): {
     readonly oauthRef: OAuthRef;
     readonly baseUrl?: string | undefined;
   } {
@@ -201,7 +194,7 @@ export class KimiAuthFacade {
 
   private runtimeOAuthRef(
     providerName: string | undefined,
-    oauthRef?: OAuthRef | undefined,
+    oauthRef?: OAuthRef,
   ): OAuthRef | undefined {
     if ((providerName ?? KIMI_CODE_PROVIDER_NAME) !== KIMI_CODE_PROVIDER_NAME) return oauthRef;
     const auth = this.resolveManagedAuth(providerName);

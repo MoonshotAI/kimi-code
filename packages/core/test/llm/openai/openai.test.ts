@@ -20,5 +20,5 @@ describe('OpenAI decode fixtures', () => {
 });
 
 describe('OpenAI transport fixtures', () => {
-  runTransportFixtures(openAIProtocol, openAITransportFixtures);
+  runTransportFixtures(openAIProtocol, openAITransportFixtures, 'openai-chat');
 });

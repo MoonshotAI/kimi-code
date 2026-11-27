@@ -1,9 +1,10 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { createGitWorktree, slashPathOf, type GitWorktreeLayout } from '@moonshot-ai/testkit/fixtures';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -12,7 +13,7 @@ import {
   ISessionIndex,
   ISessionIndexMirror,
   ISessionManager,
-  IWorkspaceService,
+  IProjectService,
 } from '@moonshot-ai/agent-core-v2';
 
 import { createKimiHarness, SDKRpcClientV2 } from '#/index';
@@ -49,6 +50,11 @@ async function makeTempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-list-'));
   tempDirs.push(dir);
   return dir;
+}
+
+async function repository(): Promise<GitWorktreeLayout> {
+  const base = await makeTempDir();
+  return createGitWorktree({ main: join(base, 'app'), worktree: join(base, 'app-fix') });
 }
 
 describe('KimiHarness.listSessions', () => {
@@ -160,8 +166,8 @@ describe('KimiHarness.listSessions', () => {
     try {
       const legacyWorkDir = `${workDir}/.`;
       const workspace = await client.engineAccessor
-        .get(IWorkspaceService)
-        .createOrTouch(legacyWorkDir);
+        .get(IProjectService)
+        .resolveImplicit(legacyWorkDir);
       await client.engineAccessor.get(ISessionManager).create({
         workspaceId: workspace.id,
         workDir: legacyWorkDir,
@@ -175,7 +181,7 @@ describe('KimiHarness.listSessions', () => {
     }
   });
 
-  it('directory view includes sessions of workspaces holding the dir as primary or member', async () => {
+  it('lists a directory\'s sessions from its implicit project only, never from a managed project rooted or registered there', async () => {
     const homeDir = await makeTempDir();
     const dirA = await makeTempDir();
     const dirB = await makeTempDir();
@@ -183,7 +189,7 @@ describe('KimiHarness.listSessions', () => {
     const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
 
     try {
-      const registry = client.engineAccessor.get(IWorkspaceService);
+      const registry = client.engineAccessor.get(IProjectService);
       const projectM = await registry.create({ root: dirA, additionalDirs: [dirB], name: 'M' });
       const projectN = await registry.create({ root: dirC, additionalDirs: [dirA], name: 'N' });
       const sessionManager = client.engineAccessor.get(ISessionManager);
@@ -191,14 +197,208 @@ describe('KimiHarness.listSessions', () => {
       await sessionManager.create({ workspaceId: projectN.id, workDir: dirC, sessionId: 'ses_n' });
       await client.createSession({ id: 'ses_hash_a', workDir: dirA });
 
-      const inA = await client.listSessions({ workDir: dirA });
-      expect(inA.map((item) => item.id).toSorted()).toEqual(['ses_hash_a', 'ses_m', 'ses_n'].toSorted());
+      expect((await client.listSessions({ workDir: dirA })).map((item) => item.id)).toEqual(['ses_hash_a']);
+      expect(await client.listSessions({ workDir: dirB })).toEqual([]);
+      expect(await client.listSessions({ workDir: dirC })).toEqual([]);
+      const continued = await client.listSessionsPage({ workDir: dirA, limit: 1 });
+      expect(continued.items.map((item) => item.id)).toEqual(['ses_hash_a']);
+    } finally {
+      await client.close();
+    }
+  });
 
-      const inB = await client.listSessions({ workDir: dirB });
-      expect(inB.map((item) => item.id)).toEqual(['ses_m']);
+  it('finds a session of any project by id, managed projects included, at its own working directory', async () => {
+    const homeDir = await makeTempDir();
+    const managedRoot = await makeTempDir();
+    const elsewhere = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
 
-      const inC = await client.listSessions({ workDir: dirC });
-      expect(inC.map((item) => item.id)).toEqual(['ses_n']);
+    try {
+      const managed = await client.engineAccessor
+        .get(IProjectService)
+        .create({ root: managedRoot, additionalDirs: [], name: 'Managed' });
+      await client.engineAccessor
+        .get(ISessionManager)
+        .create({ workspaceId: managed.id, workDir: managedRoot, sessionId: 'ses_managed' });
+      await client.createSession({ id: 'ses_elsewhere', workDir: elsewhere });
+
+      const [found] = await client.listSessions({ sessionId: 'ses_managed' });
+
+      expect(found).toMatchObject({ id: 'ses_managed', workDir: managedRoot });
+      expect(await client.listSessions({ workDir: managedRoot })).toEqual([]);
+      expect(await client.listSessions({ workDir: elsewhere, sessionId: 'ses_managed' })).toEqual([found]);
+      expect(await client.listSessionsPage({ workDir: elsewhere, sessionId: 'ses_managed', limit: 1 })).toEqual({ items: [found] });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('keeps finding the sessions of a worktree by its path after the worktree was removed', async () => {
+    const homeDir = await makeTempDir();
+    const { main, worktree } = await repository();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      await client.createSession({ id: 'ses_main', workDir: main });
+      const created = await client.createSession({ id: 'ses_worktree', workDir: worktree });
+      await client.closeSession({ sessionId: created.id });
+      await rm(worktree, { recursive: true });
+
+      const projects = await client.engineAccessor.get(IProjectService).list();
+      expect((await client.listSessions({ workDir: worktree })).map((item) => [item.id, item.workDir])).toEqual([
+        ['ses_worktree', slashPathOf(worktree)],
+      ]);
+      expect((await client.listSessionsPage({ workDir: worktree, limit: 1 })).items.map((item) => item.id)).toEqual(['ses_worktree']);
+      expect((await client.listSessions({ workDir: main })).map((item) => item.id)).toEqual(['ses_main']);
+      const fork = await client.forkSession({ id: 'ses_worktree' });
+      expect((await client.listSessions({ workDir: worktree })).map((item) => item.id).toSorted()).toEqual(
+        ['ses_worktree', fork.id].toSorted(),
+      );
+      expect(await client.engineAccessor.get(IProjectService).list()).toEqual(projects);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('follows a changed primary for the sessions at the root of a managed project and keeps the others in place', async () => {
+    const homeDir = await makeTempDir();
+    const { main, worktree } = await repository();
+    const moved = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const workspaces = client.engineAccessor.get(IProjectService);
+      const sessionManager = client.engineAccessor.get(ISessionManager);
+      const { id: workspaceId } = await workspaces.create({ root: main, additionalDirs: [moved], name: 'Managed' });
+      await sessionManager.create({ workspaceId, workDir: main, sessionId: 'ses_root' });
+      await sessionManager.create({ workspaceId, workDir: worktree, sessionId: 'ses_worktree' });
+
+      await workspaces.setPrimary(workspaceId, moved);
+
+      const workDirOf = async (sessionId: string) => (await client.listSessions({ sessionId }))[0]?.workDir;
+      expect(await workDirOf('ses_root')).toBe(moved);
+      expect(await workDirOf('ses_worktree')).toBe(worktree);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('continues the newest session of the working directory, keeping a repository and its worktree apart', async () => {
+    const homeDir = await makeTempDir();
+    const { main, worktree } = await repository();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      await client.createSession({ id: 'ses_main', workDir: main });
+      await client.createSession({ id: 'ses_worktree', workDir: worktree });
+      await client.createSession({ id: 'ses_worktree_newer', workDir: worktree });
+
+      const fromMain = await client.listSessionsPage({ workDir: main, limit: 1 });
+      const fromWorktree = await client.listSessionsPage({ workDir: worktree, limit: 1 });
+
+      expect(fromMain.items.map((item) => [item.id, item.workDir])).toEqual([['ses_main', slashPathOf(main)]]);
+      expect(fromWorktree.items.map((item) => [item.id, item.workDir])).toEqual([
+        ['ses_worktree_newer', slashPathOf(worktree)],
+      ]);
+      expect((await client.listSessions({ workDir: worktree })).map((item) => item.id)).toEqual([
+        'ses_worktree_newer',
+        'ses_worktree',
+      ]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('lists all sessions across a project with scope "project" and reports projectWorkDir', async () => {
+    const homeDir = await makeTempDir();
+    const base = await realpath(await makeTempDir());
+    const { main, worktree } = await createGitWorktree({
+      main: join(base, 'app'),
+      worktree: join(base, 'app-fix'),
+    });
+    const harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
+
+    try {
+      const mainSession = await harness.createSession({ id: 'ses_project_main', workDir: main });
+      const wtSession = await harness.createSession({ id: 'ses_project_wt', workDir: worktree });
+      expect(mainSession.summary?.projectWorkDir).toBe(slashPathOf(main));
+      expect(wtSession.summary?.projectWorkDir).toBe(slashPathOf(main));
+
+      expect((await harness.listSessions({ workDir: worktree })).map((item) => item.id)).toEqual(['ses_project_wt']);
+      expect((await harness.listSessions({ workDir: main })).map((item) => item.id)).toEqual(['ses_project_main']);
+
+      const fromWorktree = await harness.listSessions({ workDir: worktree, scope: 'project' });
+      const fromMain = await harness.listSessions({ workDir: main, scope: 'project' });
+      const expected = [
+        { id: 'ses_project_main', projectWorkDir: slashPathOf(main) },
+        { id: 'ses_project_wt', projectWorkDir: slashPathOf(main) },
+      ];
+      expect(
+        fromWorktree.map(({ id, projectWorkDir }) => ({ id, projectWorkDir })).toSorted((a, b) => a.id.localeCompare(b.id)),
+      ).toEqual(expected);
+      expect(
+        fromMain.map(({ id, projectWorkDir }) => ({ id, projectWorkDir })).toSorted((a, b) => a.id.localeCompare(b.id)),
+      ).toEqual(expected);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('resolves projectWorkDir for sessions stored under an older implicit workspace alias ID', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await realpath(await makeTempDir());
+    const legacyId = 'wd_proj_deadbeef0002';
+    const setupClient = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const canonical = await setupClient.engineAccessor.get(IProjectService).resolveImplicit(workDir);
+    await setupClient.close();
+    const entry = {
+      root: workDir,
+      name: 'proj',
+      kind: 'implicit',
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    };
+    await writeFile(
+      join(homeDir, 'projects.json'),
+      JSON.stringify({
+        schema_version: 2,
+        projects: { [legacyId]: entry, [canonical.id]: entry },
+        deleted_project_ids: [],
+      }),
+    );
+
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.engineAccessor.get(ISessionManager).create({
+        workspaceId: legacyId,
+        workDir,
+        sessionId: 'ses_legacy_alias',
+      });
+
+      const byProject = await client.listSessions({ workDir, scope: 'project' });
+      expect(byProject).toEqual([
+        expect.objectContaining({ id: 'ses_legacy_alias', projectWorkDir: slashPathOf(workDir) }),
+      ]);
+
+      const globalList = await client.listSessions({});
+      expect(globalList).toEqual([
+        expect.objectContaining({ id: 'ses_legacy_alias', projectWorkDir: slashPathOf(workDir) }),
+      ]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('rejects scope without workDir instead of returning global sessions', async () => {
+    const homeDir = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await expect(
+        client.listSessionsPage({ scope: 'project' } as never),
+      ).rejects.toMatchObject({ code: 'request.work_dir_required' });
     } finally {
       await client.close();
     }
@@ -235,7 +435,6 @@ describe('SDKRpcClientV2.listSessionsPage', () => {
       expect(new Set(pagedIds)).toEqual(
         new Set([0, 1, 2, 3, 4].map((i) => `ses_page_${String(i)}`)),
       );
-      // Draining pages yields exactly the unpaged listing, in the same order.
       const full = await client.listSessions({ workDir });
       expect(pagedIds).toEqual(full.map((item) => item.id));
     } finally {
@@ -278,8 +477,6 @@ describe('SDKRpcClientV2.listSessionsPage', () => {
       }
       const index = client.engineAccessor.get(ISessionIndex);
       await index.prepare();
-      // A summary whose workDir can no longer be resolved (unknown workspace,
-      // no cwd) is dropped by the mapping; the page must still fill.
       client.engineAccessor.get(ISessionIndexMirror).record({
         id: 'ses_ghost',
         workspaceId: 'ws_missing',
@@ -303,8 +500,6 @@ describe('SDKRpcClientV2.listSessionsPage', () => {
       expect(ids).toEqual(['ses_drain_0', 'ses_drain_1', 'ses_drain_2']);
     } finally {
       await client.close();
-      // Dispose fired the mirror/query-store async closes; await them before
-      // the shared afterEach removes the temp home.
       await drainSessionIndexMirror();
       await drainQueryStoreDisposals();
       vi.unstubAllEnvs();
@@ -313,12 +508,6 @@ describe('SDKRpcClientV2.listSessionsPage', () => {
 });
 
 describe('SDKRpcClientV2 search-index separation', () => {
-  // The global full-text search database (`<homeDir>/search-index`) belongs
-  // to the kap-server search surface. The TUI-side chain (rpc client →
-  // klient → `ISessionIndex`) must list, resume and continue sessions without
-  // ever opening it — including while the session read model is still
-  // preparing.
-
   it('listSessions / resumeSession never open the global search index (read model off)', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
     vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', '0');
@@ -336,7 +525,6 @@ describe('SDKRpcClientV2 search-index separation', () => {
       expect(resumed.id).toBe(created.id);
 
       expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
-      // With the read model off, the session query-store is never opened either.
       expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(false);
     } finally {
       await client.close();
@@ -355,10 +543,6 @@ describe('SDKRpcClientV2 search-index separation', () => {
       const created = await client.createSession({ id: 'ses_search_sep_on', workDir });
       await client.closeSession({ sessionId: created.id });
 
-      // The read model is still preparing here: the first list kicks the
-      // background projection and answers from authoritative metadata, the
-      // resume reads the authoritative document — neither waits for, nor
-      // opens, any full-text index.
       const sessions = await client.listSessions({ workDir });
       expect(sessions.map((item) => item.id)).toEqual([created.id]);
       const resumed = await client.resumeSession({ id: created.id });
@@ -366,16 +550,12 @@ describe('SDKRpcClientV2 search-index separation', () => {
 
       expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
 
-      // Settle the kicked projection before close so teardown never races it,
-      // and prove the read model really did engage (the flag took effect).
       const status = await client.engineAccessor.get(ISessionIndex).prepare();
       expect(status.state).toBe('ready');
       expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(true);
       expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
     } finally {
       await client.close();
-      // Dispose fired the mirror/query-store async closes; await them before
-      // the shared afterEach removes the temp home.
       await drainSessionIndexMirror();
       await drainQueryStoreDisposals();
       vi.unstubAllEnvs();

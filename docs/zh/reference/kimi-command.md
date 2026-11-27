@@ -27,6 +27,8 @@ kimi <subcommand> [options]
 | `--agent <name>` | | 以指定 Agent 作为 main agent 启动新会话。不能与 `--session`/`--continue` 同时使用 |
 | `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent 并为新会话选中它。不可重复传入，也不能与 `--agent`、`--session` 或 `--continue` 同时使用 |
 | `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
+| `--worktree [name]` | `-w` | 在新建的 [Git worktree](../guides/worktrees.md) 中启动会话（实验功能）。省略名称时自动生成 |
+| `--worktree-base <ref>` | | 指定新工作树的起始提交、分支或标签。须与 `--worktree` 一起使用 |
 
 `-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。隐藏标志 `--environment <id>` 让新会话绑定到已配置的远程环境，`--environment-cwd <path>` 覆盖该环境的工作目录（详见 [远程环境](../guides/remote-environment.md#kimi-environment-与-environment-cwd)）。
 
@@ -44,6 +46,8 @@ kimi <subcommand> [options]
 - `--output-format` 只能与 `--prompt` 一起使用
 - `--environment` 不能与 `--session`/`--continue` 组合——环境在会话创建时绑定，恢复会话时会自动还原已绑定的环境
 - `--environment-cwd` 必须与 `--environment` 一起使用；两者都只在创建会话时生效，不能与 `--session`/`--continue` 组合
+- `--worktree` 不能与 `--session`、`--continue` 或 `--environment` 组合
+- `--worktree-base` 必须与 `--worktree` 一起使用
 
 非交互模式下没人能审阅计划，所以新会话不应用 `default_plan_mode`。恢复已经处于 Plan 模式的会话时照常运行，会话仍在 Plan 模式中，但计划无法在非交互模式下批准，会等你下次用 `kimi -r` 打开会话时审阅。
 
@@ -111,29 +115,66 @@ kimi -p --agent reviewer "审查这个分支上的改动"
 
 `--agent-file` 以最高优先级注册单个 Agent 文件（仅本次启动）并选中它；该 flag 不可重复传入，`--agent` 与 `--agent-file` 互斥。两个 flag 都仅在新建会话时有效——都不能与 `--session`/`--continue` 组合，因为 Agent 在会话创建时绑定，恢复会话时会自动还原已绑定的 Agent。选择在会话首次绑定后即固定，之后不可切换；在 TUI 中，这些 flag 只绑定启动时的会话，之后在同一进程内新建的会话（例如通过 `/new`）使用默认 Agent。Agent 文件格式与发现目录详见 [Agent 与 subagent](../customization/agents.md#自定义-agent)。
 
-## 非交互执行
+## print 模式
 
-在脚本或 CI 中运行单次 prompt 时，使用 `-p`：
+使用 `-p` 或 `--prompt` 可以不进入终端交互界面，直接执行单次任务、输出结果并自动退出，适合 Shell 脚本、Git Hooks 和 CI 流水线。
 
-```sh
-kimi -p "Summarize the current repository status"
-```
+### 基本用法
 
-输出采用 transcript 样式：thinking 内容和 Assistant 正文都以 `• ` 开头，换行后两个空格缩进。Assistant 正文输出到 stdout；thinking、工具进度和 "恢复会话" 提示输出到 stderr。`-p` 模式不会请求人工审批，普通工具调用按 `auto` 权限策略处理，静态 deny 规则仍然生效。
-
-临时切换模型：
+传入任务描述即可执行，需要时可通过 `-m` 临时指定模型。
 
 ```sh
-kimi -m kimi-code/kimi-for-coding -p "Explain the latest diff"
+# 执行单次任务
+kimi -p "总结当前仓库的改动"
+
+# 临时指定本次使用的模型
+kimi -m kimi-code/kimi-for-coding -p "解释最近一次提交的 diff"
 ```
 
-需要结构化读取输出时，使用 `stream-json` 格式——stdout 每行都是一个 JSON 对象：
+默认以纯文本输出，且输出与进度自动分离。最终回复正文写入 `stdout`，每段以 `• ` 开头，可直接重定向到文件或传给下游管道；思考过程、工具执行进度和结尾的会话恢复提示写入 `stderr`，不会混入结果文件。
+
+::: warning 无人值守自动放行
+`-p` 模式不弹出交互式审批确认，常规文件读写与命令执行默认自动放行；配置文件中的 `deny` 规则仍会照常拦截。
+:::
+
+### 结构化输出
+
+需要在脚本或 CI 中按字段解析结果时，加上 `--output-format stream-json`。此时 `stdout` 每行输出一个 JSON 对象，按发生顺序记录模型回复、工具调用、工具返回结果和结尾的会话提示；思考过程和工具进度仍只输出到 `stderr`。
 
 ```sh
-kimi -p "List changed files" --output-format stream-json
+# 输出完整 JSON 事件流
+kimi -p "列出本次修改的文件" --output-format stream-json
+
+# 配合 jq 提取最终回复正文
+kimi -p "生成本次变更的 commit message" --output-format stream-json \
+  | jq -r 'select(.role == "assistant" and .content != null and (.tool_calls | not)) | .content' \
+  | tail -n 1
 ```
 
-`stream-json` 模式下，普通回复输出 Assistant 消息；模型调用工具时，先输出带 `tool_calls` 的 Assistant 消息，再输出对应的 Tool 消息，最后继续输出后续 Assistant 消息。thinking 内容不会写入 JSONL；工具进度和恢复会话提示仍写到 stderr。
+### 接续会话
+
+每次 `-p` 执行都会自动保存会话，并在结束时输出 `session_id`。纯文本模式下它打印在 `stderr` 末尾，`stream-json` 模式下则作为 `stdout` 中的 `session.resume_hint` 行输出。
+
+需要分步追问时，可以按场景选择续接方式。在当前目录快速延续最近一次会话时用 `-c`，在脚本或 CI 中精确指定会话时先提取 `session_id` 再传给 `-S`。
+
+```sh
+# 同一目录下续接最近一次会话
+kimi -p "给 src/retry.ts 补齐参数校验"
+kimi -c -p "运行单测，如果有失败请一并修掉"
+
+# 在脚本中提取 session_id 并精确续接
+RUN=$(kimi -p "给 src/retry.ts 补齐参数校验" --output-format stream-json)
+SID=$(printf '%s\n' "$RUN" | jq -r 'select(.type == "session.resume_hint") | .session_id')
+kimi -S "$SID" -p "运行单测，如果有失败请一并修掉"
+```
+
+### 退出码
+
+| 退出码 | 含义 |
+| --- | --- |
+| `0` | 任务正常完成 |
+| `1` | 命令行参数错误、模型鉴权未就绪或执行出错 |
+| `4` | `-S` / `-c` 指定的会话正被另一个进程占用 |
 
 ## 子命令
 
@@ -159,9 +200,9 @@ kimi acp
 
 ### `kimi web`
 
-在当前终端前台运行本地 Kimi 服务 —— 同一个进程同时挂载 REST + WebSocket API 与 web UI —— 并在服务就绪后用默认浏览器打开 web UI。命令会一直挂在终端，直到收到 `SIGINT` / `SIGTERM`（如 `Ctrl-C`）时干净退出。
+在当前终端前台运行本地 Kimi 服务 —— 同一个进程同时挂载 REST + WebSocket API 与 web UI —— 并在服务就绪后用默认浏览器打开 web UI。命令收到 `SIGINT` 或 `SIGTERM`（例如按 `Ctrl-C`）时开始关闭。成功关闭时退出码为 `0`。清理失败时，即使关闭了服务日志，命令也会将错误写入 `stderr` 并以退出码 `1` 退出。
 
-服务运行时，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。用 API 驱动会话的完整流程见[服务 API：用 API 驱动一个会话](./server-api.md#用-api-驱动一个会话)，协议细节见[服务 API](./server-api.md)。
+服务运行时，`GET /api/v1/kap.md` 会返回当前版本的 KAP 接口说明，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。在其他 Agent 中交互与交接会话见[在其他 Agent 中使用（Agent to Agent）](../guides/other-agents.md)。
 
 ```sh
 kimi web                 # 前台运行服务并打开浏览器
@@ -181,12 +222,9 @@ kimi web --port 58628    # 指定绑定端口
 | `--dangerous-bypass-auth` | 关闭所有 REST 与 WebSocket 路由的 bearer token 鉴权，使 web UI 无需 token 即可连接；仅用于可信网络或自有鉴权代理之后 |
 | `--web-title <title>` | 自定义 web UI 的浏览器标签页标题；默认为工作区目录名 |
 | `--no-open` | 就绪后不自动打开浏览器 |
+| `--json` | 以机器可读模式启动：不自动打开浏览器，为当前进程生成一次性内存 token，就绪后向 `stdout` 输出单行 JSON（含 `origin`、`ws_url`、`token`、`kimi_agent_protocol_version`），日志输出到 `stderr` |
 
 `kimi web` 默认只绑定本机 loopback 地址，并在启动横幅中打印 bearer token；web UI 通过 URL 的 `#token=` 片段自动完成鉴权。
-
-::: info 提示
-`kimi server` 命令树已废弃：任何 `kimi server …` 调用（含全部旧子命令）只会打印弃用提示并以退出码 1 结束，请改用 `kimi web`。唯一的例外是 `kimi server kill`，它仍然可用，仅用于停止 0.28.0 之前版本启动的服务。该提示将在 Kimi Code 下个大版本移除。
-:::
 
 ::: danger 警告
 `--dangerous-bypass-auth` 会彻底关闭鉴权。任何能访问该端口的人都能完全控制你的会话、文件系统和 shell。请仅在可信网络或自有鉴权反向代理之后使用，用完后按 `Ctrl+C` 停止服务。

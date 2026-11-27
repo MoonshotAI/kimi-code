@@ -1,11 +1,11 @@
-/**
- * Outcome types for turns, steps, tool calls, and detached (async) tool calls, plus the standard
- * causes issued by the loop itself.
- */
 import type { ToolMessage } from '#/llm/message';
-import type { Cause } from '#/tool/contract';
 
-export type { Cause } from '#/tool/contract';
+export interface Cause {
+  readonly by?: string;
+  readonly reason: string;
+  readonly message?: string;
+  readonly details?: Readonly<Record<string, unknown>>;
+}
 
 export const INTERRUPTED: Cause = { by: 'loop', reason: 'interrupted' };
 

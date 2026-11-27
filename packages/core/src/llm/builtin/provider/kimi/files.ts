@@ -1,8 +1,6 @@
-/**
- * Kimi file upload for image and video media, returning `ms://` file references.
- */
+import type { ResolvedEndpoint } from '#/llm/endpoint';
 import { uploadFilename } from '#/llm/protocol/kit/media';
-import type { LlmFiles, UploadedMedia } from '#/llm/request';
+import { MediaUploadFailedError, type LlmFiles, type UploadedMedia } from '#/llm/request';
 
 import { kimiOpenAIProtocol } from './protocol';
 
@@ -45,7 +43,16 @@ function formatUploadStatusError(
     value === 'error'
       ? `Kimi file upload failed for file "${id}" (${field}=${rendered})`
       : `Kimi file upload for file "${id}" is not ready (${field}=${rendered})`;
-  return new Error(detail === undefined ? summary : `${summary}: ${detail}`);
+  const message = detail === undefined ? summary : `${summary}: ${detail}`;
+  return value === 'error' ? new MediaUploadFailedError(message) : new Error(message);
+}
+
+function failedFileStatus(file: unknown): 'extract_status' | 'status' | undefined {
+  if (typeof file !== 'object' || file === null) return undefined;
+  const record = file as Record<string, unknown>;
+  if (record['extract_status'] === 'error') return 'extract_status';
+  if (record['status'] === 'error') return 'status';
+  return undefined;
 }
 
 function parseUploadedKimiFile(uploaded: unknown): UploadedMedia {
@@ -55,6 +62,15 @@ function parseUploadedKimiFile(uploaded: unknown): UploadedMedia {
   const record = uploaded as Record<string, unknown>;
   const rawId = record['id'];
   const id = typeof rawId === 'string' && rawId.trim().length > 0 ? rawId : undefined;
+  const failedStatus = failedFileStatus(record);
+  if (failedStatus !== undefined) {
+    throw formatUploadStatusError(
+      id ?? '(unknown)',
+      failedStatus,
+      'error',
+      readUploadFailureDetail(record),
+    );
+  }
   if (id === undefined) {
     throw new Error('Kimi file upload returned an empty file id');
   }
@@ -81,21 +97,24 @@ function parseUploadedKimiFile(uploaded: unknown): UploadedMedia {
 }
 
 function createKimiFiles(filesBaseUrl: (baseUrl: string | undefined) => string | undefined): LlmFiles {
+  const clientFor = (endpoint: ResolvedEndpoint) =>
+    kimiOpenAIProtocol.client({ ...endpoint, baseUrl: filesBaseUrl(endpoint.baseUrl) }, undefined);
   return {
     kinds: new Set(['image', 'video']),
     upload: async (file, { endpoint, signal }) => {
       if (!file.mimeType.startsWith(`${file.kind}/`)) {
         throw new Error(`Expected a ${file.kind} mime type, got ${file.mimeType}`);
       }
-      const client = kimiOpenAIProtocol.client(
-        { ...endpoint, baseUrl: filesBaseUrl(endpoint.baseUrl) },
-        undefined,
-      );
+      const client = clientFor(endpoint);
       const body = new File([new Uint8Array(file.data)], uploadFilename(file), {
         type: file.mimeType,
       });
       const uploaded = await client.files.create({ file: body, purpose: file.kind as never }, { signal });
       return parseUploadedKimiFile(uploaded);
+    },
+    hasFailed: async (id, { endpoint, signal }) => {
+      const file = await clientFor(endpoint).files.retrieve(id, { signal });
+      return failedFileStatus(file) !== undefined;
     },
   };
 }

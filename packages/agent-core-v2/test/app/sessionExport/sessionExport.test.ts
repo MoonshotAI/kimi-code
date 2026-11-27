@@ -45,8 +45,7 @@ import {
 import { writeExportZip } from '#/app/sessionExport/zip';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionManager/sessionManager';
-import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceService } from '#/app/workspace/workspace';
+import { ISessionLifecycleService } from '#/project/sessionLifecycle/sessionLifecycle';
 import { Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
@@ -898,6 +897,40 @@ describe('sessionExport', () => {
     ]);
   });
 
+  it('excludes session presence markers from both preview and exported archives', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_live', 'ses_presence');
+    await mkdir(join(sessionDir, 'presence'), { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+    await writeFile(
+      join(sessionDir, 'presence', '1234-marker.json'),
+      JSON.stringify({ version: 1, pid: 1234, hostname: 'secret-host.example.test', startedAt: 1 }),
+      'utf-8',
+    );
+    const outputPath = join(tmp, 'presence.zip');
+    ix = createTestServices(tmp, {
+      summary: {
+        id: 'ses_presence',
+        workspaceId: 'ws_live',
+        title: 'Presence test',
+        createdAt: 1,
+        updatedAt: 1,
+        archived: false,
+      },
+      lifecycleHandle: undefined,
+    });
+
+    const preview = await ix.get(ISessionExportService).preview?.('ses_presence');
+    const result = await ix.get(ISessionExportService).export({
+      sessionId: 'ses_presence',
+      outputPath,
+      version: '1.0.0-test',
+    });
+
+    expect(preview?.files).toEqual(['state.json']);
+    expect(result.entries).toEqual(['manifest.json', 'state.json']);
+  });
+
   function createTestServices(
     homeDir: string,
     options: {
@@ -962,42 +995,6 @@ function registerSessionExportServices(
       throw new Error('createChild should not be called by session export');
     },
   });
-  reg.defineInstance(IWorkspaceService, {
-    _serviceBrand: undefined,
-    list: async () => [],
-    get: async (id) => ({
-      id,
-      root: `/workspaces/${id}`,
-      name: id,
-      kind: 'implicit',
-      additionalDirs: [],
-      createdAt: 1,
-      lastOpenedAt: 2,
-    }),
-    create: async (input) => ({
-      id: 'ws_created',
-      root: input.root,
-      name: 'created',
-      kind: 'implicit',
-      additionalDirs: [],
-      createdAt: 1,
-      lastOpenedAt: 2,
-    }),
-    createOrTouch: async (root) => ({
-      id: 'ws_created',
-      root,
-      name: 'created',
-      kind: 'implicit',
-      additionalDirs: [],
-      createdAt: 1,
-      lastOpenedAt: 2,
-    }),
-    touch: async () => undefined,
-    update: async () => undefined,
-    setPrimary: async () => undefined,
-    readProjectConfigDirs: async () => [],
-    delete: async () => {},
-  });
   reg.define(ISessionExportService, SessionExportService);
 }
 
@@ -1024,6 +1021,8 @@ function liveSessionHandle(options: {
           noteUserInput: () => {},
           noteActiveRequest: () => {},
           noteSubagentDispatch: () => ({}),
+          noteModel: () => {},
+          finishModelSteps: () => undefined,
         } satisfies ISessionRequestAttributionService,
       ],
     ]),
@@ -1067,6 +1066,7 @@ function stubSessionMetadata(meta: SessionMeta): ISessionMetadata {
     setGeneratedTitleIfUncustomized: async () => false,
     setArchived: async () => {},
     registerAgent: async () => {},
+    unregisterAgent: async () => {},
   };
 }
 

@@ -26,7 +26,6 @@ const tempDirs: string[] = [];
 const CONFIG_ENV_PATTERN =
   /^(KIMI_MODEL_|KIMI_LOOP_|KIMI_MCP_|KIMI_WEB_|KIMI_IMAGE_|KIMI_CODE_BACKGROUND_|KIMI_CODE_MODEL_CATALOG_)/;
 
-/** Keep ambient env from injecting providers/models into the v2 engine. */
 function scrubConfigEnv(): () => void {
   const saved: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -324,7 +323,7 @@ describe('Session skills', () => {
     const result = await session.promptWithSkills(
       '/review src/app.ts',
       [{ name: 'review', args: 'src/app.ts' }],
-      { steerIfActive: true },
+      { steerIfActive: true, promptId: 'prompt-client-skill' },
     );
     expect(result).toEqual(submission);
     expect(promptWithSkills).toHaveBeenLastCalledWith({
@@ -332,6 +331,7 @@ describe('Session skills', () => {
       input: [{ type: 'text', text: '/review src/app.ts' }],
       skills: [{ name: 'review', args: 'src/app.ts' }],
       steerIfActive: true,
+      promptId: 'prompt-client-skill',
     });
 
     await session.promptWithSkills('again', [{ name: 'review' }], { steerIfActive: false });

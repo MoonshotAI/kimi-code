@@ -5,11 +5,12 @@ import { dirname, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { currentProcessLiveness } from '@moonshot-ai/agent-core-v2/_base/utils/processLiveness';
+
 import { tryAcquireUpdateInstallLock } from '#/cli/update/install-lock';
 import { getUpdateInstallLockFile } from '#/utils/paths';
 
 const fsMocks = vi.hoisted(() => ({
-  /** When set, link() throws an error with this code (no hard-link support). */
   linkError: null as string | null,
 }));
 
@@ -63,9 +64,6 @@ describe('update install lock', () => {
   });
 
   it('grants the lock to exactly one of many concurrent acquirers', async () => {
-    // The lock file must never be observable in an empty/partial state:
-    // losers of the create race used to sweep the just-created (still empty)
-    // lock as "corrupt" and also win, breaking exclusivity.
     const attempts = await Promise.all(
       Array.from({ length: 20 }, () => tryAcquireUpdateInstallLock({ version: '0.5.0' })),
     );
@@ -79,9 +77,6 @@ describe('update install lock', () => {
   });
 
   it('grants exactly one winner when racing to take over a stale lock', async () => {
-    // A dead holder's aged lock: every contender classifies it as stale and
-    // tries to take it over. Compare-and-delete plus post-publish
-    // verification must leave exactly one survivor.
     const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
     await new Promise((resolve) => child.once('exit', resolve));
     writeAgedLock(child.pid ?? -1);
@@ -98,8 +93,6 @@ describe('update install lock', () => {
     const filePath = getUpdateInstallLockFile();
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, '{', 'utf-8');
-    // Crash residue is old; a YOUNG unparseable file is treated as a publish
-    // still in progress (see the publish grace), so age it past the grace.
     const old = new Date(Date.now() - 2 * 60 * 1000);
     utimesSync(filePath, old, old);
 
@@ -110,9 +103,6 @@ describe('update install lock', () => {
   });
 
   it('treats a young unparseable lock as a publish in progress', async () => {
-    // The exclusive-create fallback (filesystems without hard links) is
-    // observable between create and write; sweeping that window would break
-    // exclusivity, so young unparseable content is NOT stale.
     const filePath = getUpdateInstallLockFile();
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, '{', 'utf-8');
@@ -158,7 +148,7 @@ describe('update install lock', () => {
     await lock?.release();
   });
 
-  function writeAgedLock(pid: number): void {
+  function writeAgedLock(pid: number, liveness?: string): void {
     const filePath = getUpdateInstallLockFile();
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(
@@ -167,19 +157,44 @@ describe('update install lock', () => {
         version: '0.5.0',
         pid,
         startedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        ...(liveness === undefined ? {} : { liveness }),
       })}\n`,
       'utf-8',
     );
   }
 
   it('does not treat an aged lock as stale while its holder process is alive', async () => {
-    // The holder is this very test process — guaranteed alive. A long native
-    // download must survive past the 30-minute age threshold.
-    writeAgedLock(process.pid);
+    const holder = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
+    expect(holder).not.toBeNull();
 
-    const lock = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
+    const lock = await tryAcquireUpdateInstallLock({
+      version: '0.5.0',
+      now: new Date(Date.now() + 60 * 60 * 1000),
+    });
 
     expect(lock).toBeNull();
+    await holder?.release();
+  });
+
+  it('sweeps an aged lock whose pid now belongs to a process started after it', async () => {
+    const reused = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    try {
+      await new Promise((resolve) => reused.once('spawn', resolve));
+      writeAgedLock(reused.pid ?? -1, 'kimi-code-live-0-00000000000000000000000000000000');
+
+      const lock = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
+
+      expect(lock).not.toBeNull();
+      const held = JSON.parse(readFileSync(getUpdateInstallLockFile(), 'utf-8')) as {
+        pid: number;
+        liveness?: string;
+      };
+      expect(held.pid).toBe(process.pid);
+      expect(held.liveness).toBe(currentProcessLiveness());
+      await lock?.release();
+    } finally {
+      reused.kill('SIGKILL');
+    }
   });
 
   it('sweeps an aged lock whose holder process is gone', async () => {
@@ -194,8 +209,6 @@ describe('update install lock', () => {
   });
 
   it('sweeps a young lock whose holder process is gone', async () => {
-    // A killed holder skips its finally and never releases: the dead pid must
-    // make the lock stale immediately, not after the 30-minute threshold.
     const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
     await new Promise((resolve) => child.once('exit', resolve));
     const filePath = getUpdateInstallLockFile();

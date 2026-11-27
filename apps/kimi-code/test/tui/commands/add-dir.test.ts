@@ -21,6 +21,9 @@ function makeHost(additionalDirs: readonly string[] = []) {
       streamingPhase: 'idle',
       isCompacting: false,
     },
+    ui: {
+      mode: 'regular' as const,
+    },
   };
   let mountedPanel: MountedPanel | null = null;
   const session = {
@@ -111,6 +114,21 @@ describe('handleAddDirCommand', () => {
     expect(rendered).not.toContain('Do not add this directory.');
   });
 
+  it('adds a directory without mentioning trust or asking for it', async () => {
+    const { host, session, getMountedPanel } = makeHost();
+
+    await handleAddDirCommand(host, '../shared');
+
+    const rendered = getMountedPanel()?.render(120).map(strip).join('\n') ?? '';
+    expect(rendered).toContain('Add directory to workspace: ../shared');
+    expect(rendered).not.toMatch(/trust/i);
+    getMountedPanel()?.handleInput(' ');
+    await vi.waitFor(() => {
+      expect(session.addAdditionalDir).toHaveBeenCalledWith('../shared', { persist: false });
+    });
+    expect(host.mountEditorReplacement).toHaveBeenCalledOnce();
+  });
+
   it('adds a workspace dir for this session only after confirmation', async () => {
     const { host, session, getMountedPanel } = makeHost();
 
@@ -153,6 +171,26 @@ describe('handleAddDirCommand', () => {
     expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
   });
 
+  it('says a directory the project cannot remember was added for this session only', async () => {
+    const { host, session, getMountedPanel } = makeHost();
+    session.addAdditionalDir.mockResolvedValueOnce({ additionalDirs: ['/repo'], persisted: false });
+
+    await handleAddDirCommand(host, '/repo');
+    getMountedPanel()?.handleInput('\u001B[B');
+    getMountedPanel()?.handleInput(' ');
+
+    await vi.waitFor(() => {
+      expect(session.addAdditionalDir).toHaveBeenCalledWith('/repo', { persist: true });
+    });
+    await vi.waitFor(() => {
+      expect(host.showStatus).toHaveBeenCalledWith(
+        'Added workspace directory:\n  /repo\n  For this session only',
+        'success',
+      );
+    });
+    expect(host.setAppState).toHaveBeenCalledWith({ additionalDirs: ['/repo'] });
+  });
+
   it('does not add a workspace dir when the confirmation is cancelled', async () => {
     const { host, session, getMountedPanel } = makeHost();
 
@@ -188,11 +226,9 @@ describe('handleAddDirCommand', () => {
 
   it('re-checks the busy gate after lazy session creation (v2)', async () => {
     const { host, session, getMountedPanel } = makeHost();
-    // Session-less v2: the path-adding form lazy-creates via ensureSession.
     Object.assign(host, {
       session: undefined,
       ensureSession: vi.fn(async () => {
-        // A first prompt starts a turn while the session is being created.
         host.state.appState.streamingPhase = 'waiting';
         return session;
       }),

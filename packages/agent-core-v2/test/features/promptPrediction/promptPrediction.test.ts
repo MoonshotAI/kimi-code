@@ -4,7 +4,6 @@ import { Emitter } from '#/_base/event';
 import type { ILogService } from '#/_base/log/log';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import type { CoreLoopRequester, OperationLoopRequesterOptions } from '#/agent/loop/requesterContract';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFlagService } from '#/app/flag/flag';
@@ -12,6 +11,15 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { SessionPromptPredictionService } from '#/features/promptPrediction/promptPredictionService';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
+import {
+  contentsOf,
+  createRequester,
+  requesterContents,
+  type LlmDimension,
+  type LlmRequestPart,
+  type LlmRequester,
+} from '@moonshot-ai/core/llm/requester';
+import type { FullLoopLlmRequester } from '@moonshot-ai/core/loop/request';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
   ISessionActivityView,
@@ -47,6 +55,10 @@ function finish(
   };
 }
 
+function structured(message: string | null): string {
+  return JSON.stringify({ show: message === null ? 'no' : 'yes', message: message ?? '' });
+}
+
 describe('SessionPromptPredictionService', () => {
   it('keeps prediction isolated, strictly once, cancellable, and stale-safe', async () => {
     let enabled = false;
@@ -55,32 +67,37 @@ describe('SessionPromptPredictionService', () => {
       { role: 'user', content: [{ type: 'text', text: 'hello' }] },
     ];
     const originalContext = contextSnapshot;
-    let nextResult = () => Promise.resolve(finish('inspect the failing test'));
+    let nextResult: () => Promise<PredictionOutcome> = () =>
+      Promise.resolve({ ...finish(structured('inspect the failing test')), requestId: undefined });
     const requests: Array<{
-      options: OperationLoopRequesterOptions;
-      input?: Parameters<CoreLoopRequester['generate']>[0];
+      input?: LlmRequestPart;
+      maxOutputSize?: number;
       signal?: AbortSignal;
     }> = [];
-    const requester = {
-      prepareOperation: async (options: OperationLoopRequesterOptions, signal: AbortSignal) => {
-        const request: (typeof requests)[number] = { options, signal };
-        requests.push(request);
-        options.onTrace?.({ requestId: 'request-1' });
-        return {
-          generate: (
-            input: Parameters<CoreLoopRequester['generate']>[0],
-            control: { signal: AbortSignal },
-          ) => {
-            request.input = input;
-            request.signal = control.signal;
-            return nextResult();
-          },
+    const wrap = (current: FullLoopLlmRequester): FullLoopLlmRequester => ({
+      [requesterContents]: contentsOf(current),
+      with: ((next: LlmRequestPart | LlmRequester<LlmDimension>) =>
+        wrap(current.with(contentsOf(next)))) as FullLoopLlmRequester['with'],
+      request: (rest) => current.request(rest),
+      generate: (rest, control) => {
+        const request: (typeof requests)[number] = {
+          input: contentsOf(current.with(rest)),
+          signal: control.signal,
         };
+        requests.push(request);
+        control.onEvent?.({ type: 'llm.delta.request_id', requestId: 'request-1' });
+        return nextResult();
       },
-    };
+    });
+    const requester = wrap(createRequester() as FullLoopLlmRequester);
     const loop = {
       requester,
+      resolveMaxOutputTokens: (maxOutputSize?: number) => {
+        requests.push({ maxOutputSize });
+        return maxOutputSize;
+      },
       history: () => contextSnapshot,
+      rawHistory: () => contextSnapshot,
       snapshot: () => ({
         state: 'idle',
         queue: [],
@@ -140,52 +157,76 @@ describe('SessionPromptPredictionService', () => {
       server_decode_ms: 220,
       client_consume_ms: 4,
       client_blocked_ms: 200,
+      request_id: 'request-1',
     }));
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.options.source()).toEqual({
-      type: 'operation',
-      turnId: 0,
-      requestKind: 'prompt_prediction',
+    expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
+      status: 'generated',
+      input_other: 3,
+      output_tokens: 2,
+      input_cache_read: 5,
+      input_cache_creation: 1,
+      request_id: 'request-1',
+    }));
+    expect(requests).toHaveLength(2);
+    const generatedRequests = () => requests.filter((entry) => entry.input !== undefined);
+    expect(requests[0]?.maxOutputSize).toBe(512);
+    expect(generatedRequests()[0]?.input?.attributes).toEqual({ kind: 'prediction', turnId: 0 });
+    expect(generatedRequests()[0]?.input?.model?.maxOutputTokens).toBe(512);
+    expect(generatedRequests()[0]?.input?.model?.responseFormat).toEqual({
+      type: 'json_schema',
+      jsonSchema: {
+        name: 'next_prompt_prediction',
+        strict: true,
+        schema: {
+          type: 'object',
+          properties: {
+            show: { type: 'string', enum: ['yes', 'no'] },
+            message: { type: 'string' },
+          },
+          required: ['show', 'message'],
+          additionalProperties: false,
+        },
+      },
     });
-    expect(requests[0]?.input?.content?.messages).toHaveLength(2);
-    expect(requests[0]?.input?.content?.messages?.at(-1)).toEqual({
+    expect(generatedRequests()[0]?.input?.content?.messages).toHaveLength(2);
+    expect(generatedRequests()[0]?.input?.content?.messages?.at(-1)).toEqual({
       role: 'user',
       content: [{
         type: 'text',
         text: expect.stringMatching(
-          /predict what THEY would type[\s\S]*NEVER SUGGEST[\s\S]*Stay silent if the next step[\s\S]*Format: 2-12 words, match the user's style and language\. Or nothing\./,
+          /predict what THEY would type[\s\S]*NEVER SUGGEST[\s\S]*Format: 2-12 words, match the user's style and language\.[\s\S]*Return JSON matching the provided schema\./,
         ),
       }],
     });
-    expect(requests[0]?.options.tools).toBeUndefined();
+    expect(generatedRequests()[0]?.input?.profile).toBeUndefined();
     expect(contextSnapshot).toBe(originalContext);
     expect(contextSnapshot).toHaveLength(1);
 
     lastEnded = { turnId: 1, reason: 'completed' };
-    nextResult = () => Promise.resolve(finish('', [{ type: 'function', id: 'call-1', name: 'Read', arguments: '{}' }]));
+    nextResult = () => Promise.resolve(finish(structured('ignored'), [{ type: 'function', id: 'call-1', name: 'Read', arguments: '{}' }]));
     await expect(service.predict({ predictionId: 'tools', expectedTurnId: 1 })).resolves.toBeNull();
     expect(contextSnapshot).toBe(originalContext);
-    expect(requests).toHaveLength(2);
+    expect(generatedRequests()).toHaveLength(2);
 
     lastEnded = { turnId: 2, reason: 'completed' };
-    nextResult = () => Promise.resolve(finish('run this\u001b[2J'));
+    nextResult = () => Promise.resolve(finish(structured('run this\u001b[2J')));
     await expect(service.predict({ predictionId: 'control', expectedTurnId: 2 })).resolves.toBeNull();
-    expect(requests).toHaveLength(3);
+    expect(generatedRequests()).toHaveLength(3);
 
     lastEnded = { turnId: 3, reason: 'completed' };
-    nextResult = () => Promise.resolve(finish('partial', [], 'filtered'));
+    nextResult = () => Promise.resolve(finish(structured('partial'), [], 'filtered'));
     await expect(service.predict({ predictionId: 'filtered', expectedTurnId: 3 })).resolves.toBeNull();
-    expect(requests).toHaveLength(4);
+    expect(generatedRequests()).toHaveLength(4);
 
     lastEnded = { turnId: 4, reason: 'completed' };
     nextResult = () => new Promise<PredictionOutcome>(() => {});
     const cancelled = service.predict({ predictionId: 'cancel-me', expectedTurnId: 4 });
-    await vi.waitFor(() => expect(requests).toHaveLength(5));
+    await vi.waitFor(() => expect(generatedRequests()).toHaveLength(5));
     expect(service.cancel('other')).toBe(false);
     expect(service.cancel('cancel-me', 'escape')).toBe(true);
     expect(service.cancel('cancel-me', 'escape')).toBe(false);
     await expect(cancelled).resolves.toBeNull();
-    expect(requests[4]?.signal?.aborted).toBe(true);
+    expect(generatedRequests()[4]?.signal?.aborted).toBe(true);
     expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
       status: 'cancelled',
       reason: 'escape',
@@ -201,16 +242,16 @@ describe('SessionPromptPredictionService', () => {
       resolveStale = resolve;
     });
     const stale = service.predict({ predictionId: 'stale', expectedTurnId: 5 });
-    await vi.waitFor(() => expect(requests).toHaveLength(6));
+    await vi.waitFor(() => expect(generatedRequests()).toHaveLength(6));
     contextSnapshot = [];
-    resolveStale(finish('must not leak'));
+    resolveStale(finish(structured('must not leak')));
     await expect(stale).resolves.toBeNull();
 
     lastEnded = { turnId: 6, reason: 'completed' };
     contextSnapshot = originalContext;
     nextResult = () => new Promise<PredictionOutcome>(() => {});
     const activityCancelled = service.predict({ predictionId: 'activity-cancelled', expectedTurnId: 6 });
-    await vi.waitFor(() => expect(requests).toHaveLength(7));
+    await vi.waitFor(() => expect(generatedRequests()).toHaveLength(7));
     activityEmitter.fire({
       state: {
         busy: true,
@@ -221,7 +262,7 @@ describe('SessionPromptPredictionService', () => {
       cause: 'background',
     });
     await expect(activityCancelled).resolves.toBeNull();
-    expect(requests[6]?.signal?.aborted).toBe(true);
+    expect(generatedRequests()[6]?.signal?.aborted).toBe(true);
     expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
       status: 'cancelled',
       reason: 'activity_background',
@@ -232,10 +273,10 @@ describe('SessionPromptPredictionService', () => {
     const timedOut = service.predict({ predictionId: 'timeout', expectedTurnId: 7 });
     try {
       await vi.advanceTimersByTimeAsync(0);
-      expect(requests).toHaveLength(8);
+      expect(generatedRequests()).toHaveLength(8);
       await vi.advanceTimersByTimeAsync(20_000);
       await expect(timedOut).resolves.toBeNull();
-      expect(requests[7]?.signal?.aborted).toBe(true);
+      expect(generatedRequests()[7]?.signal?.aborted).toBe(true);
       expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
         status: 'timeout',
       }));
@@ -244,11 +285,28 @@ describe('SessionPromptPredictionService', () => {
     }
 
     lastEnded = { turnId: 8, reason: 'completed' };
-    const disposed = service.predict({ predictionId: 'dispose', expectedTurnId: 8 });
-    await vi.waitFor(() => expect(requests).toHaveLength(9));
+    nextResult = () => Promise.resolve(finish(structured(null)));
+    await expect(service.predict({ predictionId: 'no-prediction', expectedTurnId: 8 })).resolves.toBeNull();
+    expect(generatedRequests()).toHaveLength(9);
+    expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
+      status: 'empty',
+    }));
+
+    lastEnded = { turnId: 9, reason: 'completed' };
+    nextResult = () => Promise.resolve(finish('not json'));
+    await expect(service.predict({ predictionId: 'invalid-json', expectedTurnId: 9 })).resolves.toBeNull();
+    expect(generatedRequests()).toHaveLength(10);
+    expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
+      status: 'invalid',
+    }));
+
+    lastEnded = { turnId: 10, reason: 'completed' };
+    nextResult = () => new Promise<PredictionOutcome>(() => {});
+    const disposed = service.predict({ predictionId: 'dispose', expectedTurnId: 10 });
+    await vi.waitFor(() => expect(generatedRequests()).toHaveLength(11));
     service.dispose();
     await expect(disposed).resolves.toBeNull();
-    expect(requests[8]?.signal?.aborted).toBe(true);
+    expect(generatedRequests()[10]?.signal?.aborted).toBe(true);
     expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
       status: 'cancelled',
       reason: 'disposed',

@@ -1,0 +1,157 @@
+name: Desktop E2E
+
+# Optional: the Electron journeys run in up to four shards on separate machines,
+# and the result job reports them under one check name. It is not a required
+# check. Automatic triggers are temporarily disabled while the E2E suite is
+# replaced; workflow_dispatch remains available. The organization runs at most
+# five macOS jobs at once, and the journeys take at most four of them.
+# When the automatic triggers below are restored, pull requests run the journeys
+# only when they change them or carry the desktop-e2e label, main runs all of
+# them on every push and every night, and a failure there opens or updates one
+# tracking issue.
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: '43 18 * * *'
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-e2e-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+
+jobs:
+  plan:
+    name: Plan the desktop journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.select.outputs.mode }}
+      specs: ${{ steps.select.outputs.specs }}
+      total: ${{ steps.split.outputs.total }}
+      shards: ${{ steps.split.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Choose the journeys to run
+        id: select
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'desktop-e2e') }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            args=(--pull-request)
+            if [[ "$LABELLED" == "true" ]]; then args+=(--labelled); fi
+            git diff --name-only "$BASE_SHA" HEAD | node apps/desktop/scripts/ci/select-e2e-specs.mjs "${args[@]}"
+          else
+            node apps/desktop/scripts/ci/select-e2e-specs.mjs
+          fi
+      - name: Split them across machines
+        id: split
+        shell: bash
+        env:
+          MODE: ${{ steps.select.outputs.mode }}
+          SPECS: ${{ steps.select.outputs.specs }}
+          MAX_SHARDS: 4
+        run: |
+          set -euo pipefail
+          read -r -a specs <<< "$SPECS"
+          case "$MODE" in
+            none) total=0 ;;
+            specs) total=$(( ${#specs[@]} < MAX_SHARDS ? ${#specs[@]} : MAX_SHARDS )) ;;
+            *) total=$MAX_SHARDS ;;
+          esac
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+          shards=()
+          for (( shard = 1; shard <= (total > 0 ? total : 1); shard++ )); do shards+=("$shard"); done
+          echo "shards=[$(IFS=,; echo "${shards[*]}")]" >> "$GITHUB_OUTPUT"
+          echo "Desktop e2e: $MODE mode on $total machine(s)"
+
+  journeys:
+    name: Desktop E2E shard ${{ matrix.shard }}/${{ needs.plan.outputs.total }}
+    needs: plan
+    if: needs.plan.outputs.mode != 'none'
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run this shard of the journeys
+        shell: bash
+        env:
+          MODE: ${{ needs.plan.outputs.mode }}
+          SPECS: ${{ needs.plan.outputs.specs }}
+          SHARD: ${{ matrix.shard }}/${{ needs.plan.outputs.total }}
+        run: |
+          set -o pipefail
+          args=()
+          if [[ "$MODE" == "specs" ]]; then read -r -a args <<< "$SPECS"; fi
+          pnpm --filter kimi-code-app run e2e:headless "${args[@]}" --shard="$SHARD" 2>&1 | tee "$RUNNER_TEMP/desktop-e2e.log"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: desktop-e2e-failure-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/desktop-e2e.log
+            apps/desktop/test-results/e2e/
+            apps/desktop/playwright-report/
+          retention-days: 7
+
+  result:
+    name: Desktop E2E journeys (optional)
+    needs: [plan, journeys]
+    if: ${{ !cancelled() && needs.plan.outputs.mode != 'none' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check every shard
+        shell: bash
+        env:
+          PLAN: ${{ needs.plan.result }}
+          JOURNEYS: ${{ needs.journeys.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$PLAN" != "success" ]]; then echo "::error::Planning the desktop journeys ended with $PLAN"; exit 1; fi
+          if [[ "$JOURNEYS" != "success" ]]; then echo "::error::The desktop journey shards ended with $JOURNEYS"; exit 1; fi
+          echo "Every desktop journey shard passed"
+
+  alert:
+    name: Track desktop journey failures on main
+    needs: result
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    concurrency:
+      group: desktop-e2e-main-tracking-issue
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: apps/desktop/scripts/ci
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.result.result }}
+        run: node apps/desktop/scripts/ci/report-main-journeys.mjs --result "$RESULT"

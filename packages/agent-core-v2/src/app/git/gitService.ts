@@ -57,7 +57,7 @@ export class GitService implements IGitService {
     const dirty = porc.stdout
       .split('\0')
       .some((record) => record.length > 0 && !record.startsWith('## '));
-    if (dirty) {
+    if (dirty && options.includeStats !== false) {
       const head = await this.runCommand('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], cwd);
       if (head.exitCode === 0) {
         const diffArgs = ['diff', '--no-color', '--numstat', 'HEAD', '--'];
@@ -182,6 +182,7 @@ export class GitService implements IGitService {
         () => ({ ok: false as const }),
       );
     if (!spawned.ok) {
+      lease.dispose();
       return { exitCode: -1, stdout: '', stderr: '' };
     }
     const { proc } = spawned;

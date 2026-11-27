@@ -1,8 +1,6 @@
-/**
- * Proxy-aware `fetch` for LLM clients with an optional response-headers timeout configured by
- * `KIMI_CODE_LLM_HEADERS_TIMEOUT_MS`.
- */
 import { Agent, EnvHttpProxyAgent, type Dispatcher } from 'undici';
+
+import { log } from '#/utils/log';
 
 export const LLM_HEADERS_TIMEOUT_ENV = 'KIMI_CODE_LLM_HEADERS_TIMEOUT_MS';
 
@@ -114,8 +112,9 @@ export function getLlmHeadersTimeoutDispatcher(
       if (!warnedInvalidProxy) {
         warnedInvalidProxy = true;
         const reason = error instanceof Error ? error.message : String(error);
-        process.stderr.write(
-          `kimi: ${LLM_HEADERS_TIMEOUT_ENV}: ignoring invalid proxy configuration (${reason}); requests keep the default headers timeout\n`,
+        log.warn(
+          { env: LLM_HEADERS_TIMEOUT_ENV, reason },
+          'ignoring invalid proxy configuration; requests keep the default headers timeout',
         );
       }
       dispatcher = undefined;
@@ -123,8 +122,9 @@ export function getLlmHeadersTimeoutDispatcher(
   } else if (hasSocksProxy(env)) {
     if (!warnedSocksProxy) {
       warnedSocksProxy = true;
-      process.stderr.write(
-        `kimi: ${LLM_HEADERS_TIMEOUT_ENV} is not supported with SOCKS proxies; requests keep the default headers timeout\n`,
+      log.warn(
+        { env: LLM_HEADERS_TIMEOUT_ENV },
+        'SOCKS proxies do not support the headers timeout; requests keep the default headers timeout',
       );
     }
     dispatcher = undefined;

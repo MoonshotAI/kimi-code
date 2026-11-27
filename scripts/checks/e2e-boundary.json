@@ -1,0 +1,33 @@
+{
+  "exceptions": [
+    {
+      "file": "tests/e2e/support/scenario.ts",
+      "rule": "no-flake-masking",
+      "pattern": ".skip(",
+      "reason": "scenario() reports a surface that a scenario declares as not applicable (except / onlyOn, each with a mandatory reason) as skipped with that reason. Scenarios, self-tests and drivers still cannot skip."
+    }
+  ],
+  "testSwitches": [
+    {
+      "name": "KIMI_CODE_CLOCK_FILE",
+      "files": [
+        "tests/e2e/surfaces/environment.ts"
+      ],
+      "reason": "Points the engine's host clock at a file that holds the current time, so a scenario can move the date the way time passes on the user's machine, for example across midnight in the middle of a session. Only IHostClock reads it, and IHostClock only tells the model the local date; the driver sets it only for scenarios that give a starting time with the clock option. With the variable unset the clock reads the real time. A file that does not hold a time makes the clock throw instead of falling back to the real time: the engine logs the failure and leaves the date out of the request, so a scenario that asserts the date fails."
+    },
+    {
+      "name": "KIMI_DESKTOP_E2E",
+      "files": [
+        "tests/e2e/surfaces/desktop.ts"
+      ],
+      "reason": "Only takes effect in an unpackaged build. With any value it keeps DevTools from opening, skips the quit confirmation and registers no deep-link handler or jump list. With the value quiet, which is what the driver uses unless E2E_HEADED=1, it also keeps the window invisible, off the screen and out of the taskbar, turns off background throttling so that the hidden page keeps rendering, creates no tray icon and, on macOS, keeps the app out of the Dock. These change what the app does to the machine running the test; the conversation behaviour under test is unchanged."
+    },
+    {
+      "name": "KIMI_DESKTOP_NO_SHELL_ENV",
+      "files": [
+        "tests/e2e/surfaces/desktop.ts"
+      ],
+      "reason": "Stops the app from running the login shell at start-up to import its environment variables. The test home has no shell profile of its own, so the import would only add what the machine's system-wide profile files set, which would make a run depend on the host and start more slowly. It changes where the environment comes from, not how the app behaves in a conversation."
+    }
+  ]
+}

@@ -1,6 +1,3 @@
-/**
- * Normalizes tool JSON Schemas for Kimi: inlines `$ref` definitions and fills in missing property types.
- */
 import { SyntaxRequestFormatError } from '#/llm/protocol/errors';
 
 export function derefJsonSchema(schema: Record<string, unknown>): Record<string, unknown> {

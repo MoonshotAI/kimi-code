@@ -1,30 +1,22 @@
-/**
- * `SessionEventWiring` — the in-process v1 edge over the v2 per-agent event
- * bus. Covers the status-snapshot fold: v2 emits `agent.status.updated` in
- * slices and the model slice rides only the bind-time emission, so the
- * wiring merges a consistent usage + context + model snapshot into every
- * status event (mirrors kap-server's broadcaster bridge).
- * Run: pnpm exec vitest run test/session-event-wiring.test.ts
- */
 import { describe, expect, it } from 'vitest';
 
 import type { Event } from '#/index';
 import {
+  Error2,
+  ErrorCodes,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentScopeContext,
   IEventBus,
   ISessionTokenCountingService,
   ISessionUsageService,
+  MAIN_AGENT_ID,
   makeAgentScopeContext,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
-import { SessionEventWiring, type SessionEventSink } from '#/v2/session-wiring';
-
-// ---------------------------------------------------------------------------
-// Fakes
-// ---------------------------------------------------------------------------
+import { readStatusModelContext, SessionEventWiring, type SessionEventSink } from '#/v2/session-wiring';
 
 type FakeBusEvent = { type: string } & Record<string, unknown>;
 
@@ -110,10 +102,6 @@ function bindStatusServices(agent: FakeAgentHandle, model: string): void {
   agent.set(ISessionUsageService, { status: () => USAGE });
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('SessionEventWiring status snapshot fold', () => {
   it('folds a consistent usage + context + model snapshot into every status event', () => {
     const sub = new FakeAgentHandle('agent-1');
@@ -126,11 +114,7 @@ describe('SessionEventWiring status snapshot fold', () => {
       { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
     ];
     try {
-      // The v2 model slice rides only the subagent's bind-time emission, which
-      // reaches clients before `subagent.spawned` and is dropped there; a
-      // later usage-only slice must still carry the model at this edge.
       sub.bus.emit({ type: 'agent.status.updated', usage: USAGE });
-      // Non-status events pass through untouched.
       sub.bus.emit({ type: 'assistant.delta', delta: 'Hi', time: 1_700_000_000_123 });
       sub.bus.emit({
         type: 'tool.result',
@@ -174,11 +158,17 @@ describe('SessionEventWiring status snapshot fold', () => {
     expect(JSON.stringify(events[3])).not.toContain('"source"');
   });
 
-  it.each(['blocked', 'failed'] as const)('forwards prompt.completed(%s) so rejected prompts can settle clients', (reason) => {
+  it.each(['blocked', 'failed'] as const)('forwards prompt.queued and prompt.completed(%s) so clients can track prompts', (reason) => {
     const sub = new FakeAgentHandle('agent-1');
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);
     try {
+      sub.bus.emit({
+        type: 'prompt.queued',
+        promptId: 'prompt-1',
+        content: [{ type: 'text', text: 'queued' }],
+        queueLength: 1,
+      });
       sub.bus.emit({
         type: 'prompt.completed',
         promptId: 'prompt-1',
@@ -189,8 +179,15 @@ describe('SessionEventWiring status snapshot fold', () => {
       wiring.dispose();
     }
 
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(2);
     expect(events[0]).toMatchObject({
+      type: 'prompt.queued',
+      sessionId: 's1',
+      agentId: 'agent-1',
+      promptId: 'prompt-1',
+      queueLength: 1,
+    });
+    expect(events[1]).toMatchObject({
       type: 'prompt.completed',
       sessionId: 's1',
       agentId: 'agent-1',
@@ -220,7 +217,6 @@ describe('SessionEventWiring status snapshot fold', () => {
 
   it('passes status events through unchanged when the agent services are incomplete', () => {
     const sub = new FakeAgentHandle('agent-1');
-    // No profile/usage/context/wire services bound — nothing to fold in.
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);
     try {
@@ -239,9 +235,6 @@ describe('SessionEventWiring status snapshot fold', () => {
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);
     try {
-      // `promptAttachments` is transcript-projection metadata: kap-server
-      // strips it from the WS wire event, so SDK consumers must not see it
-      // either.
       sub.bus.emit({
         type: 'turn.prompt',
         turnId: 1,
@@ -279,5 +272,94 @@ describe('SessionEventWiring status snapshot fold', () => {
       prompt: 'describe this',
     });
     expect(events[1]).not.toHaveProperty('promptAttachments');
+  });
+
+  it('falls back to the default model context window when the main agent model was removed from config', () => {
+    const main = new FakeAgentHandle(MAIN_AGENT_ID);
+    main.set(ISessionTokenCountingService, { statusSize: () => 10 });
+    main.set(IAgentLoopService, {
+      getModel: () => 'removed',
+      resolveModelContext: () => {
+        throw new Error2(ErrorCodes.CONFIG_INVALID, 'Model "removed" is not configured in config.toml.', {
+          details: { model: 'removed' },
+        });
+      },
+    });
+    main.set(ISessionUsageService, { status: () => USAGE });
+    main.set(IProviderCatalogService, {
+      getDefaultModelId: () => 'fallback',
+      get: () => ({ spec: { maxInputSize: 64_000, maxContextSize: 128_000 } }),
+    });
+    const { sink, events } = collectingSink();
+    const wiring = new SessionEventWiring(makeSession([main]), sink);
+    try {
+      main.bus.emit({ type: 'agent.status.updated', usage: USAGE });
+    } finally {
+      wiring.dispose();
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'agent.status.updated',
+      sessionId: 's1',
+      agentId: MAIN_AGENT_ID,
+      usage: USAGE,
+      contextTokens: 10,
+      maxContextTokens: 64_000,
+      contextUsage: 10 / 64_000,
+      model: 'removed',
+    });
+  });
+
+  it('reads zero max context tokens when the removed main agent model has no default fallback', () => {
+    const main = new FakeAgentHandle(MAIN_AGENT_ID);
+    main.set(IAgentLoopService, {
+      getModel: () => 'removed',
+      resolveModelContext: () => {
+        throw new Error2(ErrorCodes.CONFIG_INVALID, 'Model "removed" is not configured in config.toml.', {
+          details: { model: 'removed' },
+        });
+      },
+    });
+
+    expect(readStatusModelContext(main as never)).toEqual({
+      modelAlias: 'removed',
+      maxContextTokens: 0,
+    });
+  });
+
+  it('keeps rejecting other model configuration errors and removed subagent models', () => {
+    const main = new FakeAgentHandle(MAIN_AGENT_ID);
+    bindStatusServices(main, 'broken');
+    main.set(IAgentLoopService, {
+      getModel: () => 'broken',
+      resolveModelContext: () => {
+        throw new Error2(ErrorCodes.CONFIG_INVALID, 'provider settings are invalid', {
+          details: { model: 'broken' },
+        });
+      },
+    });
+    const sub = new FakeAgentHandle('agent-1');
+    bindStatusServices(sub, 'removed');
+    sub.set(IAgentLoopService, {
+      getModel: () => 'removed',
+      resolveModelContext: () => {
+        throw new Error2(ErrorCodes.CONFIG_INVALID, 'Model "removed" is not configured in config.toml.', {
+          details: { model: 'removed' },
+        });
+      },
+    });
+    const { sink } = collectingSink();
+    const wiring = new SessionEventWiring(makeSession([main, sub]), sink);
+    try {
+      expect(() => main.bus.emit({ type: 'agent.status.updated', usage: USAGE })).toThrow(
+        'provider settings are invalid',
+      );
+      expect(() => sub.bus.emit({ type: 'agent.status.updated', usage: USAGE })).toThrow(
+        'Model "removed" is not configured in config.toml.',
+      );
+    } finally {
+      wiring.dispose();
+    }
   });
 });

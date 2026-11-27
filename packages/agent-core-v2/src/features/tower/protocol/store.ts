@@ -455,26 +455,13 @@ export class TowerStore {
   }
 
   private async reapStaleStateLock(lockPath: string): Promise<boolean> {
+    if ((await this.readDeadStateLockHolder(lockPath)) === undefined) return false;
     const guard = await this.acquireStateLockReaper(lockPath);
     if (guard === undefined) return false;
     try {
-      let content: string;
-      try {
-        content = await readFile(lockPath, 'utf8');
-      } catch {
-        return false;
-      }
-      const pid = Number(/^pid=(\d+)\b/.exec(content)?.[1]);
-      if (!Number.isSafeInteger(pid) || pid <= 0 || !(await this.stateLockHolderIsDead(pid))) {
-        return false;
-      }
-      let confirmed: string;
-      try {
-        confirmed = await readFile(lockPath, 'utf8');
-      } catch {
-        return false;
-      }
-      if (confirmed !== content || !(await this.stateLockHolderIsDead(pid))) return false;
+      const content = await this.readDeadStateLockHolder(lockPath);
+      if (content === undefined) return false;
+      if ((await this.readDeadStateLockHolder(lockPath)) !== content) return false;
       try {
         await rm(lockPath);
         return true;
@@ -485,6 +472,20 @@ export class TowerStore {
     } finally {
       await this.releaseStateLockReaper(guard);
     }
+  }
+
+  private async readDeadStateLockHolder(lockPath: string): Promise<string | undefined> {
+    let content: string;
+    try {
+      content = await readFile(lockPath, 'utf8');
+    } catch {
+      return undefined;
+    }
+    const pid = Number(/^pid=(\d+)\b/.exec(content)?.[1]);
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !(await this.stateLockHolderIsDead(pid))) {
+      return undefined;
+    }
+    return content;
   }
 
   private async stateLockReaperRef(lockPath: string): Promise<string> {
@@ -2186,22 +2187,22 @@ export class TowerStore {
     ) {
       if (reviewMission.completionTip === undefined) {
         throw new TowerProtocolError(
-          `artifact mission ${reviewMission.id} has no completion tip recorded — its acceptance-request cannot be bound to an exact branch tip. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope for explicit human approval, then record TowerReview again.`,
+          `artifact mission ${reviewMission.id} has no completion tip recorded — its acceptance-request cannot be bound to an exact branch tip. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record TowerReview again immediately when the user has asked for the merge, otherwise only after explicit user approval.`,
         );
       }
       if (input.acceptanceTip === undefined) {
         throw new TowerProtocolError(
-          `artifact mission ${reviewMission.id} requires acceptance_tip from the TowerComplete acceptance-request the human approved — present the latest request and pass its completion tip explicitly`,
+          `artifact mission ${reviewMission.id} requires acceptance_tip from the latest TowerComplete acceptance-request — present the latest request and pass its completion tip explicitly`,
         );
       }
       if (input.acceptanceTip !== reviewMission.completionTip) {
         throw new TowerProtocolError(
-          `artifact acceptance references ${input.acceptanceTip.slice(0, 7)}, but the latest acceptance-request for mission ${reviewMission.id} covers ${reviewMission.completionTip.slice(0, 7)} — the approval is tied to a different presentation; present the latest request and pass its acceptance_tip`,
+          `artifact acceptance references ${input.acceptanceTip.slice(0, 7)}, but the latest acceptance-request for mission ${reviewMission.id} covers ${reviewMission.completionTip.slice(0, 7)} — the acceptance is tied to a different presentation; present the latest request and pass its acceptance_tip`,
         );
       }
       if (reviewedCommit !== reviewMission.completionTip) {
         throw new TowerProtocolError(
-          `branch "${input.target}" advanced after the artifact acceptance-request (completion ${reviewMission.completionTip.slice(0, 7)}, current ${reviewedCommit.slice(0, 7)}) — the user has not approved the delivery at the current tip. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope for fresh explicit human approval, then record TowerReview again.`,
+          `branch "${input.target}" advanced after the artifact acceptance-request (completion ${reviewMission.completionTip.slice(0, 7)}, current ${reviewedCommit.slice(0, 7)}) — the delivery at the current tip has not been accepted. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record fresh acceptance with TowerReview immediately when the user has asked for the merge, otherwise only after explicit user approval.`,
         );
       }
     }
@@ -3020,7 +3021,7 @@ export class TowerStore {
         if (inProgress && files.length > 0) {
           mission.blockers.push(
             mission.kind === 'artifact'
-              ? `tower rebase onto ${state.base} conflicted in: ${files.join(', ')} — the rebase was aborted and your worktree is back to the pre-rebase state. Resolve it yourself: run \`git rebase ${state.base}\` in your worktree, fix the listed conflicts, \`git add\` the resolved files, then continue with \`GIT_EDITOR=true git rebase --continue\` (a plain \`git rebase --continue\` opens an editor and hangs a non-interactive shell). Re-run your checks, clear this blocker (TowerMission clear_blockers), then run TowerComplete with the current report and key_artifacts so the tower can present the new acceptance-request for fresh explicit human acceptance of the entire tip — the moved tip cannot reuse the old acceptance`
+              ? `tower rebase onto ${state.base} conflicted in: ${files.join(', ')} — the rebase was aborted and your worktree is back to the pre-rebase state. Resolve it yourself: run \`git rebase ${state.base}\` in your worktree, fix the listed conflicts, \`git add\` the resolved files, then continue with \`GIT_EDITOR=true git rebase --continue\` (a plain \`git rebase --continue\` opens an editor and hangs a non-interactive shell). Re-run your checks, clear this blocker (TowerMission clear_blockers), then run TowerComplete with the current report and key_artifacts so the tower can present the new acceptance-request for fresh artifact acceptance of the entire tip — the moved tip cannot reuse the old acceptance`
               : `tower rebase onto ${state.base} conflicted in: ${files.join(', ')} — the rebase was aborted and your worktree is back to the pre-rebase state. Resolve it yourself: run \`git rebase ${state.base}\` in your worktree, fix the listed conflicts, \`git add\` the resolved files, then continue with \`GIT_EDITOR=true git rebase --continue\` (a plain \`git rebase --continue\` opens an editor and hangs a non-interactive shell). Re-run your tests, then clear this blocker (TowerMission clear_blockers) and TowerSend the tower asking for a fresh review — a worker-run rebase is not covered by the clean-rebase waiver, so the moved tip needs a new clean review before the merge can land`,
           );
           mission.status = 'blocked';
@@ -3413,7 +3414,7 @@ function artifactAcceptanceReport(
   const key = new Set(keyArtifacts);
   const additional = changed.filter((path) => !key.has(path));
   return [
-    'Key artifacts for human acceptance:',
+    'Key artifacts for acceptance:',
     ...keyArtifacts.map((path) => `- ${path}`),
     '',
     `Completion tip: ${completionTip}`,

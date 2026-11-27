@@ -1,14 +1,10 @@
-/**
- * OpenAI Chat Completions decoding: the stream decoder that turns chunks into streamed parts (including
- * reasoning content and reasoning details), usage, and finish info; replay of a non-streaming response;
- * and OpenAI SDK error classification, which the Responses protocol reuses.
- */
 import {
   APIConnectionError as RawOpenAISDKConnectionError,
   APIConnectionTimeoutError as RawOpenAISDKConnectionTimeoutError,
   APIError as RawOpenAISDKAPIError,
   OpenAIError as RawOpenAISDKError,
 } from 'openai';
+import { v4 as randomUUID } from 'uuid';
 
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
@@ -19,11 +15,15 @@ import {
   isUnreachableConnection,
   toLlmTransportErrorMessage,
 } from '#/llm/protocol/rules/status';
-import type { LlmRemoteErrorMessage } from '#/llm/response';
-import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/response';
+import {
+  type LlmRemoteErrorMessage,
+  NO_FINISH,
+  type FinishInfo,
+  type FinishReason,
+  type TokenUsage,
+} from '#/llm/response';
 import type { StreamedMessagePart, ThinkPart } from '#/llm/message';
 import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
-import type { TokenUsage } from '#/llm/response';
 
 export type RawUsage = {
   prompt_tokens?: number;
@@ -48,6 +48,7 @@ export type RawChunk = {
       tool_calls?: RawStreamToolCallDelta[];
     };
     finish_reason?: string | null;
+    usage?: RawUsage | null;
   }[];
   usage?: RawUsage | null;
 };
@@ -68,6 +69,7 @@ export type RawResponse = {
       tool_calls?: RawToolCall[];
     } | null;
     finish_reason?: string | null;
+    usage?: RawUsage | null;
   }[];
   usage?: RawUsage | null;
 };
@@ -256,7 +258,7 @@ export function createDecoder(
         return [
           {
             type: 'function',
-            id: toolCall.id ?? crypto.randomUUID(),
+            id: toolCall.id ?? randomUUID(),
             name: functionName,
             arguments: functionArguments ?? null,
             extras: toolCall.extras,
@@ -294,7 +296,7 @@ export function createDecoder(
       return [
         {
           type: 'function',
-          id: buffered.id ?? toolCall.id ?? crypto.randomUUID(),
+          id: buffered.id ?? toolCall.id ?? randomUUID(),
           name: functionName,
           arguments: initialArguments,
           extras: buffered.extras,
@@ -313,7 +315,7 @@ export function createDecoder(
       if (typeof chunk.id === 'string' && chunk.id.length > 0) {
         sink.onMessageId(chunk.id);
       }
-      const usage = parseUsage(chunk.usage);
+      const usage = parseUsage(chunk.usage ?? chunk.choices?.[0]?.usage);
       if (usage !== undefined) {
         sink.onUsage(usage);
       }

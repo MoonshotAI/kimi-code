@@ -1,7 +1,3 @@
-/**
- * Request results: finish reasons, the `LlmErrorMessage` union, timing, notices, stream and retry
- * events, the `LlmRunEvent` vocabulary, and the final `LlmOutcome`.
- */
 import type {
   AssistantMessage,
   FinishInfo,
@@ -33,6 +29,7 @@ export type LlmErrorKind =
   | 'image_format'
   | 'empty_response'
   | 'provider'
+  | 'invalid_tool_arguments'
   | 'unknown';
 
 export type LlmRemoteErrorKind = Exclude<LlmErrorKind, 'syntax'>;
@@ -163,23 +160,22 @@ export interface LlmNotice extends LlmNoticeInput {
 
 export type LlmNoticeSink = (notice: LlmNoticeInput) => void;
 
-export type LlmStreamEvent =
-  | { readonly type: 'llm.notice'; readonly notice: LlmNotice }
-  | { readonly type: 'llm.streaming.headers'; readonly headers: Record<string, string> }
-  | { readonly type: 'llm.streaming.request_id'; readonly requestId: string }
-  | ({ readonly type: 'llm.timing' } & LlmTiming)
-  | { readonly type: 'llm.streaming.part'; readonly part: StreamedMessagePart; readonly block?: number }
-  | { readonly type: 'llm.streaming.usage'; readonly usage: Partial<TokenUsage> }
-  | { readonly type: 'llm.streaming.finish'; readonly finish: FinishInfo }
-  | { readonly type: 'llm.streaming.tool_call_end'; readonly toolCall: ToolCall; readonly index?: number | string }
-  | { readonly type: 'llm.streaming.message_id'; readonly messageId: string };
+export type LlmNoticeEvent = { readonly type: 'llm.notice'; readonly notice: LlmNotice };
 
-export type LlmSentEvent = { readonly type: 'llm.sent' };
+export type LlmDeltaEvent =
+  | { readonly type: 'llm.delta.response_header'; readonly headers: Record<string, string> }
+  | { readonly type: 'llm.delta.request_id'; readonly requestId: string }
+  | ({ readonly type: 'llm.delta.timing' } & LlmTiming)
+  | { readonly type: 'llm.delta.part'; readonly part: StreamedMessagePart; readonly block?: number }
+  | { readonly type: 'llm.delta.usage'; readonly usage: Partial<TokenUsage> }
+  | { readonly type: 'llm.delta.finish'; readonly finish: FinishInfo }
+  | { readonly type: 'llm.delta.tool_call_end'; readonly toolCall: ToolCall; readonly index?: number | string }
+  | { readonly type: 'llm.delta.message_id'; readonly messageId: string };
 
-export type LlmRetrying =
+export type LlmRetry =
   | {
-      readonly type: 'llm.retrying';
-      readonly reason: 'backoff';
+      readonly type: 'llm.retry';
+      readonly reason: 'backoff' | 'invalid_tool_arguments';
       readonly error: LlmErrorMessage;
       readonly message?: AssistantMessage | null;
       readonly usage?: TokenUsage;
@@ -194,7 +190,7 @@ export type LlmRetrying =
       readonly delayMs: number;
     }
   | {
-      readonly type: 'llm.retrying';
+      readonly type: 'llm.retry';
       readonly reason: 'recovery';
       readonly error: LlmErrorMessage;
       readonly message?: AssistantMessage | null;
@@ -243,11 +239,52 @@ export interface LlmRequestSummary {
   readonly messageCount: number;
 }
 
+// Emitted before resolvers; toolsHash describes the initial request profile, not the provider payload.
 export type LlmRunStarted = { readonly type: 'llm.started' } & LlmRequestSummary;
+
+export type LlmRequestProjection =
+  | 'strict'
+  | 'media-degraded'
+  | 'media-stripped'
+  | 'strict-media-degraded'
+  | 'strict-media-stripped';
+
+// Emitted after resolvers for each attempt, before legalization and provider encoding.
+export type LlmRunRequested = {
+  readonly type: 'llm.requested';
+  readonly kind?: 'loop' | 'compaction' | 'prediction';
+  readonly provider: string;
+  readonly model: string;
+  readonly modelAlias?: string;
+  readonly thinkingEffort?: ThinkingEffort;
+  readonly thinkingKeep?: string;
+  readonly temperature?: number;
+  readonly topP?: number;
+  readonly maxTokens?: number;
+  readonly betaApi?: boolean;
+  readonly toolSelect?: boolean;
+  readonly systemPromptHash: string;
+  readonly systemPrompt?: string;
+  readonly toolsHash: string;
+  readonly messageCount: number;
+  readonly turnStep?: string;
+  readonly attempt?: string;
+  readonly projection?: LlmRequestProjection;
+  readonly droppedCount?: number;
+};
+
+export type LlmQueued = {
+  readonly type: 'llm.queued';
+  readonly active: number;
+  readonly waiting: number;
+  readonly position: number;
+};
 
 export type LlmRunEvent =
   | LlmRunStarted
-  | LlmSentEvent
-  | LlmStreamEvent
-  | LlmRetrying
+  | LlmRunRequested
+  | LlmQueued
+  | LlmNoticeEvent
+  | LlmDeltaEvent
+  | LlmRetry
   | { readonly type: 'llm.ended'; readonly outcome: LlmOutcome };

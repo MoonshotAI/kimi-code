@@ -1,0 +1,26 @@
+{
+  "name": "@moonshot-ai/vite-preset",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./icons": "./src/icons.d.ts",
+    "./worker": "./src/worker.d.ts"
+  },
+  "peerDependencies": {
+    "@vitejs/plugin-vue": "^5.2.4",
+    "unplugin-icons": "^23.0.0",
+    "vite": "^6.3.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.4",
+    "typescript": "6.0.2",
+    "unplugin-icons": "^23.0.0",
+    "vite": "^6.3.3",
+    "vitest": "4.1.4"
+  }
+}

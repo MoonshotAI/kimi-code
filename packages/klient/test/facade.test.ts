@@ -11,7 +11,6 @@ import { KlientValidationError } from '../src/core/validation.js';
 
 const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Records calls, replays scripted results, and captures listen subscriptions. */
 class FakeChannel implements KlientChannel {
   readonly calls: Array<{ scope: ScopeRef; service: string; method: string; args: unknown[] }> = [];
   readonly subscriptions: Array<{
@@ -20,7 +19,6 @@ class FakeChannel implements KlientChannel {
     dispose: ReturnType<typeof vi.fn>;
   }> = [];
   result: unknown;
-  /** Keyed `${service}.${method}` result overrides. */
   readonly results = new Map<string, unknown>();
   private readonly handlers = new Map<number, (data: unknown) => void>();
   private nextSub = 0;
@@ -31,10 +29,7 @@ class FakeChannel implements KlientChannel {
     return Promise.resolve(this.results.has(key) ? this.results.get(key) : this.result);
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
-  async *stream(_scope: ScopeRef, _service: string, _method: string, _args: unknown[]): AsyncIterableIterator<unknown> {
-    // stub — streaming is not exercised in facade tests
-  }
+  async *stream(_scope: ScopeRef, _service: string, _method: string, _args: unknown[]): AsyncIterableIterator<unknown> {}
 
   listen(scope: ScopeRef, source: EventSourceRef, handler: (data: unknown) => void): IDisposable {
     const id = this.nextSub;
@@ -47,7 +42,6 @@ class FakeChannel implements KlientChannel {
     return { dispose };
   }
 
-  /** Push a raw payload into the Nth subscription (0-based). */
   emit(index: number, data: unknown): void {
     this.handlers.get(index)?.(data);
   }
@@ -71,14 +65,14 @@ describe('facade routing', () => {
     const klient = createKlientFromChannel(channel);
 
     channel.result = { id: 'w1', root: '/x', name: 'n', kind: 'implicit', additionalDirs: [], createdAt: 1, lastOpenedAt: 2 };
-    await klient.global.workspaces.createOrTouch({ root: '/x', name: 'n' });
+    await klient.global.workspaces.resolveImplicit('/x');
     expect(channel.calls[0]).toMatchObject({
       service: 'workspaceService',
-      method: 'createOrTouch',
-      args: ['/x', 'n'],
+      method: 'resolveImplicit',
+      args: ['/x'],
     });
 
-    channel.result = undefined; // void output
+    channel.result = undefined;
     await klient.global.plugins.setMcpServerEnabled({ id: 'p', server: 's', enabled: true });
     expect(channel.calls[1]).toMatchObject({
       service: 'pluginService',
@@ -117,6 +111,25 @@ describe('facade routing', () => {
     ]);
   });
 
+  it('lists pending approvals denied by Auto Review at low risk', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const approval = {
+      id: 'approval-low-risk',
+      toolName: 'Bash',
+      action: 'Run command',
+      display: { kind: 'command', command: 'echo hello' },
+      approvalDetail: {
+        outcome: 'denied',
+        risk: 'low',
+        reason: 'User boundary forbids this action.',
+      },
+    };
+    channel.results.set('sessionApprovalService.listPending', [approval]);
+
+    await expect(klient.session('s1').approvals.list()).resolves.toEqual([approval]);
+  });
+
   it('forwards the login region option through the wire contract', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
@@ -150,7 +163,6 @@ describe('facade routing', () => {
       supported: true,
       state: 'partial',
       steps: [{ id: 'permissions', state: 'missing' }],
-      // The completed-install note survives the contract parse (not stripped).
       install: { running: false, note: 'user-skill-migrated' },
     };
     channel.result = [status];
@@ -273,7 +285,7 @@ describe('agent profile routing', () => {
     const klient = createKlientFromChannel(channel);
     const agent = klient.session('s1').agent('main');
 
-    channel.result = undefined; // void output
+    channel.result = undefined;
     await agent.setThinking('on');
     expect(channel.calls[0]).toEqual({
       scope: { sessionId: 's1', agentId: 'main' },
@@ -442,7 +454,7 @@ describe('session skills routing', () => {
     });
     channel.results.set('agentCommandService.list', []);
     await agent.prompt({ input: [{ type: 'text', text: 'hi' }] });
-    await agent.steer({ input: [{ type: 'text', text: 'steer' }] });
+    await agent.steer({ input: [{ type: 'text', text: 'steer' }], promptId: 'prompt-client-steer' });
     await agent.cancel({ turnId: 2 });
     await agent.cancel();
     await agent.setPermission('yolo');
@@ -465,7 +477,7 @@ describe('session skills routing', () => {
           {
             role: 'user',
             content: [{ type: 'text', text: 'steer' }],
-            attributes: { origin: { kind: 'user' } },
+            attributes: { origin: { kind: 'user' }, promptId: 'prompt-client-steer' },
           },
         ],
       },
@@ -715,7 +727,7 @@ describe('contract validation', () => {
   it('rejects drifted output payloads', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
-    channel.result = { id: 's1' }; // missing required SessionSummary fields
+    channel.result = { id: 's1' };
     await expect(klient.global.sessions.get('s1')).rejects.toBeInstanceOf(KlientValidationError);
   });
 
@@ -844,6 +856,7 @@ describe('event hub', () => {
       blocked: [] as unknown[],
       cancelled: [] as unknown[],
       completed: [] as unknown[],
+      turnEnded: [] as unknown[],
     };
     const errors: Error[] = [];
     agent.events.onError((error) => {
@@ -856,9 +869,8 @@ describe('event hub', () => {
     agent.events.on('compaction.blocked', (event) => seen.blocked.push(event));
     agent.events.on('compaction.cancelled', (event) => seen.cancelled.push(event));
     agent.events.on('compaction.completed', (event) => seen.completed.push(event));
+    agent.events.on('turn.ended', (event) => seen.turnEnded.push(event));
 
-    // All six registrations share one `events` stream subscription bound to
-    // the agent scope.
     expect(channel.subscriptions).toHaveLength(1);
     expect(channel.subscriptions[0]?.scope).toEqual({ sessionId: 's1', agentId: 'main' });
     expect(channel.subscriptions[0]?.source).toEqual({ kind: 'stream', name: 'events' });
@@ -887,16 +899,24 @@ describe('event hub', () => {
     channel.emit(0, blocked);
     channel.emit(0, cancelled);
     channel.emit(0, completed);
+    channel.emit(0, { type: 'turn.ended', turnId: 1, reason: 'completed', time: 1 });
+    channel.emit(0, { type: 'turn.ended', turnId: 1, reason: 'completed', continuation: 'background', time: 2 });
+    channel.emit(0, { type: 'turn.ended', turnId: 2, reason: 'completed', continuation: 'none', time: 3 });
     channel.emit(0, { type: 'tool.updated', turnId: 1, toolCallId: 'tc1', taskId: 'task-1', status: 'running', detached: false }); // missing fields
     channel.emit(0, { type: 'unregistered.type', turnId: 1 });
     await tick();
 
     expect(seen.delta).toEqual([delta]);
-    expect(seen.progress).toEqual([progress]);
+    expect(seen.progress).toEqual([{ ...progress, origin: 'loop' }]);
     expect(seen.started).toEqual([started]);
     expect(seen.blocked).toEqual([blocked]);
     expect(seen.cancelled).toEqual([cancelled]);
     expect(seen.completed).toEqual([completed]);
+    expect(seen.turnEnded).toEqual([
+      { type: 'turn.ended', turnId: 1, reason: 'completed', time: 1 },
+      { type: 'turn.ended', turnId: 1, reason: 'completed', continuation: 'background', time: 2 },
+      { type: 'turn.ended', turnId: 2, reason: 'completed', continuation: 'none', time: 3 },
+    ]);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toBeInstanceOf(KlientValidationError);
   });

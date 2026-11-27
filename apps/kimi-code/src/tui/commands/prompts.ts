@@ -75,7 +75,7 @@ export interface FeedbackPromptResult {
 
 export function promptFeedbackInput(host: SlashCommandHost): Promise<FeedbackPromptResult | undefined> {
   return new Promise((resolve) => {
-    const dialog = new FeedbackInputDialogComponent((result: FeedbackInputDialogResult) => {
+    const dialog = new FeedbackInputDialogComponent(host.state.ui, (result: FeedbackInputDialogResult) => {
       host.restoreEditor();
       resolve(result.kind === 'ok' ? { value: result.value } : undefined);
     });
@@ -218,12 +218,6 @@ export function promptSshPassword(host: SlashCommandHost, environmentId: string)
   }).finally(releaseAuthBlock);
 }
 
-/**
- * Asks for the provider endpoint the catalog did not declare (or declared
- * only as an env placeholder) — required for catalog imports whose protocol
- * was guessed, where the built-in default endpoint would point at the wrong
- * host. Esc cancels the import.
- */
 export function promptBaseUrl(host: SlashCommandHost, platformName: string): Promise<string | undefined> {
   return new Promise((resolve) => {
     const dialog = new ApiKeyInputDialogComponent(

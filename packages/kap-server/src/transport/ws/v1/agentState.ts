@@ -7,6 +7,8 @@ import {
   IAgentSwarmService,
   IAgentTodoService,
   IAgentTowerService,
+  MAIN_AGENT_ID,
+  missingConfiguredModelAlias,
   planKey,
   type IAgentScopeHandle,
   type ServiceIdentifier,
@@ -14,28 +16,53 @@ import {
 
 import type {
   AgentState,
+  ContextState,
   GoalState,
   TodoItemState,
-  UsageState,
 } from '../../../protocol/ws-agent';
 import { readLegacyStatus } from '../../../services/legacyStatus/legacyStatus';
 
-export function readAgentState(handle: IAgentScopeHandle, running: boolean): AgentState {
+interface ProfileSnapshot {
+  readonly key: string;
+  readonly revision: number;
+}
+
+const profileSnapshots = new WeakMap<IAgentScopeHandle, ProfileSnapshot>();
+let lastProfileRevision = 0;
+
+export function readAgentState(handle: IAgentScopeHandle | undefined, running: boolean): AgentState {
+  if (handle === undefined) {
+    return {
+      status: running ? 'running' : 'idle',
+      compacting: false,
+      plan_mode: false,
+      swarm_mode: false,
+      tower_mode: false,
+    };
+  }
   const profile = optionalService(handle, IAgentLoopService);
-  const model = profile?.getModel() ?? '';
-  return {
-    status: running ? 'running' : 'idle',
-    compacting: (optionalService(handle, IAgentFullCompactionService)?.compacting ?? null) !== null,
+  let model = profile?.getModel() ?? '';
+  const isMain = handle.id === MAIN_AGENT_ID;
+  const missingModel = isMain && model !== '' ? missingConfiguredModelAlias(handle) : undefined;
+  if (missingModel !== undefined) model = '';
+  const settings = {
     model: text(model),
+    missing_model: missingModel,
     thinking: model === '' ? undefined : text(profile?.getEffectiveThinkingLevel()),
     permission_mode: optionalService(handle, IAgentPermissionModeService)?.mode,
     plan_mode: planActive(handle),
     swarm_mode: optionalService(handle, IAgentSwarmService)?.isActive === true,
     tower_mode: optionalService(handle, IAgentTowerService)?.isActive === true,
   };
+  return {
+    status: running ? 'running' : 'idle',
+    compacting: (optionalService(handle, IAgentFullCompactionService)?.compacting ?? null) !== null,
+    ...settings,
+    profile_revision: profileRevision(handle, JSON.stringify(settings)),
+  };
 }
 
-export function readUsageState(handle: IAgentScopeHandle): UsageState | undefined {
+export function readContextState(handle: IAgentScopeHandle): ContextState | undefined {
   const status = readLegacyStatus(handle);
   if (status === undefined) return undefined;
   return {
@@ -61,6 +88,14 @@ export function readGoalState(handle: IAgentScopeHandle): GoalState | undefined 
 export function readTodoItems(handle: IAgentScopeHandle): TodoItemState[] {
   const todos = optionalService(handle, IAgentTodoService)?.get() ?? [];
   return todos.map((todo) => ({ title: todo.title, status: todo.status }));
+}
+
+function profileRevision(handle: IAgentScopeHandle, key: string): number {
+  const previous = profileSnapshots.get(handle);
+  if (previous?.key === key) return previous.revision;
+  lastProfileRevision = Math.max(lastProfileRevision + 1, Date.now());
+  profileSnapshots.set(handle, { key, revision: lastProfileRevision });
+  return lastProfileRevision;
 }
 
 function planActive(handle: IAgentScopeHandle): boolean {

@@ -39,9 +39,7 @@ export async function foldAgentWireReplay(
   try {
     const limited = await foldAgentWireReplayWindowed(wirePath, turnLimit);
     if (limited !== undefined) return limited;
-  } catch {
-    // Any windowed-scan irregularity reproduces the reference behavior below.
-  }
+  } catch {}
   const full = await foldAgentWireReplayFull(wirePath);
   return {
     replay: limitAgentReplayByTurns(full.replay, turnLimit),
@@ -235,12 +233,6 @@ interface ScannedRecord {
   readonly record: WireRecord;
 }
 
-// Folds exactly the records that the full fold truncated to the last
-// `turnLimit` user turns would produce: the raw-record window starting at the
-// Nth-from-last turn-start append (extended back over an open step / pending
-// tool calls to the last pending-clearing record), plus every earlier
-// FOLD_CARRYOVER record so toolStore and goal state survive the window.
-// Returns undefined when the window cannot be proven equivalent.
 async function foldAgentWireReplayWindowed(
   wirePath: string,
   turnLimit: number,

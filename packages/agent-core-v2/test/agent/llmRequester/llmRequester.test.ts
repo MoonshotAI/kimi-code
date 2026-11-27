@@ -1,5 +1,4 @@
 import { providerHttpError } from '../../harness/index';
-import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import type {
   Message,
   StreamedMessagePart,
@@ -8,12 +7,9 @@ import type {
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type {
-  LoopRequester,
-  AgentLLMRequestSource,
-} from '#/agent/loop/requesterContract';
+import type { AgentLLMRequestSource } from '#/agent/usage/usage';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
-import { errorFromLlmMessage } from '#/llm-adapter/contract/errors';
+import { errorFromLlmMessage } from '#/provider-catalog/errors';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
@@ -27,7 +23,6 @@ import {
   telemetryServices,
   type TestAgentContext,
 } from '../../harness';
-import { promptCacheComparisons } from '../../harness/prompt-cache-guard';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 interface CapturedLogEntry {
@@ -55,7 +50,7 @@ function captureLogs(): { logger: Logger; entries: CapturedLogEntry[] } {
 describe('LLMRequester service migration coverage', () => {
   describe('wire observability records', () => {
     let ctx: TestAgentContext;
-    let llmRequester: LoopRequester;
+    let llmRequester: IAgentLoopService;
     let shouldVerifyResume = true;
 
     const requestTools: readonly Tool[] = [
@@ -91,10 +86,9 @@ describe('LLMRequester service migration coverage', () => {
     ];
 
     beforeEach(() => {
-      vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
       shouldVerifyResume = true;
       ctx = createTestAgent();
-      llmRequester = ctx.get(IAgentLoopService).requester;
+      llmRequester = ctx.get(IAgentLoopService);
     });
 
     afterEach(async () => {
@@ -129,6 +123,7 @@ describe('LLMRequester service migration coverage', () => {
           logFields: { turnStep: '7.2', droppedCount: 3 },
         },
       });
+      ctx.expectCacheBreak('the test sends two unrelated requests through the requester', { at: 'history' });
       ctx.mockNextResponse({ type: 'text', text: 'second response' });
       await requestCore(llmRequester, {
         messages: [userMessage('second direct request')],
@@ -194,7 +189,7 @@ describe('LLMRequester service migration coverage', () => {
           };
         })),
       );
-      llmRequester = ctx.get(IAgentLoopService).requester;
+      llmRequester = ctx.get(IAgentLoopService);
       ctx.configure({
         modelCapabilities: {
           image_in: false,
@@ -237,7 +232,7 @@ describe('LLMRequester service migration coverage', () => {
           };
         })),
       );
-      llmRequester = ctx.get(IAgentLoopService).requester;
+      llmRequester = ctx.get(IAgentLoopService);
       ctx.configure({
         modelCapabilities: {
           image_in: false,
@@ -280,7 +275,7 @@ describe('LLMRequester service migration coverage', () => {
           };
         })),
       );
-      llmRequester = ctx.get(IAgentLoopService).requester;
+      llmRequester = ctx.get(IAgentLoopService);
 
       await requestCore(llmRequester);
 
@@ -444,11 +439,14 @@ describe('LLMRequester service migration coverage', () => {
         output: 'moon-result',
       });
 
-      expect(protocolEvents(ctx, 'tool.call.delta').map((event) => event.args)).toEqual([
-        { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: undefined },
-        { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', argumentsPart: '{"query"' },
-        { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', argumentsPart: ':"moon"}' },
-      ]);
+      const deltas = protocolEvents(ctx, 'tool.call.delta').map((event) => event.args as { argumentsPart?: string });
+      expect(deltas[0]).toEqual({ time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: '' });
+      const pieces = deltas.slice(1);
+      expect(pieces.length).toBeGreaterThan(1);
+      for (const piece of pieces) {
+        expect(piece).toEqual({ time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', argumentsPart: expect.any(String) });
+      }
+      expect(pieces.map((piece) => piece.argumentsPart).join('')).toBe('{"query":"moon"}');
       expect(protocolEvents(ctx, 'toolCall').at(-1)?.args).toEqual({
         turnId: 0,
         toolCallId: 'call_lookup',
@@ -458,6 +456,7 @@ describe('LLMRequester service migration coverage', () => {
       ctx.mockNextResponse({ type: 'text', text: 'The lookup result is moon-result.' });
       await ctx.untilTurnEnd();
     });
+
   });
 
   describe('request failure logging', () => {
@@ -488,7 +487,7 @@ describe('LLMRequester service migration coverage', () => {
         })),
         logServices(logger),
       );
-      const llmRequester = ctx.get(IAgentLoopService).requester;
+      const llmRequester = ctx.get(IAgentLoopService);
 
       await expect(
         requestCore(llmRequester, {
@@ -521,7 +520,7 @@ describe('LLMRequester service migration coverage', () => {
           throw new Error('terminated');
         })),
       );
-      const llmRequester = ctx.get(IAgentLoopService).requester;
+      const llmRequester = ctx.get(IAgentLoopService);
 
       await expect(requestCore(llmRequester)).rejects.toMatchObject({
         name: 'APIConnectionError',
@@ -537,7 +536,7 @@ describe('LLMRequester service migration coverage', () => {
         })),
         telemetryServices(recordingTelemetry(records)),
       );
-      const llmRequester = ctx.get(IAgentLoopService).requester;
+      const llmRequester = ctx.get(IAgentLoopService);
 
       await expect(requestCore(llmRequester)).rejects.toMatchObject({
         name: 'APIProviderRateLimitError',
@@ -567,7 +566,7 @@ describe('LLMRequester service migration coverage', () => {
         })),
         telemetryServices(recordingTelemetry(records)),
       );
-      const llmRequester = ctx.get(IAgentLoopService).requester;
+      const llmRequester = ctx.get(IAgentLoopService);
 
       await expect(
         requestCore(llmRequester, { source: { type: 'turn', turnId: 3, step: 1 } }),
@@ -599,7 +598,7 @@ describe('LLMRequester service migration coverage', () => {
 
   describe('request timing and budget', () => {
     let ctx: TestAgentContext;
-    let llmRequester: LoopRequester;
+    let llmRequester: IAgentLoopService;
     let profile: IAgentLoopService;
     let requestMaxTokens: unknown;
     let logEntries: CapturedLogEntry[];
@@ -654,7 +653,7 @@ describe('LLMRequester service migration coverage', () => {
         })),
         logServices(logger),
       );
-      llmRequester = ctx.get(IAgentLoopService).requester;
+      llmRequester = ctx.get(IAgentLoopService);
       profile = ctx.get(IAgentLoopService);
       profile.update({
         modelAlias: 'deepseek/deepseek-v4-flash',
@@ -671,7 +670,7 @@ describe('LLMRequester service migration coverage', () => {
       }
     });
 
-    it('emits stream timing and applies the model output budget through LoopRequester', async () => {
+    it('emits stream timing and applies the model output budget through IAgentLoopService', async () => {
       const { parts, finish } = await collectLLMRequest((onPart) =>
         requestCore(llmRequester, undefined, onPart),
       );
@@ -743,7 +742,7 @@ describe('LLMRequester service migration coverage', () => {
 
   describe('per-turn intent handoff', () => {
     let ctx: TestAgentContext;
-    let llmRequester: LoopRequester;
+    let llmRequester: IAgentLoopService;
     let capturedCacheKey: unknown;
 
     beforeEach(() => {
@@ -773,7 +772,7 @@ describe('LLMRequester service migration coverage', () => {
           };
         })),
       );
-      llmRequester = ctx.get(IAgentLoopService).requester;
+      llmRequester = ctx.get(IAgentLoopService);
     });
 
     afterEach(async () => {
@@ -812,7 +811,6 @@ describe('LLMRequester service migration coverage', () => {
     ])(
       'starts the next turn as a prefix extension of the $recovery request the previous turn settled on',
       async ({ response, keptMedia }) => {
-        const compared = promptCacheComparisons();
         const ctx = createTestAgent();
         try {
           ctx.configure({
@@ -846,7 +844,11 @@ describe('LLMRequester service migration coverage', () => {
           expect(countMedia(settled!.history)).toBe(keptMedia);
           expect(findGenerateCallPrefixBreak(settled!, nextTurn!)).toBeUndefined();
           expect(ctx.llmCalls).toHaveLength(3);
-          expect(promptCacheComparisons()).toBeGreaterThan(compared);
+          expect(ctx.promptCache().slice(0, 3)).toMatchObject([
+            { rejected: true },
+            { rejected: false, break: undefined },
+            { rejected: false, baseline: 1, break: undefined },
+          ]);
 
           const mediaMessage = (value: string): Message => ({
             role: 'user',
@@ -855,13 +857,27 @@ describe('LLMRequester service migration coverage', () => {
           ctx.mockNextProviderResponse(providerHttpError(413, 'Request Entity Too Large'));
           ctx.mockNextResponse({ type: 'text', text: 'Independent request.' });
           ctx.mockNextResponse({ type: 'text', text: 'Recovered request.' });
+          ctx.expectCacheBreak('the test sends its own media requests through the requester', { at: 'history' });
+          ctx.expectCacheBreak('media recovery replaces the image the next request sent', { at: 'history' });
           await Promise.all([
-            requestCore(ctx.get(IAgentLoopService).requester, { messages: [mediaMessage('AAAA')] }),
-            requestCore(ctx.get(IAgentLoopService).requester, { messages: [mediaMessage('BBBB')] }),
+            requestCore(ctx.get(IAgentLoopService), { messages: [mediaMessage('AAAA')] }),
+            requestCore(ctx.get(IAgentLoopService), { messages: [mediaMessage('BBBB')] }),
           ]);
           const sideCalls = ctx.llmCalls.slice(3);
           expect(sideCalls.map((call) => countMedia(call.history)).toSorted()).toEqual([0, 1, 1]);
           expect(ctx.llmCalls).toHaveLength(6);
+
+          const loop = ctx.get(IAgentLoopService) as IAgentLoopService & {
+            resetLoop(): Promise<void>;
+          };
+          await loop.resetLoop();
+          ctx.expectCacheBreak('resetLoop clears reusable media recovery entries', { at: 'history' });
+          ctx.mockNextResponse({ type: 'text', text: 'After reset.' });
+          await ctx.rpc.prompt({ input: [{ type: 'text', text: 'fresh recovery memory' }] });
+          await ctx.untilTurnEnd();
+
+          expect(countMedia(ctx.llmCalls.at(-1)!.history)).toBeGreaterThan(2);
+          expect(ctx.llmCalls).toHaveLength(7);
         } finally {
           await ctx.dispose();
         }
@@ -912,27 +928,37 @@ interface RequestOverrides {
 }
 
 async function requestCore(
-  requester: LoopRequester,
+  loop: IAgentLoopService,
   overrides: RequestOverrides = {},
   onPart: (part: StreamedMessagePart) => void = () => {},
   signal = new AbortController().signal,
 ) {
   const source: AgentLLMRequestSource = overrides.source ?? { type: 'operation' };
-  const operation = await requester.prepareOperation({
-    source: () => source,
-    maxOutputSize: overrides.maxOutputSize,
-    tools: overrides.tools,
-  }, signal);
-  const outcome = await operation.generate(
+  await loop.start();
+  const maxOutputTokens = overrides.maxOutputSize === undefined
+    ? undefined
+    : loop.resolveMaxOutputTokens(overrides.maxOutputSize);
+  const outcome = await loop.requester.generate(
     {
-      content: { messages: overrides.messages },
+      ...(maxOutputTokens === undefined ? {} : { model: { maxOutputTokens } }),
+      content: { ...(overrides.messages === undefined ? {} : { messages: overrides.messages }) },
       profile: { systemPrompt: overrides.systemPrompt, tools: overrides.tools },
       policy: { retry: { maxAttemptsPerStep: 1 } },
+      attributes: {
+        ...(source.type === 'turn'
+          ? { kind: 'loop' as const }
+          : source.requestKind === undefined
+            ? {}
+            : { kind: source.requestKind }),
+        ...(source.turnId === undefined ? {} : { turnId: source.turnId }),
+        ...(source.type === 'turn' && source.step !== undefined ? { step: source.step } : {}),
+        ...(source.logFields === undefined ? {} : { logFields: source.logFields }),
+      },
     },
     {
       signal,
       onEvent: (event) => {
-        if (event.type === 'llm.streaming.part') onPart(event.part);
+        if (event.type === 'llm.delta.part') onPart(event.part);
       },
     },
   );

@@ -42,10 +42,8 @@ import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeCo
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
+import { UNKNOWN_CAPABILITY } from '#/provider-catalog/capability';
 import type { ToolCall } from '#human/message';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
@@ -89,7 +87,6 @@ import { IFlagService } from '#/app/flag/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import '#/app/event/eventBusService';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ILogService } from '#/_base/log/log';
@@ -103,7 +100,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
-import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
+import { IProjectTrust } from '#/project/projectTrust/projectTrust';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
@@ -124,17 +121,18 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { EnvironmentBinding } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { ScopeUnits, type Fiber } from '#/_base/di/fiber';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager } from '#/project/projectInstance/projectInstanceManager';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { stubProviderDiscovery } from '../../stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const noopLog = {
   _serviceBrand: undefined,
@@ -228,8 +226,10 @@ describe('AgentLifecycleService', () => {
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
   let loopStart: ReturnType<typeof vi.fn<IAgentLoopService['start']>>;
+  let loopClose: ReturnType<typeof vi.fn<IAgentLoopService['close']>>;
   let loopSetProfile: ReturnType<typeof vi.fn<IAgentLoopService['setProfile']>>;
   let loopProfileSequence: ProfileBindingSnapshot[];
+  let loopHasPersistedState: boolean;
   let beforeExecuteListeners: number;
   let didExecuteHookIds: string[];
 
@@ -264,13 +264,13 @@ describe('AgentLifecycleService', () => {
           ? 'sessions/ws_test/sess_test'
           : `sessions/ws_test/sess_test/${subKey}`,
     } as unknown as ISessionContext);
-    ix.stub(ISessionWorkspaceInfo, {
+    ix.stub(ISessionProjectInfo, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       primaryByWorkspace: {},
       additionalDirs: [],
       onDidChange: Event.None,
-    } as ISessionWorkspaceInfo);
+    } as ISessionProjectInfo);
     ix.stub(IEnvironmentService, {
       onDidChange: () => ({ dispose: () => {} }),
       _serviceBrand: undefined,
@@ -287,16 +287,16 @@ describe('AgentLifecycleService', () => {
       environmentId: 'local',
       fs: undefined,
     } as unknown as ISessionWorkdir);
-    ix.stub(IWorkspaceTrust, {
+    ix.stub(IProjectTrust, {
       get: async () => false,
-    } as unknown as IWorkspaceTrust);
+    } as unknown as IProjectTrust);
     ix.stub(IProjectPermissionRulesService, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       rules: [],
       appendRules: async () => {},
     });
-    ix.stub(IWorkspaceInstanceManager, {
+    ix.stub(IProjectInstanceManager, {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
       get: () => undefined,
@@ -417,10 +417,13 @@ describe('AgentLifecycleService', () => {
     const loopHistory: ContextMessage[] = [];
     let closePromise: Promise<void> | undefined;
     let loopProfile: ProfileBindingSnapshot = { thinkingLevel: 'off', systemPrompt: '' };
+    loopHasPersistedState = false;
     loopProfileSequence = [];
     const loopStub = {
       _serviceBrand: undefined,
       start: vi.fn(async () => {}),
+      started: false,
+      get hasPersistedState() { return loopHasPersistedState; },
       baselineTools: () => [],
       data: () => ({
         ...(loopProfileSequence.length > 0 ? loopProfileSequence.shift()! : loopProfile),
@@ -490,6 +493,7 @@ describe('AgentLifecycleService', () => {
       })()),
     };
     loopStart = loopStub.start;
+    loopClose = loopStub.close;
     loopSetProfile = loopStub.setProfile;
     ix.stub(IAgentLoopService, loopStub as unknown as IAgentLoopService);
     ix.stub(ITelemetryService, {
@@ -505,19 +509,19 @@ describe('AgentLifecycleService', () => {
     ix.stub(IHostEnvironment, { _serviceBrand: undefined } as IHostEnvironment);
     ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);
     ix.stub(IHostClock, { _serviceBrand: undefined } as IHostClock);
-    ix.stub(IModelCatalog, {
+    ix.stub(IProviderCatalogService, {
       _serviceBrand: undefined,
       get: () => ({ spec: { provider: 'stub', name: 'stub', capability: {} } }),
-    } as unknown as IModelCatalog);
+    } as unknown as IProviderCatalogService);
     ix.stub(ISessionTokenCountingService, {
       estimateText: () => 0,
       estimateMessage: () => 0,
       estimateMessages: () => 0,
       recordTruncation: () => {},
     } as unknown as ISessionTokenCountingService);
-    ix.stub(IProtocolAdapterRegistry, {
+    ix.stub(IProviderCatalogService, {
       _serviceBrand: undefined,
-    } as IProtocolAdapterRegistry);
+    } as IProviderCatalogService);
     ix.stub(IBuiltinAgentProfileLoader, {
       _serviceBrand: undefined,
       list: () => [],
@@ -660,6 +664,7 @@ describe('AgentLifecycleService', () => {
     expect(main.agentId).toBe('main');
     expect(svc.get('main')).toBe(main);
     expect(svc.handleOf('main')).toBeDefined();
+    expect(loopStart).not.toHaveBeenCalled();
     expect(svc.list()).toEqual([main]);
     await svc.remove(main);
     expect(svc.get('main')).toBeUndefined();
@@ -771,8 +776,11 @@ describe('AgentLifecycleService', () => {
     }
   });
 
-  it('create failure after scope creation keeps the context active through async teardown', async () => {
-    registerAgent.mockRejectedValueOnce(new Error('boom'));
+  it('create and close failures after scope creation keep the context active through async teardown', async () => {
+    const failure = new Error('boom');
+    loopHasPersistedState = true;
+    loopStart.mockRejectedValueOnce(failure);
+    loopClose.mockRejectedValueOnce(failure);
     const svc = ix.get(IAgentLifecycleService);
     const bus = ix.get(ISessionEventBus);
     const seen: string[] = [];
@@ -808,7 +816,7 @@ describe('AgentLifecycleService', () => {
     };
     process.on('unhandledRejection', onUnhandled);
     try {
-      await expect(svc.create({ agentId: 'main' })).rejects.toThrow('boom');
+      await expect(svc.create({ agentId: 'main' })).rejects.toBe(failure);
       expect(seen).toEqual(['delivered']);
       expect(unhandled).toEqual([]);
     } finally {
@@ -880,8 +888,10 @@ describe('AgentLifecycleService', () => {
     });
     loopSettled.mockImplementationOnce(() => {
       markDrainStarted();
-      return new Promise<void>((resolve) => {
-        releaseDrain = resolve;
+      return new Promise<undefined>((resolve) => {
+        releaseDrain = () => {
+          resolve(undefined);
+        };
       });
     });
     const svc = ix.get(IAgentLifecycleService);
@@ -905,7 +915,7 @@ describe('AgentLifecycleService', () => {
     const main = await svc.create({ agentId: 'main' });
     const disposed: string[] = [];
     disposables.add(svc.onDidClose((agent) => disposed.push(agent.agentId)));
-    loopSettled.mockImplementation(() => new Promise<void>(() => {}));
+    loopSettled.mockImplementation(() => new Promise<undefined>(() => {}));
     vi.useFakeTimers();
     try {
       const removal = svc.remove(main);
@@ -1083,6 +1093,10 @@ describe('AgentLifecycleService', () => {
     expect(loopSetProfile.mock.invocationCallOrder[0]).toBeLessThan(
       loopStart.mock.invocationCallOrder[0]!,
     );
+    loopStart.mockClear();
+    loopHasPersistedState = true;
+    await svc.create({ agentId: 'restored' });
+    expect(loopStart).toHaveBeenCalledOnce();
   });
 
   it('does not re-seal a wire log that already has records', async () => {
@@ -1102,7 +1116,7 @@ describe('AgentLifecycleService', () => {
     expect(log.appended.some((record) => record.type === 'metadata')).toBe(false);
     expect(log.appended.some((record) => record.type === 'profile.bind')).toBe(false);
     expect(loopSetProfile).not.toHaveBeenCalled();
-    expect(loopStart).toHaveBeenCalledOnce();
+    expect(loopStart).not.toHaveBeenCalled();
   });
 
   it('leaves permission mode at the default when permissionMode is omitted', async () => {

@@ -6,6 +6,9 @@ External PRs are accepted for approved bug fixes only: link an issue that a main
 See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
 -->
 
+<!-- If the UI changes, start with a "Screenshots / Recordings" section here, above "Requirement or Bug",
+     with before/after images. -->
+
 ## Requirement or Bug
 
 <!-- If there's an issue, write Resolve #(issue_number) and add one sentence of context.
@@ -26,8 +29,7 @@ See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
 <!-- Help the reviewer understand the change without reading the diff.
      For changes that span modules, introduce new concepts, or replace an old path, start with the
      core idea and a diagram of the resulting structure, then the key decisions and where to start reading.
-     Pair diagrams and tables with sentences that explain why.
-     If the UI changes, add a "Screenshots / Recordings" section with before/after images. -->
+     Pair diagrams and tables with sentences that explain why. -->
 
 ## Behavior Changes and Affected Users
 

@@ -2,10 +2,11 @@ name: CI
 
 on:
   pull_request:
+    branches-ignore:
+      - 'release/*'
   push:
     branches:
       - main
-      - 'release/*'
 
   workflow_dispatch:
 
@@ -17,17 +18,9 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/heads/release/') }}
 
 jobs:
-  release-workflow-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-      - run: node --test scripts/release-trigger.test.mjs scripts/canary-release.test.mjs
-
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -41,11 +34,52 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      - name: Check for generated declarations in agent-core-v2 source and tests
+        shell: bash
+        run: |
+          declarations=$(git status --porcelain=v1 --untracked-files=all --ignored=matching -- \
+            ':(glob)packages/agent-core-v2/src/**/*.d.ts' \
+            ':(glob)packages/agent-core-v2/src/**/*.d.[cm]ts' \
+            ':(glob)packages/agent-core-v2/test/**/*.d.ts' \
+            ':(glob)packages/agent-core-v2/test/**/*.d.[cm]ts')
+          if [ -n "$declarations" ]; then
+            printf 'Unexpected declarations in agent-core-v2 source and tests:\n%s\n' "$declarations"
+            exit 1
+          fi
       - name: Smoke test CLI bundle
         run: pnpm -C apps/kimi-code run smoke
+      - name: Test automatic reconnect on the built CLI
+        run: pnpm exec vitest run packages/app-core/test/reconnect/server-restart.test.ts
+        env:
+          TESTKIT_CLI_BUILD: dist
+      # Temporarily disabled while the E2E suite is being replaced.
+      - name: Run the TUI and KAP subprocess journeys on the built CLI
+        if: false
+        run: pnpm exec vitest run apps/kimi-code/test/e2e/tui tests/scenarios/cold-recovery.test.ts
+        env:
+          TESTKIT_CLI_BUILD: dist
+      - name: Save CLI Web assets for the tested release commit
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-web-${{ github.sha }}
+          path: apps/kimi-code/web-dist/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+      - name: Save the Desktop renderer for the tested release commit
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-renderer-${{ github.sha }}
+          path: apps/desktop/desktop-dist/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -53,20 +87,35 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # Pull requests run only the packages their diff reaches through the
+      # workspace dependency graph, on as many shards as that needs; shards
+      # left over stop here before installing. Pushes and manual runs test
+      # everything, so a manual run on a branch is the way to get a full run.
+      - name: Select tests
+        id: select
+        run: node scripts/select-vitest-targets.mjs ${{ github.event_name == 'pull_request' && '--pull-request' || '' }} ${{ matrix.shard == 1 && '--summary' || '' }}
 
       - uses: pnpm/action-setup@v6
+        if: fromJSON(steps.select.outputs.shards) >= matrix.shard
 
       - uses: actions/setup-node@v6
+        if: fromJSON(steps.select.outputs.shards) >= matrix.shard
         with:
           node-version-file: .nvmrc
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run test --shard=${{ matrix.shard }}/5
+        if: fromJSON(steps.select.outputs.shards) >= matrix.shard
+      # Keep the KAP server suite and every tests/scenarios case in these shards.
+      - run: pnpm run test ${{ steps.select.outputs.filters }} --shard=${{ matrix.shard }}/${{ steps.select.outputs.shards }} --passWithNoTests --exclude='**/test/e2e/tui/**' --exclude='**/test/reconnect/**' --reporter=default --reporter=github-actions
+        if: fromJSON(steps.select.outputs.shards) >= matrix.shard
 
-  # pi-tui's suite runs on node:test (not vitest), so the root `pnpm run test`
-  # does not execute it; it needs its own job.
-  test-pi-tui:
+  # Suites the sharded root run above does not cover. They take seconds each,
+  # so they share one runner instead of holding one each.
+  test-standalone-suites:
     runs-on: ubuntu-latest
 
     steps:
@@ -80,28 +129,10 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @moonshot-ai/pi-tui test
-
-  # The VS Code extension suite runs on the default (v2) engine as part of the
-  # sharded root run above; this job reruns it on the legacy v1 engine, which
-  # the extension selects through the rollback env var.
-  test-vscode-legacy:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter kimi-code test
-        env:
-          KIMI_CODE_LEGACY_FLAG: "1"
+      # pi-tui's suite runs on node:test (not vitest), so the root
+      # `pnpm run test` does not execute it.
+      - name: pi-tui (node:test)
+        run: pnpm --filter @moonshot-ai/pi-tui test
 
   test-windows:
     runs-on: windows-latest
@@ -129,6 +160,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: pnpm/action-setup@v6
 
@@ -139,7 +172,27 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
+      - run: node --test 'scripts/checks/*.test.mjs'
+      - run: node --test scripts/check-comments.test.mjs
+      - name: Release workflow tests
+        if: ${{ !cancelled() }}
+        run: node --test scripts/release.test.mjs scripts/release-trigger.test.mjs scripts/canary-release.test.mjs scripts/desktop-nightly-guard.test.mjs
+      - run: node --test scripts/select-vitest-targets.test.mjs scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs scripts/mutation-diff.test.mjs apps/desktop/scripts/ci/select-e2e-specs.test.mjs apps/desktop/scripts/ci/report-main-journeys.test.mjs scripts/e2e-nightly-notify.test.mjs
       - run: pnpm run sherif
+      - name: Check new code duplication
+        id: duplication
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          pnpm run check:duplication "$BASE_SHA"
+      - name: Show new duplicate locations
+        if: failure() && steps.duplication.outcome == 'failure' && hashFiles('.tmp/jscpd/jscpd-report.json') != ''
+        run: |
+          jq -r '.duplicates[] | select(.isNew) |
+            "\(.firstFile.name):\(.firstFile.start) and \(.secondFile.name):\(.secondFile.start) (\(.lines) lines, \(.tokens) tokens)"
+          ' .tmp/jscpd/jscpd-report.json
 
   typecheck:
     runs-on: ubuntu-latest
@@ -158,10 +211,17 @@ jobs:
       - name: Typecheck
         run: |
           pnpm exec tsc --version
-          for config in packages/*/tsconfig.json apps/kimi-code/tsconfig.json; do
+          for config in packages/*/tsconfig.json apps/kimi-code/tsconfig.json tests/scenarios/tsconfig.json tests/e2e/tsconfig.json; do
+            # Source-only app packages are typechecked through the desktop
+            # renderer program below, not standalone under the root tsc setup.
+            case "${config}" in
+              packages/app-*/tsconfig.json) continue ;;
+            esac
             echo "Typechecking ${config}"
             pnpm exec tsc -p "${config}" --noEmit
           done
+      - name: Typecheck desktop
+        run: pnpm --filter kimi-code-app run typecheck
       - name: Typecheck VS Code extension
         run: pnpm --filter kimi-code run typecheck
       - name: Typecheck vis-server

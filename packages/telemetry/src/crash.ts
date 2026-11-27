@@ -23,9 +23,6 @@ export function installCrashHandlersForClient(client: TelemetryClient): () => vo
       uninstallCrashHandlers();
     };
   }
-  // Rejections recorded by the rejection handler below and then rethrown to
-  // preserve Node's default crash; the monitor must not report them twice.
-  // A Set (not WeakSet) so primitive reasons dedupe by value too.
   const recordedRejections = new Set<unknown>();
   const trackCrash = (errorType: string, source: string) => {
     try {
@@ -35,28 +32,14 @@ export function installCrashHandlersForClient(client: TelemetryClient): () => vo
         source,
       });
       client.flushSync();
-    } catch {
-      // Crash telemetry must never mask the original exception.
-    }
+    } catch {}
   };
   installedUncaughtHandler = (error, origin) => {
     if (isAbortError(error)) return;
     if (recordedRejections.has(error)) return;
-    // `error` is typed Error but can be anything a rejection rethrow sent
-    // through (primitives, null) — classify it null-safely.
     trackCrash(crashErrorType(error), origin);
   };
   process.on('uncaughtExceptionMonitor', installedUncaughtHandler);
-  // `uncaughtExceptionMonitor` never fires for a rejection that has a
-  // listener — and the TUI always registers one, converting the rejection
-  // into a silent exit(1) with no telemetry at all. Observe rejections
-  // directly so those crashes still leave a trace. Registering a real
-  // listener suppresses Node's default crash-on-rejection, so when we are
-  // the only listener (print / server modes) rethrow to preserve it; the
-  // dedupe set above keeps the monitor from double-reporting that path.
-  // AbortError rejections are expected cancellations: never reported, and
-  // never rethrown either — rethrowing them would turn a normal cancel into
-  // a crash (#2801).
   installedRejectionHandler = (reason: unknown) => {
     const soleListener = process.listenerCount('unhandledRejection') === 1;
     if (!isAbortError(reason)) {

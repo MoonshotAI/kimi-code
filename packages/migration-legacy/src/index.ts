@@ -1,5 +1,3 @@
-// Public API surface for the kimi-cli → kimi-code migration tool.
-
 export * from './types.js';
 export { detectMigration } from './detect.js';
 export {
@@ -10,6 +8,7 @@ export { defaultPlansSourceDir } from './steps/plans.js';
 export { runMigration, type RunMigrationInput } from './run-migration.js';
 export {
   importedSessionDir,
+  isSessionImported,
   writeImportedSession,
   type ImportedSessionInput,
   type ImportedSessionMessage,

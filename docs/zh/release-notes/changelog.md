@@ -6,6 +6,74 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.8.1（2026-11-26）
+
+### 修复
+
+- 修复 Gemini Provider 的部分问题。
+- 修复会导致报 `unloaded_tool` 会话错误的情况。
+
+## 2.8.0（2026-11-25）
+
+### 优化
+
+- 优化提示词预测功能，可在 `/experiments` 开启。
+- TUI 连续排队发送消息时，中间回合不再弹出完成通知；后台任务仍会照常提醒。
+
+### 修复
+
+- 修复使用已失效的模型的会话不能恢复的问题。
+- 修复了一些已知问题，并做了若干细节优化。更多技术条目见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+## 2.7.3（2026-11-24）
+
+### 修复
+
+- 修复模型不可用后会话无法打开的问题。
+
+## 2.7.2（2026-11-20）
+
+### 修复
+
+- Web：修复发送后草稿从全局设置继承的思考强度被重置为模型默认值的问题。
+
+## 2.7.1（2026-11-20）
+
+### 修复
+
+- 修复恢复包含轮次内插话的会话后，按轮次创建分支失败的问题。
+- 修复后台通知轮次未结束时排队消息被提前处理的问题。
+- Web：修复发送后草稿的思考强度选项恢复为模型默认值的问题。
+- Web：修复通过不安全 HTTP 访问时输入框消失的问题。
+
+## 2.7.0（2026-11-19）
+
+### 功能
+
+- `/settings` 新增 Follow-up 行为设置，选择 Steer 后 Enter 可将消息即时送入当前运行回合。
+- 可在 `/tasks` 查看前台运行中的 Agent 及其活动。
+- Web 端：支持浏览器标签页标题显示项目与会话标题。
+- 支持为项目配置 SSH 主机，各主机独立登录，并可复制自定义模型提供商。
+- 允许恢复已在其他客户端打开的会话。
+- 支持接入 Amazon Bedrock 模型服务。详见 [Amazon Bedrock 配置文档](https://moonshotai.github.io/kimi-code/zh/configuration/providers.html#bedrock)
+- TUI 新增实验性下一提示词预测，设置 `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1` 后按 Tab 或右方向键采纳。
+
+### 修复
+
+- 修复 `kimi -p` 及 `[subagent] timeout_ms = 0` 配置下子 Agent 立即超时的问题。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+## 2.6.3（2026-11-17）
+
+### 修复
+
+- 修复前台 Shell 命令输出重复且加载状态不消失的问题。
+- 修复后台通知导致 Tower 任务意外停止的问题。
+- 修复每轮回复完成后外部 Stop 钩子未执行的问题。
+- 修复恢复或创建会话分支时后台任务通知意外触发新回复的问题。
+- 修复 Windows 上 WebBridge 守护进程运行时无法更新的问题。
+- 修复了若干已知的问题。
+
 ## 2.6.2（2026-11-14）
 
 ### 新功能

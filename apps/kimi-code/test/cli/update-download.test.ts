@@ -66,11 +66,11 @@ describe('createDownloadProgress', () => {
     const nowSpy = vi.spyOn(Date, 'now');
     nowSpy.mockReturnValue(1_000);
     progress(10 * 1024 * 1024, total);
-    nowSpy.mockReturnValue(1_050); // inside the 100 ms throttle window → skipped
+    nowSpy.mockReturnValue(1_050);
     progress(20 * 1024 * 1024, total);
     nowSpy.mockReturnValue(1_200);
     progress(30 * 1024 * 1024, total);
-    progress(total, total); // final frame is never throttled
+    progress(total, total);
 
     expect(chunks).toEqual([
       '\r\u001B[KDownloading… 10% (10/100 MB)',
@@ -85,7 +85,7 @@ describe('createDownloadProgress', () => {
     const progress = createDownloadProgress(out, 'Downloading…');
     const total = 100 * 1024 * 1024;
 
-    progress(10 * 1024 * 1024, total); // below the 32 MB line interval → skipped
+    progress(10 * 1024 * 1024, total);
     progress(40 * 1024 * 1024, total);
     progress(total, total);
 
@@ -176,13 +176,11 @@ describe('runUpdateDownloadCommand', () => {
   it('waits for and adopts the result when another instance downloads the same version', async () => {
     mocks.tryAcquireUpdateInstallLock.mockResolvedValue(null);
     mocks.readUpdateInstallLockVersion.mockResolvedValue('0.7.0');
-    // The other worker's staged update is verified on disk on the first poll.
     mocks.readStagedNativeUpdate.mockResolvedValue({ version: '0.7.0', channel: 'stable', sha256: STAGED_HASH });
     const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     await expect(runUpdateDownloadCommand('0.7.0')).resolves.toBe(0);
     expect(mocks.stageNativeUpdate).not.toHaveBeenCalled();
     expect(stdoutSpy).toHaveBeenCalledWith(expect.stringContaining('already in progress'));
-    // A background waiter's adoption keeps the auto marker.
     expect(mocks.promoteStagedUpdateToManual).not.toHaveBeenCalled();
   });
 
@@ -197,9 +195,6 @@ describe('runUpdateDownloadCommand', () => {
   });
 
   it('keeps waiting until the manual promotion is confirmed persisted', async () => {
-    // The first promotion attempt loses a race with a concurrent swap's
-    // claim/restore cycle; the loop must not report adoption until the
-    // marker is confirmed.
     mocks.tryAcquireUpdateInstallLock.mockResolvedValue(null);
     mocks.readUpdateInstallLockVersion.mockResolvedValue('0.7.0');
     mocks.readStagedNativeUpdate.mockResolvedValue({ version: '0.7.0', channel: 'stable', sha256: STAGED_HASH });
@@ -216,9 +211,6 @@ describe('runUpdateDownloadCommand', () => {
     mocks.tryAcquireUpdateInstallLock.mockResolvedValue(null);
     mocks.readUpdateInstallLockVersion.mockResolvedValue('0.7.0');
     mocks.readStagedNativeUpdate.mockResolvedValue({ version: '0.7.0', channel: 'stable', sha256: STAGED_HASH });
-    // First poll: the recorded payload is corrupt (the holder is re-staging
-    // it — its metadata is only replaced when the repaired generation
-    // publishes); second poll: the repaired generation verifies.
     mocks.hashFileSha256.mockResolvedValueOnce('corrupt').mockResolvedValue(STAGED_HASH);
     vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     await expect(runUpdateDownloadCommand('0.7.0')).resolves.toBe(0);
@@ -229,12 +221,10 @@ describe('runUpdateDownloadCommand', () => {
   it('takes over when the holder dies leaving a corrupt stage behind', async () => {
     const release = vi.fn(async () => {});
     mocks.tryAcquireUpdateInstallLock
-      .mockResolvedValueOnce(null) // initial acquire: held
-      .mockResolvedValue({ filePath: '/tmp/install.lock', release }); // in-loop takeover
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ filePath: '/tmp/install.lock', release });
     mocks.readUpdateInstallLockVersion.mockResolvedValueOnce('0.7.0');
     mocks.readStagedNativeUpdate.mockResolvedValue({ version: '0.7.0', channel: 'stable', sha256: STAGED_HASH });
-    // The recorded payload never verifies: the lock poll takes over and
-    // stageNativeUpdate's own adoption check re-stages it.
     mocks.hashFileSha256.mockResolvedValue('corrupt');
     await expect(runUpdateDownloadCommand('0.7.0')).resolves.toBe(0);
     expect(mocks.stageNativeUpdate).toHaveBeenCalledWith(
@@ -246,9 +236,9 @@ describe('runUpdateDownloadCommand', () => {
   it('takes over when the same-version holder finishes without staging', async () => {
     const release = vi.fn(async () => {});
     mocks.tryAcquireUpdateInstallLock
-      .mockResolvedValueOnce(null) // held by the other worker…
-      .mockResolvedValueOnce({ filePath: '/tmp/install.lock', release }); // …won inside the wait loop
-    mocks.readUpdateInstallLockVersion.mockResolvedValueOnce('0.7.0'); // the initial holder check
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ filePath: '/tmp/install.lock', release });
+    mocks.readUpdateInstallLockVersion.mockResolvedValueOnce('0.7.0');
     mocks.readStagedNativeUpdate.mockResolvedValue(null);
     await expect(runUpdateDownloadCommand('0.7.0')).resolves.toBe(0);
     expect(mocks.stageNativeUpdate).toHaveBeenCalledWith(

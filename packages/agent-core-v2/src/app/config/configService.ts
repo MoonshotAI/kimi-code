@@ -406,9 +406,21 @@ export class ConfigService extends Disposable implements IConfigService {
 
   inspect<T = unknown>(domain: string): ConfigInspectValue<T> {
     const memoryValue = this.memory[domain] as T | undefined;
+    const section = this.registry.getSection(domain);
+    let envValue: T | undefined;
+    if (section?.env !== undefined) {
+      try {
+        envValue = applySectionEnv(undefined, section.env, (name) =>
+          this.bootstrap.getEnv(name),
+        ) as T;
+      } catch {
+        envValue = undefined;
+      }
+    }
     return {
       value: this.get<T>(domain),
       defaultValue: this.registry.defaultValue<T>(domain),
+      envValue,
       userValue: this.raw[domain] as T | undefined,
       memoryValue,
     };
@@ -716,7 +728,7 @@ export class ConfigService extends Disposable implements IConfigService {
     domains?: readonly string[],
   ): void {
     const previous = this.effective;
-    this.validated = this.buildValidated(this.raw);
+    this.validated = this.buildValidated(this.raw, this.validated);
     const next = { ...this.validated };
     this.applySectionEnvBindings(next, true);
     this.applyEnvOverlay(next);
@@ -755,12 +767,15 @@ export class ConfigService extends Disposable implements IConfigService {
     }
   }
 
-  private buildValidated(raw: ResolvedConfig): ResolvedConfig {
+  private buildValidated(raw: ResolvedConfig, previous: ResolvedConfig = {}): ResolvedConfig {
     const validated: ResolvedConfig = {};
     for (const [domain, value] of Object.entries(raw)) {
       try {
         validated[domain] = this.registry.validate(domain, value);
       } catch (error) {
+        if (Object.prototype.hasOwnProperty.call(previous, domain)) {
+          validated[domain] = previous[domain];
+        }
         this.pushDiagnostic({
           domain,
           severity: 'warning',

@@ -1,0 +1,511 @@
+import { writeFile } from 'node:fs/promises';
+import type { AddressInfo } from 'node:net';
+import { join } from 'node:path';
+
+import { afterEach, describe, expect, it } from 'vitest';
+import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
+
+import { WaitTimeoutError } from '#/errors';
+import { createTestHome, type TestHome } from '#/fixtures/home';
+import { FIXED_TIME } from '#/fixtures/normalize';
+import { isConversationFrame, turnsFromFrames, type KapFrame } from '#/kap/frames';
+import { startKap, type KapRunningServer } from '#/kap/harness';
+import { KapProcess } from '#/kap/process';
+import { dropFrames, duplicateFrames, insertUnknownFrame, KapRecorder, mutateKapRecording, readKapRecording, replayKapRecording, UNKNOWN_FRAME_TYPE, type KapRecording } from '#/kap/recording';
+import { KapEnvelopeError, KapRest } from '#/kap/rest';
+import { KapCommandError, KapSocket, WS_BEARER_PROTOCOL_PREFIX } from '#/kap/socket';
+
+describe('turnsFromFrames', () => {
+  const turn = (ordinal: number, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    turn_id: `t${ordinal}`,
+    ordinal,
+    status: 'running',
+    items: [],
+    ...extra,
+  });
+
+  it('applies live frames on top of the subscribe snapshot', () => {
+    const frames: KapFrame[] = [
+      { type: 'turns', turns: [turn(0, { status: 'ended', items: [{ item_id: 'u0', type: 'user_message', text: 'hi' }] })] },
+      { type: 'turn.started', turn: turn(1) },
+      { type: 'item.started', turn_id: 't1', item: { item_id: 'a1', type: 'assistant_message', text: '' } },
+      { type: 'item.delta', turn_id: 't1', item_id: 'a1', field: 'text', delta: 'Hel' },
+      { type: 'item.delta', turn_id: 't1', item_id: 'a1', field: 'text', delta: 'lo' },
+      { type: 'item.started', turn_id: 't1', item: { item_id: 'c1', type: 'tool_call', status: 'running' } },
+      { type: 'item.updated', turn_id: 't1', item_id: 'c1', set: { status: 'waiting' } },
+      { type: 'turn.updated', turn_id: 't1', step: { index: 2, outcome: 'completed' } },
+      { type: 'turn.updated', turn_id: 't1', step: { index: 1, outcome: 'completed' }, retry: { attempt: 1 } },
+      { type: 'item.ended', turn_id: 't1', item: { item_id: 'a1', type: 'assistant_message', text: 'Hello', status: 'ended' } },
+      { type: 'notice', turn_id: 't1', message: 'fyi' },
+    ];
+    const [first, running] = turnsFromFrames(frames);
+    expect(first).toMatchObject({ turn_id: 't0', items: [{ item_id: 'u0', text: 'hi' }] });
+    expect(running).toMatchObject({ turn_id: 't1', status: 'running', retry: { attempt: 1 } });
+    expect(running?.items).toEqual([
+      { item_id: 'a1', type: 'assistant_message', text: 'Hello', status: 'ended' },
+      { item_id: 'c1', type: 'tool_call', status: 'waiting' },
+    ]);
+    expect(running?.['steps']).toEqual([
+      { index: 1, outcome: 'completed' },
+      { index: 2, outcome: 'completed' },
+    ]);
+    const ended = turnsFromFrames([...frames, { type: 'turn.ended', turn: turn(1, { status: 'ended', outcome: 'completed', steps: [{ index: 1 }] }) }])[1];
+    expect(ended).toMatchObject({ status: 'ended', outcome: 'completed', steps: [{ index: 1 }] });
+    expect(ended).not.toHaveProperty('retry');
+    expect(ended?.items).toHaveLength(2);
+  });
+
+  it('clears a retry, removes items and turns, and keeps turns ordered', () => {
+    const turns = turnsFromFrames([
+      { type: 'turn.started', turn: turn(2) },
+      { type: 'turn.started', turn: turn(1) },
+      { type: 'turn.updated', turn_id: 't2', retry: { attempt: 1 } },
+      { type: 'turn.updated', turn_id: 't2' },
+      { type: 'item.started', turn_id: 't2', item: { item_id: 'x', type: 'assistant_message' } },
+      { type: 'item.removed', turn_id: 't2', item_id: 'x' },
+      { type: 'turn.started', turn: turn(3) },
+      { type: 'turns.removed', turn_ids: ['t3'] },
+      { type: 'turns.failed', turn_ids: ['t9'] },
+    ]);
+    expect(turns.map((entry) => entry.turn_id)).toEqual(['t1', 't2']);
+    expect(turns[1]).not.toHaveProperty('retry');
+    expect(turns[1]?.items).toEqual([]);
+  });
+
+  it('rejects conversation frames it does not understand', () => {
+    expect(() => turnsFromFrames([{ type: 'turn.paused', turn_id: 't1' }])).toThrow(/Unknown KAP conversation frame type "turn.paused"/);
+  });
+
+  it('tells conversation frames from session frames', () => {
+    expect(isConversationFrame({ type: 'item.delta', turn_id: 't1' })).toBe(true);
+    expect(isConversationFrame({ type: 'turn.paused', turn_id: 't1' })).toBe(true);
+    expect(isConversationFrame({ type: 'task', turn_id: 't1' })).toBe(false);
+    expect(isConversationFrame({ type: 'todo' })).toBe(false);
+  });
+});
+
+describe('KapRest', () => {
+  interface Seen {
+    readonly url: string;
+    readonly init: RequestInit | undefined;
+  }
+
+  function restWith(status: number, body: string): { readonly rest: KapRest; readonly seen: Seen[] } {
+    const seen: Seen[] = [];
+    const fetchImpl: typeof fetch = (input, init) => {
+      seen.push({ url: input instanceof Request ? input.url : String(input), init });
+      return Promise.resolve(new Response(body, { status, headers: { 'content-type': 'application/json' } }));
+    };
+    return { rest: new KapRest('http://kap.test', () => 'tok', fetchImpl), seen };
+  }
+
+  it('sends bearer auth and query parameters and unwraps the envelope', async () => {
+    const { rest, seen } = restWith(200, JSON.stringify({ code: 0, msg: 'ok', data: { id: 's1' } }));
+    await expect(rest.get('/api/v1/sessions', { page_size: 2, before: undefined, archived: false })).resolves.toEqual({ id: 's1' });
+    expect(seen[0]?.url).toBe('http://kap.test/api/v1/sessions?page_size=2&archived=false');
+    expect(seen[0]?.init).toMatchObject({ method: 'GET', headers: { authorization: 'Bearer tok' } });
+  });
+
+  it('posts JSON bodies', async () => {
+    const { rest, seen } = restWith(200, JSON.stringify({ code: 0, data: null }));
+    await rest.post('/api/v1/sessions', { cwd: '/w' });
+    expect(seen[0]?.init).toMatchObject({ method: 'POST', body: '{"cwd":"/w"}', headers: { 'content-type': 'application/json' } });
+  });
+
+  it('raises envelope errors with the method, path, status and code', async () => {
+    const failing = restWith(404, JSON.stringify({ code: 40401, msg: 'session not found' }));
+    await expect(failing.rest.get('/api/v1/sessions/x')).rejects.toMatchObject({
+      name: 'KapEnvelopeError',
+      method: 'GET',
+      path: '/api/v1/sessions/x',
+      status: 404,
+      code: 40401,
+    });
+    const refused = restWith(200, JSON.stringify({ code: 1, msg: 'busy' }));
+    await expect(refused.rest.post('/api/v1/sessions/x/prompts')).rejects.toBeInstanceOf(KapEnvelopeError);
+    const garbled = restWith(502, '<html>bad gateway</html>');
+    await expect(garbled.rest.get('/api/v1/sessions')).rejects.toThrow(/HTTP 502: "<html>bad gateway<\/html>"/);
+  });
+});
+
+describe('KapSocket', () => {
+  const servers: WebSocketServer[] = [];
+  const sockets: KapSocket[] = [];
+
+  afterEach(async () => {
+    await Promise.all(sockets.splice(0).map((socket) => socket.close()));
+    await Promise.all(
+      servers.splice(0).map(
+        (server) =>
+          new Promise<void>((resolve) => {
+            for (const client of server.clients) client.terminate();
+            server.close(() => resolve());
+          }),
+      ),
+    );
+  });
+
+  async function serve(onConnection: (peer: ServerSocket, protocol: string | undefined) => void): Promise<string> {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    servers.push(server);
+    server.on('connection', (peer, request) => onConnection(peer, request.headers['sec-websocket-protocol']));
+    await new Promise<void>((resolve) => server.once('listening', () => resolve()));
+    return `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1/ws`;
+  }
+
+  async function connect(url: string): Promise<KapSocket> {
+    const socket = await KapSocket.connect(url, 'tok');
+    sockets.push(socket);
+    return socket;
+  }
+
+  function onJson(peer: ServerSocket, handler: (frame: Record<string, unknown>) => void): void {
+    peer.on('message', (data) => {
+      const bytes = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
+      handler(JSON.parse(bytes.toString('utf8')) as Record<string, unknown>);
+    });
+  }
+
+  it('authenticates with the bearer subprotocol and answers pings without recording them', async () => {
+    let offered: string | undefined;
+    const pongs: unknown[] = [];
+    const url = await serve((peer, protocol) => {
+      offered = protocol;
+      onJson(peer, (frame) => pongs.push(frame));
+      peer.send(JSON.stringify({ type: 'ping' }));
+      peer.send(JSON.stringify({ type: 'hello' }));
+    });
+    const socket = await connect(url);
+    await socket.waitFor((frame) => frame.type === 'hello');
+    expect(offered).toBe(`${WS_BEARER_PROTOCOL_PREFIX}tok`);
+    expect(socket.frames.map((frame) => frame.type)).toEqual(['hello']);
+    await expect.poll(() => pongs).toEqual([{ type: 'pong' }]);
+  });
+
+  it('matches command responses by request id and raises failed commands', async () => {
+    const url = await serve((peer) => {
+      onJson(peer, (frame) => {
+        if (frame['type'] !== 'subscribe') return;
+        const failing = frame['session_id'] === 'missing';
+        peer.send(JSON.stringify({ type: 'response', request_id: 'someone-else', code: 0 }));
+        peer.send(JSON.stringify({ type: 'response', request_id: frame['request_id'], code: failing ? 40401 : 0 }));
+        if (failing) return;
+        for (const agentId of frame['agent_ids'] as string[]) {
+          peer.send(JSON.stringify({ type: 'turns', session_id: frame['session_id'], agent_id: agentId, turns: [] }));
+        }
+      });
+    });
+    const socket = await connect(url);
+    await socket.subscribe('s1', { agentIds: ['main', 'sub'] });
+    expect(socket.frames.filter((frame) => frame.type === 'turns').map((frame) => frame['agent_id'])).toEqual(['main', 'sub']);
+    await expect(socket.subscribe('missing')).rejects.toBeInstanceOf(KapCommandError);
+  });
+
+  it('waits for each newly subscribed agent and reloads its snapshot after unsubscribe', async () => {
+    const subscribed = new Set<string>();
+    const url = await serve((peer) => onJson(peer, (command) => {
+      peer.send(JSON.stringify({ type: 'response', request_id: command['request_id'], code: 0 }));
+      for (const agentId of command['agent_ids'] as string[]) {
+        if (command['type'] === 'unsubscribe') {
+          subscribed.delete(agentId);
+        } else if (!subscribed.has(agentId)) {
+          subscribed.add(agentId);
+          peer.send(JSON.stringify({ type: 'turns', session_id: 's1', agent_id: agentId, turns: [] }));
+        }
+      }
+    }));
+    const socket = await connect(url);
+    await socket.subscribe('s1', { waitForSnapshot: false });
+    await socket.subscribe('s1');
+    await socket.subscribe('s1', { agentIds: ['main', 'sub'] });
+    await socket.subscribe('s1', { agentIds: ['sub', 'main'] });
+    await socket.command({ type: 'unsubscribe', session_id: 's1', agent_ids: ['sub'] });
+    await socket.subscribe('s1', { agentIds: ['main', 'sub'] });
+    expect(socket.frames.filter((frame) => frame.type === 'turns').map((frame) => frame['agent_id'])).toEqual(['main', 'sub', 'sub']);
+  });
+
+  it('reports a failed snapshot with its agent, code and reason and allows another subscription', async () => {
+    let attempts = 0;
+    const url = await serve((peer) => onJson(peer, (command) => {
+      attempts += 1;
+      peer.send(JSON.stringify({ type: 'response', request_id: command['request_id'], code: 0 }));
+      const snapshot = attempts === 1 ? { type: 'turns.failed', code: 40402, msg: 'history unavailable' } : { type: 'turns', turns: [] };
+      peer.send(JSON.stringify({ ...snapshot, session_id: 's1', agent_id: 'child' }));
+    }));
+    const socket = await connect(url);
+    const options = { agentIds: ['child'] };
+    await expect(socket.subscribe('s1', options)).rejects.toMatchObject({
+      name: 'KapCommandError',
+      response: { type: 'turns.failed', session_id: 's1', agent_id: 'child', code: 40402, msg: 'history unavailable' },
+    });
+    await socket.subscribe('s1', options);
+    expect(socket.frames.at(-1)).toMatchObject({ type: 'turns', agent_id: 'child' });
+  });
+
+  it.each([
+    ['the session is archived', { type: 'session', change: 'archived', session: { id: 's1' } }],
+    ['the session is deleted', { type: 'session', change: 'deleted', session: { id: 's1' } }],
+    ['the agent ends', { type: 'agent', status: 'ended', session_id: 's1', agent_id: 'child' }],
+  ] as const)('waits for a fresh snapshot after %s', async (_label, ended) => {
+    let first = true;
+    let peerSocket: ServerSocket | undefined;
+    const url = await serve((peer) => {
+      peerSocket = peer;
+      onJson(peer, (command) => {
+        peer.send(JSON.stringify({ type: 'response', request_id: command['request_id'], code: 0 }));
+        if (command['type'] === 'subscribe' && first) {
+          first = false;
+          peer.send(JSON.stringify({ type: 'turns', session_id: 's1', agent_id: 'child', turns: [] }));
+        }
+      });
+    });
+    const socket = await connect(url);
+    const options = { agentIds: ['child'] };
+    await socket.subscribe('s1', options);
+    peerSocket?.send(JSON.stringify(ended));
+    await socket.waitFor((frame) => frame.type === ended.type);
+    const snapshot = socket.subscribe('s1', options);
+    await socket.command({ type: 'barrier' });
+    peerSocket?.send(JSON.stringify({ type: 'turns.failed', session_id: 's1', agent_id: 'child', code: 40402, msg: 'agent removed' }));
+    await expect(snapshot).rejects.toMatchObject({ response: { msg: 'agent removed' } });
+  });
+
+  it('explains a timed-out wait and fails fast once the server closes', async () => {
+    let peerSocket: ServerSocket | undefined;
+    const url = await serve((peer) => {
+      peerSocket = peer;
+      peer.send(JSON.stringify({ type: 'agent' }));
+      peer.send('not json');
+    });
+    const socket = await connect(url);
+    await expect(socket.waitFor((frame) => frame.type === 'never', { timeoutMs: 30 })).rejects.toThrow(WaitTimeoutError);
+    await expect(socket.waitFor((frame) => frame.type === 'never', { timeoutMs: 30 })).rejects.toThrow(
+      /received 1 frame\(s\), latest: agent; 1 unreadable frame\(s\), first: "not json"/,
+    );
+    const waiting = socket.waitFor((frame) => frame.type === 'never', { timeoutMs: 5_000 });
+    peerSocket?.close(1001, 'idle');
+    await expect(waiting).rejects.toThrow(/closed \(code 1001, reason "idle"\)/);
+    expect(socket.unreadableFrames).toEqual(['not json']);
+  });
+
+  it('reports a refused upgrade with its HTTP status', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0, verifyClient: (_info, done) => done(false, 401) });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.once('listening', () => resolve()));
+    await expect(KapSocket.connect(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1/ws`, 'bad')).rejects.toThrow(
+      /upgrade failed with HTTP 401/,
+    );
+  });
+});
+
+describe('KapHarness', () => {
+  it('restores HOME when harnesses close in any order', async () => {
+    const before = process.env['HOME'];
+    const startServer = (): Promise<KapRunningServer> => Promise.resolve({ host: '127.0.0.1', port: 9, close: () => Promise.resolve() });
+    const first = await startKap({ startServer });
+    const second = await startKap({ startServer });
+    expect(process.env['HOME']).toBe(second.home.home);
+    await first.close();
+    expect(process.env['HOME']).toBe(second.home.home);
+    await second.close();
+    expect(process.env['HOME']).toBe(before);
+  });
+});
+
+const STUB_KAP_SERVER = `import { createServer } from 'node:http';
+import { connect } from 'node:net';
+
+const mode = process.env.STUB_MODE;
+const token = 'stub-token';
+if (mode === 'remote-ready') {
+  console.log(JSON.stringify({ origin: 'http://192.0.2.1:80', ws_url: 'ws://192.0.2.1:80/api/v1/ws', token }));
+  setInterval(() => {}, 60_000);
+} else {
+  const server = createServer((request, response) => {
+    if (request.headers.authorization !== 'Bearer ' + token) return response.writeHead(401).end();
+    if (request.method !== 'POST' || request.url !== '/api/v1/shutdown') return response.writeHead(404).end();
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ code: 0, msg: 'ok', data: {} }), () => process.exit(0));
+  });
+  server.listen(Number(process.argv[process.argv.indexOf('--port') + 1]), '127.0.0.1', async () => {
+    if (mode === 'leaky') {
+      await new Promise((resolve) => {
+        connect({ host: 'blocked.example.test', port: 443, lookup: (_host, _options, callback) => callback(new Error('lookup disabled')) }).once('error', resolve);
+      });
+    }
+    const { port } = server.address();
+    console.log(JSON.stringify({ origin: 'http://127.0.0.1:' + port, ws_url: 'ws://127.0.0.1:' + port + '/api/v1/ws', token }));
+  });
+}
+`;
+
+describe('KapProcess', () => {
+  const homes: TestHome[] = [];
+
+  afterEach(async () => {
+    await Promise.all(homes.splice(0).map((home) => home.remove()));
+  });
+
+  async function startStub(mode: string): Promise<KapProcess> {
+    const home = await createTestHome('testkit-kap-process');
+    homes.push(home);
+    const entry = join(home.root, 'stub-kap-server.mjs');
+    await writeFile(entry, STUB_KAP_SERVER);
+    return KapProcess.start({ home, command: { entry }, env: { STUB_MODE: mode } });
+  }
+
+  it('connects from the ready line and shuts the server down through the authenticated API', async () => {
+    const server = await startStub('normal');
+    expect(server.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(server.wsUrl).toBe(`${server.origin.replace('http', 'ws')}/api/v1/ws`);
+    expect(server.token).toBe('stub-token');
+    await server.close();
+    await expect(server.close()).resolves.toBeUndefined();
+  }, 20_000);
+
+  it('kills the process tree when a test simulates a crash', async () => {
+    const server = await startStub('normal');
+    await expect(server.crash()).resolves.toBeUndefined();
+  }, 20_000);
+
+  it('restarts on the same port, after a clean exit or a crash, until the test closes it', async () => {
+    const server = await startStub('normal');
+    const origin = server.origin;
+    const pids = [server.pid];
+    await server.restart();
+    pids.push(server.pid);
+    await server.restart('crash');
+    pids.push(server.pid);
+    expect(server.origin).toBe(origin);
+    expect(new Set(pids).size).toBe(3);
+    await server.close();
+    await expect(server.restart()).rejects.toThrow('The KAP server was already stopped');
+  }, 30_000);
+
+  it('fails the shutdown when the server reached a non-loopback address', async () => {
+    const server = await startStub('leaky');
+    await expect(server.close()).rejects.toMatchObject({
+      message: expect.stringContaining('Could not close the KAP server'),
+      cause: expect.objectContaining({ message: expect.stringContaining('non-loopback addresses: blocked.example.test:443') }),
+    });
+  }, 20_000);
+
+  it('refuses a ready line that points away from loopback and stops the child', async () => {
+    await expect(startStub('remote-ready')).rejects.toMatchObject({
+      message: expect.stringMatching(/^The KAP server failed to start\nKAP server pid=\d+ exit=null signal=SIGKILL|^The KAP server failed to start\nKAP server pid=\d+ exit=1/),
+      cause: expect.objectContaining({ message: expect.stringContaining('does not describe a loopback server') }),
+    });
+  }, 20_000);
+});
+
+describe('KAP recordings', () => {
+  const fakeSocket = (frames: KapFrame[]): KapSocket => ({ get frames() { return frames; }, mark: () => frames.length }) as unknown as KapSocket;
+  const emptyPage = { turns: [], has_more: false };
+
+  it('keeps one session and agent per stream and gives the same token to an ID in every stream', () => {
+    const first: KapFrame[] = [{ type: 'turns', session_id: 's-1', agent_id: 'main', turns: [], has_more: false }];
+    const second: KapFrame[] = [];
+    const recorder = new KapRecorder('s-1');
+    recorder.watch('primary', fakeSocket(first));
+    recorder.watch('child', fakeSocket(first), 'subagent-1');
+    expect(() => recorder.watch('primary', fakeSocket(second))).toThrow('already has a stream named primary');
+    first.push(
+      { type: 'turns', session_id: 's-1', agent_id: 'main', turns: [], has_more: false, event_created_at: '2026-11-19T08:00:00.000Z' },
+      { type: 'turns', session_id: 's-2', agent_id: 'main', turns: [], has_more: false },
+    );
+    expect(recorder.checkpoint('subscribed')).toEqual({ primary: [expect.objectContaining({ type: 'turns' })], child: [] });
+    recorder.watch('late', fakeSocket(second));
+    first.push(
+      { type: 'turn.started', session_id: 's-1', agent_id: 'main', turn: { turn_id: 't-9', ordinal: 0, items: [] } },
+      { type: 'turn.started', session_id: 's-1', agent_id: 'subagent-1', turn: { turn_id: 't-10', ordinal: 0, items: [] } },
+      { type: 'session.updated', session_id: 's-1', agent_id: 'main' },
+    );
+    second.push({ type: 'turns', session_id: 's-1', agent_id: 'main', turns: [{ turn_id: 't-9', ordinal: 0, items: [] }], has_more: false });
+    recorder.checkpoint('started');
+    const final = { turns: [{ turn_id: 't-9', ordinal: 0, items: [] }], has_more: false };
+    expect(() => recorder.recording({ serverVersion: '1.0.0', kapVersion: '1', pages: { primary: { initial: emptyPage, final } } })).toThrow('no REST pages for stream child');
+    const recording = recorder.recording({
+      serverVersion: '1.0.0',
+      kapVersion: '1',
+      pages: { primary: { initial: emptyPage, final }, child: { initial: emptyPage, final: emptyPage }, late: { initial: emptyPage, final } },
+    });
+    const shape = Object.fromEntries(Object.entries(recording.streams).map(([name, stream]) => [name, stream.checkpoints.map(({ name: at, frames }) => [at, frames.map((frame) => frame.type)])]));
+    expect(shape).toEqual({
+      primary: [['subscribed', ['turns']], ['started', ['turn.started']]],
+      child: [['subscribed', []], ['started', ['turn.started']]],
+      late: [['started', ['turns']]],
+    });
+    expect(recording.streams['primary']?.checkpoints[0]?.frames[0]).toMatchObject({ session_id: '<session_id:1>', event_created_at: FIXED_TIME });
+    expect(recording.streams['primary']?.checkpoints[1]?.frames[0]?.['turn']).toMatchObject({ turn_id: '<turn_id:1>' });
+    expect(recording.streams['child']?.checkpoints[1]?.frames[0]?.['turn']).toMatchObject({ turn_id: '<turn_id:2>' });
+    expect(recording.streams['late']?.checkpoints[0]?.frames[0]?.['turns']).toEqual([expect.objectContaining({ turn_id: '<turn_id:1>' })]);
+    expect(recording.streams['late']?.final.turns[0]).toMatchObject({ turn_id: '<turn_id:1>' });
+    expect(recording.streams['child']?.agentId).toBe('subagent-1');
+    expect(() => new KapRecorder('s-1').checkpoint('empty')).toThrow('Watch at least one socket');
+  });
+
+  it('replays each stream in order and refuses recordings it cannot read', async () => {
+    const home = await createTestHome('testkit-recording');
+    try {
+      const recording: KapRecording = {
+        format: 2,
+        serverVersion: '1.0.0',
+        kapVersion: '1',
+        streams: {
+          primary: {
+            agentId: 'main',
+            initial: emptyPage,
+            checkpoints: [
+              { name: 'first', frames: [{ type: 'turn.started' }] },
+              { name: 'second', frames: [{ type: 'item.started' }, { type: 'turn.ended' }] },
+            ],
+            final: emptyPage,
+          },
+        },
+      };
+      const path = join(home.root, 'trace.json');
+      await writeFile(path, JSON.stringify(recording));
+      const typesSeen = { start: (page: { turns: readonly unknown[] }) => [`start:${page.turns.length}`], apply: (seen: string[], frame: KapFrame) => [...seen, frame.type] };
+      expect(replayKapRecording(await readKapRecording(path), 'primary', typesSeen)).toEqual([
+        { name: 'first', view: ['start:0', 'turn.started'] },
+        { name: 'second', view: ['start:0', 'turn.started', 'item.started', 'turn.ended'] },
+      ]);
+      expect(() => replayKapRecording(recording, 'late', typesSeen)).toThrow('has no stream named late; it has primary');
+      await writeFile(path, JSON.stringify({ ...recording, format: 1 }));
+      await expect(readKapRecording(path)).rejects.toThrow(/uses KAP recording format 1; this testkit reads format 2/);
+      await writeFile(path, JSON.stringify({ ...recording, streams: { primary: { ...recording.streams['primary'], checkpoints: [{ name: 'broken' }] } } }));
+      await expect(readKapRecording(path)).rejects.toThrow(/is not a complete KAP recording/);
+      await writeFile(path, JSON.stringify({ ...recording, streams: {} }));
+      await expect(readKapRecording(path)).rejects.toThrow(/is not a complete KAP recording/);
+    } finally {
+      await home.remove();
+    }
+  });
+
+  it('drops, duplicates and adds frames in one checkpoint of one stream', () => {
+    const frames: KapFrame[] = [
+      { type: 'item.started', session_id: '<session_id:1>', agent_id: 'main' },
+      { type: 'item.delta', session_id: '<session_id:1>', agent_id: 'main' },
+      { type: 'turn.ended', session_id: '<session_id:1>', agent_id: 'main' },
+    ];
+    const recording: KapRecording = {
+      format: 2,
+      serverVersion: '1.0.0',
+      kapVersion: '1',
+      streams: { primary: { agentId: 'main', initial: emptyPage, checkpoints: [{ name: 'partial', frames }, { name: 'completed', frames }], final: emptyPage } },
+    };
+    const at = { stream: 'primary', checkpoint: 'partial' };
+    const typesAt = (changed: KapRecording, checkpoint: number) => changed.streams['primary']!.checkpoints[checkpoint]!.frames.map((frame) => frame.type);
+    expect(typesAt(mutateKapRecording(recording, at, dropFrames((frame) => frame.type === 'item.delta')), 0)).toEqual(['item.started', 'turn.ended']);
+    expect(typesAt(mutateKapRecording(recording, at, duplicateFrames((frame) => frame.type === 'item.delta')), 0)).toEqual(['item.started', 'item.delta', 'item.delta', 'turn.ended']);
+    const withUnknown = mutateKapRecording(recording, at, insertUnknownFrame(1));
+    expect(typesAt(withUnknown, 0)).toEqual(['item.started', UNKNOWN_FRAME_TYPE, 'item.delta', 'turn.ended']);
+    expect(withUnknown.streams['primary']!.checkpoints[0]!.frames[1]).toEqual({ type: UNKNOWN_FRAME_TYPE, session_id: '<session_id:1>', agent_id: 'main' });
+    expect(typesAt(withUnknown, 1)).toEqual(['item.started', 'item.delta', 'turn.ended']);
+    expect(recording.streams['primary']!.checkpoints[0]!.frames).toHaveLength(3);
+    expect(() => mutateKapRecording(recording, at, dropFrames((frame) => frame.type === 'notice'))).toThrow('dropFrames matched no frame');
+    expect(() => mutateKapRecording(recording, at, duplicateFrames(() => false))).toThrow('duplicateFrames matched no frame');
+    expect(() => mutateKapRecording(recording, at, insertUnknownFrame(4))).toThrow('outside 0..3');
+    expect(() => mutateKapRecording(recording, { stream: 'primary', checkpoint: 'later' }, insertUnknownFrame(0))).toThrow('no checkpoint named later');
+  });
+});

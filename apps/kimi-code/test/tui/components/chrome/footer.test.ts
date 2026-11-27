@@ -1,13 +1,14 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 
 import chalk from 'chalk';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { buildWeightedTips, FooterComponent } from '#/tui/components/chrome/footer';
 import { ALL_TIPS, TRANSCRIPT_GROUPING_TIP } from '#/tui/constant/tips';
-import { BRAILLE_SPINNER_INTERVAL_MS } from '#/tui/constant/rendering';
+import { BRAILLE_SPINNER_FRAMES, BRAILLE_SPINNER_INTERVAL_MS } from '#/tui/constant/rendering';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
@@ -50,7 +51,6 @@ function truecolorCodes(text: string): Set<string> {
   return codes;
 }
 
-// Dark dance colors the footer never uses outside of /dance.
 const RAINBOW_CYAN = '91,192,190';
 const RAINBOW_GREEN = '78,200,126';
 
@@ -187,8 +187,6 @@ describe('FooterComponent', () => {
 
     const codes = truecolorCodes(footer.render(120).join('\n'));
 
-    // "kimi-k2" spreads across the palette, pulling in colors the footer
-    // never renders on its own.
     expect(codes.has(RAINBOW_CYAN)).toBe(true);
     expect(codes.has(RAINBOW_GREEN)).toBe(true);
   });
@@ -209,7 +207,6 @@ describe('FooterComponent', () => {
     currentTheme.setPalette(lightColors);
     try {
       const after = footer.render(120).join('\n');
-      // Reads currentTheme live, so a palette swap changes the emitted colours.
       expect(after).not.toBe(before);
     } finally {
       currentTheme.setPalette(darkColors);
@@ -366,7 +363,6 @@ describe('FooterComponent ctrl+o hint', () => {
   });
 
   it('keeps the hint and drops the rotating tip when only one of them fits', () => {
-    // Same left-hand slots without the tips: measures the space the hint competes for.
     const noTips = new FooterComponent({
       ...appState,
       statusLine: { items: ['mode', 'model', 'cwd'], command: null },
@@ -483,7 +479,7 @@ describe('FooterComponent ctrl+o hint beside an inline tips slot', () => {
 });
 
 describe('FooterComponent environment slot', () => {
-  const ERROR = '38;2;232;84;84'; // colors.error #E85454
+  const ERROR = '38;2;232;84;84';
   let repoDir: string;
   const previousChalkLevel = chalk.level;
 
@@ -550,6 +546,141 @@ describe('FooterComponent environment slot', () => {
       },
       onRefresh,
     );
+    footer.dispose();
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('FooterComponent worktree location', () => {
+  const worktree = { root: '/tmp/wt/fix-login', name: 'fix-login', repoRoot: '/tmp/project' };
+  const statusOn = (branch: string) => ({
+    branch,
+    dirty: true,
+    ahead: 0,
+    behind: 0,
+    diffAdded: 3,
+    diffDeleted: 1,
+    pullRequest: null,
+  });
+  const previousChalkLevel = chalk.level;
+
+  beforeEach(() => {
+    chalk.level = 3;
+  });
+
+  afterEach(() => {
+    chalk.level = previousChalkLevel;
+  });
+
+  function footerAt(state: Partial<AppState>, branch: string | null): FooterComponent {
+    gitStatusMocks.createGitStatusCache.mockImplementation(() => ({
+      getStatus: () => (branch === null ? null : statusOn(branch)),
+      refresh: vi.fn(),
+      dispose: vi.fn(),
+    }));
+    const footer = new FooterComponent({ ...appState, ...state });
+    footer.setGitBinding((current) => ({ key: current.workDir, source: gitSource }));
+    onTestFinished(() => {
+      footer.dispose();
+    });
+    return footer;
+  }
+
+  it('names the worktree in the cwd slot and marks a detached HEAD', () => {
+    const footer = footerAt({ workDir: worktree.root, worktree }, '');
+    const rendered = footer.render(160)[0] ?? '';
+    expect(stripVTControlCharacters(rendered)).toContain('worktree fix-login  detached [+3 -1]');
+    expect(rendered).toContain(chalk.hex(darkColors.accent)('fix-login'));
+    expect(stripVTControlCharacters(rendered)).not.toContain('/tmp/wt');
+  });
+
+  it('appends the path below the worktree root including dot-prefixed subdirectories', () => {
+    const footer = footerAt({ workDir: `${worktree.root}/packages/foo`, worktree }, 'feat/login');
+    expect(stripVTControlCharacters(footer.render(160)[0] ?? '')).toContain(
+      'worktree fix-login/packages/foo  feat/login [+3 -1]',
+    );
+
+    const dotdot = footerAt({ workDir: `${worktree.root}/..cache`, worktree }, 'feat/login');
+    expect(stripVTControlCharacters(dotdot.render(160)[0] ?? '')).toContain(
+      'worktree fix-login/..cache  feat/login [+3 -1]',
+    );
+  });
+
+  it('keeps the plain cwd and hides a detached HEAD outside a worktree', () => {
+    const footer = footerAt({ workDir: '/tmp/project' }, '');
+    const rendered = stripVTControlCharacters(footer.render(160)[0] ?? '');
+    expect(rendered).toContain('/tmp/project');
+    expect(rendered).not.toContain('worktree');
+    expect(rendered).not.toContain('detached');
+  });
+
+  it('shows the remote cwd while a remote environment is bound', () => {
+    const footer = footerAt(
+      {
+        workDir: worktree.root,
+        worktree,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready', cwd: '/remote/work' },
+      },
+      'main',
+    );
+    const rendered = stripVTControlCharacters(footer.render(160)[0] ?? '');
+    expect(rendered).toContain('/remote/work');
+    expect(rendered).not.toContain('worktree fix-login');
+  });
+});
+
+describe('FooterComponent spinning transient hints', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('animates a spinning transient hint and stops ticking when cleared or replaced', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(appState, onRefresh);
+    onTestFinished(() => {
+      footer.dispose();
+    });
+
+    footer.setTransientHint('Shutting down… (running shutdown hooks)', { spinning: true });
+    expect(footer.getTransientHint()).toBe('Shutting down… (running shutdown hooks)');
+    expect(stripVTControlCharacters(footer.render(140)[1] ?? '')).toContain(
+      `${BRAILLE_SPINNER_FRAMES[0]} Shutting down… (running shutdown hooks)`,
+    );
+
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(stripVTControlCharacters(footer.render(140)[1] ?? '')).toContain(
+      `${BRAILLE_SPINNER_FRAMES[1]} Shutting down… (running shutdown hooks)`,
+    );
+
+    footer.setTransientHint('Deleting worktree wt… (Ctrl+C to force quit)', { spinning: true });
+    expect(stripVTControlCharacters(footer.render(140)[1] ?? '')).toContain(
+      `${BRAILLE_SPINNER_FRAMES[1]} Deleting worktree wt… (Ctrl+C to force quit)`,
+    );
+
+    footer.setTransientHint('Press Ctrl+C again to exit');
+    onRefresh.mockClear();
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 3);
+    expect(onRefresh).not.toHaveBeenCalled();
+    const staticLine = stripVTControlCharacters(footer.render(140)[1] ?? '');
+    expect(staticLine).toContain('Press Ctrl+C again to exit');
+    expect(staticLine).not.toContain(BRAILLE_SPINNER_FRAMES[0]);
+
+    footer.setTransientHint('Shutting down…', { spinning: true });
+    footer.setTransientHint(null);
+    onRefresh.mockClear();
+    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 3);
+    expect(onRefresh).not.toHaveBeenCalled();
+    expect(footer.getTransientHint()).toBeNull();
+  });
+
+  it('stops the transient hint spinner timer on dispose', () => {
+    vi.useFakeTimers();
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(appState, onRefresh);
+    footer.setTransientHint('Deleting worktree wt… (Ctrl+C to force quit)', { spinning: true });
     footer.dispose();
     vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
     expect(onRefresh).not.toHaveBeenCalled();

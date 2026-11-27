@@ -65,12 +65,19 @@ export default {
           },
         ],
       }],
-      tools: [{
-        name: tool.name,
-        description: tool.description,
-        input_schema: tool.parameters,
-        cache_control: { type: 'ephemeral' },
-      }],
+      tools: [
+        {
+          name: tool.name,
+          description: tool.description,
+          input_schema: tool.parameters,
+        },
+        {
+          name: 'later',
+          description: tool.description,
+          input_schema: tool.parameters,
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
     },
     betas: ['interleaved-thinking-2025-05-14'],
     useBetaApi: false,

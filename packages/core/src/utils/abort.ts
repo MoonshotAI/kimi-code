@@ -1,7 +1,3 @@
-/**
- * `AbortScope`: an abort signal paired with its trigger, optionally linked to a parent signal.
- */
-
 export interface AbortScope {
   readonly signal: AbortSignal;
   abort(reason?: unknown): void;
@@ -18,4 +14,15 @@ export function withAbort(parent: AbortSignal): AbortScope {
     signal: AbortSignal.any([parent, scope.signal]),
     abort: (reason) => scope.abort(reason),
   };
+}
+
+export function isUserCancellation(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && 'userCancelled' in value && value.userCancelled === true;
+}
+
+export function abortedToolOutput(toolName: string, reason: unknown): string {
+  if (isUserCancellation(reason)) {
+    return `The user manually interrupted "${toolName}" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.`;
+  }
+  return `Tool "${toolName}" was aborted`;
 }

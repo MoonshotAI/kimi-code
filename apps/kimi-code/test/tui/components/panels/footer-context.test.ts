@@ -97,7 +97,6 @@ describe('FooterComponent — context NaN resilience', () => {
     const out = strip(fc.render(200).join(''));
     expect(out).not.toMatch(/Infinity|NaN/);
     expect(out).toMatch(/context: 0%/);
-    // With maxTokens=0, token-count annotation is suppressed.
     expect(out).not.toMatch(/\(500\//);
   });
 
@@ -167,7 +166,7 @@ describe('FooterComponent — context NaN resilience', () => {
 describe('buildWeightedTips — weighted rotation', () => {
   it('repeats higher-priority tips more often (length = sum of weights)', () => {
     const seq = buildWeightedTips([
-      { text: 'a' }, // weight 1 (default)
+      { text: 'a' },
       { text: 'b', priority: 3 },
       { text: 'c', priority: 2 },
     ]);

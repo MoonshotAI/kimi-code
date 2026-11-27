@@ -1,12 +1,7 @@
-/**
- * `LlmRequest` contract and its dimensions: protocol binding, model spec and request model (thinking,
- * sampling, response format, output cap), endpoint with credentials and file upload, profile (system
- * prompt, tools), content (messages), and policy.
- */
 import type { ResolvedEndpoint } from '#/llm/endpoint';
 import type { MediaKind, Message, ToolDescription } from '#/llm/message';
 import type { LlmPolicy } from '#/llm/policy/policy';
-import type { Protocol } from '#/llm/protocol/protocol';
+import type { Protocol, ProtocolName } from '#/llm/protocol/protocol';
 
 export interface ModelCapability {
   readonly image_in?: boolean;
@@ -112,12 +107,18 @@ export interface UploadedMedia {
   readonly expiresAt?: number;
 }
 
+export class MediaUploadFailedError extends Error {}
+
 export interface LlmFiles {
   readonly kinds: ReadonlySet<MediaKind>;
   readonly upload: (
     file: LlmFileInput,
     ctx: { readonly endpoint: ResolvedEndpoint; readonly signal: AbortSignal },
   ) => Promise<UploadedMedia>;
+  readonly hasFailed?: (
+    id: string,
+    ctx: { readonly endpoint: ResolvedEndpoint; readonly signal: AbortSignal },
+  ) => Promise<boolean>;
 }
 
 export interface LlmEndpoint {
@@ -136,6 +137,7 @@ export function modelKey(model: LlmModelSpec, endpoint: LlmEndpoint | undefined)
 
 export interface LlmProtocolBinding<TOptions = any> {
   readonly base: Protocol<TOptions>;
+  readonly name?: ProtocolName;
   readonly options?: TOptions;
   readonly stream?: boolean;
   readonly recoveryKey?: string;
@@ -151,6 +153,16 @@ export interface LlmRequestContent {
   readonly usedTokens?: number;
 }
 
+export interface LlmRequestAttributes {
+  readonly kind?: 'loop' | 'compaction' | 'prediction' | (string & {});
+  readonly turnId?: number;
+  readonly step?: number;
+  readonly modelAlias?: string;
+  readonly providerType?: string;
+  readonly logFields?: Readonly<Record<string, unknown>>;
+  readonly promptCacheProbe?: 'compaction';
+}
+
 export interface LlmRequest {
   readonly protocol: LlmProtocolBinding;
   readonly endpoint?: LlmEndpoint;
@@ -158,4 +170,5 @@ export interface LlmRequest {
   readonly profile?: LlmRequestProfile;
   readonly content: LlmRequestContent;
   readonly policy?: LlmPolicy;
+  readonly attributes?: LlmRequestAttributes;
 }

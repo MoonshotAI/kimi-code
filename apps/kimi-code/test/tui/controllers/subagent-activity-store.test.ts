@@ -103,7 +103,6 @@ describe('SubagentActivityStore', () => {
     );
 
     let record = store.get('agent-1');
-    // No step event yet — a synthetic step holds the in-flight call.
     expect(record?.steps).toHaveLength(1);
     expect(record?.steps[0]?.toolCalls[0]?.args).toEqual({ command: 'ls -la' });
 
@@ -251,6 +250,29 @@ describe('SubagentActivityStore', () => {
     expect(record?.error).toBe('boom');
   });
 
+  it('provides separate activity for successive calls to the same agent', () => {
+    const store = new SubagentActivityStore();
+    const original = store.ensureRecord(spawn());
+    store.applyEvent(ev({ type: 'assistant.delta', turnId: 1, delta: 'First output' }));
+    store.markCompleted('agent-1', 'First result');
+
+    store.ensureRecord(spawn({ parentToolCallId: 'tc-2' }));
+    store.applyEvent(ev({ type: 'assistant.delta', turnId: 2, delta: 'Second output' }));
+
+    expect(original.steps.map((step) => step.textTail)).toEqual(['First output']);
+    expect(original.resultSummary).toBe('First result');
+    expect(store.get('agent-1', 'tc-1')).toBeUndefined();
+    expect(store.get('agent-1', 'tc-2')?.steps.map((step) => step.textTail)).toEqual(['Second output']);
+  });
+
+  it('preserves activity that arrives before spawn metadata', () => {
+    const store = new SubagentActivityStore();
+    store.applyEvent(ev({ type: 'assistant.delta', turnId: 1, delta: 'Early output' }));
+    store.ensureRecord(spawn());
+
+    expect(store.get('agent-1', 'tc-1')?.steps.map((step) => step.textTail)).toEqual(['Early output']);
+  });
+
   it('clear() releases all records', () => {
     const store = new SubagentActivityStore();
     store.ensureRecord(spawn());
@@ -300,7 +322,6 @@ describe('SubagentActivityStore', () => {
   it('drops delta-only arg buffers when their step is evicted', () => {
     const store = new SubagentActivityStore();
     store.ensureRecord(spawn());
-    // A call truncated before started/result only ever produced deltas.
     store.applyEvent(
       ev({ type: 'tool.call.delta', turnId: 1, toolCallId: 't-trunc', name: 'Write', argumentsPart: '{"path":"a"' }),
     );

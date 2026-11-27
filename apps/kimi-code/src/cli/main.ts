@@ -1,13 +1,3 @@
-/**
- * Kimi Code CLI implementation.
- *
- * Loaded dynamically from the `src/main.ts` process entry after the
- * exec-server argv pre-dispatch, so the executor path never pays for the
- * SDK's full registration. Parses CLI arguments via Commander.js, validates
- * options, runs the outer update preflight, then delegates to the requested
- * UI runner.
- */
-
 import {
   createKimiHarness,
   ErrorCodes,
@@ -55,14 +45,6 @@ import { maybeRelaunchWithStagedNativeUpdate } from './update/native-swap';
 import { createKimiCodeHostIdentity } from './host-identity';
 import { getVersion } from './version';
 
-/**
- * Outcome of a CLI command run, reported back to the process entrypoint.
- *
- * `handleMainCommand` is a reusable, unit-tested handler — it must not terminate
- * the process itself. It reports here whether a headless (`kimi -p`) run
- * completed so the entrypoint (the only place that owns the process) can arm the
- * force-exit fallback.
- */
 export interface MainCommandOutcome {
   readonly headlessCompleted: boolean;
 }
@@ -100,17 +82,24 @@ export async function handleMainCommand(
     process.exit(0);
   }
 
-  if (validated.uiMode === 'print') {
-    await runPrompt(validated.options, version);
-    return { headlessCompleted: true };
-  }
+  try {
+    if (validated.uiMode === 'print') {
+      await runPrompt(validated.options, version);
+      return { headlessCompleted: true };
+    }
 
-  startupTrace('runShell:begin');
-  await runShell(validated.options, version);
-  return { headlessCompleted: false };
+    startupTrace('runShell:begin');
+    await runShell(validated.options, version);
+    return { headlessCompleted: false };
+  } catch (error) {
+    if (error instanceof OptionConflictError) {
+      process.stderr.write(`error: ${error.message}\n`);
+      process.exit(1);
+    }
+    throw error;
+  }
 }
 
-/** `kimi migrate`: launch the migration screen only, then exit. `--run` runs the full migration headlessly with step logs instead. */
 async function handleMigrateCommand(
   version: string,
   options: MigrateCommandOptions,
@@ -121,9 +110,6 @@ async function handleMigrateCommand(
     return;
   }
   if (options.run) {
-    // Set the exit code and return normally — an immediate process.exit here
-    // could terminate before buffered step/report output is flushed when the
-    // command is piped or redirected.
     process.exitCode = await runHeadlessMigrate({ configOnly: options.configOnly });
     return;
   }
@@ -161,7 +147,6 @@ export async function handleUpgradeCommand(version: string, yes: boolean): Promi
   process.exit(exitCode);
 }
 
-/** A neutral CLIOptions value — `kimi migrate` never opens a chat session. */
 const MIGRATE_CLI_OPTIONS: CLIOptions = {
   session: undefined,
   continue: false,
@@ -180,10 +165,6 @@ const MIGRATE_CLI_OPTIONS: CLIOptions = {
 export function main(): void {
   process.title = PROCESS_NAME;
   installCrashHandlers();
-  // A staged native update is swapped in and re-exec'd here, before any other
-  // initialization, so the user session immediately runs the new binary (and
-  // the old process never replaces itself while running). Every failure path
-  // inside falls back to a normal startup with the current exe.
   void maybeRelaunchWithStagedNativeUpdate({
     exePath: process.execPath,
     argv: process.argv,
@@ -198,13 +179,8 @@ export function main(): void {
 }
 
 function bootstrap(): void {
-  // Route all outbound fetch through HTTP_PROXY/HTTPS_PROXY (honoring NO_PROXY)
-  // before any client is constructed. No-op when no proxy variable is set; an
-  // invalid proxy URL is reported and ignored rather than aborting startup.
   installGlobalProxyDispatcher();
   installNativeModuleHook();
-  // Best-effort SEA worker installation. Diagnostics are trace-only and avoid
-  // exposing the user's cache path; failure keeps MiniDb's bounded inline mode.
   const workerInstall = installMinidbTextBuildWorker();
   startupTrace(
     workerInstall.status === 'installed'
@@ -213,9 +189,6 @@ function bootstrap(): void {
         ? `minidb-worker:failed code=${workerInstall.errorCode} sha256=${workerInstall.assetSha256 ?? 'unknown'}`
         : `minidb-worker:${workerInstall.status}`,
   );
-  // Same pattern for the global-search worker: extracted from the SEA blob so
-  // the search index runs off the main thread; a failure leaves the search
-  // surface degraded ([database] search = false restores the inline host).
   const searchWorkerInstall = installKapSearchWorker();
   startupTrace(
     searchWorkerInstall.status === 'installed'
@@ -226,13 +199,10 @@ function bootstrap(): void {
   );
   if (runNativeAssetSmokeIfRequested()) return;
 
-  // Start the background cleanup of stale native cache. Fire-and-forget; must not block startup or throw.
   queueMicrotask(() => {
     try {
       cleanupStaleNativeCacheForCurrent();
-    } catch {
-      // ignore: cache GC must never affect process startup
-    }
+    } catch {}
   });
 
   const version = getVersion();
@@ -242,11 +212,6 @@ function bootstrap(): void {
     (opts) => {
       void handleMainCommand(opts, version)
         .then(async (outcome) => {
-          // Only the process entrypoint disposes of the process. Print mode
-          // relies on the event loop draining to exit; flush any buffered output
-          // and then arm an unref'd fallback so a stray ref'd handle left over
-          // from the run can't wedge a completed `kimi -p` until an external
-          // timeout. A healthy run drains and exits before the fallback fires.
           if (outcome.headlessCompleted) {
             await finalizeHeadlessRun(
               process,
@@ -256,15 +221,6 @@ function bootstrap(): void {
           }
         })
         .catch(async (error: unknown) => {
-          // Set the failure exit code synchronously, before any `await`. The
-          // terminal `process.exit(1)` below is our intended exit, but it sits
-          // behind `await logStartupFailure(...)`; by the time we reach that
-          // await, the failed run's `finally` cleanup has already torn down its
-          // ref'd handles (sockets, timers, background tasks). If the event loop
-          // drains during the await, Node exits on its own with the DEFAULT code
-          // 0 and `process.exit(1)` never runs — headless (`kimi -p`) failures
-          // would then exit 0 nondeterministically. Setting `process.exitCode`
-          // up front makes that drain-exit report failure too.
           process.exitCode = 1;
           const operation = opts.prompt !== undefined ? 'run prompt' : 'start shell';
           await logStartupFailure(operation, error);
@@ -312,10 +268,6 @@ function bootstrap(): void {
       );
     },
     (listen) => {
-      // Reached only when the argv pre-dispatch in `src/main.ts` did not match
-      // the exact light shape (e.g. `--listen=stdio` or a bad transport) — the
-      // full CLI is already loaded, so correctness matters here, not startup
-      // cost. stdout still carries protocol frames only.
       void runExecServerCommand(listen).then((code) => {
         process.exitCode = code;
       });
@@ -336,7 +288,5 @@ async function logStartupFailure(operation: string, error: unknown): Promise<voi
   });
   try {
     await flushDiagnosticLogs();
-  } catch {
-    // Best-effort diagnostic flush only.
-  }
+  } catch {}
 }

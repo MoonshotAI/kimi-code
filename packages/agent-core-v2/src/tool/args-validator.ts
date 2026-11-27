@@ -1,1 +1,1 @@
-export * from '@moonshot-ai/core/tool/args-validator';
+export * from '@moonshot-ai/core/tool/args';

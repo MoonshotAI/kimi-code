@@ -1,6 +1,3 @@
-/**
- * `LlmResolver` contract: a per-attempt step that rewrites the request before it is sent.
- */
 import type { LlmRequest } from '#/llm/request';
 import type { LlmNoticeSink } from '#/llm/response';
 import type { LlmRecoveryRecord } from './recovery';

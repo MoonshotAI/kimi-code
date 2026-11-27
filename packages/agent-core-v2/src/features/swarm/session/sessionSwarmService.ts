@@ -1,4 +1,4 @@
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { Error2, ErrorCodes } from '#/errors';
 import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
@@ -188,7 +188,6 @@ export class SessionSwarmService implements ISessionSwarmService {
       description: options.description,
       swarmIndex: options.swarmIndex,
       runInBackground: options.runInBackground,
-      fork: plan.fork,
       model: plan.model,
       modelSource: plan.modelSource,
     });

@@ -1,6 +1,9 @@
 import {
   INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
+  INTERACTION_TAG_TOOL_CALL_ID,
   INTERACTION_TAG_TURN_ID,
+  interactions,
   isInteractionCancellation,
   MAIN_AGENT_ID,
   type ApprovalRequest,
@@ -8,7 +11,8 @@ import {
   type Interaction,
 } from '@moonshot-ai/agent-core-v2';
 
-import type { InteractionOutcome } from './interaction';
+import type { InteractionOutcome, PendingInteraction } from './interaction';
+import { toWireQuestion } from './question-wire';
 
 const APPROVAL_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
@@ -21,6 +25,61 @@ export function interactionAgentId(interaction: Interaction): string {
   return typeof tag === 'string' ? tag : MAIN_AGENT_ID;
 }
 
+export function interactionToolCallId(interaction: Interaction): string | undefined {
+  const tag = interaction.tags[INTERACTION_TAG_TOOL_CALL_ID];
+  if (typeof tag === 'string') return tag;
+  const fromPayload = (interaction.payload as { toolCallId?: unknown } | null | undefined)
+    ?.toolCallId;
+  return typeof fromPayload === 'string' ? fromPayload : undefined;
+}
+
+export function toPendingInteraction(
+  interaction: Interaction,
+  sessionId: string,
+): PendingInteraction | undefined {
+  const kind = interaction.kind;
+  if (kind !== 'approval' && kind !== 'question') return undefined;
+  const base = {
+    interaction_id: interaction.id,
+    session_id: sessionId,
+    agent_id: interactionAgentId(interaction),
+    created_at: new Date(interaction.createdAt).toISOString(),
+    tool_call_id: interactionToolCallId(interaction),
+  };
+  if (kind === 'approval') {
+    const request = interaction.payload as ApprovalRequest;
+    return {
+      ...base,
+      kind,
+      request: {
+        tool_name: request.toolName,
+        action: request.action,
+        tool_input_display: request.display,
+        approval_detail: request.approvalDetail,
+        expires_at: approvalExpiresAt(interaction),
+      },
+    };
+  }
+  return {
+    ...base,
+    kind,
+    request: { questions: toWireQuestion(interaction, sessionId).questions },
+  };
+}
+
+export function listPendingInteractions(sessionId: string): PendingInteraction[] {
+  const raw = interactions.findAll({
+    resolved: false,
+    tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+  });
+  const items: PendingInteraction[] = [];
+  for (const interaction of raw) {
+    const wire = toPendingInteraction(interaction, sessionId);
+    if (wire !== undefined) items.push(wire);
+  }
+  return items;
+}
+
 export function toWireApproval(interaction: Interaction, sessionId: string): {
   approval_id: string;
   session_id: string;
@@ -30,6 +89,7 @@ export function toWireApproval(interaction: Interaction, sessionId: string): {
   tool_name: string;
   action: string;
   tool_input_display: unknown;
+  approval_detail?: ApprovalRequest['approvalDetail'];
   created_at: string;
   expires_at: string;
 } {
@@ -44,6 +104,7 @@ export function toWireApproval(interaction: Interaction, sessionId: string): {
     tool_name: p.toolName,
     action: p.action,
     tool_input_display: p.display,
+    approval_detail: p.approvalDetail,
     created_at: new Date(interaction.createdAt).toISOString(),
     expires_at: approvalExpiresAt(interaction),
   };

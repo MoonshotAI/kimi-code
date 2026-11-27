@@ -1,10 +1,3 @@
-/**
- * Shared conformance suite — the guarantee that the ipc and memory
- * transports are interchangeable. Every transport test file runs the exact
- * same assertions against a real in-process engine; only the `before` setup
- * differs per file.
- */
-
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -20,30 +13,24 @@ import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManage
 import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
-import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
-import {
-  createMockProvider,
-  withMockProvider,
-} from '../../../agent-core-v2/test/harness/scripted-generate.js';
+import { deferred, slashPathOf } from '@moonshot-ai/testkit/fixtures';
+import { createFakeModel, say } from '@moonshot-ai/testkit/model';
 import {
   resetModelsDevUpstreamForTest,
   setModelsDevUpstreamForTest,
 } from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevUpstream';
 
 import type { Klient } from '../../src/index.js';
+import type { KlientChannel } from '../../src/core/channel.js';
 import type { TestEngine } from './engine.js';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 export interface KlientConformanceTarget {
   readonly klient: Klient;
-  /**
-   * The in-process engine's App scope. Both transports boot the engine
-   * in-process, so the suite can assemble dynamic units (e.g. contributed
-   * commands) through the production `IFeatureManager` path.
-   */
   readonly app: TestEngine['app'];
+  readonly call: KlientChannel['call'];
+  readonly stream: KlientChannel['stream'];
   cleanup(): Promise<void>;
 }
 
@@ -80,15 +67,16 @@ export function defineKlientConformance(
       expect(env.clientVersion.length).toBeGreaterThan(0);
     });
 
-    it('workspaces round-trip through create/get/update/list/delete', async () => {
+    it('workspaces round-trip through resolve/get/update/list/delete', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'klient-workspace-root-'));
       const additionalDir = await mkdtemp(join(tmpdir(), 'klient-workspace-extra-'));
       try {
         const workspaces = target.klient.global.workspaces;
-        const created = await workspaces.createOrTouch({ root: process.cwd(), name: 'conformance' });
-        expect(created.id.length).toBeGreaterThan(0);
+        const created = await workspaces.resolveImplicit(root);
+        expect(created).toMatchObject({ root, kind: 'implicit' });
 
         const fetched = await workspaces.get(created.id);
-        expect(fetched?.name).toBe('conformance');
+        expect(fetched).toEqual(created);
 
         const updated = await workspaces.update({ id: created.id, patch: { name: 'conformance-2' } });
         expect(updated?.name).toBe('conformance-2');
@@ -111,6 +99,7 @@ export function defineKlientConformance(
         await workspaces.delete(created.id);
         expect(await workspaces.get(created.id)).toBeUndefined();
       } finally {
+        await rm(root, { recursive: true, force: true });
         await rm(additionalDir, { recursive: true, force: true });
       }
     });
@@ -131,7 +120,7 @@ export function defineKlientConformance(
       try {
         expect(created).toMatchObject({
           title: 'conformance session',
-          cwd: process.cwd(),
+          cwd: slashPathOf(process.cwd()),
           archived: false,
         });
         expect(created.id.length).toBeGreaterThan(0);
@@ -275,19 +264,28 @@ export function defineKlientConformance(
       const sub = target.klient.events.on('kosong.providers.changed', (event) => {
         events.push(event);
       });
-      // Give the subscription a wire round-trip (memory is synchronous; ipc
-      // and http's lazy WS need a frame exchange).
       await new Promise((resolve) => {
         setTimeout(resolve, 300);
       });
 
       const name = '__klient_conformance__';
       try {
-        await target.klient.global.kosong.addProvider(name, {
+        await target.call({}, 'providerService', 'set', [
+          name,
+          { type: 'openai', apiKey: 'conf-key' },
+        ]);
+        await expect(target.call({}, 'providerService', 'get', [name])).resolves.toMatchObject({
           type: 'openai',
-          auth: { method: 'api-key', apiKey: 'conf-key' },
+          apiKey: 'conf-key',
         });
-        const got = await target.klient.global.kosong.getProvider(name);
+        const configured = (await target.call({}, 'providerService', 'list', [])) as Record<
+          string,
+          unknown
+        >;
+        expect(configured[name]).toMatchObject({ type: 'openai', apiKey: 'conf-key' });
+        const got = (await target.call({}, 'modelResolver', 'getProvider', [name])) as {
+          has_api_key: boolean;
+        };
         expect(got.has_api_key).toBe(true);
 
         await waitFor(
@@ -295,9 +293,10 @@ export function defineKlientConformance(
           5_000,
         );
       } finally {
-        await target.klient.global.kosong.removeProvider(name);
+        await target.call({}, 'providerService', 'delete', [name]);
         sub.dispose();
       }
+      await expect(target.call({}, 'providerService', 'get', [name])).resolves.toBeUndefined();
       expect(errors).toEqual([]);
     });
 
@@ -327,8 +326,6 @@ export function defineKlientConformance(
         });
         expect((await config.inspect<string>('defaultModel')).userValue).toBe('conf-provider/m1');
 
-        // A domain mapped to `undefined` is cleared; domains absent from the
-        // sections record are left untouched.
         await config.replaceSections({ sections: { defaultModel: undefined } });
         expect((await config.inspect<string>('defaultModel')).userValue).toBeUndefined();
         const providers = await config.inspect<Record<string, unknown>>('providers');
@@ -418,15 +415,13 @@ export function defineKlientConformance(
       expect([...downloaded.data]).toEqual([...bytes]);
 
       await files.delete(meta.id);
-      // Both transports surface a deleted/expired upload as the same public
-      // RPCError code, never the engine's raw error type.
       await expect(files.get(meta.id)).rejects.toMatchObject({ name: 'RPCError', code: 40404 });
     });
 
     it('kosong lists models/providers and preserves generation contracts', async () => {
       const kosong = target.klient.global.kosong;
-      expect(Array.isArray(await kosong.listModels())).toBe(true);
-      expect(Array.isArray(await kosong.listProviders())).toBe(true);
+      expect(Array.isArray(await target.call({}, 'modelResolver', 'listModels', []))).toBe(true);
+      expect(Array.isArray(await target.call({}, 'modelResolver', 'listProviders', []))).toBe(true);
 
       const events: Array<{
         added: readonly string[];
@@ -436,7 +431,6 @@ export function defineKlientConformance(
       const sub = target.klient.events.on('kosong.models.changed', (event) => {
         events.push(event);
       });
-      // See kosong.providers.changed above — give the subscription a wire round-trip.
       await new Promise((resolve) => {
         setTimeout(resolve, 300);
       });
@@ -467,39 +461,39 @@ export function defineKlientConformance(
         baseUrl: 'https://example.test/v1',
         auth: { method: 'api-key', apiKey: 'conf-key' },
       });
-      await target.app.accessor.get(IModelService).set(kimiId, {
+      const catalog = target.app.accessor.get(IProviderCatalogService);
+      const previousDefaultModel = catalog.getDefaultModelId();
+      await target.call({}, 'modelService', 'set', [
+        kimiId,
+        {
+          provider: kimiProviderId,
+          model: 'conf-kimi',
+          maxContextSize: 4096,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
+          defaultEffort: 'high',
+        },
+      ]);
+      await expect(target.call({}, 'modelService', 'get', [kimiId])).resolves.toMatchObject({
         provider: kimiProviderId,
         model: 'conf-kimi',
-        maxContextSize: 4096,
-        capabilities: ['thinking'],
-        supportEfforts: ['low', 'high'],
-        defaultEffort: 'high',
       });
-      const bodies: Record<string, unknown>[] = [];
-      const chunk = JSON.stringify({
-        id: 'chatcmpl-conf',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'conf-kimi',
-        choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      });
-      vi.stubGlobal('fetch', (async (
-        input: Parameters<typeof fetch>[0],
-        init?: Parameters<typeof fetch>[1],
-      ) => {
-        bodies.push(JSON.parse(await new Request(input, init).text()) as Record<string, unknown>);
-        return new Response(`data: ${chunk}\n\ndata: [DONE]\n\n`, {
-          status: 200,
-          headers: { 'content-type': 'text/event-stream' },
-        });
-      }) as typeof fetch);
-      const consume = async (stream: AsyncIterable<unknown>): Promise<void> => {
-        let finished = false;
-        for await (const event of stream) {
-          if ((event as { readonly type?: string }).type === 'llm.ended') finished = true;
-        }
-        expect(finished).toBe(true);
+      const configuredModels = (await target.call({}, 'modelService', 'list', [])) as Record<
+        string,
+        unknown
+      >;
+      expect(configuredModels[kimiId]).toMatchObject({ provider: kimiProviderId, model: 'conf-kimi' });
+      await expect(
+        target.call({}, 'modelResolver', 'setDefaultModel', [kimiId]),
+      ).resolves.toMatchObject({ default_model: kimiId });
+      const model = createFakeModel();
+      model.route('kosong', () => true).script(say('ok'), say('ok'), say('ok'), say('ok'));
+      vi.stubGlobal('fetch', model.fetch);
+      const consume = async (stream: AsyncIterable<unknown>): Promise<unknown[]> => {
+        const events: unknown[] = [];
+        for await (const event of stream) events.push(event);
+        expect(events).toContainEqual(expect.objectContaining({ type: 'llm.ended' }));
+        return events;
       };
       const publicInput = {
         systemPrompt: '',
@@ -534,12 +528,17 @@ export function defineKlientConformance(
         ],
       };
       try {
-        await consume(kosong.generate(kimiId, publicInput, { model: { thinking: { effort: 'on' } } }));
-        await consume(kosong.generate(kimiId, publicInput, { model: { thinking: { effort: 'max' } } }));
-        const catalog = target.app.accessor.get(IModelCatalog);
-        const registry = target.app.accessor.get(IProtocolAdapterRegistry);
+        const responseEvents = await consume(
+          kosong.generate(kimiId, publicInput, { model: { thinking: { effort: 'on' } } }),
+        );
+        await consume(target.stream({}, 'modelResolver', 'generate', [
+          kimiId,
+          publicInput,
+          { model: { thinking: { effort: 'max' } } },
+        ]));
+        const registry = target.app.accessor.get(IProviderCatalogService);
         const directGenerate = (effort: string) => {
-          const requester = registry.request(catalog.get(kimiId), {
+          const requester = registry.createRequester(catalog.get(kimiId), {
             model: { thinking: { effort } },
           });
           return streamLlmRequest(
@@ -552,6 +551,7 @@ export function defineKlientConformance(
         };
         await consume(directGenerate('on'));
         await consume(directGenerate('max'));
+        const bodies = model.requests().map((request) => request.body as Record<string, unknown>);
         expect(bodies.map((body) => body['thinking'])).toEqual([
           { type: 'enabled' },
           { type: 'enabled', effort: 'max' },
@@ -576,46 +576,31 @@ export function defineKlientConformance(
         }
 
         const responsePart = { type: 'text' as const, text: 'ok' };
-        const fakeRequester = createMockProvider(async () => ({
-          id: 'response-1',
-          message: { role: 'assistant', content: [responsePart], toolCalls: [] },
-          usage: null,
-          finishReason: 'completed',
-          rawFinishReason: 'stop',
-        }));
-        const request = registry.request.bind(registry);
-        const generate = vi.spyOn(registry, 'request').mockImplementation((model, params) =>
-          withMockProvider(request(model, params), fakeRequester),
+        expect(responseEvents).toContainEqual(
+          expect.objectContaining({ type: 'llm.delta.part', part: responsePart }),
         );
-        try {
-          const responseEvents: unknown[] = [];
-          for await (const event of kosong.generate(kimiId, publicInput)) {
-            responseEvents.push(event);
-          }
-          expect(responseEvents).toContainEqual(
-            expect.objectContaining({ type: 'llm.streaming.part', part: responsePart }),
-          );
-          expect(responseEvents).toContainEqual(
-            expect.objectContaining({
-              type: 'llm.ended',
-              outcome: expect.objectContaining({
-                type: 'done',
-                message: expect.objectContaining({
-                  role: 'assistant',
-                  content: [responsePart],
-                  toolCalls: [],
-                }),
+        expect(responseEvents).toContainEqual(
+          expect.objectContaining({
+            type: 'llm.ended',
+            outcome: expect.objectContaining({
+              type: 'done',
+              message: expect.objectContaining({
+                role: 'assistant',
+                content: [responsePart],
+                toolCalls: [],
               }),
             }),
-          );
-        } finally {
-          generate.mockRestore();
-        }
+          }),
+        );
+        model.verify();
       } finally {
         vi.unstubAllGlobals();
-        await kosong.removeProvider(kimiId);
+        await model.close();
+        await catalog.setDefaultModelId(previousDefaultModel);
+        await target.call({}, 'modelService', 'delete', [kimiId]);
         await kosong.removeProvider(kimiProviderId);
       }
+      await expect(target.call({}, 'modelService', 'get', [kimiId])).resolves.toBeUndefined();
     });
 
     it('flags / plugins / auth read models respond', async () => {
@@ -643,7 +628,6 @@ export function defineKlientConformance(
           },
         });
         const entry = added.find((server) => server.name === 'conf-mcp');
-        // Mutable (user-level) entries carry the full config for edit prefill.
         expect(entry).toMatchObject({
           name: 'conf-mcp',
           source: 'global',
@@ -672,8 +656,6 @@ export function defineKlientConformance(
 
     it('global mcp probes an inline server config without persisting it', async () => {
       const mcp = target.klient.global.mcp;
-      // Inline probe against a scratch cwd: the binary runs but never
-      // speaks MCP, so the connection test reports a clean failure.
       const probeCwd = await mkdtemp(join(tmpdir(), 'klient-conf-mcp-probe-'));
       try {
         const probe = await mcp.test({
@@ -700,21 +682,16 @@ export function defineKlientConformance(
         server: { name: 'conf-mcp', transport: 'stdio', command: 'conf-command' },
       });
       try {
-        // The locator surface: resolve a legacy name, inspect nothing/all.
         expect(await mcp.resolveByName({ name: 'conf-mcp' })).toEqual({
           source: 'global',
           name: 'conf-mcp',
         });
         expect(await mcp.inspect({ targets: [] })).toEqual([]);
-        // An omitted `targets` ahead of a present options arg must mean "the
-        // whole catalog" on every transport (ipc encodes it as `null`).
         expect((await mcp.inspect({})).map((i) => i.runtimeName)).toContain('conf-mcp');
         await expect(
           mcp.inspect({ targets: [{ source: 'global', name: 'conf-missing' }] }),
         ).rejects.toMatchObject({ name: 'RPCError', code: 40408 });
 
-        // Offline auth classification of a stdio server needs no probe, and
-        // an OAuth flow against a stdio target is request.invalid → 40001.
         expect(await mcp.authStatuses()).toEqual([
           { name: 'conf-mcp', authStatus: 'not-applicable' },
         ]);
@@ -769,7 +746,6 @@ export function defineKlientConformance(
         },
       });
       try {
-        // Invalidate is offline: no stored grant and no network needed.
         await expect(
           mcp.resetAuth({ locator: { source: 'global', name: 'conf-oauth' } }),
         ).resolves.toBeUndefined();
@@ -793,8 +769,9 @@ export function defineKlientConformance(
     });
 
     it('agent environment binding and media events are available through every transport', async () => {
+      const workDir = await mkdtemp(join(tmpdir(), 'klient-conf-environment-'));
       const created = await target.klient.global.sessions.create({
-        workDir: process.cwd(),
+        workDir,
         title: 'conformance environment',
       });
       try {
@@ -817,6 +794,7 @@ export function defineKlientConformance(
           main.accessor.get(IEventBus).publish(
             new ToolResultEvent({
               agentId: 'main',
+              origin: 'loop',
               turnId: 1,
               toolCallId: 'call-media',
               output: [
@@ -840,6 +818,7 @@ export function defineKlientConformance(
         }
       } finally {
         await target.klient.session(created.id).close();
+        await rm(workDir, { recursive: true, force: true });
       }
     });
 
@@ -850,8 +829,6 @@ export function defineKlientConformance(
       });
       const calls: string[] = [];
 
-      // A dynamic App-scope unit contributing one command into the
-      // `CommandContribution` collection — the same path a Feature takes.
       class ConformanceCommands extends Service {
         static override readonly name = 'klient-conformance-commands';
         constructor() {
@@ -871,7 +848,6 @@ export function defineKlientConformance(
       try {
         const agent = target.klient.session(created.id).agent('main');
 
-        // Dynamic assembly goes through the cascade — poll until visible.
         let infos = await agent.listCommands();
         const deadline = Date.now() + 5_000;
         while (!infos.some((command) => command.name === 'conformance-echo')) {
@@ -889,13 +865,48 @@ export function defineKlientConformance(
         await agent.runCommand({ name: 'conformance-echo', args: 'hello commands' });
         expect(calls).toEqual(['hello commands']);
 
-        // Unknown names fail with a coded engine error.
         await expect(agent.runCommand({ name: 'conformance-missing' })).rejects.toThrow(
           /Unknown command/,
         );
       } finally {
         await handle.dispose();
         await target.klient.session(created.id).close();
+      }
+    });
+
+    it('returns the same busy error on every transport when a prompt opts out of queueing', async () => {
+      const created = await target.klient.global.sessions.create({ workDir: process.cwd() });
+      const session = target.klient.session(created.id);
+      const agent = session.agent('main');
+      const sessionHandle = getLiveSessionById(target.app.accessor, created.id)!;
+      const lifecycle = sessionHandle.accessor.get(IAgentLifecycleService);
+      const { agentId } = await lifecycle.create({ agentId: 'main' });
+      const loop = lifecycle.handleOf(agentId)!.accessor.get(IAgentLoopService);
+      const entered = deferred();
+      const release = deferred();
+      const hold = loop.hooks.onBeforeSubmitPrompt.register('hold-test-prompt', async (_context, next) => {
+        entered.resolve();
+        await release.promise;
+        await next();
+      });
+      const first = agent.prompt({ input: [{ type: 'text', text: 'Start a turn.' }] });
+      try {
+        await entered.promise;
+        await expect(agent.prompt({
+          input: [{ type: 'text', text: 'Reject this while active.' }],
+          rejectIfBusy: true,
+        })).rejects.toMatchObject({ code: 40001, details: { code: 'turn.agent_busy' } });
+        expect(loop.snapshot().queue).toMatchObject([
+          { role: 'user', content: [{ type: 'text', text: 'Start a turn.' }] },
+        ]);
+      } finally {
+        hold.dispose();
+        release.resolve();
+        try {
+          await first;
+        } finally {
+          await session.close();
+        }
       }
     });
 

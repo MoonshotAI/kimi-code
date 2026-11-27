@@ -1,5 +1,5 @@
 import type { ContentPart, SystemMessage, ToolDescription as Tool, UserMessage } from '@moonshot-ai/core/llm/message';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { LLMRequestTrace } from '#/agent/loop/requestObservation';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 export type ExecutableToolOutput = string | ContentPart[];
@@ -50,7 +50,10 @@ export interface ToolUpdate {
 
 export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_url';
 
+export type ToolExecutionOrigin = 'loop' | 'shellCommand';
+
 export interface ExecutableToolContext {
+  readonly origin?: ToolExecutionOrigin;
   readonly turnId: number;
   readonly toolCallId: string;
   readonly trace?: LLMRequestTrace;

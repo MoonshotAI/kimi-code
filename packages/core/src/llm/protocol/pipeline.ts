@@ -1,8 +1,3 @@
-/**
- * Encode pipeline shared by all protocols: legalize the request, convert params, tools, and messages
- * to the native shape, then merge turns, annotate, finalize, and flatten into the wire request. Every
- * pass can be traced and can report notices.
- */
 import { renderToolResultForModel, type Message, type ToolDescription } from '#/llm/message';
 import type {
   LlmModelSpec,
@@ -12,10 +7,12 @@ import type {
   ThinkingRequestOptions,
 } from '#/llm/request';
 import type { LlmNotice, LlmNoticeSink } from '#/llm/response';
+import { log } from '#/utils/log';
 
 import { applyPatterns, type Pattern } from './pattern';
-import type { LlmModule } from './protocol';
+import type { LlmModule, Protocol } from './protocol';
 import { legalize, type LegalizeSpec } from './rules';
+import { withProtocolCapabilities } from './rules/model';
 
 export type PassTrace = (pass: string, output: unknown) => void;
 
@@ -38,6 +35,11 @@ export interface PassRunner<TOptions> {
     pass: string,
     module: LlmModule<TOptions>,
     rewrite: (module: LlmModule<TOptions>, ctx: PassContext) => LlmRequestModel,
+  ) => LlmModule<TOptions>;
+  readonly module: (
+    pass: string,
+    module: LlmModule<TOptions>,
+    rewrite: (module: LlmModule<TOptions>, ctx: PassContext) => LlmModule<TOptions>,
   ) => LlmModule<TOptions>;
 }
 
@@ -109,7 +111,7 @@ function convert<TOptions, TMessage, TTool, TParams extends object>(
   return {
     system: module.profile.systemPrompt,
     messages: module.content.messages.flatMap((message) => pipeline.message(lowerableMessage(message), module)),
-    tools: (module.profile.tools ?? []).filter((tool) => tool.deferred !== true).map(pipeline.tool),
+    tools: (module.profile.tools ?? []).map(pipeline.tool),
     params,
   };
 }
@@ -123,11 +125,12 @@ function mergeTurns<TMessage, TTool, TParams>(
 }
 
 export function runPipeline<TOptions, TMessage, TTool, TParams extends object, TRequest>(
-  pipeline: PipelineSpec<TOptions, TMessage, TTool, TParams, TRequest>,
+  pipeline: PipelineSpec<TOptions, TMessage, TTool, TParams, TRequest> & Pick<Protocol, 'capability'>,
   input: LlmModule<TOptions>,
   hooks?: EncodeHooks,
 ): TRequest {
   const run = <T>(pass: string, output: T): T => {
+    log.debug({ pass }, 'llm encode stage');
     hooks?.trace?.(pass, output);
     return output;
   };
@@ -143,9 +146,17 @@ export function runPipeline<TOptions, TMessage, TTool, TParams extends object, T
       );
     },
     model: (pass, module, rewrite) => run(pass, { ...module, model: rewrite(module, contextOf(pass)) }),
+    module: (pass, module, rewrite) => run(pass, rewrite(module, contextOf(pass))),
   };
 
-  const legal = legalize(input, pipeline, pipeline.cacheKey !== undefined, passes);
+  const capable = run('with-capabilities', {
+    ...input,
+    model: {
+      ...input.model,
+      spec: withProtocolCapabilities(input.model.spec, pipeline),
+    },
+  });
+  const legal = legalize(capable, pipeline, pipeline.cacheKey !== undefined, passes);
   const converted = run('convert', convert(legal, pipeline));
   const merged = run('merge-turns', mergeTurns(converted, pipeline.mergeTurns));
   const annotated = run('annotate-cache', pipeline.annotate?.(merged) ?? merged);

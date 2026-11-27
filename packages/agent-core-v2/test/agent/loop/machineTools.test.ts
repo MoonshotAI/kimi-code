@@ -24,11 +24,11 @@ function prompt() {
 describe('handler tool execution', () => {
   it('executes duplicate calls independently and preserves model result order', async () => {
     let bashCalls = 0;
-    const executor = executorFrom(['Bash', 'Read'], async ({ toolCall }) => {
-      if (toolCall.name === 'Read') return { content: [{ type: 'text', text: 'read' }] };
+    const executor = executorFrom(['Bash', 'Read'], async (context) => {
+      if (context.call.name === 'Read') return { content: [{ type: 'text', text: 'read' }] };
       bashCalls += 1;
       return bashCalls === 2
-        ? { content: [{ type: 'text', text: 'second failed' }], isError: true }
+        ? { content: [{ type: 'text', text: 'second failed' }], outcome: 'failed', reason: 'second failed' }
         : { content: [{ type: 'text', text: 'first ok' }] };
     });
     const scripted = requester([
@@ -49,8 +49,8 @@ describe('handler tool execution', () => {
   });
 
   it('contains one tool failure without failing its sibling or the step', async () => {
-    const executor = executorFrom(['Bash', 'Read'], async ({ toolCall }) => {
-      if (toolCall.name === 'Bash') throw new Error('executor exploded');
+    const executor = executorFrom(['Bash', 'Read'], async (context) => {
+      if (context.call.name === 'Bash') throw new Error('executor exploded');
       return { content: [{ type: 'text', text: 'read ok' }] };
     });
     const scripted = requester([done('', [call('t1'), call('t2', 'Read')]), done('final')]);

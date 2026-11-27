@@ -37,6 +37,39 @@ describe('HelpPanelComponent', () => {
     },
   );
 
+  it('includes Ctrl-F only in fullscreen mode', () => {
+    const regularShortcuts = keyboardShortcuts('queue', false, 'regular');
+    const fullscreenShortcuts = keyboardShortcuts('queue', false, 'fullscreen');
+
+    expect(regularShortcuts.some((shortcut) => shortcut.keys === 'Ctrl-F')).toBe(false);
+    expect(fullscreenShortcuts).toContainEqual({
+      keys: 'Ctrl-F',
+      description: 'Search conversation',
+    });
+
+    const regularOut = strip(
+      new HelpPanelComponent({
+        commands: [],
+        shortcuts: regularShortcuts,
+        onClose: () => {},
+      })
+        .render(80)
+        .join('\n'),
+    );
+    const fullscreenOut = strip(
+      new HelpPanelComponent({
+        commands: [],
+        shortcuts: fullscreenShortcuts,
+        onClose: () => {},
+      })
+        .render(80)
+        .join('\n'),
+    );
+    expect(regularOut).not.toMatch(/Ctrl-F/);
+    expect(fullscreenOut).toMatch(/Ctrl-F/);
+    expect(fullscreenOut).toMatch(/Search conversation/);
+  });
+
   it('renders keyboard shortcuts + slash commands sections', () => {
     const panel = new HelpPanelComponent({
       commands: [cmd('exit', 'Exit', ['quit', 'q'])],
@@ -80,7 +113,7 @@ describe('HelpPanelComponent', () => {
       commands: [],
       onClose,
     });
-    panel.handleInput('\u001B'); // Esc
+    panel.handleInput('\u001B');
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -113,11 +146,11 @@ describe('HelpPanelComponent', () => {
       onClose: () => {},
       maxVisible: 6,
     });
-    panel.handleInput('\u001B[B'); // ↓
-    panel.handleInput('\u001B[B'); // ↓
+    panel.handleInput('\u001B[B');
+    panel.handleInput('\u001B[B');
     const out = strip(panel.render(80).join('\n'));
     expect(out).toMatch(/showing 3-8 of/);
-    panel.handleInput('\u001B[A'); // ↑
+    panel.handleInput('\u001B[A');
     const out2 = strip(panel.render(80).join('\n'));
     expect(out2).toMatch(/showing 2-7 of/);
   });

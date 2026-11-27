@@ -43,7 +43,7 @@ import {
   IAgentProfileService,
   type ProfileBindingSnapshot,
 } from '#/agent/profile/profile';
-import { abortError } from '#/_base/utils/abort';
+import { abortError, isAbortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 
@@ -87,6 +87,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   declare readonly _serviceBrand: undefined;
   private readonly roster = new Map<string, ManagedAgent>();
   private readonly creating = new Map<string, Promise<AgentContext>>();
+  private readonly removing = new Map<ManagedAgent, Promise<void>>();
+  private readonly cancelledAgentIds = new Set<string>();
   private nextLifecycleGeneration = 0;
   private readonly onDidCreateEmitter = this._register(new Emitter<AgentContext>());
   private readonly onDidCreateScopeEmitter = this._register(new Emitter<AgentScopeCreatedEvent>());
@@ -157,6 +159,15 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
   }
 
+  whenCreateSettled(agentId?: string): Promise<void> {
+    if (agentId !== undefined) {
+      const pending = this.creating.get(agentId);
+      return pending === undefined ? Promise.resolve() : pending.then(() => undefined, () => undefined);
+    }
+    if (this.creating.size === 0) return Promise.resolve();
+    return Promise.allSettled(this.creating.values()).then(() => undefined);
+  }
+
   private async nextAvailableAgentId(): Promise<string> {
     let maxSuffix = -1;
     const consider = (id: string): void => {
@@ -166,6 +177,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     for (const id of this.roster.keys()) consider(id);
     const persisted = (await this.sessionMetadata.read()).agents ?? {};
     for (const id of Object.keys(persisted)) consider(id);
+    const onDisk = await this.storage.list(this.ctx.scope('agents'));
+    for (const id of onDisk) consider(id);
     const candidate = Math.max(maxSuffix + 1, nextAgentId);
     nextAgentId = candidate + 1;
     return `agent-${String(candidate)}`;
@@ -282,12 +295,25 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         accessor: {
           get: (id) => container.invokeFunction((accessor) => accessor.get(id)),
         },
-        dispose: () => loop.close().then(() => container.disposeAsync()),
+        dispose: async () => {
+          try {
+            await loop.close();
+          } finally {
+            await container.disposeAsync();
+          }
+        },
       };
       this.rosterAdopt(scopeHandle);
       managed = this.roster.get(agentId);
+      if (this.cancelledAgentIds.has(agentId)) {
+        throw abortError(`Agent "${agentId}" was closed while starting`);
+      }
       stage = 'register';
       await this.sessionMetadata.registerAgent(agentId, meta);
+      if (this.cancelledAgentIds.has(agentId)) {
+        await this.sessionMetadata.unregisterAgent(agentId).catch(() => {});
+        throw abortError(`Agent "${agentId}" was closed while starting`);
+      }
       this.onDidCreateEmitter.fire(agent);
       didCreate = true;
       this.onDidCreateScopeEmitter.fire({ context: agent, handle, meta });
@@ -310,12 +336,14 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       }
       attachInteractionAgent(agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));
       stage = 'bootstrap';
+      const shouldStartImmediately =
+        loop.hasPersistedState || opts.initialProfile !== undefined || opts.initialTools !== undefined;
       const initialProfile = await this.bindBootstrap(handle, opts);
       if (initialProfile !== undefined) await loop.setProfile(initialProfile);
       stage = 'toolActivation';
       await handle.accessor.get(IAgentToolActivationService).activate();
       stage = 'start';
-      await loop.start(opts.initialTools);
+      if (shouldStartImmediately) await loop.start(opts.initialTools);
       return agent;
     } catch (error) {
       this.telemetry.track2('agent_create_failed', {
@@ -382,6 +410,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
     const source = sourceManaged.handle;
     const sourceLoop = source.accessor.get(IAgentLoopService);
+    await sourceLoop.start();
     const sourceData = sourceLoop.data();
     const override = opts?.binding;
     const sourceBinding = source.accessor.get(IAgentEnvironmentBindingService).current;
@@ -503,9 +532,39 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   async remove(agent: AgentContext): Promise<void> {
     const managed = this.roster.get(agent.agentId);
-    if (managed === undefined || managed.context !== agent || managed.closing) return;
+    if (managed === undefined || managed.context !== agent) return;
+    await this.ensureRemoved(managed);
+  }
+
+  async removeById(agentId: string): Promise<void> {
+    this.cancelledAgentIds.add(agentId);
+    try {
+      const inflight = this.creating.get(agentId);
+      if (inflight !== undefined) {
+        try {
+          await inflight;
+        } catch (error) {
+          if (!isAbortError(error)) throw error;
+        }
+      }
+      const managed = this.roster.get(agentId);
+      if (managed !== undefined) {
+        await this.ensureRemoved(managed);
+      }
+    } finally {
+      this.cancelledAgentIds.delete(agentId);
+    }
+  }
+
+  private ensureRemoved(managed: ManagedAgent): Promise<void> {
+    const existing = this.removing.get(managed);
+    if (existing !== undefined) return existing;
     managed.closing = true;
-    await this.removeManaged(agent, managed);
+    const task = this.removeManaged(managed.context, managed).finally(() => {
+      this.removing.delete(managed);
+    });
+    this.removing.set(managed, task);
+    return task;
   }
 
   private async removeManaged(agent: AgentContext, managed: ManagedAgent): Promise<void> {
@@ -579,6 +638,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       releaseQuiescence?.();
     }
     if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);
+    detachInteractionAgent(agent.agentId, this.ctx.sessionId);
     this.onDidCloseEmitter.fire(agent);
     if (stopError !== undefined) throw stopError;
   }

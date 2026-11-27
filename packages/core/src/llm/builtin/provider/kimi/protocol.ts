@@ -1,12 +1,7 @@
-/**
- * Kimi variants of the OpenAI Chat Completions, Anthropic, and OpenAI Responses protocols: Kimi thinking
- * params, tool schema and builtin-function conversion, output token filling, usage hoisting,
- * `x-trace-id` request ids, and Kimi error classification and diagnostics.
- */
-import type { Message, ToolDescription, ContentPart } from '#/llm/message';
+import { readToolLifecycleMeta, type Message, type ToolDescription, type ContentPart } from '#/llm/message';
 import { providerImagePolicy } from '#/llm/protocol/kit/media';
 import { requestIdFromHeader } from '#/llm/protocol/kit/http';
-import type { Decoder, LlmErrorDiagnosticsInput } from '#/llm/protocol/protocol';
+import type { LlmErrorDiagnosticsInput } from '#/llm/protocol/protocol';
 import type { LlmModelSpec, ThinkingRequestOptions } from '#/llm/request';
 import { llmStatusErrorMessage, type LlmRemoteErrorMessage } from '#/llm/response';
 import {
@@ -22,9 +17,8 @@ import {
   type OpenAINativeMessage,
   type OpenAINativeToolCall,
   type OpenAILowerContext,
-  type OpenAIRawChunk,
-  type OpenAIRawUsage,
 } from '#/llm/builtin/protocol/openai/index';
+import { openAIMediaConversionPatterns } from '#/llm/builtin/protocol/openai/media-conversion';
 import {
   openAIResponsesModelLegality,
   openAIResponsesProtocol,
@@ -126,18 +120,6 @@ function applyKimiMessageExtras(
   return native;
 }
 
-function hoistKimiUsage(chunk: OpenAIRawChunk): OpenAIRawChunk {
-  if (chunk.usage !== null && chunk.usage !== undefined && typeof chunk.usage === 'object') {
-    return chunk;
-  }
-  const firstChoice = chunk.choices?.[0] as { usage?: OpenAIRawUsage | null } | undefined;
-  const choiceUsage = firstChoice?.usage;
-  if (choiceUsage === null || choiceUsage === undefined || typeof choiceUsage !== 'object') {
-    return chunk;
-  }
-  return { ...chunk, usage: choiceUsage };
-}
-
 const kimiImageMimes = providerImagePolicy('kimi').acceptedMimes;
 
 function withKimiErrors(base: {
@@ -163,6 +145,7 @@ export const kimiOpenAIProtocol = openAIProtocol.with((base) => ({
     ...openAIModelLegality,
     fillMaxOutputTokens: fillKimiMaxOutputTokens,
   },
+  patterns: (module) => openAIMediaConversionPatterns(module.options?.toolMessageConversion ?? 'keep_parts'),
   thinking: (thinking) => (thinking === undefined ? undefined : kimiOpenAIThinkingParams(thinking)),
   maxOutputTokens: (cap) => ({ max_completion_tokens: cap }),
   tool: convertKimiTool,
@@ -177,14 +160,11 @@ export const kimiOpenAIProtocol = openAIProtocol.with((base) => ({
         module.model.thinking?.keep === 'all' && module.model.thinking?.effort !== 'off',
       toolMessageConversion: module.options?.toolMessageConversion ?? 'keep_parts',
     };
-    return lowerOpenAIMessage(message, ctx).map((native) => applyKimiMessageExtras(message, native));
-  },
-  decoder: (module, sink): Decoder<OpenAIRawChunk> => {
-    const inner = base.decoder(module, sink);
-    return {
-      push: (chunk) => inner.push(hoistKimiUsage(chunk)),
-      end: () => inner.end(),
-    };
+    const messages = lowerOpenAIMessage(message, ctx).map((native) => applyKimiMessageExtras(message, native));
+    if (module.model.spec.capability?.dynamically_loaded_tools !== true) return messages;
+    const removed = message.content.flatMap((part) => readToolLifecycleMeta(part)?.removed ?? []);
+    if (removed.length === 0) return messages;
+    return [...messages, { role: 'system', unload_tools: removed } as unknown as OpenAINativeMessage];
   },
   flatten: (native, module) => {
     const { extra_body: extraBody, ...extras } = module.options?.extras ?? {};

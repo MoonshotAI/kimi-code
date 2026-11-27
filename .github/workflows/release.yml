@@ -4,14 +4,19 @@ on:
   push:
     branches: ['release/*']
   workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Exact release commit; defaults to the selected branch head'
+        required: false
+        type: string
 
 concurrency:
-  group: release-${{ github.ref }}-${{ github.sha }}
+  group: release-${{ github.ref }}-${{ inputs.sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
   version:
-    if: github.repository_owner == 'MoonshotAI' && startsWith(github.ref, 'refs/heads/release/')
+    if: github.repository_owner == 'MoonshotAI' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
     concurrency:
       group: release-version-${{ github.ref }}
       cancel-in-progress: false
@@ -19,7 +24,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      actions: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -33,41 +37,177 @@ jobs:
       - uses: changesets/action@v1
         id: version
         with:
-          version: pnpm run version:release
+          version: node scripts/version-release.mjs
           commit: 'ci: release packages'
           title: 'ci: release packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Check version PR
-        if: steps.version.outputs.pullRequestNumber != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION_BRANCH: changeset-release/${{ github.ref_name }}
-        run: gh workflow run ci.yml --ref "$VERSION_BRANCH"
-
   candidate:
-    if: github.repository_owner == 'MoonshotAI' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    if: github.repository_owner == 'MoonshotAI' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/heads/release/')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read
       pull-requests: read
-      actions: read
-      checks: read
     outputs:
       publish: ${{ steps.trigger.outputs.publish }}
+      sha: ${{ steps.commit.outputs.sha }}
+      cli-tag: ${{ steps.cli.outputs.tag }}
+      cli-targets: ${{ steps.cli.outputs.targets }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-      - name: Wait for merged version commit CI
+          ref: ${{ inputs.sha || github.sha }}
+          fetch-depth: 0
+      - name: Resolve release commit
+        id: commit
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+          EVENT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${REQUESTED_SHA:-$EVENT_SHA}"
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'Release SHA must be a full commit SHA' >&2
+            exit 1
+          fi
+          git cat-file -e "$sha^{commit}"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Check release candidate
         id: trigger
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.commit.outputs.sha }}
         run: node scripts/release-trigger.mjs
+      - uses: pnpm/action-setup@v6
+        if: steps.trigger.outputs.publish == 'true'
+      - uses: actions/setup-node@v6
+        if: steps.trigger.outputs.publish == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install dependencies
+        if: steps.trigger.outputs.publish == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Verify release plan
+        if: steps.trigger.outputs.publish == 'true'
+        env:
+          RELEASE_SHA: ${{ steps.commit.outputs.sha }}
+        run: node scripts/release.mjs check
+      - name: Run unit tests
+        if: steps.trigger.outputs.publish == 'true'
+        run: pnpm run test --exclude='**/test/e2e/tui/**' --exclude='**/test/reconnect/**'
+      - name: Plan native build for the tested commit
+        if: steps.trigger.outputs.publish == 'true'
+        id: cli
+        env:
+          RELEASE_SHA: ${{ steps.commit.outputs.sha }}
+        run: node scripts/release.mjs plan-cli
+
+  desktop-release:
+    name: Desktop release plan
+    needs: candidate
+    if: needs.candidate.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.prepare.outputs.build }}
+      tag: ${{ steps.prepare.outputs.tag }}
+      cli-planned: ${{ needs.candidate.outputs.cli-tag != '' }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.candidate.outputs.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Verify release branch, plan and tested commit
+        env:
+          RELEASE_SHA: ${{ needs.candidate.outputs.sha }}
+        run: node scripts/release.mjs check
+      - name: Prepare draft release
+        id: prepare
+        env:
+          RELEASE_SHA: ${{ needs.candidate.outputs.sha }}
+        run: node scripts/release.mjs prepare
+
+  desktop-artifacts:
+    name: Desktop release artifacts
+    needs: [candidate, desktop-release]
+    if: needs.desktop-release.outputs.build == 'true'
+    # 静态校验：reusable workflow 各 job 声明的权限并集不能超过调用方持有的
+    # 权限。desktop-build.yml 的 publish-canary job 请求 contents: write，
+    # 调用 job 不显式授权则整个 workflow 在启动前被判 invalid（startup_failure）。
+    # release 路径下 canary 恒为 false，publish-canary 不会实际执行。
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: read
+    uses: ./.github/workflows/desktop-build.yml
+    with:
+      sha: ${{ needs.candidate.outputs.sha }}
+      retention-days: 7
+      upload-artifact-prefix: kimi-code-app
+      pnpm-cache-restore-only: ${{ needs.desktop-release.outputs.cli-planned == 'true' }}
+    secrets:
+      APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+  publish-desktop-assets:
+    name: Publish desktop release assets
+    needs:
+      - candidate
+      - desktop-release
+      - desktop-artifacts
+    if: needs.desktop-release.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ needs.candidate.outputs.sha }}
+
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kimi-code-app-*
+          path: dist-desktop-release
+          merge-multiple: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Merge mac updater metadata (arm64 + x64)
+        shell: bash
+        run: node scripts/merge-mac-update-yml.mjs dist-desktop-release
+
+      - name: Upload installers to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.desktop-release.outputs.tag }}
+        run: gh release upload "$RELEASE_TAG" dist-desktop-release/* --clobber
+
+      - name: Publish completed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.candidate.outputs.sha }}
+        run: node scripts/release.mjs finish
 
   vscode:
     needs: candidate
@@ -75,6 +215,8 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/vscode-publish.yml
+    with:
+      sha: ${{ needs.candidate.outputs.sha }}
     secrets:
       VSCE_PAT: ${{ secrets.VSCE_PAT }}
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
@@ -87,7 +229,6 @@ jobs:
     outputs:
       packages_published: ${{ steps.changesets.outputs.published }}
       kimi_native_release: ${{ steps.kimi-release.outputs.should_publish }}
-      kimi_release_tag: ${{ steps.kimi-release.outputs.tag }}
     permissions:
       contents: write
       pull-requests: write
@@ -97,6 +238,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ needs.candidate.outputs.sha }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -121,15 +263,20 @@ jobs:
           node apps/kimi-code/scripts/update-catalog.mjs --out "$CATALOG_FILE"
           echo "KIMI_CODE_BUILT_IN_CATALOG_FILE=$CATALOG_FILE" >> "$GITHUB_ENV"
 
-      - name: Build packages
-        run: pnpm build
+      - name: Build publishable npm workspaces and their dependencies
+        shell: bash
+        run: |
+          publishable=$(pnpm -r list --depth -1 --json | jq -er '.[] | select(.private == false) | .name')
+          filters=()
+          while IFS= read -r pkg; do filters+=(--filter "${pkg}..."); done <<< "$publishable"
+          pnpm -r "${filters[@]}" run build
 
       - name: Create Release Pull Request or Publish to npm
         id: changesets
         uses: changesets/action@v1
         with:
           publish: pnpm changeset publish
-          version: pnpm run version:release
+          version: node scripts/version-release.mjs
           commit: "ci: release packages"
           title: "ci: release packages"
         env:
@@ -143,12 +290,30 @@ jobs:
         env:
           CHANGESETS_PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
 
+      - name: Set Kimi Code release title
+        if: steps.kimi-release.outputs.should_publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.kimi-release.outputs.tag }}
+          PLANNED_TAG: ${{ needs.candidate.outputs.cli-tag }}
+          RELEASE_VERSION: ${{ steps.kimi-release.outputs.version }}
+        run: |
+          if [[ "$RELEASE_TAG" != "$PLANNED_TAG" ]]; then
+            echo 'Published CLI tag does not match the planned native build' >&2
+            exit 1
+          fi
+          gh release edit "$RELEASE_TAG" --title "Kimi Code CLI ${RELEASE_VERSION}"
+
   native-artifacts:
     name: Native release artifact
-    needs: release
-    if: needs.release.outputs.kimi_native_release == 'true'
+    needs: candidate
+    if: needs.candidate.outputs.publish == 'true' && needs.candidate.outputs.cli-tag != ''
+    permissions:
+      actions: read
+      contents: read
     uses: ./.github/workflows/_native-build.yml
     with:
+      sha: ${{ needs.candidate.outputs.sha }}
       upload-artifact-prefix: kimi-code-native
       retention-days: 7
       sign-macos: true
@@ -163,12 +328,54 @@ jobs:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
 
+  compress-native:
+    name: Compress native archive (${{ matrix.target }})
+    needs: [candidate, native-artifacts]
+    if: needs.candidate.outputs.cli-tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.candidate.outputs.cli-targets) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.candidate.outputs.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: kimi-code-native-${{ matrix.target }}
+          path: dist-compressed
+      - name: Compress and checksum the signed binary
+        working-directory: dist-compressed
+        env:
+          TARGET: ${{ matrix.target }}
+          TAG: ${{ needs.candidate.outputs.cli-tag }}
+        run: |
+          sha256sum --check "kimi-code-${TARGET}.zip.sha256"
+          node ../apps/kimi-code/scripts/native/produce-manifest.mjs . "$TAG"
+          mv manifest.json "manifest-${TARGET}.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kimi-code-native-compressed-${{ matrix.target }}
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist-compressed/*.zst*
+            dist-compressed/*.tar.gz*
+            dist-compressed/manifest-*.json
+
   publish-native-assets:
     name: Publish native release assets
     needs:
+      - candidate
       - release
-      - native-artifacts
-    if: needs.release.outputs.kimi_native_release == 'true'
+      - compress-native
+    if: needs.candidate.outputs.cli-tag != '' && (needs.release.outputs.kimi_native_release == 'true' || github.run_attempt > 1 || github.event_name == 'workflow_dispatch')
+    env:
+      RELEASE_TAG: ${{ needs.candidate.outputs.cli-tag }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -176,6 +383,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.candidate.outputs.sha }}
 
       - name: Download native artifacts
         uses: actions/download-artifact@v8
@@ -184,16 +393,24 @@ jobs:
           path: dist-native-release
           merge-multiple: true
 
-      - name: Produce manifest.json
-        env:
-          RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
-        run: node apps/kimi-code/scripts/native/produce-manifest.mjs dist-native-release "$RELEASE_TAG"
+      - name: Merge the six platform manifests
+        run: node apps/kimi-code/scripts/native/merge-platform-manifests.mjs dist-native-release "$RELEASE_TAG"
 
-      - name: Upload assets to GitHub Release
+      - name: Verify previously published CLI before retrying the upload
+        id: retry
+        if: needs.release.outputs.kimi_native_release != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
-        run: gh release upload "$RELEASE_TAG" dist-native-release/* --clobber
+          RELEASE_SHA: ${{ needs.candidate.outputs.sha }}
+        run: node scripts/release.mjs check-cli-retry
+
+      - name: Upload assets to GitHub Release
+        if: needs.release.outputs.kimi_native_release == 'true' || steps.retry.outputs.complete == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$RELEASE_TAG" dist-native-release/kimi-code-* --clobber
+          gh release upload "$RELEASE_TAG" dist-native-release/manifest.json --clobber
 
   deploy-docs:
     needs: publish-native-assets

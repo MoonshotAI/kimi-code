@@ -15,8 +15,8 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { BashInput } from '#/agent/tools/os/bash/bash';
 import type { SubagentToolInput } from '#/agent/tools/agent/agent';
+import { toolExecutorHook } from '../../harness/toolHooks';
 import {
-  composeToolExecutorHooks,
   memoryOutputStore,
   ToolExecutor as HandlerToolExecutor,
   type LegacyToolAgentContext,
@@ -47,7 +47,7 @@ export function startBashTask(ctx: TestAgentContext, args: BashInput) {
     id: toolCallId,
     name: 'Bash',
     arguments: JSON.stringify(args),
-  }, { turnId: 0 });
+  }, { origin: 'loop', turnId: 0 });
 }
 
 export function startAgentTask(ctx: TestAgentContext, args: SubagentToolInput) {
@@ -57,7 +57,7 @@ export function startAgentTask(ctx: TestAgentContext, args: SubagentToolInput) {
     id: `agent-task-${String(++agentTaskSequence)}`,
     name: 'Agent',
     arguments: JSON.stringify(args),
-  }, { turnId: 0 });
+  }, { origin: 'loop', turnId: 0 });
 }
 
 let loopTaskSequence = 0;
@@ -101,9 +101,7 @@ async function startRegisteredTaskInLoop(
     name,
     arguments: JSON.stringify(args),
   });
-  if (args.run_in_background !== true && args.background !== true) {
-    ctx.mockNextResponse({ type: 'text', text: `${name} started` });
-  }
+  ctx.mockNextResponse({ type: 'text', text: `${name} started` });
   await ctx.rpc.prompt({ input: [{ type: 'text', text: `start ${name}` }] });
   const live = await Promise.race([created, ctx.get(IAgentLoopService).settled().then(() => undefined)]);
   if (live === undefined) throw new Error(`${name} did not start`);
@@ -212,7 +210,7 @@ export function createTaskChannel(
   const raw = new HandlerToolExecutor<LegacyToolAgentContext>([], {
     outputStore: store,
     get hook() {
-      return composeToolExecutorHooks(hooks);
+      return toolExecutorHook(hooks);
     },
   });
   const reduced = new AgentTaskService('main');
@@ -480,7 +478,7 @@ export async function startControlledTask(
     id: toolCallId,
     name: 'ControlledTask',
     arguments: '{}',
-  }, { turnId: 0 });
+  }, { origin: 'loop', turnId: 0 });
   channel.handlers.set(handler.taskId, handler);
   for (let attempt = 0; attempt < 50 && handler.snapshot().fields['task'] === undefined; attempt++) {
     await Promise.resolve();

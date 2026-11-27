@@ -1,15 +1,3 @@
-/**
- * DockSection — a panel made of a fixed head, a body and a fixed foot.
- *
- * Inline (regular mode, no `DockLayout`) the three parts simply stack and the
- * host's GutterContainer pads them. Docked (fullscreen) the section sits in
- * the layout tree itself: each part carries its own gutter, the body lives in
- * a ScrollView capped at `maxBodyRows` and scrolls with the wheel, and the
- * head and foot never shrink — so a long body cannot push the foot (options,
- * key hints) off the screen. A part that takes focus on a click hands it to
- * the whole section.
- */
-
 import {
   ScrollView,
   VStack,
@@ -29,26 +17,45 @@ export interface DockLayout {
 
 export type DockPart = 'head' | 'body' | 'foot';
 
-/**
- * Keeps the scrollbar column reserved but paints the bar only while the body
- * overflows, so a short body shows no track and a long one always shows where
- * it is.
- */
 class OverflowScrollView extends ScrollView {
+  private overflowChanged = false;
+  private lastContentHeight = 0;
+
+  constructor(
+    component: Component,
+    private readonly onWheel?: () => void,
+  ) {
+    super(component, {
+      overscroll: 'contain',
+      scrollbar: 'always',
+    });
+  }
+
+  get measuredContentHeight(): number {
+    return this.lastContentHeight;
+  }
+
   override get isScrollbarVisible(): boolean {
     return this.canScroll;
   }
 
   override updateLayout(contentHeight: number, viewportHeight: number, requestRender: () => void): void {
     const overflowed = this.canScroll;
+    this.lastContentHeight = Math.max(0, Math.floor(contentHeight));
     super.updateLayout(contentHeight, viewportHeight, requestRender);
-    if (this.canScroll !== overflowed) requestRender();
+    if (this.canScroll !== overflowed) this.overflowChanged = true;
+  }
+
+  consumeOverflowChange(): boolean {
+    if (!this.overflowChanged) return false;
+    this.overflowChanged = false;
+    return true;
   }
 
   override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
-    // Consume the wheel here so the renderer's fallback cannot hand overscroll to the transcript.
     if (event.type !== 'wheel') return undefined;
     this.scrollBy(event.wheelDelta ?? 0);
+    this.onWheel?.();
     return { handled: true, target: mouseTarget(this, event) };
   }
 }
@@ -64,7 +71,7 @@ function mouseTarget(component: Component, event: TuiMouseEvent): TuiMouseDispat
 }
 
 export abstract class DockSection extends VStack {
-  private readonly bodyScroll: ScrollView | undefined;
+  private readonly bodyScroll: OverflowScrollView | undefined;
 
   constructor(readonly layout?: DockLayout) {
     super();
@@ -86,26 +93,37 @@ export abstract class DockSection extends VStack {
       this.addChild(view('foot'));
       return;
     }
-    this.bodyScroll = new OverflowScrollView(padded(view('body')), {
-      overscroll: 'contain',
-      scrollbar: 'always',
+    this.bodyScroll = new OverflowScrollView(padded(view('body')), () => {
+      this.onBodyScrolled();
     });
     this.addChild(padded(view('head')), { shrink: 0 });
     this.addChild(this.bodyScroll, { shrink: 1, minSize: 0, maxSize: layout.maxBodyRows });
     this.addChild(padded(view('foot')), { shrink: 0 });
   }
 
-  /** Scroll a docked body by `lines`; false when it did not move (inline, or already at the edge). */
   scrollBody(lines: number): boolean {
     if (this.bodyScroll === undefined) return false;
     return this.bodyScroll.scrollBy(lines) !== lines;
   }
 
-  /**
-   * Whether a docked body is taller than its rows, judged from a head or foot
-   * render at `partWidth`: the body renders one column narrower (the
-   * scrollbar's), and the last layout covers a dock squeezed below the cap.
-   */
+  protected ensureBodyVisible(startRow: number, endRow: number): void {
+    const scroll = this.bodyScroll;
+    if (scroll === undefined) return;
+    const viewport = scroll.viewportHeight;
+    if (viewport <= 0) return;
+    if (startRow < scroll.scrollTop) {
+      scroll.scrollTo(startRow);
+    } else if (endRow > scroll.scrollTop + viewport) {
+      scroll.scrollTo(Math.max(0, endRow - viewport));
+    }
+  }
+
+  protected isBodyScrolledNearEnd(thresholdRows = 3): boolean {
+    const scroll = this.bodyScroll;
+    if (scroll === undefined || !scroll.canScroll) return false;
+    return scroll.scrollTop + scroll.viewportHeight + thresholdRows >= scroll.measuredContentHeight;
+  }
+
   protected bodyOverflows(partWidth: number): boolean {
     if (this.layout === undefined || this.bodyScroll === undefined) return false;
     return (
@@ -117,6 +135,12 @@ export abstract class DockSection extends VStack {
   scrollBodyToTop(): void {
     this.bodyScroll?.scrollToStart();
   }
+
+  consumeOverflowChange(): boolean {
+    return this.bodyScroll?.consumeOverflowChange() ?? false;
+  }
+
+  protected onBodyScrolled(): void {}
 
   protected abstract renderPart(part: DockPart, width: number): string[];
 

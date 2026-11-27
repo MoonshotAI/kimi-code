@@ -1,7 +1,8 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -11,8 +12,9 @@ import {
   IAgentLifecycleService,
   IAgentToolRegistryService,
   IAtomicDocumentStore,
+  ISessionMcpHandle,
   type ISessionScopeHandle,
-  IWorkspaceInstanceManager,
+  IProjectInstanceManager,
   resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
@@ -362,13 +364,36 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(promoted.body.data.root).toBe(extra);
     expect(promoted.body.data.additional_dirs).toEqual([root]);
 
-    const session = await postJson<{ workspace_id: string; metadata: { cwd: string } }>(
+    const session = await postJson<{ workspace_id: string; cwd: string }>(
       '/api/v1/sessions',
       { workspace_id: id },
     );
     expect(session.body.code).toBe(0);
     expect(session.body.data.workspace_id).toBe(id);
-    expect(session.body.data.metadata.cwd).toBe(extra);
+    expect(session.body.data.cwd).toBe(extra);
+  });
+
+  it('rejects promoting a folder of an implicit workspace with WORKSPACE_PRIMARY_IMMUTABLE (40941)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-implicit-primary-'));
+    try {
+      const extra = join(root, 'candidate');
+      await mkdir(extra);
+      const session = await postJson<{ workspace_id: string }>('/api/v1/sessions', { cwd: root });
+      const id = session.body.data.workspace_id;
+      expect((await patchJson<WorkspaceWire>(`/api/v1/workspaces/${id}`, { additional_dirs: [extra] })).body.code).toBe(0);
+
+      const rejected = await postJson<null>(`/api/v1/workspaces/${id}/primary`, { path: extra });
+
+      expect(rejected.body.code).toBe(40941);
+      const listed = await getJson<{ items: WorkspaceWire[] }>('/api/v1/workspaces');
+      expect(listed.body.data.items.find((item) => item.id === id)).toMatchObject({
+        kind: 'implicit',
+        root,
+        additional_dirs: [extra],
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('rejects invalid primary paths and unknown workspaces (40001/40409/40410)', async () => {
@@ -494,7 +519,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     await vi.waitFor(async () => {
       const { body } = await getJson<ListWire>('/api/v1/workspaces');
       expect(body.code).toBe(0);
-      const unions = body.data.items.filter((w) => [typedId, lowerId].includes(w.id));
+      const unions = body.data.items.filter((w) => w.id === typedId || w.id === lowerId);
       expect(unions).toHaveLength(1);
       expect(unions[0]?.session_count).toBe(2);
     });
@@ -506,7 +531,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
       expect(created.body.code).toBe(0);
       const id = created.body.data.id;
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const acquire = vi.spyOn(manager, 'acquire').mockRejectedValue(
         new Error('runtime environment unavailable'),
       );
@@ -528,6 +553,30 @@ describe('server-v2 /api/v1/workspaces', () => {
       }
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a project trusted only through its primary record and clears every directory record on untrust', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-primary-'));
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-extra-'));
+    try {
+      const neighbour = await postJson<WorkspaceWire>('/api/v1/workspaces', { root: extra });
+      const trustedNeighbour = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${neighbour.body.data.id}/trust`);
+      expect(trustedNeighbour.body.data.trusted).toBe(true);
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root, additional_dirs: [extra] });
+      const id = created.body.data.id;
+
+      const initial = await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+      expect(initial.body.data.trusted).toBe(false);
+
+      await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+      const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
+      expect(revoked.body.data.trusted).toBe(false);
+      const neighbourAfter = await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${neighbour.body.data.id}/trust`);
+      expect(neighbourAfter.body.data.trusted).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(extra, { recursive: true, force: true });
     }
   });
 
@@ -607,7 +656,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       const id = created.body.data.id;
       const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
       await docs.set('workspace-trust', encodeWorkDirKey(root), { root, trustedAt: 1 });
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const read = docs.get.bind(docs);
       let shouldFail = true;
       let failed = false;
@@ -620,12 +669,13 @@ describe('server-v2 /api/v1/workspaces', () => {
       });
       let release: (() => void) | undefined;
       try {
-        const lease = await manager.acquire({ workspaceId: id, root });
+        const lease = await manager.acquire({ workspaceId: id });
         release = () => lease.dispose();
         const workspace = lease.instance;
-        await workspace.program.mcpConfig.ready;
+        const mcp = (await workspace.program.acquireMcp()).service;
+        await mcp.ready;
         expect(failed).toBe(true);
-        expect(workspace.program.mcpConfig.servers()).toEqual({});
+        expect(mcp.connectionManager().list()).toEqual([]);
         const recovered: boolean[] = [];
         workspace.program.trust.onDidChange((change) => recovered.push(change.trusted));
         shouldFail = false;
@@ -636,7 +686,7 @@ describe('server-v2 /api/v1/workspaces', () => {
         expect(workspace.program.trust.isTrusted()).toBe(true);
 
         await vi.waitFor(() => {
-          expect(workspace.program.mcpConfig.servers()).toHaveProperty('projectOnly');
+          expect(mcp.connectionManager().get('projectOnly')).toBeDefined();
         });
         expect(recovered).toEqual([true]);
       } finally {
@@ -661,7 +711,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
       const id = created.body.data.id;
       const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const read = docs.get.bind(docs);
       let shouldFail = true;
       let failed = false;
@@ -674,12 +724,13 @@ describe('server-v2 /api/v1/workspaces', () => {
       });
       let release: (() => void) | undefined;
       try {
-        const lease = await manager.acquire({ workspaceId: id, root });
+        const lease = await manager.acquire({ workspaceId: id });
         release = () => lease.dispose();
         const workspace = lease.instance;
-        await workspace.program.mcpConfig.ready;
+        const mcp = (await workspace.program.acquireMcp()).service;
+        await mcp.ready;
         expect(failed).toBe(true);
-        expect(workspace.program.mcpConfig.servers()).toEqual({});
+        expect(mcp.connectionManager().list()).toEqual([]);
         shouldFail = false;
 
         const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
@@ -687,7 +738,7 @@ describe('server-v2 /api/v1/workspaces', () => {
         expect(revoked.body.data.trusted).toBe(true);
 
         await vi.waitFor(() => {
-          expect(workspace.program.mcpConfig.servers()).toHaveProperty('projectOnly');
+          expect(mcp.connectionManager().get('projectOnly')).toBeDefined();
         });
       } finally {
         get.mockRestore();
@@ -704,10 +755,10 @@ describe('server-v2 /api/v1/workspaces', () => {
     const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
     expect(created.body.code).toBe(0);
     const id = created.body.data.id;
-    const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+    const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
     let release: (() => void) | undefined;
     try {
-      const lease = await manager.acquire({ workspaceId: id, root });
+      const lease = await manager.acquire({ workspaceId: id });
       release = () => lease.dispose();
       const workspace = lease.instance;
       await workspace.program.trust.ready;
@@ -803,8 +854,8 @@ describe('server-v2 /api/v1/workspaces', () => {
       expect(result.isError).not.toBe(true);
       return JSON.stringify(result.output);
     };
-    const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
-    const lease = await manager.acquire({ workspaceId, root: dirA });
+    const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
+    const lease = await manager.acquire({ workspaceId });
     const instance = lease.instance;
     const program = instance.program;
 
@@ -853,9 +904,9 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(await run('Read', { path: join(dirC, 'c.txt') })).toContain('from-c');
     expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${dirB}\n`));
 
-    const reloaded = await postJson<{ metadata: { cwd: string } }>(`/api/v1/sessions/${sessionId}:reload`);
+    const reloaded = await postJson<{ cwd: string }>(`/api/v1/sessions/${sessionId}:reload`);
     expect(reloaded.body.code).toBe(0);
-    expect(reloaded.body.data.metadata.cwd).toBe(dirB);
+    expect(reloaded.body.data.cwd).toBe(dirB);
     session = getLiveSessionById((server as RunningServer).core.accessor, sessionId)!;
     agent = await ensureAgent(session);
     registry = agent.accessor.get(IAgentToolRegistryService);
@@ -887,4 +938,92 @@ describe('server-v2 /api/v1/workspaces', () => {
     const explicitResumedAgent = await ensureAgent(explicitResumed);
     expect(explicitResumedAgent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(dirA);
   }, 30_000);
+
+  describe('project MCP servers of sessions in several working directories', () => {
+    interface McpSession {
+      readonly workspaceId: string;
+      readonly servers: () => string[];
+    }
+
+    async function directoryWith(server: string, dir: string): Promise<string> {
+      await mkdir(join(dir, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(dir, '.kimi-code', 'mcp.json'),
+        JSON.stringify({ mcpServers: { [server]: { command: 'never-runs', enabled: false } } }),
+      );
+      return dir;
+    }
+
+    async function repositoryWithServers(): Promise<Record<'lab' | 'root' | 'src' | 'worktree', string>> {
+      const lab = await realpath(await mkdtemp(join(home as string, 'mcp-workdirs-')));
+      const { main, worktree } = await createGitWorktree({ main: join(lab, 'app'), worktree: join(lab, 'app-fix') });
+      return {
+        lab,
+        root: await directoryWith('home', main),
+        src: await directoryWith('planted', join(main, 'src')),
+        worktree: await directoryWith('worktree', worktree),
+      };
+    }
+
+    async function openSession(request: Record<string, unknown>): Promise<McpSession> {
+      const created = await postJson<{ id: string; workspace_id: string }>('/api/v1/sessions', request);
+      expect(created.body.code).toBe(0);
+      const mcp = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!.accessor.get(ISessionMcpHandle);
+      await mcp.ready;
+      return {
+        workspaceId: created.body.data.workspace_id,
+        servers: () =>
+          mcp.connectionManager.list().filter((entry) => entry.status !== 'removed').map((entry) => entry.name).toSorted(),
+      };
+    }
+
+    it.each(['managed', 'implicit'] as const)('switches with the trust of a %s project in every checkout', async (kind) => {
+      const { root, src, worktree } = await repositoryWithServers();
+      const project = kind === 'managed'
+        ? { workspace_id: (await postJson<WorkspaceWire>('/api/v1/workspaces', { root })).body.data.id }
+        : {};
+      const sessions: McpSession[] = [];
+      for (const cwd of [root, src, worktree]) sessions.push(await openSession({ ...project, cwd }));
+      const id = sessions[0]!.workspaceId;
+      const everywhere = () => sessions.map(({ servers }) => servers());
+      expect(sessions.map(({ workspaceId }) => workspaceId)).toEqual([id, id, id]);
+      expect(everywhere()).toEqual([[], [], []]);
+
+      expect((await postJson(`/api/v1/workspaces/${id}/trust`)).body.code).toBe(0);
+      await vi.waitFor(() => {
+        expect(everywhere()).toEqual([['home'], ['home'], ['worktree']]);
+      });
+
+      expect((await postJson(`/api/v1/workspaces/${id}/untrust`)).body.code).toBe(0);
+      await vi.waitFor(() => {
+        expect(everywhere()).toEqual([[], [], []]);
+      });
+
+      expect((await postJson(`/api/v1/workspaces/${id}/trust`)).body.code).toBe(0);
+      await vi.waitFor(() => {
+        expect(everywhere()).toEqual([['home'], ['home'], ['worktree']]);
+      });
+    });
+
+    it('follows a new primary directory and leaves the worktree of a pinned session alone', async () => {
+      vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
+      try {
+        const { lab, root, worktree } = await repositoryWithServers();
+        const next = await directoryWith('moved', join(lab, 'next'));
+        const id = (await postJson<WorkspaceWire>('/api/v1/workspaces', { root, additional_dirs: [next] })).body.data.id;
+        const following = await openSession({ workspace_id: id });
+        const pinned = await openSession({ workspace_id: id, environment_id: 'local', environment_cwd: worktree });
+        expect([following.servers(), pinned.servers()]).toEqual([['home'], ['worktree']]);
+
+        expect((await postJson(`/api/v1/workspaces/${id}/primary`, { path: next })).body.code).toBe(0);
+
+        await vi.waitFor(() => {
+          expect(following.servers()).toEqual(['moved']);
+        });
+        expect(pinned.servers()).toEqual(['worktree']);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+  });
 });

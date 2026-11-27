@@ -2,7 +2,7 @@ import type { SessionRatingHost } from '@moonshot-ai/kimi-code-product/session-r
 import { z } from 'zod';
 
 import { okEnvelope } from '../envelope';
-import { defineRoute } from '../middleware/defineRoute';
+import { defineRoute, type PostRouteHost } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   sessionRatingRequestSchema,
@@ -10,19 +10,8 @@ import {
 } from '../protocol/rest-session-rating';
 import type { ConversationService } from '../services/conversation/conversationService';
 
-interface SessionRatingRouteHost {
-  post(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
-    handler: (
-      req: { id: string; body: unknown; params: unknown; headers: Record<string, unknown> },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-}
-
 export function registerSessionRatingRoutes(
-  app: SessionRatingRouteHost,
+  app: PostRouteHost,
   sessionRating: SessionRatingHost,
   conversations: ConversationService,
 ): void {
@@ -68,6 +57,6 @@ export function registerSessionRatingRoutes(
   app.post(
     route.path,
     route.options,
-    route.handler as Parameters<SessionRatingRouteHost['post']>[2],
+    route.handler as Parameters<PostRouteHost['post']>[2],
   );
 }

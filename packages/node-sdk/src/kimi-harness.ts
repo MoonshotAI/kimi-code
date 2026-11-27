@@ -42,6 +42,7 @@ import type {
   ReloadSessionInput,
   RefreshProviderModelsOptions,
   RefreshProviderModelsResponse,
+  SessionPlacement,
   SessionSummary,
   SessionSummaryPage,
   SkillSummary,
@@ -59,6 +60,16 @@ import type {
   WorkspaceTrustInfo,
   WorkspaceTrustInfoOptions,
 } from '#/types';
+import type {
+  CreatedWorktree,
+  CreateWorktreeInput,
+  CreateWorktreeOptions,
+  InspectWorktreeRemovalInput,
+  RemoveWorktreeInput,
+  WorkLocation,
+  WorktreeListing,
+  WorktreeRemovalCheck,
+} from '#/worktree';
 
 export interface KimiHarnessEnvironmentOptions {
   readonly identity?: KimiHostIdentity;
@@ -184,9 +195,6 @@ export class KimiHarness {
       sessionStartedProperties: _sessionStartedProperties,
       ...resumeInput
     } = stripLegacyKaosOptions(input);
-    // A session whose close is in flight (`isClosed` but not yet unmapped)
-    // is not a valid resume target — fall through and re-resume fresh, which
-    // the engine serializes behind that close.
     if (active !== undefined && !active.isClosed) {
       if (input.agentProfile !== undefined) {
         await this.rpc.resumeSession({ ...resumeInput, id });
@@ -194,12 +202,6 @@ export class KimiHarness {
       return active;
     }
 
-    // Coalesce concurrent resumes of the same id onto one facade, keyed by
-    // the full input so a caller with different options (dirs, replay,
-    // profile) never has them silently dropped; without this,
-    // parallel identical callers each build their own Session over the
-    // shared engine handle, and one facade's close kills the engine handle
-    // under the other.
     const key = resumeCoalesceKey(id, input);
     const inflight = this.resumeInflight.get(key);
     if (inflight !== undefined) return inflight;
@@ -385,6 +387,26 @@ export class KimiHarness {
     return this.rpc.getGitPullRequest(workDir, input);
   }
 
+  async resolveWorkLocation(cwd: string): Promise<WorkLocation> {
+    return this.rpc.resolveWorkLocation(cwd);
+  }
+
+  async listWorktrees(cwd: string): Promise<WorktreeListing> {
+    return this.rpc.listWorktrees(cwd);
+  }
+
+  async createWorktree(input: CreateWorktreeInput, options?: CreateWorktreeOptions): Promise<CreatedWorktree> {
+    return this.rpc.createWorktree(input, options);
+  }
+
+  async inspectWorktreeRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck> {
+    return this.rpc.inspectWorktreeRemoval(input);
+  }
+
+  async removeWorktree(input: RemoveWorktreeInput): Promise<void> {
+    return this.rpc.removeWorktree(input);
+  }
+
   /**
    * App-global plugin command list, no session required. Empty on the v1
    * engine, which only exposes plugin commands through a live session.
@@ -408,8 +430,11 @@ export class KimiHarness {
    * one shared connection set per workspace `Program`, so `/mcp` is inspectable
    * before the first session exists; empty on the v1 engine.
    */
-  async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
-    return this.rpc.listWorkspaceMcpServers(workDir);
+  async listWorkspaceMcpServers(
+    workDir: string,
+    options?: Pick<CreateSessionOptions, 'environmentId' | 'environmentCwd'>,
+  ): Promise<readonly McpServerInfo[]> {
+    return this.rpc.listWorkspaceMcpServers(workDir, options);
   }
 
   async installPlugin(input: string | InstallPluginInput): Promise<PluginSummary> {
@@ -457,7 +482,8 @@ export class KimiHarness {
   /**
    * Trust state of `workDir` (agent-core-v2 only; the v1 engine reports an
    * always-trusted workspace). Querying may register the workDir as a
-   * workspace, which session creation would do anyway.
+   * workspace, which session creation would do anyway. With `sessionId`, the
+   * answer is about the project that session belongs to.
    */
   async getWorkspaceTrustInfo(
     workDir: string,
@@ -466,9 +492,23 @@ export class KimiHarness {
     return this.rpc.getWorkspaceTrustInfo(workDir, options);
   }
 
-  /** Mark `workDir` as trusted; project-level MCP servers connect live afterwards. */
-  async trustWorkspace(workDir: string): Promise<void> {
-    return this.rpc.trustWorkspace(workDir);
+  /**
+   * Mark `workDir`, or with `sessionId` the project that session belongs to,
+   * as trusted; project-level MCP servers connect live afterwards.
+   */
+  async trustWorkspace(
+    workDir: string,
+    options?: Pick<WorkspaceTrustInfoOptions, 'sessionId'>,
+  ): Promise<void> {
+    return this.rpc.trustWorkspace(workDir, options);
+  }
+
+  /**
+   * Where a session started in `workDir` is kept, for hosts that write session
+   * files themselves. A project that does not exist yet is registered.
+   */
+  async resolveSessionPlacement(workDir: string): Promise<SessionPlacement> {
+    return this.rpc.resolveSessionPlacement(workDir);
   }
 
   async getConfig(options: GetConfigOptions = {}): Promise<KimiConfig> {
@@ -684,11 +724,6 @@ export class KimiHarness {
       ...this.sessionStartedProperties,
       ...sessionScoped,
       ...this.sessionStartedDynamicProperties?.(),
-      // Canonical fields are owned by the harness and must win over any
-      // caller-supplied sessionStartedProperties that happen to share a key.
-      // A single-process host has no per-connection client id, so `client_id`
-      // stays empty; empty strings (unlike null) survive payload flattening,
-      // keeping the client-attribution keys present on every row.
       client_id: '',
       client_name: this.identity?.productName ?? '',
       client_version: this.identity?.version ?? '',
@@ -705,9 +740,6 @@ function resumeCoalesceKey(id: string, input: ResumeSessionInput): string {
 }
 
 function stripLegacyKaosOptions<T extends object>(input: T): T {
-  // JavaScript hosts may still pass the removed kaos options; keep them out of
-  // forwarded RPC inputs and serialized keys — custom implementations can hold
-  // circular runtime handles.
   const { kaos, persistenceKaos, ...rest } = input as T & {
     kaos?: unknown;
     persistenceKaos?: unknown;

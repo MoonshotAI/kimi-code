@@ -211,16 +211,10 @@ export type PluginInstallTrustConfirmResult =
   | { readonly kind: 'cancel' };
 
 export interface PluginInstallTrustConfirmOptions {
-  /** Plugin display name or source, shown in the title for identification. */
   readonly label: string;
   readonly onDone: (result: PluginInstallTrustConfirmResult) => void;
 }
 
-/**
- * Confirmation shown before installing a third-party (unofficial) plugin.
- * Defaults to "Exit" so the user must explicitly switch to "Trust and install"
- * to proceed with a plugin that Kimi has not reviewed.
- */
 export class PluginInstallTrustConfirmComponent extends ChoicePickerComponent {
   constructor(opts: PluginInstallTrustConfirmOptions) {
     super({
@@ -298,10 +292,6 @@ function pluginStatus(plugin: PluginSummary): string | undefined {
 }
 
 function marketplaceStatusStyle(status: string, colors: ColorPalette): (text: string) => string {
-  // States recede, actions pop: "installed …" is a quiet fact (dim), while
-  // "install …" (the available action) stays primary and "update …" stays a
-  // warning — the two used to share near-identical green-ish treatments in
-  // the same column and read as interchangeable.
   if (status.startsWith('update')) return chalk.hex(colors.warning);
   if (status.startsWith('installed') || status === 'cloud only') {
     return chalk.hex(colors.textDim);
@@ -309,8 +299,6 @@ function marketplaceStatusStyle(status: string, colors: ColorPalette): (text: st
   return chalk.hex(colors.primary);
 }
 
-/** Rounded single-line URL input box (DESIGN §9), shared by the marketplace
- * Custom tab and the unified plugins panel. */
 function renderUrlInputBox(
   input: Input,
   focused: boolean,
@@ -330,10 +318,6 @@ function renderUrlInputBox(
   ];
 }
 
-// ===========================================================================
-// Unified /plugins panel: Installed / Official / Curated / Custom tabs.
-// ===========================================================================
-
 export type PluginsPanelTabId = 'installed' | 'official' | 'third-party' | 'custom';
 
 export type PluginsPanelSelection =
@@ -352,10 +336,9 @@ export interface PluginsPanelOptions {
   readonly initialTab?: PluginsPanelTabId;
   readonly selectedId?: string;
   readonly pluginHint?: { readonly id: string; readonly text: string };
+  readonly terminalRows?: () => number;
   readonly onSelect: (selection: PluginsPanelSelection) => void;
   readonly onCancel: () => void;
-  /** Called the first time the Official or Curated tab needs its catalog.
-   * The host fetches the marketplace and calls setMarketplace / setMarketplaceError. */
   readonly onRequestMarketplace?: () => void;
 }
 
@@ -371,6 +354,10 @@ const PLUGINS_PANEL_TABS: readonly { id: PluginsPanelTabId; label: string }[] = 
   { id: 'third-party', label: 'Curated' },
   { id: 'custom', label: 'Custom' },
 ];
+const PLUGINS_PANEL_VISIBLE_CONTENT_LINES = 16;
+const PLUGINS_PANEL_MAX_PANEL_LINES = 28;
+const PLUGINS_PANEL_EXTERNAL_LINES = 2;
+const PLUGINS_PANEL_DEFAULT_TERMINAL_ROWS = 30;
 
 export class PluginsPanelComponent extends Container implements Focusable {
   focused = false;
@@ -379,6 +366,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
   private readonly customInput = new Input();
   private activeTabIndex: number;
   private selectedIndex = 0;
+  private listStart = 0;
   private market: MarketState = { status: 'idle' };
   private installing: string | undefined;
   private catalogVersions = new Map<string, string | undefined>();
@@ -392,7 +380,10 @@ export class PluginsPanelComponent extends Container implements Focusable {
     );
     if (opts.selectedId !== undefined && this.activeTab.id === 'installed') {
       const idx = opts.installed.findIndex((p) => p.id === opts.selectedId);
-      if (idx >= 0) this.selectedIndex = idx;
+      if (idx >= 0) {
+        this.selectedIndex = idx;
+        this.listStart = idx;
+      }
     }
     this.customInput.onSubmit = (value) => {
       const source = value.trim();
@@ -414,6 +405,8 @@ export class PluginsPanelComponent extends Container implements Focusable {
 
   setInstalled(plugins: readonly PluginSummary[]): void {
     this.opts.installed = plugins;
+    this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, plugins.length - 1));
+    this.listStart = Math.min(this.listStart, Math.max(0, plugins.length - 1));
   }
 
   setMarketplace(entries: readonly PluginMarketplaceEntry[], source: string): void {
@@ -497,15 +490,10 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private get thirdPartyEntries(): readonly PluginMarketplaceEntry[] {
-    // Anything not explicitly marked official lands here: `curated` entries plus
-    // entries that omit `tier` (custom marketplaces often do). Without this,
-    // untiered entries would be invisible in both marketplace tabs.
     return this.marketplaceEntries.filter((entry) => entry.tier !== 'official');
   }
 
   private requestMarketplaceIfNeeded(): void {
-    // The Installed tab also needs the catalog to render update badges; only the
-    // Custom tab (manual URL entry) can skip the fetch entirely.
     if (this.market.status === 'idle' && this.activeTab.id !== 'custom') {
       this.market = { status: 'loading' };
       this.opts.onRequestMarketplace?.();
@@ -520,6 +508,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     if (matchesKey(data, Key.tab)) {
       this.activeTabIndex = (this.activeTabIndex + 1) % PLUGINS_PANEL_TABS.length;
       this.selectedIndex = 0;
+      this.listStart = 0;
       this.requestMarketplaceIfNeeded();
       return;
     }
@@ -527,6 +516,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
       this.activeTabIndex =
         (this.activeTabIndex - 1 + PLUGINS_PANEL_TABS.length) % PLUGINS_PANEL_TABS.length;
       this.selectedIndex = 0;
+      this.listStart = 0;
       this.requestMarketplaceIfNeeded();
       return;
     }
@@ -547,18 +537,15 @@ export class PluginsPanelComponent extends Container implements Focusable {
   private handleInstalledInput(data: string): void {
     const plugins = this.opts.installed;
     if (matchesKey(data, Key.up)) {
-      this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+      this.moveListSelection(plugins.length, -1);
       return;
     }
     if (matchesKey(data, Key.down)) {
-      this.selectedIndex = Math.min(plugins.length - 1, this.selectedIndex + 1);
+      this.moveListSelection(plugins.length, 1);
       return;
     }
     const plugin = plugins[this.selectedIndex];
     const ch = printableChar(data);
-    // Decode Space for terminals that send printable keys via Kitty/CSI-u
-    // sequences (e.g. VS Code's integrated terminal); `matchesKey(Key.space)`
-    // alone misses those and the toggle silently stops working.
     if (matchesKey(data, Key.space) || ch === ' ') {
       if (plugin !== undefined) {
         this.opts.onSelect({ kind: 'toggle', id: plugin.id, enabled: !plugin.enabled });
@@ -595,11 +582,11 @@ export class PluginsPanelComponent extends Container implements Focusable {
   private handleMarketplaceInput(data: string): void {
     const entries = this.activeTab.id === 'official' ? this.officialEntries : this.thirdPartyEntries;
     if (matchesKey(data, Key.up)) {
-      this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+      this.moveListSelection(entries.length, -1);
       return;
     }
     if (matchesKey(data, Key.down)) {
-      this.selectedIndex = entries.length === 0 ? 0 : Math.min(entries.length - 1, this.selectedIndex + 1);
+      this.moveListSelection(entries.length, 1);
       return;
     }
     if (matchesKey(data, Key.enter)) {
@@ -607,6 +594,49 @@ export class PluginsPanelComponent extends Container implements Focusable {
       if (entry === undefined || marketplaceEntryIsCloudOnly(entry)) return;
       this.opts.onSelect({ kind: 'install', entry });
     }
+  }
+
+  private moveListSelection(total: number, delta: number): void {
+    this.selectedIndex = total === 0
+      ? 0
+      : Math.min(Math.max(0, this.selectedIndex + delta), total - 1);
+  }
+
+  private visibleListRange(rowLines: readonly number[], reservedLines: number): { start: number; end: number } {
+    const total = rowLines.length;
+    if (total === 0) {
+      this.listStart = 0;
+      return { start: 0, end: 0 };
+    }
+    const terminalRows = this.opts.terminalRows?.() ?? PLUGINS_PANEL_DEFAULT_TERMINAL_ROWS;
+    const maxLines = Math.max(
+      2,
+      Math.min(PLUGINS_PANEL_VISIBLE_CONTENT_LINES, terminalRows - reservedLines),
+    );
+    const rangeFrom = (start: number): { start: number; end: number } => {
+      let end = start;
+      let lines = 0;
+      while (end < total) {
+        const nextLines = rowLines[end]!;
+        if (end > start && lines + nextLines > maxLines) break;
+        lines += nextLines;
+        end++;
+        if (lines >= maxLines) break;
+      }
+      return { start, end };
+    };
+    const fullRange = rangeFrom(0);
+    if (fullRange.end === total) {
+      this.listStart = 0;
+      return fullRange;
+    }
+    const start = Math.max(0, Math.min(this.listStart, this.selectedIndex, total - 1));
+    let view = rangeFrom(start);
+    while (this.selectedIndex >= view.end && view.start < total - 1) {
+      view = rangeFrom(view.start + 1);
+    }
+    this.listStart = view.start;
+    return view;
   }
 
   override invalidate(): void {
@@ -645,6 +675,12 @@ export class PluginsPanelComponent extends Container implements Focusable {
     else if (tab === 'third-party') this.renderThirdParty(lines, width);
     else this.renderCustom(lines, width);
 
+    const terminalRows = this.opts.terminalRows?.() ?? PLUGINS_PANEL_DEFAULT_TERMINAL_ROWS;
+    const targetLines = Math.min(
+      PLUGINS_PANEL_MAX_PANEL_LINES,
+      Math.max(0, terminalRows - PLUGINS_PANEL_EXTERNAL_LINES),
+    );
+    while (lines.length < targetLines - 1) lines.push('');
     lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width, ELLIPSIS));
   }
@@ -652,15 +688,21 @@ export class PluginsPanelComponent extends Container implements Focusable {
   private renderInstalled(lines: string[], width: number): void {
     const { installed } = this.opts;
     const colors = currentTheme.palette;
+    const rows = installed.map((plugin, index) => this.renderInstalledRow(plugin, index, width));
+    const reservedLines = lines.length + 3 + PLUGINS_PANEL_EXTERNAL_LINES;
+    const view = this.visibleListRange(rows.map((row) => row.length), reservedLines);
     if (installed.length === 0) {
       lines.push(chalk.hex(colors.textMuted)('  No plugins installed.'));
     } else {
-      for (let i = 0; i < installed.length; i++) {
-        lines.push(...this.renderInstalledRow(installed[i]!, i, width));
+      for (let i = view.start; i < view.end; i++) {
+        lines.push(...rows[i]!);
       }
     }
     lines.push('');
-    lines.push(mutedHintLine(` ${installed.length} installed`, colors));
+    const summary = view.start > 0 || view.end < installed.length
+      ? ` ${this.selectedIndex + 1} / ${installed.length} installed`
+      : ` ${installed.length} installed`;
+    lines.push(mutedHintLine(summary, colors));
   }
 
   private marketplaceHint(): string {
@@ -674,7 +716,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     const plugin = this.opts.installed[this.selectedIndex];
     const hasUpdate = plugin !== undefined && this.installedUpdateStatus(plugin) !== undefined;
     const enter = hasUpdate ? 'Enter update' : 'Enter details';
-    return ` Tab switch · Space toggle · D remove · M MCP · ${enter} · I details · R reload · Esc cancel`;
+    return ` Tab switch · ↑↓ navigate · Space toggle · D remove · M MCP · ${enter} · I details · R reload · Esc cancel`;
   }
 
   private installedUpdateStatus(
@@ -731,23 +773,23 @@ export class PluginsPanelComponent extends Container implements Focusable {
       lines.push(mutedHintLine('  Use the Custom tab to install from a URL.', colors));
       if (entries.length === 0) return;
     }
+    const rows = entries.map((entry, index) => this.renderMarketplaceRow(entry, index, width));
+    const reservedLines = lines.length + 3 +
+      (this.market.status === 'loaded' ? 1 : 0) + PLUGINS_PANEL_EXTERNAL_LINES;
+    const view = this.visibleListRange(rows.map((row) => row.length), reservedLines);
     if (entries.length === 0) {
       lines.push(chalk.hex(colors.textMuted)('  No plugins found.'));
     } else {
-      for (let i = 0; i < entries.length; i++) {
-        lines.push(...this.renderMarketplaceRow(entries[i]!, i, width));
+      for (let i = view.start; i < view.end; i++) {
+        lines.push(...rows[i]!);
       }
     }
     const installedCount = entries.filter((entry) =>
       this.isMarketplaceEntryInstalled(entry),
     ).length;
     lines.push('');
-    lines.push(
-      mutedHintLine(
-        ` ${installedCount} installed · ${entries.length - installedCount} available`,
-        colors,
-      ),
-    );
+    const position = entries.length > 0 ? `${this.selectedIndex + 1} / ${entries.length} · ` : '';
+    lines.push(mutedHintLine(` ${position}${installedCount} installed`, colors));
     if (this.market.status === 'loaded') {
       lines.push(mutedHintLine(` Source: ${this.market.source}`, colors));
     }
@@ -786,13 +828,13 @@ export class PluginsPanelComponent extends Container implements Focusable {
     const description = isOfficial
       ? officialMarketplaceEntryDescription(entry)
       : marketplaceEntryDescription(entry);
-    for (const descLine of wrapOverviewDescription(description, descWidth)) {
-      out.push(mutedHintLine(`    ${descLine}`, colors));
+    const descriptionLines = wrapOverviewDescription(description, descWidth);
+    const visibleDescriptionLines = descriptionLines.slice(0, 3);
+    if (descriptionLines.length > 3) {
+      visibleDescriptionLines[2] = truncateToWidth(`${visibleDescriptionLines[2]}…`, descWidth, ELLIPSIS);
     }
-    if (!isOfficial) {
-      for (const metadataLine of wrapOverviewDescription(marketplaceEntryMetadata(entry), descWidth)) {
-        out.push(mutedHintLine(`    ${metadataLine}`, colors));
-      }
+    for (const descLine of visibleDescriptionLines) {
+      out.push(mutedHintLine(`    ${descLine}`, colors));
     }
     return out;
   }
@@ -853,18 +895,6 @@ function mcpItemServerName(item: PluginsOverviewItem): string | undefined {
 
 function marketplaceEntryDescription(entry: PluginMarketplaceEntry): string {
   return pluginMarketplaceCliDescription(entry) ?? marketplaceTierLabel(entry.tier);
-}
-
-function marketplaceEntryMetadata(entry: PluginMarketplaceEntry): string {
-  const version = entry.version !== undefined ? ` · v${entry.version}` : '';
-  const tier = pluginMarketplaceCliDescription(entry) !== undefined
-    ? ` · ${marketplaceTierLabel(entry.tier)}`
-    : '';
-  const keywords =
-    entry.keywords !== undefined && entry.keywords.length > 0
-      ? ` · ${entry.keywords.join(', ')}`
-      : '';
-  return `id ${entry.id}${version}${tier}${keywords}`;
 }
 
 function officialMarketplaceEntryDescription(entry: PluginMarketplaceEntry): string {

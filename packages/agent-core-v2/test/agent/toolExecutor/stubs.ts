@@ -10,8 +10,8 @@ import type {
 import type { LegacyAfterContext, LegacyDecisionContext } from '#/agent/toolExecutor/legacyHooks';
 import { OrderedHookSlot } from '#/hooks';
 import { BeforeToolExecuteEmitter } from '#/agent/toolExecutor/beforeToolExecuteEvent';
+import { toolExecutorHook } from '../../harness/toolHooks';
 import {
-  composeToolExecutorHooks,
   textToolContent,
   ToolExecutor,
   type ToolReturn,
@@ -62,14 +62,17 @@ export function stubToolExecutorEvents(): ToolExecutorEventStubs {
     didExecuteSlot,
     fireBeforeExecute: async (context) => {
       const beforeDecision = await beforeEmitter.fireBeforeExecute(context);
-      if (beforeDecision !== undefined) return beforeDecision;
+      if (beforeDecision?.veto !== undefined || beforeDecision?.allow === true) return beforeDecision;
       const decisionContext = decisionContextOf(context);
-      const starting = await composeToolExecutorHooks(hooks).starting?.(decisionContext);
-      if (starting !== undefined && 'skipPermitting' in starting) return { allow: true };
+      const starting = await toolExecutorHook(hooks).starting?.(decisionContext);
+      if (starting !== undefined && 'skipPermitting' in starting) {
+        const metadata = decisionContext.context.metadata;
+        return metadata === undefined ? { allow: true } : { allow: true, executionMetadata: metadata };
+      }
       if (starting !== undefined && 'reject' in starting && starting.result !== undefined) {
         return { veto: oldResult(starting.result) };
       }
-      const permitting = await composeToolExecutorHooks(hooks).permitting?.(decisionContext);
+      const permitting = await toolExecutorHook(hooks).permitting?.(decisionContext);
       if (permitting !== undefined && 'reject' in permitting && permitting.result !== undefined) {
         return { veto: oldResult(permitting.result) };
       }
@@ -78,7 +81,7 @@ export function stubToolExecutorEvents(): ToolExecutorEventStubs {
         : { executionMetadata: decisionContext.context.metadata };
     },
     fireWillExecute: async (data, signal) => {
-      await composeToolExecutorHooks(hooks).beforeExecute?.(decisionContextOf({
+      await toolExecutorHook(hooks).beforeExecute?.(decisionContextOf({
         ...data,
         toolCalls: [data.toolCall],
         signal,
@@ -92,7 +95,7 @@ function decisionContextOf(context: ResolvedToolExecutionHookContext): LegacyDec
     ...context,
     call: context.toolCall,
     taskId: 'stub-task',
-    context: { turnId: context.turnId, trace: context.trace },
+    context: { origin: 'loop', turnId: context.turnId, trace: context.trace },
     prepared: {
       kind: 'execute',
       execution: context.execution,

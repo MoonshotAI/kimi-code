@@ -1,7 +1,9 @@
-import { visibleWidth } from '@moonshot-ai/pi-tui';
+import { TuiAltScreen, visibleWidth } from '@moonshot-ai/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionPickerComponent } from '#/tui/components/dialogs/session-picker';
+
+import { VirtualTerminal } from '../../../../../../packages/pi-tui/test/virtual-terminal';
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\[[0-?]*[ -/]*[@-~]/g, '');
@@ -94,7 +96,6 @@ describe('SessionPickerComponent', () => {
     const output = renderPlain(component);
 
     expect(output).toContain('Refactor sessions list');
-    // Session id is rendered in full, never abbreviated with an ellipsis.
     expect(output).toContain('ses_01HXYABCDEFGHIJK');
     expect(output).not.toMatch(/ses_01\S*…/);
     expect(output).toContain('/tmp/project');
@@ -208,9 +209,7 @@ describe('SessionPickerComponent', () => {
     const lines = component.render(120).map((line) => stripAnsi(line));
     const headerLine = lines.find((line) => line.includes('Short title'));
     expect(headerLine).toBeDefined();
-    // Title and time sit side-by-side with only the small inline separator.
     expect(headerLine).toMatch(/Short title\s{1,4}5m ago/);
-    // No long run of trailing spaces, i.e. not right-aligned.
     expect(headerLine).not.toMatch(/Short title\s{8,}/);
   });
 
@@ -276,10 +275,6 @@ describe('SessionPickerComponent', () => {
     }
   });
 
-  // Regression for #240: a long session id, the inline time + "(current)"
-  // badge, and a long prompt all used to be appended past the terminal edge,
-  // which crashed the renderer with "Rendered line exceeds terminal width" on
-  // very narrow terminals.
   it('never renders a line wider than the terminal, even on tiny widths (#240)', () => {
     const now = new Date('2026-05-11T12:00:00.000Z').getTime();
     vi.spyOn(Date, 'now').mockReturnValue(now);
@@ -1168,6 +1163,249 @@ describe('SessionPickerComponent', () => {
       for (const width of [40, 24, 20, 12, 8]) {
         expect(renderPlain(component, width)).toContain('? [y/N]');
       }
+    });
+  });
+
+  it('tags worktree and missing working directories after the directory', () => {
+    const component = new SessionPickerComponent({
+      sessions: [
+        { id: 'ses_wt', title: 'In a worktree', work_dir: '/tmp/wt/x', worktree: 'x', updated_at: 0 },
+        { id: 'ses_gone', title: 'Gone', work_dir: '/tmp/gone', missing: true, updated_at: 0 },
+        { id: 'ses_plain', title: 'Plain', work_dir: '/tmp/project', updated_at: 0 },
+      ],
+      loading: false,
+      currentSessionId: '',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const lines = renderPlain(component).split('\n');
+    expect(lines.find((line) => line.includes('ses_wt'))).toMatch(/\/tmp\/wt\/x {3}worktree x$/);
+    expect(lines.find((line) => line.includes('ses_gone'))).toMatch(/\/tmp\/gone {3}missing$/);
+    expect(lines.find((line) => line.includes('ses_plain'))).toMatch(/\/tmp\/project$/);
+  });
+
+  describe('three-tab scope navigation and fullscreen mouse', () => {
+    const sessions = [
+      { id: 'ses_1', title: 'First session', work_dir: '/tmp/project', updated_at: 10 },
+      { id: 'ses_2', title: 'Second session', work_dir: '/tmp/wt/feat', worktree: 'feat', updated_at: 20 },
+      { id: 'ses_3', title: 'Third session', work_dir: '/tmp/other', updated_at: 30 },
+    ];
+
+    it('hides the tab strip for non-git directories and shows Cwd / Project / All tabs for git repos', () => {
+      const nonGit = new SessionPickerComponent({
+        sessions,
+        loading: false,
+        currentSessionId: '',
+        scope: 'cwd',
+        showTabs: false,
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onSelectScope: vi.fn(),
+      });
+      const nonGitOut = renderPlain(nonGit);
+      expect(nonGitOut).not.toContain('Project');
+      expect(nonGitOut).not.toContain('Tab switch');
+
+      const git = new SessionPickerComponent({
+        sessions,
+        loading: false,
+        currentSessionId: '',
+        scope: 'project',
+        showTabs: true,
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onSelectScope: vi.fn(),
+      });
+      const gitOut = renderPlain(git);
+      expect(gitOut).toContain('Project sessions');
+      expect(gitOut).toContain('Cwd');
+      expect(gitOut).toContain('Project');
+      expect(gitOut).toContain('All');
+      expect(gitOut).toContain('Tab switch');
+      expect(gitOut).toContain('Ctrl+A all');
+    });
+
+    it('cycles Cwd -> Project -> All with Tab/Shift+Tab and keeps Ctrl+A toggling All', () => {
+      const onSelectScope = vi.fn();
+      const makePicker = (scope: 'cwd' | 'project' | 'all') =>
+        new SessionPickerComponent({
+          sessions,
+          loading: false,
+          currentSessionId: '',
+          scope,
+          showTabs: true,
+          onSelect: vi.fn(),
+          onCancel: vi.fn(),
+          onSelectScope,
+        });
+      makePicker('cwd').handleInput('\t');
+      makePicker('cwd').handleInput('\u001B[Z');
+      makePicker('cwd').handleInput('\u0001');
+
+      expect(onSelectScope.mock.calls).toEqual([
+        ['project', 'ses_1'],
+        ['all', 'ses_1'],
+        ['all', 'ses_1'],
+      ]);
+
+      onSelectScope.mockClear();
+      makePicker('all').handleInput('\u0001');
+      expect(onSelectScope).toHaveBeenCalledExactlyOnceWith('cwd', 'ses_1');
+    });
+
+    it('switches tabs on mouse click and supports fullscreen ScrollView move/click/wheel', async () => {
+      let now = 10_000;
+      vi.spyOn(Date, 'now').mockImplementation(() => now);
+      const onSelectScope = vi.fn();
+      const onSelect = vi.fn();
+      const picker = new SessionPickerComponent({
+        sessions,
+        loading: false,
+        currentSessionId: '',
+        scope: 'cwd',
+        showTabs: true,
+        layout: { maxBodyRows: 6 },
+        onSelect,
+        onCancel: vi.fn(),
+        onSelectScope,
+      });
+      const vt = new VirtualTerminal(100, 16);
+      const ui = new TuiAltScreen(vt);
+      ui.setLayoutRoot(picker);
+      ui.start();
+      ui.setFocus(picker);
+      await vt.waitForRender();
+      try {
+        let lines = vt.getViewport().map((line) => stripAnsi(line));
+        const tabRow = lines.findIndex(
+          (line) => line.includes('Cwd') && line.includes('Project') && line.includes('All'),
+        );
+        expect(tabRow).toBeGreaterThan(0);
+        const projectCol = lines[tabRow]!.indexOf('Project') + 1;
+        const secondCardRow = lines.findIndex((line) => line.includes('Second session'));
+        expect(secondCardRow).toBeGreaterThan(tabRow);
+
+        now += 500;
+        vt.sendInput(`\u001B[<0;${String(projectCol + 1)};${String(tabRow + 1)}M`);
+        vt.sendInput(`\u001B[<0;${String(projectCol + 1)};${String(tabRow + 1)}m`);
+        await vt.waitForRender();
+        expect(onSelectScope).toHaveBeenCalledWith('project', 'ses_1');
+
+        vt.sendInput(`\u001B[<35;6;${String(secondCardRow + 1)}M`);
+        await vt.waitForRender();
+        lines = vt.getViewport().map((line) => stripAnsi(line));
+        expect(lines[secondCardRow]).toContain('❯ Second session');
+
+        vt.sendInput(`\u001B[<0;6;${String(secondCardRow + 1)}M`);
+        vt.sendInput(`\u001B[<0;6;${String(secondCardRow + 1)}m`);
+        await vt.waitForRender();
+        expect(onSelect).toHaveBeenCalledWith(sessions[1]);
+
+        vt.sendInput(`\u001B[<65;6;${String(secondCardRow + 1)}M`);
+        vt.sendInput(`\u001B[<65;6;${String(secondCardRow + 1)}M`);
+        vt.sendInput(`\u001B[<65;6;${String(secondCardRow + 1)}M`);
+        await vt.waitForRender();
+        lines = vt.getViewport().map((line) => stripAnsi(line));
+        const thirdCardRow = lines.findIndex((line) => line.includes('Third session'));
+        expect(thirdCardRow).toBeGreaterThan(tabRow);
+
+        vt.sendInput(`\u001B[<0;6;${String(thirdCardRow + 1)}M`);
+        vt.sendInput(`\u001B[<0;6;${String(thirdCardRow + 1)}m`);
+        await vt.waitForRender();
+        expect(onSelect).toHaveBeenLastCalledWith(sessions[2]);
+      } finally {
+        ui.stop();
+      }
+    });
+
+    it('reveals newly appended pages when wheel scrolling loads more in fullscreen mode', async () => {
+      const page1 = [
+        { id: 'ses_1', title: 'Page 1 first', work_dir: '/repo', updated_at: 100 },
+        { id: 'ses_2', title: 'Page 1 second', work_dir: '/repo', updated_at: 90 },
+        { id: 'ses_3', title: 'Page 1 third', work_dir: '/repo', updated_at: 85 },
+      ];
+      const page2 = [
+        { id: 'ses_4', title: 'Page 2 fourth', work_dir: '/repo', updated_at: 80 },
+      ];
+      const vt = new VirtualTerminal(100, 14);
+      const ui = new TuiAltScreen(vt);
+      const onLoadMore = vi.fn(() => {
+        picker.appendSessions(page2);
+        picker.setPaging(false, false);
+        ui.requestRender();
+      });
+      const picker = new SessionPickerComponent({
+        sessions: page1,
+        loading: false,
+        currentSessionId: '',
+        scope: 'cwd',
+        showTabs: true,
+        pageSize: 3,
+        hasMore: true,
+        layout: { maxBodyRows: 5 },
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onLoadMore,
+        requestRender: () => ui.requestRender(),
+      });
+      ui.setLayoutRoot(picker);
+      ui.start();
+      ui.setFocus(picker);
+      await vt.waitForRender();
+      try {
+        const linesBefore = vt.getViewport().map((line) => stripAnsi(line));
+        const bodyRow = linesBefore.findIndex((line) => line.includes('Page 1 first'));
+        expect(bodyRow).toBeGreaterThan(0);
+
+        vt.sendInput(`\u001B[<65;6;${String(bodyRow + 1)}M`);
+        vt.sendInput(`\u001B[<65;6;${String(bodyRow + 1)}M`);
+        vt.sendInput(`\u001B[<65;6;${String(bodyRow + 1)}M`);
+        await vt.waitForRender();
+        expect(onLoadMore).toHaveBeenCalledOnce();
+
+        vt.sendInput(`\u001B[<65;6;${String(bodyRow + 1)}M`);
+        vt.sendInput(`\u001B[<65;6;${String(bodyRow + 1)}M`);
+        vt.sendInput(`\u001B[<65;6;${String(bodyRow + 1)}M`);
+        await vt.waitForRender();
+        const linesAfter = vt.getViewport().map((line) => stripAnsi(line)).join('\n');
+        expect(linesAfter).toContain('Page 2 fourth');
+      } finally {
+        ui.stop();
+      }
+    });
+
+    it('tracks pending scope transitions so rapid Tab presses advance and can cancel back to cwd', () => {
+      const onSelectScope = vi.fn();
+      const picker = new SessionPickerComponent({
+        sessions: [{ id: 'ses_1', title: 'One', work_dir: '/repo', updated_at: 100 }],
+        loading: false,
+        currentSessionId: 'ses_1',
+        scope: 'cwd',
+        showTabs: true,
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onSelectScope,
+      });
+
+      picker.handleInput('\t');
+      picker.handleInput('\t');
+      picker.handleInput('\t');
+      expect(onSelectScope.mock.calls).toEqual([
+        ['project', 'ses_1'],
+        ['all', 'ses_1'],
+        ['cwd', 'ses_1'],
+      ]);
+
+      onSelectScope.mockClear();
+      picker.handleInput('\t');
+      expect(onSelectScope).toHaveBeenCalledWith('project', 'ses_1');
+      picker.clearPendingScope();
+      picker.handleInput('\t');
+      expect(onSelectScope.mock.calls).toEqual([
+        ['project', 'ses_1'],
+        ['project', 'ses_1'],
+      ]);
     });
   });
 });

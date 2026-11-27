@@ -5,7 +5,7 @@ import {
   IEnvironmentService,
   ISessionIndex,
   ISessionIndexMirror,
-  IWorkspaceAliases,
+  IProjectAliases,
   environmentBindingId,
   LOCAL_ENVIRONMENT_ID,
   setSessionArchivedBatch,
@@ -14,10 +14,11 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { IGitService, type FsPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
 import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
+import { sessionWorkDir } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
-import { defineRoute } from '../middleware/defineRoute';
+import { defineRoute, type GetRouteHost, type PostRouteHost } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   batchSessionsRequestSchema,
@@ -27,6 +28,7 @@ import {
   parseSessionFields,
   parseSessionIncludeDomains,
   type BatchSessionsResponse,
+  type ListSessionsQuery,
   type SessionIdProjection,
   type SessionsArchivedFilter,
   type SessionsSort,
@@ -35,26 +37,11 @@ import {
 import type { Session, SessionActivity, SessionGit } from '../protocol/session';
 import { loadWorkspaceVisibility } from '../services/workspaceVisibility';
 import { withTimeout } from '../transport/errors';
+import type { HostSources } from '../services/hosts/hostFanout';
 import { resolveSessionFacts, toWireSession, type SessionFacts } from './sessions';
+import { listAllSessionsAcrossHosts, listSessionsAcrossHosts, type SessionsListOutcome } from './sessionsAcrossHosts';
 
-interface SessionListRouteHost {
-  get(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
-    handler: (
-      req: { id: string; query: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-  post(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
-    handler: (
-      req: { id: string; body: unknown; params: unknown; headers: Record<string, unknown> },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-}
+type SessionListRouteHost = GetRouteHost & PostRouteHost;
 
 const DEFAULT_PAGE_SIZE = 50;
 const DEFAULT_GROUP_PAGE_SIZE = 5;
@@ -80,6 +67,7 @@ interface NormalizedQuery {
   readonly updatedBefore?: number;
   readonly archived: SessionsArchivedFilter;
   readonly hasPrompt?: boolean;
+  readonly text?: string;
   readonly view: SessionsView;
   readonly groupPageSize: number;
   readonly sort: SessionsSort;
@@ -94,6 +82,13 @@ export function mapSessionActivity(facts: SessionFacts): SessionActivity {
   if (facts.mainTurnActive) return 'turn';
   if (facts.busy) return 'background';
   return 'idle';
+}
+
+function matchesText(summary: SessionSummary, text: string): boolean {
+  return (
+    summary.id.toLowerCase() === text ||
+    [summary.title, summary.lastPrompt].some((value) => value?.toLowerCase().includes(text) === true)
+  );
 }
 
 function sortKeyOf(sort: SessionsSort): (summary: SessionSummary) => number {
@@ -129,6 +124,7 @@ function queryFingerprint(query: NormalizedQuery): string {
     query.includeGit,
     query.pageSize,
     query.projection,
+    query.text ?? null,
   ];
   return createHash('sha256').update(JSON.stringify(canonical)).digest('base64url').slice(0, 16);
 }
@@ -300,37 +296,21 @@ async function runBatchArchive(
   );
 }
 
-export function registerSessionListAndBatchRoutes(
-  app: SessionListRouteHost,
+async function listSessionsHere(
   core: Scope,
-): void {
-  const gitResolver = new GitDomainResolver(core);
-
-  const listRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/sessions',
-      querystring: listSessionsQuerySchema,
-      success: { data: listSessionsResponseSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
-        [ErrorCode.PAGE_TOKEN_MISMATCH]: {},
-      },
-      description:
-        "List sessions with filtering, sorting, optional workspace grouping (view=by_workspace), optional git branch/PR metadata (include=git), or lightweight id projection (fields=id,archived; page_size ceiling relaxed to 10000). Paginate with page_token, 1-based page, or flat before_id/after_id cursors.",
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      const raw = req.query;
-
+  gitResolver: GitDomainResolver,
+  raw: Omit<ListSessionsQuery, 'hosts'>,
+): Promise<SessionsListOutcome> {
+      const text = raw.query?.trim().toLowerCase();
       const query: NormalizedQuery = {
         workspaceFilter: asArray(raw.workspace_id),
         busy: raw.busy,
         activities: asArray(raw.activity),
         updatedAfter: raw.updated_after === undefined ? undefined : Date.parse(raw.updated_after),
         updatedBefore: raw.updated_before === undefined ? undefined : Date.parse(raw.updated_before),
-        archived: raw.archived ?? 'false',
-        hasPrompt: raw.has_prompt,
+        archived: raw.archived ?? (raw.archived_only === true ? 'true' : raw.include_archive === true ? 'all' : 'false'),
+        hasPrompt: raw.exclude_empty === true ? true : raw.has_prompt,
+        text: text === '' ? undefined : text,
         view: raw.view ?? 'flat',
         groupPageSize: raw.group_page_size ?? DEFAULT_GROUP_PAGE_SIZE,
         sort: raw.sort ?? 'updated_at_desc',
@@ -346,8 +326,7 @@ export function registerSessionListAndBatchRoutes(
           cursor = decodePageToken(raw.page_token, fingerprint);
         } catch (error) {
           if (error instanceof PageTokenMismatchError) {
-            reply.send(errEnvelope(ErrorCode.PAGE_TOKEN_MISMATCH, error.message, req.id));
-            return;
+            return { ok: false, code: ErrorCode.PAGE_TOKEN_MISMATCH, message: error.message };
           }
           throw error;
         }
@@ -355,7 +334,7 @@ export function registerSessionListAndBatchRoutes(
 
       let workspaceIds: string[] | undefined;
       if (query.workspaceFilter !== undefined) {
-        const aliases = core.accessor.get(IWorkspaceAliases);
+        const aliases = core.accessor.get(IProjectAliases);
         const sets = await Promise.all(
           query.workspaceFilter.map((id) => aliases.resolveAliasIds(id)),
         );
@@ -381,7 +360,7 @@ export function registerSessionListAndBatchRoutes(
       };
 
       const cwdOf = (summary: SessionSummary): string | undefined => {
-        const candidate = summary.cwd ?? roots.get(summary.workspaceId);
+        const candidate = sessionWorkDir(summary, roots.get(summary.workspaceId));
         return candidate !== undefined && candidate.length > 0 ? candidate : undefined;
       };
 
@@ -395,6 +374,7 @@ export function registerSessionListAndBatchRoutes(
         ) {
           return false;
         }
+        if (query.text !== undefined && !matchesText(summary, query.text)) return false;
         if (query.updatedAfter !== undefined && summary.updatedAt < query.updatedAfter) {
           return false;
         }
@@ -426,7 +406,7 @@ export function registerSessionListAndBatchRoutes(
         }
         return summaries.map((summary) =>
           toWireSession(
-            summary,
+            { ...summary, workspaceRoot: roots.get(summary.workspaceId) },
             requiredCwdOf(summary),
             factsOf(summary.id),
             gitBySession === undefined
@@ -445,7 +425,7 @@ export function registerSessionListAndBatchRoutes(
           readonly rep: SessionSummary;
           readonly items: SessionSummary[];
         }
-        const aliasService = core.accessor.get(IWorkspaceAliases);
+        const aliasService = core.accessor.get(IProjectAliases);
         const canonicalById = new Map<string, string>();
         const canonicalIdOf = async (workspaceId: string): Promise<string> => {
           let canonical = canonicalById.get(workspaceId);
@@ -517,13 +497,10 @@ export function registerSessionListAndBatchRoutes(
           }),
         );
 
-        reply.send(
-          okEnvelope(
-            { groups, total: groupList.length, has_more: hasMore, next_page_token: nextPageToken },
-            req.id,
-          ),
-        );
-        return;
+        return {
+          ok: true,
+          data: { groups, total: groupList.length, has_more: hasMore, next_page_token: nextPageToken },
+        };
       }
 
       let window: SessionSummary[];
@@ -582,17 +559,48 @@ export function registerSessionListAndBatchRoutes(
 
       const items = query.projection ? projectIds(window) : await buildItems(window);
 
-      reply.send(
-        okEnvelope(
-          {
-            items,
-            total: sorted.length,
-            has_more: hasMore,
-            next_page_token: nextPageToken,
-          },
-          req.id,
-        ),
-      );
+      return {
+        ok: true,
+        data: {
+          items,
+          total: sorted.length,
+          has_more: hasMore,
+          next_page_token: nextPageToken,
+        },
+      };
+}
+
+export function registerSessionListAndBatchRoutes(
+  app: SessionListRouteHost,
+  core: Scope,
+  hosts?: HostSources,
+): void {
+  const gitResolver = new GitDomainResolver(core);
+  const listRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/sessions',
+      querystring: listSessionsQuerySchema,
+      success: { data: listSessionsResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.PAGE_TOKEN_MISMATCH]: {},
+        [ErrorCode.HOST_UNAVAILABLE]: {},
+      },
+      description:
+        "List sessions with filtering (query matches title or last prompt as a case-insensitive substring, or an exact session id), sorting, optional workspace grouping (view=by_workspace), optional git branch/PR metadata (include=git), or lightweight id projection (fields=id,archived; page_size ceiling relaxed to 10000). Paginate with page_token, 1-based page, or flat before_id/after_id cursors. hosts=include merges sessions from the app-created projects on every SSH host.",
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      const raw = req.query;
+      const { hosts: includeHosts, ...query } = raw;
+      const local = (next: Omit<ListSessionsQuery, 'hosts'>) => listSessionsHere(core, gitResolver, next);
+      const outcome = includeHosts === 'include' && hosts !== undefined
+        ? raw.view !== 'by_workspace' && raw.page_size === undefined && raw.page_token === undefined && raw.page === undefined && raw.before_id === undefined && raw.after_id === undefined
+          ? await listAllSessionsAcrossHosts(query, hosts, local)
+          : await listSessionsAcrossHosts(raw, hosts, local)
+        : await local(query);
+      reply.send(outcome.ok ? okEnvelope(outcome.data, req.id) : errEnvelope(outcome.code, outcome.message, req.id));
     },
   );
 

@@ -108,6 +108,7 @@ timeout = 5
 | [`models`](#models) | `table` | — | 模型别名表 |
 | [`thinking`](#thinking) | `table` | — | Thinking 模式默认参数 |
 | [`loop_control`](#loop-control) | `table` | — | Agent 循环控制参数 |
+| [`auto_review`](#auto-review) | `table` | — | "Ask When Needed" 和 "Never Ask" 模式下的实验性 LLM 复核 |
 | [`task`](#task) | `table` | — | 后台任务与 Tower Agent 运行参数；`background` 为 legacy 配置节名称 |
 | [`tools`](#tools) | `table` | — | 全局工具开关 |
 | [`image`](#image) | `table` | — | 图片压缩参数 |
@@ -224,7 +225,7 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 
 在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令（别名 `/subagent-model`）打开模型选择器：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的 subagent 立即按新默认值绑定，无需重启会话。
 
-subagent 只会运行在模型池列出的模型上。单独一行 `default_model`（或只有一个条目的 `models` 表）会把所有 subagent 固定到该模型。池中有两个及以上条目时启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中列出模型池（默认模型标注 `[default]`），main agent 可按次派生选择模型。池 key 只能引用已配置的 [`[models]`](#models) 条目。下面的 `kimi-code/*` 别名由 `/login` 自动提供：
+配置 `[secondary_model]` 后，subagent 只会运行在模型池列出的模型上。单独一行 `default_model`（或只有一个条目的 `models` 表）会把所有 subagent 固定到该模型；Tower 的 reviewer 除外——它们默认继承 Tower 当前模型，显式传入池中别名才沿用池模型。池中有两个及以上条目时，main agent 可在每次派生时通过 `Agent`、`AgentSwarm` 和 `TowerSpawn` 的 `model` 参数选择模型：可选模型列表（默认模型标注 `[default]`）通过系统提醒注入上下文，因此会话运行中修改 `[secondary_model]` 不会改变工具定义。池 key 只能引用已配置的 [`[models]`](#models) 条目。下面的 `kimi-code/*` 别名由 `/login` 自动提供：
 
 ```toml
 [secondary_model]
@@ -242,12 +243,12 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 
 `model` 参数的取值规则：
 
-- 只接受池中别名。main agent 自己的模型不是隐含选项：如果希望难的子任务能用主模型，需要把主模型的别名显式写进模型池。
-- `default_model` 与 `models` 都未配置时该参数不存在，subagent 继承调用方模型；池中只有一个条目时同样不提供该参数。
+- 配置 `[secondary_model]` 时只接受池中别名。main agent 自己的模型不是隐含选项：如果希望难的子任务能用主模型，需要把主模型的别名显式写进模型池。
+- `default_model` 与 `models` 都未配置时，subagent 继承调用方的模型与 Thinking 设置，不注入可选模型列表，传入任何 `model` 都会被拒绝。
 - 绑定池中别名时不继承调用方的 Thinking 档位，即使该别名就是调用方自己的模型。本节设置了 `default_effort` 时以它为准；否则，`[thinking].enabled = false` 会保持关闭 Thinking；开启 Thinking 时，再依次使用所绑定模型条目的 `default_effort`、全局 `[thinking].effort`、所绑定模型 `support_efforts` 的中间项。
-- 传入的值不是池中别名时，本次派生报错并列出可选值。
+- 传入不在可选列表中的值时，本次派生报错并列出可选值；恢复已有 subagent（或未传 `items` 调用 `AgentSwarm`）时传入 `model` 也会报错。
 
-原来的 `force` 字段已移除：单独一行 `default_model` 已经能把所有 subagent 固定到同一个模型。仍设置了 `force` 的配置会在加载时给出警告，该字段被忽略。
+原来的 `force` 字段已移除：单独一行 `default_model` 已经能把 Agent、AgentSwarm subagent 和 tower worker 固定到同一个模型。仍设置了 `force` 的配置会在加载时给出警告，该字段被忽略。
 
 ### 为池内条目配置不同 Thinking 档位
 
@@ -323,6 +324,28 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 `max_steps_per_turn` 可被环境变量 `KIMI_LOOP_MAX_STEPS_PER_TURN` 覆盖，`max_attempts_per_step` 可被 `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` 覆盖，优先级均高于配置文件。旧的 `KIMI_LOOP_MAX_RETRIES_PER_STEP` 已废弃，但在新变量未设置时仍生效（启动时会给出警告）。
 
 重试仅针对瞬时故障：连接错误、超时、HTTP 429 限流和 5xx 服务端错误。账户额度耗尽或余额不足导致的 429 不会重试，会立即失败：在充值之前重试不可能成功。
+
+## `auto_review`
+
+`auto_review` 配置 "Ask When Needed" 和 "Never Ask" 模式下对 `Bash` 和 MCP 工具调用的实验性 LLM 复核，默认关闭。设置 `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` 或 `[experimental] auto_review = true` 开启。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | `[secondary_model]` 默认模型，未配置时为主模型 | 独立复核请求使用的模型别名 |
+| `effort` | `string` | — | 复核请求的 Thinking 档位，必须是复核模型支持的档位，否则报配置错误 |
+| `timeout_ms` | `integer` | `30000` | 复核截止时间（毫秒），范围 `1000` 到 `120000` |
+
+只复核 `Bash` 和 MCP 工具调用中、"Always Ask" 模式下会请你审批的调用；`Edit`、`Write` 等其他内置工具不参与复核，沿用当前权限模式的静态结果。`Bash` 和 MCP 调用中，已被更具体的规则放行的调用——静态可确认只读的 `Bash` 命令、你配置的 `allow` 规则、本会话已批准过的调用——不复核。在 "Ask When Needed" 模式下，你显式配置的 `ask` 规则不交给复核模型处理，仍会直接请你确认；在不弹窗的 "Never Ask" 模式下，命中这类 `ask` 规则的调用仍会交给复核模型审查。识别出的危险命令在两种模式下（包括 `kimi -p`）即使命中 `allow` 规则或本会话已批准，也仍会复核，因为 "Always Ask" 模式会就它们请你审批。复核结果为 `allow` 时直接执行；为 `deny` 或复核失败时，"Ask When Needed" 模式转人工审批，"Never Ask" 模式不执行工具并返回错误，主 Agent 可继续处理。
+
+复核模型会收到当前工作目录、当前的 AGENTS.md 快照（首次复核时读取，工作区指令变化时刷新）、压缩后仍在上下文里的用户和父级指令（每条用户指令附带它所回复的上一条 Agent 回复，最多取末尾 2000 个字符）、压缩摘要（仅用于保留显式边界，不作为放行授权）、已完成的历史工具调用（含用户人工批准标记），以及待审工具的完整参数与目标目录的 Git 工作树状态（仅探测工作区和已批准附加目录内的路径）。工具输出文本和媒体不会发送。请求超出模型窗口时，这次复核失败。复核期间若保留的授权指令或工作目录发生变化，不会使用旧结果执行动作。
+
+复核请求的 Thinking 档位不沿用主循环当前的档位。设置了 `effort` 时按它请求；未设置 `effort` 而复核借用了 `[secondary_model]` 的默认模型时，连同该节的 `default_effort` 一起沿用。这两种档位都不受 `[thinking].enabled = false` 影响。都没有时，`[thinking].enabled = false` 关闭复核的 thinking（模型不能关闭时除外）；开启 thinking 时依次取复核模型条目的 `default_effort`、全局 `[thinking].effort`、模型默认档。档位越高复核越慢，频繁超时时可调低 `effort` 或调大 `timeout_ms`。
+
+```toml
+[auto_review]
+model = "kimi-code/kimi-for-coding-highspeed"
+timeout_ms = 30000
+```
 
 ## `token_counting`
 
@@ -539,6 +562,8 @@ api_key = "sk-xxx"
 
 用户规则在会话启动时从用户 `config.toml` 加载。为兼容旧配置，用户 `config.toml` 中的 `turn-override` 和 `session-runtime` 规则会静默忽略，不产生警告。
 
+如果用户 `config.toml` 无法读取、TOML 解析失败或配置节校验失败，会话会使用默认值或最后一份有效的校验后配置继续运行，error 和 warning 诊断仍会显示在配置诊断及非交互输出中。文件无法读取或解析期间，配置写回仍会被阻止。
+
 项目规则仅在本地环境且 workspace 已信任时从 `.kimi-code/local.toml` 读取，省略 `scope` 时默认为 `project`。远程环境不支持项目规则。项目规则修改后需要新建会话生效，不会热重载。
 
 也可以在 `[permission]` 下设置 `dangerous_command_guard = false` 完全关闭所有内置 guard 确认策略：危险命令、敏感文件（如 `.env`、`id_rsa`）访问、git 控制路径访问在 "Always Ask" 和 "Ask When Needed" 模式下不再触发审批（"Never Ask" 模式本就不启用这些策略），默认 `true`。环境变量 `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` 会覆盖文件设置。全部内置 guard 关闭后，"Ask When Needed" 模式下只有你自己配置的 `ask` 规则仍会要求确认；"Always Ask" 模式下未被自动放行的工具照旧逐个询问。`Read`/`Write`/`Edit` 对秘密文件的硬阻断保持不变。此开关只适用于已经在 Agent 之外统一命令限权的环境。
@@ -583,6 +608,8 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 远端工作目录必须是 POSIX 绝对路径或 Windows 驱动器路径，相对路径和 `~` 不会展开。Git Bash 和启动器的要求见 [Windows 目标](../guides/remote-environment.md#windows-目标)。
 
 可选的顶层 `default` 指定创建会话时未显式给出绑定时使用的环境。它必须指向一个已配置的条目，且该条目必须设置 `defaultCwd`——绑定由环境和工作目录成对构成，缺了工作目录的默认绑定会悬空。未设置 `default` 时，这些会话从 `local` 开始。TUI 的 `/new` 不用这个 default，而是保留当前环境。详见 [远程环境](../guides/remote-environment.md)。
+
+环境配置节非法时，隐式会话创建不会直接失败：有历史有效声明时沿用历史声明，否则回退到本地环境并给出警告。这可能改变命令的执行位置；依赖配置的远程环境前，请先查看配置诊断。
 
 ### SSH 条目
 
@@ -650,6 +677,7 @@ defaultCwd = "/workspace"
 | `theme` | `string` | `auto` | 配色主题：`auto`、`dark`、`light` 或[自定义主题](../customization/themes.md)名 |
 | `tui_mode` | `string` | `regular` | 界面布局：`regular` 渲染进终端滚动缓冲区；`fullscreen`（实验性）部分组件支持鼠标交互，交互更顺手 |
 | `copy_on_select` | `boolean` | `true` | 仅全屏模式：选中文本即复制；也可以按 `Ctrl-C` 复制 |
+| `wheel_scroll_lines` | `"auto" \| integer` | `"auto"` | 仅全屏模式：每次鼠标滚轮事件滚动的行数（`"auto"` 或正整数）；`"auto"` 会在快速滚动时自动提速 |
 | `render_latex` | `boolean` | `true` | 将 Markdown 中的 LaTeX 公式渲染为 Unicode 文本；`false` 保留原始源码 |
 | `disable_paste_burst` | `boolean` | `false` | 禁用非 bracketed paste 的粘贴突发兜底；默认开启，避免快速多行粘贴被逐行提交 |
 | `cache_expiry_hint` | `boolean` | `true` | resume 或长时间空闲后发消息时，若上下文缓存可能过期则提醒，可先压缩或新建会话（仅 v2 引擎） |
@@ -676,6 +704,7 @@ model、cwd、git 分支、permission 模式、plan 模式、上下文用量、s
 theme = "auto" # "auto" | "dark" | "light" | 自定义主题名
 # tui_mode = "regular" # "regular" | "fullscreen"（"fullscreen" 为实验性）
 copy_on_select = true # 仅全屏模式：false 表示按 Ctrl-C 才复制
+# wheel_scroll_lines = "auto" # 仅全屏模式："auto" 或每次滚轮事件滚动的行数（如 1、2、3、5、10）
 render_latex = true # false 表示消息中的 LaTeX 公式保留原始源码
 disable_paste_burst = false # true 表示禁用非 bracketed paste 的粘贴突发兜底
 cache_expiry_hint = true # false 表示关闭 resume / 空闲提交时的"缓存已过期"提醒弹窗
@@ -707,7 +736,7 @@ thinking = "grouped" # "grouped" | "ungrouped"
 
 除了 `~/.kimi-code` 下的用户级文件，Kimi Code 还会读取位于 `<项目根目录>/.kimi-code/local.toml` 的项目级本地配置文件。它保存的是与某一个项目检出相关、通常不应与队友共享的设置。
 
-早期版本的 [`/add-dir`](../reference/slash-commands.md) 会把「记住此目录」写入这个文件；现版本改为记入 `~/.kimi-code/projects.json` 中的工作区注册表，`local.toml` 随之成为只读的存量兼容字段，任何组件都不会再写入它。隐式工作区（终端按目录进入）的会话仍把其中的 `additional_dir` 并入额外目录；显式创建（managed）工作区的会话不再读取它。要把旧配置搬进注册表，可在客户端的新建/编辑工作区弹窗中使用导入功能（底层为 [`GET /api/v1/workspaces/project-config-dirs`](../reference/server-api-service.md#get-api-v1-workspaces-project-config-dirs)），导入后即由注册表管理，删除即时生效。
+早期版本的 [`/add-dir`](../reference/slash-commands.md) 会把「记住此目录」写入这个文件；现版本改为记入 `~/.kimi-code/projects.json` 中的工作区注册表，`local.toml` 随之成为只读的存量兼容字段，任何组件都不会再写入它。隐式工作区（终端按目录进入）的会话仍把其中的 `additional_dir` 并入额外目录；显式创建（managed）工作区的会话不再读取它。要把旧配置搬进注册表，可在客户端的新建/编辑工作区弹窗中使用导入功能（底层为本地服务的 `GET /api/v1/workspaces/project-config-dirs`），导入后即由注册表管理，删除即时生效。
 
 ### `[workspace]`
 
@@ -724,7 +753,7 @@ additional_dir = ["/absolute/path/to/shared"]
 
 目录以绝对路径存储，与具体机器相关。因此建议把 `.kimi-code/local.toml` 加入项目的 `.gitignore`，避免被提交。
 
-除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server），受工作区信任门控：在启动提示中选择信任该文件夹后才生效。详见 [Model Context Protocol](../customization/mcp.md)。
+除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server），受工作区信任门控：在启动提示中选择信任该项目后才生效。详见 [Model Context Protocol](../customization/mcp.md)。
 
 ## 下一步
 

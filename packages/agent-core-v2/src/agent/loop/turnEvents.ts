@@ -1,4 +1,4 @@
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
 import type { PromptOrigin } from '#/agent/contextMemory/types';
@@ -268,6 +268,10 @@ export interface TurnStepRetryingEvent extends Omit<TurnStepRetryingPayload, 'ag
 
 export interface TurnStepInterruptedEvent extends Omit<TurnStepInterruptedPayload, 'agentId'> {
   readonly type: 'turn.step.interrupted';
+}
+
+export interface TurnStepStreamResetEvent extends Omit<TurnStepStreamResetPayload, 'agentId'> {
+  readonly type: 'turn.step.stream_reset';
 }
 
 export interface AssistantDeltaEvent extends Omit<AssistantDeltaPayload, 'agentId'> {

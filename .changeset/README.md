@@ -97,7 +97,7 @@ Commit messages must follow Conventional Commit style. Do not include any author
 
 ### 4. CI generates the release PR
 
-Changesets accumulate on `main`. Create `release/<cycle>` from the selected commit; pushes to that branch use `changesets/action@v1` to create or update its release PR. Manual **Release** runs on a release branch only prepare the PR. The workflow explicitly dispatches CI for the generated version branch.
+Changesets accumulate on `main`. Create `release/<cycle>` from the selected commit; pushes to that branch use `changesets/action@v1` to create or update its release PR. Release branches and release PRs do not trigger the full CI workflow. Manual **Release** runs on a release branch execute the release pipeline directly; use the optional `sha` input to pin the exact commit. The release workflow does not dispatch a separate CI workflow.
 
 The release PR runs:
 
@@ -107,15 +107,16 @@ The release PR runs:
 
 ### 5. Merge the release PR
 
-Review the version PR, latest CI and CLI/extension pre-changelog together. Once the matching version PR is merged into `release/<cycle>`, publication waits for that exact commit’s push CI. Ordinary pushes do not publish. The existing publication steps then run:
+Review the version PR and CLI/extension pre-changelog together. Once the matching version PR is merged into `release/<cycle>`, the release workflow runs the unit tests directly on that exact commit and then publishes. Ordinary pushes do not publish. The publication steps then run:
 
 - `pnpm install --frozen-lockfile`
+- unit tests on the release commit
 - `pnpm build`
 - `pnpm changeset publish`
 
-The packages are then published via npm Trusted Publishing, and a GitHub Release is created. CLI native builds still depend on Changesets reporting a newly published CLI package; npm-succeeded/native-failed whole-run recovery is not changed by this migration.
+The packages are then published via npm Trusted Publishing, and a GitHub Release is created. If an intermediate release step fails, run **Release** manually on the release branch, optionally supplying the original `sha`; the same release commit is reused without reverting the branch.
 
-VS Code uses the same approved release commit and CI gate, publishing only when the extension version changed in that push. It retains its existing build and marketplace checks. It no longer publishes on main pushes or through a standalone manual entry. The documentation workflow is dispatched on main after CLI artifacts are uploaded; its deployment result is tracked separately. CDN remains manual.
+VS Code uses the same approved release commit and release-workflow test gate, publishing only when the extension version changed in that release. It retains its existing build and marketplace checks. It no longer publishes on main pushes or through a standalone manual entry. The documentation workflow is dispatched on main after CLI artifacts are uploaded; its deployment result is tracked separately. CDN remains manual.
 
 Migration: merge the main infrastructure PR first to disable the old publisher, then the release infrastructure PR. These PRs do not publish. Close the obsolete main version PR separately. After the actual release, synchronize versions, changelogs, lockfile and consumed changeset removals back to main, preserving later main work. Main synchronization does not publish npm or VS Code. Do not change Desktop's submodule pointer as part of this step.
 
@@ -141,7 +142,7 @@ The root-level `pnpm run publish` first runs typecheck, lint, sherif, test, buil
 
 - Every PR that affects publishable-package behavior or public API should include a corresponding changeset.
 - Changeset files must be committed to the repository — release PRs are only triggered after they're merged.
-- Release PRs require human review and approval. They do not publish before merge; merging the approved PR automatically publishes after its commit passes CI.
+- Release PRs require human review and approval. They do not publish before merge; merging the approved PR authorizes the release workflow, which publishes after its direct unit-test gate passes.
 - Do not add release changesets for private internal packages; only select `@moonshot-ai/kimi-code` and `@moonshot-ai/kimi-code-sdk`.
 - If a change in an underlying internal package alters user-visible behavior or public API of a publishable package, add a changeset to the affected publishable package. For example, when a bug fixed in `@moonshot-ai/agent-core-v2` resolves an issue CLI users encounter, add a changeset to `@moonshot-ai/kimi-code` describing the user-visible fix.
 - `@moonshot-ai/kimi-code` is the official CLI package name; after a global install it provides the `kimi` command.

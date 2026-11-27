@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kimi-code-oauth",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "Kimi OAuth toolkit for managed Kimi Code authentication",
   "license": "MIT",
@@ -52,6 +52,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@moonshot-ai/testkit": "workspace:^",
     "@types/proper-lockfile": "^4.1.4"
   }
 }

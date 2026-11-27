@@ -47,8 +47,8 @@ import {
   resolveModelForReady,
   providerNameFromFlatModel,
   type ModelReadyFailureReason,
-} from '#/llm-adapter/model/model-auth';
-import { IModelService, type ModelRecord } from '#/llm-adapter/model/model';
+} from '#/provider-catalog/model/model-auth';
+import { type ModelRecord } from '#/provider-catalog/model/model';
 import {
   DEFAULT_MODEL_SECTION,
   MODELS_SECTION,
@@ -57,12 +57,11 @@ import {
 } from '#/app/kosongConfig/configSection';
 import { ModelCatalogChanged } from '#/app/kosongConfig/discovery';
 import {
-  IProviderService,
   type OAuthRef,
   type ProviderConfig,
   type ProvidersChangedEvent,
-} from '#/llm-adapter/provider/provider';
-import { isOAuthCatalogVendor } from '#/llm-adapter/provider/provider-definition';
+} from '#/provider-catalog/provider/provider';
+import { isOAuthCatalogVendor } from '#/provider-catalog/provider/provider-definition';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IRegionService } from '#/app/region/region';
 import { kimiRegionEnv } from '#/app/region/regionService';
@@ -78,6 +77,7 @@ import {
   IOAuthToolkit,
   type OAuthLoginOptions,
 } from './auth';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const TERMINAL_RETENTION_MS = 5 * 60 * 1000;
 const DEFAULT_DEVICE_EXPIRES_IN_SEC = 15 * 60;
@@ -109,7 +109,7 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   constructor(
     @IOAuthToolkit private readonly toolkit: IOAuthToolkit,
-    @IProviderService private readonly providerService: IProviderService,
+    @IProviderCatalogService private readonly providerService: IProviderCatalogService,
     @IConfigService private readonly config: IConfigService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
@@ -128,7 +128,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     options: OAuthLoginOptions = {},
   ): Promise<OAuthFlowStart> {
     this.log.info('oauth startLogin: enter', { provider });
-    const configured = this.providerService.get(provider);
+    const configured = this.providerService.getProviderConfig(provider);
     const region =
       options.region ??
       (provider === KIMI_CODE_PROVIDER_NAME &&
@@ -283,7 +283,7 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   getManagedUsage(provider = KIMI_CODE_PROVIDER_NAME): Promise<AuthManagedUsageResult> {
-    const configured = this.providerService.get(provider);
+    const configured = this.providerService.getProviderConfig(provider);
     const auth = resolveKimiCodeRuntimeAuth({
       configuredBaseUrl: configured?.baseUrl,
       configuredOAuthRef: configured?.oauth,
@@ -295,7 +295,7 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   getManagedUserInfo(provider = KIMI_CODE_PROVIDER_NAME): Promise<AuthManagedUserInfoResult> {
-    const configured = this.providerService.get(provider);
+    const configured = this.providerService.getProviderConfig(provider);
     const auth = resolveKimiCodeRuntimeAuth({
       configuredBaseUrl: configured?.baseUrl,
       configuredOAuthRef: configured?.oauth,
@@ -468,7 +468,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     readonly baseUrl: string | undefined;
     readonly oauthHost: string | undefined;
   } {
-    const config = this.providerService.get(provider);
+    const config = this.providerService.getProviderConfig(provider);
     if (provider !== KIMI_CODE_PROVIDER_NAME) {
       return { oauthRef: config?.oauth, baseUrl: undefined, oauthHost: undefined };
     }
@@ -495,12 +495,12 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   private readOAuthRefOptional(provider: string): OAuthRef | undefined {
-    return this.providerService.get(provider)?.oauth;
+    return this.providerService.getProviderConfig(provider)?.oauth;
   }
 
   private resolveRuntimeOAuthRef(provider: string, oauthRef?: OAuthRef): OAuthRef | undefined {
     if (provider !== KIMI_CODE_PROVIDER_NAME) return oauthRef;
-    const config = this.providerService.get(provider);
+    const config = this.providerService.getProviderConfig(provider);
     return resolveKimiCodeRuntimeAuth({
       configuredBaseUrl: config?.baseUrl,
       configuredOAuthRef: oauthRef ?? config?.oauth,
@@ -566,8 +566,8 @@ export class OAuthService extends Disposable implements IOAuthService {
   ): Promise<void> {
     if (oauthRef === undefined && provider !== KIMI_CODE_PROVIDER_NAME) return;
     const baseUrl =
-      loginBaseUrl ?? this.providerService.get(provider)?.baseUrl ?? kimiCodeBaseUrl();
-    await this.providerService.set(provider, {
+      loginBaseUrl ?? this.providerService.getProviderConfig(provider)?.baseUrl ?? kimiCodeBaseUrl();
+    await this.providerService.setProviderConfig(provider, {
       type: 'kimi',
       baseUrl,
       apiKey: '',
@@ -667,8 +667,7 @@ export class AuthSummaryService implements IAuthSummaryService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IProviderService private readonly providerService: IProviderService,
-    @IModelService private readonly modelService: IModelService,
+    @IProviderCatalogService private readonly providerService: IProviderCatalogService,
     @IConfigService private readonly config: IConfigService,
     @IOAuthService private readonly oauth: IOAuthService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -676,7 +675,7 @@ export class AuthSummaryService implements IAuthSummaryService {
   ) {}
 
   async summarize(): Promise<readonly AuthStatus[]> {
-    const providers = this.providerService.list();
+    const providers = this.providerService.listProviderConfigs();
     const oauthProviders = Object.entries(providers).filter(
       ([, config]) => config.oauth !== undefined,
     );
@@ -701,21 +700,21 @@ export class AuthSummaryService implements IAuthSummaryService {
   async ensureReady(modelOverride?: string): Promise<void> {
     try {
       await this.config.reload();
-      const providers = this.providerService.list();
-      const models = this.modelService.list();
-      const modelId = modelOverride ?? this.modelService.getDefaultModel();
+      const providers = this.providerService.listProviderConfigs();
+      const models = this.providerService.listModelRecords();
+      const modelId = modelOverride ?? this.providerService.getDefaultModelId();
       const configured = modelId === undefined || modelId === '' ? undefined : models[modelId];
       if (Object.keys(providers).length === 0 && !isProviderlessModel(configured)) {
         throw new AuthProvisioningRequiredError();
       }
-      const resolution = resolveModelForReady(modelId, models, providers, this.providerService.getDefaultProvider());
+      const resolution = resolveModelForReady(modelId, models, providers, this.providerService.getDefaultProviderId());
       if (!resolution.resolved) {
         throw unresolvedModelError(modelId, resolution.reason, configured);
       }
 
       const model = effectiveModelConfig(configured as ModelRecord);
-      const providerId = model.providerId ?? model.provider ?? this.providerService.getDefaultProvider();
-      const provider = providerId === undefined ? undefined : this.providerService.get(providerId);
+      const providerId = model.providerId ?? model.provider ?? this.providerService.getDefaultProviderId();
+      const provider = providerId === undefined ? undefined : this.providerService.getProviderConfig(providerId);
       const providerName = (providerId ?? providerNameFromFlatModel(model)) as string;
 
       const auth = resolveModelAuthMaterial({
@@ -736,6 +735,7 @@ export class AuthSummaryService implements IAuthSummaryService {
         if (nonEmpty(token) !== undefined) return;
         throw new AuthTokenMissingError(providerKey);
       }
+      if (provider?.type === 'vertexai') return;
       throw new AuthTokenMissingError(providerName);
     } catch (error) {
       this.telemetry.track2('auth_ensure_ready_failed', {

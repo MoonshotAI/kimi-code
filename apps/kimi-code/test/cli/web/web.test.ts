@@ -1,15 +1,7 @@
-/**
- * Tests for the `kimi web` Commander wiring and its subcommands.
- *
- * These tests don't actually start the server — the foreground runner is
- * injected, so they verify option parsing, the ready banner / one-line ready
- * output, browser opening, and the rotate-token / deprecated `kimi server kill`
- * subcommands against fake deps.
- */
-
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 
 import chalk, { Chalk } from 'chalk';
 import { Command } from 'commander';
@@ -17,7 +9,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
 
+import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
+
 import { registerWebCommand } from '#/cli/sub/web';
+import {
+  daemonSocketPath,
+  ensureDaemon,
+  type DaemonConnection,
+  type EnsureDaemonDeps,
+} from '#/cli/sub/web/ensure-daemon';
 import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type {
   RemoteControlCloseReason,
@@ -37,7 +37,6 @@ function stripAnsi(text: string): string {
 }
 
 function makeProgram(): Command {
-  // `commander` exitOverride avoids killing the test runner when --help/error fires.
   const program = new Command('kimi').exitOverride();
   registerWebCommand(program);
   return program;
@@ -45,10 +44,6 @@ function makeProgram(): Command {
 
 type ForegroundRunner = NonNullable<WebCommandDeps['startServerForeground']>;
 
-/**
- * Fake foreground runner: records the parsed options and fires `onReady` with
- * a fixed origin, then returns (the real runner blocks until SIGINT/SIGTERM).
- */
 function makeRunner(origin = 'http://127.0.0.1:58627'): {
   runner: ForegroundRunner;
   calls: { options: ParsedServerOptions | undefined };
@@ -62,7 +57,6 @@ function makeRunner(origin = 'http://127.0.0.1:58627'): {
   return { runner, calls };
 }
 
-/** Capturing stdout/stderr pair for `WebCommandDeps`. */
 function makeIo(): {
   stdout: Pick<NodeJS.WriteStream, 'write'>;
   stderr: Pick<NodeJS.WriteStream, 'write'>;
@@ -90,9 +84,21 @@ describe('kimi web', () => {
     const program = makeProgram();
     const web = program.commands.find((c) => c.name() === 'web');
     expect(web).toBeDefined();
-    const subs = web?.commands.map((c) => c.name()).toSorted();
-    // Foreground servers stop with Ctrl+C, so there is no kill/ps.
+    const subs = web?.commands.map((c) => c.name());
     expect(subs).toEqual(['rotate-token']);
+  });
+
+  it('reports the host protocol from `kimi server ensure-daemon --probe` without starting a server', async () => {
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      await makeProgram().parseAsync(['node', 'kimi', 'server', 'ensure-daemon', '--probe']);
+      const line = String(write.mock.calls.at(-1)?.[0]);
+      expect(line.startsWith('__KIMI_ENSURE_DAEMON__')).toBe(true);
+      const payload = JSON.parse(line.slice('__KIMI_ENSURE_DAEMON__'.length)) as Record<string, unknown>;
+      expect(payload).toEqual({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: expect.any(String) });
+    } finally {
+      write.mockRestore();
+    }
   });
 
   it('exposes the foreground server options on `web` itself', () => {
@@ -111,10 +117,7 @@ describe('kimi web', () => {
     expect(longs).toContain('--web-title');
     const remoteControl = web!.options.find((option) => option.long === '--remote-control');
     expect(remoteControl?.short).toBe('--rc');
-    // web opens the browser by default → the option is the negative --no-open.
     expect(longs).toContain('--no-open');
-    // The background/daemon era flags are gone: the server always runs in the
-    // foreground.
     expect(longs).not.toContain('--foreground');
     expect(longs).not.toContain('--keep-alive');
     expect(longs).not.toContain('--daemon');
@@ -122,44 +125,31 @@ describe('kimi web', () => {
     expect(longs).not.toContain('--allow-remote-terminals');
   });
 
-  it('routes `kimi server` and any legacy subcommand to a deprecation notice', async () => {
-    for (const argv of [
-      ['node', 'kimi', 'server'],
-      ['node', 'kimi', 'server', 'run', '--port', '1'],
-      ['node', 'kimi', 'server', 'status'],
-      ['node', 'kimi', 'server', 'ps', '--json'],
-    ]) {
-      const program = makeProgram();
-      let stderr = '';
-      const exitCalls: number[] = [];
-      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
-        stderr += String(chunk);
-        return true;
-      });
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-        exitCalls.push(code ?? 0);
-        return undefined;
-      }) as never);
+  it('runs a hidden `kimi server` with the same options as `kimi web` but `open: false` by default', async () => {
+    const program = makeProgram();
+    expect(program.helpInformation()).not.toMatch(/^\s+server\s/m);
+    const server = program.commands.find((c) => c.name() === 'server');
+    expect(server).toBeDefined();
+    expect(server?.commands.map((c) => c.name()).toSorted()).toEqual([
+      'ensure-daemon',
+      'kill',
+      'rotate-token',
+    ]);
+    let parsedOpts: Record<string, unknown> | undefined;
+    server!.action((opts: Record<string, unknown>) => {
+      parsedOpts = opts;
+    });
+    await program.parseAsync(['node', 'kimi', 'server', '--port', '59000']);
+    expect(parsedOpts).toMatchObject({ port: '59000', open: false });
 
-      await program.parseAsync(argv);
-      errSpy.mockRestore();
-      exitSpy.mockRestore();
-
-      expect(exitCalls).toEqual([1]);
-      expect(stderr).toContain('`kimi server` has been deprecated and no longer works.');
-      expect(stderr).toContain('kimi web');
-      expect(stderr).toContain('kimi server kill');
-      expect(stderr).toContain('0.28.0');
-      expect(stderr).toContain('next major version');
-    }
+    await program.parseAsync(['node', 'kimi', 'server', '--open']);
+    expect(parsedOpts).toMatchObject({ open: true });
   });
 });
 
 describe('`kimi web` ready banner', () => {
   it('prints the TUI-style ready panel once listening', async () => {
     const { handleWebCommand } = await import('#/cli/sub/web/run');
-    // The runner reports the actual bound origin — the banner must take the
-    // port from it, not from the requested --port.
     const { runner } = makeRunner('http://127.0.0.1:58628');
     const { stdout, stderr, readStdout } = makeIo();
 
@@ -179,22 +169,18 @@ describe('`kimi web` ready banner', () => {
     expect(plain).toContain('Local:');
     expect(plain).toContain('http://127.0.0.1:58628/#token=tok');
     expect(plain).toContain('Token:');
-    // Loopback bind shows a Network hint for enabling network access.
     expect(plain).toContain('Network:');
     expect(plain).toContain('use --host to enable');
     expect(plain).toContain('Logs:');
     expect(plain).toContain('off');
     expect(plain).toContain('Stop:');
     expect(plain).toContain('Ctrl+C');
-    // No bordered panel (the token URL must print in full for copying), but
-    // the Kimi sprite stays next to the title.
     expect(plain).not.toContain('╭');
     expect(plain).not.toContain('╰');
     expect(plain).toContain('▐█▛█▛█▌');
     expect(plain).toContain('▐█████▌');
     expect(plain).not.toContain('Kimi server:');
 
-    // Title is above the URLs; Logs/Stop are at the bottom.
     expect(plain.indexOf('Kimi server ready')).toBeLessThan(plain.indexOf('Local:'));
     expect(plain.indexOf('Logs:')).toBeLessThan(plain.indexOf('Stop:'));
   });
@@ -266,15 +252,11 @@ describe('`kimi web` ready banner', () => {
     );
 
     const plain = stripAnsi(readStdout());
-    // Red, impossible-to-miss danger notice.
     expect(plain).toContain('DANGER: authentication is DISABLED');
     expect(plain).toContain('--dangerous-bypass-auth');
     expect(plain).toContain('Ctrl+C');
-    // The token is irrelevant when bypassed — neither printed nor carried in
-    // any URL (so it cannot leak via copy/paste of the banner).
     expect(plain).not.toContain('tok');
     expect(plain).not.toContain('#token=');
-    // The opened browser URL carries no token fragment either.
     expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627');
   });
 });
@@ -304,8 +286,6 @@ describe('ready banner reflects the bind class', () => {
     expect(raw).toContain('Kimi server ready');
     expect(raw).toContain('Local:');
     expect(raw).toContain('Network:');
-    // Full token-bearing URLs are printed plainly (no box, no truncation) so
-    // they are easy to copy.
     expect(raw).toContain('http://localhost:58627/#token=tok-xyz');
     expect(raw).toContain('http://192.0.2.66:58627/#token=tok-xyz');
     expect(raw).toContain('http://198.51.100.216:58627/#token=tok-xyz');
@@ -324,7 +304,6 @@ describe('ready banner reflects the bind class', () => {
       {
         startServerForeground: runner,
         resolveToken: () => 'tok-loop',
-        // Injected interface addresses must NOT leak into a loopback banner.
         networkAddresses: [{ address: '192.0.2.66', family: 'IPv4' }],
         openUrl: vi.fn(),
         stdout,
@@ -338,7 +317,6 @@ describe('ready banner reflects the bind class', () => {
     expect(raw).toContain('http://127.0.0.1:58627/#token=tok-loop');
     expect(raw).toContain('Token:');
     expect(raw).toContain('tok-loop');
-    // No network URLs on a loopback bind — just the "off" hint.
     expect(raw).toContain('use --host to enable');
     expect(raw).not.toContain('Network:  http');
     expect(raw).not.toContain('192.0.2.66');
@@ -608,7 +586,6 @@ describe('kimi rc', () => {
         errSpy.mockRestore();
         exitSpy.mockRestore();
       }
-      // The loopback check only runs when remoteControl was forced on.
       expect(stderr).toContain('--remote-control requires a loopback host.');
     }
   });
@@ -780,12 +757,12 @@ describe('shared parsers stay strict', () => {
 describe('server web asset directory resolution', () => {
   it('uses extracted SEA web assets when available', async () => {
     const { resolveServerWebAssetsDir } = await import('#/cli/sub/web/run');
-    expect(resolveServerWebAssetsDir('/cache/kimi/dist-web')).toBe('/cache/kimi/dist-web');
+    expect(resolveServerWebAssetsDir('/cache/kimi/web-dist')).toBe('/cache/kimi/web-dist');
   });
 
-  it('falls back to package dist-web outside SEA mode', async () => {
+  it('falls back to package web-dist outside SEA mode', async () => {
     const { resolveServerWebAssetsDir } = await import('#/cli/sub/web/run');
-    expect(resolveServerWebAssetsDir(null)).toMatch(/[/\\]dist-web$/);
+    expect(resolveServerWebAssetsDir(null)).toMatch(/[/\\]web-dist$/);
   });
 
   it('returns the assets dir when it is built, dev mode or not', async () => {
@@ -872,11 +849,11 @@ function makeLegacyKillDeps(overrides: Partial<LegacyKillDeps> = {}): {
 describe('`kimi server kill` (deprecated, legacy servers only)', () => {
   const legacyLock = { pid: 1234, host: '127.0.0.1', port: 58627 };
 
-  it('is registered as the only working subcommand of the deprecated `server` command', () => {
+  it('is registered as a subcommand of `server`', () => {
     const program = makeProgram();
     const server = program.commands.find((c) => c.name() === 'server');
     expect(server).toBeDefined();
-    expect(server?.commands.map((c) => c.name())).toEqual(['kill']);
+    expect(server?.commands.map((c) => c.name())).toContain('kill');
   });
 
   it('prints a deprecation notice naming the 0.28.0 cutoff on every run', async () => {
@@ -929,7 +906,6 @@ describe('`kimi server kill` (deprecated, legacy servers only)', () => {
     expect(signals).toEqual([{ pid: 1234, signal: 'SIGTERM' }]);
     expect(writes.join('')).toContain('pid 1234');
     expect(writes.join('')).toContain('stopped.');
-    // The lock is removed once the pid is confirmed dead.
     expect(state.removeCalls).toBe(1);
   });
 
@@ -937,7 +913,6 @@ describe('`kimi server kill` (deprecated, legacy servers only)', () => {
     const { handleLegacyKillCommand } = await import('#/cli/sub/web/legacy-kill');
     const { deps, writes, signals, clock } = makeLegacyKillDeps({
       readLock: async () => ({ ...legacyLock, pid: 5678 }),
-      // Survives the 3s SIGTERM grace, dies during the 2s SIGKILL grace.
       pidAlive: () => clock.t < 3100,
     });
 
@@ -962,7 +937,6 @@ describe('`kimi server kill` (deprecated, legacy servers only)', () => {
     const { handleLegacyKillCommand } = await import('#/cli/sub/web/legacy-kill');
     const { deps, signals, state, clock } = makeLegacyKillDeps({
       readLock: async () => ({ pid: 1234 }),
-      // Alive at the initial check, dead when the SIGTERM grace polls.
       pidAlive: () => clock.t < 50,
     });
 
@@ -1034,8 +1008,6 @@ describe('readLegacyLock', () => {
   it('rejects a corrupt lock whose pid is not a positive integer', async () => {
     const { readLegacyLock } = await import('#/cli/sub/web/legacy-kill');
     const lockPath = join(dir, 'lock');
-    // pid 0 / negative pids have process-group semantics on POSIX — the lock
-    // must be treated as unusable rather than signaled.
     for (const pid of [0, -1, 1.5, '1234']) {
       writeFileSync(lockPath, JSON.stringify({ pid, port: 58627 }));
       await expect(readLegacyLock(lockPath)).resolves.toBeUndefined();
@@ -1092,8 +1064,6 @@ describe('buildWebUrl', () => {
     expect(url).toBe('http://127.0.0.1:58627/#token=abc123');
     const parsed = new URL(url);
     expect(parsed.hash).toBe('#token=abc123');
-    // The token is client-side only: it must NOT appear in the path or query
-    // (which WOULD be sent to the server and logged).
     expect(parsed.pathname).not.toContain('abc123');
     expect(parsed.search).not.toContain('abc123');
   });
@@ -1154,6 +1124,146 @@ describe('browserOpenOrigin', () => {
   });
 });
 
+describe('`kimi server ensure-daemon`', () => {
+  let homeDir: string;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), 'kimi-ensure-daemon-'));
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  function connection(overrides: Partial<DaemonConnection> = {}): DaemonConnection {
+    return {
+      stream: new PassThrough(),
+      version: '1.0.0',
+      stopIfIdle: async () => true,
+      close: () => {},
+      ...overrides,
+    };
+  }
+
+  function makeDeps(overrides: Partial<EnsureDaemonDeps> = {}): EnsureDaemonDeps {
+    return {
+      homeDir,
+      version: '1.0.0',
+      connectSocket: async () => connection(),
+      spawnServer: vi.fn(),
+      wait: async () => {},
+      ...overrides,
+    };
+  }
+
+  it('reuses a live daemon socket of the same version without spawning', async () => {
+    const conn = connection();
+    const deps = makeDeps({
+      connectSocket: async () => conn,
+    });
+
+    await expect(ensureDaemon(deps)).resolves.toEqual({
+      version: '1.0.0',
+      stream: conn.stream,
+    });
+    expect(deps.spawnServer).not.toHaveBeenCalled();
+  });
+
+  it('spawns a new server when the socket is absent and waits until it connects', async () => {
+    let attempts = 0;
+    const spawned = connection();
+    const deps = makeDeps({
+      connectSocket: async () => {
+        attempts += 1;
+        return attempts >= 4 ? spawned : undefined;
+      },
+    });
+
+    await expect(ensureDaemon(deps)).resolves.toEqual({
+      version: '1.0.0',
+      stream: spawned.stream,
+    });
+    expect(deps.spawnServer).toHaveBeenCalledWith(
+      daemonSocketPath(homeDir),
+      join(homeDir, 'server', 'ensure-daemon.log'),
+      join(homeDir, 'server', 'forwarded-ssh-agent.sock'),
+    );
+  });
+
+  it('replaces an idle daemon of another version after its socket closes', async () => {
+    let state: 'old' | 'draining' | 'closed' | 'new' = 'old';
+    const stopIfIdle = vi.fn(async () => {
+      state = 'draining';
+      return true;
+    });
+    const spawned = connection();
+    const deps = makeDeps({
+      connectSocket: async () => {
+        if (state === 'old') return connection({ version: '0.9.0', stopIfIdle });
+        if (state === 'draining') {
+          state = 'closed';
+          return connection({ version: '0.9.0' });
+        }
+        if (state === 'closed') return undefined;
+        return spawned;
+      },
+      spawnServer: vi.fn(() => {
+        state = 'new';
+      }),
+    });
+
+    await expect(ensureDaemon(deps)).resolves.toMatchObject({ version: '1.0.0' });
+    expect(stopIfIdle).toHaveBeenCalledTimes(1);
+    expect(deps.spawnServer).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to replace a daemon of another version that still has live work', async () => {
+    const deps = makeDeps({
+      connectSocket: async () =>
+        connection({ version: '0.9.0', stopIfIdle: async () => false }),
+    });
+
+    await expect(ensureDaemon(deps)).rejects.toMatchObject({ code: 'version_mismatch_busy' });
+    expect(deps.spawnServer).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('atomically updates the forwarded agent socket symlink when SSH_AUTH_SOCK is present', async () => {
+    const agentSocket = join(homeDir, 'server', 'forwarded-ssh-agent.sock');
+    await ensureDaemon(makeDeps({ sshAuthSock: '/tmp/ssh-1/agent.100' }));
+    expect(lstatSync(agentSocket).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(agentSocket)).toBe('/tmp/ssh-1/agent.100');
+
+    await ensureDaemon(makeDeps({ sshAuthSock: '/tmp/ssh-2/agent.200' }));
+    expect(readlinkSync(agentSocket)).toBe('/tmp/ssh-2/agent.200');
+
+    await ensureDaemon(makeDeps({ sshAuthSock: undefined }));
+    expect(readlinkSync(agentSocket)).toBe('/tmp/ssh-2/agent.200');
+  });
+
+  it('releases the lock after a failure and clears dead or corrupted lock files', async () => {
+    const lockPath = join(homeDir, 'server', 'ensure-daemon.lock');
+    await expect(
+      ensureDaemon(
+        makeDeps({
+          connectSocket: async () =>
+            connection({ version: '0.9.0', stopIfIdle: async () => false }),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: 'version_mismatch_busy',
+    });
+    expect(existsSync(lockPath)).toBe(false);
+
+    writeFileSync(lockPath, '999999999');
+    await expect(ensureDaemon(makeDeps())).resolves.toMatchObject({ version: '1.0.0' });
+    expect(existsSync(lockPath)).toBe(false);
+
+    writeFileSync(lockPath, '');
+    await expect(ensureDaemon(makeDeps())).resolves.toMatchObject({ version: '1.0.0' });
+    expect(existsSync(lockPath)).toBe(false);
+  });
+});
+
 describe('`kimi web rotate-token`', () => {
   let dir: string;
   let prevHome: string | undefined;
@@ -1196,9 +1306,6 @@ describe('`kimi web rotate-token`', () => {
   it('re-prints the access links with the new token when a server is running', async () => {
     const { registerWebCommand } = await import('#/cli/sub/web');
     const { mkdirSync, writeFileSync: writeSync } = await import('node:fs');
-    // Fake a live instance-registry entry pointing at this (alive) process so
-    // getLiveServerInstance() finds the running server and the command can
-    // re-print its links.
     mkdirSync(join(dir, 'server', 'instances'), { recursive: true });
     writeSync(
       join(dir, 'server', 'instances', '01JTEST0000000000000000000.json'),
@@ -1226,7 +1333,6 @@ describe('`kimi web rotate-token`', () => {
     const token = readFileSync(join(dir, 'server.token'), 'utf8').trim();
     expect(stdout).toContain('New server token');
     expect(stdout).toContain(`http://127.0.0.1:58627/#token=${token}`);
-    // Token line sits between the note and the links.
     expect(stdout.indexOf('picks up the new token')).toBeLessThan(
       stdout.indexOf('New server token'),
     );
@@ -1260,5 +1366,72 @@ describe('filterDisplayAddresses', () => {
       { address: '10.0.0.1', family: 'IPv4' },
       { address: '2001:db8::1', family: 'IPv6' },
     ]);
+  });
+});
+
+describe('kimi web --json', () => {
+  it('mints an ephemeral in-memory bearer token, skips openUrl and server.token, and prints a single-line JSON ready payload', async () => {
+    const { handleWebCommand, formatJsonBootLine } = await import('#/cli/sub/web/run');
+    const { runner, calls } = makeRunner('http://127.0.0.1:49123/');
+    const io = makeIo();
+    const openUrl = vi.fn();
+    const resolveToken = vi.fn(() => 'persistent-server-token');
+
+    await handleWebCommand(
+      { port: '0', json: true, open: true },
+      {
+        startServerForeground: runner,
+        openUrl,
+        resolveToken,
+        stdout: io.stdout,
+        stderr: io.stderr,
+      },
+    );
+
+    expect(openUrl).not.toHaveBeenCalled();
+    expect(resolveToken).not.toHaveBeenCalled();
+    expect(calls.options?.skipInstanceRegistry).toBe(true);
+    expect(calls.options?.logToStderr).toBe(true);
+    expect(calls.options?.authTokenService).toBeDefined();
+
+    const issuedToken = calls.options!.authTokenService!.getToken();
+    expect(issuedToken.length).toBeGreaterThan(20);
+    expect(await calls.options!.authTokenService!.isValid(issuedToken)).toBe(true);
+    expect(await calls.options!.authTokenService!.isValid('persistent-server-token')).toBe(false);
+
+    const lines = io.readStdout().trim().split('\n');
+    expect(lines).toHaveLength(1);
+    const parsed = JSON.parse(lines[0]!) as Record<string, unknown>;
+    expect(parsed).toEqual({
+      origin: 'http://127.0.0.1:49123',
+      ws_url: 'ws://127.0.0.1:49123/api/v1/ws',
+      token: issuedToken,
+      kimi_agent_protocol_version: '1.0.0',
+    });
+
+    expect(JSON.parse(formatJsonBootLine('http://::1:58627', 'tok_1'))).toMatchObject({
+      origin: 'http://[::1]:58627',
+      ws_url: 'ws://[::1]:58627/api/v1/ws',
+    });
+    expect(JSON.parse(formatJsonBootLine('http://0.0.0.0:58627', 'tok_1'))).toMatchObject({
+      origin: 'http://127.0.0.1:58627',
+      ws_url: 'ws://127.0.0.1:58627/api/v1/ws',
+    });
+  });
+
+  it('rejects combining --json with incompatible flags', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const io = makeIo();
+
+    for (const [opts, pattern] of [
+      [{ json: true, remoteControl: true }, /--json cannot be combined with --remote-control/],
+      [{ json: true, dangerousBypassAuth: true }, /--json cannot be combined with --dangerous-bypass-auth/],
+      [{ json: true, debugEndpoints: true }, /--json cannot be combined with --debug-endpoints/],
+      [{ json: true, allowRemoteShutdown: true }, /--json cannot be combined with --allow-remote-shutdown/],
+    ] as const) {
+      await expect(
+        handleWebCommand(opts, { openUrl: vi.fn(), stdout: io.stdout, stderr: io.stderr }),
+      ).rejects.toThrow(pattern);
+    }
   });
 });

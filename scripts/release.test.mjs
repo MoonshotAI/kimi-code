@@ -1,0 +1,347 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
+import { afterEach, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const desktop = true;
+const releaseScript = fileURLToPath(new URL('./release.mjs', import.meta.url));
+const versionScript = fileURLToPath(new URL('./version-release.mjs', import.meta.url));
+const dirs = [];
+const sha = 'a'.repeat(40);
+const otherSha = 'b'.repeat(40);
+const branch = 'release/test';
+const name = desktop ? 'kimi-code-app' : '@moonshot-ai/kimi-code';
+const path = desktop ? 'apps/desktop' : 'apps/kimi-code';
+const tag = desktop ? `kimi-code-desktop@1.0.1` : `${name}@1.0.1`;
+
+function fixture(overrides = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'release-test-'));
+  dirs.push(dir);
+  mkdirSync(join(dir, path), { recursive: true });
+  mkdirSync(join(dir, '.changeset'));
+  mkdirSync(join(dir, 'bin'));
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'release-fixture', private: true }));
+  const pkg = { name, version: '1.0.1', private: desktop };
+  writeFileSync(join(dir, path, 'package.json'), JSON.stringify(pkg));
+  writeFileSync(join(dir, path, 'CHANGELOG.md'), '# Changelog\n\n## 1.0.1\n\nFix a bug.\n\n## 1.0.0\n\nOld notes.\n');
+  writeFileSync(join(dir, '.changeset/README.md'), '# Changesets');
+  writeFileSync(join(dir, '.changeset/release-plan.json'), JSON.stringify({ branch, packages: [{ ...pkg, path }] }));
+  const state = {
+    tags: {}, releases: {}, calls: [], ...overrides,
+  };
+  writeFileSync(join(dir, 'state.json'), JSON.stringify(state));
+  writeFileSync(join(dir, 'bin/gh'), `#!/usr/bin/env node
+const fs = require('node:fs');
+const file = process.env.RELEASE_TEST_STATE;
+const state = JSON.parse(fs.readFileSync(file));
+const args = process.argv.slice(2);
+state.calls.push(args);
+function done(value) { fs.writeFileSync(file, JSON.stringify(state)); console.log(JSON.stringify(value)); }
+function missing() { fs.writeFileSync(file, JSON.stringify(state)); console.error('gh: Not Found (HTTP 404)'); process.exit(1); }
+if (state.apiError) { console.error('gh: Forbidden (HTTP 403)'); process.exit(1); }
+const endpoint = args[1] || '';
+if (args[0] === 'api') {
+  if (endpoint === 'graphql') {
+    const tag = args.find(x => x.startsWith('tag=')).slice(4);
+    done({ data: { repository: { release: state.releases[tag] ? { isDraft: state.releases[tag].draft } : null } } });
+  } else if (endpoint.includes('/git/ref/tags/')) {
+    const tag = decodeURIComponent(endpoint.split('/git/ref/tags/')[1]);
+    if (!state.tags[tag]) missing();
+    done({ object: { type: 'commit', sha: state.tags[tag] } });
+  } else if (endpoint.endsWith('/git/refs')) {
+    const tag = args.find(x => x.startsWith('ref=')).slice('ref=refs/tags/'.length);
+    state.tags[tag] = args.find(x => x.startsWith('sha=')).slice(4);
+    done({});
+  } else if (endpoint.includes('/releases/tags/')) {
+    const tag = decodeURIComponent(endpoint.split('/releases/tags/')[1]);
+    if (!state.releases[tag]) missing();
+    done(state.releases[tag]);
+  } else throw new Error('Unexpected API: ' + endpoint);
+} else if (args[0] === 'release' && args[1] === 'create') {
+  state.releases[args[2]] = { draft: true, title: args[args.indexOf('--title') + 1], notes: fs.readFileSync(0, 'utf8') };
+  done({});
+} else if (args[0] === 'release' && args[1] === 'edit') {
+  state.releases[args[2]].draft = false;
+  done({});
+} else throw new Error('Unexpected command: ' + args);
+`, { mode: 0o755 });
+  writeFileSync(join(dir, 'bin/pnpm'), `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = ${JSON.stringify(path)};
+const file = path + '/package.json';
+const pkg = JSON.parse(fs.readFileSync(file));
+if (process.argv.includes('list')) console.log(JSON.stringify([{ path: process.cwd() }, { path: process.cwd() + '/' + path }]));
+else if (process.argv.slice(2).join(' ') === 'changeset version') {
+  pkg.version = '1.0.2';
+  fs.writeFileSync(file, JSON.stringify(pkg));
+  fs.unlinkSync('.changeset/fix.md');
+} else throw new Error('Unexpected pnpm command');
+`, { mode: 0o755 });
+  return {
+    dir,
+    env: { ...process.env, PATH: `${join(dir, 'bin')}${delimiter}${process.env.PATH}`, RELEASE_TEST_STATE: join(dir, 'state.json'),
+      GITHUB_REPOSITORY: 'example/project', GITHUB_REF: `refs/heads/${branch}`, GITHUB_REF_NAME: branch,
+      GITHUB_SHA: sha, GITHUB_OUTPUT: join(dir, 'output') },
+    state: () => JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')),
+  };
+}
+
+function run(f, command, env = {}) {
+  return spawnSync(process.execPath, [releaseScript, command], { cwd: f.dir, env: { ...f.env, ...env }, encoding: 'utf8' });
+}
+
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+test('accepts only the tested release commit', () => {
+  const f = fixture();
+  assert.equal(run(f, 'check').status, 0);
+  assert.equal(run(f, 'check', { GITHUB_SHA: otherSha, RELEASE_SHA: sha }).status, 0);
+  for (const invalid of ['', 'main', sha.slice(0, 8)]) {
+    assert.match(run(f, 'check', { GITHUB_SHA: invalid }).stderr, /full commit SHA/);
+  }
+  assert.match(run(f, 'check', { GITHUB_REF: 'refs/heads/main', GITHUB_REF_NAME: 'main' }).stderr, /release\/\*/);
+  assert.match(run(f, 'check', { GITHUB_REF: `refs/tags/${branch}` }).stderr, /release\/\*/);
+});
+
+test('rejects an old plan and unconsumed changesets', () => {
+  const f = fixture();
+  writeFileSync(join(f.dir, '.changeset/fix.md'), '---\n---\n');
+  assert.match(run(f, 'check').stderr, /Unconsumed changesets/);
+  rmSync(join(f.dir, '.changeset/fix.md'));
+  writeFileSync(join(f.dir, path, 'package.json'), JSON.stringify({ name, version: '1.0.2', private: desktop }));
+  assert.match(run(f, 'check').stderr, /no longer matches/);
+  const next = fixture();
+  assert.match(run(next, 'check', { GITHUB_REF: 'refs/heads/release/next', GITHUB_REF_NAME: 'release/next' }).stderr, /version PR/);
+});
+
+void test('release plan checks do not depend on a separate CI run', () => {
+  const f = fixture({ tags: { [tag]: sha } });
+  assert.equal(run(f, 'check').status, 0);
+  assert.equal(f.state().calls.some(args => args[1]?.includes('/actions/workflows/')), false);
+});
+
+test('API failure and existing tags on another commit stop publication', () => {
+  assert.match(run(fixture({ apiError: true }), 'prepare').stderr, /Forbidden/);
+  assert.match(run(fixture({ tags: { [tag]: otherSha } }), 'prepare').stderr, /another commit/);
+});
+
+test('prepares a draft and retries an interrupted release from the same SHA', () => {
+  const f = fixture();
+  assert.equal(run(f, 'prepare').status, 0);
+  assert.equal(f.state().tags[tag], sha);
+  assert.equal(f.state().releases[tag].draft, true);
+  assert.equal(f.state().releases[tag].title, 'Kimi Code Desktop 1.0.1');
+  assert.match(f.state().releases[tag].notes, /Fix a bug/);
+  assert.doesNotMatch(f.state().releases[tag].notes, /Old notes/);
+  assert.match(readFileSync(join(f.dir, 'output'), 'utf8'), /build=true/);
+  assert.equal(run(f, 'prepare').status, 0);
+  assert.equal(f.state().calls.filter(x => x[0] === 'release' && x[1] === 'create').length, 1);
+  assert.equal(run(f, 'finish').status, 0);
+  assert.equal(f.state().releases[tag].draft, false);
+  writeFileSync(join(f.dir, 'output'), '');
+  assert.equal(run(f, 'prepare').status, 0);
+  assert.match(readFileSync(join(f.dir, 'output'), 'utf8'), /build=false/);
+});
+
+function addCliToPlan(f) {
+  const cli = { name: '@moonshot-ai/kimi-code', path: 'apps/kimi-code', version: '2.0.0', private: false };
+  mkdirSync(join(f.dir, cli.path), { recursive: true });
+  writeFileSync(join(f.dir, cli.path, 'package.json'), JSON.stringify(cli));
+  const planFile = join(f.dir, '.changeset/release-plan.json');
+  const plan = JSON.parse(readFileSync(planFile, 'utf8'));
+  plan.packages.push(cli);
+  writeFileSync(planFile, JSON.stringify(plan));
+  return { cli, plan, planFile };
+}
+
+void test('native asset recovery requires the exact npm version and remote tag, and leaves complete downloads alone', () => {
+  const f = fixture();
+  const { cli, planFile } = addCliToPlan(f);
+  writeFileSync(planFile, JSON.stringify({ branch, packages: [cli] }));
+  const releaseTag = `${cli.name}@${cli.version}`;
+  const files = ['kimi-code-linux-x64.zip', 'manifest.json'];
+  const dist = join(f.dir, 'dist-native-release');
+  mkdirSync(dist);
+  for (const file of [...files, 'manifest-linux-x64.json']) writeFileSync(join(dist, file), file);
+  const assets = files.map(name => ({ name, state: 'uploaded', size: 100 }));
+  const state = f.state();
+  state.tags[releaseTag] = sha;
+  state.releases[releaseTag] = { assets };
+  writeFileSync(join(f.dir, 'bin/npm'), `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] !== 'view' || args[1] !== process.env.RELEASE_TAG || args[2] !== 'version' || !args.includes('--json')) process.exit(2);
+if (!process.env.TEST_NPM_VERSION) process.exit(1);
+console.log(JSON.stringify(process.env.TEST_NPM_VERSION));
+`, { mode: 0o755 });
+  const check = (extra = {}) => {
+    writeFileSync(f.env.RELEASE_TEST_STATE, JSON.stringify(state));
+    writeFileSync(f.env.GITHUB_OUTPUT, '');
+    return run(f, 'check-cli-retry', { RELEASE_TAG: releaseTag, GITHUB_RUN_ATTEMPT: '1', TEST_NPM_VERSION: cli.version, ...extra });
+  };
+  for (const { remote, complete } of [
+    { remote: [], complete: false },
+    { remote: assets.slice(0, 1), complete: false },
+    { remote: [assets[0], { ...assets[1], state: 'starter' }], complete: false },
+    { remote: assets, complete: true },
+  ]) {
+    state.releases[releaseTag].assets = remote;
+    const result = check();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), `complete=${complete}\n`);
+  }
+  for (const [extra, reason] of [
+    [{ TEST_NPM_VERSION: '2.0.1' }, /npm did not confirm/],
+    [{ TEST_NPM_VERSION: '' }, /npm view/],
+    [{ RELEASE_TAG: `${cli.name}@2.0.1` }, /does not match the release plan/],
+  ]) {
+    const result = check(extra);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, reason);
+    assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), '');
+  }
+  state.tags[releaseTag] = otherSha;
+  assert.match(check().stderr, /another commit/);
+  delete state.tags[releaseTag];
+  assert.match(check().stderr, /Missing tag/);
+});
+
+void test('desktop only defers pnpm cache writes for a new CLI release, not a previously tagged version', () => {
+  const f = fixture();
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: f.dir, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git('init', '--quiet');
+  const outputFor = (tag) => `tag=${tag}\ntargets=["darwin-arm64","darwin-x64","linux-arm64","linux-x64","win32-arm64","win32-x64"]\n`;
+  assert.equal(run(f, 'plan-cli').status, 0);
+  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), outputFor(''));
+
+  const { cli, plan, planFile } = addCliToPlan(f);
+  writeFileSync(f.env.GITHUB_OUTPUT, '');
+  assert.equal(run(f, 'plan-cli').status, 0);
+  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), outputFor(`${cli.name}@${cli.version}`));
+
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgSign=false', 'commit', '--allow-empty', '--quiet', '-m', 'prior release');
+  git('-c', 'tag.gpgSign=false', 'tag', `${cli.name}@${cli.version}`);
+  writeFileSync(f.env.GITHUB_OUTPUT, '');
+  assert.equal(run(f, 'plan-cli').status, 0);
+  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), outputFor(''));
+
+  writeFileSync(planFile, JSON.stringify({ ...plan, packages: [cli] }));
+  writeFileSync(f.env.GITHUB_OUTPUT, '');
+  assert.equal(run(f, 'plan-cli', { GITHUB_SHA: git('rev-parse', 'HEAD') }).status, 0);
+  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), outputFor(`${cli.name}@${cli.version}`));
+});
+
+void test('only CLI-only installs opt out of the Electron rebuild', () => {
+  const f = fixture();
+  const marker = join(f.dir, 'electron-rebuilt');
+  const bin = join(f.dir, 'bin', process.platform === 'win32' ? 'electron-rebuild.cmd' : 'electron-rebuild');
+  writeFileSync(bin, process.platform === 'win32' ? '@echo off\r\ntype nul > "%REBUILD_MARKER%"\r\n' : '#!/bin/sh\ntouch "$REBUILD_MARKER"\n', { mode: 0o755 });
+  const script = fileURLToPath(new URL('../apps/desktop/scripts/rebuild-native.mjs', import.meta.url));
+  for (const skip of ['1', '']) {
+    const result = spawnSync(process.execPath, [script], { env: { ...f.env, REBUILD_MARKER: marker, KIMI_SKIP_DESKTOP_PTY_REBUILD: skip } });
+    assert.equal(result.status, 0, result.stderr.toString());
+    if (skip === '1') assert.throws(() => readFileSync(marker), { code: 'ENOENT' });
+    else assert.equal(readFileSync(marker).length, 0);
+  }
+});
+
+void test('workflow release titles use product names and full versions', () => {
+  const workflow = (name) => readFileSync(fileURLToPath(new URL(`../.github/workflows/${name}`, import.meta.url)), 'utf8');
+  const stable = workflow('release.yml');
+  assert.match(stable, /RELEASE_VERSION: \$\{\{ steps\.kimi-release\.outputs\.version \}\}/);
+  assert.match(stable, /gh release edit "\$RELEASE_TAG" --title "Kimi Code CLI \$\{RELEASE_VERSION\}"/);
+  const canary = workflow('canary-release.yml');
+  assert.equal(canary.split('--title "Kimi Code CLI ${CANARY_VERSION}"').length - 1, 2);
+  assert.doesNotMatch(canary, /--title "\$CANARY_TAG"/);
+  const desktop = workflow('desktop-build.yml');
+  assert.match(desktop, /--title "Kimi Code Desktop \$\{version\}"/);
+  assert.doesNotMatch(desktop, /--title "Kimi Code Canary/);
+});
+
+void test('release workflow runs candidate tests directly and supports manual SHA reruns', () => {
+  const workflow = readFileSync(fileURLToPath(new URL('../.github/workflows/release.yml', import.meta.url)), 'utf8');
+  assert.match(workflow, /workflow_dispatch:[\s\S]*sha:/);
+  assert.match(workflow, /candidate:[\s\S]*workflow_dispatch/);
+  assert.match(workflow, /candidate:[\s\S]*pnpm run test --exclude='[^']+\/test\/e2e\/tui\/[^']+'/);
+  assert.doesNotMatch(workflow, /gh workflow run ci\.yml/);
+  assert.doesNotMatch(workflow, /gh run watch/);
+  assert.doesNotMatch(workflow, /ci-run-id/);
+  assert.match(workflow, /github\.run_attempt > 1/);
+  const ci = readFileSync(fileURLToPath(new URL('../.github/workflows/ci.yml', import.meta.url)), 'utf8');
+  assert.doesNotMatch(ci, /branches:\n\s+- 'release\/\*'/);
+  assert.match(ci, /pull_request:\n\s+branches-ignore:\n\s+- 'release\/\*'/);
+});
+
+test('version command records the consumed changesets and changed package versions', () => {
+  const f = fixture();
+  writeFileSync(join(f.dir, '.changeset/fix.md'), '---\n---\n');
+  const result = spawnSync(process.execPath, [versionScript], { cwd: f.dir, env: f.env, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const plan = JSON.parse(readFileSync(join(f.dir, '.changeset/release-plan.json'), 'utf8'));
+  assert.equal(plan.branch, branch);
+  assert.deepEqual(plan.changesets, ['fix.md']);
+  assert.deepEqual(plan.packages, [{ name, path, version: '1.0.2', private: desktop }]);
+});
+
+test('a later version PR retains earlier packages from the same release cycle', () => {
+  const f = fixture();
+  const earlier = { name: '@example/sdk', path: 'packages/sdk', version: '2.0.0', private: false };
+  const planFile = join(f.dir, '.changeset/release-plan.json');
+  const plan = JSON.parse(readFileSync(planFile, 'utf8'));
+  plan.packages.push(earlier);
+  plan.changesets = ['earlier.md'];
+  writeFileSync(planFile, JSON.stringify(plan));
+  writeFileSync(join(f.dir, '.changeset/fix.md'), '---\n---\n');
+  const result = spawnSync(process.execPath, [versionScript], { cwd: f.dir, env: f.env, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const next = JSON.parse(readFileSync(planFile, 'utf8'));
+  assert.deepEqual(next.packages, [{ name, path, version: '1.0.2', private: desktop }, earlier]);
+  assert.deepEqual(next.changesets, ['fix.md', 'earlier.md']);
+});
+
+test('the next release cycle discards the old package plan', () => {
+  const f = fixture();
+  const planFile = join(f.dir, '.changeset/release-plan.json');
+  writeFileSync(planFile, JSON.stringify({ branch: 'release/old', changesets: ['old.md'], packages: [{ name: '@example/old' }] }));
+  writeFileSync(join(f.dir, '.changeset/fix.md'), '---\n---\n');
+  const result = spawnSync(process.execPath, [versionScript], { cwd: f.dir, env: f.env, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const next = JSON.parse(readFileSync(planFile, 'utf8'));
+  assert.equal(next.packages.length, 1);
+  assert.deepEqual(next.changesets, ['fix.md']);
+});
+
+void test('skips desktop publication when the plan has no desktop package', () => {
+  const f = fixture();
+  mkdirSync(join(f.dir, 'packages/sdk'), { recursive: true });
+  writeFileSync(join(f.dir, 'packages/sdk/package.json'), JSON.stringify({ name: '@example/sdk', version: '2.0.0' }));
+  writeFileSync(join(f.dir, '.changeset/release-plan.json'), JSON.stringify({
+    branch,
+    packages: [{ name: '@example/sdk', path: 'packages/sdk', version: '2.0.0', private: false }],
+  }));
+  assert.equal(run(f, 'check').status, 0);
+  assert.equal(run(f, 'prepare').status, 0);
+  assert.match(readFileSync(join(f.dir, 'output'), 'utf8'), /build=false/);
+  assert.equal(run(f, 'finish').status, 0);
+  assert.deepEqual(f.state().tags, {});
+  assert.deepEqual(f.state().releases, {});
+});
+
+test('publishes the triggering commit without querying CI runs', () => {
+  const f = fixture();
+  for (const command of ['check', 'prepare', 'finish']) {
+    const result = run(f, command);
+    assert.equal(result.status, 0, result.stderr);
+  }
+  assert.equal(f.state().tags[tag], sha);
+  assert.equal(f.state().releases[tag].draft, false);
+  assert.equal(f.state().calls.some(args => args[1]?.includes('/actions/workflows/')), false);
+});

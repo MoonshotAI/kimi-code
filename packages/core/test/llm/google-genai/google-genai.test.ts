@@ -20,5 +20,5 @@ describe('Google GenAI decode fixtures', () => {
 });
 
 describe('Google GenAI transport fixtures', () => {
-  runTransportFixtures(googleGenAIProtocol, googleGenAITransportFixtures);
+  runTransportFixtures(googleGenAIProtocol, googleGenAITransportFixtures, 'gemini');
 });

@@ -24,16 +24,17 @@ import {
   IAgentTodoService,
   IEventBus,
   IEventService,
-  IModelCatalog,
-  IModelService,
+  IConfigService,
   ISessionActivityView,
   ISessionMetadata,
   ISessionLifecycleService,
+  ISessionIndex,
   ISessionManager,
   ISessionTokenCountingService,
   ISessionUsageService,
-  IWorkspaceInstanceManager,
-  IWorkspaceSessions,
+  IProjectInstanceManager,
+  IProjectService,
+  IProjectSessions,
   MAIN_AGENT_ID,
   interactions,
   makeAgentScopeContext,
@@ -62,11 +63,12 @@ import type {
 import { mapError } from '../src/transport/errors';
 import {
   type BroadcastDelivery,
+  type BroadcastFrame,
   type BroadcastTarget,
-  type EventEnvelope,
   SessionEventBroadcaster,
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
 import { USAGE_FRAME_INTERVAL_MS } from '../src/transport/ws/v1/sessionAgentFeed';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 type FakeBusEvent = { type: string };
 
@@ -263,6 +265,10 @@ class FakeLifecycle {
   }
   onDidCreate(h: (context: AgentContext) => void) {
     this.createHandlers.push(h);
+    return { dispose: () => {} };
+  }
+  onWillClose(h: (context: AgentContext) => void) {
+    this.disposeHandlers.push(h);
     return { dispose: () => {} };
   }
   onDidClose(h: (context: AgentContext) => void) {
@@ -515,13 +521,31 @@ function makeCore(
           onDidArchiveSession: managerEvents?.onDidArchiveSession,
         };
       }
-      if (token === IWorkspaceInstanceManager) {
+      if (token === IProjectInstanceManager) {
         return {
           list: () => [{ program: { accessor: handler.accessor } }],
           onDidChange: () => ({ dispose: () => {} }),
         };
       }
-      if (token === IWorkspaceSessions) {
+      if (token === ISessionIndex) {
+        return {
+          get: async (sessionId: string) => ({
+            id: sessionId,
+            workspaceId: 'wd_aaa_000000000000',
+            cwd: '/repo/a',
+            createdAt: 1,
+            updatedAt: 2,
+            archived: false,
+          }),
+        };
+      }
+      if (token === IProjectService) {
+        return { get: async () => ({ root: '/repo/a' }) };
+      }
+      if (token === IConfigService) {
+        return { ready: Promise.resolve(), getAll: () => ({}) };
+      }
+      if (token === IProjectSessions) {
         return { listRecent: async () => [], count: async () => 3 };
       }
       return undefined;
@@ -542,17 +566,33 @@ function sessionHandle(core: Scope, sessionId: string): IScopeHandle {
   return core.accessor.get(ISessionManager).get(sessionId) as IScopeHandle;
 }
 
-function workChanges(envelopes: readonly EventEnvelope[]): EventEnvelope[] {
-  return envelopes.filter((e) => e.type === 'event.session.work_changed');
+function sessionInfo(id: string, workspaceId = 'wd_aaa_000000000000') {
+  return {
+    id,
+    workspace_id: workspaceId,
+    cwd: '/repo/a',
+    title: id,
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+    activity: 'idle' as const,
+    archived: false,
+  };
+}
+
+function workChanges(envelopes: readonly BroadcastFrame[]) {
+  return envelopes.filter(
+    (frame): frame is Extract<BroadcastFrame, { type: 'session' }> =>
+      frame.type === 'session' && frame.change === 'updated',
+  );
 }
 
 function collectingTarget(): {
   target: BroadcastTarget;
-  envelopes: EventEnvelope[];
+  envelopes: BroadcastFrame[];
   interactionMessages: InteractionEventMessage[];
   deliveries: BroadcastDelivery[];
 } {
-  const envelopes: EventEnvelope[] = [];
+  const envelopes: BroadcastFrame[] = [];
   const interactionMessages: InteractionEventMessage[] = [];
   const deliveries: BroadcastDelivery[] = [];
   return {
@@ -561,7 +601,7 @@ function collectingTarget(): {
         if (frame.type === 'interaction' && !('payload' in frame)) {
           interactionMessages.push(frame);
         } else {
-          envelopes.push(frame as EventEnvelope);
+          envelopes.push(frame);
         }
         deliveries.push(delivery);
       },
@@ -691,7 +731,7 @@ describe('SessionEventBroadcaster', () => {
     await expect(bc.subscribe('nope', target, ['main'])).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
   });
 
-  it('broadcasts session.meta.updated under the real session id and fans out to every connection', async () => {
+  it('broadcasts a full session on session.meta.updated and fans out to every connection', async () => {
 
     const s1View = collectingTarget();
     const s2View = collectingTarget();
@@ -712,28 +752,25 @@ describe('SessionEventBroadcaster', () => {
     await vi.waitFor(() => expect(s2View.envelopes).toHaveLength(1));
 
     expect(s1View.envelopes[0]).toMatchObject({
-      type: 'session.meta.updated',
-      session_id: 's1',
-      payload: {
-        type: 'session.meta.updated',
-        agentId: 'main',
-        sessionId: 's1',
-        title: '测试',
-        patch: { title: '测试', lastPrompt: '测试' },
-      },
+      type: 'session',
+      change: 'updated',
+      session: { id: 's1', title: '测试', last_prompt: '测试' },
     });
-    expect(s1View.envelopes[0]!.session_id).not.toBe('__global__');
-    expect(s2View.envelopes[0]!.session_id).toBe('s1');
+    expect(s2View.envelopes[0]).toMatchObject({
+      type: 'session',
+      change: 'updated',
+      session: { id: 's1', title: '测试', last_prompt: '测试' },
+    });
   });
 
-  it('broadcasts event.session.created under the real session id and fans out to every connection', async () => {
+  it('broadcasts a full session on creation and fans out to every connection', async () => {
 
     const s1View = collectingTarget();
     const s2View = collectingTarget();
     bc.addGlobalTarget(s1View.target);
     bc.addGlobalTarget(s2View.target);
 
-    const session = { id: 's1', title: 't', status: 'idle' };
+    const session = sessionInfo('s1');
     eventBus.emit({
       type: 'event.session.created',
       payload: { agentId: 'main', sessionId: 's1', session },
@@ -743,17 +780,15 @@ describe('SessionEventBroadcaster', () => {
     await vi.waitFor(() => expect(s2View.envelopes).toHaveLength(1));
 
     expect(s1View.envelopes[0]).toMatchObject({
-      type: 'event.session.created',
-      session_id: 's1',
-      payload: {
-        type: 'event.session.created',
-        agentId: 'main',
-        sessionId: 's1',
-        session,
-      },
+      type: 'session',
+      change: 'created',
+      session,
     });
-    expect(s1View.envelopes[0]!.session_id).not.toBe('__global__');
-    expect(s2View.envelopes[0]!.session_id).toBe('s1');
+    expect(s2View.envelopes[0]).toMatchObject({
+      type: 'session',
+      change: 'created',
+      session,
+    });
   });
 
   it('fans out event.session.archived to every connection, including for cold sessions', async () => {
@@ -762,19 +797,14 @@ describe('SessionEventBroadcaster', () => {
 
     eventBus.emit({
       type: 'event.session.archived',
-      payload: { sessionId: 'cold-1', workspaceId: 'wd_cold' },
+      payload: { sessionId: 'cold-1', workspaceId: 'wd_cold_000000000000', session: sessionInfo('cold-1', 'wd_cold_000000000000') },
     });
 
     await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
     expect(globalView.envelopes[0]).toMatchObject({
-      type: 'event.session.archived',
-      session_id: '__global__',
-      payload: {
-        type: 'event.session.archived',
-        agentId: 'main',
-        sessionId: 'cold-1',
-        workspace_id: 'wd_cold',
-      },
+      type: 'session',
+      change: 'archived',
+      session: { id: 'cold-1', workspace_id: 'wd_cold_000000000000' },
     });
     expect(globalView.deliveries).toEqual(['immediate']);
   });
@@ -785,19 +815,14 @@ describe('SessionEventBroadcaster', () => {
 
     eventBus.emit({
       type: 'event.session.restored',
-      payload: { sessionId: 'cold-1', workspaceId: 'wd_cold' },
+      payload: { sessionId: 'cold-1', workspaceId: 'wd_cold_000000000000', session: sessionInfo('cold-1', 'wd_cold_000000000000') },
     });
 
     await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
     expect(globalView.envelopes[0]).toMatchObject({
-      type: 'event.session.restored',
-      session_id: '__global__',
-      payload: {
-        type: 'event.session.restored',
-        agentId: 'main',
-        sessionId: 'cold-1',
-        workspace_id: 'wd_cold',
-      },
+      type: 'session',
+      change: 'restored',
+      session: { id: 'cold-1', workspace_id: 'wd_cold_000000000000' },
     });
   });
 
@@ -807,19 +832,14 @@ describe('SessionEventBroadcaster', () => {
 
     eventBus.emit({
       type: 'event.session.deleted',
-      payload: { sessionId: 'cold-1', workspaceId: 'wd_cold' },
+      payload: { sessionId: 'cold-1', workspaceId: 'wd_cold_000000000000', session: sessionInfo('cold-1', 'wd_cold_000000000000') },
     });
 
     await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
     expect(globalView.envelopes[0]).toMatchObject({
-      type: 'event.session.deleted',
-      session_id: '__global__',
-      payload: {
-        type: 'event.session.deleted',
-        agentId: 'main',
-        sessionId: 'cold-1',
-        workspace_id: 'wd_cold',
-      },
+      type: 'session',
+      change: 'deleted',
+      session: { id: 'cold-1', workspace_id: 'wd_cold_000000000000' },
     });
     expect(globalView.deliveries).toEqual(['immediate']);
   });
@@ -839,20 +859,15 @@ describe('SessionEventBroadcaster', () => {
 
     await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
     expect(globalView.envelopes[0]).toMatchObject({
-      type: 'event.workspace.created',
-      session_id: '__global__',
-      payload: {
-        type: 'event.workspace.created',
-        agentId: 'main',
-        sessionId: '__global__',
-        workspace: {
-          id: 'wd_a',
-          root: '/repo/a',
-          name: 'repo-a',
-          created_at: new Date(1_000).toISOString(),
-          last_opened_at: new Date(2_000).toISOString(),
-          session_count: 3,
-        },
+      type: 'workspace',
+      change: 'created',
+      workspace: {
+        id: 'wd_a',
+        root: '/repo/a',
+        name: 'repo-a',
+        created_at: new Date(1_000).toISOString(),
+        last_opened_at: new Date(2_000).toISOString(),
+        session_count: 3,
       },
     });
 
@@ -862,11 +877,9 @@ describe('SessionEventBroadcaster', () => {
     });
     await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(2));
     expect(globalView.envelopes[1]).toMatchObject({
-      type: 'event.workspace.updated',
-      payload: {
-        type: 'event.workspace.updated',
-        workspace: { id: 'wd_a', name: 'renamed', session_count: 3 },
-      },
+      type: 'workspace',
+      change: 'updated',
+      workspace: { id: 'wd_a', name: 'renamed', session_count: 3 },
     });
     expect(globalView.deliveries).toEqual(['immediate', 'immediate']);
   });
@@ -882,15 +895,9 @@ describe('SessionEventBroadcaster', () => {
 
     await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
     expect(globalView.envelopes[0]).toMatchObject({
-      type: 'event.workspace.deleted',
-      session_id: '__global__',
-      payload: {
-        type: 'event.workspace.deleted',
-        agentId: 'main',
-        sessionId: '__global__',
-        workspace_id: 'wd_a',
-        root: '/repo/a',
-      },
+      type: 'workspace',
+      change: 'deleted',
+      workspace: { id: 'wd_a', root: '/repo/a' },
     });
   });
 
@@ -901,7 +908,7 @@ describe('SessionEventBroadcaster', () => {
       const globalView = collectingTarget();
       bc.addGlobalTarget(globalView.target);
 
-      const session = { id: 's1', title: 't', status: 'idle' };
+      const session = sessionInfo('s1');
       eventBus.emit({
         type: 'event.session.created',
         payload: { agentId: 'main', sessionId: 's1', session },
@@ -909,8 +916,9 @@ describe('SessionEventBroadcaster', () => {
 
       await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
       expect(globalView.envelopes[0]).toMatchObject({
-        type: 'event.session.created',
-        session_id: 's1',
+        type: 'session',
+        change: 'created',
+        session,
       });
       expect(globalView.deliveries).toEqual(['immediate']);
     });
@@ -924,7 +932,7 @@ describe('SessionEventBroadcaster', () => {
 
       eventBus.emit({
         type: 'event.session.created',
-        payload: { agentId: 'main', sessionId: 's1', session: { id: 's1' } },
+        payload: { agentId: 'main', sessionId: 's1', session: sessionInfo('s1') },
       });
       await settle();
 
@@ -940,10 +948,10 @@ describe('SessionEventBroadcaster', () => {
 
       eventBus.emit({
         type: 'event.session.created',
-        payload: { agentId: 'main', sessionId: 's1', session: { id: 's1' } },
+        payload: { agentId: 'main', sessionId: 's1', session: sessionInfo('s1') },
       });
 
-      const sessionEvents = () => both.envelopes.filter((e) => e.type.startsWith('event.'));
+      const sessionEvents = () => both.envelopes.filter((e) => e.type === 'session');
       await vi.waitFor(() => expect(sessionEvents()).toHaveLength(1));
       await settle();
       expect(sessionEvents()).toHaveLength(1);
@@ -965,9 +973,9 @@ describe('SessionEventBroadcaster', () => {
 
       await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
       expect(globalView.envelopes[0]).toMatchObject({
-        type: 'event.config.warning',
-        session_id: '__global__',
-        payload: { warnings },
+        type: 'config',
+        config: { providers: {} },
+        warnings,
       });
       expect(globalView.deliveries).toEqual(['immediate']);
     });
@@ -987,16 +995,13 @@ describe('SessionEventBroadcaster', () => {
 
       await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(2));
       expect(globalView.envelopes[0]).toMatchObject({
-        type: 'event.plugin.changed',
-        session_id: '__global__',
+        type: 'invalidated',
+        kind: 'plugins',
       });
       expect(globalView.envelopes[1]).toMatchObject({
         type: 'event.capability.changed',
-        session_id: '__global__',
-        payload: {
-          capability_id: 'kimi-webbridge',
-          install: { running: true, step: 'download', percent: 42 },
-        },
+        capability_id: 'kimi-webbridge',
+        install: { running: true, step: 'download', percent: 42 },
       });
     });
 
@@ -1014,7 +1019,7 @@ describe('SessionEventBroadcaster', () => {
         expect(globalView.envelopes).toHaveLength(1);
       });
       expect(globalView.envelopes[0]).toMatchObject({
-        payload: { install: { running: false, confirmationRequired: 'stop-processes' } },
+        install: { running: false, confirmation_required: 'stop-processes' },
       });
     });
 
@@ -1040,7 +1045,8 @@ describe('SessionEventBroadcaster', () => {
       await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
       expect(globalView.envelopes[0]).toMatchObject({
         type: 'event.capability.changed',
-        payload: { capability_id: 'kimi-cu', install: { running: false } },
+        capability_id: 'kimi-cu',
+        install: { running: false },
       });
     });
 
@@ -1057,8 +1063,9 @@ describe('SessionEventBroadcaster', () => {
 
       await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
       expect(globalView.envelopes[0]).toMatchObject({
-        type: 'event.config.warning',
-        payload: { warnings },
+        type: 'config',
+        config: { providers: {} },
+        warnings,
       });
     });
 
@@ -1074,9 +1081,8 @@ describe('SessionEventBroadcaster', () => {
 
       await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
       expect(globalView.envelopes[0]).toMatchObject({
-        type: 'event.config.changed',
-        session_id: '__global__',
-        payload: { changedFields: ['defaultModel'], config },
+        type: 'config',
+        config,
       });
       expect(globalView.deliveries).toEqual(['immediate']);
     });
@@ -1093,9 +1099,8 @@ describe('SessionEventBroadcaster', () => {
 
       await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
       expect(globalView.envelopes[0]).toMatchObject({
-        type: 'event.config.changed',
-        session_id: '__global__',
-        payload: { changedFields: ['mcp'], config },
+        type: 'config',
+        config,
       });
     });
 
@@ -1129,8 +1134,8 @@ describe('SessionEventBroadcaster', () => {
 
       await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
       expect(globalView.envelopes[0]).toMatchObject({
-        type: 'event.config.changed',
-        payload: { changedFields: ['models'], config: { models: {} } },
+        type: 'config',
+        config: { models: {} },
       });
     });
 
@@ -1149,14 +1154,13 @@ describe('SessionEventBroadcaster', () => {
 
       await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
       expect(globalView.envelopes[0]).toMatchObject({
-        type: 'event.model_catalog.changed',
-        session_id: '__global__',
-        payload: { changed, unchanged: ['openai-main'], failed },
+        type: 'invalidated',
+        kind: 'models',
       });
       expect(globalView.deliveries).toEqual(['immediate']);
     });
 
-    it('forwards retired_default on event.model_catalog.changed', async () => {
+    it('collapses model catalog changes into invalidated', async () => {
       const globalView = collectingTarget();
       bc.addGlobalTarget(globalView.target);
 
@@ -1173,9 +1177,8 @@ describe('SessionEventBroadcaster', () => {
 
       await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
       expect(globalView.envelopes[0]).toMatchObject({
-        type: 'event.model_catalog.changed',
-        session_id: '__global__',
-        payload: { changed, unchanged: [], failed: [], retired_default: retiredDefault },
+        type: 'invalidated',
+        kind: 'models',
       });
       expect(globalView.deliveries).toEqual(['immediate']);
     });
@@ -1245,8 +1248,8 @@ describe('SessionEventBroadcaster', () => {
 
       await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
       expect(globalView.envelopes[0]).toMatchObject({
-        type: 'event.model_catalog.changed',
-        payload: { changed, unchanged: [], failed: [] },
+        type: 'invalidated',
+        kind: 'models',
       });
     });
   });
@@ -1263,24 +1266,14 @@ describe('SessionEventBroadcaster', () => {
       main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
       await settle();
 
-      expect(globalView.envelopes.map((e) => e.type)).toEqual([
-        'event.session.work_changed',
-        'event.session.work_changed',
-      ]);
+      expect(globalView.envelopes.map((e) => e.type)).toEqual(['session', 'session']);
       expect(globalView.envelopes[0]).toMatchObject({
-        session_id: 's1',
-        payload: {
-          type: 'event.session.work_changed',
-          busy: true,
-          main_turn_active: true,
-          last_turn_reason: undefined,
-          agentId: 'main',
-          sessionId: 's1',
-        },
+        change: 'updated',
+        session: { id: 's1', activity: 'turn', last_turn_outcome: undefined },
       });
       expect(globalView.envelopes[1]).toMatchObject({
-        session_id: 's1',
-        payload: { busy: false, main_turn_active: false, last_turn_reason: 'completed' },
+        change: 'updated',
+        session: { id: 's1', activity: 'idle', last_turn_outcome: 'completed' },
       });
       expect(globalView.deliveries).toEqual(['immediate', 'immediate']);
     });
@@ -1300,7 +1293,7 @@ describe('SessionEventBroadcaster', () => {
 
       for (const view of [s1View, s2View]) {
         expect(workChanges(view.envelopes)).toHaveLength(1);
-        expect(workChanges(view.envelopes)[0]).toMatchObject({ session_id: 's1' });
+        expect(workChanges(view.envelopes)[0]).toMatchObject({ session: { id: 's1' } });
       }
     });
 
@@ -1334,7 +1327,7 @@ describe('SessionEventBroadcaster', () => {
       main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
       await settle();
       expect(workChanges(globalView.envelopes)).toHaveLength(1);
-      expect(workChanges(globalView.envelopes)[0]!.payload).toMatchObject({ busy: false });
+      expect(workChanges(globalView.envelopes)[0]!.session).toMatchObject({ activity: 'idle' });
     });
 
     it('stops tracking an archived session', async () => {
@@ -1350,7 +1343,7 @@ describe('SessionEventBroadcaster', () => {
       expect(workChanges(globalView.envelopes)).toHaveLength(0);
     });
 
-    it('maps the main turn outcome into last_turn_reason on the post-turn work_changed', async () => {
+    it('maps the main turn outcome into last_turn_outcome on the post-turn work_changed', async () => {
       const lc = openSession('s1');
       const main = lc.addAgent('main');
       const globalView = collectingTarget();
@@ -1367,13 +1360,13 @@ describe('SessionEventBroadcaster', () => {
         await settle();
       }
 
-      expect(workChanges(globalView.envelopes).map((e) => e.payload)).toMatchObject([
-        { busy: true, last_turn_reason: undefined },
-        { busy: false, last_turn_reason: 'cancelled' },
-        { busy: true, last_turn_reason: undefined },
-        { busy: false, last_turn_reason: 'failed' },
-        { busy: true, last_turn_reason: undefined },
-        { busy: false, last_turn_reason: 'failed' },
+      expect(workChanges(globalView.envelopes).map((e) => e.session)).toMatchObject([
+        { activity: 'turn', last_turn_outcome: undefined },
+        { activity: 'idle', last_turn_outcome: 'interrupted' },
+        { activity: 'turn', last_turn_outcome: undefined },
+        { activity: 'idle', last_turn_outcome: 'failed' },
+        { activity: 'turn', last_turn_outcome: undefined },
+        { activity: 'idle', last_turn_outcome: 'failed' },
       ]);
     });
 
@@ -1388,9 +1381,9 @@ describe('SessionEventBroadcaster', () => {
       main.bus.emit(agentEvent('task.terminated', { agentId: 'main' }));
       await settle();
 
-      expect(workChanges(globalView.envelopes).map((e) => e.payload)).toMatchObject([
-        { busy: true, last_turn_reason: undefined },
-        { busy: false, last_turn_reason: undefined },
+      expect(workChanges(globalView.envelopes).map((e) => e.session)).toMatchObject([
+        { activity: 'background', last_turn_outcome: undefined },
+        { activity: 'idle', last_turn_outcome: undefined },
       ]);
     });
 
@@ -1408,14 +1401,14 @@ describe('SessionEventBroadcaster', () => {
       main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
       await settle();
 
-      expect(workChanges(globalView.envelopes).map((e) => e.payload)).toMatchObject([
-        { busy: true, main_turn_active: false },
-        { busy: true, main_turn_active: true },
-        { busy: true, main_turn_active: false, last_turn_reason: 'completed' },
+      expect(workChanges(globalView.envelopes).map((e) => e.session)).toMatchObject([
+        { activity: 'background' },
+        { activity: 'turn' },
+        { activity: 'background', last_turn_outcome: 'completed' },
       ]);
     });
 
-    it('flips busy but never touches last_turn_reason from sub-agent turn boundaries', async () => {
+    it('flips busy but never touches last_turn_outcome from sub-agent turn boundaries', async () => {
       const lc = openSession('s1');
       const main = lc.addAgent('main');
       const sub = lc.addAgent('agent-0');
@@ -1435,11 +1428,11 @@ describe('SessionEventBroadcaster', () => {
       sub.bus.emit(agentEvent('turn.ended', { turnId: 11, reason: 'cancelled' }));
       await settle();
 
-      expect(workChanges(globalView.envelopes).map((e) => e.payload)).toMatchObject([
-        { busy: true, last_turn_reason: undefined },
-        { busy: false, last_turn_reason: 'completed' },
-        { busy: true, last_turn_reason: 'completed' },
-        { busy: false, last_turn_reason: 'completed' },
+      expect(workChanges(globalView.envelopes).map((e) => e.session)).toMatchObject([
+        { activity: 'turn', last_turn_outcome: undefined },
+        { activity: 'idle', last_turn_outcome: 'completed' },
+        { activity: 'background', last_turn_outcome: 'completed' },
+        { activity: 'idle', last_turn_outcome: 'completed' },
       ]);
     });
   });
@@ -1643,6 +1636,210 @@ describe('SessionEventBroadcaster', () => {
     });
 
     expect(interactionMessages).toHaveLength(0);
+  });
+
+  describe('the pending interaction a session frame reports', () => {
+    const approval = {
+      toolCallId: 'call_1',
+      toolName: 'Bash',
+      action: 'run',
+      display: { kind: 'command', command: 'ls' },
+    };
+    const question = { questions: [{ question: 'Pick', options: [{ label: 'A' }] }] };
+
+    function framesAbout(sessionId: string): { target: BroadcastTarget; sent: string[] } {
+      const sent: string[] = [];
+      return {
+        sent,
+        target: {
+          send: (frame) => {
+            if (frame.type === 'session' && frame.change === 'updated' && frame.session.id === sessionId) {
+              sent.push(`session ${frame.session.activity} ${String(frame.session.pending_interaction)}`);
+            } else if (frame.type === 'interaction' && !('payload' in frame) && frame.session_id === sessionId) {
+              sent.push(`${frame.interaction_id} ${frame.status}`);
+            }
+          },
+        },
+      };
+    }
+
+    async function subscribedTo(sessionId: string): Promise<{ target: BroadcastTarget; sent: string[] }> {
+      const view = framesAbout(sessionId);
+      bc.addGlobalTarget(view.target);
+      await bc.subscribe(sessionId, view.target, ['main']);
+      await settle();
+      view.sent.length = 0;
+      return view;
+    }
+
+    function sessionStatesAfter(sent: readonly string[], frame: string): string[] {
+      const at = sent.lastIndexOf(frame);
+      if (at < 0) return [`${frame} was never sent`];
+      return [...new Set(sent.slice(at + 1).filter((later) => later.startsWith('session ')))];
+    }
+
+    function titleChanged(sessionId: string): void {
+      eventBus.emit({
+        type: 'session.meta.updated',
+        payload: { agentId: 'main', sessionId, title: 'Title', patch: { title: 'Title', lastPrompt: 'Prompt' } },
+      });
+    }
+
+    async function statesAfterARequestAtEveryPointOf(change: (sessionId: string, main: FakeAgentHandle) => void): Promise<string[][]> {
+      const states: string[][] = [];
+      let sentBeforeTheRequest = 0;
+      for (let ticks = 0; sentBeforeTheRequest < 3; ticks += 1) {
+        expect(ticks).toBeLessThan(200);
+        const sessionId = `s${ticks}`;
+        const main = openSession(sessionId).addAgent('main');
+        const view = await subscribedTo(sessionId);
+
+        change(sessionId, main);
+        for (let tick = 0; tick < ticks; tick += 1) await Promise.resolve();
+        interactions.enqueue({ id: `a${ticks}`, kind: 'approval', payload: approval, tags: { sessionId } });
+        await settle();
+
+        if (view.sent.indexOf(`a${ticks} pending`) > 0) sentBeforeTheRequest += 1;
+        states.push(sessionStatesAfter(view.sent, `a${ticks} pending`));
+      }
+      return states;
+    }
+
+    it('reports an approval requested right after a turn started in the session frames sent after the request', async () => {
+      const main = openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      interactions.enqueue({ id: 'a1', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      await settle();
+
+      expect(sessionStatesAfter(view.sent, 'a1 pending')).toEqual(['session turn approval']);
+    });
+
+    it('reports the next approval when the previous one was answered just before it', async () => {
+      openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+      interactions.enqueue({ id: 'a1', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      await settle();
+      view.sent.length = 0;
+
+      interactions.respond('a1', { decision: 'approved' });
+      interactions.enqueue({ id: 'a2', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      await settle();
+
+      expect(sessionStatesAfter(view.sent, 'a2 pending')).toEqual(['session idle approval']);
+    });
+
+    it('reports a question asked right after a turn started in the session frames sent after it', async () => {
+      const main = openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      interactions.enqueue({ id: 'q1', kind: 'question', payload: question, tags: { sessionId: 's1' } });
+      await settle();
+
+      expect(sessionStatesAfter(view.sent, 'q1 pending')).toEqual(['session turn question']);
+    });
+
+    it('reports an approval requested right after a turn ended in the session frames sent after the request', async () => {
+      const main = openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      await settle();
+      view.sent.length = 0;
+
+      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+      interactions.enqueue({ id: 'a1', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      await settle();
+
+      expect(sessionStatesAfter(view.sent, 'a1 pending')).toEqual(['session idle approval']);
+    });
+
+    it('reports the pending approval in the session frames sent after an accepted subscription got it again', async () => {
+      const main = openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      interactions.enqueue({ id: 'a1', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      bc.sendPendingInteractions('s1', view.target);
+      await settle();
+
+      expect(view.sent.filter((frame) => frame === 'a1 pending')).toHaveLength(2);
+      expect(sessionStatesAfter(view.sent, 'a1 pending')).toEqual(['session turn approval']);
+    });
+
+    it('no longer reports an approval that was answered before the session frame was sent', async () => {
+      openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+
+      interactions.enqueue({ id: 'a1', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      interactions.respond('a1', { decision: 'approved' });
+      await settle();
+
+      expect(sessionStatesAfter(view.sent, 'a1 ended')).toEqual(['session idle none']);
+    });
+
+    it('reports an approval in the frames of a started turn, at whichever point of preparing them the request arrives', async () => {
+      const states = await statesAfterARequestAtEveryPointOf((_sessionId, main) => {
+        main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      });
+
+      expect(states).toEqual(states.map(() => ['session turn approval']));
+    });
+
+    it('reports an approval in the frame of a title change, at whichever point of preparing it the request arrives', async () => {
+      const states = await statesAfterARequestAtEveryPointOf((sessionId) => {
+        titleChanged(sessionId);
+      });
+
+      expect(states).toEqual(states.map(() => ['session idle approval']));
+    });
+
+    it('still reports every other part of the session state as it was when it changed', async () => {
+      const main = openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+      await settle();
+
+      expect(view.sent).toEqual(['session turn none', 'session idle none']);
+    });
+
+    it('still sends the session frames of a session whose current state can no longer be read', async () => {
+      const lifecycle = openSession('s1');
+      const main = lifecycle.addAgent('main');
+      const view = await subscribedTo('s1');
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'cancelled' }));
+      Object.defineProperty(lifecycle, 'workView', {
+        get: () => {
+          throw new Error('the session scope was disposed');
+        },
+      });
+      await settle();
+
+      expect(view.sent).toEqual(['session turn none', 'session idle none']);
+    });
+
+    it('leaves the frame of an archived session without a pending interaction', async () => {
+      openSession('s1').addAgent('main');
+      const archived = collectingTarget();
+      bc.addGlobalTarget(archived.target);
+      interactions.enqueue({ id: 'a1', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      await settle();
+      archived.envelopes.length = 0;
+
+      eventBus.emit({
+        type: 'event.session.archived',
+        payload: { sessionId: 's1', workspaceId: 'wd_aaa_000000000000', session: sessionInfo('s1') },
+      });
+      await settle();
+
+      expect(archived.envelopes).toMatchObject([{ type: 'session', change: 'archived' }]);
+      expect(archived.envelopes[0]).not.toHaveProperty('session.pending_interaction', 'approval');
+    });
   });
 
   describe('conversation subscriptions', () => {
@@ -1934,7 +2131,7 @@ describe('SessionEventBroadcaster', () => {
     });
 
     type StateFrame = { type: string; agent_id: string } & Record<string, unknown>;
-    const STATE_FRAME_TYPES = new Set(['agent', 'usage', 'goal', 'todo']);
+    const STATE_FRAME_TYPES = new Set(['agent', 'context', 'goal', 'todo']);
     const stateFramesOf = (view: ReturnType<typeof collectingTarget>): StateFrame[] =>
       view.envelopes.filter((frame) => STATE_FRAME_TYPES.has(frame.type)) as unknown as StateFrame[];
     const settle = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -2016,7 +2213,7 @@ describe('SessionEventBroadcaster', () => {
           swarm_mode: false,
           tower_mode: false,
         }),
-        expect.objectContaining({ type: 'usage', agent_id: 'main', context_tokens: 0, max_context_tokens: 1000 }),
+        expect.objectContaining({ type: 'context', agent_id: 'main', context_tokens: 0, max_context_tokens: 1000 }),
         expect.objectContaining({ type: 'goal', agent_id: 'main' }),
         expect.objectContaining({
           type: 'todo',
@@ -2026,6 +2223,32 @@ describe('SessionEventBroadcaster', () => {
       ]);
       expect(JSON.parse(JSON.stringify(frames[2]))).not.toHaveProperty('goal');
       expect(stateFramesOf(offView)).toEqual([]);
+    });
+
+    it('pushes updated agent state when the model catalog changes', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      let model = 'k2';
+      Object.assign(main.accessor.get(IAgentLoopService) as Record<string, unknown>, {
+        getModel: () => model,
+      });
+      sessions.set('s1', lc);
+      bc = makeBroadcasterForAgents();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, ['main']);
+      expect(stateFramesOf(view)).toContainEqual(expect.objectContaining({ type: 'agent', model: 'k2' }));
+
+      model = 'k3';
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed: [{ provider_id: 'openai-main', provider_name: 'OpenAI', added: 0, removed: 1 }], unchanged: [], failed: [] },
+      });
+      await settle();
+
+      const agentFrames = stateFramesOf(view).filter((frame) => frame.type === 'agent');
+      expect(agentFrames).toHaveLength(2);
+      expect(agentFrames[1]).toMatchObject({ model: 'k3' });
     });
 
     it('pushes todo, goal and permission changes and stays quiet when nothing changed', async () => {
@@ -2095,15 +2318,17 @@ describe('SessionEventBroadcaster', () => {
           },
         }),
       });
-      main.set(IModelService, { getDefaultModel: () => 'k3' });
-      main.set(IModelCatalog, { get: () => ({ spec: { maxInputSize: 800 } }) });
+      main.set(IProviderCatalogService, {
+        getDefaultModelId: () => 'k3',
+        get: () => ({ spec: { maxInputSize: 800 } }),
+      });
       sessions.set('s1', lc);
       bc = makeBroadcasterForAgents();
 
       const view = collectingTarget();
       await bc.subscribe('s1', view.target, ['main']);
 
-      expect(stateFramesOf(view).find((frame) => frame.type === 'usage')).toMatchObject({
+      expect(stateFramesOf(view).find((frame) => frame.type === 'context')).toMatchObject({
         max_context_tokens: expected,
       });
     });
@@ -2127,7 +2352,7 @@ describe('SessionEventBroadcaster', () => {
       await settle(USAGE_FRAME_INTERVAL_MS + 50);
 
       expect(stateFramesOf(view).slice(subscribed)).toEqual([
-        expect.objectContaining({ type: 'usage', context_tokens: 300, max_context_tokens: 1000 }),
+        expect.objectContaining({ type: 'context', context_tokens: 300, max_context_tokens: 1000 }),
       ]);
     });
 
@@ -2179,36 +2404,47 @@ describe('SessionEventBroadcaster', () => {
       await bc.subscribe('s1', view.target, ['main']);
       expect(agentFrames()).toEqual(['main', 'agent-0', 'agent-0', 'main']);
     });
+
+    it('preserves main subscription across session close and reopen while dropping closed side agents', async () => {
+      const lc = openSession('s1');
+      lc.addAgent('main');
+      lc.addAgent('btw-1');
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, ['main', 'btw-1']);
+
+      lc.removeAgent('btw-1');
+      lc.removeAgent('main');
+      managerEvents.fireDidClose('s1');
+
+      const reopened = openSession('s1');
+      const reopenedMain = reopened.addAgent('main');
+      managerEvents.fireDidCreate('s1', sessionHandle(core, 's1'));
+      await settle();
+
+      reopenedMain.bus.emit(agentEvent('turn.started', { turnId: 5, origin: { kind: 'user' } }));
+      await settle();
+
+      const afterEnded = stateFramesOf(view).filter(
+        (frame) => frame.type === 'agent' && frame.agent_id === 'main' && frame['status'] === 'running',
+      );
+      expect(afterEnded.length).toBeGreaterThan(0);
+    });
   });
 });
 
 describe('sessionEventMessageSchema', () => {
   const timestamp = '2026-08-27T00:00:00.000Z';
 
-  function envelope(payload: Record<string, unknown>): Record<string, unknown> {
-    return {
-      type: payload['type'],
-      session_id: '__global__',
-      timestamp,
-      payload: { agentId: 'main', sessionId: '__global__', ...payload },
-    };
+  function frame(fields: Record<string, unknown>): Record<string, unknown> {
+    return { event_created_at: timestamp, ...fields };
   }
 
-  it('accepts config changed, config warning, and model catalog changed envelopes', () => {
+  it('accepts flat config, session, and invalidated frames', () => {
     expect(
       sessionEventMessageSchema.safeParse(
-        envelope({
-          type: 'event.config.changed',
-          changedFields: ['defaultModel'],
+        frame({
+          type: 'config',
           config: { default_model: 'k2', providers: {} },
-        }),
-      ).success,
-    ).toBe(true);
-
-    expect(
-      sessionEventMessageSchema.safeParse(
-        envelope({
-          type: 'event.config.warning',
           warnings: [{ domain: 'loopControl', message: 'deprecated key' }, { message: 'other' }],
         }),
       ).success,
@@ -2216,62 +2452,35 @@ describe('sessionEventMessageSchema', () => {
 
     expect(
       sessionEventMessageSchema.safeParse(
-        envelope({
-          type: 'event.model_catalog.changed',
-          changed: [
-            { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 2, removed: 1 },
-          ],
-          unchanged: ['openai-main'],
-          failed: [{ provider: 'managed:kimi-code', reason: 'network disabled' }],
-        }),
+        frame({ type: 'session', change: 'created', session: sessionInfo('s1') }),
       ).success,
+    ).toBe(true);
+
+    expect(
+      sessionEventMessageSchema.safeParse(frame({ type: 'invalidated', kind: 'models' })).success,
+    ).toBe(true);
+    expect(
+      sessionEventMessageSchema.safeParse(frame({ type: 'invalidated', kind: 'plugins' })).success,
     ).toBe(true);
   });
 
   it('rejects raw agent events, which are no longer pushed', () => {
     expect(
-      sessionEventMessageSchema.safeParse(envelope({ type: 'turn.started', turnId: 1 })).success,
+      sessionEventMessageSchema.safeParse(frame({ type: 'turn.started', turnId: 1 })).success,
     ).toBe(false);
   });
 
-  it('rejects malformed config and model catalog event envelopes', () => {
+  it('rejects malformed config and invalidated frames', () => {
+    expect(
+      sessionEventMessageSchema.safeParse(frame({ type: 'config', config: [] })).success,
+    ).toBe(false);
     expect(
       sessionEventMessageSchema.safeParse(
-        envelope({ type: 'event.config.changed', changedFields: 'defaultModel', config: {} }),
+        frame({ type: 'config', config: {}, warnings: [{ domain: 'loopControl' }] }),
       ).success,
     ).toBe(false);
-
     expect(
-      sessionEventMessageSchema.safeParse(
-        envelope({ type: 'event.config.changed', changedFields: [], config: [] }),
-      ).success,
-    ).toBe(false);
-
-    expect(
-      sessionEventMessageSchema.safeParse(
-        envelope({ type: 'event.config.warning', warnings: [{ domain: 'loopControl' }] }),
-      ).success,
-    ).toBe(false);
-
-    expect(
-      sessionEventMessageSchema.safeParse(
-        envelope({
-          type: 'event.model_catalog.changed',
-          changed: [],
-          failed: [],
-        }),
-      ).success,
-    ).toBe(false);
-
-    expect(
-      sessionEventMessageSchema.safeParse(
-        envelope({
-          type: 'event.model_catalog.changed',
-          changed: [],
-          unchanged: [],
-          failed: [{ provider: 'managed:kimi-code', reason: 42 }],
-        }),
-      ).success,
+      sessionEventMessageSchema.safeParse(frame({ type: 'invalidated', kind: 'capabilities' })).success,
     ).toBe(false);
   });
 });

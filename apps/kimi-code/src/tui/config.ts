@@ -1,16 +1,9 @@
-/**
- * Client-owned preferences.
- *
- * Agent/runtime settings live in core's `config.toml`; this file owns
- * kimi-code client preferences such as terminal UI and update behavior.
- */
-
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { MAX_ANIMATION_FRAME_RATE } from '@moonshot-ai/pi-tui';
+import { MAX_ANIMATION_FRAME_RATE, type WheelScrollLines } from '@moonshot-ai/pi-tui';
 import { parse as parseToml } from 'smol-toml';
 import { z } from 'zod';
 
@@ -145,9 +138,7 @@ export const StatusLineFileConfigSchema = z.object({
 });
 
 export const StatusLineConfigSchema = z.object({
-  /** Ordered built-in slots for footer line 1; null means the default layout. */
   items: z.array(z.enum(STATUS_LINE_ITEMS)).nullable(),
-  /** User command whose first stdout line replaces footer line 1; null disables. */
   command: z.string().nullable(),
 });
 export type StatusLineConfig = z.infer<typeof StatusLineConfigSchema>;
@@ -226,10 +217,24 @@ export function resolveFollowUpBehavior(value: FollowUpBehavior | undefined): Fo
   return value ?? DEFAULT_FOLLOW_UP_BEHAVIOR;
 }
 
+export type { WheelScrollLines };
+
+export const DEFAULT_WHEEL_SCROLL_LINES: WheelScrollLines = 'auto';
+
+export const WheelScrollLinesSchema: z.ZodType<WheelScrollLines> = z.union([
+  z.literal('auto'),
+  z.number().int().min(1).refine(Number.isSafeInteger),
+]);
+
+export function resolveWheelScrollLines(value: WheelScrollLines | undefined): WheelScrollLines {
+  return value ?? DEFAULT_WHEEL_SCROLL_LINES;
+}
+
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
   tui_mode: z.string().optional(),
   copy_on_select: z.boolean().optional(),
+  wheel_scroll_lines: z.unknown().optional(),
   render_latex: z.boolean().optional(),
   disable_paste_burst: z.boolean().optional(),
   cache_expiry_hint: z.boolean().optional(),
@@ -270,26 +275,17 @@ export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
   tuiMode: TuiModeSchema.optional(),
   copyOnSelect: z.boolean().optional(),
-  /** LaTeX math rendering in Markdown; optional only so older hand-built test
-   * fixtures still typecheck. */
+  wheelScrollLines: WheelScrollLinesSchema.optional(),
   renderLatex: z.boolean().optional(),
   disablePasteBurst: z.boolean(),
-  /** Present in every normalized config; optional only so hand-built test
-   * fixtures from before this field existed still typecheck. */
   cacheExpiryHint: z.boolean().optional(),
   disableFeedbackSurvey: z.boolean().optional(),
-  /** Present in every normalized config; optional only so hand-built test
-   * fixtures from before this field existed still typecheck. */
   autoSessionTitle: z.boolean().optional(),
   followUpBehavior: FollowUpBehaviorSchema.optional(),
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
-  /** Present in every normalized config; optional only so hand-built test
-   * fixtures from before this field existed still typecheck. */
   statusLine: StatusLineConfigSchema.optional(),
-  /** Present in every normalized config; optional only so hand-built test
-   * fixtures from before this field existed still typecheck. */
   markdown: MarkdownConfigSchema.optional(),
   transcript: TranscriptConfigSchema,
 });
@@ -323,12 +319,6 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   transcript: DEFAULT_TRANSCRIPT_CONFIG,
 });
 
-/**
- * Thrown by `loadTuiConfig` when the on-disk TOML cannot be parsed.
- * Carries `fallback` so the caller can recover without re-running the
- * I/O, and use `message` (== `INVALID_TUI_CONFIG_MESSAGE`) as a
- * user-facing notice.
- */
 export class TuiConfigParseError extends Error {
   override readonly name = 'TuiConfigParseError';
   readonly fallback: TuiConfig;
@@ -461,6 +451,18 @@ export function normalizeTuiConfig(
       warn(`[tui.toml] ignoring unknown follow_up_behavior value: ${shown}`);
     }
   }
+  const wheelScrollLinesValue = config.wheel_scroll_lines;
+  let wheelScrollLines: WheelScrollLines | undefined;
+  if (wheelScrollLinesValue !== undefined) {
+    const parsed = WheelScrollLinesSchema.safeParse(wheelScrollLinesValue);
+    if (parsed.success) {
+      wheelScrollLines = parsed.data;
+    } else {
+      warn(
+        `[tui.toml] ignoring invalid wheel_scroll_lines value: ${formatInvalidTomlValue(wheelScrollLinesValue)} (expected "auto" or a positive integer)`,
+      );
+    }
+  }
   const tuiModeValue = config.tui_mode;
   let tuiMode: TuiMode | undefined;
   if (tuiModeValue !== undefined) {
@@ -475,6 +477,7 @@ export function normalizeTuiConfig(
     tuiMode,
     copyOnSelect:
       config.copy_on_select ?? DEFAULT_TUI_CONFIG.copyOnSelect,
+    wheelScrollLines,
     renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     cacheExpiryHint: config.cache_expiry_hint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
@@ -518,11 +521,6 @@ export function normalizeTuiConfig(
 }
 
 export function renderTuiConfig(config: TuiConfig): string {
-  // An active status_line must round-trip: any preference save rewrites the
-  // whole file, so the section is emitted live when set and left as a
-  // commented-out guide when unset. The [markdown] section follows the same
-  // pattern: live when mermaid rendering is turned off, commented guide at
-  // the default.
   const statusItems = config.statusLine?.items;
   const statusCommand = config.statusLine?.command;
   const statusLines: string[] = [];
@@ -537,6 +535,12 @@ export function renderTuiConfig(config: TuiConfig): string {
     config.tuiMode === undefined
       ? '# tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)'
       : `tui_mode = "${config.tuiMode}" # "regular" | "fullscreen" ("fullscreen" is experimental)`;
+  const wheelScrollLinesComment =
+    '# fullscreen only: "auto" or lines per wheel event (e.g. 1, 2, 3, 5, 10)';
+  const wheelScrollLinesLine =
+    config.wheelScrollLines === undefined
+      ? `# wheel_scroll_lines = "auto" ${wheelScrollLinesComment}`
+      : `wheel_scroll_lines = ${config.wheelScrollLines === 'auto' ? '"auto"' : String(config.wheelScrollLines)} ${wheelScrollLinesComment}`;
   const markdownSection =
     config.markdown?.mermaid === 'off'
       ? `[markdown]\nmermaid = "off" # "final" | "off"\n`
@@ -573,6 +577,7 @@ export function renderTuiConfig(config: TuiConfig): string {
 theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
 ${tuiModeLine}
 copy_on_select = ${String(config.copyOnSelect !== false)} # fullscreen only: false copies only when you press Ctrl-C
+${wheelScrollLinesLine}
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit
@@ -592,6 +597,21 @@ auto_install = ${String(config.upgrade.autoInstall)} # true | false
 ${markdownSection}
 ${transcriptSection}
 ${statusSection}`;
+}
+
+function formatInvalidTomlValue(value: unknown): string {
+  if (typeof value === 'bigint' || (typeof value === 'number' && !Number.isFinite(value))) {
+    return String(value);
+  }
+  try {
+    return (
+      JSON.stringify(value, (_key, entry: unknown) =>
+        typeof entry === 'bigint' ? String(entry) : entry,
+      ) ?? String(value)
+    );
+  } catch {
+    return String(value);
+  }
 }
 
 function escapeTomlBasicString(value: string): string {

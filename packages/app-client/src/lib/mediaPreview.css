@@ -1,0 +1,19 @@
+.pswp {
+  --pswp-root-z-index: var(--z-modal);
+  --pswp-bg: var(--color-scrim-strong);
+  -webkit-app-region: no-drag;
+}
+.media-preview-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--space-4);
+  padding: 0 var(--space-6);
+  color: var(--color-text-on-scrim);
+  font-size: var(--text-xs);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}

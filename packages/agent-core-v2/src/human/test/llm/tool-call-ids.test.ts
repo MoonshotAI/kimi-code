@@ -1,3 +1,4 @@
+import { call as scriptedCall, createFakeModel } from '@moonshot-ai/testkit/model';
 import { describe, expect, it } from 'vitest';
 
 import { openAIProtocol } from '@moonshot-ai/core/llm/builtin/protocol/openai/index';
@@ -26,19 +27,6 @@ function policy(maxLength: number) {
   return {
     normalize: (id: string) => sanitizeToolCallId(id, maxLength),
     maxLength,
-  };
-}
-
-function withResponseStream(chunks: readonly Record<string, unknown>[]) {
-  return {
-    withResponse: async () => ({
-      data: {
-        async *[Symbol.asyncIterator]() {
-          for (const chunk of chunks) yield chunk;
-        },
-      },
-      response: new Response(null),
-    }),
   };
 }
 
@@ -151,38 +139,11 @@ describe('LLM tool call id normalization', () => {
   });
 
   it('normalizes direct requester events and final outcome through settle', async () => {
-    const chunks = [
-      {
-        id: 'chatcmpl-1',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'test-model',
-        choices: [
-          {
-            index: 0,
-            delta: {
-              tool_calls: [
-                {
-                  index: 0,
-                  id: 'call_1',
-                  type: 'function',
-                  function: { name: 'Bash', arguments: '{}' },
-                },
-              ],
-            },
-            finish_reason: 'tool_calls',
-          },
-        ],
-      },
-    ];
+    const model = createFakeModel();
+    model.route('requester', () => true).script(scriptedCall('Bash', {}, { id: 'call_1', invalid: true }));
     const requester = createCoreRequester().with({
       protocol: { base: openAIProtocol },
-      endpoint: {
-        baseUrl: 'https://example.test/v1',
-        clientFactory: () => ({
-          chat: { completions: { create: () => withResponseStream(chunks) } },
-        }),
-      },
+      endpoint: { baseUrl: 'https://example.test/v1', fetch: model.fetch },
     });
     const parts: StreamedMessagePart[] = [];
     const outcome = await requester.generate(
@@ -199,7 +160,7 @@ describe('LLM tool call id normalization', () => {
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
-          if (event.type === 'llm.streaming.part') parts.push(event.part);
+          if (event.type === 'llm.delta.part') parts.push(event.part);
         },
       },
     );
@@ -212,5 +173,7 @@ describe('LLM tool call id normalization', () => {
     expect(outcome.message.toolCalls.map((call) => [call.id, call.rawId])).toEqual([
       ['call_1__2', 'call_1'],
     ]);
+    model.verify();
+    await model.close();
   });
 });

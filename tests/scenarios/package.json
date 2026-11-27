@@ -1,0 +1,16 @@
+{
+  "name": "@moonshot-ai/scenarios",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Protocol scenario tests: a real kap-server and engine driven over KAP, with the testkit fake model.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@moonshot-ai/kap-server": "workspace:^",
+    "@moonshot-ai/testkit": "workspace:^"
+  }
+}

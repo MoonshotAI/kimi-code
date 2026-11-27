@@ -2,12 +2,13 @@ import {
   IBashParserService,
   type BashParseResult,
   type BashSyntaxNode,
+  normalizeBashCommandName,
 } from '#/app/bashParser/bashParser';
 import { IConfigService } from '#/app/config/config';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { isDangerousCommandGuardEnabled } from '#/agent/permissionRules/configSection';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type {
+  PermissionMode,
   PermissionPolicy,
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
@@ -122,13 +123,12 @@ export class DangerousCommandAskPermissionPolicyService implements PermissionPol
 
   constructor(
     @IBashParserService private readonly bashParser: IBashParserService,
-    @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @IConfigService private readonly config: IConfigService,
   ) {}
 
-  evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {
+  evaluate(context: ResolvedToolExecutionHookContext, mode: PermissionMode): PermissionPolicyResult | undefined {
     if (!isDangerousCommandGuardEnabled(this.config)) return undefined;
-    if (this.modeService.mode === 'auto') return undefined;
+    if (mode === 'auto') return undefined;
     if (context.toolCall.name !== 'Bash') return undefined;
     const command = bashCommandText(context.args);
     const verdict =
@@ -141,7 +141,7 @@ export class DangerousCommandAskPermissionPolicyService implements PermissionPol
     if (verdict.kind === 'dangerous') {
       return { kind: 'ask', reason: { dangerous_command: verdict.command } };
     }
-    if (this.modeService.mode === 'yolo') return undefined;
+    if (mode === 'yolo') return undefined;
     return { kind: 'ask', reason: { unanalyzable_command: true } };
   }
 }
@@ -317,12 +317,7 @@ function analyzeInvocation(
 }
 
 function normalizeCommandName(raw: string): string {
-  let name = raw;
-  const separator = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-  if (separator >= 0) name = name.slice(separator + 1);
-  name = name.toLowerCase();
-  if (name.endsWith('.exe')) name = name.slice(0, -'.exe'.length);
-  return name;
+  return normalizeBashCommandName(raw);
 }
 
 function dropLeadingOptions(args: readonly string[], valueOptions: ReadonlySet<string>): string[] {

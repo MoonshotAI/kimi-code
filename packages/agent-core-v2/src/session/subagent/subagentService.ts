@@ -22,14 +22,12 @@ import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnviro
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import type { Environment } from '#/environment/environment';
 import { IConfigService } from '#/app/config/config';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { type Model } from '#/provider-catalog/model/catalog';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { createHooks } from '#/hooks';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { agentContextOf } from '#/agent/scopeContext/scopeContext';
-import { IAgentReminderService } from '#/features/reminder/reminderService';
 
 import {
   type AgentRunHandle,
@@ -47,12 +45,12 @@ import {
 } from './configSection';
 import {
   DEFAULT_PROFILE_NAME,
-  FORK_CONTEXT_NOTICE,
   type SpawnSubagentOptions,
   type SpawnedSubagent,
   type SubagentSpawnPlan,
   type SubagentSpawnPlanInput,
 } from './spawn';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export class SessionSubagentService extends Service implements ISessionSubagentService {
   declare readonly _serviceBrand: undefined;
@@ -70,7 +68,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IConfigService private readonly configService: IConfigService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IProviderCatalogService private readonly modelCatalog: IProviderCatalogService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ILogService private readonly log: ILogService,
   ) {
@@ -89,19 +87,17 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
 
   async planSpawn(input: SubagentSpawnPlanInput): Promise<SubagentSpawnPlan> {
     const caller = this.requireCaller(input.callerAgentId);
-    const fork = input.fork === true;
     await this.catalog.ready;
     const own = caller.accessor.get(IAgentLoopService).data();
-    const requested = input.profileName !== undefined && input.profileName.length > 0
-      ? input.profileName
-      : undefined;
     const requestedProfileName =
-      requested ?? (fork ? (own.profileName ?? DEFAULT_PROFILE_NAME) : DEFAULT_PROFILE_NAME);
+      input.profileName !== undefined && input.profileName.length > 0
+        ? input.profileName
+        : DEFAULT_PROFILE_NAME;
     let allowlist = subagentAllowlistFor(this.catalog, own);
     if (allowlist !== undefined && own.subagents === undefined) {
       allowlist = withoutDelegatingTargets(this.catalog, allowlist);
     }
-    if (!fork && allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
+    if (allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
       throw new Error2(
         ErrorCodes.AGENT_TYPE_NOT_ALLOWED,
         subagentTypeNotAllowedMessage(requestedProfileName, allowlist),
@@ -109,7 +105,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       );
     }
     const profile = this.catalog.get(requestedProfileName);
-    if (!fork && profile === undefined) {
+    if (profile === undefined) {
       throw new Error2(ErrorCodes.PROFILE_UNKNOWN, `Unknown agent type: "${requestedProfileName}"`, {
         details: { profileName: requestedProfileName },
       });
@@ -119,13 +115,11 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         details: { agentId: input.callerAgentId },
       });
     }
-    const binding = fork
-      ? { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' as const }
-      : resolveSubagentBinding(
-          this.configService,
-          { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-          input.model,
-        );
+    const binding = resolveSubagentBinding(
+      this.configService,
+      { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
+      input.model,
+    );
     let model: Model;
     try {
       model = this.modelCatalog.get(binding.model);
@@ -133,11 +127,10 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       throw wrapSubagentModelError(error, binding.model, own.modelAlias);
     }
     return {
-      profileName: profile?.name ?? requestedProfileName,
+      profileName: profile.name,
       model: binding.model,
       modelSource: binding.modelSource,
       thinking: resolveSubagentThinking(this.configService, model, binding.thinking),
-      fork,
     };
   }
 
@@ -145,33 +138,21 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     const caller = this.requireCaller(opts.callerAgentId);
     const { plan } = opts;
     const callerBinding = caller.accessor.get(IAgentEnvironmentBindingService).current;
-    const lease = plan.fork
-      ? undefined
-      : await caller.accessor.get(IAgentEnvironmentService).acquireWhenReady(['process']);
+    const lease = await caller.accessor.get(IAgentEnvironmentService).acquireWhenReady(['process']);
     try {
       let created: IAgentScopeHandle;
       try {
-        if (plan.fork) {
-          const forked = await this.agentLifecycle.fork(agentContextOf(caller), {
-            labels: opts.labels,
-          });
-          created = this.agentLifecycle.handleOf(forked.agentId)!;
-          created.accessor
-            .get(IAgentReminderService)
-            .notify(FORK_CONTEXT_NOTICE, { variant: 'fork_context' });
-        } else {
-          const createdContext = await this.agentLifecycle.create({
-            binding: {
-              profile: plan.profileName,
-              model: plan.model,
-              thinking: plan.thinking,
-            },
-            labels: opts.labels,
-            environmentId: callerBinding.environmentId,
-            environmentCwd: callerBinding.cwd,
-          });
-          created = this.agentLifecycle.handleOf(createdContext.agentId)!;
-        }
+        const createdContext = await this.agentLifecycle.create({
+          binding: {
+            profile: plan.profileName,
+            model: plan.model,
+            thinking: plan.thinking,
+          },
+          labels: opts.labels,
+          environmentId: callerBinding.environmentId,
+          environmentCwd: callerBinding.cwd,
+        });
+        created = this.agentLifecycle.handleOf(createdContext.agentId)!;
       } catch (error) {
         throw wrapSubagentModelError(
           error,
@@ -182,17 +163,15 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       created.accessor
         .get(IAgentPermissionModeService)
         .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
-      const createdUserTools = created.accessor.get(IAgentUserToolService);
-      const callerUserTools = caller.accessor.get(IAgentUserToolService);
-      if (plan.fork) {
-        const activeToolNames = created.accessor.get(IAgentLoopService).getActiveToolNames();
-        createdUserTools.inheritUserTools(callerUserTools, activeToolNames);
-      } else {
-        createdUserTools.inheritUserTools(callerUserTools);
-      }
-      const promptText = plan.fork
-        ? opts.prompt
-        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.environment, callerBinding.cwd);
+      created.accessor
+        .get(IAgentUserToolService)
+        .inheritUserTools(caller.accessor.get(IAgentUserToolService));
+      const promptText = await this.applyPromptPrefix(
+        plan.profileName,
+        opts.prompt,
+        lease.environment,
+        callerBinding.cwd,
+      );
       return {
         agentId: created.id,
         profileName: plan.profileName,
@@ -201,7 +180,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         promptText,
       };
     } finally {
-      lease?.dispose();
+      lease.dispose();
     }
   }
 

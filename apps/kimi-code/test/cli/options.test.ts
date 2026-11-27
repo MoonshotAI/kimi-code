@@ -1,10 +1,3 @@
-/**
- * Scenario: top-level CLI option parsing, validation, and help discovery.
- * Responsibilities: accepted arguments map to CLIOptions and invalid combinations fail early.
- * Wiring: Commander is real; command handlers and output sinks are local test boundaries.
- * Run: pnpm -C apps/kimi-code exec vitest run test/cli/options.test.ts
- */
-
 import { describe, expect, it, vi } from 'vitest';
 
 import { createProgram } from '#/cli/commands';
@@ -533,6 +526,40 @@ describe('CLI options parsing', () => {
     });
   });
 
+  describe('-w/--worktree', () => {
+    it('parses an optional worktree name and a base', () => {
+      expect(parse(['-w']).worktree).toBe('');
+      expect(parse(['-w', 'fix-login']).worktree).toBe('fix-login');
+      expect(parse(['--worktree=fix-login', '--worktree-base', 'v1.2.0'])).toMatchObject({
+        worktree: 'fix-login',
+        worktreeBase: 'v1.2.0',
+      });
+      expect(parse([]).worktree).toBeUndefined();
+      expect(validateOptions(parse(['-w', 'fix-login']), {}).uiMode).toBe('shell');
+      expect(validateOptions(parse(['-p', 'hi', '-w']), {}).uiMode).toBe('print');
+    });
+
+    it('rejects --worktree-base without -w and an empty base', () => {
+      expect(() => validateOptions(parse(['--worktree-base', 'main']))).toThrow('--worktree-base requires -w/--worktree.');
+      expect(() => validateOptions(parse(['-w', '--worktree-base', ' ']))).toThrow('Worktree base cannot be empty.');
+    });
+
+    it.each([['-c'], ['-r', 'ses_123'], ['-r'], ['--session', 'ses_123']])(
+      'rejects -w with %s',
+      (...resumeArgs: string[]) => {
+        const opts = parse(['-w', ...resumeArgs]);
+        expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+        expect(() => validateOptions(opts)).toThrow('Cannot combine -w/--worktree with -c/--continue or -S/--session');
+      },
+    );
+
+    it('rejects -w with --environment', () => {
+      expect(() => validateOptions(parse(['-w', '--environment', 'dev-box']))).toThrow(
+        'Cannot combine -w/--worktree with --environment',
+      );
+    });
+  });
+
   describe('--add-dir', () => {
     it('parses one additional workspace directory', () => {
       expect(parse(['--add-dir', '/shared']).addDirs).toEqual(['/shared']);
@@ -608,7 +635,6 @@ describe('CLI options parsing', () => {
         'session',
         'acp',
         'web',
-        'server',
         'rc',
         'login',
         'doctor',

@@ -1,8 +1,3 @@
-/**
- * Shared syntax-highlighting helpers for code previews
- * (tool-call Write/Edit, approval-panel Write content, etc.).
- */
-
 import { extname } from 'node:path';
 
 import { highlight, supportsLanguage } from 'cli-highlight';

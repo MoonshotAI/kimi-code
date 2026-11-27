@@ -54,13 +54,6 @@ export function runCommand(
   return { ok: true, stdout };
 }
 
-/**
- * Non-blocking counterpart of `runCommand`. Used by the clipboard image probe
- * on the startup path so a slow or wedged helper (notably `powershell.exe` on
- * WSL, or a stuck `wl-paste`/`xclip`) cannot freeze the event loop. The child
- * is killed and the promise resolves with `ok: false` once `timeoutMs` elapses
- * or the captured stdout exceeds `DEFAULT_MAX_BUFFER_BYTES`.
- */
 export function runCommandAsync(
   command: string,
   args: string[],
@@ -84,8 +77,6 @@ export function runCommandAsync(
     let settled = false;
     let timer: ReturnType<typeof setTimeout>;
 
-    // Marks the promise as settled and clears the timeout. Returns true only for
-    // the first caller, so each event handler below resolves at most once.
     const claim = (): boolean => {
       if (settled) return false;
       settled = true;

@@ -1,4 +1,6 @@
 import {
+  AutoReviewCompleted,
+  AutoReviewStarted,
   IAgentBlobService,
   IAgentLoopService,
   IEventBus,
@@ -10,7 +12,7 @@ import {
   type IAgentScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 import type { CollectionView } from '@moonshot-ai/agent-core-v2/_base/di/collection';
-import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear, ContextUndo } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { AssistantDelta, ThinkingDelta, ToolCallDelta } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
@@ -194,6 +196,38 @@ describe('conversation fold', () => {
     });
     expect(turn?.items.map((item) => item.item_id)).toEqual(['p1', 's1:0', 's1:2', 'call-1']);
     expect(turn?.items[3]).toMatchObject({ name: 'Bash', input: { command: 'ls' }, output: 'a\nb', outcome: 'completed', step_index: 1 });
+  });
+
+  it('folds turn.ended continuation onto the turn header and omits it for legacy records', () => {
+    const state = fold([
+      turnPrompt(0, 'p0'), userMessage('p0', 'first'), turnEnded(0, 'completed', { continuation: 'turn' }),
+      turnPrompt(1, 'p1'), userMessage('p1', 'second'), turnEnded(1, 'completed', { continuation: 'background' }),
+      turnPrompt(2, 'p2'), userMessage('p2', 'third'), turnEnded(2, 'completed', { continuation: 'none' }),
+      turnPrompt(3, 'p3'), userMessage('p3', 'legacy'), turnEnded(3, 'completed'),
+    ]);
+
+    expect(state.turns.map((turn) => turn.continuation)).toEqual(['turn', 'background', 'none', undefined]);
+  });
+
+  it('appends the parts of a step without rescanning the items already in its turn', () => {
+    const state = fold([turnPrompt(0, 'p1'), userMessage('p1', 'hello'), stepBegin(0, 1, 's1')]);
+    const turn = state.turns[0]!;
+    let itemReads = 0;
+    turn.items = new Proxy(turn.items, {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && /^\d+$/.test(key)) itemReads++;
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+    const parts = 200;
+    for (let block = 0; block < parts; block++) {
+      applyConversationRecord(state, contentPart(0, 1, 's1', { type: 'think', think: `t${String(block)}` }, block));
+    }
+    applyConversationRecord(state, contentPart(0, 1, 's1', { type: 'think', think: 'rewritten' }, 0));
+
+    expect(itemReads).toBeLessThan(parts * 2);
+    expect(turn.items).toHaveLength(parts + 1);
+    expect(turn.items[1]).toMatchObject({ item_id: 's1:0', text: 'rewritten' });
   });
 
   it('attaches the request debug to the last item of each step only when debugging', () => {
@@ -616,6 +650,61 @@ describe('conversation fold', () => {
     expect(turns[2]?.items[0]).toMatchObject({ kind: 'compaction', trigger: 'auto', summary: 'legacy' });
   });
 
+  it('shows a failed compaction with its reason and keeps a later summary out of it', () => {
+    const error = {
+      code: 'compaction.failed',
+      message: 'APIStatusError: 400 Bad Request',
+      retryable: false,
+      cause: {
+        code: 'provider.api_error',
+        message: '400 Bad Request',
+        retryable: false,
+        details: { statusCode: 400, requestId: 'req-1' },
+      },
+    };
+    const state = fold([
+      record('full_compaction.begin', { source: 'manual' }),
+      record('full_compaction.cancel', { error }),
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'go'),
+      stepBegin(0, 1, 's1'),
+      record('full_compaction.begin', { source: 'auto' }),
+      record('full_compaction.cancel', { error: { ...error, message: 'mid-turn refusal' } }),
+      turnEnded(0, 'completed'),
+      record('context.apply_compaction', { summary: 'legacy', compactedCount: 2 }),
+    ]);
+
+    const turns = state.turns;
+    expect(turns.map((turn) => `${turn.kind}:${turn.status}:${turn.outcome}`)).toEqual([
+      'system:ended:completed',
+      'agent:ended:completed',
+      'system:ended:completed',
+    ]);
+    expect(turns[0]?.items).toEqual([{
+      type: 'system',
+      item_id: `${turns[0]!.turn_id}#0`,
+      status: 'ended',
+      outcome: 'failed',
+      created_at: expect.any(String),
+      kind: 'compaction',
+      trigger: 'manual',
+      error: {
+        code: 'compaction.failed',
+        message: 'APIStatusError: 400 Bad Request',
+        status_code: 400,
+        request_id: 'req-1',
+        retryable: false,
+      },
+    }]);
+    expect(turns[1]?.items[1]).toMatchObject({
+      kind: 'compaction',
+      trigger: 'auto',
+      outcome: 'failed',
+      error: { message: 'mid-turn refusal' },
+    });
+    expect(turns[2]?.items[0]).toMatchObject({ kind: 'compaction', outcome: 'completed', summary: 'legacy' });
+  });
+
   it('opens a forked conversation with a boundary turn and hides what it inherited', () => {
     const state = fold([
       userMessage('m1', 'inherited question'),
@@ -900,6 +989,17 @@ describe('orphan turns', () => {
 
     expect(settled.turns[0]).toMatchObject({ status: 'ended', outcome: 'completed' });
   });
+
+  it('ends a crashed first turn from the modern engine (carrying trigger) as interrupted', () => {
+    const modernFirstTurn: WireRecord[] = [
+      record('turn.prompt', { turnId: 0, promptId: 'p1', origin: { kind: 'user' }, input: [], trigger: 'normal' }),
+      userMessage('p1', 'first turn crash'),
+      stepBegin(0, 1, 's0'),
+    ];
+    const settled = settleOrphanTurns(fold(modernFirstTurn));
+
+    expect(settled.turns[0]).toMatchObject({ status: 'ended', outcome: 'interrupted', end_reason: 'aborted' });
+  });
 });
 
 const passThroughBlobs = {
@@ -1001,6 +1101,7 @@ const updated = (
   output?: { offset: number; text: string },
 ): ToolUpdated => new ToolUpdated({
   agentId: 'main',
+  origin: 'loop',
   turnId: 0,
   toolCallId: 'call-1',
   taskId: 'task-1',
@@ -1023,6 +1124,85 @@ async function runningTurn(h: FeedHarness): Promise<void> {
 }
 
 describe('conversation feed', () => {
+  it('publishes turn continuation on live turn.ended frames, REST pages, and replay', async () => {
+    const h = feedHarness([]);
+    await runningTurn(h);
+    await h.dispatcher.dispatch(new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed', continuation: 'turn' }));
+    await flushed();
+    expect(h.events).toEqual([
+      expect.objectContaining({ type: 'turn.ended', turn: expect.objectContaining({ status: 'ended', continuation: 'turn' }) }),
+    ]);
+    expect((await h.feed.page(undefined, 20)).turns[0]?.continuation).toBe('turn');
+
+    h.events.length = 0;
+    await h.dispatcher.dispatch(prompt(1, 'p2'));
+    await h.dispatcher.dispatch(userPrompt('p2', 'after background'));
+    await h.dispatcher.dispatch(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'completed', continuation: 'none' }));
+    await flushed();
+    expect(h.events.filter((event) => event.type === 'turn.ended')).toEqual([
+      expect.objectContaining({ turn: expect.objectContaining({ continuation: 'none' }) }),
+    ]);
+
+    h.events.length = 0;
+    await h.dispatcher.restore();
+    expect(h.events).toEqual([]);
+    expect((await h.feed.page(undefined, 20)).turns.map((turn) => turn.continuation)).toEqual(['turn', 'none']);
+    h.dispatcher.dispose();
+  });
+
+  it('only reuses the historical request ID when its step produced the rated reply', async () => {
+    const h = feedHarness([
+      turnPrompt(0, 'p0'), userMessage('p0', 'First question'),
+      stepBegin(0, 1, 'answer'), contentPart(0, 1, 'answer', { type: 'text', text: 'First answer' }),
+      stepEnd(0, 1, 'answer', { finishReason: 'end_turn' }), turnEnded(0, 'completed', { requestId: 'first-request' }),
+      turnPrompt(1, 'p1'), userMessage('p1', 'Second question'),
+      stepBegin(1, 1, 'explain'), contentPart(1, 1, 'explain', { type: 'text', text: 'I will read the file.' }),
+      toolCall(1, 1, 'explain', 'read', 'Read', { path: 'example.txt' }), toolResult('read', 'file content'),
+      stepEnd(1, 1, 'explain', { finishReason: 'tool_use' }), stepBegin(1, 2, 'failed'),
+      stepEnd(1, 2, 'failed', { finishReason: 'error' }), turnEnded(1, 'failed', { requestId: 'failed-request' }),
+      turnPrompt(2, 'p2'), userMessage('p2', 'Third question'), message('assistant', 'Plain answer'),
+      turnEnded(2, 'completed', { requestId: 'text-request' }),
+      turnPrompt(3, 'p3'), userMessage('p3', 'Fourth question'), message('assistant', 'A previous reply'),
+      turnEnded(3, 'failed', { requestId: 'unproven-request' }),
+    ]);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+    const [first, second, third, fourth] = h.feed.turns();
+    expect(h.feed.feedbackTurn(first!.turn_id, 'answer:0')).toMatchObject({ requestId: 'first-request' });
+    expect(h.feed.feedbackTurn(second!.turn_id, 'explain:0')).toEqual({});
+    expect(h.feed.feedbackTurn(third!.turn_id)).toMatchObject({ requestId: 'text-request' });
+    expect(h.feed.feedbackTurn(fourth!.turn_id)).toEqual({});
+    h.dispatcher.dispose();
+  });
+
+  it.each([true, false])('preserves only provable reply attribution after undoing a steer (per-step records: %s)', async (perStep) => {
+    const first = { step: 1, role: 'step', provider: 'example', model: 'earlier', isKfc: false, requestId: 'first-request' };
+    const child = { ...first, role: 'subagent', model: 'helper', requestId: 'child-request' };
+    const last = { ...first, step: 2, model: 'later', requestId: 'last-request' };
+    const h = feedHarness([
+      turnPrompt(0, 'start'), userMessage('start', 'First question'),
+      stepBegin(0, 1, 'first'), contentPart(0, 1, 'first', { type: 'text', text: 'First reply' }),
+      stepEnd(0, 1, 'first', { finishReason: 'tool_use' }),
+      userMessage('followup', 'Follow-up question', { kind: 'user', inTurn: true }),
+      stepBegin(0, 2, 'last'), contentPart(0, 2, 'last', { type: 'text', text: 'Last reply' }),
+      stepEnd(0, 2, 'last', { finishReason: 'end_turn' }),
+      turnEnded(0, 'completed', { requestId: last.requestId, replyModel: last, modelSteps: perStep ? [first, child, last] : undefined }),
+    ]);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+    const turnId = h.feed.turns()[0]!.turn_id;
+    expect(h.feed.feedbackTurn(turnId, 'last:0')).toMatchObject({ requestId: last.requestId });
+
+    await h.dispatcher.dispatch(new ContextUndo({ agentId: 'main', count: 1 }));
+
+    const retained = perStep ? { requestId: first.requestId, replyModel: first, modelSteps: [first, child] } : {};
+    expect(h.feed.feedbackTurn(turnId, 'first:0')).toEqual(retained);
+    await h.dispatcher.restore();
+    expect(h.feed.feedbackTurn(turnId, 'first:0')).toEqual(retained);
+    expect(h.feed.feedbackTurn(turnId, 'last:0')).toBeUndefined();
+    h.dispatcher.dispose();
+  });
+
   it('rejects ready when the first replay fails', async () => {
     const h = feedHarness([prompt(0, 'p1').serialize()]);
     h.failNextReplay();
@@ -1187,6 +1367,26 @@ describe('conversation feed', () => {
     expect(h.events.at(-1)).toMatchObject({ type: 'item.updated', item_id: 'call-1', set: { task_id: 'bash-p81' } });
   });
 
+  it('delivers the pending OAuth URL both live and on reconnect without retaining it on completion', async () => {
+    const h = feedHarness([]);
+    await runningTurn(h);
+    const display = { kind: 'generic', summary: 'Authenticate example', detail: { kind: 'mcp_oauth', serverName: 'example' } } as const;
+    await h.dispatcher.dispatch(loopEvent({ type: 'tool.call', stepUuid: 's1', toolCallId: 'call-1', name: 'mcp__example__authenticate', args: {}, display, turnId: '0', step: 1 }));
+    await flushed();
+    const request = { waitId: 'wait-1', serverName: 'example', authorizationUrl: 'https://auth.example.test/authorize?state=test', expiresAt: Date.now() + 60_000 };
+    const fields = { 'mcp.oauth.authorization_url': request };
+    await h.dispatcher.dispatch(updated(fields));
+    await h.dispatcher.dispatch(updated({ ...fields, status: 'Waiting for callback' }));
+    expect(h.events).toContainEqual(expect.objectContaining({ type: 'item.updated', item_id: 'call-1', set: { fields } }));
+    expect((await h.feed.page(undefined, 20)).turns[0]?.items[1]).toMatchObject({ status: 'running', display, fields });
+    await h.dispatcher.dispatch(loopEvent({ type: 'tool.result', toolCallId: 'call-1', result: { output: 'Connected' } }));
+    await flushed();
+    const ended = (await h.feed.page(undefined, 20)).turns[0]?.items[1];
+    expect(ended).toMatchObject({ status: 'ended', display });
+    expect(JSON.stringify(ended)).not.toContain(request.authorizationUrl);
+    h.dispatcher.dispose();
+  });
+
   it('streams a tool call through its stages, input, output and fields', async () => {
     const h = feedHarness([]);
     await runningTurn(h);
@@ -1194,6 +1394,19 @@ describe('conversation feed', () => {
     const display = { kind: 'command', command: 'ls' } as const;
     await h.dispatcher.dispatch(new ToolCallDelta({ agentId: 'main', turnId: 0, toolCallId: 'call-1', name: 'Bash', argumentsPart: '{"command":' }));
     await h.dispatcher.dispatch(new ToolCallDelta({ agentId: 'main', turnId: 0, toolCallId: 'call-1', argumentsPart: '"ls"}' }));
+    await h.dispatcher.dispatch(new AutoReviewStarted({ agentId: 'main', turnId: 0, toolCallId: 'call-1', toolName: 'Bash' }));
+    await h.dispatcher.dispatch(new AutoReviewCompleted({
+      agentId: 'main',
+      turnId: 0,
+      toolCallId: 'call-1',
+      toolName: 'Bash',
+      triggerPolicy: 'fallback-ask',
+      model: 'k2',
+      decision: 'deny',
+      risk: 'medium',
+      reason: 'Needs confirmation.',
+      durationMs: 12,
+    }));
     await h.dispatcher.dispatch(new InteractionRequestEvent({
       agentId: 'main',
       id: 'i1',
@@ -1218,6 +1431,8 @@ describe('conversation feed', () => {
     expect(h.events).toMatchObject([
       { type: 'item.started', item: { item_id: 'call-1', type: 'tool_call', status: 'running', stage: 'input', name: 'Bash', input_text: '{"command":' } },
       { type: 'item.delta', ...tool, field: 'input_text', delta: '"ls"}' },
+      { type: 'item.updated', ...tool, set: { auto_review: true } },
+      { type: 'item.updated', ...tool, set: { auto_review: false } },
       { type: 'item.updated', ...tool, set: { stage: 'awaiting_approval', interaction_id: 'i1', display } },
       { type: 'item.updated', ...tool, set: { stage: 'executing' } },
       { type: 'item.updated', ...tool, set: { input: { command: 'ls' } } },
@@ -1228,8 +1443,8 @@ describe('conversation feed', () => {
       { type: 'item.updated', ...tool, set: { fields: { progress: { percent: 40, text: 'copying' }, status: 'verifying' } } },
       { type: 'item.updated', ...tool, set: { fields: { progress: { percent: 40, text: 'copying' }, status: 'verifying', 'example.kind': { url: 'https://example.com/auth' } } } },
     ]);
-    expect(Object.keys((h.events[3] as { set: object }).set)).toEqual(['stage']);
-    expect(Object.keys((h.events[4] as { set: object }).set)).toEqual(['input']);
+    expect(Object.keys((h.events[5] as { set: object }).set)).toEqual(['stage']);
+    expect(Object.keys((h.events[6] as { set: object }).set)).toEqual(['input']);
     expect(midway).toMatchObject({
       stage: 'executing',
       output: 'a\nb\n',
@@ -1282,5 +1497,97 @@ describe('conversation feed', () => {
     await huge.feed.ready;
     expect(await huge.feed.page(undefined, 10)).toMatchObject({ turns: [{ ordinal: 0 }], has_more: false });
     huge.dispatcher.dispose();
+  });
+
+  it('does not mark a failed notification-opened turn as a trailing rejected prompt', () => {
+    const state = fold([
+      turnPrompt(0, 'notif-p1', { kind: 'background_task', taskId: 'bg-1' }),
+      userMessage('notif-p1', notificationXml('bg-1'), { kind: 'background_task', taskId: 'bg-1' }),
+      turnEnded(0, 'failed'),
+      record('prompt.completed', { promptId: 'notif-p1', reason: 'failed' }),
+    ]);
+    expect(state.trailingRejectedPrompt).toBe(false);
+    expect(state.turns[0]).toMatchObject({ status: 'ended', outcome: 'failed' });
+
+    const rejected = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'work'),
+      turnEnded(0, 'failed'),
+      record('prompt.completed', { promptId: 'p2', reason: 'blocked' }),
+    ]);
+    expect(rejected.trailingRejectedPrompt).toBe(true);
+  });
+
+  it('keeps a failed continuation turn continuable while rejecting subsequent failed submissions', () => {
+    const continuedFailed = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'work'),
+      turnEnded(0, 'cancelled'),
+      record('turn.prompt', {
+        turnId: 1,
+        promptId: undefined,
+        origin: { kind: 'injection', variant: 'turn_continue', ownerPromptId: 'p1' },
+        input: [],
+        trigger: 'continue',
+      }),
+      loop({ type: 'step.begin', uuid: 'step-c1', turnId: '1', step: 1 }),
+      turnEnded(1, 'failed'),
+      record('prompt.completed', { promptId: 'generated-waiter-1', reason: 'failed' }),
+    ]);
+    expect(continuedFailed.trailingRejectedPrompt).toBe(false);
+    expect(continuedFailed.turns.at(-1)).toMatchObject({ status: 'ended', outcome: 'failed' });
+
+    const subsequentGateFailure = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'work'),
+      turnEnded(0, 'cancelled'),
+      record('turn.prompt', {
+        turnId: 1,
+        promptId: undefined,
+        origin: { kind: 'injection', variant: 'turn_continue', ownerPromptId: 'p1' },
+        input: [],
+        trigger: 'continue',
+      }),
+      loop({ type: 'step.begin', uuid: 'step-c1', turnId: '1', step: 1 }),
+      turnEnded(1, 'failed'),
+      record('prompt.completed', { promptId: 'generated-waiter-1', reason: 'failed' }),
+      record('prompt.completed', { promptId: 'p2', reason: 'failed' }),
+    ]);
+    expect(subsequentGateFailure.trailingRejectedPrompt).toBe(true);
+
+    const crashedContinuation = settleOrphanTurns(
+      fold([
+        turnPrompt(0, 'p1'),
+        userMessage('p1', 'work'),
+        turnEnded(0, 'cancelled'),
+        record('turn.prompt', {
+          turnId: 1,
+          promptId: undefined,
+          origin: { kind: 'injection', variant: 'turn_continue', ownerPromptId: 'p1' },
+          input: [],
+          trigger: 'continue',
+        }),
+        loop({ type: 'step.begin', uuid: 'step-c1', turnId: '1', step: 1 }),
+      ]),
+    );
+    applyConversationRecord(crashedContinuation, record('prompt.completed', { promptId: 'p2', reason: 'failed' }));
+    expect(crashedContinuation.trailingRejectedPrompt).toBe(true);
+
+    const cancelledContinuationThenGateFailure = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'work'),
+      turnEnded(0, 'cancelled'),
+      record('turn.prompt', {
+        turnId: 1,
+        promptId: undefined,
+        origin: { kind: 'injection', variant: 'turn_continue', ownerPromptId: 'p1' },
+        input: [],
+        trigger: 'continue',
+      }),
+      loop({ type: 'step.begin', uuid: 'step-c1', turnId: '1', step: 1 }),
+      turnEnded(1, 'cancelled'),
+      record('prompt.completed', { promptId: 'p2', reason: 'failed' }),
+    ]);
+    expect(cancelledContinuationThenGateFailure.trailingRejectedPrompt).toBe(true);
   });
 });

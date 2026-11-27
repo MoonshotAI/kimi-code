@@ -1,18 +1,3 @@
-/**
- * TasksBrowserApp — full-screen alt-screen takeover for browsing
- * background tasks. Three-pane layout (left task list, right top
- * detail, right bottom preview output) framed by a header row and
- * footer key hint.
- *
- * Mounted by `kimi-tui.ts` via container swap rather than `showOverlay`
- * — the main TUI's children are saved, cleared, and this component is
- * added as the sole child so it covers the entire screen. The
- * controller restores the children when the user exits.
- *
- * Data (tasks list, tail output) flows in via `setProps`; user actions
- * fire the `on*` callbacks back to the controller.
- */
-
 import {
   Container,
   Key,
@@ -31,6 +16,7 @@ import type {
 import { SELECT_POINTER } from '@/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '@/tui/utils/printable-key';
+import { formatRelativeTime } from '#/tui/utils/relative-time';
 import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 import { modelDisplayName } from './model-selector';
 
@@ -45,18 +31,13 @@ export interface TasksBrowserProps {
   readonly tailOutput: string | undefined;
   readonly tailLoading: boolean;
   readonly flashMessage: string | undefined;
-  /** Model catalog from the app config, used to resolve task model aliases
-   *  to display names (same mapping as the other subagent surfaces). */
   readonly availableModels: Record<string, ModelAlias>;
   readonly onSelect: (taskId: string) => void;
   readonly onToggleFilter: () => void;
   readonly onRefresh: () => void;
   readonly onCancel: () => void;
-  /** Fired when the user confirms a stop request via the inline `y` prompt. */
   readonly onStopConfirmed: (taskId: string) => void;
-  /** Fired when the user presses Enter or O on a selected task. */
   readonly onOpenOutput: (taskId: string) => void;
-  /** Fired when stop is requested on a task that cannot be stopped. */
   readonly onStopIgnored?: (taskId: string, reason: 'terminal') => void;
 }
 
@@ -69,14 +50,11 @@ const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
   lost: 'lost',
 };
 
-/** Auto-cancel the inline stop confirmation after this many ms. */
 const STOP_CONFIRM_TIMEOUT_MS = 5_000;
 
-/** Minimum dimensions before we just print a "too small" message. */
 const MIN_WIDTH = 48;
 const MIN_HEIGHT = 10;
 
-/** Hard caps so a tiny / huge terminal still gets a sensible left-column width. */
 const LIST_COL_MIN = 28;
 const LIST_COL_MAX = 44;
 const LIST_COL_RATIO = 0.32;
@@ -105,18 +83,6 @@ function isTerminal(status: BackgroundTaskStatus): boolean {
   );
 }
 
-function formatRelativeTime(ts: number | null | undefined): string {
-  if (ts === null || ts === undefined || !Number.isFinite(ts) || ts <= 0) return '';
-  const diffSec = Math.floor(Math.max(0, Date.now() - ts) / 1000);
-  if (diffSec < 60) return 'just now';
-  const minutes = Math.floor(diffSec / 60);
-  if (minutes < 60) return `${String(minutes)}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${String(hours)}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${String(days)}d ago`;
-}
-
 function singleLine(text: string): string {
   return text.replaceAll(/\s+/g, ' ').trim();
 }
@@ -128,24 +94,15 @@ function padToWidth(line: string, width: number): string {
   return line + ' '.repeat(width - w);
 }
 
-/** Fit `line` into exactly `width` columns, even after CJK-edge truncation. */
 function fitExactly(line: string, width: number): string {
   let s = line;
   if (visibleWidth(s) > width) s = truncateToWidth(s, width, ELLIPSIS);
   return padToWidth(s, width);
 }
 
-function visibleTasks(
-  tasks: readonly BackgroundTaskInfo[],
-  filter: TasksFilter,
-): BackgroundTaskInfo[] {
-  // The /tasks panel is for background task management. Foreground tasks
-  // (detached === false) are shown in the main transcript instead, and only
-  // appear here after being detached via Ctrl+B. `detached !== false` keeps
-  // reconcile ghosts whose `detached` field may be undefined.
-  const backgroundOnly = tasks.filter((t) => t.detached !== false);
-  if (filter === 'all') return [...backgroundOnly];
-  return backgroundOnly.filter((t) => !isTerminal(t.status));
+export function isVisibleTask(task: BackgroundTaskInfo, filter: TasksFilter): boolean {
+  if (task.detached === false) return task.kind === 'agent' && !isTerminal(task.status);
+  return filter === 'all' || !isTerminal(task.status);
 }
 
 function compareTasks(a: BackgroundTaskInfo, b: BackgroundTaskInfo): number {
@@ -198,13 +155,17 @@ export class TasksBrowserApp extends Container implements Focusable {
     super();
     this.props = props;
     this.terminal = terminal;
-    this.sortedVisible = visibleTasks(props.tasks, props.filter).toSorted(compareTasks);
+    this.sortedVisible = props.tasks
+      .filter((task) => isVisibleTask(task, props.filter))
+      .toSorted(compareTasks);
     this.syncSelectionFromProps();
   }
 
   setProps(next: TasksBrowserProps): void {
     this.props = next;
-    this.sortedVisible = visibleTasks(next.tasks, next.filter).toSorted(compareTasks);
+    this.sortedVisible = next.tasks
+      .filter((task) => isVisibleTask(task, next.filter))
+      .toSorted(compareTasks);
     this.syncSelectionFromProps();
     if (this.pendingStopTaskId !== undefined) {
       const task = next.tasks.find((t) => t.taskId === this.pendingStopTaskId);
@@ -288,7 +249,7 @@ export class TasksBrowserApp extends Container implements Focusable {
     }
     if (k === 's' || k === 'S') {
       const task = this.sortedVisible[this.selectedIndex];
-      if (task === undefined) return;
+      if (task === undefined || task.detached === false) return;
       if (isTerminal(task.status)) {
         this.props.onStopIgnored?.(task.taskId, 'terminal');
         return;
@@ -308,10 +269,6 @@ export class TasksBrowserApp extends Container implements Focusable {
     }
   }
 
-  /**
-   * Render the entire screen as `terminal.rows` lines of `width` cols.
-   * Layout: header(1) + body(rows-2) + footer(1).
-   */
   override render(width: number): string[] {
     const rows = Math.max(1, this.terminal.rows);
     if (width < MIN_WIDTH || rows < MIN_HEIGHT) {
@@ -339,18 +296,13 @@ export class TasksBrowserApp extends Container implements Focusable {
     return lines;
   }
 
-  // ── header / footer ──────────────────────────────────────────────────
-
   private renderHeader(width: number): string {
     const title = currentTheme.boldFg('primary', ' TASK BROWSER ');
     const filterText = currentTheme.fg(
       'textMuted',
       ` filter=${this.props.filter === 'all' ? 'ALL' : 'ACTIVE'} `,
     );
-    // Count only the tasks actually listed (background tasks after the
-    // foreground-task filter), so a foreground-only session doesn't read
-    // "1 running / 1 total" above an empty list.
-    const visible = visibleTasks(this.props.tasks, this.props.filter);
+    const visible = this.sortedVisible;
     const counts = countByStatus(visible);
     const countSegments: string[] = [];
     if (counts.running > 0)
@@ -382,11 +334,14 @@ export class TasksBrowserApp extends Container implements Focusable {
     const parts = [
       ` ${key('↑↓')} ${dim('select')}`,
       `${key('Enter/O')} ${dim('output')}`,
-      `${key('S')} ${dim('stop')}`,
       `${key('R')} ${dim('refresh')}`,
       `${key('Tab')} ${dim('filter')}`,
       `${key('Q/Esc')} ${dim('cancel')} `,
     ];
+    const task = this.sortedVisible[this.selectedIndex];
+    if (task !== undefined && task.detached !== false) {
+      parts.splice(2, 0, `${key('S')} ${dim('stop')}`);
+    }
     const left = parts.join('  ');
     const flash = this.props.flashMessage;
     if (flash !== undefined && flash.length > 0) {
@@ -399,13 +354,6 @@ export class TasksBrowserApp extends Container implements Focusable {
     return fitExactly(left, width);
   }
 
-  // ── frame primitive ──────────────────────────────────────────────────
-
-  /**
-   * Render a framed box: `┌─ Title ─┐` top, `│ <content> │` sides, `└─┘`
-   * bottom. Result is exactly `width × height` cells. `content` is a
-   * pre-rendered array of inner-width-sized lines; extra rows are padded.
-   */
   private renderFrame(
     title: string,
     content: readonly string[],
@@ -444,8 +392,6 @@ export class TasksBrowserApp extends Container implements Focusable {
     return lines;
   }
 
-  // ── left: task list frame ────────────────────────────────────────────
-
   private renderListFrame(width: number, height: number): string[] {
     const title = `Tasks [${this.props.filter}]`;
     const innerHeight = Math.max(0, height - 2);
@@ -454,7 +400,7 @@ export class TasksBrowserApp extends Container implements Focusable {
       const empty =
         this.props.filter === 'active'
           ? 'No active tasks. Tab = show all.'
-          : 'No background tasks in this session.';
+          : 'No tasks in this session.';
       const lines: string[] = [currentTheme.fg('textMuted', empty)];
       while (lines.length < innerHeight) lines.push('');
       return this.renderFrame(title, lines, width, height);
@@ -509,8 +455,6 @@ export class TasksBrowserApp extends Container implements Focusable {
     return fitExactly(`${prefix} ${currentTheme.fg('text', desc)}`, innerWidth);
   }
 
-  /** Secondary line under an agent task's row: the model it runs on, resolved
-   *  through the model catalog like the other subagent surfaces. */
   private agentModelText(task: BackgroundTaskInfo): string | undefined {
     if (task.kind !== 'agent' || task.model === undefined) return undefined;
     const name = modelDisplayName(task.model, this.props.availableModels[task.model]);
@@ -523,8 +467,6 @@ export class TasksBrowserApp extends Container implements Focusable {
     return indent + currentTheme.fg('textMuted', clipped);
   }
 
-  // Agent tasks with a bound model take two lines (row + model line), so
-  // scrolling is tracked in rendered lines rather than task indices.
   private taskLineStarts(): { starts: number[]; total: number } {
     const starts: number[] = [];
     let total = 0;
@@ -553,13 +495,7 @@ export class TasksBrowserApp extends Container implements Focusable {
     if (this.listScroll > maxScroll) this.listScroll = maxScroll;
   }
 
-  // ── right: detail + preview stack ────────────────────────────────────
-
   private renderRightStack(width: number, height: number): string[] {
-    // Detail wants ~10 rows (or 40% of body, whichever is larger) — agent tasks
-    // carry Task ID / Status / Description / Agent ID / Agent type / Model /
-    // Effort / Time. Clamp it so the preview frame keeps its borders plus one
-    // content row even near the minimum terminal height.
     const detailHeight = Math.min(
       Math.max(10, Math.min(Math.floor(height * 0.4), height - 5)),
       Math.max(3, height - 3),
@@ -589,6 +525,9 @@ export class TasksBrowserApp extends Container implements Focusable {
       `${label('Status:')}${currentTheme.fg(statusColor(task.status), STATUS_LABEL[task.status])}`,
       `${label('Description:')}${value(singleLine(task.description) || '—')}`,
     ];
+    if (task.detached === false) {
+      lines.push(`${label('Mode:')}${value('Foreground')}`);
+    }
     if (task.kind === 'process' && task.command && task.command !== task.description) {
       lines.push(`${label('Command:')}${value(singleLine(task.command))}`);
     }
@@ -651,8 +590,6 @@ export class TasksBrowserApp extends Container implements Focusable {
     while (styled.length < innerHeight) styled.push('');
     return this.renderFrame('Preview Output', styled, width, height);
   }
-
-  // ── too-small fallback ──────────────────────────────────────────────
 
   private renderTooSmall(width: number, rows: number): string[] {
     const lines: string[] = [];

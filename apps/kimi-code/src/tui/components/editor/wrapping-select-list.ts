@@ -10,8 +10,6 @@ import {
   type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
-// Mirror pi-tui's private select-list layout constants
-// (dist/components/select-list.js); keep in sync when bumping pi-tui.
 const DEFAULT_PRIMARY_COLUMN_WIDTH = 32;
 const PRIMARY_COLUMN_GAP = 2;
 const MIN_DESCRIPTION_WIDTH = 10;
@@ -20,12 +18,6 @@ const DESCRIPTION_MAX_LINES = 2;
 const ELLIPSIS = '…';
 const ELLIPSIS_WIDTH = visibleWidth(ELLIPSIS);
 
-// truncateToWidth appends an ANSI reset whenever it actually truncates.
-// Labels and descriptions here are plain text, and the reset would sit
-// inside the theme's colour wrapping and reset the rest of the line (e.g.
-// a selected row with a truncated name loses its colour after the name),
-// so strip it.
-// oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const TRAILING_ANSI_RESET = /(?:\u001B\[0m)+$/;
 
 function truncatePlainToWidth(text: string, maxWidth: number): string {
@@ -40,16 +32,6 @@ interface SelectListInternals {
   readonly layout: SelectListLayoutOptions;
 }
 
-/**
- * SelectList that wraps item descriptions onto up to two lines instead of
- * truncating them to one. Long command / skill descriptions stay readable;
- * anything past the second line is ellipsized.
- *
- * Only `render` is replaced — selection, filtering, and key handling stay in
- * pi-tui. pi-tui keeps the row state private, so the renderer reads it
- * through a cast, the same idiom CustomEditor uses for autocomplete
- * internals.
- */
 export class WrappingSelectList extends SelectList {
   override render(width: number): string[] {
     const { filteredItems, selectedIndex, maxVisible, theme } = this.internals();
@@ -143,7 +125,7 @@ export class WrappingSelectList extends SelectList {
       const truncatedValueWidth = visibleWidth(truncatedValue);
       const spacing = ' '.repeat(Math.max(1, effectivePrimaryColumnWidth - truncatedValueWidth));
       const descriptionStart = prefixWidth + truncatedValueWidth + spacing.length;
-      const remainingWidth = width - descriptionStart - 2; // -2 for safety, as upstream
+      const remainingWidth = width - descriptionStart - 2;
       if (remainingWidth > MIN_DESCRIPTION_WIDTH) {
         const descriptionLines = wrapDescription(description, remainingWidth);
         const indent = ' '.repeat(descriptionStart);
@@ -235,11 +217,6 @@ export class WrappingSelectList extends SelectList {
   }
 }
 
-/**
- * Wrap `text` to at most DESCRIPTION_MAX_LINES lines of `width` columns.
- * When the text needs more lines, the last visible line is rebuilt from the
- * remaining text and ellipsized.
- */
 function wrapDescription(text: string, width: number): string[] {
   const wrapped = wrapTextWithAnsi(text, width);
   if (wrapped.length <= DESCRIPTION_MAX_LINES) {

@@ -7,8 +7,8 @@ import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
 import { type ConfigSectionChangedEvent, IConfigService } from '#/app/config/config';
 import { describeUnknownError } from '#/app/config/configPure';
 import { deepEqual } from '#/app/config/sectionDiff';
-import { IModelService, type ModelsSection } from '#/llm-adapter/model/model';
-import { IProviderService, type ProvidersSection } from '#/llm-adapter/provider/provider';
+import { type ModelsSection } from '#/provider-catalog/model/model';
+import { type ProvidersSection } from '#/provider-catalog/provider/provider';
 
 import { IKosongConfigService } from './kosongConfig';
 import {
@@ -17,6 +17,7 @@ import {
   MODELS_SECTION,
   PROVIDERS_SECTION,
 } from './configSection';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const PERSIST_MAX_ATTEMPTS = 3;
 
@@ -29,8 +30,7 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
 
   constructor(
     @IConfigService private readonly config: IConfigService,
-    @IProviderService private readonly providers: IProviderService,
-    @IModelService private readonly models: IModelService,
+    @IProviderCatalogService private readonly providerCatalog: IProviderCatalogService,
     @ILogService private readonly log: ILogService,
   ) {
     super();
@@ -44,19 +44,19 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
 
   private async initialize(): Promise<void> {
     await this.config.ready;
-    this.providers.loadAll(
+    this.providerCatalog.loadProviderConfigs(
       this.config.get<ProvidersSection>(PROVIDERS_SECTION) ?? {},
       this.config.get<string>(DEFAULT_PROVIDER_SECTION),
     );
-    this.models.loadAll(
+    this.providerCatalog.loadModelRecords(
       this.config.get<ModelsSection>(MODELS_SECTION) ?? {},
       this.config.get<string>(DEFAULT_MODEL_SECTION),
     );
     this._register(this.config.onDidSectionChange((e) => this.onConfigSectionChanged(e)));
     this._register(
-      this.providers.onDidChangeProviders((e) => {
+      this.providerCatalog.onDidChangeProviders((e) => {
         if (
-          deepEqual(this.config.get<ProvidersSection>(PROVIDERS_SECTION) ?? {}, this.providers.list())
+          deepEqual(this.config.get<ProvidersSection>(PROVIDERS_SECTION) ?? {}, this.providerCatalog.listProviderConfigs())
         ) {
           return;
         }
@@ -64,21 +64,21 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
       }),
     );
     this._register(
-      this.providers.onDidChangeDefaultProvider((e) => {
+      this.providerCatalog.onDidChangeDefaultProvider((e) => {
         if (this.config.get<string>(DEFAULT_PROVIDER_SECTION) === e.id) return;
         e.waitUntil(this.enqueuePersistDefaultPointer(DEFAULT_PROVIDER_SECTION, e.id));
       }),
     );
     this._register(
-      this.models.onDidChangeModels((e) => {
-        if (deepEqual(this.config.get<ModelsSection>(MODELS_SECTION) ?? {}, this.models.list())) {
+      this.providerCatalog.onDidChangeModels((e) => {
+        if (deepEqual(this.config.get<ModelsSection>(MODELS_SECTION) ?? {}, this.providerCatalog.listModelRecords())) {
           return;
         }
         e.waitUntil(this.enqueuePersistModels());
       }),
     );
     this._register(
-      this.models.onDidChangeDefaultModel((e) => {
+      this.providerCatalog.onDidChangeDefaultModel((e) => {
         if (this.config.get<string>(DEFAULT_MODEL_SECTION) === e.id) return;
         e.waitUntil(this.enqueuePersistDefaultPointer(DEFAULT_MODEL_SECTION, e.id));
       }),
@@ -88,25 +88,25 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
   private onConfigSectionChanged(e: ConfigSectionChangedEvent): void {
     switch (e.domain) {
       case PROVIDERS_SECTION:
-        this.providers.loadAll(
+        this.providerCatalog.loadProviderConfigs(
           (e.value as ProvidersSection | undefined) ?? {},
-          this.providers.getDefaultProvider(),
+          this.providerCatalog.getDefaultProviderId(),
         );
         break;
       case MODELS_SECTION:
-        this.models.loadAll(
+        this.providerCatalog.loadModelRecords(
           (e.value as ModelsSection | undefined) ?? {},
-          this.models.getDefaultModel(),
+          this.providerCatalog.getDefaultModelId(),
         );
         break;
       case DEFAULT_PROVIDER_SECTION:
-        void this.providers
-          .setDefaultProvider(e.value as string | undefined)
+        void this.providerCatalog
+          .setDefaultProviderId(e.value as string | undefined)
           .catch((error) => this.logPersistFailure(error));
         break;
       case DEFAULT_MODEL_SECTION:
-        void this.models
-          .setDefaultModel(e.value as string | undefined)
+        void this.providerCatalog
+          .setDefaultModelId(e.value as string | undefined)
           .catch((error) => this.logPersistFailure(error));
         break;
     }
@@ -114,7 +114,7 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
 
   private enqueuePersistProviders(): Promise<void> {
     return this.enqueue(async () => {
-      const next = this.providers.list();
+      const next = this.providerCatalog.listProviderConfigs();
       if (deepEqual(this.config.get<ProvidersSection>(PROVIDERS_SECTION) ?? {}, next)) return;
       await this.replaceWithRetry(PROVIDERS_SECTION, next);
     });
@@ -122,7 +122,7 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
 
   private enqueuePersistModels(): Promise<void> {
     return this.enqueue(async () => {
-      const next = this.models.list();
+      const next = this.providerCatalog.listModelRecords();
       if (deepEqual(this.config.get<ModelsSection>(MODELS_SECTION) ?? {}, next)) return;
       await this.replaceWithRetry(MODELS_SECTION, next);
     });
@@ -135,12 +135,12 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
       const effective = this.config.get<string>(domain);
       if (effective === value) return;
       if (domain === DEFAULT_PROVIDER_SECTION) {
-        void this.providers
-          .setDefaultProvider(effective)
+        void this.providerCatalog
+          .setDefaultProviderId(effective)
           .catch((error) => this.logPersistFailure(error));
       } else if (domain === DEFAULT_MODEL_SECTION) {
-        void this.models
-          .setDefaultModel(effective)
+        void this.providerCatalog
+          .setDefaultModelId(effective)
           .catch((error) => this.logPersistFailure(error));
       }
     });

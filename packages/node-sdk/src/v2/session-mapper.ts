@@ -35,6 +35,7 @@ export function normalizeWorkDir(workDir: string): string {
 /** v1 summary fields the v2 index summary does not carry, resolved by the caller. */
 export interface SessionSummaryFacts {
   readonly workDir: string;
+  readonly projectWorkDir?: string;
   readonly sessionDir: string;
   readonly additionalDirs?: readonly string[];
 }
@@ -48,6 +49,7 @@ export function v2SummaryToSessionSummary(
     title: summary.title,
     lastPrompt: summary.lastPrompt,
     workDir: facts.workDir,
+    projectWorkDir: facts.projectWorkDir,
     sessionDir: facts.sessionDir,
     createdAt: summary.createdAt,
     updatedAt: summary.updatedAt,
@@ -82,11 +84,7 @@ function v2AgentsToV1(agents: Readonly<Record<string, V2AgentMeta>>): Record<str
   for (const [agentId, agent] of Object.entries(agents)) {
     mapped[agentId] = {
       homedir: agent.homedir,
-      // v2 registers every agent with a type; the fallbacks only cover
-      // documents written before that registration existed.
       type: agent.type ?? (agentId === 'main' ? 'main' : 'sub'),
-      // v1 persists an explicit null for a parentless agent where v2 leaves
-      // the field unset.
       parentAgentId: agent.parentAgentId ?? null,
       swarmItem: agent.labels?.['swarmItem'] ?? agent.swarmItem,
       profileName: agent.labels?.['profileName'],

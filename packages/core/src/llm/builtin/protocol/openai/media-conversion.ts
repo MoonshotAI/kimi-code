@@ -1,8 +1,3 @@
-/**
- * Tool-message conversion patterns for OpenAI Chat Completions: depending on `toolMessageConversion`,
- * keep tool-result parts, move tool-result media into a following user message, or convert tool
- * results to plain text.
- */
 import type { ContentPart, Message, ThinkPart, ToolMessage, UserMessage } from '#/llm/message';
 import { mediaUrlOf } from '#/llm/protocol/kit/media';
 import { toolResultToPlainText } from '#/llm/protocol/patterns';
@@ -17,33 +12,6 @@ function isExtractableMedia(part: ContentPart): boolean {
   return part.type === 'video_url' && !mediaUrlOf(part).startsWith('data:');
 }
 
-/**
- * Moves images and non-data-URL videos from a run of tool messages into a following user message
- * prefixed by an attachment prompt, leaving stripped tool messages with placeholders where needed.
- *
- * @example
- * const image = {
- *   type: 'image_url',
- *   imageUrl: { url: 'https://example.com/chart.png' },
- * };
- * // Input:
- * [{ role: 'tool', toolCallId: 'call-1', content: [image] }] // ←
- * // Output:
- * [
- *   {
- *     role: 'tool',
- *     toolCallId: 'call-1',
- *     content: [{ type: 'text', text: '(see attached media)' }], // ←
- *   },
- *   {
- *     role: 'user', // ←
- *     content: [
- *       { type: 'text', text: 'Attached media from tool result:' },
- *       image, // ←
- *     ],
- *   },
- * ]
- */
 export const extractToolMedia: Pattern<Message> = {
   name: 'extractToolMedia',
   rewrite(items, index) {

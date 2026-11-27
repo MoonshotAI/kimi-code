@@ -1,17 +1,10 @@
-/**
- * Scenario: maintainers package and inspect the VS Code extension on any host OS.
- * Responsibilities: six-target argument handling, actionable failures, isolated
- * dev state, manifest/resource hygiene, unresolved imports, and entry loading.
- * Wiring: real Node packaging/verifier CLIs and filesystem; VSIX directory
- * fixtures replace only the external Marketplace archive producer.
- * Run: pnpm --filter kimi-code exec vitest run --config vitest.config.ts test/vsix-package.test.ts
- */
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { build } from 'tsdown';
 
 const appRoot = resolve(import.meta.dirname, '..');
 const packageScript = join(appRoot, 'scripts', 'vsix-package.mjs');
@@ -64,6 +57,23 @@ describe('VSIX package CLI (target planning and validation)', () => {
     expect(result.stderr).toContain('Unknown VSIX target "plan9-x64"');
     expect(result.stderr).toContain('win32-arm64');
   });
+
+  it('bundles uuid into the extension entry', async () => {
+    const outputDir = await makeTempDir('kimi-extension-bundle-');
+    const result = await build({
+      cwd: appRoot,
+      config: join(appRoot, 'tsdown.config.ts'),
+      outDir: join(outputDir, 'dist'),
+      logLevel: 'silent',
+    });
+
+    try {
+      const source = await readFile(join(outputDir, 'dist', 'extension.js'), 'utf8');
+      expect(source).not.toMatch(/from ['"]uuid['"]/);
+    } finally {
+      for (const bundle of result.bundles) await bundle[Symbol.asyncDispose]();
+    }
+  }, 30_000);
 });
 
 describe('VSIX verifier CLI (package contract and failure details)', () => {

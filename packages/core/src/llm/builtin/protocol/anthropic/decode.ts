@@ -1,12 +1,9 @@
-/**
- * Anthropic Messages decoding: the stream decoder that turns SDK events into streamed parts, usage,
- * and finish info; replay of a non-streaming response as stream events; and SDK error classification.
- */
 import {
   APIConnectionError as RawAnthropicSDKConnectionError,
   APIConnectionTimeoutError as RawAnthropicSDKConnectionTimeoutError,
   APIError as RawAnthropicSDKAPIError,
 } from '@anthropic-ai/sdk';
+import { v4 as randomUUID } from 'uuid';
 
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
 import {
@@ -16,10 +13,14 @@ import {
   isUnreachableConnection,
   toLlmTransportErrorMessage,
 } from '#/llm/protocol/rules/status';
-import type { LlmRemoteErrorMessage } from '#/llm/response';
-import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/response';
+import {
+  type LlmRemoteErrorMessage,
+  NO_FINISH,
+  type FinishInfo,
+  type FinishReason,
+  type TokenUsage,
+} from '#/llm/response';
 import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
-import type { TokenUsage } from '#/llm/response';
 
 export type RawUsage = {
   input_tokens?: number | null;
@@ -188,7 +189,7 @@ export function createDecoder(sink: DecodeSink): Decoder<RawChunk> {
         toolUseIndexes.add(index);
         sink.onDelta({
           type: 'function',
-          id: block.id ?? crypto.randomUUID(),
+          id: block.id ?? randomUUID(),
           name: block.name ?? '',
           arguments: '',
           _streamIndex: index,

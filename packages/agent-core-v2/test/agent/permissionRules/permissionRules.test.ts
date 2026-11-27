@@ -237,6 +237,46 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
   });
 
+  it.each([
+    { name: 'pinned session', workdirCwd: '/other/shared', sessionCwd: '/main' },
+    { name: 'session that follows the project primary', workdirCwd: undefined, sessionCwd: '/other/shared' },
+  ])('reads and writes the project rules of a $name in its own working directory', async ({ workdirCwd, sessionCwd }) => {
+    const atMain: PermissionRule = { decision: 'deny', scope: 'project', pattern: 'Bash(main)' };
+    const atOther: PermissionRule = { decision: 'deny', scope: 'project', pattern: 'Bash(other)' };
+    const approved: PermissionRule = { decision: 'allow', scope: 'project', pattern: 'Read' };
+    const files = new Map<string, unknown[]>([
+      ['/main', [atMain]],
+      ['/other/shared', [atOther]],
+    ]);
+    const reads: string[] = [];
+    const localConfig = {
+      readPermissionRules: async (dir: string) => {
+        reads.push(dir);
+        return { projectRoot: dir, configPath: `${dir}/.kimi-code/local.toml`, rules: files.get(dir) ?? [] };
+      },
+      appendPermissionRules: async (dir: string, rules: readonly unknown[]) => {
+        const next = [...(files.get(dir) ?? []), ...rules];
+        files.set(dir, next);
+        return { projectRoot: dir, configPath: `${dir}/.kimi-code/local.toml`, rules: next };
+      },
+    } as never;
+    const service = new ProjectPermissionRulesService(
+      { cwd: sessionCwd } as never,
+      { environmentId: 'local', cwd: workdirCwd } as never,
+      localConfig,
+      { get: async () => true } as never,
+    );
+    await service.ready;
+    expect(service.rules).toEqual([atOther]);
+
+    await service.appendRules([approved]);
+
+    expect(service.rules).toEqual([atOther, approved]);
+    expect(files.get('/other/shared')).toEqual([atOther, approved]);
+    expect(files.get('/main')).toEqual([atMain]);
+    expect(reads).toEqual(['/other/shared']);
+  });
+
   it('loads local trusted rules, ignores legacy user runtime scopes, and rejects remote project IO', async () => {
     const projectRule: PermissionRule = { decision: 'deny', scope: 'project', pattern: 'Bash' };
     const appendedRule: PermissionRule = { decision: 'allow', scope: 'project', pattern: 'Write' };
@@ -327,7 +367,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     config.permission = {
       rules: [{ ...runtimeRule, scope: 'invalid' }],
     } as unknown as PermissionConfig;
-    expect(() => readUserPermissionRules(config.asService())).toThrow();
+    expect(readUserPermissionRules(config.asService())).toEqual([]);
   });
 
   it('only persists approval records (permission.rules.add is live-only)', async () => {

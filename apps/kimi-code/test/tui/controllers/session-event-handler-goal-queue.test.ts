@@ -259,12 +259,30 @@ describe('SessionEventHandler goal queue promotion', () => {
     expect(host.sendQueuedMessage).toHaveBeenLastCalledWith(session, { text: 'Ship queued goal' });
   });
 
+  it('defers queued-goal promotion until compaction finishes while idle', async () => {
+    const { host, session } = makeHost();
+    host.state.appState.streamingPhase = 'idle';
+    host.state.appState.isCompacting = true;
+    const handler = new SessionEventHandler(host);
+
+    handler.requestQueuedGoalPromotion();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(session.createGoal).not.toHaveBeenCalled();
+
+    host.state.appState.isCompacting = false;
+    handler.retryQueuedGoalPromotion();
+    await vi.waitFor(() => {
+      expect(session.createGoal).toHaveBeenCalledWith({
+        objective: 'Ship queued goal',
+        replace: false,
+      });
+    });
+  });
+
   it('defers queued-goal promotion while a queued message is mid-dispatch', async () => {
     const { host, session } = makeHost();
     host.state.appState.streamingPhase = 'idle';
     host.state.queuedMessages = [];
-    // The queue looks empty and the phase is idle, but a shifted queued message
-    // is still awaiting its deferred send. Promotion must not jump ahead of it.
     host.state.queuedMessageDispatchPending = true;
     const handler = new SessionEventHandler(host);
 
@@ -272,8 +290,6 @@ describe('SessionEventHandler goal queue promotion', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(session.createGoal).not.toHaveBeenCalled();
 
-    // Once the queued message has been dispatched, the flag clears and the
-    // promotion proceeds on the next retry.
     host.state.queuedMessageDispatchPending = false;
     handler.retryQueuedGoalPromotion();
     await vi.waitFor(() => {

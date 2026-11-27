@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { createFakeModel, say, type FakeModel } from '@moonshot-ai/testkit/model';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { SkillSummary } from '@moonshot-ai/agent-core-v2';
@@ -10,7 +11,6 @@ import { ACP_BUILTIN_SLASH_COMMANDS } from '../src/builtin-commands';
 import { buildAcpSkillSlashCommands } from '../src/slash';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { writeFakeModelConfig } from './_helpers/fakeModelConfig';
-import { createScriptedProvider, type ScriptedProvider } from './_helpers/scriptedProvider';
 
 interface AvailableCommand {
   readonly name: string;
@@ -18,7 +18,6 @@ interface AvailableCommand {
   readonly input?: { readonly hint?: string } | null;
 }
 
-/** The update payload's command list, typed loosely for assertions. */
 function commandsOf(notification: unknown): readonly AvailableCommand[] {
   const params = (notification as { params?: { update?: { availableCommands?: unknown } } })
     .params;
@@ -88,12 +87,21 @@ describe('buildAcpSkillSlashCommands', () => {
 describe('acp-server skills / available commands', () => {
   let homeDir: string | undefined;
   let client: TestClient | undefined;
-  let scripted: ScriptedProvider | undefined;
+  let model: FakeModel | undefined;
 
   afterEach(async () => {
     if (client !== undefined) {
       await client.close();
       client = undefined;
+    }
+    if (model !== undefined) {
+      const current = model;
+      model = undefined;
+      try {
+        current.verify();
+      } finally {
+        await current.close();
+      }
     }
     if (homeDir !== undefined) {
       await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -108,23 +116,18 @@ describe('acp-server skills / available commands', () => {
     return client;
   }
 
-  /**
-   * Boot with the scripted LLM and a project skill fixture at
-   * `<cwd>/.kimi-code/skills/acp-fixture/SKILL.md` (the engine's project
-   * skill discovery root; the temp cwd has no `.git`, so it IS the project
-   * root).
-   */
   async function bootWithFixtureSkill(): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-skills-turn-'));
-    await writeFakeModelConfig(homeDir);
+    model = createFakeModel();
+    await model.listen();
+    await writeFakeModelConfig(homeDir, { baseUrl: model.origin });
     await mkdir(join(homeDir, '.kimi-code', 'skills', 'acp-fixture'), { recursive: true });
     await writeFile(
       join(homeDir, '.kimi-code', 'skills', 'acp-fixture', 'SKILL.md'),
       '---\nname: acp-fixture\ndescription: ACP fixture skill\n---\n\n' +
         '# ACP Fixture\n\nAlways answer with the word FIXTURE.\n',
     );
-    scripted = createScriptedProvider();
-    client = await createTestClient({ homeDir, extraSeeds: [scripted.seed] });
+    client = await createTestClient({ homeDir });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
     return client;
   }
@@ -143,10 +146,8 @@ describe('acp-server skills / available commands', () => {
 
     const notification = await c.waitForSessionUpdate('available_commands_update', 10_000);
     const commands = commandsOf(notification);
-    // The six ACP builtins (executed locally by the host) stay first…
     expect(commands.slice(0, ACP_BUILTIN_SLASH_COMMANDS.length).map((command) => command.name))
       .toEqual(ACP_BUILTIN_SLASH_COMMANDS.map((command) => command.name));
-    // …followed by the engine's builtin skills (bare command names).
     expect(commands.length).toBeGreaterThan(ACP_BUILTIN_SLASH_COMMANDS.length);
     expect(commands.some((command) => command.name === 'write-goal')).toBe(true);
     const compact = commands.find((command) => command.name === 'compact');
@@ -158,9 +159,6 @@ describe('acp-server skills / available commands', () => {
     await c.send('session/new', { cwd: homeDir, mcpServers: [] });
     await c.waitForSessionUpdate('available_commands_update', 10_000);
 
-    // Clients register the session when the response lands and silently drop
-    // `session/update` notifications that arrive earlier (Zed), so the slash
-    // commands push must come after the `session/new` response on the wire.
     const responseIndex = c.received.findIndex(
       (m) => (m.result as { sessionId?: string } | undefined)?.sessionId !== undefined,
     );
@@ -184,7 +182,7 @@ describe('acp-server skills / available commands', () => {
 
   it('/skill:acp-fixture activates the skill and drives a normal turn', async () => {
     const c = await bootWithFixtureSkill();
-    scripted!.mockNextText('FIXTURE');
+    model!.script(say('FIXTURE'));
     const sessionId = await newSession(c);
 
     const promptPromise = c.send('session/prompt', {
@@ -199,11 +197,9 @@ describe('acp-server skills / available commands', () => {
 
     const result = (await promptPromise) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
-    expect(scripted!.callCount()).toBe(1);
+    expect(model!.requests().length).toBe(1);
 
-    // The model received the rendered skill activation (content + args), not
-    // the raw slash text.
-    const history = JSON.stringify(scripted!.callHistory()[0]);
+    const history = model!.requests()[0]?.rawBody;
     expect(history).toContain('skill-loaded');
     expect(history).toContain('Always answer with the word FIXTURE');
     expect(history).toContain('ARGUMENTS: some args');
@@ -212,7 +208,7 @@ describe('acp-server skills / available commands', () => {
 
   it('a builtin-source skill activates through its bare command name', async () => {
     const c = await bootWithFixtureSkill();
-    scripted!.mockNextText('goal noted');
+    model!.script(say('goal noted'));
     const sessionId = await newSession(c);
 
     const result = (await c.send('session/prompt', {
@@ -220,16 +216,15 @@ describe('acp-server skills / available commands', () => {
       prompt: [{ type: 'text', text: '/write-goal ship it' }],
     })) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
-    expect(scripted!.callCount()).toBe(1);
+    expect(model!.requests().length).toBe(1);
 
-    const history = JSON.stringify(scripted!.callHistory()[0]);
+    const history = model!.requests()[0]?.rawBody;
     expect(history).toContain('skill-loaded');
     expect(history).toContain('write-goal');
   }, 30_000);
 
   it('an unknown slash command is answered locally and never reaches the model', async () => {
     const c = await bootWithFixtureSkill();
-    scripted!.mockNextText('echoed');
     const sessionId = await newSession(c);
 
     const before = c.sessionUpdates().length;
@@ -239,8 +234,7 @@ describe('acp-server skills / available commands', () => {
     })) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
 
-    // No LLM turn was launched — the notice is a local agent_message_chunk.
-    expect(scripted!.callCount()).toBe(0);
+    expect(model!.requests().length).toBe(0);
     type Update = { sessionUpdate?: string; content?: { text?: string } };
     const chunk = c
       .sessionUpdates()
@@ -275,7 +269,6 @@ describe('acp-server skills / available commands', () => {
     await c.close();
     const aliasClient = await createTestClient({
       homeDir: homeDir!,
-      extraSeeds: [scripted!.seed],
       slashCommands: {
         commands: [aliasCommand],
         skillCommandMap: new Map([[alias, 'acp-fixture']]),
@@ -283,7 +276,7 @@ describe('acp-server skills / available commands', () => {
     });
     client = aliasClient;
     await aliasClient.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
-    scripted!.mockNextText('ALIAS');
+    model!.script(say('ALIAS'));
     const sessionId = await newSession(aliasClient);
 
     const result = (await aliasClient.send('session/prompt', {
@@ -291,8 +284,47 @@ describe('acp-server skills / available commands', () => {
       prompt: [{ type: 'text', text: '/fixture-alias extra args' }],
     })) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
-    expect(scripted!.callHistory()[0] && JSON.stringify(scripted!.callHistory()[0])).toContain(
+    expect(model!.requests()[0]?.rawBody).toContain(
       'acp-fixture',
     );
+  }, 30_000);
+
+  it('replays a sub-skill on session/load under the command name the session advertises', async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'acp-skills-sub-'));
+    model = createFakeModel();
+    await model.listen();
+    await writeFakeModelConfig(homeDir, { baseUrl: model.origin });
+    const bundle = join(homeDir, '.kimi-code', 'skills', 'bundle');
+    await mkdir(join(bundle, 'child'), { recursive: true });
+    await writeFile(
+      join(bundle, 'SKILL.md'),
+      '---\nname: bundle\ndescription: Bundle skill\nhas-sub-skill: true\n---\n\nBundle body.\n',
+    );
+    await writeFile(
+      join(bundle, 'child', 'SKILL.md'),
+      '---\nname: child\ndescription: Child skill\n---\n\nAlways answer with the word CHILD.\n',
+    );
+    const c = await createTestClient({ homeDir });
+    client = c;
+    await c.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+    model.script(say('CHILD'));
+    const sessionId = await newSession(c);
+
+    const result = (await c.send('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: '/bundle.child some args' }],
+    })) as { stopReason: string };
+    expect(result.stopReason).toBe('end_turn');
+    expect(model.requests()[0]?.rawBody).toContain('Always answer with the word CHILD');
+
+    const beforeLoad = c.sessionUpdates().length;
+    await c.send('session/load', { sessionId, cwd: homeDir, mcpServers: [] });
+    const replayedUserTexts = c
+      .sessionUpdates()
+      .slice(beforeLoad)
+      .map((m) => (m.params as { update?: { sessionUpdate?: string; content?: { text?: string } } }).update)
+      .flatMap((update) => (update?.sessionUpdate === 'user_message_chunk' ? [update.content?.text] : []));
+
+    expect(replayedUserTexts).toEqual(['/bundle.child some args']);
   }, 30_000);
 });

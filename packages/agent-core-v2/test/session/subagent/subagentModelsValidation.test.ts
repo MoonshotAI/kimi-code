@@ -5,7 +5,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IConfigService } from '#/app/config/config';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { type Model } from '#/provider-catalog/model/catalog';
 import {
   SECONDARY_MODEL_SECTION,
   SUBAGENT_SECTION,
@@ -14,6 +14,7 @@ import { ISessionSubagentModelsValidationService } from '#/session/subagent/suba
 import { SessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidationService';
 
 import { StubConfigService } from '../../stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 describe('SessionSubagentModelsValidationService', () => {
   let disposables: DisposableStore;
@@ -33,7 +34,7 @@ describe('SessionSubagentModelsValidationService', () => {
 
   function setup(configValues: Record<string, unknown>): void {
     ix.stub(IConfigService, new StubConfigService(configValues));
-    ix.stub(IModelCatalog, {
+    ix.stub(IProviderCatalogService, {
       _serviceBrand: undefined,
       get: (id: string) => {
         if (!modelIds.has(id)) {
@@ -69,7 +70,7 @@ describe('SessionSubagentModelsValidationService', () => {
           },
         } as Model;
       },
-    } as unknown as IModelCatalog);
+    } as unknown as IProviderCatalogService);
     ix.set(
       ISessionSubagentModelsValidationService,
       new SyncDescriptor(SessionSubagentModelsValidationService),

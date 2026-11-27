@@ -83,8 +83,9 @@ const DOUBLE_CLICK_INTERVAL_MS = 500;
 const MAX_LAYOUT_EFFECT_PASSES = 10;
 const COPY_ERROR_FLASH_DURATION_MS = 5000;
 // Regular mode delegates double-click selection to the terminal emulator. Fullscreen owns mouse selection,
-// so mirror common terminal word-selection behavior by keeping paths and kebab-case tokens whole.
-const TERMINAL_WORD_SELECTION_JOINERS = new Set(["/", "-"]);
+// so it uses iTerm2's default "characters considered part of a word" set:
+// https://github.com/gnachman/iTerm2/blob/7f4ff739721f95d0b93003d8701c4523a7edf261/sources/Settings/iTermPreferences.m#L743
+const TERMINAL_WORD_SELECTION_JOINERS = new Set(["/", "-", "+", "\\", "~", "_", "."]);
 const wordSegmenter = getWordSegmenter();
 
 interface CachedKittyImage {
@@ -167,6 +168,10 @@ interface SearchHighlightRange {
 	current: boolean;
 }
 
+function sanitizeSearchQuery(query: string): string {
+	return query.replace(/\r\n|[\r\n\t]/g, " ");
+}
+
 export interface TuiAltScreenOptions {
 	/**
 	 * Logical lines moved for each mouse-wheel event (default: 1). `"auto"` accelerates fast wheel
@@ -202,6 +207,15 @@ export interface TuiAltScreenOptions {
 	copySelection?: (text: string) => Promise<boolean | string>;
 }
 
+// Terminals that forward the right-click to mouse-tracking apps and also paste
+// the clipboard themselves. pi's synthetic paste would duplicate their paste.
+const RIGHT_CLICK_PASTING_TERMINALS = new Set(["vscode", "tabby"]);
+
+function terminalPastesOnRightClick(): boolean {
+	const termProgram = process.env['TERM_PROGRAM']?.toLowerCase();
+	return termProgram !== undefined && RIGHT_CLICK_PASTING_TERMINALS.has(termProgram);
+}
+
 /** Alternate-screen TUI with a scrollable, application-owned viewport. */
 export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	readonly mode = "fullscreen" as const;
@@ -215,6 +229,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly layoutEffects = new Set<LayoutEffect>();
 	private runningLayoutEffects = false;
 	private layoutEffectRenderRequested = false;
+	private layoutEffectContentChanged = false;
 	private layoutEffectForceRequested = false;
 	private readonly implicitDocument: Component;
 	private readonly implicitScrollView: ScrollView;
@@ -356,13 +371,22 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	override requestRender(force = false): void {
 		if (this.runningLayoutEffects) {
 			if (force) this.layoutEffectForceRequested = true;
+			this.layoutEffectContentChanged = true;
 			this.layoutEffectRenderRequested = true;
 			return;
 		}
 		super.requestRender(force);
 	}
 
-	override render(width: number): string[] {
+	protected override requestViewRender(): void {
+		if (this.runningLayoutEffects) {
+			this.layoutEffectRenderRequested = true;
+			return;
+		}
+		super.requestViewRender();
+	}
+
+	override render(width: number): readonly string[] {
 		return this.layoutRoot?.render(width) ?? super.render(width);
 	}
 
@@ -372,6 +396,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private getPrimaryScrollView(): ScrollView {
 		return this.currentLayout?.primaryScrollView ?? this.implicitScrollView;
+	}
+
+	private hasSearchableScrollView(): boolean {
+		return this.layoutRoot === undefined || this.currentLayout?.primaryScrollView !== undefined;
 	}
 
 	protected override beforeTerminalStart(): void {
@@ -532,17 +560,17 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	scrollBy(lines: number): void {
 		this.getPrimaryScrollView().scrollBy(lines);
-		this.requestRender();
+		this.requestViewRender();
 	}
 
 	scrollToTop(): void {
 		this.getPrimaryScrollView().scrollToStart();
-		this.requestRender();
+		this.requestViewRender();
 	}
 
 	scrollToBottom(): void {
 		this.getPrimaryScrollView().scrollToEnd();
-		this.requestRender();
+		this.requestViewRender();
 	}
 
 	private scrollToPrompt(direction: -1 | 1): void {
@@ -554,24 +582,42 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		for (let row = scrollView.scrollTop + direction; row >= 0 && row < lines.length; row += direction) {
 			if (!OSC133_PROMPT_START.test(lines[row] ?? "")) continue;
 			scrollView.scrollTo(row);
-			this.requestRender();
+			this.requestViewRender();
 			return;
 		}
 	}
 
-	private toggleSearch(): void {
-		if (this.activeSearch) {
-			this.closeSearch();
+	/** Open and focus transcript search, optionally pre-filling a single-line query. */
+	openSearch(query?: string): void {
+		const sanitized = query === undefined ? undefined : sanitizeSearchQuery(query);
+		const existing = this.activeSearch;
+		if (existing) {
+			existing.overlay?.focus();
+			if (sanitized !== undefined) {
+				existing.component.setQuery(sanitized);
+				if (sanitized !== existing.query) {
+					existing.query = sanitized;
+					existing.component.setResult(-1, 0);
+				}
+				existing.anchorRow = this.getPrimaryScrollView().scrollTop;
+				existing.selectionMode = "query";
+			}
+			this.requestRender();
 			return;
 		}
+		if (!this.hasSearchableScrollView()) return;
+
 		const component = new AltScreenSearchComponent(
-			(query) => this.updateSearchQuery(query),
+			(nextQuery) => this.updateSearchQuery(nextQuery),
 			this.searchNavigationButtonStyle,
 		);
+		if (sanitized !== undefined) {
+			component.setQuery(sanitized);
+		}
 		const search: ActiveSearch = {
 			component,
 			index: new AltScreenSearchIndex(),
-			query: "",
+			query: sanitized ?? "",
 			matches: [],
 			selectedIndex: -1,
 			anchorRow: this.getPrimaryScrollView().scrollTop,
@@ -584,6 +630,15 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			minWidth: 32,
 			margin: 1,
 		});
+		this.requestRender();
+	}
+
+	private toggleSearch(): void {
+		if (this.activeSearch) {
+			this.closeSearch();
+			return;
+		}
+		this.openSearch();
 	}
 
 	private closeSearch(): void {
@@ -713,7 +768,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.flashes.flash(message, durationMs);
 	}
 
-	private shouldDeferViewportInputToOverlay(): boolean {
+	/** Focused overlays and components that capture viewport input receive viewport keys instead of the transcript. */
+	private shouldDeferViewportInput(): boolean {
+		if (this.getFocusedComponent()?.capturesViewportInput) return true;
 		return this.isOverlayFocused() && this.activeSearch?.overlay?.isFocused() !== true;
 	}
 
@@ -787,7 +844,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		// full-screen component mounted as the layout root), let navigation keys
 		// fall through to the focused component instead of consuming them.
 		const primaryScrollable = this.getPrimaryScrollView().canScroll;
-		if (keybindings.matches(data, "tui.altScreen.search")) {
+		if (keybindings.matches(data, "tui.altScreen.search") && (this.activeSearch || this.hasSearchableScrollView())) {
 			if (!isRelease) this.toggleSearch();
 			return { consume: true };
 		}
@@ -805,7 +862,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				return { consume: true };
 			}
 		}
-		if (this.shouldDeferViewportInputToOverlay()) return undefined;
+		if (this.shouldDeferViewportInput()) return undefined;
 		if (primaryScrollable && keybindings.matches(data, "tui.altScreen.pageUp")) {
 			if (!isRelease) {
 				this.scrollBy(-Math.max(1, this.getPrimaryScrollView().viewportHeight - PAGE_SCROLL_OVERLAP));
@@ -914,8 +971,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private applyMouseDispatchResult(event: TuiMouseEvent, result: TuiMouseDispatchResult): boolean {
 		const focusTarget = this.resolveMouseFocusTarget(result.focusTarget ?? result.target.component);
-		const focusChanged = result.focus === true && this.getFocusedComponent() !== focusTarget;
-		if (result.focus) this.setFocus(focusTarget);
+		const shouldFocus = result.focus === true && !(this.activeSearch && event.type === "wheel");
+		const focusChanged = shouldFocus && this.getFocusedComponent() !== focusTarget;
+		if (shouldFocus) {
+			if (this.activeSearch && focusTarget !== this.activeSearch.component) {
+				this.closeSearch();
+			}
+			this.setFocus(focusTarget);
+		}
 		if (result.capture) this.mouseCapture = result.target;
 		return (
 			result.render ??
@@ -1063,7 +1126,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const primary = this.getPrimaryScrollView();
 		if (remaining !== 0 && !seen.has(primary)) primary.scrollBy(remaining);
 		this.updateScrollbarHover(event.x, event.y);
-		this.requestRender();
+		// Scrolling moves the viewport only. Reusing the previous component output keeps a wheel
+		// frame O(viewport); re-rendering a long transcript on every wheel event saturated a core.
+		this.requestViewRender();
 	}
 
 	private parseSgrMouseEvent(data: string): SgrMouseEvent | undefined {
@@ -1081,7 +1146,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		if (
 			!this.onRightClickPaste ||
 			process.platform !== "win32" ||
-			process.env['TERM_PROGRAM']?.toLowerCase() === "vscode" ||
+			terminalPastesOnRightClick() ||
 			event.release ||
 			event.button !== 2
 		) {
@@ -1368,7 +1433,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 		const point = this.getScrollSelectionPoint(scrollView, pointer.x, pointer.y);
 		if (point) this.updateSelectionFocus(point);
-		this.requestRender();
+		// Selection is painted onto the screen after layout, so it needs no new component output.
+		this.requestViewRender();
 	}
 
 	private stopSelectionAutoScroll(): void {
@@ -1768,18 +1834,22 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const width = Math.max(1, this.terminal.columns);
 		const height = Math.max(1, this.terminal.rows);
 		const revealSelection = this.activeSearch !== undefined && this.activeSearch.selectionMode !== "retain";
+		const requestViewRender = () => this.requestViewRender();
+		let passReusableOutput = this.contentChanged ? undefined : this.currentLayout?.renderCache;
+		this.contentChanged = false;
 		let nextLayout: LayoutFrame;
 		let previousPass: LayoutFrame | undefined;
 		for (let pass = 0; ; pass++) {
 			const root = this.layoutRoot ?? this.implicitScrollView;
-			nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
+			nextLayout = renderLayoutFrame(root, width, height, requestViewRender, passReusableOutput);
 			if (this.refreshSearch(nextLayout, { retainIndex: pass > 0, revealSelection })) {
-				nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
+				nextLayout = renderLayoutFrame(root, width, height, requestViewRender, nextLayout.renderCache);
 			}
 			if (previousPass) this.preserveSelectionAcrossPadding(previousPass, nextLayout);
 			if (this.layoutEffects.size === 0) break;
 			this.currentLayout = nextLayout;
 			this.layoutEffectRenderRequested = false;
+			this.layoutEffectContentChanged = false;
 			this.layoutEffectForceRequested = false;
 			this.runningLayoutEffects = true;
 			try {
@@ -1792,6 +1862,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			if (!this.layoutEffectRenderRequested) break;
 			previousPass = nextLayout;
 			if (this.layoutEffectForceRequested) this.resetRenderState();
+			passReusableOutput = this.layoutEffectContentChanged || this.contentChanged ? undefined : nextLayout.renderCache;
+			this.contentChanged = false;
 			if (pass + 1 >= MAX_LAYOUT_EFFECT_PASSES) {
 				throw new Error(`Layout effects did not stabilize after ${MAX_LAYOUT_EFFECT_PASSES} passes`);
 			}
@@ -1817,10 +1889,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const imageAnchorsNeedRedraw = screen.some(
 			(line, row) => changedRows[row] && (isImageLine(line) || isImageLine(this.previousScreen[row] ?? "")),
 		);
-		const isWezTerm = Boolean(process.env['WEZTERM_PANE']) || process.env['TERM_PROGRAM']?.toLowerCase() === "wezterm";
 		const imageCellsNeedRedraw =
 			!imageAnchorsNeedRedraw &&
-			isWezTerm &&
 			this.imageProtocol === "kitty" &&
 			changedRows.some(Boolean) &&
 			screen.some((line, row) => {
@@ -1842,22 +1912,24 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		let buffer = BEGIN_SYNCHRONIZED_OUTPUT;
 		if (fullRedraw) {
 			this.fullRedrawCount += 1;
-			const clearImages =
-				this.imageProtocol === "kitty" && hadUploadedKittyImages
-					? deleteAllKittyPlacements()
-					: this.deleteKittyImages();
-			buffer += `${clearImages}\x1b[2J`;
+			if (this.imageProtocol === "kitty" && hadUploadedKittyImages) {
+				// Kitty frees image data without placements on ED 2, which would break placement-only reuse.
+				// Every row is cleared with EL 2 below, so keep the uploads and skip the screen clear.
+				buffer += deleteAllKittyPlacements();
+			} else {
+				buffer += `${this.deleteKittyImages()}\x1b[2J`;
+			}
 		} else if (imagesNeedRedraw) {
 			if (this.imageProtocol === "iterm2") buffer += "\x1b[2J";
 			else if (this.imageProtocol === "kitty") buffer += deleteAllKittyPlacements();
 		}
 		buffer += preparedKittyScreen.evictedImageDeletion;
 
-		// WezTerm erases intersecting Kitty image cells when a later row write touches a covered row.
-		// Draw image placements after every clear and text write so nothing later intersects them; preserve
-		// the existing interleaved output for text-only frames and every other terminal.
-		const drawKittyImagesLast =
-			redrawImages && this.imageProtocol === "kitty" && screen.some(isImageLine) && isWezTerm;
+		// Some terminals store Kitty images in the cells they cover (WezTerm, xterm.js's image addon in Orca),
+		// so clearing or writing a covered row erases that part of the image. Draw placements after every clear
+		// and text write so nothing later intersects them. Terminals that keep images on a separate layer
+		// (Kitty, Ghostty) render the same result; text-only frames keep the interleaved output.
+		const drawKittyImagesLast = redrawImages && this.imageProtocol === "kitty" && screen.some(isImageLine);
 		if (drawKittyImagesLast) {
 			for (let row = 0; row < height; row++) {
 				if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;

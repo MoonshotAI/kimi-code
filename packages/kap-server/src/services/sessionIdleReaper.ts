@@ -20,6 +20,23 @@ export function resolveSessionIdleReclaimMs(env: NodeJS.ProcessEnv): number {
   return parsed;
 }
 
+export async function closeIdleSessions(
+  sessions: Pick<ISessionManager, 'list' | 'closeIfIdle'>,
+  idleTimeoutMs: number,
+  onError?: (sessionId: string, error: unknown) => void,
+  shouldStop?: () => boolean,
+): Promise<void> {
+  for (const handle of sessions.list()) {
+    if (shouldStop?.() === true) return;
+    try {
+      await sessions.closeIfIdle(handle.id, idleTimeoutMs);
+    } catch (error) {
+      if (onError === undefined) throw error;
+      onError(handle.id, error);
+    }
+  }
+}
+
 export class SessionIdleReaper {
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight: Promise<void> | undefined;
@@ -64,16 +81,16 @@ export class SessionIdleReaper {
   }
 
   private async sweepSessions(): Promise<void> {
-    for (const handle of this.sessions.list()) {
-      if (this.closed) return;
-      try {
-        await this.sessions.closeIfIdle(handle.id, this.idleTimeoutMs);
-      } catch (error) {
+    await closeIdleSessions(
+      this.sessions,
+      this.idleTimeoutMs,
+      (sessionId, error) => {
         this.logger.warn(
-          { sessionId: handle.id, err: error instanceof Error ? error.message : String(error) },
+          { sessionId, err: error instanceof Error ? error.message : String(error) },
           'session idle reclaim failed',
         );
-      }
-    }
+      },
+      () => this.closed,
+    );
   }
 }

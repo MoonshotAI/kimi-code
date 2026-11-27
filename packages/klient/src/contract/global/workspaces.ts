@@ -1,8 +1,3 @@
-/**
- * `workspaceService` — process-wide catalog of known workspaces. Mirrors
- * `agent-core-v2/app/workspace/workspace.ts`.
- */
-
 import { z } from 'zod';
 
 import { maybe, noResult } from '../helpers.js';
@@ -26,8 +21,8 @@ export const workspaceUpdateSchema = z.object({
 export const workspacesContract = {
   list: { input: z.tuple([]), output: z.array(workspaceSchema) },
   get: { input: z.tuple([z.string()]), output: maybe(workspaceSchema) },
-  createOrTouch: {
-    input: z.tuple([z.string(), z.string().optional()]),
+  resolveImplicit: {
+    input: z.tuple([z.string()]),
     output: workspaceSchema,
   },
   update: {

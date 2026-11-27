@@ -1,6 +1,6 @@
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
-import type { ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentPlanService } from '#/features/plan/plan';
 import type { PlanData } from '#/features/plan/plan';
@@ -17,6 +17,28 @@ type ResolvePlanResult =
   | { readonly ok: true; readonly plan: string; readonly path?: string | undefined }
   | { readonly ok: false; readonly error: ExecutableToolResult };
 
+type PlanReviewOption = NonNullable<ExitPlanModeInput['options']>[number];
+
+interface PlanReviewApproval {
+  readonly selectedLabel?: string;
+}
+
+function planReviewApproval(metadata: unknown): PlanReviewApproval | undefined {
+  if (typeof metadata !== 'object' || metadata === null) return undefined;
+  const review = (metadata as { planReview?: unknown }).planReview;
+  if (typeof review !== 'object' || review === null) return undefined;
+  const selectedLabel = (review as { selectedLabel?: unknown }).selectedLabel;
+  return { selectedLabel: typeof selectedLabel === 'string' ? selectedLabel : undefined };
+}
+
+function selectedOption(
+  options: readonly PlanReviewOption[] | undefined,
+  label: string | undefined,
+): PlanReviewOption | undefined {
+  if (options === undefined || label === undefined) return undefined;
+  return options.find((option) => option.label === label);
+}
+
 export class ExitPlanModeTool implements IExitPlanModeTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'ExitPlanMode' as const;
@@ -30,7 +52,7 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
       description: 'Presenting plan and exiting plan mode',
       display: await this.resolvePlanReviewDisplay(args),
       approvalRule: this.name,
-      execute: () => this.execution(),
+      execute: (ctx) => this.execution(args, ctx),
     };
   }
 
@@ -59,7 +81,10 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
     return display;
   }
 
-  private async execution(): Promise<ExecutableToolResult> {
+  private async execution(
+    args: ExitPlanModeInput,
+    ctx: ExecutableToolContext,
+  ): Promise<ExecutableToolResult> {
     const status = await this.planMode.status();
     if (status === null) {
       return {
@@ -72,11 +97,41 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
     const resolvedPlan = await this.resolvePlan();
     if (!resolvedPlan.ok) return resolvedPlan.error;
 
+    const approval = planReviewApproval(ctx.metadata);
+    if (approval === undefined) {
+      return {
+        isError: true,
+        output:
+          'The plan could not be shown to the user for review, so plan mode is still active. Call ExitPlanMode again.',
+      };
+    }
+
+    const failed = this.exitPlanMode();
+    if (failed !== undefined) return failed;
+
+    const selected = selectedOption(args.options, approval.selectedLabel);
+    const optionPrefix =
+      selected === undefined
+        ? ''
+        : `Selected approach: ${selected.label}\nExecute ONLY the selected approach. Do not execute any unselected alternatives.\n\n`;
+    const savedTo =
+      resolvedPlan.path !== undefined ? `Plan saved to: ${resolvedPlan.path}\n\n` : '';
     return {
-      isError: true,
-      output:
-        'The plan could not be shown to the user for review, so plan mode is still active. Call ExitPlanMode again.',
+      isError: false,
+      output: `Exited plan mode. ${optionPrefix}Plan mode deactivated. All tools are now available.\n${savedTo}## Approved Plan:\n${resolvedPlan.plan}`,
     };
+  }
+
+  private exitPlanMode(): ExecutableToolResult | undefined {
+    try {
+      this.planMode.exit();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to exit plan mode.';
+      return {
+        isError: true,
+        output: `Failed to exit plan mode: ${message}`,
+      };
+    }
   }
 
   private async resolvePlan(): Promise<ResolvePlanResult> {

@@ -12,7 +12,6 @@ export interface ActivityPaneOptions {
   readonly mode: ActivityPaneMode;
   readonly spinner?: MoonLoader;
   readonly tip?: string;
-  /** Extra dim line rendered under the spinner (e.g. step retry error detail). */
   readonly detail?: string;
 }
 
@@ -44,7 +43,7 @@ export class ActivityPaneComponent extends Container {
     }
   }
 
-  override render(width: number): string[] {
+  override render(width: number): readonly string[] {
     if (this.spinnerRef && 'setAvailableWidth' in this.spinnerRef) {
       this.spinnerRef.setAvailableWidth(width);
     }

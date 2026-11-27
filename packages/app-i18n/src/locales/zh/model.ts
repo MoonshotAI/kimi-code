@@ -1,0 +1,18 @@
+export default {
+  close: '关闭 (Esc)',
+  capabilityContext: '{size} 上下文',
+  capabilityImageInput: '图片理解',
+  capabilityToolUse: '工具调用',
+  capabilityThinking: '思考',
+  capabilityAlwaysThinking: '始终思考',
+  switchConfirmTitle: '确认切换模型？',
+  switchConfirmPrompt: '切换到 {model}，当前会话怎么继续？',
+  switchEffortConfirmTitle: '确认把思考强度由 {from} 切换到 {to}？',
+  switchConfirmConfirm: '确认切换',
+  switchConfirmCompact: '压缩后继续',
+  switchConfirmCompactDesc: '继续当前会话，成本更低、效果更好',
+  switchConfirmContinue: '直接继续',
+  switchConfirmContinueDesc: '质量可能下降｜缓存失效，Token 消耗更高',
+  switchConfirmCancel: '取消',
+  switchCompactAborted: '压缩未完成，模型未变更。',
+} as const;

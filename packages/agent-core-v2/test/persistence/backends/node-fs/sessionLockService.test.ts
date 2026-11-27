@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
+import { currentProcessLiveness } from '#/_base/utils/processLiveness';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { SessionLockHolder } from '#/persistence/interface/sessionLock';
 import {
@@ -70,6 +71,7 @@ describe('SessionLockService', () => {
     const holder = readLockFile(homeDir, SID);
     expect(holder.pid).toBe(process.pid);
     expect(holder.clientIdentity).toBe('client_a');
+    expect(holder.liveness).toBe(currentProcessLiveness());
     serviceA.release(SID);
     expect(existsSync(lockPath(homeDir, SID))).toBe(false);
   });
@@ -179,20 +181,45 @@ describe('SessionLockService', () => {
     }
   });
 
-  it('treats a lock from another hostname as occupied even when the pid is dead', () => {
+  it('reclaims a lock whose pid now belongs to a process started after it', () => {
+    const reused: SessionLockHolder = {
+      version: 1,
+      token: 'reused-token',
+      pid: process.pid,
+      hostname: '',
+      startedAt: Date.now() - 60_000,
+      clientIdentity: 'ghost',
+      liveness: 'kimi-code-live-0-00000000000000000000000000000000',
+    };
+    serviceA.hold('warmup');
+    serviceA.release('warmup');
+    writeFileSync(lockPath(homeDir, SID), JSON.stringify(reused), { mode: 0o600 });
+    const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true);
+    mocks.execFileSync.mockReturnValue('S    00:10\n');
+    try {
+      expect(() => serviceA.hold(SID)).not.toThrow();
+      expect(readLockFile(homeDir, SID).token).not.toBe('reused-token');
+      serviceA.release(SID);
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
+  it('reclaims a lock from another hostname even when its pid is locally alive', () => {
     const foreign: SessionLockHolder = {
       version: 1,
       token: 'foreign-token',
-      pid: 1,
+      pid: process.pid,
       hostname: 'definitely-not-this-host',
-      startedAt: 0,
+      startedAt: Date.now(),
       clientIdentity: 'ghost',
     };
     serviceA.hold('warmup');
     serviceA.release('warmup');
     writeFileSync(lockPath(homeDir, SID), JSON.stringify(foreign), { mode: 0o600 });
-    expect(() => serviceA.hold(SID)).toThrowError(/in use by another Kimi Code process/);
-    expect(readLockFile(homeDir, SID).token).toBe('foreign-token');
+    expect(() => serviceA.hold(SID)).not.toThrow();
+    expect(readLockFile(homeDir, SID).token).not.toBe('foreign-token');
+    serviceA.release(SID);
   });
 
   it('takeover evicts a live holder and leaves the new lock alone when the old holder releases', () => {

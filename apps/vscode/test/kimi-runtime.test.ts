@@ -1,10 +1,3 @@
-/**
- * Scenario: the VS Code host owns one Kimi harness and routes Webviews to shared SDK sessions.
- * Responsibilities: create/resume/switch, per-session settings, multi-view ownership, detach, and disposal.
- * Wiring: KimiRuntime and SessionRuntime are real; in-memory Session/KimiHarness fakes form the public SDK boundary.
- * Run: pnpm exec vitest run --config apps/vscode/vitest.config.ts test/kimi-runtime.test.ts
- */
-
 import type {
   ApprovalHandler,
   CreateSessionOptions,
@@ -970,7 +963,6 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
 
     await expect(opened.prompt("concurrent message")).resolves.toEqual({ status: "failed" });
 
-    // The rejection surfaces as a mid-turn warning; the active turn is untouched.
     expect(opened.isBusy).toBe(true);
     const busyWarning = broadcasts.find(({ data }) => (data as { type?: string }).type === "error");
     expect(busyWarning?.data).toMatchObject({
@@ -996,8 +988,6 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
         releaseExclusive = resolve;
       }),
     );
-    // No active work means no later stream_complete: the rejection must be
-    // terminal so the caller's composer can unlock.
     expect(opened.isBusy).toBe(true);
 
     await expect(opened.prompt("during fork")).resolves.toEqual({ status: "failed" });
@@ -1030,7 +1020,6 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       message: "Failed to write agent records: EACCES",
     } as unknown as Event);
 
-    // The turn is still running: no settlement, no terminal error on the wire.
     expect(opened.isBusy).toBe(true);
     const warning = broadcasts.find(({ data }) => (data as { type?: string }).type === "error");
     expect(warning?.data).toMatchObject({

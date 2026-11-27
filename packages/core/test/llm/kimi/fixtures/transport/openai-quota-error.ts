@@ -2,13 +2,13 @@ import { testModule } from '../../../harness';
 import type { KimiOpenAITransportFixture } from '../types';
 
 export default {
-  name: 'kimi-openai-quota-error',
+  name: 'as a Kimi OpenAI user, I want quota errors to retain their trace diagnostics',
   module: testModule(),
   endpoint: { baseUrl: 'https://example.test/v1', apiKey: 'test-key' },
   stream: false,
   response: {
     status: 429,
-    headers: { 'x-trace-id': 'trace-quota' },
+    headers: { 'x-trace-id': 'trace-quota', 'x-request-id': 'req-kimi-quota' },
     json: {
       error: { message: 'quota used', type: 'exceeded_current_quota_error' },
     },
@@ -23,7 +23,7 @@ export default {
         kind: 'quota_exhausted',
         message: 'quota used',
         statusCode: 429,
-        requestId: null,
+        requestId: 'req-kimi-quota',
         retryable: false,
       },
     },

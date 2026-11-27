@@ -1,7 +1,6 @@
 export type UIMode = 'shell' | 'print';
 export type PromptOutputFormat = 'text' | 'stream-json';
 
-/** Environment variable that sets the default `-p` output format (flag wins). */
 export const OUTPUT_FORMAT_ENV = 'KIMI_MODEL_OUTPUT_FORMAT';
 
 const OUTPUT_FORMATS = ['text', 'stream-json'] as const;
@@ -10,14 +9,6 @@ function isOutputFormat(value: string): value is PromptOutputFormat {
   return (OUTPUT_FORMATS as readonly string[]).includes(value);
 }
 
-/**
- * Resolve the effective `-p` output format.
- *
- * Precedence: explicit `--output-format` flag → `KIMI_MODEL_OUTPUT_FORMAT` env
- * (prompt mode only) → `text`. The env var is ignored outside prompt mode so an
- * ambient value never affects interactive `kimi`. An invalid env value fails
- * fast via `OptionConflictError`.
- */
 export function resolveOutputFormat(
   opts: Pick<CLIOptions, 'prompt' | 'outputFormat'>,
   env: Readonly<Record<string, string | undefined>> = process.env,
@@ -47,14 +38,10 @@ export interface CLIOptions {
   agent: string | undefined;
   agentFiles: string[];
   addDirs?: string[];
-  /**
-   * `--environment <id>`: one-shot override of the configured `[environments]`
-   * default. Creation-only, like `--agent`: a resumed session restores its
-   * recorded binding instead.
-   */
   environment: string | undefined;
-  /** `--environment-cwd <path>`: overrides the selected entry's `defaultCwd`. */
   environmentCwd?: string;
+  worktree?: string;
+  worktreeBase?: string;
 }
 
 export interface ValidatedOptions {
@@ -67,6 +54,12 @@ export class OptionConflictError extends Error {
     super(message);
     this.name = 'OptionConflictError';
   }
+}
+
+export function worktreeFlagOffError(): OptionConflictError {
+  return new OptionConflictError(
+    '-w/--worktree is experimental. Turn it on with KIMI_CODE_EXPERIMENTAL_WORKTREE=1, with worktree = true under [experimental] in config.toml, or from /experiments.',
+  );
 }
 
 export function validateOptions(
@@ -136,8 +129,22 @@ export function validateOptions(
   if (opts.yolo && opts.auto) {
     throw new OptionConflictError('Cannot combine --yolo with --auto.');
   }
-  // Validate `KIMI_MODEL_OUTPUT_FORMAT` eagerly in prompt mode so a typo fails
-  // fast through the friendly `error:` path instead of mid-run.
+  if (opts.worktreeBase !== undefined && opts.worktree === undefined) {
+    throw new OptionConflictError('--worktree-base requires -w/--worktree.');
+  }
+  if (opts.worktreeBase !== undefined && opts.worktreeBase.trim().length === 0) {
+    throw new OptionConflictError('Worktree base cannot be empty.');
+  }
+  if (opts.worktree !== undefined && (opts.session !== undefined || opts.continue)) {
+    throw new OptionConflictError(
+      'Cannot combine -w/--worktree with -c/--continue or -S/--session: -w starts a new session in a new worktree.',
+    );
+  }
+  if (opts.worktree !== undefined && opts.environment !== undefined) {
+    throw new OptionConflictError(
+      'Cannot combine -w/--worktree with --environment: a worktree session runs in a local checkout.',
+    );
+  }
   if (promptMode) resolveOutputFormat(opts, env);
   return { options: opts, uiMode: promptMode ? 'print' : 'shell' };
 }

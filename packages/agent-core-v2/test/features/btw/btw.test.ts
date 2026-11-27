@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -18,10 +19,12 @@ import { SessionBtwService } from '#/features/btw/btwService';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { ToolCall } from '#human/message';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { ErrorCodes } from '#/errors';
 import {
   IAgentLifecycleService,
   type AgentScopeCreatedEvent,
 } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -36,6 +39,7 @@ describe('SessionBtwService', () => {
   let onDidCreateScope: Emitter<AgentScopeCreatedEvent>;
   let childContext: AgentContext;
   let child: AgentScopeCreatedEvent['handle'];
+  let setChildPermissionMode: ReturnType<typeof vi.fn>;
 
   function fireScopeCreated(
     handle: AgentScopeCreatedEvent['handle'],
@@ -68,6 +72,7 @@ describe('SessionBtwService', () => {
     executorEvents = stubToolExecutorEvents();
     onDidCreateScope = disposables.add(new Emitter<AgentScopeCreatedEvent>());
     childContext = stubAgentContext('agent-btw-1', 2);
+    setChildPermissionMode = vi.fn();
 
     child = {
       id: 'agent-btw-1',
@@ -76,6 +81,7 @@ describe('SessionBtwService', () => {
           if (id === IAgentToolApprovalService) return { formatDenyMessage };
           if (id === IAgentToolExecutorService) return executorEvents.executor;
           if (id === IAgentReminderService) return { notify: appendReminder };
+          if (id === IAgentPermissionModeService) return { mode: 'manual', setMode: setChildPermissionMode };
           return undefined;
         },
       },
@@ -92,6 +98,7 @@ describe('SessionBtwService', () => {
               scope: (subKey?: string) => subKey ?? '',
             };
           }
+          if (id === IAgentPermissionModeService) return { mode: 'yolo' };
           return undefined;
         },
       },
@@ -104,12 +111,19 @@ describe('SessionBtwService', () => {
       _serviceBrand: undefined,
       fork,
       onDidCreateScope: onDidCreateScope.event,
+      get: (id: string) => (id === 'agent-btw-1' ? childContext : undefined),
+      remove: vi.fn(async () => {}),
       handleOf: (id: string) => {
         if (id === 'main') return main;
         if (id === 'agent-btw-1') return child;
         return undefined;
       },
     } as unknown as IAgentLifecycleService);
+    ix.stub(ISessionMetadata, {
+      _serviceBrand: undefined,
+      read: async () => ({ id: 's1', createdAt: 0, updatedAt: 0, archived: false, agents: {} }),
+      unregisterAgent: vi.fn(async () => {}),
+    } as unknown as ISessionMetadata);
     ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
   });
   afterEach(() => disposables.dispose());
@@ -125,6 +139,13 @@ describe('SessionBtwService', () => {
     expect(appendReminder).toHaveBeenCalledWith(SIDE_QUESTION_SYSTEM_REMINDER, {
       variant: 'btw',
     });
+  });
+
+  it('starts the side-question child in the permission mode main is using', async () => {
+    const svc = ix.get(ISessionBtwService);
+    await svc.start();
+
+    expect(setChildPermissionMode).toHaveBeenCalledWith('yolo');
   });
 
   it('vetoes non-read-only tool calls on the child through the btw deny listener', async () => {
@@ -186,5 +207,96 @@ describe('SessionBtwService', () => {
     fireScopeCreated(child, { parentAgentId: 'main' });
 
     expect(await bashDecision(executorEvents, 'Bash')).toBeUndefined();
+  });
+
+  it('closes a live btw agent even when persisted metadata omitted registration, unregistering before removal', async () => {
+    const order: string[] = [];
+    const liveBtwHandle = {
+      id: 'agent-btw-1',
+      accessor: {
+        get: (id: unknown) => {
+          if (id === IAgentScopeContext) {
+            return {
+              _serviceBrand: undefined,
+              agentId: 'agent-btw-1',
+              agentContext: childContext,
+              meta: { type: 'sub', labels: { [BTW_AGENT_LABEL]: 'true' } },
+              scope: (subKey?: string) => subKey ?? '',
+            };
+          }
+          return undefined;
+        },
+      },
+    } as unknown as AgentScopeCreatedEvent['handle'];
+    ix.stub(IAgentLifecycleService, {
+      _serviceBrand: undefined,
+      onDidCreateScope: onDidCreateScope.event,
+      get: (id: string) => (id === 'agent-btw-1' ? childContext : undefined),
+      handleOf: (id: string) => (id === 'agent-btw-1' ? liveBtwHandle : undefined),
+      remove: vi.fn(async () => {
+        order.push('remove');
+      }),
+    } as unknown as IAgentLifecycleService);
+    ix.stub(ISessionMetadata, {
+      _serviceBrand: undefined,
+      read: async () => ({ id: 's1', createdAt: 0, updatedAt: 0, archived: false, agents: {} }),
+      unregisterAgent: vi.fn(async () => {
+        order.push('unregister');
+      }),
+    } as unknown as ISessionMetadata);
+    ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
+
+    await ix.get(ISessionBtwService).close('agent-btw-1');
+    expect(order).toEqual(['unregister', 'remove']);
+  });
+
+  it('joins an in-progress close when a second close starts after metadata unregistration', async () => {
+    let persistedAgents: Record<string, { type: 'sub'; labels: Record<string, string> }> = {
+      'agent-btw-1': { type: 'sub', labels: { [BTW_AGENT_LABEL]: 'true' } },
+    };
+    let liveVisible = true;
+    let releaseRemove!: () => void;
+    const removeBarrier = new Promise<void>((resolve) => {
+      releaseRemove = resolve;
+    });
+    const removeById = vi.fn(async () => {
+      liveVisible = false;
+      await removeBarrier;
+    });
+    ix.stub(IAgentLifecycleService, {
+      _serviceBrand: undefined,
+      onDidCreateScope: onDidCreateScope.event,
+      get: (id: string) => (id === 'agent-btw-1' && liveVisible ? childContext : undefined),
+      handleOf: (id: string) => (id === 'agent-btw-1' && liveVisible ? child : undefined),
+      removeById,
+    } as unknown as IAgentLifecycleService);
+    ix.stub(ISessionMetadata, {
+      _serviceBrand: undefined,
+      read: async () => ({ id: 's1', createdAt: 0, updatedAt: 0, archived: false, agents: persistedAgents }),
+      unregisterAgent: vi.fn(async (id: string) => {
+        const next = { ...persistedAgents };
+        delete next[id];
+        persistedAgents = next;
+      }),
+    } as unknown as ISessionMetadata);
+    ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
+
+    const svc = ix.get(ISessionBtwService);
+    const first = svc.close('agent-btw-1');
+    await vi.waitFor(() => expect(removeById).toHaveBeenCalledTimes(1));
+
+    let secondSettled = false;
+    const second = svc.close('agent-btw-1').then(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+
+    releaseRemove();
+    await Promise.all([first, second]);
+    expect(secondSettled).toBe(true);
+    expect(removeById).toHaveBeenCalledTimes(1);
+
+    await expect(svc.close('agent-btw-1')).rejects.toMatchObject({ code: ErrorCodes.AGENT_NOT_FOUND });
   });
 });

@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import type {
-  ApprovalRequest,
-  ApprovalResponse as CoreApprovalResponse,
-  QuestionRequest,
-  QuestionResult,
+import {
+  formatApprovalReviewTitle,
+  type ApprovalRequest,
+  type ApprovalResponse as CoreApprovalResponse,
+  type QuestionRequest,
+  type QuestionResult,
 } from "@moonshot-ai/kimi-code-sdk";
 
 import type { ApprovalResponse, QuestionRequest as LegacyQuestionRequest } from "../../shared/legacy-sdk";
@@ -86,12 +87,19 @@ export class ReverseRpcController {
 }
 
 function approvalPayload(id: string, request: ApprovalRequest) {
+  const review = request.approvalDetail;
+  const detail = describeToolDisplay(request.display);
+  const reviewSummary = review === undefined ? undefined : `${formatApprovalReviewTitle(review)}: ${review.reason}`;
   return {
     id,
     tool_call_id: request.toolCallId,
     sender: request.toolName,
     action: request.action,
-    description: describeToolDisplay(request.display),
+    description: reviewSummary === undefined
+      ? detail
+      : detail.length > 0
+        ? `${reviewSummary} — ${detail}`
+        : reviewSummary,
     display: toLegacyDisplay(request.display),
   };
 }

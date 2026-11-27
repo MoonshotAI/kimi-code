@@ -41,7 +41,7 @@ export default defineConfig({
   },
   deps: {
     onlyBundle: false,
-    alwaysBundle: [/^@moonshot-ai\//, 'immer', 'zod'],
+    alwaysBundle: [/^@moonshot-ai\//, 'immer', 'uuid', 'zod'],
     neverBundle: ['vscode'],
   },
   outputOptions: {

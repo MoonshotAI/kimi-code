@@ -1,4 +1,4 @@
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { ToolCallDeltaPayload } from '#/agent/loop/turnEvents';
 import type {
   McpServerStatusEventPayload,
@@ -10,11 +10,13 @@ import type {
   ShellStartedPayload,
 } from '#/agent/shellCommand/shellCommandService';
 import { AgentEvent2 } from '#/app/event/event2';
+import type { ToolExecutionOrigin } from '#/tool/toolContract';
 import type { ToolExecutionStatus } from '#/tool/executor';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 export interface ToolCallStartedPayload {
   readonly agentId: string;
+  readonly origin: ToolExecutionOrigin;
   readonly turnId: number;
   readonly toolCallId: string;
   readonly name: string;
@@ -31,6 +33,7 @@ export interface ToolCallStarted extends ToolCallStartedPayload {}
 
 export interface ToolUpdatedPayload {
   readonly agentId: string;
+  readonly origin: ToolExecutionOrigin;
   readonly turnId: number;
   readonly toolCallId: string;
   readonly taskId: string;
@@ -48,6 +51,7 @@ export interface ToolUpdated extends ToolUpdatedPayload {}
 
 export interface ToolResultEventPayload {
   readonly agentId: string;
+  readonly origin: ToolExecutionOrigin;
   readonly turnId: number;
   readonly toolCallId: string;
   readonly output: unknown;

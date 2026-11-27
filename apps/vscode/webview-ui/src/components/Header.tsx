@@ -16,7 +16,6 @@ export function Header() {
   const { startNewConversation, sessionId, messages, isStreaming } = useChatStore();
 
   const handleNewSession = async () => {
-    // If streaming, show confirmation dialog
     if (isStreaming) {
       setShowConfirmNew(true);
       return;

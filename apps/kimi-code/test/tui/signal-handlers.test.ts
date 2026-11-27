@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 
 interface SignalDriver {
@@ -52,6 +53,7 @@ function makeHarness() {
     setTelemetryContext: vi.fn(),
     getWorkspaceTrustInfo: vi.fn(async () => ({
       trusted: true,
+      projectRoot: '/tmp/proj-signals',
       gatedMcpServers: [],
       gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
       instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
@@ -71,10 +73,6 @@ function makeDriver(): { driver: SignalDriver; tui: KimiTUI } {
   return { driver, tui };
 }
 
-// Capture handlers via process.prependListener spy so we can invoke them
-// directly without going through `process.emit`. Routing through emit also
-// fires unrelated listeners that vitest installs on its worker process, and
-// those listeners exit the worker.
 interface CapturedHandlers {
   signalHandlers: Map<NodeJS.Signals, (...args: unknown[]) => void>;
   stdoutErrorHandler?: (error: Error) => void;
@@ -84,8 +82,6 @@ interface CapturedHandlers {
 
 function captureHandlers(driver: SignalDriver): CapturedHandlers {
   const signalHandlers = new Map<NodeJS.Signals, (...args: unknown[]) => void>();
-  // The Node typings give `process.prependListener` a long list of overloads
-  // (one per signal). We bypass that by typing the spy through `unknown`.
   const prependSpy = vi.spyOn(process, 'prependListener');
   (prependSpy as unknown as { mockImplementation: (fn: unknown) => unknown }).mockImplementation(
     (event: string | symbol, listener: (...args: unknown[]) => void): NodeJS.Process => {
@@ -160,7 +156,6 @@ describe('KimiTUI signal handlers', () => {
   });
 
   it('registers SIGTERM and SIGHUP on POSIX, only SIGTERM on Windows', () => {
-    // POSIX
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     const posix = makeDriver();
     const posixCaptured = captureHandlers(posix.driver);
@@ -169,7 +164,6 @@ describe('KimiTUI signal handlers', () => {
     posixCaptured.restore();
     posix.driver.unregisterSignalHandlers();
 
-    // Windows
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
     const win = makeDriver();
     const winCaptured = captureHandlers(win.driver);
@@ -207,12 +201,9 @@ describe('KimiTUI signal handlers', () => {
     expect(sigterm).toBeDefined();
     sigterm?.();
 
-    // Allow the rejected stop() promise to settle so the .catch() chain runs.
     await Promise.resolve();
     await Promise.resolve();
 
-    // 143 = 128 + SIGTERM(15). Supervisors key off this to detect signal-driven
-    // exits; we must not collapse it to the SIGHUP code (129) or to 0.
     expect(stopSpy).toHaveBeenCalledWith(143);
     expect(exitSpy).toHaveBeenCalledWith(143);
     expect(exitSpy).not.toHaveBeenCalledWith(129);
@@ -226,9 +217,6 @@ describe('KimiTUI signal handlers', () => {
   it('SIGTERM handler routes through stop(143) and forces exit 143 on success', async () => {
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     const { driver, tui } = makeDriver();
-    // `stop()` resolving without exiting models the defensive fallback path
-    // where `onExit` was not wired up. The handler must still exit 143 so
-    // supervisors see signal termination.
     const stopSpy = vi.spyOn(tui, 'stop').mockResolvedValue(undefined);
     const captured = captureHandlers(driver);
 
@@ -243,6 +231,36 @@ describe('KimiTUI signal handlers', () => {
     expect(exitSpy).toHaveBeenCalledWith(143);
     expect(exitSpy).not.toHaveBeenCalledWith(0);
 
+    stopSpy.mockRestore();
+    captured.restore();
+    driver.unregisterSignalHandlers();
+  });
+
+  it('SIGTERM stops without asking about the Kimi worktree it runs in', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    setExperimentalFeatures([{ id: 'worktree', enabled: true }]);
+    const harness = { ...makeHarness(), inspectWorktreeRemoval: vi.fn(), removeWorktree: vi.fn() };
+    const tui = new KimiTUI(harness as never, {
+      ...makeStartupInput(),
+      workDir: '/tmp/wt-signals',
+      projectRoot: '/tmp/proj-signals',
+      isGitRepo: true,
+      worktree: { root: '/tmp/wt-signals', name: 'wt', repoRoot: '/tmp/proj-signals' },
+    });
+    const driver = tui as unknown as SignalDriver;
+    const stopSpy = vi.spyOn(tui, 'stop').mockResolvedValue(undefined);
+    const captured = captureHandlers(driver);
+
+    captured.signalHandlers.get('SIGTERM')?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(stopSpy).toHaveBeenCalledWith(143);
+    expect(harness.inspectWorktreeRemoval).not.toHaveBeenCalled();
+    expect(harness.removeWorktree).not.toHaveBeenCalled();
+    expect(tui.worktreeExit.outcome).toBeUndefined();
+
+    setExperimentalFeatures([]);
     stopSpy.mockRestore();
     captured.restore();
     driver.unregisterSignalHandlers();
@@ -300,7 +318,6 @@ describe('KimiTUI signal handlers', () => {
 
   it('stop() unregisters previously-installed signal handlers', async () => {
     const { driver, tui } = makeDriver();
-    // Suppress real stop work for this test — focus on the cleanup contract.
     vi.spyOn(tui, 'stop').mockImplementation(async () => {
       (tui as unknown as SignalDriver).unregisterSignalHandlers();
     });
@@ -335,14 +352,9 @@ describe('KimiTUI signal handlers', () => {
 
   it('start() unregisters signal handlers when initialization throws', async () => {
     const { tui } = makeDriver();
-    // Force the very first awaited call inside start() to reject. We don't
-    // care which method blows up — only that the failure surfaces and any
-    // listeners we installed up front get cleaned up before the throw escapes.
     vi.spyOn(tui as unknown as { initMainTui(): Promise<boolean> }, 'initMainTui').mockRejectedValue(
       new Error('init boom'),
     );
-    // Stub state.ui.stop so the failure-path cleanup does not touch the real
-    // event loop.
     vi.spyOn(
       (tui as unknown as { state: { ui: { stop(): void } } }).state.ui,
       'stop',

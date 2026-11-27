@@ -8,7 +8,7 @@ Update this section after every sync. Do not reuse the previous range.
 
 - **Repo:** `https://github.com/earendil-works/pi.git`
 - **Subtree:** `packages/tui`
-- **Commit:** `7c22a93d0ed02092142fa63823e63d76aa4e2406` (2026-10-22; v1.4.0 plus upstream main through this commit)
+- **Commit:** `b882d08f34f8a245c8d3ea8b057759e1b8b2054c` (2026-11-25; v1.6.1 plus upstream main through this commit)
 - **This commit is an upstream marker.** It may not exist in this repo's object database.
 
 ## Reconstruct the fork
@@ -114,6 +114,12 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** The host can filter history entries, decorate a recalled entry, and save/restore its own state next to the history draft.
 
 **Why not in the app:** History recall mutates editor state internally; the host is not on that path unless the editor calls out.
+
+### editor-clear-history — keep
+
+**Decision:** `Editor.clearHistory()` clears the editor's stored prompt history and resets any in-progress history recall index, so a host switching working directories can swap in the new directory's history cleanly.
+
+**Why not in the app:** Prompt history and its recall cursor are private fields on `Editor`; the host cannot clear or reset them without recreating the editor instance.
 
 ### unbracketed-paste-enter-is-newline — keep
 
@@ -240,3 +246,15 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** `requestAnimationFrame` and `cancelAnimationFrame` on the TUI work like the browser's. A request runs once; every callback of a frame gets the same timestamp on the `performance.now()` clock; frames are never replayed after a late wake. By default they land on a fixed `ANIMATION_FRAME_INTERVAL_MS` grid. `setAnimationFrameRate` on `TuiBase` takes a whole number of frames per second from 1 to `MAX_ANIMATION_FRAME_RATE` and throws `RangeError` on anything else; after it, the next frame comes one new interval after the last frame. One unref'd timer serves all requests and exists only while a request is pending. A throwing callback does not stop the other callbacks or later frames, and the first error is rethrown in a microtask. `stop()` pauses frames and keeps the requests; `start()` resumes on the next frame. An optional constructor clock lets tests drive frames by hand. Without one, each scheduler keeps the global timers and `performance.now` it found when it was created, so a running frame chain never moves onto fake timers that a later test installs. With no requests, behavior matches upstream.
 
 **Why not in the app:** Pausing and resuming must follow the renderer's own `stop()` and `start()`, which hosts such as the external editor call directly. One clock in the renderer also lets every animated component share one timer and one frame time. The host sets the frame rate there for the same reason: the timer and the grid belong to the renderer, and no component sees the others' requests.
+
+### alt-screen-search-bindings-and-open-search — keep
+
+**Decision:** Default alternate-screen search keybindings in `TUI_KEYBINDINGS` use `["ctrl+f", "ctrl+shift+f"]` for `tui.altScreen.search`, `["up", "shift+enter", "ctrl+shift+g"]` for `tui.altScreen.searchPrevious`, and `["down", "enter", "ctrl+g"]` for `tui.altScreen.searchNext`. `TuiAltScreen.openSearch(query?)` idempotently opens or refocuses transcript search (when the active layout has a searchable scroll view) and optionally prefills a single-line sanitized query with the cursor at the end via `Input.setCursor(position)` (paired with `Input.getCursor()`). When primary search navigation keys are `up`/`down`, `AltScreenSearchComponent` renders semantic `↑ Previous` and `↓ Next` labels (with narrow fallback `↑ ↓`), and whitespace-only queries do not show `No matches`. The `tui.altScreen.search` binding requires a searchable scroll view so full-screen layout takeovers without a `ScrollView` keep their own `Ctrl+F` handling. While transcript search is active, non-wheel mouse focus transfers to a component outside the search overlay close active search before moving focus, whereas wheel events, clicking search controls, and drag-selecting transcript text keep search open; when search is inactive, wheel focus requests keep upstream semantics.
+
+**Why not in the app:** Default keybindings live in `TUI_KEYBINDINGS` shared by all `pi-tui` components; search overlay lifecycle, `ActiveSearch` state, viewport key dispatch, mouse focus dispatch, search label formatting, and `Input` cursor positioning are private to `TuiAltScreen`, `AltScreenSearchComponent`, and `Input`.
+
+### kitty-caps-lock-modified-letter-normalization — keep
+
+**Decision:** When Kitty CSI-u input reports an uppercase Latin letter (`A`–`Z`) with Caps Lock and any non-lock modifier (`ctrl`, `alt`, `super`, or `shift`) active, key matching and `parseKey` normalize the letter identity to lowercase so modified letter bindings match while plain Caps Lock uppercase text input stays unaffected.
+
+**Why not in the app:** `KeybindingsManager`, `TuiAltScreen`, and all `pi-tui` components dispatch keybindings directly through `keys.ts` before any app component input handler runs.

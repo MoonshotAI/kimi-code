@@ -1,8 +1,3 @@
-/**
- * Durable loop records: which `LoopEmitted` events are persisted, their JSON-safe serialization, and
- * the projection that folds a record stream back into the state needed to restore a loop (profile,
- * messages, turns, unfinished turn, pending notifications).
- */
 import type { Message, UserMessage } from '#/llm/message';
 import type { UnfinishedTurn } from './contract/command';
 import type { LoopEmitted } from './contract/emitted';
@@ -32,7 +27,7 @@ const recordTypes = [
   'tool.ended',
   'tool.async_ended',
   'hook.failed',
-  'llm.retrying',
+  'llm.retry',
   'llm.notice',
 ] as const;
 

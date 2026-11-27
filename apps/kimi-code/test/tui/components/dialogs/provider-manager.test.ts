@@ -8,10 +8,8 @@ import {
 } from '#/tui/components/dialogs/provider-manager';
 import { darkColors } from '#/tui/theme/colors';
 
-// Truecolor SGR fragments for the darkColors tokens we assert on
-// (see theme/colors.ts). Forcing chalk.level below guarantees they appear.
-const PRIMARY = '38;2;79;168;255'; // colors.primary  #4FA8FF
-const MUTED = '38;2;107;107;107'; // colors.textMuted #6B6B6B
+const PRIMARY = '38;2;79;168;255';
+const MUTED = '38;2;107;107;107';
 const BOLD = '[1m';
 const ESC = String.fromCodePoint(27);
 
@@ -46,8 +44,6 @@ describe('ProviderManagerComponent', () => {
   });
 
   it('renders [ Add New Platform ] in the brand color, never muted, when not selected', () => {
-    // A configured provider occupies row 0 (selected); the add row sits below
-    // it and is therefore not the highlighted row.
     const component = makeComponent({
       providers: {
         acme: { baseUrl: 'https://acme.test' },
@@ -61,8 +57,6 @@ describe('ProviderManagerComponent', () => {
   });
 
   it('bolds [ Add New Platform ] when it is the selected row', () => {
-    // With no configured providers the synthetic add row is the only row, so it
-    // starts as the highlighted selection.
     const component = makeComponent();
     const line = addRowLine(component);
     expect(line).toBeDefined();
@@ -97,14 +91,10 @@ describe('ProviderManagerComponent', () => {
 
     const titleIdx = lines.findIndex((l) => l.includes('Providers'));
     expect(titleIdx).toBeGreaterThanOrEqual(0);
-    // The line directly under the title is the hint, never an inner border (the
-    // old `border · title · border` sandwich is gone).
     expect(isBorder(lines[titleIdx + 1])).toBe(false);
     expect(lines[titleIdx + 1]).toContain('navigate');
     expect(lines[titleIdx + 1]).toContain('Esc cancel');
-    // Blank line separates the hint from the body, exactly like the model dialog.
     expect(lines[titleIdx + 2]).toBe('');
-    // Only the top and bottom full-width borders remain — two, not three.
     expect(lines.filter(isBorder).length).toBe(2);
   });
 

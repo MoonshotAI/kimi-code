@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,6 +7,7 @@ import { join } from 'pathe';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { parseBooleanEnv } from '#/_base/utils/env';
+import { currentProcessLiveness, processStampAlive } from '#/_base/utils/processLiveness';
 import { LifecycleScope } from '#/app/scopes';
 
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -34,24 +34,6 @@ const UNREADABLE_HOLDER: SessionLockHolder = {
 type ClaimOutcome =
   | { readonly claimed: true }
   | { readonly claimed: false; readonly holder: SessionLockHolder | undefined };
-
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EPERM') return false;
-  }
-  if (process.platform === 'win32') return true;
-  try {
-    const stat = execFileSync('ps', ['-p', String(pid), '-o', 'stat='], {
-      encoding: 'utf8',
-      timeout: 1000,
-    });
-    return !stat.trim().startsWith('Z');
-  } catch {
-    return true;
-  }
-}
 
 const CLIENT_DISPLAY_NAMES: Record<string, string> = {
   kimi_code_cli: 'Kimi Code CLI',
@@ -129,7 +111,13 @@ export class SessionLockService extends SessionLockHolds {
     for (let attempt = 0; attempt < 2; attempt++) {
       if (this.tryPublish(lockPath, this.payload(token))) return { claimed: true };
       const current = this.readHolder(lockPath);
-      if (current !== undefined && this.alive(current)) return { claimed: false, holder: current };
+      if (
+        current !== undefined &&
+        this.alive(current) &&
+        (current.hostname === '' || current.hostname === this.hostname)
+      ) {
+        return { claimed: false, holder: current };
+      }
       this.reclaim(lockPath, token);
     }
     return { claimed: false, holder: this.readHolder(lockPath) };
@@ -156,7 +144,13 @@ export class SessionLockService extends SessionLockHolds {
     }
     try {
       const current = this.readHolder(lockPath);
-      if (current === undefined || !this.alive(current)) this.unlinkSilent(lockPath);
+      if (
+        current === undefined ||
+        !this.alive(current) ||
+        (current.hostname !== '' && current.hostname !== this.hostname)
+      ) {
+        this.unlinkSilent(lockPath);
+      }
     } finally {
       this.unlinkSilent(reclaimPath);
     }
@@ -190,6 +184,10 @@ export class SessionLockService extends SessionLockHolds {
     } catch {
       return UNREADABLE_HOLDER;
     }
+    const liveness =
+      typeof parsed.liveness === 'string' && parsed.liveness.length > 0
+        ? parsed.liveness
+        : undefined;
     return {
       version: typeof parsed.version === 'number' ? parsed.version : UNREADABLE_HOLDER.version,
       token: typeof parsed.token === 'string' ? parsed.token : UNREADABLE_HOLDER.token,
@@ -203,17 +201,16 @@ export class SessionLockService extends SessionLockHolds {
           : UNREADABLE_HOLDER.clientIdentity,
       clientDisplayName:
         typeof parsed.clientDisplayName === 'string' ? parsed.clientDisplayName : undefined,
+      ...(liveness === undefined ? {} : { liveness }),
     };
   }
 
   private alive(holder: SessionLockHolder): boolean {
-    if (holder.hostname !== '' && holder.hostname !== this.hostname) return true;
-    if (!pidAlive(holder.pid)) return false;
-    const bootTime = Date.now() - os.uptime() * 1000;
-    return holder.startedAt >= bootTime;
+    return processStampAlive(holder, this.hostname);
   }
 
   private payload(token: string): string {
+    const liveness = currentProcessLiveness();
     return JSON.stringify({
       version: LOCK_FILE_VERSION,
       token,
@@ -222,6 +219,7 @@ export class SessionLockService extends SessionLockHolds {
       startedAt: Date.now(),
       clientIdentity: this.clientIdentity,
       clientDisplayName: this.clientDisplayName,
+      ...(liveness === undefined ? {} : { liveness }),
     } satisfies SessionLockHolder);
   }
 

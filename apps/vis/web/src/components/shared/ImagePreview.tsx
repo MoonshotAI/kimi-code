@@ -4,15 +4,9 @@ import { CopyButton } from './CopyButton';
 
 interface ImagePreviewProps {
   url: string;
-  /** Optional label rendered as the header chip (e.g. `image_url`). */
   label?: string;
 }
 
-/** Inline preview for an image ContentPart URL.
- *  Renders the actual `<img>` for `data:image/*` and `http(s)://` URLs;
- *  falls back to the raw URL for any other scheme.
- *  Click "expand" to lift the height cap to 80vh; click "open in tab"
- *  to view the full asset in a new browser tab. */
 export function ImagePreview({ url, label = 'image_url' }: ImagePreviewProps) {
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);

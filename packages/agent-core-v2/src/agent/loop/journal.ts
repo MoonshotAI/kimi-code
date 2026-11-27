@@ -27,7 +27,7 @@ import {
 import type { AssistantMessage, Message, UserMessage } from '@moonshot-ai/core/llm/message';
 
 import { contextFromHistoryEntry, historyFromContext } from './history';
-import { TurnPrompt } from './turnOps';
+import { TurnCancel, TurnPrompt } from './turnOps';
 import type {
   LoopEmitted,
   LoopInput,
@@ -296,13 +296,13 @@ function turnReason(outcome: TurnOutcome): 'completed' | 'cancelled' | 'failed' 
   }
 }
 
-function toolArguments(entry: AssistantMessage, toolCallId: string): unknown {
+function toolArguments(entry: AssistantMessage, toolCallId: string): { args: unknown; argsRaw?: string } {
   const args = entry.toolCalls.find((call) => call.id === toolCallId)?.arguments;
-  if (args === undefined || args === null) return undefined;
+  if (args === undefined || args === null) return { args: undefined };
   try {
-    return JSON.parse(args) as unknown;
+    return { args: JSON.parse(args) as unknown, argsRaw: args };
   } catch {
-    return args;
+    return { args, argsRaw: args };
   }
 }
 
@@ -344,6 +344,11 @@ export class LoopJournal {
         if (event.canceled) {
           const index = this.normal.findIndex((entry) => entry.attributes?.promptId === event.promptId);
           if (index >= 0) this.normal.splice(index, 1);
+          if (event.startingTurnId !== undefined) {
+            const cancellation = { agentId: this.agentId, turnId: event.startingTurnId, target: 'queued' as const };
+            if (this.dispatcher === undefined) this.write({ type: 'turn.cancel', ...cancellation });
+            else void this.dispatcher.dispatch(new TurnCancel(cancellation));
+          }
         }
         return;
       case 'prompt.steered': {
@@ -382,7 +387,7 @@ export class LoopJournal {
         if (step !== undefined) this.ensureStepStarted(requesting.turnId, requesting.step, step);
         return;
       }
-      case 'llm.retrying': {
+      case 'llm.retry': {
         const requesting = this.requestingStep;
         if (requesting === undefined) return;
         const key = stepKey(requesting.turnId, requesting.step);
@@ -401,7 +406,7 @@ export class LoopJournal {
         }
         return;
       }
-      case 'llm.sent': {
+      case 'llm.requested': {
         const requesting = this.requestingStep;
         if (requesting === undefined) return;
         const key = stepKey(requesting.turnId, requesting.step);
@@ -430,7 +435,7 @@ export class LoopJournal {
           toolCallId: event.toolCall.id,
           rawId: event.toolCall.rawId,
           name: event.toolCall.name,
-          args: toolArguments(assistant, event.toolCall.id),
+          ...toolArguments(assistant, event.toolCall.id),
           extras: event.toolCall.extras,
           display: event.display as ToolInputDisplay | undefined,
         });
@@ -498,6 +503,7 @@ export class LoopJournal {
           durationMs: event.durationMs,
           stopReason: event.stopReason,
           requestId: event.requestId,
+          continuation: event.continuation,
         };
         this.write(record['requestId'] === undefined
           ? Object.fromEntries(Object.entries(record).filter(([key]) => key !== 'requestId')) as WireRecord
@@ -569,7 +575,7 @@ export class LoopJournal {
           toolCallId,
           rawId: toolCall?.rawId,
           name: toolCall?.name ?? toolCallId,
-          args: toolArguments(assistant, toolCallId),
+          ...toolArguments(assistant, toolCallId),
           extras: toolCall?.extras,
         });
       }

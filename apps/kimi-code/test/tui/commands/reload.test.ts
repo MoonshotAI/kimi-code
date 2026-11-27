@@ -2,7 +2,9 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Text, TuiAltScreen } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
   handleReloadCommand,
@@ -108,6 +110,23 @@ auto_install = false
     });
   });
 
+  it('re-resolves the working directory when the reload flips the worktree flag', async () => {
+    await writeTuiConfig('theme = "dark"\n');
+    const host = makeHost({ session: { id: 'ses-1', reloadSession: vi.fn(async () => ({})) } });
+    const refreshWorkLocation = vi.fn(async () => {});
+    Object.assign(host, { refreshWorkLocation });
+
+    await handleReloadCommand(host);
+    expect(refreshWorkLocation).not.toHaveBeenCalled();
+
+    host.harness.getExperimentalFeatures.mockResolvedValue([{ id: 'worktree', enabled: true }]);
+    await handleReloadCommand(host);
+    expect(refreshWorkLocation).toHaveBeenCalledOnce();
+
+    await handleReloadCommand(host);
+    expect(refreshWorkLocation).toHaveBeenCalledOnce();
+  });
+
   it('awaits the async theme application before refreshing terminal tracking', async () => {
     await writeTuiConfig('theme = "auto"\n');
     const host = makeHost();
@@ -118,8 +137,6 @@ auto_install = false
     };
 
     let themeWhenTracked: string | undefined;
-    // Theme application resolves on a later microtask, mirroring the real
-    // async palette load; tracking must observe the *new* theme.
     mutable.applyTheme = vi.fn(async (theme: string) => {
       await Promise.resolve();
       mutable.state.appState.theme = theme;
@@ -137,9 +154,6 @@ auto_install = false
     await writeTuiConfig('render_latex = false\n');
     const host = makeHost();
 
-    // applyTheme invalidates transcript components, which rebuild their
-    // Markdown children by copying the shared options — the reloaded value
-    // must already be live at that point.
     let latexWhenThemeApplied: boolean | undefined;
     const mutable = host as unknown as { applyTheme: unknown };
     mutable.applyTheme = vi.fn(() => {
@@ -192,7 +206,6 @@ auto_install = false
     expect(refreshSkillCommands).toHaveBeenCalledOnce();
     expect(refreshPluginCommands).toHaveBeenCalledOnce();
     expect(hydrateLazyConfigDefaults).toHaveBeenCalledOnce();
-    // Autocomplete must rebuild after the command maps are refreshed.
     expect(refreshSkillCommands.mock.invocationCallOrder[0]).toBeLessThan(
       host.refreshSlashCommandAutocomplete.mock.invocationCallOrder[0]!,
     );
@@ -253,6 +266,113 @@ auto_install = false
     await handleReloadTuiCommand(host);
 
     expect(host.showNotice).not.toHaveBeenCalled();
+  });
+
+  async function attachFullscreenRenderer(host: ReturnType<typeof makeHost>) {
+    const vt = new VirtualTerminal(40, 12);
+    const ui = new TuiAltScreen(vt, undefined, undefined, { wheelScrollLines: 'auto' });
+    ui.addChild(
+      new Text(Array.from({ length: 60 }, (_, index) => `line ${String(index + 1)}`).join('\n'), 0, 0),
+    );
+    ui.start();
+    onTestFinished(() => {
+      ui.stop();
+    });
+    await vt.waitForRender();
+    Object.assign(host.state, { ui });
+    return { ui, vt };
+  }
+
+  it('hot-reloads wheel_scroll_lines on /reload-tui and updates live TuiAltScreen scrolling', async () => {
+    await writeTuiConfig('tui_mode = "fullscreen"\nwheel_scroll_lines = 4\n');
+    const host = makeHost();
+    const { ui, vt } = await attachFullscreenRenderer(host);
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.state.appState.wheelScrollLines).toBe(4);
+    const before = ui.viewportTop;
+    vt.sendInput('\u001B[<64;1;1M');
+    await vt.waitForRender();
+    expect(before - ui.viewportTop).toBe(4);
+  });
+
+  it('hot-reloads wheel_scroll_lines on /reload and updates live TuiAltScreen scrolling', async () => {
+    await writeTuiConfig('tui_mode = "fullscreen"\nwheel_scroll_lines = 5\n');
+    const session = { id: 'ses-1', reloadSession: vi.fn(async () => ({})) };
+    const host = makeHost({ session });
+    const { ui, vt } = await attachFullscreenRenderer(host);
+
+    await handleReloadCommand(host);
+
+    expect(host.state.appState.wheelScrollLines).toBe(5);
+    const before = ui.viewportTop;
+    vt.sendInput('\u001B[<64;1;1M');
+    await vt.waitForRender();
+    expect(before - ui.viewportTop).toBe(5);
+  });
+
+  it('reverts live TuiAltScreen wheel scrolling to auto when wheel_scroll_lines is removed on /reload-tui', async () => {
+    vi.stubEnv('SSH_CONNECTION', '1');
+    let now = 1_000;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    onTestFinished(() => {
+      nowSpy.mockRestore();
+    });
+
+    await writeTuiConfig('tui_mode = "fullscreen"\nwheel_scroll_lines = 4\n');
+    const host = makeHost();
+    const { ui, vt } = await attachFullscreenRenderer(host);
+    await handleReloadTuiCommand(host);
+    expect(host.state.appState.wheelScrollLines).toBe(4);
+
+    await writeTuiConfig('tui_mode = "fullscreen"\n');
+    await handleReloadTuiCommand(host);
+
+    expect(host.state.appState.wheelScrollLines).toBeUndefined();
+    const start = ui.viewportTop;
+    vt.sendInput('\u001B[<64;1;1M');
+    await vt.waitForRender();
+    const afterFirst = ui.viewportTop;
+    expect(start - afterFirst).toBe(1);
+
+    now += 25;
+    vt.sendInput('\u001B[<64;1;1M');
+    await vt.waitForRender();
+    expect(afterFirst - ui.viewportTop).toBeGreaterThan(1);
+  });
+
+  it('warns and falls back to auto when wheel_scroll_lines is invalid on /reload-tui', async () => {
+    vi.stubEnv('SSH_CONNECTION', '1');
+    let now = 2_000;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    onTestFinished(() => {
+      nowSpy.mockRestore();
+    });
+
+    await writeTuiConfig('tui_mode = "fullscreen"\nwheel_scroll_lines = 4\n');
+    const host = makeHost();
+    const { ui, vt } = await attachFullscreenRenderer(host);
+    await handleReloadTuiCommand(host);
+
+    await writeTuiConfig('tui_mode = "fullscreen"\nwheel_scroll_lines = "3"\n');
+    await handleReloadTuiCommand(host);
+
+    expect(host.state.appState.wheelScrollLines).toBeUndefined();
+    expect(host.showStatus).toHaveBeenCalledWith(
+      '[tui.toml] ignoring invalid wheel_scroll_lines value: "3" (expected "auto" or a positive integer)',
+      'warning',
+    );
+    const start = ui.viewportTop;
+    vt.sendInput('\u001B[<64;1;1M');
+    await vt.waitForRender();
+    const afterFirst = ui.viewportTop;
+    expect(start - afterFirst).toBe(1);
+
+    now += 25;
+    vt.sendInput('\u001B[<64;1;1M');
+    await vt.waitForRender();
+    expect(afterFirst - ui.viewportTop).toBeGreaterThan(1);
   });
 });
 

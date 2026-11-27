@@ -1,9 +1,6 @@
-/**
- * Credential recovery: when the endpoint's credential provider can recover from an auth failure,
- * invalidate the credentials and try once more, either as a request recovery or around any call.
- */
 import type { LlmRecovery } from '#/llm/policy/recovery';
 import type { LlmCredentialProvider } from '#/llm/request';
+import { log } from '#/utils/log';
 
 export async function runWithCredentialRecovery<T>(
   credentialProvider: LlmCredentialProvider | undefined,
@@ -14,6 +11,7 @@ export async function runWithCredentialRecovery<T>(
     return await run();
   } catch (error) {
     if (signal?.aborted === true || credentialProvider?.canRecover?.(error) !== true) throw error;
+    log.debug('llm credential recovery: refreshing credential and retrying once');
     credentialProvider.invalidate?.();
     return run();
   }

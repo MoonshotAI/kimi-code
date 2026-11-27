@@ -113,9 +113,6 @@ describe('migrated session is discoverable by agent-core-v2', () => {
       .filter((l) => l.length > 0)
       .map((l) => JSON.parse(l) as { type: string; [key: string]: unknown });
 
-    // Content round trip: the v2 context transcript preserves the imported
-    // messages. Compare their native role/content shape while dropping UI-only
-    // displays and optional usage/timing metadata.
     const transcript = reduceContextTranscript(records);
     const imported = records
       .filter((r) => r.type === 'context.append_message')
@@ -134,11 +131,6 @@ describe('migrated session is discoverable by agent-core-v2', () => {
       });
     expect(stripDisplays([...transcript.entries])).toEqual(stripDisplays(imported));
 
-    // The invariant that keeps a live turn from hijacking an imported one:
-    // every turn.prompt advances the restored turn clock by one, so the number
-    // of synthesized turn.prompt records must equal the number of turns the
-    // imported user messages open. The first live turn
-    // after resume then gets an id past every imported turn.
     const promptCount = records.filter((r) => r.type === 'turn.prompt').length;
     expect(promptCount).toBe(openedTurns(transcript.entries));
     expect(promptCount).toBeGreaterThan(0);
@@ -147,8 +139,6 @@ describe('migrated session is discoverable by agent-core-v2', () => {
       .filter((r) => r.type === 'turn.ended')
       .map((r) => r['turnId'])
       .filter((id): id is number => typeof id === 'number');
-    // Turns without assistant content (e.g. an unanswered user message) get no
-    // turn.ended; the rest carry sequential ids within the imported range.
     expect(endedTurnIds).toEqual([...endedTurnIds].toSorted((a, b) => a - b));
     expect(new Set(endedTurnIds).size).toBe(endedTurnIds.length);
     expect(Math.max(...endedTurnIds)).toBeLessThan(promptCount);
@@ -163,10 +153,14 @@ describe('imported external session is discoverable by agent-core-v2', () => {
     { role: 'assistant', content: [{ type: 'text', text: 'Added.' }] },
     { role: 'user', content: [{ type: 'text', text: '<EXTERNAL SESSION IMPORTED>\nThe conversation above was imported.' }] },
   ] as const;
+  const PROJECT_ID = encodeWorkDirKey('/Users/example/main');
   const write = () => writeImportedSession({
     targetHome,
+    projectId: PROJECT_ID,
+    projectRoot: '/Users/example/main',
     sessionId: 'ses_example-source',
     workDir: WORK_DIR,
+    environmentCwd: WORK_DIR,
     title: 'Fix the login flow',
     lastPrompt: 'Add a regression test',
     updatedAtMs: 1_700_000_000_000,
@@ -177,10 +171,12 @@ describe('imported external session is discoverable by agent-core-v2', () => {
   it('lists the session with its title, original time and import metadata', async () => {
     const sessionDir = await write();
 
-    expect(sessionDir).toBe(importedSessionDir(targetHome, WORK_DIR, 'ses_example-source'));
+    expect(sessionDir).toBe(importedSessionDir(targetHome, PROJECT_ID, 'ses_example-source'));
     expect(await readSessionSummaryV2(targetHome, 'ses_example-source')).toMatchObject({
+      workspaceId: PROJECT_ID,
       title: 'Fix the login flow',
       cwd: WORK_DIR,
+      environmentCwd: WORK_DIR,
       lastPrompt: 'Add a regression test',
       createdAt: 1_700_000_000_000,
       updatedAt: 1_700_000_000_000,

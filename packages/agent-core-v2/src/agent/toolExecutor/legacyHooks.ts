@@ -1,9 +1,15 @@
 import { AsyncEmitter } from '#/_base/event';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { IAgentToolExecutorService } from './toolExecutor';
-import type { AfterExecuteHookContext, ToolDecisionContext, ToolResult, ToolStartingDecision } from '#/tool/executor';
+import type {
+  AfterExecuteHookContext,
+  ToolDecisionContext,
+  ToolResult,
+  ToolStartingDecision,
+  LegacyToolAgentContext,
+  LegacyToolPreparation,
+} from '#/tool/executor';
 import { toLegacyToolReturn } from '#/tool/executor';
-import type { LegacyToolAgentContext, LegacyToolPreparation } from '#/tool/executor';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import { BeforeToolExecuteEmitter } from './beforeToolExecuteEvent';
@@ -104,6 +110,32 @@ export function legacyDidExecuteContext(context: LegacyAfterContext): ToolDidExe
     accesses: prepared?.kind === 'execute' ? prepared.accesses : undefined,
     result: legacyResultOf(context),
   };
+}
+
+export function legacyResultToToolResult(
+  context: LegacyAfterContext,
+  result: ExecutableToolResult,
+): ToolResult {
+  const converted = toLegacyToolReturn(result, context.call.name);
+  if (converted.outcome === 'failed') {
+    return {
+      ...context.result,
+      content: converted.content,
+      outcome: context.result.outcome.type === 'failed'
+        ? context.result.outcome
+        : {
+            type: 'failed',
+            error: {
+              outcome: 'failed',
+              type: 'error',
+              phase: 'after-execute',
+              reason: converted.reason,
+              data: converted.data,
+            },
+          },
+    };
+  }
+  return { ...context.result, content: converted.content, outcome: { type: 'success' } };
 }
 
 export function legacyResultOf(context: LegacyAfterContext): ExecutableToolResult {

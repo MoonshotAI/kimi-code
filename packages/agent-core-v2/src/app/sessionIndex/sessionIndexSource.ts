@@ -1,7 +1,6 @@
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
+import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
 
 import { CHILD_SESSION_KIND, CHILD_SESSION_KIND_KEY, type SessionSummary } from './sessionIndex';
 import { SESSION_INDEX_DIRTY_DIR } from './sessionIndexDirtyJournal';
@@ -216,7 +215,7 @@ export function summaryEquals(a: SessionSummary, b: SessionSummary): boolean {
   );
 }
 
-export async function listWorkspaceIds(
+export async function listProjectIds(
   storage: IFileSystemStorageService,
   sessionsScope: string,
 ): Promise<readonly string[]> {
@@ -256,25 +255,15 @@ export async function readSessionSummary(
     rawCustom !== null && typeof rawCustom === 'object' && !Array.isArray(rawCustom)
       ? (rawCustom as Record<string, unknown>)
       : undefined;
-  const originalCwd = recoverCwd(meta);
-  const environmentId = typeof meta['environmentId'] === 'string'
-    ? meta['environmentId']
-    : LOCAL_ENVIRONMENT_ID;
+  const environmentId = typeof meta['environmentId'] === 'string' ? meta['environmentId'] : undefined;
   const environmentCwd = typeof meta['environmentCwd'] === 'string'
     ? meta['environmentCwd']
     : undefined;
-  const cwd = primaryDir === undefined || environmentId !== LOCAL_ENVIRONMENT_ID
-    ? originalCwd
-    : resolveEffectiveWorkspaceRoots(
-        { workspaceId, cwd: originalCwd ?? primaryDir },
-        { environmentId, cwd: environmentCwd },
-        { primaryByWorkspace: { [workspaceId]: primaryDir }, additionalDirs: [] },
-      ).workDir;
   return buildSessionSummary({
     id: sessionId,
     workspaceId,
-    cwd,
-    environmentId: typeof meta['environmentId'] === 'string' ? meta['environmentId'] : undefined,
+    cwd: sessionWorkDir({ cwd: recoverCwd(meta), environmentId, environmentCwd }, primaryDir),
+    environmentId,
     environmentCwd,
     title: typeof meta['title'] === 'string' ? meta['title'] : undefined,
     lastPrompt: typeof meta['lastPrompt'] === 'string' ? meta['lastPrompt'] : undefined,

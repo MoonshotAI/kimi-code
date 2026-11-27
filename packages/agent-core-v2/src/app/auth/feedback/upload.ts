@@ -1,5 +1,6 @@
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import type { FeedbackArchive } from './archive';
 
@@ -54,19 +55,22 @@ export interface UploadArchiveOptions {
   readonly maxRetries?: number;
   /** Called after each part finishes with the cumulative uploaded bytes. */
   readonly onProgress?: (uploadedBytes: number, totalBytes: number) => void;
+  readonly signal?: AbortSignal;
+  readonly redirect?: 'error';
 }
 
 export async function uploadArchive(
   api: FeedbackUploadUrlApi,
-  archive: FeedbackArchive,
+  archive: Pick<FeedbackArchive, 'path' | 'size' | 'sha256'>,
   feedbackId: number,
   options: UploadArchiveOptions,
-): Promise<void> {
+): Promise<number> {
   if (archive.size > MAX_ARCHIVE_SIZE) {
     throw new Error(
       `Failed to upload archive: size ${archive.size} exceeds maximum allowed size ${MAX_ARCHIVE_SIZE}.`,
     );
   }
+  options.signal?.throwIfAborted();
   const created = await api.createUploadUrl({
     feedbackId,
     filename: options.filename,
@@ -74,7 +78,9 @@ export async function uploadArchive(
     sha256: archive.sha256,
   });
   const completed = await uploadParts(archive.path, created.parts, archive.size, options);
+  options.signal?.throwIfAborted();
   await api.completeUpload({ uploadId: created.uploadId, parts: completed });
+  return created.uploadId;
 }
 
 interface PartLayout {
@@ -99,26 +105,46 @@ async function uploadParts(
   options: UploadArchiveOptions,
 ): Promise<CompletedUploadPart[]> {
   const layout = layoutParts(parts);
+  if (
+    layout.length === 0 ||
+    new Set(parts.map((part) => part.partNumber)).size !== parts.length ||
+    parts.some((part) => !Number.isSafeInteger(part.size) || part.size <= 0 ||
+      !Number.isSafeInteger(part.partNumber) || part.partNumber <= 0) ||
+    layout.reduce((size, { part }) => size + part.size, 0) !== totalBytes
+  ) {
+    throw new Error('Feedback upload parts do not match the file size.');
+  }
   const results: CompletedUploadPart[] = Array.from({ length: layout.length });
   const concurrency = Math.max(1, Math.min(options.concurrency ?? DEFAULT_CONCURRENCY, layout.length));
   let nextIndex = 0;
   let uploadedBytes = 0;
+  const abort = new AbortController();
+  const signal = options.signal === undefined ? abort.signal : AbortSignal.any([abort.signal, options.signal]);
+  let failure: { error: unknown } | undefined;
+  const workerOptions = { ...options, signal };
 
   async function worker(): Promise<void> {
-    while (true) {
+    while (!signal.aborted) {
       const index = nextIndex;
       nextIndex += 1;
       if (index >= layout.length) return;
       const entry = layout[index];
       if (entry === undefined) return;
-      const completed = await uploadOnePartWithRetry(filePath, entry, options);
-      results[index] = completed;
-      uploadedBytes += entry.part.size;
-      options.onProgress?.(uploadedBytes, totalBytes);
+      try {
+        results[index] = await uploadOnePartWithRetry(filePath, entry, workerOptions);
+        uploadedBytes += entry.part.size;
+        options.onProgress?.(uploadedBytes, totalBytes);
+      } catch (error) {
+        failure ??= { error };
+        abort.abort(error);
+        return;
+      }
     }
   }
 
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  if (failure !== undefined) throw failure.error;
+  signal.throwIfAborted();
   return results;
 }
 
@@ -130,12 +156,14 @@ async function uploadOnePartWithRetry(
   const maxRetries = Math.max(0, options.maxRetries ?? DEFAULT_MAX_RETRIES);
   let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    options.signal?.throwIfAborted();
     try {
       return await uploadOnePart(filePath, layout, options);
     } catch (error) {
       lastError = error;
+      options.signal?.throwIfAborted();
       if (attempt === maxRetries || !isRetryable(error)) break;
-      await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
+      await delay(RETRY_BASE_DELAY_MS * 2 ** attempt, undefined, { signal: options.signal });
     }
   }
   throw lastError;
@@ -148,31 +176,32 @@ async function uploadOnePart(
 ): Promise<CompletedUploadPart> {
   const { part, start } = layout;
   const timeoutMs = options.timeoutMs ?? DEFAULT_PART_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, timeoutMs);
+  const timeout = new AbortController();
+  const timer = timeoutMs === Infinity ? undefined : setTimeout(() => { timeout.abort(); }, timeoutMs);
+  const signal = options.signal === undefined ? timeout.signal : AbortSignal.any([timeout.signal, options.signal]);
   const stream = createReadStream(filePath, { start, end: start + part.size - 1 });
   try {
     const res = await fetch(part.url, {
       method: part.method,
       body: Readable.toWeb(stream),
+      redirect: options.redirect,
       headers: { 'Content-Length': String(part.size) },
       duplex: 'half',
-      signal: controller.signal,
+      signal,
     } as RequestInit);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new UploadPartHttpError(part.partNumber, res.status, text);
     }
     const etag = res.headers.get('etag');
+    await res.body?.cancel().catch(() => {});
     if (etag === null || etag.length === 0) {
       throw new Error(`Failed to upload part ${part.partNumber}: missing ETag in response.`);
     }
     return { partNumber: part.partNumber, etag };
   } catch (error) {
     stream.destroy();
-    if (error instanceof Error && error.name === 'AbortError') {
+    if (timeout.signal.aborted) {
       throw new Error(`Failed to upload part ${part.partNumber}: upload timed out.`, { cause: error });
     }
     throw error;
@@ -199,10 +228,4 @@ function isRetryable(error: unknown): boolean {
   }
   // Network errors and timeouts are retryable.
   return true;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }

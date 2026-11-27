@@ -1,4 +1,5 @@
 import {
+  AUTO_REVIEW_HINT_DELAY_MS,
   TRANSCRIPT_GROUP_COUNT_DELAY_MS,
   TRANSCRIPT_TAIL_ENTER_MS,
   TRANSCRIPT_TAIL_THINKING_THROTTLE_MS,
@@ -34,6 +35,8 @@ export interface CallFacts {
   readonly start: Instant;
   readonly name?: string;
   readonly argsEnd?: Instant;
+  readonly reviewStart?: Instant;
+  readonly reviewEnd?: Instant;
   readonly exec?: Instant;
   readonly settle?: CallSettle;
 }
@@ -52,11 +55,6 @@ export interface ThinkingFacts {
 
 export type TurnOutcome = 'completed' | 'stopped';
 
-/**
- * `endedAtMs` is `Date.now()` read at `end`, for showing when the turn finished. It is read
- * then because the monotonic clock can pause while the machine sleeps, so `end` cannot be
- * turned into wall time later.
- */
 export type TurnFacts =
   | { readonly kind: 'live'; readonly start: Instant }
   | {
@@ -71,6 +69,7 @@ export type CallPhase =
   | { readonly kind: 'history' }
   | { readonly kind: 'writing'; readonly since: Instant }
   | { readonly kind: 'queued'; readonly since: Instant }
+  | { readonly kind: 'reviewing'; readonly since: Instant }
   | { readonly kind: 'executing'; readonly since: Instant }
   | { readonly kind: 'settled'; readonly settle: CallSettle };
 
@@ -88,6 +87,9 @@ export function phaseAt(facts: CallFacts | undefined, now: Instant): CallPhase {
   if (facts === undefined) return { kind: 'history' };
   if (facts.settle !== undefined && facts.settle.at <= now) return { kind: 'settled', settle: facts.settle };
   if (happened(facts.exec, now)) return { kind: 'executing', since: facts.exec };
+  if (happened(facts.reviewStart, now) && !happened(facts.reviewEnd, now)) {
+    return { kind: 'reviewing', since: facts.reviewStart };
+  }
   if (happened(facts.argsEnd, now)) return { kind: 'queued', since: facts.argsEnd };
   return { kind: 'writing', since: facts.start };
 }
@@ -140,11 +142,24 @@ function preparingInterval(facts: CallFacts): Interval | undefined {
   return interval.from < interval.to ? interval : undefined;
 }
 
+function reviewHintInterval(facts: CallFacts): Interval | undefined {
+  if (facts.reviewStart === undefined) return undefined;
+  const interval = {
+    from: facts.reviewStart + AUTO_REVIEW_HINT_DELAY_MS,
+    to: Math.min(facts.reviewEnd ?? Infinity, facts.settle?.at ?? Infinity),
+  };
+  return interval.from < interval.to ? interval : undefined;
+}
+
 const contains = (interval: Interval | undefined, now: Instant): boolean =>
   interval !== undefined && interval.from <= now && now < interval.to;
 
 export function slowAt(facts: CallFacts | undefined, now: Instant): boolean {
   return facts !== undefined && contains(slowInterval(facts), now);
+}
+
+export function reviewHintAt(facts: CallFacts | undefined, now: Instant): boolean {
+  return facts !== undefined && contains(reviewHintInterval(facts), now);
 }
 
 export function preparingAt(facts: CallFacts | undefined, now: Instant): boolean {
@@ -172,6 +187,8 @@ interface MutableCall {
   readonly start: Instant;
   name?: string;
   argsEnd?: Instant;
+  reviewStart?: Instant;
+  reviewEnd?: Instant;
   exec?: Instant;
   settle?: CallSettle;
 }
@@ -247,12 +264,33 @@ export class TurnTimeline implements TimelineReader {
 
   callStarted(id: ToolCallId, name: string): void {
     const at = this.clock();
+    const call = this.prepareCall(id, name, at);
+    if (call === undefined) return;
+    if (call.reviewStart !== undefined) call.reviewEnd ??= at;
+    call.exec ??= at;
+  }
+
+  reviewStarted(id: ToolCallId, name: string): void {
+    const at = this.clock();
+    const call = this.prepareCall(id, name, at);
+    if (call === undefined) return;
+    call.reviewStart ??= at;
+    call.reviewEnd = undefined;
+  }
+
+  private prepareCall(id: ToolCallId, name: string, at: Instant): MutableCall | undefined {
     const call = this.calls.get(id) ?? this.register(id, { start: at });
-    if (call.settle !== undefined) return;
+    if (call.settle !== undefined) return undefined;
     this.closeOpen(at);
     call.name ??= name;
     call.argsEnd ??= at;
-    call.exec ??= at;
+    return call;
+  }
+
+  reviewEnded(id: ToolCallId): void {
+    const call = this.calls.get(id);
+    if (call === undefined || call.reviewStart === undefined || call.reviewEnd !== undefined) return;
+    call.reviewEnd = this.clock();
   }
 
   callResult(id: ToolCallId): void {
@@ -334,6 +372,7 @@ export class TurnTimeline implements TimelineReader {
       nextThought?.start ?? Infinity,
       ...this.turnCalls.map((call) => firstTaken(slowInterval(call))),
       ...this.turnCalls.map((call) => firstTaken(preparingInterval(call))),
+      ...this.turnCalls.map((call) => firstTaken(reviewHintInterval(call))),
       this.firstWaitAfter(end),
     ));
   }

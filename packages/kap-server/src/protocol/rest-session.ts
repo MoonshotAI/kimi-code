@@ -9,16 +9,15 @@ import {
 } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import { ErrorCode } from './error-codes';
-import { goalSnapshotSchema } from './goal';
-import { cursorQuerySchema, pageResponseSchema } from './pagination';
+import { pendingInteractionSchema } from './interaction';
 import {
   creationOnlyProfileSchema,
   sessionActivitySchema,
-  sessionChildCreateSchema,
   sessionCreateSchema,
   sessionForkSchema,
   sessionSchema,
 } from './session';
+import { agentStateSchema } from './ws-agent';
 
 export { sessionWarningSchema, sessionWarningsResponseSchema };
 export type {
@@ -101,6 +100,7 @@ export const listSessionsQuerySchema = z
     activity: repeatedParam(sessionActivitySchema),
     updated_after: isoDateTimeSchema.optional(),
     updated_before: isoDateTimeSchema.optional(),
+    query: z.string().optional(),
     sort: sessionsSortSchema.optional(),
     view: sessionsViewSchema.optional(),
     group_page_size: z.coerce.number().int().min(1).max(IDS_PROJECTION_PAGE_SIZE_MAX).optional(),
@@ -111,8 +111,20 @@ export const listSessionsQuerySchema = z
     page: z.coerce.number().int().min(1).optional(),
     before_id: z.string().min(1).optional(),
     after_id: z.string().min(1).optional(),
+    include_archive: booleanQueryParam,
+    exclude_empty: booleanQueryParam,
+    archived_only: booleanQueryParam,
+    hosts: z.literal('include').optional(),
   })
   .superRefine((value, ctx) => {
+    if (value.archived_only === true && value.include_archive === true) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'archived_only and include_archive are mutually exclusive',
+        path: ['archived_only'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
     const cursorParams = [
       value.page_token !== undefined ? 'page_token' : undefined,
       value.page !== undefined ? 'page' : undefined,
@@ -212,6 +224,7 @@ export type ListSessionsQuery = z.infer<typeof listSessionsQuerySchema>;
 export const sessionIdProjectionSchema = z.object({
   id: z.string().min(1),
   archived: z.boolean(),
+  host_id: z.string().optional(),
 });
 export type SessionIdProjection = z.infer<typeof sessionIdProjectionSchema>;
 
@@ -220,6 +233,7 @@ export const listSessionsFlatResponseSchema = z.object({
   total: z.number().int().nonnegative(),
   has_more: z.boolean(),
   next_page_token: z.string().min(1).optional(),
+  unavailable_hosts: z.array(z.string()).optional(),
 });
 export type ListSessionsFlatResponse = z.infer<typeof listSessionsFlatResponseSchema>;
 
@@ -227,6 +241,7 @@ export const sessionWorkspaceGroupSchema = z.object({
   workspace_id: z.string().min(1),
   sessions: z.array(z.union([sessionSchema, sessionIdProjectionSchema])),
   total: z.number().int().nonnegative(),
+  host_id: z.string().optional(),
 });
 export type SessionWorkspaceGroup = z.infer<typeof sessionWorkspaceGroupSchema>;
 
@@ -235,6 +250,7 @@ export const listSessionsGroupedResponseSchema = z.object({
   total: z.number().int().nonnegative(),
   has_more: z.boolean(),
   next_page_token: z.string().min(1).optional(),
+  unavailable_hosts: z.array(z.string()).optional(),
 });
 export type ListSessionsGroupedResponse = z.infer<typeof listSessionsGroupedResponseSchema>;
 
@@ -297,7 +313,10 @@ export const exportSessionRequestSchema = z
   .strict();
 export type ExportSessionRequest = z.infer<typeof exportSessionRequestSchema>;
 
-export const updateSessionProfileResponseSchema = sessionSchema;
+export const updateSessionProfileResponseSchema = z.object({
+  session: sessionSchema,
+  agent: agentStateSchema,
+});
 export type UpdateSessionProfileResponse = z.infer<typeof updateSessionProfileResponseSchema>;
 
 export const updateSessionMetaRequestSchema = updateSessionProfileRequestSchema;
@@ -309,8 +328,24 @@ export type UpdateSessionMetaResponse = UpdateSessionProfileResponse;
 export const updateSessionRequestSchema = updateSessionProfileRequestSchema;
 export type UpdateSessionRequest = z.infer<typeof updateSessionRequestSchema>;
 
-export const updateSessionResponseSchema = sessionSchema;
+export const updateSessionResponseSchema = updateSessionProfileResponseSchema;
 export type UpdateSessionResponse = z.infer<typeof updateSessionResponseSchema>;
+
+export type SessionAction =
+  | 'fork'
+  | 'compact'
+  | 'undo'
+  | 'cancel'
+  | 'wait'
+  | 'continue'
+  | 'btw'
+  | 'predict-prompt'
+  | 'cancel-prompt-prediction'
+  | 'restore'
+  | 'archive'
+  | 'delete'
+  | 'reload'
+  | 'takeover';
 
 export const forkSessionRequestSchema = sessionForkSchema;
 export type ForkSessionRequest = z.infer<typeof forkSessionRequestSchema>;
@@ -367,39 +402,13 @@ export const cancelPromptPredictionResponseSchema = z.object({
 });
 export type CancelPromptPredictionResponse = z.infer<typeof cancelPromptPredictionResponseSchema>;
 
-export const listSessionChildrenQuerySchema = cursorQuerySchema.and(
-  z.object({
-    busy: booleanQueryParam,
-    include_archive: booleanQueryParam,
-  }),
-);
-export type ListSessionChildrenQuery = z.infer<typeof listSessionChildrenQuerySchema>;
-
-export const listSessionChildrenResponseSchema = pageResponseSchema(sessionSchema);
-export type ListSessionChildrenResponse = z.infer<typeof listSessionChildrenResponseSchema>;
-
-export const createSessionChildRequestSchema = sessionChildCreateSchema;
-export type CreateSessionChildRequest = z.infer<typeof createSessionChildRequestSchema>;
-
-export const createSessionChildResponseSchema = sessionSchema;
-export type CreateSessionChildResponse = z.infer<typeof createSessionChildResponseSchema>;
-
-export const getSessionGoalResponseSchema = goalSnapshotSchema.nullable();
-export type GetSessionGoalResponse = z.infer<typeof getSessionGoalResponseSchema>;
-
-export const editSessionGoalRequestSchema = z.object({
-  objective: z.string(),
+export const compactSessionBodySchema = z.object({
+  instruction: z.string().optional(),
 });
-export type EditSessionGoalRequest = z.infer<typeof editSessionGoalRequestSchema>;
-
-export const editSessionGoalResponseSchema = goalSnapshotSchema;
-export type EditSessionGoalResponse = z.infer<typeof editSessionGoalResponseSchema>;
 
 export const compactSessionRequestSchema = z.preprocess(
   (value) => value === undefined ? {} : value,
-  z.object({
-    instruction: z.string().optional(),
-  }),
+  compactSessionBodySchema,
 );
 export type CompactSessionRequest = z.infer<typeof compactSessionRequestSchema>;
 
@@ -416,6 +425,15 @@ export const undoSessionResponseSchema = z.object({
   removed_turn_ids: z.array(z.string().min(1)),
 });
 export type UndoSessionResponse = z.infer<typeof undoSessionResponseSchema>;
+
+export const undoUnavailableDataSchema = z.object({
+  reason: z.enum(['empty', 'compaction_boundary', 'insufficient']),
+  requested_count: z.number().int().nonnegative(),
+  undoable_count: z.number().int().nonnegative(),
+  requestedCount: z.number().int().nonnegative().meta({ deprecated: true }),
+  undoableCount: z.number().int().nonnegative().meta({ deprecated: true }),
+});
+export type UndoUnavailableData = z.infer<typeof undoUnavailableDataSchema>;
 
 export const archiveSessionResponseSchema = z.object({
   archived: z.literal(true),
@@ -435,10 +453,46 @@ export const deleteSessionResponseSchema = z.object({
 });
 export type DeleteSessionResponse = z.infer<typeof deleteSessionResponseSchema>;
 
-export const sessionAbortResponseSchema = z.object({
-  aborted: z.boolean(),
+export const cancelSessionBodySchema = z.object({
+  agent_id: z.string().min(1).optional(),
+  include_background: z.boolean().optional(),
 });
-export type SessionAbortResponse = z.infer<typeof sessionAbortResponseSchema>;
+
+export const cancelSessionRequestSchema = z.preprocess(
+  (value) => (value === undefined ? {} : value),
+  cancelSessionBodySchema,
+);
+export type CancelSessionRequest = z.infer<typeof cancelSessionRequestSchema>;
+
+export const sessionCancelResponseSchema = z.object({
+  cancelled: z.boolean(),
+});
+export type SessionCancelResponse = z.infer<typeof sessionCancelResponseSchema>;
+
+export const DEFAULT_SESSION_WAIT_TIMEOUT_MS = 15_000;
+export const MAX_SESSION_WAIT_TIMEOUT_MS = 60_000;
+
+export const waitSessionBodySchema = z.object({
+  timeout_ms: z.number().int().min(0).max(MAX_SESSION_WAIT_TIMEOUT_MS).optional(),
+});
+
+export const waitSessionRequestSchema = z.preprocess(
+  (value) => (value === undefined ? {} : value),
+  waitSessionBodySchema,
+);
+export type WaitSessionRequest = z.infer<typeof waitSessionRequestSchema>;
+
+export const waitSessionResponseSchema = z.object({
+  session: sessionSchema,
+  pending_interactions: z.array(pendingInteractionSchema),
+  timed_out: z.boolean(),
+});
+export type WaitSessionResponse = z.infer<typeof waitSessionResponseSchema>;
+
+export const sessionContinueResponseSchema = z.object({
+  continued: z.literal(true),
+});
+export type SessionContinueResponse = z.infer<typeof sessionContinueResponseSchema>;
 
 function fitsUtf8ByteLimit(value: string, limit: number): boolean {
   let bytes = 0;

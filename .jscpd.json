@@ -1,0 +1,24 @@
+{
+  "pattern": "{packages/*/src/**,apps/**/src/**,apps/vscode/shared/**,scripts/**,build/**,apps/*/scripts/**,packages/*/scripts/**,tests/scenarios/support/**,apps/kimi-code/test/e2e/tui/support/**,apps/desktop/e2e/{fixtures,pages}/**,packages/klient/test/helpers/**,packages/pi-tui/test/virtual-terminal.ts}",
+  "format": ["typescript", "tsx", "javascript", "jsx", "vue"],
+  "formatsExts": {
+    "javascript": ["js", "mjs", "cjs"],
+    "typescript": ["ts", "mts", "cts"]
+  },
+  "ignore": [
+    "**/*.{test,spec}.*",
+    "**/*.d.{ts,mts,cts}",
+    "**/{__snapshots__,recordings,__generated__,generated,vendor,node_modules,dist,coverage}/**",
+    "**/*.generated.*",
+    "**/webp-dec-wasm.ts",
+    "**/locales/**",
+    "**/{tsdown,vite,vitest,playwright}*.config.*",
+    "packages/pi-tui/src/**"
+  ],
+  "minTokens": 60,
+  "minLines": 6,
+  "mode": "mild",
+  "reporters": ["json"],
+  "output": ".tmp/jscpd",
+  "noTips": true
+}

@@ -5,7 +5,7 @@ import type { AgentReplayRecord } from '#/agent/replayBuilder/types';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { WireRecord } from '#/wire/record';
 import { fromCoreMessage } from '#human/message';
-import { fromLlmMessage } from '#/llm-adapter/contract/message';
+import { fromLlmMessage } from '#/wire/message';
 
 const METADATA: WireRecord = {
   type: 'metadata',
@@ -100,6 +100,37 @@ describe('foldWireRecords', () => {
       isError: false,
     });
     expect(tool.time).toBe(13);
+  });
+
+  it('rebuilds tool call arguments from argsRaw when present and keeps legacy records unchanged', () => {
+    const raw = '{ "command":  "ls", "timeout": 1e3 }';
+    const folded = fold([
+      loopEvent({ type: 'step.begin', uuid: 's1' }, 1),
+      loopEvent(
+        {
+          type: 'tool.call',
+          stepUuid: 's1',
+          toolCallId: 'tc1',
+          name: 'Shell',
+          args: { command: 'ls', timeout: 1000 },
+          argsRaw: raw,
+        },
+        2,
+      ),
+      loopEvent(
+        { type: 'tool.call', stepUuid: 's1', toolCallId: 'tc2', name: 'Shell', args: { command: 'pwd' } },
+        3,
+      ),
+      loopEvent({ type: 'step.end', uuid: 's1' }, 4),
+    ]);
+    const [assistant] = messageRecords(folded.replay);
+    if (assistant?.type !== 'message' || assistant.message.role !== 'assistant') {
+      throw new Error('expected assistant message');
+    }
+    expect(assistant.message.toolCalls.map((call) => call.arguments)).toEqual([
+      raw,
+      '{"command":"pwd"}',
+    ]);
   });
 
   it('defers messages behind an open tool exchange and flushes them in order', () => {

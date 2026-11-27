@@ -14,29 +14,25 @@ import type { IBuiltinSkillSource } from '#/features/skill/catalog/builtinSkillS
 import type { IUserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import type { IAppStateService } from '#/app/state/appState';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { IWorkspaceService } from '#/app/workspace/workspace';
-import type { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
+import type { IProjectService } from '#/app/project/project';
+import type { IProjectPersistence } from '#/app/project/projectPersistence';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
-import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import type { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
-import type { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
-import type { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
-import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
-import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
-import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
-import type { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
+import type { SessionLifecycleService } from '#/project/sessionLifecycle/sessionLifecycleService';
+import type { IProjectContext } from '#/project/projectContext/projectContext';
+import type { IPluginAgentProfileLoader } from '#/project/projectAgentProfileLoader/pluginAgentProfileLoader';
+import type { IUserAgentProfileLoader } from '#/project/projectAgentProfileLoader/userAgentProfileLoader';
+import type { IProjectTrust } from '#/project/projectTrust/projectTrust';
+import type { IProjectTrustStore } from '#/project/projectTrust/projectTrustStore';
+import type { ProgramMcpLease } from './programMcp';
 import type { ProgramWorkdir } from './programWorkdirs';
 
 export interface ProgramSessionControllerInput {
-  readonly context: IWorkspaceContext;
-  readonly extraAgentProfiles: IExtraAgentProfileLoader;
-  readonly explicitAgentProfiles: IExplicitAgentProfileLoader;
+  readonly context: IProjectContext;
   readonly userAgentProfiles: IUserAgentProfileLoader;
   readonly pluginAgentProfiles: IPluginAgentProfileLoader;
-  readonly mcp: IWorkspaceMcpService;
-  readonly trust: IWorkspaceTrust;
-  readonly acquireWorkdir: (environmentId: string, cwd: string, followsPrimary?: boolean) => Promise<ProgramWorkdir>;
+  readonly acquireMcp: (workDir?: string) => Promise<ProgramMcpLease>;
+  readonly trust: IProjectTrust;
+  readonly acquireWorkdir: (environmentId: string, cwd: string, followsPrimary?: boolean, launchDir?: string) => Promise<ProgramWorkdir>;
   readonly onDispose: () => void;
 }
 
@@ -57,8 +53,8 @@ export interface ProgramDependencies {
   readonly userSkills: IUserFileSkillSource;
   readonly telemetry: ITelemetryService;
   readonly docs: IAtomicDocumentStore;
-  readonly workspaces: IWorkspaceService;
-  readonly workspaceStore: IWorkspacePersistence;
-  readonly trustStore: IWorkspaceTrustStore;
+  readonly workspaces: IProjectService;
+  readonly workspaceStore: IProjectPersistence;
+  readonly trustStore: IProjectTrustStore;
   createSessionController(input: ProgramSessionControllerInput): SessionLifecycleService;
 }

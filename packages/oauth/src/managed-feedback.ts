@@ -1,16 +1,9 @@
-/**
- * Submit user feedback to the managed Kimi Code platform.
- *
- * POSTs a JSON body to `{kimiCodeBaseUrl}/feedback` with a Bearer access
- * token. The client tags `version` with a `kimi-code-` prefix so the
- * backend can identify this client.
- */
-
 import { readApiErrorMessage } from './api-error';
+import { isRecord } from './utils';
 import { kimiCodeBaseUrl } from './managed-usage';
 
 export interface SubmitFeedbackBody {
-  readonly session_id: string;
+  readonly session_id?: string;
   readonly content: string;
   readonly version: string;
   readonly os: string;
@@ -36,16 +29,58 @@ export function kimiCodeFeedbackUrl(baseUrl?: string): string {
   return `${(baseUrl ?? kimiCodeBaseUrl()).replace(/\/+$/, '')}/feedback`;
 }
 
+export interface FeedbackRequestOptions {
+  readonly timeoutMs?: number;
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly redirect?: 'error';
+  readonly signal?: AbortSignal;
+}
+
 export async function fetchSubmitFeedback(
   url: string,
   accessToken: string,
   body: SubmitFeedbackBody,
-  opts: { timeoutMs?: number; headers?: Readonly<Record<string, string>> } = {},
+  opts: FeedbackRequestOptions = {},
 ): Promise<FetchSubmitFeedbackResult> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, opts.timeoutMs ?? 8000);
+  const result = await postFeedbackJson(url, accessToken, body, opts, 'submit');
+  if (result.kind === 'error') return result;
+  const feedbackId = parseFeedbackId(result.payload);
+  return feedbackId === undefined
+    ? { kind: 'error', message: 'Failed to submit feedback: missing feedback_id.' }
+    : { kind: 'ok', feedbackId };
+}
+
+export interface UpdateFeedbackBody {
+  readonly feedback_id: number;
+  readonly content?: string;
+  readonly contact?: string;
+  readonly info?: Record<string, unknown>;
+}
+
+export async function fetchUpdateFeedback(
+  url: string,
+  accessToken: string,
+  body: UpdateFeedbackBody,
+): Promise<{ readonly kind: 'ok' } | FetchSubmitFeedbackError> {
+  const result = await postFeedbackJson(`${url.replace(/\/+$/, '')}/update`, accessToken, body, { redirect: 'error' }, 'update');
+  return result.kind === 'error' ? result : { kind: 'ok' };
+}
+
+const failureMessages = {
+  submit: 'Failed to submit feedback',
+  update: 'Failed to update feedback',
+  upload: 'Feedback upload request failed',
+} as const;
+
+export async function postFeedbackJson(
+  url: string,
+  accessToken: string,
+  body: unknown,
+  opts: FeedbackRequestOptions,
+  operation: keyof typeof failureMessages,
+): Promise<{ kind: 'ok'; payload: unknown } | FetchSubmitFeedbackError> {
+  const failure = failureMessages[operation];
+  const timeout = AbortSignal.timeout(opts.timeoutMs ?? 8000);
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -56,46 +91,33 @@ export async function fetchSubmitFeedback(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal: opts.signal === undefined ? timeout : AbortSignal.any([timeout, opts.signal]),
+      redirect: opts.redirect,
     });
     if (!res.ok) {
-      return {
-        kind: 'error',
-        status: res.status,
-        message: await readApiErrorMessage(
-          res,
-          `Failed to submit feedback: HTTP ${String(res.status)}`,
-        ),
-      };
+      return { kind: 'error', status: res.status, message: await readApiErrorMessage(res, `${failure}: HTTP ${res.status}`) };
     }
-    const feedbackId = parseFeedbackId(await res.json());
-    if (feedbackId === undefined) {
-      return { kind: 'error', message: 'Failed to submit feedback: missing feedback_id.' };
+    const text = await res.text();
+    const payload: unknown = text.length > 0 ? JSON.parse(text) : undefined;
+    if (isRecord(payload) && typeof payload['code'] === 'number' && payload['code'] !== 0) {
+      return { kind: 'error', message: 'The feedback service rejected the request.' };
     }
-    return { kind: 'ok', feedbackId };
+    return { kind: 'ok', payload };
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      return { kind: 'error', message: 'Failed to submit feedback: request timed out.' };
+    if (timeout.aborted) {
+      return { kind: 'error', message: operation === 'upload' ? 'Feedback upload request timed out.' : `${failure}: request timed out.` };
     }
-    const msg = error instanceof Error ? error.message : String(error);
-    return { kind: 'error', message: `Failed to submit feedback: ${msg}` };
-  } finally {
-    clearTimeout(timer);
+    return { kind: 'error', message: `${failure}: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
 
 function parseFeedbackId(payload: unknown): number | undefined {
-  const direct = readFeedbackId(payload);
-  if (direct !== undefined) return direct;
-  if (typeof payload === 'object' && payload !== null && 'data' in payload) {
-    return readFeedbackId((payload as { readonly data: unknown }).data);
-  }
-  return undefined;
+  if (!isRecord(payload)) return undefined;
+  return readFeedbackId(payload) ?? readFeedbackId(payload['data']);
 }
 
 function readFeedbackId(payload: unknown): number | undefined {
-  if (typeof payload !== 'object' || payload === null) return undefined;
-  const record = payload as Record<string, unknown>;
-  const value = record['feedback_id'] ?? record['id'];
-  return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
+  if (!isRecord(payload)) return undefined;
+  const value = payload['feedback_id'] ?? payload['id'];
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }

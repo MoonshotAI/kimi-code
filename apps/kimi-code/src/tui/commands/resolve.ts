@@ -1,16 +1,16 @@
+import type { TuiMode } from '@moonshot-ai/pi-tui';
+
 import {
-  findBuiltInSlashCommand,
+  findVisibleBuiltInSlashCommand,
   resolveSlashCommandAvailability,
   type BuiltinSlashCommand,
   type BuiltinSlashCommandName,
 } from './registry';
-import { isExperimentalFlagEnabled } from './experimental-flags';
 import { parseSlashInput } from './parse';
 import type { TUIState } from '../tui-state';
 import type { InlineSkillActivation } from '../types';
 import { extractInlineSkillActivations, findInlineSkillTokens } from '../utils/inline-skill-tokens';
 import type {
-  KimiSlashCommand,
   ParsedSlashInput,
   SlashCommandBusyReason,
   SlashCommandInvalidReason,
@@ -23,7 +23,6 @@ export type SlashCommandIntent =
       readonly command: BuiltinSlashCommand;
       readonly name: BuiltinSlashCommandName;
       readonly args: string;
-      /** Queue instead of executing now (/compact while streaming). */
       readonly enqueue?: boolean;
     }
   | {
@@ -56,6 +55,7 @@ export interface ResolveSlashCommandInput {
   readonly pluginCommandMap: ReadonlyMap<string, string>;
   readonly isStreaming: boolean;
   readonly isCompacting: boolean;
+  readonly tuiMode: TuiMode;
   readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
   readonly defaultSkillPathForCommand?: (commandName: string) => string | undefined;
 }
@@ -64,19 +64,13 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
   const parsed = parseSlashInput(options.input);
   if (parsed === null) return { kind: 'not-command' };
 
-  const command = findBuiltInSlashCommand(parsed.name);
-  // `command` is a literal union where only some members carry `experimentalFlag`; widen to read it.
-  if (
-    command !== undefined &&
-    isExperimentalFlagEnabled((command as KimiSlashCommand).experimentalFlag)
-  ) {
+  const command = findVisibleBuiltInSlashCommand(parsed.name, options.tuiMode);
+  if (command !== undefined) {
     const busyReason = slashCommandBusyReason(options);
     if (
       busyReason !== undefined &&
       resolveSlashCommandAvailability(command, parsed.args) === 'idle-only'
     ) {
-      // A live compaction also sets streamingPhase, and busyReason reports
-      // 'streaming' first — compacting must stay blocked, not enqueue.
       if (command.name === 'compact' && busyReason === 'streaming' && !options.isCompacting) {
         return {
           kind: 'builtin',
@@ -100,19 +94,11 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
     };
   }
 
-  // Skill activations are never blocked by a busy session: the TUI queues
-  // them behind the running turn exactly like normal messages (see
-  // sendSkillActivation), and Ctrl-S steers them as real activations, so
-  // skill commands can be issued any time.
   const exactSkillName = options.skillCommandMap.get(parsed.name) ?? options.skillCommandMap.get(parsed.name.toLowerCase());
   if (exactSkillName !== undefined) {
     return skillCommandIntent(parsed, exactSkillName);
   }
 
-  // A plugin command wins over the skill shorthand for the same
-  // `<pluginId>:<name>` input: the skill stays reachable through its explicit
-  // `skill:<pluginId>:<name>` command, while the plugin command has no
-  // alternative form.
   if (options.pluginCommandMap.has(parsed.name)) {
     const busyReason = slashCommandBusyReason(options);
     if (busyReason !== undefined) {
@@ -184,6 +170,40 @@ export function resolveUserInput(options: ResolveSlashCommandInput): {
   return { intent, activations: selectedActivations };
 }
 
+export interface SlashCommandResolutionHost {
+  readonly state: {
+    readonly appState: Pick<TUIState['appState'], 'streamingPhase' | 'isCompacting'>;
+    readonly ui: Pick<TUIState['ui'], 'mode'>;
+  };
+  readonly skillCommandMap: ReadonlyMap<string, string>;
+  readonly pluginCommandMap: ReadonlyMap<string, string>;
+  readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
+  readonly defaultSkillPathForCommand?: (commandName: string) => string | undefined;
+}
+
+export function resolveHostUserInput(
+  host: SlashCommandResolutionHost,
+  input: string,
+  overrides?: Partial<Pick<ResolveSlashCommandInput, 'isStreaming' | 'isCompacting' | 'tuiMode'>>,
+): ReturnType<typeof resolveUserInput> {
+  return resolveUserInput({
+    input,
+    skillCommandMap: host.skillCommandMap,
+    pluginCommandMap: host.pluginCommandMap,
+    isStreaming: overrides?.isStreaming ?? host.state.appState.streamingPhase !== 'idle',
+    isCompacting: overrides?.isCompacting ?? host.state.appState.isCompacting,
+    tuiMode: overrides?.tuiMode ?? host.state.ui.mode,
+    skillVariantPathForCommand:
+      host.skillVariantPathForCommand === undefined
+        ? undefined
+        : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart),
+    defaultSkillPathForCommand:
+      host.defaultSkillPathForCommand === undefined
+        ? undefined
+        : (commandName) => host.defaultSkillPathForCommand!(commandName),
+  });
+}
+
 export function resolveSkillCommand(
   skillCommandMap: ReadonlyMap<string, string>,
   commandName: string,
@@ -251,11 +271,6 @@ export function slashBusyMessage(
   return `Cannot /${commandName} while compacting — wait for compaction to finish first.`;
 }
 
-/**
- * Whether a delayed input restore is still safe: the editor must be empty
- * (no newer draft) and still mounted (no editor-replacement panel opened
- * meanwhile). Restores that run synchronously with submit do not need this.
- */
 export function canRestoreSubmittedInput(host: { state: TUIState }): boolean {
   return host.state.editor.getText().length === 0 && !host.state.editorReplacementMounted;
 }

@@ -7,7 +7,8 @@ import type { FinishReason } from '@moonshot-ai/core/llm/response';
 import type { ContentPart, Message, TextPart, ToolCall, ToolDescription as Tool, UserMessage } from '@moonshot-ai/core/llm/message';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { Hooks } from '#/hooks';
-import type { LoopRequester } from './requesterContract';
+import type { LlmRequestModel } from '@moonshot-ai/core/llm/request';
+import type { FullLoopLlmRequester } from '@moonshot-ai/core/loop/request';
 import type {
   BindAgentInput,
   EffectiveProfileReader,
@@ -202,6 +203,7 @@ export interface PromptHandle extends PromptSnapshot {
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
   readonly promptId?: string;
+  readonly rejectIfBusy?: boolean;
 }
 
 export interface PromptLaunchResult {
@@ -244,12 +246,24 @@ export interface LoopDetachedTask {
   readonly completion: ToolCompletionFactory;
 }
 
+export interface LoopRequestContent {
+  readonly systemPrompt: string;
+  readonly tools: readonly Tool[];
+  readonly messages: readonly Message[];
+}
+
 export interface IAgentLoopService extends EffectiveProfileReader {
   readonly _serviceBrand: undefined;
 
-  readonly requester: LoopRequester;
+  readonly requester: FullLoopLlmRequester;
+
+  resolveMaxOutputTokens(maxOutputSize?: number): LlmRequestModel['maxOutputTokens'];
 
   start(tools?: readonly Tool[]): Promise<void>;
+
+  readonly started: boolean;
+
+  readonly hasPersistedState: boolean;
 
   baselineTools(): readonly Tool[];
 
@@ -277,6 +291,10 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   history(): readonly ContextMessage[];
 
+  rawHistory(): readonly Message[];
+
+  previewRequestContent(): LoopRequestContent;
+
   historyRevision(): number;
 
   replaceHistory(messages: readonly Message[], reason?: string, onAccepted?: () => void): boolean;
@@ -292,6 +310,7 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   detachTool(task: LoopDetachedTask, text?: string): void;
 
+  suppressTaskNotifications(taskIds: readonly string[]): void;
 
   abortTool(toolCallId: string, reason?: unknown): void;
 
@@ -299,7 +318,9 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   snapshot(): LoopSnapshot;
 
-  settled(): Promise<void>;
+  settled(): Promise<TurnResult | undefined>;
+
+  continueTurn(reminders?: readonly Message[]): void;
 
   retry(): Promise<TurnResult | undefined>;
 

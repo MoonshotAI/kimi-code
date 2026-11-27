@@ -2,12 +2,18 @@ import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 import { TuiAltScreen } from '@moonshot-ai/pi-tui';
 
 import { currentTheme, lightColors } from '#/tui/theme';
-import { DEFAULT_MARKDOWN_CONFIG, loadTuiConfig, resolveTuiMode, type TuiConfig } from '../config';
+import {
+  DEFAULT_MARKDOWN_CONFIG,
+  loadTuiConfig,
+  resolveTuiMode,
+  resolveWheelScrollLines,
+  type TuiConfig,
+} from '../config';
 import { TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { setMarkdownMermaidMode, setMarkdownRenderLatex } from '../utils/markdown-options';
 import type { SlashCommandHost } from './dispatch';
 import { applyTranscriptPresentation } from './config';
-import { setExperimentalFeatures } from './experimental-flags';
+import { isExperimentalFlagEnabled, setExperimentalFeatures } from './experimental-flags';
 
 export async function handleReloadTuiCommand(host: SlashCommandHost): Promise<void> {
   const tuiConfig = await loadTuiConfig(undefined, (message) =>
@@ -32,10 +38,10 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   }
 
   const config = await host.harness.getConfig({ reload: true });
+  const worktreeWasEnabled = isExperimentalFlagEnabled('worktree');
   setExperimentalFeatures(await host.harness.getExperimentalFeatures());
+  if (isExperimentalFlagEnabled('worktree') !== worktreeWasEnabled) await host.refreshWorkLocation();
   if (session === undefined) {
-    // Session-less v2: rebuild the workspace-level dynamic commands too, so
-    // skill/plugin changes apply before the first session exists.
     await host.refreshSkillCommands();
     await host.refreshPluginCommands();
   }
@@ -47,9 +53,6 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   await applyReloadedTuiConfig(host, tuiConfig);
 
   if (session === undefined) {
-    // Still session-less on the v2 engine: refresh the lazy defaults too, so
-    // defaults edited externally (config.toml, a newly added default model)
-    // reach the first lazy-created session instead of staying stale.
     await host.hydrateLazyConfigDefaults();
     host.showStatus(
       'Environment and TUI config reloaded; no active session.',
@@ -62,9 +65,6 @@ export async function applyReloadedTuiConfig(
   host: SlashCommandHost,
   config: TuiConfig,
 ): Promise<void> {
-  // Set the LaTeX toggle before applyTheme: theme application invalidates the
-  // transcript components, which rebuild their Markdown children and copy the
-  // options at construction — so the new value must be live by then.
   setMarkdownRenderLatex(config.renderLatex ?? true);
   setMarkdownMermaidMode(config.markdown?.mermaid ?? DEFAULT_MARKDOWN_CONFIG.mermaid);
   const resolved = config.theme === 'auto'
@@ -77,6 +77,7 @@ export async function applyReloadedTuiConfig(
     tuiMode: config.tuiMode,
     disablePasteBurst: config.disablePasteBurst,
     copyOnSelect: config.copyOnSelect,
+    wheelScrollLines: config.wheelScrollLines,
     renderLatex: config.renderLatex,
     cacheExpiryHint: config.cacheExpiryHint,
     autoSessionTitle: config.autoSessionTitle,
@@ -91,6 +92,7 @@ export async function applyReloadedTuiConfig(
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
   if (host.state.ui instanceof TuiAltScreen) {
     host.state.ui.setCopyOnSelect(config.copyOnSelect !== false);
+    host.state.ui.setWheelScrollLines(resolveWheelScrollLines(config.wheelScrollLines));
   }
   if (resolveTuiMode(config.tuiMode).mode !== host.state.ui.mode) {
     host.showNotice(TUI_MODE_RESTART_NOTICE);

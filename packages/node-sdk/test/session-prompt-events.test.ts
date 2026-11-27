@@ -5,73 +5,62 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  call,
+  createFakeModel,
+  held,
+  reply,
+  say,
+  type FakeModel,
+  type Lane,
+  type ModelRequest,
+  type RequestFacts,
+} from '@moonshot-ai/testkit/model';
+
 import { createKimiHarness, type Event, type KimiHarness } from '#/index';
 
 import { TEST_IDENTITY } from './test-identity';
 import { waitForAgentWireEvent } from './session-runtime-helpers';
 
-const MODEL_URL = 'https://model.example.test/v1/chat/completions';
-
-const fakeProviderState = vi.hoisted(() => ({
-  calls: [] as Array<{
-    readonly systemPrompt: string;
-    readonly history: unknown;
-  }>,
-  responseText: 'hello from fake provider',
-  responseGate: undefined as Promise<void> | undefined,
-}));
-
-function sseChunk(delta: Record<string, unknown>, finishReason: string | null = null): string {
-  return `data: ${JSON.stringify({
-    id: 'chatcmpl-stub',
-    object: 'chat.completion.chunk',
-    created: 0,
-    model: 'fake-model',
-    choices: [{ index: 0, delta, finish_reason: finishReason }],
-  })}`;
-}
-
-function sseBody(text: string): string {
-  return [sseChunk({ role: 'assistant', content: text }), sseChunk({}, 'stop'), 'data: [DONE]']
-    .map((line) => `${line}\n\n`)
-    .join('');
-}
-
+let model: FakeModel;
+let catchAll: Lane | undefined;
 let fetchStub: ReturnType<typeof vi.spyOn> | undefined;
+
+function replies(): Lane {
+  catchAll ??= model.route('session', () => true);
+  return catchAll;
+}
+
+function userMentions(request: RequestFacts, text: string): boolean {
+  return request.texts('user').some((content) => content.includes(text));
+}
+
+function systemPromptOf(request: ModelRequest | undefined): string {
+  return request?.texts('system').join('\n') ?? '';
+}
+
+function historyOf(request: ModelRequest | undefined): string {
+  return JSON.stringify((request?.body as { readonly messages?: unknown } | undefined)?.messages ?? []);
+}
 
 const tempDirs: string[] = [];
 
 beforeEach(() => {
-  fakeProviderState.calls.length = 0;
-  fakeProviderState.responseText = 'hello from fake provider';
-  fakeProviderState.responseGate = undefined;
-  fetchStub = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    if (url !== MODEL_URL) {
-      throw new Error(`Unexpected fetch: ${url}`);
-    }
-    const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
-      readonly messages?: ReadonlyArray<{ readonly role: string; readonly content: unknown }>;
-    };
-    const messages = body.messages ?? [];
-    const system = messages.find((message) => message.role === 'system');
-    fakeProviderState.calls.push({
-      systemPrompt: typeof system?.content === 'string' ? system.content : '',
-      history: messages,
-    });
-    await fakeProviderState.responseGate;
-    return new Response(sseBody(fakeProviderState.responseText), {
-      status: 200,
-      headers: { 'Content-Type': 'text/event-stream' },
-    });
-  });
+  model = createFakeModel();
+  catchAll = undefined;
+  fetchStub = vi.spyOn(globalThis, 'fetch').mockImplementation(model.fetch);
 });
 
 afterEach(async () => {
   fetchStub?.mockRestore();
   fetchStub = undefined;
-  for (const dir of tempDirs.splice(0)) {
-    await removeTempDir(dir);
+  try {
+    model.verify();
+  } finally {
+    await model.close();
+    for (const dir of tempDirs.splice(0)) {
+      await removeTempDir(dir);
+    }
   }
 });
 
@@ -104,46 +93,19 @@ describe('Session.prompt events', () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '');
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const requests: Array<{ tools: unknown; messages: Array<{ role: string; content: unknown }> }> =
-      [];
-    fetchStub!.mockImplementation(
-      async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
-        const url =
-          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-        if (url !== MODEL_URL) throw new Error(`Unexpected fetch: ${url}`);
-        if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body');
-        requests.push(JSON.parse(init.body));
-        const body =
-          requests.length % 2 === 1
-            ? [
-                sseChunk({
-                  role: 'assistant',
-                  tool_calls: [
-                    {
-                      index: 0,
-                      id: `notify-${requests.length}`,
-                      type: 'function',
-                      function: {
-                        name: 'NotifyUser',
-                        arguments: JSON.stringify({
-                          title: 'Checking the work',
-                          message: 'Reviewing the changed files.',
-                        }),
-                      },
-                    },
-                  ],
-                }),
-                sseChunk({}, 'tool_calls'),
-                'data: [DONE]',
-              ]
-                .map((line) => `${line}\n\n`)
-                .join('')
-            : sseBody('Work completed.');
-        return new Response(body, {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
-      },
+    const notify = (id: string) =>
+      call(
+        'NotifyUser',
+        { title: 'Checking the work', message: 'Reviewing the changed files.' },
+        { id },
+      );
+    replies().script(
+      notify('notify-1'),
+      say('Work completed.'),
+      notify('notify-3'),
+      say('Work completed.'),
+      notify('notify-5'),
+      say('Work completed.'),
     );
     let harness = createKimiHarness({
       identity: TEST_IDENTITY,
@@ -170,6 +132,9 @@ describe('Session.prompt events', () => {
         expect(await done).toMatchObject({ reason: 'completed' });
       }
       unsubscribe();
+      const requests = model.requests().map(
+        (request) => request.body as { tools: unknown; messages: Array<{ role: string; content: unknown }> },
+      );
       expect(requests).toHaveLength(6);
       const system = (request: (typeof requests)[number]) =>
         request.messages.filter((message) => message.role === 'system');
@@ -232,6 +197,7 @@ describe('Session.prompt events', () => {
 
     try {
       await configureFakeProvider(harness);
+      replies().script(say('first reply'), say('second reply'), say('image reply'));
       const session = await harness.createSession({ id: 'ses_prompt_meta', workDir });
       const events: Event[] = [];
       const unsubscribe = session.onEvent((event) => {
@@ -296,6 +262,7 @@ describe('Session.prompt events', () => {
 
     try {
       await configureFakeProvider(harness);
+      replies().script(say('hello from fake provider'));
       const session = await harness.createSession({ id: 'ses_prompt_events', workDir });
       const events: Event[] = [];
       const done = waitForEvent(session, (event) => event.type === 'turn.ended');
@@ -324,8 +291,8 @@ describe('Session.prompt events', () => {
           reason: 'completed',
         }),
       );
-      expect(fakeProviderState.calls[0]?.systemPrompt).toContain('You are Kimi Code CLI');
-      expect(fakeProviderState.calls[0]?.systemPrompt).toContain('Available skills');
+      expect(systemPromptOf(model.requests()[0])).toContain('You are Kimi Code CLI');
+      expect(systemPromptOf(model.requests()[0])).toContain('Available skills');
     } finally {
       await harness.close();
     }
@@ -341,6 +308,7 @@ describe('Session.prompt events', () => {
 
     try {
       await configureFakeProvider(harness);
+      replies().script(say('hello from fake provider'));
       const session = await harness.createSession({ id: 'ses_prompt_unsubscribe', workDir });
       const unsubscribedEvents: Event[] = [];
       const unsubscribe = session.onEvent((event) => {
@@ -368,6 +336,7 @@ describe('Session.prompt events', () => {
 
     try {
       await configureFakeProvider(harness);
+      replies().script(say('AGENTS.md written.'));
       const session = await harness.createSession({ id: 'ses_init_rpc', workDir });
       const events: Event[] = [];
       const unsubscribe = session.onEvent((event) => {
@@ -398,7 +367,7 @@ describe('Session.prompt events', () => {
           type: 'session.meta.updated',
         }),
       );
-      expect(JSON.stringify(fakeProviderState.calls[0]?.history)).toContain('Task requirements:');
+      expect(historyOf(model.requests()[0])).toContain('Task requirements:');
     } finally {
       await harness.close();
     }
@@ -414,6 +383,7 @@ describe('Session.prompt events', () => {
 
     try {
       await configureFakeProvider(harness);
+      replies().script(say('AGENTS.md written.'));
       const session = await harness.createSession({ id: 'ses_init_rpc_v2', workDir });
       const events: Event[] = [];
       const unsubscribe = session.onEvent((event) => {
@@ -438,135 +408,69 @@ describe('Session.prompt events', () => {
     }
   });
 
-  it('includes persisted subagent replay only when resume explicitly requests it', async () => {
+  it('includes cancelled subagent output in persisted replay only when resume explicitly requests it', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
     const childPrompt = 'Find why the parser never terminates.';
+    const bgWorkerPrompt = 'Keep streaming in background across fork and close.';
     const finding = 'Found the loop at src/parser.ts:42; not verified yet.';
     const draft = 'Drafting the report: the loop never advances.';
-    let parentRequests = 0;
-    let childRequests = 0;
-    let signalChildStreaming!: () => void;
-    const childStreaming = new Promise<void>((resolve) => {
-      signalChildStreaming = resolve;
-    });
     const parentAfterChild = Promise.withResolvers<void>();
-    const toolResponse = (id: string, name: string, args: Record<string, unknown>, text?: string) =>
-      [
-        sseChunk({
-          role: 'assistant',
-          ...(text === undefined ? {} : { content: text }),
-          tool_calls: [
-            {
-              index: 0,
-              id,
-              type: 'function',
-              function: { name, arguments: JSON.stringify(args) },
-            },
-          ],
-        }),
-        sseChunk({}, 'tool_calls'),
-        'data: [DONE]',
-      ]
-        .map((line) => `${line}\n\n`)
-        .join('');
+    const childDraft = model.hold('child-draft');
+    const bgWorkerDraft = model.hold('bg-worker');
 
     try {
       await configureFakeProvider(harness);
-      await harness.setConfig({ experimental: { subagent_fork: true } });
-      fetchStub!.mockImplementation(async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
-        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-        if (url !== MODEL_URL) throw new Error(`Unexpected fetch: ${url}`);
-        const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
-          readonly messages?: ReadonlyArray<{ readonly role: string; readonly content: unknown }>;
-        };
-        const messages = body.messages ?? [];
-        const isChild = messages.some(
-          (message) => message.role === 'user' && JSON.stringify(message.content).includes(childPrompt),
+      model
+        .route('bg-worker', (request) => userMentions(request, bgWorkerPrompt))
+        .script(held('bg-worker', reply(say('working'), say(' still working')), 1));
+      const bgParent = model
+        .route('bg-parent', (request) => userMentions(request, 'Start background worker and finish turn'))
+        .script(
+          call(
+            'Agent',
+            { description: 'bg worker', prompt: bgWorkerPrompt, run_in_background: true },
+            { id: 'call_bg_worker' },
+          ),
+          say('Worker running in background.'),
         );
-        if (isChild) {
-          childRequests += 1;
-          if (childRequests === 1) {
-            return new Response(toolResponse('child_tasks', 'TaskList', {}, finding), {
-              status: 200,
-              headers: { 'Content-Type': 'text/event-stream' },
-            });
-          }
-          const stream = new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(
-                new TextEncoder().encode(`${sseChunk({ role: 'assistant', content: draft })}\n\n`),
-              );
-              signalChildStreaming();
-              const abort = () => {
-                controller.error(init?.signal?.reason);
-              };
-              if (init?.signal?.aborted === true) abort();
-              else init?.signal?.addEventListener('abort', abort, { once: true });
-            },
-          });
-          return new Response(stream, {
-            status: 200,
-            headers: { 'Content-Type': 'text/event-stream' },
-          });
-        }
-
-        const isSeed = messages.some(
-          (message) => message.role === 'user' && JSON.stringify(message.content).includes('seed completed boundary'),
+      const child = model
+        .route('child', (request) => userMentions(request, childPrompt))
+        .script(
+          call('TaskList', {}, { id: 'child_tasks', text: finding }),
+          held('child-draft', reply(say(draft), say(' and the rest')), 1),
         );
-        const isParentTurn = messages.some(
-          (message) => message.role === 'user' && JSON.stringify(message.content).includes('Stop the forked subagent'),
-        );
-        if (isSeed && !isParentTurn) {
-          return new Response(sseBody('seed answer'), {
-            status: 200,
-            headers: { 'Content-Type': 'text/event-stream' },
-          });
-        }
-
-        parentRequests += 1;
-        if (parentRequests === 1) {
-          return new Response(
-            toolResponse('call_agent', 'Agent', {
-              description: 'trace parser loop',
-              prompt: childPrompt,
-              run_in_background: true,
-              fork: true,
-            }),
-            { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
-          );
-        }
-        if (parentRequests === 2) {
-          await childStreaming;
-          await parentAfterChild.promise;
-          const taskId = /task_id: (agent-[0-9a-z]+)/.exec(JSON.stringify(messages))?.[1];
-          if (taskId === undefined) throw new Error('Expected a background task id');
-          return new Response(toolResponse('call_stop', 'TaskStop', { task_id: taskId }), {
-            status: 200,
-            headers: { 'Content-Type': 'text/event-stream' },
-          });
-        }
-        return new Response(sseBody('Stopped the forked subagent.'), {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
-      });
 
       const session = await harness.createSession({ id: 'ses_subagent_replay', workDir });
       await session.setPermission('yolo');
       const events: Event[] = [];
       const unsubscribe = session.onEvent((event) => events.push(event));
       await runPrompt(session, 'seed completed boundary', 'seed answer');
-      await session.prompt('Stop the forked subagent after it writes a draft.');
-      await childStreaming;
+      replies().script(
+        call(
+          'Agent',
+          { description: 'trace parser loop', prompt: childPrompt, run_in_background: true },
+          { id: 'call_agent' },
+        ),
+        async (request) => {
+          await childDraft.reached();
+          await parentAfterChild.promise;
+          const taskId = /task_id: (agent-[0-9a-z]+)/.exec(request.rawBody)?.[1];
+          if (taskId === undefined) throw new Error('Expected a background task id');
+          return call('TaskStop', { task_id: taskId }, { id: 'call_stop' });
+        },
+        say('Stopped the subagent.'),
+      );
+      await session.prompt('Stop the subagent after it writes a draft.');
+      await childDraft.reached();
 
       const runningFork = await harness.forkSession({ id: session.id });
       expect(runningFork.getResumeState()?.agents['main']).toMatchObject({ userTurnCount: 2 });
       expect(visibleReplayText(runningFork.getResumeState()?.agents['main']?.replay ?? [])).toEqual([
         'user:seed completed boundary',
         'assistant:seed answer',
-        'user:Stop the forked subagent after it writes a draft.',
+        'user:Stop the subagent after it writes a draft.',
       ]);
       expect(Object.keys(runningFork.getResumeState()?.sessionMetadata.agents ?? {})).toEqual([
         'main',
@@ -576,7 +480,9 @@ describe('Session.prompt events', () => {
       parentAfterChild.resolve();
       await vi.waitFor(
         () => {
-          expect(parentRequests).toBe(3);
+          expect(
+            replies().requests().filter((request) => userMentions(request, 'Stop the subagent')),
+          ).toHaveLength(3);
           expect(events).toContainEqual(
             expect.objectContaining({ type: 'turn.ended', agentId: 'main', reason: 'completed' }),
           );
@@ -593,7 +499,7 @@ describe('Session.prompt events', () => {
 
       const spawned = events.find((event) => event.type === 'subagent.spawned');
       if (spawned?.type !== 'subagent.spawned') throw new Error('Expected persisted subagent');
-      expect(childRequests).toBe(2);
+      expect(child.requests()).toHaveLength(2);
       const stopResults = events.filter(
         (event) => event.type === 'tool.result' && event.toolCallId === 'call_stop',
       );
@@ -644,6 +550,44 @@ describe('Session.prompt events', () => {
           }),
         }),
       );
+      await fullResume.close();
+
+      const bgSession = await harness.createSession({ id: 'ses_bg_reconcile', workDir });
+      await bgSession.setPermission('yolo');
+      const bgTurnEnded = waitForEvent(
+        bgSession,
+        (event) => event.type === 'turn.ended' && event.agentId === 'main',
+      );
+      await bgSession.prompt('Start background worker and finish turn');
+      await bgTurnEnded;
+      await bgWorkerDraft.reached();
+      expect(bgParent.requests()).toHaveLength(2);
+
+      const idleFork = await harness.forkSession({ id: bgSession.id });
+      expect(bgParent.requests()).toHaveLength(2);
+      await vi.waitFor(async () => {
+        expect(await idleFork.listBackgroundTasks({ activeOnly: false })).toEqual([
+          expect.objectContaining({ status: 'lost' }),
+        ]);
+        expect((await idleFork.getContext()).history).toContainEqual(
+          expect.objectContaining({
+            origin: expect.objectContaining({ kind: 'task', status: 'lost' }),
+          }),
+        );
+      });
+      await idleFork.close();
+
+      await bgSession.close();
+      const coldBgResume = await harness.resumeSession({ id: bgSession.id });
+      expect(bgParent.requests()).toHaveLength(2);
+      await vi.waitFor(async () => {
+        expect((await coldBgResume.getContext()).history).toContainEqual(
+          expect.objectContaining({
+            origin: expect.objectContaining({ kind: 'task', status: 'killed' }),
+          }),
+        );
+      });
+      await coldBgResume.close();
     } finally {
       parentAfterChild.resolve();
       await harness.close();
@@ -660,6 +604,7 @@ describe('Session.prompt events', () => {
 
     try {
       await configureFakeProvider(harness);
+      replies().script(say('hello from fake provider'));
       const session = await harness.createSession({ id: 'ses_btw_rpc', workDir });
       const events: Event[] = [];
       const unsubscribe = session.onEvent((event) => {
@@ -670,7 +615,7 @@ describe('Session.prompt events', () => {
       await session.prompt('main task context');
       await done;
 
-      fakeProviderState.responseText = 'The main agent is working from the existing context.';
+      replies().script(say('The main agent is working from the existing context.'));
       events.length = 0;
       done = waitForEvent(
         session,
@@ -708,10 +653,8 @@ describe('Session.prompt events', () => {
           type: 'session.meta.updated',
         }),
       );
-      expect(fakeProviderState.calls[1]?.systemPrompt).toBe(
-        fakeProviderState.calls[0]?.systemPrompt,
-      );
-      const btwHistoryText = JSON.stringify(fakeProviderState.calls[1]?.history);
+      expect(systemPromptOf(model.requests()[1])).toBe(systemPromptOf(model.requests()[0]));
+      const btwHistoryText = historyOf(model.requests()[1]);
       expect(btwHistoryText).toContain('main task context');
       expect(btwHistoryText).toContain('What are you working on right now?');
 
@@ -736,6 +679,7 @@ describe('Session.prompt events', () => {
       await runPrompt(source, 'first question', 'first answer');
       await runPrompt(source, 'second question', 'second answer');
       await runPrompt(source, 'third question', 'third answer');
+      model.expectCacheBreak('undo rewrites the history', { at: 'history' });
       await source.undoHistory(1);
       await source.close();
 
@@ -755,6 +699,7 @@ describe('Session.prompt events', () => {
       expect(userTurnCount).toBe(3);
       expect(legacySnapshot.agents['main']?.userTurnCount).toBeUndefined();
 
+      replies().script(say('Compacted summary.'));
       await resumed.compact();
       await waitForAgentWireEvent(homeDir, source.id, 'context.apply_compaction');
       const compacted = await harness.reloadSession({ id: source.id });
@@ -771,55 +716,6 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
-    let thirdRequests = 0;
-    fetchStub!.mockImplementation(async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url !== MODEL_URL) throw new Error(`Unexpected fetch: ${url}`);
-      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
-        readonly messages?: unknown;
-      };
-      const serialized = JSON.stringify(body.messages ?? []);
-      if (serialized.includes('queued question')) {
-        return new Response(sseBody('queued answer'), {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
-      }
-      if (serialized.includes('third question')) {
-        thirdRequests += 1;
-        if (thirdRequests === 1) {
-          const toolBody = [
-            sseChunk({
-              role: 'assistant',
-              tool_calls: [{
-                index: 0,
-                id: 'running-fork-shell',
-                type: 'function',
-                function: {
-                  name: 'Bash',
-                  arguments: JSON.stringify({ command: 'node -e "setTimeout(() => {}, 2000)"' }),
-                },
-              }],
-            }),
-            sseChunk({}, 'tool_calls'),
-            'data: [DONE]',
-          ].map((line) => `${line}\n\n`).join('');
-          return new Response(toolBody, {
-            status: 200,
-            headers: { 'Content-Type': 'text/event-stream' },
-          });
-        }
-        return new Response(sseBody('third answer'), {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
-      }
-      return new Response(sseBody(fakeProviderState.responseText), {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-      });
-    });
-
     try {
       await configureFakeProvider(harness);
       const source = await harness.createSession({ id: 'ses_turn_fork_source', workDir });
@@ -840,6 +736,11 @@ describe('Session.prompt events', () => {
         source,
         (event) => event.type === 'turn.ended' && event.turnId === 3,
         5_000,
+      );
+      replies().script(
+        call('Bash', { command: 'node -e "setTimeout(() => {}, 2000)"' }, { id: 'running-fork-shell' }),
+        say('third answer'),
+        say('queued answer'),
       );
       await source.prompt('third question');
       await toolStarted;
@@ -957,6 +858,7 @@ describe('Session.prompt events', () => {
       await runPrompt(source, 'kept prompt one', 'kept answer one');
       await runPrompt(source, 'kept prompt two', 'kept answer two');
       await runPrompt(source, 'retracted prompt', 'retracted answer');
+      model.expectCacheBreak('undo rewrites the history', { at: 'history' });
       await source.undoHistory(1);
       await runPrompt(source, 'follow-up prompt', 'follow-up answer');
 
@@ -1024,6 +926,7 @@ describe('Session.prompt events', () => {
       const fork = await harness.forkSession({ id: source.id, turnIndex: 0 });
       const started = waitForEvent(fork, (event) => event.type === 'turn.started');
       const ended = waitForEvent(fork, (event) => event.type === 'turn.ended');
+      replies().script(say('branch answer'));
 
       await fork.prompt('branch continuation');
 
@@ -1044,6 +947,7 @@ describe('Session.prompt events', () => {
       const source = await harness.createSession({ id: 'ses_turn_fork_agents_source', workDir });
       await runPrompt(source, 'kept prompt', 'kept answer');
       await runPrompt(source, 'future prompt', 'future answer');
+      replies().script(say('AGENTS.md written.'));
       await source.init();
 
       const fork = await harness.forkSession({ id: source.id, turnIndex: 0 });
@@ -1077,12 +981,12 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
-    const responseGate = Promise.withResolvers<void>();
+    const firstReply = model.hold('first-reply');
 
     try {
       await configureFakeProvider(harness);
       const source = await harness.createSession({ id: 'ses_turn_fork_range_source', workDir });
-      fakeProviderState.responseGate = responseGate.promise;
+      replies().script(held('first-reply', say('hello from fake provider')));
       const started = waitForEvent(source, (event) => event.type === 'turn.started');
       const ended = waitForEvent(source, (event) => event.type === 'turn.ended');
       await source.prompt('only question');
@@ -1101,7 +1005,7 @@ describe('Session.prompt events', () => {
       ).resolves.toHaveLength(1);
       await fork.close();
 
-      responseGate.resolve();
+      firstReply.release();
       await ended;
       await source.close();
       const completedSource = await harness.resumeSession({ id: source.id });
@@ -1121,7 +1025,7 @@ describe('Session.prompt events', () => {
         'assistant:fork answer',
       ]);
     } finally {
-      responseGate.resolve();
+      firstReply.release();
       await harness.close();
     }
   });
@@ -1151,7 +1055,7 @@ async function runPrompt(
   input: string,
   response: string,
 ): Promise<void> {
-  fakeProviderState.responseText = response;
+  replies().script(say(response));
   const done = waitForEvent(session, (event) => event.type === 'turn.ended');
   await session.prompt(input);
   await done;
@@ -1186,7 +1090,7 @@ async function configureFakeProvider(harness: KimiHarness): Promise<void> {
   await harness.setConfig({
     providers: {
       local: {
-        type: 'openai',
+        type: 'kimi',
         baseUrl: 'https://model.example.test/v1',
         apiKey: 'sk-test',
       },

@@ -1,6 +1,8 @@
+import { stripVTControlCharacters } from 'node:util';
+
 import { visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
@@ -48,7 +50,6 @@ function truecolorCodes(text: string): Set<string> {
   return codes;
 }
 
-/** The two header rows (logo + title) of the rendered welcome box. */
 function headerOf(lines: string[]): string {
   return [lines[3], lines[4]].join('\n');
 }
@@ -79,7 +80,6 @@ describe('WelcomeComponent', () => {
   it('renders the banner in a single brand color by default', () => {
     const codes = truecolorCodes(headerOf(new WelcomeComponent(appState).render(80)));
 
-    // No rainbow by default — just the brand primary (plus the dim tagline).
     expect(codes.size).toBeLessThanOrEqual(2);
   });
 
@@ -112,6 +112,32 @@ describe('WelcomeComponent', () => {
 
     expect(lines.some((line) => line.includes('/home/remote/project'))).toBe(true);
     expect(lines.some((line) => line.includes('/Users/local/project'))).toBe(false);
+  });
+
+  it('adds a Worktree line under Directory only inside a worktree', () => {
+    vi.stubEnv('HOME', '/Users/me');
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+    const text = (state: AppState) =>
+      new WelcomeComponent(state)
+        .render(120)
+        .map((line) => stripVTControlCharacters(line).replaceAll(/^│\s*|\s*│$/g, ''));
+    const worktreeRoot = '/Users/me/.kimi-code/worktrees/wd_project/fix-login';
+    const inside = text({
+      ...appState,
+      workDir: worktreeRoot,
+      projectRoot: '/Users/me/code/project',
+      isGitRepo: true,
+      worktree: { root: worktreeRoot, name: 'fix-login', repoRoot: '/Users/me/code/project' },
+    });
+    const directory = inside.findIndex((line) => line.startsWith('Directory: '));
+    expect(inside[directory]).toBe(`Directory: ${worktreeRoot}`);
+    expect(inside[directory + 1]).toBe('Worktree:  fix-login of ~/code/project');
+    expect(inside[directory + 2]).toMatch(/^Session: {3}/);
+
+    const outside = text({ ...appState, workDir: '/Users/me/code/project' });
+    expect(outside.some((line) => line.startsWith('Worktree:'))).toBe(false);
   });
 
   it('keeps every line within the requested width on narrow terminals', () => {

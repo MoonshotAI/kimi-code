@@ -1,14 +1,15 @@
-/**
- * `runLlmRequest`: the policy-driven attempt loop. Each attempt applies recorded recovery rewrites and
- * the resolvers, then settles; failures are recovered or retried per the request policy, and every run
- * ends with `llm.ended` and an `LlmOutcome`.
- */
 import { estimateUsedContextTokens } from '#/llm/context-usage';
-import type { ToolDescription } from '#/llm/message';
+import {
+  createSystemMessage,
+  TOOL_ARGUMENT_CORRECTION_ORIGIN,
+  type SystemMessage,
+  type ToolDescription,
+} from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequest } from '#/llm/request';
-import type { LlmOutcome, LlmRunEvent, LlmRunStarted } from '#/llm/response';
+import type { LlmOutcome, LlmRunEvent, LlmRunRequested, LlmRunStarted } from '#/llm/response';
 import { sha256Hex } from '#/utils/hash';
+import { log } from '#/utils/log';
 
 import {
   createRecoveryLedger,
@@ -27,7 +28,7 @@ import {
   type LlmRetryable,
   type LlmRetryOptions,
 } from './retry';
-import { settleLlmRequest } from './settle';
+import { runAttempt } from './settle';
 
 export type LlmPolicyList<T> = readonly T[] | (() => readonly T[]);
 
@@ -45,6 +46,31 @@ export interface LlmRunControl {
     context: { readonly appliedRecoveries: readonly LlmRecoveryRecord[] },
   ) => void;
   readonly onEvent?: (event: LlmRunEvent) => void;
+}
+
+function mergePolicyLists<T>(
+  base: LlmPolicyList<T> | undefined,
+  extra: LlmPolicyList<T> | undefined,
+): LlmPolicyList<T> | undefined {
+  if (base === undefined) return extra;
+  if (extra === undefined) return base;
+  return () => [...listOf(base), ...listOf(extra)];
+}
+
+export function mergeLlmPolicies(base: LlmPolicy | undefined, extra: LlmPolicy | undefined): LlmPolicy | undefined {
+  if (base === undefined) return extra;
+  if (extra === undefined) return base;
+  const retry = base.retry === undefined
+    ? extra.retry
+    : extra.retry === undefined
+      ? base.retry
+      : { ...base.retry, ...extra.retry };
+  return {
+    resolvers: mergePolicyLists(base.resolvers, extra.resolvers),
+    recoveries: mergePolicyLists(base.recoveries, extra.recoveries),
+    retryables: mergePolicyLists(base.retryables, extra.retryables),
+    ...(retry === undefined ? {} : { retry }),
+  };
 }
 
 export interface LlmRequesterExecution {
@@ -110,7 +136,7 @@ export function llmStartedEvent(request: LlmRequest): LlmRunStarted {
       ? undefined
       : sha256Hex(
           encoder.encode(
-            JSON.stringify(profile.tools.filter((tool) => tool.deferred !== true).map(toolSignature)),
+            JSON.stringify(profile.tools.map(toolSignature)),
           ),
         );
   return {
@@ -128,6 +154,36 @@ export function llmStartedEvent(request: LlmRequest): LlmRunStarted {
   };
 }
 
+function requestedKindOf(kind: string | undefined): LlmRunRequested['kind'] {
+  if (kind === 'loop' || kind === 'compaction' || kind === 'prediction') return kind;
+  return undefined;
+}
+
+export function llmRequestedEvent(request: LlmRequest, attempt: number): LlmRunRequested {
+  const { maxOutputTokens, ...summary } = llmStartedEvent(request);
+  const encoder = new TextEncoder();
+  const attributes = request.attributes;
+  const kind = requestedKindOf(attributes?.kind);
+  const turnStep = attributes?.turnId === undefined
+    ? undefined
+    : attributes.step === undefined
+      ? undefined
+      : `${String(attributes.turnId)}.${String(attributes.step)}`;
+  const droppedCount = attributes?.logFields?.['droppedCount'];
+  return {
+    ...summary,
+    type: 'llm.requested',
+    ...(kind === undefined ? {} : { kind }),
+    ...(attributes?.modelAlias === undefined ? {} : { modelAlias: attributes.modelAlias }),
+    ...(turnStep === undefined ? {} : { turnStep }),
+    ...(typeof droppedCount === 'number' ? { droppedCount } : {}),
+    maxTokens: typeof maxOutputTokens === 'number' ? maxOutputTokens : undefined,
+    systemPromptHash: summary.systemPromptHash ?? sha256Hex(encoder.encode('')),
+    toolsHash: summary.toolsHash ?? sha256Hex(encoder.encode('[]')),
+    attempt: String(attempt),
+  };
+}
+
 export async function runLlmRequest(
   request: LlmRequest,
   control: LlmRunControl,
@@ -135,6 +191,9 @@ export async function runLlmRequest(
 ): Promise<LlmOutcome> {
   let outcome: LlmOutcome;
   try {
+    const started: LlmRunEvent = llmStartedEvent(request);
+    log.info({ ...started }, 'llm event');
+    control.onEvent?.(started);
     const sizedRequest: LlmRequest =
       request.content.usedTokens === undefined
         ? {
@@ -151,6 +210,15 @@ export async function runLlmRequest(
       outcome = { type: 'aborted', message: null, usage: undefined };
     } else {
       const llmError = toLlmErrorMessage(error);
+      log.error(
+        {
+          kind: llmError.kind,
+          message: llmError.message,
+          provider: request.model.spec.provider,
+          model: request.model.spec.name,
+        },
+        'llm request threw before completion',
+      );
       outcome = {
         type: 'failed',
         error: llmError,
@@ -159,10 +227,36 @@ export async function runLlmRequest(
       };
     }
   }
-  control.onEvent?.({ type: 'llm.ended', outcome });
+  const ended: LlmRunEvent = { type: 'llm.ended', outcome };
+  log.info({ ...ended }, 'llm event');
+  control.onEvent?.(ended);
   return outcome;
 }
 
+/**
+ * Drives the attempts of one LLM request.
+ *
+ * For each attempt, applies recovery and resolvers, adds any temporary correction,
+ * calls runAttempt, emits request/retry events, and enforces retry delays,
+ * attempt limits, and cancellation.
+ *
+ * Invariants:
+ * - Each attempt settles through an independent accumulator.
+ * - Retry partial assistant messages never enter conversation history; only the final outcome can.
+ * - Failed-attempt usage never contributes to a successful outcome or session usage.
+ * - Invalid tool calls never execute; corrections use only a temporary SystemMessage.
+ * - Bounded invalid-argument retries are immediate; infinite retries use Retry-After or backoff.
+ * - Cancellation prevents further attempts, including while waiting for a retry delay.
+ * - Final non-invalid failures may be salvaged; invalid-argument failures retain no text.
+ *
+ * State:
+ * buildAttempt(N) -> apply recovery/resolvers -> settle
+ *   done/aborted       -> return outcome
+ *   failed + recovery  -> record recovery -> emit retry -> buildAttempt(1)
+ *   failed + retryable -> emit retry -> wait -> buildAttempt(N + 1)
+ *   failed + terminal  -> return failed
+ *   abort at any point -> return aborted
+ */
 async function runAttempts(
   request: LlmRequest,
   control: LlmRunControl,
@@ -172,66 +266,85 @@ async function runAttempts(
   const policy = request.policy ?? {};
   const ledger = createRecoveryLedger(recoveries.read(request));
   let attempt = 1;
-  let started = false;
-  const pendingNotices: LlmRunEvent[] = [];
+  // Currently only set for invalid tool-call arguments to guide the next generation.
+  let toolArgumentCorrectionMessage: SystemMessage | undefined;
   const maxAttempts = resolveMaxAttempts(policy.retry);
-  const start = (resolvedRequest: LlmRequest): void => {
-    if (started) return;
-    started = true;
-    onEvent?.(llmStartedEvent(resolvedRequest));
-    for (const event of pendingNotices) onEvent?.(event);
-    pendingNotices.length = 0;
-  };
-
   while (!signal.aborted) {
-    const recoveredRequest = ledger.apply(request);
+    const requestForAttempt = toolArgumentCorrectionMessage === undefined
+      ? request
+      : {
+          ...request,
+          content: {
+            ...request.content,
+            messages: [...request.content.messages, toolArgumentCorrectionMessage],
+          },
+        };
+    const recoveredRequest = ledger.apply(requestForAttempt);
     let resolvedRequest = recoveredRequest;
     let recoveryRequest = recoveredRequest;
-    try {
-      for (const resolver of listOf(policy.resolvers)) {
-        resolvedRequest = await resolver.resolve(resolvedRequest, {
-          signal,
-          appliedRecoveries: ledger.applied,
-          report: (notice) => {
-            const event: LlmRunEvent = {
-              type: 'llm.notice',
-              notice: { ...notice, source: resolver.id },
-            };
-            if (started) onEvent?.(event);
-            else pendingNotices.push(event);
-          },
-        });
-        if (resolver.recoveryRequest === 'resolved') recoveryRequest = resolvedRequest;
-        if (signal.aborted) {
-          start(recoveredRequest);
-          return { type: 'aborted', message: null, usage: undefined };
-        }
+    for (const resolver of listOf(policy.resolvers)) {
+      resolvedRequest = await resolver.resolve(resolvedRequest, {
+        signal,
+        appliedRecoveries: ledger.applied,
+        report: (notice) => {
+          const event: LlmRunEvent = {
+            type: 'llm.notice',
+            notice: { ...notice, source: resolver.id },
+          };
+          log.info({ ...event }, 'llm event');
+          onEvent?.(event);
+        },
+      });
+      if (resolver.recoveryRequest === 'resolved') recoveryRequest = resolvedRequest;
+      if (signal.aborted) {
+        return { type: 'aborted', message: null, usage: undefined };
       }
-    } catch (error) {
-      start(recoveredRequest);
-      throw error;
     }
 
-    start(resolvedRequest);
     control.onAttempt?.(resolvedRequest, { appliedRecoveries: ledger.applied });
-    const result = await settleLlmRequest(resolvedRequest, { signal, onEvent });
+    const requested: LlmRunEvent = llmRequestedEvent(resolvedRequest, attempt);
+    log.info({ ...requested }, 'llm event');
+    onEvent?.(requested);
+    log.debug(
+      {
+        attempt,
+        maxAttempts,
+        provider: resolvedRequest.model.spec.provider,
+        model: resolvedRequest.model.spec.name,
+        recoveries: ledger.applied.length,
+      },
+      'llm attempt',
+    );
+    const result = await runAttempt(resolvedRequest, { signal, onEvent });
     if (result.type === 'done' || result.type === 'aborted') {
       return result;
     }
+    // Invalid arguments set a temporary correction. It survives transient failures
+    // without a salvaged message and is cleared when another failure has output.
+    if (result.error.kind === 'invalid_tool_arguments') {
+      toolArgumentCorrectionMessage = createSystemMessage(result.error.message, {
+        origin: { kind: TOOL_ARGUMENT_CORRECTION_ORIGIN },
+      });
+    } else if (result.message !== undefined) {
+      toolArgumentCorrectionMessage = undefined;
+    }
 
-    const proposal = proposeFirst(listOf(policy.recoveries), {
+    const proposal = await proposeFirst(listOf(policy.recoveries), {
       error: result.error,
       request: recoveryRequest,
+      resolvedRequest,
       appliedRecoveries: ledger.applied,
       endpoint: recoveryRequest.endpoint,
+      rawError: result.rawError,
+      signal,
     });
     if (proposal !== undefined) {
       proposal.beforeNextAttempt?.();
       ledger.record(proposal);
       recoveries.record(request, proposal);
       attempt = 1;
-      onEvent?.({
-        type: 'llm.retrying',
+      const retry: LlmRunEvent = {
+        type: 'llm.retry',
         reason: 'recovery',
         strategy: proposal.strategy,
         action: proposal.action,
@@ -243,15 +356,20 @@ async function runAttempts(
         messageId: result.messageId,
         requestId: result.requestId,
         timing: result.timing,
-      });
+      };
+      log.info({ ...retry }, 'llm event');
+      onEvent?.(retry);
       continue;
     }
 
     if (shouldRetry(policy.retry, attempt, result.error, listOf(policy.retryables))) {
-      const delayMs = readRetryAfterMs(result.error) ?? retryBackoffDelay(attempt - 1);
-      onEvent?.({
-        type: 'llm.retrying',
-        reason: 'backoff',
+      const invalidToolArguments = result.error.kind === 'invalid_tool_arguments';
+      const delayMs = invalidToolArguments && policy.retry?.infiniteRetry !== true
+        ? 0
+        : (readRetryAfterMs(result.error) ?? retryBackoffDelay(attempt - 1));
+      const retry: LlmRunEvent = {
+        type: 'llm.retry',
+        reason: invalidToolArguments ? 'invalid_tool_arguments' : 'backoff',
         failedAttempt: attempt,
         nextAttempt: attempt + 1,
         maxAttempts,
@@ -264,7 +382,9 @@ async function runAttempts(
         messageId: result.messageId,
         requestId: result.requestId,
         timing: result.timing,
-      });
+      };
+      log.info({ ...retry }, 'llm event');
+      onEvent?.(retry);
       if (!(await delay(delayMs, signal))) {
         return abortedOf(result, signal.reason);
       }
@@ -272,6 +392,18 @@ async function runAttempts(
       continue;
     }
 
+    log.error(
+      {
+        kind: result.error.kind,
+        message: result.error.message,
+        provider: resolvedRequest.model.spec.provider,
+        model: resolvedRequest.model.spec.name,
+        attempts: attempt,
+        recoveries: ledger.applied.length,
+        requestId: result.requestId ?? null,
+      },
+      'llm request failed',
+    );
     return result;
   }
 

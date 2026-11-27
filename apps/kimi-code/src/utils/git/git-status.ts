@@ -1,15 +1,3 @@
-/**
- * Cached git branch and working-tree status for the footer, read through the
- * engine so a remote-bound session reports the repository on its own host.
- *
- * getStatus() only reads the cache. The first read, refresh(), a HEAD change,
- * and a read past the 30s status TTL schedule a refresh. The read starts on a
- * later turn, not on the caller's stack, and not when the cache is
- * constructed. A local work tree has its HEAD polled every 2 seconds; a remote
- * one refreshes on refresh() and the TTL only. Pull request lookup stays async
- * and never blocks a read.
- */
-
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 
@@ -41,14 +29,11 @@ export interface PullRequestInfo {
 export interface GitStatusSource {
   status(): Promise<GitStatusSummary | null>;
   pullRequest(): Promise<GitPullRequest | null>;
-  /** Local work tree whose HEAD is polled for branch switches; unset for a remote one. */
   readonly localWorkDir?: string;
 }
 
 export interface GitStatusCache {
-  /** Returns the last status, or `null` when it is not available yet or this is not a git repo. */
   getStatus(): GitStatus | null;
-  /** Refresh now, ignoring the status TTL. No-op when a refresh is already running; one follow-up runs after it. */
   refresh(): void;
   dispose(): void;
 }
@@ -192,9 +177,7 @@ export function createGitStatusCache(
       watcher.on('error', () => undefined);
       watcher.add(join(gitDir, 'HEAD'));
       headWatcher = watcher;
-    } catch {
-      // Turn end and the status TTL still refresh if watching is unavailable.
-    }
+    } catch {}
   }
 
   function currentBranch(): string | null {
@@ -204,16 +187,16 @@ export function createGitStatusCache(
 
   function currentStatus(): GitStatus | null {
     const summary = status.summary;
+    if (summary === null) return null;
     const branch = currentBranch();
-    if (summary === null || branch === null) return null;
     return {
-      branch,
+      branch: branch ?? '',
       dirty: summary.dirty,
       ahead: summary.ahead,
       behind: summary.behind,
       diffAdded: summary.additions,
       diffDeleted: summary.deletions,
-      pullRequest: pullRequest.branch === branch ? pullRequest.value : null,
+      pullRequest: branch !== null && pullRequest.branch === branch ? pullRequest.value : null,
     };
   }
 

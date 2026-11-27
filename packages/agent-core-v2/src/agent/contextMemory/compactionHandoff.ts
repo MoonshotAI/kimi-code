@@ -1,4 +1,4 @@
-import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/session/tokenCounting/tokens';
 import { isSkillActivationPart } from '@moonshot-ai/core/llm/origin';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
@@ -340,10 +340,8 @@ function truncateTextToTokensFromEnd(text: string, maxTokens: number): string {
   let start = text.length;
   for (let i = text.length - 1; i >= 0; i--) {
     let isAscii = false;
-    // oxlint-disable-next-line unicorn/prefer-code-point
     const code = text.charCodeAt(i);
     if (code >= 0xdc00 && code <= 0xdfff && i > 0) {
-      // oxlint-disable-next-line unicorn/prefer-code-point
       const high = text.charCodeAt(i - 1);
       if (high >= 0xd800 && high <= 0xdbff) {
         i--;

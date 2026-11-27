@@ -13,8 +13,6 @@ describe('scheduleHeadlessForceExit', () => {
     const exit = vi.fn();
     let code = 0;
     const handle = scheduleHeadlessForceExit({ exit }, () => code, 2000);
-    // The exit code can be set after scheduling (e.g. a goal turn maps its
-    // terminal status to process.exitCode); it must be read at fire time.
     code = 7;
 
     expect(exit).not.toHaveBeenCalled();
@@ -27,9 +25,6 @@ describe('scheduleHeadlessForceExit', () => {
   });
 
   it('schedules an unref\'d timer so a healthy run still exits naturally', () => {
-    // Real timers: an un-unref'd guard would itself keep the event loop alive,
-    // turning the fix into a regression (every healthy run would wait the full
-    // grace before exiting). hasRef() must be false.
     const exit = vi.fn();
     const handle = scheduleHeadlessForceExit({ exit }, () => 0, 60_000);
     expect((handle as { hasRef?: () => boolean }).hasRef?.()).toBe(false);
@@ -65,16 +60,15 @@ describe('drainStdio', () => {
       resolved = true;
     });
     await Promise.resolve();
-    expect(resolved).toBe(false); // still draining
+    expect(resolved).toBe(false);
 
-    flush?.(); // consumer caught up
+    flush?.();
     await done;
     expect(resolved).toBe(true);
   });
 
   it('gives up after the timeout when the consumer never drains', async () => {
     vi.useFakeTimers();
-    // write() never invokes its flush callback — a permanently-stuck consumer.
     const stream = { write: vi.fn(() => false) } as unknown as Writable;
 
     let resolved = false;
@@ -110,12 +104,9 @@ describe('finalizeHeadlessRun', () => {
       graceMs: 2000,
     });
 
-    // Output is still draining: even well past the force-exit grace, we must NOT
-    // have armed/fired the exit — doing so would truncate the buffered output.
     await vi.advanceTimersByTimeAsync(4000);
     expect(exit).not.toHaveBeenCalled();
 
-    // Consumer catches up → drain completes → only now is the backstop armed.
     flush?.();
     await done;
     expect(exit).not.toHaveBeenCalled();

@@ -29,6 +29,7 @@ import type {
   TurnStepInterruptedEvent,
   TurnStepRetryingEvent,
   TurnStepStartedEvent,
+  TurnStepStreamResetEvent,
   WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -129,6 +130,7 @@ export interface SessionEventHost {
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
   steerQueuedMessagesIntoRunningTurn(): void;
+  acknowledgePromptQueued?(promptId: string): void;
   acknowledgeSteerDelivery?(input: unknown, promptIds?: readonly string[]): void;
   acknowledgeSteerTurnPrompt?(promptId: string | undefined, input: unknown, origin: unknown): void;
   acknowledgeSteerTurnStarted?(promptId?: string): void;
@@ -139,6 +141,7 @@ export interface SessionEventHost {
   handleTurnStarted?(event: TurnStartedEvent): void;
   handleTurnEnded?(event: TurnEndedEvent): void;
   handlePromptPredictionTurnEnded?(event: TurnEndedEvent): void;
+  handlePromptPredictionIdle?(): void;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
   readonly surveyController: SurveyController;
@@ -175,7 +178,6 @@ export class SessionEventHandler {
       });
   }
 
-  // Runtime state – owned by this handler, reset between sessions.
   backgroundTasks: Map<string, BackgroundTaskInfo> = new Map();
   backgroundTaskTranscriptedTerminal: Set<string> = new Set();
   private backgroundTaskTerminalEntries: Map<string, TranscriptEntry> = new Map();
@@ -188,6 +190,7 @@ export class SessionEventHandler {
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
   private currentTurnHasAssistantText = false;
+  private turnHadAssistantTextBeforeStep = false;
   private pluginCommandTurns: Map<string, string> = new Map();
   private pluginMcpToolsUsedInTurn: Set<string> = new Set();
   private pendingModelBlockedFallback: GoalChange | undefined;
@@ -212,6 +215,7 @@ export class SessionEventHandler {
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
     this.currentTurnHasAssistantText = false;
+    this.turnHadAssistantTextBeforeStep = false;
     this.pluginCommandTurns.clear();
     this.pluginMcpToolsUsedInTurn.clear();
     this.pendingModelBlockedFallback = undefined;
@@ -291,6 +295,7 @@ export class SessionEventHandler {
   }
 
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
+    if ('origin' in event && event.origin === 'shellCommand') return;
     this.notifications.handleEvent(event);
     if (event.type === 'background.task.started' || event.type === 'background.task.terminated') {
       this.host.handleBackgroundTaskStatus?.(event.info);
@@ -313,6 +318,7 @@ export class SessionEventHandler {
     }
 
     switch (event.type) {
+      case 'prompt.queued': this.host.acknowledgePromptQueued?.(event.promptId); break;
       case 'turn.started': this.handleTurnBegin(event); break;
       case 'turn.ended': this.handleTurnEnd(event, sendQueued); break;
       case 'prompt.completed': this.handlePromptCompleted(event, sendQueued); break;
@@ -320,6 +326,7 @@ export class SessionEventHandler {
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
       case 'turn.step.completed': this.handleStepCompleted(event); break;
       case 'turn.step.retrying': this.handleStepRetrying(event); break;
+      case 'turn.step.stream_reset': this.handleStepStreamReset(event); break;
       case 'tool.updated': this.handleToolUpdated(event); break;
       case 'shell.output': this.host.handleShellOutput(event); break;
       case 'shell.started': this.host.handleShellStarted(event); break;
@@ -329,6 +336,8 @@ export class SessionEventHandler {
       case 'tool.call.started': this.handleToolCall(event); break;
       case 'tool.call.delta': this.handleToolCallDelta(event); break;
       case 'tool.result': this.handleToolResult(event); break;
+      case 'auto_review.started': this.setToolAutoReviewing(event.toolCallId, event.toolName, true); break;
+      case 'auto_review.decision': this.setToolAutoReviewing(event.toolCallId, event.toolName, false); break;
       case 'agent.status.updated': this.handleStatusUpdate(event); break;
       case 'session.meta.updated': this.handleSessionMetaChanged(event); break;
       case 'goal.updated': this.handleGoalUpdated(event); break;
@@ -345,10 +354,17 @@ export class SessionEventHandler {
         this.subAgentEventHandler.handleLifecycleEvent(event); break;
       case 'subagent.started':
       case 'subagent.suspended':
+        this.subAgentEventHandler.handleLifecycleEvent(event); break;
       case 'subagent.completed':
       case 'subagent.failed':
-      case 'subagent.cancelled':
-        this.subAgentEventHandler.handleLifecycleEvent(event); break;
+      case 'subagent.cancelled': {
+        const record = this.subAgentEventHandler.activityStore.get(event.subagentId);
+        this.subAgentEventHandler.handleLifecycleEvent(event);
+        if (record !== undefined && this.host.state.tasksBrowser !== undefined) {
+          this.host.tasksBrowserController.onSubagentSettled(record);
+        }
+        break;
+      }
       case 'background.task.started':
       case 'background.task.terminated':
         this.handleBackgroundTaskEvent(event); break;
@@ -366,10 +382,6 @@ export class SessionEventHandler {
     }
     this.mcpServerStatusSpinners.clear();
   }
-
-  // ---------------------------------------------------------------------------
-  // Private handlers
-  // ---------------------------------------------------------------------------
 
   private handleTurnBegin(event: TurnStartedEvent): void {
     this.host.streamingUI.timeline.turnStarted();
@@ -434,9 +446,6 @@ export class SessionEventHandler {
     if (event.reason === 'cancelled') {
       this.markActiveAgentSwarmsCancelled();
     }
-    // Aborted foreground subagents emit no completed/failed lifecycle event
-    // (v2 suppresses it for aborts), so their activity records would linger
-    // until the session reset — prune them when the owning turn ends.
     this.subAgentEventHandler.dropForegroundOnlyActivityRecords();
     if (event.reason === 'failed' && event.error?.code === 'provider.filtered') {
       this.host.showStatus('Turn stopped: provider safety policy blocked the response.', 'error');
@@ -451,8 +460,6 @@ export class SessionEventHandler {
     this.renderPendingModelBlockedFallback();
     this.currentTurnHasAssistantText = false;
     this.goalCompletionTurnEnded = true;
-    // Plugin usage is reported once the whole turn's output has ended — but a
-    // cancelled turn cut the output short, so skip the notice there.
     const reportPluginUsage = event.reason !== 'cancelled';
     const pluginCommandPluginId = this.pluginCommandTurns.get(String(event.turnId));
     if (pluginCommandPluginId !== undefined) {
@@ -468,12 +475,17 @@ export class SessionEventHandler {
     }
     this.pluginMcpToolsUsedInTurn.clear();
     this.scheduleQueuedGoalPromotion();
+    if (event.continuation !== undefined && event.continuation !== 'turn') {
+      this.host.streamingUI.finalizeContinuation(sendQueued, event.continuation, event.turnId);
+      this.host.handlePromptPredictionIdle?.();
+    }
   }
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
     this.host.streamingUI.timeline.abandonUnstarted();
     this.host.streamingUI.flushNow();
     this.host.streamingUI.setStep(event.step);
+    this.turnHadAssistantTextBeforeStep = this.currentTurnHasAssistantText;
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('waiting');
     this.host.patchLivePane({
@@ -519,11 +531,14 @@ export class SessionEventHandler {
     this.host.showNotice(title, detail);
   }
 
+  private handleStepStreamReset(event: TurnStepStreamResetEvent): void {
+    if (event.step !== this.host.streamingUI.getTurnContext().step) return;
+    this.host.streamingUI.discardStepOutput();
+    this.currentTurnHasAssistantText = this.turnHadAssistantTextBeforeStep;
+  }
+
   private handleStepRetrying(event: TurnStepRetryingEvent): void {
     this.host.streamingUI.timeline.abandonUnstarted();
-    // The failure may arrive mid-stream, after thinking/assistant deltas have
-    // parked the pane in `thinking`/`composing` — drive it back to waiting so
-    // the retry label and detail actually render during the backoff.
     this.host.patchLivePane({ mode: 'waiting' });
     this.host.setAppState({
       streamingPhase: 'waiting',
@@ -537,9 +552,6 @@ export class SessionEventHandler {
         phase: 'backoff',
       },
     });
-    // Both engines sleep for `delayMs` before the next attempt runs, but only
-    // v2 re-emits `turn.step.started` for it — flip the phase on a timer so the
-    // stale countdown drops on the legacy engine too.
     this.clearStepRetryAttemptTimer();
     this.stepRetryAttemptTimer = setTimeout(() => {
       this.stepRetryAttemptTimer = undefined;
@@ -613,14 +625,6 @@ export class SessionEventHandler {
 
   private handleThinkingDelta(event: ThinkingDeltaEvent): void {
     const { state, streamingUI } = this.host;
-    // Encrypted / redacted reasoning (e.g. Kimi over the Anthropic-compatible
-    // protocol) streams thinking deltas whose visible text is empty — only an
-    // opaque signature rides along. Models also occasionally stream whitespace-
-    // only thinking (e.g. a single space). Such deltas carry nothing to render,
-    // so switching into the `thinking` pane mode here would stop the "waiting"
-    // moon spinner while no ThinkingComponent is ever created (it needs visible
-    // text), leaving a blank, spinner-less gap until the first real text/tool
-    // token arrives. Keep the moon up until actual thinking text shows up.
     if (event.delta.trim().length === 0 && !streamingUI.hasThinkingDraft()) return;
     streamingUI.timeline.thinkingDelta(event.delta);
     streamingUI.appendThinkingDelta(event.delta);
@@ -707,6 +711,20 @@ export class SessionEventHandler {
     });
   }
 
+  private setToolAutoReviewing(toolCallId: string, toolName: string, reviewing: boolean): void {
+    const { streamingUI } = this.host;
+    if (isToolCallId(toolCallId)) {
+      if (reviewing) {
+        streamingUI.timeline.reviewStarted(toolCallId, toolName);
+        if (streamingUI.getToolComponent(toolCallId) === undefined) {
+          streamingUI.accumulateToolCallDelta(toolCallId, toolName, undefined);
+        }
+      } else streamingUI.timeline.reviewEnded(toolCallId);
+    }
+    streamingUI.flushNow();
+    streamingUI.getToolComponent(toolCallId)?.setAutoReviewing(reviewing);
+  }
+
   private handleToolCallDelta(event: ToolCallDeltaEvent): void {
     if (!isToolCallId(event.toolCallId)) return;
     const { state, streamingUI } = this.host;
@@ -734,8 +752,6 @@ export class SessionEventHandler {
   }
 
   private handleToolUpdated(event: ToolUpdatedEvent): void {
-    // Input queued before the wait began would otherwise sit until the wait
-    // returns; steering it now ends the wait so the model reads it first.
     if (event.fields['wait'] !== undefined && this.host.streamingUI.markWaitForRunning(event.toolCallId)) {
       this.host.steerQueuedMessagesIntoRunningTurn();
     }
@@ -766,8 +782,6 @@ export class SessionEventHandler {
     };
     const matchedCall = streamingUI.completeToolResult(event.toolCallId, resultData);
     if (matchedCall !== undefined && isPluginMcpToolName(matchedCall.name)) {
-      // Buffer plugin MCP usage for the turn; the update notice fires once the
-      // whole turn's output has ended (see handleTurnEnd).
       this.pluginMcpToolsUsedInTurn.add(matchedCall.name);
     }
     this.subAgentEventHandler.handleAgentSwarmToolResult(
@@ -793,11 +807,6 @@ export class SessionEventHandler {
     if (event.contextUsage !== undefined) {
       patch.contextUsage = event.contextUsage;
     } else if (event.contextTokens !== undefined || event.maxContextTokens !== undefined) {
-      // v2 status events carry contextTokens/maxContextTokens but never
-      // contextUsage. Recompute the ratio from the post-patch token counts so
-      // it cannot go stale and drift from them — the footer and the /usage
-      // panel bar render this ratio while their texts recompute from the
-      // counts, so a stale ratio shows as a bar/percentage mismatch.
       const tokens = patch.contextTokens ?? this.host.state.appState.contextTokens;
       const max = patch.maxContextTokens ?? this.host.state.appState.maxContextTokens;
       patch.contextUsage = max > 0 ? tokens / max : 0;
@@ -849,10 +858,6 @@ export class SessionEventHandler {
     if (change === undefined) return;
     const { state } = this.host;
 
-    // Completion -> the box disappears (snapshot cleared on the follow-up null
-    // update) and a deterministic completion message lands in the transcript.
-    // Resume renders the same text from the durable goal completion replay
-    // record, so live and replayed completion cards stay identical.
     if (change.kind === 'completion' && event.snapshot !== null) {
       this.pendingModelBlockedFallback = undefined;
       this.goalCompletionAwaitingClear = true;
@@ -867,8 +872,6 @@ export class SessionEventHandler {
       return;
     }
 
-    // Lifecycle change (pause / resume / blocked) -> a low-profile,
-    // ctrl+o-expandable marker.
     if (change.kind === 'lifecycle' && change.status === 'blocked') {
       void this.notifyQueuedGoalWaitingOnBlocked();
       if (change.actor === 'model' || change.reason === undefined) {
@@ -949,6 +952,7 @@ export class SessionEventHandler {
       (session === undefined || this.host.session === session) &&
       !this.host.aborted &&
       this.host.state.appState.streamingPhase === 'idle' &&
+      !this.host.state.appState.isCompacting &&
       this.host.state.queuedMessages.length === 0 &&
       !this.host.state.queuedMessageDispatchPending
     );
@@ -1151,8 +1155,6 @@ export class SessionEventHandler {
     const children = state.transcriptContainer.children;
     const idx = children.indexOf(spinner);
     if (idx >= 0) {
-      // In-place replacement is picked up by the container's ref-checked
-      // render cache; a tree-wide invalidate is unnecessary (and costly).
       this.host.state.transcriptContainer.replaceChild(spinner, status);
     } else {
       state.transcriptContainer.addChild(status);
@@ -1200,12 +1202,8 @@ export class SessionEventHandler {
   private handleCompactionBegin(event: CompactionStartedEvent): void {
     this.compactionFailed = false;
     this.host.lastCompactionTrigger = event.trigger;
-    this.host.streamingUI.finalizeLiveTextBuffers('waiting');
-    this.host.setAppState({
-      isCompacting: true,
-      streamingPhase: 'waiting',
-      streamingStartTime: Date.now(),
-    });
+    this.host.streamingUI.finalizeLiveTextBuffers(this.host.state.livePane.mode);
+    this.host.setAppState({ isCompacting: true });
     this.host.streamingUI.beginCompaction(event.instruction);
   }
 
@@ -1213,8 +1211,6 @@ export class SessionEventHandler {
     event: CompactionCompletedEvent,
     sendQueued: (item: QueuedMessage) => void,
   ): void {
-    // Cancellations do not count: the context was not cut, so a queued
-    // /compact must still fire.
     if (this.host.lastCompactionTrigger === 'auto') this.host.autoCompactionSerial += 1;
     this.host.completedCompactionSerial += 1;
     this.host.streamingUI.endCompaction(
@@ -1222,9 +1218,6 @@ export class SessionEventHandler {
       event.result.tokensAfter,
       event.result.summary,
     );
-    // A completed compaction just refreshed and shrank the cached context —
-    // count it as activity so the next submit isn't judged against the
-    // pre-compaction timestamp. Cancellations do not count as activity.
     this.host.recordSessionActivity();
     if (!this.compactionFailed) this.host.noteCompactionFinished();
     this.host.surveyController.notifyCompactionFinished();
@@ -1242,6 +1235,12 @@ export class SessionEventHandler {
 
   private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
+    if (!hasActiveTurn && this.host.state.appState.loopLifecycleEvents === true) {
+      this.host.setAppState({ isCompacting: false });
+      this.host.streamingUI.resumeContinuation(sendQueued);
+      this.host.handlePromptPredictionIdle?.();
+      return;
+    }
     if (!hasActiveTurn && !this.host.state.queuedMessageDispatchPending) {
       const next = this.host.shiftQueuedMessage();
       if (next !== undefined) {
@@ -1263,22 +1262,12 @@ export class SessionEventHandler {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Background task lifecycle
-  // ---------------------------------------------------------------------------
-
   private handleBackgroundTaskEvent(
     event: BackgroundTaskStartedEvent | BackgroundTaskTerminatedEvent,
   ): void {
-    const { state } = this.host;
     const { info } = event;
     const previous = this.backgroundTasks.get(info.taskId);
     this.backgroundTasks.set(info.taskId, info);
-
-    const viewer = state.tasksBrowser?.viewer;
-    if (viewer !== undefined && viewer.taskId === info.taskId) {
-      void this.host.tasksBrowserController.refreshOutputViewer({ silent: true });
-    }
 
     const isTerminal =
       info.status === 'completed' ||
@@ -1289,37 +1278,30 @@ export class SessionEventHandler {
 
     if (event.type === 'background.task.started') {
       if (info.kind === 'agent') {
-        // A foreground subagent detached via Ctrl+B: flip its card to
-        // `◐ backgrounded` so it doesn't look like it completed.
         this.host.streamingUI.markSubagentBackgrounded(info.agentId);
         this.syncBackgroundTaskBadge();
-        this.host.tasksBrowserController.repaint();
+        this.host.tasksBrowserController.repaint(info);
         return;
       }
       this.appendBackgroundTaskEntry(info);
       this.syncBackgroundTaskBadge();
-      this.host.tasksBrowserController.repaint();
+      this.host.tasksBrowserController.repaint(info);
       return;
     }
 
     if (event.type === 'background.task.terminated' && isTerminal) {
       if (info.kind === 'agent') {
-        // The Agent tool's spawn-success ToolResult is not an error, so the
-        // parent toolCall card would otherwise render `✓ Completed` for any
-        // terminated bg agent — including `lost` / `failed` / `killed`.
-        // Push the actual terminal status so the card matches reality.
         this.host.streamingUI.applyBackgroundTaskTerminalStatus({
           agentId: info.agentId,
           description: info.description,
           status: info.status,
         });
-        // Stopped / timed-out agents terminate without a `subagent.failed`
-        // event — mark the activity record here so the detail view does not
-        // stay "running" forever. `subagent.completed` carries the result
-        // summary and may land after this, so only fill still-running records.
         const agentId = info.agentId;
         if (agentId !== undefined) {
-          const record = this.subAgentEventHandler.activityStore.get(agentId);
+          const parentToolCallId = 'parentToolCallId' in info && typeof info.parentToolCallId === 'string'
+            ? info.parentToolCallId
+            : undefined;
+          const record = this.subAgentEventHandler.activityStore.get(agentId, parentToolCallId);
           if (record !== undefined && record.status === 'running') {
             if (info.status === 'completed') {
               this.subAgentEventHandler.activityStore.markCompleted(agentId);
@@ -1336,14 +1318,14 @@ export class SessionEventHandler {
         this.backgroundTaskTranscriptedTerminal.add(info.taskId);
       }
       this.syncBackgroundTaskBadge();
-      this.host.tasksBrowserController.repaint();
+      this.host.tasksBrowserController.repaint(info);
       return;
     }
 
     if (previous?.status !== info.status) {
       this.syncBackgroundTaskBadge();
     }
-    this.host.tasksBrowserController.repaint();
+    this.host.tasksBrowserController.repaint(info);
   }
 
   private appendBackgroundTaskEntry(info: BackgroundTaskInfo): TranscriptEntry {
@@ -1361,13 +1343,6 @@ export class SessionEventHandler {
     return entry;
   }
 
-  /**
-   * Give a task-notification turn its own fold-segment boundary at turn start:
-   * move the task's asynchronously mounted terminal card down to the turn,
-   * or mount one now when none is mounted (e.g. it was trimmed). Without an
-   * anchor the turn's end-of-turn fold would extend into the previous turn's
-   * output and collapse its final answer into the step summary.
-   */
   private anchorTaskNotificationTurn(
     taskId: string,
     status: BackgroundTaskInfo['status'],
@@ -1376,10 +1351,6 @@ export class SessionEventHandler {
     if (mounted !== undefined && this.host.moveTranscriptEntryToEnd(mounted)) return;
     const task = this.backgroundTasks.get(taskId);
     if (task === undefined) return;
-    // An agent whose terminal lifecycle event landed before its task id was
-    // known (e.g. a tower worker that finished before registerTask) mounted
-    // its terminal card without registering it under the task id. Reuse that
-    // card instead of mounting a duplicate.
     if (task.kind === 'agent') {
       const orphaned = this.findTerminalBackgroundAgentCard(task.agentId, taskId);
       if (orphaned !== undefined && this.host.moveTranscriptEntryToEnd(orphaned)) {
@@ -1392,7 +1363,6 @@ export class SessionEventHandler {
     this.backgroundTaskTranscriptedTerminal.add(taskId);
   }
 
-  /** The agent's latest mounted terminal (non-`started`) background card. */
   private findTerminalBackgroundAgentCard(
     agentId: string | undefined,
     taskId: string,
@@ -1401,9 +1371,6 @@ export class SessionEventHandler {
     return this.host.state.transcriptEntries.findLast((entry) => {
       const card = entry.backgroundAgentStatus;
       if (card?.agentId !== agentId || card.phase === 'started') return false;
-      // A resumed background agent keeps its previous agentId, so the latest
-      // matching card can belong to an earlier run. Never reuse a card that
-      // is already registered under another task — mount our own instead.
       for (const [registeredTaskId, registered] of this.backgroundTaskTerminalEntries) {
         if (registered === entry && registeredTaskId !== taskId) return false;
       }

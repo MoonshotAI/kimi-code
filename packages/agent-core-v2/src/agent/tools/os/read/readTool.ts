@@ -21,7 +21,7 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
-import { countTokenChars, tokensForCharCounts, type TokenCharCounts } from '#/llm-adapter/contract/tokens';
+import { countTokenChars, tokensForCharCounts, type TokenCharCounts } from '#/session/tokenCounting/tokens';
 import {
   ToolAccesses,
   type ExecutableToolResult,
@@ -91,9 +91,7 @@ function stripTrailingLf(line: string): string {
 }
 
 function splitsSurrogatePair(text: string, offset: number): boolean {
-  // oxlint-disable-next-line unicorn/prefer-code-point -- raw UTF-16 halves are the point here
   const previous = text.charCodeAt(offset - 1);
-  // oxlint-disable-next-line unicorn/prefer-code-point -- raw UTF-16 halves are the point here
   const next = text.charCodeAt(offset);
   return previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
 }

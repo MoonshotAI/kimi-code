@@ -13,6 +13,10 @@ on:
         required: false
         type: number
         default: 3
+      web-ci-run-id:
+        description: 'Optional workflow run containing prebuilt CLI Web assets for this commit'
+        type: string
+        default: ''
       sign-macos:
         description: 'Whether to sign + notarize macOS builds (requires Apple secrets)'
         required: false
@@ -51,9 +55,8 @@ on:
       AZURE_CLIENT_SECRET:
         required: false
 
-permissions:
-  contents: read
-
+# Callers grant contents: read; callers that provide prebuilt Web assets also
+# grant actions: read to download them.
 jobs:
   native-bundle:
     name: Native bundle (${{ matrix.target }})
@@ -99,6 +102,8 @@ jobs:
         run: npm pkg set version="$VERSION"
 
       - name: Install dependencies
+        env:
+          KIMI_SKIP_DESKTOP_PTY_REBUILD: ${{ github.workflow == 'Release' && '1' || '' }}
         run: pnpm install --frozen-lockfile
 
       - name: Setup macOS keychain (release only)
@@ -116,9 +121,20 @@ jobs:
           node apps/kimi-code/scripts/update-catalog.mjs --out "$CATALOG_FILE"
           echo "KIMI_CODE_BUILT_IN_CATALOG_FILE=$CATALOG_FILE" >> "$GITHUB_ENV"
 
+      - name: Download prebuilt CLI Web assets
+        if: inputs.web-ci-run-id != ''
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.web-ci-run-id }}
+          name: cli-web-${{ inputs.sha || github.sha }}
+          path: apps/kimi-code/web-dist
+
       - name: Build Kimi web assets
-        # The SEA blob step embeds apps/kimi-code/dist-web. The bundle is
-        # committed (synced from the code-app repo) — just verify it is in place.
+        if: inputs.web-ci-run-id == ''
+        run: node apps/kimi-code/scripts/sync-web-dist.mjs
+
+      - name: Verify CLI Web assets before embedding
         run: node apps/kimi-code/scripts/check-web-assets.mjs
 
       - name: Build native executable (release profile, macOS signed)

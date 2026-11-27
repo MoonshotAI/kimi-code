@@ -1,3 +1,5 @@
+import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { defineConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
 import llmstxt from 'vitepress-plugin-llms'
@@ -52,13 +54,19 @@ const config = withMermaid(defineConfig({
                 { text: '开始使用', link: '/zh/guides/getting-started' },
                 { text: '从 kimi-cli 迁移', link: '/zh/guides/migration' },
                 { text: '常见使用案例', link: '/zh/guides/use-cases' },
-                { text: 'Tower 多 Agent 协作', link: '/zh/guides/tower' },
                 { text: '交互与输入', link: '/zh/guides/interaction' },
                 { text: '会话与上下文', link: '/zh/guides/sessions' },
-                { text: '在 IDE 中使用', link: '/zh/guides/ides' },
-                { text: '在网页中使用', link: '/zh/guides/web' },
-                { text: '远程控制', link: '/zh/guides/remote-control' },
+                { text: 'Git worktree', link: '/zh/guides/worktrees' },
+                { text: 'Tower 多 Agent 协作', link: '/zh/guides/tower' },
                 { text: '远程环境', link: '/zh/guides/remote-environment' },
+              ],
+            },
+            {
+              text: '多端与外部接入',
+              items: [
+                { text: '在网页中使用', link: '/zh/guides/web' },
+                { text: '在 IDE 中使用', link: '/zh/guides/ides' },
+                { text: '在其他 Agent 中使用（Agent to Agent）', link: '/zh/guides/other-agents' },
               ],
             },
           ],
@@ -93,16 +101,6 @@ const config = withMermaid(defineConfig({
               items: [
                 { text: 'kimi 命令', link: '/zh/reference/kimi-command' },
                 { text: 'kimi acp 子命令', link: '/zh/reference/kimi-acp' },
-                {
-                  text: '服务 API【测试版】',
-                  link: '/zh/reference/server-api',
-                  items: [
-                    { text: '会话与对话', link: '/zh/reference/server-api-conversation' },
-                    { text: '会话接口', link: '/zh/reference/server-api-sessions' },
-                    { text: '服务与配置接口', link: '/zh/reference/server-api-service' },
-                    { text: '文件接口', link: '/zh/reference/server-api-files' },
-                  ],
-                },
                 { text: '内置工具', link: '/zh/reference/tools' },
                 { text: '斜杠命令', link: '/zh/reference/slash-commands' },
                 { text: '键盘快捷键', link: '/zh/reference/keyboard' },
@@ -142,13 +140,19 @@ const config = withMermaid(defineConfig({
                 { text: 'Getting Started', link: '/en/guides/getting-started' },
                 { text: 'Migrating from kimi-cli', link: '/en/guides/migration' },
                 { text: 'Common Use Cases', link: '/en/guides/use-cases' },
-                { text: 'Tower multi-agent collaboration', link: '/en/guides/tower' },
                 { text: 'Interaction and Input', link: '/en/guides/interaction' },
                 { text: 'Sessions and Context', link: '/en/guides/sessions' },
-                { text: 'Using in IDEs', link: '/en/guides/ides' },
-                { text: 'Using Kimi Code in the browser', link: '/en/guides/web' },
-                { text: 'Remote Control', link: '/en/guides/remote-control' },
+                { text: 'Git worktrees', link: '/en/guides/worktrees' },
+                { text: 'Tower multi-agent collaboration', link: '/en/guides/tower' },
                 { text: 'Remote environments', link: '/en/guides/remote-environment' },
+              ],
+            },
+            {
+              text: 'Interfaces & Integrations',
+              items: [
+                { text: 'Using in the Browser', link: '/en/guides/web' },
+                { text: 'Using in IDEs', link: '/en/guides/ides' },
+                { text: 'Using in Other Agents (Agent to Agent)', link: '/en/guides/other-agents' },
               ],
             },
           ],
@@ -183,16 +187,6 @@ const config = withMermaid(defineConfig({
               items: [
                 { text: 'kimi Command', link: '/en/reference/kimi-command' },
                 { text: 'kimi acp Subcommand', link: '/en/reference/kimi-acp' },
-                {
-                  text: 'Server API (Beta)',
-                  link: '/en/reference/server-api',
-                  items: [
-                    { text: 'Sessions and Conversations', link: '/en/reference/server-api-conversation' },
-                    { text: 'Session Endpoints', link: '/en/reference/server-api-sessions' },
-                    { text: 'Service and Configuration Endpoints', link: '/en/reference/server-api-service' },
-                    { text: 'File Endpoints', link: '/en/reference/server-api-files' },
-                  ],
-                },
                 { text: 'Built-in Tools', link: '/en/reference/tools' },
                 { text: 'Slash Commands', link: '/en/reference/slash-commands' },
                 { text: 'Keyboard Shortcuts', link: '/en/reference/keyboard' },
@@ -218,6 +212,47 @@ const config = withMermaid(defineConfig({
     socialLinks: [
       { icon: 'github', link: 'https://github.com/MoonshotAI/kimi-code' },
     ],
+  },
+
+  buildEnd(siteConfig) {
+    const outDir = siteConfig.outDir
+    const skillsRoot = resolve(siteConfig.root, '../skills')
+    if (existsSync(skillsRoot)) {
+      const outSkillsDir = resolve(outDir, 'skills')
+      mkdirSync(outSkillsDir, { recursive: true })
+      for (const entry of readdirSync(skillsRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue
+        const skillFile = resolve(skillsRoot, entry.name, 'SKILL.md')
+        if (existsSync(skillFile)) {
+          copyFileSync(skillFile, resolve(outSkillsDir, `${entry.name}.md`))
+        }
+      }
+    }
+
+    const legacyPages = [
+      'server-api',
+      'server-api-conversation',
+      'server-api-sessions',
+      'server-api-service',
+      'server-api-files',
+    ]
+    for (const locale of ['en', 'zh'] as const) {
+      const guideTarget = `${base}${locale}/guides/other-agents.html`
+      const refDir = resolve(outDir, locale, 'reference')
+      mkdirSync(refDir, { recursive: true })
+      for (const slug of legacyPages) {
+        const html = `<!DOCTYPE html><html lang="${locale}"><head><meta charset="utf-8"><title>Redirecting…</title><link rel="canonical" href="${guideTarget}"><meta http-equiv="refresh" content="0; url=${guideTarget}"><script>location.replace(${JSON.stringify(guideTarget)});</script></head><body><p>Redirecting to <a href="${guideTarget}">${guideTarget}</a>…</p></body></html>\n`
+        writeFileSync(resolve(refDir, `${slug}.html`), html, 'utf8')
+      }
+      const guidesDir = resolve(outDir, locale, 'guides')
+      mkdirSync(guidesDir, { recursive: true })
+      const rcTarget = `${base}${locale}/guides/web.html#${locale === 'zh' ? '远程控制' : 'remote-control'}`
+      writeFileSync(
+        resolve(guidesDir, 'remote-control.html'),
+        `<!DOCTYPE html><html lang="${locale}"><head><meta charset="utf-8"><title>Redirecting…</title><link rel="canonical" href="${rcTarget}"><meta http-equiv="refresh" content="0; url=${rcTarget}"><script>location.replace(${JSON.stringify(rcTarget)});</script></head><body><p>Redirecting to <a href="${rcTarget}">${rcTarget}</a>…</p></body></html>\n`,
+        'utf8',
+      )
+    }
   },
 
   vite: {

@@ -3,11 +3,6 @@ import { z } from 'zod';
 import { getModelMigrationStateFile } from '#/utils/paths';
 import { readJsonFile, writeJsonFile } from '#/utils/persistence';
 
-/**
- * Records, per source model alias, the target model id a migration prompt was
- * already answered for. The prompt returns only when the registry declares a
- * different target.
- */
 const ModelMigrationStateSchema = z.object({
   version: z.literal(1),
   acknowledged: z.record(z.string().min(1), z.string().min(1)),

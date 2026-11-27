@@ -190,16 +190,18 @@ describe('fetchClientConfig', () => {
   });
 });
 
-describe('server-v2 POST /api/v1/client_configs', () => {
+describe('server-v2 GET /api/v1/client-configs/{name}', () => {
   let server: RunningServer | undefined;
   let cloud: Server | undefined;
   let home: string | undefined;
   let base: string;
   let cloudBehavior: { status: number; body: unknown };
+  let cloudRequestBody: string;
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-client-configs-'));
     cloudBehavior = { status: 200, body: {} };
+    cloudRequestBody = '';
   });
 
   afterEach(async () => {
@@ -228,9 +230,9 @@ describe('server-v2 POST /api/v1/client_configs', () => {
         raw += chunk.toString('utf-8');
       });
       req.on('end', () => {
+        cloudRequestBody = raw;
         res.writeHead(cloudBehavior.status, { 'content-type': 'application/json' });
         res.end(JSON.stringify(cloudBehavior.body));
-        void raw;
       });
     });
     await new Promise<void>((resolve) => {
@@ -253,10 +255,9 @@ describe('server-v2 POST /api/v1/client_configs', () => {
   async function postClientConfigs(
     name: string,
   ): Promise<Envelope<{ name: string; config: unknown }>> {
-    const res = await fetch(`${base}/api/v1/client_configs`, {
-      method: 'POST',
-      headers: { ...authHeaders(server as RunningServer), 'content-type': 'application/json' },
-      body: JSON.stringify({ name }),
+    const res = await fetch(`${base}/api/v1/client-configs/${encodeURIComponent(name)}`, {
+      method: 'GET',
+      headers: authHeaders(server as RunningServer),
     } as never);
     expect(res.status).toBe(200);
     return (await res.json()) as Envelope<{ name: string; config: unknown }>;
@@ -368,6 +369,45 @@ describe('server-v2 POST /api/v1/client_configs', () => {
     const body = await postClientConfigs('no_such_config');
     expect(body.code).toBe(0);
     expect(body.data).toEqual({ name: 'no_such_config', config: null });
+  });
+
+  it('serves the versioned feedback_form with ordered bilingual reply reasons and falls back for invalid updates', async () => {
+    const name = 'feedback_form';
+    const first = { id: 'incorrect_or_incomplete', label: { en: 'Incorrect or incomplete result', zh: '结果不正确或不完整' } };
+    const second = { id: 'other', label: { en: 'Other', zh: '其他' } };
+    const positive = [{ id: 'solved_problem', label: { en: 'Solved my problem', zh: '解决了我的问题' } }];
+    const form = (negative: unknown[]) => ({ name, config: { version: 1, reply_reasons: { negative, positive } } });
+    cloudBehavior = { status: 200, body: form([first, second]) };
+    await boot();
+    expect((await postClientConfigs(name)).data).toEqual(cloudBehavior.body);
+    expect(JSON.parse(cloudRequestBody)).toEqual({ name });
+
+    for (const reasons of [[first, first], [{ id: 'broken', label: { zh: '缺译文' } }]]) {
+      cloudBehavior = { status: 200, body: form(reasons) };
+      expect((await postClientConfigs(name)).data).toEqual({ name, config: null });
+    }
+    cloudBehavior = { status: 200, body: form([]) };
+    expect((await postClientConfigs(name)).data).toEqual(cloudBehavior.body);
+  });
+
+  it('preserves the HTTPS feedback guide for each configured language independently', async () => {
+    const name = 'feedback_form';
+    const reason = { id: 'other', label: { en: 'Other', zh: '其他' } };
+    const form = { version: 1, reply_reasons: { negative: [reason], positive: [] } };
+    const en = 'https://example.com/en/feedback';
+    const zh = 'https://example.com/zh/feedback';
+    await boot();
+    for (const [configured, expected] of [
+      [{ en, zh }, { en, zh }],
+      [{ en, zh: '/relative' }, { en }],
+      [{ en: 'http://example.com/feedback', zh }, { zh }],
+      [{ zh }, { zh }],
+    ]) {
+      cloudBehavior = { status: 200, body: { name, config: { ...form, learn_more_url: configured } } };
+      expect((await postClientConfigs(name)).data).toEqual({ name, config: { ...form, learn_more_url: expected } });
+    }
+    cloudBehavior = { status: 200, body: { name, config: { ...form, learn_more_url: 'invalid' } } };
+    expect((await postClientConfigs(name)).data).toEqual({ name, config: form });
   });
 
   it('returns null config when the cloud fetch keeps failing', async () => {

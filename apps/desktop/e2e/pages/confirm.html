@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<style>html{background:#fff;color:#111}</style>
+<title>Draft settings</title>
+<h1>Draft settings</h1>
+<button type="button" id="delete">Delete draft</button>
+<p id="result">No decision yet</p>
+<script>
+  document.getElementById('delete').addEventListener('click', () => {
+    const accepted = confirm('Delete the draft?');
+    document.getElementById('result').textContent = accepted ? 'Draft deleted' : 'Draft kept';
+  });
+</script>
+</html>

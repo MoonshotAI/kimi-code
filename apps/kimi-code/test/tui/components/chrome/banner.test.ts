@@ -124,8 +124,6 @@ describe('BannerComponent', () => {
     const subLine = lines[1]!;
     const subStartIndex = subLine.indexOf('This is a short subtext');
     const subIndentVisibleWidth = visibleWidth(subLine.slice(0, subStartIndex));
-    // The subtext starts two columns after the left edge ("✦ "), which aligns
-    // with the tag text itself rather than the main-text column.
     expect(subIndentVisibleWidth).toBe(visibleWidth('✦ '));
     expect(tagPrefixVisibleWidth).toBeGreaterThan(visibleWidth('✦ '));
   });
@@ -203,8 +201,6 @@ describe('BannerComponent', () => {
   });
 
   it('moves a long tag onto its own line so the main text keeps a usable width', () => {
-    // Regression: remote banner configs can set a full-sentence tag. Inline it
-    // would leave the main text only a few columns, which hard-breaks words.
     const width = 50;
     const lines = new BannerComponent(
       makeBannerState({
@@ -216,15 +212,12 @@ describe('BannerComponent', () => {
     for (const line of lines) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(width);
     }
-    // The tag occupies the first line alone; no main text is squeezed next to it.
     expect(lines[0]).toContain('✦ Use Kimi K3 with High thinking effort');
     expect(lines[0]).not.toContain('- for');
-    // Words stay intact (no mid-word hard breaks like "balan"/"ce").
     const joined = lines.join('\n');
     for (const word of ['balance', 'between', 'capability', 'thinking', 'effort']) {
       expect(joined).toContain(word);
     }
-    // Main text and subtext align with the tag text (right after "✦ ").
     const mainLine = lines.find((line) => line.includes('- for'))!;
     expect(visibleWidth(mainLine.slice(0, mainLine.indexOf('- for')))).toBe(visibleWidth('✦ '));
     const subLine = lines.find((line) => line.includes('Run /model'))!;

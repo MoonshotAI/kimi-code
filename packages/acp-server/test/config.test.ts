@@ -45,6 +45,7 @@ describe('acp-server config surface', () => {
     thinking?: boolean;
     supportEfforts?: readonly string[];
     defaultEffort?: string;
+    defaultPlanMode?: boolean;
     altThinking?: boolean;
     altSupportEfforts?: readonly string[];
     altDefaultEffort?: string;
@@ -58,10 +59,16 @@ describe('acp-server config surface', () => {
         altThinking: opts?.altThinking === true,
         altSupportEfforts: opts?.altSupportEfforts,
         altDefaultEffort: opts?.altDefaultEffort,
+        defaultPlanMode: opts?.defaultPlanMode,
       });
+    } else if (opts?.defaultPlanMode === true) {
+      await writeFile(join(homeDir, 'config.toml'), 'default_plan_mode = true\n');
     }
     client = await createTestClient({ homeDir });
-    await client.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+    await client.send('initialize', {
+      protocolVersion: 1,
+      clientCapabilities: opts?.defaultPlanMode === true ? { fs: { readTextFile: true } } : {},
+    });
     return client;
   }
 
@@ -103,6 +110,22 @@ describe('acp-server config surface', () => {
     30_000,
   );
 
+  it('describes the approval policies in both ACP mode pickers', async () => {
+    await boot();
+    const { modes, configOptions } = await newSession();
+    const auto = 'Run unattended, including sensitive operations, while honoring explicit deny rules.';
+    const yolo = 'Approve routine operations automatically. Sensitive actions can still require confirmation.';
+
+    expect(modes?.availableModes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'auto', description: auto }),
+      expect.objectContaining({ id: 'yolo', description: yolo }),
+    ]));
+    expect(configOptions.find((option) => option.id === 'mode')?.options).toEqual(expect.arrayContaining([
+      expect.objectContaining({ value: 'auto', description: auto }),
+      expect.objectContaining({ value: 'yolo', description: yolo }),
+    ]));
+  }, 30_000);
+
   it(
     'session/set_mode pushes current_mode_update alongside config_option_update',
     async () => {
@@ -117,7 +140,6 @@ describe('acp-server config surface', () => {
         .update;
       expect(modeUpdate?.currentModeId).toBe('yolo');
 
-      // The configOptions arm still refreshes for config-option clients.
       const configNotification = await configUpdatePromise;
       const configUpdate = (
         configNotification.params as { update?: { configOptions?: readonly ConfigOption[] } }
@@ -126,6 +148,43 @@ describe('acp-server config surface', () => {
     },
     30_000,
   );
+
+  it('reports the configured default plan mode on session creation and reload', async () => {
+    const c = await boot({ defaultPlanMode: true });
+    const { sessionId, modes, configOptions } = await newSession();
+    expect(modes?.currentModeId).toBe('plan');
+    expect(configOptions.find((option) => option.id === 'mode')?.currentValue).toBe('plan');
+    await c.send('session/close', { sessionId });
+    const restored = (await c.send('session/load', { sessionId, cwd: homeDir, mcpServers: [] })) as NewSessionResult;
+    expect(restored.modes?.currentModeId).toBe('plan');
+    expect(restored.configOptions.find((option) => option.id === 'mode')?.currentValue).toBe('plan');
+    expect(c.received.filter(({ method }) => method === 'fs/read_text_file')).toEqual([]);
+  }, 30_000);
+
+  it('reports a persisted plan mode on session resume', async () => {
+    const c = await boot();
+    const { sessionId } = await newSession();
+    await c.send('session/set_mode', { sessionId, modeId: 'plan' });
+    await c.send('session/close', { sessionId });
+
+    const restored = (await c.send('session/resume', { sessionId, cwd: homeDir, mcpServers: [] })) as NewSessionResult;
+    expect(restored.modes?.currentModeId).toBe('plan');
+    expect(restored.configOptions.find((option) => option.id === 'mode')?.currentValue).toBe('plan');
+  }, 30_000);
+
+  it('publishes only the final mode when explicitly switching from plan to YOLO', async () => {
+    const c = await boot();
+    const { sessionId } = await newSession();
+    await c.send('session/set_mode', { sessionId, modeId: 'plan' });
+    const start = c.sessionUpdates().length;
+    await c.send('session/set_mode', { sessionId, modeId: 'yolo' });
+    const updates = c.sessionUpdates().slice(start).map(({ params }) => (
+      params as { update: { sessionUpdate: string; currentModeId?: string } }
+    ).update);
+    expect(updates.filter(({ sessionUpdate }) => sessionUpdate === 'current_mode_update')).toEqual([
+      { sessionUpdate: 'current_mode_update', currentModeId: 'yolo' },
+    ]);
+  }, 30_000);
 
   it(
     'session/set_mode propagates plan errors without reporting a new mode',
@@ -143,6 +202,7 @@ describe('acp-server config surface', () => {
         conn: { sessionUpdate: async (update: unknown) => updates.push(update) },
         sessionId: 'session-test',
         currentModeId: 'default',
+        modeChangesInFlight: 0,
       });
 
       await expect(session.setMode('plan')).rejects.toThrow('plan toggle failed');
@@ -224,15 +284,12 @@ describe('acp-server config surface', () => {
     async () => {
       await boot({ fakeModel: true });
       const { sessionId } = await newSession();
-      // `session/set_model` was dropped from the SDK's legacy Agent interface
-      // in 1.x; the server keeps it as an extMethod special-case.
       const updatePromise = client!.waitForSessionUpdate('config_option_update');
       const result = await client!.send('session/set_model', {
         sessionId,
         modelId: FAKE_MODEL_ALT_ID,
       });
       expect(result).toEqual({});
-      // The switch reached the engine, not just the ACP surface.
       await expect(
         client!.server.klient.session(sessionId).agent('main').getModel(),
       ).resolves.toBe(FAKE_MODEL_ALT_ID);
@@ -278,12 +335,9 @@ describe('acp-server config surface', () => {
         modelId: `${FAKE_MODEL_ALT_ID},thinking`,
       });
       expect(result).toEqual({});
-      // The bare id reached the engine; thinking flipped on at the NEW
-      // model's declared default effort.
       await expect(agent.getModel()).resolves.toBe(FAKE_MODEL_ALT_ID);
       await expect(agent.getThinking()).resolves.toBe('high');
 
-      // The picker snapshot never carries the `,thinking` suffix.
       const listed = (await client!.send('session/set_config_option', {
         sessionId,
         configId: 'model',
@@ -304,14 +358,10 @@ describe('acp-server config surface', () => {
       await boot({ fakeModel: true, thinking: true, altThinking: true });
       const { sessionId } = await newSession();
       const agent = client!.server.klient.session(sessionId).agent('main');
-      // The default model is thinking-capable → thinking starts on.
       await expect(agent.getThinking()).resolves.not.toBe('off');
 
       await client!.send('session/set_model', { sessionId, modelId: FAKE_MODEL_ALT_ID });
       await expect(agent.getModel()).resolves.toBe(FAKE_MODEL_ALT_ID);
-      // Model and thinking stay orthogonal: the requested level survives the
-      // switch (the engine re-resolves it against the new thinking-capable
-      // model — it must not land on 'off').
       await expect(agent.getThinking()).resolves.not.toBe('off');
     },
     30_000,
@@ -323,8 +373,6 @@ describe('acp-server config surface', () => {
       await boot({ fakeModel: true, thinking: true });
       const { configOptions } = await newSession();
       const thinking = configOptions.find((o) => o.id === 'thinking');
-      // A thinking-capable model defaults to thinking on (the engine resolves
-      // the model's default effort when nothing is configured).
       expect(thinking?.currentValue).toBe('on');
     },
     30_000,
@@ -352,7 +400,6 @@ describe('acp-server config surface', () => {
         value: 'off',
       })) as { configOptions: readonly ConfigOption[] };
       expect(result.configOptions.find((o) => o.id === 'thinking')?.currentValue).toBe('off');
-      // The toggle reached the engine, not just the ACP surface.
       await expect(
         client!.server.klient.session(sessionId).agent('main').getThinking(),
       ).resolves.toBe('off');
@@ -393,7 +440,6 @@ describe('acp-server config surface', () => {
       const { configOptions } = await newSession();
       const thinking = configOptions.find((o) => o.id === 'thinking');
       expect(thinking?.options?.map((o) => o.value)).toEqual(['off', 'low', 'high']);
-      // Nothing configured → the engine resolves the model's default effort.
       expect(thinking?.currentValue).toBe('high');
     },
     30_000,
@@ -416,7 +462,6 @@ describe('acp-server config surface', () => {
         value: 'low',
       })) as { configOptions: readonly ConfigOption[] };
       expect(result.configOptions.find((o) => o.id === 'thinking')?.currentValue).toBe('low');
-      // The level reached the engine, not just the ACP surface.
       await expect(
         client!.server.klient.session(sessionId).agent('main').getThinking(),
       ).resolves.toBe('low');
@@ -477,10 +522,6 @@ describe('acp-server config surface', () => {
     'a Claude model on an Anthropic-typed provider advertises the thinking toggle via engine-derived capabilities',
     async () => {
       homeDir = await mkdtemp(join(tmpdir(), 'acp-config-'));
-      // No declared capabilities: the engine's catalog (`effectiveModelConfig`
-      // with the provider type) infers the Anthropic thinking profile for the
-      // Claude wire name, so the wire `capabilities`/`support_efforts` the ACP
-      // host reads already carry the derivation.
       await writeFile(
         join(homeDir, 'config.toml'),
         `defaultModel = "claude"
@@ -502,7 +543,6 @@ maxContextSize = 200000
       const { configOptions } = await newSession();
       const thinking = configOptions.find((o) => o.id === 'thinking');
       expect(thinking).toBeDefined();
-      // The inferred profile is effort-granular, not a bare off/on toggle.
       expect(thinking?.options?.length).toBeGreaterThan(2);
       expect(thinking?.options?.some((o) => o.value === 'off')).toBe(true);
     },
@@ -514,8 +554,6 @@ maxContextSize = 200000
     async () => {
       await boot();
       await newSession();
-      // The SDK handles the JSON-RPC-level cancel notification internally; a
-      // stray one (unknown id) must be a no-op, not a connection error.
       client!.notify('$/cancel_request', { id: 999_999 });
       const list = (await client!.send('session/list', {})) as { sessions: unknown[] };
       expect(list.sessions.length).toBeGreaterThan(0);

@@ -1,7 +1,9 @@
 import { createControlledPromise } from '@antfu/utils';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { say } from '@moonshot-ai/testkit/model';
+import { afterEach, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
 
-import type { ToolCall } from '@moonshot-ai/core/llm/message';
+import type { ContentPart, Message, ToolCall } from '@moonshot-ai/core/llm/message';
+import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
@@ -25,8 +27,11 @@ import type { ProcessTaskInfo } from '#/agent/task/types';
 import {
   createTestAgent,
   InMemoryWireRecordPersistence,
+  providerHttpError,
+  testkitAgentFixtures,
   wireRecordPersistenceServices,
   type TestAgentContext,
+  type TestkitAgentFixtures,
 } from '../../harness';
 import { submitPromptTurn } from './stubs';
 
@@ -75,6 +80,91 @@ describe('core LoopService integration', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello again' }] });
     await ctx.untilTurnEnd();
     expect(ctx.llmCalls[1]!.tools).toEqual(firstTools);
+  });
+
+  it('previews unresolved request content while the real request applies resolvers', async () => {
+    await ctx.dispose();
+    ctx = createTestAgent();
+    ctx.configure({ modelCapabilities: {
+      image_in: false,
+      video_in: false,
+      audio_in: false,
+      thinking: false,
+      tool_use: true,
+      maxContextSize: 128_000,
+      dynamically_loaded_tools: true,
+    } });
+    const deferredTool: ExecutableTool<Record<string, unknown>> = {
+      name: 'DeferredPreview',
+      description: 'Deferred preview tool.',
+      parameters: { type: 'object', properties: {} },
+      resolveExecution: () => ({
+        description: 'Deferred preview tool.',
+        approvalRule: 'DeferredPreview',
+        execute: async () => ({ output: 'ok' }),
+      }),
+    };
+    ctx.get(IAgentToolRegistryService)
+      .register(deferredTool, { source: 'mcp', disclosure: 'deferred' });
+    await ctx.restorePersisted();
+    const loop = ctx.get(IAgentLoopService);
+    try {
+      const assistant = (content: ContentPart[], id: string, name: string): Message => ({
+        role: 'assistant',
+        content,
+        toolCalls: [{ type: 'function', id, name, arguments: '{}' }],
+        attributes: { usage: emptyUsage() },
+      });
+      loop.replaceHistory([
+        { role: 'user', content: [{ type: 'text', text: 'run it' }] },
+        assistant([{ type: 'text', text: 'Running.' }, { type: 'text', text: ' ' }], 'call_bash', 'Bash'),
+        { role: 'user', content: [{ type: 'text', text: 'sent while the tool ran' }] },
+        {
+          role: 'tool',
+          toolCallId: 'call_bash',
+          content: [{ type: 'text', text: 'ok' }],
+          attributes: { durationMs: 1500, note: 'Output truncated.' },
+        },
+        assistant([{ type: 'text', text: 'Reading.' }], 'call_read', 'Read'),
+        {
+          role: 'tool',
+          toolCallId: 'call_read',
+          content: [{ type: 'text', text: 'missing file' }],
+          attributes: { isError: true },
+        },
+        assistant([{ type: 'text', text: 'Looking.' }], 'call_media', 'ReadMediaFile'),
+        { role: 'tool', toolCallId: 'call_media', content: [{ type: 'text', text: '<image path="/tmp/shot.png"></image>' }] },
+        assistant([{ type: 'text', text: 'Trying again.' }], 'call_lost', 'Bash'),
+        { role: 'user', content: [{ type: 'text', text: 'continue' }] },
+      ], 'fork');
+      const preview = loop.previewRequestContent();
+
+      expect(preview.systemPrompt).toBe(loop.getSystemPrompt());
+      expect(preview.tools).toBe(loop.baselineTools());
+      expect(preview.tools.find((tool) => tool.name === 'DeferredPreview')?.deferred).toBe(true);
+      expect(preview.tools.some((tool) => tool.name === 'ReadMediaFile')).toBe(true);
+      expect(preview.messages[0]).toMatchObject({
+        role: 'user',
+        content: [{ type: 'text', text: 'run it' }],
+      });
+
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'next' }] });
+      await ctx.untilTurnEnd();
+
+      const sent = ctx.llmCalls.at(-1)!;
+      const sentToolNames = sent.tools.map((tool) => tool.name);
+      expect(sentToolNames).not.toContain('DeferredPreview');
+      expect(sentToolNames).not.toContain('ReadMediaFile');
+      expect(sent.history[0]?.content).toContainEqual({
+        type: 'text',
+        text: expect.stringContaining('<tools_added>\nDeferredPreview\n</tools_added>'),
+        meta: { kind: 'tool_lifecycle', added: ['DeferredPreview'], removed: [] },
+      });
+      expect(sent.history.length).toBeGreaterThan(preview.messages.length);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('executes a tool batch and continues with a second core step', async () => {
@@ -222,11 +312,12 @@ describe('core LoopService integration', () => {
     });
 
     await ctx.get(IConfigService).set(LOOP_CONTROL_SECTION, { maxAttemptsPerStep: 1 });
+    ctx.mockNextProviderResponse(providerHttpError(500, 'step failed'));
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
 
     expect(seen).toHaveLength(1);
-    expect(ctx.llmCalls).toHaveLength(1);
+    expect(ctx.llmCalls).toHaveLength(2);
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({ event: 'turn.ended', args: expect.objectContaining({ reason: 'completed' }) }),
     );
@@ -338,7 +429,6 @@ describe('core LoopService integration', () => {
       await next();
     });
     ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
-    ctx.mockNextResponse({ type: 'text', text: 'This should not run.' });
 
     const { turn } = submitPromptTurn(loop, {
       role: 'user',
@@ -397,6 +487,7 @@ describe('core LoopService integration', () => {
     const previousRevision = core.historyRevision;
     const begin = vi.spyOn(ctx.get(ISessionRunGate), 'begin');
     const acquire = vi.spyOn(ctx.get(ISessionRunGate), 'acquire');
+    ctx.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await ctx.get(IAgentConversationUndoService).undo(1);
     expect(begin).toHaveBeenCalledTimes(2);
     expect(acquire).toHaveBeenCalledTimes(1);
@@ -736,8 +827,10 @@ describe('core LoopService integration', () => {
           { type: 'text', text: 'working' },
           { type: 'function', id: 'process-call', name: 'Work', arguments: '{}' },
         );
-        subject.mockNextResponse({ type: 'text', text: 'detached' });
-        subject.mockNextResponse({ type: 'text', text: 'async finished' });
+        if (!closeWhileRunning) {
+          subject.mockNextResponse({ type: 'text', text: 'detached' });
+          subject.mockNextResponse({ type: 'text', text: 'async finished' });
+        }
         const submitted = loop.submit({
           role: 'user',
           content: [{ type: 'text', text: 'start work' }],
@@ -765,6 +858,7 @@ describe('core LoopService integration', () => {
             };
           }
           await expect(loop.promptHandle(submitted.id)!.completion).resolves.toMatchObject({ state: 'completed' });
+          subject.expectCacheBreak('undo rewrites the history', { at: 'history' });
           await subject.get(IAgentConversationUndoService).undo(1);
           expect(stop).not.toHaveBeenCalled();
           gate.resolve();
@@ -886,3 +980,48 @@ describe('core LoopService integration', () => {
     (subject as unknown as { root: { dispose(): void } }).root.dispose();
   });
 });
+
+const testkitTest = base.extend<TestkitAgentFixtures>(testkitAgentFixtures());
+
+testkitTest(
+  'skips onDidFinishStep hooks for aborted steps and keeps them for normal steps',
+  async ({ agent, model }) => {
+    await agent.restorePersisted();
+    const loop = agent.get(IAgentLoopService);
+    const finished: number[] = [];
+    loop.hooks.onDidFinishStep.register('observe-finish', async (hookCtx, next) => {
+      finished.push(hookCtx.step);
+      await next();
+    });
+    const started = new Promise<void>((resolve) => {
+      loop.hooks.onWillBeginStep.register('hold-active', async (hookCtx, next) => {
+        if (hookCtx.turnId === 0) {
+          resolve();
+          await new Promise<void>((done) => {
+            hookCtx.signal.addEventListener('abort', () => done(), { once: true });
+          });
+        }
+        await next();
+      });
+    });
+    const first = submitPromptTurn(loop, {
+      role: 'user',
+      content: [{ type: 'text', text: 'first' }],
+      attributes: { promptId: 'first' },
+    }).turn;
+    await started;
+
+    expect(loop.cancel({ turnId: 0 }, 'stop')).toBe(true);
+    await expect(first.result).resolves.toMatchObject({ type: 'cancelled' });
+    expect(finished).toEqual([]);
+
+    model.script(say('second answer'));
+    const second = submitPromptTurn(loop, {
+      role: 'user',
+      content: [{ type: 'text', text: 'second' }],
+      attributes: { promptId: 'second' },
+    }).turn;
+    await expect(second.result).resolves.toMatchObject({ type: 'completed' });
+    expect(finished).toEqual([1]);
+  },
+);

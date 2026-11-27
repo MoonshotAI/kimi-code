@@ -24,7 +24,7 @@ describe('SearchableList', () => {
   it('derives page math from the cursor and pages by pageSize', () => {
     const list = make({ initialIndex: 0 });
     let v = list.view();
-    expect(v.page.pageCount).toBe(3); // ceil(10 / 4)
+    expect(v.page.pageCount).toBe(3);
     expect([v.page.start, v.page.end]).toEqual([0, 4]);
     expect(v.selectedIndex).toBe(0);
 
@@ -39,13 +39,13 @@ describe('SearchableList', () => {
 
   it('clamps the cursor at both ends', () => {
     const list = make({ initialIndex: 0 });
-    list.moveUp(); // already at top
+    list.moveUp();
     expect(list.view().selectedIndex).toBe(0);
 
     for (let i = 0; i < 20; i++) list.moveDown();
-    expect(list.view().selectedIndex).toBe(9); // last item
+    expect(list.view().selectedIndex).toBe(9);
 
-    list.pageDown(); // past the end stays clamped
+    list.pageDown();
     expect(list.view().selectedIndex).toBe(9);
   });
 
@@ -71,7 +71,7 @@ describe('SearchableList', () => {
     v = list.view();
     expect(v.query).toBe('');
     expect(v.items).toHaveLength(10);
-    expect(list.clearQuery()).toBe(false); // nothing left to clear
+    expect(list.clearQuery()).toBe(false);
   });
 
   it('trims the query on Backspace', () => {
@@ -88,7 +88,7 @@ describe('SearchableList', () => {
     expect(nav.handleKey(DOWN)).toBe(true);
     expect(nav.handleKey(PAGE_UP)).toBe(true);
     expect(nav.handleKey(PAGE_DOWN)).toBe(true);
-    expect(nav.handleKey('a')).toBe(false); // not searchable → printable ignored
+    expect(nav.handleKey('a')).toBe(false);
     expect(nav.handleKey(BACKSPACE)).toBe(false);
     expect(nav.view().query).toBe('');
 
@@ -98,11 +98,38 @@ describe('SearchableList', () => {
     expect(search.view().query).toBe('');
   });
 
+  it('appends bracketed pastes, chunked pastes, and multi-character text when searchable', () => {
+    const list = make({ searchable: true });
+    expect(list.handleKey(`${ESC}[200~item\r\n09${ESC}[201~`)).toBe(true);
+    expect(list.view().query).toBe('item09');
+    expect(list.selected()).toBe('item09');
+
+    list.clearQuery();
+    expect(list.handleKey(`${ESC}[200~it`)).toBe(true);
+    expect(list.isPasting()).toBe(true);
+    expect(list.handleKey('em\n')).toBe(true);
+    expect(list.handleKey(`03${ESC}[201~`)).toBe(true);
+    expect(list.isPasting()).toBe(false);
+    expect(list.view().query).toBe('item03');
+
+    list.clearQuery();
+    expect(list.handleKey('item05')).toBe(true);
+    expect(list.view().query).toBe('item05');
+    expect(list.handleKey(`${ESC}[1;5D`)).toBe(false);
+    expect(list.view().query).toBe('item05');
+  });
+
+  it('ignores bracketed pastes when not searchable', () => {
+    const list = make({ searchable: false });
+    expect(list.handleKey(`${ESC}[200~item09${ESC}[201~`)).toBe(false);
+    expect(list.isPasting()).toBe(false);
+    expect(list.view().query).toBe('');
+  });
+
   it('setItems replaces the items, keeps the query, and clamps the cursor', () => {
     const list = make({ searchable: true });
     for (const ch of 'zz') list.handleKey(ch);
     list.setItems([...ITEMS, 'item10']);
-    // The active query survives an items swap and still filters.
     expect(list.view().query).toBe('zz');
     expect(list.view().items).toHaveLength(0);
 
@@ -110,7 +137,6 @@ describe('SearchableList', () => {
     for (let i = 0; i < 20; i++) list.moveDown();
     expect(list.view().selectedIndex).toBe(10);
 
-    // Shrinking the set clamps the cursor into the new range.
     list.setItems(['item00']);
     const v = list.view();
     expect(v.items).toEqual(['item00']);

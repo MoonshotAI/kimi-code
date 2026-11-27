@@ -1,7 +1,3 @@
-/**
- * Turns tool execution results into messages: tool messages for completed, aborted, blocked, and failed
- * calls, and the user message that reports a detached tool's completion.
- */
 import {
   createToolMessage,
   createUserMessage,
@@ -10,9 +6,9 @@ import {
   type ToolMessage,
   type UserMessage,
 } from '#/llm/message';
-import { abortedToolOutput } from '#/tool/abort';
+import { abortedToolOutput } from '#/utils/abort';
 import { errorText } from '#/llm/protocol/errors';
-import type { ToolDetachAck, ToolResult } from '#/tool/runtime';
+import type { ToolDetachAck, ToolResult } from '#/tool/types';
 import type { AsyncToolOutcome, Cause, ToolCallOutcome } from '../contract/outcome';
 
 export function toolOutcomeMessage(
@@ -26,6 +22,7 @@ export function toolOutcomeMessage(
     isError: failed ? true : undefined,
     stopTurn: 'stopTurn' in result && result.stopTurn === true ? true : undefined,
     detached,
+    durationMs: 'durationMs' in result ? result.durationMs : undefined,
   });
 }
 

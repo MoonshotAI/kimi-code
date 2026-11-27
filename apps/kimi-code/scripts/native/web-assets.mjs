@@ -11,7 +11,7 @@ import {
 
 export { WEB_ASSET_MANIFEST_VERSION };
 
-const WEB_ASSETS_DIR = 'dist-web';
+const WEB_ASSETS_DIR = 'web-dist';
 
 function toPosixPath(path) {
   return path.split('\\').join('/');

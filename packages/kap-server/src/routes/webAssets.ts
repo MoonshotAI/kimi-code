@@ -11,17 +11,12 @@ interface WebAssetRouteHost {
   ): unknown;
 }
 
-export async function registerWebAssetRoutes(
-  app: WebAssetRouteHost,
-  assetsDir: string,
-): Promise<void> {
-  await assertWebAssets(assetsDir);
-
+export function registerWebAssetRoutes(app: WebAssetRouteHost, assetsDir: string): void {
   app.get('/', async (req, reply) => serveWebAsset(req, reply, assetsDir));
   app.get('/*', async (req, reply) => serveWebAsset(req, reply, assetsDir));
 }
 
-async function assertWebAssets(assetsDir: string): Promise<void> {
+export async function assertWebAssets(assetsDir: string): Promise<void> {
   try {
     const info = await stat(join(assetsDir, 'index.html'));
     if (!info.isFile()) {

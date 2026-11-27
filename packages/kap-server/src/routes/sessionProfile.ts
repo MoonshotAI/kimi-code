@@ -8,8 +8,9 @@ import {
   resumeSessionById,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import type { SessionWireFields } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionLegacy';
 import type { UpdateSessionProfileRequest } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
+import { workspaceRootOf } from '../services/workspaceVisibility';
+import type { SessionWireFields } from './sessions';
 
 const RESERVED_METADATA_KEYS: ReadonlySet<string> = new Set([
   'cwd',
@@ -38,7 +39,7 @@ export async function updateSessionProfile(
   core: Scope,
   sessionId: string,
   body: Pick<UpdateSessionProfileRequest, 'title' | 'metadata'>,
-): Promise<SessionWireFields> {
+): Promise<SessionWireFields & { readonly root: string }> {
   const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
@@ -61,7 +62,10 @@ export async function updateSessionProfile(
   return {
     id: meta.id,
     workspaceId: ctx.workspaceId,
-    root: ctx.cwd,
+    workspaceRoot: await workspaceRootOf(core, ctx.workspaceId),
+    environmentId: meta.environmentId,
+    environmentCwd: meta.environmentCwd,
+    root: metadata.effectiveCwd,
     title: meta.title,
     lastPrompt: meta.lastPrompt,
     createdAt: meta.createdAt,

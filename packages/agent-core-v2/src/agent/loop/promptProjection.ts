@@ -277,6 +277,9 @@ export class AgentPromptProjection {
   cancel(id: string): void {
     const waiter = this.waiters.get(id);
     if (waiter === undefined || waiter.settled === true) return;
+    for (const [turnId, pending] of this.pendingTurns) {
+      if (pending.waiter === waiter) this.pendingTurns.delete(turnId);
+    }
     waiter.settled = true;
     waiter.launched.resolve(undefined);
     waiter.completion.resolve({ promptId: id, result: undefined, state: 'cancelled' });
@@ -350,6 +353,7 @@ export class AgentPromptProjection {
       userMessageId: projection.userMessageId,
       status,
       content: stripBundledSkillBlocks(projection.message),
+      origin: projection.origin,
       clientMetadata: projection.origin.kind === 'user' ? projection.origin.clientMetadata : undefined,
       createdAt: projection.createdAt,
     }));

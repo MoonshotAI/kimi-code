@@ -7,7 +7,7 @@ import {
   type ExecutableToolResult,
 } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { AlreadyAuthorizedError, type McpOAuthService } from '#/mcpCore/oauth/service';
+import { AlreadyAuthorizedError, McpOAuthCallbackTimeout, type McpOAuthService } from '#/mcpCore/oauth/service';
 import { qualifyMcpToolName } from '#/mcpCore/tool-naming';
 
 export { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '#/tool/toolContract';
@@ -64,11 +64,11 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
       flow = await oauthService.beginAuthorization(serverName, serverUrl);
     } catch (error) {
       if (error instanceof AlreadyAuthorizedError) {
-        onUpdate?.({ kind: 'status', text: `Already authorized; reconnecting ${serverName}…` });
+        onUpdate?.({ kind: 'status', text: `Already authorized; reconnecting ${serverName}…`, fields: { 'mcp.oauth.reconnecting': true } });
         try {
           await reconnect(signal);
         } catch (reconnectError) {
-          return errorResult(serverName, reconnectError);
+          return errorResult(serverName, reconnectError, signal.aborted ? 'mcp.oauth.cancelled' : 'mcp.oauth.reconnect_failed');
         }
         return {
           output:
@@ -103,14 +103,15 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     try {
       await flow.complete({ signal, timeoutMs: waitTimeoutMs });
     } catch (error) {
-      return errorResult(serverName, error, urlText);
+      const expired = error instanceof McpOAuthCallbackTimeout || (error instanceof Error && error.cause instanceof McpOAuthCallbackTimeout);
+      return errorResult(serverName, error, signal.aborted ? 'mcp.oauth.cancelled' : expired ? 'mcp.oauth.expired' : undefined);
     }
 
-    onUpdate?.({ kind: 'status', text: `Authorized — reconnecting ${serverName}…` });
+    onUpdate?.({ kind: 'status', text: `Authorized — reconnecting ${serverName}…`, fields: { 'mcp.oauth.reconnecting': true } });
     try {
       await reconnect(signal);
     } catch (error) {
-      return errorResult(serverName, error);
+      return errorResult(serverName, error, signal.aborted ? 'mcp.oauth.cancelled' : 'mcp.oauth.reconnect_failed');
     }
 
     return {
@@ -126,6 +127,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     parameters,
     resolveExecution: () => {
       return {
+        display: { kind: 'generic', summary: `Authenticate ${serverName}`, detail: { kind: 'mcp_oauth', serverName } },
         description: `Authenticating ${serverName}`,
         approvalRule: name,
         execute,
@@ -137,15 +139,12 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
 function errorResult(
   serverName: string,
   error: unknown,
-  authorizationUrl?: string,
+  note?: string,
 ): ExecutableToolResult {
   const message = error instanceof Error ? error.message : String(error);
-  const suffix =
-    authorizationUrl !== undefined
-      ? `\n\nAuthorization URL (still valid if the listener has not timed out): ${authorizationUrl}`
-      : '';
   return {
     isError: true,
-    output: `OAuth flow for MCP server "${serverName}" did not complete: ${message}${suffix}`,
+    note,
+    output: `OAuth flow for MCP server "${serverName}" did not complete: ${message}`,
   };
 }

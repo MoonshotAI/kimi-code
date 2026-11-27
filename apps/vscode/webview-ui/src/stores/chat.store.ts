@@ -1,3 +1,4 @@
+import { v4 as randomUUID } from "uuid";
 import { create } from "zustand";
 import { produce } from "immer";
 import { bridge } from "@/services";
@@ -27,7 +28,7 @@ export interface UIStep {
 export interface InlineError {
   code: string;
   message: string;
-  detail?: string; // 服务器原始错误信息
+  detail?: string;
 }
 
 export type UIStepItem =
@@ -52,7 +53,6 @@ export interface ChatMessage {
   status?: StatusUpdate;
   inlineError?: InlineError;
   turnIndex?: number;
-  /** False for host-only commands that do not create a forkable core turn. */
   forkable?: boolean;
 }
 
@@ -200,14 +200,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
-    // If streaming, enqueue instead of sending
     if (isStreaming) {
       get().enqueue(content, currentModel);
       set({ draftMedia: [] });
       return;
     }
 
-    // Clear draft and set streaming state
     set(
       produce((draft: ChatState) => {
         clearAllInlineErrors(draft);
@@ -229,7 +227,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
-    // Remove failed assistant message and user message
     set(
       produce((draft: ChatState) => {
         clearAllInlineErrors(draft);
@@ -250,15 +247,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   processEvent: (event) => {
-    // Mid-turn warnings (terminal === false) leave the turn, the composer, and
-    // the queued messages untouched — the engine is still streaming, so they
-    // are surfaced as a transient toast only.
     if (event.type === "error" && "terminal" in event && event.terminal === false) {
       clearHandshakeTimer();
       toast.warning(event.message);
       return;
     }
-    // Clear handshake timeout on receiving valid response
     if (event.type === "TurnBegin" || event.type === "StepBegin" || event.type === "ContentPart") {
       clearHandshakeTimer();
       set({ handshakeReceived: true });
@@ -272,7 +265,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }),
     );
 
-    // Auto-send next queued item when streaming ends (complete or error)
     if (event.type === "stream_complete" || event.type === "error") {
       const { queue, isStreaming: stillStreaming } = get();
       if (!stillStreaming && queue.length > 0) {
@@ -284,7 +276,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   loadSession: async (sessionId, events) => {
     clearHandshakeTimer();
 
-    // Abort any ongoing stream when switching sessions
     const { isStreaming: wasStreaming } = get();
     if (wasStreaming) {
       await bridge.abortChat();
@@ -311,7 +302,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       get().processEvent(event);
     }
 
-    // All steps are finished when loading from history
     set(
       produce((draft: ChatState) => {
         for (const msg of draft.messages) {
@@ -336,7 +326,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   startNewConversation: async () => {
     clearHandshakeTimer();
 
-    // Abort any ongoing stream before starting new conversation
     const { isStreaming: wasStreaming } = get();
     if (wasStreaming) {
       await bridge.abortChat();
@@ -437,7 +426,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   enqueue: (content, model) => {
     set((s) => ({
-      queue: [...s.queue, { id: crypto.randomUUID(), content, model }],
+      queue: [...s.queue, { id: randomUUID(), content, model }],
     }));
   },
 

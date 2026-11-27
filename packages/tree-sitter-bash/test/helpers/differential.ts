@@ -1,19 +1,3 @@
-// test/helpers/differential.ts
-//
-// Differential test harness: parses the same source with both this package's
-// parser and the real tree-sitter-bash (web-tree-sitter + the official wasm
-// build shipped in the tree-sitter-bash npm package), normalizes both trees
-// into a comparable dump, and produces structured diffs.
-//
-// Normalization: a pre-order dump of EVERY node (named and anonymous — the
-// byte-identical trees M1/M2 verified include the anonymous token layer),
-// one line per node: `<indent>type [start,end] "text preview"`, anonymous
-// types wrapped in parens, plus a leading `hasError:` line. Both sides use
-// UTF-16 code unit offsets directly: web-tree-sitter (wasm) reports UTF-16
-// offsets for string input, same as this parser (verified: for
-// "echo 你好 && ls" the reference reports the root as [0,13] and `&&` as
-// [8,10] — UTF-16 code units, not UTF-8 bytes).
-
 import path from 'node:path';
 
 import { Language, Parser as RefParser } from 'web-tree-sitter';
@@ -27,11 +11,6 @@ const WASM_PATH = path.join(PACKAGE_ROOT, 'node_modules/tree-sitter-bash/tree-si
 
 let refParserPromise: Promise<RefParser> | null = null;
 
-/**
- * Lazily load web-tree-sitter + the bash wasm exactly once per test process.
- * Load failures throw a descriptive error (never silently skip): the
- * differential suite is meaningless without the reference.
- */
 export function loadReferenceParser(): Promise<RefParser> {
   refParserPromise ??= (async () => {
     try {
@@ -73,7 +52,6 @@ function label(type: string, isNamed: boolean): string {
   return isNamed ? type : `(${type})`;
 }
 
-/** Normalized dump of the reference tree (UTF-16 offsets as reported). */
 export async function referenceDump(source: string): Promise<string> {
   const parser = await loadReferenceParser();
   const tree = parser.parse(source);
@@ -94,11 +72,6 @@ export async function referenceDump(source: string): Promise<string> {
   return render(lines, tree.rootNode.hasError);
 }
 
-/**
- * Normalized dump of our tree. Parses with a generous budget so differential
- * results are never polluted by the default 50 ms / 50 000-node budget;
- * fixtures are expected to parse, so an abort here is an error.
- */
 export function ourDump(source: string): string {
   const result = parse(source, { timeoutMs: 60_000, maxNodes: 10_000_000 });
   if (!result.ok) throw new Error(`our parser aborted on a differential fixture: ${JSON.stringify(source)}`);
@@ -112,7 +85,6 @@ export function ourDump(source: string): string {
   return render(lines, result.hasError);
 }
 
-/** First-difference report between two dumps; empty string when identical. */
 export function diffDumps(ours: string, reference: string): string {
   if (ours === reference) return '';
   const a = ours.split('\n');
@@ -139,18 +111,11 @@ export interface Comparison {
   diff: string;
 }
 
-/** Parse `source` with both parsers and compare the normalized dumps. */
 export async function compareSource(source: string): Promise<Comparison> {
   const [ours, reference] = [ourDump(source), await referenceDump(source)];
   return { equal: ours === reference, ours, reference, diff: diffDumps(ours, reference) };
 }
 
-/**
- * Tree integrity self-check (used by fuzz): every node range must lie inside
- * the source, `text` must equal the corresponding slice, and children must be
- * contained in their parent, in source order, without overlaps. Throws with a
- * descriptive message on the first violation.
- */
 export function assertTreeIntegrity(root: SyntaxNode, source: string): void {
   const stack: SyntaxNode[] = [root];
   while (stack.length > 0) {
@@ -175,20 +140,12 @@ export function assertTreeIntegrity(root: SyntaxNode, source: string): void {
   }
 }
 
-// ------------------------------------------------------------- fixture I/O
-
-/** A curated differential fixture sample (see test/fixtures/differential/). */
 export interface FixtureSample {
-  /** Directive: 'match' (must equal the reference) or 'known-diff'. */
   kind: 'match' | 'known-diff';
-  /** Known-difference registry id (known-diff samples only). */
   id?: string;
-  /** Free-form description from the directive line. */
   description: string;
   source: string;
-  /** Stored expected dump of OUR parser (known-diff samples only). */
   expectedOurs?: string;
-  /** 1-based line of the directive, for error messages. */
   line: number;
 }
 
@@ -196,16 +153,11 @@ const DIRECTIVE_RE = /^@(match|known-diff)(?:\s+(\S+))?:\s*(.*)$/;
 const SEPARATOR_RE = /^===\s*$/m;
 const DUMP_SPLIT_RE = /^---\s*$/m;
 
-/** One official tree-sitter-bash corpus test case (input only — the
- *  expected S-expression is ignored; the live wasm reference is the
- *  comparison target). */
 export interface CorpusCase {
   name: string;
   input: string;
 }
 
-/** Parse an official corpus file (`==== name ====` / input / `----` /
- *  expected). The separator is any run of 3+ dashes. */
 export function parseCorpusFile(content: string): CorpusCase[] {
   const out: CorpusCase[] = [];
   const lines = content.split('\n');
@@ -229,14 +181,6 @@ export function parseCorpusFile(content: string): CorpusCase[] {
 }
 
 
-/**
- * Parse a fixture file. Format: blocks separated by lines of `===`; each
- * block starts with `@match: <desc>` or `@known-diff <registry-id>: <desc>`,
- * followed by the sample source. known-diff blocks additionally carry the
- * expected dump of our parser after a `---` line (the disclosed deviation
- * shape — if our output drifts from it, or starts matching the reference,
- * the test fails).
- */
 export function parseFixtureFile(filePath: string, content: string): FixtureSample[] {
   const samples: FixtureSample[] = [];
   const blocks = content.split(SEPARATOR_RE);

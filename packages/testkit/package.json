@@ -1,0 +1,52 @@
+{
+  "name": "@moonshot-ai/testkit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared test toolkit: a protocol-level fake model, a KAP driver, and test fixtures.",
+  "license": "MIT",
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*.ts"
+  },
+  "exports": {
+    "./model": {
+      "types": "./src/model/index.ts",
+      "default": "./src/model/index.ts"
+    },
+    "./services": {
+      "types": "./src/services/index.ts",
+      "default": "./src/services/index.ts"
+    },
+    "./kap": {
+      "types": "./src/kap/index.ts",
+      "default": "./src/kap/index.ts"
+    },
+    "./contract": {
+      "types": "./src/contract/index.ts",
+      "default": "./src/contract/index.ts"
+    },
+    "./fixtures": {
+      "types": "./src/fixtures/index.ts",
+      "default": "./src/fixtures/index.ts"
+    },
+    "./vitest": {
+      "types": "./src/vitest/index.ts",
+      "default": "./src/vitest/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "smol-toml": "^1.6.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.95.2",
+    "@google/genai": "^1.49.0",
+    "@types/ws": "^8.18.0",
+    "openai": "^6.34.0"
+  }
+}

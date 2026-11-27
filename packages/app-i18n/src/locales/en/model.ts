@@ -1,0 +1,18 @@
+export default {
+  close: 'Close (Esc)',
+  capabilityContext: '{size} context',
+  capabilityImageInput: 'Vision',
+  capabilityToolUse: 'Tool use',
+  capabilityThinking: 'Thinking',
+  capabilityAlwaysThinking: 'Always thinking',
+  switchConfirmTitle: 'Confirm model switch?',
+  switchConfirmPrompt: 'Switch to {model}. How should this session continue?',
+  switchEffortConfirmTitle: 'Confirm effort switch from {from} to {to}?',
+  switchConfirmConfirm: 'Confirm switch',
+  switchConfirmCompact: 'Compact and continue',
+  switchConfirmCompactDesc: 'Continue this session with lower cost and better results',
+  switchConfirmContinue: 'Continue as-is',
+  switchConfirmContinueDesc: "Quality may degrade {'|'} cache miss, higher token usage",
+  switchConfirmCancel: 'Cancel',
+  switchCompactAborted: 'Compaction did not finish — model unchanged.',
+} as const;

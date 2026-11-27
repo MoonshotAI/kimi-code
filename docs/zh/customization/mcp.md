@@ -23,7 +23,7 @@ Kimi Code CLI 支持三种 MCP server 接入方式：
 MCP server 配置写在 `mcp.json` 中，分两层：
 
 - **用户级**：`~/.kimi-code/mcp.json`（或 `$KIMI_CODE_HOME/mcp.json`），跨项目共享
-- **项目级**：工作目录下的 `.kimi-code/mcp.json`，只对当前仓库生效
+- **项目级**：项目根目录下的 `.kimi-code/mcp.json`，只对当前仓库生效。在 Git 仓库的子目录里启动时，读的也是仓库根目录下的这个文件，每个 worktree 读它自己的
 
 同名条目以项目级为准，覆盖用户级。
 
@@ -31,7 +31,7 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 
 从配置中删除某个 server 不会打断进行中的会话：该 server 在 `/mcp` 中仍显示为 `removed`，其工具在这些会话中保持可见，但调用会失败并返回移除提示；新会话则完全不会注册这些工具。反过来，编辑 `mcp.json` 或安装 plugin 新增的 server 也不会注册到已打开的会话，只会加入之后创建的会话。
 
-当 Kimi Code 在不受信任的文件夹中发现项目级 MCP server 时，工作区信任提示会显示每个 server 的传输方式和启动目标。提示默认选中 `Trust this folder`；核对列出的命令与参数或远程 URL 后确认即可，选择 `Don't trust` 则该工作区的项目级 MCP server 不会启用。
+当 Kimi Code 在不受信任的项目中发现项目级 MCP server 时，信任提示会显示每个 server 的传输方式和启动目标。核对列出的命令与参数或远程 URL 后选择 `Trust and continue` 即可启用；选择 `Exit` 则直接退出，不会启用这些 server。
 
 无头运行（例如在 CI 中执行 `kimi -p`）无法显示信任提示，因此在工作区尚未受信任时，项目级 MCP server 会保持禁用。将 [`KIMI_CODE_TRUST_WORKSPACE`](../configuration/env-vars.md#运行时开关) 设为 `1` 即可在该进程中信任当前工作区。如需全局关闭工作区信任机制并不经确认加载项目级 MCP server，可在 `config.toml` 中设置 [`[workspace] require_trust = false`](../configuration/config-files.md#workspace-trust)；仅应在所有工作区均已可信时使用该配置。
 
@@ -78,6 +78,8 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 workspace 级 MCP server 启动时连不上或意外断连时，会自动按指数退避（每次尝试后等待时间翻倍）重连：首次重试等待 `[mcp] reconnect_initial_delay_ms`（默认 `5000`），等待上限为 `[mcp] reconnect_max_delay_ms`（默认 `300000`），可在 `config.toml` 或环境变量 `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` / `KIMI_MCP_RECONNECT_MAX_DELAY_MS` 调整。server 恢复可达后，工具会自动回来。无法自行恢复的失败——命令不存在、配置非法、server 拒绝静态凭证——不会重试并保持 `failed`；session 级临时挂载的 server 同样不重试。
 
 HTTP 与 SSE server 支持通过 `headers` 或 `bearerTokenEnvVar` 提供静态凭证。需要 OAuth 时，运行 `/mcp-config login <server-name>` 完成浏览器授权。
+
+在本机聊天中，如果 Agent 调用 MCP 授权工具，允许执行工具后，还需要在服务商的网页上确认授权。桌面端会尝试打开系统浏览器；网页端可点击聊天卡片上的「打开授权页」。如果浏览器没有打开或被误关，点击同一按钮即可继续，不用重新发送消息。
 
 Plugins 也可以在 manifest 中声明 MCP servers。Plugin 声明的 servers 默认启用，可以在 `/plugins` 中禁用或重新启用：禁用或移除后，已打开会话中的工具调用会失败并返回移除提示；新增或启用 server 会立即连接到已打开的会话。详见 [Plugins](./plugins.md#plugin-中的-mcp-servers)。
 
@@ -131,14 +133,13 @@ defaultCwd = "/srv/work"
 
 ## 按需加载工具
 
-默认情况下，server 的所有工具都会直接进入模型的顶层工具列表；接入的 server 较多、或单个 server 暴露的工具较多时，这些工具定义会持续占用上下文。把 server 标记为 deferred 后，它的工具不再进入顶层工具列表：模型先看到一份可加载工具清单，需要时通过内置的 `select_tools` 工具加载完整定义，加载后同一轮即可调用。
+默认情况下，server 的所有工具都会直接进入模型的顶层工具列表；接入的 server 较多、或单个 server 暴露的工具较多时，这些工具定义会持续占用上下文。把 server 标记为 deferred 可以控制工具 schema 的披露方式。支持动态加载时，ToolSelect Resolver 会从解析后的顶层工具列表中移除 deferred 项，将 baseline 中的 deferred 名称转换为初始 reminder，后续新增和移除则通过 delta 公告。内置的 `select_tools` 再把选中的 schema 加载到 system message。不支持动态加载的模型会移除该元数据，并将初始 deferred 工具按普通声明发送。最终编码器自身不会仅凭这个标记删除工具；重复声明优先保留顶层列表。
 
-按需加载是实验功能，同时满足两个前提才会生效：
+如果同名 deferred 工具的 schema 发生更新，会话会在同一条公告中声明移除旧版本并加入新版本。模型必须再次调用 `select_tools` 加载当前 schema，然后才能调用该工具；重新加载前的调用会被拒绝，并提示重新选择。对于 Kimi Chat Completions，供应商会按旧声明、卸载消息、新声明的顺序发送请求，避免后端因无法解析的同名重复声明而拒绝请求。同名 inline 工具的更新仍在当前会话中固定使用原 schema，不进入上述重新加载流程。
 
-- 启用 `tool-select` 实验标志：设置环境变量 `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT=1`，或在 `config.toml` 的 `[experimental]` 下写 `tool-select = true`；总开关 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 会一并启用。
-- 当前模型声明了 `dynamically_loaded_tools` 能力：官方模型自动声明；其他模型可在 `config.toml` 的 `capabilities` 中追加，见 [配置文件](../configuration/config-files.md#models)。
+按需加载在当前模型声明 `dynamically_loaded_tools` 能力时生效：官方模型自动声明；其他模型可在 `config.toml` 的 `capabilities` 中追加，见 [配置文件](../configuration/config-files.md#models)。
 
-满足前提后，在 `mcp.json` 的 server 条目里设 `deferred: true`：
+在支持动态加载的模型上，在 `mcp.json` 的 server 条目里设 `deferred: true`：
 
 ```json
 {
@@ -151,7 +152,7 @@ defaultCwd = "/srv/work"
 }
 ```
 
-未设置 `deferred` 的 server 取全局默认值（未改动时为 `false`）；前提不满足时该字段被忽略，行为相同。需要 OAuth 授权的 server 在完成授权前暴露的认证工具也遵循这个字段。
+未设置 `deferred` 的 server 取全局默认值（未改动时为 `false`）；模型不支持动态加载时，该字段被忽略，行为相同。需要 OAuth 授权的 server 在完成授权前暴露的认证工具也遵循这个字段。
 
 如果不想逐个 server 标记，而是默认让所有 server 按需加载，可以在 `config.toml` 的 `[mcp]` 下设 `default_deferred = true`，见 [配置文件](../configuration/config-files.md#mcp)。单个 server 仍可用 `deferred: false` 排除；server 字段始终优先于全局默认。该值在 server 连接时固化，之后修改不会改动运行中会话的工具形态——重连该 server 或重启进程后才会应用。
 

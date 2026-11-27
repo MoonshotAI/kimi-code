@@ -23,7 +23,7 @@ export type PromptPermissionMode = z.infer<typeof promptPermissionModeSchema>;
 
 export const sessionMetadataSchema = z
   .object({
-    cwd: z.string().min(1),
+    cwd: z.string().min(1).meta({ deprecated: true }),
   })
   .catchall(z.unknown());
 export type SessionMetadata = z.infer<typeof sessionMetadataSchema>;
@@ -37,7 +37,7 @@ export const sessionAgentConfigSchema = z.object({
   tower_mode: z.boolean().optional(),
   tower_base: z.string().min(1).optional(),
   goal_objective: z.string().optional(),
-  goal_control: z.enum(['pause', 'resume', 'cancel']).optional(),
+  goal_control: z.enum(['pause', 'resume', 'cancel', 'edit']).optional(),
 });
 export type SessionAgentConfig = z.infer<typeof sessionAgentConfigSchema>;
 

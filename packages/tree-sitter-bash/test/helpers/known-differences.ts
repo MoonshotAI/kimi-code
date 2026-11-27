@@ -1,21 +1,6 @@
-// test/helpers/known-differences.ts
-//
-// The single source of truth for the known, deliberately documented ways
-// this parser's tree deviates from tree-sitter-bash 0.25.0. Every entry is:
-//   - referenced by @known-diff samples in test/fixtures/differential/ and
-//     test/fixtures/corpus/known-diffs.txt (the stored dump in each sample
-//     pins the exact deviation shape — if our output drifts, or starts
-//     matching the reference, the differential tests fail);
-//   - anchored in README.md's "Known differences" section: `readmeAnchor`
-//     must appear there verbatim, so the list and the README cannot
-//     silently drift apart (enforced by test/differential.test.ts).
-
 export interface KnownDifference {
-  /** Identifier referenced from fixture @known-diff directives. */
   readonly id: string;
-  /** Verbatim substring of README.md's Known differences section. */
   readonly readmeAnchor: string;
-  /** Short human-readable description. */
   readonly summary: string;
 }
 

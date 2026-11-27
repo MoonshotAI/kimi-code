@@ -52,8 +52,10 @@ export interface IAgentLifecycleService {
   list(filter?: AgentListFilter): readonly AgentContext[];
   broadcastPermissionMode(mode: PermissionMode): void;
   remove(agent: AgentContext): Promise<void>;
+  removeById?(agentId: string): Promise<void>;
 
   handleOf(agentId: string): IAgentScopeHandle | undefined;
+  whenCreateSettled?(agentId?: string): Promise<void>;
 
   adopt(handle: IAgentScopeHandle): AgentContext;
 }

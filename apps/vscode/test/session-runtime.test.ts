@@ -1,10 +1,3 @@
-/**
- * Scenario: one VS Code session runtime adapts the public Node SDK session for one or more Webviews.
- * Responsibilities: prompt conversion, event/terminal delivery, reverse RPC, cancellation, and baseline capture.
- * Wiring: SessionRuntime is real; a small in-memory Session implements only the public SDK boundary.
- * Run: pnpm exec vitest run --config apps/vscode/vitest.config.ts apps/vscode/test/session-runtime.test.ts
- */
-
 import type {
   ApprovalHandler,
   ApprovalRequest,
@@ -405,6 +398,7 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
       type: "tool.call.started",
       sessionId: "session-1",
       agentId: "main",
+      origin: "loop",
       turnId: 7,
       toolCallId: "tool-1",
       name: "Read",
@@ -725,6 +719,7 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
         type: "tool.call.started",
         sessionId: "session-1",
         agentId: "main",
+        origin: "loop",
         turnId: 7,
         toolCallId: "tool-1",
         name,
@@ -756,6 +751,7 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
       type: "tool.call.started",
       sessionId: "session-1",
       agentId: "main",
+      origin: "loop",
       turnId: 7,
       toolCallId: "tool-1",
       name,

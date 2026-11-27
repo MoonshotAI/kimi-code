@@ -18,7 +18,7 @@ export const TEST_ENVIRONMENT: RemoteEnvironmentInfo = {
   shellName: 'bash',
   shellPath: '/bin/bash',
   pathClass: 'posix',
-  homeDir: '/home/test',
+  homeDir: '/nonexistent',
   cwd: '/tmp',
   tempDir: '/tmp',
 };
@@ -272,7 +272,7 @@ export function throttleClientPipe(
   const endListeners = new Set<() => void>();
   const errorListeners = new Set<(error: Error) => void>();
   const maxBuffered = Math.max(options.bytesPerTick * 2, 16 * 1024);
-  let buffered: Buffer[] = [];
+  const buffered: Buffer[] = [];
   let bufferedTotal = 0;
   let release = false;
   let sourceEnded = false;

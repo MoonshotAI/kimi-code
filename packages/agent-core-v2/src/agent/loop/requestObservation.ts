@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isManagedKimiCodeBaseUrl } from '@moonshot-ai/kimi-code-oauth';
 
 import { ILogService, type LogContext } from '#/_base/log/log';
 import { isAbortError } from '#/_base/utils/abort';
@@ -16,14 +17,13 @@ import type { LlmRequest, ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import type { LlmRecoveryRecord } from '@moonshot-ai/core/llm/policy/recovery';
 import { llmErrorRequestId, type LlmOutcome, type LlmRunEvent, type LlmTiming } from '@moonshot-ai/core/llm/response';
 import { emptyUsage, grandTotal, inputTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import {
   APIStatusError,
   classifyApiError,
   errorDiagnostics,
   isLlmErrorMessage,
   isRetryableGenerateError,
-} from '#/llm-adapter/contract/errors';
+} from '#/provider-catalog/errors';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
@@ -32,13 +32,37 @@ import { defineState } from '#/state/state';
 import { summarizeProjectionRepairs, type ProjectionAnomaly } from './projection';
 import { hasStrictStructureRecovery } from './projectionPolicy';
 import { llmRequestTraceKey, LlmToolsSnapshot, llmToolsSnapshotPayload } from './llmRequestOps';
+import type { AgentLLMRequestLogFields, AgentLLMRequestSource } from '#/agent/usage/usage';
+import type { LoopLlmRunObservation, LoopLlmRunObserver, LoopRequestRuntime } from '@moonshot-ai/core/loop/index';
+import { requestModelOf, type RequestModel } from '#/provider-catalog/requester';
 import {
   agentLLMRequestLogFields,
-  type AgentLLMRequestLogFields,
-  type AgentLLMRequestSource,
-  type RequestConfigSnapshot,
-  type ResolvedRequestContext,
+  requestSourceOf,
 } from './requesterContract';
+
+export interface LLMRequestTrace {
+  readonly requestId: string | undefined;
+}
+
+export interface ResolvedRequestContext {
+  readonly model: RequestModel;
+  readonly modelAlias: string;
+  readonly thinkingEffort: ThinkingEffort;
+  readonly systemPrompt: string;
+  readonly tools?: readonly Tool[];
+  readonly messages: Message[];
+  readonly usedContextTokens?: number;
+  readonly contextRevision: number;
+  readonly promptCacheProbe: 'compaction' | undefined;
+  readonly source: AgentLLMRequestSource;
+  readonly logFields: AgentLLMRequestLogFields;
+  readonly runtime: LoopRequestRuntime;
+}
+
+interface ObserverLoopContext {
+  readonly historyRevision: number;
+  readonly infiniteRetry: boolean;
+}
 
 const CACHE_BREAK_MIN_DROP_TOKENS = 2000;
 const CACHE_BREAK_DROP_RATIO = 0.95;
@@ -96,7 +120,12 @@ export const llmRequesterEmittedThinkingEffortWarningsKey = defineState<Set<stri
   () => new Set(),
 );
 
-export class AgentLoopRequestObserver {
+export class AgentLoopRequestObserver implements LoopLlmRunObserver {
+  private loopContext: () => ObserverLoopContext = () => ({
+    historyRevision: 0,
+    infiniteRetry: false,
+  });
+
   constructor(
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -114,18 +143,45 @@ export class AgentLoopRequestObserver {
     this.states.contributeState(llmRequesterEmittedThinkingEffortWarningsKey);
   }
 
-  start(
-    source: AgentLLMRequestSource,
-    config: RequestConfigSnapshot,
-    onTrace?: (trace: LLMRequestTrace) => void,
-  ): AgentRequestObservation {
-    return new AgentRequestObservation(this, source, config, onTrace);
+  bindLoop(context: () => ObserverLoopContext): void {
+    this.loopContext = context;
+  }
+
+  start(request: LlmRequest): AgentRequestObservation {
+    const { historyRevision, infiniteRetry } = this.loopContext();
+    const source = requestSourceOf(request.attributes);
+    const modelAlias = request.attributes?.modelAlias;
+    if (modelAlias === undefined) throw new Error('llm request has no bound model');
+    const context: ResolvedRequestContext = {
+      model: requestModelOf(request),
+      modelAlias,
+      thinkingEffort: request.model.thinking?.effort ?? 'off',
+      systemPrompt: request.profile?.systemPrompt ?? '',
+      tools: request.profile?.tools === undefined ? undefined : [...request.profile.tools],
+      messages: [...request.content.messages],
+      usedContextTokens: request.content.usedTokens,
+      contextRevision: historyRevision,
+      promptCacheProbe: request.attributes?.promptCacheProbe,
+      source,
+      logFields: agentLLMRequestLogFields(source),
+      runtime: { historyRevision: () => this.loopContext().historyRevision },
+    };
+    this.noteModel(context);
+    return new AgentRequestObservation(this, source, context, infiniteRetry);
   }
 
   setRequestId(source: AgentLLMRequestSource, requestId: string | undefined, active = true): void {
     if (source.type !== 'turn') return;
     this.telemetry.setContext({ request_id: active ? requestId : undefined });
-    this.attribution.noteActiveRequest(this.scopeContext.agentId, requestId, active);
+    this.attribution.noteActiveRequest(this.scopeContext.agentId, requestId, active, source);
+  }
+
+  noteModel(request: ResolvedRequestContext): void {
+    const { source, model } = request;
+    if (source.type !== 'turn' || source.step === undefined) return;
+    this.attribution.noteModel(this.scopeContext.agentId, source.turnId, source.step, {
+      model: model.spec.name, provider: model.protocol, isKfc: isManagedKimiCodeBaseUrl(model.endpoint.baseUrl),
+    });
   }
 
   recordAttempt(
@@ -203,12 +259,12 @@ export class AgentLoopRequestObserver {
     infiniteRetry: boolean,
   ): void {
     const request = observation.requireContext();
-    if (event.type === 'llm.streaming.request_id') {
+    if (event.type === 'llm.delta.request_id') {
       observation.setRequestId(event.requestId);
       return;
     }
-    if (event.type === 'llm.streaming.headers') return;
-    if (event.type !== 'llm.retrying') return;
+    if (event.type === 'llm.delta.response_header') return;
+    if (event.type !== 'llm.retry') return;
     if (event.reason === 'backoff') {
       if (infiniteRetry) {
         this.log.warn('llm request failed; retrying indefinitely (KIMI_CODE_INFINITE_RETRY)', {
@@ -221,6 +277,16 @@ export class AgentLoopRequestObserver {
       }
       return;
     }
+    if (event.reason === 'invalid_tool_arguments') {
+      this.log.warn('tool call arguments invalid; requesting a corrected tool call', {
+        model: request.model.spec.name,
+        ...request.logFields,
+        attempt: event.failedAttempt,
+        ...retryErrorFields(event.error),
+      });
+      return;
+    }
+    if (event.reason !== 'recovery') return;
     if (event.strategy === 'structure') {
       this.log.warn('provider rejected request structure; resending with strict projection', {
         model: request.model.spec.name,
@@ -432,7 +498,7 @@ export class AgentLoopRequestObserver {
   }
 
   private logRequestFailure(observation: AgentRequestObservation, error: unknown): void {
-    const modelAlias = observation.context?.modelAlias ?? observation.config.resolved.modelAlias;
+    const modelAlias = observation.context?.modelAlias ?? 'unknown';
     this.log.warn('llm request failed', {
       ...agentLLMRequestLogFields(observation.source),
       model: modelAlias,
@@ -443,7 +509,7 @@ export class AgentLoopRequestObserver {
 
   private trackApiError(observation: AgentRequestObservation, error: unknown, requestId?: string): void {
     const model = observation.context?.model;
-    const modelAlias = observation.context?.modelAlias ?? observation.config.resolved.modelAlias;
+    const modelAlias = observation.context?.modelAlias ?? 'unknown';
     const source = observation.source;
     const classification = classifyApiError(unwrapErrorCause(error));
     const properties: ApiErrorEvent = {
@@ -542,48 +608,46 @@ export class AgentLoopRequestObserver {
   }
 }
 
-export class AgentRequestObservation {
+export class AgentRequestObservation implements LoopLlmRunObservation {
   readonly startedAt = Date.now();
   readonly media: AttemptObservation = {};
-  context: ResolvedRequestContext | undefined;
   recorded: RecordedRequestSnapshot | undefined;
-  private readonly trace = new MutableLLMRequestTrace();
+  currentRequestId: string | undefined;
 
   constructor(
     private readonly observer: AgentLoopRequestObserver,
     readonly source: AgentLLMRequestSource,
-    readonly config: RequestConfigSnapshot,
-    onTrace?: (trace: LLMRequestTrace) => void,
+    readonly context: ResolvedRequestContext,
+    private readonly infiniteRetry: boolean,
   ) {
-    onTrace?.(this.trace);
     this.setRequestId(undefined);
   }
 
-  prepare(context: ResolvedRequestContext): void {
-    this.context = context;
+  attempt(
+    request: LlmRequest,
+    info: { readonly appliedRecoveries: readonly LlmRecoveryRecord[] },
+  ): void {
+    this.observer.recordAttempt(this, request, info.appliedRecoveries);
   }
 
-  get currentRequestId(): string | undefined {
-    return this.trace.requestId;
+  event(event: LlmRunEvent): void {
+    this.observer.reportEvent(this, event, this.infiniteRetry);
+  }
+
+  settle(outcome: LlmOutcome, signal: AbortSignal): void {
+    if (outcome.type === 'done') this.observer.completeRequest(this, outcome);
+    else if (outcome.type === 'failed') this.observer.failRequest(this, outcome.error, signal, outcome.requestId);
+    else this.setRequestId(undefined);
   }
 
   setRequestId(requestId: string | null | undefined, active = true): void {
     const resolved = requestId ?? undefined;
-    this.trace.set(resolved);
+    this.currentRequestId = resolved;
     this.observer.setRequestId(this.source, resolved, active);
   }
 
   requireContext(): ResolvedRequestContext {
-    if (this.context === undefined) throw new Error('request observation has no resolved context');
     return this.context;
-  }
-}
-
-class MutableLLMRequestTrace implements LLMRequestTrace {
-  requestId: string | undefined;
-
-  set(requestId: string | undefined): void {
-    this.requestId = requestId;
   }
 }
 
@@ -637,7 +701,7 @@ function apiStatusCode(error: unknown): number | undefined {
   return undefined;
 }
 
-function apiRequestId(error: unknown): string | undefined {
+export function apiRequestId(error: unknown): string | undefined {
   const raw = unwrapErrorCause(error);
   const fromDiagnostics = nonEmptyRequestId((errorDiagnostics(error) ?? errorDiagnostics(raw))?.['requestId']);
   if (fromDiagnostics !== undefined) return fromDiagnostics;

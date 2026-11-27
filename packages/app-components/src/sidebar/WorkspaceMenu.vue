@@ -1,0 +1,121 @@
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
+import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
+import { openHostSettings } from '@moonshot-ai/app-client/composables';
+import { hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { Icon, Menu, MenuItem } from '@moonshot-ai/app-ui';
+import { useAnchoredMenu } from '../composables/useAnchoredMenu';
+
+const { t } = useI18n();
+
+const props = withDefaults(
+  defineProps<{
+    canEdit?: boolean;
+  }>(),
+  { canEdit: false },
+);
+
+const emit = defineEmits<{
+  pin: [workspace: WorkspaceView];
+  copyPath: [workspace: WorkspaceView];
+  rename: [workspace: WorkspaceView];
+  edit: [workspace: WorkspaceView];
+  remove: [workspace: WorkspaceView];
+  'update:openId': [id: string | null];
+}>();
+
+const store = workspacesStore();
+const target = ref<WorkspaceView | null>(null);
+const via = ref<'toggle' | 'context'>('toggle');
+const menuRef = ref<InstanceType<typeof Menu> | null>(null);
+const { open, menuStyle, showAnchored, openAt, close } = useAnchoredMenu(menuRef);
+const isRemoteTarget = computed(() => target.value?.hostId !== undefined);
+const targetBlocked = computed(() => hostsStore().blocked(target.value?.hostId));
+const canRenameTarget = computed(() => !targetBlocked.value);
+const canEditTarget = computed(() => {
+  const id = target.value?.id;
+  if (!props.canEdit || id === undefined || targetBlocked.value) return false;
+  return store.workspaces.some((workspace) => workspace.id === id);
+});
+const targetPinned = computed(() => {
+  const id = target.value?.id;
+  return id !== undefined && store.pinnedWorkspaceIds.includes(id);
+});
+
+function report(): void {
+  emit('update:openId', open.value && via.value === 'toggle' ? (target.value?.id ?? null) : null);
+}
+watch(open, report);
+
+async function toggle(e: MouseEvent, ws: WorkspaceView): Promise<void> {
+  if (open.value && via.value === 'toggle' && target.value?.id === ws.id) {
+    close();
+    return;
+  }
+  via.value = 'toggle';
+  target.value = ws;
+  await showAnchored(e, 'right');
+  report();
+}
+
+async function openContext(e: MouseEvent, ws: WorkspaceView): Promise<void> {
+  via.value = 'context';
+  target.value = ws;
+  await openAt(e.clientX, e.clientY);
+  report();
+}
+
+function act(action: 'pin' | 'copyPath' | 'rename' | 'edit' | 'remove'): void {
+  const ws = target.value;
+  close();
+  if (ws === null) return;
+  if (action === 'pin') emit('pin', ws);
+  else if (action === 'copyPath') emit('copyPath', ws);
+  else if (action === 'rename') emit('rename', ws);
+  else if (action === 'edit') emit('edit', ws);
+  else emit('remove', ws);
+}
+
+function openTargetHostSettings(): void {
+  const hostId = target.value?.hostId;
+  close();
+  if (hostId !== undefined) openHostSettings(hostId);
+}
+
+defineExpose({ toggle, openContext, close });
+</script>
+
+<template>
+  <Transition name="ui-menu-pop">
+    <Menu v-if="open && target" ref="menuRef" class="ui-menu-floating workspace-menu" :style="menuStyle" @click.stop>
+      <MenuItem @click="act('pin')">
+        <Icon :name="targetPinned ? 'unpin' : 'pin'" size="sm" />
+        {{ targetPinned ? t('sidebar.unpin') : t('sidebar.pin') }}
+      </MenuItem>
+      <MenuItem @click="act('copyPath')">
+        <Icon name="copy" size="sm" />
+        {{ t('sidebar.copyPath') }}
+      </MenuItem>
+      <MenuItem v-if="canRenameTarget" @click="act('rename')">
+        <Icon name="pencil" size="sm" />
+        {{ t('sidebar.rename') }}
+      </MenuItem>
+      <MenuItem v-if="canEditTarget" @click="act('edit')">
+        <Icon name="sliders" size="sm" />
+        {{ t('workspace.dialog.editTitle') }}
+      </MenuItem>
+      <MenuItem v-if="isRemoteTarget" class="ws-menu-host-settings" @click="openTargetHostSettings">
+        <Icon name="server" size="sm" />
+        {{ t('workspace.hostNotice.settings') }}
+      </MenuItem>
+      <MenuItem danger @click="act('remove')">
+        <Icon name="close" size="sm" />
+        {{ t('sidebar.removeWorkspace') }}
+      </MenuItem>
+    </Menu>
+  </Transition>
+</template>
+
+<style scoped>
+</style>

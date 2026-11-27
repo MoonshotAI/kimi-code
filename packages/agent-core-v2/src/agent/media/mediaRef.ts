@@ -135,6 +135,12 @@ export function daemonFileRefFromPart(
   return undefined;
 }
 
+export function mediaNameOf(part: ContentPart): string | undefined {
+  if (part.type === 'image_url') return part.imageUrl.name;
+  if (part.type === 'video_url') return part.videoUrl.name;
+  return undefined;
+}
+
 export const SESSION_MEDIA_DIR = 'media';
 
 export function sessionMediaFilePath(sessionDir: string, fileId: string, ext: string): string {
@@ -166,8 +172,24 @@ export function unescapeMediaAttribute(value: string): string {
     .replaceAll('&amp;', '&');
 }
 
+export interface MediaLabel {
+  readonly name?: string;
+  readonly path?: string;
+}
+
+export function buildMediaOpenTag(kind: MediaKind, label: MediaLabel): string {
+  const nameAttr = label.name === undefined ? '' : ` name="${escapeMediaAttribute(label.name)}"`;
+  const pathAttr = label.path === undefined ? '' : ` path="${escapeMediaAttribute(label.path)}"`;
+  return `<${kind}${nameAttr}${pathAttr}>`;
+}
+
+export function buildMediaTag(kind: MediaKind, label: MediaLabel): string | undefined {
+  if (label.name === undefined && label.path === undefined) return undefined;
+  return `${buildMediaOpenTag(kind, label)}</${kind}>`;
+}
+
 export function buildMediaPathTag(kind: MediaKind, path: string): string {
-  return `<${kind} path="${escapeMediaAttribute(path)}"></${kind}>`;
+  return `${buildMediaOpenTag(kind, { path })}</${kind}>`;
 }
 
 export function matchMediaPathTags(text: string): MediaPathTag[] {

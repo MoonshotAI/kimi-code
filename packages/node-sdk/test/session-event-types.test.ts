@@ -74,6 +74,12 @@ describe('Event public types', () => {
     expectTypeOf<QuestionRequest['questions'][number]['question']>().toEqualTypeOf<string>();
   });
 
+  it('exposes optional continuation info on turn.ended', () => {
+    expectTypeOf<EventByType<'turn.ended'>['continuation']>().toEqualTypeOf<
+      'turn' | 'background' | 'none' | undefined
+    >();
+  });
+
   it('exposes optional session scope on approval responses', () => {
     expectTypeOf<ApprovalResponse['scope']>().toEqualTypeOf<'session' | undefined>();
   });
@@ -106,12 +112,15 @@ describe('Event public types', () => {
         case 'turn.step.completed':
         case 'turn.step.retrying':
         case 'turn.step.interrupted':
+        case 'turn.step.stream_reset':
         case 'assistant.delta':
         case 'hook.result':
         case 'thinking.delta':
         case 'tool.call.delta':
         case 'tool.call.started':
         case 'tool.updated':
+        case 'auto_review.started':
+        case 'auto_review.decision':
         case 'shell.output':
         case 'shell.started':
         case 'shell.completed':
@@ -137,6 +146,7 @@ describe('Event public types', () => {
         case 'prompt.completed':
         case 'prompt.aborted':
         case 'prompt.steered':
+        case 'prompt.queued':
           return;
         default:
           assertNever(event);

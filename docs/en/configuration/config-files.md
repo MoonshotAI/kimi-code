@@ -108,6 +108,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`models`](#models) | `table` | — | Model alias table |
 | [`thinking`](#thinking) | `table` | — | Default parameters for Thinking mode |
 | [`loop_control`](#loop-control) | `table` | — | Agent loop control parameters |
+| [`auto_review`](#auto-review) | `table` | — | Experimental LLM review in Ask When Needed and Never Ask modes |
 | [`task`](#task) | `table` | — | Background task and Tower agent runtime parameters; `background` is the legacy section name |
 | [`tools`](#tools) | `table` | — | Global tool switch |
 | [`image`](#image) | `table` | — | Image compression parameters |
@@ -224,7 +225,7 @@ Pool aliases reference the current `[models]` table: if a provider is later dele
 
 In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command (alias `/subagent-model`) opens a model selector: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately, no session restart needed.
 
-Subagents only run on models listed in the pool. A lone `default_model` (or a `models` table with a single entry) pins every subagent to that model. A pool with two or more entries enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn. Pool keys can only reference configured [`[models]`](#models) entries. The `kimi-code/*` aliases below are provisioned by `/login`:
+When `[secondary_model]` is configured, subagents only run on models listed in the pool. A lone `default_model` (or a `models` table with a single entry) pins every subagent to that model, except Tower reviewers: they inherit Tower's current model by default, and passing the pool alias explicitly keeps the pool model. A pool with two or more entries lets the main agent choose per spawn via the `model` parameter on `Agent`, `AgentSwarm`, and `TowerSpawn`: the available models (with the default marked `[default]`) are injected into context via a system reminder, keeping tool definitions static when `[secondary_model]` changes mid-session. Pool keys can only reference configured [`[models]`](#models) entries. The `kimi-code/*` aliases below are provisioned by `/login`:
 
 ```toml
 [secondary_model]
@@ -242,12 +243,12 @@ A spawn resolves the subagent's model in this order:
 
 Rules for the `model` parameter:
 
-- It accepts pool aliases only. The main agent's own model is not an implicit choice: to let it run hard subtasks on the main model, list that model's alias in the pool explicitly.
-- When neither `default_model` nor `models` is configured, the parameter is not advertised and subagents inherit the caller's model. With a single-entry pool it is not advertised either.
+- When `[secondary_model]` is configured, it accepts pool aliases only. The main agent's own model is not an implicit choice: to let it run hard subtasks on the main model, list that model's alias in the pool explicitly.
+- When neither `default_model` nor `models` is configured, subagents inherit the caller's model and thinking, no model list is announced, and passing any `model` is rejected.
 - Binding a pool alias does not inherit the caller's thinking effort, even when the alias is the caller's own model. The section's `default_effort` wins when set. Otherwise, `[thinking].enabled = false` keeps Thinking off; when Thinking is enabled, resolution continues with the bound model entry's `default_effort`, the global `[thinking].effort`, then the middle of the bound model's `support_efforts`.
-- A value that is not a pool alias fails the spawn with an error listing the available choices.
+- Any value outside the available subagent models fails the spawn with an error listing the available choices. Passing `model` when resuming an existing subagent (or calling `AgentSwarm` without `items`) also fails with an error.
 
-The former `force` key has been removed: a lone `default_model` already pins every subagent to one model. A configuration that still sets `force` loads with a warning and the key is ignored.
+The former `force` key has been removed: a lone `default_model` already pins Agent and AgentSwarm subagents and tower workers to one model. A configuration that still sets `force` loads with a warning and the key is ignored.
 
 ### Different thinking efforts per pool entry
 
@@ -324,6 +325,28 @@ Configuration errors fail loudly instead of falling back silently. Session creat
 `max_steps_per_turn` can be overridden by the `KIMI_LOOP_MAX_STEPS_PER_TURN` environment variable, and `max_attempts_per_step` by `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP`; both take higher priority than the config file. The former `KIMI_LOOP_MAX_RETRIES_PER_STEP` variable is deprecated but still honored (with a startup warning) when the new one is unset.
 
 Retries only apply to transient failures: connection errors, timeouts, HTTP 429 rate limits, and 5xx server errors. A 429 caused by an exhausted quota or insufficient account balance is not retried and fails immediately, since it cannot succeed until the account is recharged.
+
+## `auto_review`
+
+`auto_review` configures the experimental LLM reviewer for `Bash` and MCP tool calls in Ask When Needed and Never Ask modes. It is disabled by default. Set `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` or `[experimental] auto_review = true` to enable it.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `model` | `string` | `[secondary_model]` default model, or main model | Model alias used for independent review requests |
+| `effort` | `string` | — | Thinking effort for review requests; must be an effort the review model supports, or a configuration error is reported |
+| `timeout_ms` | `integer` | `30000` | Review deadline in milliseconds, from `1000` to `120000` |
+
+Only `Bash` and MCP tool calls that Always Ask mode would ask you to approve are reviewed; other built-in tools such as `Edit` and `Write` skip review and keep the current permission mode's static result. Among `Bash` and MCP calls, those that a more specific rule already approves — statically read-only `Bash` commands, your `allow` rules, and calls approved for this session — skip review. In Ask When Needed mode, your explicit `ask` rules are not delegated to the reviewer and still prompt you directly; in Never Ask mode, where prompts are suppressed, calls matching those `ask` rules are still sent to the reviewer. Dangerous commands are still reviewed in both modes (including `kimi -p`) even when an `allow` rule or a session approval matches them, because Always Ask mode would ask about them. A reviewer `allow` lets the call run. A `deny` or a review failure asks for your approval in Ask When Needed mode; in Never Ask mode the tool returns an error without running and the main agent can continue.
+
+The reviewer receives the current working directory, the current AGENTS.md snapshot (loaded on first review and refreshed when workspace instructions change), the user and parent instructions still in context after compaction (each user instruction carries up to the last 2,000 characters of the agent reply it answers), compaction summaries (used only to retain explicit boundaries, never to grant authorization), completed prior tool calls (including whether you approved them), and the pending tool's complete arguments and target Git working-tree status (probed only within the workspace and approved additional directories). Tool output text and media are not sent. A request that exceeds the model window fails that review. If retained authorization instructions or the working directory change during review, the result is not used to execute the action.
+
+Review requests do not follow the main loop's current thinking effort. When `effort` is set, reviews use it. When `effort` is unset and the review borrows the `[secondary_model]` default model, it also borrows that section's `default_effort`. Neither of these is affected by `[thinking].enabled = false`. Otherwise, `[thinking].enabled = false` turns review thinking off unless the model cannot disable it; with thinking on, resolution continues with the review model entry's `default_effort`, then the global `[thinking].effort`, then the model's default. Higher efforts take longer; lower `effort` or raise `timeout_ms` if reviews time out.
+
+```toml
+[auto_review]
+model = "kimi-code/kimi-for-coding-highspeed"
+timeout_ms = 30000
+```
 
 ## `token_counting`
 
@@ -540,6 +563,8 @@ api_key = "sk-xxx"
 
 User rules are loaded from the user `config.toml` at session startup. For compatibility, legacy `turn-override` and `session-runtime` rules in the user config are silently ignored without a warning.
 
+If the user `config.toml` cannot be read, parsed, or validated, sessions continue with default or last-known-good validated values, and error or warning diagnostics remain visible in config diagnostics and non-interactive outputs. Config writes remain blocked while the file cannot be read or parsed.
+
 Project rules are read from `.kimi-code/local.toml` only in the local environment when the workspace is trusted, with an omitted `scope` defaulting to `project`. Remote project rules are not supported. Project rule changes take effect in a new session and are not hot-reloaded.
 
 You can also set `dangerous_command_guard = false` under `[permission]` to turn off every built-in guard confirmation policy entirely: dangerous commands, access to sensitive files such as `.env` or `id_rsa`, and access to git control paths no longer ask for confirmation in Always Ask and Ask When Needed mode (these policies are never active in Never Ask mode); the default is `true`. An environment variable `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` overrides the file setting. With all built-in guards off, only `ask` rules you configured yourself can still prompt in Ask When Needed mode; in Always Ask mode, tools that are not auto-approved continue to prompt as before. The hard block that stops `Read`/`Write`/`Edit` from touching secret files stays in effect. Use this switch only for environments that already gate commands outside the agent.
@@ -584,6 +609,8 @@ Each entry is keyed by its environment id: at most 64 characters, no leading or 
 Remote working directories must be absolute POSIX paths or Windows drive paths; relative paths and `~` are not expanded. See [Windows targets](../guides/remote-environment.md#windows-targets) for the Git Bash and launcher requirements.
 
 The optional top-level `default` names the environment a session binds to when creation does not specify one. It must reference a configured entry, and that entry must set `defaultCwd` — a binding pairs an environment with a working directory, so a default without one would dangle. Without a `default`, those sessions start on the `local` environment. A TUI `/new` does not use this default: it keeps the current environment. See [Remote environments](../guides/remote-environment.md).
+
+If the environment section is invalid, implicit session creation uses the last valid declarations when available instead of failing, or falls back to the local environment with a warning otherwise. This can change where commands run; check config diagnostics before relying on a configured remote environment.
 
 ### SSH entries
 
@@ -651,6 +678,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `theme` | `string` | `auto` | Color theme: `auto`, `dark`, `light`, or the name of a [custom theme](../customization/themes.md) |
 | `tui_mode` | `string` | `regular` | UI layout: `regular` renders into the terminal scrollback; `fullscreen` (experimental) makes parts of the UI mouse-interactive for a smoother experience |
 | `copy_on_select` | `boolean` | `true` | Fullscreen mode only: copy text as soon as you select it; you can also press `Ctrl-C` to copy |
+| `wheel_scroll_lines` | `"auto" \| integer` | `"auto"` | Fullscreen mode only: lines scrolled per mouse-wheel event (`"auto"` or a positive integer); `"auto"` speeds up automatically when scrolling fast |
 | `render_latex` | `boolean` | `true` | Render LaTeX math expressions in Markdown messages as Unicode text; `false` keeps the raw source |
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `cache_expiry_hint` | `boolean` | `true` | On resume or when submitting after a long idle stretch, warn that the context cache may have expired and offer to compact or start a new session (v2 engine only) |
@@ -677,6 +705,7 @@ Model, cwd, git branch, permission mode, plan mode, context usage, session id, v
 theme = "auto" # "auto" | "dark" | "light" | custom theme name
 # tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)
 copy_on_select = true # fullscreen only: false copies only when you press Ctrl-C
+# wheel_scroll_lines = "auto" # fullscreen only: "auto" or lines per wheel event (e.g. 1, 2, 3, 5, 10)
 render_latex = true # false keeps LaTeX math in messages as raw source
 disable_paste_burst = false # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = true # false disables the "cache expired" dialog on resume / idle submit
@@ -708,7 +737,7 @@ Changes apply on the next start, or immediately with `/reload-tui` (which reload
 
 In addition to the user-level files under `~/.kimi-code`, Kimi Code reads a project-local configuration file at `<project-root>/.kimi-code/local.toml`. It holds settings that are specific to one project checkout and typically should not be shared with teammates.
 
-Earlier versions of [`/add-dir`](../reference/slash-commands.md) wrote remembered directories to this file; current versions write them to the workspace registry in `~/.kimi-code/projects.json` instead, and `local.toml` is now a read-only legacy field that nothing writes to. Sessions of implicit workspaces (entered by directory in the terminal) still merge its `additional_dir` into the additional directories; sessions of explicitly created (managed) workspaces no longer read it. To move legacy entries into the registry, use the import action in the client's create/edit workspace dialog (backed by [`GET /api/v1/workspaces/project-config-dirs`](../reference/server-api-service.md#get-api-v1-workspaces-project-config-dirs)); imported entries are registry-managed and removals take effect immediately.
+Earlier versions of [`/add-dir`](../reference/slash-commands.md) wrote remembered directories to this file; current versions write them to the workspace registry in `~/.kimi-code/projects.json` instead, and `local.toml` is now a read-only legacy field that nothing writes to. Sessions of implicit workspaces (entered by directory in the terminal) still merge its `additional_dir` into the additional directories; sessions of explicitly created (managed) workspaces no longer read it. To move legacy entries into the registry, use the import action in the client's create/edit workspace dialog (backed by the local server's `GET /api/v1/workspaces/project-config-dirs`); imported entries are registry-managed and removals take effect immediately.
 
 ### `[workspace]`
 
@@ -725,7 +754,7 @@ additional_dir = ["/absolute/path/to/shared"]
 
 Because directories are stored as absolute paths, which are specific to your machine, we recommend adding `.kimi-code/local.toml` to your project's `.gitignore` so it is not committed.
 
-Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the folder in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
+Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the project in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
 
 ## Next steps
 

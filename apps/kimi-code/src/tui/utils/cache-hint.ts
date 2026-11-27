@@ -1,17 +1,11 @@
 import type { CacheHintConfig } from '#/utils/cache-hint-config';
 
 export interface CacheHintInput {
-  /** Current time, epoch ms. */
   readonly now: number;
-  /** Last session activity, epoch ms. Missing → skip. */
   readonly lastActiveAt?: number;
-  /** Current context size in tokens. Missing → skip (no local estimation). */
   readonly totalTokens?: number;
-  /** Upstream model ID used to look up the rule. Missing/unconfigured → skip. */
   readonly modelId?: string;
-  /** Fetch failure → undefined → skip. */
   readonly config?: CacheHintConfig;
-  /** User chose "Don't ask me again" (tui.toml). */
   readonly dismissed: boolean;
 }
 
@@ -19,11 +13,6 @@ export type CacheHintDecision =
   | { readonly kind: 'skip' }
   | { readonly kind: 'hint'; readonly idleSeconds: number; readonly totalTokens: number };
 
-/**
- * Shared trigger rule for both the resume and the idle scenarios. Every
- * missing-data branch skips — false negatives are acceptable, false positives
- * are not.
- */
 export function evaluateCacheHint(input: CacheHintInput): CacheHintDecision {
   if (input.dismissed) return { kind: 'skip' };
   const { config, modelId, lastActiveAt, totalTokens } = input;
@@ -37,7 +26,6 @@ export function evaluateCacheHint(input: CacheHintInput): CacheHintDecision {
   return { kind: 'hint', idleSeconds: Math.floor(idleMs / 1000), totalTokens };
 }
 
-/** `45m` / `3h 20m` / `26d 22h`. */
 export function formatIdleDuration(idleSeconds: number): string {
   const minutes = Math.max(1, Math.floor(idleSeconds / 60));
   if (minutes < 60) return `${minutes}m`;

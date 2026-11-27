@@ -1,11 +1,5 @@
-import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
-import { environmentBindingKey } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBindingOps';
-import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { deflateSync } from 'node:zlib';
-
 import {
+  IEnvironmentService,
   agentContextOf,
   IAgentTitlePromptSource,
   IAgentLifecycleService,
@@ -21,7 +15,7 @@ import {
   IFileService,
   ISessionContext,
   ISessionMetadata,
-  IWorkspaceInstanceManager,
+  IProjectInstanceManager,
   MAX_IMAGE_DECODE_BYTES,
   Error2,
   ErrorCodes,
@@ -29,6 +23,26 @@ import {
   getLiveSessionById,
   resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
+import {
+  environmentBindingKey,
+} from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBindingOps';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { deflateSync } from 'node:zlib';
+
 import type { PromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
@@ -1690,7 +1704,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-prompt-fake-remote-')));
     try {
-      const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+      const instance = server!.core.accessor.get(IProjectInstanceManager).get(workspaceId);
       const fake = new FakeEnvironment(
         { environmentId: 'fake-remote', generation: 'fake-generation' },
         { capabilities: ['fs'] },
@@ -1802,7 +1816,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
     try {
-      const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+      const instance = server!.core.accessor.get(IProjectInstanceManager).get(workspaceId);
       const fake = new FakeEnvironment(
         { environmentId: 'broken-remote', generation: 'broken-generation' },
         { capabilities: ['fs'] },

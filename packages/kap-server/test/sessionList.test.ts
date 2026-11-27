@@ -9,8 +9,8 @@ import {
   IEnvironmentService,
   ISessionIndex,
   IEventService,
-  IWorkspaceAliases,
-  IWorkspaceService,
+  IProjectAliases,
+  IProjectService,
   closeSessionById,
   getLiveSessionById,
   resumeSessionById,
@@ -142,7 +142,7 @@ function stubSessionIndex(summaries: SessionSummary[]): ISessionIndex {
   };
 }
 
-const workspaceStub: IWorkspaceService = {
+const workspaceStub: IProjectService = {
   _serviceBrand: undefined,
   list: async () => [
     {
@@ -168,9 +168,17 @@ const workspaceStub: IWorkspaceService = {
   create: async () => {
     throw new Error('not used in these tests');
   },
-  createOrTouch: async () => {
+  resolveImplicit: async () => {
     throw new Error('not used in these tests');
   },
+  peekImplicit: async () => {
+    throw new Error('not used in these tests');
+  },
+  reviveImplicit: async () => {
+    throw new Error('not used in these tests');
+  },
+  projectDirAt: async () => undefined,
+  acceptsWorkDir: async () => false,
   touch: async () => {
     throw new Error('not used in these tests');
   },
@@ -248,7 +256,7 @@ describe('server /api/v1/sessions list', () => {
       logLevel: 'silent',
       seeds: [
         [ISessionIndex, stubSessionIndex(summaries)],
-        [IWorkspaceService, workspaceStub],
+        [IProjectService, workspaceStub],
         [IGitService, gitStub],
       ],
     });
@@ -322,13 +330,17 @@ describe('server /api/v1/sessions list', () => {
       created_at: new Date(3_000).toISOString(),
       updated_at: new Date(5_000).toISOString(),
       archived: false,
-      busy: false,
-      main_turn_active: false,
+      activity: 'idle',
+      cwd: '/repo/a',
       pending_interaction: 'none',
-      metadata: { cwd: '/repo/a' },
-      agent_config: { model: '' },
     });
     expect('git' in first).toBe(false);
+    expect(first).not.toHaveProperty('busy');
+    expect(first).not.toHaveProperty('main_turn_active');
+    expect(first).not.toHaveProperty('agent_config');
+    expect(first).not.toHaveProperty('usage');
+    expect(first).not.toHaveProperty('permission_rules');
+    expect(first).not.toHaveProperty('message_count');
 
     const second = page.items[1] as Session;
     expect(second.title).toBe('');
@@ -336,7 +348,7 @@ describe('server /api/v1/sessions list', () => {
     expect(third.last_prompt).toBeUndefined();
   });
 
-  it('exposes the live session model on listed sessions', async () => {
+  it('returns the main agent model from profile and omits it from SessionInfo', async () => {
     await (server as RunningServer).close();
     await writeFile(
       join(home as string, 'config.toml'),
@@ -368,7 +380,7 @@ describe('server /api/v1/sessions list', () => {
     const created = await authedFetch(server, base, '/api/v1/sessions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ metadata: { cwd: home } }),
+      body: JSON.stringify({ cwd: home }),
     });
     const createdBody = (await created.json()) as { code: number; data: { id: string } };
     expect(createdBody.code).toBe(0);
@@ -379,11 +391,13 @@ describe('server /api/v1/sessions list', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ agent_config: { model: 'stub' } }),
     });
-    expect(((await bound.json()) as { code: number }).code).toBe(0);
+    const boundBody = (await bound.json()) as { code: number; data: { agent: { model?: string } } };
+    expect(boundBody.code).toBe(0);
+    expect(boundBody.data.agent.model).toBe('stub');
 
     const page = await getData();
     const item = page.items.find((entry) => entry.id === id) as Session | undefined;
-    expect(item?.agent_config).toEqual({ model: 'stub' });
+    expect(item?.cwd).toBe(home);
 
     await rm(join(home as string, 'config.toml'), { force: true });
     await (server as RunningServer).close();
@@ -688,6 +702,7 @@ describe('server /api/v1/sessions list', () => {
       id: 'local-shadow',
       workspaceId: WS_A,
       cwd: remoteRepo,
+      environmentCwd: remoteRepo,
       createdAt: 5_500,
       updatedAt: 5_500,
       archived: false,
@@ -862,7 +877,7 @@ describe('server /api/v1/sessions list', () => {
 
     const first = a.sessions[0] as Session;
     expect(first.last_prompt).toBe('do alpha');
-    expect(first.metadata.cwd).toBe('/repo/a');
+    expect(first.cwd).toBe('/repo/a');
     expect('git' in first).toBe(false);
   });
 
@@ -886,6 +901,44 @@ describe('server /api/v1/sessions list', () => {
     expect(grouped.groups.map((group) => group.workspace_id)).toEqual([WS_A]);
     expect(grouped.groups[0]?.sessions.map((item) => item.id)).toEqual(['s1', 's2']);
     expect(grouped.groups[0]?.total).toBe(2);
+  });
+
+  it('filters by query over title and last prompt (case-insensitive substring) or an exact id', async () => {
+    const byTitle = await getData('?query=ALPH');
+    expect(byTitle.items.map((item) => item.id)).toEqual(['s1']);
+
+    const byPrompt = await getData('?query=beta');
+    expect(byPrompt.items.map((item) => item.id)).toEqual(['s2']);
+
+    const byId = await getData('?query=S3');
+    expect(byId.items.map((item) => item.id)).toEqual(['s3']);
+    expect(byId.total).toBe(1);
+
+    const idFragment = await getData('?query=s');
+    expect(idFragment.items).toEqual([]);
+
+    const archived = await getData('?query=old&archived=all');
+    expect(archived.items.map((item) => item.id)).toEqual(['s4']);
+
+    const blank = await getData('?query=%20%20');
+    expect(blank.items.map((item) => item.id)).toEqual(['s1', 's2', 's3']);
+
+    const grouped = await getGroupData('?view=by_workspace&query=do');
+    expect(grouped.groups.map((group) => group.workspace_id)).toEqual([WS_A]);
+    expect(grouped.groups[0]?.sessions.map((item) => item.id)).toEqual(['s1', 's2']);
+  });
+
+  it('binds query into the page_token fingerprint', async () => {
+    const page1 = await getData('?page_size=1&query=do');
+    expect(page1.items.map((item) => item.id)).toEqual(['s1']);
+    expect(page1.has_more).toBe(true);
+
+    const page2 = await getData(`?page_size=1&query=do&page_token=${page1.next_page_token}`);
+    expect(page2.items.map((item) => item.id)).toEqual(['s2']);
+    expect(page2.has_more).toBe(false);
+
+    const drifted = await getError(`?page_size=1&query=alpha&page_token=${page1.next_page_token}`);
+    expect(drifted.code).toBe(40922);
   });
 
   it('applies sort, workspace_id, and archived to groups with flat-view semantics', async () => {
@@ -985,7 +1038,7 @@ describe('server /api/v1/sessions list', () => {
         archived: false,
       },
     ];
-    const aliasStub: IWorkspaceAliases = {
+    const aliasStub: IProjectAliases = {
       _serviceBrand: undefined,
       resolveAliasIds: async (id) =>
         id === WS_A || id === legacyAlias ? [WS_A, legacyAlias] : [id],
@@ -998,9 +1051,9 @@ describe('server /api/v1/sessions list', () => {
       logLevel: 'silent',
       seeds: [
         [ISessionIndex, stubSessionIndex(aliasSummaries)],
-        [IWorkspaceService, workspaceStub],
+        [IProjectService, workspaceStub],
         [IGitService, gitStub],
-        [IWorkspaceAliases, aliasStub],
+        [IProjectAliases, aliasStub],
       ],
     });
     base = `http://127.0.0.1:${server.port}`;
@@ -1009,7 +1062,7 @@ describe('server /api/v1/sessions list', () => {
     expect(page.total).toBe(2);
     const merged = page.groups.find((group) => group.workspace_id === WS_A);
     expect(merged?.sessions.map((item) => item.id)).toEqual(['s5', 's1', 's2']);
-    expect((merged?.sessions[0] as Session | undefined)?.metadata.cwd).toBe('/repo/a');
+    expect((merged?.sessions[0] as Session | undefined)?.cwd).toBe('/repo/a');
     expect(merged?.total).toBe(3);
   });
 });
@@ -1086,7 +1139,7 @@ describe('server /api/v1/sessions batch archive/restore', () => {
     const res = await authedFetch(server as RunningServer, base, '/api/v1/sessions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ metadata: { cwd: home } }),
+      body: JSON.stringify({ cwd: home }),
     });
     const body = (await res.json()) as {
       code: number;

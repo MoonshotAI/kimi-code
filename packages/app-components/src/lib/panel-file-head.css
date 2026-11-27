@@ -1,0 +1,22 @@
+.panel-file-head .ui-panel-header__title {
+  font: 400 var(--ui-c1) var(--font-ui);
+  direction: rtl;
+  text-align: left;
+}
+
+.panel-file-head-actions {
+  margin-left: auto;
+  min-width: 0;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tree-toggle-head {
+  order: 2;
+}
+
+.tree-toggle-head.tree-toggle-left {
+  order: -1;
+}

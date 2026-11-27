@@ -1,18 +1,20 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Message } from '@moonshot-ai/core/llm/message';
-import type { Model } from '#/llm-adapter/model/catalog';
-import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 
 export interface IAgentMediaResolverService {
   readonly _serviceBrand: undefined;
 
   resolve(
     messages: readonly Message[],
-    model: Model,
-    requester: InitializedLlmRequester,
+    request: LlmRequest,
     signal?: AbortSignal,
   ): Promise<readonly Message[]>;
-  displayPaths(messages: readonly Message[]): Promise<ReadonlyMap<string, string>>;
+  recoverFailedUploads(
+    messages: readonly Message[],
+    request: LlmRequest,
+    signal?: AbortSignal,
+  ): Promise<boolean>;
 }
 
 export const IAgentMediaResolverService = createDecorator<IAgentMediaResolverService>(

@@ -34,12 +34,13 @@ import {
 } from '#/app/telemetry/telemetry';
 import { TelemetryService } from '#/app/telemetry/telemetryService';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
-import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
+import { type ProviderConfig } from '#/provider-catalog/provider/provider';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubProviderService } from '../provider/stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 vi.mock('#/app/plugin/store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/app/plugin/store')>();
@@ -63,7 +64,7 @@ function makeHost(
 ): ScopedTestHost {
   return createScopedTestHost([
     stubPair(IBootstrapService, stubBootstrap(homeDir, env)),
-    stubPair(IProviderService, providers),
+    stubPair(IProviderCatalogService, providers),
     stubPair(IRegionService, {
       _serviceBrand: undefined,
       current: () => ({ region: 'mainland-cn', source: 'default' }),

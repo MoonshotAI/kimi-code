@@ -1,1 +1,1 @@
-export * from '@moonshot-ai/core/tool/tool-args-parse';
+export * from '@moonshot-ai/core/tool/args';

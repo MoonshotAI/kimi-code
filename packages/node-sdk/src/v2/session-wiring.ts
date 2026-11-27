@@ -33,6 +33,7 @@ import {
   IAgentLoopService,
   IEventBus,
   interactions,
+  isMissingConfiguredModelError,
   ISessionTokenCountingService,
   ISessionUsageService,
   MAIN_AGENT_ID,
@@ -43,6 +44,7 @@ import {
   type Interaction,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 import type {
   ApprovalRequest,
@@ -84,6 +86,7 @@ interface ApprovalInteractionPayload {
   readonly toolName: string;
   readonly action: string;
   readonly display: ToolInputDisplay;
+  readonly approvalDetail?: ApprovalRequest['approvalDetail'];
 }
 
 /** The v2 question payload (`agent-core-v2/src/agent/interaction/question.ts`). */
@@ -214,14 +217,12 @@ export class SessionEventWiring {
         toolName: payload.toolName,
         action: payload.action,
         display: payload.display,
+        approvalDetail: payload.approvalDetail,
         sessionId: this.session.id,
         agentId: payload.agentId ?? interactionAgentId(interaction) ?? MAIN_AGENT_ID,
       });
       interactions.respond(interaction.id, response);
-    } catch {
-      // The session scope died mid-bridge (close/reload): the parked engine
-      // request died with it, and `respond` no-ops on an unknown id anyway.
-    }
+    } catch {}
   }
 
   /**
@@ -241,9 +242,7 @@ export class SessionEventWiring {
         agentId: interactionAgentId(interaction) ?? MAIN_AGENT_ID,
       });
       interactions.respond(interaction.id, result);
-    } catch {
-      // See bridgeApproval.
-    }
+    } catch {}
   }
 
   /**
@@ -260,9 +259,7 @@ export class SessionEventWiring {
         args: payload.args,
       });
       interactions.respond(interaction.id, result);
-    } catch {
-      // See bridgeApproval.
-    }
+    } catch {}
   }
 }
 
@@ -291,24 +288,46 @@ function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event
   if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return event;
   }
-  // Externally reported context size, resolved by the `[token_counting]`
-  // strategy inside the service (`ISessionTokenCountingService.statusSize`).
   const context = agentContextOf(agent);
   const contextTokens = tokenCounting.statusSize(context);
-  const model = profile.getModel() === '' ? undefined : profile.resolveModelContext().model;
-  const maxContextTokens = model?.maxInputSize ?? model?.maxContextSize;
+  const { modelAlias, maxContextTokens } = readStatusModelContext(agent);
   const contextUsage =
-    Number.isFinite(contextTokens) &&
-    maxContextTokens !== undefined &&
-    Number.isFinite(maxContextTokens) &&
-    maxContextTokens > 0
+    Number.isFinite(contextTokens) && maxContextTokens > 0
       ? contextTokens / maxContextTokens
       : undefined;
   return Object.assign({}, event, {
     usage: usageService.status(context),
     contextTokens,
-    maxContextTokens,
+    maxContextTokens: maxContextTokens > 0 ? maxContextTokens : undefined,
     contextUsage,
-    model: profile.getModel(),
+    model: modelAlias,
   }) as unknown as Event2<any>;
+}
+
+export function readStatusModelContext(agent: IAgentScopeHandle): {
+  readonly modelAlias: string;
+  readonly maxContextTokens: number;
+} {
+  const profile = agent.accessor.get(IAgentLoopService);
+  const modelAlias = profile.getModel();
+  let modelSpec;
+  try {
+    modelSpec = modelAlias === '' ? undefined : profile.resolveModelContext().model;
+  } catch (error) {
+    if (agent.id !== MAIN_AGENT_ID || !isMissingConfiguredModelError(error, modelAlias)) {
+      throw error;
+    }
+  }
+  let maxContextTokens = modelSpec?.maxInputSize ?? modelSpec?.maxContextSize ?? 0;
+  if (maxContextTokens === 0) {
+    const catalog = agent.accessor.get(IProviderCatalogService) as IProviderCatalogService | undefined;
+    const defaultModel = catalog?.getDefaultModelId();
+    if (defaultModel !== undefined && defaultModel.length > 0 && catalog !== undefined) {
+      try {
+        const model = catalog.get(defaultModel);
+        maxContextTokens = model.spec.maxInputSize ?? model.spec.maxContextSize ?? 0;
+      } catch {}
+    }
+  }
+  return { modelAlias, maxContextTokens };
 }

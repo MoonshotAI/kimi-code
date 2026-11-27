@@ -1,10 +1,3 @@
-/**
- * Renders an assistant message using pi-tui Markdown.
- *
- * Displays a white bullet prefix with markdown content indented
- * to align after the bullet.
- */
-
 import { Container, truncateToWidth, visibleWidth, type Component, type TuiMouseDispatchResult, type TuiMouseEvent } from '@moonshot-ai/pi-tui';
 
 import { Markdown } from '#/tui/components/markdown/markdown';
@@ -97,9 +90,6 @@ export class AssistantMessageComponent implements Component {
   }
 
   invalidate(): void {
-    // Markdown caches ANSI colour codes keyed on (text, width).  When the
-    // theme changes the cached strings contain stale colours, so we rebuild
-    // the Markdown child with the new theme while preserving transient mode.
     this.markRenderDirty();
     this.contentContainer.clear();
     this.markdown = undefined;

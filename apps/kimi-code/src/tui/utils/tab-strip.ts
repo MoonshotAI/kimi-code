@@ -1,16 +1,7 @@
-/**
- * Shared tab strip renderer for tabbed dialogs (model selector, plugin
- * marketplace, …). The active tab is filled with the brand background, inactive
- * tabs are muted — matching the AskUserQuestion dialog. See
- * .agents/skills/write-tui/DESIGN.md §5.
- *
- * When the strip is wider than the terminal, it scrolls to keep the active tab
- * visible, framed by `<`/`>` markers.
- */
-
 import { visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
+import { contrastingTextColor } from '#/tui/theme/color-mix';
 import type { ColorPalette } from '#/tui/theme/colors';
 
 export interface RenderTabStripOptions {
@@ -20,31 +11,42 @@ export interface RenderTabStripOptions {
   readonly colors: ColorPalette;
 }
 
-/** Style one tab cell. Active and inactive cells have the same visible width so
- * switching never shifts the layout. */
 function styleTab(label: string, isActive: boolean, colors: ColorPalette): string {
   const cell = ` ${label} `;
   return isActive
-    ? chalk.bgHex(colors.primary).hex(colors.text).bold(cell)
+    ? chalk.bgHex(colors.primary).hex(contrastingTextColor(colors.primary)).bold(cell)
     : chalk.hex(colors.textMuted)(cell);
 }
 
-export function renderTabStrip(opts: RenderTabStripOptions): string {
+export interface TabStripHitRange {
+  readonly index: number;
+  readonly start: number;
+  readonly end: number;
+}
+
+export interface TabStripLayout {
+  readonly line: string;
+  readonly hitRanges: readonly TabStripHitRange[];
+}
+
+export function layoutTabStrip(opts: RenderTabStripOptions): TabStripLayout {
   const { labels, activeIndex, width, colors } = opts;
   const segments = labels.map((label, i) => styleTab(label, i === activeIndex, colors));
+  const segmentWidths = segments.map((s) => visibleWidth(s));
 
-  // If everything fits with a leading space, show the whole strip. Account for
-  // the single spaces `segments.join(' ')` inserts between tabs — otherwise the
-  // strip is declared to fit at widths where the joined line is actually wider
-  // and gets truncated instead of showing the `<`/`>` scroll markers.
-  const totalSegmentWidth = segments.reduce((sum, s) => sum + visibleWidth(s), 0);
+  const totalSegmentWidth = segmentWidths.reduce((sum, w) => sum + w, 0);
   const fullSeparatorWidth = Math.max(0, segments.length - 1);
   if (1 + totalSegmentWidth + fullSeparatorWidth <= width) {
-    return ' ' + segments.join(' ');
+    const hitRanges: TabStripHitRange[] = [];
+    let col = 1;
+    for (let i = 0; i < segments.length; i++) {
+      const w = segmentWidths[i]!;
+      hitRanges.push({ index: i, start: col, end: col + w });
+      col += w + 1;
+    }
+    return { line: ' ' + segments.join(' '), hitRanges };
   }
 
-  // Scrolling needed. Find the widest window that contains activeIndex.
-  const segmentWidths = segments.map((s) => visibleWidth(s));
   let start = activeIndex;
   let end = activeIndex + 1;
   let contentWidth = segmentWidths[activeIndex] ?? 0;
@@ -85,10 +87,21 @@ export function renderTabStrip(opts: RenderTabStripOptions): string {
 
   const hasLeft = start > 0;
   const hasRight = end < segments.length;
+  const hitRanges: TabStripHitRange[] = [];
+  let col = hasLeft ? 2 : 1;
+  for (let i = start; i < end; i++) {
+    const w = segmentWidths[i]!;
+    hitRanges.push({ index: i, start: col, end: col + w });
+    col += w + 1;
+  }
   let strip = hasLeft ? chalk.hex(colors.textMuted)('< ') : ' ';
   strip += segments.slice(start, end).join(' ');
   if (hasRight) {
     strip += chalk.hex(colors.textMuted)(' >');
   }
-  return strip;
+  return { line: strip, hitRanges };
+}
+
+export function renderTabStrip(opts: RenderTabStripOptions): string {
+  return layoutTabStrip(opts).line;
 }

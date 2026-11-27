@@ -15,11 +15,13 @@ import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { BeforeToolExecuteEmitter } from './beforeToolExecuteEvent';
 import { legacyExecutionContext, legacyStartingDecision } from './legacyHooks';
+import { createToolExecutorHookRegistry } from '@moonshot-ai/core/hook/tool-executor/registry';
 import {
-  composeToolExecutorHooks,
   LegacyExecutableToolAdapter,
   legacyToolDurationMs,
   ToolExecutor,
+  type LegacyToolAgentContext,
+  type LegacyToolPreparation,
   type ToolExecutionEvent,
 } from '#/tool/executor';
 
@@ -113,7 +115,20 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
     this.executor = new ToolExecutor([], {
       outputStore: this.taskOutputs,
       get hook() {
-        return composeToolExecutorHooks([resetHook, legacyHook, ...hooks, internalHook]);
+        const registry = createToolExecutorHookRegistry<LegacyToolAgentContext, LegacyToolPreparation>();
+        for (const hook of [resetHook, legacyHook, ...hooks, internalHook]) {
+          if (hook.validating !== undefined) registry.addToolHook({ point: 'validating', hook: hook.validating.bind(hook) });
+          if (hook.starting !== undefined) registry.addToolHook({ point: 'starting', hook: hook.starting.bind(hook) });
+          if (hook.permitting !== undefined) registry.addToolHook({ point: 'permitting', hook: hook.permitting.bind(hook) });
+          if (hook.beforeExecute !== undefined) {
+            registry.addToolHook({ point: 'beforeExecute', hook: hook.beforeExecute.bind(hook) });
+          }
+          if (hook.afterExecute !== undefined) {
+            registry.addToolHook({ point: 'afterExecute', hook: hook.afterExecute.bind(hook) });
+          }
+          if (hook.observe !== undefined) registry.addToolHook({ point: 'observe', hook: hook.observe.bind(hook) });
+        }
+        return registry.hook;
       },
     });
     for (const reference of registry.listReferences()) {
@@ -240,6 +255,7 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
     }
     void this.dispatcher.dispatch(new ToolUpdated({
       agentId: this.scopeContext.agentId,
+      origin: event.context.origin,
       turnId: event.context.turnId,
       toolCallId: event.call.id,
       taskId: handler.taskId,
@@ -259,6 +275,7 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
     const outcome = snapshot.error?.outcome ?? 'success';
     void this.dispatcher.dispatch(new ToolResultEvent({
       agentId: this.scopeContext.agentId,
+      origin: event.context.origin,
       turnId: event.context.turnId,
       toolCallId: event.call.id,
       output: result?.output ?? this.finalContent(event),
@@ -280,6 +297,7 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
     const prepared = snapshot.prepared;
     void this.dispatcher.dispatch(new ToolCallStarted({
       agentId: this.scopeContext.agentId,
+      origin: event.context.origin,
       turnId: event.context.turnId,
       toolCallId: event.call.id,
       name: event.call.name,

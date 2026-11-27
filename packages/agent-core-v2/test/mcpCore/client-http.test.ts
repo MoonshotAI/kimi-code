@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ErrorCodes, Error2 } from '#/errors';
 import {
@@ -8,7 +8,7 @@ import {
   isUnauthorizedTransportError,
 } from '#/mcpCore/client-http';
 
-import { startInProcessHttpMcpServer } from './stubs';
+import { startEchoHttpMcpServer } from './stubs';
 
 const cleanups: Array<() => Promise<void> | void> = [];
 
@@ -123,7 +123,7 @@ describe('buildMcpHttpHeaders', () => {
 
 describe('HttpMcpClient', () => {
   it('connects, lists tools, and round-trips a call over real HTTP', async () => {
-    const server = await startInProcessHttpMcpServer();
+    const server = await startEchoHttpMcpServer();
     cleanups.push(server.close);
 
     const client = new HttpMcpClient({ transport: 'http', url: server.url });
@@ -140,8 +140,30 @@ describe('HttpMcpClient', () => {
     }
   }, 15000);
 
+  it('notifies after the server changes its tool list', async () => {
+    const server = await startEchoHttpMcpServer();
+    cleanups.push(server.close);
+
+    const client = new HttpMcpClient({ transport: 'http', url: server.url });
+    const listener = vi.fn();
+    client.onToolsChanged(listener);
+    try {
+      await client.connect();
+      const initialTools = await client.listTools();
+      expect(initialTools.map((tool) => tool.name)).toEqual(['echo']);
+      server.addTool({ name: 'added', description: 'Added later', reply: 'added' });
+      await vi.waitFor(() => {
+        expect(listener).toHaveBeenCalledTimes(1);
+      });
+      const tools = await client.listTools();
+      expect(tools.map((tool) => tool.name)).toEqual(['echo', 'added']);
+    } finally {
+      await client.close();
+    }
+  }, 15000);
+
   it('reports weak session evidence when the SDK exhausts push-stream reconnects', async () => {
-    const server = await startInProcessHttpMcpServer();
+    const server = await startEchoHttpMcpServer();
     cleanups.push(server.close);
 
     const client = new HttpMcpClient({ transport: 'http', url: server.url });
@@ -165,7 +187,7 @@ describe('HttpMcpClient', () => {
   }, 15000);
 
   it('ignores transient SDK errors that the transport recovers from', async () => {
-    const server = await startInProcessHttpMcpServer();
+    const server = await startEchoHttpMcpServer();
     cleanups.push(server.close);
 
     const client = new HttpMcpClient({ transport: 'http', url: server.url });
@@ -186,7 +208,7 @@ describe('HttpMcpClient', () => {
   }, 15000);
 
   it('forwards bearer token from envLookup', async () => {
-    const server = await startInProcessHttpMcpServer({ authToken: 'good-token' });
+    const server = await startEchoHttpMcpServer({ bearerToken: 'good-token' });
     cleanups.push(server.close);
 
     const client = new HttpMcpClient(

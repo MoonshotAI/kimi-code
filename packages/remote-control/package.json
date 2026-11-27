@@ -42,6 +42,7 @@
   "dependencies": {
     "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
+    "https-proxy-agent": "^7.0.6",
     "ws": "^8.18.0"
   },
   "devDependencies": {

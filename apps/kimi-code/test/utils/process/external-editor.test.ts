@@ -1,4 +1,3 @@
-/* eslint-disable import/first -- vi.mock setup must run before the imports it stubs out. */
 import { EventEmitter } from 'node:events';
 import { writeFile } from 'node:fs/promises';
 import type * as FsPromises from 'node:fs/promises';
@@ -46,7 +45,6 @@ describe('external-editor helpers', () => {
   it('returns the edited contents on success and cleans up the temp directory', async () => {
     mocks.spawn.mockImplementation((cmd: string, _opts: Record<string, unknown>) => {
       const child = new EventEmitter();
-      // Extract the file path from the shell command (last argument after quoting).
       const match = cmd.match(/'([^']+prompt\.md)'/) || cmd.match(/"([^"]+prompt\.md)"/);
       const tmpFile = match![1]!;
       void writeFile(tmpFile, 'edited text', 'utf8').then(() => {

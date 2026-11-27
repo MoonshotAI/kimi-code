@@ -1,18 +1,15 @@
-/**
- * Public surface of the loop module: contracts, `createLoop`, the record projection, and the request
- * and task-wait types that hosts implement.
- */
 export * from './contract/emitted';
 export * from './contract/hook';
 export * from './contract/inbox';
 export * from './contract/outcome';
 export * from './contract/profile';
-export { createMaxStepsHook, MAX_STEPS_REASON } from './builtin/hooks';
+export { createMaxStepsHook, MAX_STEPS_REASON } from '#/hook/loop/builtin';
 export type {
-  LoopLlmRequester,
+  FullLoopLlmRequester,
+  LoopLlmRunObservation,
+  LoopLlmRunObserver,
   LoopRequestRuntime,
 } from './request';
-export type { HookRegistry } from './hook/registry';
 export type { PolicyRegistry } from '#/llm/policy/registry';
 export type { LoopInput, UnfinishedTurn } from './contract/command';
 export type { TaskWaitInput, TaskWaitOutcome, WaitForTasks } from './tool/tasks';
@@ -28,3 +25,4 @@ export {
 export { type LoopState, type LoopToolCall, type LoopTurn } from './state';
 export { createLoop, type Loop, type CreateLoopOptions } from './create-loop';
 export { createActorLoop } from './loop-actor';
+export * from './turn';
