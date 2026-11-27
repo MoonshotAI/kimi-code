@@ -550,7 +550,6 @@ export * from '#/app/projectSessions/projectSessions';
 import '#/app/projectSessions/projectSessionsService';
 import '#/app/git/gitService';
 export * from '#/app/worktree/worktree';
-export * from '#/app/worktree/flag';
 import '#/app/worktree/worktreeService';
 export * from '#/app/sessionPresence/sessionPresence';
 import '#/app/sessionPresence/sessionPresenceService';

@@ -3249,12 +3249,6 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  async refreshWorkLocation(): Promise<void> {
-    const { workDir } = this.state.appState;
-    const location = await this.harness.resolveWorkLocation(workDir);
-    await this.applyWorkLocation(location);
-  }
-
   async applyWorkLocation(
     location: WorkLocation,
     options: { readonly resolveEnvironment?: boolean; readonly environmentId?: string } = {},
@@ -3712,12 +3706,9 @@ export class KimiTUI {
           };
     const page = await this.harness.listSessionsPage(query);
     if (requestToken !== this.sessionPickerScopeRequestToken) return undefined;
-    const locations =
-      scope !== 'cwd' || isExperimentalFlagEnabled('worktree')
-        ? await sessionLocationTags(this.harness, page.items, {
-            isCancelled: () => requestToken !== this.sessionPickerScopeRequestToken,
-          })
-        : undefined;
+    const locations = await sessionLocationTags(this.harness, page.items, {
+      isCancelled: () => requestToken !== this.sessionPickerScopeRequestToken,
+    });
     if (requestToken !== this.sessionPickerScopeRequestToken) return undefined;
     return {
       nextCursor: page.nextCursor,

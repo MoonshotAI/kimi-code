@@ -4532,7 +4532,6 @@ describe('KimiTUI resume location and sessions tabs', () => {
   it('switches automatically to a same-project worktree session on --session', async () => {
     const { project, worktree, resolveWorkLocation } = places();
     const harness = makeHarness(makeSession({ id: 'ses-wt' }), {
-      getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
       listSessions: vi.fn(async () => [{ id: 'ses-wt', workDir: worktree, projectWorkDir: project }]),
       resolveWorkLocation,
     });
@@ -4716,7 +4715,6 @@ describe('KimiTUI work location', () => {
   interface LocationDriver extends StartupDriver {
     initMainTui(): Promise<boolean>;
     applyWorkLocation(location: WorkLocation): Promise<void>;
-    refreshWorkLocation(): Promise<void>;
     ensureSession(): Promise<unknown>;
     createNewSession(): Promise<void>;
     fetchSessions(scope?: 'cwd' | 'project' | 'all'): Promise<boolean>;
@@ -4787,39 +4785,6 @@ describe('KimiTUI work location', () => {
     expect(footerLine()).not.toContain(basename(project));
     expect(welcomeText()).toContain(`Directory: ${worktree}`);
     expect(welcomeText()).toContain(`Worktree:  wt of ${project}`);
-  });
-
-  it('re-resolves a Kimi worktree when the worktree flag turns on or off mid-session', async () => {
-    const project = tempDir('kimi-location-project-');
-    const worktree = tempDir('kimi-location-worktree-');
-    let flagOn = false;
-    const harness = makeHarness(makeSession(), {
-      resolveWorkLocation: vi.fn(async (cwd: string): Promise<WorkLocation> =>
-        flagOn && cwd === worktree
-          ? {
-              cwd,
-              projectRoot: project,
-              isGitRepo: true,
-              worktree: { root: worktree, name: 'wt', repoRoot: project },
-            }
-          : { cwd, projectRoot: project, isGitRepo: true },
-      ),
-    });
-    const driver = await startAt(worktree, harness);
-    expect(driver.state.appState.worktree).toBeUndefined();
-
-    flagOn = true;
-    await driver.refreshWorkLocation();
-    expect(driver.state.appState).toMatchObject({
-      workDir: worktree,
-      projectRoot: project,
-      worktree: { root: worktree, name: 'wt', repoRoot: project },
-    });
-
-    flagOn = false;
-    await driver.refreshWorkLocation();
-    expect(driver.state.appState.workDir).toBe(worktree);
-    expect(driver.state.appState.worktree).toBeUndefined();
   });
 
   it('blocks sending while a worktree is being created and cancels it on Esc', async () => {
@@ -4979,7 +4944,6 @@ describe('KimiTUI work location', () => {
         removeWorktree: vi.fn(async (_input: unknown): Promise<void> => {}),
       };
       const harness = makeHarness(session, {
-        getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
         ...mocks,
       });
       let created = 0;
@@ -5029,17 +4993,14 @@ describe('KimiTUI work location', () => {
       return stripVTControlCharacters(slot(driver, WorktreePanelComponent)?.render(200).join('\n') ?? '');
     }
 
-    it('is listed only while the worktree experiment is on', async () => {
+    it('lists /worktree without an experimental flag', async () => {
       const project = tempDir('kimi-location-project-');
       const commands = (driver: LocationDriver): string[] =>
         (driver as unknown as { getSlashCommands(): readonly { name: string }[] })
           .getSlashCommands()
           .map((command) => command.name);
 
-      expect(commands(await startAt(project, makeHarness()))).not.toContain('worktree');
-      expect(commands(await startAt(project, worktreeHarness(project, project).harness))).toContain(
-        'worktree',
-      );
+      expect(commands(await startAt(project, makeHarness()))).toContain('worktree');
     });
 
     it('starts a fresh session in the chosen checkout and omits source for bare repos', async () => {
@@ -5503,7 +5464,6 @@ describe('KimiTUI work location', () => {
     it('forces -w startup onto the local environment even when config defaults to a remote environment', async () => {
       const project = tempDir('kimi-wt-local-env-');
       const harness = makeHarness(makeSession({ id: 'ses-local' }), {
-        getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
         resolveSessionEnvironment: vi.fn(async (input: { environmentId?: string }) => ({
           environmentId: input.environmentId ?? 'dev-box',
           cwd: input.environmentId === 'local' ? project : '/remote/work',
@@ -6216,7 +6176,6 @@ describe('KimiTUI work location', () => {
       const harness = makeHarness(session, {
         inspectWorktreeRemoval,
         removeWorktree,
-        getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
       });
       const driver = makeDriver(harness, {
         ...makeStartupInput({ model: 'k2' }),
@@ -6356,18 +6315,6 @@ describe('KimiTUI work location', () => {
       expect(driver.worktreeExit.outcome?.kind).toBe('deleted');
     });
 
-    it('exits on /exit without asking while the worktree flag is off', async () => {
-      const { inspectWorktreeRemoval, driver, stop } = await startInWorktree({ uncommittedFiles: 1 });
-      setExperimentalFeatures([]);
-
-      driver.handleUserInput('/exit');
-      await vi.waitFor(() => {
-        expect(stop).toHaveBeenCalledOnce();
-      });
-      expect(inspectWorktreeRemoval).not.toHaveBeenCalled();
-      expect(driver.worktreeExit.outcome).toBeUndefined();
-    });
-
     it('updates the spinning footer hint across shutdown hooks and worktree deletion stages', async () => {
       const { harness, session, removeWorktree, driver, mount } = await startInWorktree(
         { uncommittedFiles: 0 },
@@ -6449,7 +6396,6 @@ describe('KimiTUI work location', () => {
       );
       const session = makeSession({ id: 'ses-main' });
       const harness = makeHarness(session, {
-        getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
         listWorktrees: vi.fn(async () => ({
           repoRoot: project,
           isBare: false,
