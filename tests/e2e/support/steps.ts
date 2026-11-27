@@ -1,4 +1,4 @@
-import { PERMISSION_MODE_NAMES, wantedOutput, type Actions, type ToolExpectation, type ToolStatus, type Verb } from './verbs';
+import { PERMISSION_MODE_NAMES, waitOutcome, wantedChanges, wantedOutput, type Actions, type ApprovalExpectation, type SessionBadge, type WaitOutcome, type TaskStatus, type ToolExpectation, type ToolStatus, type Verb } from './verbs';
 
 const LONGEST_QUOTE = 60;
 
@@ -9,11 +9,27 @@ export const TOOL_STATUS_WORDS: Readonly<Record<ToolStatus, string>> = {
   running: '运行中',
 };
 
+const WAIT_OUTCOME_WORDS: { readonly [O in WaitOutcome]: string } = { finished: '等到了一个任务结束', interrupted: '被新输入打断', 'timed out': '超时' };
+
+const SESSION_BADGE_WORDS: { readonly [B in SessionBadge]: string } = { unread: '标着未读', approval: '标着待审批', question: '标着待回答', none: '没有任何标记' };
+
+const TASK_STATUS_WORDS: { readonly [S in TaskStatus]: string } = { running: '正在跑', done: '已完成', failed: '失败了', stopped: '已停止' };
+
 export function quote(text: string): string {
   return `「${text.length > LONGEST_QUOTE ? `${text.slice(0, LONGEST_QUOTE)}…` : text}」`;
 }
 
+function approvalCheck(expectation: ApprovalExpectation): string {
+  const { added, removed } = wantedChanges(expectation);
+  const changes = [...added.map((line) => `新增${quote(line)}`), ...removed.map((line) => `删除${quote(line)}`)];
+  return `检查审批：${expectation.name}${quote(expectation.target)}${changes.length === 0 ? '' : `，改动里${changes.join('、')}`}`;
+}
+
 function toolCheck(expectation: ToolExpectation): string {
+  if (expectation.name === 'WaitFor') {
+    const outcome = waitOutcome(expectation);
+    return `检查工具卡：WaitFor ${outcome === undefined ? '正在等后台任务' : `等待结束，${WAIT_OUTCOME_WORDS[outcome]}`}`;
+  }
   const output = wantedOutput(expectation);
   const printed = output === undefined ? '' : `，输出里有${quote(output)}`;
   return `检查工具卡：${expectation.name}${quote(expectation.target)}${TOOL_STATUS_WORDS[expectation.status]}${printed}`;
@@ -23,15 +39,21 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   send: (text) => `用户发送${quote(text)}`,
   queue: (text) => `用户趁回合还在进行，把${quote(text)}排进队列`,
   steer: (text) => `用户趁回合还在进行，插话${quote(text)}`,
+  steerQueued: () => '用户把排队的那条消息改成插进当前回合（Ctrl+S）',
+  background: () => '用户把正在跑的命令转到后台',
+  expectTask: ({ description, status, output }) => `检查后台任务：${quote(description)}${TASK_STATUS_WORDS[status]}${output === undefined ? '' : `，输出里有${quote(output)}`}`,
+  stopTask: (description) => `用户在任务列表里停掉${quote(description)}`,
   approve: (options) => (options?.for === 'session' ? '用户批准，本会话内同样的操作不再询问' : '用户批准'),
   reject: () => '用户拒绝',
   rejectWithFeedback: (feedback) => `用户拒绝，并说明理由${quote(feedback)}`,
-  expectApproval: ({ name, target }) => `检查审批：${name}${quote(target)}`,
+  expectApproval: approvalCheck,
   answer: (option) => `用户回答问题，选${quote(option)}`,
   answerOther: (text) => `用户回答问题，自己填${quote(text)}`,
   dismissQuestion: () => '用户关掉问题，不回答',
   setPermissionMode: (mode) => `用户把权限模式切到${quote(PERMISSION_MODE_NAMES[mode])}`,
+  setDefaultPermissionMode: (mode) => `用户在设置里把新会话的默认权限改成${quote(PERMISSION_MODE_NAMES[mode])}`,
   stop: () => '用户停止回合',
+  expectStopped: () => '检查最近一回合带着「已停止」的标记',
   waitIdle: () => '等回合结束',
   waitForUsageUpdates: (count) => `等 ACP 编辑器收到 ${count} 次用量更新`,
   expectTool: toolCheck,
@@ -46,8 +68,16 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   submit: (text) => `用户把输入框里的${quote(text)}发出去`,
   expectComposer: (text) => (text === '' ? '检查输入框是空的' : `检查输入框里是${quote(text)}`),
   newSession: () => '用户新建一个会话',
+  fork: () => '用户分叉当前会话，进入分叉出来的会话',
+  deleteSession: (title) => `用户删除会话${quote(title)}`,
+  archiveSession: (title) => `用户归档会话${quote(title)}`,
+  expectSessionBadge: (title, badge) => `检查侧栏里会话${quote(title)}${SESSION_BADGE_WORDS[badge]}`,
+  removeWorkspace: () => '用户把工作区从侧栏的项目里移除',
+  addWorkspace: () => '用户把同一个文件夹重新加成项目',
+  expectSessions: (titles) => `检查会话列表：${titles.map((title) => quote(title)).join('、')}`,
   compact: () => '用户手动压缩上下文（/compact）',
   resize: (size) => (size === 'narrow' ? '用户把窗口拉窄' : '用户把窗口拉回原来的大小'),
+  reloadPage: () => '用户刷新页面',
   expectTranscript: (text) => `检查整段对话里有${quote(text)}`,
   exit: () => '用户退出，回到原来的 shell',
   expectTerminalRestored: () => '检查终端回到了正常的输入模式',

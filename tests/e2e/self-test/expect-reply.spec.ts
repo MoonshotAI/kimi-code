@@ -38,13 +38,16 @@ selfTest('expectReply', {
     },
     'finds a reply whose first words read like the start of a tool card': {
       run: async ({ product, model }) => {
-        model.script(say('Used the cached answer because nothing changed.'), say('Read 2 files and found nothing new.'));
+        model.script(say('Used the cached answer because nothing changed.'), say('Read 2 files and found nothing new.'), say('Waited for a background task and it is done.'));
         await product.send('Answer from the cache.');
         await product.waitIdle();
         await product.expectReply('Used the cached answer because nothing changed.');
         await product.send('Summarise what you read.');
         await product.waitIdle();
         await product.expectReply('Read 2 files and found nothing new.');
+        await product.send('Report on the task.');
+        await product.waitIdle();
+        await product.expectReply('Waited for a background task and it is done.');
       },
     },
     'finds text after a line of the reply that quotes a prompt marker': {

@@ -21,11 +21,21 @@ import {
   APPROVAL_PENDING,
   describeApproval,
   describeTool,
+  firstPromptOf,
   namesFile,
   PERMISSION_MODE_NAMES,
   QUESTION_PENDING,
+  waitOutcome,
   wantedOutput,
+  describeChanges,
+  missingChanges,
   type ApprovalExpectation,
+  type ChangedLines,
+  type TargetedToolExpectation,
+  type TaskExpectation,
+  type TaskStatus,
+  type WaitExpectation,
+  type WaitOutcome,
   type ApprovalToolName,
   type ApproveOptions,
   type Diagnostic,
@@ -76,6 +86,8 @@ const KITTY_KEYS: Readonly<Record<string, { readonly code: number; readonly modi
   '\x0f': { code: 111, modifiers: 5 },
   '\x11': { code: 113, modifiers: 5 },
   '\x13': { code: 115, modifiers: 5 },
+  '\x02': { code: 98, modifiers: 5 },
+  '\x18': { code: 120, modifiers: 5 },
 };
 const BEGIN_FRAME = '\x1b[?2026h';
 const END_FRAME = '\x1b[?2026l';
@@ -98,6 +110,11 @@ const KEYS = {
   toggleDetails: '\x0f',
   queue: '\x11',
   steer: '\x13',
+  background: '\x02',
+  stopTask: 's',
+  confirmStop: 'y',
+  deleteSession: '\x18',
+  confirmDelete: 'y',
 } as const;
 
 const USER_MARK = '❯';
@@ -116,12 +133,13 @@ const UNDO_FAILED = 'Failed to undo:';
 const ACTIVITY = /^[\u{1F311}-\u{1F318}\u2800-\u28FF]/u;
 const READ_GROUP = /^Read(?:ing)? \d+ files?…?(?: · .*)?$/;
 const TOOL_CARD =
-  /^(?:(?:Used|Using|Truncated) [A-Za-z][\w.-]*(?: \(.*\))?|Ran a command|Running a command|Read(?:ing)? \d+ files?…?|Collected your answers|Waiting for your input|Could not collect your input|Start(?:ed|ing) background question)(?: · .*)?$/;
+  /^(?:(?:Used|Using|Truncated) [A-Za-z][\w.-]*(?: \(.*\))?|Ran a command|Running a command|Read(?:ing)? \d+ files?…?|Collected your answers|Waiting for your input|Could not collect your input|Start(?:ed|ing) background question|(?:Waiting for (?:any )?background task|Waited for (?:a )?background task|Wait interrupted by new input|Wait timed out)(?: \([^)]*\))?|No background tasks running)(?: · .*)?$/;
 const READ_GROUP_FILE = /^[├└]─ (.+?)(?: · (.+))?$/;
 const READ_GROUP_PENDING = 'reading…';
 const READ_GROUP_FAILED = 'failed';
 const TURN_COMPLETED = 'Worked for ';
 const TURN_STOPPED = 'Interrupted by user';
+const DIFF_ROW = /^\d+ ([+-]) (.*)$/;
 const TURN_FAILED = 'Error: [';
 const FAILURE_CODE_END = '] ';
 const FAILURE_HINT = 'If this persists, run `/export-debug-zip`';
@@ -139,7 +157,13 @@ const PERMISSION_PICKER_ITEM = /^(❯ )?(.+?)( ← current)?$/;
 const PERMISSION_SET = 'Permission mode: ';
 const PERMISSION_NOTICES = ['Permission mode', 'Failed to set permission mode'] as const;
 const REJECTION_NOTICE = 'was not run because the user rejected the approval request';
-const UNFINISHED_TOOL = /^(?:Running a command|Using [A-Za-z])/;
+const UNFINISHED_TOOL = /^(?:Running a command|Using [A-Za-z]|Waiting for (?:any )?background task)/;
+const WAIT_HEADS: { readonly [O in WaitOutcome | 'running']: readonly string[] } = {
+  running: ['Waiting for any background task', 'Waiting for background task'],
+  finished: ['Waited for a background task', 'Waited for background task'],
+  interrupted: ['Wait interrupted by new input'],
+  'timed out': ['Wait timed out'],
+};
 const TRANSCRIPT_NOTES = [APPROVED, APPROVED_FOR_SESSION, REJECTED, TURN_STOPPED, TURN_FAILED, PERMISSION_SET] as const;
 const EARLIER_LINES_HIDDEN = '… ';
 const QUEUED_ITEM = `${USER_MARK} `;
@@ -160,10 +184,23 @@ const ASKED_ANSWER = '→';
 const DISMISSED_NOTE = 'User dismissed the question without answering.';
 const NEW_SESSION_COMMAND = '/new';
 const COMPACT_COMMAND = '/compact';
+const TASKS_COMMAND = '/tasks';
+const TASK_BROWSER = 'TASK BROWSER';
+const TASK_PREVIEW = '─ Preview Output ─';
+const TASK_LOADING = '[loading…]';
+const TUI_TASK_STATUS: { readonly [S in TaskStatus]: string } = { running: 'running', done: 'completed', failed: 'failed', stopped: 'killed' };
+const MOVED_TO_BACKGROUND = 'to background. /tasks to view.';
+const NOT_MOVED = ['No foreground task running.', 'Task already finished.', 'Command already finished.', 'Command is still starting'];
 const COMPACTION_DONE = 'Compaction complete';
 const COMPACTION_CANCELLED = 'Compaction cancelled';
 const NEW_SESSION_NOTICE = 'Started a new session (';
 const SESSIONS_COMMAND = '/sessions';
+const FORK_COMMAND = '/fork';
+const SESSION_LIST_WINDOW = /^Showing \d+-\d+ of /;
+const DELETE_SESSION_PROMPT = 'Delete session "';
+const DELETING_SESSION = 'Deleting session "';
+const FORKED_SESSION = /Session forked \((session_[\w-]+)\)\. Still in the original session/;
+const FORK_FAILED = ['Failed to fork session:', 'No active session'];
 const SESSION_PICKER_TITLE = /^Sessions(?: {2}\(type to search\))?$/;
 const SESSION_PICKER_CANCEL = 'Esc cancel';
 const SESSION_POINTER = '❯ ';
@@ -459,6 +496,42 @@ function blocksOf(screen: Screen): Block[] {
   return blocks;
 }
 
+interface TaskBrowser {
+  readonly total: number;
+  readonly id: string | undefined;
+  readonly status: string | undefined;
+  readonly description: string | undefined;
+  readonly output: readonly string[];
+}
+
+function taskBrowser(screen: Screen): TaskBrowser | undefined {
+  const lines = screen.viewport;
+  const header = lines.find((line) => line.trimStart().startsWith(TASK_BROWSER));
+  if (header === undefined) return undefined;
+  const total = Number(/(\d+) total/.exec(header)?.[1] ?? 0);
+  const details = lines.map((line) => line.split('││')[1]?.replace(/│\s*$/, '').trim() ?? '');
+  const field = (name: string): string | undefined => details.find((text) => text.startsWith(`${name}:`))?.slice(name.length + 1).trim();
+  const preview = lines.findIndex((line) => line.includes(TASK_PREVIEW));
+  const below = preview < 0 ? [] : lines.slice(preview + 1);
+  const end = below.findIndex((line) => line.includes('└'));
+  const output = (end < 0 ? below : below.slice(0, end)).map((line) => line.split('││')[1]?.replace(/│\s*$/, '').trim() ?? '').filter((text) => text !== '');
+  return { total, id: field('Task ID'), status: field('Status'), description: field('Description'), output };
+}
+
+type ForkOutcome = { readonly kind: 'forked'; readonly id: string } | { readonly kind: 'failed'; readonly screen: Screen };
+
+function pickerAsksToDelete(screen: Screen): boolean {
+  return screen.viewport.some((row) => {
+    const line = row.trim();
+    return line.startsWith(DELETE_SESSION_PROMPT) || line.startsWith(DELETING_SESSION);
+  });
+}
+
+function describeCards(cards: readonly SessionCard[]): string {
+  if (cards.length === 0) return 'no sessions';
+  return cards.map((card) => `${JSON.stringify(card.title)}${card.current ? ' (open)' : ''}`).join(', ');
+}
+
 function statusLines(screen: Screen, prefix: string): number {
   return screen.transcript.filter((row) => row.trimStart().startsWith(prefix)).length;
 }
@@ -568,23 +641,33 @@ function approvalPanel(screen: Screen): ApprovalPanel | undefined {
   return { title, tool: header === undefined ? undefined : APPROVAL_HEADERS[header], rows };
 }
 
-function panelCommand(panel: ApprovalPanel): string | undefined {
+function panelCommandReadings(panel: ApprovalPanel): string[] {
   const start = panel.rows.findIndex((row) => row.trimStart().startsWith(COMMAND_PROMPT));
   const first = panel.rows[start];
-  if (first === undefined) return undefined;
+  if (first === undefined) return [];
   const lines = [first.trim().slice(COMMAND_PROMPT.length)];
   for (const row of panel.rows.slice(start + 1)) {
     if (row.trim() === '' || indentOf(row) <= indentOf(first)) break;
     lines.push(row.trim());
   }
-  return lines.join(' ');
+  return lines.map((_, last) => lines.slice(0, last + 1).join(' '));
 }
 
 function panelShows(panel: ApprovalPanel, { name, target }: ApprovalExpectation, workspace: string): boolean {
   if (panel.tool !== name) return false;
   if (name !== 'Bash') return panel.rows.some((row) => namesFile(row.trim(), target, workspace));
-  const command = panelCommand(panel);
-  return command !== undefined && squash(command) === squash(target);
+  return panelCommandReadings(panel).some((command) => squash(command) === squash(target));
+}
+
+function panelChanges(panel: ApprovalPanel): ChangedLines {
+  const lines = panel.rows.flatMap((row) => {
+    const match = DIFF_ROW.exec(row.trim());
+    return match === null ? [] : [{ sign: match[1], text: match[2] ?? '' }];
+  });
+  return {
+    added: lines.filter((line) => line.sign === '+').map((line) => line.text),
+    removed: lines.filter((line) => line.sign === '-').map((line) => line.text),
+  };
 }
 
 function permissionPicker(screen: Screen): PermissionPicker | undefined {
@@ -705,7 +788,22 @@ function queuedCutShort(screen: Screen, text: string): boolean {
   return queuedMessages(screen).some((line) => line.endsWith(CUT_SHORT) && text.startsWith(line.slice(0, -CUT_SHORT.length)));
 }
 
-function toolHead({ name, target, status }: ToolExpectation): string {
+function waitHeads(expectation: WaitExpectation): readonly string[] {
+  return WAIT_HEADS[waitOutcome(expectation) ?? 'running'];
+}
+
+function turnWithSteered(screen: Screen, steered: readonly string[]): Block[] {
+  const blocks = blocksOf(screen);
+  const start = blocks.findLastIndex((block) => block.mark === USER_MARK && !steered.some((text) => squash(block.text) === squash(text)));
+  return blocks.slice(start + 1);
+}
+
+function showsWait(screen: Screen, expectation: WaitExpectation, steered: readonly string[]): boolean {
+  const heads = waitHeads(expectation);
+  return turnWithSteered(screen, steered).some((block) => block.mark === DONE_MARK && heads.some((head) => block.head === head || block.head.startsWith(`${head} `)));
+}
+
+function toolHead({ name, target, status }: TargetedToolExpectation): string {
   if (name === 'AskUserQuestion') return ASKED;
   if (name === 'Bash') return `${status === 'running' ? 'Running' : 'Ran'} a command · $ ${target}`;
   return `Used ${name} (${target})`;
@@ -723,7 +821,8 @@ function printedLines(block: Block): string[] {
   return (note < 0 ? lines : lines.slice(0, note)).map((line) => (line.startsWith(EARLIER_LINES_HIDDEN) ? line.slice(EARLIER_LINES_HIDDEN.length) : line));
 }
 
-function showsTool(screen: Screen, expectation: ToolExpectation): boolean {
+function showsTool(screen: Screen, expectation: ToolExpectation, steered: readonly string[]): boolean {
+  if (expectation.name === 'WaitFor') return showsWait(screen, expectation, steered);
   const head = toolHead(expectation);
   const output = wantedOutput(expectation);
   return latestTurn(screen).some(
@@ -755,7 +854,7 @@ function showsReadGroup(screen: Screen): boolean {
   return latestTurn(screen).some((block) => READ_GROUP.test(block.head));
 }
 
-function showsGroupedRead(screen: Screen, expectation: ToolExpectation): boolean {
+function showsGroupedRead(screen: Screen, expectation: TargetedToolExpectation): boolean {
   return groupedReads(screen).some((file) => file.path === expectation.target && file.status === expectation.status);
 }
 
@@ -823,6 +922,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private keyboardProblem: string | undefined;
   private turn: Turn | undefined;
   private queued: QueuedMessage[] = [];
+  private steered: string[] = [];
 
   constructor(
     pty: IPty,
@@ -923,6 +1023,104 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     if (outcome === 'cancelled') throw this.failure('compact() saw the compaction cancelled.', await this.read());
   }
 
+  async fork(): Promise<void> {
+    const before = await this.idleForSessions('fork()');
+    if (conversationBlocks(before).length === 0) throw this.failure('fork() needs a session with messages, but the conversation is empty.', before);
+    this.write(paste(FORK_COMMAND));
+    this.write(KEYS.enter);
+    const failures = (screen: Screen): number => screen.viewport.filter((line) => FORK_FAILED.some((failure) => line.includes(failure))).length;
+    const outcome = await this.wait('the CLI to fork the session', (screen): ForkOutcome | undefined => {
+      const forked = screen.viewport.map((line) => FORKED_SESSION.exec(line)?.[1]).findLast((id) => id !== undefined);
+      if (forked !== undefined && !before.viewport.some((line) => line.includes(forked))) return { kind: 'forked', id: forked };
+      return failures(screen) > failures(before) ? { kind: 'failed', screen } : undefined;
+    });
+    if (outcome.kind === 'failed') throw this.failure('fork() needs a session with messages, but the CLI could not fork the session.', outcome.screen);
+    const cards = await this.openSessionPicker('fork()');
+    if (!cards.some((card) => card.id === outcome.id)) {
+      const shown = await this.read();
+      await this.closeSessionPicker();
+      throw this.failure(`fork() forked the session into ${outcome.id}, but /sessions does not list it; it lists ${describeCards(cards)}.`, shown);
+    }
+    await this.resumeFromPicker('fork()', outcome.id);
+  }
+
+  async deleteSession(title: string): Promise<void> {
+    const cards = await this.openSessionPicker('deleteSession()');
+    const matching = cards.filter((card) => card.title === title);
+    if (matching.length !== 1 || matching[0]!.current) {
+      const shown = await this.read();
+      await this.closeSessionPicker();
+      const reason =
+        matching.length === 0 ? 'no session has that title' : matching.length > 1 ? `${matching.length} sessions have that title` : 'it is the open session; open another one first';
+      throw this.failure(`deleteSession() cannot pick the session ${JSON.stringify(title)}: ${reason}. /sessions lists ${describeCards(cards)}.`, shown);
+    }
+    const target = matching[0]!.id;
+    await this.selectSessionCard('deleteSession()', target);
+    this.write(KEYS.deleteSession);
+    await this.wait(`the CLI to ask before deleting ${JSON.stringify(title)}`, (screen) => (pickerAsksToDelete(screen) ? true : undefined));
+    this.write(KEYS.confirmDelete);
+    await this.wait(`/sessions to drop ${JSON.stringify(title)}`, (screen) => {
+      const now = sessionCards(screen);
+      return now !== undefined && !pickerAsksToDelete(screen) && !now.some((card) => card.id === target) ? true : undefined;
+    });
+    await this.closeSessionPicker();
+  }
+
+  async expectSessions(titles: readonly string[]): Promise<void> {
+    const cards = await this.openSessionPicker('expectSessions()');
+    const shown = await this.read();
+    await this.closeSessionPicker();
+    if (shown.viewport.some((row) => SESSION_LIST_WINDOW.test(row.trim()))) {
+      throw this.failure('expectSessions() can read only the sessions /sessions shows at once; keep the scenario to fewer sessions.', shown);
+    }
+    const listed = cards.map((card) => card.title).toSorted();
+    const wanted = titles.toSorted();
+    if (JSON.stringify(listed) !== JSON.stringify(wanted)) {
+      throw this.failure(`expectSessions() wanted /sessions to list ${JSON.stringify(wanted)}, but it lists ${JSON.stringify(listed)}.`, shown);
+    }
+  }
+
+  private async idleForSessions(verb: string): Promise<Screen> {
+    const screen = await this.wait('the turn to end', (current) => (this.turnOver(current) || current.input === 'approval' || current.input === 'question' ? current : undefined));
+    if (!this.turnOver(screen)) throw this.failure(`${verb} needs an idle product, but an approval or a question is pending.`, screen);
+    return screen;
+  }
+
+  private async openSessionPicker(verb: string): Promise<readonly SessionCard[]> {
+    await this.idleForSessions(verb);
+    this.write(paste(SESSIONS_COMMAND));
+    this.write(KEYS.enter);
+    return this.wait('/sessions to list the sessions', (current) => sessionCards(current));
+  }
+
+  private async closeSessionPicker(): Promise<void> {
+    this.write(KEYS.escape);
+    await this.wait('/sessions to close', (screen) => (sessionCards(screen) === undefined && screen.input === 'editor' ? true : undefined));
+  }
+
+  private async selectSessionCard(verb: string, id: string): Promise<void> {
+    let cards = await this.wait('/sessions to show its cards', (screen) => sessionCards(screen));
+    for (let moves = 0; cards.find((card) => card.selected)?.id !== id; moves += 1) {
+      if (moves > cards.length) throw this.failure(`${verb} could not select the session ${id} in /sessions.`, await this.read());
+      const from = cards.find((card) => card.selected)?.id;
+      const below = cards.findIndex((card) => card.id === id) > cards.findIndex((card) => card.selected);
+      this.write(below ? KEYS.down : KEYS.up);
+      cards = await this.wait('/sessions to move the selection', (screen) => {
+        const next = sessionCards(screen);
+        return next !== undefined && next.find((card) => card.selected)?.id !== from ? next : undefined;
+      });
+    }
+  }
+
+  private async resumeFromPicker(verb: string, id: string): Promise<void> {
+    await this.selectSessionCard(verb, id);
+    this.write(KEYS.enter);
+    await this.wait(`the CLI to resume the session ${id}`, (screen) => (sessionCards(screen) === undefined && screen.input === 'editor' && resumedSession(screen, id) ? true : undefined));
+    this.queued = [];
+    this.turn = undefined;
+    this.recalled = undefined;
+  }
+
   async newSession(): Promise<void> {
     const before = await this.read();
     if (!this.turnOver(before)) throw this.failure('newSession() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
@@ -968,7 +1166,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     this.write(KEYS.enter);
     const outcome = await this.wait(`the terminal UI to resume session ${target.id} and show ${JSON.stringify(title)} in its conversation`, (screen) => {
       if (resumeFailures(screen) > failed) return 'failed' as const;
-      return screen.input === 'editor' && resumedSession(screen, target.id) && userMessages(screen, title) > 0 ? ('resumed' as const) : undefined;
+      return screen.input === 'editor' && resumedSession(screen, target.id) && userMessages(screen, firstPromptOf(title)) > 0 ? ('resumed' as const) : undefined;
     });
     if (outcome === 'failed') throw this.failure(`openSession() picked ${JSON.stringify(title)}, but the terminal UI could not resume it.`, await this.read());
     this.turn = undefined;
@@ -1112,6 +1310,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     this.assertEmptyInput('send()', screen);
     this.write(paste(text));
     await this.enter(text, screen);
+    this.steered = [];
   }
 
   async submit(text: string): Promise<void> {
@@ -1122,6 +1321,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const held = composerText(screen);
     if (held !== text) throw this.failure(`submit() expected the input box to hold ${JSON.stringify(text)}, but it holds ${JSON.stringify(held)}.`, screen);
     await this.enter(text, screen);
+    this.steered = [];
   }
 
   async expectComposer(text: string): Promise<void> {
@@ -1234,12 +1434,115 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const shown = userMessages(screen, text);
     this.write(paste(text));
     this.write(KEYS.steer);
+    this.steered.push(text);
     const settled = await this.settle(`the message ${JSON.stringify(text)} to reach the running turn`, (current) =>
       userMessages(current, text) > shown && !queuedMessages(current).includes(text) ? true : undefined,
     );
     if ('over' in settled) {
       throw this.failure(`steer() did not see ${JSON.stringify(text)} reach the turn before it ended.`, settled.over);
     }
+  }
+
+  async background(): Promise<void> {
+    const screen = await this.read();
+    if (showsQuestion(screen)) throw this.failure(`background() cannot move a command: ${QUESTION_PENDING}.`, screen);
+    if (showsApproval(screen)) throw this.failure('background() cannot move a command while an approval is pending; answer it with approve() or reject() first.', screen);
+    if (this.turnOver(screen)) throw this.failure('background() needs a running command, but the product is idle.', screen);
+    const moved = screen.viewport.filter((line) => line.includes(MOVED_TO_BACKGROUND)).length;
+    this.write(KEYS.background);
+    const settled = await this.settle('the command to move to the background', (current) => {
+      if (current.viewport.filter((line) => line.includes(MOVED_TO_BACKGROUND)).length > moved) return 'moved' as const;
+      return current.viewport.some((line) => NOT_MOVED.some((hint) => line.includes(hint))) ? ('refused' as const) : undefined;
+    });
+    if ('over' in settled) throw this.failure('background() did not see the command move to the background before the turn ended.', settled.over);
+    if (settled.found === 'refused') throw this.failure('background() found no running command to move to the background.', await this.read());
+  }
+
+  async expectTask({ description, status, output }: TaskExpectation): Promise<void> {
+    const screen = await this.read();
+    if (showsQuestion(screen)) throw this.failure(`expectTask() cannot open the task browser: ${QUESTION_PENDING}.`, screen);
+    if (showsApproval(screen)) throw this.failure('expectTask() cannot open the task browser while an approval is pending; answer it with approve() or reject() first.', screen);
+    this.write(paste(TASKS_COMMAND));
+    this.write(KEYS.enter);
+    let browser = await this.selectTask(description, await this.wait('the task browser to open', (current) => taskBrowser(current)));
+    const shown = await this.wait('the task preview to load', (current) => {
+      const loaded = taskBrowser(current);
+      return loaded !== undefined && !loaded.output.includes(TASK_LOADING) ? current : undefined;
+    });
+    browser = taskBrowser(shown) ?? browser;
+    this.write(KEYS.escape);
+    await this.wait('the task browser to close', (current) => (current.input === 'editor' && taskBrowser(current) === undefined ? true : undefined));
+    if (browser.description !== description) {
+      throw this.failure(`expectTask() found no task described as ${JSON.stringify(description)} among the ${browser.total} task(s) the task browser lists.`, shown);
+    }
+    if (browser.status !== TUI_TASK_STATUS[status]) {
+      throw this.failure(`expectTask() found ${JSON.stringify(description)} ${browser.status ?? 'without a status'}, not ${TUI_TASK_STATUS[status]}.`, shown);
+    }
+    if (output !== undefined && !browser.output.includes(output)) {
+      throw this.failure(`expectTask() found ${JSON.stringify(description)}, but its output has no line ${JSON.stringify(output)}; it shows:\n${browser.output.join('\n')}`, shown);
+    }
+  }
+
+  async stopTask(description: string): Promise<void> {
+    const screen = await this.read();
+    if (showsQuestion(screen)) throw this.failure(`stopTask() cannot open the task browser: ${QUESTION_PENDING}.`, screen);
+    if (showsApproval(screen)) throw this.failure('stopTask() cannot open the task browser while an approval is pending; answer it with approve() or reject() first.', screen);
+    this.write(paste(TASKS_COMMAND));
+    this.write(KEYS.enter);
+    const browser = await this.selectTask(description, await this.wait('the task browser to open', (current) => taskBrowser(current)));
+    if (browser.description !== description || browser.status !== TUI_TASK_STATUS.running) {
+      const shown = await this.read();
+      this.write(KEYS.escape);
+      await this.wait('the task browser to close', (current) => (current.input === 'editor' && taskBrowser(current) === undefined ? true : undefined));
+      const reason = browser.description === description ? `it is ${browser.status ?? 'without a status'}` : 'the task browser does not list it';
+      throw this.failure(`stopTask() needs a running task described as ${JSON.stringify(description)}, but ${reason}.`, shown);
+    }
+    this.write(KEYS.stopTask);
+    await this.wait('the task browser to ask for confirmation', (current) => (current.viewport.some((line) => line.includes(`Stop ${browser.id ?? ''}?`)) ? true : undefined));
+    this.write(KEYS.confirmStop);
+    const stopped = await this.wait(`the task browser to show ${JSON.stringify(description)} stopped`, (current) => {
+      const now = taskBrowser(current);
+      return now !== undefined && now.description === description && now.status !== TUI_TASK_STATUS.running ? current : undefined;
+    });
+    this.write(KEYS.escape);
+    await this.wait('the task browser to close', (current) => (current.input === 'editor' && taskBrowser(current) === undefined ? true : undefined));
+    const final = taskBrowser(stopped);
+    if (final?.status !== TUI_TASK_STATUS.stopped) throw this.failure(`stopTask() stopped ${JSON.stringify(description)}, but the task browser shows it ${final?.status ?? 'without a status'}.`, stopped);
+  }
+
+  private async selectTask(description: string, opened: TaskBrowser): Promise<TaskBrowser> {
+    let browser = opened;
+    for (let moves = 0; browser.description !== description && moves < browser.total - 1; moves += 1) {
+      const from = browser.id;
+      this.write(KEYS.down);
+      browser = await this.wait('the task browser to select the next task', (current) => {
+        const next = taskBrowser(current);
+        return next !== undefined && next.id !== from ? next : undefined;
+      });
+    }
+    return browser;
+  }
+
+  async steerQueued(): Promise<void> {
+    const screen = await this.read();
+    this.assertTurnRunning('steerQueued()', screen);
+    this.assertEmptyInput('steerQueued()', screen);
+    const queued = queuedMessages(screen);
+    if (queued.length !== 1) {
+      throw this.failure(
+        `steerQueued() needs exactly one message in the queue, but ${queued.length} wait there: with several queued, Ctrl+S on the terminal UI steers them all into the turn while Desktop and Web steer only the first.`,
+        screen,
+      );
+    }
+    const text = queued[0] ?? '';
+    const shown = userMessages(screen, text);
+    this.write(KEYS.steer);
+    this.steered.push(text);
+    const settled = await this.settle(`the queued message ${JSON.stringify(text)} to reach the running turn`, (current) =>
+      userMessages(current, text) > shown && queuedMessages(current).length === 0 ? true : undefined,
+    );
+    if ('over' in settled) throw this.failure(`steerQueued() did not see ${JSON.stringify(text)} reach the turn before it ended.`, settled.over);
+    this.queued = this.queued.filter((message) => message.text !== text);
   }
 
   approve(options?: ApproveOptions): Promise<void> {
@@ -1275,11 +1578,17 @@ class TuiDriver implements SurfaceDriver<'tui'> {
       throw this.failure(`expectApproval() found no approval for ${wanted}: the turn ended without asking for one. It shows:\n${latestTurnEntries(settled.over)}`, settled.over);
     }
     if (settled.found === QUESTION_TITLE) throw this.failure(`expectApproval() found no approval for ${wanted}: ${QUESTION_PENDING}.`, await this.read());
-    if (panelShows(settled.found, expectation, this.workspace)) return;
-    throw this.failure(
-      `expectApproval() found an approval, but it does not show ${wanted}. The approval shows:\n${settled.found.rows.join('\n').trimEnd()}`,
-      await this.read(),
-    );
+    if (!panelShows(settled.found, expectation, this.workspace)) {
+      throw this.failure(
+        `expectApproval() found an approval, but it does not show ${wanted}. The approval shows:\n${settled.found.rows.join('\n').trimEnd()}`,
+        await this.read(),
+      );
+    }
+    const shown = panelChanges(settled.found);
+    const missing = missingChanges(expectation, shown);
+    if (missing.length > 0) {
+      throw this.failure(`expectApproval() found the approval, but its change does not show ${missing.join(', ')}. The change shows:\n${describeChanges(shown)}`, await this.read());
+    }
   }
 
   async answer(option: string): Promise<void> {
@@ -1483,6 +1792,16 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     }
   }
 
+  async expectStopped(): Promise<void> {
+    const settled = await this.settle('the stop notice of the latest turn', (screen) => (endsWithStopNotice(screen) ? true : undefined));
+    if ('over' in settled) {
+      throw this.failure(
+        `expectStopped() found the latest turn ended without being stopped: its last entry is not ${JSON.stringify(TURN_STOPPED)}. The turn shows:\n${latestTurnEntries(settled.over)}`,
+        settled.over,
+      );
+    }
+  }
+
   async waitIdle(): Promise<void> {
     const settled = await this.settle('the turn to end', (screen) => (showsApproval(screen) || showsQuestion(screen) ? screen : undefined));
     if ('over' in settled) return;
@@ -1494,14 +1813,14 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const wanted = describeTool(expectation);
     const settled = await this.settle(`the tool ${wanted}`, (screen) => {
       if (expectation.status === 'running' && this.turnOver(screen)) return undefined;
-      if (showsTool(screen, expectation)) return 'card' as const;
+      if (showsTool(screen, expectation, this.steered)) return 'card' as const;
       if (showsApproval(screen)) return expectation.status === 'running' ? ('approval' as const) : undefined;
       return expectation.name === 'Read' && showsReadGroup(screen) ? ('group' as const) : undefined;
     });
     if ('found' in settled && settled.found === 'approval') {
       throw this.failure(`expectTool() cannot find a running command while an approval is pending; answer it with approve() or reject() first.`, await this.read());
     }
-    const missing = 'over' in settled ? settled.over : settled.found === 'group' ? await this.missingGroupedRead(expectation, wanted) : undefined;
+    const missing = 'over' in settled ? settled.over : settled.found === 'group' && expectation.name === 'Read' ? await this.missingGroupedRead(expectation, wanted) : undefined;
     if (missing !== undefined) {
       const unnamed =
         expectation.name === 'AskUserQuestion' && dismissedQuestions(missing) > 0
@@ -1635,7 +1954,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     ];
   }
 
-  private async missingGroupedRead(expectation: ToolExpectation, wanted: string): Promise<Screen | undefined> {
+  private async missingGroupedRead(expectation: TargetedToolExpectation, wanted: string): Promise<Screen | undefined> {
     this.write(KEYS.toggleDetails);
     try {
       await this.wait('the grouped reads to list their files', (screen) => (groupedReads(screen).length > 0 ? true : undefined));
