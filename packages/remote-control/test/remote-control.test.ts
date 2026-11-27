@@ -31,7 +31,7 @@ import {
   type RemoteControlHandle,
 } from '../src/remote-control';
 import { RemoteControlDeviceClient } from '../src/device-client';
-import { remoteControlLockPath } from '../src/lock';
+import { acquireRemoteControlLock, remoteControlLockPath } from '../src/lock';
 import { createRemoteControlManager } from '../src/manager';
 
 const CLIENT_VERSION = 'kimi-code/test';
@@ -1154,6 +1154,81 @@ describe('Remote Control single-instance lock', () => {
       nonce: string;
     };
     expect(lock.nonce).toBe('successor');
+  });
+
+  it('releases held locks synchronously when the process exit hook fires and preserves a successor lock', async () => {
+    const homeA = mkdtempSync(join(tmpdir(), 'kimi-rc-exit-a-'));
+    const homeB = mkdtempSync(join(tmpdir(), 'kimi-rc-exit-b-'));
+    cleanups.push(() => {
+      rmSync(homeA, { recursive: true, force: true });
+      rmSync(homeB, { recursive: true, force: true });
+    });
+    const onSpy = vi.spyOn(process, 'on');
+    const offSpy = vi.spyOn(process, 'off');
+    try {
+      await acquireRemoteControlLock(homeA, {
+        localOrigin: 'http://127.0.0.1:58627',
+        deviceId: 'device-a',
+        url: 'https://code-rc.kimi.com/devices/device-a/',
+      });
+      await acquireRemoteControlLock(homeB, {
+        localOrigin: 'http://127.0.0.1:58628',
+        deviceId: 'device-b',
+        url: 'https://code-rc.kimi.com/devices/device-b/',
+      });
+      expect(existsSync(remoteControlLockPath(homeA))).toBe(true);
+      expect(existsSync(remoteControlLockPath(homeB))).toBe(true);
+
+      await writeFile(
+        remoteControlLockPath(homeB),
+        JSON.stringify({
+          pid: process.pid,
+          nonce: 'successor',
+          local_origin: 'http://127.0.0.1:58629',
+          device_id: 'device-b-next',
+          url: 'https://code-rc.kimi.com/devices/device-b-next/',
+          started_at: Date.now(),
+        }),
+      );
+
+      const exitCalls = onSpy.mock.calls.filter(([event]) => event === 'exit');
+      expect(exitCalls).toHaveLength(1);
+      const exitListener = exitCalls[0]?.[1] as () => void;
+      exitListener();
+
+      expect(existsSync(remoteControlLockPath(homeA))).toBe(false);
+      const surviving = JSON.parse(await readFile(remoteControlLockPath(homeB), 'utf8')) as {
+        nonce: string;
+      };
+      expect(surviving.nonce).toBe('successor');
+      expect(offSpy.mock.calls.filter(([event]) => event === 'exit')).toHaveLength(1);
+    } finally {
+      onSpy.mockRestore();
+      offSpy.mockRestore();
+    }
+  });
+
+  it('unregisters the exit listener once all held locks are released', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-exit-release-'));
+    cleanups.push(() => {
+      rmSync(homeDir, { recursive: true, force: true });
+    });
+    const onSpy = vi.spyOn(process, 'on');
+    const offSpy = vi.spyOn(process, 'off');
+    try {
+      const lock = await acquireRemoteControlLock(homeDir, {
+        localOrigin: 'http://127.0.0.1:58627',
+        deviceId: 'device-a',
+        url: 'https://code-rc.kimi.com/devices/device-a/',
+      });
+      expect(onSpy.mock.calls.filter(([event]) => event === 'exit')).toHaveLength(1);
+      await lock.release();
+      expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+      expect(offSpy.mock.calls.filter(([event]) => event === 'exit')).toHaveLength(1);
+    } finally {
+      onSpy.mockRestore();
+      offSpy.mockRestore();
+    }
   });
 });
 
