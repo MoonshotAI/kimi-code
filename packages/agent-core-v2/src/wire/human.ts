@@ -1,6 +1,6 @@
 import type { WireRecord } from './record';
 import { AGENT_SWITCHED_TYPE } from './tree/tree';
-import { matchWireTurnInputRecords } from './turnInput';
+import { isVisibleWireTurnAppend, matchWireTurnInputRecords } from './turnInput';
 
 export const HUMAN_AGENT_DOMAIN = 'agent';
 
@@ -57,9 +57,11 @@ interface LegacyTurnSegment {
 
 export function normalizeLegacyTurnSteerRecords(records: readonly WireRecord[]): WireRecord[] {
   const appendIndexBySteer = new Map<number, number>();
-  for (const match of matchWireTurnInputRecords(records, true)) {
-    if (match.inputIndex === undefined || records[match.inputIndex]!.type !== 'turn.steer') continue;
-    appendIndexBySteer.set(match.inputIndex, match.appendIndex);
+  if (records.some((record) => record.type === 'turn.steer')) {
+    for (const match of matchWireTurnInputRecords(records, true)) {
+      if (match.inputIndex === undefined || records[match.inputIndex]!.type !== 'turn.steer') continue;
+      appendIndexBySteer.set(match.inputIndex, match.appendIndex);
+    }
   }
   const normalized: WireRecord[] = [];
   const segments = new Map<number, LegacyTurnSegment>();
@@ -80,7 +82,8 @@ export function normalizeLegacyTurnSteerRecords(records: readonly WireRecord[]):
   };
 
   const moveLegacySteerBeforeAppend = (index: number, generatedCount: number): void => {
-    if (appendIndexBySteer.get(index) !== index - 1) return;
+    const appendIndex = appendIndexBySteer.get(index);
+    if (appendIndex !== index - 1 || !isVisibleWireTurnAppend(records[appendIndex]!)) return;
     const generated = normalized.splice(-generatedCount, generatedCount);
     normalized.splice(normalized.length - 1, 0, ...generated);
   };

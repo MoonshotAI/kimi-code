@@ -115,7 +115,7 @@ function isVisibleWireTurnInput(record: WireRecord): boolean {
   }
 }
 
-function isVisibleWireTurnAppend(record: WireRecord): boolean {
+export function isVisibleWireTurnAppend(record: WireRecord): boolean {
   if (record.type !== 'context.append_message') return false;
   const message = wireRecordObject(record['message']);
   if (message === undefined || message['role'] !== 'user') return false;

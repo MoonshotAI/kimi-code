@@ -247,5 +247,25 @@ describe('sliceMainRecordsAtTurn', () => {
       { text: 'C', turnId: 2 },
       { text: 'C1 altered', turnId: 3 },
     ]);
+
+    const injection: WireRecord = {
+      type: 'context.append_message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'reminder' }],
+        origin: { kind: 'injection', ownerPromptId: 'prompt-C' },
+      },
+    };
+    const withInjection = normalizeLegacyTurnSteerRecords([
+      prompt('C', 2, 'prompt-C'), append('C', 'prompt-C'),
+      injection,
+      steer('S', 2),
+      append('S'),
+      ended(2),
+    ]);
+    expect(withInjection.indexOf(injection)).toBeLessThan(
+      withInjection.findIndex((record) => record.type === 'turn.ended' && record['turnId'] === 2),
+    );
+    expect(sliceMainRecordsAtTurn(withInjection, 'session_source', 2).records).toContainEqual(injection);
   });
 });
