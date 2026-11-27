@@ -612,11 +612,68 @@ export class QuestionDialogComponent extends DockSection implements Focusable {
       part === 'head'
         ? this.renderHead(width)
         : part === 'body'
-          ? this.isSubmitTab()
-            ? this.renderSubmitBody(width)
-            : this.renderQuestionBody(width)
+          ? this.padFullscreenBody(
+              this.isSubmitTab() ? this.renderSubmitBody(width) : this.renderQuestionBody(width),
+              width,
+            )
           : this.renderFoot(width);
     return this.focused && this.isTerminalFocused() ? lines : lines.map((line) => currentTheme.fade(line));
+  }
+
+  private padFullscreenBody(lines: string[], width: number): string[] {
+    if (this.layout === undefined) return lines;
+    const targetRows = this.measureStableBodyRows(width);
+    if (lines.length >= targetRows) return lines;
+    const padded = [...lines];
+    while (padded.length < targetRows) padded.push('');
+    return padded;
+  }
+
+  private measureStableBodyRows(width: number): number {
+    if (this.layout === undefined) return 0;
+    const renderWidth = Math.max(1, width);
+    let tallest = this.measureSubmitBodyRows(renderWidth);
+    for (let i = 0; i < this.request.data.questions.length; i++) {
+      tallest = Math.max(tallest, this.measureQuestionBodyRows(i, renderWidth));
+    }
+    return Math.min(this.layout.maxBodyRows, tallest);
+  }
+
+  private measureQuestionBodyRows(questionIdx: number, renderWidth: number): number {
+    const question = this.request.data.questions[questionIdx];
+    if (question === undefined) return 0;
+    const countWrapped = (prefixLen: number, text: string): number =>
+      wrapTextWithAnsi(text, Math.max(1, renderWidth - prefixLen)).length;
+
+    let rows = countWrapped(3, question.question) + 1;
+    if (question.body !== undefined && question.body.trim().length > 0) {
+      rows += 1;
+      for (const bodyLine of question.body.trim().split('\n')) {
+        rows += countWrapped(3, bodyLine);
+      }
+    }
+    rows += 1;
+    const options = this.displayOptions(questionIdx);
+    for (let i = 0; i < options.length; i++) {
+      const opt = options[i]!;
+      const prefixLen = question.multi_select ? 6 : 6 + String(i + 1).length;
+      rows += countWrapped(prefixLen, opt.label);
+      if (opt.description !== undefined && opt.description.length > 0) {
+        rows += countWrapped(8, opt.description);
+      }
+    }
+    return rows;
+  }
+
+  private measureSubmitBodyRows(renderWidth: number): number {
+    const countWrapped = (prefixLen: number, text: string): number =>
+      wrapTextWithAnsi(text, Math.max(1, renderWidth - prefixLen)).length;
+    let rows = 3;
+    for (const question of this.request.data.questions) {
+      rows += countWrapped(5, question.question) + 1;
+    }
+    rows += 3 + SUBMIT_ACTIONS.length;
+    return rows;
   }
 
   private rule(width: number): string {

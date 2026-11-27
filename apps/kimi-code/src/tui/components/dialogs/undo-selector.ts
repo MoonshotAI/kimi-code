@@ -12,6 +12,7 @@ import { DockSection, type DockLayout, type DockPart } from '#/tui/components/ch
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import {
+  finishDialogLines,
   focusOnUnfocusedMouse,
   handleSearchableListMouse,
   type MouseRowRegion,
@@ -116,18 +117,24 @@ export class UndoSelectorComponent extends DockSection implements Focusable {
     switch (part) {
       case 'head': {
         const hintParts = ['↑↓ navigate', 'Enter select', 'Esc cancel'];
-        return [
-          currentTheme.fg('primary', '─'.repeat(width)),
-          currentTheme.boldFg('primary', ' Select messages to undo'),
-          currentTheme.fg('textMuted', ' ' + hintParts.join(' · ')),
-          '',
-        ].map((line) => truncateToWidth(line, width));
+        return finishDialogLines(
+          [
+            currentTheme.fg('primary', '─'.repeat(width)),
+            currentTheme.boldFg('primary', ' Select messages to undo'),
+            currentTheme.fg('textMuted', ' ' + hintParts.join(' · ')),
+            '',
+          ],
+          width,
+          this.focused,
+        );
       }
       case 'body':
-        return this.renderBody(width).map((line) => truncateToWidth(line, width));
+        return finishDialogLines(this.renderBody(width), width, this.focused);
       case 'foot':
-        return ['', currentTheme.fg('primary', '─'.repeat(width))].map((line) =>
-          truncateToWidth(line, width),
+        return finishDialogLines(
+          ['', currentTheme.fg('primary', '─'.repeat(width))],
+          width,
+          this.focused,
         );
     }
   }
