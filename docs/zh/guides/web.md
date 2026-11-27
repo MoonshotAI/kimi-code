@@ -105,6 +105,6 @@ Web 支持的斜杠命令见上文 [常用斜杠命令](#常用斜杠命令)，�
 ## 下一步
 
 - [print 模式](../reference/kimi-command.md#print-模式) — 单次执行、结构化输出与退出码
-- [在其他 Agent 中使用](../customization/other-agents.md) — 从 Claude Code、Codex、Cursor 等 Agent 驱动与交接会话
+- [与其他 Agent 协作](../customization/other-agents.md) — 从 Claude Code、Codex、Cursor 等 Agent 驱动与交接会话
 - [kimi 命令](../reference/kimi-command.md#kimi-web) — `kimi web` 的全部命令行选项
 - [远程控制](./remote-control.md) — 从公网任意设备远程查看和接管本机会话

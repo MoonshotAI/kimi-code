@@ -103,6 +103,6 @@ Make sure you started with `--host` (bare is fine), and use the LAN URL from the
 ## Next steps
 
 - [Print mode](../reference/kimi-command.md#print-mode) — one-shot runs, structured JSONL output, and exit codes
-- [Using in Other Agents](../customization/other-agents.md) — drive and hand off sessions from Claude Code, Codex, and Cursor
+- [Working with Other Agents](../customization/other-agents.md) — drive and hand off sessions from Claude Code, Codex, and Cursor
 - [kimi command](../reference/kimi-command.md#kimi-web) — all `kimi web` command-line options
 - [Remote Control](./remote-control.md) — remotely view and take over local sessions from any device over the public internet

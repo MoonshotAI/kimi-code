@@ -1,4 +1,4 @@
-# 在其他 Agent 中使用（Agent to Agent）
+# 与其他 Agent 协作
 
 Kimi Code CLI 与桌面端内置了 **Kimi Agent Protocol (KAP)** 本地服务，让你可以在 Claude Code、Codex、Cursor 等其他 AI Agent 中直接与本机 Kimi Code 交互——在两个 Agent 之间双向交接会话、整理本机各工作区的历史会话，或组装 Agent Team 进行多轮方案讨论。
 

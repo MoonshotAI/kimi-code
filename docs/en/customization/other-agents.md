@@ -1,4 +1,4 @@
-# Using in Other Agents (Agent to Agent)
+# Working with Other Agents
 
 Kimi Code CLI and the Kimi Code desktop app include a built-in **Kimi Agent Protocol (KAP)** local server, allowing other AI agents — such as Claude Code, Codex, and Cursor — to interact directly with your local Kimi Code: handing off sessions in either direction, organizing session history across workspaces, or assembling an Agent Team for multi-round plan discussions.
 

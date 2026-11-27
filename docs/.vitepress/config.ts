@@ -41,7 +41,7 @@ const config = withMermaid(defineConfig({
       themeConfig: {
         nav: [
           { text: '指南', link: '/zh/guides/getting-started', activeMatch: '/zh/guides/' },
-          { text: '定制化', link: '/zh/customization/mcp', activeMatch: '/zh/customization/' },
+          { text: '定制化与集成', link: '/zh/customization/mcp', activeMatch: '/zh/customization/' },
           { text: '配置', link: '/zh/configuration/config-files', activeMatch: '/zh/configuration/' },
           { text: '参考手册', link: '/zh/reference/kimi-command', activeMatch: '/zh/reference/' },
           { text: '发布说明', link: '/zh/release-notes/changelog', activeMatch: '/zh/release-notes/' },
@@ -66,7 +66,7 @@ const config = withMermaid(defineConfig({
           ],
           '/zh/customization/': [
             {
-              text: '定制化',
+              text: '定制化与集成',
               items: [
                 { text: 'Model Context Protocol', link: '/zh/customization/mcp' },
                 { text: 'Agent Skills', link: '/zh/customization/skills' },
@@ -74,7 +74,7 @@ const config = withMermaid(defineConfig({
                 { text: 'Agent 与 subagent', link: '/zh/customization/agents' },
                 { text: 'Hooks', link: '/zh/customization/hooks' },
                 { text: '在 IDE 中使用', link: '/zh/customization/ides' },
-                { text: '在其他 Agent 中使用（Agent to Agent）', link: '/zh/customization/other-agents' },
+                { text: '与其他 Agent 协作', link: '/zh/customization/other-agents' },
                 { text: '自定义主题', link: '/zh/customization/themes' },
               ],
             },
@@ -123,7 +123,7 @@ const config = withMermaid(defineConfig({
       themeConfig: {
         nav: [
           { text: 'Guides', link: '/en/guides/getting-started', activeMatch: '/en/guides/' },
-          { text: 'Customization', link: '/en/customization/mcp', activeMatch: '/en/customization/' },
+          { text: 'Customization and Integrations', link: '/en/customization/mcp', activeMatch: '/en/customization/' },
           { text: 'Configuration', link: '/en/configuration/config-files', activeMatch: '/en/configuration/' },
           { text: 'Reference', link: '/en/reference/kimi-command', activeMatch: '/en/reference/' },
           { text: 'Release Notes', link: '/en/release-notes/changelog', activeMatch: '/en/release-notes/' },
@@ -148,7 +148,7 @@ const config = withMermaid(defineConfig({
           ],
           '/en/customization/': [
             {
-              text: 'Customization',
+              text: 'Customization and Integrations',
               items: [
                 { text: 'Model Context Protocol', link: '/en/customization/mcp' },
                 { text: 'Agent Skills', link: '/en/customization/skills' },
@@ -156,7 +156,7 @@ const config = withMermaid(defineConfig({
                 { text: 'Agents and Subagents', link: '/en/customization/agents' },
                 { text: 'Hooks', link: '/en/customization/hooks' },
                 { text: 'Using in IDEs', link: '/en/customization/ides' },
-                { text: 'Using in Other Agents (Agent to Agent)', link: '/en/customization/other-agents' },
+                { text: 'Working with Other Agents', link: '/en/customization/other-agents' },
                 { text: 'Custom Themes', link: '/en/customization/themes' },
               ],
             },

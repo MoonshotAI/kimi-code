@@ -202,7 +202,7 @@ kimi acp
 
 在当前终端前台运行本地 Kimi 服务 —— 同一个进程同时挂载 REST + WebSocket API 与 web UI —— 并在服务就绪后用默认浏览器打开 web UI。命令收到 `SIGINT` 或 `SIGTERM`（例如按 `Ctrl-C`）时开始关闭。成功关闭时退出码为 `0`。清理失败时，即使关闭了服务日志，命令也会将错误写入 `stderr` 并以退出码 `1` 退出。
 
-服务运行时，`GET /api/v1/kap.md` 会返回当前版本的 KAP 接口说明，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。在其他 Agent 中交互与交接会话见[在其他 Agent 中使用（Agent to Agent）](../customization/other-agents.md)。
+服务运行时，`GET /api/v1/kap.md` 会返回当前版本的 KAP 接口说明，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。在其他 Agent 中交互与交接会话见[与其他 Agent 协作](../customization/other-agents.md)。
 
 ```sh
 kimi web                 # 前台运行服务并打开浏览器
