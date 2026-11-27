@@ -1,10 +1,9 @@
 
 import { effectScope, watch } from 'vue';
-import { anyMenuOpen, ensurePointerTracking, isSyntheticPointerMove, openDialogCount, openSheetCount } from '@moonshot-ai/app-ui';
+import { anyMenuOpen, ensurePointerTracking, installImeCompositionLatch, isImeKeyEvent, isSyntheticPointerMove, openDialogCount, openSheetCount } from '@moonshot-ai/app-ui';
 import { lastPointerPosition } from '@moonshot-ai/app-core/lib';
 import { isPointInTooltipHoverRegion } from '@moonshot-ai/app-composer/transcript';
 import { iconSvg } from '@moonshot-ai/app-client/icons';
-import { installImeCompositionLatch, isImeKeyEvent } from '@moonshot-ai/app-client/lib';
 import { linkUrlParts } from './linkUrl';
 
 export interface LinkTooltipHost {

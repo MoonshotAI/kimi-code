@@ -18,13 +18,15 @@ import {
   type FontTarget,
 } from '@moonshot-ai/app-core';
 import { bundledFontsOfKind, getBundledFont, isDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
-import { installImeCompositionLatch, isImeKeyEvent, movedOrder } from '@moonshot-ai/app-client/lib';
+import { movedOrder } from '@moonshot-ai/app-client/lib';
 import { useFontMetadata, useWrapReorderDrag } from '@moonshot-ai/app-client/composables';
 import { track } from '@moonshot-ai/app-client/contracts';
 import {
   Badge,
   Icon,
   IconButton,
+  installImeCompositionLatch,
+  isImeKeyEvent,
   Menu,
   MenuItem,
   NumberInput,

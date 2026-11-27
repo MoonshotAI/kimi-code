@@ -66,6 +66,7 @@ function activityStub(disposables: DisposableStore) {
 describe('SessionRunGateService', () => {
   let homeDir: string;
   let disposables: DisposableStore;
+  let storage: FileStorageService;
   let log: IAppendLogStore;
   let serviceA: SessionLockService;
   let serviceB: SessionLockService;
@@ -76,7 +77,8 @@ describe('SessionRunGateService', () => {
     homeDir = mkdtempSync(join(tmpdir(), 'session-run-gate-'));
     disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
-    ix.stub(IFileSystemStorageService, new FileStorageService(homeDir));
+    storage = new FileStorageService(homeDir);
+    ix.stub(IFileSystemStorageService, storage);
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     log = ix.get(IAppendLogStore);
     serviceA = new SessionLockService(bootstrapStub(homeDir, 'client_a'), noopLogger);
@@ -199,6 +201,50 @@ describe('SessionRunGateService', () => {
     expect(isError2(caught)).toBe(true);
     expect((caught as { code: string }).code).toBe('session.stale');
     expect(serviceA.held(SID)).toBe(false);
+  });
+
+  it('throws session.stale while a re-read of externally written bytes is still in progress', async () => {
+    writeExternally(`${JSON.stringify({ type: 'metadata', protocol_version: 1 })}\n`);
+    await readAll();
+    writeExternally(`${JSON.stringify({ type: 'turn.prompt' })}\n`);
+
+    const originalReadStream = storage.readStream.bind(storage);
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    let markReading!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      markReading = resolve;
+    });
+    storage.readStream = async function* (scope, key, range) {
+      markReading();
+      await readGate;
+      yield* originalReadStream(scope, key, range);
+    };
+
+    try {
+      const rereading = readAll();
+      await reading;
+      let caught: unknown;
+      try {
+        gate().begin();
+      } catch (error) {
+        caught = error;
+      }
+      expect(isError2(caught)).toBe(true);
+      expect((caught as { code: string }).code).toBe('session.stale');
+
+      releaseRead();
+      await rereading;
+      expect(() => {
+        gate().begin();
+      }).not.toThrow();
+      serviceA.release(SID);
+    } finally {
+      storage.readStream = originalReadStream;
+      releaseRead();
+    }
   });
 
   it('passes after own appends are flushed', async () => {

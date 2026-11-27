@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
-import { str } from '@moonshot-ai/app-components';
+import { str } from './toolArgs';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import OutputPanel from './OutputPanel.vue';

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { Icon, Menu, MenuItem, StatusDot } from '@moonshot-ai/app-ui';
-import { useAnchoredMenu } from '@moonshot-ai/app-components';
+import '../lib/anchored-menu.css';
+import { useAnchoredMenu } from '../composables/useAnchoredMenu';
 
 export interface FilterSelectOption {
   value: string;
@@ -87,5 +88,3 @@ function pick(value: string): void {
   width: 14px;
 }
 </style>
-
-<style src="../lib/anchored-menu.css"></style>

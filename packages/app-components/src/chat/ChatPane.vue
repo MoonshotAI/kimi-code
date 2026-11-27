@@ -16,7 +16,7 @@ import { CronToolContextKey, cronToolContexts } from './tool-calls/cronToolConte
 import BlockList from './BlockList.vue';
 import TranscriptList from './TranscriptList.vue';
 import { settledSteerTurnIdsFor, syncSettledSteerTurnIds } from './steerContinuationState';
-import { TranscriptScrollKey } from '@moonshot-ai/app-core/contracts';
+import { PinScrollKey, TranscriptScrollKey } from '@moonshot-ai/app-core/contracts';
 import ActivityRun from './ActivityRun.vue';
 import CreateProgressBlock from '../worktree/CreateProgressBlock.vue';
 import TurnFold from './TurnFold.vue';
@@ -25,7 +25,7 @@ import TurnFilesSummary from './TurnFilesSummary.vue';
 import BrowserSources from './tool-calls/browser/BrowserSources.vue';
 import NotificationCard from './NotificationCard.vue';
 import { createHistoryImageCache, HistoryImageCacheKey, Markdown, tableSelectionContextText } from '@moonshot-ai/app-markdown';
-import { FetchTurnFileChangesKey, LatestNotifyToolCallIdKey, NotifyUserEnabledKey, PinScrollKey, SelectionContextMenuKey, SessionRatingKey } from '@moonshot-ai/app-client/contracts';
+import { FetchTurnFileChangesKey, LatestNotifyToolCallIdKey, NotifyUserEnabledKey, SelectionContextMenuKey, SessionRatingKey } from '@moonshot-ai/app-client/contracts';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { useTurnFileStats } from './useTurnFileStats';
 import { editedFileCount } from '../lib/fileStaleness';
@@ -46,7 +46,7 @@ import TableSelectionContextMenu from './TableSelectionContextMenu.vue';
 import { Icon, IconButton, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
 import { useActivityRunFolding, useConfirmDialog, useIsMobile, useTurnFolding } from '@moonshot-ai/app-client/composables';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import { copyTextToClipboard, formatMessageTime, sessionWorktreeHoldsPrompts } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, formatMessageTime, formatTokens, sessionWorktreeHoldsPrompts } from '@moonshot-ai/app-core/lib';
 import { editRefillAttachments } from '@moonshot-ai/app-client/lib';
 import { SELECTION_QUOTE_ENABLED, isContextClick, selectionHitByPointer, selectionOwnedByRoot, selectionQuoteAnchor, type SelectionActionPayload, type SelectionQuoteAnchor } from '@moonshot-ai/app-client/lib';
 import { parseAttachmentLinks, serializeMention, stripAttachmentLinks } from '@moonshot-ai/app-composer/model';
@@ -55,7 +55,6 @@ import { canUndoSkillActivation, canUndoSkillActivations, skillActivationEditTex
 import { ComposerText, copyComposerSnapshot, copyTextWithFlavor } from '@moonshot-ai/app-composer/transcript';
 import {
   activityRunTailIndex as getActivityRunTailIndex,
-  formatTokens,
   canCopyUserTurn,
   estimateUserTurnHeight,
   isoMs,
@@ -72,8 +71,9 @@ import {
   turnToMarkdown,
   turnVisibleFinalText,
   userTurnDisplayText,
-} from '@moonshot-ai/app-components';
-import type { AssistantFold, AssistantRenderBlock } from '@moonshot-ai/app-components';
+  type AssistantFold,
+  type AssistantRenderBlock,
+} from '../chatTurnRendering';
 
 const { t } = useI18n();
 const mediaLabels = computed(() => ({

@@ -149,7 +149,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          sparse-checkout: apps/desktop/scripts/ci
+          sparse-checkout: |
+            apps/desktop/scripts/ci
+            scripts
       - name: Open, update or close the tracking issue
         env:
           GH_TOKEN: ${{ github.token }}
