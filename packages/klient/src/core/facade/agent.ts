@@ -82,7 +82,7 @@ export interface AgentFacade {
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
   steer(input: { input: readonly ContentPart[]; promptId?: string }): Promise<SteerResult>;
   activateSkill(input: { name: string; path?: string; args?: string }): Promise<PromptLaunchResult>;
-  cancel(input?: { turnId?: number }): Promise<void>;
+  cancel(input?: { turnId?: number; promptId?: string }): Promise<void>;
   runShellCommand(input: { command: string; commandId?: string }): Promise<ShellCommandResult>;
   cancelShellCommand(input: { commandId: string }): Promise<void>;
   getModel(): Promise<string>;
@@ -126,7 +126,9 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     activateSkill: (input) =>
       call(scope, 'agentSkillService', 'activate', [input]) as Promise<PromptLaunchResult>,
     cancel: (input) =>
-      call(scope, 'agentLoopService', 'cancelFromUser', input?.turnId === undefined ? [] : [input.turnId]) as Promise<void>,
+      (input?.promptId === undefined
+        ? call(scope, 'agentLoopService', 'cancelFromUser', input?.turnId === undefined ? [] : [input.turnId])
+        : call(scope, 'agentLoopService', 'cancelPrompt', [input.promptId])) as Promise<void>,
     runShellCommand: (input) =>
       call(scope, 'agentShellCommandService', 'run', [input]) as Promise<ShellCommandResult>,
     cancelShellCommand: (input) =>

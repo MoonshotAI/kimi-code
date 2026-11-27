@@ -1419,6 +1419,23 @@ describe('Agent loop', () => {
     await agent.expectResumeMatches();
   });
 
+  testWithProvider('cancels only the first of two client prompts still being admitted when the client cancels without naming one', async ({ agent, model }) => {
+    const agentLoop = agent.get(IAgentLoopService);
+    const firstPrompt = 'Cancel this prompt.';
+    const secondPrompt = 'Keep this prompt.';
+    model.script(say('Here is the reply.'));
+
+    const first = agentLoop.submit({ input: [{ type: 'text', text: firstPrompt }], promptId: 'first-prompt' });
+    const second = agentLoop.submit({ input: [{ type: 'text', text: secondPrompt }], promptId: 'second-prompt' });
+    expect(agentLoop.cancel()).toBe(true);
+    await Promise.all([first, second]);
+
+    await expect(agentLoop.promptHandle('first-prompt')?.completion).resolves.toMatchObject({ state: 'cancelled' });
+    await expect(agentLoop.promptHandle('second-prompt')?.completion).resolves.toMatchObject({ state: 'completed' });
+    expect(model.requests('main').map((request) => request.firstUserText)).toEqual([secondPrompt]);
+    await agent.expectResumeMatches();
+  });
+
   testWithProvider('rejects a prompt before admission when a client opts out of queueing', async ({ agent, model }) => {
     const agentLoop = agent.get(IAgentLoopService);
     const metadata = agent.get(ISessionMetadata);

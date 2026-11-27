@@ -8576,6 +8576,28 @@ command = "vim"
     expect(session.cancel).toHaveBeenCalledTimes(1);
   });
 
+  it('resends a stop pressed before the engine accepted the prompt for that prompt only', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('stop this prompt');
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledTimes(1);
+    });
+    const promptId = (session.prompt.mock.calls[0] as unknown as [unknown, { promptId: string }])[1].promptId;
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.onEscape?.();
+    expect(session.cancel).toHaveBeenCalledTimes(1);
+    expect(session.cancel).toHaveBeenLastCalledWith();
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'prompt.submitted', agentId: 'main', sessionId: 'ses-1', promptId } as unknown as Event,
+      () => {},
+    );
+
+    expect(session.cancel).toHaveBeenCalledTimes(2);
+    expect(session.cancel).toHaveBeenLastCalledWith({ promptId });
+  });
+
   it('returns to idle and allows /clear after cancelling ReadMediaFile', async () => {
     const nextSession = makeSession({ id: 'ses-2' });
     const { driver, session, harness } = await makeDriver();

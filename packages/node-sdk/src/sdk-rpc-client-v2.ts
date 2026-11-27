@@ -283,6 +283,7 @@ import {
   SDKRpcClientBase,
   type ActivatePluginCommandRpcInput,
   type ActivateSkillRpcInput,
+  type CancelRpcInput,
   type ConfigSectionChange,
   type ImportContextRpcInput,
   type ReconnectMcpServerRpcInput,
@@ -2341,10 +2342,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * run: v1's cancel cascades from the agent's turn to every foreground
    * subagent run of the session, and /init is the one session-level run v2
    * keeps off the agent turn lane — its abort controller lives in
-   * `ISessionInitService` (a silent no-op when no init is running).
+   * `ISessionInitService` (a silent no-op when no init is running). With a
+   * `promptId` only that prompt is cancelled: its turn when it is running,
+   * otherwise the prompt itself before its turn starts; /init is left alone.
    */
-  override async cancel(input: SessionIdRpcInput): Promise<void> {
+  override async cancel(input: CancelRpcInput): Promise<void> {
     const session = this.requireLiveSession(input.sessionId);
+    if (input.promptId !== undefined) {
+      const agent = await this.agentFacade(input.sessionId);
+      return agent.cancel({ promptId: input.promptId });
+    }
     session.accessor.get(ISessionInitService).cancelInit();
     const agent = await this.agentFacade(input.sessionId);
     return agent.cancel();

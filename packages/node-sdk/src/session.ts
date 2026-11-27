@@ -291,9 +291,11 @@ export class Session {
     return this.rpc.cancelPromptPrediction({ sessionId: this.id, predictionId, reason });
   }
 
-  async cancel(): Promise<void> {
+  async cancel(options?: { readonly promptId?: string }): Promise<void> {
     this.ensureOpen();
-    await this.rpc.cancel({ sessionId: this.id });
+    await this.rpc.cancel(
+      options?.promptId === undefined ? { sessionId: this.id } : { sessionId: this.id, promptId: options.promptId },
+    );
   }
 
   async setModel(model: string): Promise<void> {

@@ -257,6 +257,9 @@ function agentLoopServiceView(agent: IAgentScopeHandle): Record<string, unknown>
       }
       loop.cancel(turnId === undefined ? undefined : { turnId });
     },
+    cancelPrompt: (promptId: string) => {
+      loop.cancel({ promptId });
+    },
   };
 }
 

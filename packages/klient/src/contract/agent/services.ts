@@ -39,6 +39,7 @@ export const agentLoopContract = {
     output: steerResultSchema,
   },
   cancelFromUser: { input: z.tuple([z.number().optional()]), output: noResult },
+  cancelPrompt: { input: z.tuple([z.string()]), output: noResult },
 } satisfies ServiceContract;
 
 export const agentPermissionModeContract = {

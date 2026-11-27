@@ -1030,6 +1030,43 @@ describe('Session.prompt events', () => {
     }
   });
 
+  it('cancels only the prompt a cancel names while another turn keeps running', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const firstReply = model.hold('first-reply');
+
+    try {
+      await configureFakeProvider(harness);
+      const session = await harness.createSession({ id: 'ses_cancel_named_prompt', workDir });
+      replies().script(held('first-reply', say('first answer')));
+      const started = waitForEvent(session, (event) => event.type === 'turn.started');
+      await session.prompt('first question');
+      await started;
+      const queued = waitForEvent(session, (event) => event.type === 'prompt.queued');
+      await session.prompt('queued question', { promptId: 'queued-prompt' });
+      await queued;
+
+      const aborted = waitForEvent(
+        session,
+        (event) => event.type === 'prompt.aborted' && event.promptId === 'queued-prompt',
+      );
+      await session.cancel({ promptId: 'queued-prompt' });
+      await aborted;
+      await expect(session.cancel({ promptId: 'queued-prompt' })).rejects.toMatchObject({
+        code: 'prompt.not_found',
+      });
+      const ended = waitForEvent(session, (event) => event.type === 'turn.ended');
+      firstReply.release();
+
+      await expect(ended).resolves.toMatchObject({ reason: 'completed' });
+      expect(model.requests().map((request) => request.firstUserText)).toEqual(['first question']);
+    } finally {
+      firstReply.release();
+      await harness.close();
+    }
+  });
+
   it('rejects empty prompt input', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();

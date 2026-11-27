@@ -2819,7 +2819,7 @@ export class KimiTUI {
   acknowledgePromptSubmitted(promptId: string): void {
     const pending = this.promptBeforeTurn;
     if (pending?.promptId !== promptId || !pending.cancelRequested) return;
-    void this.session?.cancel().catch(() => {});
+    void this.session?.cancel({ promptId }).catch(() => {});
   }
 
   settlePromptBeforeTurn(promptId: string): boolean {
