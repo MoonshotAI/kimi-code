@@ -135,6 +135,13 @@ describe('loop record', () => {
     settleBackground?.({ content: [{ type: 'text', text: 'background stopped' }] });
     await first;
     await closingIdle;
+    expect(live.filter((item) => item.type === 'tool.ended').map((item) => [item.turnId, item.step, item.toolCallId, item.detached])).toEqual([
+      [2, 1, 'call-bg', true],
+      [2, 1, 'call-slow', false],
+    ]);
+    expect(live.filter((item) => item.type === 'tool.async_ended').map((item) => [item.turnId, item.step, item.toolCallId])).toEqual([
+      [2, 1, 'call-bg'],
+    ]);
     expect(turnEndEvents.every((ended) => ended.continuation === undefined)).toBe(true);
     const closed = fold([...records, ...live]);
     expect(closed.unfinished).toBeUndefined();
@@ -175,6 +182,8 @@ describe('loop record', () => {
       'turn.ended',
       'turn.started',
     ]);
+    expect(after[0]).toMatchObject({ type: 'tool.ended', turnId: 2, step: 1, toolCallId: 'call-slow' });
+    expect(after[2]).toMatchObject({ type: 'tool.ended', turnId: 2, step: 1, toolCallId: 'call-bg' });
     expect(after[4]).toMatchObject({ turnId: 2, outcome: { type: 'aborted', reason: { reason: 'crashed' } } });
     expect(after[6]).toMatchObject({ type: 'turn.started' });
     await recovered.waitForIdle();
@@ -231,9 +240,13 @@ describe('loop record', () => {
     expect(events.filter((event) => event.type === 'tool.ended' && event.toolCallId === 'call-fast')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'tool.ended' && event.toolCallId === 'call-stuck')).toHaveLength(1);
     expect(events.find((event) => event.type === 'tool.ended' && event.toolCallId === 'call-fast')).toMatchObject({
+      turnId: 0,
+      step: 1,
       outcome: { type: 'succeeded' },
     });
     expect(events.find((event) => event.type === 'tool.ended' && event.toolCallId === 'call-stuck')).toMatchObject({
+      turnId: 0,
+      step: 1,
       outcome: { type: 'aborted', reason: 'graceful' },
     });
     expect(events.filter((event) => event.type === 'turn.ended')).toHaveLength(1);

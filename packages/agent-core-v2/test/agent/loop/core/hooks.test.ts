@@ -77,6 +77,10 @@ describe('step.starting', () => {
       ],
     });
     loop.setSystemPrompt('sp');
+    const stepStarts: Extract<LoopEmitted, { type: 'step.started' }>[] = [];
+    loop.subscribe((event) => {
+      if (event.type === 'step.started') stepStarts.push(event);
+    });
     const entry = prompt('hello');
     const running = loop.runTurn(entry);
     await firstStarted;
@@ -84,6 +88,12 @@ describe('step.starting', () => {
     releaseFirst();
     expect((await running).type).toBe('done');
     expect(order).toEqual(['first:1', 'second:1', 'first:2', 'second:2']);
+    expect(stepStarts.map((event) => [event.turnId, event.step])).toEqual([
+      [0, 1],
+      [0, 2],
+    ]);
+    expect(stepStarts.every((event) => typeof event.stepId === 'string' && event.stepId.length > 0)).toBe(true);
+    expect(stepStarts[0]?.stepId).not.toBe(stepStarts[1]?.stepId);
     expect(seen.map((event) => [event.turnId, event.step])).toEqual([
       [0, 1],
       [0, 2],
@@ -234,10 +244,14 @@ describe('tool.batch-starting', () => {
     const ended = events.filter((event) => event.type === 'tool.ended');
     expect(ended).toHaveLength(2);
     expect(ended[0]).toMatchObject({
+      turnId: 0,
+      step: 1,
       toolCallId: 'c1',
       outcome: { type: 'blocked', cause: { by: 'swarm', reason: 'denied' } },
     });
     expect(ended[1]).toMatchObject({
+      turnId: 0,
+      step: 1,
       toolCallId: 'c2',
       outcome: { type: 'blocked', cause: { by: 'swarm', reason: 'denied' } },
     });
@@ -592,6 +606,8 @@ describe('hook failure policies', () => {
     expect(ended).toHaveLength(2);
     for (const event of ended) {
       expect(event).toMatchObject({
+        turnId: 0,
+        step: 1,
         outcome: { type: 'blocked', cause: { by: 'batch-strict', reason: 'hook_failed' } },
       });
     }

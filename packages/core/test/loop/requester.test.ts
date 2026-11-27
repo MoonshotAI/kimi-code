@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { createLoop } from '#/loop/index';
+import { createLoop, type LoopEmitted } from '#/loop/index';
 import type { LoopToolContext, LoopToolExecutor } from '#/loop/create-loop';
 import { createMediaDegradeRecovery } from '#/llm/builtin/policy/media-degrade';
-import { createAssistantMessage, createUserMessage, extractText } from '#/llm/message';
+import { createAssistantMessage, createUserMessage, extractText, type Message } from '#/llm/message';
 import { createLlmRequesterExecution, type LlmRunControl } from '#/llm/policy/policy';
 import type { LlmRecoveryRecord } from '#/llm/policy/recovery';
 import type { Protocol } from '#/llm/protocol/protocol';
@@ -341,6 +341,160 @@ describe('loop llm observer and policy merging', () => {
     expect(started).toHaveLength(3);
     expect(settled.map((outcome) => outcome.type)).toEqual(['done', 'done', 'done']);
     expect(loop.baseRequester).toBe(second);
+    await loop.close();
+  });
+});
+
+describe('loop event envelope', () => {
+  it('stamps turn and step on step, llm, and tool events across retries, steps, and turns', async () => {
+    interface Chunk {
+      readonly text?: string;
+      readonly toolCallId?: string;
+      readonly finish?: boolean;
+    }
+    const stepOne = (toolCallId: string): Chunk[] => [{ text: 'calling' }, { toolCallId }, { finish: true }];
+    const stepTwo: Chunk[] = [{ text: 'done' }, { finish: true }];
+    const requests: number[] = [];
+    let stepOneAttempts = 0;
+    const protocol: Protocol<unknown, readonly Message[]> = {
+      media: { kinds: {} },
+      encode: (module) => module.content.messages,
+      client: () => null,
+      send: async () => ({ body: stepTwo }),
+      sendStream: async (_client, messages) => {
+        if (messages.at(-1)?.role === 'tool') {
+          requests.push(2);
+          return { body: (async function* () { yield* stepTwo; })() };
+        }
+        requests.push(1);
+        stepOneAttempts += 1;
+        if (stepOneAttempts === 1) throw new Error('rate limited');
+        const id = messages.length === 1 ? 'call-work' : 'call-work-2';
+        return { body: (async function* () { yield* stepOne(id); })() };
+      },
+      decoder: (_module, sink) => ({
+        push: (chunk: Chunk) => {
+          if (chunk.text !== undefined) sink.onDelta({ type: 'text', text: chunk.text });
+          if (chunk.toolCallId !== undefined) {
+            sink.onDelta({ type: 'function', id: chunk.toolCallId, name: 'work', arguments: '{}' });
+            sink.onToolCallEnd();
+          }
+          if (chunk.finish === true) sink.onFinish({ finishReason: 'completed', rawFinishReason: 'stop' });
+        },
+        end: () => {},
+      }),
+      replay: (response) => response,
+      decodeError: (): LlmRemoteErrorMessage => ({
+        kind: 'rate_limit',
+        message: 'rate limited',
+        requestId: null,
+        retryAfterMs: 1,
+        headers: null,
+        retryable: true,
+      }),
+    };
+    const work = { name: 'work', description: 'work', parameters: { type: 'object' } };
+    const requester = createRequester(createLlmRequesterExecution()).with({
+      protocol: { base: protocol, stream: true },
+      endpoint: {},
+      model: { spec: { provider: 'test', name: 'envelope-model' } },
+      policy: { retry: { maxAttemptsPerStep: 2 } },
+    });
+    const tools = new ToolExecutor<LoopToolContext>([{
+      ...work,
+      execute: async () => ({ content: [{ type: 'text', text: 'tool ok' }] }),
+    }]);
+    const loop = createLoop({ requester, executor: tools, input: { profile: { tools: [work] } } });
+    const events: LoopEmitted[] = [];
+    loop.subscribe((event) => events.push(event));
+
+    expect((await loop.runTurn(createUserMessage('first'))).type).toBe('done');
+    expect((await loop.runTurn(createUserMessage('second'))).type).toBe('done');
+    expect(requests).toEqual([1, 1, 2, 1, 2]);
+
+    const steps = events.filter((event) => event.type === 'step.started');
+    expect(steps.map((event) => [event.turnId, event.step])).toEqual([
+      [0, 1],
+      [0, 2],
+      [1, 1],
+      [1, 2],
+    ]);
+    expect(steps.every((step) => typeof step.stepId === 'string' && step.stepId.length > 0)).toBe(true);
+    expect(new Set(steps.map((step) => step.stepId)).size).toBe(steps.length);
+
+    let active: { turnId: number; step: number } | undefined;
+    const llmEnvelopes: Array<{
+      turnId: number;
+      step: number;
+      activeTurnId: number | undefined;
+      activeStep: number | undefined;
+    }> = [];
+    for (const event of events) {
+      if (event.type === 'step.started') {
+        active = { turnId: event.turnId, step: event.step };
+        continue;
+      }
+      if (event.type === 'step.ended') {
+        active = undefined;
+        continue;
+      }
+      if (!('turnId' in event) || !('step' in event)) continue;
+      if (event.type.startsWith('llm.')) {
+        llmEnvelopes.push({
+          turnId: event.turnId,
+          step: event.step,
+          activeTurnId: active?.turnId,
+          activeStep: active?.step,
+        });
+      }
+    }
+    expect(llmEnvelopes.length).toBeGreaterThan(0);
+    expect(llmEnvelopes).toEqual(
+      llmEnvelopes.map(({ turnId, step }) => ({ turnId, step, activeTurnId: turnId, activeStep: step })),
+    );
+
+    expect(events.filter((event) => event.type === 'llm.started').map((event) => [event.turnId, event.step])).toEqual([
+      [0, 1],
+      [0, 2],
+      [1, 1],
+      [1, 2],
+    ]);
+    expect(events.filter((event) => event.type === 'llm.requested').map((event) => [event.turnId, event.step])).toEqual([
+      [0, 1],
+      [0, 1],
+      [0, 2],
+      [1, 1],
+      [1, 2],
+    ]);
+    expect(events.filter((event) => event.type === 'llm.retry').map((event) => [event.turnId, event.step])).toEqual([[0, 1]]);
+    expect(events.find((event) => event.type === 'llm.retry')).toMatchObject({ reason: 'backoff', failedAttempt: 1, nextAttempt: 2 });
+    expect(events.filter((event) => event.type === 'llm.ended').map((event) => [event.turnId, event.step])).toEqual([
+      [0, 1],
+      [0, 2],
+      [1, 1],
+      [1, 2],
+    ]);
+    expect(events.filter((event) => event.type === 'llm.delta.part').map((event) => [
+      event.turnId,
+      event.step,
+      event.part.type === 'text' ? event.part.text : event.part.type,
+    ])).toEqual([
+      [0, 1, 'calling'],
+      [0, 1, 'function'],
+      [0, 2, 'done'],
+      [1, 1, 'calling'],
+      [1, 1, 'function'],
+      [1, 2, 'done'],
+    ]);
+    expect(events.filter((event) => event.type === 'tool.ended').map((event) => [
+      event.turnId,
+      event.step,
+      event.toolCallId,
+      event.outcome.type,
+    ])).toEqual([
+      [0, 1, 'call-work', 'succeeded'],
+      [1, 1, 'call-work-2', 'succeeded'],
+    ]);
     await loop.close();
   });
 });

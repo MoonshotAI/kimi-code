@@ -21,12 +21,16 @@ export interface LlmMessageTiming {
 
 export type TurnContinuation = 'turn' | 'background' | 'none';
 
+export type ScopedLlmRunEvent = LlmRunEvent & { readonly turnId: number; readonly step: number };
+
 export type ToolEvent =
   | { type: 'tool.started'; taskId?: string; turnId: number; step: number; toolCall: ToolCall; args?: unknown; display?: ToolStartDisplay }
-  | { type: 'tool.delta'; toolCallId: string; update: ToolUpdate }
+  | { type: 'tool.delta'; turnId: number; step: number; toolCallId: string; update: ToolUpdate }
   | {
       type: 'tool.ended';
       taskId?: string;
+      turnId: number;
+      step: number;
       toolCallId: string;
       outcome: ToolCallOutcome;
       detached: boolean;
@@ -39,7 +43,15 @@ export type ToolEvent =
         stopTurnReason?: string;
       };
     }
-  | { type: 'tool.async_ended'; taskId?: string; toolCallId: string; outcome: AsyncToolOutcome; message: UserMessage };
+  | {
+      type: 'tool.async_ended';
+      taskId?: string;
+      turnId: number;
+      step: number;
+      toolCallId: string;
+      outcome: AsyncToolOutcome;
+      message: UserMessage;
+    };
 
 export type HookFailedEvent = {
   type: 'hook.failed';
@@ -72,8 +84,8 @@ export type LoopEmitted =
       message: Message;
       blocked?: Cause;
     }
-  | { type: 'step.started'; turnId: number; step: number }
-  | LlmRunEvent
+  | { type: 'step.started'; turnId: number; step: number; stepId: string }
+  | ScopedLlmRunEvent
   | ToolEvent
   | HookFailedEvent
   | {

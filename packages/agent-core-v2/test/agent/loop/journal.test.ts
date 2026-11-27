@@ -217,7 +217,7 @@ describe('loop journal restore', () => {
       ]);
       journal.append({ type: 'turn.started', turnId: 0, trigger: 'normal' });
       journal.append({ type: 'message.appended', turnId: 0, step: 0, source: 'normal', message: entry });
-      journal.append({ type: 'step.started', turnId: 0, step: 1 });
+      journal.append({ type: 'step.started', turnId: 0, step: 1, stepId: 'step-1' });
       journal.append({ type: 'message.appended', turnId: 0, step: 1, source: 'llm', message: answer });
       journal.append({
         type: 'tool.started',

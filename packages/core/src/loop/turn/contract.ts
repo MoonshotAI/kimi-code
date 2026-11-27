@@ -141,6 +141,7 @@ export interface Turn {
 }
 
 export interface TurnStep {
+  readonly id: string;
   readonly scope: { readonly signal: AbortSignal; abort(reason?: unknown): void };
   readonly batch: TurnToolBatch;
   steerRequested: boolean;

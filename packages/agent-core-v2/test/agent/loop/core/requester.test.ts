@@ -6,7 +6,8 @@ import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
 import type { LlmRetryable } from '@moonshot-ai/core/llm/policy/retry';
 import type { LlmModelSpec, LlmRequest } from '@moonshot-ai/core/llm/request';
 import { createRequester, type InitializedLlmRequester, type LlmDimension, type LlmRequester, type LlmRequestPart } from '@moonshot-ai/core/llm/requester';
-import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
+import type { LoopEmitted } from '@moonshot-ai/core/loop/index';
+import { createMockProviderRequester, providerHttpError, type MockProviderResponse } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
 import { executorFrom, successfulExecutor } from './executor';
 
@@ -124,6 +125,50 @@ describe('loop.requester', () => {
     );
     expect(fromFacade.request({}).profile?.systemPrompt).toBe('side');
     expect(fromFacade.request({}).content?.messages).toEqual([]);
+    await loop.close();
+  });
+
+  it('stamps turn and step on llm retries and streamed tool argument deltas', async () => {
+    const scripted = createMockProviderRequester([
+      providerHttpError(429, 'rate limited', { retryAfterMs: 1 }),
+      {
+        parts: [
+          { type: 'function', id: 'call-work', name: 'work', arguments: '{"path":', _streamIndex: 0 },
+          { type: 'tool_call_part', index: 0, argumentsPart: '"a.ts"}' },
+        ],
+      },
+      done('finished'),
+    ]).with({ policy: { retry: { maxAttemptsPerStep: 2 } } });
+    const loop = createLoop({ requester: scripted, executor: noopExecutor });
+    const events: LoopEmitted[] = [];
+    loop.subscribe((event) => events.push(event));
+
+    expect((await loop.runTurn(createUserMessage('run work'))).type).toBe('done');
+
+    expect(events.filter((event) => event.type === 'llm.retry')).toMatchObject([
+      { turnId: 0, step: 1, reason: 'backoff', failedAttempt: 1, nextAttempt: 2, maxAttempts: 2 },
+    ]);
+    const deltas = events.filter((event) => event.type === 'llm.delta.part');
+    const stepOneDeltas = deltas.filter((event) => event.step === 1);
+    expect(stepOneDeltas.length).toBeGreaterThanOrEqual(2);
+    expect(stepOneDeltas.every((event) => event.turnId === 0)).toBe(true);
+    expect(stepOneDeltas.some((event) => event.part.type === 'function')).toBe(true);
+    expect(stepOneDeltas.some((event) => event.part.type === 'tool_call_part')).toBe(true);
+    expect(deltas.filter((event) => event.step !== 1).map((event) => [event.turnId, event.step, event.part.type])).toEqual([
+      [0, 2, 'text'],
+    ]);
+    expect(events.filter((event) => event.type === 'llm.requested').map((event) => [event.turnId, event.step])).toEqual([
+      [0, 1],
+      [0, 1],
+      [0, 2],
+    ]);
+    expect(events.filter((event) => event.type === 'llm.ended').map((event) => [event.turnId, event.step, event.outcome.type])).toEqual([
+      [0, 1, 'done'],
+      [0, 2, 'done'],
+    ]);
+    expect(events.filter((event) => event.type === 'tool.ended')).toMatchObject([
+      { turnId: 0, step: 1, toolCallId: 'call-work', outcome: { type: 'succeeded' } },
+    ]);
     await loop.close();
   });
 });
