@@ -5341,7 +5341,6 @@ describe('KimiHarness worktrees', () => {
   }
 
   async function makeWorktreeHarness(): Promise<{ harness: KimiHarness; homeDir: string; repo: string }> {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '1');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-home-'));
     const repoDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-repo-'));
     tempDirs.push(homeDir, repoDir);
@@ -5423,13 +5422,6 @@ describe('KimiHarness worktrees', () => {
         projectRoot: slashPathOf(repo),
         isGitRepo: true,
         worktree,
-      });
-
-      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '0');
-      expect(await harness.resolveWorkLocation(created.cwd)).toStrictEqual({
-        cwd: created.cwd,
-        projectRoot: slashPathOf(repo),
-        isGitRepo: true,
       });
     } finally {
       await harness.close();
@@ -5534,9 +5526,7 @@ describe('KimiHarness worktrees', () => {
     }
   });
 
-  it('awaits config before checking the worktree flag in removeWorktree', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '');
+  it('creates and removes a worktree when [experimental] worktree = true remains in config.toml', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-cfg-home-'));
     const repo = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-cfg-repo-'));
     tempDirs.push(homeDir, repo);

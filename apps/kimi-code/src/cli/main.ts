@@ -84,26 +84,18 @@ export async function handleMainCommand(
     process.exit(0);
   }
 
-  try {
-    if (validated.uiMode === 'print') {
-      await runPrompt(validated.options, version);
-      return { headlessCompleted: true };
-    }
-
-    startupTrace('runShell:begin');
-    if (programResumeToken === undefined) {
-      await runShell(validated.options, version);
-    } else {
-      await runShell(validated.options, version, { programResumeToken });
-    }
-    return { headlessCompleted: false };
-  } catch (error) {
-    if (error instanceof OptionConflictError) {
-      process.stderr.write(`error: ${error.message}\n`);
-      process.exit(1);
-    }
-    throw error;
+  if (validated.uiMode === 'print') {
+    await runPrompt(validated.options, version);
+    return { headlessCompleted: true };
   }
+
+  startupTrace('runShell:begin');
+  if (programResumeToken === undefined) {
+    await runShell(validated.options, version);
+  } else {
+    await runShell(validated.options, version, { programResumeToken });
+  }
+  return { headlessCompleted: false };
 }
 
 async function handleMigrateCommand(

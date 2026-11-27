@@ -57,8 +57,6 @@ import {
   type WorkspaceTrustMcpServerInfo,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { OptionConflictError } from '#/cli/options';
-
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 
 import { runV2Print } from '../../src/cli/v2/run-v2-print';
@@ -1545,20 +1543,10 @@ describe('runV2Print', () => {
       };
     }
 
-    it('rejects -w with OptionConflictError when the worktree flag is off', async () => {
-      const { app } = makeFakeHarness();
-      mocks.bootstrap.mockReturnValue({ app });
-
-      await expect(
-        runV2Print(opts({ worktree: 'fix-login' }) as never, '1.2.3-test', { stdout: writer(), stderr: writer() }),
-      ).rejects.toThrow(OptionConflictError);
-    });
-
     it('creates a worktree, runs session in worktree cwd, and reports it', async () => {
       const stdout = writer();
       const stderr = writer();
       const { app, appServices } = makeFakeHarness();
-      (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
       const created = sampleCreated();
       const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree').mockResolvedValueOnce(created);
       const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
@@ -1590,7 +1578,6 @@ describe('runV2Print', () => {
       const stdout = writer();
       const stderr = writer();
       const { app, appServices } = makeFakeHarness();
-      (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
       const created = sampleCreated({ copiedFiles: [], sourceDirty: false });
       const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree').mockResolvedValueOnce(created);
       const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
@@ -1684,7 +1671,6 @@ describe('runV2Print', () => {
       );
       const cwd = vi.spyOn(process, 'cwd').mockReturnValue(launchDir);
       const { app, appServices } = makeFakeHarness();
-      (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
       const created = sampleCreated({
         repoRoot: launchDir,
         sourceRoot: launchDir,
@@ -1743,7 +1729,6 @@ describe('runV2Print', () => {
       const stdout = writer();
       const stderr = writer();
       const { app, appServices } = makeFakeHarness();
-      (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
       const createWt = vi
         .spyOn(SDKRpcClientV2.prototype, 'createWorktree')
         .mockRejectedValueOnce(new Error('A worktree already exists at /tmp/home/worktrees/wd_repo/fix-login.'));

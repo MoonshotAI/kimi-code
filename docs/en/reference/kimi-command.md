@@ -27,7 +27,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--agent <name>` | | Start a new session with the specified agent as the main Agent. Cannot be combined with `--session`/`--continue` |
 | `--agent-file <path>` | | Load a custom agent from a Markdown file for the new session and select it. Cannot be repeated or combined with `--agent`, `--session`, or `--continue` |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
-| `--worktree [name]` | `-w` | Start a new session in a fresh [Git worktree](../guides/worktrees.md) (experimental). Generates a name when omitted |
+| `--worktree [name]` | `-w` | Start a new session in a fresh [Git worktree](../guides/worktrees.md). Generates a name when omitted |
 | `--worktree-base <ref>` | | Starting commit, branch, or tag for the new worktree. Requires `--worktree` |
 
 `-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output. The hidden `--environment <id>` flag binds the new session to a configured remote environment, and `--environment-cwd <path>` overrides that environment's working directory (see [Remote environments](../guides/remote-environment.md#kimi-environment-and-environment-cwd)).
