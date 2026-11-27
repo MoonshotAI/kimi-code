@@ -82,7 +82,7 @@ export default {
     betaGroupHint: 'Coming soon — try them early',
     experimentalGroup: 'Experimental',
     experimentalGroupHint: 'Agent explorations — still evolving, review and enable as needed',
-    enableAll: 'Enable all',
+    enableAll: 'All',
     enableAllBeta: 'Enable all Beta features',
     lockedByEnv: 'Controlled by environment variable {env}',
     notifyUser: 'Progress updates',

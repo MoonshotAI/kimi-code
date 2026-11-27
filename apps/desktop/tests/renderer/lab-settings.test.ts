@@ -182,6 +182,9 @@ describe('SettingsDialog Lab two-tier layout', () => {
     const labSections = labPanel.querySelectorAll('section.sec');
     expect(labSections).toHaveLength(2);
     expect(
+      labSections[0]!.querySelector('.lab-beta-toggle-label')?.textContent,
+    ).toBe('全部');
+    expect(
       labSections[0]!.querySelector('.lab-sec-head button[role="switch"][aria-label="开启全部 Beta 功能"]'),
     ).not.toBeNull();
     expect(

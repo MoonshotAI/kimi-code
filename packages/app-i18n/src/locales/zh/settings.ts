@@ -82,7 +82,7 @@ export default {
     betaGroupHint: '即将推出，欢迎尝鲜',
     experimentalGroup: '实验性功能',
     experimentalGroupHint: 'Agent 体验与形态探索，尚未定型，建议了解后按需开启',
-    enableAll: '开启全部',
+    enableAll: '全部',
     enableAllBeta: '开启全部 Beta 功能',
     lockedByEnv: '由环境变量 {env} 控制',
     notifyUser: '进展更新',
