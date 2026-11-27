@@ -311,10 +311,12 @@ describe('quota auto-continue sync across session error cards and Settings', () 
     expect(cards()).toHaveLength(2);
     expect(checkboxes().map((box) => box.checked)).toEqual([false, false]);
     expect(settingsSwitch().getAttribute('aria-checked')).toBe('false');
-    const settingsGroup = document
-      .querySelector('[data-testid="quota-auto-continue-setting"]')
-      ?.closest('.settings-group');
+    const settingsRow = document.querySelector('[data-testid="quota-auto-continue-setting"]')!;
+    const settingsGroup = settingsRow.closest('.settings-group');
     expect(settingsGroup?.querySelector('[aria-label="Plan mode by default"]')).toBeNull();
+    const settingsSection = settingsRow.closest('section.sec');
+    expect(settingsSection?.querySelector('.sec-title')).toBeNull();
+    expect(settingsSection?.textContent).toContain('synced with the toggle on error cards');
     expect(host.querySelector('.tf-resume-at')).toBeNull();
 
     checkboxes()[0]!.click();

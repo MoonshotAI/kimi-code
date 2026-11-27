@@ -312,7 +312,7 @@ export default {
   defaultPlanMode: 'Plan mode by default',
   defaultPlanModeHint: 'Whether new sessions start in plan mode',
   quotaAutoContinue: 'Auto-continue when limits reset',
-  quotaAutoContinueHint: 'Automatically continue interrupted sessions when your credits reset, synced across all sessions',
+  quotaAutoContinueHint: 'Automatically continue interrupted sessions when your credits reset, synced with the toggle on error cards',
   secondaryModelSection: 'Subagents',
   secondaryModel: 'Subagent model',
   secondaryModelHint: 'Model and thinking effort that subagents use by default',

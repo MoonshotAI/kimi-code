@@ -68,7 +68,8 @@ export const STORAGE_KEYS = {
   sessionMentions: 'kimi-web.session-mentions',
   quotaAutoResume: 'kimi-web.quota-auto-resume',
   quotaAutoResumeConsumed: 'kimi-web.quota-auto-resume-consumed',
-  quotaAutoResumeReservation: 'kimi-web.quota-auto-resume-reservation',
+  quotaAutoResumePending: 'kimi-web.quota-auto-resume-pending',
+  quotaAutoResumeNullResetAt: 'kimi-web.quota-auto-resume-null-reset-at',
   quotaAutoContinue: 'kimi-web.quota-auto-continue-enabled',
 } as const;
 

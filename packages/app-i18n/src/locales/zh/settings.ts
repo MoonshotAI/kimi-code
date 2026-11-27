@@ -312,7 +312,7 @@ export default {
   defaultPlanMode: '默认计划模式',
   defaultPlanModeHint: '新会话默认进入计划模式',
   quotaAutoContinue: '额度恢复后自动继续',
-  quotaAutoContinueHint: '因额度耗尽中断的会话，会在额度恢复后自动继续，对所有会话同步生效',
+  quotaAutoContinueHint: '因额度耗尽中断的会话，会在额度恢复后自动继续，与报错卡中的开关实时同步',
   secondaryModelSection: '子智能体',
   secondaryModel: '子智能体模型',
   secondaryModelHint: '子智能体默认使用的模型与思考强度',

@@ -785,11 +785,7 @@ async function isManagedKimiSessionOnOwningHost(sessionId: string): Promise<bool
   const hostId = chatHostId(sessionId);
   const store = modelsStore();
   if (hostId !== undefined && !store.hasHostCatalog(hostId)) {
-    try {
-      await store.loadHostCatalog(hostId);
-    } catch {
-      return false;
-    }
+    await store.loadHostCatalog(hostId);
   }
   return isManagedKimiSessionModelLoaded(sessionId);
 }
@@ -843,6 +839,7 @@ async function canAutoResumeSession(sessionId: string, failedTurnId: string): Pr
   const session = rawState.sessions.find((s) => s.id === sessionId);
   if (session === undefined) return false;
   const trust = await ensureWorkspaceTrust(workspacesStore().workspaceIdForSession(session));
+  if (trust.status === 'error') throw new Error(trust.error.message);
   if (trust.status !== 'success' || !trust.trusted) return false;
   if (sessionBusyForAutoResume(sessionId)) return false;
   const page = await getKimiWebApi().getAgentTurns(sessionId, MAIN_AGENT_ID, { pageSize: 1 });
@@ -871,7 +868,6 @@ const quotaAutoResumeController = createQuotaAutoResume({
   getUsage: getUsageForSession,
   checkSessionReady: canAutoResumeSession,
   submitResume: submitQuotaAutoResume,
-  onReservationAvailable: () => armLoadedQuotaFailures(),
   onGiveUp: (sessionId, err) => {
     warningsStore().pushOperationFailure('quotaAutoResume', err, {
       sessionId,
@@ -949,12 +945,16 @@ function quotaAutoContinueFor(
   };
 }
 
-watch([quotaAutoResumeEnabled, quotaAutoContinueEnabled], ([labOn, continueOn], [prevLabOn, prevContinueOn]) => {
-  if (!labOn || !continueOn) {
+watch(quotaAutoResumeEnabled, (labOn, prevLabOn) => {
+  if (!labOn) {
     quotaAutoResumeController.clearAll();
     return;
   }
-  if (!prevLabOn || !prevContinueOn) armLoadedQuotaFailures();
+  if (!prevLabOn && quotaAutoContinueEnabled.value) armLoadedQuotaFailures();
+});
+
+watch(quotaAutoContinueEnabled, (continueOn) => {
+  if (!continueOn) quotaAutoResumeController.clearAll();
 });
 
 function conversationConnection(): ReturnType<typeof getEventConn> {
