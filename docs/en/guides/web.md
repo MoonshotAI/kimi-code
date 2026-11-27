@@ -1,15 +1,15 @@
-# Using in the Browser
+# Using Kimi Code in the browser
 
-Kimi Code Web is the browser-based graphical interface built into Kimi Code CLI: open it locally or on your LAN with `kimi web`, or turn on **Remote Control** (`kimi rc`) to scan a QR code and follow up from a phone, tablet, or another computer over the internet — all tasks and files stay and execute on your machine while the browser acts as a window.
+Kimi Code Web is the browser-based graphical interface built into Kimi Code CLI: run `kimi web` in a terminal, and you can start sessions, chat, handle approvals, and review file changes in a browser — a friendlier interface, while sessions and data still live entirely on your machine.
 
 ![Kimi Code Web UI](../../media/kimi-web-ui.jpg)
 
-## Local and LAN access
+## Getting started
 
 <div class="step">
 <span class="step-num">1</span> <strong>Install Kimi Code CLI and log in</strong>
 
-`kimi web` is a built-in CLI command. See [Getting Started](./getting-started.md) for installation and login.
+`kimi web` is a built-in CLI command — it isn't available without the CLI. See [Getting started](./getting-started.md) for installation and login.
 </div>
 
 <div class="step">
@@ -21,7 +21,7 @@ If you're already in the CLI, you can also type `/web` to hand the current sessi
 <div class="step">
 <span class="step-num">3</span> <strong>The web UI opens in your default browser once ready</strong>
 
-The startup banner prints the access URL — if the browser doesn't open automatically, copy this URL and open it manually:
+The startup banner prints the access URL — if the browser doesn't open by itself, copy this URL and open it manually:
 
 ```text
 Local:   http://127.0.0.1:58627/#token=...
@@ -39,38 +39,9 @@ The `#token=` fragment is the access credential — don't share it. Stop the ser
 | Option | Description |
 | --- | --- |
 | `--port <port>` | Bind port; defaults to `58627`, auto-increments when taken |
-| `--host [host]` | Enable LAN sharing so phones, tablets, or other computers on the same network can connect; or specify an IP such as `--host 192.168.1.10` |
+| `--host [host]` | Let phones, tablets, or other computers on the same LAN access the web address; you can also specify an IP, e.g. `--host 192.168.1.10` |
 | `--no-open` | Don't open the browser when ready |
 | `--log-level <level>` | Enable server logs at the given level; off by default |
-
-## Remote Control (phone & public internet access) {#remote-control}
-
-To check task progress, approve permissions, or continue chatting from your phone while away from your desk — without configuring port forwarding or a VPN — enable Remote Control (requires a logged-in paid Kimi membership and keeping your machine awake and online).
-
-### Starting and connecting
-
-Run any of the following foreground commands on your machine (one Remote Control instance per machine; up to about **3 devices** per account):
-
-- **`kimi rc`** (alias `kimi remote`): start Remote Control directly;
-- **`kimi web --remote-control`**: equivalent to `kimi rc`;
-- **`/remote-control`** (alias `/rc`): hand your active CLI session directly to the remote web UI.
-
-The terminal prints the access link (`https://code-rc.kimi.com/devices/<device ID>/` or `https://code-rc.kimi.ai/devices/<device ID>/` on global), a QR code (also saved as a PNG file), and your device hostname:
-
-![Terminal output after starting kimi rc: QR code and connection status](../../media/kimi-rc-banner.jpg)
-
-1. Open the access URL in a system browser on your phone or another computer (scan the QR code directly on mobile; if scanning inside WeChat, tap the top-right menu and choose "Open in Browser").
-2. Log in with the **same** Kimi account as on your machine and select the device to view and control its sessions.
-
-::: warning
-The Remote Control link grants access to your machine upon signing into the same Kimi account — do not share it publicly. Press `Ctrl+C` in the local terminal to go offline (or run `kill <pid>` using the `pid` in `~/.kimi-code/server/rc.json` if you lost the terminal). Closing the remote browser tab leaves local tasks running uninterrupted.
-:::
-
-## Relationship with the CLI
-
-The web UI and the CLI share the same login state, configuration (`config.toml`), and session data.
-
-When Web shows **Checking project trust…**, your draft and attachments stay in the composer. You can send the message once the project is trusted.
 
 ### Common slash commands
 
@@ -81,43 +52,57 @@ When Web shows **Checking project trust…**, your draft and attachments stay in
 | `/compact` | Compact the current session's context |
 | `/tower` | [Tower multi-agent collaboration](./tower.md) (experimental); `/tower <base-branch>` sets the base branch without sending an objective |
 | `/export` | Export the session content and troubleshooting logs as a ZIP |
-| `/remote-control` | Enable Remote Control to access the local web session remotely |
+| `/remote-control` | Enable remote control to access the local web session remotely |
 
-Other CLI commands have point-and-click equivalents in the UI (settings, model picker, account menu, task panel):
+## Relationship with the CLI
+
+The web UI and the CLI share the same login state, configuration (`config.toml`), and session data. Browser tab titles show the current project and session so you can distinguish tasks across tabs.
+
+The web UI supports only a subset of the CLI's slash commands — see [Common slash commands](#common-slash-commands) above. Everything else usually has a point-and-click equivalent in the UI (the settings page, the model picker, the account menu, the task panel).
+
+How the two sides compare:
 
 <div class="feature-compare-table">
 
 | Feature | CLI | Web | Notes |
 | --- | --- | --- | --- |
 | Streaming chat | ✓ | ✓ | Web renders rich formats incrementally (tables, code highlighting, diffs, tool cards) |
-| Session management | ✓ | ✓ | Archive less-used sessions and restore them anytime; enable Open / Done / Workspaces tabs on the Lab settings page |
-| Approvals | ✓ | ✓ | Click to approve or reject directly in the UI |
-| Background tasks | ✓ | ✓ | Live progress in the task panel |
-| Files and changes | ✓ | ✓ | Changed-files summary card and per-file diffs |
-| Settings | ✓ | ✓ | Graphical settings UI (providers, account & usage, Lab experiments) |
-| Global search | — | ✓ | Set `[database] global_search = true` in `config.toml` first to search across sessions and workspaces |
-| Mobile layout | — | ✓ | Works in mobile browsers over LAN (`--host`) or Remote Control (`kimi rc`) |
+| Session management | ✓ | ✓ | Web lets you archive less-used sessions away; the archive page sorts them by time and you can restore them anytime; the Open / Done / Workspaces tabs are a Lab experiment (off by default) — enable them on the settings Lab page |
+| Approvals | ✓ | ✓ | Web handles them with clicks in the UI — no commands needed |
+| Background tasks | ✓ | ✓ | Web shows live progress in the task panel |
+| Files and changes | ✓ | ✓ | Web has a changed-files summary card and per-file diffs |
+| Settings | ✓ | ✓ | Web adds a settings UI (providers, account & usage, Lab experiments) |
+| Global search | — | ✓ | Set `[database] global_search = true` in `config.toml` first; Web then searches across sessions and workspaces |
+| Mobile layout | — | ✓ | With LAN sharing on (`--host`), it works in phone browsers on the same network |
 
 </div>
 
 ## Security notes
 
-- **Set a parallel credential on LAN**: when binding a LAN address (`--host`), also set the `KIMI_CODE_PASSWORD` environment variable so the server rate-limits failed authentication attempts.
-- **Don't disable authentication entirely**: `--dangerous-bypass-auth` turns off all authentication — anyone who can reach the port can control your sessions, file system, and shell. Only use it on trusted networks or behind your own authenticating proxy (see the [kimi command reference](../reference/kimi-command.md#kimi-web)).
+- **Set a parallel credential**: when binding a LAN address, also set the `KIMI_CODE_PASSWORD` environment variable; the server then rate-limits authentication failures automatically.
+- **Don't disable authentication entirely**: `--dangerous-bypass-auth` turns off all authentication — anyone who can reach the port can control your sessions, file system, and shell. Only use it on trusted networks or behind your own authenticating proxy. See the [kimi command reference](../reference/kimi-command.md#kimi-web).
 
 ## FAQ
 
-### Port already taken or invalid token?
+### The port is already taken
 
-When the default port is busy, `kimi web` automatically retries on the next port (58628, 58629, …) — use the URL printed in the banner. To rotate an invalid token, run `kimi web rotate-token`; running instances pick up the new token automatically without restarting.
+Nothing to do. `kimi web` automatically retries with the next port (58628, 58629, …) — just use the address printed in the startup banner.
 
-### Troubleshooting LAN or Remote Control connections
+### The URL won't open in the browser
 
-- **LAN (`--host`)**: copy the full LAN URL including `#token=...`, verify your firewall allows the port, and confirm both devices are on the same subnet (guest Wi-Fi, VPNs, and phone hotspots isolate devices).
-- **Remote Control (`kimi rc`)**: confirm the machine hasn't gone to sleep, the local `kimi rc` process is still running, and you are signed into the same paid Kimi account; if blocked inside WeChat's webview, open the link in Safari or Chrome instead.
+First check the server is still running in the terminal (it runs in the foreground there). Copy the full URL including the `#token=` part; opening only `http://127.0.0.1:58627` lands on a token input page, where pasting the `Token` value from the banner also works.
+
+### How to recover from an invalid token
+
+Run `kimi web rotate-token` to generate a new token, then open the new banner URL. All running instances switch to the new token automatically — no restart needed.
+
+### Other devices on the same Wi-Fi can't connect
+
+Make sure you started with `--host` (bare is fine), and use the LAN URL from the banner (like `http://192.168.x.x:58627/#token=...`). If it still fails, check that the machine's firewall allows the port, and that both devices are really on the same network segment — guest Wi-Fi, VPNs, and switching to a 4G/5G hotspot all isolate devices.
 
 ## Next steps
 
 - [Print mode](../reference/kimi-command.md#print-mode) — one-shot runs, structured JSONL output, and exit codes
-- [Using in Other Agents (Agent to Agent)](../customization/other-agents.md) — drive and hand off sessions from Claude Code, Codex, and Cursor
-- [kimi command](../reference/kimi-command.md#kimi-web) — all `kimi web` and `kimi rc` options
+- [Using in Other Agents](../customization/other-agents.md) — drive and hand off sessions from Claude Code, Codex, and Cursor
+- [kimi command](../reference/kimi-command.md#kimi-web) — all `kimi web` command-line options
+- [Remote Control](./remote-control.md) — remotely view and take over local sessions from any device over the public internet

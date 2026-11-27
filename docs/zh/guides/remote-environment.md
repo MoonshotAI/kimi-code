@@ -146,4 +146,4 @@ defaultCwd = 'C:\work\project'
 ## 下一步
 
 - [`environments` 配置参考](../configuration/config-files.md#environments)：查看全部字段。
-- [在网页中使用（远程控制）](./web.md#远程控制)：从另一台设备操控本机会话。
+- [远程控制](./remote-control.md)：从手机或另一台电脑查看进度、处理审批并继续操控本机会话。

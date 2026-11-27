@@ -58,8 +58,9 @@ const config = withMermaid(defineConfig({
                 { text: '会话与上下文', link: '/zh/guides/sessions' },
                 { text: 'Git worktree', link: '/zh/guides/worktrees' },
                 { text: 'Tower 多 Agent 协作', link: '/zh/guides/tower' },
-                { text: '远程环境', link: '/zh/guides/remote-environment' },
                 { text: '在网页中使用', link: '/zh/guides/web' },
+                { text: '远程控制', link: '/zh/guides/remote-control' },
+                { text: '远程环境', link: '/zh/guides/remote-environment' },
               ],
             },
           ],
@@ -139,8 +140,9 @@ const config = withMermaid(defineConfig({
                 { text: 'Sessions and Context', link: '/en/guides/sessions' },
                 { text: 'Git worktrees', link: '/en/guides/worktrees' },
                 { text: 'Tower multi-agent collaboration', link: '/en/guides/tower' },
-                { text: 'Remote environments', link: '/en/guides/remote-environment' },
                 { text: 'Using in the Browser', link: '/en/guides/web' },
+                { text: 'Remote Control', link: '/en/guides/remote-control' },
+                { text: 'Remote environments', link: '/en/guides/remote-environment' },
               ],
             },
           ],
@@ -237,7 +239,6 @@ const config = withMermaid(defineConfig({
       const guidesDir = resolve(outDir, locale, 'guides')
       mkdirSync(guidesDir, { recursive: true })
       const movedGuides: Record<string, string> = {
-        'remote-control.html': `${base}${locale}/guides/web.html#${locale === 'zh' ? '远程控制' : 'remote-control'}`,
         'ides.html': `${base}${locale}/customization/ides.html`,
         'other-agents.html': `${base}${locale}/customization/other-agents.html`,
       }
