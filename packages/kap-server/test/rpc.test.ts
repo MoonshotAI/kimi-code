@@ -269,7 +269,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(association.body.data).toEqual({
       sessionId,
       workspaceId,
-      cwd: home,
+      cwd: slashPathOf(home),
     });
 
     const binding = await call<AgentEnvironmentBindingSnapshot>(

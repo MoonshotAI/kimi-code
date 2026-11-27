@@ -180,7 +180,7 @@ test('keeps a released session without an environment cwd following the current 
       await server.prompt(id, 'Where are you?');
       await server.waitIdle(id);
       expect(await toolOutputOf(model, before + 1)).toBe(`${bashPathOf(await realpath(moved))}\n`);
-      expect((await server.session(id)).cwd).toBe(moved);
+      expect((await server.session(id)).cwd).toBe(slashPathOf(moved));
     } finally {
       await server.close();
     }
@@ -265,7 +265,7 @@ test('keeps a pinned session in its directory and its interrupted prompt after t
     const second = await startServer(home);
     try {
       expect(second.pid).not.toBe(first.pid);
-      expect(await second.session(created.id)).toMatchObject({ workspace_id: created.workspace_id, cwd: pinnedDir });
+      expect(await second.session(created.id)).toMatchObject({ workspace_id: created.workspace_id, cwd: slashPathOf(pinnedDir) });
       expect(await second.turns(created.id), 'turns after the crash').toMatchObject([{
         status: 'ended',
         outcome: 'interrupted',
@@ -279,7 +279,7 @@ test('keeps a pinned session in its directory and its interrupted prompt after t
       await second.waitIdle(created.id);
       expect(model.requests('main')[before]!.view.messages.slice(0, interrupted.length), 'context after the crash').toEqual(interrupted);
       expect(await toolOutputOf(model, before + 1)).toBe(`${bashPathOf(await realpath(pinnedDir))}\n`);
-      expect(await second.session(created.id)).toMatchObject({ cwd: pinnedDir });
+      expect(await second.session(created.id)).toMatchObject({ cwd: slashPathOf(pinnedDir) });
     } finally {
       await second.close();
     }
