@@ -1,0 +1,16 @@
+/engines/*
+!/engines/README.md
+
+**/bin/
+**/obj/
+**/build/
+**/build-legacy/
+**/CMakeFiles/
+**/CMakeCache.txt
+
+**/.venv/
+**/__pycache__/
+**/*.pyc
+
+*.tmp
+*.log.tmp
