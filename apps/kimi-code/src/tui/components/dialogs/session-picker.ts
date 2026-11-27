@@ -15,7 +15,7 @@ import {
   focusOnUnfocusedMouse,
   handleSelectableListMouse,
   type MouseRowRegion,
-} from '#/tui/utils/dialog-mouse';
+} from '#/tui/utils/mouse-hit-test';
 import { printableChar } from '#/tui/utils/printable-key';
 import { formatRelativeTime } from '#/tui/utils/relative-time';
 import { SearchableList } from '#/tui/utils/searchable-list';

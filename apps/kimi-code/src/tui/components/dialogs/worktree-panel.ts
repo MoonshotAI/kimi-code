@@ -10,15 +10,19 @@ import {
 import type { KimiWorktree } from '@moonshot-ai/kimi-code-sdk';
 
 import { WORKTREE_SHORT_SHA_LENGTH } from '#/constant/worktree';
-import { DockSection, type DockLayout, type DockPart } from '#/tui/components/chrome/dock-section';
+import {
+  DockSection,
+  finishDialogLines,
+  type DockLayout,
+  type DockPart,
+} from '#/tui/components/chrome/dock-section';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme, type ColorToken } from '#/tui/theme';
 import {
-  finishDialogLines,
   focusOnUnfocusedMouse,
   handleSelectableListMouse,
   type MouseRowRegion,
-} from '#/tui/utils/dialog-mouse';
+} from '#/tui/utils/mouse-hit-test';
 import { SearchableList } from '#/tui/utils/searchable-list';
 import { abbreviateHome } from '#/utils/paths';
 

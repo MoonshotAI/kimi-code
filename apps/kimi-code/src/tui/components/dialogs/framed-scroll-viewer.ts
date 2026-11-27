@@ -15,7 +15,7 @@ import {
   OverflowScrollView,
 } from '#/tui/components/chrome/dock-section';
 import { currentTheme } from '#/tui/theme';
-import { handleActionBarMouse, type MouseActionSpan } from '#/tui/utils/dialog-mouse';
+import { handleActionBarMouse, type MouseActionSpan } from '#/tui/utils/mouse-hit-test';
 import { printableChar } from '#/tui/utils/printable-key';
 
 const ELLIPSIS = '…';

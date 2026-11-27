@@ -14,7 +14,7 @@ import { currentTheme } from '#/tui/theme';
 import {
   handleSearchableListMouse,
   type MouseRowRegion,
-} from '#/tui/utils/dialog-mouse';
+} from '#/tui/utils/mouse-hit-test';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 export interface AlignedChoiceItem<TValue extends string> {

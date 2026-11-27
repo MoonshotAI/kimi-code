@@ -25,7 +25,7 @@ import {
   handleSelectableListMouse,
   type MouseColRegion,
   type MouseRowRegion,
-} from '#/tui/utils/dialog-mouse';
+} from '#/tui/utils/mouse-hit-test';
 import { layoutStyledTabStrip } from '#/tui/utils/tab-strip';
 
 const NUMBER_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];

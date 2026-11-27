@@ -15,7 +15,7 @@ import {
   focusOnUnfocusedMouse,
   handleSearchableListMouse,
   type MouseRowRegion,
-} from '#/tui/utils/dialog-mouse';
+} from '#/tui/utils/mouse-hit-test';
 import { SearchableList } from '#/tui/utils/searchable-list';
 import type { InlineSkillActivation } from '../../types';
 

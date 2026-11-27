@@ -1,5 +1,6 @@
 import {
   ScrollView,
+  truncateToWidth,
   VStack,
   type Component,
   type TuiMouseDispatchResult,
@@ -8,6 +9,7 @@ import {
 } from '@moonshot-ai/pi-tui';
 
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
+import { currentTheme } from '#/tui/theme';
 
 import { GutterContainer } from './gutter-container';
 
@@ -184,4 +186,13 @@ function padded(component: Component): GutterContainer {
   const gutter = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   gutter.addChild(component);
   return gutter;
+}
+
+export function finishDialogLines(
+  lines: readonly string[],
+  width: number,
+  focused: boolean,
+): string[] {
+  const rendered = lines.map((line) => truncateToWidth(line, width));
+  return focused ? rendered : rendered.map((line) => currentTheme.fade(line));
 }

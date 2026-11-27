@@ -1,10 +1,5 @@
-import {
-  truncateToWidth,
-  type TuiMouseEvent,
-  type TuiMouseEventResult,
-} from '@moonshot-ai/pi-tui';
+import type { TuiMouseEvent, TuiMouseEventResult } from '@moonshot-ai/pi-tui';
 
-import { currentTheme } from '#/tui/theme';
 import type { SearchableList } from '#/tui/utils/searchable-list';
 import { isSettlingClick } from '#/tui/utils/terminal-focus';
 
@@ -155,13 +150,4 @@ export function handleSearchableListMouse<T>(
       if (item !== undefined) input.activate(item, clickEvent);
     },
   });
-}
-
-export function finishDialogLines(
-  lines: readonly string[],
-  width: number,
-  focused: boolean,
-): string[] {
-  const rendered = lines.map((line) => truncateToWidth(line, width));
-  return focused ? rendered : rendered.map((line) => currentTheme.fade(line));
 }

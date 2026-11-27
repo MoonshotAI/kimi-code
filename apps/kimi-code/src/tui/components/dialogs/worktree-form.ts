@@ -11,7 +11,7 @@ import {
 } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
-import { focusOnUnfocusedMouse } from '#/tui/utils/dialog-mouse';
+import { focusOnUnfocusedMouse } from '#/tui/utils/mouse-hit-test';
 
 export type WorktreeFormField = 'name' | 'base';
 
