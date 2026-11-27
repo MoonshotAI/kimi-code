@@ -1031,6 +1031,47 @@ describe('SessionManager creation environment', () => {
     return { options };
   }
 
+  it('moves a session to the real path of the directory in forward-slash form', async () => {
+    registry = new EnvironmentRegistry();
+    registry.register(Object.assign(new FakeEnvironment(
+      { environmentId: 'local', generation: 'local-one' },
+      { capabilities: ['fs', 'process'] },
+    ), { fs: {}, process: {} }));
+    const moves: unknown[] = [];
+    const handle = { id: 'session-1' } as unknown as ISessionScopeHandle;
+    const service = {
+      onWillCreateSession: Event.None,
+      onDidCreateSession: Event.None,
+      onWillCloseSession: Event.None,
+      onDidCloseSession: Event.None,
+      onDidArchiveSession: Event.None,
+      onDidForkSession: Event.None,
+      move: async (opts: unknown) => {
+        moves.push(opts);
+        return handle;
+      },
+      dispose: () => {},
+    } as unknown as SessionLifecycleService;
+    const program = { sessionControllerGeneration: 'generation', createSessionController: () => service } as unknown as Program;
+    const workspace = { id: 'workspace-1', root: 'C:/repo', environments: registry, program } as unknown as ProjectInstance;
+    manager = makeSessionManager(
+      workspaceManager(workspace),
+      { get: async () => ({ id: 'session-1', workspaceId: 'workspace-1', cwd: 'C:/repo', createdAt: 1, updatedAt: 1, archived: false }) } as unknown as ISessionIndex,
+      {
+        config: configWith(undefined),
+        hostFs: {
+          _serviceBrand: undefined,
+          stat: async () => ({ isFile: false, isDirectory: true, size: 0 }),
+          realpath: async () => 'C:\\repo\\wt',
+        } as unknown as IHostFileSystem,
+      },
+    );
+
+    await manager.move({ sessionId: 'session-1', workDir: 'C:\\repo\\wt\\' });
+
+    expect(moves).toEqual([{ sessionId: 'session-1', workDir: 'C:/repo/wt', environmentCwd: 'C:/repo/wt' }]);
+  });
+
   it('binds a new session to the configured default environment and cwd', async () => {
     const { options } = setup(configWith({
       default: 'sandbox',

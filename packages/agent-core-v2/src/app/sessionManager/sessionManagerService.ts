@@ -142,9 +142,9 @@ export class SessionManager implements ISessionManager {
               },
             );
           }
-          const canonicalWorkDir = await this.hostFs
-            .realpath(options.workDir)
-            .catch(() => options.workDir);
+          const canonicalWorkDir = normalizeDir(
+            await this.hostFs.realpath(options.workDir).catch(() => options.workDir),
+          );
           const environmentCwd = workDirToPin(canonicalWorkDir, targetLease.instance.root);
           return await controller.move({
             sessionId: options.sessionId,
