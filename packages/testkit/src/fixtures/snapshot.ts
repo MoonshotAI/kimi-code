@@ -13,8 +13,14 @@ export function contentDigest(content: string | Uint8Array): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
-export async function snapshotDirectory(root: string): Promise<DirectorySnapshot> {
-  const entries = await readdir(root, { recursive: true, withFileTypes: true });
+export interface SnapshotOptions {
+  readonly skip?: readonly string[];
+}
+
+export async function snapshotDirectory(root: string, { skip = [] }: SnapshotOptions = {}): Promise<DirectorySnapshot> {
+  const top = (await readdir(root, { withFileTypes: true })).filter((entry) => !skip.includes(entry.name));
+  const nested = await Promise.all(top.filter((entry) => entry.isDirectory()).map((entry) => readdir(join(root, entry.name), { recursive: true, withFileTypes: true })));
+  const entries = [...top, ...nested.flat()];
   const digests = await Promise.all(
     entries.map(async (entry): Promise<[string, string] | undefined> => {
       const path = join(entry.parentPath, entry.name);

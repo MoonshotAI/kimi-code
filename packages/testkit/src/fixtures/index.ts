@@ -14,6 +14,7 @@ export {
   bashPathOf,
   createGitRepository,
   createGitWorktree,
+  runGit,
   type GitRepositoryOptions,
   type GitWorktreeLayout,
 } from '#/fixtures/git';

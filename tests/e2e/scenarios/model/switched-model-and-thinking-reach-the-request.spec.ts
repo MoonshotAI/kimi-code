@@ -18,8 +18,8 @@ scenario(
 
     await product.send('Answer with the default model.');
     await product.waitIdle();
-    await product.chooseModel('testkit-large');
-    await product.setThinking('low');
+    await product.switchModel('testkit-large');
+    await product.setThinkingEffort('low');
     await product.send('Answer with the large model.');
     await product.waitIdle();
 

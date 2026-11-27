@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   contentDigest,
+  createGitRepository,
   createTestHome,
   directoryChanges,
   mergeKimiConfig,
@@ -17,6 +18,7 @@ import {
   type FakeMcpTool,
   type KimiConfig,
   type McpRemoteServerEntry,
+  runGit,
   type TestHome,
   until,
 } from '@moonshot-ai/testkit/fixtures';
@@ -28,7 +30,7 @@ import { startDesktop } from '../surfaces/desktop';
 import { clockFileOf } from '../surfaces/environment';
 import { startTui } from '../surfaces/tui';
 import { startWeb } from '../surfaces/web';
-import { CLOCK_TITLE, DISK_TITLES, MCP_TITLES, STEP_TITLES } from './steps';
+import { CLOCK_TITLE, DISK_TITLES, GIT_TITLE, MCP_TITLES, STEP_TITLES } from './steps';
 import {
   absenceReason,
   StartupFailure,
@@ -78,8 +80,13 @@ export interface McpServerHandle {
   disconnect(): Promise<void>;
 }
 
+export interface ScenarioGit {
+  readonly branches?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+}
+
 export interface ScenarioOptions {
   readonly workspace?: Readonly<Record<string, string>>;
+  readonly git?: ScenarioGit;
   readonly clock?: string;
   readonly provider?: ScenarioProvider;
   readonly config?: KimiConfig;
@@ -97,6 +104,7 @@ export interface Workspace {
   write(path: string, content: string): Promise<void>;
   expectFile(path: string, content: string): Promise<void>;
   expectMissing(path: string): Promise<void>;
+  git(args: readonly string[]): Promise<void>;
 }
 
 export interface ScenarioContext<S extends Surface> {
@@ -192,7 +200,7 @@ async function readIfPresent(path: string): Promise<string | undefined> {
   }
 }
 
-function promptCheck(verb: 'send' | 'queue' | 'steer'): (text: string) => void {
+function promptCheck(verb: 'send' | 'queue' | 'steer' | 'openSession' | 'btw'): (text: string) => void {
   return (text) => {
     if (!/^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u.test(text) || text !== text.trim()) {
       throw new Error(`${verb}() takes one line of printable text without surrounding spaces, got ${JSON.stringify(text)}`);
@@ -234,12 +242,24 @@ function assertToolExpectation(expectation: ToolExpectation): void {
   }
 }
 
-function lineCheck(verb: 'expectError' | 'expectAbsent' | 'rejectWithFeedback' | 'answer' | 'answerOther'): (text: string) => void {
+function lineCheck(verb: 'expectError' | 'expectAbsent' | 'rejectWithFeedback' | 'answer' | 'answerOther' | 'switchModel' | 'btw'): (text: string) => void {
   return (text) => {
     if (!/^[ -~]+$/.test(text) || text !== text.trim()) {
       throw new Error(`${verb}() takes one line of printable ASCII without surrounding spaces, got ${JSON.stringify(text)}`);
     }
   };
+}
+
+function assertSkillName(name: string): void {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+    throw new Error(`useSkill() takes the name of a skill in lowercase letters, digits and dashes, like "release-notes", got ${JSON.stringify(name)}`);
+  }
+}
+
+function assertEffort(effort: string): void {
+  if (!/^[a-z]+$/.test(effort)) {
+    throw new Error(`setThinkingEffort() takes the effort as the configuration names it, one lowercase word like "high", got ${JSON.stringify(effort)}`);
+  }
 }
 
 function assertApprovalExpectation(expectation: ApprovalExpectation): void {
@@ -258,6 +278,15 @@ function assertApprovalExpectation(expectation: ApprovalExpectation): void {
   }
 }
 
+function assertWorkspaceDirectory(path: string): void {
+  if (!/^[!-~]+$/.test(path) || workspaceKey(path) !== path) {
+    throw new Error(`addDir() takes a directory as a normalized path relative to the workspace, without spaces, like "docs", got ${JSON.stringify(path)}`);
+  }
+  if ('list'.startsWith(path.toLowerCase())) {
+    throw new Error(`addDir() cannot add ${JSON.stringify(path)}: the CLI completes it to the list subcommand of /add-dir, which only shows the directories.`);
+  }
+}
+
 const PRECHECKS: { readonly [V in Verb]?: (...args: Parameters<Actions[V]>) => void } = {
   send: promptCheck('send'),
   queue: promptCheck('queue'),
@@ -269,6 +298,15 @@ const PRECHECKS: { readonly [V in Verb]?: (...args: Parameters<Actions[V]>) => v
   expectApproval: assertApprovalExpectation,
   expectError: lineCheck('expectError'),
   expectAbsent: lineCheck('expectAbsent'),
+  openSession: promptCheck('openSession'),
+  useSkill: assertSkillName,
+  switchModel: lineCheck('switchModel'),
+  setThinkingEffort: assertEffort,
+  addDir: assertWorkspaceDirectory,
+  btw: (question, reply) => {
+    promptCheck('btw')(question);
+    lineCheck('btw')(reply);
+  },
 };
 
 
@@ -279,6 +317,11 @@ function timeOf(time: string): string {
 
 function problemOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+interface Conversation {
+  title?: string;
+  lastPrompt?: string;
 }
 
 interface RunningProduct {
@@ -297,14 +340,15 @@ class ScenarioSession {
   private readonly editorMcpServers: EditorMcpServer[] = [];
   private driver: SurfaceDriver<Surface> | undefined;
   private baseline: DirectorySnapshot | undefined;
+  private gitWorkspace = false;
   private interfaceChecks = 0;
   private frames: FramePolicy = 'on-failure';
   private testInfo: TestInfo | undefined;
   private steps = 0;
   private failedStep: string | undefined;
   private launches = 1;
-  private lastPrompt: string | undefined;
-  private sessions = 1;
+  private conversation: Conversation = {};
+  private readonly conversations: Conversation[] = [this.conversation];
   private workspaceTrust: SurfaceLaunch['workspaceTrust'];
   private readonly earlierDiagnostics: Diagnostic[] = [];
   private readonly performed = new Set<Verb>();
@@ -324,6 +368,8 @@ class ScenarioSession {
     this.home = home;
     assertOutsideGitWorkTree(home.workspace);
     await seedWorkspace(home.workspace, options.workspace ?? {});
+    if (options.git !== undefined) await createGitRepository(home.workspace, { branches: options.git.branches });
+    this.gitWorkspace = options.git !== undefined;
     const model = await startFakeModel();
     this.model = model;
     await writeKimiConfig(home.dataDir, mergeKimiConfig(fakeModelConfig(model, options.provider), options.config ?? {}));
@@ -332,7 +378,7 @@ class ScenarioSession {
     const startupStep = this.workspaceTrust === undefined ? '启动产品，等到可以输入' : '启动产品，处理工作区信任提示';
     await base.step(startupStep, async () => {
       this.driver = await this.launch({ home, model, workspaceTrust: this.workspaceTrust, ...this.launchOptions() });
-      this.baseline = await snapshotDirectory(home.workspace);
+      this.baseline = await this.workTreeSnapshot(home.workspace);
       if (frames === 'every-step') await this.show('00 启动完成');
     });
     return {
@@ -458,10 +504,26 @@ class ScenarioSession {
     const method: unknown = Reflect.get(driver, verb);
     if (typeof method !== 'function') throw new Error(`The ${this.surface} driver does not implement ${verb}().`);
     await Reflect.apply(method, driver, args);
-    if (verb === 'send' || verb === 'queue' || verb === 'steer' || verb === 'submit') this.lastPrompt = String(args[0]);
-    if (verb === 'undo') this.lastPrompt = undefined;
-    if (verb === 'newSession' || verb === 'openSession' || verb === 'removeWorkspace' || verb === 'addWorkspace') this.lastPrompt = undefined;
-    if (verb === 'newSession' || verb === 'fork' || verb === 'addWorkspace') this.sessions += 1;
+    if (verb === 'send' || verb === 'queue' || verb === 'steer' || verb === 'submit') {
+      const prompt = String(args[0]);
+      this.conversation.title ??= prompt;
+      this.conversation.lastPrompt = prompt;
+    }
+    if (verb === 'undo') this.conversation.lastPrompt = undefined;
+    if (verb === 'newSession' || verb === 'addWorkspace') {
+      this.conversation = {};
+      this.conversations.push(this.conversation);
+    }
+    if (verb === 'removeWorkspace') this.conversation = {};
+    if (verb === 'fork') {
+      const { title, lastPrompt } = this.conversation;
+      this.conversation = { ...(title === undefined ? {} : { title: `Fork: ${title}` }), ...(lastPrompt === undefined ? {} : { lastPrompt }) };
+      this.conversations.push(this.conversation);
+    }
+    if (verb === 'openSession') {
+      const title = String(args[0]);
+      this.conversation = this.conversations.find((conversation) => conversation.title === title) ?? { title };
+    }
   }
 
   private async launch(launch: SurfaceLaunch): Promise<SurfaceDriver<Surface>> {
@@ -518,7 +580,7 @@ class ScenarioSession {
       home,
       model,
       workspaceTrust: this.workspaceTrust,
-      reopen: { launch: this.launches, lastPrompt: this.lastPrompt, state },
+      reopen: { launch: this.launches, lastPrompt: this.conversation.lastPrompt, state },
       ...this.launchOptions(),
     });
   }
@@ -582,7 +644,19 @@ class ScenarioSession {
           this.declared.set(key, undefined);
           expect(await readIfPresent(join(root, key)), `workspace file ${key} should not exist`).toBeUndefined();
         }),
+      git: (args) =>
+        base.step(GIT_TITLE(args), async () => {
+          if (!this.gitWorkspace) throw new Error('workspace.git() runs git in the workspace like the user in a terminal; make the workspace a repository with the git option.');
+          const before = await this.workTreeSnapshot(root);
+          await runGit(root, args);
+          const after = await this.workTreeSnapshot(root);
+          for (const { path } of directoryChanges(before, after)) this.declared.set(path, Object.hasOwn(after, path) ? after[path] : undefined);
+        }),
     };
+  }
+
+  private workTreeSnapshot(root: string): Promise<DirectorySnapshot> {
+    return snapshotDirectory(root, { skip: this.gitWorkspace ? ['.git'] : [] });
   }
 
   private async closingProblems(): Promise<string[]> {
@@ -605,13 +679,13 @@ class ScenarioSession {
       problems.push(`The fake model reported problems:\n${problemOf(error)}`);
     }
     const keys = [...new Set(model.promptCache().filter((entry) => entry.role === 'main' && !entry.rejected).map((entry) => entry.cacheKey))];
-    if (keys.length > this.sessions) {
+    if (keys.length > this.conversations.length) {
       problems.push(
-        `The product sent main requests under ${keys.length} prompt cache keys (${keys.map((key) => JSON.stringify(key ?? null)).join(', ')}), but the scenario used ${this.sessions} session(s). ` +
+        `The product sent main requests under ${keys.length} prompt cache keys (${keys.map((key) => JSON.stringify(key ?? null)).join(', ')}), but the scenario used ${this.conversations.length} session(s). ` +
           'A provider reuses a cached prefix only under the same key, so every request of a session must keep its key, also after a restart.',
       );
     }
-    const changes = directoryChanges(this.expectedWorkspace(baseline), await snapshotDirectory(home.workspace));
+    const changes = directoryChanges(this.expectedWorkspace(baseline), await this.workTreeSnapshot(home.workspace));
     if (changes.length > 0) {
       problems.push(
         [

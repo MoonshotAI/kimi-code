@@ -6,7 +6,7 @@ import type { ApprovalBlock, TaskItem, TodoView, TurnAttachment, UIQuestion } fr
 import type { GlobalShortcutFailureReason } from '../../../shared/global-shortcut';
 import type { QuestionResponse, SessionPlan } from '../../api/types';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { useAppearance } from '@moonshot-ai/app-core';
+import { useAppearance } from '@moonshot-ai/app-core/composables';
 import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
 import { Composer, type ComposerEmits } from '@moonshot-ai/app-components';
 import { GoalPanel } from '@moonshot-ai/app-components';

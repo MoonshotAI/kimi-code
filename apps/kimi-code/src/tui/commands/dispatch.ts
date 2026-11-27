@@ -123,6 +123,7 @@ export interface SlashCommandHost {
   showStatus(msg: string, color?: ColorToken): void;
   showNotice(title: string, detail?: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
+  replaceTranscriptEntries?(entries: readonly TranscriptEntry[]): void;
   track(event: string, props?: Record<string, unknown>): void;
   mountEditorReplacement(
     panel: Component & Focusable,

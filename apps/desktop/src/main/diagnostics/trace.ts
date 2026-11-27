@@ -3,7 +3,8 @@ import { join } from 'node:path';
 
 import { app, contentTracing, dialog } from 'electron';
 
-import { getMainWindow, showMainWindow } from '../window/main-window';
+import { getMainWindow } from '../window/window-registry';
+import { showMainWindow } from '../window/main-window';
 
 const TRACE_CATEGORIES = [
   'blink',

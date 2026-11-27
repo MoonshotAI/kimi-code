@@ -1,9 +1,12 @@
+import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
 import type { PermissionApprovalResultRecord } from '#/agent/permissionRules/permissionRules';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { AgentConfigUpdateData } from '#/agent/profile/profile';
+import type { TurnEndReason } from '#/agent/loop/turnEvents';
+import type { ErrorCode } from '#/errors';
 import type {
   GoalActor,
   GoalBudgetLimits,
@@ -26,7 +29,7 @@ import {
   type WireRecord,
 } from '#/wire/record';
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
-import { matchWireTurnInputRecords } from '#/wire/turnInput';
+import { matchWireTurnInputRecords, wireRecordObject } from '#/wire/turnInput';
 
 import type { AgentReplayRecord, AgentReplayRecordPayload } from './types';
 
@@ -61,6 +64,7 @@ export const FOLD_RELEVANT_WIRE_TYPES: ReadonlySet<string> = new Set([
   'turn.prompt',
   'turn.steer',
   'turn.cancel',
+  'turn.ended',
 ]);
 
 export const FOLD_CARRYOVER_WIRE_TYPES: ReadonlySet<string> = new Set([
@@ -133,6 +137,12 @@ function migrateJournalRecords(records: readonly WireRecord[]): WireRecord[] {
   return records.map((record) => migrateWireRecord(record, migrations));
 }
 
+type TurnEndedReplayPayload = Extract<AgentReplayRecordPayload, { type: 'turn_ended' }>;
+
+type DeferredReplayEntry =
+  | { readonly kind: 'message'; readonly message: ContextMessage; readonly turnId?: number }
+  | { readonly kind: 'turn_ended'; readonly payload: TurnEndedReplayPayload; readonly time: number };
+
 interface FoldGoalState {
   goalId: string;
   objective: string;
@@ -151,7 +161,7 @@ class WireReplayFoldState {
   private history: ContextMessage[] = [];
   private readonly openSteps = new Map<string, ContextMessage>();
   private readonly pendingToolResultIds = new Set<string>();
-  private deferredMessages: { readonly message: ContextMessage; readonly turnId?: number }[] = [];
+  private deferred: DeferredReplayEntry[] = [];
   private goal: FoldGoalState | undefined;
   private nextTurnId = 0;
   private readonly cancelledTurnIds = new Set<number>();
@@ -182,6 +192,9 @@ class WireReplayFoldState {
         this.updateTurnId(record);
         return;
       case 'turn.steer':
+        return;
+      case 'turn.ended':
+        this.appendTurnEnded(record, time);
         return;
       case 'turn.cancel': {
         const turnId = record['turnId'];
@@ -270,20 +283,37 @@ class WireReplayFoldState {
 
   private appendMessage(message: ContextMessage, time: number, turnId?: number): void {
     if (this.pendingToolResultIds.size > 0) {
-      this.deferredMessages.push({ message, turnId });
+      this.deferred.push({ kind: 'message', message, turnId });
       return;
     }
     this.pushHistoryEntry(message, time, turnId);
   }
 
-  private flushDeferredMessages(time: number): void {
-    if (this.pendingToolResultIds.size > 0 || this.deferredMessages.length === 0) {
+  private appendTurnEnded(record: WireRecord, time: number): void {
+    const turnId = readNumber(record, 'turnId');
+    const reason = readTurnEndReason(record['reason']);
+    if (turnId === undefined || reason === undefined) return;
+    const error = readErrorPayload(record['error']);
+    const payload: TurnEndedReplayPayload =
+      error === undefined
+        ? { type: 'turn_ended', turnId, reason }
+        : { type: 'turn_ended', turnId, reason, error };
+    if (this.pendingToolResultIds.size > 0) {
+      this.deferred.push({ kind: 'turn_ended', payload, time });
       return;
     }
-    for (const entry of this.deferredMessages) {
-      this.pushHistoryEntry(entry.message, time, entry.turnId);
+    this.push(payload, time);
+  }
+
+  private flushDeferred(time: number): void {
+    if (this.pendingToolResultIds.size > 0 || this.deferred.length === 0) {
+      return;
     }
-    this.deferredMessages = [];
+    for (const entry of this.deferred) {
+      if (entry.kind === 'message') this.pushHistoryEntry(entry.message, time, entry.turnId);
+      else this.push(entry.payload, entry.time);
+    }
+    this.deferred = [];
   }
 
   private closePendingToolResults(time: number): void {
@@ -297,7 +327,7 @@ class WireReplayFoldState {
     }
     this.pendingToolResultIds.clear();
     this.pushHistory(messages, time);
-    this.flushDeferredMessages(time);
+    this.flushDeferred(time);
   }
 
   private appendLoopEvent(event: LoopRecordedEvent, time: number): void {
@@ -311,7 +341,7 @@ class WireReplayFoldState {
       }
       case 'step.end': {
         this.openSteps.delete(event.uuid);
-        this.flushDeferredMessages(time);
+        this.flushDeferred(time);
         return;
       }
       case 'content.part': {
@@ -364,7 +394,7 @@ class WireReplayFoldState {
           time,
         );
         this.pendingToolResultIds.delete(event.toolCallId);
-        this.flushDeferredMessages(time);
+        this.flushDeferred(time);
         return;
       }
     }
@@ -385,22 +415,27 @@ class WireReplayFoldState {
         if (removedUserCount >= count) break;
       }
     }
+    const removedFrom = this.replay.findIndex(
+      (record) => record.type === 'message' && removed.has(record.message),
+    );
     for (let i = this.replay.length - 1; i >= 0; i--) {
       const record = this.replay[i]!;
-      if (record.type === 'message' && removed.has(record.message)) {
-        this.replay.splice(i, 1);
-      }
+      const undone =
+        record.type === 'message'
+          ? removed.has(record.message)
+          : record.type === 'turn_ended' && removedFrom >= 0 && i > removedFrom;
+      if (undone) this.replay.splice(i, 1);
     }
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
-    this.deferredMessages = [];
+    this.deferred = [];
   }
 
   private clearContext(): void {
     this.history = [];
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
-    this.deferredMessages = [];
+    this.deferred = [];
   }
 
   private applyCompaction(record: WireRecord): void {
@@ -433,11 +468,11 @@ class WireReplayFoldState {
         : [summaryMessage];
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
-    this.deferredMessages = [];
+    this.deferred = [];
   }
 
   private patchLastCompaction(patch: { readonly result: CompactionResult | 'cancelled' }): void {
-    const last = this.replay.at(-1);
+    const last = this.replay.findLast((record) => record.type !== 'turn_ended');
     if (last?.type === 'compaction') {
       Object.assign(last, patch);
     }
@@ -623,6 +658,34 @@ function readString(record: WireRecord, key: string): string | undefined {
 function readNumber(record: WireRecord, key: string): number | undefined {
   const value = record[key];
   return typeof value === 'number' ? value : undefined;
+}
+
+function readTurnEndReason(value: unknown): TurnEndReason | undefined {
+  switch (value) {
+    case 'completed':
+    case 'cancelled':
+    case 'failed':
+    case 'blocked':
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function readErrorPayload(value: unknown): KimiErrorPayload | undefined {
+  const error = wireRecordObject(value);
+  const code = error?.['code'];
+  const message = error?.['message'];
+  if (typeof code !== 'string' || typeof message !== 'string') return undefined;
+  const name = error?.['name'];
+  const details = wireRecordObject(error?.['details']);
+  return {
+    code: code as ErrorCode,
+    message,
+    ...(typeof name === 'string' ? { name } : {}),
+    ...(details === undefined ? {} : { details }),
+    retryable: error?.['retryable'] === true,
+  };
 }
 
 function readCompactionSummary(record: WireRecord): string {

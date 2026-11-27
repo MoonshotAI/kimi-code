@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { killProcessTree, NETWORK_GUARD_PRELOAD, networkGuardEnv, readNetworkViolations, repoPath, TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
 import { _electron, type ElectronApplication } from '@playwright/test';
 
-import { StartupFailure, type Diagnostic, type ReopenState, type SurfaceDriver, type SurfaceLaunch } from '../support/verbs';
+import { StartupFailure, type BrowserControl, type Diagnostic, type ReopenState, type SurfaceDriver, type SurfaceLaunch } from '../support/verbs';
 import { productEnv } from './environment';
 import { offlineStubs } from './offline';
 import { OFFLINE_NAMES, PageDriver, reasonOf, WELCOME_DIALOG } from './page-driver';
@@ -65,6 +65,10 @@ class DesktopDriver extends PageDriver {
 
   reopenState(): ReopenState {
     return {};
+  }
+
+  setBrowserControl(state: BrowserControl): Promise<void> {
+    return this.switchBrowserControl(state === 'on');
   }
 
   async startupFailure(error: unknown): Promise<Error> {

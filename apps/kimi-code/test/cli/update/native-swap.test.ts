@@ -830,4 +830,29 @@ describe('maybeRelaunchWithStagedNativeUpdate', () => {
     const newExe = await readFile(exePath);
     expect(newExe.equals(Buffer.alloc(STAGED_EXE_SIZE, 1))).toBe(true);
   });
+
+  it('strips OSC7577_TOKEN from the --version smoke check while preserving it for re-exec', async () => {
+    await seedStagedUpdate(exePath, STAGED_VERSION);
+    const { calls, spawnImpl } = createSpawnMock({});
+    const env: NodeJS.ProcessEnv = {
+      PATH: '/usr/bin',
+      OSC7577_TOKEN: 'swap-resume-token',
+    };
+    const relaunched = await maybeRelaunchWithStagedNativeUpdate(
+      makeDeps(exePath, { spawnImpl, env }),
+    );
+
+    expect(relaunched).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.args).toEqual(['--version']);
+    const smokeEnv = calls[0]?.options['env'] as NodeJS.ProcessEnv | undefined;
+    expect(smokeEnv).toBeDefined();
+    expect(smokeEnv?.['PATH']).toBe('/usr/bin');
+    expect(smokeEnv?.['OSC7577_TOKEN']).toBeUndefined();
+    expect(env['OSC7577_TOKEN']).toBe('swap-resume-token');
+
+    const reexecEnv = calls[1]?.options['env'] as NodeJS.ProcessEnv | undefined;
+    expect(reexecEnv?.['OSC7577_TOKEN']).toBe('swap-resume-token');
+    expect(reexecEnv?.[KIMI_CODE_UPDATE_REEXEC_ENV]).toBe('1');
+  });
 });

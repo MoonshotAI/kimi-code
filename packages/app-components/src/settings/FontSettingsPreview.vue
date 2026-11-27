@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import type { FontTarget } from '@moonshot-ai/app-core';
+import type { FontTarget } from '@moonshot-ai/app-core/composables';
 import type { FontPreviewChrome } from './fontPreviewChrome';
 import { formatMessageTime } from '@moonshot-ai/app-core/lib';
 import { Markdown } from '@moonshot-ai/app-markdown';

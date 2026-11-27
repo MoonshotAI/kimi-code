@@ -2,7 +2,7 @@
 import { computed, createApp, h, nextTick, ref, type App } from 'vue';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import { useSidebarTabs } from '@moonshot-ai/app-core';
+import { useSidebarTabs } from '@moonshot-ai/app-core/composables';
 import type { AppSession, AppWorkspace } from '@moonshot-ai/app-core/api';
 import type { ConversationStatus } from '@moonshot-ai/app-core/client/types';
 import type { PanelTab } from '@moonshot-ai/app-client/composables';

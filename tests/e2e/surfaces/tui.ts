@@ -21,6 +21,7 @@ import {
   APPROVAL_PENDING,
   describeApproval,
   describeTool,
+  firstPromptOf,
   namesFile,
   PERMISSION_MODE_NAMES,
   QUESTION_PENDING,
@@ -40,6 +41,7 @@ import {
   type Diagnostic,
   type Frame,
   type PermissionMode,
+  type PlanModeState,
   type ReopenState,
   type SurfaceDriver,
   StartupFailure,
@@ -189,31 +191,58 @@ const TASK_LOADING = '[loading…]';
 const TUI_TASK_STATUS: { readonly [S in TaskStatus]: string } = { running: 'running', done: 'completed', failed: 'failed', stopped: 'killed' };
 const MOVED_TO_BACKGROUND = 'to background. /tasks to view.';
 const NOT_MOVED = ['No foreground task running.', 'Task already finished.', 'Command already finished.', 'Command is still starting'];
-const MODEL_COMMAND = '/model';
-const EFFORT_COMMAND = '/effort';
-const PICKER_HINT = 'Enter select';
-const PICKER_SEARCH = 'Search: ';
-const PICKER_CURSOR = '❯ ';
-const PICKER_NO_MATCHES = 'No matches';
-const EFFORT_PICKER = 'Select thinking effort';
-const FOOTER_THINKING = ' thinking';
 const COMPACTION_DONE = 'Compaction complete';
 const COMPACTION_CANCELLED = 'Compaction cancelled';
 const NEW_SESSION_NOTICE = 'Started a new session (';
 const SESSIONS_COMMAND = '/sessions';
 const FORK_COMMAND = '/fork';
-const SESSION_PICKER_TITLE = /^Sessions\b/;
-const SESSION_PICKER_HINT = 'Esc cancel';
-const SESSIONS_LOADING = 'Loading sessions…';
-const SESSION_CARD_ID = /^(session_[\w-]+)(?:\s{3,}.*)?$/;
-const SESSION_POINTER = '❯';
-const CURRENT_SESSION = '← current';
 const SESSION_LIST_WINDOW = /^Showing \d+-\d+ of /;
 const DELETE_SESSION_PROMPT = 'Delete session "';
 const DELETING_SESSION = 'Deleting session "';
-const RESUMED_SESSION = 'Resumed session (';
 const FORKED_SESSION = /Session forked \((session_[\w-]+)\)\. Still in the original session/;
 const FORK_FAILED = ['Failed to fork session:', 'No active session'];
+const SESSION_PICKER_TITLE = /^Sessions(?: {2}\(type to search\))?$/;
+const SESSION_PICKER_CANCEL = 'Esc cancel';
+const SESSION_POINTER = '❯ ';
+const SESSION_CURRENT = '← current';
+const SESSION_TITLE_END = '  ';
+const SESSION_RESUMED = 'Resumed session (';
+const SESSION_RESUME_FAILURES = ['Failed to resume session', 'Failed to replay session history', 'Cannot switch sessions'] as const;
+const RELOAD_COMMAND = '/reload';
+const SESSION_RELOADED = 'Session reloaded.';
+const INIT_COMMAND = '/init';
+const INIT_RUN = 'Initialize AGENTS.md';
+const SKILL_COMMAND = '/skill:';
+const COMMAND_FAILED = 'Error: ';
+const MODEL_COMMAND = '/model';
+const MODEL_PICKER = 'Select a model';
+const MODEL_PICKER_ROW = /^(?:❯ )?(.+?) {2,}(.+?)( ← current)?$/;
+const PICKER_CURSOR = '❯ ';
+const MODEL_SWITCHED = 'Switched to ';
+const EFFORT_COMMAND = '/effort';
+const EFFORT_PICKER = 'Select thinking effort';
+const EFFORT_ACTIVE = /\[ [^\]]+ \]/;
+const EFFORT_SEGMENT = /\[ ([^\]]+?) \]|(\S+)/g;
+const EFFORT_SET = 'Thinking set to ';
+const SWITCH_NOTICES = [MODEL_SWITCHED, EFFORT_SET, 'Already using ', 'Saved ', 'Error: '] as const;
+const ADD_DIR_COMMAND = '/add-dir';
+const ADD_DIR_TITLE = 'Add directory to workspace: ';
+const ADD_DIR_FOR_SESSION = `${USER_MARK} Yes, for this session`;
+const ADD_DIR_ADDED = 'Added workspace directory:';
+const ADD_DIR_SESSION_ONLY = 'For this session only';
+const COMMAND_ERROR = 'Error: ';
+const PLAN_COMMAND = '/plan';
+const PLAN_SET: Readonly<Record<PlanModeState, string>> = { on: 'Plan mode: ON', off: 'Plan mode: OFF' };
+const PLAN_ALREADY = 'Plan mode is already ';
+const PLAN_NOTICES = ['Plan mode: ', PLAN_ALREADY, 'Error: Failed to set plan mode'] as const;
+const BTW_COMMAND = '/btw';
+const BTW_TITLE = '╭ BTW ─ ';
+const BTW_BORDER = '│';
+const BTW_QUESTION = 'Q: ';
+const BTW_WAITING = 'Waiting for answer…';
+const BTW_START_FAILED = 'Error: Failed to start /btw';
+const BTW_FAILURE =
+  /^(?:\[[\w.:-]+\] |Interrupted by user$|Provider safety policy blocked the response\.$|Prompt hook blocked the request\.$|BTW turn ended with reason: |Failed to send \/btw prompt: )/;
 
 interface Screen {
   readonly text: string;
@@ -224,6 +253,13 @@ interface Screen {
   readonly status: readonly string[];
   readonly panel: readonly string[];
   readonly startedSession: string | undefined;
+}
+
+interface SessionCard {
+  readonly title: string;
+  readonly id: string;
+  readonly selected: boolean;
+  readonly current: boolean;
 }
 
 interface ApprovalPanel {
@@ -259,6 +295,17 @@ interface PermissionPicker {
   readonly current: string | undefined;
 }
 
+interface ModelPicker {
+  readonly names: readonly string[];
+  readonly cursor: string | undefined;
+  readonly current: string | undefined;
+}
+
+interface EffortPicker {
+  readonly efforts: readonly string[];
+  readonly active: string;
+}
+
 interface Block {
   readonly mark: (typeof TRANSCRIPT_MARKS)[number];
   readonly head: string;
@@ -281,6 +328,8 @@ interface QueuedMessage {
 }
 
 type Settled<T> = { readonly found: T } | { readonly over: Screen };
+
+type SideOutcome = { readonly opened: false } | { readonly opened: true; readonly shown: string; readonly answered: boolean };
 
 function quote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
@@ -318,9 +367,10 @@ function screenOf(rows: readonly string[], viewport: readonly string[]): Screen 
   }
   if (editor < 0) return { ...frame, input: 'none', transcript: rows, status: [], panel: [] };
   const gap = lines.findLastIndex((line, index) => index < editor && line === '');
-  const resumed = lines.findLastIndex((line, index) => index < editor && line.startsWith(RESUMED_SESSION));
-  if (resumed > gap) return { ...frame, input: 'editor', transcript: rows.slice(0, resumed), status: lines.slice(resumed + 1, editor), panel: [] };
-  return { ...frame, input: 'editor', transcript: rows.slice(0, gap + 1), status: lines.slice(gap + 1, editor), panel: [] };
+  const belowGap = rows.slice(gap + 1, editor);
+  const transcriptReachesEditor = belowGap.some(startsEntry) && !belowGap.some((row) => ACTIVITY.test(row.trim()));
+  const statusStart = transcriptReachesEditor ? editor : gap + 1;
+  return { ...frame, input: 'editor', transcript: rows.slice(0, statusStart), status: lines.slice(statusStart, editor), panel: [] };
 }
 
 function composerText(screen: Screen): string | undefined {
@@ -341,8 +391,68 @@ function composerText(screen: Screen): string | undefined {
     .trimEnd();
 }
 
+function showsAddDirChoice(screen: Screen, path: string): boolean {
+  const lines = screen.viewport.map((row) => row.trim());
+  const title = lines.lastIndexOf(`${ADD_DIR_TITLE}${path}`);
+  return title >= 0 && lines.slice(title + 1).includes(ADD_DIR_FOR_SESSION);
+}
+
+function commandNotes(screen: Screen): readonly string[] {
+  return [...screen.transcript, ...screen.status].map((row) => row.trim());
+}
+
+function commandNoteCount(screen: Screen, prefix: string): number {
+  return commandNotes(screen).filter((row) => row.startsWith(prefix)).length;
+}
+
+function addedDirectory(screen: Screen): readonly string[] {
+  const rows = commandNotes(screen);
+  const at = rows.lastIndexOf(ADD_DIR_ADDED);
+  return at < 0 ? [] : rows.slice(at + 1, at + 3);
+}
+
 function compactionNotices(screen: Screen, notice: string): number {
   return screen.transcript.filter((row) => row.includes(notice)).length;
+}
+
+function sessionCards(screen: Screen): readonly SessionCard[] | undefined {
+  const rows = screen.viewport.map((row) => row.trim());
+  const title = rows.findLastIndex((row) => SESSION_PICKER_TITLE.test(row));
+  const hint = rows.findIndex((row, index) => index > title && row.includes(SESSION_PICKER_CANCEL));
+  const end = rows.findIndex((row, index) => index > hint && APPROVAL_RULE.test(row));
+  if (title < 0 || hint < 0 || end < 0) return undefined;
+  const groups: string[][] = [[]];
+  for (const row of rows.slice(hint + 1, end)) {
+    if (row === '') groups.push([]);
+    else groups.at(-1)?.push(row);
+  }
+  return groups.flatMap(([header, meta]) => {
+    const id = meta?.split(/\s+/)[0];
+    if (header === undefined || id === undefined) return [];
+    const selected = header.startsWith(SESSION_POINTER);
+    const shown = selected ? header.slice(SESSION_POINTER.length) : header;
+    const cut = shown.indexOf(SESSION_TITLE_END);
+    return [{ title: cut < 0 ? shown : shown.slice(0, cut), id, selected, current: header.includes(`${SESSION_TITLE_END}${SESSION_CURRENT}`) }];
+  });
+}
+
+function resumedSession(screen: Screen, id: string): boolean {
+  return screen.text.split('\n').some((row) => row.trim().startsWith(`${SESSION_RESUMED}${id})`));
+}
+
+function resumeFailures(screen: Screen): number {
+  return screen.text.split('\n').filter((row) => SESSION_RESUME_FAILURES.some((failure) => row.includes(failure))).length;
+}
+
+function rowsShowing(screen: Screen, text: string, whole: boolean): number {
+  return screen.text.split('\n').filter((row) => (whole ? row.trim() === text : row.includes(text))).length;
+}
+
+function commandFailures(screen: Screen): number {
+  return screen.text.split('\n').filter((row) => {
+    const line = row.trimStart();
+    return line.startsWith(COMMAND_FAILED) && !line.startsWith(TURN_FAILED);
+  }).length;
 }
 
 function drawnWidth(screen: Screen): number | undefined {
@@ -382,36 +492,6 @@ function blocksOf(screen: Screen): Block[] {
   return blocks;
 }
 
-function modelShown(footer: string | undefined, name: string): boolean {
-  return footer === name || footer?.startsWith(`${name} `) === true;
-}
-
-function effortLabelOf(level: string): string {
-  return level.length === 0 ? level : `${level.charAt(0).toUpperCase()}${level.slice(1)}`;
-}
-
-function footerThinking(level: string): string {
-  if (level === 'off') return '';
-  return level === 'on' ? FOOTER_THINKING : ` ${level}`;
-}
-
-function withoutThinking(footer: string, selected: string | undefined): string {
-  const suffix = footerThinking((selected ?? 'off').toLowerCase());
-  return suffix !== '' && footer.endsWith(suffix) ? footer.slice(0, -suffix.length) : footer;
-}
-
-function thinkingChoices(screen: Screen): { readonly choices: readonly string[]; readonly selected: string | undefined } | undefined {
-  const lines = screen.viewport.map((line) => line.trim());
-  const title = lines.lastIndexOf(EFFORT_PICKER);
-  if (title < 0) return undefined;
-  const row = lines.slice(title + 1).find((line) => line.includes('[ ') && line.includes(' ]'));
-  if (row === undefined) return undefined;
-  const tokens = row.split(/\s{2,}/).filter((token) => token !== '');
-  const choices = tokens.map((token) => token.replace(/^\[ /, '').replace(/ \]$/, ''));
-  const selected = tokens.find((token) => token.startsWith('[ '))?.replace(/^\[ /, '').replace(/ \]$/, '');
-  return { choices, selected };
-}
-
 interface TaskBrowser {
   readonly total: number;
   readonly id: string | undefined;
@@ -434,59 +514,18 @@ function taskBrowser(screen: Screen): TaskBrowser | undefined {
   return { total, id: field('Task ID'), status: field('Status'), description: field('Description'), output };
 }
 
-interface SessionCard {
-  readonly id: string;
-  readonly title: string;
-  readonly selected: boolean;
-  readonly current: boolean;
-}
-
 type ForkOutcome = { readonly kind: 'forked'; readonly id: string } | { readonly kind: 'failed'; readonly screen: Screen };
 
-interface SessionPicker {
-  readonly loading: boolean;
-  readonly cards: readonly SessionCard[];
-  readonly windowed: boolean;
-  readonly deleting: boolean;
-}
-
-function sessionPicker(screen: Screen): SessionPicker | undefined {
-  const lines = screen.viewport.map((line) => line.trim());
-  const title = lines.findLastIndex((line, index) => SESSION_PICKER_TITLE.test(line) && lines[index + 1]?.includes(SESSION_PICKER_HINT) === true);
-  const loadingTitle = lines.findLastIndex((line, index) => SESSION_PICKER_TITLE.test(line) && lines[index + 1] === SESSIONS_LOADING);
-  if (title < 0 && loadingTitle < 0) return undefined;
-  if (loadingTitle > title) return { loading: true, cards: [], windowed: false, deleting: false };
-  const body = lines.slice(title + 2);
-  const cards = body.flatMap((line, index): SessionCard[] => {
-    const id = SESSION_CARD_ID.exec(line)?.[1];
-    const header = body[index - 1];
-    if (id === undefined || header === undefined) return [];
-    const selected = header.startsWith(SESSION_POINTER);
-    const current = header.endsWith(CURRENT_SESSION);
-    const label = (current ? header.slice(0, -CURRENT_SESSION.length) : header).replace(SESSION_POINTER, '').trim();
-    return [{ id, title: label.split(/\s{2,}/)[0] ?? '', selected, current }];
+function pickerAsksToDelete(screen: Screen): boolean {
+  return screen.viewport.some((row) => {
+    const line = row.trim();
+    return line.startsWith(DELETE_SESSION_PROMPT) || line.startsWith(DELETING_SESSION);
   });
-  return {
-    loading: false,
-    cards,
-    windowed: body.some((line) => SESSION_LIST_WINDOW.test(line)),
-    deleting: body.some((line) => line.startsWith(DELETE_SESSION_PROMPT) || line.startsWith(DELETING_SESSION)),
-  };
 }
 
 function describeCards(cards: readonly SessionCard[]): string {
   if (cards.length === 0) return 'no sessions';
   return cards.map((card) => `${JSON.stringify(card.title)}${card.current ? ' (open)' : ''}`).join(', ');
-}
-
-function pickerOpen(screen: Screen): boolean {
-  return screen.viewport.some((line) => line.includes(PICKER_HINT));
-}
-
-function footerModel(screen: Screen): string | undefined {
-  const lines = screen.viewport.map((line) => line.trim());
-  const bottom = lines.findLastIndex((line) => EDITOR_BOTTOM.test(line));
-  return bottom < 0 ? undefined : lines[bottom + 1]?.split(/\s{2,}/)[0];
 }
 
 function statusLines(screen: Screen, prefix: string): number {
@@ -647,6 +686,82 @@ function permissionNotices(screen: Screen): number {
 
 function permissionSet(screen: Screen, name: string): number {
   return screen.transcript.filter((row) => row.trim() === `${PERMISSION_SET}${name}`).length;
+}
+
+function pickerRegion(screen: Screen, title: (line: string) => boolean): string[] | undefined {
+  const lines = screen.viewport.map((row) => row.trim());
+  const start = lines.findLastIndex(title);
+  const end = lines.findIndex((line, index) => index > start && APPROVAL_RULE.test(line));
+  return start < 0 || end < 0 ? undefined : lines.slice(start + 1, end);
+}
+
+function groupsOf(lines: readonly string[]): string[][] {
+  const groups: string[][] = [[]];
+  for (const line of lines) {
+    if (line === '') groups.push([]);
+    else groups.at(-1)?.push(line);
+  }
+  return groups.filter((group) => group.length > 0);
+}
+
+function modelPicker(screen: Screen): ModelPicker | undefined {
+  const region = pickerRegion(screen, (line) => line.startsWith(MODEL_PICKER));
+  const rows = groupsOf(region ?? []).find((group) => group.some((line) => line.startsWith(PICKER_CURSOR)));
+  if (rows === undefined) return undefined;
+  const items = rows.map((line) => ({ cursor: line.startsWith(PICKER_CURSOR), match: MODEL_PICKER_ROW.exec(line) }));
+  const names = items.flatMap(({ match }) => (match?.[1] === undefined ? [] : [match[1]]));
+  if (names.length !== rows.length) return undefined;
+  return {
+    names,
+    cursor: names[items.findIndex((item) => item.cursor)],
+    current: names[items.findIndex((item) => item.match?.[3] !== undefined)],
+  };
+}
+
+function effortPicker(screen: Screen): EffortPicker | undefined {
+  const row = pickerRegion(screen, (line) => line === EFFORT_PICKER)?.find((line) => EFFORT_ACTIVE.test(line));
+  if (row === undefined) return undefined;
+  const segments = [...row.matchAll(EFFORT_SEGMENT)].map((match) => ({ effort: (match[1] ?? match[2] ?? '').toLowerCase(), active: match[1] !== undefined }));
+  const active = segments.find((segment) => segment.active)?.effort;
+  return active === undefined ? undefined : { efforts: segments.map((segment) => segment.effort), active };
+}
+
+function switchNotices(screen: Screen): string[] {
+  return [...screen.transcript, ...screen.status].map((row) => row.trim()).filter((row) => SWITCH_NOTICES.some((prefix) => row.startsWith(prefix)));
+}
+
+function rowsReading(screen: Screen, line: string): number {
+  return screen.transcript.filter((row) => row.trim() === line).length;
+}
+
+function planNotices(screen: Screen): number {
+  return screen.transcript.filter((row) => PLAN_NOTICES.some((prefix) => row.trimStart().startsWith(prefix))).length;
+}
+
+function sidePanel(screen: Screen): readonly string[] | undefined {
+  const rows = screen.viewport.map((row) => row.trim());
+  const top = rows.findLastIndex((row) => row.startsWith(BTW_TITLE));
+  if (top < 0) return undefined;
+  const body: string[] = [];
+  for (const row of rows.slice(top + 1)) {
+    if (!row.startsWith(BTW_BORDER)) break;
+    body.push(row.slice(BTW_BORDER.length, row.endsWith(BTW_BORDER) ? -BTW_BORDER.length : undefined).trim());
+  }
+  return body;
+}
+
+function sideAnswer(body: readonly string[], question: string): string | undefined {
+  const shown = squash(body.join(''));
+  const asked = squash(`${BTW_QUESTION}${question}`);
+  const at = shown.lastIndexOf(asked);
+  if (at < 0) return undefined;
+  const answer = shown.slice(at + asked.length);
+  return answer === '' || answer.startsWith(squash(BTW_WAITING)) ? undefined : answer;
+}
+
+function sideFailure(body: readonly string[]): string | undefined {
+  const asked = body.findLastIndex((row) => row.startsWith(BTW_QUESTION));
+  return asked < 0 ? undefined : body.slice(asked + 1).find((row) => BTW_FAILURE.test(row));
 }
 
 function rejectionNote(screen: Screen): string {
@@ -889,71 +1004,6 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     }
   }
 
-  async chooseModel(name: string): Promise<void> {
-    const screen = await this.read();
-    if (!this.turnOver(screen)) throw this.failure('chooseModel() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
-    if (modelShown(footerModel(screen), name)) throw this.failure(`chooseModel() asked for ${JSON.stringify(name)}, but that is already the model.`, screen);
-    this.write(paste(MODEL_COMMAND));
-    this.write(KEYS.enter);
-    await this.wait('the model picker to open', (current) => (pickerOpen(current) ? true : undefined));
-    this.write(name);
-    const searched = await this.wait(`the model picker to search for ${JSON.stringify(name)}`, (current) => {
-      const lines = current.viewport.map((line) => line.trim());
-      if (!lines.includes(`${PICKER_SEARCH}${name}`)) return undefined;
-      if (lines.some((line) => line.startsWith(`${PICKER_CURSOR}${name}  `))) return 'listed' as const;
-      return lines.includes(PICKER_NO_MATCHES) ? ('missing' as const) : undefined;
-    });
-    if (searched === 'missing') {
-      const shown = await this.read();
-      await this.closePicker('the model picker');
-      throw this.failure(`chooseModel() found no model ${JSON.stringify(name)} in the model picker.`, shown);
-    }
-    this.write(KEYS.enter);
-    await this.wait(`the model picker to close and the status bar to show ${JSON.stringify(name)}`, (current) =>
-      current.input === 'editor' && !pickerOpen(current) && modelShown(footerModel(current), name) ? true : undefined,
-    );
-  }
-
-  async setThinking(level: string): Promise<void> {
-    const screen = await this.read();
-    if (!this.turnOver(screen)) throw this.failure('setThinking() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
-    const before = footerModel(screen) ?? '';
-    this.write(paste(EFFORT_COMMAND));
-    this.write(KEYS.enter);
-    const opened = await this.wait('the thinking effort picker to open', (current) => thinkingChoices(current));
-    const wanted = effortLabelOf(level);
-    if (!opened.choices.includes(wanted) || opened.selected === wanted) {
-      const shown = await this.read();
-      await this.closePicker('the thinking effort picker');
-      const reason = opened.selected === wanted ? 'that is already the thinking level' : `the picker offers only ${opened.choices.join(', ')}`;
-      throw this.failure(`setThinking() asked for ${JSON.stringify(level)} (${wanted} in the picker), but ${reason}.`, shown);
-    }
-    let picker = opened;
-    while (picker.selected !== wanted) {
-      const from = picker.selected;
-      this.write(picker.choices.indexOf(wanted) > picker.choices.indexOf(from ?? '') ? KEYS.right : KEYS.left);
-      picker = await this.wait('the thinking effort picker to move', (current) => {
-        const moved = thinkingChoices(current);
-        return moved !== undefined && moved.selected !== from ? moved : undefined;
-      });
-    }
-    this.write(KEYS.enter);
-    const expected = `${withoutThinking(before, opened.selected)}${footerThinking(level)}`;
-    await this.wait(`the thinking effort picker to close and the status bar to show ${JSON.stringify(expected)}`, (current) =>
-      current.input === 'editor' && !pickerOpen(current) && footerModel(current) === expected ? true : undefined,
-    );
-  }
-
-  private async closePicker(label: string): Promise<void> {
-    for (let presses = 0; presses < 2; presses += 1) {
-      const before = await this.read();
-      if (!pickerOpen(before)) return;
-      this.write(KEYS.escape);
-      await this.wait(`${label} to clear its search or close`, (current) => (current.viewport.join('\n') !== before.viewport.join('\n') ? true : undefined));
-    }
-    await this.wait(`${label} to close`, (current) => (current.input === 'editor' && !pickerOpen(current) ? true : undefined));
-  }
-
   async compact(): Promise<void> {
     const before = await this.read();
     if (!this.turnOver(before)) throw this.failure('compact() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
@@ -981,55 +1031,45 @@ class TuiDriver implements SurfaceDriver<'tui'> {
       return failures(screen) > failures(before) ? { kind: 'failed', screen } : undefined;
     });
     if (outcome.kind === 'failed') throw this.failure('fork() needs a session with messages, but the CLI could not fork the session.', outcome.screen);
-    const picker = await this.openSessionPicker('fork()');
-    if (!picker.cards.some((card) => card.id === outcome.id)) {
+    const cards = await this.openSessionPicker('fork()');
+    if (!cards.some((card) => card.id === outcome.id)) {
       const shown = await this.read();
       await this.closeSessionPicker();
-      throw this.failure(`fork() forked the session into ${outcome.id}, but /sessions does not list it; it lists ${describeCards(picker.cards)}.`, shown);
+      throw this.failure(`fork() forked the session into ${outcome.id}, but /sessions does not list it; it lists ${describeCards(cards)}.`, shown);
     }
     await this.resumeFromPicker('fork()', outcome.id);
   }
 
-  async openSession(title: string): Promise<void> {
-    const picker = await this.openSessionPicker('openSession()');
-    const others = picker.cards.filter((card) => card.title === title && !card.current);
-    if (others.length !== 1) {
-      const shown = await this.read();
-      await this.closeSessionPicker();
-      const reason = others.length === 0 ? 'no other session has that title' : `${others.length} other sessions have that title`;
-      throw this.failure(`openSession() cannot pick the session ${JSON.stringify(title)}: ${reason}. /sessions lists ${describeCards(picker.cards)}.`, shown);
-    }
-    await this.resumeFromPicker('openSession()', others[0]!.id);
-  }
-
   async deleteSession(title: string): Promise<void> {
-    const picker = await this.openSessionPicker('deleteSession()');
-    const matching = picker.cards.filter((card) => card.title === title);
+    const cards = await this.openSessionPicker('deleteSession()');
+    const matching = cards.filter((card) => card.title === title);
     if (matching.length !== 1 || matching[0]!.current) {
       const shown = await this.read();
       await this.closeSessionPicker();
       const reason =
         matching.length === 0 ? 'no session has that title' : matching.length > 1 ? `${matching.length} sessions have that title` : 'it is the open session; open another one first';
-      throw this.failure(`deleteSession() cannot pick the session ${JSON.stringify(title)}: ${reason}. /sessions lists ${describeCards(picker.cards)}.`, shown);
+      throw this.failure(`deleteSession() cannot pick the session ${JSON.stringify(title)}: ${reason}. /sessions lists ${describeCards(cards)}.`, shown);
     }
     const target = matching[0]!.id;
     await this.selectSessionCard('deleteSession()', target);
     this.write(KEYS.deleteSession);
-    await this.wait(`the CLI to ask before deleting ${JSON.stringify(title)}`, (screen) => (sessionPicker(screen)?.deleting === true ? true : undefined));
+    await this.wait(`the CLI to ask before deleting ${JSON.stringify(title)}`, (screen) => (pickerAsksToDelete(screen) ? true : undefined));
     this.write(KEYS.confirmDelete);
     await this.wait(`/sessions to drop ${JSON.stringify(title)}`, (screen) => {
-      const now = sessionPicker(screen);
-      return now !== undefined && !now.loading && !now.deleting && !now.cards.some((card) => card.id === target) ? true : undefined;
+      const now = sessionCards(screen);
+      return now !== undefined && !pickerAsksToDelete(screen) && !now.some((card) => card.id === target) ? true : undefined;
     });
     await this.closeSessionPicker();
   }
 
   async expectSessions(titles: readonly string[]): Promise<void> {
-    const picker = await this.openSessionPicker('expectSessions()');
+    const cards = await this.openSessionPicker('expectSessions()');
     const shown = await this.read();
     await this.closeSessionPicker();
-    if (picker.windowed) throw this.failure('expectSessions() can read only the sessions /sessions shows at once; keep the scenario to fewer sessions.', shown);
-    const listed = picker.cards.map((card) => card.title).toSorted();
+    if (shown.viewport.some((row) => SESSION_LIST_WINDOW.test(row.trim()))) {
+      throw this.failure('expectSessions() can read only the sessions /sessions shows at once; keep the scenario to fewer sessions.', shown);
+    }
+    const listed = cards.map((card) => card.title).toSorted();
     const wanted = titles.toSorted();
     if (JSON.stringify(listed) !== JSON.stringify(wanted)) {
       throw this.failure(`expectSessions() wanted /sessions to list ${JSON.stringify(wanted)}, but it lists ${JSON.stringify(listed)}.`, shown);
@@ -1042,31 +1082,28 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     return screen;
   }
 
-  private async openSessionPicker(verb: string): Promise<SessionPicker> {
+  private async openSessionPicker(verb: string): Promise<readonly SessionCard[]> {
     await this.idleForSessions(verb);
     this.write(paste(SESSIONS_COMMAND));
     this.write(KEYS.enter);
-    return this.wait('/sessions to list the sessions', (current) => {
-      const picker = sessionPicker(current);
-      return picker !== undefined && !picker.loading ? picker : undefined;
-    });
+    return this.wait('/sessions to list the sessions', (current) => sessionCards(current));
   }
 
   private async closeSessionPicker(): Promise<void> {
     this.write(KEYS.escape);
-    await this.wait('/sessions to close', (screen) => (sessionPicker(screen) === undefined && screen.input === 'editor' ? true : undefined));
+    await this.wait('/sessions to close', (screen) => (sessionCards(screen) === undefined && screen.input === 'editor' ? true : undefined));
   }
 
   private async selectSessionCard(verb: string, id: string): Promise<void> {
-    let picker = await this.wait('/sessions to show its cards', (screen) => sessionPicker(screen));
-    for (let moves = 0; picker.cards.find((card) => card.selected)?.id !== id; moves += 1) {
-      if (moves > picker.cards.length) throw this.failure(`${verb} could not select the session ${id} in /sessions.`, await this.read());
-      const from = picker.cards.find((card) => card.selected)?.id;
-      const below = picker.cards.findIndex((card) => card.id === id) > picker.cards.findIndex((card) => card.selected);
+    let cards = await this.wait('/sessions to show its cards', (screen) => sessionCards(screen));
+    for (let moves = 0; cards.find((card) => card.selected)?.id !== id; moves += 1) {
+      if (moves > cards.length) throw this.failure(`${verb} could not select the session ${id} in /sessions.`, await this.read());
+      const from = cards.find((card) => card.selected)?.id;
+      const below = cards.findIndex((card) => card.id === id) > cards.findIndex((card) => card.selected);
       this.write(below ? KEYS.down : KEYS.up);
-      picker = await this.wait('/sessions to move the selection', (screen) => {
-        const next = sessionPicker(screen);
-        return next !== undefined && next.cards.find((card) => card.selected)?.id !== from ? next : undefined;
+      cards = await this.wait('/sessions to move the selection', (screen) => {
+        const next = sessionCards(screen);
+        return next !== undefined && next.find((card) => card.selected)?.id !== from ? next : undefined;
       });
     }
   }
@@ -1074,11 +1111,10 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private async resumeFromPicker(verb: string, id: string): Promise<void> {
     await this.selectSessionCard(verb, id);
     this.write(KEYS.enter);
-    await this.wait(`the CLI to resume the session ${id}`, (screen) =>
-      sessionPicker(screen) === undefined && screen.input === 'editor' && screen.viewport.some((line) => line.includes(`${RESUMED_SESSION}${id})`)) ? true : undefined,
-    );
+    await this.wait(`the CLI to resume the session ${id}`, (screen) => (sessionCards(screen) === undefined && screen.input === 'editor' && resumedSession(screen, id) ? true : undefined));
     this.queued = [];
     this.turn = undefined;
+    this.recalled = undefined;
   }
 
   async newSession(): Promise<void> {
@@ -1091,6 +1127,121 @@ class TuiDriver implements SurfaceDriver<'tui'> {
       screen.startedSession !== undefined && screen.startedSession !== before.startedSession && screen.input === 'editor' ? true : undefined,
     );
     this.turn = undefined;
+  }
+
+  async openSession(title: string): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) throw this.failure('openSession() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.assertEmptyInput('openSession()', before);
+    this.write(paste(SESSIONS_COMMAND));
+    this.write(KEYS.enter);
+    let cards = await this.wait('the session picker to list the sessions', (screen) => sessionCards(screen));
+    const target = cards.find((card) => card.title === title);
+    if (target === undefined || target.current) {
+      const listed = cards.length === 0 ? '(no sessions)' : cards.map((card) => `${card.title}${card.current ? ` ${SESSION_CURRENT}` : ''}`).join('\n');
+      const problem =
+        target === undefined
+          ? `openSession() found no session titled ${JSON.stringify(title)} in the session picker. It lists:\n${listed}`
+          : `openSession() found that the session titled ${JSON.stringify(title)} is the session already open; go back to another session.`;
+      this.write(KEYS.escape);
+      await this.wait('the session picker to close', (screen) => (screen.input === 'editor' ? true : undefined));
+      throw this.failure(problem, await this.read());
+    }
+    for (let moves = 0; cards.find((card) => card.selected)?.id !== target.id; moves += 1) {
+      const from = cards.findIndex((card) => card.selected);
+      const to = cards.findIndex((card) => card.id === target.id);
+      if (from < 0 || moves > cards.length) throw this.failure(`openSession() could not move the session picker's selection to ${JSON.stringify(title)}.`, await this.read());
+      const left = cards[from]?.id;
+      this.write(to > from ? KEYS.down : KEYS.up);
+      cards = await this.wait(`the session picker to move its selection toward ${JSON.stringify(title)}`, (screen) => {
+        const now = sessionCards(screen);
+        return now !== undefined && now.some((card) => card.selected && card.id !== left) ? now : undefined;
+      });
+    }
+    const failed = resumeFailures(await this.read());
+    this.write(KEYS.enter);
+    const outcome = await this.wait(`the terminal UI to resume session ${target.id} and show ${JSON.stringify(title)} in its conversation`, (screen) => {
+      if (resumeFailures(screen) > failed) return 'failed' as const;
+      return screen.input === 'editor' && resumedSession(screen, target.id) && userMessages(screen, firstPromptOf(title)) > 0 ? ('resumed' as const) : undefined;
+    });
+    if (outcome === 'failed') throw this.failure(`openSession() picked ${JSON.stringify(title)}, but the terminal UI could not resume it.`, await this.read());
+    this.turn = undefined;
+    this.queued = [];
+    this.recalled = undefined;
+  }
+
+  async reload(): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) {
+      throw this.failure('reload() needs an idle product: the terminal UI refuses /reload while a turn runs, a message is queued or an approval is pending.', before);
+    }
+    this.assertEmptyInput('reload()', before);
+    if (!blocksOf(before).some((block) => block.mark === USER_MARK)) {
+      throw this.failure('reload() reloads the conversation on screen, but it shows no message yet; send one first.', before);
+    }
+    const reloaded = rowsShowing(before, SESSION_RELOADED, true);
+    const failures = commandFailures(before);
+    this.queued = [];
+    this.turn = undefined;
+    this.write(paste(RELOAD_COMMAND));
+    this.write(KEYS.enter);
+    const outcome = await this.wait('the CLI to report the session reloaded', (screen) => {
+      if (commandFailures(screen) > failures) return 'failed' as const;
+      return rowsShowing(screen, SESSION_RELOADED, true) > reloaded && this.turnOver(screen) ? ('reloaded' as const) : undefined;
+    });
+    if (outcome === 'failed') throw this.failure('reload() saw the CLI fail to reload the session.', await this.read());
+  }
+
+  async init(): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) throw this.failure('init() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.assertEmptyInput('init()', before);
+    const runs = rowsShowing(before, INIT_RUN, false);
+    const failures = commandFailures(before);
+    this.turn = { stopped: statusLines(before, TURN_STOPPED), failed: statusLines(before, TURN_FAILED) };
+    this.queued = [];
+    this.recalled = undefined;
+    this.write(paste(INIT_COMMAND));
+    this.write(KEYS.enter);
+    const outcome = await this.wait(`the CLI to start the subagent that runs ${JSON.stringify(INIT_RUN)}`, (screen) => {
+      if (commandFailures(screen) > failures) return 'failed' as const;
+      return rowsShowing(screen, INIT_RUN, false) > runs ? ('started' as const) : undefined;
+    });
+    if (outcome === 'failed') throw this.failure('init() saw the CLI fail to run /init.', await this.read());
+  }
+
+  async useSkill(name: string): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('useSkill() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
+    }
+    this.assertEmptyInput('useSkill()', screen);
+    const command = `${SKILL_COMMAND}${name}`;
+    this.write(paste(command));
+    await this.enter(command, screen);
+  }
+
+  async addDir(path: string): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) throw this.failure('addDir() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.assertEmptyInput('addDir()', before);
+    const added = commandNoteCount(before, ADD_DIR_ADDED);
+    const refused = commandNoteCount(before, COMMAND_ERROR);
+    this.write(paste(`${ADD_DIR_COMMAND} ${path}`));
+    this.write(KEYS.enter);
+    await this.wait(`the CLI to ask whether to add ${JSON.stringify(path)}, with "Yes, for this session" selected`, (screen) => (showsAddDirChoice(screen, path) ? true : undefined));
+    this.write(KEYS.enter);
+    const outcome = await this.wait(`the CLI to report ${JSON.stringify(path)} as added`, (screen) => {
+      if (screen.input !== 'editor') return undefined;
+      if (commandNoteCount(screen, COMMAND_ERROR) > refused) return 'refused' as const;
+      return commandNoteCount(screen, ADD_DIR_ADDED) > added ? ('added' as const) : undefined;
+    });
+    const screen = await this.read();
+    if (outcome === 'refused') throw this.failure(`addDir() saw the CLI refuse to add ${JSON.stringify(path)}.`, screen);
+    const reported = addedDirectory(screen);
+    if (reported[0] !== path || reported[1] !== ADD_DIR_SESSION_ONLY) {
+      throw this.failure(`addDir() expected the CLI to report ${JSON.stringify(path)} added for this session only, but it reported ${JSON.stringify(reported)}.`, screen);
+    }
   }
 
   async resize(size: WindowSize): Promise<void> {
@@ -1500,6 +1651,114 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     }
   }
 
+  async switchModel(name: string): Promise<void> {
+    const screen = await this.idleScreen('switchModel()');
+    const notices = switchNotices(screen).length;
+    this.write(paste(MODEL_COMMAND));
+    this.write(KEYS.enter);
+    let picker = await this.wait('the model picker to open', (current) => modelPicker(current));
+    if (picker.current === name || !picker.names.includes(name)) {
+      this.write(KEYS.escape);
+      await this.wait('the model picker to close', (current) => (current.input === 'editor' && modelPicker(current) === undefined ? true : undefined));
+      const problem = picker.current === name ? 'that is already the model' : `the picker offers only ${picker.names.map((offered) => JSON.stringify(offered)).join(', ')}`;
+      throw this.failure(`switchModel() asked for ${JSON.stringify(name)}, but ${problem}.`, await this.read());
+    }
+    while (picker.cursor !== name) {
+      const from = picker.cursor;
+      this.write(picker.names.indexOf(name) > picker.names.indexOf(from ?? '') ? KEYS.down : KEYS.up);
+      picker = await this.wait('the model picker to move its cursor', (current) => {
+        const moved = modelPicker(current);
+        return moved !== undefined && moved.cursor !== from ? moved : undefined;
+      });
+    }
+    this.write(KEYS.enter);
+    const notice = await this.switchNotice('the transcript to record the model switch', notices);
+    if (!notice.startsWith(`${MODEL_SWITCHED}${name} with thinking `)) {
+      throw this.failure(`switchModel() chose ${JSON.stringify(name)}, but the transcript recorded ${JSON.stringify(notice)}.`, await this.read());
+    }
+  }
+
+  async setThinkingEffort(effort: string): Promise<void> {
+    const screen = await this.idleScreen('setThinkingEffort()');
+    const notices = switchNotices(screen).length;
+    this.write(paste(EFFORT_COMMAND));
+    this.write(KEYS.enter);
+    let picker = await this.wait('the thinking effort picker to open', (current) => effortPicker(current));
+    if (picker.active === effort || !picker.efforts.includes(effort)) {
+      this.write(KEYS.escape);
+      await this.wait('the thinking effort picker to close', (current) => (current.input === 'editor' && effortPicker(current) === undefined ? true : undefined));
+      const problem = picker.active === effort ? 'that is already the thinking effort' : `the model offers only ${picker.efforts.map((offered) => JSON.stringify(offered)).join(', ')}`;
+      throw this.failure(`setThinkingEffort() asked for ${JSON.stringify(effort)}, but ${problem}.`, await this.read());
+    }
+    while (picker.active !== effort) {
+      const from = picker.active;
+      this.write(picker.efforts.indexOf(effort) > picker.efforts.indexOf(from) ? KEYS.right : KEYS.left);
+      picker = await this.wait('the thinking effort picker to move its selection', (current) => {
+        const moved = effortPicker(current);
+        return moved !== undefined && moved.active !== from ? moved : undefined;
+      });
+    }
+    this.write(KEYS.enter);
+    const notice = await this.switchNotice('the transcript to record the thinking effort', notices);
+    if (!notice.startsWith(`${EFFORT_SET}${effort}.`)) {
+      throw this.failure(`setThinkingEffort() chose ${JSON.stringify(effort)}, but the transcript recorded ${JSON.stringify(notice)}.`, await this.read());
+    }
+  }
+
+  async setPlanMode(state: PlanModeState): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('setPlanMode() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
+    }
+    this.assertEmptyInput('setPlanMode()', screen);
+    const notices = planNotices(screen);
+    const set = rowsReading(screen, PLAN_SET[state]);
+    const already = rowsReading(screen, `${PLAN_ALREADY}${state}`);
+    this.write(paste(`${PLAN_COMMAND} ${state}`));
+    this.write(KEYS.enter);
+    const answered = await this.wait('the transcript to record the plan mode', (current) =>
+      current.input === 'editor' && planNotices(current) > notices ? current : undefined,
+    );
+    if (rowsReading(answered, PLAN_SET[state]) > set) return;
+    if (rowsReading(answered, `${PLAN_ALREADY}${state}`) > already) {
+      throw this.failure(`setPlanMode() asked to turn plan mode ${state}, but plan mode is already ${state}.`, answered);
+    }
+    throw this.failure(`setPlanMode() asked to turn plan mode ${state}, but the transcript did not record "${PLAN_SET[state]}".`, answered);
+  }
+
+  async btw(question: string, reply: string): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('btw() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
+    }
+    this.assertEmptyInput('btw()', screen);
+    const failedStarts = statusLines(screen, BTW_START_FAILED);
+    this.write(paste(`${BTW_COMMAND} ${question}`));
+    this.write(KEYS.enter);
+    let outcome: SideOutcome;
+    try {
+      outcome = await this.wait<SideOutcome>(`the side panel to show ${JSON.stringify(reply)} or a failure after ${JSON.stringify(question)}`, (current) => {
+        if (statusLines(current, BTW_START_FAILED) > failedStarts) return { opened: false };
+        const body = sidePanel(current);
+        const answer = body === undefined ? undefined : sideAnswer(body, question);
+        if (body === undefined || answer === undefined) return undefined;
+        const answered = answer.includes(squash(reply));
+        return answered || sideFailure(body) !== undefined ? { opened: true, shown: body.join('\n').trimEnd(), answered } : undefined;
+      });
+    } catch (error) {
+      if (sidePanel(await this.read()) !== undefined) await this.closeSidePanel();
+      throw error;
+    }
+    if (!outcome.opened) throw this.failure('btw() typed /btw, but the terminal UI could not start the side question.', await this.read());
+    await this.closeSidePanel();
+    if (!outcome.answered) {
+      throw this.failure(
+        `btw() asked ${JSON.stringify(question)}, but the side answer ended without ${JSON.stringify(reply)}. The side panel showed:\n${outcome.shown}`,
+        await this.read(),
+      );
+    }
+  }
+
   async stop(): Promise<void> {
     const screen = await this.read();
     if (showsQuestion(screen)) {
@@ -1747,6 +2006,26 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const recorded = collectedAnswers(screen, answer);
     this.write(KEYS.enter);
     await this.wait(`the transcript to record the answer ${JSON.stringify(answer)}`, (current) => (collectedAnswers(current, answer) > recorded ? true : undefined));
+  }
+
+  private async idleScreen(verb: string): Promise<Screen> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) throw this.failure(`${verb} needs an idle product, but a turn is running, a message is queued or an approval is pending.`, screen);
+    return screen;
+  }
+
+  private async closeSidePanel(): Promise<void> {
+    this.write(KEYS.escape);
+    await this.wait('the side panel to close and the input box to come back', (current) =>
+      sidePanel(current) === undefined && current.input === 'editor' ? true : undefined,
+    );
+  }
+
+  private switchNotice(label: string, before: number): Promise<string> {
+    return this.wait(label, (current) => {
+      const notices = switchNotices(current);
+      return current.input === 'editor' && notices.length > before ? notices.at(-1) : undefined;
+    });
   }
 
   private assertTurnRunning(verb: string, screen: Screen): void {

@@ -60,10 +60,25 @@ const PROJECTS_ON_THE_WEB = {
   acp: 'An ACP editor opens its own folder; the agent keeps no list of projects for it.',
   desktop: 'Desktop adds a project through the native folder picker; E2E leaves native dialogs to the main process unit tests.',
 };
+const NO_RELOAD_OVER_ACP =
+  'ACP has no request to reload a session, and kimi acp does not publish /reload among its commands, so an editor that sends it gets "Unknown ACP command".';
+const ONLY_THE_TERMINAL_UI_INITS = {
+  acp: 'kimi acp does not publish /init among its commands, so an editor that sends it gets "Unknown ACP command".',
+  desktop: 'The Desktop slash menu has no /init, and KAP has no request that generates AGENTS.md.',
+  web: 'The Web slash menu has no /init, and KAP has no request that generates AGENTS.md.',
+};
+const NO_SIDE_QUESTION_OVER_ACP =
+  'ACP has no side question: an editor can only send /btw as a prompt, and the agent answers it with "Unknown ACP command: /btw" without asking the model.';
 const NO_CONTINUE = {
   tui: 'The terminal UI has no way to continue a failed turn; a user sends another message instead.',
   acp: 'ACP has no request to continue a failed turn.',
 };
+const NO_ADD_DIR = {
+  acp: 'ACP has no request that adds a directory to a running session; the agent reads additionalDirectories only from session/new.',
+  desktop: 'Desktop has no /add-dir: it adds a directory to the whole project in the project dialog, through the system folder picker that Playwright cannot drive.',
+  web: 'The web UI has no /add-dir: it adds a directory to the whole project in the project dialog, which changes every session of the project rather than this one.',
+};
+const ONLY_DESKTOP_HAS_A_BROWSER = 'Only the Desktop app has a built-in browser that agents control, and only its settings have a Browser page that turns that control off.';
 
 export const VERBS = {
   send: { on: SURFACES, checksInterface: false },
@@ -81,8 +96,6 @@ export const VERBS = {
   answerOther: { on: ['tui', 'desktop', 'web'], absentBecause: NO_FREE_TEXT_OVER_ACP, checksInterface: false },
   dismissQuestion: { on: SURFACES, checksInterface: false },
   setPermissionMode: { on: SURFACES, checksInterface: false },
-  chooseModel: { on: SURFACES, checksInterface: false },
-  setThinking: { on: SURFACES, checksInterface: false },
   setDefaultPermissionMode: { on: ['desktop', 'web'], absentBecause: NO_DEFAULT_MODE_SETTING, checksInterface: false },
   stop: { on: SURFACES, checksInterface: false },
   expectStopped: { on: ['tui', 'desktop', 'web'], absentBecause: NO_STOP_MARK_OVER_ACP, checksInterface: true },
@@ -101,7 +114,6 @@ export const VERBS = {
   expectComposer: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: true },
   newSession: { on: SURFACES, checksInterface: false },
   fork: { on: SURFACES, checksInterface: false },
-  openSession: { on: SURFACES, checksInterface: false },
   deleteSession: { on: SURFACES, checksInterface: false },
   archiveSession: { on: ['desktop', 'web'], absentBecause: NO_ARCHIVE, checksInterface: false },
   expectSessions: { on: SURFACES, checksInterface: true },
@@ -110,7 +122,7 @@ export const VERBS = {
   addWorkspace: { on: ['web'], absentBecause: PROJECTS_ON_THE_WEB, checksInterface: false },
   compact: { on: SURFACES, checksInterface: false },
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
-  reload: { on: ['web'], absentBecause: NO_PAGE_TO_RELOAD, checksInterface: false },
+  reloadPage: { on: ['web'], absentBecause: NO_PAGE_TO_RELOAD, checksInterface: false },
   expectTranscript: { on: SURFACES, checksInterface: true },
   exit: { on: ['tui'], absentBecause: ONLY_IN_A_SHELL, checksInterface: false },
   expectTerminalRestored: {
@@ -121,6 +133,16 @@ export const VERBS = {
     },
     checksInterface: true,
   },
+  openSession: { on: SURFACES, checksInterface: false },
+  reload: { on: ['tui', 'desktop', 'web'], absentBecause: NO_RELOAD_OVER_ACP, checksInterface: false },
+  init: { on: ['tui'], absentBecause: ONLY_THE_TERMINAL_UI_INITS, checksInterface: false },
+  useSkill: { on: SURFACES, checksInterface: false },
+  switchModel: { on: SURFACES, checksInterface: false },
+  setThinkingEffort: { on: SURFACES, checksInterface: false },
+  addDir: { on: ['tui'], absentBecause: NO_ADD_DIR, checksInterface: false },
+  setBrowserControl: { on: ['desktop'], absentBecause: ONLY_DESKTOP_HAS_A_BROWSER, checksInterface: false },
+  setPlanMode: { on: SURFACES, checksInterface: false },
+  btw: { on: ['tui', 'desktop', 'web'], absentBecause: NO_SIDE_QUESTION_OVER_ACP, checksInterface: false },
 } as const satisfies Readonly<Record<string, VerbSpec>>;
 
 export type Verb = keyof typeof VERBS;
@@ -222,6 +244,12 @@ export function describeTool(expectation: ToolExpectation): string {
   return `${expectation.name} on ${JSON.stringify(expectation.target)} with status ${expectation.status}${printed}`;
 }
 
+const FORK_TITLE = 'Fork: ';
+
+export function firstPromptOf(title: string): string {
+  return title.startsWith(FORK_TITLE) ? firstPromptOf(title.slice(FORK_TITLE.length)) : title;
+}
+
 export type SessionBadge = 'unread' | 'approval' | 'question' | 'none';
 
 export type TaskStatus = 'running' | 'done' | 'failed' | 'stopped';
@@ -298,6 +326,9 @@ export type PermissionMode = 'manual' | 'yolo' | 'auto';
 
 export type WindowSize = 'normal' | 'narrow';
 
+export type BrowserControl = 'on' | 'off';
+export type PlanModeState = 'on' | 'off';
+
 export const PERMISSION_MODE_NAMES: Readonly<Record<PermissionMode, string>> = {
   manual: 'Always Ask',
   yolo: 'Ask When Needed',
@@ -320,8 +351,6 @@ interface VerbSignatures {
   answerOther(text: string): Promise<void>;
   dismissQuestion(): Promise<void>;
   setPermissionMode(mode: PermissionMode): Promise<void>;
-  chooseModel(name: string): Promise<void>;
-  setThinking(level: string): Promise<void>;
   setDefaultPermissionMode(mode: PermissionMode): Promise<void>;
   stop(): Promise<void>;
   expectStopped(): Promise<void>;
@@ -340,7 +369,6 @@ interface VerbSignatures {
   expectComposer(text: string): Promise<void>;
   newSession(): Promise<void>;
   fork(): Promise<void>;
-  openSession(title: string): Promise<void>;
   deleteSession(title: string): Promise<void>;
   archiveSession(title: string): Promise<void>;
   expectSessions(titles: readonly string[]): Promise<void>;
@@ -349,10 +377,20 @@ interface VerbSignatures {
   addWorkspace(): Promise<void>;
   compact(): Promise<void>;
   resize(size: WindowSize): Promise<void>;
-  reload(): Promise<void>;
+  reloadPage(): Promise<void>;
   expectTranscript(text: string): Promise<void>;
   exit(): Promise<void>;
   expectTerminalRestored(): Promise<void>;
+  openSession(title: string): Promise<void>;
+  reload(): Promise<void>;
+  init(): Promise<void>;
+  useSkill(name: string): Promise<void>;
+  switchModel(name: string): Promise<void>;
+  setThinkingEffort(effort: string): Promise<void>;
+  addDir(path: string): Promise<void>;
+  setBrowserControl(state: BrowserControl): Promise<void>;
+  setPlanMode(state: PlanModeState): Promise<void>;
+  btw(question: string, reply: string): Promise<void>;
 }
 
 export type Actions = { readonly [Name in Verb]: VerbSignatures[Name] };

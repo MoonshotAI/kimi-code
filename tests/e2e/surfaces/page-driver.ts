@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { TIMEOUTS } from '@moonshot-ai/testkit/fixtures';
 import type { BrowserContext, Page } from '@playwright/test';
 
-import type { ApprovalExpectation, ApproveOptions, Diagnostic, Frame, PermissionMode, ReopenState, SessionBadge, SurfaceDriver, TaskExpectation, ToolExpectation } from '../support/verbs';
+import type { ApprovalExpectation, ApproveOptions, Diagnostic, Frame, PermissionMode, PlanModeState, ReopenState, SessionBadge, SurfaceDriver, TaskExpectation, ToolExpectation } from '../support/verbs';
 import { RendererSurface, type MenuPage } from './renderer';
 
 export const WELCOME_DIALOG = 'Welcome to Kimi Code';
@@ -113,6 +113,14 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().setPermissionMode(mode);
   }
 
+  switchModel(name: string): Promise<void> {
+    return this.window().switchModel(name);
+  }
+
+  setThinkingEffort(effort: string): Promise<void> {
+    return this.window().setThinkingEffort(effort);
+  }
+
   stop(): Promise<void> {
     return this.window().stop();
   }
@@ -169,14 +177,6 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().expectStopped();
   }
 
-  chooseModel(name: string): Promise<void> {
-    return this.window().chooseModel(name);
-  }
-
-  setThinking(level: string): Promise<void> {
-    return this.window().setThinking(level);
-  }
-
   setDefaultPermissionMode(mode: PermissionMode): Promise<void> {
     return this.window().setDefaultPermissionMode(mode);
   }
@@ -199,10 +199,6 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
 
   fork(): Promise<void> {
     return this.window().fork();
-  }
-
-  openSession(title: string): Promise<void> {
-    return this.window().openSession(title);
   }
 
   deleteSession(title: string): Promise<void> {
@@ -233,12 +229,36 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().compact();
   }
 
+  openSession(title: string): Promise<void> {
+    return this.window().openSession(title);
+  }
+
+  reload(): Promise<void> {
+    return this.window().reload();
+  }
+
+  useSkill(name: string): Promise<void> {
+    return this.window().useSkill(name);
+  }
+
+  setPlanMode(state: PlanModeState): Promise<void> {
+    return this.window().setPlanMode(state);
+  }
+
+  btw(question: string, reply: string): Promise<void> {
+    return this.window().btw(question, reply);
+  }
+
   idle(): Promise<boolean> {
     return this.window().idle();
   }
 
   protected resizeWindow(viewport: { readonly width: number; readonly height: number }): Promise<void> {
     return this.window().resize(viewport);
+  }
+
+  protected switchBrowserControl(enabled: boolean): Promise<void> {
+    return this.window().setBrowserControl(enabled);
   }
 
   protected async awaitResumed(lastPrompt: string | undefined): Promise<void> {
@@ -248,14 +268,14 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     }
   }
 
-  protected async reloadPage(): Promise<void> {
+  protected async reloadWindow(): Promise<void> {
     const page = this.page;
     if (page === undefined) throw new Error(`The ${this.name} page is not ready.`);
     const before = page.url();
     await page.reload({ timeout: TIMEOUTS.server });
     await page.getByRole('status', { name: 'Connecting…' }).first().waitFor({ state: 'hidden', timeout: TIMEOUTS.server });
     await page.getByRole('combobox', { name: 'Message input' }).waitFor({ state: 'visible', timeout: TIMEOUTS.server });
-    if (page.url() !== before) throw new Error(`reload() came back at ${page.url()} instead of ${before}.\n${await this.window().describe()}`);
+    if (page.url() !== before) throw new Error(`reloadPage() came back at ${page.url()} instead of ${before}.\n${await this.window().describe()}`);
   }
 
   protected async startTrace(): Promise<void> {

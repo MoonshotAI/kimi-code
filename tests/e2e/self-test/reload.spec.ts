@@ -1,47 +1,45 @@
-import { bash, say } from '@moonshot-ai/testkit/model';
+import { held, read, say } from '@moonshot-ai/testkit/model';
 
 import { expect, selfTest } from '../support/scenario';
 
-const COMMAND = "printf 'rea%s\\n' dy; while [ ! -f gate.txt ]; do sleep 0.1; done; printf 'don%s\\n' e";
-
 selfTest('reload', {
   positive: {
-    'comes back to the same conversation after the page reloads while a command runs': {
-      run: async ({ product, model, workspace }) => {
-        model.script(bash(COMMAND), say('The command finished.'));
-        await product.send('Run the slow command.');
-        await product.approve();
-        await product.expectTool({ name: 'Bash', target: COMMAND, status: 'running', output: 'ready' });
-        await product.reload();
-        await product.expectTranscript('Run the slow command.');
-        await workspace.write('gate.txt', '');
-        await product.waitIdle();
-        await product.expectReply('The command finished.');
-        expect(model.requests('main')).toHaveLength(2);
-      },
-    },
-    'comes back to an idle conversation after the page reloads': {
+    'returns once the session is reloaded, and the next turn still carries the earlier history': {
+      workspace: { 'notes.txt': 'alpha\n' },
       run: async ({ product, model }) => {
-        model.script(say('Hello there.'));
-        await product.send('Say hello.');
+        model.script(read('notes.txt'), say('It says alpha.'), say('Still here after the reload.'));
+        await product.send('Read notes.txt.');
         await product.waitIdle();
+        await product.expectReply('It says alpha.');
         await product.reload();
-        await product.expectTranscript('Hello there.');
-        expect(model.requests('main')).toHaveLength(1);
+        await product.send('Are you still there?');
+        await product.waitIdle();
+        await product.expectReply('Still here after the reload.');
+        const after = model.requests('main')[2];
+        expect(after?.texts('user')).toContain('Read notes.txt.');
+        expect(after?.texts('tool').join('\n')).toContain('alpha');
       },
     },
   },
   negative: {
-    'does not take a reply of an earlier turn for the latest one after the reload': {
+    'fails while a turn is running': {
       run: async ({ product, model }) => {
-        model.script(say('The earlier answer.'), say('The later answer.'));
-        await product.send('Ask the earlier question.');
+        model.script(held('busy', say('Finished before any reload.'), 1));
+        await product.send('Take your time.');
+        await model.hold('busy').reached();
+        await expect(product.reload()).rejects.toThrow('needs an idle product');
+        model.hold('busy').release();
         await product.waitIdle();
-        await product.send('Ask the later question.');
+        await product.expectReply('Finished before any reload.');
+      },
+    },
+    'fails before the first message, when no conversation is open to reload': {
+      run: async ({ product, model }) => {
+        await expect(product.reload()).rejects.toThrow('send one first');
+        model.script(say('Hello from the first turn.'));
+        await product.send('Say hello.');
         await product.waitIdle();
-        await product.reload();
-        await expect(product.expectReply('The earlier answer.')).rejects.toThrow('The earlier answer.');
-        await product.expectReply('The later answer.');
+        await product.expectReply('Hello from the first turn.');
       },
     },
   },
