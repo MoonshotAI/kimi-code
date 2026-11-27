@@ -2,7 +2,8 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { deferred } from '@moonshot-ai/testkit/fixtures';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -106,6 +107,111 @@ describe('SessionIndexMirror', () => {
     mirror = host.app.accessor.get(ISessionIndexMirror);
     return mirror;
   }
+
+  it('runs exclusive work only after the flush in flight has written', async () => {
+    build();
+    await publishGeneration();
+    const entered = deferred();
+    const release = deferred();
+    let flushed = false;
+    const batch = queryStore.batch.bind(queryStore);
+    vi.spyOn(queryStore, 'batch').mockImplementation(async (ops) => {
+      entered.resolve();
+      await release.promise;
+      await batch(ops);
+      flushed = true;
+    });
+
+    mirror.record(summary('a'));
+    const draining = mirror.drain();
+    await entered.promise;
+    const sawFlush = mirror.runExclusive(async () => flushed);
+    release.resolve();
+
+    await expect(sawFlush).resolves.toBe(true);
+    await draining;
+  });
+
+  it('rereads a consistent value when exclusive work writes during the read', async () => {
+    build();
+    await publishGeneration();
+    let reads = 0;
+
+    const value = await mirror.readConsistently(async () => {
+      reads += 1;
+      if (reads === 1) await mirror.runExclusive(async () => {});
+      return reads;
+    });
+
+    expect(value).toBe(2);
+  });
+
+  it('reads only after the exclusive work in progress has finished', async () => {
+    build();
+    await publishGeneration();
+    const started = deferred();
+    let working = true;
+    const exclusive = mirror.runExclusive(async () => {
+      started.resolve();
+      await fsp.readdir(homeDir);
+      working = false;
+    });
+    await started.promise;
+
+    const readWhileWorking = await mirror.readConsistently(async () => working);
+
+    expect(readWhileWorking).toBe(false);
+    await exclusive;
+  });
+
+  it.each<{
+    placement: string;
+    primaries?: Record<string, string>;
+    recorded: Record<string, unknown>;
+    cwd: string;
+  }>([
+    {
+      placement: 'that follows the project primary',
+      primaries: { [WORKSPACE]: '/new' },
+      recorded: { cwd: '/old' },
+      cwd: '/new',
+    },
+    {
+      placement: 'pinned to its own directory',
+      primaries: { [WORKSPACE]: '/new' },
+      recorded: { cwd: '/old', environmentCwd: '/pinned' },
+      cwd: '/pinned',
+    },
+    {
+      placement: 'in a remote environment',
+      primaries: { [WORKSPACE]: '/new' },
+      recorded: { cwd: '/remote', environmentId: 'devbox' },
+      cwd: '/remote',
+    },
+    {
+      placement: 'whose project the generation has no primary for',
+      primaries: {},
+      recorded: { cwd: '/fresh' },
+      cwd: '/fresh',
+    },
+    {
+      placement: 'when the generation records no primaries',
+      recorded: { cwd: '/fresh' },
+      cwd: '/fresh',
+    },
+  ])('writes the working directory of a session $placement under the primaries of the generation', async ({ primaries, recorded, cwd }) => {
+    build();
+    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, {
+      seq: GENERATION,
+      workspacePrimaries: primaries,
+    });
+
+    mirror.record(summary('a', recorded));
+    await mirror.drain();
+
+    const stored = await queryStore.getMany<{ cwd?: string }>(sessionCollection(GENERATION), ['a']);
+    expect(stored.get('a')?.cwd).toBe(cwd);
+  });
 
   it('coalesces updates per session and drains summaries with counters', async () => {
     build();

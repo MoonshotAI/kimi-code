@@ -1,7 +1,9 @@
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
+import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventService } from '#/app/event/event';
+import { IProjectService } from '#/app/project/project';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { getLiveSessionById } from '#/app/sessionManager/sessionLookup';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
@@ -10,6 +12,7 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { normalizeSessionMeta, encodeSessionMeta } from '#/session/sessionMetadata/sessionMetadataService';
+import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
 
 import { sessionScopeOf, legacySessionMetaScopeOf, projectPersistenceScope } from './internal/addressing';
 import { SessionArchived, SessionRestored } from './sessionLifecycleEvents';
@@ -43,13 +46,26 @@ export async function setColdSessionArchived(
     const persisted = normalizeSessionMeta(raw, sessionId);
     const archivedAt = archived ? Date.now() : undefined;
     const nextMeta: SessionMeta = { ...persisted, archived, archivedAt };
+    const projectRoot = await accessor
+      .get(IProjectService)
+      .get(summary.workspaceId)
+      .then(
+        (project) => project?.root,
+        (error: unknown) => {
+          accessor.get(ILogService).warn('cold session archive could not read the project; mirroring the stored cwd', {
+            sessionId,
+            error: String(error),
+          });
+          return undefined;
+        },
+      );
     await docs.set(metaScope, 'state.json', encodeSessionMeta(nextMeta));
     if (legacyMetaScope !== undefined) await docs.delete(legacyMetaScope, 'state.json');
     accessor.get(ISessionIndexMirror).record(
       buildSessionSummary({
         id: sessionId,
         workspaceId: summary.workspaceId,
-        cwd: nextMeta.cwd ?? summary.cwd,
+        cwd: sessionWorkDir(nextMeta, projectRoot) ?? summary.cwd,
         environmentId: nextMeta.environmentId,
         environmentCwd: nextMeta.environmentCwd,
         title: nextMeta.title,

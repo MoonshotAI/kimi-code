@@ -68,6 +68,7 @@ export interface ISessionIndexMirror {
   record(summary: SessionSummary): void;
   pending(): readonly SessionSummary[];
   readConsistently<T>(read: () => Promise<T>): Promise<T>;
+  runExclusive<T>(work: () => Promise<T>): Promise<T>;
   retainFlushes(): IDisposable;
   evict(id: string): Promise<void>;
   drain(): Promise<void>;

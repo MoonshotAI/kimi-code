@@ -344,7 +344,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private async reconcile(generation: number): Promise<void> {
-    const run = () => this.projector.reconcile(generation);
+    const run = () => this.mirror.runExclusive(() => this.projector.reconcile(generation));
     const flight = this.reconcileFlight?.then(run, run) ?? run();
     this.reconcileFlight = flight;
     try {

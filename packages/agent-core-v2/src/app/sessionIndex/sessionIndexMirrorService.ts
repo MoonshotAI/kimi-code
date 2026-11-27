@@ -9,6 +9,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { databaseBaseEnabled } from '#/persistence/configSection';
 import { IQueryStore } from '#/persistence/interface/queryStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
 
 import { ISessionIndexMirror, type SessionSummary } from './sessionIndex';
 import { markSessionDirty } from './sessionIndexDirtyJournal';
@@ -47,6 +48,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
   private readonly pendingMarks = new Set<Promise<void>>();
   private readonly timer = this._register(new IntervalTimer({ unref: true }));
   private flushing: Promise<void> | undefined;
+  private writeQueue: Promise<void> = Promise.resolve();
   private consecutiveFailures = 0;
   private giveUpTracked = false;
   private disposed = false;
@@ -110,7 +112,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
 
   async readConsistently<T>(read: () => Promise<T>): Promise<T> {
     for (let attempt = 1; ; attempt += 1) {
-      await this.flushing;
+      await this.writeQueue;
       const writes = this.writes;
       const value = await read();
       if (writes % 2 === 0 && writes === this.writes) return value;
@@ -121,6 +123,17 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
         return value;
       }
     }
+  }
+
+  runExclusive<T>(work: () => Promise<T>): Promise<T> {
+    return this.serialize(async () => {
+      this.writes += 1;
+      try {
+        return await work();
+      } finally {
+        this.writes += 1;
+      }
+    });
   }
 
   retainFlushes(): IDisposable {
@@ -170,8 +183,17 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
     }
   }
 
+  private serialize<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.writeQueue.then(work);
+    this.writeQueue = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
+  }
+
   private flush(): Promise<void> {
-    this.flushing ??= this.flushChunk().finally(() => {
+    this.flushing ??= this.serialize(() => this.flushChunk()).finally(() => {
       this.flushing = undefined;
       if (this.pendingMap.size > 0 && this.consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
         this.timer.cancelAndSet(() => void this.flush(), FLUSH_INTERVAL_MS);
@@ -222,7 +244,10 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
           kind: 'put' as const,
           collection,
           key: id,
-          value: withRecencyField(manifest.seq, summary),
+          value: withRecencyField(manifest.seq, {
+            ...summary,
+            cwd: sessionWorkDir(summary, manifest.workspacePrimaries?.[summary.workspaceId]),
+          }),
           columns: { [recencyColumn(manifest.seq)]: summary.updatedAt },
         })),
         ...[...deltas.entries()].map(([workspaceId, delta]) => ({

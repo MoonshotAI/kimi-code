@@ -16,6 +16,7 @@ export function stubSessionIndexMirror(): ISessionIndexMirror & {
     },
     pending: () => recorded,
     readConsistently: (read) => read(),
+    runExclusive: (work) => work(),
     retainFlushes: () => toDisposable(() => {}),
     evict: async () => {},
     drain: async () => {},
