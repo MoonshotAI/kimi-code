@@ -1,6 +1,6 @@
-import { randomBytes } from 'node:crypto';
-import { mkdir, open, readFile, unlink } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+import { link, mkdir, open, readdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 
 import {
   currentProcessLiveness,
@@ -15,6 +15,11 @@ export interface RemoteControlLockInfo {
   readonly url: string;
   readonly startedAt: number;
   readonly liveness?: string;
+}
+
+interface LockFileContent {
+  readonly raw: string;
+  readonly info?: RemoteControlLockInfo;
 }
 
 interface RemoteControlLockDisk {
@@ -57,6 +62,8 @@ export interface RemoteControlLock {
 
 const MAX_ACQUIRE_ATTEMPTS = 3;
 
+const reclaimsInProgress = new Set<string>();
+
 export async function acquireRemoteControlLock(
   homeDir: string,
   details: { localOrigin: string; deviceId: string; url: string },
@@ -73,24 +80,22 @@ export async function acquireRemoteControlLock(
     startedAt: Date.now(),
     ...(liveness === undefined ? {} : { liveness }),
   };
+  const record = encodeLock(info);
   for (let attempt = 0; ; attempt += 1) {
     try {
-      const handle = await open(lockPath, 'wx');
-      try {
-        await handle.writeFile(encodeLock(info));
-      } finally {
-        await handle.close();
-      }
+      await publishLockRecord(lockPath, record, info.nonce);
+      await removeReclaimMarkers(lockPath);
       return { release: () => releaseRemoteControlLock(lockPath, info.nonce) };
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || attempt >= MAX_ACQUIRE_ATTEMPTS) {
+      if (!alreadyExists(error) || attempt >= MAX_ACQUIRE_ATTEMPTS) {
         throw error;
       }
-      const holder = await readRemoteControlLock(lockPath);
-      if (holder !== undefined && holderAlive(holder)) {
-        throw new RemoteControlAlreadyRunningError(holder);
+      const current = await readLockFile(lockPath);
+      if (current === undefined) continue;
+      if (current.info !== undefined && holderAlive(current.info)) {
+        throw new RemoteControlAlreadyRunningError(current.info);
       }
-      await removeFile(lockPath);
+      await reclaimStaleLock(lockPath, current.raw, record, info.nonce);
     }
   }
 }
@@ -98,13 +103,8 @@ export async function acquireRemoteControlLock(
 export async function inspectRemoteControlLock(
   homeDir: string,
 ): Promise<RemoteControlLockInfo | undefined> {
-  const lockPath = remoteControlLockPath(homeDir);
-  const info = await readRemoteControlLock(lockPath);
-  if (info === undefined) return undefined;
-  if (!holderAlive(info)) {
-    await removeFile(lockPath);
-    return undefined;
-  }
+  const info = await readRemoteControlLock(remoteControlLockPath(homeDir));
+  if (info === undefined || !holderAlive(info)) return undefined;
   return info;
 }
 
@@ -119,6 +119,92 @@ export async function releaseRemoteControlLockHeldBy(
   return true;
 }
 
+async function publishLockRecord(path: string, record: string, nonce: string): Promise<void> {
+  const staged = `${path}.${nonce}.tmp`;
+  try {
+    await writeFile(staged, record);
+    try {
+      await link(staged, path);
+    } catch (error) {
+      if (alreadyExists(error)) throw error;
+      await writeLockRecordInPlace(path, record);
+    }
+  } finally {
+    await unlink(staged).catch(() => {});
+  }
+}
+
+async function writeLockRecordInPlace(path: string, record: string): Promise<void> {
+  const handle = await open(path, 'wx');
+  try {
+    await handle.writeFile(record);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function reclaimStaleLock(
+  lockPath: string,
+  staleRaw: string,
+  record: string,
+  nonce: string,
+): Promise<void> {
+  reclaimsInProgress.add(nonce);
+  try {
+    const markerPath = await claimReclaimMarker(
+      `${lockPath}.reclaim.${generationOf(staleRaw)}`,
+      record,
+      nonce,
+    );
+    if ((await readLockFile(lockPath))?.raw === staleRaw) await removeFile(lockPath);
+    await releaseRemoteControlLock(markerPath, nonce).catch(() => {});
+  } finally {
+    reclaimsInProgress.delete(nonce);
+  }
+}
+
+async function claimReclaimMarker(firstPath: string, record: string, nonce: string): Promise<string> {
+  let markerPath = firstPath;
+  for (;;) {
+    try {
+      await publishLockRecord(markerPath, record, nonce);
+      return markerPath;
+    } catch (error) {
+      if (!alreadyExists(error)) throw error;
+    }
+    const owner = await readLockFile(markerPath);
+    if (owner === undefined) continue;
+    if (owner.info !== undefined && reclaimerActive(owner.info)) {
+      throw new RemoteControlAlreadyRunningError(owner.info);
+    }
+    markerPath = `${markerPath}.${generationOf(owner.raw)}`;
+  }
+}
+
+async function removeReclaimMarkers(lockPath: string): Promise<void> {
+  const directory = dirname(lockPath);
+  const prefix = `${basename(lockPath)}.reclaim.`;
+  const names = await readdir(directory).catch((): string[] => []);
+  await Promise.all(
+    names
+      .filter((name) => name.startsWith(prefix) && !name.endsWith('.tmp'))
+      .map((name) => unlink(join(directory, name)).catch(() => {})),
+  );
+}
+
+function reclaimerActive(owner: RemoteControlLockInfo): boolean {
+  if (owner.pid === process.pid) return reclaimsInProgress.has(owner.nonce);
+  return holderAlive(owner);
+}
+
+function generationOf(raw: string): string {
+  return createHash('sha256').update(raw).digest('hex').slice(0, 16);
+}
+
+function alreadyExists(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'EEXIST';
+}
+
 async function releaseRemoteControlLock(lockPath: string, nonce: string): Promise<void> {
   const info = await readRemoteControlLock(lockPath);
   if (info === undefined || info.nonce !== nonce) return;
@@ -126,13 +212,20 @@ async function releaseRemoteControlLock(lockPath: string, nonce: string): Promis
 }
 
 async function readRemoteControlLock(lockPath: string): Promise<RemoteControlLockInfo | undefined> {
+  const content = await readLockFile(lockPath).catch(() => undefined);
+  return content?.info;
+}
+
+async function readLockFile(path: string): Promise<LockFileContent | undefined> {
   let raw: string;
   try {
-    raw = await readFile(lockPath, 'utf8');
-  } catch {
-    return undefined;
+    raw = await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
   }
-  return decodeLock(raw);
+  const info = decodeLock(raw);
+  return info === undefined ? { raw } : { raw, info };
 }
 
 function encodeLock(info: RemoteControlLockInfo): string {
