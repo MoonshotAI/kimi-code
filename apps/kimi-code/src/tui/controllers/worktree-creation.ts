@@ -16,6 +16,7 @@ import {
   createWorktreeFailedPrompt,
   type WorktreeFailedChoice,
 } from '#/tui/components/dialogs/worktree-choices';
+import type { WorktreeSessionAction } from '#/tui/components/dialogs/worktree-form';
 import {
   WorktreeProgressComponent,
   type WorktreeProgress,
@@ -29,9 +30,11 @@ import { isDirectory } from '#/utils/session-directory';
 export interface WorktreeCreationRequest {
   readonly name?: string;
   readonly base?: string;
+  readonly mode?: WorktreeSessionAction;
 }
 
 export interface WorktreeCreationOptions {
+  readonly beforeCreate?: () => Promise<void> | void;
   readonly onRejected?: (error: unknown) => void;
   readonly onAccepted?: () => void;
   readonly enter?: (location: WorkLocation) => Promise<boolean>;
@@ -87,47 +90,82 @@ export class WorktreeCreationController {
     this.running = true;
     const { workDir, projectRoot } = this.host.state.appState;
     const sourceDir = isDirectory(workDir) || projectRoot === undefined ? workDir : projectRoot;
-    const block = new WorktreeProgressComponent(() => {
-      this.host.state.ui.requestRender();
-    });
-    this.block = block;
-    this.host.state.transcriptContainer.addChild(block);
-    this.host.state.ui.requestRender();
-    const progress = new ProgressRows(block, () => this.host.state.ui.requestRender());
     try {
-      const created = await this.create(request, sourceDir, progress, options);
-      if (created === undefined) return;
-      const location: WorkLocation = {
-        cwd: created.cwd,
-        projectRoot: created.repoRoot,
-        isGitRepo: true,
-        worktree: {
-          root: created.worktree.path,
-          name: created.worktree.name,
-          repoRoot: created.repoRoot,
-        },
-      };
-      if (options.enter === undefined) {
-        await this.host.applyWorkLocation(location);
-      } else if (!(await options.enter(location))) {
-        progress.stop();
-        return;
+      if (options.beforeCreate !== undefined) {
+        try {
+          await options.beforeCreate();
+        } catch (error) {
+          if (options.onRejected !== undefined) {
+            options.onRejected(error);
+          } else {
+            this.host.showError(formatErrorMessage(error));
+          }
+          return;
+        }
       }
-      const { transcriptContainer } = this.host.state;
-      if (!transcriptContainer.children.includes(block)) transcriptContainer.addChild(block);
-      progress.finish({
-        phase: 'entered',
-        name: created.worktree.name,
-        sourceDir: created.sourceRoot,
-        sourceDirty: created.sourceDirty,
-        missingSubdir: created.cwdFallback
-          ? relative(created.sourceRoot, await realpath(sourceDir).catch(() => sourceDir))
-          : undefined,
+
+      const block = new WorktreeProgressComponent(() => {
+        this.host.state.ui.requestRender();
       });
-    } catch (error) {
-      if (this.disposed) return;
-      progress.stop();
-      this.host.showError(formatErrorMessage(error));
+      this.block = block;
+      this.host.state.transcriptContainer.addChild(block);
+      this.host.state.ui.requestRender();
+      const progress = new ProgressRows(block, () => this.host.state.ui.requestRender());
+      try {
+        const created = await this.create(request, sourceDir, progress, options);
+        if (created === undefined) return;
+        const location: WorkLocation = {
+          cwd: created.cwd,
+          projectRoot: created.repoRoot,
+          isGitRepo: true,
+          worktree: {
+            root: created.worktree.path,
+            name: created.worktree.name,
+            repoRoot: created.repoRoot,
+          },
+        };
+        if (options.enter === undefined) {
+          await this.host.applyWorkLocation(location);
+        } else {
+          let entered = false;
+          try {
+            entered = await options.enter(location);
+          } catch (error) {
+            if (this.disposed) return;
+            if (request.mode === 'move') {
+              const { transcriptContainer } = this.host.state;
+              if (!transcriptContainer.children.includes(block)) transcriptContainer.addChild(block);
+              progress.finish({
+                phase: 'move_failed',
+                name: created.worktree.name,
+                sourceDir: created.sourceRoot,
+                reason: formatErrorMessage(error),
+              });
+              return;
+            }
+            throw error;
+          }
+          if (!entered) {
+            progress.stop();
+            return;
+          }
+        }
+        const { transcriptContainer } = this.host.state;
+        if (!transcriptContainer.children.includes(block)) transcriptContainer.addChild(block);
+        progress.finish({
+          phase: request.mode === 'move' ? 'moved' : 'entered',
+          name: created.worktree.name,
+          sourceDir: created.sourceRoot,
+          sourceDirty: created.sourceDirty,
+          missingSubdir: created.cwdFallback
+            ? relative(created.sourceRoot, await realpath(sourceDir).catch(() => sourceDir))
+            : undefined,
+        });
+      } catch (error) {
+        if (this.disposed) return;
+        progress.stop();
+        this.host.showError(formatErrorMessage(error));
+      }
     } finally {
       this.running = false;
       this.abort = undefined;

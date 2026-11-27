@@ -220,6 +220,50 @@ describe('WorktreeCreationController', () => {
     expect(controller.busy).toBe(false);
   });
 
+  it('rejects before creating a worktree when beforeCreate throws', async () => {
+    const { host, controller, text } = makeHost();
+    const onRejected = vi.fn();
+
+    await controller.run(
+      { name: 'fix-login', mode: 'move' },
+      {
+        beforeCreate: () => {
+          throw new Error('Background task is still running.');
+        },
+        onRejected,
+      },
+    );
+
+    expect(host.harness.createWorktree).not.toHaveBeenCalled();
+    expect(onRejected).toHaveBeenCalledWith(expect.objectContaining({ message: 'Background task is still running.' }));
+    expect(text()).toBe('');
+  });
+
+  it('reports moved session completion and preserves the created worktree if moving throws', async () => {
+    const { controller, text } = makeHost();
+
+    await controller.run({ name: 'fix-login', mode: 'move' }, { enter: async () => true });
+    expect(text()).toBe(['', '✓ Moved session to worktree fix-login'].join('\n'));
+
+    const failed = makeHost();
+    await failed.controller.run(
+      { name: 'fix-login', mode: 'move' },
+      {
+        enter: async () => {
+          throw new Error('Turn is running.');
+        },
+      },
+    );
+    expect(failed.text()).toBe(
+      [
+        '',
+        "✗ Created worktree fix-login, couldn't move session",
+        '  Turn is running.',
+        '  Session stays in /repo. Run /worktree to open fix-login.',
+      ].join('\n'),
+    );
+  });
+
   it('shows the git error under the failed step and retries on Try again', async () => {
     const { host, controller, text, choose } = makeHost();
     host.harness.createWorktree.mockImplementationOnce(

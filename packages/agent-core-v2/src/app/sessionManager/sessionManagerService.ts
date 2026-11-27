@@ -33,6 +33,7 @@ import { IProjectInstanceManager, type ProjectInstanceLease, type ProjectInstanc
 import {
   ISessionManager,
   type CreateManagedSessionOptions,
+  type MoveManagedSessionOptions,
   type UnguardedSessionLifecycle,
 } from './sessionManager';
 import { unlessProjectGone } from './sessionProject';
@@ -110,6 +111,49 @@ export class SessionManager implements ISessionManager {
     } finally {
       opened.lease.dispose();
     }
+  }
+
+  async move(options: MoveManagedSessionOptions): Promise<ISessionScopeHandle> {
+    await this.environments.ready;
+    await this.assertUsableWorkDir(options.workDir);
+    return this.serializeLifecycle(options.sessionId, async () => {
+      const entry = await this.controllerForSession(options.sessionId);
+      if (entry === undefined) {
+        throw new Error2(
+          ErrorCodes.SESSION_NOT_FOUND,
+          `session ${options.sessionId} does not exist`,
+        );
+      }
+      return this.runControllerOperation(entry, async (controller) => {
+        const targetLease = await this.projects.acquire({ cwd: options.workDir });
+        try {
+          if (targetLease.instance.id !== entry.workspaceId) {
+            throw new Error2(
+              ErrorCodes.REQUEST_INVALID,
+              `Directory "${options.workDir}" belongs to a different project`,
+              {
+                details: {
+                  sessionId: options.sessionId,
+                  workspaceId: entry.workspaceId,
+                  targetWorkspaceId: targetLease.instance.id,
+                },
+              },
+            );
+          }
+          const canonicalWorkDir = await this.hostFs
+            .realpath(options.workDir)
+            .catch(() => options.workDir);
+          const environmentCwd = workDirToPin(canonicalWorkDir, targetLease.instance.root);
+          return await controller.move({
+            sessionId: options.sessionId,
+            workDir: canonicalWorkDir,
+            environmentCwd,
+          });
+        } finally {
+          targetLease.dispose();
+        }
+      });
+    });
   }
 
   private async openCreation(options: CreateManagedSessionOptions) {

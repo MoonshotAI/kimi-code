@@ -20,6 +20,11 @@ export interface CreateManagedSessionOptions extends CreateSessionOptions {
   readonly workspaceId?: string;
 }
 
+export interface MoveManagedSessionOptions {
+  readonly sessionId: string;
+  readonly workDir: string;
+}
+
 export interface UnguardedSessionLifecycle {
   archive(): Promise<void>;
   restore(): Promise<ISessionScopeHandle | undefined>;
@@ -40,6 +45,7 @@ export interface ISessionManager {
     readonly environmentCwd?: string;
   }>;
   create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle>;
+  move(options: MoveManagedSessionOptions): Promise<ISessionScopeHandle>;
   resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
   get(sessionId: string): ISessionScopeHandle | undefined;
   status(sessionId: string): Promise<SessionSummary | undefined>;

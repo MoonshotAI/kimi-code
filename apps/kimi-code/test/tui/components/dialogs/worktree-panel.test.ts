@@ -466,6 +466,79 @@ describe('WorktreeFormComponent', () => {
     expect(handlers.onCancel).toHaveBeenCalledTimes(1);
     expect(handlers.onSubmit).not.toHaveBeenCalled();
   });
+
+  it('renders the Session row when canMoveSession is true and toggles via keyboard', () => {
+    const handlers = { onSubmit: vi.fn(), onCancel: vi.fn() };
+    const form = new WorktreeFormComponent({ canMoveSession: true, ...handlers });
+    form.focused = true;
+    const text = (): string => stripVTControlCharacters(form.render(90).join('\n').replaceAll(APC, ''));
+
+    expect(text().split('\n')[1]).toMatch(/^│ Name {5}generated\s+│$/);
+    expect(text().split('\n')[2]).toMatch(/^│ Base {5}HEAD\s+│$/);
+    expect(text().split('\n')[3]).toMatch(/^│ Session {2}\[ Move current \] {2}Start new\s+│$/);
+
+    form.handleInput(TAB);
+    form.handleInput(TAB);
+    expect(text().split('\n')[5]).toBe(' ←→ choose · Tab next field · Enter create · Esc cancel');
+
+    form.handleInput('\u001B[C');
+    expect(text().split('\n')[3]).toMatch(/^│ Session {2}Move current {2}\[ Start new \]\s+│$/);
+    form.handleInput(ENTER);
+    expect(handlers.onSubmit).toHaveBeenLastCalledWith({
+      name: undefined,
+      base: undefined,
+      sessionAction: 'new',
+    });
+
+    form.handleInput(' ');
+    form.handleInput(ENTER);
+    expect(handlers.onSubmit).toHaveBeenLastCalledWith({
+      name: undefined,
+      base: undefined,
+      sessionAction: 'move',
+    });
+  });
+
+  it('supports clicking Session choices with the mouse in fullscreen mode even when unfocused', async () => {
+    const handlers = { onSubmit: vi.fn(), onCancel: vi.fn() };
+    const form = new WorktreeFormComponent({ canMoveSession: true, ...handlers });
+    const vt = new VirtualTerminal(90, 12);
+    const ui = new TuiAltScreen(vt);
+    ui.setLayoutRoot(form);
+    ui.start();
+    await vt.waitForRender();
+    try {
+      let screen = vt.getViewport().map((line) => stripVTControlCharacters(line));
+      const sessionRow = screen.findIndex((line) => line.includes('Session'));
+      expect(sessionRow).toBe(3);
+      const startNewCol = screen[sessionRow]!.indexOf('Start new') + 2;
+
+      vt.sendInput(`\u001B[<0;${String(startNewCol + 1)};${String(sessionRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(startNewCol + 1)};${String(sessionRow + 1)}m`);
+      await vt.waitForRender();
+
+      screen = vt.getViewport().map((line) => stripVTControlCharacters(line));
+      expect(screen[sessionRow]).toContain('[ Start new ]');
+      expect(form.focused).toBe(true);
+
+      const moveCol = screen[sessionRow]!.indexOf('Move current') + 2;
+      vt.sendInput(`\u001B[<0;${String(moveCol + 1)};${String(sessionRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(moveCol + 1)};${String(sessionRow + 1)}m`);
+      await vt.waitForRender();
+
+      screen = vt.getViewport().map((line) => stripVTControlCharacters(line));
+      expect(screen[sessionRow]).toContain('[ Move current ]');
+
+      vt.sendInput(ENTER);
+      expect(handlers.onSubmit).toHaveBeenCalledWith({
+        name: undefined,
+        base: undefined,
+        sessionAction: 'move',
+      });
+    } finally {
+      ui.stop();
+    }
+  });
 });
 
 describe('createWorktreeDeletePrompt', () => {

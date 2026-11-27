@@ -388,6 +388,13 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     return this.enqueueWorkspaceDirsNotification(() => this.seedBeliefsNow(seed));
   }
 
+  async syncAgentsMdSnapshot(loaded: LoadedAgentsMd): Promise<void> {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    const agentsMdHash = hashText(`${loaded.paths.join('\n')}\n\n${loaded.content}`);
+    const agentsMdFiles = hashAgentsMdContents(loaded.files);
+    await this.recordSnapshot({ agentsMdHash, agentsMdFiles });
+  }
+
   private async seedBeliefsNow(seed: BeliefsSeed): Promise<void> {
     try {
       await this.projectInfo.ready;

@@ -1436,6 +1436,7 @@ export class AgentTestContext {
                 return harnessBinding;
               },
               bind: (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
+              rebindLocalWorkDir: async ({ cwd }) => ({ environmentId: 'local', cwd }),
             });
             const environment = new LocalEnvironment(this.root.accessor.get(IHostEnvironment),
               this.root.accessor.get(IHostFileSystem),

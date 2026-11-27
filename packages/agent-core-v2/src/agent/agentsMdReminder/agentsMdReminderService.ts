@@ -35,6 +35,7 @@ import type {
   ContextInjectionResult,
 } from '#/features/reminder/types';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { changeNotifierSnapshotKey } from '#/agent/changeNotifier/changeNotifierOps';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { legacyDidExecuteContext } from '#/agent/toolExecutor/legacyHooks';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
@@ -104,9 +105,15 @@ export class AgentAgentsMdReminderService
     this._register(
       this.dispatcher.hooks.onDidRestore.register('agentsMdReminder', async (_ctx, next) => {
         const profile = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentLoopService)).data();
-        const paths =
+        const promptPaths =
           profile.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(profile.systemPrompt);
-        this.seedInjected(paths, this.sessionContext.cwd);
+        let snapshotPaths: readonly string[] = [];
+        try {
+          const files = this.states.get(changeNotifierSnapshotKey).agentsMdFiles;
+          if (files !== undefined) snapshotPaths = Object.keys(files);
+        } catch {}
+        const effectiveCwd = this.environment.workspaceRoots().workDir || this.sessionContext.cwd;
+        this.seedInjected([...promptPaths, ...snapshotPaths], effectiveCwd);
         await next();
       }),
     );
