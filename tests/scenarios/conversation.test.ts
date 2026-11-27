@@ -742,6 +742,36 @@ describe('conversation over KAP', () => {
     expect(await kap.turns(session.id)).toHaveLength(2);
   });
 
+  test('tells a resumed session about a project folder added while it was closed, with its skills and skill root', async ({ kap, model }) => {
+    const app = join(kap.home.workspace, 'app');
+    const lib = join(kap.home.workspace, 'lib');
+    for (const dir of [app, lib]) await mkdir(join(dir, '.git'), { recursive: true });
+    const libSkill = join(lib, '.agents', 'skills', 'lib-helper');
+    await mkdir(libSkill, { recursive: true });
+    await writeFile(join(libSkill, 'SKILL.md'), '---\nname: lib-helper\ndescription: Helps with the lib folder\n---\n\nUse the lib folder.\n');
+    const project = await kap.rest.post<{ id: string; root: string }>('/api/v1/workspaces', { root: app, idempotency_key: 'resume-added-folder' });
+    const session = await kap.rest.post<{ id: string }>('/api/v1/sessions', { metadata: { cwd: project.root }, workspace_id: project.id });
+    model.script(say('first answer'), say('second answer'));
+    await kap.prompt(session.id, 'one');
+    await kap.waitIdle(session.id);
+
+    await kap.restart();
+    await kap.rest.patch(`/api/v1/workspaces/${project.id}`, { additional_dirs: [lib] });
+    await kap.prompt(session.id, 'two');
+    await kap.waitIdle(session.id);
+
+    const libRoot = await realpath(join(lib, '.agents', 'skills'));
+    expect(model.request(0).view.system).not.toContain(libRoot);
+    const reminders = model.request(1).remindersSinceReply;
+    const skillListings = reminders.filter((text) => text.includes('The skill catalog changed'));
+    const dirChanges = reminders.filter((text) => text.includes('Project directory configuration changed.'));
+    expect(skillListings).toHaveLength(1);
+    expect(dirChanges).toHaveLength(1);
+    expect(skillListings[0]).toContain('- lib-helper: Helps with the lib folder');
+    expect(skillListings[0]).toContain(`- \`${libRoot}\``);
+    expect(dirChanges[0]).toContain(`Added directories: ${await realpath(lib)}.`);
+  });
+
   test('routes subagent requests to their own lane', async ({ kap, model }) => {
     model.script(agent({ prompt: 'inspect the workspace', description: 'scout' }), say('summary done'));
     model.lane('subagent').script(say('subagent findings'));

@@ -96,13 +96,15 @@ Kimi 专属用户级 Skill 目录会随 `KIMI_CODE_HOME` 移动，隔离数据�
 - `.kimi-code/skills/`
 - `.agents/skills/`
 
-当工作区包含多个已配置的源目录时，Kimi Code CLI 会按上述项目根规则发现每个源目录的项目级 Skills，并合并到同一个 Skill 列表中。同名 Skill 会作为不同变体全部保留。仅按名称调用时，仍优先使用主目录，其后按工作区中的目录顺序确定默认项；菜单会显示各来源目录的最后一级名称，便于选择指定变体。无所属目录的 Skill 会在右侧显示「全局」，内置 Skill 则显示「内置」。斜杠补全中，普通命令位于前面，所有 Skill 连续归入同一个 "Skills" 分组。任意源目录中的 Skill 发生变化时，列表都会自动刷新。仅当前会话临时添加的目录不参与合并；如需使用其中的 Skills，请将该目录记住到工作区。
+当工作区包含多个已配置的源目录时，Kimi Code CLI 会按上述项目根规则发现每个源目录的项目级 Skills，并合并到同一个 Skill 列表中。源目录位于某个 Git 仓库的子目录时，同样按该仓库的根目录查找，不读取子目录自身的 `.kimi-code/skills/` 或 `.agents/skills/`。同名 Skill 会作为不同变体全部保留。仅按名称调用时，仍优先使用主目录，其后按工作区中的目录顺序确定默认项；菜单会显示各来源目录的最后一级名称，便于选择指定变体。无所属目录的 Skill 会在右侧显示「全局」，内置 Skill 则显示「内置」。斜杠补全中，普通命令位于前面，所有 Skill 连续归入同一个 "Skills" 分组。任意源目录中的 Skill 发生变化时，列表都会自动刷新。仅当前会话临时添加的目录不参与合并；如需使用其中的 Skills，请将该目录记住到工作区。
 
 **额外目录**：通过 `config.toml` 顶层的 `extra_skill_dirs` 声明：
 
 ```toml
 extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
 ```
+
+`~`、`~/` 开头的路径和绝对路径只指向一个目录；相对路径按项目根解析。工作区包含多个源目录时，相对路径会按主目录、当前工作目录和每个源目录的项目根各解析一次，同名 Skill 以主目录为准。
 
 **内置 Skills** 随 CLI 一起分发，优先级最低，为常见任务提供开箱即用的工作流，例如配置 MCP server、定制 TUI 主题和编辑配置文件。完整列表详见[内置 Skill 命令](../reference/slash-commands.md#内置-skill-命令)。其中介绍 Kimi Code 自身的部分可以通过顶层 [`builtin_product_skills`](../configuration/config-files.md#顶层字段) 字段关闭。
 
