@@ -679,15 +679,14 @@ describe('AgentTowerService', () => {
       await vi.waitFor(async () => {
         const state = await store.load();
         expect(state.roster.agents[0]?.deathStatus).toBe('failed');
-      });
-      const state = await store.load();
-      expect(state.roster.agents[0]?.diedAt).toBeDefined();
-      expect(state.roster.agents[0]?.deathReason).toBe('provider blew up');
+        expect(state.roster.agents[0]?.diedAt).toBeDefined();
+        expect(state.roster.agents[0]?.deathReason).toBe('provider blew up');
 
-      const activityLog = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
-      expect(activityLog).toContain(' died ');
-      expect(activityLog).toContain('session=session-main');
-      expect(activityLog).toContain(`pid=${String(process.pid)}`);
+        const activityLog = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+        expect(activityLog).toContain(' died ');
+        expect(activityLog).toContain('session=session-main');
+        expect(activityLog).toContain(`pid=${String(process.pid)}`);
+      });
 
       const notice = infos.find((entry) => entry.msg === 'tower: marking roster agent died');
       expect(notice?.payload).toMatchObject({
@@ -805,13 +804,12 @@ describe('AgentTowerService', () => {
       await vi.waitFor(async () => {
         const state = await store.load();
         expect(state.roster.agents[0]?.diedAt).toBeUndefined();
+        expect(state.roster.agents[0]?.deathStatus).toBeUndefined();
+        const log = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+        expect(log).toContain('revived');
+        expect(log).toContain('session=session-main');
+        expect(log).toContain(`pid=${String(process.pid)}`);
       });
-      const state = await store.load();
-      expect(state.roster.agents[0]?.deathStatus).toBeUndefined();
-      const log = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
-      expect(log).toContain('revived');
-      expect(log).toContain('session=session-main');
-      expect(log).toContain(`pid=${String(process.pid)}`);
 
       const notice = infos.find((entry) => entry.msg === 'tower: clearing roster agent death mark');
       expect(notice?.payload).toMatchObject({
