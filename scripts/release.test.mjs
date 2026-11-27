@@ -6,6 +6,8 @@ import { delimiter, join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { parse } from 'yaml';
+
 const desktop = true;
 const releaseScript = fileURLToPath(new URL('./release.mjs', import.meta.url));
 const versionScript = fileURLToPath(new URL('./version-release.mjs', import.meta.url));
@@ -278,6 +280,17 @@ void test('release workflow runs candidate tests directly and supports manual SH
   const ci = readFileSync(fileURLToPath(new URL('../.github/workflows/ci.yml', import.meta.url)), 'utf8');
   assert.doesNotMatch(ci, /branches:\n\s+- 'release\/\*'/);
   assert.match(ci, /pull_request:\n\s+branches-ignore:\n\s+- 'release\/\*'/);
+});
+
+void test('desktop canary fetches the main base ref when resolving versions on main', () => {
+  const workflow = parse(readFileSync(fileURLToPath(new URL('../.github/workflows/desktop-build.yml', import.meta.url)), 'utf8'));
+  const steps = workflow.jobs['matrix-source'].steps;
+  const fetchBase = steps.find((step) => step.name === 'Fetch Changesets base branch');
+  assert.ok(fetchBase);
+  assert.equal(fetchBase.run, 'git fetch --no-tags origin main:refs/heads/main');
+  assert.match(fetchBase.if, /startsWith\(github\.ref, 'refs\/heads\/release\/'\)/);
+  assert.match(fetchBase.if, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(fetchBase.if, /inputs\.canary/);
 });
 
 test('version command records the consumed changesets and changed package versions', () => {
