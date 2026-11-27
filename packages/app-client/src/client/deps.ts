@@ -18,6 +18,7 @@ export type SessionCreatedSource =
 export interface KimiClientDeps {
   api: () => KimiWebApi;
   t: Translator;
+  locale?: () => string;
   traceClientEvent?: (label: string, detail?: unknown) => void;
   traceKeyEvent?: (event: string, info?: Record<string, unknown>) => void;
   sessionExportTraceToJsonl?: () => string;
@@ -34,6 +35,7 @@ const defaultDeps: KimiClientDeps = {
     throw new Error('[@moonshot-ai/app-client] client deps not installed — call setKimiClientDeps() at app bootstrap');
   },
   t: (key) => key,
+  locale: () => 'en',
 };
 
 const cell = ((globalThis as { __kimiAppClientDeps?: { current: KimiClientDeps } }).__kimiAppClientDeps ??= {
@@ -75,6 +77,10 @@ export function getDeviceApi(hostId: string | undefined): KimiWebApi {
 
 export function t(key: string, params?: Record<string, unknown>): string {
   return cell.current.t(key, params);
+}
+
+export function clientLocale(): string {
+  return cell.current.locale?.() ?? 'en';
 }
 
 export function traceClientEvent(label: string, detail?: unknown): void {

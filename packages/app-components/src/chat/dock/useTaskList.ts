@@ -1,4 +1,4 @@
-import { inject } from 'vue';
+import { inject, toValue, type MaybeRefOrGetter } from 'vue';
 import type { TaskItem } from '@moonshot-ai/app-core/client/types';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { ModelDisplayKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
@@ -13,7 +13,7 @@ export interface TaskListEmits {
   cancel: [taskId: string];
 }
 
-export function useTaskList(props: TaskListProps, t: (key: string) => string) {
+export function useTaskList(props: TaskListProps, t: (key: string) => string, locale: MaybeRefOrGetter<string> = 'en') {
   const panelApi = inject(panelApiKey, undefined);
   const modelDisplay = inject(ModelDisplayKey, undefined);
   const subagentEffort = inject(SubagentEffortKey, undefined);
@@ -31,11 +31,7 @@ export function useTaskList(props: TaskListProps, t: (key: string) => string) {
 
   function durationLabel(task: TaskItem): string {
     if (typeof task.durationMs !== 'number') return '';
-    return formatDuration(task.durationMs, {
-      h: t('status.timeUnitHour'),
-      m: t('status.timeUnitMinute'),
-      s: t('status.timeUnitSecond'),
-    });
+    return formatDuration(task.durationMs, toValue(locale));
   }
 
   return { panelApi, modelDisplay, subagentEffort, isCancelling, stateLabel, durationLabel };

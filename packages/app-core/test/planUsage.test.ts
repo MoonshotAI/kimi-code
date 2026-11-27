@@ -19,14 +19,21 @@ const zhStrings: Record<string, string> = {
   'settings.planUsage.monthlyLimit': '每月上限',
   'settings.planUsage.resetsIn': '{duration}后重置',
   'settings.planUsage.resetDone': '已重置',
-  'settings.planUsage.durationDay': '{n} 天',
-  'settings.planUsage.durationHour': '{n} 小时',
-  'settings.planUsage.durationMinute': '{n} 分钟',
-  'settings.planUsage.durationSecond': '{n} 秒',
+};
+
+const enStrings: Record<string, string> = {
+  'settings.planUsage.resetsIn': 'resets in {duration}',
+  'settings.planUsage.resetDone': 'reset',
 };
 
 function t(key: string, params?: Record<string, unknown>): string {
   let out = zhStrings[key] ?? key;
+  for (const [k, v] of Object.entries(params ?? {})) out = out.replace(`{${k}}`, String(v));
+  return out;
+}
+
+function tEn(key: string, params?: Record<string, unknown>): string {
+  let out = enStrings[key] ?? key;
   for (const [k, v] of Object.entries(params ?? {})) out = out.replace(`{${k}}`, String(v));
   return out;
 }
@@ -113,16 +120,23 @@ describe('formatResetAt', () => {
     return new Date(NOW + ms).toISOString();
   }
 
-  it('breaks the remaining time down like the TUI duration format', () => {
-    expect(formatResetAt(after((5 * 86400 + 12 * 3600 + 57 * 60) * 1000), t)).toBe('5 天 12 小时 57 分钟后重置');
-    expect(formatResetAt(after((3 * 3600 + 8 * 60) * 1000), t)).toBe('3 小时 8 分钟后重置');
-    expect(formatResetAt(after(30 * 60 * 1000), t)).toBe('30 分钟后重置');
-    expect(formatResetAt(after(45 * 1000), t)).toBe('45 秒后重置');
+  it('formats remaining time with Intl.DurationFormat, omitting zero units and capping day-scale spans at two units', () => {
+    expect(formatResetAt(after((5 * 86400 + 12 * 3600 + 57 * 60) * 1000), t, 'zh')).toBe('5 天 12 小时后重置');
+    expect(formatResetAt(after((3 * 86400 + 5 * 60) * 1000), t, 'zh')).toBe('3 天 5 分钟后重置');
+    expect(formatResetAt(after((1 * 86400 + 2 * 3600 + 10 * 60) * 1000), t, 'zh')).toBe('1 天 2 小时后重置');
+    expect(formatResetAt(after((3 * 3600 + 8 * 60) * 1000), t, 'zh')).toBe('3 小时 8 分钟后重置');
+    expect(formatResetAt(after(30 * 60 * 1000), t, 'zh')).toBe('30 分钟后重置');
+    expect(formatResetAt(after(45 * 1000), t, 'zh')).toBe('45 秒后重置');
+
+    expect(formatResetAt(after((5 * 86400 + 12 * 3600 + 57 * 60) * 1000), tEn, 'en')).toBe('resets in 5d 12h');
+    expect(formatResetAt(after((3 * 86400 + 5 * 60) * 1000), tEn, 'en')).toBe('resets in 3d 5m');
+    expect(formatResetAt(after((1 * 86400 + 2 * 3600 + 10 * 60) * 1000), tEn, 'en')).toBe('resets in 1d 2h');
+    expect(formatResetAt(after(45 * 1000), tEn, 'en')).toBe('resets in 45s');
   });
 
   it('reads an already-passed timestamp as reset', () => {
-    expect(formatResetAt(after(-1000), t)).toBe('已重置');
-    expect(formatResetAt(after(0), t)).toBe('已重置');
+    expect(formatResetAt(after(-1000), t, 'zh')).toBe('已重置');
+    expect(formatResetAt(after(0), t, 'zh')).toBe('已重置');
   });
 
   it('returns an empty string for unparseable timestamps', () => {

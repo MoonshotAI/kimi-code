@@ -29,6 +29,7 @@ beforeAll(() => {
       throw new Error('api is not used by these tests');
     },
     t: (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params)),
+    locale: () => i18n.global.locale.value,
   });
 });
 
@@ -63,9 +64,16 @@ describe('summarizeActivity', () => {
     expect(render(s.clauses)).toBe('读取了 1 个文件');
   });
 
-  it('appends the duration faint when given', () => {
+  it('appends the duration faint when given and updates reactively when the locale changes', () => {
     const s = summarizeActivity([tool('read')], { durationMs: 26_800 });
-    expect(s.clauses.at(-1)?.fragments).toEqual([{ text: '26s', tone: 'faint' }]);
+    expect(s.clauses.at(-1)?.fragments).toEqual([{ text: '26 秒', tone: 'faint' }]);
+    i18n.global.locale.value = 'en';
+    try {
+      const en = summarizeActivity([tool('read')], { durationMs: 26_800 });
+      expect(en.clauses.at(-1)?.fragments).toEqual([{ text: '26s', tone: 'faint' }]);
+    } finally {
+      i18n.global.locale.value = 'zh';
+    }
   });
 
   it('omits a sub-second duration', () => {
@@ -88,7 +96,7 @@ describe('summarizeActivity', () => {
       [tool('read'), tool('read'), tool('bash', { status: 'error' }), thinking],
       { durationMs: 1500 },
     );
-    expect(s.plain).toBe('读取了 2 个文件 · 运行了 1 条命令（1 失败） · 1s');
+    expect(s.plain).toBe('读取了 2 个文件 · 运行了 1 条命令（1 失败） · 1 秒');
   });
 });
 

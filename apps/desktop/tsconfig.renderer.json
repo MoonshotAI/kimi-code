@@ -8,7 +8,7 @@
     // component imports (the `@moonshot-ai/vite-preset/icons` ambient only
     // covers `~icons/*?raw`). Most strict flags (`strict`,
     // `noUncheckedIndexedAccess`, …) are inherited from tsconfig.base.json.
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "ES2025.Intl", "DOM", "DOM.Iterable"],
     "types": ["vite/client", "unplugin-icons/types/vue"],
     "noPropertyAccessFromIndexSignature": false,
     "noEmit": true

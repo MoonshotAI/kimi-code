@@ -19,7 +19,7 @@ const props = withDefaults(
 );
 
 const open = useHistoryState('thinking:open', false);
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 watch(
   () => props.streaming,
@@ -45,10 +45,10 @@ watch(
 const elapsedLabel = computed(() => {
   if (props.streaming && props.startedAt) {
     const startMs = Date.parse(props.startedAt);
-    return Number.isFinite(startMs) ? formatDuration(nowMs.value - startMs) : '';
+    return Number.isFinite(startMs) ? formatDuration(nowMs.value - startMs, locale.value) : '';
   }
   if (props.durationMs !== undefined) {
-    const span = formatDuration(props.durationMs);
+    const span = formatDuration(props.durationMs, locale.value);
     return span ? `· ${span}` : '';
   }
   return '';

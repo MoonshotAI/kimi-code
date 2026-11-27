@@ -53,7 +53,7 @@ const emit = defineEmits<{
 
 const panelApi = inject(panelApiKey);
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const streaming = computed(() => props.live && !props.parked);
 const visibleItems = computed(() => props.items.filter(block => block.kind !== 'text' || block.text));
@@ -162,7 +162,7 @@ function toggle(): void {
 }
 
 const label = computed(() => {
-  const duration = spanMs.value === undefined ? '' : formatDuration(spanMs.value);
+  const duration = spanMs.value === undefined ? '' : formatDuration(spanMs.value, locale.value);
   return duration ? t('conversation.fold.worked', { duration }) : t('conversation.fold.workedUnknown');
 });
 

@@ -22,7 +22,7 @@ import { useHistoryState } from './historyState';
 
 defineProps<{ items: TaskNotification[] }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const openKeys = useHistoryState('notification:open', new Set<string>());
 
 function keyOf(n: TaskNotification, index: number): string {
@@ -94,7 +94,7 @@ function wallTimeMsOf(n: TaskNotification): number | undefined {
 }
 
 function durationText(n: TaskNotification): string {
-  return formatNotificationDuration(wallTimeMsOf(n));
+  return formatNotificationDuration(wallTimeMsOf(n), locale.value);
 }
 
 function customTitle(n: TaskNotification): string {

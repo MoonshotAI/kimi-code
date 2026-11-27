@@ -125,7 +125,7 @@ describe('background question answer receipts', () => {
       'Run gh auth login device flow and wait for browser authorization',
     );
     expect(host.querySelector('.tl-faint')?.textContent).toBe('已完成');
-    expect(host.querySelector('.tl-chip')?.textContent).toBe('47s');
+    expect(host.querySelector('.tl-chip')?.textContent).toBe('47 秒');
     expect(host.querySelector('.ntn-sr-only')?.textContent).toBe('由后台发送（Bash）');
     expect(host.textContent).not.toContain('Wall time:');
     expect(host.textContent).not.toContain('原始 payload');
@@ -173,6 +173,8 @@ describe('background question answer receipts', () => {
     expect(statuses[0]?.textContent).toContain('From background (Bash)');
     expect(statuses[0]?.textContent).toContain('Completed');
     expect(statuses[0]?.querySelector('.tl-dim')?.textContent).toBe('Long job');
+    expect(statuses[0]?.querySelector('.tl-chip')?.textContent).toBe('2s');
+    expect(statuses[1]?.querySelector('.tl-chip')?.textContent).toBe('12s');
 
     expect(statuses[1]?.querySelector('[data-icon="robot"]')).not.toBeNull();
     expect(statuses[1]?.querySelector('.tl-name')?.textContent).toBe('Background Agent');

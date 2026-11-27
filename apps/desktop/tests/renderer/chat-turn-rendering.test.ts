@@ -67,18 +67,25 @@ describe('formatTokens', () => {
 
 describe('formatDuration', () => {
   it('floors to whole seconds, hides sub-second spans, and drops trailing zero units', () => {
-    expect(formatDuration(0)).toBe('');
-    expect(formatDuration(999)).toBe('');
-    expect(formatDuration(1000)).toBe('1s');
-    expect(formatDuration(14_000)).toBe('14s');
-    expect(formatDuration(59_999)).toBe('59s');
-    expect(formatDuration(60_000)).toBe('1m');
-    expect(formatDuration(90_500)).toBe('1m30s');
-    expect(formatDuration(297_000)).toBe('4m57s');
-    expect(formatDuration(359_676)).toBe('5m59s');
-    expect(formatDuration(3_600_000)).toBe('1h');
-    expect(formatDuration(3_899_999)).toBe('1h4m');
-    expect(formatDuration(3_900_000)).toBe('1h5m');
+    expect(formatDuration(0, 'en')).toBe('');
+    expect(formatDuration(999, 'en')).toBe('');
+    expect(formatDuration(1000, 'en')).toBe('1s');
+    expect(formatDuration(14_000, 'en')).toBe('14s');
+    expect(formatDuration(59_999, 'en')).toBe('59s');
+    expect(formatDuration(60_000, 'en')).toBe('1m');
+    expect(formatDuration(90_500, 'en')).toBe('1m 30s');
+    expect(formatDuration(297_000, 'en')).toBe('4m 57s');
+    expect(formatDuration(359_676, 'en')).toBe('5m 59s');
+    expect(formatDuration(3_600_000, 'en')).toBe('1h');
+    expect(formatDuration(3_899_999, 'en')).toBe('1h 4m');
+    expect(formatDuration(3_900_000, 'en')).toBe('1h 5m');
+  });
+
+  it('carries >=24h into days and localizes Chinese units with spaces', () => {
+    expect(formatDuration(2_877_480_000, 'en')).toBe('33d 7h');
+    expect(formatDuration(2_877_480_000, 'zh')).toBe('33 天 7 小时');
+    expect(formatDuration(297_000, 'zh')).toBe('4 分钟 57 秒');
+    expect(formatDuration(3_900_000, 'zh')).toBe('1 小时 5 分钟');
   });
 });
 

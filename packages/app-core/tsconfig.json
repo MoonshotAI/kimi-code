@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "ES2025.Intl", "DOM", "DOM.Iterable"],
     "types": [],
     // Match the consumers: both apps compile package source with
     // noPropertyAccessFromIndexSignature off (web's tsconfig is standalone and

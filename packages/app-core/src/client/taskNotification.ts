@@ -57,11 +57,11 @@ export function splitNotificationWallTime(body: string): { wallTimeMs?: number; 
   };
 }
 
-export function formatNotificationDuration(ms: number | undefined): string {
+export function formatNotificationDuration(ms: number | undefined, locale: string = 'en'): string {
   if (ms === undefined || !Number.isFinite(ms) || ms < 0) return '';
-  if (ms === 0) return '0s';
+  if (ms === 0) return formatDuration(0, locale, { secondsDisplay: 'always' });
   if (ms < 1000) return '<1s';
-  return formatDuration(ms);
+  return formatDuration(ms, locale);
 }
 
 export function compactNotificationOutputPath(path: string): string {
