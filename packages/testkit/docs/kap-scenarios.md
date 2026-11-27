@@ -92,5 +92,9 @@ test('取消正在准备的回复后，同一会话仍能继续', async ({ kap, 
   - 客户端最后收到的 `session` 帧，在 `activity`、`pending_interaction`、`last_turn_outcome`、`archived` 上和 REST 不一致。帧里没有 `pending_interaction`（例如 `archived` 帧）时按 `none` 算。
   - 客户端收到某条交互的 `pending` 帧之后、结束帧之前，又收到同一会话说没有待处理交互的 `session` 帧。相信这一帧的客户端会把还开着的审批或提问清掉。客户端不再接收这个会话之后（主动取消订阅，或它订阅的最后一个子 agent 结束了），以及收到会话的 `archived`、`deleted` 帧之后，不再按之前的交互判断。
 
-  REST 已经不认识的会话和 agent（HTTP 404 或 `404xx` 错误码），例如删掉的会话、关掉的 side agent，直接跳过。自己用 `startKap()` 时可以直接调用它。直接调用 `kap` 夹具函数的测试，要把测试上下文和模型一起传进去：`fixtures.kap({ ...context, model }, run)`。[协议不变量](../src/kap/invariants.ts) · [接线自测](../../../tests/scenarios/verification.test.ts)
+  REST 已经不认识的会话和 agent（HTTP 404 或 `404xx` 错误码），例如删掉的会话、关掉的 side agent，直接跳过。
+
+  随后夹具调用 `verifyKapSchemas(kap)`，用 Ajv 按被测服务自己发布的 `/openapi.json` 和 `/asyncapi.json` 校验：用例和不变量检查通过 `kap.rest` 请求到的每个 `/api/` 路由的 JSON 响应，以及 `kap` 的客户端收到的每一帧。响应的路由、方法或 HTTP 状态码没有声明，或者响应体不合声明的 schema，就算违规；帧的 `type` 不是服务端消息、帧不合该消息的 payload，或者帧不是 JSON 对象，也算违规。同一类问题只列一次，附上出现次数和第一个违规值。发布的 schema 由服务端的 zod schema 生成，zod 用 refine 表达的约束（例如 ISO 时间格式）不在检查范围内。[帧与响应的 schema 检查](../src/kap/schemas.ts)
+
+  自己用 `startKap()` 时可以直接调用这两个检查。直接调用 `kap` 夹具函数的测试，要把测试上下文和模型一起传进去：`fixtures.kap({ ...context, model }, run)`。[协议不变量](../src/kap/invariants.ts) · [接线自测](../../../tests/scenarios/verification.test.ts)
 - **定位失败时**，先看失败输出里的请求编号、通道、状态和步骤。若模型已响应但客户端卡住，再结合最近的 WebSocket 帧和服务日志判断停在哪个回合。夹具各保留最近 32 条帧与日志摘要，客户端连接后才有帧可看。`scenarioFixtures()` 默认采集服务日志，自定义 logger 或 logLevel 时，夹具会提示其诊断日志不可用。[失败诊断与快照错误示例](../../../tests/scenarios/verification.test.ts)
