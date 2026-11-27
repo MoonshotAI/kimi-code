@@ -151,6 +151,7 @@ describe('SessionHoverCard', () => {
 
     expect(textOf(card)).toContain(zh('worktreeSession.createdFrom', { ref: 'origin/main' }));
     expect(card.querySelector('[data-worktree-icon="git-fork-cloud"]')).not.toBeNull();
+    expect(within(card).getByLabel(zh('worktreeSession.remoteBase'))).toBeTruthy();
   });
 
   it('lists every directory in order and marks only the first as main', async () => {

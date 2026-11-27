@@ -1,6 +1,7 @@
 export default {
   mainDirectory: '主目录',
   createdFrom: '基于 {ref} 创建',
+  remoteBase: '基于最新远端代码创建',
   worktreeMissing: '工作树目录不存在',
   directoryMissing: '目录不存在',
   notPushed: '未推送',

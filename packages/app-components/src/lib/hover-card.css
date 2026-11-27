@@ -1,13 +1,3 @@
-.hover-card-surface {
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-lg);
-  background: var(--color-menu-bg, var(--color-surface-raised));
-  box-shadow: var(--shadow-menu, var(--shadow-sm));
-  backdrop-filter: var(--p-menu-backdrop, blur(20px));
-  color: var(--color-text);
-  font-family: var(--font-ui);
-}
-
 .hover-card-title {
   min-width: 0;
   overflow: hidden;

@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import type { Session } from '@moonshot-ai/app-core/client/types';
 import { basename, summarizeGitStatus } from '@moonshot-ai/app-core/lib';
 import { sessionInfoStore, sessionsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
-import { Badge, Icon } from '@moonshot-ai/app-ui';
+import { Badge, Icon, Menu } from '@moonshot-ai/app-ui';
 import SessionPullRequestState from './SessionPullRequestState.vue';
 import SessionWorktreeIcon from './SessionWorktreeIcon.vue';
 import { pullRequestIcon, sessionWorktreeDisplay, shortenHomePath } from './sessionDirectoryDisplay';
@@ -78,7 +78,13 @@ const directories = computed<HoverDirectory[]>(() => {
 </script>
 
 <template>
-  <div class="session-hover-card hover-card-surface" data-session-hover-card role="dialog" :aria-label="session.title">
+  <Menu
+    class="session-hover-card ui-menu-floating"
+    data-session-hover-card
+    role="dialog"
+    :register="false"
+    :aria-label="session.title"
+  >
     <div class="shc-title hover-card-title">{{ session.title }}</div>
     <div v-for="directory in directories" :key="directory.path" class="shc-directory" :data-directory="directory.path">
       <div class="shc-line shc-heading">
@@ -93,7 +99,11 @@ const directories = computed<HoverDirectory[]>(() => {
         <span>{{ t(directory.worktree ? 'worktreeSession.worktreeMissing' : 'worktreeSession.directoryMissing') }}</span>
       </div>
       <div v-else-if="directory.base" class="shc-line shc-created">
-        <SessionWorktreeIcon size="sm" :remote="directory.base.remote" />
+        <SessionWorktreeIcon
+          size="sm"
+          :remote="directory.base.remote"
+          :label="directory.base.remote ? t('worktreeSession.remoteBase') : undefined"
+        />
         <span>{{ t('worktreeSession.createdFrom', { ref: directory.base.ref }) }}</span>
       </div>
       <div v-if="directory.branch" class="shc-line shc-branch-line">
@@ -113,20 +123,21 @@ const directories = computed<HoverDirectory[]>(() => {
         <SessionPullRequestState :state="directory.pullRequest.state" />
       </button>
     </div>
-  </div>
+  </Menu>
 </template>
 
 <style scoped src="../lib/hover-card.css"></style>
 <style scoped>
-.session-hover-card {
-  position: fixed;
-  z-index: var(--z-dropdown);
+.session-hover-card.ui-menu {
+  display: block;
   box-sizing: border-box;
   width: max-content;
   min-width: 240px;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: var(--space-3) var(--space-4);
+  color: var(--color-text);
+  font-family: var(--font-ui);
   user-select: none;
 }
 .shc-title {

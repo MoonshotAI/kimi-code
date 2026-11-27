@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Button, Icon } from '@moonshot-ai/app-ui';
+import { Button, Icon, Menu } from '@moonshot-ai/app-ui';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { useAnchoredMenu } from '../composables/useAnchoredMenu';
 import WorktreeOutput from './WorktreeOutput.vue';
@@ -25,15 +25,11 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const popover = ref<{ el: HTMLElement | null } | null>(null);
+const popover = ref<InstanceType<typeof Menu> | null>(null);
 const { open, menuStyle, toggleAnchored, close } = useAnchoredMenu(popover);
 const hasOutput = computed(() => props.output.trim().length > 0);
 const copyState = ref<'idle' | 'copied' | 'failed'>('idle');
 let copyTimer: ReturnType<typeof setTimeout> | undefined;
-
-function setPopover(element: unknown): void {
-  popover.value = element instanceof HTMLElement ? { el: element } : null;
-}
 
 function toggle(event: MouseEvent): void {
   void toggleAnchored(event, 'right');
@@ -73,12 +69,13 @@ defineExpose({ close });
     <Icon name="alert-triangle" size="sm" />
   </button>
   <Teleport to="body">
-    <Transition name="sip-pop">
-      <div
+    <Transition name="ui-menu-pop">
+      <Menu
         v-if="open"
-        :ref="setPopover"
-        class="sip hover-card-surface"
+        ref="popover"
+        class="sip ui-menu-floating"
         role="dialog"
+        :register="false"
         :aria-label="title"
         :style="menuStyle"
         data-session-info-popover
@@ -95,12 +92,11 @@ defineExpose({ close });
             {{ copyLabel }}
           </Button>
         </div>
-      </div>
+      </Menu>
     </Transition>
   </Teleport>
 </template>
 
-<style scoped src="../lib/hover-card.css"></style>
 <style scoped>
 .sip-trigger {
   flex: none;
@@ -119,15 +115,14 @@ defineExpose({ close });
 .sip-trigger:hover,
 .sip-trigger.open { box-shadow: inset 0 0 0 var(--p-hairline) var(--color-warning-bd); }
 .sip-trigger:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
-.sip {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
+.sip.ui-menu {
+  display: block;
   box-sizing: border-box;
   width: 264px;
   max-width: calc(100vw - var(--space-4));
   padding: var(--space-3);
+  color: var(--color-text);
+  font-family: var(--font-ui);
 }
 .sip-title { color: var(--color-text-strong); font-size: var(--text-sm); font-weight: var(--weight-medium); line-height: var(--leading-tight); }
 .sip-body { margin: var(--space-1) 0 0; color: var(--color-text-muted); font-size: var(--text-xs); line-height: var(--leading-normal); }
@@ -135,20 +130,4 @@ defineExpose({ close });
   margin-top: var(--space-2);
 }
 .sip-actions { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
-.sip-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.sip-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.sip-pop-enter-from,
-.sip-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
-}
 </style>

@@ -1,6 +1,7 @@
 export default {
   mainDirectory: 'Main Directory',
   createdFrom: 'Created from {ref}',
+  remoteBase: 'Created from the latest remote code',
   worktreeMissing: 'Worktree directory does not exist',
   directoryMissing: 'Directory does not exist',
   notPushed: 'Not pushed',
