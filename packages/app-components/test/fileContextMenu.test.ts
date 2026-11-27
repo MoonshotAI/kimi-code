@@ -131,6 +131,8 @@ it('resolveFileMenuPath returns native Windows paths without changing POSIX path
   expect(resolveFileMenuPath('D:\\work/notes.md')).toBe('D:\\work\\notes.md');
   expect(resolveFileMenuPath('project/notes.md', 'C:\\work')).toBe('C:\\work\\project\\notes.md');
   expect(resolveFileMenuPath('project/notes.md', '//server/share')).toBe('\\\\server\\share\\project\\notes.md');
+  expect(resolveFileMenuPath('/docs/notes.md', '//server/share/repo')).toBe('\\\\server\\share\\docs\\notes.md');
+  expect(resolveFileMenuPath('/docs/notes.md', '\\\\server\\share\\repo')).toBe('\\\\server\\share\\docs\\notes.md');
   expect(resolveFileMenuPath('/tmp/a.ts', '/repo')).toBe('/tmp/a.ts');
   expect(resolveFileMenuPath('src/a.ts', '/repo')).toBe('/repo/src/a.ts');
 });

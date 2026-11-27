@@ -1,5 +1,6 @@
 
 import { computed, watch, type ComputedRef, type Ref } from 'vue';
+import { nativePath } from '@moonshot-ai/app-core/lib';
 
 export interface JumpListWorkspaceEntry {
   name: string;
@@ -79,7 +80,7 @@ export function useJumpList(
       if (!client.initialized.value) return null;
       return client.workspacesView.value
         .slice(0, MAX_ENTRIES)
-        .map((workspace) => ({ name: workspace.name, root: workspace.root }));
+        .map((workspace) => ({ name: workspace.name, root: nativePath(workspace.root) }));
     });
     createJumpListReporter({ setJumpList }, entries);
   }

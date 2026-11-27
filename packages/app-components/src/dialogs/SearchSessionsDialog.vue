@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceView } from '@moonshot-ai/app-core/client/types';
-import { highlightHtml, snippet } from '@moonshot-ai/app-core/lib';
+import { highlightHtml, pathSearchKey, snippet } from '@moonshot-ai/app-core/lib';
 import { Dialog, EmptyState, Icon, Input, Kbd, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
@@ -61,7 +61,7 @@ const items = computed<Item[]>(() => {
   } else {
     for (const w of props.workspaces) {
       const inName = w.name.toLowerCase().includes(q);
-      const inPath = w.shortPath.toLowerCase().includes(q);
+      const inPath = pathSearchKey(w.shortPath).includes(pathSearchKey(q));
       if (!inName && !inPath) continue;
       workspaces.push({ kind: 'workspace', key: `ws:${w.id}`, hit: { workspace: w, inName, inPath } });
       if (workspaces.length >= WORKSPACE_RESULT_CAP) break;

@@ -438,6 +438,40 @@ describe('WorkspaceEditDialog shared behavior', () => {
       projectConfigDirs: ['/a/extra'],
     });
   });
+
+  it('treats a picked directory as listed when it differs only in separators, letter case or a trailing slash', async () => {
+    const pick = vi.fn(async () => ['C:\\repo\\extra', 'c:\\repo\\EXTRA\\', 'C:\\repo\\new']);
+    const { submit } = mountDialog({ mode: 'edit', initialName: 'repo', initialDirs: ['C:/repo', 'C:/repo/extra'], pick });
+    await nextTick();
+
+    document.querySelector<HTMLButtonElement>('.we-add-directory')!.click();
+    await vi.waitFor(() => expect(pick).toHaveBeenCalledOnce());
+    await nextTick();
+    expect(dirRows()).toHaveLength(3);
+    submitButton().click();
+    expect(submit).toHaveBeenCalledWith({
+      name: 'repo',
+      dirs: ['C:/repo', 'C:/repo/extra', 'C:\\repo\\new'],
+      projectConfigDirs: [],
+    });
+  });
+
+  it('imports only the project config directories that are not listed under another separator form', async () => {
+    const { submit } = mountDialog({
+      initialDirs: ['C:/repo', 'C:/repo/shared'],
+      importProjectConfig: async () => ['C:\\repo\\shared', 'C:\\repo\\docs'],
+    });
+    await nextTick();
+
+    document.querySelector<HTMLButtonElement>('.we-dirs-actions .ui-button')!.click();
+    await vi.waitFor(() => expect(dirRows()).toHaveLength(3));
+    submitButton().click();
+    expect(submit).toHaveBeenCalledWith({
+      name: 'repo',
+      dirs: ['C:/repo', 'C:/repo/shared', 'C:\\repo\\docs'],
+      projectConfigDirs: ['C:\\repo\\docs'],
+    });
+  });
 });
 
 
