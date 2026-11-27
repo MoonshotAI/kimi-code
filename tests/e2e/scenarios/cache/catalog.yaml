@@ -13,14 +13,17 @@ entries:
     operation: Start a new session, then go back to the earlier session and continue it
     promise: keeps
     coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/going-back-to-an-earlier-session-keeps-its-prefix.spec.ts
       - kind: implicit
         test: tests/e2e/scenarios/approval/new-session-asks-again.spec.ts
-    gap: Going back to the earlier session needs an openSession action on every surface.
 
   - id: A3
     operation: Compact the context by hand, then send the next message
     promise: keeps
     coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/manual-compaction-keeps-the-prefix-across-a-restart.spec.ts
       - kind: implicit
         test: tests/e2e/scenarios/conversation/compact-builds-the-next-turn-from-the-summary.spec.ts
       - kind: kap
@@ -43,7 +46,11 @@ entries:
     break:
       at: history
       reason: the user withdrew the last prompt, so the history ends before it
-    gap: The undo action exists on TUI, Desktop and Web (an ACP editor cannot undo); the scenario is not written yet.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/undo-breaks-only-the-history.spec.ts
+      - kind: implicit
+        test: tests/e2e/scenarios/conversation/undo-puts-the-prompt-back.spec.ts
 
   - id: A6
     operation: Quit the product while a turn is running, open it again and continue
@@ -51,6 +58,45 @@ entries:
     coverage:
       - kind: implicit
         test: tests/e2e/scenarios/conversation/quit-during-turn-keeps-the-prompt.spec.ts
+
+  - id: A7
+    operation: The model service rejects a compaction request as too long, and the product retries it with a shorter history
+    promise: breaks
+    break:
+      at: history
+      reason: the compaction request was too long, so the product retries it without the oldest messages
+    coverage:
+      - kind: engine
+        test: packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts
+        case: auto-compacts over-window context by shrinking after the provider rejects the full history
+      - kind: engine
+        test: packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts
+        case: reduces the compacted prefix and retries when compaction receives plain 413
+
+  - id: A8
+    operation: A tool call ends without running, because a permission rule denies it or the user stops the turn before it starts, then the product restarts and the conversation goes on
+    promise: keeps
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/tool-results-keep-the-prefix-across-a-restart-and-a-reload.spec.ts
+      - kind: implicit
+        test: tests/e2e/scenarios/config/permission-rules-from-the-config-file-apply.spec.ts
+      - kind: engine
+        test: packages/agent-core-v2/test/wire/resume.test.ts
+        case: carries every kind of tool result exactly as the live session sent it
+
+  - id: A9
+    operation: Restart the product or reload the session after tool calls of many kinds returned their results, then send the next message
+    promise: keeps
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/tool-results-keep-the-prefix-across-a-restart-and-a-reload.spec.ts
+      - kind: engine
+        test: packages/agent-core-v2/test/agent/loop/projection.test.ts
+        case: is sent the same after the session is restored as it was live
+      - kind: engine
+        test: packages/agent-core-v2/test/wire/resume.test.ts
+        case: carries every kind of tool result exactly as the live session sent it
 
   - id: B1
     operation: Switch the permission mode between two turns
@@ -66,15 +112,18 @@ entries:
     operation: Turn plan mode on or off between two turns
     promise: keeps
     coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/plan-mode-keeps-the-prefix.spec.ts
       - kind: kap
         test: tests/scenarios/prompt-cache.test.ts
         case: turning plan mode on
-    gap: Needs a plan mode action on every surface.
 
   - id: B3
     operation: Switch to another model with /model, then switch back
     promise: keeps
-    gap: Needs a second model in the scenario config and a model switch action. Each model keeps its own cache, so switching back continues the first model's prefix.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/switching-to-another-model-and-back-keeps-the-prefix.spec.ts
 
   - id: B4
     operation: Change the thinking effort with /effort
@@ -82,7 +131,9 @@ entries:
     break:
       at: header
       reason: the user changed the thinking effort, which is part of the model settings
-    gap: Needs the thinking capability in the scenario config and an effort action. Only the model settings may change; the history must stay as it was.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/thinking-effort-change-breaks-only-the-model-settings.spec.ts
 
   - id: B5
     operation: Hold a whole conversation with every experimental feature on
@@ -102,22 +153,31 @@ entries:
       - kind: kap
         test: tests/scenarios/prompt-cache.test.ts
         case: turning tower mode on
-    gap: Goal mode is not covered yet; check first whether it runs in the main conversation.
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: keeps the goal turn on the same prompt cache prefix
 
   - id: B7
     operation: Add a workspace directory with /add-dir between two turns
-    promise: unknown
-    gap: Find out whether the product changes the system prompt or tells the model in a reminder, then add an add-dir action.
+    promise: keeps
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/adding-a-workspace-directory-keeps-the-prefix.spec.ts
 
   - id: B8
     operation: Run /reload without changing the configuration
     promise: keeps
-    gap: Needs a reload action.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/reload-keeps-the-prefix.spec.ts
 
   - id: B9
     operation: Turn an experimental feature on or off with /experiments in the middle of a session
-    promise: unknown
-    gap: Find out what the product promises, then add an experiments action.
+    promise: keeps
+    coverage:
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: turning an experimental feature off and reloading the session
 
   - id: C1
     operation: An MCP server adds a tool in the middle of a session
@@ -146,12 +206,16 @@ entries:
   - id: C4
     operation: Use a skill or a slash command between two turns
     promise: keeps
-    gap: Needs a slash command action.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/skill-keeps-the-prefix.spec.ts
 
   - id: C5
     operation: Turn the Desktop built-in browser control off and on again
-    promise: unknown
-    gap: Desktop sends mcp__desktop_browser__run by default. Find out whether turning the control off changes the tool list or only adds a reminder, and let the Desktop driver use the settings page.
+    promise: keeps
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/turning-the-browser-control-off-and-on-keeps-the-prefix.spec.ts
 
   - id: C6
     operation: An ACP editor passes MCP servers in session/new or session/load
@@ -162,8 +226,12 @@ entries:
 
   - id: C7
     operation: Enable a plugin with /plugins in the middle of a session
-    promise: unknown
-    gap: Find out what the product promises, then add a plugins action.
+    promise: keeps
+    coverage:
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: enabling a plugin
+    gap: An E2E scenario needs a way to install a plugin into the scenario's home and a plugins action.
 
   - id: D1
     operation: Approve, approve for the session, reject or reject with feedback, then continue
@@ -251,7 +319,9 @@ entries:
   - id: D9
     operation: Ask a side question with /btw, then go back to the main conversation
     promise: keeps
-    gap: Needs a btw action, and an explicit check that the side request reuses the main conversation's prefix, because the ledger does not check side requests.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/side-question-keeps-the-prefix.spec.ts
 
   - id: E1
     operation: Write or change AGENTS.md in the middle of a session
@@ -272,7 +342,9 @@ entries:
   - id: E3
     operation: Switch the git branch in a terminal between two turns
     promise: keeps
-    gap: Needs a workspace.git action; a workspace that is a git work tree also changes what asks for approval.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/git-branch-switch-keeps-the-prefix.spec.ts
 
   - id: E4
     operation: Trust a new folder, then hold a conversation across a restart
@@ -293,12 +365,27 @@ entries:
   - id: E6
     operation: Generate AGENTS.md with /init, then continue
     promise: keeps
-    gap: Needs a slash command action.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/init-keeps-the-prefix.spec.ts
+
+  - id: E7
+    operation: Move the session into a new git worktree between two turns
+    promise: keeps
+    coverage:
+      - kind: engine
+        test: packages/agent-core-v2/test/agent/workdirMove/workdirMove.test.ts
+      - kind: engine
+        test: packages/node-sdk/test/worktree-session-move.test.ts
+    gap: Needs a workspace.git setup and a worktree action on TUI.
 
   - id: F1
     operation: Two clients follow the same session
     promise: keeps
-    gap: A scenario drives one surface at a time; two WebSocket clients in a KAP scenario cover this more cheaply.
+    coverage:
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: keeps the next request on the same prompt cache prefix when a second client subscribes in the middle of the session
 
   - id: F2
     operation: Resize the window between two turns

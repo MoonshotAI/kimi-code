@@ -18,10 +18,12 @@ vi.mock('electron', () => ({
   webContents: { getFocusedWebContents: vi.fn(() => null) },
 }));
 
-vi.mock('../../../src/main/window/main-window', () => ({
+vi.mock('../../../src/main/window/window-registry', () => ({
   getMainWindow: vi.fn(() => null),
-  createWindow: vi.fn(),
   sendToRenderer: vi.fn(),
+}));
+vi.mock('../../../src/main/window/main-window', () => ({
+  createWindow: vi.fn(),
   showMainWindow: vi.fn(),
   usesCustomTitleBar: vi.fn(() => false),
   devToolsMode: vi.fn(() => 'detach'),

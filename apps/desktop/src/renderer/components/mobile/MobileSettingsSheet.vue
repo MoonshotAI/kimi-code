@@ -18,7 +18,7 @@ import {
   segmentsFor,
 } from '@moonshot-ai/app-core/lib';
 import { BottomSheet, BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, ProvidersPanel, useSettingsSubpage } from '@moonshot-ai/app-components';
-import type { FontTarget } from '@moonshot-ai/app-core';
+import type { FontTarget } from '@moonshot-ai/app-core/composables';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
 import PlanUsageCard from '../settings/PlanUsageCard.vue';
 import { formatTokens } from '@moonshot-ai/app-core/lib';

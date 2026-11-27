@@ -38,7 +38,7 @@ vi.mock('../../../src/main/release/stable-settings-import', () => ({ consumePend
 vi.mock('../../../src/main/system/shell-env', () => ({ startShellEnvProbe: vi.fn() }));
 vi.mock('../../../src/main/app/lifecycle', () => ({ main: mocks.main }));
 vi.mock('electron-updater', () => ({ autoUpdater: mocks.updater }));
-vi.mock('../../../src/main/window/main-window', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
+vi.mock('../../../src/main/window/window-registry', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
 vi.mock('../../../src/main/diagnostics/track', () => ({ trackDesktopEvent: vi.fn(), trySendDesktopEvent: vi.fn() }));
 vi.mock('../../../src/main/app/ui-state', () => ({ isUpdateAutoDownloadEnabled: () => true }));
 

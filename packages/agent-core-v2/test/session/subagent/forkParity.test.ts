@@ -35,7 +35,6 @@ import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
-import { AUTO_REVIEW_FLAG_ID } from '#/features/autoReview/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { ISessionBtwService } from '#/features/btw/btw';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
@@ -200,10 +199,7 @@ describe('subagent task reminders and btw request parity', () => {
     ctx = testAgent(
       requester === undefined ? [] : llmGenerateServices(requester),
       appService(IAppendLogStore, store),
-      appService(IFlagService, {
-        ...flags,
-        enabled: (id) => id !== AUTO_REVIEW_FLAG_ID && flags.enabled(id),
-      }),
+      appService(IFlagService, flags),
       appService(IWebSearchProviderService, {
         _serviceBrand: undefined,
         hasWebSearchProvider: () => true,

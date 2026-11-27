@@ -3100,7 +3100,7 @@ key = "${titleOAuthRef.key}"
 describe('SDKRpcClientV2 explicit MCP upserts', () => {
   const unreachable = { transport: 'http', url: 'http://127.0.0.1:1/mcp' } as const;
 
-  it('lands an explicit reconnect and an unpersisted add in the servers the sessions of the directory share', async () => {
+  it('lands an explicit reconnect and an unpersisted add in the session without leaking into sibling sessions or the project view', async () => {
     vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -3127,8 +3127,14 @@ describe('SDKRpcClientV2 explicit MCP upserts', () => {
         ['added', 'http'],
         ['project', 'http'],
       ]);
+
+      await client.createSession({ id: 'ses_mcp_sibling', workDir });
+      const sibling = await client.listMcpServers({ sessionId: 'ses_mcp_sibling' });
+      expect(sibling.map((entry) => [entry.name, entry.transport, entry.status])).toEqual([
+        ['project', 'stdio', 'disabled'],
+      ]);
       const workspace = await client.listWorkspaceMcpServers(workDir);
-      expect(workspace.map((entry) => entry.name).toSorted()).toEqual(['added', 'project']);
+      expect(workspace.map((entry) => [entry.name, entry.status])).toEqual([['project', 'disabled']]);
     } finally {
       await client.close();
       vi.unstubAllEnvs();
@@ -4477,6 +4483,85 @@ describe('foldAgentWireReplay', () => {
       expect(folded.error).toBeUndefined();
     }
   });
+
+  it('replays how each turn ended, whole or limited to the latest turns', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
+    tempDirs.push(dir);
+    const wirePath = join(dir, 'wire.jsonl');
+    const refusal = {
+      code: 'provider.api_error',
+      message: 'The example service refused this request.',
+      retryable: false,
+    };
+    const user = (text: string, time: number) => ({
+      type: 'context.append_message',
+      message: { role: 'user', content: [{ type: 'text', text }], origin: { kind: 'user' } },
+      time,
+    });
+    const records = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      user('Check the build.', 2),
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1' }, time: 3 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'content.part', stepUuid: 's1', part: { type: 'text', text: 'The build passed.' } },
+        time: 4,
+      },
+      { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's1' }, time: 5 },
+      { type: 'turn.ended', agentId: 'main', turnId: 0, reason: 'completed', durationMs: 3, time: 6 },
+      user('Summarise the deployment status.', 7),
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'failed', error: refusal, durationMs: 1, time: 8 },
+    ];
+    await writeFile(wirePath, records.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf-8');
+
+    const full = await foldAgentWireReplay(wirePath);
+    expect(full.replay.filter((record) => record.type === 'turn_ended')).toEqual([
+      { type: 'turn_ended', turnId: 0, reason: 'completed', time: 6 },
+      { type: 'turn_ended', turnId: 1, reason: 'failed', error: refusal, time: 8 },
+    ]);
+
+    const latest = await foldAgentWireReplay(wirePath, 1);
+    expect(latest.replay).toEqual(limitAgentReplayByTurns(full.replay, 1));
+    expect(latest.replay.map((record) => record.type)).toEqual(['message', 'turn_ended']);
+    expect(latest.replay.at(-1)).toEqual({
+      type: 'turn_ended',
+      turnId: 1,
+      reason: 'failed',
+      error: refusal,
+      time: 8,
+    });
+
+    const openToolPath = join(dir, 'open-tool-wire.jsonl');
+    const openTool = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      user('Run the migration.', 2),
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1' }, time: 3 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'tool.call', stepUuid: 's1', toolCallId: 'tc1', name: 'Bash', args: {} },
+        time: 4,
+      },
+      { type: 'turn.ended', agentId: 'main', turnId: 0, reason: 'cancelled', durationMs: 2, time: 5 },
+      user('Try again.', 6),
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's2' }, time: 7 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'content.part', stepUuid: 's2', part: { type: 'text', text: 'Done.' } },
+        time: 8,
+      },
+      { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's2' }, time: 9 },
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed', durationMs: 3, time: 10 },
+    ];
+    await writeFile(openToolPath, openTool.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf-8');
+    const openToolFull = await foldAgentWireReplay(openToolPath);
+    expect(openToolFull.replay.filter((record) => record.type === 'turn_ended')).toEqual([
+      { type: 'turn_ended', turnId: 0, reason: 'cancelled', time: 5 },
+      { type: 'turn_ended', turnId: 1, reason: 'completed', time: 10 },
+    ]);
+    const openToolLatest = await foldAgentWireReplay(openToolPath, 1);
+    expect(openToolLatest.replay).toEqual(limitAgentReplayByTurns(openToolFull.replay, 1));
+    expect(openToolLatest.replay.map((record) => record.type)).toEqual(['message', 'message', 'turn_ended']);
+  });
 });
 
 describe('foldAgentWireReplay turn limiting', () => {
@@ -5256,7 +5341,6 @@ describe('KimiHarness worktrees', () => {
   }
 
   async function makeWorktreeHarness(): Promise<{ harness: KimiHarness; homeDir: string; repo: string }> {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '1');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-home-'));
     const repoDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-repo-'));
     tempDirs.push(homeDir, repoDir);
@@ -5338,13 +5422,6 @@ describe('KimiHarness worktrees', () => {
         projectRoot: slashPathOf(repo),
         isGitRepo: true,
         worktree,
-      });
-
-      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '0');
-      expect(await harness.resolveWorkLocation(created.cwd)).toStrictEqual({
-        cwd: created.cwd,
-        projectRoot: slashPathOf(repo),
-        isGitRepo: true,
       });
     } finally {
       await harness.close();
@@ -5449,9 +5526,7 @@ describe('KimiHarness worktrees', () => {
     }
   });
 
-  it('awaits config before checking the worktree flag in removeWorktree', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '');
+  it('creates and removes a worktree when [experimental] worktree = true remains in config.toml', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-cfg-home-'));
     const repo = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-cfg-repo-'));
     tempDirs.push(homeDir, repo);

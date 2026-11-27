@@ -18,6 +18,7 @@ export interface CreateSessionOptions {
   readonly environmentId?: string;
   readonly environmentCwd?: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  readonly disabledMcpSources?: readonly string[];
   readonly prepare?: (session: ISessionScopeHandle) => Promise<void>;
 }
 
@@ -32,6 +33,13 @@ export interface ForkSessionOptions {
 export interface ResumeSessionOptions {
   readonly additionalDirs?: readonly string[];
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  readonly disabledMcpSources?: readonly string[];
+}
+
+export interface MoveSessionOptions {
+  readonly sessionId: string;
+  readonly workDir: string;
+  readonly environmentCwd?: string;
 }
 
 export interface CreateChildSessionOptions {
@@ -84,6 +92,7 @@ export interface ISessionLifecycleService {
   readonly onDidArchiveSession: Event<SessionArchivedEvent>;
   readonly onDidForkSession: Event<SessionForkedEvent>;
   create(opts: CreateSessionOptions): Promise<ISessionScopeHandle>;
+  move(opts: MoveSessionOptions): Promise<ISessionScopeHandle>;
   get(sessionId: string): ISessionScopeHandle | undefined;
   list(): readonly ISessionScopeHandle[];
   resume(sessionId: string, opts?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;

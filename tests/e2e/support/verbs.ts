@@ -29,19 +29,61 @@ const ONE_PROMPT_AT_A_TIME_OVER_ACP =
 const NO_FREE_TEXT_OVER_ACP = "ACP's permission request carries only option ids, so an editor cannot send a free-text answer.";
 const INPUT_IN_THE_EDITOR = "An editor writes prompts in its own input and keeps its own prompt history; the agent behind ACP never sees the user's input.";
 const NO_UNDO_OVER_ACP = 'ACP has no request to withdraw a message from the conversation.';
+const NO_STOP_MARK_OVER_ACP =
+  "ACP has no message that marks a turn as stopped: an editor learns it from the cancelled stop reason, which stop() already checks, and a session/load replay carries no trace of it.";
 const NO_WINDOW_TO_RESIZE = {
   acp: 'An editor shows the conversation in its own window; the agent behind ACP has no window to resize.',
   desktop: "The Desktop window cannot be made narrower than 900 pixels, so a user cannot give it a phone width, and Playwright can only resize it by running code in Electron's main process.",
 };
+const NO_BACKGROUNDING_OVER_ACP = 'An editor cannot move a running command to the background over ACP.';
+const TASK_LIST_OVER_ACP = 'ACP lists background tasks only in the text reply of the /tasks command, without their output; the driver does not read it yet.';
+const NO_ARCHIVE = {
+  tui: 'The terminal UI has no archive; a user deletes sessions from /sessions instead.',
+  acp: 'ACP has no request to archive a session.',
+};
+const NO_SESSION_BADGES = {
+  tui: 'The terminal UI shows one session at a time; /sessions lists no unread or approval marks.',
+  acp: 'An ACP editor keeps its own list of sessions; the agent sends no marks for them.',
+};
+const NO_TASK_STOP_OVER_ACP = 'An editor cannot stop one background task over ACP; it can only cancel the whole turn.';
+const NO_PAGE_TO_RELOAD = {
+  tui: 'A terminal shows the CLI itself; there is no page to reload.',
+  acp: 'An editor shows the conversation in its own interface; there is no page of the agent to reload.',
+  desktop: "Desktop reloads its window only from the Force Reload item of its native View menu, which the driver cannot reach.",
+};
+const PROJECTS_ON_THE_WEB = {
+  tui: 'The terminal UI works in the folder it was started in; it has no list of projects.',
+  acp: 'An ACP editor opens its own folder; the agent keeps no list of projects for it.',
+  desktop: 'Desktop adds a project through the native folder picker; E2E leaves native dialogs to the main process unit tests.',
+};
+const NO_RELOAD_OVER_ACP =
+  'ACP has no request to reload a session, and kimi acp does not publish /reload among its commands, so an editor that sends it gets "Unknown ACP command".';
+const ONLY_THE_TERMINAL_UI_INITS = {
+  acp: 'kimi acp does not publish /init among its commands, so an editor that sends it gets "Unknown ACP command".',
+  desktop: 'The Desktop slash menu has no /init, and KAP has no request that generates AGENTS.md.',
+  web: 'The Web slash menu has no /init, and KAP has no request that generates AGENTS.md.',
+};
+const NO_SIDE_QUESTION_OVER_ACP =
+  'ACP has no side question: an editor can only send /btw as a prompt, and the agent answers it with "Unknown ACP command: /btw" without asking the model.';
 const NO_CONTINUE = {
   tui: 'The terminal UI has no way to continue a failed turn; a user sends another message instead.',
   acp: 'ACP has no request to continue a failed turn.',
 };
+const NO_ADD_DIR = {
+  acp: 'ACP has no request that adds a directory to a running session; the agent reads additionalDirectories only from session/new.',
+  desktop: 'Desktop has no /add-dir: it adds a directory to the whole project in the project dialog, through the system folder picker that Playwright cannot drive.',
+  web: 'The web UI has no /add-dir: it adds a directory to the whole project in the project dialog, which changes every session of the project rather than this one.',
+};
+const ONLY_DESKTOP_HAS_A_BROWSER = 'Only the Desktop app has a built-in browser that agents control, and only its settings have a Browser page that turns that control off.';
 
 export const VERBS = {
   send: { on: SURFACES, checksInterface: false },
   queue: { on: ['tui', 'desktop', 'web'], absentBecause: ONE_PROMPT_AT_A_TIME_OVER_ACP, checksInterface: false },
   steer: { on: ['tui', 'desktop', 'web'], absentBecause: ONE_PROMPT_AT_A_TIME_OVER_ACP, checksInterface: false },
+  steerQueued: { on: ['tui', 'desktop', 'web'], absentBecause: ONE_PROMPT_AT_A_TIME_OVER_ACP, checksInterface: false },
+  background: { on: ['tui', 'desktop', 'web'], absentBecause: NO_BACKGROUNDING_OVER_ACP, checksInterface: false },
+  expectTask: { on: ['tui', 'desktop', 'web'], absentBecause: TASK_LIST_OVER_ACP, checksInterface: true },
+  stopTask: { on: ['tui', 'desktop', 'web'], absentBecause: NO_TASK_STOP_OVER_ACP, checksInterface: false },
   approve: { on: SURFACES, checksInterface: false },
   reject: { on: SURFACES, checksInterface: false },
   rejectWithFeedback: { on: ['tui', 'desktop', 'web'], absentBecause: NO_REASON_OVER_ACP, checksInterface: false },
@@ -51,6 +93,7 @@ export const VERBS = {
   dismissQuestion: { on: SURFACES, checksInterface: false },
   setPermissionMode: { on: SURFACES, checksInterface: false },
   stop: { on: SURFACES, checksInterface: false },
+  expectStopped: { on: ['tui', 'desktop', 'web'], absentBecause: NO_STOP_MARK_OVER_ACP, checksInterface: true },
   waitIdle: { on: SURFACES, checksInterface: false },
   waitForUsageUpdates: { on: ['acp'], absentBecause: 'This action waits for usage updates delivered to an ACP editor.', checksInterface: false },
   expectTool: { on: SURFACES, checksInterface: true },
@@ -65,8 +108,16 @@ export const VERBS = {
   submit: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: false },
   expectComposer: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: true },
   newSession: { on: SURFACES, checksInterface: false },
+  fork: { on: SURFACES, checksInterface: false },
+  deleteSession: { on: SURFACES, checksInterface: false },
+  archiveSession: { on: ['desktop', 'web'], absentBecause: NO_ARCHIVE, checksInterface: false },
+  expectSessions: { on: SURFACES, checksInterface: true },
+  expectSessionBadge: { on: ['desktop', 'web'], absentBecause: NO_SESSION_BADGES, checksInterface: true },
+  removeWorkspace: { on: ['web'], absentBecause: PROJECTS_ON_THE_WEB, checksInterface: false },
+  addWorkspace: { on: ['web'], absentBecause: PROJECTS_ON_THE_WEB, checksInterface: false },
   compact: { on: SURFACES, checksInterface: false },
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
+  reloadPage: { on: ['web'], absentBecause: NO_PAGE_TO_RELOAD, checksInterface: false },
   expectTranscript: { on: SURFACES, checksInterface: true },
   exit: { on: ['tui'], absentBecause: ONLY_IN_A_SHELL, checksInterface: false },
   expectTerminalRestored: {
@@ -77,6 +128,16 @@ export const VERBS = {
     },
     checksInterface: true,
   },
+  openSession: { on: SURFACES, checksInterface: false },
+  reload: { on: ['tui', 'desktop', 'web'], absentBecause: NO_RELOAD_OVER_ACP, checksInterface: false },
+  init: { on: ['tui'], absentBecause: ONLY_THE_TERMINAL_UI_INITS, checksInterface: false },
+  useSkill: { on: SURFACES, checksInterface: false },
+  switchModel: { on: SURFACES, checksInterface: false },
+  setThinkingEffort: { on: SURFACES, checksInterface: false },
+  addDir: { on: ['tui'], absentBecause: NO_ADD_DIR, checksInterface: false },
+  setBrowserControl: { on: ['desktop'], absentBecause: ONLY_DESKTOP_HAS_A_BROWSER, checksInterface: false },
+  setPlanMode: { on: SURFACES, checksInterface: false },
+  btw: { on: ['tui', 'desktop', 'web'], absentBecause: NO_SIDE_QUESTION_OVER_ACP, checksInterface: false },
 } as const satisfies Readonly<Record<string, VerbSpec>>;
 
 export type Verb = keyof typeof VERBS;
@@ -105,7 +166,9 @@ export function absenceReason(verb: Verb, surface: Surface): string {
 
 type FileToolName = 'Read' | 'Edit' | 'Write';
 
-export type ToolName = FileToolName | 'Bash' | 'AskUserQuestion';
+export type ToolName = FileToolName | 'Bash' | 'AskUserQuestion' | 'WaitFor';
+
+export type WaitOutcome = 'finished' | 'interrupted' | 'timed out';
 
 export type ToolStatus = 'done' | 'failed' | 'rejected' | 'running';
 
@@ -141,31 +204,103 @@ interface RunningCommandExpectation {
   readonly output: string;
 }
 
-export type ToolExpectation = FileToolExpectation | QuestionExpectation | RejectedCommandExpectation | EndedCommandExpectation | RunningCommandExpectation;
+interface RunningWaitExpectation {
+  readonly name: 'WaitFor';
+  readonly status: 'running';
+}
+
+interface EndedWaitExpectation {
+  readonly name: 'WaitFor';
+  readonly status: 'done';
+  readonly outcome: WaitOutcome;
+}
+
+export type WaitExpectation = RunningWaitExpectation | EndedWaitExpectation;
+
+export type TargetedToolExpectation = FileToolExpectation | QuestionExpectation | RejectedCommandExpectation | EndedCommandExpectation | RunningCommandExpectation;
+
+export type ToolExpectation = TargetedToolExpectation | WaitExpectation;
+
+export function waitOutcome(expectation: WaitExpectation): WaitOutcome | undefined {
+  return expectation.status === 'done' ? expectation.outcome : undefined;
+}
 
 export function wantedOutput(expectation: ToolExpectation): string | undefined {
   return 'output' in expectation ? expectation.output : undefined;
 }
 
 export function describeTool(expectation: ToolExpectation): string {
+  if (expectation.name === 'WaitFor') {
+    const outcome = waitOutcome(expectation);
+    return outcome === undefined ? 'WaitFor still waiting' : `WaitFor that ended ${outcome === 'finished' ? 'when a task finished' : outcome}`;
+  }
   const output = wantedOutput(expectation);
   const printed = output === undefined ? '' : ` and output ${JSON.stringify(output)}`;
   return `${expectation.name} on ${JSON.stringify(expectation.target)} with status ${expectation.status}${printed}`;
 }
 
-export type ApprovalToolName = Exclude<ToolName, 'Read' | 'AskUserQuestion'>;
+const FORK_TITLE = 'Fork: ';
+
+export function firstPromptOf(title: string): string {
+  return title.startsWith(FORK_TITLE) ? firstPromptOf(title.slice(FORK_TITLE.length)) : title;
+}
+
+export type SessionBadge = 'unread' | 'approval' | 'question' | 'none';
+
+export type TaskStatus = 'running' | 'done' | 'failed' | 'stopped';
+
+export interface TaskExpectation {
+  readonly description: string;
+  readonly status: TaskStatus;
+  readonly output?: string;
+}
+
+export type ApprovalToolName = Exclude<ToolName, 'Read' | 'AskUserQuestion' | 'WaitFor'>;
 
 export const QUESTION_PENDING = 'a question is pending; answer it with answer() or dismissQuestion() first';
 
 export const APPROVAL_PENDING = 'an approval is pending; answer it with approve() or reject() first';
 
-export interface ApprovalExpectation {
-  readonly name: ApprovalToolName;
+export interface ChangedLines {
+  readonly added: readonly string[];
+  readonly removed: readonly string[];
+}
+
+interface CommandOrWriteApproval {
+  readonly name: Exclude<ApprovalToolName, 'Edit'>;
   readonly target: string;
 }
 
-export function describeApproval({ name, target }: ApprovalExpectation): string {
-  return `${name} on ${JSON.stringify(target)}`;
+interface EditApproval {
+  readonly name: 'Edit';
+  readonly target: string;
+  readonly added?: readonly string[];
+  readonly removed?: readonly string[];
+}
+
+export type ApprovalExpectation = CommandOrWriteApproval | EditApproval;
+
+export function wantedChanges(expectation: ApprovalExpectation): ChangedLines {
+  return expectation.name === 'Edit' ? { added: expectation.added ?? [], removed: expectation.removed ?? [] } : { added: [], removed: [] };
+}
+
+export function describeApproval(expectation: ApprovalExpectation): string {
+  const { added, removed } = wantedChanges(expectation);
+  const lines = [...added.map((line) => `+${JSON.stringify(line)}`), ...removed.map((line) => `-${JSON.stringify(line)}`)];
+  return `${expectation.name} on ${JSON.stringify(expectation.target)}${lines.length === 0 ? '' : ` changing ${lines.join(' ')}`}`;
+}
+
+export function missingChanges(expectation: ApprovalExpectation, shown: ChangedLines): string[] {
+  const { added, removed } = wantedChanges(expectation);
+  return [
+    ...added.filter((line) => !shown.added.includes(line)).map((line) => `${JSON.stringify(line)} as an added line`),
+    ...removed.filter((line) => !shown.removed.includes(line)).map((line) => `${JSON.stringify(line)} as a removed line`),
+  ];
+}
+
+export function describeChanges({ added, removed }: ChangedLines): string {
+  const lines = [...removed.map((line) => `- ${line}`), ...added.map((line) => `+ ${line}`)];
+  return lines.length === 0 ? '(no changed lines)' : lines.join('\n');
 }
 
 function slashed(path: string): string {
@@ -186,6 +321,9 @@ export type PermissionMode = 'manual' | 'yolo' | 'auto';
 
 export type WindowSize = 'normal' | 'narrow';
 
+export type BrowserControl = 'on' | 'off';
+export type PlanModeState = 'on' | 'off';
+
 export const PERMISSION_MODE_NAMES: Readonly<Record<PermissionMode, string>> = {
   manual: 'Always Ask',
   yolo: 'Ask When Needed',
@@ -196,6 +334,10 @@ interface VerbSignatures {
   send(text: string): Promise<void>;
   queue(text: string): Promise<void>;
   steer(text: string): Promise<void>;
+  steerQueued(): Promise<void>;
+  background(): Promise<void>;
+  expectTask(expectation: TaskExpectation): Promise<void>;
+  stopTask(description: string): Promise<void>;
   approve(options?: ApproveOptions): Promise<void>;
   reject(): Promise<void>;
   rejectWithFeedback(feedback: string): Promise<void>;
@@ -205,6 +347,7 @@ interface VerbSignatures {
   dismissQuestion(): Promise<void>;
   setPermissionMode(mode: PermissionMode): Promise<void>;
   stop(): Promise<void>;
+  expectStopped(): Promise<void>;
   waitIdle(): Promise<void>;
   waitForUsageUpdates(count: number): Promise<void>;
   expectTool(expectation: ToolExpectation): Promise<void>;
@@ -219,11 +362,29 @@ interface VerbSignatures {
   submit(text: string): Promise<void>;
   expectComposer(text: string): Promise<void>;
   newSession(): Promise<void>;
+  fork(): Promise<void>;
+  deleteSession(title: string): Promise<void>;
+  archiveSession(title: string): Promise<void>;
+  expectSessions(titles: readonly string[]): Promise<void>;
+  expectSessionBadge(title: string, badge: SessionBadge): Promise<void>;
+  removeWorkspace(): Promise<void>;
+  addWorkspace(): Promise<void>;
   compact(): Promise<void>;
   resize(size: WindowSize): Promise<void>;
+  reloadPage(): Promise<void>;
   expectTranscript(text: string): Promise<void>;
   exit(): Promise<void>;
   expectTerminalRestored(): Promise<void>;
+  openSession(title: string): Promise<void>;
+  reload(): Promise<void>;
+  init(): Promise<void>;
+  useSkill(name: string): Promise<void>;
+  switchModel(name: string): Promise<void>;
+  setThinkingEffort(effort: string): Promise<void>;
+  addDir(path: string): Promise<void>;
+  setBrowserControl(state: BrowserControl): Promise<void>;
+  setPlanMode(state: PlanModeState): Promise<void>;
+  btw(question: string, reply: string): Promise<void>;
 }
 
 export type Actions = { readonly [Name in Verb]: VerbSignatures[Name] };

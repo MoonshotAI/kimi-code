@@ -1,6 +1,4 @@
 import {
-  AutoReviewCompleted,
-  AutoReviewStarted,
   IAgentBlobService,
   IAgentLoopService,
   IEventBus,
@@ -747,6 +745,20 @@ describe('conversation fold', () => {
     expect(new Set(ordinals).size).toBe(ordinals.length);
   });
 
+  it('reports a turn stopped without a turn.cancel record as cancelled by the user', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'go'),
+      stepBegin(0, 1, 's1'),
+      stepEnd(0, 1, 's1', { finishReason: 'interrupted' }),
+      record('turn.step.interrupted', { turnId: 0, step: 1, stepId: 's1', reason: 'aborted' }),
+      turnEnded(0, 'cancelled'),
+    ]);
+
+    expect(state.turns[0]).toMatchObject({ status: 'ended', outcome: 'interrupted', end_reason: 'user_cancelled' });
+    expect(state.turns[0]?.steps.map((step) => step.outcome)).toEqual(['interrupted']);
+  });
+
   it('keeps the newer turn open when a cancelled turn it interleaved with ends', () => {
     const state = fold([
       turnPrompt(0, 'p1'),
@@ -1394,19 +1406,6 @@ describe('conversation feed', () => {
     const display = { kind: 'command', command: 'ls' } as const;
     await h.dispatcher.dispatch(new ToolCallDelta({ agentId: 'main', turnId: 0, toolCallId: 'call-1', name: 'Bash', argumentsPart: '{"command":' }));
     await h.dispatcher.dispatch(new ToolCallDelta({ agentId: 'main', turnId: 0, toolCallId: 'call-1', argumentsPart: '"ls"}' }));
-    await h.dispatcher.dispatch(new AutoReviewStarted({ agentId: 'main', turnId: 0, toolCallId: 'call-1', toolName: 'Bash' }));
-    await h.dispatcher.dispatch(new AutoReviewCompleted({
-      agentId: 'main',
-      turnId: 0,
-      toolCallId: 'call-1',
-      toolName: 'Bash',
-      triggerPolicy: 'fallback-ask',
-      model: 'k2',
-      decision: 'deny',
-      risk: 'medium',
-      reason: 'Needs confirmation.',
-      durationMs: 12,
-    }));
     await h.dispatcher.dispatch(new InteractionRequestEvent({
       agentId: 'main',
       id: 'i1',
@@ -1431,8 +1430,6 @@ describe('conversation feed', () => {
     expect(h.events).toMatchObject([
       { type: 'item.started', item: { item_id: 'call-1', type: 'tool_call', status: 'running', stage: 'input', name: 'Bash', input_text: '{"command":' } },
       { type: 'item.delta', ...tool, field: 'input_text', delta: '"ls"}' },
-      { type: 'item.updated', ...tool, set: { auto_review: true } },
-      { type: 'item.updated', ...tool, set: { auto_review: false } },
       { type: 'item.updated', ...tool, set: { stage: 'awaiting_approval', interaction_id: 'i1', display } },
       { type: 'item.updated', ...tool, set: { stage: 'executing' } },
       { type: 'item.updated', ...tool, set: { input: { command: 'ls' } } },
@@ -1443,8 +1440,8 @@ describe('conversation feed', () => {
       { type: 'item.updated', ...tool, set: { fields: { progress: { percent: 40, text: 'copying' }, status: 'verifying' } } },
       { type: 'item.updated', ...tool, set: { fields: { progress: { percent: 40, text: 'copying' }, status: 'verifying', 'example.kind': { url: 'https://example.com/auth' } } } },
     ]);
-    expect(Object.keys((h.events[5] as { set: object }).set)).toEqual(['stage']);
-    expect(Object.keys((h.events[6] as { set: object }).set)).toEqual(['input']);
+    expect(Object.keys((h.events[3] as { set: object }).set)).toEqual(['stage']);
+    expect(Object.keys((h.events[4] as { set: object }).set)).toEqual(['input']);
     expect(midway).toMatchObject({
       stage: 'executing',
       output: 'a\nb\n',

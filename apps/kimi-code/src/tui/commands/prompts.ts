@@ -24,7 +24,7 @@ import {
 import { FeedbackInputDialogComponent, type FeedbackInputDialogResult } from '../components/dialogs/feedback-input-dialog';
 import { ModelSelectorComponent } from '../components/dialogs/model-selector';
 import { PlatformSelectorComponent } from '../components/dialogs/platform-selector';
-import { DOCK_PREVIEW_ROWS } from '../constant/rendering';
+import { DOCK_MODEL_SELECTOR_ROWS, DOCK_PREVIEW_ROWS } from '../constant/rendering';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import type { SlashCommandHost } from './dispatch';
 
@@ -321,6 +321,10 @@ export function runModelSelector(
       currentValue: firstAlias,
       currentThinkingEffort: initialThinking ? 'on' : 'off',
       searchable: true,
+      layout:
+        host.state.dockContainer === undefined
+          ? undefined
+          : { maxBodyRows: DOCK_MODEL_SELECTOR_ROWS },
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
         resolve({ alias, thinking });

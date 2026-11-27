@@ -123,6 +123,7 @@ export interface SlashCommandHost {
   showStatus(msg: string, color?: ColorToken): void;
   showNotice(title: string, detail?: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
+  replaceTranscriptEntries?(entries: readonly TranscriptEntry[]): void;
   track(event: string, props?: Record<string, unknown>): void;
   mountEditorReplacement(
     panel: Component & Focusable,
@@ -142,8 +143,7 @@ export interface SlashCommandHost {
   waitForSessionAssembly(): Promise<void>;
   readonly sessionReplacementInFlight: boolean;
   switchToSession(session: Session, message: string): Promise<void>;
-  reloadCurrentSessionView(session: Session, message: string): Promise<void>;
-  refreshWorkLocation(): Promise<void>;
+  reloadCurrentSessionView(session: Session, message?: string): Promise<void>;
   beginSessionRequest(): void;
   failSessionRequest(message: string): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;

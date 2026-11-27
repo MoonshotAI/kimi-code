@@ -8,8 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (33 sections · 2 overlay(s))
-#   autoReview               src/features/autoReview/configSection.ts
+# Index (32 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
@@ -44,17 +43,6 @@
 #   workspace                src/project/projectTrust/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
-
-# ##########################################################################
-# autoReview (config.toml: auto_review)
-#   owner: src/features/autoReview/configSection.ts
-#   scope: core
-# ##########################################################################
-
-[auto_review]
-# model: string
-# effort: string
-# timeout_ms: integer (default: 30000)
 
 # ##########################################################################
 # background
@@ -270,6 +258,7 @@ extra_skill_dirs = []
 #   hooks: stripEnv
 #   env:
 #     startup_timeout_ms <- KIMI_MCP_STARTUP_TIMEOUT_MS (custom parse)
+#     startup_wait_ms <- KIMI_MCP_STARTUP_WAIT_MS (custom parse)
 #     tool_timeout_ms <- KIMI_MCP_TOOL_TIMEOUT_MS (custom parse)
 #     reconnect_initial_delay_ms <- KIMI_MCP_RECONNECT_INITIAL_DELAY_MS (custom parse)
 #     reconnect_max_delay_ms <- KIMI_MCP_RECONNECT_MAX_DELAY_MS (custom parse)
@@ -277,6 +266,7 @@ extra_skill_dirs = []
 
 [mcp]
 # startup_timeout_ms: integer
+# startup_wait_ms: integer
 # tool_timeout_ms: integer
 # default_deferred: boolean
 # reconnect_initial_delay_ms: integer

@@ -2034,6 +2034,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-archive-mcp-'));
     const spawned: IHostProcess[] = [];
     let disposeReplacement: (() => void) | undefined;
+    let releaseReplacementMcp: (() => Promise<void>) | undefined;
     const hostProcesses = (server as RunningServer).core.accessor.get(IHostProcessService);
     const spawn = hostProcesses.spawn.bind(hostProcesses);
     const spawnSpy = vi.spyOn(hostProcesses, 'spawn').mockImplementation(async (command, args, options) => {
@@ -2101,6 +2102,7 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(replacement).not.toBe(workspace);
       const replacementMcp = (await replacement.program.acquireMcp()).service;
       await replacementMcp.ready;
+      releaseReplacementMcp = await replacementMcp.acquire();
       const replacementConnections = replacementMcp.connectionManager();
       await vi.waitFor(() => {
         expect(replacementConnections.list().some((entry) => entry.name === 'fixture' && entry.status === 'connected')).toBe(true);
@@ -2119,11 +2121,14 @@ describe('server-v2 /api/v1/sessions', () => {
           subscription.dispose();
         };
       });
+      await releaseReplacementMcp();
+      releaseReplacementMcp = undefined;
       replacementLease.dispose();
       await replacementClosed;
       disposeReplacementSubscription?.();
       expect(replacementChild.exitCode).not.toBeNull();
     } finally {
+      await releaseReplacementMcp?.();
       disposeReplacement?.();
       spawnSpy.mockRestore();
       for (const child of spawned) {
@@ -4617,28 +4622,18 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
         toolName: 'Bash',
         action: 'run',
         display: { command: 'echo ok' },
-        approvalDetail: { outcome: 'denied', risk: 'high', reason: 'Not authorized.' },
       },
       tags: { agentId: 'main', sessionId: sid, toolCallId: 'tc_wait_1' },
     });
 
     const approvalWait = (await (await approvalWaitPromise).json()) as Envelope<{
       session: SessionWire;
-      pending_interactions: Array<{
-        interaction_id: string;
-        kind: string;
-        request?: { approval_detail?: unknown };
-      }>;
+      pending_interactions: Array<{ interaction_id: string; kind: string }>;
       timed_out: boolean;
     }>;
     expect(approvalWait.code).toBe(0);
     expect(approvalWait.data.timed_out).toBe(false);
     expect(approvalWait.data.pending_interactions.map((i) => i.interaction_id)).toEqual([parked.id]);
-    expect(approvalWait.data.pending_interactions[0]?.request?.approval_detail).toEqual({
-      outcome: 'denied',
-      risk: 'high',
-      reason: 'Not authorized.',
-    });
 
     await fetch(`${base}/api/v1/sessions/${sid}/interactions/${parked.id}`, {
       method: 'POST',

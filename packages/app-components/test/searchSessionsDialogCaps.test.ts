@@ -66,6 +66,20 @@ function workspaceRows(): number {
   return document.querySelectorAll('.sd-row-ws').length;
 }
 
+describe('SearchSessionsDialog workspace paths', () => {
+  it('matches and highlights a Windows workspace path whichever slash the query uses', async () => {
+    const windows = { id: 'wd_win', name: 'app', root: 'C:/Users/me/code/app', shortPath: '~\\code\\app', sessionCount: 1 } as unknown as WorkspaceView;
+    app = createApp({ render: () => h(SearchSessionsDialog, { sessions: [], workspaces: [windows], activeId: '' }) });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+
+    await search('code/app');
+    expect(workspaceRows()).toBe(1);
+    expect(document.querySelector('.sd-ws-path')?.innerHTML).toBe('~\\<mark>code\\app</mark>');
+  });
+});
+
 describe('SearchSessionsDialog result caps', () => {
   it('shows only the first few workspaces before a query is typed', async () => {
     await mountDialog(300);

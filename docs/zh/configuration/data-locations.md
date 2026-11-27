@@ -42,7 +42,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 │       └── <key>-<suffix>.json
 ├── sessions/               # 会话数据（详见下文）
 │   └── <workDirKey>/<sessionId>/
-├── worktrees/              # Kimi 托管的 Git worktree（实验功能）
+├── worktrees/              # Kimi 托管的 Git worktree
 │   └── <repoKey>/<name>/
 ├── locks/
 │   └── sessions/           # 客户端写会话期间持有的跨进程占用锁

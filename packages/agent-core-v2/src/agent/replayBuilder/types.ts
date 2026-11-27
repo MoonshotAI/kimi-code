@@ -1,5 +1,7 @@
+import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
+import type { TurnEndReason } from '#/agent/loop/turnEvents';
 import type { AgentConfigData, AgentConfigUpdateData } from '#/agent/profile/profile';
 import type { AgentContextData, ContextMessage } from '#/agent/contextMemory/types';
 import type { GoalChange, GoalSnapshot } from '#/features/goal/types';
@@ -40,7 +42,8 @@ export type AgentReplayRecordPayload =
   | { type: 'plan_updated'; enabled: boolean }
   | { type: 'config_updated'; config: AgentConfigUpdateData }
   | { type: 'permission_updated'; mode: PermissionMode }
-  | { type: 'approval_result'; record: PermissionApprovalResultRecord };
+  | { type: 'approval_result'; record: PermissionApprovalResultRecord }
+  | { type: 'turn_ended'; turnId: number; reason: TurnEndReason; error?: KimiErrorPayload };
 
 export type AgentReplayRecord = { readonly time: number } & AgentReplayRecordPayload;
 

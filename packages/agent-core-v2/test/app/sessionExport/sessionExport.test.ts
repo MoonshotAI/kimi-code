@@ -974,6 +974,9 @@ function registerSessionExportServices(
     create: async () => {
       throw new Error('create should not be called by session export');
     },
+    move: async () => {
+      throw new Error('move should not be called by session export');
+    },
     resume: async () => options.lifecycleHandle,
     get: () => options.lifecycleHandle,
     status: async () => options.summary,

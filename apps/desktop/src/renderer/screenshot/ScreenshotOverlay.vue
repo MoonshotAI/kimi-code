@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Button, Icon, IconButton, Kbd, SegmentedControl, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
-import type { IconName } from '@moonshot-ai/app-client/icons';
+import type { IconName } from '@moonshot-ai/app-ui/icons';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ScreenshotEditor } from './editor';

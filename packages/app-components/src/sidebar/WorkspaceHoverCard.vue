@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import { workspaceFolders } from '@moonshot-ai/app-core/client';
+import { nativePath } from '@moonshot-ai/app-core/lib';
 import { Icon, Menu } from '@moonshot-ai/app-ui';
 import { hostsStore } from '@moonshot-ai/app-client/stores';
 import WorkspaceIcon from '../WorkspaceIcon.vue';
@@ -46,7 +47,7 @@ const hostFailure = computed(() => {
         </div>
         <div v-for="directory in directories" :key="directory.path" class="whc-directory whc-directory--static">
           <Icon name="folder" size="sm" />
-          <span class="whc-path">{{ directory.path }}</span>
+          <span class="whc-path">{{ nativePath(directory.path) }}</span>
         </div>
       </template>
       <template v-else>
@@ -56,11 +57,11 @@ const hostFailure = computed(() => {
           type="button"
           class="whc-directory"
           :disabled="!canOpen"
-          :aria-label="t('sidebar.openDirectoryAria', { path: directory.path })"
+          :aria-label="t('sidebar.openDirectoryAria', { path: nativePath(directory.path) })"
           @click.stop="emit('openDirectory', directory.path)"
         >
           <Icon name="folder" size="sm" />
-          <span class="whc-path">{{ directory.path }}</span>
+          <span class="whc-path">{{ nativePath(directory.path) }}</span>
         </button>
       </template>
     </div>

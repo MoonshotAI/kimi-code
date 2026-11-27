@@ -74,7 +74,6 @@ export interface ProgramWorkdir {
   readonly hostFs: IHostFileSystem;
   readonly localConfig: FileProjectLocalConfigService;
   readonly dirs: IProjectDirs;
-  readonly git: IProjectGitService;
   readonly fs: IProjectFsService;
   readonly instructions: IProjectInstructionsService;
   readonly skills: IProjectSkillCatalog;
@@ -196,7 +195,6 @@ export class ProgramWorkdirs {
       hostFs: acquired.view.hostFs,
       localConfig: acquired.view.localConfig,
       dirs: acquired.view.dirs,
-      git: acquired.view.git,
       fs: acquired.view.fs,
       instructions: acquired.view.instructions,
       skills: acquired.view.skills,
@@ -309,7 +307,7 @@ export class ProgramWorkdirs {
     return {
       contextKey,
       explicitSkills: own(new ExplicitFileSkillSource(discovery, input.context, bootstrap, input.hostFs, log)),
-      extraSkills: own(new ExtraFileSkillSource(discovery, config, input.context, bootstrap, input.hostFs, log)),
+      extraSkills: own(new ExtraFileSkillSource(discovery, config, input.context, dirs, bootstrap, input.hostFs, log)),
       explicitAgentProfiles: own(new ExplicitAgentProfileLoaderService(input.context, dirs, bootstrap, input.hostFs, log, input.userAgentProfiles, agentProfiles)),
       extraAgentProfiles: own(new ExtraAgentProfileLoaderService(input.context, dirs, config, bootstrap, input.hostFs, log, input.userAgentProfiles, agentProfiles)),
     };

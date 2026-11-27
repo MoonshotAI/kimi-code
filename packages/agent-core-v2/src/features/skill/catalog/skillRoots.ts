@@ -86,13 +86,13 @@ export async function projectSkillRootCandidates(
 
 export async function configuredRoots(
   dirs: readonly string[],
-  workDir: string,
+  workDirs: readonly string[],
   osHomeDir: string,
   source: SkillSource,
   fs: SkillRootsFs = nodeFs,
 ): Promise<readonly SkillRoot[]> {
   const roots: SkillRoot[] = [];
-  for (const dir of await configuredRootCandidates(dirs, workDir, osHomeDir, fs)) {
+  for (const dir of await configuredRootCandidates(dirs, workDirs, osHomeDir, fs)) {
     await pushExistingRoot(fs, roots, dir, source);
   }
   return roots;
@@ -100,12 +100,19 @@ export async function configuredRoots(
 
 export async function configuredRootCandidates(
   dirs: readonly string[],
-  workDir: string,
+  workDirs: readonly string[],
   osHomeDir: string,
   fs: SkillRootsFs = nodeFs,
 ): Promise<readonly string[]> {
-  const projectRoot = await findProjectRoot(fs, workDir);
-  return dirs.map((dir) => resolveConfiguredDir(dir, projectRoot, osHomeDir));
+  const candidates: string[] = [];
+  for (const workDir of new Set(workDirs)) {
+    const projectRoot = await findProjectRoot(fs, workDir);
+    for (const dir of dirs) {
+      const candidate = resolveConfiguredDir(dir, projectRoot, osHomeDir);
+      if (!candidates.includes(candidate)) candidates.push(candidate);
+    }
+  }
+  return candidates;
 }
 
 async function findProjectRoot(fs: SkillRootsFs, workDir: string): Promise<string> {

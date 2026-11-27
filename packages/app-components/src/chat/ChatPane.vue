@@ -16,7 +16,7 @@ import { CronToolContextKey, cronToolContexts } from './tool-calls/cronToolConte
 import BlockList from './BlockList.vue';
 import TranscriptList from './TranscriptList.vue';
 import { settledSteerTurnIdsFor, syncSettledSteerTurnIds } from './steerContinuationState';
-import { TranscriptScrollKey } from '@moonshot-ai/app-core/contracts';
+import { PinScrollKey, TranscriptScrollKey } from '@moonshot-ai/app-core/contracts';
 import ActivityRun from './ActivityRun.vue';
 import TurnFold from './TurnFold.vue';
 import RequestDebugRow from './RequestDebugRow.vue';
@@ -24,7 +24,7 @@ import TurnFilesSummary from './TurnFilesSummary.vue';
 import BrowserSources from './tool-calls/browser/BrowserSources.vue';
 import NotificationCard from './NotificationCard.vue';
 import { createHistoryImageCache, HistoryImageCacheKey, Markdown, tableSelectionContextText } from '@moonshot-ai/app-markdown';
-import { FetchTurnFileChangesKey, LatestNotifyToolCallIdKey, NotifyUserEnabledKey, PinScrollKey, SelectionContextMenuKey, SessionRatingKey } from '@moonshot-ai/app-client/contracts';
+import { FetchTurnFileChangesKey, LatestNotifyToolCallIdKey, NotifyUserEnabledKey, SelectionContextMenuKey, SessionRatingKey } from '@moonshot-ai/app-client/contracts';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { useTurnFileStats } from './useTurnFileStats';
 import { editedFileCount } from '../lib/fileStaleness';
@@ -45,7 +45,7 @@ import TableSelectionContextMenu from './TableSelectionContextMenu.vue';
 import { Icon, IconButton, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
 import { useActivityRunFolding, useConfirmDialog, useIsMobile, useTurnFolding } from '@moonshot-ai/app-client/composables';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import { copyTextToClipboard, formatMessageTime } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, formatMessageTime, formatTokens } from '@moonshot-ai/app-core/lib';
 import { editRefillAttachments } from '@moonshot-ai/app-client/lib';
 import { SELECTION_QUOTE_ENABLED, isContextClick, selectionHitByPointer, selectionOwnedByRoot, selectionQuoteAnchor, type SelectionActionPayload, type SelectionQuoteAnchor } from '@moonshot-ai/app-client/lib';
 import { parseAttachmentLinks, serializeMention, stripAttachmentLinks } from '@moonshot-ai/app-composer/model';
@@ -54,7 +54,6 @@ import { canUndoSkillActivation, canUndoSkillActivations, skillActivationEditTex
 import { ComposerText, copyComposerSnapshot, copyTextWithFlavor } from '@moonshot-ai/app-composer/transcript';
 import {
   activityRunTailIndex as getActivityRunTailIndex,
-  formatTokens,
   canCopyUserTurn,
   estimateUserTurnHeight,
   isoMs,
@@ -71,8 +70,9 @@ import {
   turnToMarkdown,
   turnVisibleFinalText,
   userTurnDisplayText,
-} from '@moonshot-ai/app-components';
-import type { AssistantFold, AssistantRenderBlock } from '@moonshot-ai/app-components';
+  type AssistantFold,
+  type AssistantRenderBlock,
+} from '../chatTurnRendering';
 
 const { t } = useI18n();
 const mediaLabels = computed(() => ({
@@ -1554,9 +1554,13 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           <span class="cd-chip" aria-hidden="true">
             <Icon name="collapse" size="sm" />
           </span>
-          <span class="cd-title">{{ compactionBaseLabel(turn) }}</span>
-          <span v-if="compactionTokenDelta(turn)" class="cd-tokens">{{ compactionTokenDelta(turn) }}</span>
-          <span v-if="compactionSavedLabel(turn)" class="cd-saved">{{ compactionSavedLabel(turn) }}</span>
+          <span class="cd-body">
+            <span class="cd-title">{{ compactionBaseLabel(turn) }}</span>
+            <span v-if="compactionTokenDelta(turn) || compactionSavedLabel(turn)" class="cd-metrics">
+              <span v-if="compactionTokenDelta(turn)" class="cd-tokens">{{ compactionTokenDelta(turn) }}</span>
+              <span v-if="compactionSavedLabel(turn)" class="cd-saved">{{ compactionSavedLabel(turn) }}</span>
+            </span>
+          </span>
           <span v-if="canOpenCompactionSummary(turn)" class="cd-chevron" aria-hidden="true">
             <Icon name="chevron-right" size="sm" />
           </span>
@@ -2107,20 +2111,25 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   white-space: nowrap;
 }
 .cd-card {
+  box-sizing: border-box;
   appearance: none;
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
   max-width: 100%;
+  overflow: hidden;
   padding: 4px 8px 4px 5px;
   border: var(--p-hairline) solid var(--color-line);
   border-radius: var(--radius-md);
   background: var(--color-bg);
   font: var(--text-xs)/1.25 var(--font-ui);
   color: var(--color-text-muted);
+  text-align: left;
   white-space: nowrap;
 }
 .cd-chip {
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2130,14 +2139,37 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   background: color-mix(in srgb, var(--color-context-compaction) 13%, transparent);
   color: var(--color-context-compaction);
 }
+.cd-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 7px;
+  row-gap: 3px;
+  min-width: 0;
+}
+.cd-metrics {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 7px;
+  row-gap: 3px;
+  min-width: 0;
+}
 .cd-title {
+  min-width: 0;
   color: var(--color-text);
   font-weight: var(--weight-medium);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .cd-tokens {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
 .cd-saved {
+  flex: none;
   padding: 1px 5px;
   border-radius: var(--radius-xs);
   background: var(--color-success-soft);
@@ -2151,7 +2183,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   color: var(--color-danger);
 }
 .cd-failed .cd-title {
+  flex: none;
   color: var(--color-danger);
+  white-space: nowrap;
 }
 .cd-reason {
   min-width: 0;
@@ -2159,6 +2193,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   text-overflow: ellipsis;
 }
 .cd-chevron {
+  flex: none;
   display: inline-flex;
   color: var(--color-text-faint);
 }
@@ -2526,11 +2561,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     max-width: calc(100% - 48px);
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .cd-card {
-    flex-wrap: wrap;
-    white-space: normal;
-    row-gap: 4px;
   }
   .u-edit-confirm {
     flex-wrap: wrap;

@@ -45,9 +45,11 @@ describe('server-v2 /api/v1 fs routes', () => {
   let home: string | undefined;
   let work: string | undefined;
   let base: string;
+  const previousKimiCodeHome = process.env['KIMI_CODE_HOME'];
 
   beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-home-'));
+    process.env['KIMI_CODE_HOME'] = home;
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -79,6 +81,8 @@ describe('server-v2 /api/v1 fs routes', () => {
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       home = undefined;
     }
+    if (previousKimiCodeHome === undefined) delete process.env['KIMI_CODE_HOME'];
+    else process.env['KIMI_CODE_HOME'] = previousKimiCodeHome;
   });
 
   function git(cwd: string, ...args: string[]): void {
@@ -86,12 +90,14 @@ describe('server-v2 /api/v1 fs routes', () => {
   }
 
   function hasFd(): boolean {
-    try {
-      execFileSync('fd', ['--version'], { stdio: 'ignore' });
-      return true;
-    } catch {
-      return false;
-    }
+    return ['fd', 'fdfind'].some((binary) => {
+      try {
+        execFileSync(binary, ['--version'], { stdio: 'ignore' });
+        return true;
+      } catch {
+        return false;
+      }
+    });
   }
 
   async function createWorkspaceSession(root: string, additionalDirs: string[]): Promise<string> {

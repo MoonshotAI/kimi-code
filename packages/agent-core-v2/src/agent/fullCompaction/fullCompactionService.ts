@@ -98,6 +98,7 @@ interface ActiveCompaction extends FullCompactionTask {
 
 interface CompactionAttemptResult {
   readonly summary: string;
+  readonly summaryOutputTokens?: number;
   readonly usage: TokenUsage | null;
   readonly requestId?: string;
 }
@@ -708,6 +709,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         requestAttempts += 1;
 
         try {
+          thinkingEffort = this.loopService.resolveModelContext().thinkingLevel;
           const outcome = await this.loopService.requester.with({
             model: { maxOutputTokens: this.loopService.resolveMaxOutputTokens(compactionMaxOutputSize) },
             content: { messages: historyFromContext(messages), usedTokens: usedContextTokens },
@@ -731,7 +733,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             throw new DOMException(message, 'AbortError');
           }
           cacheProbePending = false;
-          attempt = collectSummary(outcome);
+          attempt = collectSummary(outcome, thinkingEffort);
           break;
         } catch (error) {
           const isContextOverflow = this.shouldRecoverFromContextOverflow(
@@ -789,10 +791,11 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       const recoveryFooter = this.renderRecoveryFooter(wireLines);
       const summaryText = buildCompactionSummaryText(summary);
       const contextSummary = recoveryFooter === undefined ? summaryText : `${summaryText}\n\n${recoveryFooter}`;
-      const summaryOutputTokens = attempt.usage === null
-        ? undefined
-        : attempt.usage.output +
-          (recoveryFooter === undefined ? 0 : this.tokenCounting.estimateText(recoveryFooter));
+      const summaryOutputTokens =
+        attempt.summaryOutputTokens === undefined
+          ? undefined
+          : attempt.summaryOutputTokens +
+            (recoveryFooter === undefined ? 0 : this.tokenCounting.estimateText(recoveryFooter));
       const dropped = droppedCount === 0 ? undefined : droppedCount;
       this.loopService.flushReminders();
       const currentRaw = this.loopService.rawHistory();
@@ -1049,11 +1052,17 @@ function findRequestId(error: unknown): string | undefined {
   return findAPIStatusError(error)?.requestId ?? undefined;
 }
 
-function collectSummary(outcome: Extract<LlmOutcome, { type: 'done' }>): CompactionAttemptResult {
+function collectSummary(
+  outcome: Extract<LlmOutcome, { type: 'done' }>,
+  thinkingEffort: ProfileModelContext['thinkingLevel'],
+): CompactionAttemptResult {
   if (outcome.finish?.finishReason === 'truncated') {
     throw new CompactionTruncatedError();
   }
 
+  const hasThinking =
+    thinkingEffort !== 'off' ||
+    outcome.message.content.some((part) => part.type === 'think');
   const summary = outcome.message.content
     .filter((part) => part.type === 'text')
     .map((part) => part.text)
@@ -1065,7 +1074,15 @@ function collectSummary(outcome: Extract<LlmOutcome, { type: 'done' }>): Compact
     );
   }
 
-  return { summary, usage: outcome.usage ?? emptyUsage(), requestId: outcome.requestId };
+  const summaryOutputTokens =
+    !hasThinking && outcome.usage !== undefined ? outcome.usage.output : undefined;
+
+  return {
+    summary,
+    summaryOutputTokens,
+    usage: outcome.usage ?? emptyUsage(),
+    requestId: outcome.requestId,
+  };
 }
 
 function historySafeToCompact(

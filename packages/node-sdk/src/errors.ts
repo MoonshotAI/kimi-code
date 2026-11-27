@@ -84,7 +84,6 @@ export const ErrorCodes = {
 
   SHELL_GIT_BASH_NOT_FOUND: 'shell.git_bash_not_found',
 
-  WORKTREE_DISABLED: 'worktree.disabled',
   WORKTREE_NOT_GIT_REPO: 'worktree.not_git_repo',
   WORKTREE_NO_COMMITS: 'worktree.no_commits',
   WORKTREE_BASE_NOT_FOUND: 'worktree.base_not_found',
@@ -496,12 +495,6 @@ export const KIMI_ERROR_INFO = {
     action: 'Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe.',
   },
 
-  'worktree.disabled': {
-    title: 'Worktrees are disabled',
-    retryable: false,
-    public: true,
-    action: 'Set KIMI_CODE_EXPERIMENTAL_WORKTREE=1 or enable "worktree" under [experimental] in config.toml.',
-  },
   'worktree.not_git_repo': {
     title: 'Not a git repository',
     retryable: false,

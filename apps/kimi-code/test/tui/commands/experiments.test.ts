@@ -43,7 +43,6 @@ function makeHost() {
     session,
     refreshSlashCommandAutocomplete: vi.fn(),
     reloadCurrentSessionView: vi.fn(async () => {}),
-    refreshWorkLocation: vi.fn(async () => {}),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
     showStatus: vi.fn(),
@@ -58,7 +57,6 @@ function makeHost() {
     };
     refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
     reloadCurrentSessionView: ReturnType<typeof vi.fn>;
-    refreshWorkLocation: ReturnType<typeof vi.fn>;
     mountEditorReplacement: ReturnType<typeof vi.fn>;
     restoreEditor: ReturnType<typeof vi.fn>;
     showStatus: ReturnType<typeof vi.fn>;
@@ -175,15 +173,5 @@ describe('experimental feature command handlers', () => {
     await applyExperimentalFeatureChanges(host, [{ id: 'micro_compaction', enabled: false }]);
 
     expect(host.showNotice).not.toHaveBeenCalled();
-  });
-
-  it('re-resolves the working directory only when the worktree flag changes', async () => {
-    const host = makeHost();
-
-    await applyExperimentalFeatureChanges(host, [{ id: 'micro_compaction', enabled: false }]);
-    expect(host.refreshWorkLocation).not.toHaveBeenCalled();
-
-    await applyExperimentalFeatureChanges(host, [{ id: 'worktree', enabled: true }]);
-    expect(host.refreshWorkLocation).toHaveBeenCalledOnce();
   });
 });

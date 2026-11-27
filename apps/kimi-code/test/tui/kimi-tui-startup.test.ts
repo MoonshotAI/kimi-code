@@ -19,6 +19,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { BannerProvider } from '#/tui/banner/banner-provider';
 import { readBannerDisplayState } from '#/tui/banner/state';
 import { handleLoginCommand, handleLogoutCommand } from '#/tui/commands/auth';
+import { handleUndoCommand } from '#/tui/commands/undo';
 import { promptPlatformSelection, promptLogoutProviderSelection } from '#/tui/commands/prompts';
 import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { ApiKeyInputDialogComponent } from '#/tui/components/dialogs/api-key-input-dialog';
@@ -27,6 +28,7 @@ import {
   SessionPickerComponent,
   type SessionRow,
 } from '#/tui/components/dialogs/session-picker';
+import { WorktreeFormComponent } from '#/tui/components/dialogs/worktree-form';
 import { WorktreePanelComponent } from '#/tui/components/dialogs/worktree-panel';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { BannerComponent } from '#/tui/components/chrome/banner';
@@ -52,6 +54,8 @@ import {
   TERMINAL_THEME_LIGHT,
 } from '#/tui/utils/terminal-theme';
 
+import { decodeOsc7577Writes } from '../helpers/osc7577';
+
 vi.mock('@moonshot-ai/kimi-code-oauth', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-oauth')>();
   return { ...actual, fetchOpenPlatformModels: vi.fn() };
@@ -64,6 +68,10 @@ vi.mock('#/utils/clipboard/clipboard-text', () => ({
   copyTextToClipboard: vi.fn(async () => {}),
 }));
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
+vi.mock('#/utils/process/fd-detect', () => ({
+  detectFdPath: vi.fn(() => null),
+  ensureFdPath: vi.fn(async () => null),
+}));
 const modelMigrationState = vi.hoisted(() => ({ acknowledged: {} as Record<string, string> }));
 vi.mock('#/utils/model-migration-state', () => ({
   readModelMigrationAcknowledgements: vi.fn(async () => ({ ...modelMigrationState.acknowledged })),
@@ -153,6 +161,7 @@ function makeStartupInput(
 function makeSession(overrides: Record<string, unknown> = {}) {
   return {
     id: 'ses-1',
+    workDir: '/tmp/proj-a',
     model: 'k2',
     summary: { title: 'Session title' },
     getStatus: vi.fn(async () => ({
@@ -172,6 +181,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     setPermission: vi.fn(async () => {}),
     setPlanMode: vi.fn(async () => {}),
     getGoal: vi.fn(async () => ({ goal: null })),
+    getCronTasks: vi.fn(async () => ({ tasks: [] })),
     onEvent: vi.fn(() => () => {}),
     getResumeState: vi.fn(() => null),
     listSkills: vi.fn(async () => []),
@@ -259,6 +269,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       }) => session,
     ),
     resumeSession: vi.fn(async () => session),
+    moveSession: vi.fn(async (_input: { id: string; workDir: string }) => session),
     listSessions: vi.fn(async () => []),
     close: vi.fn(async () => {}),
     track: vi.fn(),
@@ -509,6 +520,20 @@ describe('KimiTUI startup', () => {
       model: 'k2',
       permissionMode: 'yolo',
     });
+  });
+
+  it('rejects precheckMoveSession before creating a worktree when scheduled cron tasks exist', async () => {
+    const session = makeSession({
+      getCronTasks: vi.fn(async () => ({
+        tasks: [{ id: 'cron-1', cron: '*/15 * * * *', prompt: 'Check CI', recurring: true, createdAt: 1, nextFireAt: 2 }],
+      })),
+    });
+    const driver = makeDriver(makeHarness(session), makeStartupInput());
+    await driver.setSession(session);
+
+    await expect(
+      (driver as unknown as { precheckMoveSession(): Promise<void> }).precheckMoveSession(),
+    ).rejects.toThrow('Cannot move the session while scheduled tasks are active.');
   });
 
   it('mounts the docked fullscreen layout when tui_mode is fullscreen', async () => {
@@ -2942,9 +2967,13 @@ describe('KimiTUI startup', () => {
       contextTokens: 10, maxContextTokens: 100, contextUsage: 0.1,
     })) });
     const harness = makeHarness(session, {
-      listSessions: vi.fn(async () => [{
-        id: session.id, title: 'Picked', workDir: '/tmp/proj-a', updatedAt: Date.now(),
-      }]),
+      listSessions: vi.fn(async () => {
+        await flushMigrationCheck();
+        await flushMigrationCheck();
+        return [{
+          id: session.id, title: 'Picked', workDir: '/tmp/proj-a', updatedAt: Date.now(),
+        }];
+      }),
     });
     const driver = makeDriver(harness, makeStartupInput({ session: '' }));
     installMigrationModels(driver);
@@ -4529,7 +4558,6 @@ describe('KimiTUI resume location and sessions tabs', () => {
   it('switches automatically to a same-project worktree session on --session', async () => {
     const { project, worktree, resolveWorkLocation } = places();
     const harness = makeHarness(makeSession({ id: 'ses-wt' }), {
-      getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
       listSessions: vi.fn(async () => [{ id: 'ses-wt', workDir: worktree, projectWorkDir: project }]),
       resolveWorkLocation,
     });
@@ -4713,7 +4741,6 @@ describe('KimiTUI work location', () => {
   interface LocationDriver extends StartupDriver {
     initMainTui(): Promise<boolean>;
     applyWorkLocation(location: WorkLocation): Promise<void>;
-    refreshWorkLocation(): Promise<void>;
     ensureSession(): Promise<unknown>;
     createNewSession(): Promise<void>;
     fetchSessions(scope?: 'cwd' | 'project' | 'all'): Promise<boolean>;
@@ -4784,39 +4811,6 @@ describe('KimiTUI work location', () => {
     expect(footerLine()).not.toContain(basename(project));
     expect(welcomeText()).toContain(`Directory: ${worktree}`);
     expect(welcomeText()).toContain(`Worktree:  wt of ${project}`);
-  });
-
-  it('re-resolves a Kimi worktree when the worktree flag turns on or off mid-session', async () => {
-    const project = tempDir('kimi-location-project-');
-    const worktree = tempDir('kimi-location-worktree-');
-    let flagOn = false;
-    const harness = makeHarness(makeSession(), {
-      resolveWorkLocation: vi.fn(async (cwd: string): Promise<WorkLocation> =>
-        flagOn && cwd === worktree
-          ? {
-              cwd,
-              projectRoot: project,
-              isGitRepo: true,
-              worktree: { root: worktree, name: 'wt', repoRoot: project },
-            }
-          : { cwd, projectRoot: project, isGitRepo: true },
-      ),
-    });
-    const driver = await startAt(worktree, harness);
-    expect(driver.state.appState.worktree).toBeUndefined();
-
-    flagOn = true;
-    await driver.refreshWorkLocation();
-    expect(driver.state.appState).toMatchObject({
-      workDir: worktree,
-      projectRoot: project,
-      worktree: { root: worktree, name: 'wt', repoRoot: project },
-    });
-
-    flagOn = false;
-    await driver.refreshWorkLocation();
-    expect(driver.state.appState.workDir).toBe(worktree);
-    expect(driver.state.appState.worktree).toBeUndefined();
   });
 
   it('blocks sending while a worktree is being created and cancels it on Esc', async () => {
@@ -4976,7 +4970,6 @@ describe('KimiTUI work location', () => {
         removeWorktree: vi.fn(async (_input: unknown): Promise<void> => {}),
       };
       const harness = makeHarness(session, {
-        getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
         ...mocks,
       });
       let created = 0;
@@ -5026,17 +5019,137 @@ describe('KimiTUI work location', () => {
       return stripVTControlCharacters(slot(driver, WorktreePanelComponent)?.render(200).join('\n') ?? '');
     }
 
-    it('is listed only while the worktree experiment is on', async () => {
+    it('lists /worktree without an experimental flag', async () => {
       const project = tempDir('kimi-location-project-');
       const commands = (driver: LocationDriver): string[] =>
         (driver as unknown as { getSlashCommands(): readonly { name: string }[] })
           .getSlashCommands()
           .map((command) => command.name);
 
-      expect(commands(await startAt(project, makeHarness()))).not.toContain('worktree');
-      expect(commands(await startAt(project, worktreeHarness(project, project).harness))).toContain(
-        'worktree',
-      );
+      expect(commands(await startAt(project, makeHarness()))).toContain('worktree');
+    });
+
+    it('moves an active session with content into a newly created worktree without clearing transcript, or starts fresh on Start new', async () => {
+      const project = tempDir('kimi-location-project-');
+      const newWt = tempDir('kimi-location-created-wt-');
+      const session = makeSession({ id: 'ses-1' });
+      const { harness } = worktreeHarness(project, newWt, session);
+      const createWorktree = vi.fn(async () => ({
+        worktree: {
+          path: newWt,
+          name: 'feat-move',
+          head: 'abc1234567890',
+          branch: undefined,
+          missing: false,
+          managed: true,
+        },
+        repoRoot: project,
+        sourceRoot: project,
+        cwd: newWt,
+        cwdFallback: false,
+        copiedFiles: [],
+        sourceDirty: true,
+      }));
+      Object.assign(harness, { createWorktree });
+      harness.moveSession.mockImplementation(async ({ workDir }: { id: string; workDir: string }) => {
+        Object.assign(session, { workDir });
+        return session;
+      });
+
+      const driver = await startAt(project, harness);
+      await driver.ensureSession();
+
+      const emptyPanel = await openPanel(driver);
+      emptyPanel.handleInput('\u000E');
+      const emptyForm = slot(driver, WorktreeFormComponent);
+      expect(emptyForm).toBeDefined();
+      expect(stripVTControlCharacters(emptyForm!.render(90).join('\n'))).not.toContain('Session');
+      emptyForm!.handleInput('\u001B');
+      slot(driver, WorktreePanelComponent)?.handleInput('\u001B');
+
+      driver.state.transcriptEntries.push({
+        id: 'u1',
+        kind: 'user',
+        renderMode: 'plain',
+        content: 'keep this context',
+      });
+      const marker: Component = {
+        render: () => ['keep-transcript-marker'],
+        invalidate: () => {},
+      };
+      driver.state.transcriptContainer.addChild(marker);
+
+      (
+        driver as unknown as {
+          backgroundTasks: Map<string, { status: 'running' | 'completed' }>;
+        }
+      ).backgroundTasks.set('bg-1', { status: 'running' });
+
+      const busyPanel = await openPanel(driver);
+      busyPanel.handleInput('\u000E');
+      const busyForm = slot(driver, WorktreeFormComponent)!;
+      expect(stripVTControlCharacters(busyForm.render(90).join('\n'))).toContain('[ Move current ]');
+      busyForm.handleInput(ENTER);
+      await vi.waitFor(() => {
+        expect(stripVTControlCharacters(busyForm.render(120).join('\n'))).toContain(
+          'Cannot move the session while background tasks are running.',
+        );
+      });
+      expect(createWorktree).not.toHaveBeenCalled();
+
+      (
+        driver as unknown as {
+          backgroundTasks: Map<string, { status: 'running' | 'completed' }>;
+        }
+      ).backgroundTasks.clear();
+
+      busyForm.handleInput(ENTER);
+      await vi.waitFor(() => {
+        expect(transcriptText(driver)).toContain('✓ Moved session to worktree feat-move');
+      });
+      expect(harness.moveSession).toHaveBeenCalledWith({ id: 'ses-1', workDir: newWt });
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+      expect(driver.state.transcriptContainer.children).toContain(marker);
+      expect(driver.state.appState).toMatchObject({
+        sessionId: 'ses-1',
+        workDir: newWt,
+        projectRoot: project,
+        worktree: { root: newWt, name: 'feat-move', repoRoot: project },
+      });
+      const footerLine = stripVTControlCharacters(driver.state.footer.render(200)[0] ?? '');
+      expect(footerLine).toContain('worktree feat-move');
+
+      const newWt2 = tempDir('kimi-location-created-wt2-');
+      createWorktree.mockResolvedValueOnce({
+        worktree: {
+          path: newWt2,
+          name: 'feat-fresh',
+          head: 'def4567890123',
+          branch: undefined,
+          missing: false,
+          managed: true,
+        },
+        repoRoot: project,
+        sourceRoot: project,
+        cwd: newWt2,
+        cwdFallback: false,
+        copiedFiles: [],
+        sourceDirty: false,
+      });
+      const panel2 = await openPanel(driver);
+      panel2.handleInput('\u000E');
+      const form2 = slot(driver, WorktreeFormComponent)!;
+      form2.handleInput('\t');
+      form2.handleInput('\t');
+      form2.handleInput('\u001B[C');
+      form2.handleInput(ENTER);
+
+      await vi.waitFor(() => {
+        expect(transcriptText(driver)).toContain('✓ Entered worktree feat-fresh');
+      });
+      expect(harness.createSession).toHaveBeenCalledTimes(2);
+      expect(driver.state.appState.sessionId).toBe('ses-2');
+      expect(driver.state.appState.workDir).toBe(newWt2);
     });
 
     it('starts a fresh session in the chosen checkout and omits source for bare repos', async () => {
@@ -5500,7 +5613,6 @@ describe('KimiTUI work location', () => {
     it('forces -w startup onto the local environment even when config defaults to a remote environment', async () => {
       const project = tempDir('kimi-wt-local-env-');
       const harness = makeHarness(makeSession({ id: 'ses-local' }), {
-        getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
         resolveSessionEnvironment: vi.fn(async (input: { environmentId?: string }) => ({
           environmentId: input.environmentId ?? 'dev-box',
           cwd: input.environmentId === 'local' ? project : '/remote/work',
@@ -6213,7 +6325,6 @@ describe('KimiTUI work location', () => {
       const harness = makeHarness(session, {
         inspectWorktreeRemoval,
         removeWorktree,
-        getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
       });
       const driver = makeDriver(harness, {
         ...makeStartupInput({ model: 'k2' }),
@@ -6353,18 +6464,6 @@ describe('KimiTUI work location', () => {
       expect(driver.worktreeExit.outcome?.kind).toBe('deleted');
     });
 
-    it('exits on /exit without asking while the worktree flag is off', async () => {
-      const { inspectWorktreeRemoval, driver, stop } = await startInWorktree({ uncommittedFiles: 1 });
-      setExperimentalFeatures([]);
-
-      driver.handleUserInput('/exit');
-      await vi.waitFor(() => {
-        expect(stop).toHaveBeenCalledOnce();
-      });
-      expect(inspectWorktreeRemoval).not.toHaveBeenCalled();
-      expect(driver.worktreeExit.outcome).toBeUndefined();
-    });
-
     it('updates the spinning footer hint across shutdown hooks and worktree deletion stages', async () => {
       const { harness, session, removeWorktree, driver, mount } = await startInWorktree(
         { uncommittedFiles: 0 },
@@ -6446,7 +6545,6 @@ describe('KimiTUI work location', () => {
       );
       const session = makeSession({ id: 'ses-main' });
       const harness = makeHarness(session, {
-        getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
         listWorktrees: vi.fn(async () => ({
           repoRoot: project,
           isBare: false,
@@ -6510,5 +6608,207 @@ describe('KimiTUI work location', () => {
       await stopPromise;
       expect(driver.state.footer.getTransientHint()).toBeNull();
     });
+  });
+});
+
+describe('OSC 7577 program resume lifecycle', () => {
+  const TEST_OSC_TOKEN = 'tui-osc-token';
+
+  type Osc7577Event =
+    | { readonly kind: 'clear' }
+    | { readonly kind: 'resume'; readonly argv: readonly string[]; readonly cwd?: string };
+
+  function createOsc7577Tui(
+    harness: ReturnType<typeof makeHarness>,
+    startupOverrides: Parameters<typeof makeStartupInput>[0] = { model: 'k2' },
+  ) {
+    const tui = new KimiTUI(harness as never, {
+      ...makeStartupInput(startupOverrides),
+      programResumeToken: TEST_OSC_TOKEN,
+    });
+    onTestFinished(() => {
+      (tui as unknown as { unregisterSignalHandlers(): void }).unregisterSignalHandlers();
+    });
+    const writes: string[] = [];
+    vi.spyOn(tui.state.terminal, 'write').mockImplementation((data: string) => {
+      writes.push(data);
+    });
+    vi.spyOn(tui.state.terminal, 'setProgress').mockImplementation(() => {});
+    vi.spyOn(tui.state.ui, 'start').mockImplementation(() => {});
+    vi.spyOn(tui.state.ui, 'stop').mockImplementation(() => {});
+    vi.spyOn(tui.state.ui, 'requestRender').mockImplementation(() => {});
+    const events = (): Osc7577Event[] =>
+      decodeOsc7577Writes(writes, TEST_OSC_TOKEN).map((entry) =>
+        entry.kind === 'clear'
+          ? { kind: 'clear' }
+          : {
+              kind: 'resume',
+              argv: entry.argv,
+              ...(entry.cwd === undefined ? {} : { cwd: entry.cwd }),
+            },
+      );
+    return { tui, events };
+  }
+
+  it('stays silent on sessionless startup and reports kimi -r <id> with workDir after the first transcript entry', async () => {
+    const session = makeSession({ id: 'ses-first' });
+    const harness = makeHarness(session);
+    const { tui, events } = createOsc7577Tui(harness);
+
+    await tui.start();
+    expect(events()).toEqual([]);
+
+    await tui.ensureSession();
+    expect(events()).toEqual([]);
+
+    tui.appendTranscriptEntry({
+      id: 'msg-1',
+      kind: 'user',
+      renderMode: 'plain',
+      content: 'hello world',
+    });
+    expect(events()).toEqual([
+      {
+        kind: 'resume',
+        argv: ['kimi', '-r', 'ses-first'],
+        cwd: '/tmp/proj-a',
+      },
+    ]);
+  });
+
+  it('coalesces replay history on startup resume into a single OSC 7577 report', async () => {
+    const resumeState = createResumeState();
+    (
+      resumeState as unknown as {
+        agents: { main: { replay: unknown[] } };
+      }
+    ).agents.main.replay = [
+      {
+        type: 'message',
+        message: { role: 'user', content: [{ type: 'text', text: 'question' }] },
+      },
+      {
+        type: 'message',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }] },
+      },
+    ];
+    const session = makeSession({
+      id: 'ses-resumed',
+      getResumeState: vi.fn(() => resumeState),
+    });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-resumed', workDir: '/tmp/proj-a' }]),
+    });
+    const { tui, events } = createOsc7577Tui(harness, { session: 'ses-resumed', model: 'k2' });
+
+    await tui.start();
+
+    expect(events()).toEqual([
+      {
+        kind: 'resume',
+        argv: ['kimi', '-r', 'ses-resumed'],
+        cwd: '/tmp/proj-a',
+      },
+    ]);
+  });
+
+  it('republishes after external editor returns and clears on /new without leaking (newSessionId, oldEntries)', async () => {
+    const firstSession = makeSession({ id: 'ses-old' });
+    const secondSession = makeSession({ id: 'ses-new' });
+    let sessionIndex = 0;
+    const harness = makeHarness(firstSession, {
+      createSession: vi.fn(async () => {
+        sessionIndex += 1;
+        return sessionIndex === 1 ? firstSession : secondSession;
+      }),
+    });
+    const { tui, events } = createOsc7577Tui(harness);
+
+    await tui.start();
+    await tui.ensureSession();
+    tui.appendTranscriptEntry({
+      id: 'msg-old',
+      kind: 'user',
+      renderMode: 'plain',
+      content: 'initial message',
+    });
+    expect(events()).toEqual([
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-old'], cwd: '/tmp/proj-a' },
+    ]);
+
+    tui.setExternalEditorRunning(true);
+    expect(events()).toHaveLength(1);
+    tui.setExternalEditorRunning(false);
+    expect(events()).toEqual([
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-old'], cwd: '/tmp/proj-a' },
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-old'], cwd: '/tmp/proj-a' },
+    ]);
+
+    await tui.createNewSession();
+    expect(events()).toEqual([
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-old'], cwd: '/tmp/proj-a' },
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-old'], cwd: '/tmp/proj-a' },
+      { kind: 'clear' },
+    ]);
+  });
+
+  it('stays silent when /undo runs in a /new empty session', async () => {
+    const session = makeSession({
+      id: 'ses-new-empty',
+      undoHistory: vi.fn(async () => {}),
+    });
+    const harness = makeHarness(session);
+    const { tui, events } = createOsc7577Tui(harness);
+
+    await tui.start();
+    await tui.createNewSession();
+    await handleUndoCommand(tui);
+
+    expect(tui.state.transcriptEntries.map((entry) => entry.content)).toEqual([
+      'Nothing to undo.',
+    ]);
+    expect(tui.hasSessionContent()).toBe(false);
+    expect(events()).toEqual([]);
+  });
+
+  it('emits clear=1 and reports hasSessionContent() === false when /undo 1 empties all turns', async () => {
+    const undoHistory = vi.fn(async () => {});
+    const session = makeSession({
+      id: 'ses-undo',
+      undoHistory,
+    });
+    const harness = makeHarness(session);
+    const { tui, events } = createOsc7577Tui(harness);
+
+    await tui.start();
+    await tui.createNewSession();
+    await handleUndoCommand(tui);
+    expect(events()).toEqual([]);
+
+    tui.appendTranscriptEntry({
+      id: 'msg-user-1',
+      kind: 'user',
+      renderMode: 'plain',
+      content: 'first prompt',
+    });
+    tui.appendTranscriptEntry({
+      id: 'msg-assistant-1',
+      kind: 'assistant',
+      renderMode: 'markdown',
+      content: 'first reply',
+    });
+    expect(tui.hasSessionContent()).toBe(true);
+    expect(events()).toEqual([
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-undo'], cwd: '/tmp/proj-a' },
+    ]);
+
+    await handleUndoCommand(tui, '1');
+
+    expect(undoHistory).toHaveBeenCalledWith(1);
+    expect(tui.hasSessionContent()).toBe(false);
+    expect(events()).toEqual([
+      { kind: 'resume', argv: ['kimi', '-r', 'ses-undo'], cwd: '/tmp/proj-a' },
+      { kind: 'clear' },
+    ]);
   });
 });

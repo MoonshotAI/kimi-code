@@ -24,7 +24,7 @@ function resolveCoreRef(): string {
 }
 
 const iconsDir = fileURLToPath(
-  new URL('./src/icons/kimi', import.meta.resolve('@moonshot-ai/app-client/package.json')),
+  new URL('./src/icons/kimi', import.meta.resolve('@moonshot-ai/app-ui/package.json')),
 );
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8')) as {

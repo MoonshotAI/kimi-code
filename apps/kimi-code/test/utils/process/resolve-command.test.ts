@@ -4,7 +4,7 @@ import { join, parse } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { resolveCommandPath } from '#/utils/process/resolve-command';
+import { resolveCommandPath, resolveTrustedExecutable } from '#/utils/process/resolve-command';
 
 const originalEnv = { ...process.env };
 const originalPlatform = process.platform;
@@ -174,5 +174,27 @@ describe('resolveCommandPath (win32)', () => {
     process.env['PATHEXT'] = '.COM;.EXE;.BAT;.CMD';
 
     expect(resolveCommandPath('npm', cwd)).toBeUndefined();
+  });
+});
+
+describe('resolveTrustedExecutable', () => {
+  it('accepts an executable outside cwd and rejects one inside cwd', () => {
+    mockPlatform('win32');
+    const trustedDir = makeTempDir('kimi-trusted-bin-');
+    const cwd = makeTempDir('kimi-untrusted-cwd-');
+    const trustedExe = join(trustedDir, 'kimi.exe');
+    const untrustedExe = join(cwd, 'kimi.exe');
+    const nestedDir = join(cwd, 'bin');
+    mkdirSync(nestedDir);
+    const nestedExe = join(nestedDir, 'kimi.exe');
+    writeFileSync(trustedExe, 'MZ');
+    writeFileSync(untrustedExe, 'MZ');
+    writeFileSync(nestedExe, 'MZ');
+
+    expect(resolveTrustedExecutable(trustedExe, cwd)).toBe(trustedExe);
+    expect(resolveTrustedExecutable(untrustedExe, cwd)).toBeUndefined();
+    expect(resolveTrustedExecutable(nestedExe, cwd)).toBeUndefined();
+    expect(resolveTrustedExecutable(nestedDir, cwd)).toBeUndefined();
+    expect(resolveTrustedExecutable(join(trustedDir, 'missing.exe'), cwd)).toBeUndefined();
   });
 });

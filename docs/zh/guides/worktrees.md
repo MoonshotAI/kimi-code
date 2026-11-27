@@ -2,31 +2,9 @@
 
 Git worktree（Git 工作树，指同一个 Git 仓库额外检出的独立工作目录）让你在隔离目录里并行推进多个任务，不干扰主仓库中未提交的改动，也不必来回切换分支。
 
-::: info 说明
-Git worktree 目前是实验功能，默认关闭。
-:::
-
-## 开启功能
-
-可以通过以下任意一种方式开启：
-
-- **在 TUI 中开启**：运行 `/experiments`，打开 **Git worktrees** 立即生效。
-- **在配置中持久开启**：在 `~/.kimi-code/config.toml` 中添加：
-
-```toml
-[experimental]
-worktree = true
-```
-
-- **单次启动开启**：启动时设置[环境变量](../configuration/env-vars.md#运行时开关)：
-
-```sh
-KIMI_CODE_EXPERIMENTAL_WORKTREE=1 kimi -w
-```
-
 ## 在 TUI 中用 `/worktree` 管理
 
-在本地 Git 仓库中运行 `/worktree`，可以查看、创建、切换和删除当前仓库的工作树。
+在本地 Git 仓库中运行 `/worktree`，可以查看、创建、切换和删除当前仓库的工作树。如果当前会话已经开始对话，新建工作树时可以直接将当前会话搬过去继续推进，也可以开启全新会话；原工作树中未提交的文件改动仍保留在原处。
 
 ## 在 CLI 中用 `kimi -w` 启动
 
