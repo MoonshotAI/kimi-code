@@ -108,6 +108,8 @@ interface LogState {
   failureWarned: boolean;
   stuckWatch: NodeJS.Timeout | undefined;
   cutoverEpoch: number;
+  readEpoch: number;
+  appendedBytes: number;
   refCount: number;
   retired: boolean;
   ready: Promise<void>;
@@ -196,41 +198,52 @@ export class AppendLogStore {
     await this.flushLog(scope, key);
     const state = this.state(scope, key);
     const lengthAtStart = this.diskLength(scope, key);
-    if (lengthAtStart !== undefined) {
-      state.knownLength = lengthAtStart;
-    }
-    const onTruncate = options?.onTruncate;
-    const textDecoder = new TextDecoder();
-    let pending = '';
-    let lineNumber = 0;
-    for await (const chunk of this.storage.readStream(scope, key)) {
-      pending += textDecoder.decode(chunk, { stream: true });
-      let newlineIndex = pending.indexOf('\n');
-      while (newlineIndex !== -1) {
-        const raw = pending.slice(0, newlineIndex);
-        pending = pending.slice(newlineIndex + 1);
-        lineNumber++;
-        let record: R | undefined;
-        try {
-          record = this.parseLine<R>(raw, scope, key, lineNumber, false);
-        } catch (error) {
-          if (onTruncate === undefined) throw error;
-          onTruncate({ lineNumber, reason: 'corrupted', cause: error });
-          return;
+    const appendedAtStart = state.appendedBytes;
+    const cutoverEpochAtStart = state.cutoverEpoch;
+    const readEpoch = ++state.readEpoch;
+    try {
+      const onTruncate = options?.onTruncate;
+      const textDecoder = new TextDecoder();
+      let pending = '';
+      let lineNumber = 0;
+      for await (const chunk of this.storage.readStream(scope, key)) {
+        pending += textDecoder.decode(chunk, { stream: true });
+        let newlineIndex = pending.indexOf('\n');
+        while (newlineIndex !== -1) {
+          const raw = pending.slice(0, newlineIndex);
+          pending = pending.slice(newlineIndex + 1);
+          lineNumber++;
+          let record: R | undefined;
+          try {
+            record = this.parseLine<R>(raw, scope, key, lineNumber, false);
+          } catch (error) {
+            if (onTruncate === undefined) throw error;
+            onTruncate({ lineNumber, reason: 'corrupted', cause: error });
+            return;
+          }
+          if (record !== undefined) yield record;
+          newlineIndex = pending.indexOf('\n');
         }
-        if (record !== undefined) yield record;
-        newlineIndex = pending.indexOf('\n');
       }
-    }
-    pending += textDecoder.decode();
-    if (pending.length > 0) {
-      lineNumber++;
-      const record = this.parseLine<R>(pending, scope, key, lineNumber, true);
-      if (record !== undefined) {
-        yield record;
-      } else if (onTruncate !== undefined) {
-        const line = pending.endsWith('\r') ? pending.slice(0, -1) : pending;
-        if (line.length > 0) onTruncate({ lineNumber, reason: 'truncated' });
+      pending += textDecoder.decode();
+      if (pending.length > 0) {
+        lineNumber++;
+        const record = this.parseLine<R>(pending, scope, key, lineNumber, true);
+        if (record !== undefined) {
+          yield record;
+        } else if (onTruncate !== undefined) {
+          const line = pending.endsWith('\r') ? pending.slice(0, -1) : pending;
+          if (line.length > 0) onTruncate({ lineNumber, reason: 'truncated' });
+        }
+      }
+    } finally {
+      const disk = this.diskLength(scope, key);
+      if (
+        disk !== undefined &&
+        state.cutoverEpoch === cutoverEpochAtStart &&
+        readEpoch === state.readEpoch
+      ) {
+        state.knownLength = (lengthAtStart ?? 0) + (state.appendedBytes - appendedAtStart);
       }
     }
   }
@@ -370,6 +383,8 @@ export class AppendLogStore {
         failureWarned: false,
         stuckWatch: undefined,
         cutoverEpoch: 0,
+        readEpoch: 0,
+        appendedBytes: 0,
         refCount: 0,
         retired: false,
         ready,
@@ -544,6 +559,7 @@ export class AppendLogStore {
         state.recovery = undefined;
         wrote = true;
         if (state.knownLength !== undefined) state.knownLength += encoded.length;
+        state.appendedBytes += encoded.length;
         if (wroteBox !== undefined) wroteBox.value = true;
       } catch (error) {
         state.inFlightBytes = 0;
