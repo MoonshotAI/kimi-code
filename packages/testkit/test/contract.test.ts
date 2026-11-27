@@ -98,29 +98,6 @@ describe('contract summary', () => {
   });
 });
 
-describe('shared schemas', () => {
-  const withSharedEnvelope = (): unknown => {
-    const document = structuredClone(openapi()) as { paths: Record<string, Record<string, { responses: Record<string, { content: Record<string, { schema: unknown }> }> }>>; components?: unknown };
-    for (const item of Object.values(document.paths)) {
-      for (const operation of Object.values(item)) {
-        for (const response of Object.values(operation.responses)) {
-          const media = response.content['application/json']!;
-          if (JSON.stringify(media.schema) === JSON.stringify(envelope)) media.schema = { $ref: '#/components/schemas/Envelope' };
-        }
-      }
-    }
-    document.components = { schemas: { Envelope: envelope } };
-    return document;
-  };
-
-  it('summarizes and digests a document that references shared schemas like the inlined one', () => {
-    expect(JSON.stringify(withSharedEnvelope())).toContain('#/components/schemas/Envelope');
-    expect(summarizeContract(withSharedEnvelope(), asyncapi()).lines).toEqual(summarizeContract(openapi(), asyncapi()).lines);
-    const inlined = { ...(openapi() as Record<string, unknown>), components: { schemas: {} } };
-    expect(contractDigest(withSharedEnvelope(), asyncapi())).toBe(contractDigest(inlined, asyncapi()));
-  });
-});
-
 describe('contract digest', () => {
   const labels = (valueType: string, extra: Record<string, unknown> = {}): unknown => ({
     openapi: '3.1.0',

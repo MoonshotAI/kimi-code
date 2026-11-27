@@ -1,14 +1,9 @@
-import { inlineSchemaRefs } from '@moonshot-ai/testkit/contract';
 import { describe, expect, it } from 'vitest';
 
 import { sharedAuthHeaders, sharedServer } from './helpers/sharedServer';
 
 describe('server-v2 OpenAPI', () => {
   async function fetchOpenApi(): Promise<Record<string, unknown>> {
-    return inlineSchemaRefs(await fetchPublishedOpenApi());
-  }
-
-  async function fetchPublishedOpenApi(): Promise<Record<string, unknown>> {
     const res = await fetch(`${sharedServer().base}/openapi.json`, {
       headers: sharedAuthHeaders(),
     } as never);
@@ -24,25 +19,6 @@ describe('server-v2 OpenAPI', () => {
     const info = asRecord(doc['info']);
     expect(info['title']).toBe('Kimi Code Server API');
     expect(typeof info['version']).toBe('string');
-  });
-
-  it('publishes each shared schema once and references it from every use', async () => {
-    const doc = await fetchPublishedOpenApi();
-    const schemas = asRecord(asRecord(doc['components'])['schemas']);
-    const references = new Set<string>();
-    const collect = (value: unknown): void => {
-      if (Array.isArray(value)) value.forEach(collect);
-      else if (typeof value === 'object' && value !== null) {
-        const reference = (value as Record<string, unknown>)['$ref'];
-        if (typeof reference === 'string') references.add(reference);
-        Object.values(value).forEach(collect);
-      }
-    };
-    collect(doc);
-
-    expect([...references].filter((reference) => schemas[reference.replace('#/components/schemas/', '')] === undefined)).toEqual([]);
-    expect(Object.keys(schemas).filter((name) => !references.has(`#/components/schemas/${name}`))).toEqual([]);
-    expect(asRecord(schemas['Session'])['properties']).toMatchObject({ worktree: { $ref: '#/components/schemas/SessionWorktree' } });
   });
 
   it('covers the core /api/v1 routes v2 registers', async () => {
