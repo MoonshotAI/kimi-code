@@ -51,6 +51,7 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   expectTranscript: (text) => `检查整段对话里有${quote(text)}`,
   exit: () => '用户退出，回到原来的 shell',
   expectTerminalRestored: () => '检查终端回到了正常的输入模式',
+  openSession: (title) => `用户回到之前标题为${quote(title)}的会话`,
 };
 
 export const DISK_TITLES = {

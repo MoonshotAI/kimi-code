@@ -13,9 +13,10 @@ entries:
     operation: Start a new session, then go back to the earlier session and continue it
     promise: keeps
     coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/going-back-to-an-earlier-session-keeps-its-prefix.spec.ts
       - kind: implicit
         test: tests/e2e/scenarios/approval/new-session-asks-again.spec.ts
-    gap: Going back to the earlier session needs an openSession action on every surface.
 
   - id: A3
     operation: Compact the context by hand, then send the next message

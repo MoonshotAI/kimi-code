@@ -77,6 +77,7 @@ export const VERBS = {
     },
     checksInterface: true,
   },
+  openSession: { on: SURFACES, checksInterface: false },
 } as const satisfies Readonly<Record<string, VerbSpec>>;
 
 export type Verb = keyof typeof VERBS;
@@ -224,6 +225,7 @@ interface VerbSignatures {
   expectTranscript(text: string): Promise<void>;
   exit(): Promise<void>;
   expectTerminalRestored(): Promise<void>;
+  openSession(title: string): Promise<void>;
 }
 
 export type Actions = { readonly [Name in Verb]: VerbSignatures[Name] };

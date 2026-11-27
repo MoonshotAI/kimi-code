@@ -199,7 +199,7 @@ async function readIfPresent(path: string): Promise<string | undefined> {
   }
 }
 
-function promptCheck(verb: 'send' | 'queue' | 'steer'): (text: string) => void {
+function promptCheck(verb: 'send' | 'queue' | 'steer' | 'openSession'): (text: string) => void {
   return (text) => {
     if (!/^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u.test(text) || text !== text.trim()) {
       throw new Error(`${verb}() takes one line of printable text without surrounding spaces, got ${JSON.stringify(text)}`);
@@ -268,6 +268,7 @@ const PRECHECKS: { readonly [V in Verb]?: (...args: Parameters<Actions[V]>) => v
   expectApproval: assertApprovalExpectation,
   expectError: lineCheck('expectError'),
   expectAbsent: lineCheck('expectAbsent'),
+  openSession: promptCheck('openSession'),
 };
 
 
@@ -278,6 +279,11 @@ function timeOf(time: string): string {
 
 function problemOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+interface Conversation {
+  title?: string;
+  lastPrompt?: string;
 }
 
 interface RunningProduct {
@@ -303,8 +309,8 @@ class ScenarioSession {
   private steps = 0;
   private failedStep: string | undefined;
   private launches = 1;
-  private lastPrompt: string | undefined;
-  private sessions = 1;
+  private conversation: Conversation = {};
+  private readonly conversations: Conversation[] = [this.conversation];
   private workspaceTrust: SurfaceLaunch['workspaceTrust'];
   private readonly earlierDiagnostics: Diagnostic[] = [];
   private readonly performed = new Set<Verb>();
@@ -460,11 +466,19 @@ class ScenarioSession {
     const method: unknown = Reflect.get(driver, verb);
     if (typeof method !== 'function') throw new Error(`The ${this.surface} driver does not implement ${verb}().`);
     await Reflect.apply(method, driver, args);
-    if (verb === 'send' || verb === 'queue' || verb === 'steer' || verb === 'submit') this.lastPrompt = String(args[0]);
-    if (verb === 'undo') this.lastPrompt = undefined;
+    if (verb === 'send' || verb === 'queue' || verb === 'steer' || verb === 'submit') {
+      const prompt = String(args[0]);
+      this.conversation.title ??= prompt;
+      this.conversation.lastPrompt = prompt;
+    }
+    if (verb === 'undo') this.conversation.lastPrompt = undefined;
     if (verb === 'newSession') {
-      this.lastPrompt = undefined;
-      this.sessions += 1;
+      this.conversation = {};
+      this.conversations.push(this.conversation);
+    }
+    if (verb === 'openSession') {
+      const title = String(args[0]);
+      this.conversation = this.conversations.find((conversation) => conversation.title === title) ?? { title };
     }
   }
 
@@ -522,7 +536,7 @@ class ScenarioSession {
       home,
       model,
       workspaceTrust: this.workspaceTrust,
-      reopen: { launch: this.launches, lastPrompt: this.lastPrompt, state },
+      reopen: { launch: this.launches, lastPrompt: this.conversation.lastPrompt, state },
       ...this.launchOptions(),
     });
   }
@@ -623,9 +637,9 @@ class ScenarioSession {
       problems.push(`The fake model reported problems:\n${problemOf(error)}`);
     }
     const keys = [...new Set(model.promptCache().filter((entry) => entry.role === 'main' && !entry.rejected).map((entry) => entry.cacheKey))];
-    if (keys.length > this.sessions) {
+    if (keys.length > this.conversations.length) {
       problems.push(
-        `The product sent main requests under ${keys.length} prompt cache keys (${keys.map((key) => JSON.stringify(key ?? null)).join(', ')}), but the scenario used ${this.sessions} session(s). ` +
+        `The product sent main requests under ${keys.length} prompt cache keys (${keys.map((key) => JSON.stringify(key ?? null)).join(', ')}), but the scenario used ${this.conversations.length} session(s). ` +
           'A provider reuses a cached prefix only under the same key, so every request of a session must keep its key, also after a restart.',
       );
     }

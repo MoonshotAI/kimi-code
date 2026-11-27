@@ -155,6 +155,14 @@ const COMPACT_COMMAND = '/compact';
 const COMPACTION_DONE = 'Compaction complete';
 const COMPACTION_CANCELLED = 'Compaction cancelled';
 const NEW_SESSION_NOTICE = 'Started a new session (';
+const SESSIONS_COMMAND = '/sessions';
+const SESSION_PICKER_TITLE = /^Sessions(?: {2}\(type to search\))?$/;
+const SESSION_PICKER_CANCEL = 'Esc cancel';
+const SESSION_POINTER = '❯ ';
+const SESSION_CURRENT = '← current';
+const SESSION_TITLE_END = '  ';
+const SESSION_RESUMED = 'Resumed session (';
+const SESSION_RESUME_FAILURES = ['Failed to resume session', 'Failed to replay session history', 'Cannot switch sessions'] as const;
 
 interface Screen {
   readonly text: string;
@@ -165,6 +173,13 @@ interface Screen {
   readonly status: readonly string[];
   readonly panel: readonly string[];
   readonly startedSession: string | undefined;
+}
+
+interface SessionCard {
+  readonly title: string;
+  readonly id: string;
+  readonly selected: boolean;
+  readonly current: boolean;
 }
 
 interface ApprovalPanel {
@@ -282,6 +297,35 @@ function composerText(screen: Screen): string | undefined {
 
 function compactionNotices(screen: Screen, notice: string): number {
   return screen.transcript.filter((row) => row.includes(notice)).length;
+}
+
+function sessionCards(screen: Screen): readonly SessionCard[] | undefined {
+  const rows = screen.viewport.map((row) => row.trim());
+  const title = rows.findLastIndex((row) => SESSION_PICKER_TITLE.test(row));
+  const hint = rows.findIndex((row, index) => index > title && row.includes(SESSION_PICKER_CANCEL));
+  const end = rows.findIndex((row, index) => index > hint && APPROVAL_RULE.test(row));
+  if (title < 0 || hint < 0 || end < 0) return undefined;
+  const groups: string[][] = [[]];
+  for (const row of rows.slice(hint + 1, end)) {
+    if (row === '') groups.push([]);
+    else groups.at(-1)?.push(row);
+  }
+  return groups.flatMap(([header, meta]) => {
+    const id = meta?.split(/\s+/)[0];
+    if (header === undefined || id === undefined) return [];
+    const selected = header.startsWith(SESSION_POINTER);
+    const shown = selected ? header.slice(SESSION_POINTER.length) : header;
+    const cut = shown.indexOf(SESSION_TITLE_END);
+    return [{ title: cut < 0 ? shown : shown.slice(0, cut), id, selected, current: header.includes(`${SESSION_TITLE_END}${SESSION_CURRENT}`) }];
+  });
+}
+
+function resumedSession(screen: Screen, id: string): boolean {
+  return screen.text.split('\n').some((row) => row.trim().startsWith(`${SESSION_RESUMED}${id})`));
+}
+
+function resumeFailures(screen: Screen): number {
+  return screen.text.split('\n').filter((row) => SESSION_RESUME_FAILURES.some((failure) => row.includes(failure))).length;
 }
 
 function drawnWidth(screen: Screen): number | undefined {
@@ -719,6 +763,47 @@ class TuiDriver implements SurfaceDriver<'tui'> {
       screen.startedSession !== undefined && screen.startedSession !== before.startedSession && screen.input === 'editor' ? true : undefined,
     );
     this.turn = undefined;
+  }
+
+  async openSession(title: string): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) throw this.failure('openSession() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.assertEmptyInput('openSession()', before);
+    this.write(paste(SESSIONS_COMMAND));
+    this.write(KEYS.enter);
+    let cards = await this.wait('the session picker to list the sessions', (screen) => sessionCards(screen));
+    const target = cards.find((card) => card.title === title);
+    if (target === undefined || target.current) {
+      const listed = cards.length === 0 ? '(no sessions)' : cards.map((card) => `${card.title}${card.current ? ` ${SESSION_CURRENT}` : ''}`).join('\n');
+      const problem =
+        target === undefined
+          ? `openSession() found no session titled ${JSON.stringify(title)} in the session picker. It lists:\n${listed}`
+          : `openSession() found that the session titled ${JSON.stringify(title)} is the session already open; go back to another session.`;
+      this.write(KEYS.escape);
+      await this.wait('the session picker to close', (screen) => (screen.input === 'editor' ? true : undefined));
+      throw this.failure(problem, await this.read());
+    }
+    for (let moves = 0; cards.find((card) => card.selected)?.id !== target.id; moves += 1) {
+      const from = cards.findIndex((card) => card.selected);
+      const to = cards.findIndex((card) => card.id === target.id);
+      if (from < 0 || moves > cards.length) throw this.failure(`openSession() could not move the session picker's selection to ${JSON.stringify(title)}.`, await this.read());
+      const left = cards[from]?.id;
+      this.write(to > from ? KEYS.down : KEYS.up);
+      cards = await this.wait(`the session picker to move its selection toward ${JSON.stringify(title)}`, (screen) => {
+        const now = sessionCards(screen);
+        return now !== undefined && now.some((card) => card.selected && card.id !== left) ? now : undefined;
+      });
+    }
+    const failed = resumeFailures(await this.read());
+    this.write(KEYS.enter);
+    const outcome = await this.wait(`the terminal UI to resume session ${target.id} and show ${JSON.stringify(title)} in its conversation`, (screen) => {
+      if (resumeFailures(screen) > failed) return 'failed' as const;
+      return screen.input === 'editor' && resumedSession(screen, target.id) && userMessages(screen, title) > 0 ? ('resumed' as const) : undefined;
+    });
+    if (outcome === 'failed') throw this.failure(`openSession() picked ${JSON.stringify(title)}, but the terminal UI could not resume it.`, await this.read());
+    this.turn = undefined;
+    this.queued = [];
+    this.recalled = undefined;
   }
 
   async resize(size: WindowSize): Promise<void> {

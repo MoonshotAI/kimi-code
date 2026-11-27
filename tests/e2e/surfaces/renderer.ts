@@ -468,8 +468,38 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     if (!(await this.idle())) {
       throw new Error(`newSession() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
     }
-    await this.press('newSession()', `the ${NEW_SESSION} button`, this.page.getByRole('button', { name: new RegExp(`^${NEW_SESSION}`) }).first());
+    await this.press('newSession()', `the ${NEW_SESSION} button`, this.newSessionButton().first());
     await this.wait('a new, empty conversation', async () => ((await this.conversationSize()) === 0 && (await this.composer().isVisible()) ? true : undefined));
+  }
+
+  async openSession(title: string): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`openSession() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    if ((await this.userMessages(1, title).count()) > 0) {
+      throw new Error(
+        `openSession() found that the session titled ${JSON.stringify(title)} is the session already open: its first prompt is in the conversation on screen. Go back to another session.\n${await this.describe()}`,
+      );
+    }
+    const sidebar = this.sidebar();
+    const entry = sidebar.getByText(title, { exact: true }).and(this.page.locator(SHOWN));
+    let previous: string | undefined;
+    const listed = await this.wait(`the sidebar to list the session ${JSON.stringify(title)}, or to stop changing`, async () => {
+      if ((await entry.count()) > 0) return 'listed' as const;
+      const shown = (await sidebar.allTextContents()).join('\n');
+      const settled = shown === previous;
+      previous = shown;
+      return settled ? ('missing' as const) : undefined;
+    });
+    if (listed === 'missing') {
+      const shown = await sidebar.ariaSnapshot({ timeout: TIMEOUTS.wait }).catch((error: unknown) => `The sidebar could not be read: ${reasonOf(error)}`);
+      throw new Error(`openSession() found no session titled ${JSON.stringify(title)} in the sidebar. The sidebar shows:\n${shown}`);
+    }
+    await this.press('openSession()', `the session ${JSON.stringify(title)} in the sidebar`, entry.first());
+    await this.wait(`the conversation of the session ${JSON.stringify(title)} to show its first prompt`, async () =>
+      (await this.userMessages(1, title).count()) > 0 && (await this.idle()) ? true : undefined,
+    );
+    this.recalled = undefined;
   }
 
   async resize(viewport: { readonly width: number; readonly height: number }): Promise<void> {
@@ -503,6 +533,14 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
 
   private composer(): Locator {
     return this.page.getByRole('combobox', { name: 'Message input' });
+  }
+
+  private sidebar(): Locator {
+    return this.page.getByRole('complementary').filter({ has: this.newSessionButton() });
+  }
+
+  private newSessionButton(): Locator {
+    return this.page.getByRole('button', { name: new RegExp(`^${NEW_SESSION}`) });
   }
 
   private failureCards(): Locator {

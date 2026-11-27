@@ -292,6 +292,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private sessionId = '';
   private openedMode: string | undefined;
   private restored = false;
+  private reopens: { readonly list: boolean; readonly load: boolean } = { list: false, load: false };
   private readonly leftSessions = new Set<string>();
   private leftSessionUpdates = 0;
   private turn: Turn | undefined;
@@ -346,6 +347,8 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     if (initialized.protocolVersion !== PROTOCOL_VERSION) {
       throw new Error(`kimi acp answered initialize with protocol version ${String(initialized.protocolVersion)}; the editor speaks ${String(PROTOCOL_VERSION)}.`);
     }
+    const offered = initialized.agentCapabilities;
+    this.reopens = { list: (offered?.sessionCapabilities?.list ?? undefined) !== undefined, load: offered?.loadSession === true };
     if (resume === undefined) {
       const session = await this.response(
         'the agent to create a session',
@@ -511,6 +514,43 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     this.restored = false;
     this.prompts = [];
     this.turn = undefined;
+  }
+
+  async openSession(title: string): Promise<void> {
+    if (!this.turnOver() || this.permissions.length > 0) {
+      throw new Error(`openSession() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
+    }
+    if (!this.reopens.list || !this.reopens.load) {
+      throw new Error(`kimi acp does not offer both session/list and session/load, so an editor cannot show its earlier sessions and reopen one.\n${this.describe()}`);
+    }
+    await this.wait('the agent to send every session/update it announced', () => (this.handledUpdates() >= this.receivedUpdates ? true : undefined));
+    const listed = await this.response('the agent to list its sessions', this.connection.agent.request(methods.agent.session.list, {}));
+    const titled = listed.sessions.filter((session) => session.title === title);
+    const target = titled[0];
+    if (target === undefined || titled.length > 1) {
+      const shown = listed.sessions.map((session) => `- ${JSON.stringify(session.title ?? null)} (${session.sessionId})`).join('\n');
+      const problem = target === undefined ? `found no session titled ${JSON.stringify(title)}` : `found ${titled.length} sessions titled ${JSON.stringify(title)}`;
+      throw new Error(`openSession() ${problem} in session/list. The agent lists:\n${shown === '' ? '(no sessions)' : shown}\n${this.describe()}`);
+    }
+    if (target.sessionId === this.sessionId) {
+      throw new Error(`openSession() found that the session titled ${JSON.stringify(title)} is the session already open (${this.sessionId}); go back to another session.\n${this.describe()}`);
+    }
+    this.leftSessions.add(this.sessionId);
+    this.leftSessions.delete(target.sessionId);
+    this.sessionStart = this.updates.length;
+    this.sessionId = target.sessionId;
+    this.restored = true;
+    this.prompts = [];
+    this.turn = undefined;
+    const loaded = await this.response(
+      `the agent to load session ${target.sessionId}`,
+      this.connection.agent.request(methods.agent.session.load, { sessionId: target.sessionId, cwd: this.home.workspace, mcpServers: this.mcpServers }),
+    );
+    this.openedMode = loaded.modes?.currentModeId;
+    await this.wait('the agent to send every session/update it announced', () => (this.handledUpdates() >= this.receivedUpdates ? true : undefined));
+    if (!userTextsOf(this.sessionUpdates()).some((text) => text.trim() === title)) {
+      throw new Error(`openSession() loaded session ${target.sessionId}, but its replay shows no user message ${JSON.stringify(title)}:\n${this.conversation().join('\n')}\n${this.describe()}`);
+    }
   }
 
   async stop(): Promise<void> {
