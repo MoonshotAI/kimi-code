@@ -709,6 +709,24 @@ const turnFailed = computed<boolean>(
     turns.value.length > 0,
 );
 
+const quotaAutoContinue = computed(() =>
+  turnFailed.value ? client.quotaAutoContinueFor(props.sessionId, turnError.value) : null,
+);
+
+watch(
+  [() => props.sessionId, turnFailed],
+  ([sid, failed]) => {
+    if (failed && sid) client.ensureQuotaAutoContinueHostCatalog(sid);
+  },
+  { immediate: true, flush: 'post' },
+);
+
+function handleSetQuotaAutoContinue(enabled: boolean): void {
+  if (!props.sessionId) return;
+  client.setQuotaAutoContinuePreference(enabled, props.sessionId);
+  track('settings_changed', { key: 'quota-auto-continue', value: enabled ? 'on' : 'off' });
+}
+
 function handleResumeTurn(): void {
   if (!gateSubmit()) return;
   followAfterUserAction();
@@ -1032,7 +1050,9 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               :turn-failed="turnFailed"
               :turn-error="turnError"
               :turn-retry="turnRetry"
+              :quota-auto-continue="quotaAutoContinue"
               @resume-turn="handleResumeTurn"
+              @set-quota-auto-continue="handleSetQuotaAutoContinue"
               @fork-turn="handleForkTurn"
               @open-media="emit('openMedia', $event)"
               @edit-message="handleEditMessage"

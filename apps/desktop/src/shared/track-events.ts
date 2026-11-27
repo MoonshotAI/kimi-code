@@ -51,6 +51,8 @@ const settingsChangedPropertiesSchema = z.discriminatedUnion('key', [
   z.object({ key: z.literal('dock-icon'), value: z.enum(['light', 'dark']), ...settingsSourcePanel }),
   z.object({ key: z.literal('sidebar-multi-tab'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
   z.object({ key: z.literal('session-mentions'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
+  z.object({ key: z.literal('quota-auto-resume'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
+  z.object({ key: z.literal('quota-auto-continue'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
   z.object({ key: z.literal('native-title-bar'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
   z.object({ key: z.literal('update-auto-download'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
   z.object({ key: z.literal('browser-autoplay'), value: z.enum(['allow', 'block']), ...settingsSourcePanel }),

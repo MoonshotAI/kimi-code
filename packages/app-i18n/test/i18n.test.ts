@@ -59,6 +59,21 @@ describe('createKimiI18n', () => {
     expect(i18n.global.t('tools.cron.field.id')).toBe('标识符');
     expect(i18n.global.t('tools.cron.field.cron')).toBe('Cron 表达式');
   });
+
+  it('provides auto-continue card and settings copy without banned quota terminology in en and zh', () => {
+    const i18n = createKimiI18n({ locale: 'en' });
+    expect(i18n.global.t('conversation.quotaAutoContinueLabel')).toBe('Auto-continue when limits reset');
+    expect(i18n.global.t('conversation.quotaAutoResumeScheduled', { time: '7:34 PM' })).toBe('Auto-resuming at 7:34 PM');
+    expect(i18n.global.t('settings.quotaAutoContinue')).toBe('Auto-continue when limits reset');
+    expect(i18n.global.t('settings.quotaAutoContinueHint')).toBe(
+      'Automatically continue interrupted sessions when your credits reset, synced with the toggle on error cards',
+    );
+    i18n.global.locale.value = 'zh';
+    expect(i18n.global.t('conversation.quotaAutoContinueLabel')).toBe('额度恢复后自动继续');
+    expect(i18n.global.t('conversation.quotaAutoResumeScheduled', { time: '19:34' })).toBe('将于 19:34 自动继续');
+    expect(i18n.global.t('settings.quotaAutoContinue')).toBe('额度恢复后自动继续');
+    expect(i18n.global.t('settings.quotaAutoContinueHint')).toBe('因额度耗尽中断的会话，会在额度恢复后自动继续，与报错卡中的开关实时同步');
+  });
 });
 
 describe('useKimiI18n', () => {

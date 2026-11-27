@@ -2,6 +2,7 @@
 import { computed, h, reactive, ref, watch, watchEffect, type Component } from 'vue';
 import { formatDuration as formatTaskDuration } from '@moonshot-ai/app-core/lib';
 import {
+  getDeviceApi,
   getKimiWebApi,
   notifyPluginsShelfEvent,
   notifySessionDeleted,
@@ -59,6 +60,7 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { liveComposerEditorFor } from '@moonshot-ai/app-composer/runtime';
 import { createPromptPrediction } from './promptPrediction';
+import { createQuotaAutoResume, isManagedQuotaError } from './quotaAutoResume';
 import { sessionTasksToAppTasks, subagentDisplayName } from '@moonshot-ai/app-core/client';
 import {
   conversationTurnError,
@@ -73,12 +75,13 @@ import {
   undoableOpener,
   type CompactionItem,
   type ConversationContinuation,
+  type ConversationError,
   type ConversationLoadError,
   type ConversationNotice,
   type ConversationTurn,
   type ConversationTurnHeader,
 } from '@moonshot-ai/app-core/conversation';
-import { useAppearance, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core/composables';
+import { useAppearance, useQuotaAutoResume, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core/composables';
 import type { AppNoticeDetail } from '@moonshot-ai/app-core/contracts';
 import { shouldNotifyCompletion } from '../composables/useNotification';
 import { notificationsStore } from '../stores/notifications';
@@ -504,6 +507,7 @@ function setActiveSessionId(id: string | undefined): void {
 }
 
 function forgetSession(sessionId: string): void {
+  quotaAutoResumeController.cancelSession(sessionId);
   sessionReadScope.forget(sessionId);
   composerAttachmentStore.clear(sessionId);
   connectionStore().forgetSession(sessionId);
@@ -658,6 +662,7 @@ async function writeSessionProfile(
   tokens: ProfileWriteTokens,
   preserveDraftThinking: boolean,
 ): Promise<boolean> {
+  if (patch.model !== undefined) quotaAutoResumeController.cancelSession(sid);
   let ok = true;
   try {
     await getKimiWebApi().updateSession(sid, patch);
@@ -759,6 +764,197 @@ const promptPredictionController = createPromptPrediction({
 
 watchEffect(() => {
   promptPredictionController.refresh();
+});
+
+function isManagedKimiSessionModelLoaded(sessionId: string): boolean {
+  const session = rawState.sessions.find((s) => s.id === sessionId);
+  if (session === undefined || session.archived) return false;
+  const hostId = chatHostId(sessionId);
+  const store = modelsStore();
+  if (hostId !== undefined && !store.hasHostCatalog(hostId)) return false;
+  const chatModel = store.resolveHostSendModel(session.model, hostId);
+  const hostModels = store.modelsForHost(hostId);
+  const entry =
+    chatModel === null ? undefined : hostModels.find((m) => m.id === chatModel || m.model === chatModel);
+  return entry?.provider === MANAGED_KIMI_CODE_PROVIDER_ID;
+}
+
+async function isManagedKimiSessionOnOwningHost(sessionId: string): Promise<boolean> {
+  const session = rawState.sessions.find((s) => s.id === sessionId);
+  if (session === undefined || session.archived) return false;
+  const hostId = chatHostId(sessionId);
+  const store = modelsStore();
+  if (hostId !== undefined && !store.hasHostCatalog(hostId)) {
+    await store.loadHostCatalog(hostId);
+  }
+  return isManagedKimiSessionModelLoaded(sessionId);
+}
+
+const hostCatalogRequests = new Set<string>();
+
+function ensureQuotaAutoContinueHostCatalog(sessionId: string): void {
+  if (!quotaAutoResumeEnabled.value) return;
+  const session = rawState.sessions.find((s) => s.id === sessionId);
+  if (session === undefined || session.archived) return;
+  const hostId = chatHostId(sessionId);
+  const store = modelsStore();
+  if (hostId === undefined || store.hasHostCatalog(hostId) || hostCatalogRequests.has(hostId)) return;
+  hostCatalogRequests.add(hostId);
+  void store
+    .loadHostCatalog(hostId)
+    .catch(() => {})
+    .finally(() => {
+      hostCatalogRequests.delete(hostId);
+    });
+}
+
+async function getUsageForSession(sessionId: string) {
+  try {
+    return await getDeviceApi(chatHostId(sessionId)).getUsage();
+  } catch (err) {
+    return { kind: 'error' as const, message: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function sessionBusyForAutoResume(sessionId: string): boolean {
+  const session = rawState.sessions.find((s) => s.id === sessionId);
+  return (
+    session === undefined ||
+    session.archived ||
+    mainTurnRunning(sessionId) ||
+    mainCompacting(sessionId) ||
+    promptStore().inFlightBySession[sessionId] === true ||
+    promptStore().isContinueTurnStarting(sessionId) ||
+    promptStore().isSteerInFlight(sessionId) ||
+    (promptStore().queuedBySession[sessionId]?.length ?? 0) > 0 ||
+    (promptStore().optimisticMessagesBySession[sessionId]?.length ?? 0) > 0 ||
+    (rawState.approvalsBySession[sessionId] ?? []).length > 0 ||
+    (rawState.questionsBySession[sessionId] ?? []).length > 0
+  );
+}
+
+async function canAutoResumeSession(sessionId: string, failedTurnId: string): Promise<boolean> {
+  if (sessionBusyForAutoResume(sessionId)) return false;
+  if (!(await isManagedKimiSessionOnOwningHost(sessionId))) return false;
+  const session = rawState.sessions.find((s) => s.id === sessionId);
+  if (session === undefined) return false;
+  const trust = await ensureWorkspaceTrust(workspacesStore().workspaceIdForSession(session));
+  if (trust.status === 'error') throw new Error(trust.error.message);
+  if (trust.status !== 'success' || !trust.trusted) return false;
+  if (sessionBusyForAutoResume(sessionId)) return false;
+  const page = await getKimiWebApi().getAgentTurns(sessionId, MAIN_AGENT_ID, { pageSize: 1 });
+  if (sessionBusyForAutoResume(sessionId)) return false;
+  if (!(await isManagedKimiSessionOnOwningHost(sessionId))) return false;
+  const latest = page.turns.at(-1);
+  return latest?.turn_id === failedTurnId && latest.status === 'ended' && latest.outcome === 'failed';
+}
+
+async function submitQuotaAutoResume(
+  sessionId: string,
+  input: { turnId: string; resetAt: string | null; promptId: string },
+): Promise<void> {
+  const result = await getKimiWebApi().submitPrompt(sessionId, {
+    promptId: input.promptId,
+    content: [{ type: 'text', text: t('conversation.quotaAutoResumePrompt') }],
+    metadata: { kimi_quota_auto_resume: { turnId: input.turnId, resetAt: input.resetAt } },
+  });
+  if (result.status === 'failed') throw new Error('Quota auto-resume prompt failed');
+}
+
+const { quotaAutoResumeEnabled, quotaAutoContinueEnabled, setQuotaAutoContinueEnabled } = useQuotaAutoResume();
+const quotaAutoResumeController = createQuotaAutoResume({
+  enabled: () => quotaAutoResumeEnabled.value && quotaAutoContinueEnabled.value,
+  isManagedKimiSession: isManagedKimiSessionOnOwningHost,
+  getUsage: getUsageForSession,
+  checkSessionReady: canAutoResumeSession,
+  submitResume: submitQuotaAutoResume,
+  onGiveUp: (sessionId, err) => {
+    warningsStore().pushOperationFailure('quotaAutoResume', err, {
+      sessionId,
+      title: t('conversation.quotaAutoResumeFailedTitle'),
+      message: t('conversation.quotaAutoResumeFailedMessage'),
+    });
+  },
+});
+
+function isQuotaFailedTurn(turn: ConversationTurn | undefined): turn is ConversationTurn & { error: ConversationError } {
+  return (
+    turn?.kind === 'agent' &&
+    turn.status === 'ended' &&
+    turn.outcome === 'failed' &&
+    turn.end_reason !== 'user_cancelled' &&
+    turn.end_reason !== 'aborted' &&
+    turn.end_reason !== 'max_steps' &&
+    turn.end_reason !== 'blocked' &&
+    turn.error !== undefined &&
+    isManagedQuotaError(turn.error)
+  );
+}
+
+function armLoadedQuotaFailures(preferredSessionId?: string): void {
+  const preferred = preferredSessionId ?? rawState.activeSessionId;
+  const candidates = [...mainConversations.entries.values()]
+    .filter(
+      (entry) =>
+        entry.agentId === MAIN_AGENT_ID &&
+        entry.loaded &&
+        isManagedKimiSessionModelLoaded(entry.sessionId) &&
+        isQuotaFailedTurn(entry.view.turns.at(-1)),
+    )
+    .toSorted((a, b) => {
+      const aPreferred = a.sessionId === preferred ? 1 : 0;
+      const bPreferred = b.sessionId === preferred ? 1 : 0;
+      if (aPreferred !== bPreferred) return bPreferred - aPreferred;
+      return b.lastTouched - a.lastTouched;
+    });
+  for (const entry of candidates) {
+    const latest = entry.view.turns.at(-1);
+    if (isQuotaFailedTurn(latest)) quotaAutoResumeController.handleTurnFailed(entry.sessionId, latest.turn_id, latest.error);
+  }
+}
+
+function setQuotaAutoContinuePreference(enabled: boolean, preferredSessionId?: string): void {
+  setQuotaAutoContinueEnabled(enabled);
+  if (enabled && quotaAutoResumeEnabled.value) armLoadedQuotaFailures(preferredSessionId);
+}
+
+export interface QuotaAutoContinueCardView {
+  readonly enabled: boolean;
+  readonly resetAt: string | null;
+}
+
+function quotaAutoContinueFor(
+  sessionId: string | null | undefined,
+  turnError: AppTurnError | null | undefined,
+): QuotaAutoContinueCardView | null {
+  if (!quotaAutoResumeEnabled.value || sessionId === undefined || sessionId === null || sessionId === '') return null;
+  if (!isManagedQuotaError(turnError)) return null;
+  const endReason = turnError?.endReason;
+  if (endReason === 'user_cancelled' || endReason === 'aborted' || endReason === 'max_steps' || endReason === 'blocked') {
+    return null;
+  }
+  if (!isManagedKimiSessionModelLoaded(sessionId)) return null;
+  const entry = mainConversationOf(sessionId);
+  void entry?.version.value;
+  const latest = entry?.loaded ? entry.view.turns.at(-1) : undefined;
+  const failedTurnId = latest?.status === 'ended' && latest.outcome === 'failed' ? latest.turn_id : undefined;
+  const pending = failedTurnId === undefined ? null : quotaAutoResumeController.pendingFor(sessionId, failedTurnId);
+  return {
+    enabled: quotaAutoContinueEnabled.value,
+    resetAt: pending?.resetAt ?? null,
+  };
+}
+
+watch(quotaAutoResumeEnabled, (labOn, prevLabOn) => {
+  if (!labOn) {
+    quotaAutoResumeController.clearAll();
+    return;
+  }
+  if (!prevLabOn && quotaAutoContinueEnabled.value) armLoadedQuotaFailures();
+});
+
+watch(quotaAutoContinueEnabled, (continueOn) => {
+  if (!continueOn) quotaAutoResumeController.clearAll();
 });
 
 function conversationConnection(): ReturnType<typeof getEventConn> {
@@ -1920,6 +2116,7 @@ function onMainPage(entry: ConversationEntry, previous: readonly ConversationTur
 }
 
 function onMainTurnsRemoved(entry: ConversationEntry, turnIds: readonly string[]): void {
+  quotaAutoResumeController.cancelSession(entry.sessionId);
   promptStore().settleContinueTurnStart(entry.sessionId);
   const phases = turnPhasesOf(entry);
   for (const turnId of turnIds) phases.delete(turnId);
@@ -1928,6 +2125,7 @@ function onMainTurnsRemoved(entry: ConversationEntry, turnIds: readonly string[]
 }
 
 function onMainTurnStarted(entry: ConversationEntry, turn: ConversationTurn): void {
+  quotaAutoResumeController.cancelSession(entry.sessionId);
   promptPredictionController.handleTurnStarted(entry.sessionId);
   turnPhasesOf(entry).set(turn.turn_id, 'running');
   scheduleSessionRowRefresh(entry.sessionId);
@@ -1944,6 +2142,16 @@ function settleMainTurnEnd(entry: ConversationEntry, turn: ConversationTurn): vo
   pruneEchoedPrompts(sessionId);
   promptPipeline.resumeQueueIfIdle(sessionId);
   if (turn.kind !== 'agent') return;
+  if (
+    turn.status === 'ended' &&
+    turn.outcome === 'failed' &&
+    turn.end_reason !== 'user_cancelled' &&
+    turn.end_reason !== 'aborted'
+  ) {
+    quotaAutoResumeController.handleTurnFailed(sessionId, turn.turn_id, turn.error);
+  } else {
+    quotaAutoResumeController.cancelSession(sessionId);
+  }
   scheduleSessionRowRefresh(sessionId);
   onMainTurnEnd(sessionId, turnResult(turn) === 'completed' ? 'idle' : 'aborted', {
     firstTurn: turn.ordinal === 0,
@@ -2967,6 +3175,7 @@ const promptPipeline = usePromptPipeline(rawState, {
   isMainWaitForWaiting: mainWaitForWaiting,
   promptIdToAbort: mainPromptIdToAbort,
   lastAgentTurnId: (sessionId) => mainTurnsOf(sessionId).findLast((turn) => turn.kind === 'agent')?.turn_id,
+  onPromptInitiated: (sessionId) => quotaAutoResumeController.cancelSession(sessionId),
   selectSession: sessionSelection.selectSession,
   upsertSessionSorted,
 });
@@ -3651,8 +3860,14 @@ export function useKimiWebClient() {
     sideChatDraft: sideChat.sideChatDraft,
     clearSideChatDraftIfUnchanged: sideChat.clearSideChatDraftIfUnchanged,
     uploadImage: promptPipeline.uploadImage,
-    abortCurrentPrompt: promptPipeline.abortCurrentPrompt,
+    abortCurrentPrompt: async () => {
+      if (rawState.activeSessionId !== undefined) quotaAutoResumeController.cancelSession(rawState.activeSessionId);
+      return promptPipeline.abortCurrentPrompt();
+    },
     continueSession: promptPipeline.continueSession,
+    quotaAutoContinueFor,
+    setQuotaAutoContinuePreference,
+    ensureQuotaAutoContinueHostCatalog,
     respondApproval: approvalsStore().respondApproval,
     respondQuestion: approvalsStore().respondQuestion,
     dismissQuestion: approvalsStore().dismissQuestion,

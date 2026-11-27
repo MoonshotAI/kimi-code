@@ -40,12 +40,24 @@ export const useModelsStore = defineStore('kimi.models', () => {
   const activeHostId = ref<string | undefined>(undefined);
   const modelsByHost = ref<Record<string, AppModel[]>>({});
   const defaultModelByHost = ref<Record<string, string | null>>({});
-  const activeModels = computed(() =>
-    activeHostId.value === undefined ? models.value : modelsByHost.value[activeHostId.value] ?? [],
-  );
-  const activeDefaultModel = computed(() =>
-    activeHostId.value === undefined ? defaultModel.value : defaultModelByHost.value[activeHostId.value] ?? null,
-  );
+  function hasHostCatalog(hostId: string): boolean {
+    return Object.prototype.hasOwnProperty.call(modelsByHost.value, hostId);
+  }
+
+  function modelsForHost(hostId: string | undefined): AppModel[] {
+    return hostId === undefined ? models.value : modelsByHost.value[hostId] ?? [];
+  }
+
+  function defaultModelForHost(hostId: string | undefined): string | null {
+    return hostId === undefined ? defaultModel.value : defaultModelByHost.value[hostId] ?? null;
+  }
+
+  function resolveHostSendModel(sessionModel: string | null | undefined, hostId: string | undefined): string | null {
+    return resolveChatModel(sessionModel, null, defaultModelForHost(hostId), modelsForHost(hostId));
+  }
+
+  const activeModels = computed(() => modelsForHost(activeHostId.value));
+  const activeDefaultModel = computed(() => defaultModelForHost(activeHostId.value));
 
   const catalogProviders = ref<AppCatalogProvider[]>([]);
   const catalogState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -267,6 +279,10 @@ export const useModelsStore = defineStore('kimi.models', () => {
     activeHostId,
     activeModels,
     activeDefaultModel,
+    hasHostCatalog,
+    modelsForHost,
+    defaultModelForHost,
+    resolveHostSendModel,
     setActiveHost,
     loadHostCatalog,
     setHostDefaultModel,
