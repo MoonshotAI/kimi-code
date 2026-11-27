@@ -99,6 +99,25 @@ describe('WorkspaceHoverCard', () => {
     expect(emitted).toHaveBeenCalledExactlyOnceWith('/repo/docs');
   });
 
+  it('shows Windows directories in native form and opens them by the path the server reported', async () => {
+    host = document.createElement('div');
+    document.body.append(host);
+    const emitted = vi.fn();
+    const windows: WorkspaceView = { ...workspace, root: 'C:/repo/code-app', shortPath: 'C:\\repo\\code-app', additionalDirs: ['C:/repo/docs'] };
+    app = createApp({ render: () => h(WorkspaceHoverCard, { workspace: windows, canOpen: true, onOpenDirectory: emitted }) });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('.whc-directory')];
+    expect(buttons.map(button => button.querySelector('.whc-path')?.textContent)).toEqual([
+      'C:\\repo\\code-app',
+      'C:\\repo\\docs',
+    ]);
+    buttons[1]!.click();
+    expect(emitted).toHaveBeenCalledExactlyOnceWith('C:/repo/docs');
+  });
+
   it('keeps paths readable but disabled when opening is unavailable', async () => {
     host = document.createElement('div');
     document.body.append(host);

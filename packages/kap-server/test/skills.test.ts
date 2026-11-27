@@ -641,6 +641,40 @@ describe('server-v2 /api/v1 skills', () => {
       expect(names(wsSkills)).toEqual(names(sessSkills));
     });
 
+    it('resolves relative extra skill dirs against every workspace directory, primary first, as sessions do', async () => {
+      const primary = await makeWorkspaceDir();
+      const secondary = await makeWorkspaceDir();
+      await seedExplicitSkill(join(primary, 'team-skills'), 'e2e-team-primary');
+      await seedExplicitSkill(join(secondary, 'team-skills'), 'e2e-team-secondary');
+      await writeFile(
+        join(secondary, 'team-skills', 'e2e-team-primary.md'),
+        '---\nname: e2e-team-primary\ndescription: shadowed by the primary directory\n---\n\nShadowed.\n',
+      );
+      const wid = await registerWorkspace(primary, [secondary]);
+      const config = server!.core.accessor.get(IConfigService);
+      try {
+        await config.set(EXTRA_SKILL_DIRS_SECTION, ['team-skills']);
+        const created = await postJson<{ id: string }>('/api/v1/sessions', { workspace_id: wid });
+        expect(created.body.code).toBe(0);
+        const sid = created.body.data.id;
+        const [workspaceResponse, sessionResponse] = await Promise.all([
+          getJson<{ skills: SkillWire[] }>(`/api/v1/workspaces/${wid}/skills`),
+          getJson<{ skills: SkillWire[] }>(`/api/v1/sessions/${sid}/skills`),
+        ]);
+        const extraOf = (data: unknown) => listSkillsResponseSchema.parse(data).skills
+          .filter((skill) => skill.source === 'extra')
+          .map((skill) => [skill.name, skill.description] as const)
+          .toSorted(([a], [b]) => a.localeCompare(b));
+        expect(extraOf(workspaceResponse.body.data)).toEqual([
+          ['e2e-team-primary', 'explicit skill e2e-team-primary'],
+          ['e2e-team-secondary', 'explicit skill e2e-team-secondary'],
+        ]);
+        expect(extraOf(sessionResponse.body.data)).toEqual(extraOf(workspaceResponse.body.data));
+      } finally {
+        await config.set(EXTRA_SKILL_DIRS_SECTION, []);
+      }
+    });
+
     it('lists same-name variants and activates an explicit additional-dir path', async () => {
       const primary = await makeWorkspaceDir();
       const secondary = await makeWorkspaceDir();

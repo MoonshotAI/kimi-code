@@ -49,10 +49,20 @@ export class KapClient {
   private readonly endpoint: KapEndpoint;
   private readonly clientOptions: KapClientOptions;
   private readonly sockets = new Set<KapSocket>();
+  private readonly connected: KapSocket[] = [];
+  private readonly created = new Set<string>();
 
   constructor(endpoint: KapEndpoint, options: KapClientOptions = {}) {
     this.endpoint = endpoint;
     this.clientOptions = options;
+  }
+
+  get connectedSockets(): readonly KapSocket[] {
+    return this.connected;
+  }
+
+  get createdSessionIds(): readonly string[] {
+    return [...this.created];
   }
 
   get origin(): string {
@@ -74,15 +84,18 @@ export class KapClient {
   async connect(): Promise<KapSocket> {
     const socket = await KapSocket.connect(this.wsUrl, this.token, this.clientOptions.onFrame);
     this.sockets.add(socket);
+    this.connected.push(socket);
     return socket;
   }
 
   async createSession(options: CreateSessionOptions = {}): Promise<KapSession> {
-    return this.rest.post<KapSession>('/api/v1/sessions', {
+    const session = await this.rest.post<KapSession>('/api/v1/sessions', {
       cwd: options.cwd ?? this.clientOptions.workspace,
       title: options.title,
       agent_config: options.agentConfig,
     });
+    this.created.add(session.id);
+    return session;
   }
 
   session(sessionId: string): Promise<KapSession> {
@@ -125,8 +138,10 @@ export class KapClient {
     return this.rest.post(`${sessionPath(sessionId)}:undo`, { turn_id: turnId, agent_id: agentId });
   }
 
-  fork(sessionId: string, body: Readonly<Record<string, unknown>> = {}): Promise<KapSession> {
-    return this.rest.post<KapSession>(`${sessionPath(sessionId)}:fork`, body);
+  async fork(sessionId: string, body: Readonly<Record<string, unknown>> = {}): Promise<KapSession> {
+    const session = await this.rest.post<KapSession>(`${sessionPath(sessionId)}:fork`, body);
+    this.created.add(session.id);
+    return session;
   }
 
   compact(sessionId: string, instruction?: string): Promise<Record<string, never>> {
@@ -183,7 +198,7 @@ export class KapClient {
       if (waited.timed_out) continue;
       const [session, queue] = await Promise.all([this.session(sessionId), this.prompts(sessionId)]);
       last = session;
-      if (session.activity === 'idle' && session.pending_interaction === 'none' && queue.active === null && queue.queued.length === 0) return session;
+      if (isIdle(session, queue)) return session;
       await sleep(25);
     }
   }
@@ -193,6 +208,10 @@ export class KapClient {
     this.sockets.clear();
     await Promise.all(sockets.map((socket) => socket.close()));
   }
+}
+
+export function isIdle(session: KapSession, queue: KapPromptQueue): boolean {
+  return session.activity === 'idle' && session.pending_interaction === 'none' && queue.active === null && queue.queued.length === 0;
 }
 
 function sessionPath(sessionId: string): string {

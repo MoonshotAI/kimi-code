@@ -103,6 +103,7 @@ describe('local HTML targets', () => {
     expect(localHtmlPathTarget('/site/index.html', 'D:\\repo')).toBe('D:/site/index.html');
     expect(localHtmlPathTarget('\\site\\index.html', 'D:\\repo')).toBe('D:\\site\\index.html');
     expect(localHtmlPathTarget('/site/index.html', '\\\\server\\share\\repo')).toBe('\\\\server\\share/site/index.html');
+    expect(localHtmlPathTarget('/site/index.html', '//server/share/repo')).toBe('//server/share/site/index.html');
     expect(localHtmlPathTarget('/site/index.html', '/Users/me')).toBe('/site/index.html');
     expect(localHtmlPathTarget('/site/index.html', '')).toBe('/site/index.html');
     expect(localHtmlPathTarget('\\site\\index.html', '')).toBeNull();

@@ -12,6 +12,11 @@ export interface FrameWaitOptions {
   readonly after?: number;
 }
 
+export interface KapUnsubscription {
+  readonly frame: number;
+  readonly sessionId: string;
+}
+
 export interface SubscribeOptions extends FrameWaitOptions {
   readonly agentIds?: readonly string[];
   readonly waitForSnapshot?: boolean;
@@ -32,7 +37,9 @@ export class KapSocket {
   private readonly unreadable: string[] = [];
   private readonly listeners = new Set<() => void>();
   private readonly readyAgents = new Map<string, Set<string>>();
+  private readonly ended = new Map<string, Set<string>>();
   private readonly unsubscribes = new Map<string, Readonly<Record<string, unknown>>>();
+  private readonly left: KapUnsubscription[] = [];
   private closeInfo: { readonly code: number; readonly reason: string } | undefined;
   private lastError: Error | undefined;
   private readonly closed: Promise<void>;
@@ -152,6 +159,18 @@ export class KapSocket {
     return turnsFromFrames(this.conversation(sessionId, agentId));
   }
 
+  subscribedAgents(sessionId: string): readonly string[] {
+    return [...(this.readyAgents.get(sessionId) ?? [])];
+  }
+
+  endedAgents(sessionId: string): readonly string[] {
+    return [...(this.ended.get(sessionId) ?? [])];
+  }
+
+  get unsubscriptions(): readonly KapUnsubscription[] {
+    return this.left;
+  }
+
   async close(): Promise<void> {
     if (this.closeInfo === undefined) this.socket.close();
     await this.closed;
@@ -188,7 +207,13 @@ export class KapSocket {
         const ready = this.readyAgents.get(session) ?? new Set<string>();
         ready.add(agent);
         this.readyAgents.set(session, ready);
-      } else if (frame.type === 'turns.failed' || (frame.type === 'agent' && frame['status'] === 'ended')) {
+        this.ended.get(session)?.delete(agent);
+      } else if (frame.type === 'agent' && frame['status'] === 'ended' && this.readyAgents.get(session)?.delete(agent) === true) {
+        const ended = this.ended.get(session) ?? new Set<string>();
+        ended.add(agent);
+        this.ended.set(session, ended);
+        if (agent !== 'main' && this.readyAgents.get(session)?.size === 0) this.left.push({ frame: this.received.length - 1, sessionId: session });
+      } else if (frame.type === 'turns.failed') {
         this.readyAgents.get(session)?.delete(agent);
       }
     }
@@ -199,10 +224,15 @@ export class KapSocket {
     const sessionId = command['session_id'];
     const agentIds = command['agent_ids'];
     if (Array.isArray(agentIds)) {
-      for (const id of agentIds) this.readyAgents.get(sessionId)?.delete(String(id));
+      for (const id of agentIds) {
+        this.readyAgents.get(sessionId)?.delete(String(id));
+        this.ended.get(sessionId)?.delete(String(id));
+      }
     } else {
       this.readyAgents.delete(sessionId);
+      this.ended.delete(sessionId);
     }
+    if ((this.readyAgents.get(sessionId)?.size ?? 0) === 0) this.left.push({ frame: this.received.length - 1, sessionId });
   }
 
   private notify(): void {
