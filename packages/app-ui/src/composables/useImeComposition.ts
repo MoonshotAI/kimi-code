@@ -30,6 +30,7 @@ export function useImeComposition(): {
     return (
       isComposingText ||
       e.isComposing ||
+      // oxlint-disable-next-line typescript/no-deprecated -- Chromium/Safari IME composition still reports keyCode 229
       e.keyCode === 229 ||
       Date.now() - compositionEndedAt < COMPOSITION_END_GUARD_MS
     );

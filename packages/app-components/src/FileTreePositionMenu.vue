@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, IconButton, Menu, MenuItem } from '@moonshot-ai/app-ui';
+import './lib/anchored-menu.css';
 import { useAnchoredMenu } from './composables/useAnchoredMenu';
 import { useFileTreePosition, type FileTreePosition } from './composables/useFileTreePosition';
 
@@ -54,5 +55,3 @@ function pick(next: FileTreePosition): void {
   flex: none;
 }
 </style>
-
-<style src="./lib/anchored-menu.css"></style>

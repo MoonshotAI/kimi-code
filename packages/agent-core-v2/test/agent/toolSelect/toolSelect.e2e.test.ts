@@ -255,6 +255,135 @@ describe('progressive tool disclosure end-to-end', () => {
     });
   });
 
+  it('caps the startup MCP wait at 2s without cancelling, then announces and calls late deferred tools', async (context) => {
+    const ready = createControlledPromise<void>();
+    const waiting = createControlledPromise<void>();
+    await withTestkitMcpAgent(context, { ready, onWait: waiting.resolve }, async (agent, model) => {
+      agent.get(IAgentToolSelectService);
+      agent.get(IAgentToolSelectAnnouncementsService);
+      agent.get(IAgentToolExecutorService);
+      agent.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
+
+      vi.useFakeTimers();
+      let restoredSettled = false;
+      try {
+        const restored = agent.restorePersisted().then(() => {
+          restoredSettled = true;
+        });
+        await waiting;
+        await vi.advanceTimersByTimeAsync(1_999);
+        expect(restoredSettled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await restored;
+      } finally {
+        vi.useRealTimers();
+      }
+
+      await agent.rpc.setPermission({ mode: 'yolo' });
+      model.script(say('first reply'));
+      await agent.rpc.prompt({ input: [{ type: 'text', text: 'start while the server is still booting' }] });
+      await agent.untilTurnEnd();
+      expect(toolNames(model.requests('main')[0]!.view.tools)).not.toContain(MCP_ALPHA);
+
+      registration = agent.get(IAgentToolRegistryService)
+        .register(alpha, { source: 'mcp', disclosure: 'deferred' });
+      ready.resolve();
+
+      model.script(
+        call('select_tools', { names: [MCP_ALPHA] }, { id: 'call_select_late' }),
+        call(MCP_ALPHA, { query: 'moon' }, { id: 'call_alpha_late', invalid: true }),
+        say('done'),
+      );
+      await agent.rpc.prompt({ input: [{ type: 'text', text: 'use the late server tool' }] });
+      await agent.untilTurnEnd();
+
+      const requests = model.requests('main');
+      expect(viewText(requests[1]!)).toContain(`<tools_added>\n${MCP_ALPHA}\n</tools_added>`);
+      expect(viewText(requests[2]!)).toContain(`Loaded: ${MCP_ALPHA}`);
+      const body = requests[2]!.body as {
+        readonly messages?: readonly {
+          readonly tools?: readonly {
+            readonly function?: { readonly name?: string; readonly parameters?: unknown };
+          }[];
+        }[];
+      };
+      const loadedSchema = (body.messages ?? [])
+        .flatMap((message) => message.tools ?? [])
+        .find((tool) => tool.function?.name === MCP_ALPHA);
+      expect(loadedSchema?.function?.parameters).toEqual(alpha.parameters);
+      expect(alpha.calls).toBe(1);
+      expect(agent.get(IAgentLoopService).baselineTools().map((tool) => tool.name)).not.toContain(MCP_ALPHA);
+    });
+  });
+
+  it.for(['deferred', 'inline'] as const)(
+    'exposes late-connected %s MCP tools inline on the next request when dynamic loading is unsupported',
+    async (disclosure, context) => {
+      const ready = createControlledPromise<void>();
+      const waiting = createControlledPromise<void>();
+      await withTestkitMcpAgent(context, { ready, onWait: waiting.resolve }, async (agent, model) => {
+        agent.get(IAgentToolSelectService);
+        agent.get(IAgentToolSelectAnnouncementsService);
+        agent.get(IAgentToolExecutorService);
+        agent.configure({ modelCapabilities: { ...DISCLOSURE_CAPABILITIES, dynamically_loaded_tools: false } });
+
+        vi.useFakeTimers();
+        try {
+          const restored = agent.restorePersisted();
+          await waiting;
+          await vi.advanceTimersByTimeAsync(2_000);
+          await restored;
+        } finally {
+          vi.useRealTimers();
+        }
+
+        await agent.rpc.setPermission({ mode: 'yolo' });
+        model.script(say('first reply'));
+        await agent.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
+        await agent.untilTurnEnd();
+        expect(toolNames(model.requests('main')[0]!.view.tools)).not.toContain(MCP_ALPHA);
+
+        registration = agent.get(IAgentToolRegistryService)
+          .register(alpha, { source: 'mcp', disclosure });
+        ready.resolve();
+
+        model.expectCacheBreak(
+          'late-connected MCP tools are appended to top-level tools when dynamic loading is unsupported',
+        );
+        model.script(call(MCP_ALPHA, { query: 'moon' }, { id: 'call_alpha_plain' }), say('done'));
+        await agent.rpc.prompt({ input: [{ type: 'text', text: 'use the late server tool directly' }] });
+        await agent.untilTurnEnd();
+
+        const secondWire = model.requests('main')[1]!;
+        const exposed = secondWire.view.tools.find((tool) => tool.name === MCP_ALPHA);
+        expect(exposed?.parameters).toEqual(alpha.parameters);
+        expect(exposed).not.toHaveProperty('deferred', true);
+        expect(toolNames(secondWire.view.tools)).not.toContain('select_tools');
+        expect(alpha.calls).toBe(1);
+      });
+    },
+  );
+
+  it('does not wait for pending startup MCP discovery when KIMI_MCP_STARTUP_WAIT_MS is 0', async (context) => {
+    vi.stubEnv('KIMI_MCP_STARTUP_WAIT_MS', '0');
+    const ready = createControlledPromise<void>();
+    const waiting = createControlledPromise<void>();
+    await withTestkitMcpAgent(context, { ready, onWait: waiting.resolve }, async (agent, model) => {
+      agent.get(IAgentToolSelectService);
+      agent.get(IAgentToolSelectAnnouncementsService);
+      agent.get(IAgentToolExecutorService);
+      agent.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
+
+      await agent.restorePersisted();
+      await agent.rpc.setPermission({ mode: 'yolo' });
+      model.script(say('immediate'));
+      await agent.rpc.prompt({ input: [{ type: 'text', text: 'go' }] });
+      await agent.untilTurnEnd();
+      expect(model.requests('main')).toHaveLength(1);
+      ready.resolve();
+    });
+  });
+
   it('announces, loads, preserves schemas through replacements and restore, and keeps the baseline stable', async () => {
     const inlineName = 'mcp__srv__inline';
     const inlineTool = new StubMcpTool(inlineName);
@@ -398,8 +527,11 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(ctx.get(IAgentLoopService).data().activeToolNames).toBeUndefined();
     expect(ctx.get(IAgentToolSelectService).defaultTools(false).map((tool) => tool.name))
       .toContain(MCP_ALPHA);
-    expect(toolNames(switchWire.tools)).not.toContain(MCP_ALPHA);
-    expect(toolNames(switchWire.tools)).not.toContain(inlineName);
+    expect(toolNames(switchWire.tools)).toContain(MCP_ALPHA);
+    expect(switchWire.tools.find((tool) => tool.name === MCP_ALPHA)).not.toHaveProperty('deferred', true);
+    expect(switchWire.tools.find((tool) => tool.name === inlineName)).toMatchObject({
+      description: `${inlineName} desc`,
+    });
     expect(toolNames(switchWire.tools)).not.toContain(runtimeTool);
     expect(toolNames(switchWire.tools)).not.toContain('select_tools');
     expect(historyText(switchWire.history)).toContain(runtimeTool);

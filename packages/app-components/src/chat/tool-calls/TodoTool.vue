@@ -4,7 +4,7 @@ import { computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
-import { parseArgRecord, str } from '@moonshot-ai/app-components';
+import { parseArgRecord, str } from './toolArgs';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import OutputPanel from './OutputPanel.vue';

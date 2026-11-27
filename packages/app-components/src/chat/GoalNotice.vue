@@ -2,7 +2,7 @@
 import { computed, inject, nextTick, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, IconButton } from '@moonshot-ai/app-ui';
-import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
+import { PinScrollKey } from '@moonshot-ai/app-core/contracts';
 import MessageTime from './MessageTime.vue';
 import { useHistoryState } from './historyState';
 

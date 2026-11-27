@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import './lib/anchored-menu.css';
 import type { PinnedEntry, Session } from '@moonshot-ai/app-core/client/types';
 import type {
   DropPosition,
@@ -27,12 +28,12 @@ import {
   STORAGE_KEYS,
 } from '@moonshot-ai/app-core/lib';
 import { useAppearance } from '@moonshot-ai/app-core';
-import { useResizable, useOverlayScrollbar } from '@moonshot-ai/app-client/composables';
+import { useResizable } from '@moonshot-ai/app-client/composables';
 import SessionRow from './SessionRow.vue';
 import SidebarSectionHeader from './sidebar/SidebarSectionHeader.vue';
 import { useAnchoredMenu } from './composables/useAnchoredMenu';
 import { useSessionDrag, usePinnedListDrag } from './composables/useSessionDrag';
-import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Menu, MenuItem, Tooltip, useOverlayScrollbar } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
@@ -893,7 +894,5 @@ const {
   box-shadow: inset 0 0 0 1px var(--color-accent);
 }
 </style>
-
-<style src="./lib/anchored-menu.css"></style>
 
 <style scoped src="./lib/locate-flash.css"></style>

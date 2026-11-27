@@ -7,7 +7,7 @@ import type { DiffViewLine } from '@moonshot-ai/app-core/client/types';
 import { diffStats } from '@moonshot-ai/app-core/client';
 import { buildEditDiffLines, buildWriteContent } from '@moonshot-ai/app-core/client';
 import { basename } from '@moonshot-ai/app-core/lib';
-import { argFallbackText, argFilePath, parseArgRecord, pathDirname } from '@moonshot-ai/app-components';
+import { argFallbackText, argFilePath, parseArgRecord, pathDirname } from './toolArgs';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import HighlightedCode from '../../HighlightedCode.vue';
