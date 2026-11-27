@@ -45,27 +45,35 @@ describe('sessionWorktreeDisplay', () => {
 });
 
 describe('shortenHomePath', () => {
-  it('abbreviates the known home directory', () => {
-    expect(shortenHomePath('/Users/me/.kimi-code/worktrees/a', '/Users/me')).toBe('~/.kimi-code/worktrees/a');
-    expect(shortenHomePath('/Users/me', '/Users/me/')).toBe('~');
+  it.each<[string, string, string | null, string]>([
+    ['the known home directory', '/Users/me/.kimi-code/worktrees/a', '/Users/me', '~/.kimi-code/worktrees/a'],
+    ['home itself, ignoring a trailing slash', '/Users/me', '/Users/me/', '~'],
+    ['a conventional home directory when home is unknown', '/home/dev/project', null, '~/project'],
+  ])('abbreviates %s', (_label, path, home, expected) => {
+    expect(shortenHomePath(path, home)).toBe(expected);
   });
 
-  it('does not treat a sibling directory as home', () => {
-    expect(shortenHomePath('/opt/me-too/a', '/opt/me')).toBe('/opt/me-too/a');
-  });
-
-  it('abbreviates conventional home directories when home is unknown', () => {
-    expect(shortenHomePath('/home/dev/project', null)).toBe('~/project');
-    expect(shortenHomePath('/srv/project', null)).toBe('/srv/project');
+  it.each<[string, string, string | null]>([
+    ['a sibling of home', '/opt/me-too/a', '/opt/me'],
+    ['a path outside any home when home is unknown', '/srv/project', null],
+  ])('keeps %s unchanged', (_label, path, home) => {
+    expect(shortenHomePath(path, home)).toBe(path);
   });
 });
 
 describe('pull request state', () => {
-  it('normalizes the state for labels and icons', () => {
-    expect(pullRequestStateKey(' MERGED ')).toBe('merged');
-    expect(pullRequestStateLabel('draft')).toBe('Draft');
-    expect(pullRequestStateLabel('something')).toBe('Unknown');
-    expect(pullRequestIcon('merged')).toBe('git-merge');
-    expect(pullRequestIcon('open')).toBe('git-pull-request');
+  it.each<[string, string, string]>([
+    [' MERGED ', 'merged', 'git-merge'],
+    ['open', 'open', 'git-pull-request'],
+    ['draft', 'draft', 'git-pull-request'],
+    ['something', 'unknown', 'git-pull-request'],
+  ])('normalizes %j to %s with the %s icon', (state, key, icon) => {
+    expect(pullRequestStateKey(state)).toBe(key);
+    expect(pullRequestIcon(state)).toBe(icon);
+  });
+
+  it('labels a known state and falls back for an unknown one', () => {
+    expect(pullRequestStateLabel('draft')).toContain('Draft');
+    expect(pullRequestStateLabel('something')).toContain('Unknown');
   });
 });

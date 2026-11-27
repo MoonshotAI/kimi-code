@@ -1,92 +1,240 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { worktreeSetup } from '@moonshot-ai/app-client/testing';
-import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import type { AppSessionWorktree, AppWorktreeSetup, AppWorktreeSetupStep } from '@moonshot-ai/app-core/api';
+import { messages } from '@moonshot-ai/app-i18n';
+import type {
+  AppSessionWorktree,
+  AppWorktreeSetup,
+  AppWorktreeSetupStep,
+  AppWorktreeSetupStepKind,
+  AppWorktreeSetupStepState,
+} from '@moonshot-ai/app-core/api';
 import {
   createBlockView,
   createDecisionCardView,
   createInvalidCardView,
   createStepLabel,
+  type CreateCardView,
   type CreateTranslate,
 } from '../src/worktree/createPresentation';
 
-const i18n = createKimiI18n({ locale: 'en' });
-const t = i18n.global.t as unknown as CreateTranslate;
+const requestedKeys = new Set<string>();
+
+const t: CreateTranslate = (key, named) => {
+  requestedKeys.add(key);
+  if (named === undefined) return key;
+  return `${key}(${Object.entries(named)
+    .map(([name, value]) => `${name}=${String(value)}`)
+    .join(',')})`;
+};
 
 function worktree(overrides: Partial<AppWorktreeSetup> = {}, extra: Partial<AppSessionWorktree> = {}): AppSessionWorktree {
   return { ...extra, setup: worktreeSetup(overrides) };
 }
 
-function step(kind: AppWorktreeSetupStep['kind'], state: AppWorktreeSetupStep['state'], extra: Partial<AppWorktreeSetupStep> = {}): AppWorktreeSetupStep {
+function step(kind: AppWorktreeSetupStepKind, state: AppWorktreeSetupStepState, extra: Partial<AppWorktreeSetupStep> = {}): AppWorktreeSetupStep {
   return { kind, state, ...extra };
 }
 
-const actionIds = (view: { actions: { id: string }[] } | null) => view?.actions.map((item) => item.id);
-const actionLabels = (view: { actions: { label: string }[] } | null) => view?.actions.map((item) => item.label);
+function decision(view: CreateCardView | null) {
+  if (view === null) return null;
+  return {
+    title: view.title,
+    body: view.body,
+    actions: view.actions.map((item) => item.id),
+    primary: view.actions.filter((item) => item.primary === true).map((item) => item.id),
+  };
+}
 
-describe('worktree creation step copy', () => {
+describe('worktree creation step label', () => {
   const ref = 'origin/main';
 
   it.each<[AppWorktreeSetupStep, string]>([
-    [step('fetch', 'pending', { ref }), 'Fetch origin/main'],
-    [step('fetch', 'running', { ref }), 'Fetching origin/main'],
-    [step('fetch', 'done', { ref }), 'Fetched origin/main'],
-    [step('fetch', 'failed', { ref }), 'Failed to fetch origin/main'],
-    [step('fetch', 'failed', { ref, timedOut: true }), 'Fetching origin/main timed out'],
-    [step('fetch', 'stopped', { ref }), 'Stopped fetching origin/main'],
-    [step('create', 'pending'), 'Create Worktree'],
-    [step('create', 'running', { ref }), 'Creating Worktree from origin/main'],
-    [step('create', 'done', { ref: 'main' }), 'Worktree created from main'],
-    [step('create', 'failed', { ref }), 'Worktree creation failed'],
-    [step('changes', 'pending'), 'Include local uncommitted changes'],
-    [step('changes', 'failed'), 'Failed to include local changes'],
-    [step('prune', 'running'), 'Cleaning up invalid Worktree record'],
-  ])('labels %j as "%s"', (item, label) => {
-    expect(createStepLabel(item, t)).toBe(label);
+    [step('fetch', 'pending', { ref }), 'worktreeCreate.step.fetch.pending(ref=origin/main)'],
+    [step('fetch', 'failed', { ref }), 'worktreeCreate.step.fetch.failed(ref=origin/main)'],
+    [step('fetch', 'failed', { ref, timedOut: true }), 'worktreeCreate.step.fetch.timedOut(ref=origin/main)'],
+    [step('fetch', 'running'), 'worktreeCreate.step.fetchPlain.running'],
+    [step('create', 'pending'), 'worktreeCreate.step.createPlain.pending'],
+    [step('create', 'running', { ref: '' }), 'worktreeCreate.step.createPlain.running'],
+    [step('create', 'done', { ref: 'main' }), 'worktreeCreate.step.create.done(ref=main)'],
+    [step('changes', 'failed', { timedOut: true }), 'worktreeCreate.step.changes.timedOut'],
+    [step('prune', 'running', { ref }), 'worktreeCreate.step.prune.running'],
+  ])('labels %j with %s', (item, key) => {
+    expect(createStepLabel(item, t)).toBe(key);
   });
 });
 
 describe('worktree creation block', () => {
   it.each<[Partial<AppWorktreeSetup>, string]>([
-    [{ status: 'failed', failure: { kind: 'fetch_failed' } }, 'Remote fetch failed'],
-    [{ status: 'failed', failure: { kind: 'fetch_timeout' } }, 'Remote fetch timed out'],
-    [{ status: 'failed', failure: { kind: 'conflict' } }, 'Local changes conflict with the remote'],
-    [{ status: 'failed', failure: { kind: 'disk_full' } }, 'Worktree creation failed'],
-    [{ status: 'failed', failure: { kind: 'create_failed' } }, 'Worktree creation failed'],
-    [{ status: 'stopped', stoppedStep: 'create' }, 'Worktree creation stopped'],
-    [{ status: 'local' }, 'Switched to Local Mode'],
-  ])('titles %j as "%s"', (overrides, title) => {
-    expect(createBlockView(worktree(overrides), t).title).toBe(title);
+    [{ status: 'running' }, 'creating'],
+    [{ status: 'ready' }, 'created'],
+    [{ status: 'failed', failure: { kind: 'fetch_failed' } }, 'fetchFailed'],
+    [{ status: 'failed', failure: { kind: 'fetch_timeout' } }, 'fetchTimeout'],
+    [{ status: 'failed', failure: { kind: 'conflict' } }, 'conflict'],
+    [{ status: 'failed', failure: { kind: 'disk_full' } }, 'createFailed'],
+    [{ status: 'failed', failure: { kind: 'create_failed' } }, 'createFailed'],
+    [{ status: 'stopped', stoppedStep: 'create' }, 'stopped'],
+    [{ status: 'local' }, 'local'],
+  ])('titles %j as block.%s', (overrides, title) => {
+    expect(createBlockView(worktree(overrides), t).title).toBe(`worktreeCreate.block.${title}`);
   });
 
-  it('falls back to a static block for a recreate run without the original creation', () => {
-    const recreating = worktree({ purpose: 'recreate', status: 'running', steps: [step('prune', 'running'), step('create', 'pending')] });
-    expect(createBlockView(recreating, t)).toMatchObject({ title: 'Worktree created', meta: null, expandable: false, steps: [] });
-    const failed = worktree({ purpose: 'recreate', status: 'failed', failure: { kind: 'create_failed' } });
-    expect(createBlockView(failed, t).title).toBe('Worktree created');
+  it('counts the running command and connects each step to a reached successor', () => {
+    const view = createBlockView(
+      worktree({
+        status: 'running',
+        commandsRan: 1,
+        steps: [
+          step('fetch', 'done', { ref: 'origin/main', command: 'git fetch' }),
+          step('create', 'running', { ref: 'origin/main', command: 'git worktree add' }),
+          step('changes', 'pending', { command: 'git cherry-pick', output: '  ' }),
+        ],
+      }),
+      t,
+    );
+
+    expect(view.meta).toBe('worktreeCreate.block.commandsRan(n=2)');
+    expect(view.steps.map((item) => [item.tone, item.connected])).toEqual([
+      ['done', true],
+      ['running', false],
+      ['pending', false],
+    ]);
+    expect(view.steps[2]).toMatchObject({ command: 'git cherry-pick' });
+    expect(view.steps[2]).not.toHaveProperty('output');
+    expect(view).toMatchObject({ expandable: true, defaultOpen: true, note: null });
+  });
+
+  it.each<[Partial<AppWorktreeSetup>, boolean]>([
+    [{ status: 'running', steps: [step('fetch', 'running')] }, true],
+    [{ status: 'failed', steps: [step('fetch', 'failed')] }, true],
+    [{ status: 'ready', steps: [step('create', 'done')] }, false],
+    [{ status: 'stopped', steps: [step('create', 'stopped')] }, false],
+  ])('opens %j by default: %s', (overrides, open) => {
+    expect(createBlockView(worktree(overrides), t).defaultOpen).toBe(open);
+  });
+
+  it('omits the command count before any command and notes included local changes', () => {
+    const view = createBlockView(worktree({ status: 'ready', commandsRan: 0 }, { includedLocalChanges: true }), t);
+
+    expect(view).toMatchObject({ meta: null, note: 'worktreeCreate.block.includedLocalChanges', expandable: false });
+  });
+
+  it('keeps the trimmed output of a failed step', () => {
+    const view = createBlockView(
+      worktree({ status: 'failed', steps: [step('fetch', 'failed', { output: 'fatal: host\n\n' })] }),
+      t,
+    );
+
+    expect(view.steps[0]?.output).toBe('fatal: host');
+  });
+
+  it('shows the original creation while a recreate run is in progress', () => {
     const original = worktree({ status: 'ready', commandsRan: 1, steps: [step('create', 'done', { ref: 'main' })] }, { path: '/w' });
-    expect(createBlockView(worktree({ purpose: 'recreate', status: 'local' }), t, original).title).toBe('Switched to Local Mode');
+    const recreating = worktree({ purpose: 'recreate', status: 'running', steps: [step('prune', 'running'), step('create', 'pending')] });
+
+    expect(createBlockView(recreating, t, original)).toEqual(createBlockView(original, t));
+  });
+
+  it.each<[string, Partial<AppWorktreeSetup>, AppSessionWorktree | null, string]>([
+    ['running without the original', { status: 'running', steps: [step('prune', 'running')] }, null, 'created'],
+    ['failed without the original', { status: 'failed', failure: { kind: 'create_failed' } }, null, 'created'],
+    ['switched to local mode', { status: 'local' }, worktree({ status: 'ready' }, { path: '/w' }), 'local'],
+  ])('falls back to a static block for a recreate run %s', (_label, overrides, original, title) => {
+    expect(createBlockView(worktree({ purpose: 'recreate', ...overrides }), t, original)).toEqual({
+      title: `worktreeCreate.block.${title}`,
+      meta: null,
+      note: null,
+      steps: [],
+      expandable: false,
+      defaultOpen: false,
+    });
   });
 });
 
-describe('worktree decision cards', () => {
-  it('offers local creation and retry when the fetch fails or times out', () => {
-    const failed = createDecisionCardView(worktree({ status: 'failed', failure: { kind: 'fetch_failed' } }), t);
-    expect(failed).toMatchObject({
-      kind: 'fetchFailed',
-      title: 'Remote fetch failed',
-      body: 'Unable to connect to the remote. No Worktree was created, and this message has not been processed.',
-    });
-    expect(actionLabels(failed)).toEqual(['Create from local main', 'Retry']);
-    expect(failed?.actions.at(-1)?.primary).toBe(true);
-    expect(failed?.actions[0]?.primary).toBeUndefined();
+describe('worktree decision card', () => {
+  it.each<[string, Partial<AppWorktreeSetup>, ReturnType<typeof decision>]>([
+    [
+      'fetch failure',
+      { status: 'failed', failure: { kind: 'fetch_failed' } },
+      {
+        title: 'worktreeCreate.card.fetchFailedTitle',
+        body: 'worktreeCreate.card.fetchFailedBody',
+        actions: ['createFromLocal', 'retry'],
+        primary: ['retry'],
+      },
+    ],
+    [
+      'fetch timeout',
+      { status: 'failed', failure: { kind: 'fetch_timeout' } },
+      {
+        title: 'worktreeCreate.card.fetchTimeoutTitle',
+        body: 'worktreeCreate.card.fetchTimeoutBody(seconds=30)',
+        actions: ['createFromLocal', 'retry'],
+        primary: ['retry'],
+      },
+    ],
+    [
+      'full disk',
+      { status: 'failed', failure: { kind: 'disk_full' } },
+      {
+        title: 'worktreeCreate.card.createFailedTitle',
+        body: 'worktreeCreate.card.diskFullBody',
+        actions: ['manage', 'useLocal', 'retry'],
+        primary: ['retry'],
+      },
+    ],
+    [
+      'creation failure',
+      { status: 'failed', failure: { kind: 'create_failed' } },
+      {
+        title: 'worktreeCreate.card.createFailedTitle',
+        body: 'worktreeCreate.card.createFailedBody',
+        actions: ['useLocal', 'retry'],
+        primary: ['retry'],
+      },
+    ],
+    [
+      'failure without details',
+      { status: 'failed' },
+      {
+        title: 'worktreeCreate.card.createFailedTitle',
+        body: 'worktreeCreate.card.createFailedBody',
+        actions: ['useLocal', 'retry'],
+        primary: ['retry'],
+      },
+    ],
+    [
+      'stop during creation',
+      { status: 'stopped', stoppedStep: 'create' },
+      {
+        title: 'worktreeCreate.card.stoppedTitle',
+        body: 'worktreeCreate.card.stoppedBody',
+        actions: ['useLocal', 'retry'],
+        primary: ['retry'],
+      },
+    ],
+    [
+      'stop during the fetch',
+      { status: 'stopped', stoppedStep: 'fetch' },
+      {
+        title: 'worktreeCreate.card.stoppedTitle',
+        body: 'worktreeCreate.card.stoppedBody',
+        actions: ['createFromLocal', 'retry'],
+        primary: ['retry'],
+      },
+    ],
+  ])('offers the right choices after a %s', (_label, overrides, expected) => {
+    expect(decision(createDecisionCardView(worktree(overrides), t))).toEqual(expected);
+  });
 
-    const timeout = createDecisionCardView(worktree({ status: 'failed', failure: { kind: 'fetch_timeout' } }), t);
-    expect(timeout?.title).toBe('Remote fetch timed out');
-    expect(timeout?.body).toBe(
-      'The fetch did not complete within 30 seconds. No Worktree was created, and this message has not been processed.',
+  it('names the source branch in the local creation choice', () => {
+    const view = createDecisionCardView(
+      worktree({ status: 'failed', request: { sourceBranch: 'feature/login' }, failure: { kind: 'fetch_failed' } }),
+      t,
     );
-    expect(actionIds(timeout)).toEqual(['createFromLocal', 'retry']);
+
+    expect(view?.actions[0]?.label).toBe('worktreeCreate.action.createFromLocal(branch=feature/login)');
   });
 
   it('lists conflicting files and makes local creation the primary choice', () => {
@@ -98,120 +246,95 @@ describe('worktree decision cards', () => {
       }),
       t,
     );
-    expect(view?.title).toBe('Local changes conflict with the remote');
-    expect(view?.body).toBe('The following files conflict with new commits on origin/main.');
+
+    expect(view?.kind).toBe('conflict');
     expect(view?.files).toEqual(['src/greet.js']);
-    expect(actionLabels(view)).toEqual(['Create from Remote', 'Create from local main']);
-    expect(view?.actions.at(-1)).toMatchObject({ id: 'createFromLocal', primary: true });
+    expect(decision(view)).toEqual({
+      title: 'worktreeCreate.card.conflictTitle',
+      body: 'worktreeCreate.card.conflictBody(ref=origin/main)',
+      actions: ['createFromRemote', 'createFromLocal'],
+      primary: ['createFromLocal'],
+    });
   });
 
-  it('adds Manage only when the disk is full', () => {
-    const full = createDecisionCardView(worktree({ status: 'failed', failure: { kind: 'disk_full' } }), t);
-    expect(full?.title).toBe('Worktree creation failed');
-    expect(full?.body).toBe(
-      'Insufficient disk space. No directory or branch was retained. Remove unneeded Worktrees and try again.',
-    );
-    expect(actionIds(full)).toEqual(['manage', 'useLocal', 'retry']);
-
-    const generic = createDecisionCardView(worktree({ status: 'failed', failure: { kind: 'create_failed' } }), t);
-    expect(generic?.body).toBe('An error occurred while creating the Worktree. No directory or branch was retained.');
-    expect(actionIds(generic)).toEqual(['useLocal', 'retry']);
-    expect(actionIds(createDecisionCardView(worktree({ status: 'failed' }), t))).toEqual(['useLocal', 'retry']);
-  });
-
-  it('switches the stopped card buttons when the fetch was stopped', () => {
-    const stopped = createDecisionCardView(worktree({ status: 'stopped', stoppedStep: 'create' }), t);
-    expect(stopped?.title).toBe('Worktree creation stopped');
-    expect(actionIds(stopped)).toEqual(['useLocal', 'retry']);
-    const fetchStopped = createDecisionCardView(worktree({ status: 'stopped', stoppedStep: 'fetch' }), t);
-    expect(actionLabels(fetchStopped)).toEqual(['Create from local main', 'Retry']);
-  });
-
-  it('shows no decision card for a missing worktree or a recreate run', () => {
-    expect(createDecisionCardView(null, t)).toBeNull();
-    expect(createDecisionCardView(worktree({ status: 'ready' }, { path: '/w', missing: true }), t)).toBeNull();
-    expect(
-      createDecisionCardView(worktree({ purpose: 'recreate', status: 'failed', failure: { kind: 'create_failed' } }), t),
-    ).toBeNull();
+  it.each<[string, AppSessionWorktree | null]>([
+    ['no worktree', null],
+    ['a running creation', worktree({ status: 'running' })],
+    ['a missing worktree', worktree({ status: 'ready' }, { path: '/w', missing: true })],
+    ['a failed recreate run', worktree({ purpose: 'recreate', status: 'failed', failure: { kind: 'create_failed' } })],
+  ])('shows no decision card for %s', (_label, value) => {
+    expect(createDecisionCardView(value, t)).toBeNull();
   });
 });
 
 describe('invalid worktree card', () => {
   const missing = { path: '/w', branch: 'kimi/1111-3321', missing: true };
 
-  it('offers recreate and local mode while the branch exists', () => {
+  it('offers recreate as the primary choice while the branch exists', () => {
     const view = createInvalidCardView(worktree({ status: 'ready' }, missing), t);
-    expect(view).toMatchObject({
-      phase: 'missing',
-      title: 'Worktree no longer exists',
-      body: 'You can recreate it from branch kimi/1111-3321 or switch to Local mode.',
+
+    expect(view?.phase).toBe('missing');
+    expect(decision(view)).toEqual({
+      title: 'worktreeCreate.invalid.missingTitle',
+      body: 'worktreeCreate.invalid.missingBody(branch=kimi/1111-3321)',
+      actions: ['useLocal', 'recreate'],
+      primary: ['recreate'],
     });
-    expect(actionLabels(view)).toEqual(['Use Local Mode', 'Recreate Worktree']);
-    expect(actionIds(view)).toEqual(['useLocal', 'recreate']);
   });
 
   it('only offers local mode when the branch is gone', () => {
     const view = createInvalidCardView(worktree({ status: 'ready' }, { ...missing, branchMissing: true }), t);
+
     expect(view?.phase).toBe('branchGone');
-    expect(view?.body).toBe(
-      'Branch kimi/1111-3321 has also been deleted, so the Worktree cannot be recreated. You can switch to Local mode.',
-    );
-    expect(actionIds(view)).toEqual(['useLocal']);
+    expect(decision(view)).toEqual({
+      title: 'worktreeCreate.invalid.missingTitle',
+      body: 'worktreeCreate.invalid.branchGoneBody(branch=kimi/1111-3321)',
+      actions: ['useLocal'],
+      primary: ['useLocal'],
+    });
   });
 
-  it('follows the recreate run from cleanup to creation', () => {
-    const cleaning = createInvalidCardView(
-      worktree(
-        { purpose: 'recreate', status: 'running', steps: [step('prune', 'running', { command: 'git worktree prune' }), step('create', 'pending')] },
-        { branch: 'kimi/1111-3321', missing: true },
-      ),
-      t,
-    );
-    expect(cleaning).toMatchObject({
-      phase: 'recreating',
-      title: 'Cleaning up invalid Worktree record',
-      command: 'git worktree prune',
-    });
-    expect(actionIds(cleaning)).toEqual(['stop']);
+  it('follows the recreate run from cleanup to creation with only a Stop action', () => {
+    const run = (steps: AppWorktreeSetupStep[]) =>
+      createInvalidCardView(
+        worktree({ purpose: 'recreate', status: 'running', steps }, { branch: 'kimi/1111-3321', missing: true }),
+        t,
+      );
 
-    const creating = createInvalidCardView(
-      worktree(
-        {
-          purpose: 'recreate',
-          status: 'running',
-          steps: [step('prune', 'done'), step('create', 'running', { command: 'git worktree add /w kimi/1111-3321' })],
-        },
-        { branch: 'kimi/1111-3321', missing: true },
-      ),
-      t,
-    );
+    const cleaning = run([step('prune', 'running', { command: 'git worktree prune' }), step('create', 'pending')]);
+    expect(cleaning).toMatchObject({ phase: 'recreating', title: 'worktreeCreate.invalid.cleaningTitle', command: 'git worktree prune' });
+    expect(decision(cleaning)).toMatchObject({ actions: ['stop'], primary: [] });
+
+    const creating = run([step('prune', 'done'), step('create', 'running', { command: 'git worktree add /w kimi/1111-3321' })]);
     expect(creating).toMatchObject({
-      title: 'Recreating Worktree from kimi/1111-3321',
+      phase: 'recreating',
+      title: 'worktreeCreate.invalid.recreatingTitle(branch=kimi/1111-3321)',
       command: 'git worktree add /w kimi/1111-3321',
     });
   });
 
-  it('reports a failed recreate with raw output and the disk-full variant', () => {
+  it.each<[string, AppWorktreeSetup['failure'], string, string[]]>([
+    ['a creation error', { kind: 'create_failed' }, 'worktreeCreate.invalid.failedBody', ['viewOutput', 'useLocal', 'retry']],
+    ['a full disk', { kind: 'disk_full' }, 'worktreeCreate.invalid.diskFullBody', ['viewOutput', 'manage', 'useLocal', 'retry']],
+  ])('reports a recreate that failed with %s and keeps its raw output', (_label, failure, body, actions) => {
     const steps = [step('prune', 'done'), step('create', 'failed', { command: 'git worktree add /w b', output: 'fatal: boom\n' })];
-    const failed = createInvalidCardView(
-      worktree({ purpose: 'recreate', status: 'failed', stoppedStep: 'create', failure: { kind: 'create_failed' }, steps }, { branch: 'b', missing: true }),
+    const view = createInvalidCardView(
+      worktree({ purpose: 'recreate', status: 'failed', stoppedStep: 'create', failure, steps }, { branch: 'b', missing: true }),
       t,
     );
-    expect(failed).toMatchObject({
-      phase: 'failed',
-      title: 'Worktree recreation failed',
-      body: 'An error occurred while recreating the Worktree. No directory was retained.',
-      output: 'git worktree add /w b\nfatal: boom',
-    });
-    expect(actionLabels(failed)).toEqual(['View Raw Output', 'Use Local Mode', 'Retry']);
-    expect(actionIds(failed)).toEqual(['viewOutput', 'useLocal', 'retry']);
 
-    const full = createInvalidCardView(
-      worktree({ purpose: 'recreate', status: 'failed', failure: { kind: 'disk_full' }, steps }, { branch: 'b', missing: true }),
+    expect(view).toMatchObject({ phase: 'failed', title: 'worktreeCreate.invalid.failedTitle', output: 'git worktree add /w b\nfatal: boom' });
+    expect(decision(view)).toMatchObject({ body, actions, primary: ['retry'] });
+  });
+
+  it('offers no raw output when the failed recreate printed nothing', () => {
+    const view = createInvalidCardView(
+      worktree({ purpose: 'recreate', status: 'failed', failure: { kind: 'create_failed' } }, { branch: 'b', missing: true }),
       t,
     );
-    expect(full?.body).toBe('Insufficient disk space. No directory was retained. Remove unneeded Worktrees and try again.');
-    expect(actionIds(full)).toEqual(['viewOutput', 'manage', 'useLocal', 'retry']);
+
+    expect(view?.output).toBeNull();
+    expect(decision(view)?.actions).toEqual(['useLocal', 'retry']);
   });
 
   it('reports a stopped recreate', () => {
@@ -219,12 +342,79 @@ describe('invalid worktree card', () => {
       worktree({ purpose: 'recreate', status: 'stopped', stoppedStep: 'create' }, { branch: 'b', missing: true }),
       t,
     );
-    expect(view).toMatchObject({ phase: 'stopped', title: 'Worktree recreation stopped', body: 'No directory was retained.' });
-    expect(actionIds(view)).toEqual(['useLocal', 'retry']);
+
+    expect(view?.phase).toBe('stopped');
+    expect(decision(view)).toEqual({
+      title: 'worktreeCreate.invalid.stoppedTitle',
+      body: 'worktreeCreate.invalid.stoppedBody',
+      actions: ['useLocal', 'retry'],
+      primary: ['retry'],
+    });
   });
 
-  it('shows no invalid card once the worktree is ready', () => {
-    expect(createInvalidCardView(worktree({ purpose: 'recreate', status: 'ready' }, { path: '/w', branch: 'b' }), t)).toBeNull();
-    expect(createInvalidCardView(worktree({ status: 'ready' }, { path: '/w' }), t)).toBeNull();
+  it.each<[string, AppSessionWorktree]>([
+    ['a finished recreate', worktree({ purpose: 'recreate', status: 'ready' }, { path: '/w', branch: 'b' })],
+    ['a healthy worktree', worktree({ status: 'ready' }, { path: '/w' })],
+  ])('shows no invalid card for %s', (_label, value) => {
+    expect(createInvalidCardView(value, t)).toBeNull();
+  });
+});
+
+type Messages = { [key: string]: string | Messages };
+
+function resolves(locale: Messages, key: string): boolean {
+  let node: string | Messages | undefined = locale;
+  for (const part of key.split('.')) node = typeof node === 'object' ? node[part] : undefined;
+  return typeof node === 'string' && node.length > 0;
+}
+
+function unresolved(keys: Iterable<string>): string[] {
+  const locales = messages as unknown as Record<'en' | 'zh', Messages>;
+  return [...keys].flatMap((key) =>
+    (['en', 'zh'] as const).filter((locale) => !resolves(locales[locale], key)).map((locale) => `${locale}: ${key}`),
+  );
+}
+
+function sourceKeys(): Set<string> {
+  const root = fileURLToPath(new URL('../src/', import.meta.url));
+  const files = [
+    ...readdirSync(`${root}worktree`)
+      .filter((name) => /\.(?:vue|ts)$/.test(name))
+      .map((name) => `${root}worktree/${name}`),
+    `${root}settings/WorktreesPanel.vue`,
+  ];
+  const namespaces = Object.keys(messages.en).join('|');
+  const pattern = new RegExp(`['"\`]((?:${namespaces})\\.[\\w.]+)['"\`]`, 'g');
+  const keys = new Set<string>();
+  for (const file of files) for (const [, key] of readFileSync(file, 'utf8').matchAll(pattern)) keys.add(key!);
+  return keys;
+}
+
+describe('worktree component copy', () => {
+  it('resolves every step label in English and Chinese', () => {
+    const kinds: AppWorktreeSetupStepKind[] = ['fetch', 'prune', 'create', 'changes', 'include'];
+    const states: AppWorktreeSetupStepState[] = ['pending', 'running', 'done', 'failed', 'stopped', 'skipped'];
+    const keys = new Set<string>();
+    const record: CreateTranslate = (key) => {
+      keys.add(key);
+      return key;
+    };
+    for (const kind of kinds) {
+      for (const state of states) {
+        for (const ref of [undefined, 'origin/main']) {
+          createStepLabel(step(kind, state, { ref }), record);
+          createStepLabel(step(kind, state, { ref, timedOut: true }), record);
+        }
+      }
+    }
+
+    expect(unresolved(keys)).toEqual([]);
+  });
+
+  it('resolves every key the view models requested and the components name', () => {
+    const keys = new Set([...requestedKeys, ...sourceKeys()]);
+
+    expect(keys.size).toBeGreaterThan(50);
+    expect(unresolved(keys)).toEqual([]);
   });
 });

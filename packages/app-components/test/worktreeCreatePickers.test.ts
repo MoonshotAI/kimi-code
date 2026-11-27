@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
-import { createApp, h, nextTick, type App, type Component } from 'vue';
+import { nextTick, type Component } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import { IconResolverKey, type ToastOptions } from '@moonshot-ai/app-ui';
+import type { ToastOptions } from '@moonshot-ai/app-ui';
 import type { AppWorkspace, WorkspaceGitBranches } from '@moonshot-ai/app-core/api';
 import { onToast, resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { registerWorktreeSettingsOpener, useNewSessionEnvironment } from '@moonshot-ai/app-client/composables';
@@ -10,8 +9,7 @@ import { workspacesStore, worktreesStore } from '@moonshot-ai/app-client/stores'
 import { memoryStorage } from '@moonshot-ai/app-client/testing';
 import CreateEnvironmentPicker from '../src/worktree/CreateEnvironmentPicker.vue';
 import CreateSourceBranchPicker from '../src/worktree/CreateSourceBranchPicker.vue';
-
-const i18n = createKimiI18n({ locale: 'en' });
+import { cleanup, containing, msg, pointerDown, press, render, settle, textOf, typeInto, within, type Rendered } from './helpers/dom';
 
 const GB = 1024 * 1024 * 1024;
 
@@ -44,40 +42,27 @@ const repo: WorkspaceGitBranches = {
   ],
 };
 
+const notRepo: WorkspaceGitBranches = { isRepo: false, dirty: false, remotes: [], branches: [] };
+
 function workspace(id: string, extra: Partial<AppWorkspace> = {}): AppWorkspace {
   return { id, root: `/repo/${id}`, name: id, kind: 'managed', additionalDirs: [], sessionCount: 0, ...extra };
 }
 
-let app: App | null = null;
-let host: HTMLDivElement;
+let rendered: Rendered | null = null;
 let toasts: ToastOptions[] = [];
 let stopToasts: (() => void) | undefined;
 
-function mount(component: Component, props: Record<string, unknown>): void {
-  app = createApp({ render: () => h(component, props) });
-  app.use(i18n);
-  app.provide(IconResolverKey, (name: string) => ({ render: () => h('svg', { 'data-icon': name }) }));
-  app.mount(host);
-}
+const environment = () => useNewSessionEnvironment();
+const view = () => within(rendered!.host);
 
-async function settle(): Promise<void> {
-  for (let i = 0; i < 4; i += 1) {
-    await Promise.resolve();
-    await nextTick();
-  }
+function mount(component: Component, props: Record<string, unknown>): void {
+  rendered = render(component, props);
 }
 
 async function loadBranches(info: WorkspaceGitBranches): Promise<void> {
   api.getWorkspaceGitBranches.mockResolvedValue(info);
-  await useNewSessionEnvironment().refreshBranches('ws1');
+  await environment().refreshBranches('ws1');
 }
-
-function pressKey(target: EventTarget, key: string): void {
-  target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
-}
-
-const q = <T extends HTMLElement = HTMLElement>(selector: string) => host.querySelector<T>(selector);
-const all = (selector: string) => [...host.querySelectorAll<HTMLElement>(selector)];
 
 beforeEach(() => {
   vi.stubGlobal('localStorage', memoryStorage());
@@ -85,108 +70,114 @@ beforeEach(() => {
   for (const mock of Object.values(api)) mock.mockReset();
   api.getWorkspaceGitBranches.mockResolvedValue(repo);
   api.listWorktrees.mockResolvedValue({ items: [], totalSizeBytes: 0 });
-  setKimiClientDeps({ api: () => api as never, t: (key, params) => i18n.global.t(key, params ?? {}) });
+  setKimiClientDeps({ api: () => api as never, t: (key, params) => msg(key, params ?? {}) });
   workspacesStore().workspaces = [workspace('ws1'), workspace('ws2'), workspace('remote', { hostId: 'h1' })];
-  useNewSessionEnvironment().reset();
+  environment().reset();
   worktreesStore().reset();
   toasts = [];
   stopToasts = onToast((event) => {
     if (event.type === 'show' && event.options) toasts.push(event.options);
   });
-  host = document.createElement('div');
-  document.body.append(host);
 });
 
 afterEach(() => {
-  app?.unmount();
-  app = null;
-  host.remove();
+  cleanup();
+  rendered = null;
   stopToasts?.();
   resetKimiClientDeps();
   vi.unstubAllGlobals();
 });
 
 describe('CreateEnvironmentPicker', () => {
+  const chipName = (option: 'local' | 'worktree') =>
+    `${msg('worktreeCreate.environment.label')}: ${msg(`worktreeCreate.environment.${option}`)}`;
+  const chip = () => view().getByRole('button', { name: new RegExp(`^${msg('worktreeCreate.environment.label')}: `) });
+  const menu = () => view().queryByRole('menu', { name: msg('worktreeCreate.environment.label') });
+  const option = (id: 'local' | 'worktree') =>
+    view().getByRole('menuitemradio', { name: new RegExp(`^${msg(`worktreeCreate.environment.${id}`)} `) });
+  const checking = () => within(option('worktree')).queryByRole('status', { name: msg('worktreeCreate.environment.checking') });
+
   async function mountOpen(): Promise<void> {
     mount(CreateEnvironmentPicker, { workspaceId: 'ws1' });
     await nextTick();
-    q('.wce-chip')!.click();
+    chip().click();
     await settle();
   }
-
-  const worktreeRow = () => q('.wce-row[data-option="worktree"]')!;
 
   it('starts on Local and enables Worktree once the project is known to be a Git repository', async () => {
     const branches = Promise.withResolvers<WorkspaceGitBranches>();
     api.getWorkspaceGitBranches.mockReturnValueOnce(branches.promise);
     await mountOpen();
 
-    expect(q('.wce')?.dataset.environment).toBe('local');
-    expect(q('.wce-chip-name')?.textContent).toBe('Local');
-    expect(q('.wce-row[data-option="local"] .wce-row-desc')?.textContent).toBe('Work directly in the project directory');
-    expect(worktreeRow().getAttribute('aria-disabled')).toBe('true');
-    expect(worktreeRow().querySelector('.ui-spinner')).not.toBeNull();
-    expect(worktreeRow().querySelector('.wce-row-desc')?.textContent).toBe('Create an independent Worktree for this session');
-    worktreeRow().click();
-    expect(useNewSessionEnvironment().preferred).toBe('local');
+    expect(chip().getAttribute('aria-label')).toBe(chipName('local'));
+    expect(chip().getAttribute('aria-haspopup')).toBe('menu');
+    expect(chip().getAttribute('aria-expanded')).toBe('true');
+    expect(option('local').getAttribute('aria-checked')).toBe('true');
+    expect(option('worktree').getAttribute('aria-disabled')).toBe('true');
+    expect(checking()).not.toBeNull();
+    option('worktree').click();
+    expect(environment().preferred).toBe('local');
 
     branches.resolve(repo);
     await settle();
-    expect(worktreeRow().getAttribute('aria-disabled')).toBe('false');
-    expect(worktreeRow().querySelector('.ui-spinner')).toBeNull();
+    expect(option('worktree').getAttribute('aria-disabled')).toBe('false');
+    expect(checking()).toBeNull();
 
-    worktreeRow().click();
+    option('worktree').click();
     await settle();
-    expect(useNewSessionEnvironment().preferred).toBe('worktree');
-    expect(q('.wce')?.dataset.environment).toBe('worktree');
-    expect(q('.wce-panel')).toBeNull();
+    expect(environment().preferred).toBe('worktree');
+    expect(menu()).toBeNull();
+    expect(chip().getAttribute('aria-label')).toBe(chipName('worktree'));
+    expect(chip().getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(chip());
   });
 
-  it('dims Worktree for a project that is not a Git repository and falls back to Local', async () => {
-    api.getWorkspaceGitBranches.mockResolvedValue({ isRepo: false, dirty: false, remotes: [], branches: [] });
-    useNewSessionEnvironment().selectEnvironment('worktree');
+  it('disables Worktree with the reason for a project that is not a Git repository and falls back to Local', async () => {
+    api.getWorkspaceGitBranches.mockResolvedValue(notRepo);
+    environment().selectEnvironment('worktree');
     await mountOpen();
 
-    expect(q('.wce-chip-name')?.textContent).toBe('Local');
-    const row = worktreeRow();
-    expect(row.classList.contains('disabled')).toBe(true);
-    expect(row.querySelector('.ui-spinner')).toBeNull();
-    expect(row.querySelector('.wce-row-desc')?.textContent).toBe('The current project is not a Git repository.');
-    expect(q('.wce-row[data-option="local"]')?.getAttribute('aria-checked')).toBe('true');
+    expect(chip().getAttribute('aria-label')).toBe(chipName('local'));
+    expect(option('worktree').getAttribute('aria-disabled')).toBe('true');
+    expect(textOf(option('worktree'))).toContain(msg('worktreeCreate.environment.notGitRepo'));
+    expect(checking()).toBeNull();
+    expect(option('local').getAttribute('aria-checked')).toBe('true');
   });
 
-  it('rechecks on open and shows a repository that became available', async () => {
-    await loadBranches({ isRepo: false, dirty: false, remotes: [], branches: [] });
+  it('rechecks on open and enables a repository that became available', async () => {
+    await loadBranches(notRepo);
     const branches = Promise.withResolvers<WorkspaceGitBranches>();
     api.getWorkspaceGitBranches.mockReturnValueOnce(branches.promise);
     await mountOpen();
-    expect(worktreeRow().querySelector('.ui-spinner')).not.toBeNull();
+    expect(checking()).not.toBeNull();
 
     branches.resolve(repo);
     await settle();
-    expect(worktreeRow().getAttribute('aria-disabled')).toBe('false');
-    expect(worktreeRow().querySelector('.ui-spinner')).toBeNull();
+    expect(option('worktree').getAttribute('aria-disabled')).toBe('false');
+    expect(checking()).toBeNull();
   });
 
-  it('supports arrow keys, Enter and Esc', async () => {
+  it('focuses the menu and supports arrow keys, Enter and Esc', async () => {
     await mountOpen();
 
-    const panel = q('.wce-panel')!;
-    expect(document.activeElement).toBe(panel);
-    pressKey(panel, 'ArrowDown');
+    expect(document.activeElement).toBe(menu());
+    press(menu()!, 'ArrowDown');
     await nextTick();
-    expect(worktreeRow().classList.contains('active')).toBe(true);
-    pressKey(panel, 'Enter');
+    expect(option('worktree').classList.contains('active')).toBe(true);
+    press(menu()!, 'Enter');
     await settle();
-    expect(useNewSessionEnvironment().preferred).toBe('worktree');
-    expect(q('.wce-panel')).toBeNull();
+    expect(environment().preferred).toBe('worktree');
+    expect(menu()).toBeNull();
+    expect(document.activeElement).toBe(chip());
 
-    q('.wce-chip')!.click();
+    chip().click();
+    await settle();
+    expect(document.activeElement).toBe(menu());
+    press(menu()!, 'Escape');
     await nextTick();
-    pressKey(document.body, 'Escape');
-    await nextTick();
-    expect(q('.wce-panel')).toBeNull();
-    expect(useNewSessionEnvironment().preferred).toBe('worktree');
+    expect(menu()).toBeNull();
+    expect(document.activeElement).toBe(chip());
+    expect(environment().preferred).toBe('worktree');
   });
 
   it('reminds about disk usage for 8 seconds with a Manage action after choosing Worktree', async () => {
@@ -194,11 +185,15 @@ describe('CreateEnvironmentPicker', () => {
     const openSettings = vi.fn();
     registerWorktreeSettingsOpener(openSettings);
     await mountOpen();
-    worktreeRow().click();
+    option('worktree').click();
     await vi.waitFor(() => expect(toasts).toHaveLength(1));
 
-    expect(toasts[0]).toMatchObject({ layout: 'bar', title: 'Worktrees are using 5.3 GB ·', duration: 8000 });
-    expect(toasts[0]?.actions?.[0]?.label).toBe('Manage');
+    expect(toasts[0]).toMatchObject({
+      layout: 'bar',
+      title: msg('worktreeCreate.disk.reminder', { size: '5.3 GB' }),
+      duration: 8000,
+    });
+    expect(toasts[0]?.actions?.map((action) => action.label)).toEqual([msg('worktreeManage.manage')]);
     const dismiss = vi.fn();
     await toasts[0]?.actions?.[0]?.onClick({ dismiss });
     expect(dismiss).toHaveBeenCalled();
@@ -208,209 +203,219 @@ describe('CreateEnvironmentPicker', () => {
 });
 
 describe('CreateSourceBranchPicker', () => {
+  const chipName = (branch: string) => `${msg('worktreeCreate.branch.label')}: ${branch}`;
+  const chip = () => view().getByRole('button', { name: new RegExp(`^${msg('worktreeCreate.branch.label')}: `) });
+  const panel = () => view().queryByRole('dialog', { name: msg('worktreeCreate.branch.label') });
+  const search = () => view().getByRole('textbox', { name: msg('worktreeCreate.branch.searchPlaceholder') }) as HTMLInputElement;
+  const options = () => view().queryAllByRole('option');
+  const optionNames = () => options().map((item) => textOf(item));
+  const branchOption = (branch: string) => view().getByRole('option', { name: new RegExp(`^${branch}( \\w+)?$`) });
+  const localChangesOption = () =>
+    view().queryByRole('option', { name: containing(msg('worktreeCreate.branch.includeLocalChangesHint')) });
+  const selected = () => view().getAllByRole('option').filter((item) => item.getAttribute('aria-selected') === 'true');
+  const active = () => view().getAllByRole('option').find((item) => item.classList.contains('active'));
+  const remoteSwitch = () => view().queryByRole('switch', { name: msg('worktreeCreate.branch.useRemote') });
+  const glyph = () => chip().querySelector<HTMLElement>('[data-glyph]')!;
+
   async function mountOpen(info: WorkspaceGitBranches = repo): Promise<void> {
     await loadBranches(info);
-    useNewSessionEnvironment().selectEnvironment('worktree');
+    environment().selectEnvironment('worktree');
     mount(CreateSourceBranchPicker, { workspaceId: 'ws1' });
     await settle();
-    q('.wsb-chip')!.click();
+    chip().click();
     await settle();
   }
 
-  it('is hidden in Local mode and shows the selected branch in Worktree mode', async () => {
+  it('is hidden in Local mode and names the selected branch in Worktree mode', async () => {
     await loadBranches(repo);
     mount(CreateSourceBranchPicker, { workspaceId: 'ws1' });
     await nextTick();
-    expect(q('.wsb')).toBeNull();
+    expect(view().queryByRole('button')).toBeNull();
 
-    useNewSessionEnvironment().selectEnvironment('worktree');
+    environment().selectEnvironment('worktree');
     await settle();
-    expect(q('.wsb-chip-name')?.textContent).toBe('main');
-    expect(q('.wsb-chip .wsb-glyph')?.dataset.glyph).toBe('worktree-branch');
-    expect(q('.wsb-chip .wsb-glyph')?.classList.contains('has-dot')).toBe(false);
+    expect(chip().getAttribute('aria-label')).toBe(chipName('main'));
+    expect(chip().getAttribute('aria-haspopup')).toBe('dialog');
+    expect(glyph().dataset.glyph).toBe('worktree-branch');
+    expect(glyph().classList.contains('has-dot')).toBe(false);
   });
 
-  it('opens a heading-less panel with the search focused and both groups', async () => {
+  it('opens with the search focused, local changes first and branches by recency', async () => {
     await mountOpen();
 
-    expect(document.activeElement).toBe(q('.wsb-search input'));
+    expect(panel()).not.toBeNull();
+    expect(document.activeElement).toBe(search());
     expect(api.getWorkspaceGitBranches).toHaveBeenCalledWith('ws1');
-    expect(all('.wsb-group').map((el) => el.textContent)).toEqual(['Local File Status', 'Local Branches']);
-    expect(q('.wsb-row[data-row="local"] .wsb-row-name')?.textContent).toBe('main');
-    expect(q('.wsb-row[data-row="local"] .wsb-row-desc')?.textContent).toBe(
-      'Include local changes · Leave the original directory unchanged',
-    );
-    expect(all('.wsb-list .wsb-row:not([data-row="local"]) .wsb-row-name').map((el) => el.textContent)).toEqual([
+    const listbox = view().getByRole('listbox');
+    expect(textOf(listbox)).toContain(msg('worktreeCreate.branch.localFileStatus'));
+    expect(textOf(listbox)).toContain(msg('worktreeCreate.branch.localBranches'));
+    expect(optionNames()).toEqual([
+      `main ${msg('worktreeCreate.branch.includeLocalChangesHint')}`,
       'feature/login',
       'local-only',
       'main',
     ]);
-    expect(q('.wsb-row.on')?.dataset.row).toBe('main');
-    expect(q('.wsb-row.on svg[data-icon="check"]')).not.toBeNull();
+    expect(selected()).toEqual([branchOption('main')]);
   });
 
-  it('shows muted remote names only when the repository has several remotes', async () => {
+  it('names each branch remote only when the repository has several remotes', async () => {
     await mountOpen();
-    expect(q('.wsb-row-remote')).toBeNull();
-    app?.unmount();
-    app = null;
+    expect(optionNames().slice(1)).toEqual(['feature/login', 'local-only', 'main']);
+    cleanup();
 
     await mountOpen({
       ...repo,
       remotes: ['fork', 'origin'],
       branches: [
         ...repo.branches.slice(0, 2),
-        {
-          name: 'main',
-          committedAt: '2026-11-16T00:00:00.000Z',
-          remoteRef: 'fork/main',
-          remote: 'fork',
-          remoteSource: 'same_name',
-        },
+        { name: 'main', committedAt: '2026-11-16T00:00:00.000Z', remoteRef: 'fork/main', remote: 'fork', remoteSource: 'same_name' },
       ],
     });
-    const remoteOf = (row: string) => q(`.wsb-row[data-row="${row}"] .wsb-row-remote`)?.textContent ?? null;
-    expect(remoteOf('feature/login')).toBe('origin');
-    expect(remoteOf('main')).toBe('fork');
-    expect(remoteOf('local-only')).toBeNull();
-    expect(q('.wsb-row[data-row="local"] .wsb-row-remote')).toBeNull();
+    expect(optionNames()).toEqual([
+      `main ${msg('worktreeCreate.branch.includeLocalChangesHint')}`,
+      'feature/login origin',
+      'local-only',
+      'main fork',
+    ]);
   });
 
-  it('omits the Local File Status group for a clean main directory', async () => {
+  it('omits the local changes option for a clean main directory', async () => {
     await mountOpen({ ...repo, dirty: false });
-    expect(all('.wsb-group').map((el) => el.textContent)).toEqual(['Local Branches']);
-    expect(q('.wsb-row[data-row="local"]')).toBeNull();
+
+    expect(textOf(view().getByRole('listbox'))).not.toContain(msg('worktreeCreate.branch.localFileStatus'));
+    expect(localChangesOption()).toBeNull();
   });
 
-  it('keeps the panel open after a selection and marks included local changes with a dot', async () => {
+  it('keeps the panel open after a selection and records included local changes', async () => {
     await mountOpen();
 
-    q('.wsb-row[data-row="feature/login"]')!.click();
+    branchOption('feature/login').click();
     await settle();
-    expect(q('.wsb-panel')).not.toBeNull();
-    expect(q('.wsb-chip-name')?.textContent).toBe('feature/login');
-    expect(q('.wsb-row.on')?.dataset.row).toBe('feature/login');
+    expect(panel()).not.toBeNull();
+    expect(chip().getAttribute('aria-label')).toBe(chipName('feature/login'));
+    expect(selected()).toEqual([branchOption('feature/login')]);
+    expect(environment().worktreeRequest('ws1')).toMatchObject({ sourceBranch: 'feature/login' });
+    expect(environment().worktreeRequest('ws1')?.includeLocalChanges).not.toBe(true);
 
-    q('.wsb-row[data-row="local"]')!.click();
+    localChangesOption()!.click();
     await settle();
-    expect(q('.wsb-panel')).not.toBeNull();
-    expect(q('.wsb-row.on')?.dataset.row).toBe('local');
-    expect(q('.wsb-chip .wsb-glyph')?.classList.contains('has-dot')).toBe(true);
-    expect(useNewSessionEnvironment().worktreeRequest('ws1')).toMatchObject({ sourceBranch: 'main', includeLocalChanges: true });
+    expect(panel()).not.toBeNull();
+    expect(selected()).toEqual([localChangesOption()]);
+    expect(glyph().classList.contains('has-dot')).toBe(true);
+    expect(environment().worktreeRequest('ws1')).toMatchObject({ sourceBranch: 'main', includeLocalChanges: true });
   });
 
-  it('filters while typing and reports no matches', async () => {
+  it('filters case-insensitively while typing and reports no matches', async () => {
     await mountOpen();
-    const search = async (text: string) => {
-      const input = q<HTMLInputElement>('.wsb-search input')!;
-      input.value = text;
-      input.dispatchEvent(new Event('input'));
-      await settle();
-    };
-    await search('LOGIN');
-    expect(all('.wsb-row').map((el) => el.dataset.row)).toEqual(['feature/login']);
 
-    await search('nothing-here');
-    expect(all('.wsb-row')).toHaveLength(0);
-    expect(q('.wsb-empty')?.textContent).toBe('No matching branches');
-  });
-
-  it('navigates with the arrow keys and selects with Enter without closing', async () => {
-    await mountOpen({ ...repo, dirty: false });
-    const input = q<HTMLInputElement>('.wsb-search input')!;
-    expect(q('.wsb-row.active')?.dataset.row).toBe('main');
-    pressKey(input, 'ArrowUp');
-    await nextTick();
-    expect(q('.wsb-row.active')?.dataset.row).toBe('local-only');
-    pressKey(input, 'Enter');
+    typeInto(search(), 'LOGIN');
     await settle();
-    expect(q('.wsb-chip-name')?.textContent).toBe('local-only');
-    expect(q('.wsb-panel')).not.toBeNull();
+    expect(optionNames()).toEqual(['feature/login']);
+
+    typeInto(search(), 'nothing-here');
+    await settle();
+    expect(options()).toEqual([]);
+    expect(view().getByText(msg('worktreeCreate.branch.empty'))).toBeTruthy();
   });
 
-  it('keeps arrow-key navigation after a row or the remote toggle takes focus', async () => {
+  it('moves through branches with the arrow keys and selects with Enter without closing', async () => {
     await mountOpen({ ...repo, dirty: false });
-    const toggle = q<HTMLButtonElement>('[data-foot="remote"] .ui-switch')!;
-    toggle.focus();
-    pressKey(toggle, 'ArrowUp');
-    await nextTick();
-    expect(q('.wsb-row.active')?.dataset.row).toBe('local-only');
-    expect(document.activeElement).toBe(q('.wsb-search input'));
 
-    const row = q<HTMLButtonElement>('.wsb-row[data-row="local-only"]')!;
+    expect(active()).toBe(branchOption('main'));
+    press(search(), 'ArrowUp');
+    await nextTick();
+    expect(active()).toBe(branchOption('local-only'));
+    press(search(), 'Enter');
+    await settle();
+    expect(chip().getAttribute('aria-label')).toBe(chipName('local-only'));
+    expect(panel()).not.toBeNull();
+  });
+
+  it('keeps arrow-key navigation and returns focus to the search after a row or the remote switch takes focus', async () => {
+    await mountOpen({ ...repo, dirty: false });
+    remoteSwitch()!.focus();
+    press(remoteSwitch()!, 'ArrowUp');
+    await nextTick();
+    expect(active()).toBe(branchOption('local-only'));
+    expect(document.activeElement).toBe(search());
+
+    const row = branchOption('local-only');
     row.focus();
     row.click();
     await settle();
-    pressKey(row, 'ArrowDown');
+    press(row, 'ArrowDown');
     await nextTick();
-    expect(q('.wsb-row.active')?.dataset.row).toBe('main');
-    expect(document.activeElement).toBe(q('.wsb-search input'));
+    expect(active()).toBe(branchOption('main'));
+    expect(document.activeElement).toBe(search());
   });
 
-  it('toggles the latest remote code without closing and badges the button with a cloud', async () => {
+  it('switches to the latest remote code without closing', async () => {
     await mountOpen();
-    const toggle = q<HTMLButtonElement>('[data-foot="remote"] .ui-switch')!;
-    expect(toggle.getAttribute('aria-checked')).toBe('false');
-    toggle.click();
+    expect(remoteSwitch()!.getAttribute('aria-checked')).toBe('false');
+
+    remoteSwitch()!.click();
     await settle();
 
-    expect(q('.wsb-panel')).not.toBeNull();
-    expect(q('[data-foot="remote"] .ui-switch')?.getAttribute('aria-checked')).toBe('true');
-    expect(q('.wsb-chip .wsb-glyph')?.dataset.glyph).toBe('git-branch-cloud');
-    expect(useNewSessionEnvironment().worktreeRequest('ws1')).toMatchObject({ sourceBranch: 'main', useRemote: true });
+    expect(panel()).not.toBeNull();
+    expect(remoteSwitch()!.getAttribute('aria-checked')).toBe('true');
+    expect(glyph().dataset.glyph).toBe('git-branch-cloud');
+    expect(environment().worktreeRequest('ws1')).toMatchObject({ sourceBranch: 'main', useRemote: true });
   });
 
-  it('replaces the toggle with a note for a branch that has no remote', async () => {
+  it('replaces the remote switch with a note for a branch that has no remote', async () => {
     await mountOpen();
-    q('.wsb-row[data-row="local-only"]')!.click();
+
+    branchOption('local-only').click();
     await settle();
-    expect(q('[data-foot="remote"]')).toBeNull();
-    expect(q('[data-foot="no-remote"]')?.textContent?.trim()).toBe(
-      'This branch has no remote; it will be created from the local branch.',
-    );
+
+    expect(remoteSwitch()).toBeNull();
+    expect(view().getByText(msg('worktreeCreate.branch.noRemote'))).toBeTruthy();
   });
 
   it('closes on Esc, on an outside press and on a second click of the button', async () => {
     await mountOpen();
-    pressKey(document.body, 'Escape');
+    press(document.body, 'Escape');
     await nextTick();
-    expect(q('.wsb-panel')).toBeNull();
+    expect(panel()).toBeNull();
+    expect(document.activeElement).toBe(chip());
 
-    q('.wsb-chip')!.click();
+    chip().click();
     await settle();
-    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    pointerDown(document.body);
     await nextTick();
-    expect(q('.wsb-panel')).toBeNull();
+    expect(panel()).toBeNull();
 
-    q('.wsb-chip')!.click();
+    chip().click();
     await settle();
-    q('.wsb-panel')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    pointerDown(panel()!);
     await nextTick();
-    expect(q('.wsb-panel')).not.toBeNull();
-    q('.wsb-chip')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    q('.wsb-chip')!.click();
+    expect(panel()).not.toBeNull();
+    pointerDown(chip());
+    chip().click();
     await nextTick();
-    expect(q('.wsb-panel')).toBeNull();
+    expect(panel()).toBeNull();
+    expect(chip().getAttribute('aria-expanded')).toBe('false');
   });
 
   it('shows the remote ref and the included changes in the hover card', async () => {
     await loadBranches(repo);
     vi.useFakeTimers();
     try {
-      const store = useNewSessionEnvironment();
-      store.selectEnvironment('worktree');
-      store.selectSource('ws1', { branch: 'main', includeLocalChanges: true });
-      store.setUseRemote('ws1', true);
+      environment().selectEnvironment('worktree');
+      environment().selectSource('ws1', { branch: 'main', includeLocalChanges: true });
+      environment().setUseRemote('ws1', true);
       mount(CreateSourceBranchPicker, { workspaceId: 'ws1' });
       await nextTick();
-      q('.wsb')!.dispatchEvent(new MouseEvent('mouseenter'));
+      const picker = rendered!.host.querySelector('[data-worktree-source-branch]')!;
+      picker.dispatchEvent(new MouseEvent('mouseenter'));
       vi.advanceTimersByTime(200);
       await nextTick();
-      expect(all('.wsb-hover-row').map((el) => el.textContent?.trim())).toEqual(['origin/main', 'Include local changes']);
-      expect(q('.wsb-hover-main svg')?.getAttribute('data-icon')).toBe('git-branch-cloud');
-      q('.wsb')!.dispatchEvent(new MouseEvent('mouseleave'));
+      const tooltip = view().getByRole('tooltip');
+      expect(textOf(tooltip)).toBe(`origin/main ${msg('worktreeCreate.branch.includeLocalChanges')}`);
+      expect(tooltip.querySelector('[data-icon="git-branch-cloud"]')).not.toBeNull();
+      picker.dispatchEvent(new MouseEvent('mouseleave'));
       await nextTick();
-      expect(q('.wsb-hover')).toBeNull();
+      expect(view().queryByRole('tooltip')).toBeNull();
     } finally {
       vi.useRealTimers();
     }

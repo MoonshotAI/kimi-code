@@ -1,10 +1,8 @@
 // @vitest-environment jsdom
-import { createApp, h, nextTick, type App } from 'vue';
+import { nextTick } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '@moonshot-ai/app-core/client/types';
 import { OpenSidebarBrowserUrlKey } from '@moonshot-ai/app-core/contracts';
-import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import { IconResolverKey } from '@moonshot-ai/app-ui';
 
 const stores = vi.hoisted(() => ({
   sessions: [] as Array<Record<string, unknown>>,
@@ -34,11 +32,11 @@ vi.mock('@moonshot-ai/app-client/stores', () => ({
 }));
 
 import SessionHoverCard from '../src/worktree/SessionHoverCard.vue';
+import { cleanup, render, textOf, translator, within } from './helpers/dom';
 
 const WORKTREE = '/Users/me/.kimi-code/worktrees/cursor-worktree-entry-test';
-
-let app: App | null = null;
-let host: HTMLDivElement;
+const zh = translator('zh');
+const MAIN = zh('worktreeSession.mainDirectory');
 
 function row(overrides: Partial<Session> = {}): Session {
   return {
@@ -88,22 +86,23 @@ function ready(path: string, value: Record<string, unknown> = {}): Record<string
 }
 
 async function mountCard(session: Session, openInApp?: (url: string) => void): Promise<HTMLElement> {
-  app = createApp({ render: () => h(SessionHoverCard, { session }) });
-  app.use(createKimiI18n({ locale: 'zh' }));
-  app.provide(IconResolverKey, (name) => ({ render: () => h('svg', { 'data-icon': name }) }));
-  if (openInApp !== undefined) app.provide(OpenSidebarBrowserUrlKey, () => openInApp);
-  app.mount(host);
+  const { host } = render(SessionHoverCard, { session }, {
+    locale: 'zh',
+    provide: openInApp === undefined ? [] : [[OpenSidebarBrowserUrlKey, () => openInApp]],
+  });
   await nextTick();
-  return host.querySelector<HTMLElement>('[data-session-hover-card]')!;
+  return within(host).getByRole('dialog', { name: session.title });
 }
 
-function directory(el: HTMLElement, path: string): HTMLElement {
-  return el.querySelector<HTMLElement>(`[data-directory="${path}"]`)!;
+function directories(card: HTMLElement): HTMLElement[] {
+  return [...card.querySelectorAll<HTMLElement>('[data-directory]')];
+}
+
+function directory(card: HTMLElement, path: string): HTMLElement {
+  return card.querySelector<HTMLElement>(`[data-directory="${path}"]`)!;
 }
 
 beforeEach(() => {
-  host = document.createElement('div');
-  document.body.append(host);
   stores.sessions = [];
   stores.fsHome = '/Users/me';
   stores.roots = [];
@@ -116,31 +115,23 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  app?.unmount();
-  app = null;
-  host.remove();
+  cleanup();
   vi.restoreAllMocks();
 });
 
 describe('SessionHoverCard', () => {
-  it('shows a worktree session: title, name, role, path, source, branch and sync state', async () => {
+  it('describes a worktree session: name, role, path, source, branch and sync state', async () => {
     stores.sessions = [worktreeRecord()];
     stores.roots = [WORKTREE];
     stores.rows = [ready(WORKTREE)];
-    const el = await mountCard(row());
+    const card = await mountCard(row());
 
-    expect(el.querySelector('.shc-title')?.textContent).toBe('Login redirect analysis');
-    const main = directory(el, WORKTREE);
-    expect(main.querySelector('.shc-name')?.textContent).toBe('cursor-worktree-entry-test');
-    expect(main.querySelector('.shc-role')?.textContent).toBe('主目录');
-    expect(main.querySelector('.shc-path')?.textContent).toBe('~/.kimi-code/worktrees/cursor-worktree-entry-test');
-    expect(main.querySelector('.shc-created')?.textContent).toBe('基于 main 创建');
-    expect(main.querySelector('.shc-created [data-icon="git-fork"]')).not.toBeNull();
-    expect(main.querySelector('.shc-branch')?.textContent).toBe('kimi/1104-b8b6');
-    expect(main.querySelector('.shc-not-pushed')?.textContent?.trim()).toBe('未推送');
-    expect([...main.children].map(node => node.classList[node.classList.length - 1])).toEqual([
-      'shc-heading', 'shc-path', 'shc-created', 'shc-branch-line',
-    ]);
+    const main = textOf(directory(card, WORKTREE));
+    expect(main.startsWith(`cursor-worktree-entry-test ${MAIN}`)).toBe(true);
+    expect(main).toContain('~/.kimi-code/worktrees/cursor-worktree-entry-test');
+    expect(main).toContain(zh('worktreeSession.createdFrom', { ref: 'main' }));
+    expect(main).toContain(`kimi/1104-b8b6 ${zh('worktreeSession.notPushed')}`);
+    expect(directory(card, WORKTREE).querySelector('[data-worktree-icon="git-fork"]')).not.toBeNull();
   });
 
   it('titles the worktree directory with the project name', async () => {
@@ -148,21 +139,21 @@ describe('SessionHoverCard', () => {
     stores.roots = [WORKTREE];
     stores.rows = [ready(WORKTREE)];
     stores.workspaces = [{ id: 'ws-demo', name: 'demo-project' }];
-    const el = await mountCard({ ...row(), workspaceId: 'ws-demo' });
+    const card = await mountCard({ ...row(), workspaceId: 'ws-demo' });
 
-    expect(el.querySelector('.shc-name')?.textContent).toBe('demo-project');
+    expect(textOf(directory(card, WORKTREE)).startsWith(`demo-project ${MAIN}`)).toBe(true);
   });
 
-  it('adds the cloud badge when the worktree was created from a remote', async () => {
+  it('marks a worktree created from a remote with the cloud icon', async () => {
     stores.sessions = [worktreeRecord({ base: { ref: 'origin/main', remote: true } })];
     stores.roots = [WORKTREE];
-    const el = await mountCard(row());
+    const card = await mountCard(row());
 
-    expect(el.querySelector('.shc-created')?.textContent).toBe('基于 origin/main 创建');
-    expect(el.querySelector('.shc-created [data-icon="git-fork-cloud"]')).not.toBeNull();
+    expect(textOf(card)).toContain(zh('worktreeSession.createdFrom', { ref: 'origin/main' }));
+    expect(card.querySelector('[data-worktree-icon="git-fork-cloud"]')).not.toBeNull();
   });
 
-  it('lists every directory and marks only the main one', async () => {
+  it('lists every directory in order and marks only the first as main', async () => {
     stores.sessions = [worktreeRecord()];
     stores.roots = [WORKTREE, '/Users/other/extra', '/srv/plain'];
     stores.rows = [
@@ -170,76 +161,66 @@ describe('SessionHoverCard', () => {
       ready('/Users/other/extra', { branch: 'codex/conflict-safety', upstream: 'origin/codex/conflict-safety' }),
       { path: '/srv/plain', primary: false, state: { status: 'non-git' } },
     ];
-    const el = await mountCard(row());
+    const card = await mountCard(row());
 
-    expect([...el.querySelectorAll('[data-directory]')].map(node => node.getAttribute('data-directory'))).toEqual(stores.roots);
-    expect(el.querySelectorAll('.shc-role')).toHaveLength(1);
-    expect(el.querySelectorAll('.shc-created')).toHaveLength(1);
-    const extra = directory(el, '/Users/other/extra');
-    expect(extra.querySelector('.shc-name')?.textContent).toBe('extra');
-    expect(extra.querySelector('.shc-path')?.textContent).toBe('~/extra');
-    expect(extra.querySelector('.shc-branch')?.textContent).toBe('codex/conflict-safety');
-    expect(extra.querySelector('.shc-not-pushed')).toBeNull();
-    const plain = directory(el, '/srv/plain');
-    expect(plain.querySelector('.shc-path')?.textContent).toBe('/srv/plain');
-    expect(plain.querySelector('.shc-branch-line')).toBeNull();
+    expect(directories(card).map((node) => node.getAttribute('data-directory'))).toEqual(stores.roots);
+    expect(directories(card).map((node) => textOf(node).includes(MAIN))).toEqual([true, false, false]);
+    expect(textOf(directory(card, '/Users/other/extra'))).toBe('extra ~/extra codex/conflict-safety');
+    expect(textOf(directory(card, '/srv/plain'))).toBe('plain /srv/plain');
   });
 
-  it('strikes the path and warns when the worktree directory is gone', async () => {
+  it('strikes the path, warns and hides the pull request when the worktree directory is gone', async () => {
     stores.sessions = [worktreeRecord({ missing: true })];
     stores.roots = [WORKTREE];
     stores.rows = [{ path: WORKTREE, primary: true, state: { status: 'missing' } }];
-    const el = await mountCard(row({ pullRequest: { number: 7, state: 'open', url: 'https://example.test/pr/7' } }));
+    const card = await mountCard(row({ pullRequest: { number: 7, state: 'open', url: 'https://example.test/pr/7' } }));
 
-    expect(el.querySelector('.shc-path')?.classList.contains('missing')).toBe(true);
-    expect(el.querySelector('.shc-missing')?.textContent).toBe('工作树目录不存在');
-    expect(el.querySelector('.shc-created')).toBeNull();
-    expect(el.querySelector('.shc-branch')?.textContent).toBe('kimi/1104-b8b6');
-    expect(el.querySelector('.shc-pr')).toBeNull();
+    const text = textOf(card);
+    expect(text).toContain(zh('worktreeSession.worktreeMissing'));
+    expect(text).not.toContain(zh('worktreeSession.createdFrom', { ref: 'main' }));
+    expect(text).toContain('kimi/1104-b8b6');
+    expect(within(card).getByText('~/.kimi-code/worktrees/cursor-worktree-entry-test').classList.contains('missing')).toBe(true);
+    expect(within(card).queryByRole('button')).toBeNull();
   });
 
   it('shows only the directory for a local session', async () => {
     stores.sessions = [{ id: 's1', cwd: '/Users/me/Desktop' }];
     stores.roots = ['/Users/me/Desktop'];
-    const el = await mountCard(row({ cwd: '/Users/me/Desktop' }));
+    const card = await mountCard(row({ cwd: '/Users/me/Desktop' }));
 
-    const main = directory(el, '/Users/me/Desktop');
-    expect(main.querySelector('.shc-name')?.textContent).toBe('Desktop');
-    expect(main.querySelector('.shc-role')?.textContent).toBe('主目录');
-    expect(main.querySelector('.shc-path')?.textContent).toBe('~/Desktop');
-    expect(main.children).toHaveLength(2);
+    expect(textOf(directory(card, '/Users/me/Desktop'))).toBe(`Desktop ${MAIN} ~/Desktop`);
   });
 
-  it('falls back to the listed branch and pull request without cached status', async () => {
+  it('falls back to the listed branch and opens the listed pull request without cached status', async () => {
     stores.sessions = [{ ...worktreeRecord(), pullRequest: { number: 1312, state: 'merged', url: 'https://example.test/pr/1312' } }];
     stores.roots = [WORKTREE];
     const openInApp = vi.fn();
-    const el = await mountCard(row(), openInApp);
+    const card = await mountCard(row(), openInApp);
 
-    expect(el.querySelector('.shc-branch')?.textContent).toBe('kimi/1104-b8b6');
-    expect(el.querySelector('.shc-not-pushed')).toBeNull();
-    expect(el.querySelector('.shc-pr-number')?.textContent).toBe('PR #1312');
-    expect(el.querySelector('.shc-pr .spr-state')?.textContent).toBe('Merged');
-    el.querySelector<HTMLButtonElement>('.shc-pr')!.click();
+    expect(textOf(card)).toContain('kimi/1104-b8b6');
+    expect(textOf(card)).not.toContain(zh('worktreeSession.notPushed'));
+    const pullRequest = within(card).getByRole('button', { name: zh('header.openPr') });
+    expect(textOf(pullRequest)).toBe('PR #1312 Merged');
+    pullRequest.click();
     expect(openInApp).toHaveBeenCalledExactlyOnceWith('https://example.test/pr/1312');
   });
 
-  it('is read-only: no changes button, no refresh and no status request', async () => {
+  it('is read-only: no buttons, no change counts and no status request', async () => {
     stores.sessions = [worktreeRecord()];
     stores.roots = [WORKTREE];
     stores.rows = [ready(WORKTREE, { additions: 3, deletions: 1, entries: { 'a.ts': 'M' } })];
-    const el = await mountCard(row());
+    const card = await mountCard(row());
 
-    expect(el.querySelectorAll('button')).toHaveLength(0);
-    expect(el.textContent).not.toContain('+3');
+    expect(within(card).queryAllByRole('button')).toEqual([]);
+    expect(textOf(card)).not.toContain('+3');
     expect(stores.observe).not.toHaveBeenCalled();
     expect(stores.refresh).not.toHaveBeenCalled();
   });
 
   it('uses the row directory when the session is not in the loaded list', async () => {
-    const el = await mountCard(row({ cwd: '/Users/me/elsewhere' }));
+    const card = await mountCard(row({ cwd: '/Users/me/elsewhere' }));
 
     expect(stores.sessionPanelRoots).not.toHaveBeenCalled();
-    expect(el.querySelector('.shc-path')?.textContent).toBe('~/elsewhere');
+    expect(textOf(card)).toContain('~/elsewhere');
   });
 });

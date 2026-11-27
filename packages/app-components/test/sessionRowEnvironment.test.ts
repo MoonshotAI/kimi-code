@@ -1,15 +1,13 @@
 // @vitest-environment jsdom
-import { createApp, h, nextTick, reactive, type App } from 'vue';
+import { nextTick, reactive } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '@moonshot-ai/app-core/client/types';
 import { OpenSidebarBrowserUrlKey } from '@moonshot-ai/app-core/contracts';
-import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { clientPinia } from '@moonshot-ai/app-client/stores';
-import { IconResolverKey } from '@moonshot-ai/app-ui';
 import SessionRow from '../src/SessionRow.vue';
+import { cleanup, msg, render, screen, within, type Rendered } from './helpers/dom';
 
-let app: App | null = null;
-let host: HTMLDivElement;
+let rendered: Rendered;
 
 function session(overrides: Partial<Session> = {}): Session {
   return {
@@ -24,87 +22,87 @@ function session(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
-function mountRow(row: Session, openInApp?: (url: string) => void): { row: Session } {
+function mountRow(row: Session, openInApp?: (url: string) => void): void {
   const state = reactive({ row });
-  app = createApp({
-    setup() {
-      return () => h(SessionRow, { session: state.row, active: false });
-    },
+  rendered = render(SessionRow, () => ({ session: state.row, active: false }), {
+    plugins: [clientPinia],
+    provide: openInApp === undefined ? [] : [[OpenSidebarBrowserUrlKey, () => openInApp]],
   });
-  app.use(clientPinia);
-  app.use(createKimiI18n({ locale: 'en' }));
-  app.provide(IconResolverKey, (name) => ({
-    render: () => h('svg', { 'data-icon': name }),
-  }));
-  if (openInApp !== undefined) app.provide(OpenSidebarBrowserUrlKey, () => openInApp);
-  app.mount(host);
-  return state;
 }
 
+const view = () => within(rendered.host);
+
 function rowEl(): HTMLElement {
-  return host.querySelector<HTMLElement>('.se')!;
+  return rendered.host.querySelector<HTMLElement>('.se')!;
+}
+
+function environmentIcon(key: string): HTMLElement | null {
+  return view().queryAllByLabel(msg(key))[0] ?? null;
 }
 
 function card(): HTMLElement | null {
-  return document.body.querySelector<HTMLElement>('[data-session-hover-card]');
+  return screen.queryByRole('dialog', { name: 'Fix login redirect' });
+}
+
+function follows(first: Element, second: Element): boolean {
+  return (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 }
 
 beforeEach(() => {
   window.localStorage.clear();
-  host = document.createElement('div');
-  document.body.append(host);
 });
 
 afterEach(() => {
-  app?.unmount();
-  app = null;
-  host.remove();
+  cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
   window.localStorage.clear();
 });
 
 describe('SessionRow environment indicator', () => {
-  it('shows no icon for a local session', () => {
+  it('labels no environment for a local session and shows its time', () => {
     mountRow(session());
 
-    expect(host.querySelector('.wt')).toBeNull();
-    expect(host.querySelector('.ts')?.textContent).toBe('1h');
+    expect(['worktreeSession.rowWorktree', 'worktreeSession.rowSettingUp', 'worktreeSession.rowInvalid'].map(environmentIcon)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    expect(view().getByText('1h')).toBeTruthy();
     expect(rowEl().classList.contains('env-invalid')).toBe(false);
   });
 
-  it('shows the worktree icon left of the date', () => {
+  it('labels a worktree session with the worktree icon before the time', () => {
     mountRow(session({ environment: 'worktree' }));
 
-    const icon = host.querySelector<HTMLElement>('.act .wt')!;
-    expect(icon.getAttribute('data-environment')).toBe('worktree');
-    expect(icon.querySelector('[data-icon="git-fork"]')).not.toBeNull();
-    expect(icon.nextElementSibling?.classList.contains('ts')).toBe(true);
+    const icon = environmentIcon('worktreeSession.rowWorktree')!;
+    expect(icon.getAttribute('data-icon')).toBe('git-fork');
+    expect(follows(icon, view().getByText('1h'))).toBe(true);
   });
 
-  it.each<[string, Partial<Session>]>([
-    ['the session is running', { environment: 'worktree', busy: true }],
-    ['the worktree is being created', { environment: 'settingUp' }],
-  ])('shows the worktree icon and a spinner while %s', (_label, overrides) => {
+  it.each<[string, Partial<Session>, string]>([
+    ['the session is running', { environment: 'worktree', busy: true }, 'worktreeSession.rowWorktree'],
+    ['the worktree is being created', { environment: 'settingUp' }, 'worktreeSession.rowSettingUp'],
+  ])('shows the worktree icon and then a spinner instead of the time while %s', (_label, overrides, key) => {
     mountRow(session(overrides));
 
-    const icon = host.querySelector<HTMLElement>('.act .wt')!;
-    expect(icon.querySelector('[data-icon="git-fork"]')).not.toBeNull();
-    expect(icon.nextElementSibling?.classList.contains('st')).toBe(true);
-    expect(host.querySelector('.st .ui-spinner')).not.toBeNull();
-    expect(host.querySelector('.ts')).toBeNull();
+    const icon = environmentIcon(key)!;
+    const spinner = view().getByRole('status', { name: msg('common.loading') });
+    expect(icon.getAttribute('data-icon')).toBe('git-fork');
+    expect(follows(icon, spinner)).toBe(true);
+    expect(view().queryByText('1h')).toBeNull();
   });
 
   it('slashes the icon and dims the title of an invalid worktree session', () => {
     mountRow(session({ environment: 'invalid' }));
 
-    expect(host.querySelector('.act .wt [data-icon="git-fork-off"]')).not.toBeNull();
+    expect(environmentIcon('worktreeSession.rowInvalid')?.getAttribute('data-icon')).toBe('git-fork-off');
     expect(rowEl().classList.contains('env-invalid')).toBe(true);
   });
 });
 
 describe('SessionRow hover card', () => {
-  it('opens after the pointer rests on the row for 500 ms and closes after it leaves', async () => {
+  it('opens after the pointer rests on the row for 500 ms and closes 140 ms after it leaves', async () => {
     vi.useFakeTimers();
     mountRow(session({ environment: 'worktree' }));
 
@@ -113,8 +111,7 @@ describe('SessionRow hover card', () => {
     expect(card()).toBeNull();
     await vi.advanceTimersByTimeAsync(1);
     await nextTick();
-    expect(card()?.querySelector('.shc-title')?.textContent).toBe('Fix login redirect');
-    expect(card()?.querySelector('.shc-path')?.textContent).toBe('~/project');
+    expect(within(card()!).getByText('~/project')).toBeTruthy();
 
     rowEl().dispatchEvent(new MouseEvent('mouseleave'));
     await vi.advanceTimersByTimeAsync(139);
@@ -155,13 +152,14 @@ describe('SessionRow hover card', () => {
 
 describe('SessionRow pull request tag', () => {
   const pullRequest = { number: 12, state: 'open' as const, url: 'https://github.com/acme/repo/pull/12' };
+  const tag = () => view().getByRole('button', { name: 'PR #12' });
 
   it('opens the pull request in the built-in browser when one is available', () => {
     const openInApp = vi.fn();
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
     mountRow(session({ pullRequest, cwdLabel: 'project' }), openInApp);
 
-    host.querySelector<HTMLButtonElement>('.pr')!.click();
+    tag().click();
     expect(openInApp).toHaveBeenCalledExactlyOnceWith(pullRequest.url);
     expect(open).not.toHaveBeenCalled();
   });
@@ -170,7 +168,7 @@ describe('SessionRow pull request tag', () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
     mountRow(session({ pullRequest, cwdLabel: 'project' }));
 
-    host.querySelector<HTMLButtonElement>('.pr')!.click();
+    tag().click();
     expect(open).toHaveBeenCalledExactlyOnceWith(pullRequest.url, '_blank', 'noopener');
   });
 });

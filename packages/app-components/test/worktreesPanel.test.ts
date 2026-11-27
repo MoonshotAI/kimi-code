@@ -1,24 +1,20 @@
 // @vitest-environment jsdom
-import { createApp, h, nextTick, type App } from 'vue';
+import { nextTick } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import { IconResolverKey } from '@moonshot-ai/app-ui';
 import type { AppWorktree } from '@moonshot-ai/app-core/api';
 import { resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { resetWorktreeManageDialogs, useWorktreeManageDialogs } from '@moonshot-ai/app-client/composables';
 import { worktreesStore, type WorktreeRemovalItem } from '@moonshot-ai/app-client/stores';
 import { appWorktree, memoryStorage, sessionRef, worktreeManageApi, worktreeRisk } from '@moonshot-ai/app-client/testing';
 import WorktreesPanel from '../src/settings/WorktreesPanel.vue';
+import { cleanup, msg, render, screen, settle, textOf, within, type Rendered } from './helpers/dom';
 
-const i18n = createKimiI18n({ locale: 'en' });
 const MB = 1024 * 1024;
 const GB = 1024 * MB;
 
 const api = worktreeManageApi();
-
 const dialogs = useWorktreeManageDialogs();
-let app: App | undefined;
-let host: HTMLDivElement;
+let rendered: Rendered;
 let openSession: ReturnType<typeof vi.fn>;
 
 function worktree(name: string, overrides: Partial<AppWorktree> = {}): AppWorktree {
@@ -48,8 +44,7 @@ const fixture = (): AppWorktree[] => [
 
 function mount(options: { items?: AppWorktree[]; total?: number; loaded?: boolean; removals?: WorktreeRemovalItem[]; deleted?: Record<string, string> } = {}) {
   const store = worktreesStore();
-  const items = options.items ?? fixture();
-  store.items = items;
+  store.items = options.items ?? fixture();
   store.totalSizeBytes = options.total;
   store.loaded = options.loaded ?? true;
   store.removals = options.removals ?? [];
@@ -58,16 +53,43 @@ function mount(options: { items?: AppWorktree[]; total?: number; loaded?: boolea
   const ensureLoaded = vi.spyOn(store, 'ensureLoaded').mockResolvedValue(true);
   const refreshSizes = vi.spyOn(store, 'refreshSizes').mockResolvedValue(true);
   const markReminded = vi.spyOn(store, 'markDiskUsageReminded');
-  app = createApp({ render: () => h(WorktreesPanel, { onOpenSession: openSession }) });
-  app.use(i18n);
-  app.provide(IconResolverKey, (name: string) => ({ render: () => h('svg', { 'data-icon': name }) }));
-  app.mount(host);
+  rendered = render(WorktreesPanel, { onOpenSession: openSession });
   return { store, load, ensureLoaded, refreshSizes, markReminded };
 }
 
+const view = () => within(rendered.host);
+
 function row(name: string): HTMLElement {
-  return host.querySelector<HTMLElement>(`.manage-row[data-path="/wt/${name}"]`)!;
+  return rendered.host.querySelector<HTMLElement>(`[data-path="/wt/${name}"]`)!;
 }
+
+const rowPaths = () => [...rendered.host.querySelectorAll('[data-path]')].map((el) => el.getAttribute('data-path'));
+
+function rowButton(name: string, label: string): HTMLButtonElement | null {
+  return within(row(name)).queryByRole('button', { name: label }) as HTMLButtonElement | null;
+}
+
+function projectToggle(project: string): HTMLElement {
+  return view().getByRole('button', { name: new RegExp(`^${project} `) });
+}
+
+function batchButton(): HTMLButtonElement {
+  return view().getByRole('button', { name: msg('worktreeManage.batchDelete') }) as HTMLButtonElement;
+}
+
+function deleteSelectedButton(): HTMLButtonElement | null {
+  return view().queryByRole('button', { name: msg('worktreeManage.deleteSelected') }) as HTMLButtonElement | null;
+}
+
+function rowCheckbox(title: string): HTMLInputElement {
+  return view().getByRole('checkbox', { name: msg('worktreeManage.selectWorktree', { name: title }) }) as HTMLInputElement;
+}
+
+function projectCheckbox(project: string): HTMLInputElement {
+  return view().getByRole('checkbox', { name: msg('worktreeManage.selectProject', { project }) }) as HTMLInputElement;
+}
+
+const selectedCount = (n: number) => msg('worktreeManage.selectedCount', { n });
 
 function failedRemoval(name: string, reason: 'in_use' | 'unknown', output: string): WorktreeRemovalItem {
   return { path: `/wt/${name}`, name, deleteBranch: false, state: 'failed', reason, output };
@@ -77,79 +99,43 @@ function deletingRemoval(name: string, state: 'waiting' | 'deleting' = 'deleting
   return { path: `/wt/${name}`, name, deleteBranch: false, state };
 }
 
-function text(el: Element | null | undefined): string {
-  if (el === null || el === undefined) return '';
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  const parts: string[] = [];
-  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-    const part = node.textContent?.replace(/\s+/g, ' ').trim() ?? '';
-    if (part !== '') parts.push(part);
-  }
-  return parts.join(' ');
-}
-
-function cards(): string[] {
-  return [...host.querySelectorAll('.wtp-card-toggle')].map((card) => text(card));
-}
-
-async function frames(): Promise<void> {
-  for (let index = 0; index < 3; index++) await new Promise((resolve) => requestAnimationFrame(resolve));
-  await nextTick();
-}
-
-async function flush(): Promise<void> {
-  for (let index = 0; index < 6; index++) await nextTick();
-}
-
-function check(input: HTMLInputElement): void {
-  input.checked = !input.checked;
-  input.dispatchEvent(new Event('change'));
-}
-
 beforeEach(() => {
   vi.stubGlobal('localStorage', memoryStorage());
-  host = document.createElement('div');
-  document.body.append(host);
   openSession = vi.fn();
   for (const mock of Object.values(api)) mock.mockReset();
   api.inspectWorktrees.mockImplementation(async (paths) => ({
     items: paths.map((path) => worktreeRisk(path.split('/').at(-1)!)),
     errors: {},
   }));
-  setKimiClientDeps({
-    api: () => api as never,
-    t: (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params)),
-  });
+  setKimiClientDeps({ api: () => api as never, t: (key, params) => msg(key, params) });
   worktreesStore().reset();
   resetWorktreeManageDialogs();
 });
 
 afterEach(() => {
-  app?.unmount();
-  app = undefined;
+  cleanup();
   vi.restoreAllMocks();
   resetWorktreeManageDialogs();
   worktreesStore().reset();
   resetKimiClientDeps();
-  host.remove();
   document.body.innerHTML = '';
   vi.unstubAllGlobals();
 });
 
 describe('Worktrees settings page', () => {
-  it('loads the list and counts opening the page as a disk reminder', async () => {
+  it('loads the list on first open and counts opening the page as a disk reminder', async () => {
     const { ensureLoaded, load, markReminded } = mount({ loaded: false, items: [] });
-    await flush();
+    await settle();
 
     expect(ensureLoaded).toHaveBeenCalledOnce();
     expect(load).not.toHaveBeenCalled();
     expect(markReminded).toHaveBeenCalled();
-    expect(text(host.querySelector('.wtp-state'))).toBe('Loading Worktrees…');
+    expect(view().getByText(msg('worktreeManage.loading'))).toBeTruthy();
   });
 
   it('refreshes an already loaded list when the page opens again', async () => {
     const { ensureLoaded, load } = mount();
-    await flush();
+    await settle();
 
     expect(load).toHaveBeenCalledOnce();
     expect(ensureLoaded).not.toHaveBeenCalled();
@@ -158,99 +144,98 @@ describe('Worktrees settings page', () => {
   it('groups worktrees by project with a count and disk usage', () => {
     mount({ total: 2.3 * GB });
 
-    expect(text(host.querySelector('.wtp-title'))).toBe('Created Worktrees');
-    expect(cards()).toEqual(['kimi-worktree-demo 1 Worktree · 60 MB', 'kimi-code-app 4 Worktrees · 2.3 GB']);
-    expect(text(host.querySelector('.wtp-total'))).toBe('Total: 2.3 GB.');
-    expect(host.querySelector('.wtp-total [data-icon]')).toBeNull();
+    expect(view().getByRole('heading', { name: msg('worktreeManage.title') })).toBeTruthy();
+    expect(textOf(projectToggle('kimi-worktree-demo'))).toBe(
+      `kimi-worktree-demo ${msg('worktreeManage.projectSummary', { n: 1 })} · 60 MB`,
+    );
+    expect(textOf(projectToggle('kimi-code-app'))).toBe(`kimi-code-app ${msg('worktreeManage.projectSummary', { n: 4 })} · 2.3 GB`);
+    const card = projectToggle('kimi-code-app').closest('section')!;
+    expect(['demo', 'badge', 'login', 'retry', 'task-3'].map((name) => card.contains(row(name)))).toEqual([false, true, true, true, true]);
+    const total = view().getByText(msg('worktreeManage.total', { size: '2.3 GB' }));
+    expect(total.parentElement!.querySelector('[data-icon="alert-triangle"]')).toBeNull();
   });
 
   it('recommends freeing space above the reminder threshold', () => {
     mount({ total: 5.3 * GB });
 
-    expect(text(host.querySelector('.wtp-total'))).toBe(
-      'Total: 5.3 GB. Consider deleting Worktrees you no longer need to free up space.',
-    );
-    expect(host.querySelector('.wtp-total [data-icon="alert-triangle"]')).not.toBeNull();
+    const total = view().getByText(msg('worktreeManage.totalReminder', { size: '5.3 GB' }));
+    expect(total.parentElement!.querySelector('[data-icon="alert-triangle"]')).not.toBeNull();
   });
 
-  it('renders each kind of row', () => {
+  it.each<[string, { title: string; label?: string; notes: string[]; open: boolean; deletable: boolean }]>([
+    ['demo', { title: 'Reply hello', notes: ['kimi/demo', '60 MB'], open: true, deletable: true }],
+    [
+      'login',
+      { title: 'Fix login redirect', notes: ['kimi/login', '1.1 GB', msg('worktreeManage.sessionsInUse', { n: 4 })], open: true, deletable: true },
+    ],
+    ['retry', { title: 'Retry requests', label: 'worktreeManage.labelArchived', notes: ['kimi/retry'], open: false, deletable: true }],
+    [
+      'task-3',
+      { title: 'task-3', notes: ['tower/task-3-api-client', '260 MB', msg('worktreeManage.noSession')], open: false, deletable: true },
+    ],
+    ['hello', { title: 'Hello', label: 'worktreeManage.labelDeleted', notes: ['kimi/hello', '60 MB'], open: false, deletable: true }],
+    ['badge', { title: 'Sidebar badge', notes: [msg('worktreeManage.deleting')], open: false, deletable: false }],
+    ['queued', { title: 'queued', notes: [msg('worktreeManage.deleting')], open: false, deletable: false }],
+  ])('describes the %s worktree row and offers only the actions it allows', (name, expected) => {
     mount({
       items: [...fixture(), worktree('hello'), worktree('queued')],
       removals: [failedRemoval('hello', 'in_use', 'busy'), deletingRemoval('badge'), deletingRemoval('queued', 'waiting')],
       deleted: { '/wt/hello': 'Hello' },
     });
 
-    expect(text(row('demo').querySelector('.manage-row__title'))).toBe('Reply hello');
-    expect(text(row('demo').querySelector('.manage-row__meta'))).toBe('kimi/demo · 60 MB');
-    expect(row('demo').querySelector('.manage-row__open')).not.toBeNull();
+    const text = textOf(row(name));
+    expect(text.startsWith(expected.label === undefined ? expected.title : `${expected.title} ${msg(expected.label)}`)).toBe(true);
+    for (const note of expected.notes) expect(text).toContain(note);
+    expect(rowButton(name, msg('worktreeManage.openSession')) !== null).toBe(expected.open);
+    expect(rowButton(name, msg('worktreeManage.delete')) !== null).toBe(expected.deletable);
+  });
 
-    expect(text(row('login').querySelector('.manage-row__title'))).toBe('Fix login redirect');
-    expect(text(row('login').querySelector('.manage-row__meta'))).toBe('kimi/login · 1.1 GB · 4 sessions in use');
+  it('sets a directory title apart from a session title', () => {
+    mount();
 
-    expect(text(row('retry').querySelector('.manage-row__title'))).toBe('Retry requests Archived');
-    expect(row('retry').querySelector('.manage-row__open')).toBeNull();
-    expect(row('retry').querySelector('.manage-row__delete')).not.toBeNull();
-
-    expect(text(row('task-3').querySelector('.manage-row__title'))).toBe('task-3');
-    expect(row('task-3').querySelector('.manage-row__name')!.classList.contains('is-directory')).toBe(true);
-    expect(text(row('task-3').querySelector('.manage-row__meta'))).toBe(
-      'tower/task-3-api-client · 260 MB · No associated session',
-    );
-    expect(row('task-3').querySelector('.manage-row__open')).toBeNull();
-
-    expect(text(row('hello').querySelector('.manage-row__title'))).toBe('Hello Deleted');
-    expect(row('hello').querySelector('.manage-row__name')!.classList.contains('is-directory')).toBe(false);
-    expect(text(row('hello').querySelector('.manage-row__meta'))).toBe('kimi/hello · 60 MB');
-    expect(text(row('hello').querySelector('.manage-row__failure'))).toBe('Deletion failed: directory in use View Raw Output');
-    expect(row('hello').querySelector('.manage-row__open')).toBeNull();
-    expect(row('hello').querySelector('.manage-row__delete')).not.toBeNull();
-
-    expect(text(row('badge').querySelector('.manage-row__actions'))).toBe('Deleting…');
-    expect(text(row('queued').querySelector('.manage-row__actions'))).toBe('Deleting…');
-    expect(row('queued').querySelector('.manage-row__delete')).toBeNull();
+    expect(within(row('task-3')).getByText('task-3').classList.contains('is-directory')).toBe(true);
+    expect(within(row('demo')).getByText('Reply hello').classList.contains('is-directory')).toBe(false);
   });
 
   it('opens the first active associated session', () => {
     mount();
 
-    row('login').querySelector<HTMLButtonElement>('.manage-row__open')!.click();
+    rowButton('login', msg('worktreeManage.openSession'))!.click();
 
-    expect(openSession).toHaveBeenCalledWith('s-login');
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('s-login');
   });
 
   it('collapses and expands a project card', async () => {
     mount();
-    const toggle = host.querySelectorAll<HTMLButtonElement>('.wtp-card-toggle')[1]!;
+    const toggle = projectToggle('kimi-code-app');
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
 
     toggle.click();
     await nextTick();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    await frames();
-    expect(host.querySelectorAll('.manage-row')).toHaveLength(1);
+    await vi.waitFor(() => expect(rowPaths()).toEqual(['/wt/demo']), { interval: 1 });
 
     toggle.click();
     await nextTick();
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    expect(host.querySelectorAll('.manage-row')).toHaveLength(5);
+    expect(rowPaths()).toHaveLength(5);
   });
 
   it('recomputes sizes from the refresh button', () => {
     const { refreshSizes } = mount();
 
-    host.querySelector<HTMLButtonElement>('.wtp-refresh')!.click();
+    view().getByRole('button', { name: msg('worktreeManage.refresh') }).click();
 
     expect(refreshSizes).toHaveBeenCalledOnce();
   });
 
   it('refuses to delete while the associated session is running', async () => {
     mount();
-    const button = row('badge').querySelector<HTMLButtonElement>('.manage-row__delete')!;
+    const button = rowButton('badge', msg('worktreeManage.delete'))!;
 
     expect(button.getAttribute('aria-disabled')).toBe('true');
-    expect(button.classList.contains('is-unavailable')).toBe(true);
     button.click();
-    await flush();
+    await settle();
 
     expect(api.inspectWorktrees).not.toHaveBeenCalled();
     expect(dialogs.deleteDialog.value).toBeNull();
@@ -259,35 +244,37 @@ describe('Worktrees settings page', () => {
   it('asks for confirmation after refreshing the status of the clicked worktree', async () => {
     mount();
 
-    row('login').querySelector<HTMLButtonElement>('.manage-row__delete')!.click();
-    await flush();
+    rowButton('login', msg('worktreeManage.delete'))!.click();
+    await settle();
 
-    expect(api.inspectWorktrees).toHaveBeenCalledWith(['/wt/login']);
+    expect(api.inspectWorktrees).toHaveBeenCalledExactlyOnceWith(['/wt/login']);
     expect(dialogs.deleteDialog.value).toMatchObject({ kind: 'worktrees', phase: 'confirm' });
   });
 
-  it('shows the failure reason with expandable raw output', async () => {
-    mount({
-      removals: [
-        failedRemoval('demo', 'in_use', 'Directory not empty'),
-        failedRemoval('retry', 'unknown', 'fatal: boom'),
-      ],
-    });
+  it.each<[string, 'in_use' | 'unknown', string]>([
+    ['the directory is in use', 'in_use', 'worktreeManage.failedInUse'],
+    ['the cause is unknown', 'unknown', 'worktreeManage.failedGeneric'],
+  ])('explains a failed deletion when %s', (_label, reason, key) => {
+    mount({ removals: [failedRemoval('demo', reason, 'fatal: boom')] });
 
-    expect(text(row('demo').querySelector('.manage-row__failure'))).toBe(
-      'Deletion failed: directory in use View Raw Output',
-    );
-    expect(text(row('retry').querySelector('.manage-row__failure'))).toBe('Deletion failed View Raw Output');
-    expect(row('demo').querySelector('.manage-row__output')).toBeNull();
+    expect(textOf(row('demo'))).toContain(msg(key));
+  });
 
-    row('demo').querySelector<HTMLButtonElement>('.manage-row__link')!.click();
+  it('expands and collapses the raw output of a failed deletion', async () => {
+    mount({ removals: [failedRemoval('demo', 'in_use', 'Directory not empty')] });
+    const show = rowButton('demo', msg('worktreeManage.viewOutput'))!;
+    expect(show.getAttribute('aria-expanded')).toBe('false');
+    expect(within(row('demo')).queryByText('Directory not empty')).toBeNull();
+
+    show.click();
     await nextTick();
-    expect(text(row('demo').querySelector('.manage-row__output'))).toBe('Directory not empty');
-    expect(text(row('demo').querySelector('.manage-row__link'))).toBe('Collapse');
+    const hide = rowButton('demo', msg('worktreeManage.hideOutput'))!;
+    expect(hide.getAttribute('aria-expanded')).toBe('true');
+    expect(within(row('demo')).getByText('Directory not empty')).toBeTruthy();
 
-    row('demo').querySelector<HTMLButtonElement>('.manage-row__link')!.click();
+    hide.click();
     await nextTick();
-    expect(row('demo').querySelector('.manage-row__output')).toBeNull();
+    expect(within(row('demo')).queryByText('Directory not empty')).toBeNull();
   });
 
   it('clears the failures the user has seen when the page closes', () => {
@@ -295,29 +282,29 @@ describe('Worktrees settings page', () => {
       removals: [failedRemoval('demo', 'in_use', 'busy'), failedRemoval('gone', 'in_use', 'busy'), deletingRemoval('login')],
     });
 
-    app?.unmount();
-    app = undefined;
+    rendered.unmount();
 
     expect(store.removals.map((entry) => entry.path)).toEqual(['/wt/gone', '/wt/login']);
   });
 
-  it('states when there is nothing to manage and when loading failed', async () => {
+  it('states when there is nothing to manage and retries a failed load', async () => {
     const empty = mount({ items: [] });
-    expect(text(host.querySelector('.wtp-state'))).toBe('No Worktrees yet.');
-    expect(host.querySelector<HTMLButtonElement>('.wtp-batch')!.disabled).toBe(true);
+    expect(view().getByText(msg('worktreeManage.empty'))).toBeTruthy();
+    expect(batchButton().disabled).toBe(true);
 
     empty.store.loaded = false;
     empty.store.loadError = 'offline';
     await nextTick();
-    expect(text(host.querySelector('.wtp-state'))).toBe('Couldn’t load Worktrees. Retry');
-    host.querySelector<HTMLButtonElement>('.wtp-state .ui-button')!.click();
-    expect(empty.load).toHaveBeenCalled();
+    expect(view().getByText(msg('worktreeManage.loadFailed'))).toBeTruthy();
+    empty.load.mockClear();
+    view().getByRole('button', { name: msg('worktreeManage.retryLoad') }).click();
+    expect(empty.load).toHaveBeenCalledOnce();
   });
 });
 
 describe('batch mode', () => {
   async function enterBatch(): Promise<void> {
-    host.querySelector<HTMLButtonElement>('.wtp-batch')!.click();
+    batchButton().click();
     await nextTick();
   }
 
@@ -325,107 +312,111 @@ describe('batch mode', () => {
     await nextTick();
     vi.useFakeTimers();
     try {
-      const button = host.querySelector<HTMLButtonElement>('.wtp-batch')!;
+      const button = batchButton();
       document.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 10, clientY: 10 }));
       button.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 24, clientY: 18 }));
       vi.advanceTimersByTime(1000);
       await nextTick();
-      return text(document.body.querySelector('[role="tooltip"]'));
+      return textOf(screen.getByRole('tooltip'));
     } finally {
       vi.useRealTimers();
     }
   }
 
-  it('styles Batch Delete as destructive and explains what it deletes', async () => {
+  it('styles Batch Delete as destructive and explains how many worktrees it can delete', async () => {
     mount();
-    expect(host.querySelector('.wtp-batch')!.classList.contains('ui-button--danger')).toBe(true);
-    expect(await hoverBatch()).toBe(
-      'Select Worktrees to delete (4 can be deleted). Deleting removes the Worktree directory, and uncommitted changes in it are lost.',
-    );
+
+    expect(batchButton().classList.contains('ui-button--danger')).toBe(true);
+    expect(await hoverBatch()).toBe(msg('worktreeManage.batchDeleteTip', { n: 4 }));
   });
-
-  function rowCheckbox(name: string): HTMLInputElement {
-    return row(name).querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-  }
-
-  function cardCheckbox(index: number): HTMLInputElement {
-    return host.querySelectorAll<HTMLInputElement>('.wtp-card-check input')[index]!;
-  }
 
   it('swaps the header and row actions for checkboxes', async () => {
     mount();
     await enterBatch();
 
-    expect(text(host.querySelector('.wtp-actions'))).toBe('0 selected Cancel Delete Selected');
-    expect(host.querySelector<HTMLButtonElement>('.wtp-batch-delete')!.disabled).toBe(true);
-    expect(host.querySelectorAll('.manage-row input[type="checkbox"]')).toHaveLength(5);
-    expect(host.querySelectorAll('.wtp-card-check input')).toHaveLength(2);
-    expect(host.querySelector('.manage-row__delete')).toBeNull();
-    expect(host.querySelector('.manage-row__open')).toBeNull();
-    expect(rowCheckbox('badge').disabled).toBe(true);
+    expect(view().getByText(selectedCount(0))).toBeTruthy();
+    expect(view().getByRole('button', { name: msg('worktreeManage.cancelBatch') })).toBeTruthy();
+    expect(deleteSelectedButton()!.disabled).toBe(true);
+    expect(view().queryByRole('button', { name: msg('worktreeManage.batchDelete') })).toBeNull();
+    const rowBoxes = ['Reply hello', 'Sidebar badge', 'Fix login redirect', 'Retry requests', 'task-3'].map(rowCheckbox);
+    const projectBoxes = ['kimi-worktree-demo', 'kimi-code-app'].map(projectCheckbox);
+    expect(view().getAllByRole('checkbox')).toEqual([projectBoxes[0], rowBoxes[0], projectBoxes[1], ...rowBoxes.slice(1)]);
+    expect(view().queryAllByRole('button', { name: msg('worktreeManage.delete') })).toEqual([]);
+    expect(view().queryAllByRole('button', { name: msg('worktreeManage.openSession') })).toEqual([]);
+    expect(rowCheckbox('Sidebar badge').disabled).toBe(true);
   });
 
   it('selects every deletable worktree of a project from the card header', async () => {
     mount();
     await enterBatch();
 
-    check(cardCheckbox(1));
+    projectCheckbox('kimi-code-app').click();
     await nextTick();
 
-    expect(text(host.querySelector('.wtp-selected'))).toBe('3 selected');
-    expect(rowCheckbox('login').checked).toBe(true);
-    expect(rowCheckbox('retry').checked).toBe(true);
-    expect(rowCheckbox('task-3').checked).toBe(true);
-    expect(rowCheckbox('badge').checked).toBe(false);
-    expect(rowCheckbox('demo').checked).toBe(false);
-    expect(cardCheckbox(1).checked).toBe(true);
+    expect(view().getByText(selectedCount(3))).toBeTruthy();
+    expect(
+      ['Fix login redirect', 'Retry requests', 'task-3', 'Sidebar badge', 'Reply hello'].map((title) => rowCheckbox(title).checked),
+    ).toEqual([true, true, true, false, false]);
+    expect(projectCheckbox('kimi-code-app').checked).toBe(true);
 
-    check(rowCheckbox('retry'));
+    rowCheckbox('Retry requests').click();
     await nextTick();
-    expect(text(host.querySelector('.wtp-selected'))).toBe('2 selected');
-    expect(cardCheckbox(1).checked).toBe(false);
+    expect(view().getByText(selectedCount(2))).toBeTruthy();
+    expect(projectCheckbox('kimi-code-app').checked).toBe(false);
 
-    check(cardCheckbox(1));
+    projectCheckbox('kimi-code-app').click();
     await nextTick();
-    check(cardCheckbox(1));
+    projectCheckbox('kimi-code-app').click();
     await nextTick();
-    expect(text(host.querySelector('.wtp-selected'))).toBe('0 selected');
+    expect(view().getByText(selectedCount(0))).toBeTruthy();
+  });
+
+  it('ignores a click on a worktree whose session is running', async () => {
+    mount();
+    await enterBatch();
+
+    rowCheckbox('Sidebar badge').click();
+    await nextTick();
+
+    expect(rowCheckbox('Sidebar badge').checked).toBe(false);
+    expect(view().getByText(selectedCount(0))).toBeTruthy();
   });
 
   it('confirms the selection and leaves batch mode once deletion starts', async () => {
     api.removeWorktree.mockReturnValue(new Promise(() => undefined));
     mount();
     await enterBatch();
-    check(rowCheckbox('login'));
-    check(rowCheckbox('demo'));
+    rowCheckbox('Fix login redirect').click();
+    rowCheckbox('Reply hello').click();
     await nextTick();
 
-    host.querySelector<HTMLButtonElement>('.wtp-batch-delete')!.click();
-    await flush();
+    deleteSelectedButton()!.click();
+    await settle(6);
 
-    expect(api.inspectWorktrees).toHaveBeenCalledWith(['/wt/login', '/wt/demo']);
+    expect(api.inspectWorktrees).toHaveBeenCalledExactlyOnceWith(['/wt/login', '/wt/demo']);
     expect(dialogs.deleteDialog.value).toMatchObject({ kind: 'worktrees', phase: 'confirm' });
-    expect(host.querySelector('.wtp-batch-delete')).not.toBeNull();
+    expect(deleteSelectedButton()).not.toBeNull();
 
     dialogs.confirmDeletion();
-    await flush();
+    await settle(6);
 
-    expect(host.querySelector('.wtp-batch-delete')).toBeNull();
-    expect(host.querySelector('.wtp-batch')).not.toBeNull();
-    expect(text(row('login').querySelector('.manage-row__actions'))).toBe('Deleting…');
+    expect(deleteSelectedButton()).toBeNull();
+    expect(batchButton()).toBeTruthy();
+    expect(textOf(row('login'))).toContain(msg('worktreeManage.deleting'));
   });
 
   it('leaves batch mode on Cancel and forgets the selection', async () => {
     mount();
     await enterBatch();
-    check(rowCheckbox('login'));
+    rowCheckbox('Fix login redirect').click();
     await nextTick();
 
-    host.querySelector<HTMLButtonElement>('.wtp-batch-cancel')!.click();
+    view().getByRole('button', { name: msg('worktreeManage.cancelBatch') }).click();
     await nextTick();
-    expect(host.querySelector('.manage-row input[type="checkbox"]')).toBeNull();
+    expect(view().queryAllByRole('checkbox')).toEqual([]);
 
     await enterBatch();
-    expect(text(host.querySelector('.wtp-selected'))).toBe('0 selected');
+    expect(view().getByText(selectedCount(0))).toBeTruthy();
+    expect(rowCheckbox('Fix login redirect').checked).toBe(false);
   });
 });

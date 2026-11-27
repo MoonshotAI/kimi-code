@@ -62,6 +62,7 @@ import { useConfirmDialog, useTranscriptScroll, useTurnFolding, type TranscriptS
 import ChatPane from '../src/chat/ChatPane.vue';
 import { resetInMemorySettledSteerTurnIds } from '../src/chat/steerContinuationState';
 import { forgetCreateRuns } from '../src/worktree/createBlockMemory';
+import { getByRole, getByText, iconStub, msg, queryByRole } from './helpers/dom';
 
 function turn(over: Partial<ChatTurn>): ChatTurn {
   return { id: 't1', role: 'user', no: 1, text: '', ...over } as ChatTurn;
@@ -595,12 +596,13 @@ describe('ChatPane worktree creation block', () => {
   const reply = turn({ id: 'a1', role: 'assistant', no: 2, text: 'Hi', daemonTurnId: 1, daemonTurnState: 'completed' });
   const secondPrompt = turn({ id: 'u2', no: 3, text: 'Again' });
   const blocks = () => [...host.querySelectorAll<HTMLElement>('[data-worktree-create-block]')];
+  const steerButton = () => queryByRole(host, 'button', { name: msg('composer.queueSteer') });
 
   async function mountPane(props: Record<string, unknown> | (() => Record<string, unknown>)): Promise<void> {
     const read = typeof props === 'function' ? props : () => props;
     app = createApp({ render: () => h(ChatPane, { sessionId: 's1', ...read() }) });
     app.use(createKimiI18n({ locale: 'en' }));
-    app.provide(IconResolverKey, (name: string) => ({ render: () => h('svg', { 'data-icon': name }) }));
+    app.provide(IconResolverKey, iconStub);
     app.mount(host);
     await nextTick();
   }
@@ -609,14 +611,13 @@ describe('ChatPane worktree creation block', () => {
     forgetCreateRuns();
   });
 
-  it('renders one block directly below the first user message', async () => {
+  it('renders one block right after the first user message', async () => {
     await mountPane({ turns: [firstPrompt, reply, secondPrompt], worktree: sessionWorktree('ready', { path: '/w' }) });
 
     expect(blocks()).toHaveLength(1);
-    const first = host.querySelector<HTMLElement>('[data-turn-id="u1"]')!.closest('.u-turn')!;
-    expect(first.contains(blocks()[0]!)).toBe(true);
-    expect(first.lastElementChild).toBe(blocks()[0]);
-    expect(blocks()[0]?.querySelector('.wcb-title')?.textContent).toBe('Worktree created');
+    const bubble = host.querySelector<HTMLElement>('[data-turn-id="u1"]')!;
+    expect(bubble.parentElement!.lastElementChild).toBe(blocks()[0]);
+    expect(getByRole(blocks()[0]!, 'status', { name: msg('worktreeCreate.block.created') })).toBeTruthy();
   });
 
   it('renders no block for a local session or before the start of the history is loaded', async () => {
@@ -628,15 +629,17 @@ describe('ChatPane worktree creation block', () => {
     expect(blocks()).toHaveLength(0);
   });
 
-  it('hides the queue steer control while the worktree holds prompts', async () => {
+  it('withholds the queue steer control while the worktree holds prompts', async () => {
     const queued: QueuedPromptView[] = [{ id: 'q1', text: 'Next', attachmentCount: 0 }];
     const held = ref<AppSessionWorktree>(sessionWorktree('failed', {}, { failure: { kind: 'fetch_failed' } }));
-    await mountPane(() => ({ turns: [firstPrompt], queued, worktree: held.value }));
-    expect(host.querySelector('.q-turn')).not.toBeNull();
-    expect(host.querySelector('.q-send')).toBeNull();
+    const onSteerQueued = vi.fn();
+    await mountPane(() => ({ turns: [firstPrompt], queued, worktree: held.value, onSteerQueued }));
+    expect(getByText(host, 'Next')).toBeTruthy();
+    expect(steerButton()).toBeNull();
 
     held.value = sessionWorktree('ready', { path: '/w' });
     await nextTick();
-    expect(host.querySelector('.q-send')).not.toBeNull();
+    steerButton()!.click();
+    expect(onSteerQueued).toHaveBeenCalledExactlyOnceWith(0);
   });
 });
