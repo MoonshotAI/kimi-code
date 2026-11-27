@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { useConfirmDialog, usePanelTabDrag } from '@moonshot-ai/app-client/composables';
 import { panelCloseTargets } from '@moonshot-ai/app-client/panel';
 import { PanelContextMenu } from '@moonshot-ai/app-components';
+import { nativePath } from '@moonshot-ai/app-core/lib';
 import { createTerminalCloseGuard } from '../../lib/terminalCloseGuard';
 import { Icon, IconButton, Tooltip } from '@moonshot-ai/app-ui';
 import type { SelectionActionPayload } from '@moonshot-ai/app-client/lib';
@@ -198,7 +199,7 @@ function onTabKeydown(event: KeyboardEvent, index: number): void {
           :style="drag.styleFor(tab.id)"
           @contextmenu.prevent.stop="openContextMenu(tab.id, $event.clientX, $event.clientY)"
         >
-          <Tooltip :text="tab.cwd">
+          <Tooltip :text="nativePath(tab.cwd)">
             <button
               :ref="setTabRef(tab.id)"
               type="button"

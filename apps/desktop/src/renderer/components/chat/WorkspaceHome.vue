@@ -5,6 +5,7 @@ import { Badge, Icon } from '@moonshot-ai/app-ui';
 import { WorkspaceIcon } from '@moonshot-ai/app-components/support';
 import { OpenInMenu } from '@moonshot-ai/app-components';
 import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { nativePath } from '@moonshot-ai/app-core/lib';
 import { useNativeTerminal } from '../../composables/useNativeTerminal';
 
 const props = defineProps<{
@@ -39,7 +40,7 @@ function toggleTerminalPanel(): void {
     </div>
     <div v-if="dirs.length > 0" class="ws-home-dirs">
       <div v-for="(dir, i) in dirs" :key="dir" class="ws-home-dir">
-        <span class="ws-home-path" :title="dir">{{ dir }}</span>
+        <span class="ws-home-path" :title="nativePath(dir)">{{ nativePath(dir) }}</span>
         <Badge v-if="i === 0 && dirs.length > 1" size="sm" class="ws-home-primary">
           {{ t('workspace.dialog.primaryBadge') }}
         </Badge>

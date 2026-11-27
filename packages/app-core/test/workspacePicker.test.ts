@@ -34,4 +34,14 @@ describe('filterWorkspaces', () => {
   it('returns no workspaces when nothing matches', () => {
     expect(filterWorkspaces(workspaces, 'missing')).toEqual([]);
   });
+
+  it('matches a Windows root whichever separators the query uses', () => {
+    const windows = [
+      { id: 'w', name: 'App', root: 'C:/Users/me/app', shortPath: '~\\app' },
+      { id: 'n', name: 'Notes', root: 'C:\\Users\\me\\notes', shortPath: '~\\notes' },
+    ];
+    expect(filterWorkspaces(windows, 'C:\\Users\\me').map((workspace) => workspace.id)).toEqual(['w', 'n']);
+    expect(filterWorkspaces(windows, 'c:/users/me').map((workspace) => workspace.id)).toEqual(['w', 'n']);
+    expect(filterWorkspaces(windows, '~/notes').map((workspace) => workspace.id)).toEqual(['n']);
+  });
 });

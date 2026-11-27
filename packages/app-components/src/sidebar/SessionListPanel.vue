@@ -13,6 +13,7 @@ import {
   savePinnedCollapsed,
   saveSessionsSectionCollapsed,
   saveSidebarViewMode,
+  nativePath,
   visibleOpenGroups,
   type DropPosition,
   type PinnedInsertTarget,
@@ -670,7 +671,7 @@ function toggleWsMenu(ws: WorkspaceView, e: MouseEvent): void {
 }
 
 function copyWsPath(ws: WorkspaceView): void {
-  void copyTextToClipboard(ws.root);
+  void copyTextToClipboard(nativePath(ws.root));
 }
 
 function startRenameWs(ws: WorkspaceView): void {

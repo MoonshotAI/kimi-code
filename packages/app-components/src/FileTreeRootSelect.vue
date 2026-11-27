@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { basename } from '@moonshot-ai/app-core/lib';
+import { basename, nativePath } from '@moonshot-ai/app-core/lib';
 import { Icon, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
 import { useAnchoredMenu } from './composables/useAnchoredMenu';
 
@@ -32,7 +32,7 @@ function pickRoot(root: string): void {
 
 <template>
   <div class="files-root-select-wrap">
-    <Tooltip :text="root">
+    <Tooltip :text="nativePath(root)">
       <button
         type="button"
         class="files-root-select"
@@ -53,7 +53,7 @@ function pickRoot(root: string): void {
           v-for="item in roots"
           :key="item"
           role="menuitemradio"
-          :title="item"
+          :title="nativePath(item)"
           :aria-checked="item === root"
           @click="pickRoot(item)"
         >
