@@ -108,6 +108,57 @@ describe('reduceAppEvent session work state', () => {
   });
 });
 
+describe('reduceAppEvent sessionDeleted', () => {
+  const OTHER = 's_2';
+
+  function stateWithSessions(activeSessionId: string): KimiClientState {
+    const row = (id: string): AppSession => ({
+      id,
+      title: id,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      busy: false,
+      mainTurnActive: false,
+      archived: false,
+      cwd: '/workspace',
+      model: 'model',
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalCostUsd: 0,
+        contextTokens: 0,
+        contextLimit: 0,
+        turnCount: 0,
+      },
+      messageCount: 0,
+    });
+    const state = createInitialState();
+    state.sessions = [row(SID), row(OTHER)];
+    state.activeSessionId = activeSessionId;
+    state.approvalsBySession[SID] = [approval('a1')];
+    state.approvalsBySession[OTHER] = [approval('a2')];
+    return state;
+  }
+
+  it('removes only the deleted session and clears it as the active session', () => {
+    const next = reduceAppEvent(stateWithSessions(SID), { type: 'sessionDeleted', sessionId: SID }, meta());
+
+    expect(next.sessions.map((session) => session.id)).toEqual([OTHER]);
+    expect(next.activeSessionId).toBeUndefined();
+    expect(next.approvalsBySession[SID]).toBeUndefined();
+    expect(next.approvalsBySession[OTHER]).toHaveLength(1);
+  });
+
+  it('keeps the active session when another session is deleted', () => {
+    const next = reduceAppEvent(stateWithSessions(OTHER), { type: 'sessionDeleted', sessionId: SID }, meta());
+
+    expect(next.sessions.map((session) => session.id)).toEqual([OTHER]);
+    expect(next.activeSessionId).toBe(OTHER);
+  });
+});
+
 describe('goalVersionBySession', () => {
   it('drops the version counter with the session', () => {
     const initial = createInitialState();
