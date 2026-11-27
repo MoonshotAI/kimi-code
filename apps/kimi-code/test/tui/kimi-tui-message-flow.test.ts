@@ -10,6 +10,7 @@ import {
   resetCapabilitiesCache,
   setCapabilities,
   setKittyProtocolActive,
+  type Component,
   type TuiMouseEvent,
 } from '@moonshot-ai/pi-tui';
 import {
@@ -27,6 +28,8 @@ import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
+import { StatusMessageComponent } from '#/tui/components/messages/status-message';
+import { OAUTH_LOGIN_REQUIRED_CODE } from '#/tui/constant/kimi-tui';
 import { CacheHintDialogComponent } from '#/tui/components/dialogs/cache-hint-dialog';
 import * as cacheHintConfig from '#/utils/cache-hint-config';
 import { clientConfigs } from '#/utils/client-configs';
@@ -17013,5 +17016,201 @@ describe('transcript fold block clicks', () => {
     expect(closed).not.toContain('wide-tail');
     expect(closed).toContain('wide-head');
     expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
+  });
+});
+
+describe('restoring how a turn ended after resume', () => {
+  interface Ending {
+    readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+    readonly error?: {
+      readonly code: string;
+      readonly message: string;
+      readonly retryable: boolean;
+      readonly details?: Record<string, unknown>;
+    };
+  }
+
+  const refusal = {
+    code: 'provider.api_error',
+    message: 'The example service refused this request.',
+    retryable: false,
+  };
+  const stepLimit = {
+    code: 'loop.max_steps_exceeded',
+    message: 'Turn exceeded maxSteps=3.',
+    retryable: false,
+  };
+  const filtered = {
+    code: 'provider.filtered',
+    message: 'Provider safety policy blocked the response.',
+    details: { finishReason: 'filtered' },
+    retryable: false,
+  };
+  const loginRequired = {
+    code: OAUTH_LOGIN_REQUIRED_CODE,
+    message: 'The login expired.',
+    retryable: false,
+  };
+  const hint = expect.stringContaining('If this persists, run `/export-debug-zip`');
+
+  function liveTurnEndEvents({ reason, error }: Ending): Event[] {
+    const base = { agentId: 'main', sessionId: 'ses-1', turnId: 1 };
+    const events: Event[] = [];
+    if (reason === 'cancelled') {
+      events.push({ ...base, type: 'turn.step.interrupted', step: 1, reason: 'aborted' } as Event);
+    }
+    const failedInsideAStep =
+      reason === 'failed' && error?.code !== stepLimit.code && error?.code !== filtered.code;
+    if (failedInsideAStep) {
+      events.push({
+        ...base,
+        type: 'turn.step.interrupted',
+        step: 1,
+        reason: 'error',
+        message: error?.message,
+      } as Event);
+    }
+    events.push({ ...base, type: 'turn.ended', reason, ...(error === undefined ? {} : { error }) } as Event);
+    if (error !== undefined) events.push({ ...base, type: 'error', ...error } as Event);
+    return events;
+  }
+
+  function statusLines(children: readonly Component[]): string[] {
+    return children
+      .filter((child) => child instanceof StatusMessageComponent)
+      .map((child) => child.render(120).join('\n'));
+  }
+
+  function visible(lines: readonly string[]): string[] {
+    return lines.map((line) => stripSgr(line).trim());
+  }
+
+  async function shownLive(ending: Ending): Promise<string[]> {
+    const { driver } = await makeDriver();
+    const before = driver.state.transcriptContainer.children.length;
+    for (const event of liveTurnEndEvents(ending)) {
+      driver.sessionEventHandler.handleEvent(event, vi.fn());
+    }
+    return statusLines(driver.state.transcriptContainer.children.slice(before));
+  }
+
+  async function resumeWith(replay: readonly Record<string, unknown>[]) {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    (session.getResumeState as ReturnType<typeof vi.fn>).mockReturnValue({
+      sessionMetadata: {},
+      agents: {
+        main: {
+          config: { modelCapabilities: { max_context_tokens: 100 }, modelAlias: 'k2' },
+          plan: null,
+          permission: { mode: 'manual' },
+          swarmMode: false,
+          context: { history: [], tokenCount: 0 },
+          background: [],
+          toolStore: {},
+          replay,
+        },
+      },
+    });
+    const before = driver.state.transcriptContainer.children.length;
+    expect(await driver.sessionReplay.hydrateFromReplay(session as unknown as Session)).toBe(true);
+    return { driver, lines: statusLines(driver.state.transcriptContainer.children.slice(before)) };
+  }
+
+  function prompt(text: string, time: number): Record<string, unknown> {
+    return {
+      type: 'message',
+      time,
+      message: { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } },
+    };
+  }
+
+  function reply(text: string, time: number): Record<string, unknown> {
+    return {
+      type: 'message',
+      time,
+      message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] },
+    };
+  }
+
+  function ended(turnId: number, { reason, error }: Ending, time: number): Record<string, unknown> {
+    return { type: 'turn_ended', time, turnId, reason, ...(error === undefined ? {} : { error }) };
+  }
+
+  it.each<[string, Ending, unknown[]]>([
+    [
+      'a turn the model service refused',
+      { reason: 'failed', error: refusal },
+      ['Error: [provider.api_error] The example service refused this request.', hint],
+    ],
+    [
+      'a turn that reached the step limit',
+      { reason: 'failed', error: stepLimit },
+      ['Error: [loop.max_steps_exceeded] Turn exceeded maxSteps=3.', hint],
+    ],
+    [
+      'a turn the provider safety policy stopped',
+      { reason: 'failed', error: filtered },
+      [
+        'Turn stopped: provider safety policy blocked the response.',
+        expect.stringMatching(/^Error: \[provider\.filtered\] /),
+        hint,
+      ],
+    ],
+    [
+      'a turn that needed a new login',
+      { reason: 'failed', error: loginRequired },
+      ['Error: OAuth login expired. Send /login to login.'],
+    ],
+    ['a turn the user stopped', { reason: 'cancelled' }, ['Interrupted by user']],
+    [
+      'a turn a prompt hook blocked',
+      { reason: 'blocked' },
+      ['Turn stopped: prompt hook blocked the request.'],
+    ],
+    ['a turn that completed', { reason: 'completed' }, []],
+  ])('shows %s as it was shown live', async (_name, ending, expected) => {
+    const live = await shownLive(ending);
+    const { lines } = await resumeWith([
+      prompt('Summarise the deployment status.', 1),
+      reply('Checking the deployment.', 2),
+      ended(0, ending, 3),
+    ]);
+
+    expect(visible(live)).toEqual(expected);
+    expect(lines).toEqual(live);
+  });
+
+  it('shows each failed or stopped turn under that turn, also when later turns completed', async () => {
+    const { driver } = await resumeWith([
+      prompt('Summarise the deployment status.', 1),
+      ended(0, { reason: 'failed', error: refusal }, 2),
+      prompt('Estimate the downtime.', 3),
+      reply('Downtime is about five', 4),
+      ended(1, { reason: 'cancelled' }, 5),
+      prompt('Check the build.', 6),
+      reply('The build passed.', 7),
+      ended(2, { reason: 'completed' }, 8),
+    ]);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    const order = [
+      'Summarise the deployment status.',
+      'Error: [provider.api_error] The example service refused this request.',
+      'Estimate the downtime.',
+      'Downtime is about five',
+      'Interrupted by user',
+      'Check the build.',
+      'The build passed.',
+    ].map((text) => transcript.indexOf(text));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect(order).toEqual(order.toSorted((a, b) => a - b));
+    expect(transcript.split('Error: [provider.api_error]')).toHaveLength(2);
+
+    const entries = driver.state.transcriptEntries;
+    const turnOf = (text: string) => entries.find((entry) => entry.content.startsWith(text))?.turnId;
+    expect(turnOf('Error: [provider.api_error]')).toBe(turnOf('Summarise the deployment status.'));
+    expect(turnOf('Interrupted by user')).toBe(turnOf('Estimate the downtime.'));
+    expect(turnOf('Summarise the deployment status.')).not.toBe(turnOf('Estimate the downtime.'));
   });
 });

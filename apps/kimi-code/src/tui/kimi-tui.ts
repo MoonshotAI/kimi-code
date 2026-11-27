@@ -132,6 +132,7 @@ import {
   type TuiMode,
 } from './config';
 import {
+  ERROR_STATUS_PREFIX,
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
   MAX_AUTO_TITLE_ATTEMPTS,
@@ -4523,7 +4524,7 @@ export class KimiTUI {
   }
 
   showError(message: string): void {
-    this.showStatus(`Error: ${message}`, 'error');
+    this.showStatus(`${ERROR_STATUS_PREFIX}${message}`, 'error');
   }
 
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle {
