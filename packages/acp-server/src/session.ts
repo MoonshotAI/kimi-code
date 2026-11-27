@@ -82,6 +82,13 @@ const TURN_AGENT_BUSY_CODE = 'turn.agent_busy';
 const SESSION_OCCUPIED_CODE = 'session.occupied';
 const SESSION_STALE_CODE = 'session.stale';
 
+const AGENT_STARTED_ORIGIN_KINDS: ReadonlySet<string> = new Set(['task', 'cron_job', 'cron_missed', 'system_trigger']);
+
+function isAgentStartedOrigin(origin: unknown): boolean {
+  if (typeof origin !== 'object' || origin === null || !('kind' in origin)) return false;
+  return typeof origin.kind === 'string' && AGENT_STARTED_ORIGIN_KINDS.has(origin.kind);
+}
+
 export function mapPromptLaunchError(error: unknown, sessionId: string): RequestError {
   const code = (error as { readonly code?: unknown } | null | undefined)?.code;
   const message = error instanceof Error ? error.message : String(error);
@@ -152,7 +159,7 @@ export class AcpSession {
   private modeChangesInFlight = 0;
   private skills: readonly SkillSummary[] = [];
   private driver: TurnDriver | undefined;
-  private taskNotificationTurnId: number | undefined;
+  private agentStartedTurnId: number | undefined;
   private readonly pendingPromptAborts = new Set<{ aborted: boolean }>();
   private readonly subscriptions: IDisposable[] = [];
   private readonly toolCallStreamArgs = new Map<string, { args: string }>();
@@ -197,9 +204,7 @@ export class AcpSession {
         if (mode !== undefined && mode !== this.currentModeId) void this.publishMode(mode);
       }),
       events.on('turn.started', ({ turnId, origin }) => {
-        if (typeof origin === 'object' && origin !== null && 'kind' in origin && origin.kind === 'task') {
-          this.taskNotificationTurnId = turnId;
-        }
+        if (isAgentStartedOrigin(origin)) this.agentStartedTurnId = turnId;
       }),
       events.on('assistant.delta', (event) => {
         this.dispatchTurnEvent(event.turnId, () => {
@@ -488,7 +493,7 @@ export class AcpSession {
   }
 
   private assertNoActiveTurn(): void {
-    if (this.taskNotificationTurnId !== undefined || (this.driver !== undefined && !this.driver.settled)) {
+    if (this.agentStartedTurnId !== undefined || (this.driver !== undefined && !this.driver.settled)) {
       throw RequestError.invalidRequest(
         { code: TURN_AGENT_BUSY_CODE },
         'another turn is already in progress',
@@ -537,7 +542,7 @@ export class AcpSession {
   }
 
   private dispatchTurnEvent(turnId: number, dispatch: () => void): void {
-    if (this.taskNotificationTurnId === turnId) {
+    if (this.agentStartedTurnId === turnId) {
       dispatch();
       return;
     }
@@ -717,8 +722,8 @@ export class AcpSession {
 
   private onTurnEnded(event: AgentEventPayloads['turn.ended']): void {
     this.terminalsAwaitingCall.length = 0;
-    if (event.turnId === this.taskNotificationTurnId) {
-      this.taskNotificationTurnId = undefined;
+    if (event.turnId === this.agentStartedTurnId) {
+      this.agentStartedTurnId = undefined;
       void this.emitUsageUpdate();
       return;
     }
@@ -798,7 +803,7 @@ export class AcpSession {
     driver.cancelRequested = true;
     const turnId = driver.turnId;
     if (turnId === undefined) {
-      if (this.taskNotificationTurnId !== undefined) return;
+      if (this.agentStartedTurnId !== undefined) return;
       void this.agent.cancel().catch((error) => {
         log.warn('acp: cancel (unaddressed) failed', {
           sessionId: this.sessionId,
