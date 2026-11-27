@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import '@xterm/xterm/css/xterm.css';
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { useIsDark } from '@moonshot-ai/app-core';
+import { useIsDark } from '@moonshot-ai/app-core/composables';
 import { useTerminalFonts } from '@moonshot-ai/app-client/composables';
 import type { Terminal } from '@xterm/xterm';
 import type { FitAddon } from '@xterm/addon-fit';

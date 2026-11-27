@@ -27,7 +27,7 @@ import {
   sessionsListMinHeight,
   STORAGE_KEYS,
 } from '@moonshot-ai/app-core/lib';
-import { useAppearance } from '@moonshot-ai/app-core';
+import { useAppearance } from '@moonshot-ai/app-core/composables';
 import { useResizable } from '@moonshot-ai/app-client/composables';
 import SessionRow from './SessionRow.vue';
 import SidebarSectionHeader from './sidebar/SidebarSectionHeader.vue';

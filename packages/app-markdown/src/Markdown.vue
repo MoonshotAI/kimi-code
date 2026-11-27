@@ -11,7 +11,7 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, reacti
 import { useKimiI18n } from '@moonshot-ai/app-i18n';
 import { MarkdownRender, enableKatex, enableMermaid, languageMap } from 'markstream-vue';
 import { ensureMarkdownWorkers } from './lib/markdownWorkers';
-import { useIsDark } from '@moonshot-ai/app-core';
+import { useIsDark } from '@moonshot-ai/app-core/composables';
 import { HistoryStateKey, OpenFileLinkKey, OpenLocalHtmlFileKey, OpenSidebarBrowserUrlKey, PinScrollKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
 import { classifyMentionHref, decodeSessionMention, decodeSkillMention, mentionActionLine, mentionActionPath, mentionActionSuffix, sessionMentionPath, unescapeLinkDest, unescapeRenderedLinkText } from '@moonshot-ai/app-composer/model';
 import { mentionHrefToPath, mentionIconSvg, truncateMentionName } from '@moonshot-ai/app-composer/features/mention';

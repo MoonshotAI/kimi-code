@@ -5,7 +5,7 @@ import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
 import type { Terminal as XTerm, ITheme } from '@xterm/xterm';
 import { computed, nextTick, onDeactivated, onMounted, onUnmounted, ref, toRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useIsDark, useFontPrefs, effectiveFontPrefs, quoteFontFamily } from '@moonshot-ai/app-core';
+import { useIsDark, useFontPrefs, effectiveFontPrefs, quoteFontFamily } from '@moonshot-ai/app-core/composables';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { SelectionActionBubble } from '@moonshot-ai/app-components';
 import type { SelectionActionPayload } from '@moonshot-ai/app-client/lib';

@@ -79,7 +79,8 @@ class OverlayWindow extends EventEmitter {
 }
 
 vi.mock('../../../src/main/screenshot/screenshot-output', () => ({ initPinnedScreenshotIpc: vi.fn(), createPinnedScreenshot, copyScreenshot, saveScreenshot }));
-vi.mock('../../../src/main/window/main-window', () => ({ showMainWindow: vi.fn(), getMainWindow: () => mainWindow, focusedWindowWebContents: () => startupContents }));
+vi.mock('../../../src/main/window/window-registry', () => ({ getMainWindow: () => mainWindow, focusedWindowWebContents: () => startupContents }));
+vi.mock('../../../src/main/window/main-window', () => ({ showMainWindow: vi.fn() }));
 vi.mock('../../../src/main/diagnostics/log', () => ({ log: { info: vi.fn(), warn: vi.fn() } }));
 vi.mock('../../../src/main/screenshot/screenshot-native', () => ({ configureScreenshotOverlay, captureNativeScreenshotFrames }));
 vi.mock('node:os', () => ({ release: () => '23.0.0' }));

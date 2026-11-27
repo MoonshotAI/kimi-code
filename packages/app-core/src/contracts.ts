@@ -1,6 +1,19 @@
 
 import type { InjectionKey, Ref, ShallowRef } from 'vue';
 import type { AnchorPath, AuxKind, LayoutModel, NavigateOptions, ScrollController } from './lib/transcriptScroll';
+export type AppNoticePosition = 'top-center' | 'top-right' | 'bottom-center' | 'bottom-right';
+
+export interface AppNoticeDetail {
+  label: string;
+  value: string;
+}
+
+export interface AppNoticeCopyLink {
+  label: string;
+  copiedLabel: string;
+  url: string;
+}
+
 export const HistoryStateKey: InjectionKey<Map<string, unknown>> = Symbol('history-state');
 export const PinScrollKey: InjectionKey<(el: HTMLElement, ms?: number) => void> = Symbol('pinScroll');
 

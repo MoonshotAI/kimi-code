@@ -21,7 +21,8 @@ vi.mock('electron', () => ({
   shell: { showItemInFolder: mocks.showItemInFolder, openPath: mocks.openPath },
 }));
 vi.mock('../../../src/main/diagnostics/collector', () => ({ collectDiagnosticsSnapshot: mocks.collectDiagnosticsSnapshot }));
-vi.mock('../../../src/main/window/main-window', () => ({ getMainWindow: () => mocks.mainWindow, showMainWindow: mocks.showMainWindow }));
+vi.mock('../../../src/main/window/window-registry', () => ({ getMainWindow: () => mocks.mainWindow }));
+vi.mock('../../../src/main/window/main-window', () => ({ showMainWindow: mocks.showMainWindow }));
 
 import {
   collectDiagnosticsEntries,
