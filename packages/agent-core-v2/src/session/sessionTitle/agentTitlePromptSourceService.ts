@@ -122,6 +122,14 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
         continuesTurn = record['continuation'] === 'turn';
         continue;
       }
+      if (record.type === 'turn.steer') {
+        const promptIds = record['promptIds'];
+        const firstPromptId =
+          Array.isArray(promptIds) && typeof promptIds[0] === 'string' ? promptIds[0] : undefined;
+        const id = typeof record['messageId'] === 'string' ? record['messageId'] : firstPromptId;
+        if (id !== undefined) ids.add(id);
+        continue;
+      }
       if (record.type !== 'turn.prompt') continue;
       hasTurnPrompts = true;
       if (continuesTurn && typeof record['promptId'] === 'string') ids.add(record['promptId']);

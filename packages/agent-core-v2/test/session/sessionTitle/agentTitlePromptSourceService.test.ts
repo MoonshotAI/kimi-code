@@ -233,6 +233,51 @@ describe('AgentTitlePromptSource', () => {
     });
   });
 
+  it.each([
+    ['messageId', { messageId: 'msg_skill' }],
+    ['promptIds', { promptIds: ['msg_skill'] }],
+  ])('keeps a legacy turn.steer (%s) inside the first turn while stopping at the next turn skill opener', async (_label, steerIds) => {
+    liveMessages = [
+      userMessage('msg_open', 'Deploy the service'),
+      userMessage('msg_skill', 'expanded review instructions', {
+        kind: 'skill_activation',
+        activationId: 'act-1',
+        skillName: 'review',
+        trigger: 'user-slash',
+      }),
+      assistantMessage('a1', [{ type: 'text', text: 'Deployed and reviewed.' }]),
+      userMessage('msg_next', 'expanded security instructions', {
+        kind: 'skill_activation',
+        activationId: 'act-2',
+        skillName: 'security',
+        trigger: 'user-slash',
+      }),
+      assistantMessage('a2', [{ type: 'text', text: 'Security checked.' }]),
+    ];
+    liveWireRecords = [
+      { type: 'turn.prompt', promptId: 'msg_open', turnId: 0 },
+      {
+        type: 'turn.steer',
+        turnId: 0,
+        input: [{ type: 'text', text: 'expanded review instructions' }],
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-1',
+          skillName: 'review',
+          trigger: 'user-slash',
+        },
+        ...steerIds,
+      },
+      { type: 'turn.ended', turnId: 0, reason: 'completed' },
+      { type: 'turn.prompt', promptId: 'msg_next', turnId: 1 },
+    ];
+
+    await expect(ix.get(IAgentTitlePromptSource).firstTurnExcerpt()).resolves.toEqual({
+      user: 'Deploy the service',
+      assistant: 'Deployed and reviewed.',
+    });
+  });
+
   it('prefers client display text for a user-slash skill opener and falls back when empty', async () => {
     liveMessages = [
       userMessage('skill-1', 'expanded skill body', {
