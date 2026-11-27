@@ -313,8 +313,8 @@
     "apps/desktop/src/main/app/ui-state.ts": 1,
     "apps/desktop/src/main/browser/browser-annotations.ts": 1,
     "apps/desktop/src/main/browser/browser-view.ts": 2,
+    "apps/desktop/src/main/ipc/handlers/browserIpc.ts": 3,
     "apps/desktop/src/main/ipc/preload.ts": 5,
-    "apps/desktop/src/main/ipc/register.ts": 3,
     "apps/desktop/src/renderer/App.vue": 6,
     "apps/desktop/src/renderer/components/Sidebar.vue": 2,
     "apps/desktop/src/renderer/components/UserMenu.vue": 1,
@@ -566,7 +566,7 @@
   },
   "typescript/no-floating-promises": {
     "apps/desktop/e2e/focus-watch/steal-control.cjs": 1,
-    "apps/desktop/src/main/ipc/register.ts": 1,
+    "apps/desktop/src/main/ipc/handlers/systemTerminalIpc.ts": 1,
     "apps/desktop/src/main/shell/menu.ts": 1,
     "packages/app-client/test/useUpdateStatus.test.ts": 2,
     "scripts/canary-linux.test.mjs": 1,
@@ -713,7 +713,7 @@
     "packages/core/src/store/append-log.ts": 3
   },
   "typescript/no-unsafe-argument": {
-    "apps/desktop/src/main/ipc/register.ts": 1,
+    "apps/desktop/src/main/ipc/handlers/systemTerminalIpc.ts": 1,
     "apps/desktop/src/renderer/api/config.ts": 2,
     "apps/desktop/src/renderer/browser-control.ts": 1,
     "apps/desktop/src/renderer/browser-overlay.ts": 1,
@@ -956,7 +956,7 @@
     "scripts/desktop-artifact-prefix.test.mjs": 1
   },
   "typescript/return-await": {
-    "apps/desktop/src/main/ipc/register.ts": 1,
+    "apps/desktop/src/main/ipc/handlers/systemTerminalIpc.ts": 1,
     "packages/app-components/test/tableSelectionContextMenu.test.ts": 1,
     "packages/app-core/test/useLocalFonts.test.ts": 1
   },
