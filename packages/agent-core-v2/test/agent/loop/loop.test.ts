@@ -1438,6 +1438,27 @@ describe('Agent loop', () => {
     await agent.expectResumeMatches();
   });
 
+  testWithProvider('cancels the turn that carries a steered prompt when a client cancels that prompt', async ({ agent, model }) => {
+    await agent.restorePersisted();
+    const agentLoop = agent.get(IAgentLoopService);
+    model.script(held('first', say('The first step finished.')), held('steered', say('Never sent.')));
+
+    submitTurn(agentLoop, 'Start the turn.');
+    await model.hold('first').reached();
+    await agentLoop.submit({ input: [{ type: 'text', text: 'Steer this in.' }], promptId: 'steer-prompt' });
+    await agentLoop.steer(['steer-prompt']);
+    model.hold('first').release();
+    await model.hold('steered').reached();
+    expect(model.requests('main')[1]?.texts('user')).toContain('Steer this in.');
+    expect(agentLoop.promptHandle('steer-prompt')?.state).toBe('running');
+
+    expect(agentLoop.cancel({ promptId: 'steer-prompt' })).toBe(true);
+
+    await expect(agentLoop.settled()).resolves.toMatchObject({ type: 'cancelled' });
+    await expect(agentLoop.promptHandle('steer-prompt')?.completion).resolves.toMatchObject({ state: 'cancelled' });
+    expect(model.requests('main')).toHaveLength(2);
+  });
+
   testWithProvider('rejects a prompt before admission when a client opts out of queueing', async ({ agent, model }) => {
     const agentLoop = agent.get(IAgentLoopService);
     const metadata = agent.get(ISessionMetadata);
