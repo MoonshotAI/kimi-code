@@ -365,7 +365,7 @@ function sectionOf(card) {
 
 await test('lists the commits since the last run on main that passed, with their pull request numbers, and links to the whole range', () => {
   const commits = [commit(1), commit(2, 'chore: pushed straight to main'), commit(3, `feat: ${'y'.repeat(200)} (#5700)`), ...Array.from({ length: 22 }, (_, index) => commit(index + 4))];
-  const card = failureCard({ run, jobs: [job('TUI (optional)', 'failure'), notifyJob], results: [], candidates: { windows: false, base, status: 'ahead', total: 25, commits } });
+  const card = failureCard({ run, jobs: [job('TUI (optional)', 'failure'), notifyJob], results: [], candidates: { notOnPush: [], base, status: 'ahead', total: 25, commits } });
   const [title, since, list] = sectionOf(card);
   assert.equal(title, '**上次全绿以来的提交（25 个）**');
   assert.equal(since, '从上次全绿的[合并后运行 · a1b2c3d4e](https://github.com/example/repo/actions/runs/40)算起');
@@ -380,56 +380,80 @@ await test('lists the commits since the last run on main that passed, with their
   ]);
 });
 
-await test('says when the range starts at the last nightly run because a Windows job failed, and lists a short range whole', () => {
-  const card = failureCard({
-    run,
-    jobs: [job('Windows tui (optional)', 'failure', [], ['windows-latest']), notifyJob],
-    results: [],
-    candidates: { windows: true, base: { ...base, event: 'schedule' }, status: 'ahead', total: 2, commits: [commit(1), commit(2)] },
-  });
-  assert.deepEqual(sectionOf(card), [
-    '**上次全绿以来的提交（2 个）**',
-    '从上次全绿的[定时运行 · a1b2c3d4e](https://github.com/example/repo/actions/runs/40)算起。有 Windows 作业没通过，合并后运行不跑 Windows，所以只看每晚运行',
-    '· #5601 fix: change number 1\n· #5602 fix: change number 2',
-  ]);
+await test('says when the range starts at the last nightly run because a job failed on a platform pushes to main do not run, and lists a short range whole', () => {
+  for (const { notOnPush, jobs, reason } of [
+    { notOnPush: ['Windows'], jobs: [job('Windows tui (optional)', 'failure', [], ['windows-latest'])], reason: '有 Windows 作业没通过，合并后运行不跑 Windows' },
+    { notOnPush: ['macOS'], jobs: [job('macOS desktop (optional)', 'failure', [], ['macos-15'])], reason: '有 macOS 作业没通过，合并后运行不跑 macOS' },
+    {
+      notOnPush: ['Windows', 'macOS'],
+      jobs: [job('Windows tui (optional)', 'failure', [], ['windows-latest']), job('macOS desktop (optional)', 'failure', [], ['macos-15'])],
+      reason: '有 Windows、macOS 作业没通过，合并后运行不跑 Windows、macOS',
+    },
+  ]) {
+    const card = failureCard({
+      run,
+      jobs: [...jobs, notifyJob],
+      results: [],
+      candidates: { notOnPush, base: { ...base, event: 'schedule' }, status: 'ahead', total: 2, commits: [commit(1), commit(2)] },
+    });
+    assert.deepEqual(sectionOf(card), [
+      '**上次全绿以来的提交（2 个）**',
+      `从上次全绿的[定时运行 · a1b2c3d4e](https://github.com/example/repo/actions/runs/40)算起。${reason}，所以只看每晚运行`,
+      '· #5601 fix: change number 1\n· #5602 fix: change number 2',
+    ]);
+  }
 });
 
 await test('says so instead of listing commits when there is no range to show', () => {
   const jobs = [job('TUI (optional)', 'failure'), notifyJob];
   const section = candidates => sectionOf(failureCard({ run, jobs, results: [], candidates }));
-  assert.deepEqual(section({ windows: false, base, status: 'identical', total: 0, commits: [] }), [
+  assert.deepEqual(section({ notOnPush: [], base, status: 'identical', total: 0, commits: [] }), [
     '**上次全绿以来的提交**',
     '上次全绿的[合并后运行 · a1b2c3d4e](https://github.com/example/repo/actions/runs/40)测的就是这个提交，之后没有新提交。',
   ]);
   for (const status of ['behind', 'diverged']) {
-    assert.deepEqual(section({ windows: false, base, status, total: 3, commits: [] }), [
+    assert.deepEqual(section({ notOnPush: [], base, status, total: 3, commits: [] }), [
       '**上次全绿以来的提交**',
       '上次全绿的[合并后运行 · a1b2c3d4e](https://github.com/example/repo/actions/runs/40)不在这个提交之前，列不出候选提交。',
     ]);
   }
-  assert.deepEqual(section({ windows: false }), ['**上次全绿以来的提交**', 'main 上找不到更早的全绿运行，列不出候选提交']);
-  assert.deepEqual(section({ windows: true }), ['**上次全绿以来的提交**', 'main 上找不到更早的全绿每晚运行，列不出候选提交']);
-  assert.deepEqual(section({ windows: false, error: 'GET repos/example/repo/compare/a...b failed with HTTP 404: Not Found' }), [
+  assert.deepEqual(section({ notOnPush: [] }), ['**上次全绿以来的提交**', 'main 上找不到更早的全绿运行，列不出候选提交']);
+  assert.deepEqual(section({ notOnPush: ['Windows'] }), ['**上次全绿以来的提交**', 'main 上找不到更早的全绿每晚运行，列不出候选提交']);
+  assert.deepEqual(section({ notOnPush: ['macOS'] }), ['**上次全绿以来的提交**', 'main 上找不到更早的全绿每晚运行，列不出候选提交']);
+  assert.deepEqual(section({ notOnPush: [], error: 'GET repos/example/repo/compare/a...b failed with HTTP 404: Not Found' }), [
     '**上次全绿以来的提交**',
     '没能读到候选提交：GET repos/example/repo/compare/a...b failed with HTTP 404: Not Found',
   ]);
-  const card = failureCard({ run, jobs, results: [], candidates: { windows: false, base, status: 'identical', total: 0, commits: [] } });
+  const card = failureCard({ run, jobs, results: [], candidates: { notOnPush: [], base, status: 'identical', total: 0, commits: [] } });
   assert.equal(card.elements.find(element => element.tag === 'action').actions.length, 1);
 });
 
-await test('asks for the last passing push or nightly run before this one, or only nightly runs when a Windows job failed, and the commits since', async () => {
-  for (const [jobs, events] of [
-    [[job('Desktop (optional, 1/2)', 'failure'), job('Windows web (optional, 1/2)', 'success', [], ['windows-latest']), notifyJob], ['push', 'schedule']],
-    [[job('Desktop (optional, 1/2)', 'success'), job('Windows web (optional, 1/2)', 'cancelled', [], ['windows-latest']), notifyJob], ['schedule']],
+await test('asks for the last passing push or nightly run before this one, or only nightly runs when a Windows or macOS job failed, names those platforms, and lists the commits since', async () => {
+  const fromPush = '从上次全绿的[合并后运行 · a1b2c3d4e](https://github.com/example/repo/actions/runs/40)算起';
+  const fromNightly = platforms => `从上次全绿的[定时运行 · a1b2c3d4e](https://github.com/example/repo/actions/runs/40)算起。有 ${platforms} 作业没通过，合并后运行不跑 ${platforms}，所以只看每晚运行`;
+  for (const { jobs, events, since } of [
+    {
+      jobs: [job('Desktop (optional, 1/2)', 'failure'), job('Windows web (optional, 1/2)', 'success', [], ['windows-latest']), job('macOS web (optional, 1/2)', 'success', [], ['macos-15'])],
+      events: ['push', 'schedule'],
+      since: fromPush,
+    },
+    { jobs: [job('Desktop (optional, 1/2)', 'success'), job('Windows web (optional, 1/2)', 'cancelled', [], ['windows-latest'])], events: ['schedule'], since: fromNightly('Windows') },
+    { jobs: [job('Desktop (optional, 1/2)', 'success'), job('macOS desktop (optional)', 'failure', [], ['macos-15'])], events: ['schedule'], since: fromNightly('macOS') },
+    {
+      jobs: [job('macOS desktop (optional)', 'failure', [], ['macos-15']), job('Windows tui (optional)', 'failure', [], ['windows-latest'])],
+      events: ['schedule'],
+      since: fromNightly('Windows、macOS'),
+    },
+    { jobs: [job('Desktop (optional, 1/2)', 'failure'), job('macOS tui (optional)', 'skipped', [], ['macos-15'])], events: ['push', 'schedule'], since: fromPush },
   ]) {
     const asked = [];
     const posted = [];
     const github = {
       run: async () => run,
-      jobs: async () => jobs,
+      jobs: async () => [...jobs, notifyJob],
       lastPassingRun: async options => {
         asked.push(['last-pass', options]);
-        return base;
+        return { ...base, event: options.events.length === 1 ? 'schedule' : 'push' };
       },
       commitsBetween: async (from, to) => {
         asked.push(['commits', from, to]);
@@ -441,7 +465,7 @@ await test('asks for the last passing push or nightly run before this one, or on
       ['last-pass', { workflow: 427, events, currentRunId: 42, createdBefore: '2026-11-26T20:07:29Z' }],
       ['commits', base.sha, run.head_sha],
     ]);
-    assert.ok(texts(posted[0]).includes('**上次全绿以来的提交（1 个）**'));
+    assert.deepEqual(sectionOf(posted[0]).slice(0, 2), ['**上次全绿以来的提交（1 个）**', since]);
   }
 });
 
