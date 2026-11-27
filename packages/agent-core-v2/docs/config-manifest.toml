@@ -54,7 +54,7 @@
 [auto_review]
 # model: string
 # effort: string
-# timeout_ms: integer (default: 30000)
+# timeout_ms: integer
 
 # ##########################################################################
 # background

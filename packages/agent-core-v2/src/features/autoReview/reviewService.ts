@@ -16,7 +16,6 @@ import {
   type BashParseResult,
   type BashSyntaxNode,
 } from '#/app/bashParser/bashParser';
-import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -35,7 +34,6 @@ import {
   type AutoReviewAncestry,
 } from './autoReviewEvents';
 import { createAutoReviewReviewer } from './autoReviewGate';
-import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
 import { AUTO_REVIEW_FLAG_ID } from './flag';
 import {
   buildReviewMessages,
@@ -99,7 +97,6 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @ISessionAutoReviewService private readonly sessionReview: ISessionAutoReviewService,
-    @IConfigService private readonly configService: IConfigService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
     @ref(ISessionWorkdir) private readonly workdir: LiveRef<ISessionWorkdir>,
@@ -157,24 +154,25 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       toolCallId: context.toolCall.id,
       toolName: context.toolCall.name,
     }));
-    const timeoutMs = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION)?.timeoutMs ?? 30000;
-    const deadline = createDeadlineAbortSignal(context.signal, timeoutMs);
+    let deadline: ReturnType<typeof createDeadlineAbortSignal> | undefined;
     let modelAlias = '';
     let outcome: AutoReviewOutcome;
     try {
       modelAlias = this.loop.resolveModelContext().modelAlias;
+      const binding = await this.sessionReview.resolveBinding(modelAlias, context.signal);
+      context.signal.throwIfAborted();
+      modelAlias = binding.modelAlias;
+      deadline = createDeadlineAbortSignal(context.signal, binding.timeoutMs);
       for (let run = 1; ; run += 1) {
         const snapshot = await this.takeSnapshot(context, deadline.signal);
-        const result = await this.sessionReview.execute({
+        outcome = await this.sessionReview.execute({
           agentContext: this.scopeContext.agentContext,
           turnId: context.turnId,
-          mainModelAlias: modelAlias,
+          binding,
           deadline,
           messages: snapshot.messages,
         });
         context.signal.throwIfAborted();
-        modelAlias = result.modelAlias;
-        outcome = result.outcome;
         if (outcome.decision === 'failed') break;
         const history = this.loop.history();
         const changed = this.workspace.workDir !== snapshot.cwd
@@ -187,11 +185,11 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       }
     } catch (error) {
       context.signal.throwIfAborted();
-      outcome = deadline.signal.aborted
+      outcome = deadline?.signal.aborted
         ? { decision: 'failed', reason: deadline.timedOut() ? 'Review timed out.' : 'Review cancelled.' }
         : { decision: 'failed', reason: error instanceof Error ? error.message : String(error) };
     } finally {
-      deadline.clear();
+      deadline?.clear();
     }
     const durationMs = Date.now() - startedAt;
     const risk = 'risk' in outcome ? outcome.risk : undefined;

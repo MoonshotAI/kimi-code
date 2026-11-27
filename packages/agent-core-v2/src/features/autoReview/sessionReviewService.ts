@@ -1,3 +1,8 @@
+import {
+  isManagedKimiCode,
+  isManagedKimiCodeBaseUrl,
+  KIMI_CODE_PLATFORM_ID,
+} from '@moonshot-ai/kimi-code-oauth';
 import { z } from 'zod';
 
 import { Service } from '#/_base/di/service';
@@ -9,6 +14,7 @@ import { IFlagService } from '#/app/flag/flag';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { Error2, ErrorCodes } from '#/errors';
 import { llmMessageFromError } from '#/provider-catalog/errors';
+import type { Model } from '#/provider-catalog/model/catalog';
 import { resolveMaxOutputTokens } from '#/provider-catalog/model/completion-budget';
 import type { ModelOverrides } from '#/provider-catalog/model/model.types';
 import {
@@ -21,10 +27,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import {
   assertModelSupportsConfiguredEffort,
-  resolveSubagentModelPool,
   resolveSubagentThinking,
-  SECONDARY_MODEL_SECTION,
-  type SecondaryModelConfig,
 } from '#/session/subagent/configSection';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
@@ -33,20 +36,27 @@ import { isRetryableError, readRetryAfterMs, retryBackoffDelay } from '@moonshot
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
 import {
+  modelSupportsThinkingEffort,
+  normalizeRequestedThinkingEffort,
   resolveForcedThinkingEffort,
   resolveThinkingEffortForModel,
   resolveThinkingKeep,
 } from '@moonshot-ai/core/llm/thinking';
 
 import REVIEW_POLICY from './auto-review-policy.md?raw';
+import {
+  DEFAULT_AUTO_REVIEW_TIMEOUT_MS,
+  IAutoReviewCloudConfigService,
+  type AutoReviewCloudConfig,
+} from './cloudConfig';
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
 import { AUTO_REVIEW_FLAG_ID } from './flag';
 import {
   ISessionAutoReviewService,
   type AutoReviewOutcome,
   type ProjectInstructions,
+  type ReviewBinding,
   type SessionReviewInput,
-  type SessionReviewRun,
 } from './review';
 
 const AUTO_REVIEW_REQUEST_KIND = 'auto_review';
@@ -88,11 +98,6 @@ const RESPONSE_FORMAT = {
   },
 } as const;
 
-interface ReviewBinding {
-  readonly modelAlias: string;
-  readonly effort?: string;
-}
-
 type AttemptResult =
   | AutoReviewOutcome
   | { readonly decision: 'retry'; readonly reason: string; readonly retryAfterMs?: number };
@@ -111,6 +116,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     @ISessionUsageService private readonly usage: ISessionUsageService,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
+    @IAutoReviewCloudConfigService private readonly cloudConfig: IAutoReviewCloudConfigService,
   ) {
     super();
     this._register(this.instructions.onDidChange(() => {
@@ -134,32 +140,75 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     return this.cachedInstructions;
   }
 
-  async execute(input: SessionReviewInput): Promise<SessionReviewRun> {
-    const binding = this.bindingFor(input.mainModelAlias);
-    this.assertReviewModelValid(binding.modelAlias);
-    const outcome = await this.runWithDeadline(input, binding);
-    return { modelAlias: binding.modelAlias, outcome };
+  async resolveBinding(mainModelAlias: string, signal: AbortSignal): Promise<ReviewBinding> {
+    const config = this.configService.get<AutoReviewConfig | undefined>(AUTO_REVIEW_SECTION);
+    const mainModel = this.tryGetModel(mainModelAlias);
+    const needsCloud = config?.model === undefined || config.timeoutMs === undefined;
+    const cloud = mainModel !== undefined && isManagedKimiModel(mainModel) && needsCloud
+      ? await this.cloudConfig.load(signal)
+      : undefined;
+    const selection = config?.model !== undefined
+      ? { modelAlias: config.model, effort: config.effort }
+      : (cloud === undefined || mainModel === undefined
+          ? undefined
+          : this.cloudModelBinding(cloud, mainModelAlias, mainModel, config?.effort))
+        ?? { modelAlias: mainModelAlias, effort: config?.effort };
+    this.assertReviewModelValid(selection.modelAlias);
+    return { ...selection, timeoutMs: config?.timeoutMs ?? cloud?.timeout_ms ?? DEFAULT_AUTO_REVIEW_TIMEOUT_MS };
   }
 
   assertConfigValid(): void {
-    const configured = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION)?.model
-      ?? resolveSubagentModelPool(this.configService)?.defaultModel;
+    const configured = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION)?.model;
     if (configured !== undefined) this.assertReviewModelValid(configured);
   }
 
-  private bindingFor(mainModelAlias: string): ReviewBinding {
-    const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
-    if (config?.model !== undefined) return { modelAlias: config.model, effort: config.effort };
-    const pooled = resolveSubagentModelPool(this.configService)?.defaultModel;
-    if (pooled === undefined) return { modelAlias: mainModelAlias, effort: config?.effort };
-    const secondary = this.configService.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION);
-    return { modelAlias: pooled, effort: config?.effort ?? secondary?.defaultEffort };
+  private cloudModelBinding(
+    cloud: AutoReviewCloudConfig,
+    mainModelAlias: string,
+    mainModel: Model,
+    localEffort: string | undefined,
+  ): Omit<ReviewBinding, 'timeoutMs'> | undefined {
+    const target = cloud.model === undefined
+      ? { alias: mainModelAlias, model: mainModel }
+      : this.resolveManagedModelAlias(cloud.model, mainModel);
+    if (target === undefined) return undefined;
+    if (localEffort === undefined) return { modelAlias: target.alias, cloudEffort: safeCloudEffort(target.model, cloud.effort) };
+    return safeCloudEffort(target.model, localEffort) === undefined ? undefined : { modelAlias: target.alias, effort: localEffort };
+  }
+
+  private tryGetModel(alias: string): Model | undefined {
+    try {
+      return this.providerCatalog.get(alias);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private resolveManagedModelAlias(
+    target: string,
+    mainModel: Model,
+  ): { readonly alias: string; readonly model: Model } | undefined {
+    const byName = this.providerCatalog.findByName(target);
+    const candidates = new Set<string>([
+      ...byName,
+      `${KIMI_CODE_PLATFORM_ID}/${target}`,
+      target,
+    ]);
+    let fallback: { readonly alias: string; readonly model: Model } | undefined;
+    for (const alias of candidates) {
+      const model = this.tryGetModel(alias);
+      if (model === undefined || !isManagedKimiModel(model)) continue;
+      if (model.providerName === mainModel.providerName) {
+        return { alias, model };
+      }
+      fallback ??= { alias, model };
+    }
+    return fallback;
   }
 
   private assertReviewModelValid(modelAlias: string): void {
     const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
-    const configured = config?.model ?? resolveSubagentModelPool(this.configService)?.defaultModel;
-    if (modelAlias !== configured && config?.effort === undefined) return;
+    if (modelAlias !== config?.model && config?.effort === undefined) return;
     let model;
     try {
       model = this.providerCatalog.get(modelAlias);
@@ -180,11 +229,8 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     );
   }
 
-  private async runWithDeadline(
-    input: SessionReviewInput,
-    binding: ReviewBinding,
-  ): Promise<AutoReviewOutcome> {
-    const { deadline } = input;
+  async execute(input: SessionReviewInput): Promise<AutoReviewOutcome> {
+    const { deadline, binding } = input;
     let acquired = false;
     try {
       await this.acquireSlot(deadline.signal);
@@ -250,7 +296,8 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     const overrides = this.configService.get<ModelOverrides>('modelOverrides');
     const thinkingConfig = this.configService.get<ThinkingConfig>(THINKING_SECTION);
     const strict = requiresStrictThinkingValidation(this.providerCatalog, model.protocol, model.providerType);
-    const requestedEffort = resolveSubagentThinking(this.configService, model, binding.effort);
+    const cloudEffort = thinkingConfig?.enabled === false ? undefined : binding.cloudEffort;
+    const requestedEffort = resolveSubagentThinking(this.configService, model, binding.effort ?? cloudEffort);
     const resolvedEffort = resolveThinkingEffortForModel(requestedEffort, thinkingConfig, model.spec, strict);
     const thinkingEffort = binding.effort !== undefined
       ? resolvedEffort
@@ -317,6 +364,23 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     }
     this.activeReviews -= 1;
   }
+}
+
+function isManagedKimiModel(model: Model): boolean {
+  return isManagedKimiCode(model.providerName) || isManagedKimiCodeBaseUrl(model.endpoint.baseUrl);
+}
+
+function safeCloudEffort(model: Model, configured: string | undefined): string | undefined {
+  const effort = normalizeRequestedThinkingEffort(configured);
+  if (effort === undefined) return undefined;
+  if (effort === 'off') {
+    if (model.spec.thinking?.alwaysThinking === true) return undefined;
+    if (model.spec.thinking?.supportEfforts !== undefined && model.spec.thinking.offEffort === undefined) {
+      return undefined;
+    }
+  }
+  if (!modelSupportsThinkingEffort(effort, model.spec, true)) return undefined;
+  return configured;
 }
 
 function classifyFailedOutcome(

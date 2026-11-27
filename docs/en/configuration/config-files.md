@@ -332,7 +332,7 @@ Retries only apply to transient failures: connection errors, timeouts, HTTP 429 
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `model` | `string` | `[secondary_model]` default model, or main model | Model alias used for independent review requests |
+| `model` | `string` | Main model | Model alias used for independent review requests |
 | `effort` | `string` | — | Thinking effort for review requests; must be an effort the review model supports, or a configuration error is reported |
 | `timeout_ms` | `integer` | `30000` | Review deadline in milliseconds, from `1000` to `120000` |
 
@@ -340,7 +340,7 @@ Only `Bash` and MCP tool calls that Always Ask mode would ask you to approve are
 
 The reviewer receives the current working directory, the current AGENTS.md snapshot (loaded on first review and refreshed when workspace instructions change), the user and parent instructions still in context after compaction (each user instruction carries up to the last 2,000 characters of the agent reply it answers), compaction summaries (used only to retain explicit boundaries, never to grant authorization), completed prior tool calls (including whether you approved them), and the pending tool's complete arguments and target Git working-tree status (probed only within the workspace and approved additional directories). Tool output text and media are not sent. A request that exceeds the model window fails that review. If retained authorization instructions or the working directory change during review, the result is not used to execute the action.
 
-Review requests do not follow the main loop's current thinking effort. When `effort` is set, reviews use it. When `effort` is unset and the review borrows the `[secondary_model]` default model, it also borrows that section's `default_effort`. Neither of these is affected by `[thinking].enabled = false`. Otherwise, `[thinking].enabled = false` turns review thinking off unless the model cannot disable it; with thinking on, resolution continues with the review model entry's `default_effort`, then the global `[thinking].effort`, then the model's default. Higher efforts take longer; lower `effort` or raise `timeout_ms` if reviews time out.
+Review requests do not follow the main loop's current thinking effort. When `effort` is set, reviews use it regardless of `[thinking].enabled = false`. Otherwise, `[thinking].enabled = false` turns review thinking off unless the model cannot disable it; with thinking on, resolution continues with the review model entry's `default_effort`, then the global `[thinking].effort`, then the model's default. Higher efforts take longer; lower `effort` or raise `timeout_ms` if reviews time out.
 
 ```toml
 [auto_review]
