@@ -1,12 +1,21 @@
-import type { TUI } from '@moonshot-ai/pi-tui';
-import { Container, Spacer, Text } from '@moonshot-ai/pi-tui';
+import type { Component, TUI, TuiRenderLine } from '@moonshot-ai/pi-tui';
+import {
+  Container,
+  renderComponentLines,
+  Spacer,
+  Text,
+  visibleWidth,
+} from '@moonshot-ai/pi-tui';
 
-import { DETACH_HINT_TEXT } from '#/tui/constant/rendering';
+import { DETACH_HINT_TEXT, MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { formatTokenCount } from '#/utils/usage/usage-format';
 
+import { LeadingDecorationText } from './leading-decoration-text';
 import type { ToolCallComponent, ToolCallSubagentSnapshot } from './tool-call';
+import { splitToolTranscriptRow } from './tool-renderers/transcript-row';
+import type { TranscriptRowParts } from './transcript-row-layout';
 
 const THROTTLE_MS = 200;
 
@@ -25,19 +34,25 @@ interface PhaseCounts {
   readonly terminal: number;
 }
 
+interface AgentBodyLine {
+  readonly gutter: string;
+  readonly content: string;
+}
+
 export class AgentGroupComponent extends Container {
   private readonly entries: AgentEntry[] = [];
-  private readonly headerText: Text;
+  private readonly headerText: LeadingDecorationText;
   private readonly bodyContainer: Container;
   private throttleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastFlushPhases = new Map<string, ToolCallSubagentSnapshot['phase']>();
   private _invalidating = false;
   private projectionVersion = 0;
+  private bodyGutterWidths: number[] = [];
 
   constructor(private readonly ui: TUI | undefined) {
     super();
     this.addChild(new Spacer(1));
-    this.headerText = new Text('', 0, 0);
+    this.headerText = new LeadingDecorationText('', 0, 0);
     this.addChild(this.headerText);
     this.bodyContainer = new Container();
     this.addChild(this.bodyContainer);
@@ -66,6 +81,26 @@ export class AgentGroupComponent extends Container {
       this.scheduleRender();
     });
     this.flushRender();
+  }
+
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    const source: TuiRenderLine[] = [];
+    const gutterWidths: number[] = [];
+    const append = (component: Component, gutterWidth: number): void => {
+      const lines = renderComponentLines(component, width);
+      lines.forEach((line, index) => {
+        source.push(line);
+        const continuation = line.selectionExclusions?.find((range) => range.start === 0)?.end ?? 0;
+        gutterWidths.push(index === 0 ? gutterWidth : continuation);
+      });
+    };
+    const spacer = this.children[0];
+    if (spacer !== undefined) append(spacer, 0);
+    append(this.headerText, visibleWidth(STATUS_BULLET));
+    this.bodyContainer.children.forEach((child, index) => {
+      append(child, this.bodyGutterWidths[index] ?? 0);
+    });
+    return splitToolTranscriptRow(this, source, width, gutterWidths);
   }
 
   private scheduleRender(): void {
@@ -101,12 +136,14 @@ export class AgentGroupComponent extends Container {
     const snapshots = this.entries.map((e) => e.tc.getSubagentSnapshot());
     this.headerText.setText(this.buildHeader(snapshots));
     this.bodyContainer.clear();
+    this.bodyGutterWidths = [];
     snapshots.forEach((snap, idx) => {
       const isLast = idx === snapshots.length - 1;
       this.appendLines(snap, isLast);
     });
     if (this.shouldShowDetachHint(snapshots)) {
       this.bodyContainer.addChild(new Text(currentTheme.dim(DETACH_HINT_TEXT), 2, 0));
+      this.bodyGutterWidths.push(MESSAGE_INDENT.length);
     }
 
     this.lastFlushPhases.clear();
@@ -149,6 +186,13 @@ export class AgentGroupComponent extends Container {
   }
 
   private appendLines(snap: ToolCallSubagentSnapshot, isLast: boolean): void {
+    for (const line of this.bodyLines(snap, isLast)) {
+      this.bodyContainer.addChild(new LeadingDecorationText(`${line.gutter}${line.content}`, 0, 0));
+      this.bodyGutterWidths.push(visibleWidth(line.gutter));
+    }
+  }
+
+  private bodyLines(snap: ToolCallSubagentSnapshot, isLast: boolean): AgentBodyLine[] {
     const dim = (text: string) => currentTheme.dim(text);
 
     const branch1 = isLast ? '└─' : '├─';
@@ -158,21 +202,24 @@ export class AgentGroupComponent extends Container {
     const namePart = currentTheme.fg('primary', agentType);
     const descPart = dim(`· ${desc}`);
     const stats = formatStats(snap);
-    const line1 = `  ${branch1} ${namePart} ${descPart}${stats}${tail}`;
-    this.bodyContainer.addChild(new Text(line1, 0, 0));
+    const lines = [{
+      gutter: `  ${branch1} `,
+      content: `${namePart} ${descPart}${stats}${tail}`,
+    }];
 
     const branch2 = isLast ? '   ' : '│  ';
     if (snap.phase === 'failed') {
       const errLine = (snap.errorText ?? 'Failed').split('\n').at(0) ?? 'Failed';
-      const errStr = currentTheme.fg('error', `Error: ${errLine}`);
-      this.bodyContainer.addChild(new Text(`  ${branch2}    ${errStr}`, 0, 0));
-      return;
+      const content = currentTheme.fg('error', `Error: ${errLine}`);
+      lines.push({ gutter: `  ${branch2}    `, content });
+      return lines;
     }
     if (snap.phase === 'done' || snap.phase === 'backgrounded') {
-      return;
+      return lines;
     }
     const activity = snap.latestActivity ?? fallbackActivityForPhase(snap.phase);
-    this.bodyContainer.addChild(new Text(`  ${branch2}    ${dim(activity)}`, 0, 0));
+    lines.push({ gutter: `  ${branch2}    `, content: dim(activity) });
+    return lines;
   }
 
   private shouldShowDetachHint(snapshots: readonly ToolCallSubagentSnapshot[]): boolean {

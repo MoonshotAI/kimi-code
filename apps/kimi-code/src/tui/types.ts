@@ -12,7 +12,17 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { FollowUpBehavior, MarkdownConfig, NotificationsConfig, StatusLineConfig, TranscriptConfig, TuiMode, UpgradePreferences } from './config';
+import type {
+  FollowUpBehavior,
+  MarkdownConfig,
+  MouseConfig,
+  NotificationsConfig,
+  SelectionCopyMode,
+  StatusLineConfig,
+  TranscriptConfig,
+  TuiMode,
+  UpgradePreferences,
+} from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
 import type { MediaAttachment, VideoAttachment } from './utils/image-attachment-store';
@@ -66,7 +76,8 @@ export interface AppState {
   version: string;
   editorCommand: string | null;
   disablePasteBurst?: boolean;
-  copyOnSelect?: boolean;
+  selectionCopyMode?: SelectionCopyMode;
+  mouse?: MouseConfig;
   renderLatex?: boolean;
   cacheExpiryHint?: boolean;
   disableFeedbackSurvey?: boolean;

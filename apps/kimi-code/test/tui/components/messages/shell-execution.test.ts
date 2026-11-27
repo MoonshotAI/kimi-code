@@ -1,10 +1,11 @@
-import { Container } from '@moonshot-ai/pi-tui';
+import { Container, renderLineTexts } from '@moonshot-ai/pi-tui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   ShellExecutionComponent,
   shellExecutionResultRenderer,
 } from '#/tui/components/messages/shell-execution';
+import { flattenTranscriptRow } from '#/tui/components/messages/transcript-row-layout';
 import { setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 function strip(text: string): string {
@@ -22,6 +23,33 @@ describe('ShellExecutionComponent', () => {
 
     expect(output).toContain('  $ printf hello');
     expect(output).toContain('    printf world');
+  });
+
+  it('separates shell prompts and output indentation without changing the visual rows', () => {
+    const component = new ShellExecutionComponent({
+      command: 'printf hello\nprintf world',
+      showCommand: true,
+      result: { tool_call_id: 'call_shell', output: 'done', is_error: false },
+    });
+    const parts = component.renderTranscriptRow(80);
+
+    expect(parts.gutterWidths).toEqual([4, 4, 2]);
+    expect(parts.gutterLines.map((line) => strip(line.text))).toEqual(['  $ ', '    ', '  ']);
+    expect(parts.contentLines.map((line) => strip(line.text).trimEnd())).toEqual([
+      'printf hello',
+      'printf world',
+      'done',
+    ]);
+    expect(renderLineTexts(flattenTranscriptRow(parts, 80)).map((line) => strip(line).trimEnd())).toEqual(
+      component.render(80).map((line) => strip(line).trimEnd()),
+    );
+    expect(component.renderTranscriptRow(80)).toBe(parts);
+
+    component.invalidate();
+    const invalidated = component.renderTranscriptRow(80);
+    expect(renderLineTexts(flattenTranscriptRow(invalidated, 80))).toEqual(
+      renderLineTexts(flattenTranscriptRow(parts, 80)),
+    );
   });
 
   it('keeps collapsed shell output short and expands on demand', () => {
@@ -109,6 +137,33 @@ describe('ShellExecutionComponent', () => {
     expect(out).toContain('x');
     expect(out).not.toContain('x'.repeat(500));
     expect(out).toContain('… (');
+  });
+
+  it('keeps responsive symmetric result indentation by default', () => {
+    const component = new ShellExecutionComponent({
+      result: {
+        tool_call_id: 'call_shell',
+        output: '123456789012345678',
+        is_error: false,
+      },
+    });
+    expect(component.render(20).map((line) => strip(line).trimEnd())).toEqual([
+      '  1234567890123456',
+      '  78',
+    ]);
+    expect(
+      renderLineTexts(flattenTranscriptRow(component.renderTranscriptRow(20), 20))
+        .map((line) => strip(line).trimEnd()),
+    ).toEqual(['  1234567890123456', '  78']);
+
+    const narrow = new ShellExecutionComponent({
+      result: { tool_call_id: 'call_shell', output: 'abcd', is_error: false },
+    });
+    expect(narrow.render(4).map((line) => strip(line).trimEnd())).toEqual([' ab', ' cd']);
+    expect(
+      renderLineTexts(flattenTranscriptRow(narrow.renderTranscriptRow(4), 4))
+        .map((line) => strip(line).trimEnd()),
+    ).toEqual([' ab', ' cd']);
   });
 
   describe('shellExecutionResultRenderer', () => {

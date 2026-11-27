@@ -1,15 +1,17 @@
-import { visibleWidth } from '@moonshot-ai/pi-tui';
+import { TuiAltScreen, renderComponentLines, renderLineTexts, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import * as cliHighlight from 'cli-highlight';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Markdown } from '#/tui/components/markdown/markdown';
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
+import { flattenTranscriptRow } from '#/tui/components/messages/transcript-row-layout';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { currentTheme } from '#/tui/theme/theme';
 import { setMarkdownAltScreenActive, setMarkdownRenderLatex } from '#/tui/utils/markdown-options';
 
+import { VirtualTerminal } from '../../../../../../packages/pi-tui/test/virtual-terminal';
 import { captureProcessWrite } from '../../../helpers/process';
 
 vi.mock('cli-highlight', async () => {
@@ -57,6 +59,48 @@ describe('AssistantMessageComponent', () => {
         expect(visibleWidth(line)).toBeLessThanOrEqual(width);
       }
     }
+  });
+
+  it('separates the bullet and spacer from selectable content without changing flattened rows', () => {
+    const component = new AssistantMessageComponent();
+    component.updateContent('1234567890ABCDEFGHIJ');
+
+    const legacy = renderComponentLines(component, 12);
+    const parts = component.renderTranscriptRow(12);
+    const flattened = flattenTranscriptRow(parts, 12);
+
+    expect(parts.gutterWidth).toBe(2);
+    expect(parts.gutterLines.map((line) => strip(line.text))).toEqual(['', STATUS_BULLET, '  ']);
+    expect(parts.contentLines.map((line) => strip(line.text))).toEqual([
+      '',
+      '1234567890',
+      'ABCDEFGHIJ',
+    ]);
+    expect(renderLineTexts(flattened).map((line) => strip(line).trimEnd())).toEqual(
+      renderLineTexts(legacy).map((line) => strip(line).trimEnd()),
+    );
+    expect(flattened[0]?.selectionRegion).toEqual({
+      content: parts.contentLines[0],
+      column: 2,
+      width: 10,
+    });
+    expect(parts.contentLines[0]?.text).toMatch(/^\u001B\]133;A\u0007/);
+    expect(parts.contentLines.at(-1)?.text).toMatch(/^\u001B\]133;B\u0007\u001B\]133;C\u0007/);
+    expect(parts.contentLines[1]?.softWrap?.[0]?.logicalLineId).toBe(
+      parts.contentLines[2]?.softWrap?.[0]?.logicalLineId,
+    );
+    expect(flattened[2]?.selectionRegion?.content.softWrap).toBe(parts.contentLines[2]?.softWrap);
+
+    expect(component.renderTranscriptRow(12)).toBe(parts);
+    component.updateContent('1234567890ABCDEFGHIJ updated');
+    const updated = component.renderTranscriptRow(12);
+    expect(updated).not.toBe(parts);
+    expect(updated.contentLines.map((line) => strip(line.text)).join('\n')).toContain('updated');
+    component.setShowBullet(false);
+    const withoutBullet = component.renderTranscriptRow(12);
+    expect(withoutBullet).not.toBe(updated);
+    component.invalidate();
+    expect(component.renderTranscriptRow(12)).not.toBe(withoutBullet);
   });
 
   it('renders unknown markdown fence languages as plain text without stderr noise', () => {
@@ -162,6 +206,33 @@ describe('AssistantMessageComponent', () => {
 
     const cached = component.render(80);
     expect(cached[0]).toBe(lines[0]);
+  });
+
+  it('copies a soft-wrapped assistant line without a visual newline or continuation indent', async () => {
+    const terminal = new VirtualTerminal(12, 5);
+    const copied: string[] = [];
+    const source = '1234567890ABCDEFGHIJ';
+    const tui = new TuiAltScreen(terminal, undefined, undefined, {
+      copySelection: async (text) => {
+        copied.push(text);
+        return true;
+      },
+    });
+    const component = new AssistantMessageComponent(false);
+    component.updateContent(source);
+    tui.addChild(component);
+    tui.start();
+    try {
+      await terminal.waitForRender();
+      terminal.sendInput('\x1b[<0;3;2M');
+      terminal.sendInput('\x1b[<32;12;3M');
+      terminal.sendInput('\x1b[<0;12;3m');
+      await terminal.waitForRender();
+
+      expect(copied).toEqual([source]);
+    } finally {
+      tui.stop();
+    }
   });
 
   it('renders LaTeX math by default and keeps raw source when disabled', () => {

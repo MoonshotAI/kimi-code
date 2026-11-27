@@ -1,15 +1,23 @@
-import type { Component } from '@moonshot-ai/pi-tui';
-import { Container, Text } from '@moonshot-ai/pi-tui';
+import type { Component, TuiRenderLine } from '@moonshot-ai/pi-tui';
+import {
+  Container,
+  RENDER_LINES,
+  renderComponentLines,
+  renderLineTexts,
+  Text,
+} from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 
+import { splitToolTranscriptRow } from './tool-renderers/transcript-row';
 import type { ResultRenderer } from './tool-renderers/types';
 import { isSpilledToolOutput, PREVIEW_LINES } from './tool-renderers/types';
 import { outcomeRows } from './tool-renderers/outcome';
 import { TruncatedOutputComponent } from './tool-renderers/truncated';
+import type { TranscriptRowParts } from './transcript-row-layout';
 
 export interface ShellExecutionOptions {
   readonly command?: string;
@@ -20,10 +28,16 @@ export interface ShellExecutionOptions {
   readonly expandHint?: boolean;
 }
 
+interface TranscriptChild {
+  readonly component: Component;
+  readonly promptWidth: number;
+}
+
 export class ShellExecutionComponent extends Container {
   private renderCache:
-    | { width: number; lines: string[]; childRefs: Component[]; childLines: string[][] }
+    | { width: number; lines: TuiRenderLine[]; childRefs: Component[]; childLines: TuiRenderLine[][] }
     | undefined;
+  private readonly transcriptChildren: TranscriptChild[] = [];
 
   constructor(options: ShellExecutionOptions) {
     super();
@@ -43,9 +57,13 @@ export class ShellExecutionComponent extends Container {
   }
 
   override render(width: number): string[] {
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  override [RENDER_LINES](width: number): TuiRenderLine[] {
     const cache = this.renderCache;
     const childRefs = this.children;
-    const childLines = childRefs.map((child) => child.render(width));
+    const childLines = childRefs.map((child) => renderComponentLines(child, width));
     if (
       isRenderCacheEnabled() &&
       cache?.width === width &&
@@ -61,6 +79,21 @@ export class ShellExecutionComponent extends Container {
     return lines;
   }
 
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    const safeWidth = Math.max(1, width);
+    const source: TuiRenderLine[] = [];
+    const gutterWidths: number[] = [];
+    for (const child of this.transcriptChildren) {
+      const lines = renderComponentLines(child.component, safeWidth);
+      lines.forEach((line, index) => {
+        source.push(line);
+        const padding = line.selectionExclusions?.find((range) => range.start === 0)?.end ?? 0;
+        gutterWidths.push(padding + (index === 0 ? child.promptWidth : 0));
+      });
+    }
+    return splitToolTranscriptRow(this, source, safeWidth, gutterWidths);
+  }
+
   private addCommandPreview(command: string, previewLines: number | undefined): void {
     if (command.length === 0) return;
     const allLines = command.split('\n');
@@ -70,7 +103,9 @@ export class ShellExecutionComponent extends Container {
         i === 0
           ? currentTheme.fg('shellMode', '$ ') + currentTheme.dim(line)
           : `  ${currentTheme.dim(line)}`;
-      this.addChild(new Text(text, 2, 0));
+      const component = new Text(text, 2, 0);
+      this.addChild(component);
+      this.transcriptChildren.push({ component, promptWidth: 2 });
     }
   }
 
@@ -80,15 +115,15 @@ export class ShellExecutionComponent extends Container {
     expandHint: boolean,
   ): void {
     if (!result.output) return;
-    this.addChild(
-      new TruncatedOutputComponent(sanitizeShellOutput(result.output), {
-        expanded,
-        isError: result.is_error ?? false,
-        maxLines: PREVIEW_LINES,
-        expandHint,
-        color: 'textMuted',
-      }),
-    );
+    const component = new TruncatedOutputComponent(sanitizeShellOutput(result.output), {
+      expanded,
+      isError: result.is_error ?? false,
+      maxLines: PREVIEW_LINES,
+      expandHint,
+      color: 'textMuted',
+    });
+    this.addChild(component);
+    this.transcriptChildren.push({ component, promptWidth: 0 });
   }
 
   wasTruncated(): boolean {

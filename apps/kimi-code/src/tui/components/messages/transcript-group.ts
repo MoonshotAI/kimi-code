@@ -1,7 +1,15 @@
 import {
+  decorateRenderLine,
+  prefixRenderLine,
+  RENDER_LINES,
+  renderComponentLines,
+  renderLineTexts,
+  Text,
+  textRenderLine,
   visibleWidth,
-  wrapTextWithAnsi,
+  withRenderLineText,
   type Component,
+  type TuiRenderLine,
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
@@ -33,6 +41,7 @@ import {
   type TimelineReader,
 } from '#/tui/utils/turn-timeline';
 import { TitleSweep } from './running-title';
+import type { TranscriptRowParts } from './transcript-row-layout';
 import { renderHeaderContent, TruncatedHeaderLine } from './truncated-header-line';
 
 export interface TranscriptGroupModel extends GroupViewInput {
@@ -70,16 +79,35 @@ type Branch = 'middle' | 'last' | 'indent' | 'bare';
 
 type RowForm = 'line' | 'wrapped' | 'none';
 
+interface RowLines {
+  readonly lines: readonly TuiRenderLine[];
+  readonly gutterLines: readonly TuiRenderLine[];
+  readonly contentLines: readonly TuiRenderLine[];
+  readonly gutterWidths: readonly number[];
+}
+
+interface RowDetail {
+  readonly lines: readonly TuiRenderLine[];
+  readonly gutterWidth: number;
+}
+
 interface MemberDraft {
   readonly item: LogicalTranscriptItem;
   readonly rowKey: string;
-  readonly row: readonly string[];
-  readonly detail: readonly string[] | undefined;
+  readonly row: RowLines;
+  readonly detail: RowDetail | undefined;
 }
 
 interface MemberFrame extends MemberDraft {
   readonly branch: Branch;
-  readonly lines: readonly string[];
+  readonly lines: readonly TuiRenderLine[];
+  readonly gutterLines: readonly TuiRenderLine[];
+  readonly contentLines: readonly TuiRenderLine[];
+  readonly gutterWidths: readonly number[];
+}
+
+interface TitleFrame extends TranscriptRowParts {
+  readonly lines: readonly TuiRenderLine[];
 }
 
 interface FrameKey {
@@ -96,9 +124,11 @@ interface FrameKey {
 
 interface Frame {
   readonly key: FrameKey;
-  readonly title: readonly string[];
+  readonly separated: boolean;
+  readonly title: TitleFrame;
   readonly members: readonly MemberFrame[];
-  readonly lines: string[];
+  readonly lines: TuiRenderLine[];
+  readonly parts: TranscriptRowParts;
   readonly regions: readonly HitRegion[];
 }
 
@@ -142,15 +172,28 @@ export class TranscriptGroupComponent implements Component {
   }
 
   render(width: number): string[] {
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    return this.renderFrame(width, true).parts;
+  }
+
+  [RENDER_LINES](width: number): TuiRenderLine[] {
+    return this.renderFrame(width, false).lines;
+  }
+
+  private renderFrame(width: number, separated: boolean): Frame {
     const now = monotonicNow();
     const { view, thinking } = this.paceTail(deriveGroupView(this.model, now), now);
     this.shownThinking = thinking;
     if (view.live && this.frameRequest === undefined) this.syncFrames();
     const key = this.frameKey(view, width, now);
     const previous = this.frame;
-    const sameKey = previous !== undefined && sameFrameKey(previous.key, key);
+    const sameKey = previous !== undefined && previous.separated === separated && sameFrameKey(previous.key, key);
     const title = sameKey ? previous.title : this.renderTitle(view, width, now);
     const sameBase = previous !== undefined &&
+      previous.separated === separated &&
       previous.key.width === width &&
       previous.key.palette === key.palette &&
       previous.key.background === key.background;
@@ -158,26 +201,36 @@ export class TranscriptGroupComponent implements Component {
       view,
       width,
       now,
-      title.length + 2,
+      title.lines.length + 2,
       key.viewportRows,
       sameBase ? previous.members : [],
+      separated,
     );
     if (
       sameKey &&
       members.length === previous.members.length &&
       members.every((member, index) => member.lines === previous.members[index]?.lines)
     ) {
-      return previous.lines;
+      return previous;
     }
 
-    const lines = ['', ...title];
+    const lines = [blankRenderLine(TITLE_INDENT), ...title.lines];
+    const gutterLines: TuiRenderLine[] = [textRenderLine(''), ...title.gutterLines];
+    const contentLines: TuiRenderLine[] = [textRenderLine(''), ...title.contentLines];
+    const gutterWidths: number[] = [TITLE_INDENT.length, ...title.contentLines.map(() => TITLE_INDENT.length)];
     const regions: HitRegion[] = [{ start: 1, end: lines.length, action: { kind: 'toggleGroup' } }];
     if (this.model.expanded) {
-      lines.push('');
+      lines.push(blankRenderLine(TITLE_INDENT));
+      gutterLines.push(textRenderLine(''));
+      contentLines.push(textRenderLine(''));
+      gutterWidths.push(TITLE_INDENT.length);
       const rows = bodyOf(this.model, view).kind === 'rows';
       for (const member of members) {
         const start = lines.length;
         lines.push(...member.lines);
+        gutterLines.push(...member.gutterLines);
+        contentLines.push(...member.contentLines);
+        gutterWidths.push(...member.gutterWidths);
         regions.push({
           start,
           end: lines.length,
@@ -186,7 +239,12 @@ export class TranscriptGroupComponent implements Component {
       }
       if (showLess) {
         const start = lines.length;
-        lines.push(`${chalk.hex(this.guideColor())('└ ')}${currentTheme.fg('textDim', 'Show less')}`);
+        const guide = chalk.hex(this.guideColor())('└ ');
+        const label = currentTheme.fg('textDim', 'Show less');
+        lines.push(textRenderLine(`${guide}${label}`));
+        gutterLines.push(textRenderLine(guide));
+        contentLines.push(textRenderLine(label));
+        gutterWidths.push(visibleWidth(guide));
         regions.push({ start, end: lines.length, action: { kind: 'showLess', removedLines: lines.length - 2 } });
       }
     }
@@ -194,10 +252,19 @@ export class TranscriptGroupComponent implements Component {
       if (!this.model.expanded && key.tail.length > 0) {
         regions.push({ start: lines.length, end: lines.length + 1, action: { kind: 'toggleGroup' } });
       }
-      lines.push(key.tail.length === 0 ? '' : currentTheme.dim(`${TAIL_HEAD}${key.tail}`));
+      const empty = key.tail.length === 0;
+      const tail = empty ? { gutter: '', content: '' } : splitDimmedTail(key.tail);
+      const gutter = empty ? '' : `${TITLE_INDENT}${tail.gutter}`;
+      lines.push(empty
+        ? blankRenderLine(TITLE_INDENT)
+        : decorateRenderLine(textRenderLine(currentTheme.dim(`└ ${key.tail}`)), TITLE_INDENT));
+      gutterLines.push(textRenderLine(gutter));
+      contentLines.push(textRenderLine(tail.content));
+      gutterWidths.push(empty ? TITLE_INDENT.length : visibleWidth(gutter));
     }
-    this.frame = { key, title, members, lines, regions };
-    return lines;
+    const parts = { gutterWidth: TITLE_INDENT.length, gutterWidths, gutterLines, contentLines };
+    this.frame = { key, separated, title, members, lines, parts, regions };
+    return this.frame;
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
@@ -234,7 +301,7 @@ export class TranscriptGroupComponent implements Component {
     };
   }
 
-  private renderTitle(view: GroupView, width: number, now: Instant): string[] {
+  private renderTitle(view: GroupView, width: number, now: Instant): TitleFrame {
     const paint = this.sweep.painter();
     const style = (text: string): string => paint(text, TITLE_INDENT.length);
     const head = this.model.expanded ? `${paint(MARKER, 0)} ` : TITLE_INDENT;
@@ -242,15 +309,26 @@ export class TranscriptGroupComponent implements Component {
     if (view.title.kind === 'item' && this.model.expanded) {
       const { verb, subject } = view.title.item.label;
       const full = subject === undefined ? verb : `${verb} ${subject}`;
-      return wrapTextWithAnsi(`${style(full)}${suffix}`, Math.max(1, width - TITLE_INDENT.length))
-        .map((line, index) => `${index === 0 ? head : TITLE_INDENT}${line}`);
+      const contentLines = wrapStructuredText(`${style(full)}${suffix}`, Math.max(1, width - TITLE_INDENT.length));
+      const gutterLines = contentLines.map((_, index) => textRenderLine(index === 0 ? head : TITLE_INDENT));
+      const lines = contentLines.map((line, index) => decorateRenderLine(
+        line,
+        index === 0 ? head : TITLE_INDENT,
+      ));
+      return { gutterWidth: TITLE_INDENT.length, gutterLines, contentLines, lines };
     }
     this.header.setText({
-      head,
+      head: '',
       flex: { text: titleText(view.title), style, keep: 'head' },
       tail: suffix,
     });
-    return this.header.render(width);
+    const contentLines = renderComponentLines(this.header, Math.max(1, width - visibleWidth(head)));
+    return {
+      gutterWidth: TITLE_INDENT.length,
+      gutterLines: contentLines.map(() => textRenderLine(head)),
+      contentLines,
+      lines: contentLines.map((line) => decorateRenderLine(line, head)),
+    };
   }
 
   private renderMembers(
@@ -260,20 +338,21 @@ export class TranscriptGroupComponent implements Component {
     headerHeight: number,
     viewportRows: number | undefined,
     previous: readonly MemberFrame[],
+    separated: boolean,
   ): { readonly members: readonly MemberFrame[]; readonly showLess: boolean } {
     const body = bodyOf(this.model, view);
     if (body.kind === 'none') return { members: [], showLess: false };
     const { timeline } = this.model;
-    const inner = Math.max(1, width - 2);
+    const inner = Math.max(1, width - TITLE_INDENT.length);
     const draft = (item: LogicalTranscriptItem, form: RowForm, open: boolean, columns: number, index: number): MemberDraft =>
-      memberDraft(item, rowStatusOf(item, timeline, now), form, open, columns, now, previous[index]);
+      memberDraft(item, rowStatusOf(item, timeline, now), form, open, columns, now, previous[index], separated);
     const drafts = body.kind === 'detail'
       ? [draft(body.item, body.withRow ? 'wrapped' : 'none', true, body.withRow ? inner : width, 0)]
       : this.model.members.map((item, index) => {
         const open = isExpandedComponent(item.display);
         return draft(item, open ? 'wrapped' : 'line', open, inner, index);
       });
-    const height = headerHeight + drafts.reduce((total, member) => total + member.row.length + (member.detail?.length ?? 0), 0);
+    const height = headerHeight + drafts.reduce((total, member) => total + member.row.lines.length + (member.detail?.lines.length ?? 0), 0);
     const showLess = viewportRows !== undefined && height > viewportRows;
     const guide = (text: string): string => chalk.hex(this.guideColor())(text);
     const members = drafts.map((member, index): MemberFrame => {
@@ -291,9 +370,23 @@ export class TranscriptGroupComponent implements Component {
         return { ...reused, item: member.item };
       }
       const prefix = prefixFor(branch, guide);
-      const lines = [...member.row, ...(member.detail ?? [])]
-        .map((line, lineIndex) => `${prefix(lineIndex === 0)}${line}`);
-      return { ...member, branch, lines };
+      const rowCount = member.row.lines.length;
+      const sourceLines = [...member.row.lines, ...(member.detail?.lines ?? [])];
+      const lines = sourceLines.map((line, lineIndex) => prefixRenderLine(line, prefix(lineIndex === 0)));
+      const gutterLines = sourceLines.map((_, lineIndex) => {
+        const alignment = lineIndex < rowCount
+          ? member.row.gutterLines[lineIndex]?.text ?? ''
+          : ' '.repeat(member.detail?.gutterWidth ?? 0);
+        return textRenderLine(`${prefix(lineIndex === 0)}${alignment}`);
+      });
+      const contentLines = [...member.row.contentLines, ...(member.detail?.lines ?? [])];
+      const gutterWidths = sourceLines.map((_, lineIndex) => {
+        const alignment = lineIndex < rowCount
+          ? member.row.gutterWidths[lineIndex] ?? 0
+          : member.detail?.gutterWidth ?? 0;
+        return visibleWidth(prefix(lineIndex === 0)) + alignment;
+      });
+      return { ...member, branch, lines, gutterLines, contentLines, gutterWidths };
     });
     return { members, showLess };
   }
@@ -355,8 +448,10 @@ interface RowFrame {
   readonly palette: ColorPalette;
   readonly status: string;
   readonly open: boolean;
-  readonly detail: readonly string[] | undefined;
-  readonly lines: string[];
+  readonly separated: boolean;
+  readonly detail: RowDetail | undefined;
+  readonly lines: TuiRenderLine[];
+  readonly parts: TranscriptRowParts;
 }
 
 export class TranscriptRowComponent implements Component {
@@ -389,13 +484,25 @@ export class TranscriptRowComponent implements Component {
   }
 
   render(width: number): string[] {
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    return this.renderFrame(width, true).parts;
+  }
+
+  [RENDER_LINES](width: number): TuiRenderLine[] {
+    return this.renderFrame(width, false).lines;
+  }
+
+  private renderFrame(width: number, separated: boolean): RowFrame {
     const now = monotonicNow();
     const status = rowStatusOf(this.item, this.timeline, now);
     const key = statusKey(status, now);
     const { display } = this.item;
     const open = isExpandedComponent(display);
     const shown = open || this.item.detailWhile?.includes(status.kind) === true;
-    const detail = shown && hasRowDetail(display) ? display.renderRowDetail(width) : undefined;
+    const detail = shown ? renderRowDetail(display, width, separated) : undefined;
     const previous = this.frame;
     if (
       previous?.item === this.item &&
@@ -403,17 +510,50 @@ export class TranscriptRowComponent implements Component {
       previous.palette === currentTheme.palette &&
       previous.status === key &&
       previous.open === open &&
+      previous.separated === separated &&
       previous.detail === detail
     ) {
-      return previous.lines;
+      return previous;
     }
     const marker = rowMarker(this.item);
-    const indent = ' '.repeat(visibleWidth(marker));
+    const markerWidth = visibleWidth(marker);
+    const indent = ' '.repeat(markerWidth);
     const columns = Math.max(1, width - indent.length);
-    const row = open ? wrappedRow(this.item, status, columns, now) : [rowLine(this.item, status, columns, now)];
-    const lines = ['', ...row.map((line, index) => `${index === 0 ? marker : indent}${line}`), ...(detail ?? [])];
-    this.frame = { item: this.item, width, palette: currentTheme.palette, status: key, open, detail, lines };
-    return lines;
+    const row = open
+      ? wrappedRow(this.item, status, columns, now)
+      : singleRow(this.item, status, columns, now);
+    const detailWidth = detail?.gutterWidth ?? 0;
+    const lines = [
+      blankRenderLine(indent),
+      ...row.lines.map((line, index) => decorateRenderLine(line, index === 0 ? marker : indent)),
+      ...(detail?.lines ?? []),
+    ];
+    const gutterLines = [
+      textRenderLine(''),
+      ...row.lines.map((_, index) => textRenderLine(
+        `${index === 0 ? marker : indent}${row.gutterLines[index]?.text ?? ''}`,
+      )),
+      ...(detail?.lines ?? []).map(() => textRenderLine(' '.repeat(detailWidth))),
+    ];
+    const contentLines = [textRenderLine(''), ...row.contentLines, ...(detail?.lines ?? [])];
+    const gutterWidths = [
+      markerWidth,
+      ...row.lines.map((_, index) => markerWidth + (row.gutterWidths[index] ?? 0)),
+      ...(detail?.lines ?? []).map(() => detailWidth),
+    ];
+    const parts = { gutterWidth: markerWidth, gutterWidths, gutterLines, contentLines };
+    this.frame = {
+      item: this.item,
+      width,
+      palette: currentTheme.palette,
+      status: key,
+      open,
+      separated,
+      detail,
+      lines,
+      parts,
+    };
+    return this.frame;
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
@@ -478,14 +618,40 @@ function memberDraft(
   width: number,
   now: Instant,
   previous: MemberFrame | undefined,
+  separated: boolean,
 ): MemberDraft {
   const rowKey = `${String(item.projectionVersion)}:${form}:${statusKey(status, now)}`;
-  let row: readonly string[] = [];
+  let row: RowLines = unadornedRow([]);
   if (previous?.item.display === item.display && previous.rowKey === rowKey) row = previous.row;
-  else if (form === 'line') row = [rowLine(item, status, width, now)];
+  else if (form === 'line') row = singleRow(item, status, width, now);
   else if (form === 'wrapped') row = wrappedRow(item, status, width, now);
-  const detail = open && hasRowDetail(item.display) ? item.display.renderRowDetail(width) : undefined;
+  const detail = open ? renderRowDetail(item.display, width, separated) : undefined;
   return { item, rowKey, row, detail };
+}
+
+interface TranscriptRowDetailRenderable {
+  renderTranscriptRowDetail(width: number): TuiRenderLine[];
+}
+
+function isTranscriptRowDetailRenderable(
+  display: Component,
+): display is Component & TranscriptRowDetailRenderable {
+  return 'renderTranscriptRowDetail' in display && typeof display.renderTranscriptRowDetail === 'function';
+}
+
+function renderRowDetail(
+  display: Component,
+  width: number,
+  separated: boolean,
+): RowDetail | undefined {
+  if (!hasRowDetail(display)) return undefined;
+  if (separated && isTranscriptRowDetailRenderable(display)) {
+    return {
+      lines: display.renderTranscriptRowDetail(Math.max(1, width - TITLE_INDENT.length)),
+      gutterWidth: TITLE_INDENT.length,
+    };
+  }
+  return { lines: display.renderRowDetail(width), gutterWidth: 0 };
 }
 
 function prefixFor(branch: Branch, guide: (text: string) => string): (first: boolean) => string {
@@ -535,25 +701,65 @@ function rowMarker(item: LogicalTranscriptItem): string {
   return hasStatusMarker(display) ? display.statusMarker() : TITLE_INDENT;
 }
 
-function rowLine(item: LogicalTranscriptItem, status: RowStatus, width: number, now: Instant): string {
+function rowLine(item: LogicalTranscriptItem, status: RowStatus, width: number, now: Instant): TuiRenderLine {
   const head = rowHead(item, status);
   const { subject } = item.label;
-  return renderHeaderContent({
+  return textRenderLine(renderHeaderContent({
     head: subject === undefined ? head : `${head} `,
     flex: { text: subject === undefined ? '' : oneLine(subject), style: (text) => currentTheme.dim(text), keep: 'head' },
     tail: statusSuffix(status, now),
-  }, width);
+  }, width));
 }
 
-function wrappedRow(item: LogicalTranscriptItem, status: RowStatus, width: number, now: Instant): string[] {
+function splitDimmedTail(text: string): { readonly gutter: string; readonly content: string } {
+  const head = currentTheme.dim('└ ');
+  const branch = head.indexOf('└ ');
+  if (branch < 0) return { gutter: head, content: currentTheme.dim(text) };
+  return { gutter: head.slice(0, branch + 2), content: `${text}${head.slice(branch + 2)}` };
+}
+
+function blankRenderLine(decoration: string): TuiRenderLine {
+  const end = visibleWidth(decoration);
+  if (end === 0) return textRenderLine('');
+  return { text: '', selectionExclusions: [{ start: 0, end }] };
+}
+
+function wrapStructuredText(text: string, width: number): TuiRenderLine[] {
+  return renderComponentLines(new Text(text, 0, 0), width)
+    .map((line) => withRenderLineText(line, line.text.trimEnd()));
+}
+
+function unadornedRow(lines: readonly TuiRenderLine[]): RowLines {
+  return {
+    lines,
+    gutterLines: lines.map(() => textRenderLine('')),
+    contentLines: lines,
+    gutterWidths: lines.map(() => 0),
+  };
+}
+
+function singleRow(item: LogicalTranscriptItem, status: RowStatus, width: number, now: Instant): RowLines {
+  return unadornedRow([rowLine(item, status, width, now)]);
+}
+
+function wrappedRow(item: LogicalTranscriptItem, status: RowStatus, width: number, now: Instant): RowLines {
   const head = rowHead(item, status);
   const suffix = statusSuffix(status, now);
   const { rowVerb, subject } = item.label;
-  if (subject === undefined) return wrapTextWithAnsi(`${head}${suffix}`, width);
+  if (subject === undefined) return unadornedRow(wrapStructuredText(`${head}${suffix}`, width));
   const indent = visibleWidth(rowVerb) + 1;
-  if (width - indent < MIN_WRAPPED_SUBJECT_WIDTH) return wrapTextWithAnsi(`${head} ${currentTheme.dim(subject)}${suffix}`, width);
-  return wrapTextWithAnsi(`${currentTheme.dim(subject)}${suffix}`, width - indent)
-    .map((line, index) => `${index === 0 ? `${head} ` : ' '.repeat(indent)}${line}`);
+  if (width - indent < MIN_WRAPPED_SUBJECT_WIDTH) {
+    return unadornedRow(wrapStructuredText(`${head} ${currentTheme.dim(subject)}${suffix}`, width));
+  }
+  const wrapped = wrapStructuredText(`${currentTheme.dim(subject)}${suffix}`, width - indent);
+  const contentLines = wrapped.map((line, index) => index === 0 ? prefixRenderLine(line, `${head} `) : line);
+  const gutterLines = wrapped.map((_, index) => textRenderLine(index === 0 ? '' : ' '.repeat(indent)));
+  return {
+    lines: contentLines.map((line, index) => index === 0 ? line : prefixRenderLine(line, ' '.repeat(indent))),
+    gutterLines,
+    contentLines,
+    gutterWidths: wrapped.map((_, index) => index === 0 ? 0 : indent),
+  };
 }
 
 function sameFrameKey(left: FrameKey, right: FrameKey): boolean {

@@ -7,17 +7,21 @@ import {
   type Focusable,
   type TuiMouseEvent,
   type Terminal,
+  type TUI,
   TuiAltScreen,
 } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { showSettingsSelector } from '#/tui/commands/config';
 import { handleGoalCommand } from '#/tui/commands/goal';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import { MoonLoader } from '#/tui/components/chrome/moon-loader';
+import { AgentGroupComponent } from '#/tui/components/messages/agent-group';
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
-import { StatusMessageComponent } from '#/tui/components/messages/status-message';
+import { ReadGroupComponent } from '#/tui/components/messages/read-group';
+import { NoticeMessageComponent, StatusMessageComponent } from '#/tui/components/messages/status-message';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { UserMessageComponent } from '#/tui/components/messages/user-message';
@@ -45,13 +49,16 @@ import {
   TERMINAL_FOCUS_OUT,
 } from '#/tui/utils/terminal-focus';
 import { markTranscriptComponent } from '#/tui/utils/transcript-component-metadata';
+import { TurnTimeline } from '#/tui/utils/turn-timeline';
 
 import { VirtualTerminal } from '../../../../packages/pi-tui/test/virtual-terminal';
 
 const clipboardText = vi.hoisted(() => ({
   copyTextToClipboard: vi.fn<(text: string) => Promise<'native' | 'osc52'>>(async () => 'native'),
+  readClipboardText: vi.fn<() => Promise<string>>(async () => ''),
 }));
 vi.mock('#/utils/clipboard/clipboard-text', () => clipboardText);
+vi.mock('#/utils/clipboard/clipboard-native', () => ({ clipboard: null }));
 
 const WIDTH = 120;
 const HEIGHT = 30;
@@ -107,6 +114,7 @@ async function mountFullscreen(height = HEIGHT): Promise<{
     startup: { continueLast: false, yolo: false, auto: false, plan: false },
   };
   const state = createTUIState(opts);
+  state.transcriptContainer.setPresentationOptions({ fullscreen: true, toolCallDensity: 'compact', thinking: 'grouped' });
   const vt = new VirtualTerminal(WIDTH, height);
   (state.ui as { terminal: Terminal }).terminal = vt;
 
@@ -120,6 +128,10 @@ async function mountFullscreen(height = HEIGHT): Promise<{
 
 function screenRows(vt: VirtualTerminal): string[] {
   return vt.getViewport().map((row) => stripAnsi(row).trimEnd());
+}
+
+function highlightedText(line: string): string[] {
+  return [...line.matchAll(/\u001B\[7m([\s\S]*?)\u001B\[27m/g)].map((match) => stripAnsi(match[1]!));
 }
 
 function editorReplacementHost(state: ReturnType<typeof createTUIState>): SlashCommandHost {
@@ -260,6 +272,145 @@ async function clickRow(vt: VirtualTerminal, row: number): Promise<void> {
   await vt.waitForRender();
 }
 
+function rightClick(vt: VirtualTerminal, column: number, row: number): void {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  const termProgram = process.env['TERM_PROGRAM'];
+  if (!platform) throw new Error('process.platform descriptor missing');
+  Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' });
+  delete process.env['TERM_PROGRAM'];
+  try {
+    vt.sendInput(`\u001B[<2;${column + 1};${row + 1}M`);
+    vt.sendInput(`\u001B[<2;${column + 1};${row + 1}m`);
+  } finally {
+    Object.defineProperty(process, 'platform', platform);
+    if (termProgram === undefined) delete process.env['TERM_PROGRAM'];
+    else process.env['TERM_PROGRAM'] = termProgram;
+  }
+}
+
+async function copyComponentSelection(
+  component: Component,
+  width: number,
+  select?: (rows: string[]) => { start: number; end: number },
+  startText?: string,
+): Promise<string | undefined> {
+  const height = Math.max(1, component.render(width).length);
+  const vt = new VirtualTerminal(width, height);
+  let copied: string | undefined;
+  const ui = new TuiAltScreen(vt, undefined, undefined, {
+    copySelection: async (text) => {
+      copied = text;
+      return true;
+    },
+  });
+  ui.addChild(component);
+  ui.start();
+  try {
+    await vt.waitForRender();
+    const rows = vt.getViewport().map((row) => stripAnsi(row));
+    const range = select?.(rows) ?? {
+      start: rows.findIndex((row) => row.trim().length > 0),
+      end: rows.findLastIndex((row) => row.trim().length > 0),
+    };
+    expect(range.start).toBeGreaterThanOrEqual(0);
+    expect(range.end).toBeGreaterThanOrEqual(range.start);
+    const startColumn = startText === undefined ? 0 : rows[range.start]!.indexOf(startText);
+    expect(startColumn).toBeGreaterThanOrEqual(0);
+    vt.sendInput(`\u001B[<0;${startColumn + 1};${range.start + 1}M`);
+    vt.sendInput(`\u001B[<32;${width};${range.end + 1}M`);
+    vt.sendInput(`\u001B[<0;${width};${range.end + 1}m`);
+    await vt.waitForRender();
+    return copied;
+  } finally {
+    ui.stop();
+  }
+}
+
+async function copyComponentTripleClick(component: Component, width: number): Promise<string | undefined> {
+  const height = Math.max(1, component.render(width).length);
+  const vt = new VirtualTerminal(width, height);
+  let copied: string | undefined;
+  const ui = new TuiAltScreen(vt, undefined, undefined, {
+    copySelection: async (text) => {
+      copied = text;
+      return true;
+    },
+  });
+  ui.addChild(component);
+  ui.start();
+  try {
+    await vt.waitForRender();
+    const rows = vt.getViewport().map((row) => stripAnsi(row));
+    const row = rows.findIndex((line) => line.includes('S'));
+    expect(row).toBeGreaterThanOrEqual(0);
+    const column = Math.max(0, rows[row]!.indexOf('S'));
+    for (let click = 0; click < 3; click++) {
+      vt.sendInput(`\u001B[<0;${column + 1};${row + 1}M`);
+      vt.sendInput(`\u001B[<0;${column + 1};${row + 1}m`);
+    }
+    await vt.waitForRender();
+    return copied;
+  } finally {
+    ui.stop();
+  }
+}
+
+async function expectComponentCopyGestures(
+  component: Component,
+  width: number,
+  expected: string,
+  select: (rows: string[]) => { start: number; end: number } = logicalLineRange,
+  startText?: string,
+): Promise<void> {
+  await expect(copyComponentSelection(component, width, select, startText)).resolves.toBe(expected);
+  await expect(copyComponentTripleClick(component, width)).resolves.toBe(expected);
+}
+
+function logicalLineRange(rows: string[]): { start: number; end: number } {
+  const range = {
+    start: rows.findIndex((row) => row.includes('S')),
+    end: rows.findIndex((row) => row.includes('D')),
+  };
+  expect(range.start).toBeGreaterThanOrEqual(0);
+  expect(range.end).toBeGreaterThan(range.start);
+  return range;
+}
+
+const CLIPBOARD_READ_ERROR = "Clipboard paste unavailable: use your terminal's paste shortcut";
+
+async function startRightClickPasteAfterOsc52Copy(
+  read: () => Promise<string>,
+): Promise<{ state: ReturnType<typeof createTUIState>; vt: VirtualTerminal }> {
+  clipboardText.copyTextToClipboard.mockImplementationOnce(async () => 'osc52');
+  clipboardText.readClipboardText.mockClear();
+  clipboardText.readClipboardText.mockImplementationOnce(read);
+  const { state, vt } = await mountFullscreen();
+  const alt = state.ui as TuiAltScreen;
+  alt.setCopyOnSelect(false);
+  alt.setCopyOnRightClick(true);
+  try {
+    state.transcriptContainer.addChild(new Text('hello world', 0, 0));
+    alt.renderNow();
+    await vt.flush();
+    const row = screenRows(vt).findIndex((line) => line.includes('hello world'));
+    const col = screenRows(vt)[row]!.indexOf('hello world');
+    vt.sendInput(`\u001B[<0;${col + 1};${row + 1}M`);
+    vt.sendInput(`\u001B[<32;${col + 11};${row + 1}M`);
+    vt.sendInput(`\u001B[<0;${col + 11};${row + 1}m`);
+    vt.sendInput(`\u001B[<2;${col + 11};${row + 1}M`);
+    vt.sendInput(`\u001B[<2;${col + 11};${row + 1}m`);
+    await vi.waitFor(() => {
+      expect(alt.hasActiveSelection()).toBe(false);
+    });
+    vt.sendInput(`\u001B[<2;${col + 11};${row + 1}M`);
+    vt.sendInput(`\u001B[<2;${col + 11};${row + 1}m`);
+    return { state, vt };
+  } catch (error) {
+    state.ui.stop();
+    throw error;
+  }
+}
+
 describe('fullscreen layout', () => {
   it.each([
     ['a native copy', () => Promise.resolve('native' as const), 'Copied!'],
@@ -282,11 +433,1118 @@ describe('fullscreen layout', () => {
     vt.sendInput(`\u001B[<32;${col + 11};${row + 1}M`);
     vt.sendInput(`\u001B[<0;${col + 11};${row + 1}m`);
 
+    expect((state.ui as TuiAltScreen).hasActiveSelection()).toBe(true);
     expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith('hello world');
     await vi.waitFor(() => {
       expect(screenRows(vt).join('\n')).toContain(flash);
     });
     state.ui.stop();
+  });
+
+  it('pastes readable clipboard text after an OSC 52 right-click copy', async () => {
+    const { state } = await startRightClickPasteAfterOsc52Copy(async () => 'clipboard text');
+    try {
+      await vi.waitFor(() => {
+        expect(state.editor.getText()).toBe('clipboard text');
+      });
+      expect(clipboardText.readClipboardText).toHaveBeenCalledTimes(1);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('shows an unreadable clipboard error after an OSC 52 right-click copy', async () => {
+    const { state, vt } = await startRightClickPasteAfterOsc52Copy(() =>
+      Promise.reject(new Error(CLIPBOARD_READ_ERROR)),
+    );
+    try {
+      await vi.waitFor(() => {
+        expect(screenRows(vt).join('\n')).toContain(CLIPBOARD_READ_ERROR);
+      });
+      expect(clipboardText.readClipboardText).toHaveBeenCalledTimes(1);
+      expect(state.editor.getText()).toBe('');
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it.each([
+    ['user', 'alpha\nbeta', () => new UserMessageComponent('alpha\nbeta')],
+    [
+      'assistant',
+      'alpha\n\nbeta',
+      () => {
+        const component = new AssistantMessageComponent();
+        component.updateContent('alpha\n\nbeta');
+        return component;
+      },
+    ],
+  ])('omits %s message decorations when copying across visual rows', async (_name, expected, createComponent) => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const { state, vt } = await mountFullscreen();
+    try {
+      state.transcriptContainer.addChild(createComponent());
+      const alt = state.ui as TuiAltScreen;
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((row) => row.includes('alpha'));
+      const lastRow = rows.findIndex((row) => row.includes('beta'));
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(lastRow).toBeGreaterThan(firstRow);
+      const firstColumn = rows[firstRow]!.indexOf('alpha');
+      const lastColumn = rows[lastRow]!.lastIndexOf('beta') + 3;
+
+      vt.sendInput(`\u001B[<0;${firstColumn + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${lastRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${lastRow + 1}m`);
+
+      await vi.waitFor(() => {
+        expect(clipboardText.copyTextToClipboard).toHaveBeenCalledWith(expected);
+      });
+      expect(vt.getViewport()[firstRow]).not.toMatch(/\x1b\[7m(?:\x1b\[[0-9;]*m)*[●❯]/);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('shows selected transcript newlines without changing the editor focus or cursor', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const { state, vt } = await mountFullscreen();
+    try {
+      const source = 'alpha\nbeta\n\ngamma';
+      state.transcriptContainer.addChild(new UserMessageComponent(source));
+      state.editor.setText('bottom\ndraft');
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((row) => row.includes('alpha'));
+      const secondRow = rows.findIndex((row) => row.includes('beta'));
+      const emptyRow = secondRow + 1;
+      const lastRow = rows.findIndex((row) => row.includes('gamma'));
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(secondRow).toBe(firstRow + 1);
+      expect(rows[emptyRow]?.trim()).toBe('');
+      expect(lastRow).toBe(emptyRow + 1);
+      const firstColumn = rows[firstRow]!.indexOf('alpha');
+      const lastColumn = rows[lastRow]!.indexOf('gamma') + 'gamma'.length - 1;
+      const editorCursor = state.editor.getCursor();
+      const terminalCursor = vt.getCursorPosition();
+      expect(alt.getFocusedComponent()).toBe(state.editor);
+      expect(state.editor.focused).toBe(true);
+
+      vt.sendInput(`\u001B[<0;${firstColumn + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${lastRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${lastRow + 1}m`);
+      await vt.waitForRender();
+
+      expect(highlightedText(alt.getScreenLines()[firstRow]!).join('')).toBe('alpha ');
+      expect(highlightedText(alt.getScreenLines()[secondRow]!).join('')).toBe('beta ');
+      const emptyLine = alt.getScreenLines()[emptyRow]!;
+      expect(highlightedText(emptyLine).join('')).toBe(' ');
+      const emptyHighlight = emptyLine.indexOf('\u001B[7m');
+      expect(emptyHighlight).toBeGreaterThanOrEqual(0);
+      expect(stripAnsi(emptyLine.slice(0, emptyHighlight))).toHaveLength(firstColumn);
+      expect(highlightedText(alt.getScreenLines()[lastRow]!).join('')).toBe('gamma');
+      expect(await alt.copyActiveSelectionToClipboard()).toBe(true);
+      expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith(source);
+      expect(state.editor.getText()).toBe('bottom\ndraft');
+      expect(state.editor.getCursor()).toEqual(editorCursor);
+      expect(alt.getFocusedComponent()).toBe(state.editor);
+      expect(state.editor.focused).toBe(true);
+      expect(vt.getCursorPosition()).toEqual(terminalCursor);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it.each([1, 2, 3, 4, 20])(
+    'copies status text without responsive padding at width %i',
+    async (width) => {
+      await expect(copyComponentSelection(new StatusMessageComponent('abcd'), width)).resolves.toBe('abcd');
+    },
+  );
+
+  it('copies CJK status text without deleting visible glyphs', async () => {
+    await expect(copyComponentSelection(new StatusMessageComponent('中文'), 4)).resolves.toBe('中文');
+  });
+
+  it.each([4, 20])('copies notice title and detail at width %i', async (width) => {
+    await expect(
+      copyComponentSelection(new NoticeMessageComponent('abcd', 'efgh'), width),
+    ).resolves.toBe('abcd\nefgh');
+  });
+
+  it('does not remove tool header text when the header has no bullet', async () => {
+    const component = new ToolCallComponent(
+      { id: 'call_plan_copy', name: 'ExitPlanMode', args: {} },
+      undefined,
+    );
+    try {
+      await expect(copyComponentSelection(component, 20)).resolves.toBe('Current plan');
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it.each([4, 20])('copies tool progress without responsive padding at width %i', async (width) => {
+    const component = new ToolCallComponent(
+      { id: 'call_progress_copy', name: 'Read', args: { path: 'x' } },
+      undefined,
+    );
+    component.appendProgress('abcd');
+    try {
+      const copied = await copyComponentSelection(component, width, (rows) => ({
+        start: rows.findIndex((row) => row.includes(width === 4 ? 'ab' : 'abcd')),
+        end: rows.findIndex((row) => row.includes(width === 4 ? 'cd' : 'abcd')),
+      }));
+      expect(copied).toBe('abcd');
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it.each([8, 120])('copies every agent description fragment at width %i', async (width) => {
+    const agent = new ToolCallComponent(
+      { id: 'call_agent_copy', name: 'Agent', args: { description: 'abcd' } },
+      undefined,
+    );
+    agent.onSubagentSpawned({ agentId: 'sub_agent_copy', agentName: 'coder', runInBackground: false });
+    agent.onSubagentStarted({ agentId: 'sub_agent_copy', agentName: 'coder', runInBackground: false });
+    agent.onSubagentCompleted({ resultSummary: 'done' });
+    const group = new AgentGroupComponent(undefined);
+    group.attach('call_agent_copy', agent);
+    try {
+      const copied = await copyComponentSelection(group, width, (rows) => ({
+        start: rows.findIndex((row) => row.includes('└─')),
+        end: rows.length - 1,
+      }));
+      expect(copied).toBe('└─ coder · abcd · 0 tools · 0s · ✓ Completed');
+    } finally {
+      group.dispose();
+      agent.dispose();
+    }
+  });
+
+  it.each([8, 120])('copies every grouped read path fragment at width %i', async (width) => {
+    const tool = new ToolCallComponent(
+      { id: 'call_read_copy', name: 'Read', args: { path: 'src/abcd.ts' } },
+      { tool_call_id: 'call_read_copy', output: '1\tline', is_error: false },
+    );
+    const group = new ReadGroupComponent(undefined);
+    group.attach('call_read_copy', tool);
+    group.setExpanded(true);
+    try {
+      const copied = await copyComponentSelection(group, width, (rows) => ({
+        start: rows.findIndex((row) => row.includes('└─')),
+        end: rows.length - 1,
+      }));
+      expect(copied).toBe('└─ src/abcd.ts · 1 line');
+    } finally {
+      group.dispose();
+      tool.dispose();
+    }
+  });
+
+  it.each([2, 4, 20])('copies bare group detail without losing columns at width %i', async (width) => {
+    const { state } = await mountFullscreen();
+    const source = `START${'x'.repeat(30)}END`;
+    const tool = new ToolCallComponent(
+      { id: `bare-${width}`, name: 'Read', args: { path: '/work/a.ts' } },
+      { tool_call_id: `bare-${width}`, output: source, is_error: false },
+    );
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.addChild(tool);
+      state.transcriptContainer.toggleToolOutputExpansion();
+      await expect(
+        copyComponentSelection(state.transcriptContainer, width, logicalLineRange, 'S'),
+      ).resolves.toBe(source);
+    } finally {
+      tool.dispose();
+      state.ui.stop();
+    }
+  });
+
+  it.each([
+    { name: 'an independent row', tools: ['CronCreate'] },
+    { name: 'a single-member group', tools: ['Read'] },
+    { name: 'a multi-member group', tools: ['Read', 'Read'] },
+  ])('copies a soft-wrapped logical line from $name', async ({ tools }) => {
+    const { state } = await mountFullscreen();
+    const source = `START${'x'.repeat(50)}END`;
+    const calls = tools.map((name, index) => new ToolCallComponent(
+      { id: `wrapped-${name}-${index}`, name, args: name === 'Read' ? { path: `/work/${index}.ts` } : {} },
+      {
+        tool_call_id: `wrapped-${name}-${index}`,
+        output: index === 0 ? source : `OTHER${'y'.repeat(50)}DONE`,
+        is_error: false,
+      },
+    ));
+    try {
+      groupTranscript(state);
+      for (const call of calls) state.transcriptContainer.addChild(call);
+      state.transcriptContainer.toggleToolOutputExpansion();
+      const copied = await copyComponentSelection(state.transcriptContainer, 20, logicalLineRange, 'S');
+      expect(copied?.replaceAll('\n', '')).toBe(source);
+    } finally {
+      for (const call of calls) call.dispose();
+      state.ui.stop();
+    }
+  });
+
+  it('copies a soft-wrapped Thinking logical line without visual indentation', async () => {
+    const source = `START${'x'.repeat(50)}END`;
+    const thinking = new ThinkingComponent(source, true, 'finalized');
+    thinking.setExpanded(true);
+    await expect(copyComponentSelection(thinking, 20, logicalLineRange)).resolves.toBe(source);
+    thinking.dispose();
+  });
+
+  it('keeps expanded Thought indentation out of selections and copied blank lines', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const source = 'alpha\n\nbeta';
+    const thinking = new ThinkingComponent(source, true, 'finalized');
+    thinking.finalize({ known: true, ms: 3000 });
+    const { state, vt } = await mountFullscreen();
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.addChild(thinking);
+      state.transcriptContainer.toggleGroup(thinking);
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((row) => row.includes('alpha'));
+      const emptyRow = firstRow + 1;
+      const lastRow = rows.findIndex((row) => row.includes('beta'));
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(lastRow).toBe(emptyRow + 1);
+      const firstColumn = rows[firstRow]!.indexOf('alpha');
+      const lastColumn = rows[lastRow]!.indexOf('beta') + 'beta'.length - 1;
+
+      vt.sendInput(`\u001B[<0;${firstColumn + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${lastRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${lastRow + 1}m`);
+      await vt.waitForRender();
+
+      expect(highlightedText(alt.getScreenLines()[firstRow]!)).toEqual(['alpha ']);
+      const emptyLine = alt.getScreenLines()[emptyRow]!;
+      expect(highlightedText(emptyLine)).toEqual([' ']);
+      const emptyHighlight = emptyLine.indexOf('\u001B[7m');
+      expect(emptyHighlight).toBeGreaterThanOrEqual(0);
+      expect(stripAnsi(emptyLine.slice(0, emptyHighlight))).toHaveLength(firstColumn);
+      expect(highlightedText(alt.getScreenLines()[lastRow]!)).toEqual(['beta']);
+      expect(await alt.copyActiveSelectionToClipboard()).toBe(true);
+      expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith(source);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('places grouped transcript blank-line markers after the message gutter', async () => {
+    const thinking = new ThinkingComponent('alpha\n\nbeta', true, 'finalized');
+    thinking.finalize({ known: true, ms: 3000 });
+    const { state, vt } = await mountFullscreen();
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.addChild(new UserMessageComponent('start'));
+      state.transcriptContainer.addChild(thinking);
+      state.transcriptContainer.toggleGroup(thinking);
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const startRow = rows.findIndex((row) => row.includes('start'));
+      const titleRow = rows.findIndex((row) => row.includes('Thought for 3s'));
+      const firstRow = rows.findIndex((row) => row.includes('alpha'));
+      const lastRow = rows.findIndex((row) => row.includes('beta'));
+      expect(startRow).toBeGreaterThanOrEqual(0);
+      expect(titleRow).toBeGreaterThan(startRow);
+      expect(firstRow).toBe(titleRow + 2);
+      expect(lastRow).toBe(firstRow + 2);
+      const blankRows = [titleRow - 1, titleRow + 1, firstRow + 1];
+      for (const row of blankRows) expect(rows[row]?.trim()).toBe('');
+      const startColumn = rows[startRow]!.indexOf('start');
+      const contentColumn = rows[firstRow]!.indexOf('alpha');
+      const lastColumn = rows[lastRow]!.indexOf('beta') + 'beta'.length - 1;
+
+      vt.sendInput(`\u001B[<0;${startColumn + 1};${startRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${lastRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${lastRow + 1}m`);
+      await vt.waitForRender();
+
+      for (const row of blankRows) {
+        const line = alt.getScreenLines()[row]!;
+        expect(highlightedText(line)).toEqual([' ']);
+        const highlight = line.indexOf('\u001B[7m');
+        expect(highlight).toBeGreaterThanOrEqual(0);
+        expect(stripAnsi(line.slice(0, highlight))).toHaveLength(contentColumn);
+      }
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('places an independent row blank-line marker after its status marker', async () => {
+    const call = new ToolCallComponent(
+      { id: 'cron-blank', name: 'CronCreate', args: { cron: '*/5 * * * *', prompt: 'check CI' } },
+      { tool_call_id: 'cron-blank', output: 'created', is_error: false },
+    );
+    const { state, vt } = await mountFullscreen();
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.addChild(new UserMessageComponent('start'));
+      state.transcriptContainer.addChild(call);
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const startRow = rows.findIndex((row) => row.includes('start'));
+      const cronRow = rows.findIndex((row) => row.includes('CronCreate'));
+      const blankRow = cronRow - 1;
+      expect(startRow).toBeGreaterThanOrEqual(0);
+      expect(cronRow).toBeGreaterThan(startRow);
+      expect(rows[blankRow]?.trim()).toBe('');
+      const startColumn = rows[startRow]!.indexOf('start');
+      const contentColumn = rows[cronRow]!.indexOf('CronCreate');
+      const lastColumn = rows[cronRow]!.length - 1;
+
+      vt.sendInput(`\u001B[<0;${startColumn + 1};${startRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${cronRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${cronRow + 1}m`);
+      await vt.waitForRender();
+
+      const line = alt.getScreenLines()[blankRow]!;
+      expect(highlightedText(line)).toEqual([' ']);
+      const highlight = line.indexOf('\u001B[7m');
+      expect(highlight).toBeGreaterThanOrEqual(0);
+      expect(stripAnsi(line.slice(0, highlight))).toHaveLength(contentColumn);
+    } finally {
+      call.dispose();
+      state.ui.stop();
+    }
+  });
+
+  it('places an agent group leading blank-line marker after its bullet', async () => {
+    const agent = new ToolCallComponent(
+      { id: 'call_agent_blank', name: 'Agent', args: { description: 'abcd' } },
+      undefined,
+    );
+    agent.onSubagentSpawned({ agentId: 'sub_agent_blank', agentName: 'coder', runInBackground: false });
+    agent.onSubagentStarted({ agentId: 'sub_agent_blank', agentName: 'coder', runInBackground: false });
+    agent.onSubagentCompleted({ resultSummary: 'done' });
+    const group = new AgentGroupComponent(undefined);
+    group.attach('call_agent_blank', agent);
+    const { state, vt } = await mountFullscreen();
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.addChild(new UserMessageComponent('start'));
+      state.transcriptContainer.addChild(group);
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const startRow = rows.findIndex((row) => row.includes('start'));
+      const headerRow = rows.findIndex((row) => row.includes('agents finished'));
+      const blankRow = headerRow - 1;
+      expect(startRow).toBeGreaterThanOrEqual(0);
+      expect(headerRow).toBeGreaterThan(startRow);
+      expect(rows[blankRow]?.trim()).toBe('');
+      const startColumn = rows[startRow]!.indexOf('start');
+      const contentColumn = rows[headerRow]!.indexOf('1 coder');
+      const lastColumn = rows[headerRow]!.length - 1;
+
+      vt.sendInput(`\u001B[<0;${startColumn + 1};${startRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${headerRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${headerRow + 1}m`);
+      await vt.waitForRender();
+
+      const line = alt.getScreenLines()[blankRow]!;
+      expect(highlightedText(line)).toEqual([' ']);
+      const highlight = line.indexOf('\u001B[7m');
+      expect(highlight).toBeGreaterThanOrEqual(0);
+      expect(stripAnsi(line.slice(0, highlight))).toHaveLength(contentColumn);
+    } finally {
+      group.dispose();
+      agent.dispose();
+      state.ui.stop();
+    }
+  });
+
+  it('places a read group leading blank-line marker after its bullet', async () => {
+    const tool = new ToolCallComponent(
+      { id: 'call_read_blank', name: 'Read', args: { path: 'src/abcd.ts' } },
+      { tool_call_id: 'call_read_blank', output: '1\tline', is_error: false },
+    );
+    const group = new ReadGroupComponent(undefined);
+    group.attach('call_read_blank', tool);
+    const { state, vt } = await mountFullscreen();
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.setPresentationOptions({ fullscreen: true, toolCallDensity: 'ungrouped', thinking: 'ungrouped' });
+      state.transcriptContainer.addChild(new UserMessageComponent('start'));
+      state.transcriptContainer.addChild(group);
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const startRow = rows.findIndex((row) => row.includes('start'));
+      const headerRow = rows.findIndex((row) => row.includes('Read'));
+      const blankRow = headerRow - 1;
+      expect(startRow).toBeGreaterThanOrEqual(0);
+      expect(headerRow).toBeGreaterThan(startRow);
+      expect(rows[blankRow]?.trim()).toBe('');
+      const startColumn = rows[startRow]!.indexOf('start');
+      const contentColumn = rows[headerRow]!.indexOf('Read');
+      const lastColumn = rows[headerRow]!.length - 1;
+
+      vt.sendInput(`\u001B[<0;${startColumn + 1};${startRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${headerRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${headerRow + 1}m`);
+      await vt.waitForRender();
+
+      const line = alt.getScreenLines()[blankRow]!;
+      expect(highlightedText(line)).toEqual([' ']);
+      const highlight = line.indexOf('\u001B[7m');
+      expect(highlight).toBeGreaterThanOrEqual(0);
+      expect(stripAnsi(line.slice(0, highlight))).toHaveLength(contentColumn);
+    } finally {
+      group.dispose();
+      tool.dispose();
+      state.ui.stop();
+    }
+  });
+
+  it('places a tool card leading blank-line marker after its status marker', async () => {
+    const call = new ToolCallComponent(
+      { id: 'swarm-blank', name: 'AgentSwarm', args: { prompt: 'fix the selection' } },
+      { tool_call_id: 'swarm-blank', output: '3 completed', is_error: false },
+    );
+    const { state, vt } = await mountFullscreen();
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.addChild(new UserMessageComponent('start'));
+      state.transcriptContainer.addChild(call);
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const startRow = rows.findIndex((row) => row.includes('start'));
+      const headerRow = rows.findIndex((row) => row.includes('AgentSwarm'));
+      const blankRow = headerRow - 1;
+      expect(startRow).toBeGreaterThanOrEqual(0);
+      expect(headerRow).toBeGreaterThan(startRow);
+      expect(rows[blankRow]?.trim()).toBe('');
+      const startColumn = rows[startRow]!.indexOf('start');
+      const contentColumn = rows[headerRow]!.indexOf('Used');
+      const lastColumn = rows[headerRow]!.length - 1;
+
+      vt.sendInput(`\u001B[<0;${startColumn + 1};${startRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${headerRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${headerRow + 1}m`);
+      await vt.waitForRender();
+
+      const line = alt.getScreenLines()[blankRow]!;
+      expect(highlightedText(line)).toEqual([' ']);
+      const highlight = line.indexOf('\u001B[7m');
+      expect(highlight).toBeGreaterThanOrEqual(0);
+      expect(stripAnsi(line.slice(0, highlight))).toHaveLength(contentColumn);
+    } finally {
+      call.dispose();
+      state.ui.stop();
+    }
+  });
+
+  it('copies a soft-wrapped ToolOutputMarkdown logical line without visual indentation', async () => {
+    setExperimentalFeatures([{ id: 'notify_user', enabled: true }]);
+    onTestFinished(() => setExperimentalFeatures([]));
+    const source = `START${'x'.repeat(50)}END`;
+    const component = new ToolCallComponent(
+      { id: 'notify-soft-wrap-copy', name: 'NotifyUser', args: { title: 'Update', message: source } },
+      {
+        tool_call_id: 'notify-soft-wrap-copy',
+        output: 'Update shown to the user.',
+        is_error: false,
+      },
+    );
+    component.setExpanded(true);
+    try {
+      await expect(copyComponentSelection(component, 20, logicalLineRange)).resolves.toBe(source);
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it.each(['thinking', 'text'] as const)('copies long gutter %s by dragging and triple-clicking', async (kind) => {
+    const source = `START ${'x'.repeat(8)} ${'y'.repeat(8)} END`;
+    const component = new ToolCallComponent(
+      { id: `gutter-${kind}`, name: 'Agent', args: { description: 'inspect wrapping' } },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: `gutter-${kind}`,
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    component.appendSubagentText(source, kind);
+    try {
+      await expectComponentCopyGestures(component, 24, `│ ${source}`);
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it('copies an expanded NotifyUser title across both wrap widths', async () => {
+    setExperimentalFeatures([{ id: 'notify_user', enabled: true }]);
+    onTestFinished(() => setExperimentalFeatures([]));
+    const source = `START ${'x'.repeat(20)} ${'y'.repeat(15)} END`;
+    const ui = {
+      mode: 'fullscreen',
+      terminal: { rows: 30 },
+      requestRender: () => {},
+    } as unknown as TUI;
+    const component = new ToolCallComponent(
+      { id: 'notify-title-wrap', name: 'NotifyUser', args: { title: source, message: 'Body' } },
+      undefined,
+      ui,
+    );
+    component.setExpanded(true);
+    try {
+      await expectComponentCopyGestures(component, 24, source);
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it('copies a NotifyUser title with first-line text after a tab across both wrap widths', async () => {
+    setExperimentalFeatures([{ id: 'notify_user', enabled: true }]);
+    onTestFinished(() => setExperimentalFeatures([]));
+    const suffix = `${'x'.repeat(30)} ${'y'.repeat(15)} END`;
+    const component = new ToolCallComponent(
+      {
+        id: 'notify-title-tab-wrap',
+        name: 'NotifyUser',
+        args: { title: `START\tABCEFGHIJ ${suffix}`, message: 'Body' },
+      },
+      undefined,
+      {
+        mode: 'fullscreen',
+        terminal: { rows: 30 },
+        requestRender: () => {},
+      } as unknown as TUI,
+    );
+    component.setExpanded(true);
+    try {
+      await expectComponentCopyGestures(component, 24, `START   ABCEFGHIJ ${suffix}`);
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it('copies a single-member expanded group title as one logical line', async () => {
+    const { state } = await mountFullscreen();
+    const source = `START${'x'.repeat(40)}END`;
+    const call = new ToolCallComponent(
+      { id: 'single-title-wrap', name: 'Read', args: { path: `/work/${source}` } },
+      { tool_call_id: 'single-title-wrap', output: '', is_error: false },
+      undefined,
+      '/work',
+    );
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.addChild(call);
+      state.transcriptContainer.toggleGroup(call);
+      await expectComponentCopyGestures(
+        state.transcriptContainer,
+        24,
+        `Read ${source}`,
+        (rows) => ({
+          start: rows.findIndex((row) => row.includes('Read')),
+          end: rows.findIndex((row) => row.includes('D')),
+        }),
+        'Read',
+      );
+    } finally {
+      call.dispose();
+      state.ui.stop();
+    }
+  });
+
+  it.each(['Bash', 'Read'] as const)('copies an expanded %s wrappedRow by dragging and triple-clicking', async (name) => {
+    const { state } = await mountFullscreen();
+    const source = name === 'Bash'
+      ? `START ${'x'.repeat(12)} ${'y'.repeat(12)} END`
+      : `START${'x'.repeat(40)}END`;
+    const otherName = name === 'Bash' ? 'Read' : 'Bash';
+    const target = new ToolCallComponent(
+      {
+        id: `wrapped-row-${name}`,
+        name,
+        args: name === 'Bash' ? { command: source } : { path: `/work/${source}` },
+      },
+      { tool_call_id: `wrapped-row-${name}`, output: '', is_error: false },
+      undefined,
+      '/work',
+    );
+    const other = new ToolCallComponent(
+      {
+        id: `wrapped-row-other-${name}`,
+        name: otherName,
+        args: otherName === 'Bash' ? { command: 'true' } : { path: '/work/other.ts' },
+      },
+      { tool_call_id: `wrapped-row-other-${name}`, output: '', is_error: false },
+      undefined,
+      '/work',
+    );
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.addChild(target);
+      state.transcriptContainer.addChild(other);
+      state.transcriptContainer.toggleToolOutputExpansion();
+      await expectComponentCopyGestures(state.transcriptContainer, 32, `${name} ${source}`, logicalLineRange, name);
+    } finally {
+      target.dispose();
+      other.dispose();
+      state.ui.stop();
+    }
+  });
+
+  it('renders expanded group tree guides outside the selectable content', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const { state, vt } = await mountFullscreen();
+    try {
+      groupTranscript(state);
+      const thinking = new ThinkingComponent('reasoning', true, 'finalized');
+      thinking.finalize({ known: true, ms: 3000 });
+      state.transcriptContainer.addChild(thinking);
+      state.transcriptContainer.addChild(new ToolCallComponent(
+        { id: 'tree-read', name: 'Read', args: { path: '/work/a.ts' } },
+        { tool_call_id: 'tree-read', output: 'content', is_error: false },
+      ));
+      state.transcriptContainer.addChild(new ToolCallComponent(
+        { id: 'tree-bash', name: 'Bash', args: { command: 'pnpm test' } },
+        { tool_call_id: 'tree-bash', output: 'passed', is_error: false },
+      ));
+      state.transcriptContainer.toggleGroup(thinking);
+      const alt = state.ui as TuiAltScreen;
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const titleRow = rows.findIndex((row) => row.includes('● Thought for 3s,'));
+      const firstRow = rows.findIndex((row) => row.includes('├ Thought for 3s'));
+      const lastRow = rows.findIndex((row) => row.includes('└ Bash pnpm test'));
+      expect(titleRow).toBeGreaterThanOrEqual(0);
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(lastRow).toBeGreaterThan(firstRow);
+      expect(rows[firstRow]!.indexOf('├')).toBe(rows[titleRow]!.indexOf('●'));
+      const firstColumn = rows[firstRow]!.indexOf('Thought');
+      const lastColumn = rows[lastRow]!.indexOf('Bash pnpm test') + 'Bash pnpm test'.length - 1;
+
+      vt.sendInput(`\u001B[<0;${firstColumn + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${lastRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${lastRow + 1}m`);
+
+      await vi.waitFor(() => {
+        expect(clipboardText.copyTextToClipboard).toHaveBeenCalledWith('Thought for 3s\nRead /work/a.ts\nBash pnpm test');
+      });
+      expect(highlightedText(alt.getScreenLines()[firstRow]!).join('')).not.toContain('├');
+      expect(highlightedText(alt.getScreenLines()[lastRow]!).join('')).not.toContain('└');
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('copies group tail content without highlighting its tree guide', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const { state, vt } = await mountFullscreen();
+    try {
+      groupTranscript(state);
+      const timeline = new TurnTimeline();
+      state.transcriptContainer.setTimeline(timeline);
+      const thinking = new ThinkingComponent('reasoning', true, 'live');
+      state.transcriptContainer.addChild(thinking);
+      timeline.turnStarted();
+      timeline.thinkingDelta('Tail body');
+      const alt = state.ui as TuiAltScreen;
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const tailRow = rows.findIndex((row) => row.includes('└ Tail body'));
+      expect(tailRow).toBeGreaterThanOrEqual(0);
+      const firstColumn = rows[tailRow]!.indexOf('Tail body');
+      const lastColumn = firstColumn + 'Tail body'.length - 1;
+
+      vt.sendInput(`\u001B[<0;${firstColumn + 1};${tailRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${tailRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${tailRow + 1}m`);
+
+      await vi.waitFor(() => {
+        expect(clipboardText.copyTextToClipboard).toHaveBeenCalledWith('Tail body');
+      });
+      alt.renderNow();
+      await vt.flush();
+      expect(highlightedText(alt.getScreenLines()[tailRow]!).join('')).toBe('Tail body');
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('keeps left-gutter drags out of selection while clicks toggle a group', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const thinking = new ThinkingComponent('reasoning', true, 'finalized');
+    thinking.finalize({ known: true, ms: 3000 });
+    const { state, vt } = await mountFullscreen();
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.addChild(thinking);
+      const alt = state.ui as TuiAltScreen;
+      alt.renderNow();
+      await vt.flush();
+      let rows = screenRows(vt);
+      let titleRow = rows.findIndex((row) => row.includes('Thought for 3s'));
+      expect(titleRow).toBeGreaterThanOrEqual(0);
+      expect(rows.some((row) => row.includes('reasoning'))).toBe(false);
+      let gutterColumn = CHROME_GUTTER;
+
+      vt.sendInput(`\u001B[<0;${gutterColumn + 1};${titleRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${gutterColumn + 8};${titleRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${gutterColumn + 8};${titleRow + 1}m`);
+      await vt.waitForRender();
+      expect(alt.hasActiveSelection()).toBe(false);
+      expect(clipboardText.copyTextToClipboard).not.toHaveBeenCalled();
+      expect(screenRows(vt).some((row) => row.includes('reasoning'))).toBe(false);
+
+      vt.sendInput(`\u001B[<0;${gutterColumn + 1};${titleRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${gutterColumn + 1};${titleRow + 1}m`);
+      await vt.waitForRender();
+      expect(screenRows(vt).some((row) => row.includes('reasoning'))).toBe(true);
+      expect(alt.hasActiveSelection()).toBe(false);
+
+      rows = screenRows(vt);
+      titleRow = rows.findIndex((row) => row.includes('Thought for 3s'));
+      gutterColumn = CHROME_GUTTER;
+      vt.sendInput(`\u001B[<0;${gutterColumn + 1};${titleRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${gutterColumn + 8};${titleRow + 2}M`);
+      vt.sendInput(`\u001B[<0;${gutterColumn + 8};${titleRow + 2}m`);
+      await vt.waitForRender();
+      expect(alt.hasActiveSelection()).toBe(false);
+      expect(screenRows(vt).some((row) => row.includes('reasoning'))).toBe(true);
+
+      vt.sendInput(`\u001B[<0;${gutterColumn + 1};${titleRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${gutterColumn + 1};${titleRow + 1}m`);
+      await vt.waitForRender();
+      expect(screenRows(vt).some((row) => row.includes('reasoning'))).toBe(false);
+      expect(clipboardText.copyTextToClipboard).not.toHaveBeenCalled();
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('copies only content across Thought, groups, blank lines, and Assistant', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const thinking = new ThinkingComponent('thought alpha\n\nthought beta', true, 'finalized');
+    thinking.finalize({ known: true, ms: 3000 });
+    const read = new ToolCallComponent(
+      { id: 'region-read', name: 'Read', args: { path: '/work/a.ts' } },
+      { tool_call_id: 'region-read', output: 'content', is_error: false },
+    );
+    const bash = new ToolCallComponent(
+      { id: 'region-bash', name: 'Bash', args: { command: 'pnpm test' } },
+      { tool_call_id: 'region-bash', output: 'passed', is_error: false },
+    );
+    const assistant = new AssistantMessageComponent();
+    const { state, vt } = await mountFullscreen();
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.addChild(thinking);
+      state.transcriptContainer.addChild(read);
+      state.transcriptContainer.addChild(bash);
+      state.transcriptContainer.addChild(assistant);
+      assistant.updateContent('assistant alpha\n\nassistant beta');
+      thinking.setExpanded(true);
+      state.transcriptContainer.toggleGroup(thinking);
+      const alt = state.ui as TuiAltScreen;
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((row) => row.includes('thought alpha'));
+      const lastRow = rows.findIndex((row) => row.includes('assistant beta'));
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(lastRow).toBeGreaterThan(firstRow);
+      expect(rows.slice(firstRow, lastRow + 1).some((row) => row.trim() === '')).toBe(true);
+      expect(rows.slice(firstRow, lastRow + 1).some((row) => row.includes('├ Read /work/a.ts'))).toBe(true);
+      const firstColumn = rows[firstRow]!.indexOf('thought alpha');
+      const lastColumn = rows[lastRow]!.indexOf('assistant beta') + 'assistant beta'.length - 1;
+
+      vt.sendInput(`\u001B[<0;${firstColumn + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${lastRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${lastRow + 1}m`);
+      await vi.waitFor(() => {
+        expect(clipboardText.copyTextToClipboard).toHaveBeenCalled();
+      });
+      const copied = clipboardText.copyTextToClipboard.mock.calls.at(-1)?.[0];
+      expect(copied).toBe(
+        'thought alpha\n\nthought beta\nRead /work/a.ts\nBash pnpm test\n\nassistant alpha\n\nassistant beta',
+      );
+    } finally {
+      read.dispose();
+      bash.dispose();
+      state.ui.stop();
+    }
+  });
+
+  it('clamps transcript drags entering the left gutter and scrollbar column', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const { state, vt } = await mountFullscreen();
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.addChild(new UserMessageComponent('alpha\n\nbeta'));
+      state.transcriptContainer.addChild(new Text('body\n'.repeat(40), 0, 0));
+      const alt = state.ui as TuiAltScreen;
+      alt.renderNow();
+      alt.scrollToTop();
+      await vt.waitForRender();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((row) => row.includes('alpha'));
+      const lastRow = rows.findIndex((row) => row.includes('beta'));
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(lastRow).toBeGreaterThan(firstRow);
+      const firstColumn = rows[firstRow]!.indexOf('alpha');
+      const lastColumn = rows[lastRow]!.indexOf('beta') + 'beta'.length - 1;
+
+      vt.sendInput(`\u001B[<0;${firstColumn + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${WIDTH};${lastRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${WIDTH};${lastRow + 1}m`);
+      await vi.waitFor(() => {
+        expect(clipboardText.copyTextToClipboard).toHaveBeenCalledWith('alpha\n\nbeta');
+      });
+      expect(alt.getScreenLines().every((line) => highlightedText(line).every((text) => !/[❯│┃]/u.test(text)))).toBe(true);
+
+      alt.resetTextSelection();
+      clipboardText.copyTextToClipboard.mockClear();
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${lastRow + 1}M`);
+      vt.sendInput(`\u001B[<32;1;${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<0;1;${firstRow + 1}m`);
+      await vi.waitFor(() => {
+        expect(clipboardText.copyTextToClipboard).toHaveBeenCalledWith('alpha\n\nbeta');
+      });
+      expect(alt.getScreenLines().every((line) => highlightedText(line).every((text) => !/[❯│┃]/u.test(text)))).toBe(true);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('keeps scrollbar track gestures from creating or extending text selections', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const { state, vt } = await mountFullscreen();
+    try {
+      groupTranscript(state);
+      state.transcriptContainer.addChild(
+        new Text(Array.from({ length: 80 }, (_, index) => `line ${index + 1}`).join('\n'), 0, 0),
+      );
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      alt.renderNow();
+      alt.scrollToTop();
+      await vt.waitForRender();
+      vt.sendInput(`\u001B[<35;${WIDTH};2M`);
+      await vt.waitForRender();
+      const editorTop = screenRows(vt).findIndex((row) => row.includes('╭'));
+      expect(editorTop).toBeGreaterThan(1);
+      const trackRow = editorTop - 1;
+      const initialTop = alt.viewportTop;
+
+      vt.sendInput(`\u001B[<0;${WIDTH};${trackRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${WIDTH};${trackRow + 1}m`);
+      await vt.waitForRender();
+      expect(alt.viewportTop).toBeGreaterThan(initialTop);
+      expect(alt.hasActiveSelection()).toBe(false);
+      expect(await alt.copyActiveSelectionToClipboard()).toBe(false);
+
+      alt.scrollToTop();
+      await vt.waitForRender();
+      const rows = screenRows(vt);
+      const textRow = rows.findIndex((row) => row.includes('line 1'));
+      const textColumn = rows[textRow]!.indexOf('line 1');
+      vt.sendInput(`\u001B[<0;${textColumn + 1};${textRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${textColumn + 6};${textRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${textColumn + 6};${textRow + 1}m`);
+      await vt.waitForRender();
+      expect(alt.hasActiveSelection()).toBe(true);
+      expect(await alt.copyActiveSelectionToClipboard()).toBe(true);
+      expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith('line 1');
+      clipboardText.copyTextToClipboard.mockClear();
+
+      const topBeforeDrag = alt.viewportTop;
+      vt.sendInput(`\u001B[<0;${WIDTH};${trackRow + 1}M`);
+      await vt.waitForRender();
+      const pressedTop = alt.viewportTop;
+      expect(pressedTop).toBeGreaterThan(topBeforeDrag);
+      vt.sendInput(`\u001B[<32;${WIDTH};2M`);
+      vt.sendInput(`\u001B[<0;${WIDTH};2m`);
+      await vt.waitForRender();
+      expect(alt.viewportTop).toBeLessThan(pressedTop);
+      expect(alt.hasActiveSelection()).toBe(false);
+      expect(clipboardText.copyTextToClipboard).not.toHaveBeenCalled();
+      const releasedTop = alt.viewportTop;
+      vt.sendInput(`\u001B[<35;${textColumn + 6};${textRow + 1}M`);
+      await vt.waitForRender();
+      expect(alt.viewportTop).toBe(releasedTop);
+      expect(alt.hasActiveSelection()).toBe(false);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('preserves soft-wrapped assistant dragging, double-click words, and triple-click lines', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    clipboardText.copyTextToClipboard.mockResolvedValueOnce('native');
+    const { state, vt } = await mountFullscreen();
+    const source = 'A'.repeat(WIDTH);
+    const assistant = new AssistantMessageComponent();
+    state.transcriptContainer.addChild(assistant);
+    assistant.updateContent(source);
+    const alt = state.ui as TuiAltScreen;
+    try {
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((row) => row.includes('A'.repeat(100)));
+      const secondRow = rows.findIndex((row, index) => index > firstRow && row.includes('A'));
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(secondRow).toBeGreaterThan(firstRow);
+      const firstColumn = rows[firstRow]!.indexOf('A');
+      const lastColumn = rows[secondRow]!.lastIndexOf('A');
+
+      vt.sendInput(`\u001B[<0;${firstColumn + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastColumn + 1};${secondRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastColumn + 1};${secondRow + 1}m`);
+      await vi.waitFor(() => {
+        expect(clipboardText.copyTextToClipboard).toHaveBeenCalledWith(source);
+      });
+      for (const row of [firstRow, secondRow]) {
+        const column = rows[row]!.indexOf('A');
+        const expectedWord = rows[row]!.match(/A+/)?.[0];
+        expect(expectedWord).toBeDefined();
+        alt.resetTextSelection();
+        clipboardText.copyTextToClipboard.mockClear();
+        for (let click = 0; click < 2; click++) {
+          vt.sendInput(`\u001B[<0;${column + 1};${row + 1}M`);
+          vt.sendInput(`\u001B[<0;${column + 1};${row + 1}m`);
+        }
+        await vi.waitFor(() => {
+          expect(clipboardText.copyTextToClipboard).toHaveBeenCalledWith(expectedWord);
+        });
+        alt.resetTextSelection();
+        clipboardText.copyTextToClipboard.mockClear();
+        for (let click = 0; click < 3; click++) {
+          vt.sendInput(`\u001B[<0;${column + 1};${row + 1}M`);
+          vt.sendInput(`\u001B[<0;${column + 1};${row + 1}m`);
+        }
+        await vi.waitFor(() => {
+          expect(clipboardText.copyTextToClipboard).toHaveBeenCalledWith(source);
+        });
+      }
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('selects a complete soft-wrapped user message when triple-clicking either visual row', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const source = '渲染一个 Markdown 表格，内部随便填写一些内容。'.repeat(6);
+    const { state, vt } = await mountFullscreen();
+    try {
+      state.transcriptContainer.addChild(new UserMessageComponent(source));
+      const alt = state.ui as TuiAltScreen;
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((row) => row.includes('渲染'));
+      const secondRow = firstRow + 1;
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(rows[secondRow]?.trim()).not.toBe('');
+      for (const row of [firstRow, secondRow]) {
+        clipboardText.copyTextToClipboard.mockClear();
+        const column = row === firstRow ? rows[row]!.indexOf('渲') : rows[row]!.search(/\S/);
+        for (let click = 0; click < 3; click++) {
+          vt.sendInput(`\u001B[<0;${column + 1};${row + 1}M`);
+          vt.sendInput(`\u001B[<0;${column + 1};${row + 1}m`);
+        }
+        await vi.waitFor(() => {
+          expect(clipboardText.copyTextToClipboard).toHaveBeenCalledWith(source);
+        });
+      }
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('keeps wrapped status text out of message decoration columns', async () => {
+    const { state, vt } = await mountFullscreen();
+    try {
+      vt.resize(60, HEIGHT);
+      await vt.waitForRender();
+      state.transcriptContainer.addChild(
+        new StatusMessageComponent(
+          'Routine edits and commands run automatically; risky actions, questions, and plans still ask.',
+        ),
+      );
+      const alt = state.ui as TuiAltScreen;
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((row) => row.includes('Routine edits'));
+      const continuationRow = firstRow + 1;
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(rows[continuationRow]?.trim()).not.toBe('');
+      expect(rows[continuationRow]!.search(/\S/)).toBe(rows[firstRow]!.indexOf('Routine edits'));
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('completes right-click copy after unverified OSC 52 delivery', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    clipboardText.copyTextToClipboard.mockResolvedValueOnce('osc52');
+    const { state, vt } = await mountFullscreen();
+    const alt = state.ui as TuiAltScreen;
+    try {
+      alt.setCopyOnSelect(false);
+      alt.setCopyOnRightClick(true);
+      state.transcriptContainer.addChild(new Text('hello world', 0, 0));
+      alt.renderNow();
+      await vt.flush();
+      const row = screenRows(vt).findIndex((line) => line.includes('hello world'));
+      const col = screenRows(vt)[row]!.indexOf('hello world');
+
+      vt.sendInput(`\u001B[<0;${col + 1};${row + 1}M`);
+      vt.sendInput(`\u001B[<32;${col + 11};${row + 1}M`);
+      vt.sendInput(`\u001B[<0;${col + 11};${row + 1}m`);
+      await vt.waitForRender();
+      expect(clipboardText.copyTextToClipboard).not.toHaveBeenCalled();
+
+      vt.sendInput(`\u001B[<2;${col + 11};${row + 1}M`);
+      vt.sendInput(`\u001B[<2;${col + 11};${row + 1}m`);
+
+      await vi.waitFor(() => {
+        expect(alt.hasActiveSelection()).toBe(false);
+        expect(screenRows(vt).join('\n')).toContain('Copied via terminal');
+      });
+      expect(clipboardText.copyTextToClipboard).toHaveBeenCalledOnce();
+      expect(clipboardText.copyTextToClipboard).toHaveBeenCalledWith('hello world');
+    } finally {
+      state.ui.stop();
+    }
   });
 
   it('summarizes only the current message, jumps to its start, and searches the original text', async () => {
@@ -354,7 +1612,7 @@ describe('fullscreen layout', () => {
     alt.stop();
   });
 
-  it('keeps copied text unchanged when a scroll toggles the pill after selection', async () => {
+  it('keeps selection content stable across scrolling, sticky pill, resize, and Jump to bottom', async () => {
     const { state, vt } = await mountFullscreen();
     const entry: TranscriptEntry = {
       id: 'user',
@@ -393,6 +1651,12 @@ describe('fullscreen layout', () => {
     alt.scrollBy(-1);
     await vt.waitForRender();
     expect(pillLines(state)).toEqual([]);
+    await alt.copyActiveSelectionToClipboard();
+    expect(copy).toHaveBeenCalledWith('alpha');
+    copy.mockClear();
+    vt.resize(WIDTH - 20, HEIGHT);
+    await vt.waitForRender();
+    expect(screenRows(vt).some((row) => row.includes('Jump to bottom'))).toBe(true);
     await alt.copyActiveSelectionToClipboard();
     expect(copy).toHaveBeenCalledWith('alpha');
     alt.stop();
@@ -465,7 +1729,7 @@ describe('fullscreen layout', () => {
       vt.resize(60, HEIGHT);
       await vt.waitForRender();
       expect(measure).toHaveBeenCalledTimes(1);
-      expect(measure).toHaveBeenCalledWith('latest question', 60 - CHROME_GUTTER * 2, undefined);
+      expect(measure).toHaveBeenCalledWith('latest question', 60 - CHROME_GUTTER * 2 - 1, undefined);
       vt.sendInput('\u001B[<0;5;1M');
       vt.sendInput('\u001B[<0;5;1m');
       await vt.waitForRender();
@@ -666,7 +1930,7 @@ describe('fullscreen layout', () => {
     vt.sendInput('\u001B[<0;5;4m');
     await vt.waitForRender();
     expect(clicks.at(-1)?.y).toBe(0);
-    expect(clicks.at(-1)?.width).toBe(WIDTH - CHROME_GUTTER * 2);
+    expect(clicks.at(-1)?.width).toBe(WIDTH - CHROME_GUTTER * 2 - 1);
     alt.stop();
   });
 
@@ -1713,5 +2977,671 @@ describe('fullscreen layout', () => {
     expect(responses).toEqual([{ response: 'rejected', feedback: undefined, selected_label: undefined }]);
 
     state.ui.stop();
+  });
+
+  it('omits the editor border and prompt gutter from dragged selections', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('hello');
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const top = rows.findIndex((line) => line.includes('╭'));
+      const bottom = rows.findIndex((line) => line.includes('╰'));
+      expect(top).toBeGreaterThanOrEqual(0);
+      expect(bottom).toBeGreaterThan(top);
+      const startColumn = rows[top]!.indexOf('╭');
+      const endColumn = rows[bottom]!.lastIndexOf('╯');
+
+      vt.sendInput(`\u001B[<0;${startColumn + 1};${top + 1}M`);
+      vt.sendInput(`\u001B[<32;${endColumn + 1};${bottom + 1}M`);
+      vt.sendInput(`\u001B[<0;${endColumn + 1};${bottom + 1}m`);
+      await vt.waitForRender();
+
+      expect(await alt.copyActiveSelectionToClipboard()).toBe(true);
+      const copied = clipboardText.copyTextToClipboard.mock.calls.at(-1)?.[0];
+      expect(copied).toBe('hello');
+      expect(copied).not.toMatch(/[╭╮╰╯│─>]/u);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it.each([
+    [4, ' a│', ' b│', ['a'], ['b']],
+    [6, ' │ab│', ' │ab│', ['ab'], ['ab']],
+    [8, ' │ ab │', ' │ ab │', ['ab'], ['ab']],
+  ])(
+    'highlights only docked editor text dragged at width %i',
+    async (width, firstLine, lastLine, firstHighlight, lastHighlight) => {
+      clipboardText.copyTextToClipboard.mockClear();
+      const { state, vt } = await mountFullscreen();
+      try {
+        const alt = state.ui as TuiAltScreen;
+        alt.setCopyOnSelect(false);
+        state.editor.setText('ab');
+        state.editor.focused = false;
+        vt.resize(width, HEIGHT);
+        alt.renderNow();
+        await vt.flush();
+        const rows = screenRows(vt);
+        const firstRow = rows.findIndex((line) => line === firstLine);
+        const lastRow = rows.findIndex((line) => line === lastLine);
+        expect(firstRow).toBeGreaterThanOrEqual(0);
+        expect(lastRow).toBeGreaterThanOrEqual(firstRow);
+        const textStart = rows[firstRow]!.indexOf('a');
+        const textEnd = rows[lastRow]!.indexOf('b');
+
+        vt.sendInput(`\u001B[<0;${textStart + 1};${firstRow + 1}M`);
+        vt.sendInput(`\u001B[<32;${textEnd + 2};${lastRow + 1}M`);
+        vt.sendInput(`\u001B[<0;${textEnd + 2};${lastRow + 1}m`);
+        await vt.waitForRender();
+
+        expect(highlightedText(alt.getScreenLines()[firstRow]!)).toEqual(firstHighlight);
+        expect(highlightedText(alt.getScreenLines()[lastRow]!)).toEqual(lastHighlight);
+        expect(await alt.copyActiveSelectionToClipboard()).toBe(true);
+        expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith('ab');
+      } finally {
+        state.ui.stop();
+      }
+    },
+  );
+
+  it('clips docked editor selection safely at width 1 without highlighting decorations', async () => {
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('ab');
+      state.editor.focused = false;
+      vt.resize(1, HEIGHT);
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      expect(rows.every((line) => line === '')).toBe(true);
+
+      vt.sendInput('\u001B[<0;1;1M');
+      vt.sendInput(`\u001B[<32;1;${HEIGHT}M`);
+      vt.sendInput(`\u001B[<0;1;${HEIGHT}m`);
+      await vt.waitForRender();
+
+      for (const line of alt.getScreenLines()) {
+        expect(stripAnsi(line).length).toBeLessThanOrEqual(1);
+        expect(highlightedText(line)).toEqual([]);
+      }
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('keeps search focused while selecting or clicking docked editor text', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('hello world');
+      alt.renderNow();
+      await vt.flush();
+      vt.sendInput('\u001B[102;6u');
+      vt.sendInput('find');
+      await vt.waitForRender();
+      const searchFocus = alt.getFocusedComponent();
+      const searchCursor = vt.getCursorPosition();
+      const editorCursor = state.editor.getCursor();
+      expect(searchFocus).not.toBe(state.editor);
+      expect(state.editor.focused).toBe(false);
+      const rows = screenRows(vt);
+      const row = rows.findIndex((line) => line.includes('hello world'));
+      expect(row).toBeGreaterThanOrEqual(0);
+      const start = rows[row]!.indexOf('hello');
+      expect(start).toBeGreaterThanOrEqual(0);
+
+      vt.sendInput(`\u001B[<0;${start + 1};${row + 1}M`);
+      vt.sendInput(`\u001B[<32;${start + 5};${row + 1}M`);
+      vt.sendInput(`\u001B[<0;${start + 5};${row + 1}m`);
+      await vt.waitForRender();
+
+      expect(alt.getFocusedComponent()).toBe(searchFocus);
+      expect(state.editor.getCursor()).toEqual(editorCursor);
+      expect(vt.getCursorPosition()).toEqual(searchCursor);
+      expect(await alt.copyActiveSelectionToClipboard()).toBe(true);
+      expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith('hello');
+
+      vt.sendInput(`\u001B[<0;${start + 7};${row + 1}M`);
+      vt.sendInput(`\u001B[<0;${start + 7};${row + 1}m`);
+      await vt.waitForRender();
+
+      expect(alt.getFocusedComponent()).toBe(searchFocus);
+      expect(state.editor.focused).toBe(false);
+      expect(state.editor.getCursor()).toEqual(editorCursor);
+      expect(vt.getCursorPosition()).toEqual(searchCursor);
+      vt.sendInput('X');
+      await vt.waitForRender();
+      expect(state.editor.getText()).toBe('hello world');
+      expect(screenRows(vt).join('\n')).toContain('findX');
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('right-click paste replaces the selected search query without changing the editor', async () => {
+    clipboardText.readClipboardText.mockClear();
+    clipboardText.readClipboardText.mockResolvedValueOnce('replacement');
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('editor body');
+      alt.renderNow();
+      await vt.flush();
+      vt.sendInput('\u001B[102;6u');
+      vt.sendInput('alpha beta');
+      await vt.waitForRender();
+      const search = alt.getFocusedComponent() as Component & { getText(): string };
+      const rows = screenRows(vt);
+      const row = rows.findIndex((line) => line.includes('alpha beta'));
+      const start = rows[row]!.indexOf('beta');
+      expect(row).toBeGreaterThanOrEqual(0);
+      expect(start).toBeGreaterThanOrEqual(0);
+
+      vt.sendInput(`\u001B[<0;${start + 1};${row + 1}M`);
+      vt.sendInput(`\u001B[<32;${start + 4};${row + 1}M`);
+      vt.sendInput(`\u001B[<0;${start + 4};${row + 1}m`);
+      await vt.waitForRender();
+      expect(alt.hasActiveSelection()).toBe(true);
+      rightClick(vt, start + 3, row);
+
+      await vi.waitFor(() => {
+        expect(search.getText()).toBe('alpha replacement');
+      });
+      expect(alt.hasActiveSelection()).toBe(false);
+      expect(state.editor.getText()).toBe('editor body');
+      expect(clipboardText.readClipboardText).toHaveBeenCalledTimes(1);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('right-click paste replaces the selected editor text without changing the search query', async () => {
+    clipboardText.readClipboardText.mockClear();
+    clipboardText.readClipboardText.mockResolvedValueOnce('replacement');
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      alt.renderNow();
+      await vt.flush();
+      vt.sendInput('\u001B[102;6u');
+      vt.sendInput('search query');
+      await vt.waitForRender();
+      const search = alt.getFocusedComponent() as Component & { getText(): string };
+      vt.sendInput('\u001B');
+      state.editor.setText('alpha beta');
+      alt.renderNow();
+      await vt.flush();
+      expect(alt.getFocusedComponent()).toBe(state.editor);
+      const rows = screenRows(vt);
+      const row = rows.findIndex((line) => line.includes('alpha beta'));
+      const start = rows[row]!.indexOf('beta');
+      expect(row).toBeGreaterThanOrEqual(0);
+      expect(start).toBeGreaterThanOrEqual(0);
+
+      vt.sendInput(`\u001B[<0;${start + 1};${row + 1}M`);
+      vt.sendInput(`\u001B[<32;${start + 4};${row + 1}M`);
+      vt.sendInput(`\u001B[<0;${start + 4};${row + 1}m`);
+      await vt.waitForRender();
+      expect(alt.hasActiveSelection()).toBe(true);
+      rightClick(vt, start + 3, row);
+
+      await vi.waitFor(() => {
+        expect(state.editor.getText()).toBe('alpha replacement');
+      });
+      expect(alt.hasActiveSelection()).toBe(false);
+      expect(search.getText()).toBe('search query');
+      expect(clipboardText.readClipboardText).toHaveBeenCalledTimes(1);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('omits virtual space after docked editor text from dragged highlights', async () => {
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('ddd');
+      state.editor.focused = false;
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const row = rows.findIndex((line) => line.includes('ddd'));
+      expect(row).toBeGreaterThanOrEqual(0);
+      const line = rows[row]!;
+      const textStart = line.indexOf('ddd');
+      const textEnd = textStart + 3;
+
+      vt.sendInput(`\u001B[<0;${textEnd + 6};${row + 1}M`);
+      vt.sendInput(`\u001B[<32;${textEnd + 11};${row + 1}M`);
+      vt.sendInput(`\u001B[<0;${textEnd + 11};${row + 1}m`);
+      await vt.waitForRender();
+      expect(highlightedText(alt.getScreenLines()[row]!).filter((text) => text !== ' ')).toEqual([]);
+
+      vt.sendInput(`\u001B[<0;${textEnd + 11};${row + 1}M`);
+      vt.sendInput(`\u001B[<32;${textStart + 1};${row + 1}M`);
+      vt.sendInput(`\u001B[<0;${textStart + 1};${row + 1}m`);
+      await vt.waitForRender();
+      expect(highlightedText(alt.getScreenLines()[row]!).filter((text) => text !== ' ')).toEqual(['ddd']);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('limits multiline docked editor highlights to content and selected newline cells', async () => {
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('ddd\neee\nfff');
+      state.editor.focused = false;
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((line) => line.includes('ddd'));
+      const middleRow = rows.findIndex((line) => line.includes('eee'));
+      const lastRow = rows.findIndex((line) => line.includes('fff'));
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(middleRow).toBeGreaterThan(firstRow);
+      expect(lastRow).toBeGreaterThan(middleRow);
+      const firstEnd = rows[firstRow]!.indexOf('ddd') + 3;
+      const lastEnd = rows[lastRow]!.indexOf('fff') + 3;
+
+      vt.sendInput(`\u001B[<0;${firstEnd + 6};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${lastEnd + 6};${lastRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${lastEnd + 6};${lastRow + 1}m`);
+      await vt.waitForRender();
+
+      for (const [row, expected] of [[firstRow, [' ']], [middleRow, ['eee ']], [lastRow, ['fff']]] as const) {
+        expect(highlightedText(alt.getScreenLines()[row]!)).toEqual(expected);
+      }
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('starts a logical multiline editor selection from the top frame', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('ddd\n');
+      state.editor.focused = false;
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((line) => line.includes('ddd'));
+      const topRow = rows.findIndex((line) => line.includes('╭'));
+      const emptyRow = firstRow + 1;
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(topRow).toBe(firstRow - 1);
+      const column = rows[firstRow]!.indexOf('ddd');
+
+      vt.sendInput(`\u001B[<0;${column + 1};${topRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${column + 1};${emptyRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${column + 1};${emptyRow + 1}m`);
+      await vt.waitForRender();
+
+      expect(highlightedText(alt.getScreenLines()[firstRow]!)).toEqual(['ddd ']);
+      expect(highlightedText(alt.getScreenLines()[emptyRow]!)).toEqual([' ']);
+      expect(await alt.copyActiveSelectionToClipboard()).toBe(true);
+      expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith('ddd\n');
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('keeps selected editor newlines and the empty-line endpoint visible when dragged outside', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('ddd\n');
+      state.editor.focused = false;
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((line) => line.includes('ddd'));
+      const emptyRow = firstRow + 1;
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(rows[emptyRow]).toContain('│');
+      const column = rows[firstRow]!.indexOf('ddd');
+
+      vt.sendInput(`\u001B[<0;${column + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${column + 1};${emptyRow + 1}M`);
+      await vt.waitForRender();
+
+      expect(highlightedText(alt.getScreenLines()[firstRow]!)).toEqual(['ddd ']);
+      expect(highlightedText(alt.getScreenLines()[emptyRow]!)).toEqual([' ']);
+
+      vt.sendInput(`\u001B[<32;${column + 1};${HEIGHT}M`);
+      await vt.waitForRender();
+      expect(highlightedText(alt.getScreenLines()[firstRow]!)).toEqual(['ddd ']);
+      expect(highlightedText(alt.getScreenLines()[emptyRow]!)).toEqual([' ']);
+      vt.sendInput(`\u001B[<0;${column + 1};${HEIGHT}m`);
+      await vt.waitForRender();
+      expect(highlightedText(alt.getScreenLines()[firstRow]!)).toEqual(['ddd ']);
+      expect(highlightedText(alt.getScreenLines()[emptyRow]!)).toEqual([' ']);
+      expect(await alt.copyActiveSelectionToClipboard()).toBe(true);
+      expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith('ddd\n');
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('starts a docked editor selection at the prompt without highlighting trailing space', async () => {
+    clipboardText.copyTextToClipboard.mockClear();
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('ddd');
+      state.editor.focused = false;
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const row = rows.findIndex((line) => line.includes('ddd'));
+      expect(row).toBeGreaterThanOrEqual(0);
+      const prompt = rows[row]!.indexOf('>');
+      const textStart = rows[row]!.indexOf('ddd');
+      expect(prompt).toBeGreaterThanOrEqual(0);
+      expect(textStart).toBeGreaterThan(prompt);
+
+      vt.sendInput(`\u001B[<0;${prompt + 1};${row + 1}M`);
+      vt.sendInput(`\u001B[<32;${WIDTH - 1};${row + 1}M`);
+      vt.sendInput(`\u001B[<0;${WIDTH - 1};${row + 1}m`);
+      await vt.waitForRender();
+
+      expect(highlightedText(alt.getScreenLines()[row]!)).toEqual(['ddd']);
+      expect(await alt.copyActiveSelectionToClipboard()).toBe(true);
+      expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith('ddd');
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('moves the docked editor caret to the active drag endpoint', async () => {
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('qqq\nwww\neee');
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((line) => line.includes('qqq'));
+      const secondRow = rows.findIndex((line) => line.includes('www'));
+      const thirdRow = rows.findIndex((line) => line.includes('eee'));
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(secondRow).toBeGreaterThan(firstRow);
+      expect(thirdRow).toBeGreaterThan(secondRow);
+      const start = rows[firstRow]!.indexOf('qqq');
+      const endpoint = rows[secondRow]!.indexOf('www') + 1;
+      expect(state.editor.getCursor()).toEqual({ line: 2, col: 3 });
+      expect(vt.getCursorPosition()).toEqual({ x: rows[thirdRow]!.indexOf('eee') + 3, y: thirdRow });
+
+      vt.sendInput(`\u001B[<0;${start + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${endpoint + 1};${secondRow + 1}M`);
+      await vt.waitForRender();
+
+      expect(state.editor.getCursor()).toEqual({ line: 1, col: 1 });
+      expect(vt.getCursorPosition()).toEqual({ x: endpoint, y: secondRow });
+      expect(highlightedText(alt.getScreenLines()[thirdRow]!)).toEqual([]);
+      vt.sendInput(`\u001B[<0;${endpoint + 1};${secondRow + 1}m`);
+      await vt.waitForRender();
+      expect(state.editor.getCursor()).toEqual({ line: 1, col: 1 });
+      expect(vt.getCursorPosition()).toEqual({ x: endpoint, y: secondRow });
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('immediately clears a dragged editor selection and shows one caret at the clicked position', async () => {
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('dddd\naaa\neee');
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((line) => line.includes('dddd'));
+      const thirdRow = rows.findIndex((line) => line.includes('eee'));
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(thirdRow).toBeGreaterThan(firstRow);
+      const start = rows[firstRow]!.indexOf('dddd') + 1;
+      const endpoint = start + 1;
+      const click = rows[thirdRow]!.indexOf('eee');
+      vt.sendInput(`\u001B[<0;${start + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${endpoint + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${endpoint + 1};${firstRow + 1}m`);
+      await vt.waitForRender();
+
+      vt.sendInput(`\u001B[<0;${click + 1};${thirdRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${click + 1};${thirdRow + 1}m`);
+      await new Promise<void>((resolve) => process.nextTick(resolve));
+
+      expect(state.editor.getCursor()).toEqual({ line: 2, col: 0 });
+      expect(alt.hasActiveSelection()).toBe(false);
+      expect(highlightedText(alt.getScreenLines()[firstRow]!)).toEqual([]);
+      expect(highlightedText(alt.getScreenLines()[thirdRow]!)).toEqual(['e']);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('replaces a dragged multiline editor selection with typed input', async () => {
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('first\nsecond\nthird');
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((line) => line.includes('first'));
+      const lastRow = rows.findIndex((line) => line.includes('third'));
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(lastRow).toBeGreaterThan(firstRow);
+      const start = rows[firstRow]!.indexOf('first') + 1;
+      const end = rows[lastRow]!.indexOf('third') + 3;
+      vt.sendInput(`\u001B[<0;${start + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${end + 1};${lastRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${end + 1};${lastRow + 1}m`);
+      await vt.waitForRender();
+
+      vt.sendInput('X');
+      await vt.waitForRender();
+
+      expect(state.editor.getText()).toBe('fXd');
+      expect(state.editor.getCursor()).toEqual({ line: 0, col: 2 });
+      expect(alt.hasActiveSelection()).toBe(false);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('deletes a dragged multiline selection in the docked editor', async () => {
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('first\nsecond\nthird');
+      alt.renderNow();
+      await vt.flush();
+      const rows = screenRows(vt);
+      const firstRow = rows.findIndex((line) => line.includes('first'));
+      const lastRow = rows.findIndex((line) => line.includes('third'));
+      expect(firstRow).toBeGreaterThanOrEqual(0);
+      expect(lastRow).toBeGreaterThan(firstRow);
+      const start = rows[firstRow]!.indexOf('first') + 1;
+      const end = rows[lastRow]!.indexOf('third') + 3;
+
+      vt.sendInput(`\u001B[<0;${start + 1};${firstRow + 1}M`);
+      vt.sendInput(`\u001B[<32;${end + 1};${lastRow + 1}M`);
+      vt.sendInput(`\u001B[<0;${end + 1};${lastRow + 1}m`);
+      await vt.waitForRender();
+      vt.sendInput('\u007F');
+      await vt.waitForRender();
+
+      expect(state.editor.getText()).toBe('fd');
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('deletes the complete horizontally scrolled search query after triple click through KimiTUI', async () => {
+    const { state, vt } = await mountFullscreen();
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      vt.sendInput('\u001B[102;6u');
+      vt.sendInput('abcdefghijklmnopqrstuvwxyz0123456789');
+      await vt.waitForRender();
+      const rows = screenRows(vt);
+      const row = rows.findIndex((line) => line.includes('No matches'));
+      expect(row).toBeGreaterThanOrEqual(0);
+      const line = rows[row]!;
+      const borderIndex = line.indexOf('│');
+      expect(borderIndex).toBeGreaterThanOrEqual(0);
+      const clickColumn = borderIndex + 3;
+      for (let click = 0; click < 3; click++) {
+        vt.sendInput(`\u001B[<0;${clickColumn};${row + 1}M`);
+        vt.sendInput(`\u001B[<0;${clickColumn};${row + 1}m`);
+        await vt.waitForRender();
+      }
+      await vt.waitForRender();
+
+      vt.sendInput('\u001B[3~');
+      await vt.waitForRender();
+      expect(screenRows(vt).some((line) => line.includes('Find in transcript'))).toBe(true);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('replaces a search selection with bracketed paste through KimiTUI without changing the editor', async () => {
+    const { driver, vt } = mountFullscreenKimiTui();
+    const { state } = driver;
+    try {
+      const alt = state.ui as TuiAltScreen;
+      alt.setCopyOnSelect(false);
+      state.editor.setText('bottom\ndraft');
+      const editorCursor = state.editor.getCursor();
+      state.ui.requestRender();
+      await vt.waitForRender();
+
+      vt.sendInput('\u001B[102;6u');
+      vt.sendInput('hello world');
+      await vt.waitForRender();
+      const searchFocus = alt.getFocusedComponent();
+      expect(searchFocus).not.toBe(state.editor);
+      const rows = screenRows(vt);
+      const row = rows.findIndex((line) => line.includes('hello world'));
+      expect(row).toBeGreaterThanOrEqual(0);
+      const start = rows[row]!.indexOf('world');
+      expect(start).toBeGreaterThanOrEqual(0);
+      vt.sendInput(`\u001B[<0;${start + 1};${row + 1}M`);
+      vt.sendInput(`\u001B[<32;${start + 5};${row + 1}M`);
+      vt.sendInput(`\u001B[<0;${start + 5};${row + 1}m`);
+      await vt.waitForRender();
+      expect(alt.hasActiveSelection()).toBe(true);
+
+      vt.sendInput('\u001B[200~PASTE\u001B[201~');
+      await vt.waitForRender();
+
+      expect(screenRows(vt).some((line) => line.includes('hello PASTE'))).toBe(true);
+      expect(screenRows(vt).some((line) => line.includes('hello worldPASTE'))).toBe(false);
+      expect(state.editor.getText()).toBe('bottom\ndraft');
+      expect(state.editor.getCursor()).toEqual(editorCursor);
+      expect(state.editor.focused).toBe(false);
+      expect(alt.getFocusedComponent()).toBe(searchFocus);
+      expect(alt.hasActiveSelection()).toBe(false);
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('deletes a dragged selection in the docked editor', async () => {
+    const { state, vt } = await mountFullscreen();
+    try {
+      (state.ui as TuiAltScreen).setCopyOnSelect(false);
+      state.editor.setText('hello world');
+      state.ui.requestRender();
+      await vt.waitForRender();
+      const rows = screenRows(vt);
+      const row = rows.findIndex((line) => line.includes('hello world'));
+      expect(row).toBeGreaterThanOrEqual(0);
+      const start = rows[row]!.indexOf('world');
+      expect(start).toBeGreaterThanOrEqual(0);
+      vt.sendInput(`\u001B[<0;${start + 1};${row + 1}M`);
+      vt.sendInput(`\u001B[<32;${start + 5};${row + 1}M`);
+      vt.sendInput(`\u001B[<0;${start + 5};${row + 1}m`);
+      await vt.waitForRender();
+      vt.sendInput('\u007F');
+      vt.sendInput('X');
+      await vt.waitForRender();
+
+      expect(state.editor.getText()).toBe('hello X');
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('deletes the current logical line on triple click in the docked editor', async () => {
+    const { state, vt } = await mountFullscreen();
+    try {
+      (state.ui as TuiAltScreen).setCopyOnSelect(false);
+      state.editor.setText('first\nsecond');
+      state.ui.requestRender();
+      await vt.waitForRender();
+      const rows = screenRows(vt);
+      const row = rows.findIndex((line) => line.includes('second'));
+      expect(row).toBeGreaterThanOrEqual(0);
+      const column = rows[row]!.indexOf('second') + 2;
+      for (let click = 0; click < 3; click++) {
+        vt.sendInput(`\u001B[<0;${column};${row + 1}M`);
+        vt.sendInput(`\u001B[<0;${column};${row + 1}m`);
+      }
+      await vt.waitForRender();
+      vt.sendInput('\u007F');
+      await vt.waitForRender();
+
+      expect(state.editor.getText()).toBe('first\n');
+    } finally {
+      state.ui.stop();
+    }
+  });
+
+  it('selects and deletes all docked editor text with Ctrl+Shift+A', async () => {
+    const { state, vt } = await mountFullscreen();
+    try {
+      (state.ui as TuiAltScreen).setCopyOnSelect(false);
+      state.editor.setText('first\nsecond');
+      state.ui.requestRender();
+      await vt.waitForRender();
+      vt.sendInput('\u001B[97;6u');
+      await vt.waitForRender();
+      vt.sendInput('\u007F');
+      await vt.waitForRender();
+
+      expect(state.editor.getText()).toBe('');
+    } finally {
+      state.ui.stop();
+    }
   });
 });

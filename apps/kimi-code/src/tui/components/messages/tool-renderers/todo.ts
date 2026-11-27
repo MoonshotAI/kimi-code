@@ -1,7 +1,10 @@
-import { truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
+import { renderComponentLines, truncateToWidth, visibleWidth, type Component } from '@moonshot-ai/pi-tui';
 
 import { OUTCOME_ROW_INDENT, TRUNCATION_ELLIPSIS } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
+
+import type { TranscriptRowParts } from '../transcript-row-layout';
+import { splitToolTranscriptRow, toolTranscriptGutterWidths } from './transcript-row';
 
 export type TodoStatus = 'pending' | 'in_progress' | 'done';
 
@@ -118,6 +121,15 @@ export class TodoCardBody implements Component {
   ) {}
 
   invalidate(): void {}
+
+  selectionExclusions(width: number) {
+    return [{ start: 0, end: Math.min(visibleWidth(OUTCOME_ROW_INDENT), Math.max(0, width)) }];
+  }
+
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    const lines = renderComponentLines(this, width);
+    return splitToolTranscriptRow(this, lines, width, toolTranscriptGutterWidths(lines));
+  }
 
   render(width: number): string[] {
     const lines: string[] = [];

@@ -1,8 +1,9 @@
-import { ANIMATION_FRAME_INTERVAL_MS, AnimationFrameScheduler, visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
+import { ANIMATION_FRAME_INTERVAL_MS, AnimationFrameScheduler, renderComponentLines, renderLineTexts, visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
+import { flattenTranscriptRow } from '#/tui/components/messages/transcript-row-layout';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 
 const defaultChalkLevel = chalk.level;
@@ -46,6 +47,109 @@ describe('ThinkingComponent', () => {
     expect(lines[1]).toBe('● Thinking');
     expect(lines.join('\n')).not.toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
     expect(lines[2]?.trimEnd()).toBe('  working it out');
+  });
+
+  it('keeps soft-wrap identity across indented visual rows', () => {
+    const component = new ThinkingComponent('abcdefghijklmnopqrstuvwxyz', true, 'finalized');
+    const lines = renderComponentLines(component, 12).filter((line) => line.text.includes('abc') || line.text.includes('mnop'));
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0]?.softWrap?.[0]?.logicalLineId).toBe(lines[1]?.softWrap?.[0]?.logicalLineId);
+    expect(lines[1]?.softWrap?.[0]?.continuation).toBeDefined();
+
+    const content = component.renderTranscriptRow(12).contentLines.filter(
+      (line) => line.text.includes('abc') || line.text.includes('mnop'),
+    );
+    expect(content[0]?.softWrap?.[0]?.logicalLineId).toBe(content[1]?.softWrap?.[0]?.logicalLineId);
+    expect(content[1]?.softWrap?.[0]?.continuation).toBeDefined();
+  });
+
+  it('separates live and finalized thinking rows while preserving fold and expand behavior', () => {
+    const component = new ThinkingComponent(longThinking, true, 'live');
+    const legacyLive = renderComponentLines(component, 80);
+    const live = component.renderTranscriptRow(80);
+
+    expect(live.contentLines.map((line) => strip(line.text).trimEnd())).toEqual([
+      '',
+      'Thinking',
+      'line6',
+      'line7',
+    ]);
+    expect(live.gutterLines.map((line) => strip(line.text))).toEqual(['', '● ', '  ', '  ']);
+    expect(renderLineTexts(flattenTranscriptRow(live, 80)).map((line) => strip(line).trimEnd())).toEqual(
+      renderLineTexts(legacyLive).map((line) => strip(line).trimEnd()),
+    );
+    expect(component.renderTranscriptRow(80)).toBe(live);
+
+    component.finalize({ known: false });
+    const collapsed = component.renderTranscriptRow(80);
+    expect(collapsed).not.toBe(live);
+    expect(collapsed.contentLines.map((line) => strip(line.text).trimEnd())).toEqual([
+      '',
+      'line1',
+      'line2',
+      '… (5 more lines, ctrl+o to expand)',
+    ]);
+    expect(collapsed.gutterLines.map((line) => strip(line.text))).toEqual(['', '● ', '  ', '  ']);
+
+    component.setExpanded(true);
+    const expanded = component.renderTranscriptRow(80);
+    expect(expanded).not.toBe(collapsed);
+    expect(expanded.contentLines.map((line) => strip(line.text).trimEnd())).toEqual([
+      '',
+      'line1',
+      'line2',
+      'line3',
+      'line4',
+      'line5',
+      'line6',
+      'line7',
+    ]);
+    expect(renderLineTexts(flattenTranscriptRow(expanded, 80)).map((line) => strip(line).trimEnd())).toEqual(
+      renderLineTexts(renderComponentLines(component, 80)).map((line) => strip(line).trimEnd()),
+    );
+  });
+
+  it('keeps opened thought titles and blank content lines in their respective regions', () => {
+    const component = new ThinkingComponent('line1\n\nline2\n\n', true, 'live');
+    component.setFinishedForm({ kind: 'opened', title: 'Thought for 5s' });
+    component.finalize({ known: true, ms: 5_000 });
+
+    const legacy = renderComponentLines(component, 80);
+    const parts = component.renderTranscriptRow(80);
+    expect(parts.contentLines.map((line) => strip(line.text).trimEnd())).toEqual([
+      '',
+      'Thought for 5s',
+      'line1',
+      '',
+      'line2',
+    ]);
+    expect(parts.gutterLines.map((line) => strip(line.text))).toEqual(['', '  ', '  ', '  ', '  ']);
+    expect(renderLineTexts(flattenTranscriptRow(parts, 80)).map((line) => strip(line).trimEnd())).toEqual(
+      renderLineTexts(legacy).map((line) => strip(line).trimEnd()),
+    );
+  });
+
+  it('renders transcript details as pure content and invalidates their cache', () => {
+    const component = new ThinkingComponent('first\nsecond', true, 'finalized');
+    const details = component.renderTranscriptRowDetail(80);
+
+    expect(details.map((line) => strip(line.text).trimEnd())).toEqual(['first', 'second']);
+    expect(component.renderTranscriptRowDetail(80)).toBe(details);
+    expect(component.renderRowDetail(80).map((line) => strip(line.text).trimEnd())).toEqual([
+      '  first',
+      '  second',
+    ]);
+
+    component.setText('updated');
+    const updated = component.renderTranscriptRowDetail(80);
+    expect(updated).not.toBe(details);
+    expect(updated.map((line) => strip(line.text).trimEnd())).toEqual(['updated']);
+    component.invalidate();
+    expect(component.renderTranscriptRowDetail(80)).not.toBe(updated);
+    expect(new ThinkingComponent('', true, 'finalized').renderTranscriptRowDetail(80)).toEqual([
+      { text: '' },
+    ]);
   });
 
   it('keeps live thinking height-limited to the tail', () => {

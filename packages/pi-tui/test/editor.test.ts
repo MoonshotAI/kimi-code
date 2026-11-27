@@ -6,6 +6,7 @@ import { describe, it, mock } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "../src/autocomplete.ts";
 import { Editor, wordWrapLine } from "../src/components/editor.ts";
+import { getKeybindings, KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "../src/keybindings.ts";
 import { PasteBurst } from "../src/paste-burst.ts";
 import { FAKE_CURSOR_START, renderFakeCursor, type TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
@@ -525,6 +526,130 @@ describe("Editor component", () => {
 			lines[0] = "mutated";
 			assert.deepStrictEqual(editor.getLines(), ["a", "b"]);
 		});
+
+		it("exits history browsing when moved to a document offset", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.addToHistory("old");
+			editor.handleInput("\x1b[A");
+			assert.strictEqual(editor.getText(), "old");
+
+			editor.moveCursorToOffset(3);
+			editor.handleInput("\x1b[B");
+
+			assert.strictEqual(editor.getText(), "old");
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 3 });
+		});
+
+		it("uses the last scrolled visual line for the select-all endpoint", () => {
+			const text = "one\ntwo\nthree\nfour\nfive\nlast-line";
+			const editor = new Editor(createTestTUI(20, 10), defaultEditorTheme);
+			editor.setText(text);
+			editor.render(20);
+
+			assert.deepStrictEqual(editor.getSelectAllSelection(), {
+				start: { row: 1, col: 0, offset: 0 },
+				end: { row: 5, col: 9, offset: text.length, boundary: true },
+			});
+		});
+	});
+
+	describe("Selection projection", () => {
+		it("round-trips wide and combining graphemes between cells and UTF-16 offsets", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { paddingX: 2 });
+			editor.setText("A你e\u0301🙂B");
+			editor.render(30);
+
+			for (const column of [3, 4]) {
+				assert.deepStrictEqual(editor.getSelectionOffsets(1, column), { start: 1, end: 2 });
+			}
+			for (const column of [6, 7]) {
+				assert.deepStrictEqual(editor.getSelectionOffsets(1, column), { start: 4, end: 6 });
+			}
+			assert.deepStrictEqual(editor.getSelectionPointForOffset(3, "backward"), { row: 1, col: 5, offset: 3 });
+			assert.deepStrictEqual(editor.getSelectionPointForOffset(3, "forward"), { row: 1, col: 6, offset: 3 });
+			assert.deepStrictEqual(editor.getSelectionPointForOffset(5, "backward"), { row: 1, col: 6, offset: 5 });
+			assert.deepStrictEqual(editor.getSelectionPointForOffset(5, "forward"), { row: 1, col: 8, offset: 5 });
+			for (const offset of [0, 1, 2, 4, 6, 7]) {
+				const point = editor.getSelectionPointForOffset(offset, "backward");
+				assert.ok(point);
+				assert.strictEqual(editor.getSelectionOffsets(point.row, point.col)?.start, offset);
+			}
+		});
+
+		it("uses forward and backward affinity at soft-wrap boundaries and reprojects after resize", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setText("abcdefgh");
+			editor.render(6);
+
+			assert.deepStrictEqual(editor.getSelectionPointForOffset(5, "forward"), { row: 2, col: 0, offset: 5 });
+			assert.deepStrictEqual(editor.getSelectionPointForOffset(5, "backward"), { row: 1, col: 5, offset: 5 });
+			assert.deepStrictEqual(editor.getSelectionPointForOffset(8, "backward"), { row: 2, col: 3, offset: 8 });
+
+			editor.render(20);
+			assert.deepStrictEqual(editor.getSelectionPointForOffset(5, "forward"), { row: 1, col: 5, offset: 5 });
+			assert.deepStrictEqual(editor.getSelectionPointForOffset(5, "backward"), { row: 1, col: 5, offset: 5 });
+		});
+
+		it("clamps offscreen logical endpoints to visible highlights without changing offsets", () => {
+			const text = "one\ntwo\nthree\nfour\nfive\nlast-line";
+			const editor = new Editor(createTestTUI(20, 10), defaultEditorTheme);
+			editor.setText(text);
+			editor.render(20);
+
+			assert.deepStrictEqual(editor.getSelectionPointForOffset(0, "forward"), { row: 1, col: 0, offset: 0 });
+			assert.deepStrictEqual(editor.getSelectionPointForOffset(text.length, "backward"), {
+				row: 5,
+				col: 9,
+				offset: text.length,
+			});
+
+			editor.moveCursorToOffset(0);
+			editor.render(20);
+			assert.deepStrictEqual(editor.getSelectionPointForOffset(text.length, "backward"), {
+				row: 5,
+				col: 4,
+				offset: text.length,
+			});
+		});
+
+		it("clamps stale rows against the current document before the next render", () => {
+			const editor = new Editor(createTestTUI(20, 10), defaultEditorTheme);
+			editor.setText("one\ntwo\nthree\nfour\nfive\nlast-line");
+			editor.render(20);
+			editor.setText("x");
+
+			assert.deepStrictEqual(editor.getClosestSelectionPoint(5, 99), {
+				row: 1,
+				col: 1,
+				offset: 1,
+				endOffset: 1,
+				boundary: true,
+			});
+			assert.strictEqual(editor.getSelectionOffsets(5, 0), undefined);
+			assert.strictEqual(editor.getSelectionContentStart(5), undefined);
+			assert.strictEqual(editor.getSelectionContentEnd(5), undefined);
+			assert.strictEqual(editor.getSelectionNewlineOffset(5), undefined);
+			assert.strictEqual(editor.getLineSelection(5), undefined);
+			assert.deepStrictEqual(editor.getSelectAllSelection(), {
+				start: { row: 1, col: 0, offset: 0 },
+				end: { row: 1, col: 1, offset: 1, boundary: true },
+			});
+		});
+
+		it("projects from the actual narrow-width padding", () => {
+			for (const width of [1, 4, 6, 8]) {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme, { paddingX: 4 });
+				editor.setText("x");
+				editor.render(width);
+				const padding = Math.min(4, Math.max(0, Math.floor((width - 1) / 2)));
+				assert.strictEqual(editor.getSelectionContentStart(1), padding);
+				assert.deepStrictEqual(editor.getSelectionPointForOffset(0, "forward"), {
+					row: 1,
+					col: padding,
+					offset: 0,
+				});
+			}
+		});
 	});
 
 	describe("Paste burst fallback", () => {
@@ -677,6 +802,34 @@ describe("Editor component", () => {
 			editor.handleInput("\x1b[27;2;69~");
 
 			assert.strictEqual(editor.getText(), "E");
+		});
+
+		it("rejects mixed control blocks and C1 controls as ordinary input", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setText("before");
+
+			editor.handleInput("new\nvalue");
+			editor.handleInput("\u0085");
+
+			assert.strictEqual(editor.getText(), "before");
+		});
+
+		it("honors an explicit word deletion binding for Shift+Backspace", () => {
+			const previous = getKeybindings();
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setText("alpha beta");
+			setKeybindings(
+				new KeybindingsManager(TUI_KEYBINDINGS, {
+					"tui.editor.deleteWordBackward": "shift+backspace",
+					"tui.editor.deleteCharBackward": [],
+				}),
+			);
+			try {
+				editor.handleInput("\x1b[127;2u");
+				assert.strictEqual(editor.getText(), "alpha ");
+			} finally {
+				setKeybindings(previous);
+			}
 		});
 	});
 
@@ -2898,6 +3051,43 @@ describe("Editor component", () => {
 			assert.ok(!afterMove.includes("message"), "stale argument menu must not survive the cursor move");
 		});
 
+		it("refreshes autocomplete after moving to a document offset", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setAutocompleteProvider({
+				getSuggestions: async (lines, _cursorLine, cursorCol) => {
+					const before = (lines[0] || "").slice(0, cursorCol);
+					if (!before.startsWith("/")) return null;
+					if (before.includes(" ")) {
+						return {
+							items: [
+								{ value: "repo", label: "repo" },
+								{ value: "message", label: "message" },
+							],
+							prefix: "",
+						};
+					}
+					return {
+						items: [
+							{ value: "cmd", label: "cmd" },
+							{ value: "cat", label: "cat" },
+						],
+						prefix: before,
+					};
+				},
+				applyCompletion,
+			});
+			editor.setText("/cmd ");
+			editor.handleInput("\t");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+			editor.moveCursorToOffset(4);
+			await flushAutocomplete();
+			editor.handleInput("\t");
+
+			assert.strictEqual(editor.getText(), "cmd ");
+		});
+
 		it("debounces # autocomplete while typing", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			let suggestionCalls = 0;
@@ -4517,6 +4707,108 @@ describe("Editor component", () => {
 			editor.handleInput("\x7f"); // delete marker #1, renumber #3 -> #2 and #2 -> #1
 			editor.handleInput("\r");
 			assert.strictEqual(submitted, pasteC + pasteB);
+		});
+
+		it("does not expand a literal marker typed after deleting its selection", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			const marker = editor.getText();
+
+			assert.strictEqual(editor.deleteSelection(0, marker.length), true);
+			editor.insertTextAtCursor("[paste #1]");
+			assert.strictEqual(editor.getExpandedText(), "[paste #1]");
+
+			editor.handleInput("\x1b[45;5u");
+			editor.handleInput("\x1b[45;5u");
+			assert.strictEqual(editor.getText(), marker);
+			assert.strictEqual(editor.getExpandedText(), paste);
+		});
+
+		it("cleans and renumbers multiple paste markers deleted by a selection with undo", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const pasteA = bigPaste("alpha");
+			const pasteB = bigPaste("beta");
+			const pasteC = bigPaste("gamma");
+			editor.handleInput(`\x1b[200~${pasteA}\x1b[201~`);
+			editor.handleInput(`\x1b[200~${pasteB}\x1b[201~`);
+			editor.handleInput(`\x1b[200~${pasteC}\x1b[201~`);
+			const originalText = editor.getText();
+			const markers = [...originalText.matchAll(/\[paste #\d+ \+\d+ lines\]/g)];
+			const selectionEnd = markers[1]!.index + markers[1]![0].length;
+
+			assert.strictEqual(editor.deleteSelection(0, selectionEnd), true);
+			assert.strictEqual(editor.getText(), "[paste #1 +12 lines]");
+			assert.strictEqual(editor.getExpandedText(), pasteC);
+
+			editor.handleInput("\x1b[45;5u");
+			assert.strictEqual(editor.getText(), originalText);
+			assert.strictEqual(editor.getExpandedText(), pasteA + pasteB + pasteC);
+		});
+
+		for (const [name, key] of [
+			["Backspace", "\x7f"],
+			["Delete", "\x1b[3~"],
+		] as const) {
+			it(`cleans the paste registry after atomic ${name} and preserves undo`, () => {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				const pasteA = bigPaste("alpha");
+				const pasteB = bigPaste("beta");
+				editor.handleInput(`\x1b[200~${pasteA}\x1b[201~`);
+				editor.handleInput(`\x1b[200~${pasteB}\x1b[201~`);
+				const originalText = editor.getText();
+				editor.handleInput("\x01");
+				if (name === "Backspace") editor.handleInput("\x1b[C");
+
+				editor.handleInput(key);
+				assert.strictEqual(editor.getText(), "[paste #1 +12 lines]");
+				assert.strictEqual(editor.getExpandedText(), pasteB);
+				editor.moveCursorToOffset(editor.getText().length);
+				editor.insertTextAtCursor("[paste #2]");
+				assert.strictEqual(editor.getExpandedText(), `${pasteB}[paste #2]`);
+
+				editor.handleInput("\x1b[45;5u");
+				editor.handleInput("\x1b[45;5u");
+				assert.strictEqual(editor.getText(), originalText);
+				assert.strictEqual(editor.getExpandedText(), pasteA + pasteB);
+			});
+		}
+
+		it("deletes a complete marker for a partial selection across narrow visual rows", () => {
+			const editor = new Editor(createTestTUI(6, 10), defaultEditorTheme, { paddingX: 0 });
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			const marker = editor.getText();
+			editor.render(6);
+			const start = editor.getClosestSelectionPoint(1, 3);
+			const end = editor.getClosestSelectionPoint(2, 2);
+
+			assert.strictEqual(editor.deleteSelection(start.offset, end.endOffset), true);
+			assert.strictEqual(editor.getText(), "");
+			assert.strictEqual(editor.getExpandedText(), "");
+			assert.strictEqual(start.offset, 0);
+			assert.strictEqual(end.endOffset, marker.length);
+
+			editor.handleInput("\x1b[45;5u");
+			assert.strictEqual(editor.getText(), marker);
+			assert.strictEqual(editor.getExpandedText(), paste);
+		});
+
+		it("keeps a same-id paste registry entry while another marker reference survives", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			const marker = editor.getText();
+			editor.insertTextAtCursor(marker);
+			assert.strictEqual(editor.getText(), marker + marker);
+
+			assert.strictEqual(editor.deleteSelection(0, marker.length), true);
+			assert.strictEqual(editor.getText(), marker);
+			assert.strictEqual(editor.getExpandedText(), paste);
+
+			editor.handleInput("\x1b[45;5u");
+			assert.strictEqual(editor.getText(), marker + marker);
+			assert.strictEqual(editor.getExpandedText(), paste + paste);
 		});
 
 		it("undo after setText restores paste markers and registry", () => {

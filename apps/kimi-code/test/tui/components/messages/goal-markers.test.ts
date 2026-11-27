@@ -1,13 +1,51 @@
-import { visibleWidth } from '@moonshot-ai/pi-tui';
+import { TuiAltScreen, visibleWidth, type Component } from '@moonshot-ai/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { SwarmModeMarkerComponent } from '#/tui/components/messages/swarm-markers';
+import {
+  flattenTranscriptRow,
+  TranscriptRowLayout,
+} from '#/tui/components/messages/transcript-row-layout';
 import { buildGoalMarker, GoalMarkerComponent } from '#/tui/components/messages/goal-markers';
 import type { GoalChange } from '@moonshot-ai/kimi-code-sdk';
+
+import { VirtualTerminal } from '../../../../../../packages/pi-tui/test/virtual-terminal';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
 function strip(lines: string[]): string {
   return lines.join('\n').replaceAll(ANSI_SGR, '');
+}
+
+async function expectLogicalLineCopy(component: Component, source: string): Promise<void> {
+  const terminal = new VirtualTerminal(12, 20);
+  const copied: string[] = [];
+  const tui = new TuiAltScreen(terminal, undefined, undefined, {
+    copySelection: async (text) => {
+      copied.push(text);
+      return true;
+    },
+  });
+  tui.addChild(component);
+  tui.start();
+  try {
+    await terminal.waitForRender();
+    const rows = tui.getScreenLines().map((line) => strip([line]));
+    const firstNeedle = source.slice(0, 4);
+    const lastNeedle = source.slice(-4);
+    const startRow = rows.findIndex((line) => line.includes(firstNeedle));
+    const endRow = rows.findLastIndex((line) => line.includes(lastNeedle));
+    expect(startRow).toBeGreaterThanOrEqual(0);
+    expect(endRow).toBeGreaterThanOrEqual(startRow);
+    const startColumn = rows[startRow]!.indexOf(firstNeedle) + 1;
+    const endColumn = rows[endRow]!.indexOf(lastNeedle) + lastNeedle.length;
+    terminal.sendInput(`\u001B[<0;${startColumn};${startRow + 1}M`);
+    terminal.sendInput(`\u001B[<32;${endColumn};${endRow + 1}M`);
+    terminal.sendInput(`\u001B[<0;${endColumn};${endRow + 1}m`);
+    await terminal.waitForRender();
+    expect(copied).toEqual([source]);
+  } finally {
+    tui.stop();
+  }
 }
 
 describe('buildGoalMarker', () => {
@@ -107,9 +145,65 @@ describe('GoalMarkerComponent', () => {
     expect(marker.render(80)).toHaveLength(1);
     expect(strip(marker.render(80))).not.toContain('(ctrl+o)');
   });
+
+  it('aligns expanded detail continuations at narrow widths', () => {
+    const marker = new GoalMarkerComponent(
+      'Goal blocked',
+      'alpha beta gamma delta epsilon zeta',
+      'warning',
+    );
+    marker.setExpanded(true);
+    for (const width of [4, 10, 20]) {
+      const lines = marker.render(width);
+      for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      if (width <= 4) continue;
+      const detail = lines.slice(1).map((line) => strip([line]));
+      for (const line of detail) expect(line.startsWith('    ')).toBe(true);
+    }
+  });
+
+  it('uses per-row gutters for the headline and expanded detail', () => {
+    const marker = new GoalMarkerComponent('Goal blocked', 'still spinning', 'warning');
+    const collapsed = marker.renderTranscriptRow(40);
+    expect(strip(collapsed.contentLines.map((line) => line.text))).toBe(
+      'Goal blocked (ctrl+o)',
+    );
+    expect(strip(collapsed.gutterLines.map((line) => line.text))).toBe('  ◦ ');
+
+    marker.setExpanded(true);
+    const expanded = marker.renderTranscriptRow(40);
+    expect(strip(expanded.contentLines.map((line) => line.text))).toBe(
+      'Goal blocked\nstill spinning',
+    );
+    expect(strip(expanded.gutterLines.map((line) => line.text))).toBe('  ◦ \n    ');
+    expect(expanded.gutterWidths).toEqual([visibleWidth('  ◦ '), 4]);
+    expect(
+      flattenTranscriptRow(expanded, 40).map((line) => strip([line.text]).trimEnd()),
+    ).toEqual(marker.render(40).map((line) => strip([line]).trimEnd()));
+  });
+
+  it('copies a soft-wrapped expanded detail without visual newlines or indentation', async () => {
+    const source = 'alpha beta gamma delta epsilon zeta';
+    const marker = new GoalMarkerComponent('Goal blocked', source, 'warning');
+    marker.setExpanded(true);
+    await expectLogicalLineCopy(marker, source);
+    await expectLogicalLineCopy(new TranscriptRowLayout(marker), source);
+  });
 });
 
 describe('SwarmModeMarkerComponent', () => {
+  it('separates the status bullet from the swarm label', () => {
+    const marker = new SwarmModeMarkerComponent('active');
+    const width = 30;
+    const parts = marker.renderTranscriptRow(width);
+
+    expect(strip(parts.contentLines.map((line) => line.text))).toBe('\nSwarm activated');
+    expect(strip(parts.gutterLines.map((line) => line.text))).toBe('\n● ');
+    expect(
+      flattenTranscriptRow(parts, width).map((line) => strip([line.text]).trimEnd()),
+    ).toEqual(marker.render(width).map((line) => strip([line]).trimEnd()));
+  });
+
   it('keeps marker lines within very narrow widths', () => {
     const marker = new SwarmModeMarkerComponent('active');
 

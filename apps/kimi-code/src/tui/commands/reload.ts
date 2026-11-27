@@ -2,7 +2,13 @@ import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 import { TuiAltScreen } from '@moonshot-ai/pi-tui';
 
 import { currentTheme, lightColors } from '#/tui/theme';
-import { DEFAULT_MARKDOWN_CONFIG, loadTuiConfig, resolveTuiMode, type TuiConfig } from '../config';
+import {
+  DEFAULT_MARKDOWN_CONFIG,
+  DEFAULT_MOUSE_CONFIG,
+  loadTuiConfig,
+  resolveTuiMode,
+  type TuiConfig,
+} from '../config';
 import { TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { setMarkdownMermaidMode, setMarkdownRenderLatex } from '../utils/markdown-options';
 import type { SlashCommandHost } from './dispatch';
@@ -68,7 +74,8 @@ export async function applyReloadedTuiConfig(
     editorCommand: config.editorCommand,
     tuiMode: config.tuiMode,
     disablePasteBurst: config.disablePasteBurst,
-    copyOnSelect: config.copyOnSelect,
+    selectionCopyMode: config.selectionCopyMode,
+    mouse: config.mouse,
     renderLatex: config.renderLatex,
     cacheExpiryHint: config.cacheExpiryHint,
     autoSessionTitle: config.autoSessionTitle,
@@ -82,7 +89,12 @@ export async function applyReloadedTuiConfig(
   applyTranscriptPresentation(host);
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
   if (host.state.ui instanceof TuiAltScreen) {
-    host.state.ui.setCopyOnSelect(config.copyOnSelect !== false);
+    const selectionCopyMode = config.selectionCopyMode ?? 'immediate';
+    const mouse = config.mouse ?? DEFAULT_MOUSE_CONFIG;
+    host.state.ui.setCopyOnSelect(selectionCopyMode === 'immediate');
+    host.state.ui.setCopyOnRightClick(selectionCopyMode === 'right-click');
+    host.state.ui.setWheelScrollLines(mouse.wheelScrollLines);
+    host.state.ui.setAltWheelAcceleration(mouse.altWheelAcceleration);
   }
   if (resolveTuiMode(config.tuiMode).mode !== host.state.ui.mode) {
     host.showNotice(TUI_MODE_RESTART_NOTICE);

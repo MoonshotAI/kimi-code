@@ -1,10 +1,13 @@
-import type { TUI } from '@moonshot-ai/pi-tui';
-import { Container, Spacer, Text } from '@moonshot-ai/pi-tui';
+import type { Component, TUI, TuiRenderLine } from '@moonshot-ai/pi-tui';
+import { Container, renderComponentLines, Spacer, visibleWidth } from '@moonshot-ai/pi-tui';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 
+import { LeadingDecorationText } from './leading-decoration-text';
 import type { ToolCallComponent, ToolCallReadSnapshot } from './tool-call';
+import { splitToolTranscriptRow } from './tool-renderers/transcript-row';
+import type { TranscriptRowParts } from './transcript-row-layout';
 import { TruncatedHeaderLine, type HeaderContent } from './truncated-header-line';
 
 const THROTTLE_MS = 200;
@@ -28,7 +31,7 @@ export class ReadGroupComponent extends Container {
   constructor(private readonly ui: TUI | undefined) {
     super();
     this.addChild(new Spacer(1));
-    this.headerText = new TruncatedHeaderLine('');
+    this.headerText = new TruncatedHeaderLine('', visibleWidth(STATUS_BULLET));
     this.addChild(this.headerText);
     this.bodyContainer = new Container();
     this.addChild(this.bodyContainer);
@@ -71,6 +74,23 @@ export class ReadGroupComponent extends Container {
       this.scheduleRender();
     });
     this.flushRender();
+  }
+
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    const source: TuiRenderLine[] = [];
+    const gutterWidths: number[] = [];
+    const append = (component: Component, gutterWidth: number): void => {
+      const lines = renderComponentLines(component, width);
+      lines.forEach((line, index) => {
+        source.push(line);
+        gutterWidths.push(index === 0 ? gutterWidth : 0);
+      });
+    };
+    const spacer = this.children[0];
+    if (spacer !== undefined) append(spacer, 0);
+    append(this.headerText, visibleWidth(STATUS_BULLET));
+    for (const child of this.bodyContainer.children) append(child, 5);
+    return splitToolTranscriptRow(this, source, width, gutterWidths);
   }
 
   private scheduleRender(): void {
@@ -117,7 +137,7 @@ export class ReadGroupComponent extends Container {
       );
       visibleSnapshots.forEach((snap, idx) => {
         const isLast = idx === visibleSnapshots.length - 1;
-        this.bodyContainer.addChild(new Text(this.buildBodyLine(snap, isLast), 0, 0));
+        this.bodyContainer.addChild(new LeadingDecorationText(this.buildBodyLine(snap, isLast), 0, 0));
       });
     }
 

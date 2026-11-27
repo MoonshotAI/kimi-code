@@ -152,7 +152,16 @@ export class TruncatedHeaderLine implements Component {
     | { content: HeaderContent; width: number; lines: string[]; truncated: boolean }
     | undefined;
 
-  constructor(private content: HeaderContent) {}
+  constructor(
+    private content: HeaderContent,
+    private readonly decorationWidth = 0,
+  ) {}
+
+  selectionExclusions(width: number) {
+    return this.decorationWidth === 0
+      ? []
+      : [{ start: 0, end: Math.min(this.decorationWidth, Math.max(0, width)) }];
+  }
 
   setText(content: HeaderContent): void {
     if (sameContent(this.content, content)) return;

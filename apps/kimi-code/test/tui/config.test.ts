@@ -73,7 +73,8 @@ auto_install = false
 
     expect(config).toEqual({
       theme: 'light',
-      copyOnSelect: true,
+      selectionCopyMode: 'immediate',
+      mouse: { wheelScrollLines: 'auto', altWheelAcceleration: true },
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
@@ -135,16 +136,68 @@ auto_session_title = false
     expect(config.autoSessionTitle).toBe(false);
   });
 
-  it('defaults copy_on_select to true and round-trips false through tui.toml', () => {
-    expect(parseTuiConfig('').copyOnSelect).toBe(true);
-    expect(renderTuiConfig(DEFAULT_TUI_CONFIG)).toContain('copy_on_select = true');
+  it('uses cursor_copy_mode and keeps deprecated copy_on_select as a fallback', () => {
+    expect(parseTuiConfig('').selectionCopyMode).toBe('immediate');
+    expect(parseTuiConfig('copy_on_select = true').selectionCopyMode).toBe('immediate');
+    expect(renderTuiConfig(DEFAULT_TUI_CONFIG)).toContain('cursor_copy_mode = "immediate"');
+    expect(renderTuiConfig(DEFAULT_TUI_CONFIG)).not.toContain('copy_on_select =');
 
-    const config = parseTuiConfig(`
+    const off = parseTuiConfig(`
 copy_on_select = false
 `);
+    expect(off.selectionCopyMode).toBe('off');
+    expect(renderTuiConfig(off)).toContain('cursor_copy_mode = "off"');
+    expect(parseTuiConfig(renderTuiConfig(off)).selectionCopyMode).toBe('off');
 
-    expect(config.copyOnSelect).toBe(false);
-    expect(parseTuiConfig(renderTuiConfig(config)).copyOnSelect).toBe(false);
+    const legacyRightClick = parseTuiConfig('copy_on_select = "right-click"');
+    expect(legacyRightClick.selectionCopyMode).toBe('right-click');
+
+    const rightClick = parseTuiConfig(`
+cursor_copy_mode = "right-click"
+`);
+    expect(rightClick.selectionCopyMode).toBe('right-click');
+    expect(renderTuiConfig(rightClick)).toContain('cursor_copy_mode = "right-click"');
+    expect(renderTuiConfig(rightClick)).not.toContain('copy_on_select =');
+    expect(parseTuiConfig(renderTuiConfig(rightClick)).selectionCopyMode).toBe('right-click');
+
+    const preferred = parseTuiConfig('cursor_copy_mode = "off"\ncopy_on_select = true');
+    expect(preferred.selectionCopyMode).toBe('off');
+  });
+
+  it('warns and falls back to copy_on_select for an invalid cursor_copy_mode', () => {
+    const warnings: string[] = [];
+    const config = parseTuiConfig(
+      'cursor_copy_mode = "unknown"\ncopy_on_select = false',
+      (message) => warnings.push(message),
+    );
+
+    expect(config.selectionCopyMode).toBe('off');
+    expect(warnings).toEqual(['[tui.toml] ignoring unknown cursor_copy_mode value: unknown']);
+  });
+
+  it('defaults wheel scrolling to auto and parses fixed line counts and Alt acceleration', () => {
+    expect(parseTuiConfig('').mouse).toEqual({ wheelScrollLines: 'auto', altWheelAcceleration: true });
+    expect(renderTuiConfig(DEFAULT_TUI_CONFIG)).toContain('wheel_scroll_lines = "auto"');
+
+    const config = parseTuiConfig(`
+[mouse]
+wheel_scroll_lines = 4
+alt_wheel_acceleration = false
+`);
+    expect(config.mouse).toEqual({ wheelScrollLines: 4, altWheelAcceleration: false });
+    expect(renderTuiConfig(config)).toContain('wheel_scroll_lines = 4');
+    expect(parseTuiConfig(renderTuiConfig(config)).mouse).toEqual(config.mouse);
+  });
+
+  it.each(['fast', 0, 1.5])('warns and uses auto for invalid wheel_scroll_lines = %s', (value) => {
+    const warnings: string[] = [];
+    const source = `[mouse]\nwheel_scroll_lines = ${typeof value === 'string' ? `"${value}"` : String(value)}`;
+    const config = parseTuiConfig(source, (message) => warnings.push(message));
+
+    expect(config.mouse?.wheelScrollLines).toBe('auto');
+    expect(warnings).toEqual([
+      `[tui.toml] ignoring invalid mouse.wheel_scroll_lines value: ${String(value)}`,
+    ]);
   });
 
   it('normalizes an empty editor command to auto-detect', () => {
@@ -155,7 +208,8 @@ command = "   "
 
     expect(config).toEqual({
       theme: 'auto',
-      copyOnSelect: true,
+      selectionCopyMode: 'immediate',
+      mouse: { wheelScrollLines: 'auto', altWheelAcceleration: true },
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
@@ -207,7 +261,8 @@ command = "   "
 
     expect(await loadTuiConfig(filePath)).toEqual({
       theme: 'light',
-      copyOnSelect: true,
+      selectionCopyMode: 'immediate',
+      mouse: { wheelScrollLines: 'auto', altWheelAcceleration: true },
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,

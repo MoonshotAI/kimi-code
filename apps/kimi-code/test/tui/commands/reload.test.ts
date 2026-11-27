@@ -2,6 +2,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { TuiAltScreen } from '@moonshot-ai/pi-tui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -14,6 +15,7 @@ import {
   isExperimentalFlagEnabled,
   setExperimentalFeatures,
 } from '#/tui/commands/experimental-flags';
+import { VirtualTerminal } from '../../../../../packages/pi-tui/test/virtual-terminal';
 import {
   createMarkdownOptions,
   getMarkdownMermaidMode,
@@ -213,6 +215,34 @@ auto_install = false
     await handleReloadTuiCommand(host);
 
     expect(host.state.appState.followUpBehavior).toBeUndefined();
+  });
+
+  it('applies mouse scrolling and selection copy modes to the live fullscreen renderer', async () => {
+    await writeTuiConfig(`
+cursor_copy_mode = "right-click"
+
+[mouse]
+wheel_scroll_lines = 3
+alt_wheel_acceleration = false
+`);
+    const host = makeHost();
+    const ui = new TuiAltScreen(new VirtualTerminal(40, 10));
+    Object.assign(host.state, { ui });
+
+    await handleReloadTuiCommand(host);
+
+    expect(ui.getCopyOnSelect()).toBe(false);
+    expect(ui.getCopyOnRightClick()).toBe(true);
+    const internals = ui as unknown as {
+      wheelScroll: { lines: 'auto' | number };
+      altWheelAcceleration: boolean;
+    };
+    expect(internals.wheelScroll.lines).toBe(3);
+    expect(internals.altWheelAcceleration).toBe(false);
+    expect(host.state.appState).toMatchObject({
+      selectionCopyMode: 'right-click',
+      mouse: { wheelScrollLines: 3, altWheelAcceleration: false },
+    });
   });
 
   it('notices a required restart when tui_mode differs from the running UI mode', async () => {

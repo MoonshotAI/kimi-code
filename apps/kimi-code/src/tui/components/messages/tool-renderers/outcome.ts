@@ -1,4 +1,4 @@
-import type { Component } from '@moonshot-ai/pi-tui';
+import { visibleWidth, type Component } from '@moonshot-ai/pi-tui';
 
 import { OUTCOME_MAX_LINES, OUTCOME_ROW_INDENT, TRUNCATION_ELLIPSIS } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
@@ -21,7 +21,7 @@ export function outcomeRow(head: string, text: string, tail: string): Component 
     head,
     flex: { text, style: dimOutcomeStyle, keep: 'head' },
     tail: tail.length > 0 ? dimOutcomeStyle(tail) : '',
-  });
+  }, visibleWidth(OUTCOME_ROW_INDENT));
 }
 
 export function outcomeLine(text: string, more?: 'above' | 'below'): Component {

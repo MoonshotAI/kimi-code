@@ -1,9 +1,10 @@
-import { resetCapabilitiesCache, setCapabilities, Text, visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
+import { renderComponentLines, resetCapabilitiesCache, setCapabilities, Text, visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
+import { flattenTranscriptRow } from '#/tui/components/messages/transcript-row-layout';
 import { TruncatedHeaderLine } from '#/tui/components/messages/truncated-header-line';
 import { NOTIFY_USER_MARK, STATUS_BULLET } from '#/tui/constant/symbols';
 import { darkColors } from '#/tui/theme/colors';
@@ -145,6 +146,201 @@ describe('ToolCallComponent', () => {
         expect(visibleWidth(line)).toBeLessThanOrEqual(width);
       }
     }
+  });
+
+  it('refreshes structured progress exclusions across width changes', () => {
+    const component = new ToolCallComponent(
+      { id: 'call_narrow_progress', name: 'Read', args: { path: 'x' } },
+      undefined,
+    );
+    component.appendProgress('abcd');
+    try {
+      const exclusions = (width: number, text: string) => renderComponentLines(component, width)
+        .find((line) => line.text.includes(text))?.selectionExclusions;
+      expect(exclusions(4, 'ab')).toEqual([{ start: 0, end: 1 }]);
+      expect(exclusions(20, 'abcd')).toEqual([{ start: 0, end: 2 }]);
+      expect(exclusions(4, 'ab')).toEqual([{ start: 0, end: 1 }]);
+      const cached = renderComponentLines(component, 4);
+      expect(renderComponentLines(component, 4)).toBe(cached);
+      expect(component.render(4)).toEqual(cached.map((line) => line.text));
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it('preserves ToolOutputMarkdown soft-wrap metadata while dimming', () => {
+    setExperimentalFeatures([{ id: 'notify_user', enabled: true }]);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_notify_soft_wrap',
+        name: 'NotifyUser',
+        args: { title: 'Update', message: `START${'x'.repeat(40)}END` },
+      },
+      {
+        tool_call_id: 'call_notify_soft_wrap',
+        output: 'Update shown to the user.',
+        is_error: false,
+      },
+    );
+    component.setExpanded(true);
+    try {
+      const lines = renderComponentLines(component, 20).filter((line) =>
+        line.text.includes('START') || line.text.includes('END')
+      );
+      expect(lines).toHaveLength(2);
+      expect(lines[0]?.softWrap?.[0]?.logicalLineId).toBe(lines[1]?.softWrap?.[0]?.logicalLineId);
+      expect(lines[1]?.softWrap?.[0]?.continuation).toBeDefined();
+    } finally {
+      component.dispose();
+    }
+  });
+
+  describe('transcript row regions', () => {
+    it('separates the status marker and raw tool output from content', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_region_read', name: 'Read', args: { path: 'foo.ts' } },
+        {
+          tool_call_id: 'call_region_read',
+          output: 'first\nsecond',
+          is_error: false,
+        },
+      );
+      component.setExpanded(true);
+
+      const parts = component.renderTranscriptRow(40);
+      const headerIndex = parts.contentLines.findIndex((line) => line.text.includes('Used Read'));
+      const outputIndex = parts.contentLines.findIndex((line) => line.text.includes('first'));
+      expect(strip(parts.gutterLines[headerIndex]?.text ?? '')).toBe(STATUS_BULLET);
+      expect(strip(parts.contentLines[headerIndex]?.text ?? '')).toContain('Used Read');
+      expect(strip(parts.contentLines[headerIndex]?.text ?? '')).not.toContain(STATUS_BULLET);
+      expect(parts.gutterWidths?.[outputIndex]).toBe(4);
+      expect(strip(parts.contentLines[outputIndex]?.text ?? '').trimEnd()).toBe('first');
+      expect(strip(parts.contentLines[outputIndex + 1]?.text ?? '').trimEnd()).toBe('second');
+
+      const flattened = flattenTranscriptRow(parts, 40);
+      expect(flattened[outputIndex]?.selectionRegion).toEqual({
+        content: parts.contentLines[outputIndex],
+        column: 4,
+        width: 36,
+      });
+      expect(flattened[headerIndex]?.text.startsWith(component.statusMarker())).toBe(true);
+      expect(flattened.map((line) => strip(line.text))).toEqual(component.render(40).map(strip));
+
+      const detail = component.renderTranscriptRowDetail(40).map((line) => strip(line.text).trimEnd());
+      expect(detail).toEqual(['first', 'second']);
+      expect(component.renderRowDetail(40).map((line) => strip(line.text).trimEnd())).toEqual([
+        '    first',
+        '    second',
+      ]);
+      component.dispose();
+    });
+
+    it('restores the child render width while caching detail by its content width', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_region_detail_width', name: 'Bash', args: { command: 'printf output' } },
+        {
+          tool_call_id: 'call_region_detail_width',
+          output: 'first\nsecond',
+          is_error: false,
+        },
+      );
+      component.setExpanded(true);
+
+      const detail = component.renderTranscriptRowDetail(38);
+      expect(component.renderTranscriptRowDetail(38)).toBe(detail);
+      expect(detail.map((line) => strip(line.text))).toEqual(
+        component.renderRowDetail(40).map((line) => strip(line.text).slice(2)),
+      );
+      expect(detail.map((line) => visibleWidth(line.text))).toEqual([38, 38]);
+
+      expect(component.renderTranscriptRowDetail(40)).not.toBe(detail);
+      const restored = component.renderTranscriptRowDetail(38);
+      expect(restored.map((line) => line.text)).toEqual(detail.map((line) => line.text));
+      expect(component.renderTranscriptRowDetail(38)).toBe(restored);
+      component.dispose();
+    });
+
+    it('preserves trailing terminal sequences when removing detail gutters', () => {
+      const previousLevel = chalk.level;
+      chalk.level = 3;
+      try {
+        const component = new ToolCallComponent(
+          {
+            id: 'call_region_detail_ansi',
+            name: 'Edit',
+            args: { path: 'a.ts', old_string: 'one', new_string: 'two' },
+          },
+          {
+            tool_call_id: 'call_region_detail_ansi',
+            output: 'first\nsecond\nthird\nfourth',
+            is_error: false,
+          },
+        );
+        component.setExpanded(true);
+
+        const detail = component.renderTranscriptRowDetail(78);
+        const legacy = component.renderRowDetail(80);
+        expect(detail.at(-1)?.text).toBe(legacy.at(-1)?.text.slice(2));
+        expect(detail.at(-1)?.text.endsWith('\u001B[22m')).toBe(true);
+        component.dispose();
+      } finally {
+        chalk.level = previousLevel;
+      }
+    });
+
+    it('keeps soft-wrap identity in content and points regions at the wrapped text', () => {
+      const output = `START${'x'.repeat(60)}END`;
+      const component = new ToolCallComponent(
+        { id: 'call_region_wrap', name: 'TaskOutput', args: {} },
+        { tool_call_id: 'call_region_wrap', output, is_error: false },
+      );
+      component.setExpanded(true);
+
+      const parts = component.renderTranscriptRow(20);
+      const wrapped = parts.contentLines.filter((line) =>
+        line.text.includes('START') || line.text.includes('END')
+      );
+      expect(wrapped.length).toBeGreaterThan(1);
+      expect(wrapped.every((line) => !strip(line.text).startsWith('  '))).toBe(true);
+      expect(wrapped[0]?.softWrap?.[0]?.logicalLineId).toBe(wrapped.at(-1)?.softWrap?.[0]?.logicalLineId);
+      expect(wrapped.at(-1)?.softWrap?.[0]?.continuation).toBeDefined();
+
+      const flattened = flattenTranscriptRow(parts, 20);
+      const outputIndex = parts.contentLines.findIndex((line) => line.text.includes('START'));
+      expect(flattened[outputIndex]?.selectionRegion).toEqual({
+        content: parts.contentLines[outputIndex],
+        column: 2,
+        width: 18,
+      });
+      expect(flattened[outputIndex]?.softWrap?.[0]?.start).toBe(2);
+      component.dispose();
+    });
+
+    it('reuses stable rows and refreshes them after result, expansion, and invalidation', () => {
+      const call = { id: 'call_region_cache', name: 'Read', args: { path: 'foo.ts' } };
+      const component = new ToolCallComponent(call, undefined);
+      const pending = component.renderTranscriptRow(40);
+      expect(component.renderTranscriptRow(40)).toBe(pending);
+
+      component.setResult(
+        { tool_call_id: call.id, output: 'first\nsecond', is_error: false },
+        { known: false },
+      );
+      const collapsed = component.renderTranscriptRow(40);
+      expect(collapsed).not.toBe(pending);
+      expect(collapsed.contentLines.map((line) => strip(line.text))).not.toContain('first');
+
+      component.setExpanded(true);
+      const expanded = component.renderTranscriptRow(40);
+      expect(expanded).not.toBe(collapsed);
+      expect(expanded.contentLines.map((line) => strip(line.text).trimEnd())).toContain('second');
+
+      component.invalidate();
+      const invalidated = component.renderTranscriptRow(40);
+      expect(invalidated).not.toBe(expanded);
+      expect(invalidated.contentLines.map((line) => strip(line.text).trimEnd())).toContain('second');
+      component.dispose();
+    });
   });
 
   it('keeps collapsed tool results short and expands on demand', () => {
@@ -1869,6 +2065,32 @@ describe('ToolCallComponent', () => {
     expect(rows[0]).not.toContain('answer');
     expect(rows[1]).toContain('answer');
     component.dispose();
+  });
+
+  it('does not mutate text render results when padding a short subagent window', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_render_ownership',
+        name: 'Agent',
+        args: { description: 'short output' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_render_ownership',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    component.appendSubagentText('short', 'text');
+    const lines = ['short'];
+    const textRender = vi.spyOn(Text.prototype, 'render').mockReturnValue(lines);
+    try {
+      component.render(60);
+      expect(lines).toEqual(['short']);
+    } finally {
+      textRender.mockRestore();
+      component.dispose();
+    }
   });
 
   it('keeps the two-row window identical for multi-line text past the preview cap', () => {

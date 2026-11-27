@@ -1,4 +1,4 @@
-import type { ThinkingDisplay, ToolCallDensity, TranscriptConfig } from '../../config';
+import type { SelectionCopyMode, ThinkingDisplay, ToolCallDensity, TranscriptConfig } from '../../config';
 import type { DockLayout } from '../chrome/dock-section';
 import { ChoicePickerComponent, PreviewChoicePickerComponent, type ChoiceOption } from './choice-picker';
 import { TranscriptPreview } from './transcript-preview';
@@ -52,8 +52,8 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
   },
   {
     value: 'copyOnSelect',
-    label: 'Copy on select',
-    description: 'Choose whether selecting text in fullscreen mode copies it.',
+    label: 'Selection copying',
+    description: 'Choose when selected text is copied in fullscreen mode.',
   },
   {
     value: 'mermaid',
@@ -214,33 +214,39 @@ export class ThinkingDisplaySelectorComponent extends PreviewChoicePickerCompone
   }
 }
 
-const COPY_ON_SELECT_OPTIONS: readonly ChoiceOption[] = [
-  {
-    value: 'on',
-    label: 'On',
-    description: 'Copy text as soon as you select it.',
-  },
+const SELECTION_COPY_MODE_OPTIONS = [
   {
     value: 'off',
     label: 'Off',
     description: 'Press Ctrl-C to copy selected text.',
   },
-];
+  {
+    value: 'immediate',
+    label: 'Immediately',
+    description: 'Copy text as soon as you select it.',
+  },
+  {
+    value: 'right-click',
+    label: 'Right-click',
+    description: 'Right-click to copy; right-click again to paste if clipboard reading is available.',
+  },
+] as const satisfies readonly (ChoiceOption & { readonly value: SelectionCopyMode })[];
 
-export interface CopyOnSelectSelectorOptions {
-  readonly currentValue: boolean;
-  readonly onSelect: (value: boolean) => void;
+export interface SelectionCopyModeSelectorOptions {
+  readonly currentValue: SelectionCopyMode;
+  readonly onSelect: (value: SelectionCopyMode) => void;
   readonly onCancel: () => void;
 }
 
-export class CopyOnSelectSelectorComponent extends ChoicePickerComponent {
-  constructor(opts: CopyOnSelectSelectorOptions) {
+export class SelectionCopyModeSelectorComponent extends ChoicePickerComponent {
+  constructor(opts: SelectionCopyModeSelectorOptions) {
     super({
-      title: 'Copy on select',
-      options: COPY_ON_SELECT_OPTIONS,
-      currentValue: opts.currentValue ? 'on' : 'off',
+      title: 'Selection copying',
+      options: SELECTION_COPY_MODE_OPTIONS,
+      currentValue: opts.currentValue,
       onSelect: (value) => {
-        if (value === 'on' || value === 'off') opts.onSelect(value === 'on');
+        const option = SELECTION_COPY_MODE_OPTIONS.find((candidate) => candidate.value === value);
+        if (option !== undefined) opts.onSelect(option.value);
       },
       onCancel: opts.onCancel,
     });

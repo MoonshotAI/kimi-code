@@ -44,7 +44,8 @@ describe('update preference commands', () => {
       theme: 'auto',
       editorCommand: null,
       disablePasteBurst: false,
-      copyOnSelect: true,
+      selectionCopyMode: 'immediate',
+      mouse: { wheelScrollLines: 'auto', altWheelAcceleration: true },
       renderLatex: true,
       cacheExpiryHint: true,
       autoSessionTitle: true,
@@ -67,7 +68,7 @@ describe('update preference commands', () => {
           theme: 'auto' as const,
           editorCommand: null,
           renderLatex: false,
-          copyOnSelect: false,
+          selectionCopyMode: 'off' as const,
           autoSessionTitle: false,
           notifications: { enabled: true, condition: 'unfocused' as const },
           upgrade: { autoInstall: true },
@@ -84,7 +85,7 @@ describe('update preference commands', () => {
     expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
       expect.objectContaining({
         renderLatex: false,
-        copyOnSelect: false,
+        selectionCopyMode: 'off',
         autoSessionTitle: false,
       }),
     );

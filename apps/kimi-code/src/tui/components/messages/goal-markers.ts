@@ -1,9 +1,20 @@
-import { truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
+import {
+  decorateRenderLine,
+  RENDER_LINES,
+  renderLineTexts,
+  textRenderLine,
+  truncateRenderLine,
+  visibleWidth,
+  type Component,
+  type TuiRenderLine,
+} from '@moonshot-ai/pi-tui';
 import type { GoalChange } from '@moonshot-ai/kimi-code-sdk';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
+
+import type { TranscriptRowParts } from './transcript-row-layout';
 
 const HEAD_INDENT = '  ';
 const DETAIL_INDENT = '    ';
@@ -41,6 +52,64 @@ export class GoalMarkerComponent implements Component {
 
   invalidate(): void {}
 
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    const safeWidth = Math.max(0, width);
+    const dot = currentTheme.fg(this.accentToken, this.marker);
+    const head = currentTheme.fg(this.textToken, this.headline);
+    const prefix = `${this.indent}${dot} `;
+    const gutterWidth = Math.min(visibleWidth(prefix), safeWidth);
+    const contentLines: TuiRenderLine[] = [];
+    const gutterLines: TuiRenderLine[] = [];
+    const gutterWidths: number[] = [];
+    if (this.leadingBlank) {
+      contentLines.push(textRenderLine(''));
+      gutterLines.push(textRenderLine(''));
+      gutterWidths.push(0);
+    }
+    const appendLine = (content: TuiRenderLine, decoration: string): void => {
+      const lineGutterWidth = Math.min(visibleWidth(decoration), safeWidth);
+      const contentWidth = Math.max(0, safeWidth - lineGutterWidth);
+      contentLines.push(
+        contentWidth > 0 ? truncateRenderLine(content, contentWidth) : textRenderLine(''),
+      );
+      gutterLines.push(
+        truncateRenderLine(textRenderLine(decoration), lineGutterWidth),
+      );
+      gutterWidths.push(lineGutterWidth);
+    };
+
+    const hasDetail = this.detail !== undefined && this.detail.length > 0;
+    if (!hasDetail || !this.expandable) {
+      appendLine(textRenderLine(head), prefix);
+    } else if (!this.expanded) {
+      const text = `${head} ${currentTheme.fg('textMuted', '(ctrl+o)')}`;
+      appendLine(textRenderLine(text), prefix);
+    } else {
+      appendLine(textRenderLine(head), prefix);
+      const detailLines = wrap(this.detail!, Math.max(1, width - DETAIL_INDENT.length));
+      for (let i = 0; i < detailLines.length; i += 1) {
+        const text = currentTheme.fg('textDim', detailLines[i]!);
+        appendLine(
+          {
+            text,
+            softWrap: [
+              {
+                logicalLineId: 0,
+                start: 0,
+                end: visibleWidth(text),
+                ...(i === 0
+                  ? {}
+                  : { continuation: { omittedWhitespace: ' ', generatedIndent: 0 } }),
+              },
+            ],
+          },
+          DETAIL_INDENT,
+        );
+      }
+    }
+    return { gutterWidth, gutterWidths, gutterLines, contentLines };
+  }
+
   setExpanded(expanded: boolean): void {
     this.expanded = expanded;
   }
@@ -57,37 +126,65 @@ export class GoalMarkerComponent implements Component {
     return true;
   }
 
+  selectionExclusions() {
+    return [{ start: 0, end: visibleWidth(this.indent) + visibleWidth(this.marker) + 1 }];
+  }
+
   render(width: number): string[] {
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  [RENDER_LINES](width: number): TuiRenderLine[] {
     const dot = currentTheme.fg(this.accentToken, this.marker);
     const head = currentTheme.fg(this.textToken, this.headline);
+    const prefix = `${this.indent}${dot} `;
     const hasDetail = this.detail !== undefined && this.detail.length > 0;
-    if (!hasDetail) return this.clampToWidth([`${this.indent}${dot} ${head}`], width);
+    if (!hasDetail) {
+      return this.clampToWidth([decorateRenderLine(textRenderLine(head), prefix)], width);
+    }
 
     if (!this.expandable) {
-      return this.clampToWidth([`${this.indent}${dot} ${head}`], width);
+      return this.clampToWidth([decorateRenderLine(textRenderLine(head), prefix)], width);
     }
     if (!this.expanded) {
-      return this.clampToWidth(
-        [`${this.indent}${dot} ${head} ${currentTheme.fg('textMuted', '(ctrl+o)')}`],
-        width,
-      );
+      const text = `${head} ${currentTheme.fg('textMuted', '(ctrl+o)')}`;
+      return this.clampToWidth([decorateRenderLine(textRenderLine(text), prefix)], width);
     }
-    const out = [`${this.indent}${dot} ${head}`];
-    const wrapWidth = Math.max(20, width - DETAIL_INDENT.length);
-    for (const line of wrap(this.detail!, wrapWidth)) {
-      out.push(DETAIL_INDENT + currentTheme.fg('textDim', line));
+    const out = [decorateRenderLine(textRenderLine(head), prefix)];
+    const wrapWidth = Math.max(1, width - DETAIL_INDENT.length);
+    const detailLines = wrap(this.detail!, wrapWidth);
+    for (let i = 0; i < detailLines.length; i += 1) {
+      const text = currentTheme.fg('textDim', detailLines[i]!);
+      out.push(
+        decorateRenderLine(
+          {
+            text,
+            softWrap: [
+              {
+                logicalLineId: 0,
+                start: 0,
+                end: visibleWidth(text),
+                ...(i === 0
+                  ? {}
+                  : { continuation: { omittedWhitespace: ' ', generatedIndent: 0 } }),
+              },
+            ],
+          },
+          DETAIL_INDENT,
+        ),
+      );
     }
     return this.clampToWidth(out, width);
   }
 
-  private clampToWidth(lines: string[], width: number): string[] {
+  private clampToWidth(lines: TuiRenderLine[], width: number): TuiRenderLine[] {
     const withBlank = this.withLeadingBlank(lines);
-    if (width <= 0) return withBlank.map(() => '');
-    return withBlank.map((line) => truncateToWidth(line, width));
+    if (width <= 0) return withBlank.map(() => textRenderLine(''));
+    return withBlank.map((line) => truncateRenderLine(line, width));
   }
 
-  private withLeadingBlank(lines: string[]): string[] {
-    return this.leadingBlank ? ['', ...lines] : lines;
+  private withLeadingBlank(lines: TuiRenderLine[]): TuiRenderLine[] {
+    return this.leadingBlank ? [textRenderLine(''), ...lines] : lines;
   }
 }
 

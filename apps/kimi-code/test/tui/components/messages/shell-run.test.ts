@@ -1,9 +1,45 @@
+import { renderComponentLines, TuiAltScreen } from '@moonshot-ai/pi-tui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ShellRunComponent } from '#/tui/components/messages/shell-run';
+import { flattenTranscriptRow } from '#/tui/components/messages/transcript-row-layout';
+
+import { VirtualTerminal } from '../../../../../../packages/pi-tui/test/virtual-terminal';
 
 function stripTheme(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
+}
+
+async function expectLogicalLineCopy(component: ShellRunComponent, source: string): Promise<void> {
+  const terminal = new VirtualTerminal(12, 20);
+  const copied: string[] = [];
+  const tui = new TuiAltScreen(terminal, undefined, undefined, {
+    copySelection: async (text) => {
+      copied.push(text);
+      return true;
+    },
+  });
+  tui.addChild(component);
+  tui.start();
+  try {
+    await terminal.waitForRender();
+    const rows = tui.getScreenLines().map(stripTheme);
+    const firstNeedle = source.slice(0, 4);
+    const lastNeedle = source.slice(-4);
+    const startRow = rows.findIndex((line) => line.includes(firstNeedle));
+    const endRow = rows.findLastIndex((line) => line.includes(lastNeedle));
+    expect(startRow).toBeGreaterThanOrEqual(0);
+    expect(endRow).toBeGreaterThanOrEqual(startRow);
+    const startColumn = rows[startRow]!.indexOf(firstNeedle) + 1;
+    const endColumn = rows[endRow]!.indexOf(lastNeedle) + lastNeedle.length;
+    terminal.sendInput(`\u001B[<0;${startColumn};${startRow + 1}M`);
+    terminal.sendInput(`\u001B[<32;${endColumn};${endRow + 1}M`);
+    terminal.sendInput(`\u001B[<0;${endColumn};${endRow + 1}m`);
+    await terminal.waitForRender();
+    expect(copied).toEqual([source]);
+  } finally {
+    tui.stop();
+  }
 }
 
 describe('ShellRunComponent hardening', () => {
@@ -64,6 +100,92 @@ describe('ShellRunComponent hardening', () => {
       c.append('output');
       c.render(100);
     }).not.toThrow();
+  });
+
+  it('marks running, backgrounded, and finished indentation as decoration', () => {
+    const c = create();
+    c.append('output');
+    const running = renderComponentLines(c, 20).find((line) => line.text.includes('output'));
+    expect(running?.selectionExclusions).toEqual([{ start: 0, end: 2 }]);
+
+    c.finishBackgrounded();
+    const backgrounded = renderComponentLines(c, 20).filter(
+      (line) => line.text.includes('Moved to') || line.text.includes('background.'),
+    );
+    expect(backgrounded).toHaveLength(2);
+    for (const line of backgrounded) {
+      expect(line.selectionExclusions).toEqual([{ start: 0, end: 2 }]);
+    }
+
+    const finished = create();
+    finished.finish('output', '', false);
+    const finalLine = renderComponentLines(finished, 20).find((line) => line.text.includes('output'));
+    expect(finalLine?.selectionExclusions).toEqual([{ start: 0, end: 2 }]);
+  });
+
+  it.each([2, 4])('keeps running and finished indentation consistent at width %i', (width) => {
+    const c = create();
+    c.append('abcd');
+    const running = c.render(width);
+    c.finish('abcd', '', false);
+    const finished = c.render(width);
+    expect(finished).toEqual(running.slice(0, finished.length));
+  });
+
+  it('keeps an 18-cell body on one line at width 20 when running and finished', () => {
+    const source = '123456789012345678';
+    const c = create();
+    c.append(source);
+    const running = c.render(20);
+    c.finish(source, '', false);
+    const finished = c.render(20);
+    expect(finished).toHaveLength(1);
+    expect(finished[0]).toBe(running[0]);
+  });
+
+  it('copies long running and finished output without visual newlines or indentation', async () => {
+    const source = '1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const c = create();
+    c.append(source);
+    await expectLogicalLineCopy(c, source);
+    c.finish(source, '', false);
+    await expectLogicalLineCopy(c, source);
+  });
+
+  it('separates indentation from streaming and finalized transcript content', () => {
+    const c = create();
+    c.append('first');
+    const running = c.renderTranscriptRow(20);
+    expect(c.renderTranscriptRow(20)).toBe(running);
+    expect(running.gutterWidth).toBe(2);
+    const runningContent = running.contentLines.map((line) => stripTheme(line.text).trimEnd());
+    expect(runningContent[0]).toBe('first');
+    expect(runningContent[1]).toMatch(/^\(\d+s\)$/);
+    expect(runningContent.slice(2).join(' ')).toBe('(ctrl+b to run in background)');
+    expect(running.gutterLines.every((line) => line.text === '  ')).toBe(true);
+
+    c.append('\nsecond');
+    const updated = c.renderTranscriptRow(20);
+    expect(updated).not.toBe(running);
+    expect(updated.contentLines.map((line) => line.text).join('\n')).toContain('second');
+
+    c.finish('first\nsecond', '', false);
+    const finished = c.renderTranscriptRow(20);
+    expect(finished.contentLines.map((line) => stripTheme(line.text).trimEnd())).toEqual([
+      'first',
+      'second',
+    ]);
+    expect(finished.gutterLines.every((line) => line.text === '  ')).toBe(true);
+    expect(flattenTranscriptRow(finished, 20).map((line) => line.selectionRegion)).toEqual([
+      { content: finished.contentLines[0], column: 2, width: 18 },
+      { content: finished.contentLines[1], column: 2, width: 18 },
+    ]);
+
+    c.invalidate();
+    const invalidated = c.renderTranscriptRow(20);
+    expect(invalidated.contentLines.map((line) => line.text)).toEqual(
+      finished.contentLines.map((line) => line.text),
+    );
   });
 });
 
@@ -133,6 +255,19 @@ describe('ShellRunComponent finished collapse', () => {
     const collapsed = stripTheme(c.render(80).join('\n'));
     expect(collapsed).toContain('+5 lines');
     expect(collapsed).not.toContain('row-01');
+  });
+
+  it('refreshes separated transcript rows when finished output expands', () => {
+    const c = create();
+    c.finish(rows(30), '', false);
+    const collapsed = c.renderTranscriptRow(80);
+    expect(collapsed.contentLines.map((line) => line.text).join('\n')).toContain('ctrl+o to expand');
+
+    c.setExpanded(true);
+    const expanded = c.renderTranscriptRow(80);
+    expect(expanded).not.toBe(collapsed);
+    expect(expanded.contentLines.map((line) => line.text).join('\n')).toContain('row-30');
+    expect(expanded.contentLines.map((line) => line.text).join('\n')).not.toContain('ctrl+o to expand');
   });
 
   it('carries the expanded state over to the finished view', () => {

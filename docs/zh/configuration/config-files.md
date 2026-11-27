@@ -653,7 +653,7 @@ defaultCwd = "/workspace"
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | 配色主题：`auto`、`dark`、`light` 或[自定义主题](../customization/themes.md)名 |
 | `tui_mode` | `string` | `regular` | 界面布局：`regular` 渲染进终端滚动缓冲区；`fullscreen`（实验性）部分组件支持鼠标交互，交互更顺手 |
-| `copy_on_select` | `boolean` | `true` | 仅全屏模式：选中文本即复制；也可以按 `Ctrl-C` 复制 |
+| `cursor_copy_mode` | `string` | `"immediate"` | 仅全屏模式：`"off"` 表示仅按 `Ctrl-C` 复制，`"immediate"` 表示选中后立即复制，`"right-click"` 表示第一次右键复制并取消选中，剪贴板可读时第二次右键粘贴到输入框；也可在 `/settings` → Selection copying 中修改 |
 | `render_latex` | `boolean` | `true` | 将 Markdown 中的 LaTeX 公式渲染为 Unicode 文本；`false` 保留原始源码 |
 | `disable_paste_burst` | `boolean` | `false` | 禁用非 bracketed paste 的粘贴突发兜底；默认开启，避免快速多行粘贴被逐行提交 |
 | `cache_expiry_hint` | `boolean` | `true` | resume 或长时间空闲后发消息时，若上下文缓存可能过期则提醒，可先压缩或新建会话（仅 v2 引擎） |
@@ -663,10 +663,20 @@ defaultCwd = "/workspace"
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
 | `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
+| `[mouse].wheel_scroll_lines` | `string` 或 `integer` | `auto` | 全屏模式下的滚轮滚动：`"auto"` 从每个事件 1 行开始，快速滚动时最高加速到 6 行；正整数设置固定行数。本地 macOS 终端交由操作系统处理加速 |
+| `[mouse].alt_wheel_acceleration` | `boolean` | `true` | 按住 `Alt` 滚动时，是否将当前滚动距离乘以 5 |
 | `[transcript].tool_call_density` | `string` | `compact` | `fullscreen` 模式下的工具调用密度：`compact`、`balanced` 或 `detailed` |
 | `[transcript].thinking` | `string` | `grouped` | `fullscreen` 模式下的思考折叠：`grouped` 或 `ungrouped` |
 | `[status_line].items` | `string[]` | `[]` | 底部状态栏第一行的内置槽位及顺序：`mode`、`goal`、`model`、`tasks`、`cwd`、`git`、`tips`，未知 id 跳过并告警 |
 | `[status_line].command` | `string` | `""` | 自定义状态栏命令：stdout 首行替换状态栏，stdin 收 JSON 快照；上限 300ms、每秒一次，失败回退内置布局 |
+
+已废弃的 `copy_on_select` 字段仍会在未设置 `cursor_copy_mode` 时作为回退：`true` 对应 `"immediate"`，`false` 对应 `"off"`。现有配置可按此对应关系迁移，保存配置时会写入 `cursor_copy_mode`。
+
+全屏模式复制选区时，会合并仅因显示宽度产生的换行，并保留原始换行。换行处被省略的空格也会还原，因此长逻辑行粘贴后仍是一行。三击会选中自动换行后的完整逻辑行。消息装饰列（例如状态符号及其续行缩进）不会被选中，也不会进入复制结果。
+
+右键粘贴要求系统剪贴板可读。macOS 可以回退到 `pbpaste`，Wayland 可以回退到 `wl-paste`，X11 可以回退到 `xclip` 或 `xsel`。在没有图形显示环境的 Linux 主机或 SSH 会话中，OSC 52 可以通过终端发送复制内容，但复制成功并不意味着 Kimi Code 能读回剪贴板。没有可读后端时，右键粘贴会显示错误；此时请使用终端的粘贴快捷键。
+
+有 Overlay（浮层）时，选区行为由拖动起点决定。从 Overlay 内开始的选区会限制在该 Overlay 内，只复制其中可见的文本。从正文开始的选区可以拖入或穿过 Overlay；Overlay 不会改变颜色，复制结果仍包含底层正文，包括被 Overlay 遮挡的内容。
 
 <details>
 <summary>command 的 stdin 输入</summary>
@@ -679,7 +689,7 @@ model、cwd、git 分支、permission 模式、plan 模式、上下文用量、s
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | 自定义主题名
 # tui_mode = "regular" # "regular" | "fullscreen"（"fullscreen" 为实验性）
-copy_on_select = true # 仅全屏模式：false 表示按 Ctrl-C 才复制
+cursor_copy_mode = "immediate" # "off"（仅 Ctrl-C）、"immediate" 或 "right-click"（剪贴板可读时复制后再次右键粘贴）
 render_latex = true # false 表示消息中的 LaTeX 公式保留原始源码
 disable_paste_burst = false # true 表示禁用非 bracketed paste 的粘贴突发兜底
 cache_expiry_hint = true # false 表示关闭 resume / 空闲提交时的"缓存已过期"提醒弹窗
@@ -695,6 +705,10 @@ notification_condition = "unfocused" # "unfocused" | "always"
 
 [upgrade]
 auto_install = true
+
+[mouse]
+wheel_scroll_lines = "auto" # "auto" 或每次滚动的正整数行数
+alt_wheel_acceleration = true # Alt + 滚轮以五倍距离滚动
 
 [transcript] # 仅 fullscreen 模式生效
 tool_call_density = "compact" # "compact" | "balanced" | "detailed"

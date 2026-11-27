@@ -1,11 +1,21 @@
+import {
+	appendLines,
+	decorateRenderLine,
+	RENDER_LINES,
+	renderComponentLines,
+	renderLineTexts,
+	textRenderLine,
+	type TuiRenderLine,
+	withRenderLineText,
+} from "../render-line.ts";
 import { type Component, dispatchMouseEvent, type TuiMouseDispatchResult, type TuiMouseEvent } from "../tui.ts";
 import { flattenLines, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
-	childLines: string[];
+	childLines: TuiRenderLine[];
 	width: number;
 	bgSample: string | undefined;
-	lines: string[];
+	lines: TuiRenderLine[];
 };
 
 /**
@@ -59,14 +69,19 @@ export class Box implements Component {
 		this.cache = undefined;
 	}
 
-	private matchCache(width: number, childLines: string[], bgSample: string | undefined): boolean {
+	private matchCache(width: number, childLines: TuiRenderLine[], bgSample: string | undefined): boolean {
 		const cache = this.cache;
+		if (!cache || cache.width !== width || cache.bgSample !== bgSample || cache.childLines.length !== childLines.length) {
+			return false;
+		}
+		const keys = Object.keys(childLines);
+		const cachedKeys = Object.keys(cache.childLines);
 		return (
-			!!cache &&
-			cache.width === width &&
-			cache.bgSample === bgSample &&
-			cache.childLines.length === childLines.length &&
-			cache.childLines.every((line, i) => line === childLines[i])
+			keys.length === cachedKeys.length &&
+			keys.every(
+				(key, index) =>
+					key === cachedKeys[index] && childLines[Number(key)] === cache.childLines[Number(key)],
+			)
 		);
 	}
 
@@ -104,61 +119,42 @@ export class Box implements Component {
 	}
 
 	render(width: number): string[] {
-		if (this.children.length === 0) {
-			return [];
-		}
+		return renderLineTexts(this[RENDER_LINES](width));
+	}
+
+	[RENDER_LINES](width: number): TuiRenderLine[] {
+		if (this.children.length === 0) return [];
 
 		const contentWidth = Math.max(1, width - this.paddingX * 2);
 		const leftPad = " ".repeat(this.paddingX);
-
-		// Render all children. Keep the child lines unpadded: children usually return the same string
-		// objects every frame, so the cache check below is a cheap identity comparison per line.
-		// Padding here would create new strings that must be compared character by character.
-		const childLines: string[] = [];
+		const childLines: TuiRenderLine[] = [];
 		const mouseChildren: Array<{ component: Component; height: number }> = [];
 		for (const child of this.children) {
-			const lines = child.render(contentWidth);
+			const lines = renderComponentLines(child, contentWidth);
 			mouseChildren.push({ component: child, height: lines.length });
-			for (const line of lines) {
-				childLines.push(line);
-			}
+			appendLines(childLines, lines);
 		}
 		this.mouseLayout = { width: contentWidth, children: mouseChildren };
 
-		if (childLines.length === 0) {
-			return [];
-		}
+		if (childLines.length === 0) return [];
 
-		// Check if bgFn output changed by sampling
 		const bgSample = this.bgFn ? this.bgFn("test") : undefined;
+		if (this.matchCache(width, childLines, bgSample)) return this.cache!.lines;
 
-		// Check cache validity
-		if (this.matchCache(width, childLines, bgSample)) {
-			return this.cache!.lines;
+		const result: TuiRenderLine[] = [];
+		for (let i = 0; i < this.paddingY; i++) result.push(textRenderLine(this.applyBg("", width)));
+		const contentOffset = result.length;
+		result.length += childLines.length;
+		for (const key of Object.keys(childLines)) {
+			const index = Number(key);
+			if (String(index) !== key || index < 0 || index >= childLines.length) continue;
+			const padded = decorateRenderLine(childLines[index]!, leftPad);
+			result[contentOffset + index] = withRenderLineText(padded, this.applyBg(padded.text, width));
 		}
+		for (let i = 0; i < this.paddingY; i++) result.push(textRenderLine(this.applyBg("", width)));
 
-		// Apply background and padding
-		const result: string[] = [];
-
-		// Top padding
-		for (let i = 0; i < this.paddingY; i++) {
-			result.push(this.applyBg("", width));
-		}
-
-		// Content
-		for (const line of childLines) {
-			result.push(this.applyBg(leftPad + line, width));
-		}
-
-		// Bottom padding
-		for (let i = 0; i < this.paddingY; i++) {
-			result.push(this.applyBg("", width));
-		}
-
-		// Update cache
-		flattenLines(result);
+		flattenLines(result.map((line) => line.text));
 		this.cache = { childLines, width, bgSample, lines: result };
-
 		return result;
 	}
 

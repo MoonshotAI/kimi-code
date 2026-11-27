@@ -1,3 +1,5 @@
+import type { TuiRenderLine } from '@moonshot-ai/pi-tui';
+
 export interface Expandable {
   setExpanded(expanded: boolean): void;
 }
@@ -12,7 +14,7 @@ export interface OmitsExpandHint {
 }
 
 export interface HasRowDetail {
-  renderRowDetail(width: number): string[];
+  renderRowDetail(width: number): TuiRenderLine[];
 }
 
 export interface HasStatusMarker {

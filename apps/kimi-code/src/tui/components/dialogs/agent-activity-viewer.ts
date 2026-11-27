@@ -2,6 +2,7 @@ import {
   Container,
   Key,
   matchesKey,
+  renderLineTexts,
   type Focusable,
   type Terminal,
   truncateToWidth,
@@ -168,7 +169,10 @@ export class AgentActivityViewer extends Container implements Focusable {
       }
       if (step.thinkingTail !== undefined && step.thinkingTail.trim().length > 0) {
         const thinking = new ThinkingComponent(step.thinkingTail);
-        out.push(currentTheme.dim(`${MESSAGE_INDENT}Thinking`), ...thinking.renderRowDetail(innerWidth));
+        out.push(
+          currentTheme.dim(`${MESSAGE_INDENT}Thinking`),
+          ...renderLineTexts(thinking.renderRowDetail(innerWidth)),
+        );
       }
       if (step.textTail.trim().length > 0) {
         const message = new AssistantMessageComponent();

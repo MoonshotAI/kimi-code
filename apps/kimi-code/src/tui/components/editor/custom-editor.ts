@@ -5,11 +5,18 @@ import {
   isKeyRelease,
   matchesKey,
   Key,
+  RENDER_LINES,
   SelectList,
+  stripTerminalSequences,
+  textRenderLine,
   truncateToWidth,
   visibleWidth,
+  withRenderLineSelectionExclusions,
   type SelectItem,
+  type SelectionInputContext,
+  type SelectionInputResult,
   type TUI,
+  type TuiRenderLine,
 } from '@moonshot-ai/pi-tui';
 
 import type { SubmitKey } from '#/tui/config';
@@ -128,7 +135,7 @@ export class CustomEditor extends Editor {
   private consumingPaste = false;
   private consumeBuffer = '';
   private pasteInFlight = false;
-  private readonly pasteInputQueue: string[] = [];
+  private readonly pasteInputQueue: Array<{ data: string; selection?: SelectionInputContext }> = [];
   private argumentHints: ReadonlyMap<string, string> = new Map();
   private skillCommandNames: ReadonlySet<string> = new Set();
   private promptPrediction: string | undefined;
@@ -239,7 +246,7 @@ export class CustomEditor extends Editor {
   }
 
   override render(width: number): string[] {
-    const lines = super.render(width);
+    const lines = [...super.render(width)];
     if (lines.length < 3) return lines;
     const firstContentIdx = 1;
     const isBash = this.inputMode === 'bash';
@@ -326,6 +333,35 @@ export class CustomEditor extends Editor {
     return inactive ? framed.map((line) => currentTheme.fade(line)) : framed;
   }
 
+  [RENDER_LINES](width: number): TuiRenderLine[] {
+    const lines = this.render(width);
+    const contentStart = this.getSelectionContentStart(1) ?? 0;
+    return lines.map((text) => {
+      const plain = stripTerminalSequences(text);
+      const first = plain[0];
+      const last = plain.at(-1);
+      const horizontalBorder =
+        ((first === '╭' && last === '╮') ||
+          (first === '├' && last === '┤') ||
+          (first === '╰' && last === '╯')) ||
+        plain === '╭' ||
+        plain === '├' ||
+        plain === '╰';
+      const sideBorder = (first === '│' && last === '│') || plain === '│';
+      const lineWidth = visibleWidth(text);
+      if (horizontalBorder) {
+        return withRenderLineSelectionExclusions(textRenderLine(text), [{ start: 0, end: lineWidth }]);
+      }
+      if (sideBorder) {
+        return withRenderLineSelectionExclusions(textRenderLine(text), [
+          { start: 0, end: contentStart },
+          { start: lineWidth - 1, end: lineWidth },
+        ]);
+      }
+      return textRenderLine(text);
+    });
+  }
+
   private computeArgumentHint(): string | undefined {
     if (this.inputMode === 'bash') return undefined;
     const text = this.getText();
@@ -343,6 +379,15 @@ export class CustomEditor extends Editor {
     return trailingSpace.length > 0 ? hint : ` ${hint}`;
   }
 
+  override handleSelectionInput(data: string, selection: SelectionInputContext): SelectionInputResult {
+    if (this.pasteInFlight) {
+      if (!this.canHandleSelectionInput(data)) return { handled: false };
+      this.pasteInputQueue.push({ data, selection });
+      return { handled: true, clearSelection: true };
+    }
+    return super.handleSelectionInput(data, selection);
+  }
+
   override handleInput(data: string): void {
     const normalized = normalizeCapsLockedCtrl(data);
     if (isKeyRelease(normalized)) {
@@ -350,7 +395,7 @@ export class CustomEditor extends Editor {
     }
 
     if (this.pasteInFlight) {
-      this.pasteInputQueue.push(normalized);
+      this.pasteInputQueue.push({ data: normalized });
       return;
     }
 
@@ -520,7 +565,11 @@ export class CustomEditor extends Editor {
     if (this.pasteInFlight) return;
     const next = this.pasteInputQueue.shift();
     if (next === undefined) return;
-    this.handleInput(next);
+    if (next.selection === undefined) {
+      this.handleInput(next.data);
+    } else {
+      this.handleSelectionInput(next.data, next.selection);
+    }
     if (!this.pasteInFlight) this.flushPasteInputQueue();
   }
 

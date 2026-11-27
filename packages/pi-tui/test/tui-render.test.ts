@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { type AnimationClock, AnimationFrameScheduler } from "../src/animation-frame.ts";
+import { Box } from "../src/components/box.ts";
 import { Image } from "../src/components/image.ts";
 import { Input } from "../src/components/input.ts";
 import { Text } from "../src/components/text.ts";
@@ -17,7 +18,25 @@ import {
 	setCapabilities,
 	setCellDimensions,
 } from "../src/terminal-image.ts";
-import { type Component, Container, CURSOR_MARKER, renderFakeCursor, type TUI } from "../src/tui.ts";
+import {
+	offsetRenderLine,
+	prefixRenderLine,
+	RENDER_LINES,
+	renderComponentLines,
+	renderLineTexts,
+	truncateRenderLine,
+	type TuiRenderLine,
+	withRenderLineSelectionRegion,
+} from "../src/render-line.ts";
+import {
+	type Component,
+	compositeTuiRenderLine,
+	Container,
+	CURSOR_MARKER,
+	renderFakeCursor,
+	type TUI,
+} from "../src/tui.ts";
+import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { sliceByColumn } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
@@ -390,6 +409,32 @@ describe("TUI animation frames", () => {
 		assert.strictEqual(replacedSetTimeout.mock.callCount(), 0, "the frame was scheduled on the replaced setTimeout");
 		assert.strictEqual(replacedNow.mock.callCount(), 0, "the frame read the replaced performance.now");
 	});
+});
+
+describe("TUI input dispatch", () => {
+	for (const mode of ["regular", "fullscreen"] as const) {
+		it(`routes public input through listeners to the focused component in ${mode} mode`, async () => {
+			const terminal = new VirtualTerminal(40, 10);
+			const tui: TUI = mode === "regular" ? new TuiMainScreen(terminal) : new TuiAltScreen(terminal);
+			const component = new InputComponent();
+			const receivedByListener: string[] = [];
+			tui.addChild(component);
+			tui.setFocus(component);
+			tui.addInputListener((data) => {
+				receivedByListener.push(data);
+				return { data: data.toUpperCase() };
+			});
+			tui.start();
+			try {
+				await terminal.waitForRender();
+				tui.dispatchInput("paste");
+				assert.deepStrictEqual(receivedByListener, ["paste"]);
+				assert.deepStrictEqual(component.lines, ["PASTE"]);
+			} finally {
+				tui.stop();
+			}
+		});
+	}
 });
 
 describe("TUI render scheduling", () => {
@@ -1188,6 +1233,21 @@ describe("TUI differential rendering", () => {
 	});
 });
 
+describe("TUI soft-wrap metadata", () => {
+	it("does not write selection metadata to the main-screen terminal", async () => {
+		const terminal = new LoggingVirtualTerminal(10, 4);
+		const tui = new TuiMainScreen(terminal);
+		tui.addChild(new Text("1234567890ABCDEFGHIJ", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			assert.ok(!terminal.getWrites().includes("\x1b[999;"));
+		} finally {
+			tui.stop();
+		}
+	});
+});
+
 describe("Container width clamping", () => {
 	it("clamps non-positive widths to 1 before rendering children", () => {
 		const container = new Container();
@@ -1203,6 +1263,18 @@ describe("Container width clamping", () => {
 		container.render(-3);
 		container.render(5);
 		assert.deepStrictEqual(received, [1, 1, 5]);
+	});
+
+	it("appends large dense child output without spreading arguments", () => {
+		const childLines = Array.from({ length: 150_000 }, (_, index) => `line-${index}`);
+		const container = new Container();
+		container.addChild({ render: () => childLines, invalidate: () => {} });
+
+		const rendered = container.render(80);
+
+		assert.strictEqual(rendered.length, childLines.length);
+		assert.strictEqual(rendered[0], "line-0");
+		assert.strictEqual(rendered.at(-1), "line-149999");
 	});
 });
 
@@ -1240,6 +1312,35 @@ describe("Text negative width safety", () => {
 		const text = new Text("你好", 1, 1);
 		assert.doesNotThrow(() => text.render(0));
 		assert.doesNotThrow(() => text.render(-1));
+	});
+});
+
+describe("Text selection exclusions", () => {
+	it("tracks the responsive padding actually rendered at each width", () => {
+		for (const [width, padding] of [[1, 0], [2, 0], [3, 1], [4, 1], [5, 2], [20, 2]] as const) {
+			const lines = renderComponentLines(new Text("abcd", 2, 0), width);
+			assert.ok(lines.length > 0);
+			for (const line of lines) {
+				assert.deepStrictEqual(
+					line.selectionExclusions,
+					padding === 0 ? undefined : [{ start: 0, end: padding }],
+				);
+			}
+		}
+	});
+});
+
+describe("Text selection exclusion cache", () => {
+	it("refreshes exclusions across width changes and reuses unchanged snapshots", () => {
+		const component = new Text("abcd", 2, 0);
+		const narrow = renderComponentLines(component, 4);
+		assert.deepStrictEqual(narrow[0]?.selectionExclusions, [{ start: 0, end: 1 }]);
+		const wide = renderComponentLines(component, 20);
+		assert.deepStrictEqual(wide[0]?.selectionExclusions, [{ start: 0, end: 2 }]);
+		const narrowAgain = renderComponentLines(component, 4);
+		assert.deepStrictEqual(narrowAgain[0]?.selectionExclusions, [{ start: 0, end: 1 }]);
+		assert.strictEqual(renderComponentLines(component, 4), narrowAgain);
+		assert.deepStrictEqual(component.render(4), renderLineTexts(narrowAgain));
 	});
 });
 
@@ -1401,6 +1502,238 @@ describe("TUI steady-frame processed-line reuse", () => {
 			resetCapabilitiesCache();
 			setCellDimensions({ widthPx: 9, heightPx: 18 });
 		}
+	});
+});
+
+describe("Box structured render cache", () => {
+	function createComponent(getLines: () => TuiRenderLine[]): Component {
+		return {
+			render: () => renderLineTexts(getLines()),
+			[RENDER_LINES]: () => getLines(),
+			invalidate: () => {},
+		};
+	}
+
+	it("refreshes soft-wrap metadata when text is unchanged", () => {
+		let lines: TuiRenderLine[] = [
+			{ text: "content", softWrap: [{ logicalLineId: 1, start: 0, end: 7 }] },
+		];
+		const box = new Box(1, 0);
+		box.addChild(createComponent(() => lines));
+		const first = box[RENDER_LINES](80);
+		const origin = first[0]?.softWrap?.[0]?.origin;
+		assert.equal(typeof origin, "symbol");
+		assert.deepStrictEqual(first[0]?.softWrap, [{ logicalLineId: 1, start: 0, end: 8, origin }]);
+
+		lines = [{ text: "content", softWrap: [{ logicalLineId: 2, start: 0, end: 5 }] }];
+		const second = box[RENDER_LINES](80);
+		assert.notStrictEqual(second, first);
+		assert.deepStrictEqual(first[0]?.softWrap, [{ logicalLineId: 1, start: 0, end: 8, origin }]);
+		assert.deepStrictEqual(second[0]?.softWrap, [{ logicalLineId: 2, start: 1, end: 6, origin }]);
+	});
+
+	it("excludes its own padding while preserving copied child metadata", () => {
+		const origin = Symbol("child");
+		const lines: TuiRenderLine[] = [
+			{
+				text: "content",
+				softWrap: [{ logicalLineId: 1, start: 0, end: 7, origin }],
+				selectionExclusions: [{ start: 1, end: 2 }],
+			},
+		];
+		const box = new Box(2, 0);
+		box.addChild(createComponent(() => lines));
+
+		const rendered = box[RENDER_LINES](80);
+
+		assert.deepStrictEqual(rendered[0]?.softWrap, [{ logicalLineId: 1, start: 0, end: 9, origin }]);
+		assert.deepStrictEqual(rendered[0]?.selectionExclusions, [
+			{ start: 0, end: 2 },
+			{ start: 3, end: 4 },
+		]);
+	});
+
+	it("refreshes and removes selection exclusions when text is unchanged", () => {
+		let lines: TuiRenderLine[] = [{ text: "content", selectionExclusions: [{ start: 1, end: 2 }] }];
+		const box = new Box(1, 0);
+		box.addChild(createComponent(() => lines));
+		const first = box[RENDER_LINES](80);
+		assert.deepStrictEqual(first[0]?.selectionExclusions, [
+			{ start: 0, end: 1 },
+			{ start: 2, end: 3 },
+		]);
+
+		lines = [{ text: "content", selectionExclusions: [{ start: 0, end: 3 }] }];
+		const second = box[RENDER_LINES](80);
+		assert.notStrictEqual(second, first);
+		assert.deepStrictEqual(first[0]?.selectionExclusions, [
+			{ start: 0, end: 1 },
+			{ start: 2, end: 3 },
+		]);
+		assert.deepStrictEqual(second[0]?.selectionExclusions, [{ start: 0, end: 4 }]);
+
+		lines = [{ text: "content" }];
+		const third = box[RENDER_LINES](80);
+		assert.notStrictEqual(third, second);
+		assert.deepStrictEqual(third[0]?.selectionExclusions, [{ start: 0, end: 1 }]);
+	});
+
+	it("refreshes row count when existing text is unchanged", () => {
+		let lines: TuiRenderLine[] = [{ text: "content" }];
+		const box = new Box(1, 0);
+		box.addChild(createComponent(() => lines));
+		const first = box[RENDER_LINES](80);
+
+		lines = [{ text: "content" }, { text: "content" }];
+		const second = box[RENDER_LINES](80);
+		assert.notStrictEqual(second, first);
+		assert.strictEqual(second.length, 2);
+	});
+
+	it("reuses cached output when child rows are unchanged", () => {
+		const line: TuiRenderLine = {
+			text: "content",
+			softWrap: [{ logicalLineId: 1, start: 0, end: 7 }],
+			selectionExclusions: [{ start: 1, end: 2 }],
+		};
+		let lines = [line];
+		const box = new Box(1, 0);
+		box.addChild(createComponent(() => lines));
+		const first = box[RENDER_LINES](80);
+
+		lines = [line];
+		assert.strictEqual(box[RENDER_LINES](80), first);
+	});
+});
+
+describe("Immutable render results", () => {
+	it("reflects in-place legacy string updates without changing prior snapshots", () => {
+		const lines = ["before"];
+		const component: Component = {
+			render: () => lines,
+			invalidate: () => {},
+		};
+		const firstStructured = renderComponentLines(component, 80);
+		const firstTexts = renderLineTexts(firstStructured);
+		assert.strictEqual(renderLineTexts(firstStructured), firstTexts);
+
+		lines[0] = "after";
+		lines.push("third");
+		const secondStructured = renderComponentLines(component, 80);
+		assert.notStrictEqual(secondStructured, firstStructured);
+		assert.deepStrictEqual(firstStructured.map((line) => line.text), ["before"]);
+		assert.deepStrictEqual(firstTexts, ["before"]);
+		assert.deepStrictEqual(secondStructured.map((line) => line.text), ["after", "third"]);
+		assert.deepStrictEqual(renderLineTexts(secondStructured), ["after", "third"]);
+	});
+
+	it("preserves large sparse legacy array lengths and holes", () => {
+		const lines: string[] = [];
+		lines.length = 1_000_000_000;
+		lines[0] = "first";
+		lines[lines.length - 1] = "last";
+		const component: Component = { render: () => lines, invalidate: () => {} };
+
+		const structured = renderComponentLines(component, 80);
+
+		assert.strictEqual(structured.length, lines.length);
+		assert.strictEqual(structured[0]?.text, "first");
+		assert.strictEqual(structured[structured.length - 1]?.text, "last");
+		assert.strictEqual(1 in structured, false);
+		assert.strictEqual(structured.length - 2 in structured, false);
+	});
+
+	it("preserves prior selection metadata when an update uses new structured lines", () => {
+		let lines: TuiRenderLine[] = [
+			{
+				text: "content",
+				softWrap: [{ logicalLineId: 1, start: 0, end: 7 }],
+				selectionExclusions: [{ start: 1, end: 2 }],
+			},
+		];
+		const component: Component = {
+			render: () => renderLineTexts(lines),
+			[RENDER_LINES]: () => lines,
+			selectionExclusions: () => [{ start: 3, end: 4 }],
+			invalidate: () => {},
+		};
+		const first = renderComponentLines(component, 80);
+		const origin = first[0]?.softWrap?.[0]?.origin;
+		assert.equal(typeof origin, "symbol");
+		assert.strictEqual(renderComponentLines(component, 80), first);
+
+		lines = [
+			{
+				text: "content",
+				softWrap: [{ logicalLineId: 1, start: 0, end: 5 }],
+				selectionExclusions: [{ start: 2, end: 3 }],
+			},
+		];
+		const second = renderComponentLines(component, 80);
+		assert.notStrictEqual(second, first);
+		assert.deepStrictEqual(first[0]?.softWrap, [{ logicalLineId: 1, start: 0, end: 7, origin }]);
+		assert.deepStrictEqual(first[0]?.selectionExclusions, [
+			{ start: 1, end: 2 },
+			{ start: 3, end: 4 },
+		]);
+		assert.deepStrictEqual(second[0]?.softWrap, [{ logicalLineId: 1, start: 0, end: 5, origin }]);
+		assert.deepStrictEqual(second[0]?.selectionExclusions, [{ start: 2, end: 4 }]);
+		assert.strictEqual(renderComponentLines(component, 80), second);
+	});
+
+	it("keeps child soft-wrap origins stable through nested containers", () => {
+		const inheritedOrigin = Symbol("inherited");
+		const lines: TuiRenderLine[] = [
+			{
+				text: "content",
+				softWrap: [
+					{ logicalLineId: 1, start: 0, end: 3, origin: inheritedOrigin },
+					{ logicalLineId: 2, start: 3, end: 7 },
+				],
+			},
+		];
+		const child: Component = {
+			render: () => renderLineTexts(lines),
+			[RENDER_LINES]: () => lines,
+			invalidate: () => {},
+		};
+		const container = new Container();
+		container.addChild(child);
+
+		const childLines = renderComponentLines(child, 80);
+		const containerLines = renderComponentLines(container, 80);
+		const childOrigin = childLines[0]?.softWrap?.[1]?.origin;
+
+		assert.equal(typeof childOrigin, "symbol");
+		assert.strictEqual(childLines[0]?.softWrap?.[0]?.origin, inheritedOrigin);
+		assert.strictEqual(containerLines[0]?.softWrap?.[0]?.origin, inheritedOrigin);
+		assert.strictEqual(containerLines[0]?.softWrap?.[1]?.origin, childOrigin);
+		assert.strictEqual(renderComponentLines(child, 80), childLines);
+		assert.strictEqual(renderComponentLines(container, 80)[0]?.softWrap?.[1]?.origin, childOrigin);
+	});
+
+	it("propagates selection regions through line composition and transforms", () => {
+		const content: TuiRenderLine = {
+			text: "body",
+			softWrap: [{ logicalLineId: 1, start: 0, end: 4 }],
+		};
+		const line = withRenderLineSelectionRegion(
+			{ text: "● body", softWrap: [{ logicalLineId: 2, start: 2, end: 6 }] },
+			content,
+			2,
+			4,
+		);
+		assert.strictEqual(line.selectionRegion?.content, content);
+
+		const prefixed = prefixRenderLine(line, "  ");
+		assert.deepStrictEqual(prefixed.selectionRegion, { content, column: 4, width: 4 });
+		const composited = compositeTuiRenderLine({ text: "" }, prefixed, 3, 8, 20);
+		assert.deepStrictEqual(composited.selectionRegion, { content, column: 7, width: 4 });
+		const offset = offsetRenderLine(composited, 2);
+		assert.deepStrictEqual(offset.selectionRegion, { content, column: 9, width: 4 });
+		const truncated = truncateRenderLine(offset, 10);
+		assert.deepStrictEqual(truncated.selectionRegion, { content, column: 9, width: 1 });
+		assert.strictEqual(truncated.selectionRegion?.content.softWrap, content.softWrap);
 	});
 });
 

@@ -4,7 +4,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { MermaidPreferenceSelectorComponent } from '#/tui/components/dialogs/mermaid-preference-selector';
 import {
-  CopyOnSelectSelectorComponent,
+  SelectionCopyModeSelectorComponent,
   SettingsSelectorComponent,
   ThinkingDisplaySelectorComponent,
   ToolCallDensitySelectorComponent,
@@ -63,14 +63,14 @@ describe('transcript display selectors', () => {
     expect(regular).toContain('Usage');
     expect(regular).not.toContain('Tool call density');
     expect(regular).not.toContain('Thinking folding');
-    expect(regular).not.toContain('Copy on select');
+    expect(regular).not.toContain('Selection copying');
 
     const fullscreen = settingsText(true).split('\n');
     expect(fullscreen).toContain('    Tool call density');
     expect(fullscreen).toContain('    Choose how much of each tool call the transcript shows.');
     expect(fullscreen).toContain('    Thinking folding');
     expect(fullscreen).toContain('    Choose whether to fold finished thinking.');
-    expect(fullscreen).toContain('    Copy on select');
+    expect(fullscreen).toContain('    Selection copying');
   });
 
   it('offers compact, balanced, and detailed tool calls with the current marker', () => {
@@ -270,22 +270,38 @@ describe('transcript display previews', () => {
   });
 });
 
-describe('CopyOnSelectSelectorComponent', () => {
-  it('marks the current choice and maps the options back to the boolean', () => {
+describe('SelectionCopyModeSelectorComponent', () => {
+  it('offers all three copy modes and maps keyboard selections back to their values', () => {
     const onSelect = vi.fn();
-    const picker = new CopyOnSelectSelectorComponent({
-      currentValue: false,
+    const picker = new SelectionCopyModeSelectorComponent({
+      currentValue: 'off',
       onSelect,
       onCancel: () => {},
     });
     const text = strip(picker.render(100).join('\n'));
-    expect(text).toContain('Off ← current');
+    expect(text).toContain('Selection copying');
+    expect(text).toContain('❯ Off ← current');
+    expect(text).toContain('Immediately');
+    expect(text).toContain('Right-click');
     expect(text).toContain('Press Ctrl-C to copy selected text.');
+    expect(text).toContain('Right-click to copy; right-click again to paste if clipboard reading is available.');
 
     picker.handleInput('\r');
-    picker.handleInput('\u001B[A');
+    picker.handleInput('\u001B[B');
     picker.handleInput('\r');
-    expect(onSelect.mock.calls).toEqual([[false], [true]]);
+    picker.handleInput('\u001B[B');
+    picker.handleInput('\r');
+    expect(onSelect.mock.calls).toEqual([['off'], ['immediate'], ['right-click']]);
+  });
+
+  it('marks right-click as the current mode', () => {
+    const picker = new SelectionCopyModeSelectorComponent({
+      currentValue: 'right-click',
+      onSelect: () => {},
+      onCancel: () => {},
+    });
+
+    expect(strip(picker.render(100).join('\n'))).toContain('❯ Right-click ← current');
   });
 });
 

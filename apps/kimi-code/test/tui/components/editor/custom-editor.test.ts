@@ -1,7 +1,9 @@
 import {
   CURSOR_MARKER,
+  Editor,
   FAKE_CURSOR_END,
   FAKE_CURSOR_START,
+  RENDER_LINES,
   type AutocompleteItem,
   type AutocompleteProvider,
   type AutocompleteSuggestions,
@@ -51,6 +53,37 @@ function providerRecordingForce(items: AutocompleteItem[]): {
   };
   return { provider, calls };
 }
+
+describe('CustomEditor render ownership', () => {
+  it('does not mutate the base render result', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+    editor.setText('/add-dir ');
+    const lines = ['top', '/add-dir ', 'bottom'];
+    const baseRender = vi.spyOn(Editor.prototype, 'render').mockReturnValue(lines);
+    onTestFinished(() => baseRender.mockRestore());
+
+    editor.render(90);
+
+    expect(lines).toEqual(['top', '/add-dir ', 'bottom']);
+  });
+});
+
+describe('CustomEditor selection exclusions', () => {
+  it.each([
+    [1, [{ start: 0, end: 1 }]],
+    [4, [{ start: 0, end: 1 }, { start: 3, end: 4 }]],
+    [6, [{ start: 0, end: 2 }, { start: 5, end: 6 }]],
+    [8, [{ start: 0, end: 3 }, { start: 7, end: 8 }]],
+  ])('uses the rendered content start at width %i', (width, expected) => {
+    const editor = makeEditor();
+    editor.focused = false;
+
+    const lines = editor[RENDER_LINES](width);
+
+    expect(lines[1]?.selectionExclusions).toEqual(expected);
+  });
+});
 
 describe('CustomEditor autocomplete Escape handling', () => {
   it('escape closes a visible slash command menu without firing app-level escape', async () => {
@@ -653,6 +686,91 @@ describe('CustomEditor paste marker expansion', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(submit).toHaveBeenCalledWith('[image #1 (1×1)] hello');
+  });
+
+  it('preserves the custom input path for an atomic selection paste', () => {
+    const editor = makeEditor();
+    editor.setText('alpha beta');
+
+    const result = editor.handleSelectionInput('\u001B[200~X\u001B[201~', {
+      start: 6,
+      end: 11,
+      generation: 1,
+    });
+
+    expect(result).toEqual({ handled: true, clearSelection: true });
+    expect(editor.getText()).toBe('alpha X');
+    editor.handleInput('\u001F');
+    expect(editor.getText()).toBe('alpha beta');
+  });
+
+  it('retains a queued split bracketed paste selection until the paste completes', async () => {
+    const editor = makeEditor();
+    editor.setText('alpha beta');
+    let resolvePaste!: (handled: boolean) => void;
+    editor.onPasteImage = () =>
+      new Promise<boolean>((resolve) => {
+        resolvePaste = resolve;
+      });
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    const result = editor.handleSelectionInput('\u001B[200~', {
+      start: 6,
+      end: 11,
+      generation: 1,
+    });
+    expect(result).toEqual({ handled: true, clearSelection: true });
+    resolvePaste(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(editor.getText()).toBe('alpha beta');
+
+    editor.handleInput('X');
+    expect(editor.getText()).toBe('alpha beta');
+    editor.handleInput('\u001B[201~');
+
+    expect(editor.getText()).toBe('alpha X');
+    editor.handleInput('\u001F');
+    expect(editor.getText()).toBe('alpha beta');
+  });
+
+  it('does not clear a selection for rejected input queued behind an image paste', async () => {
+    const editor = makeEditor();
+    editor.setText('alpha beta');
+    let resolvePaste!: (handled: boolean) => void;
+    editor.onPasteImage = () =>
+      new Promise<boolean>((resolve) => {
+        resolvePaste = resolve;
+      });
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    const result = editor.handleSelectionInput('new\nvalue', { start: 6, end: 11, generation: 1 });
+    expect(result).toEqual({ handled: false });
+
+    resolvePaste(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(editor.getText()).toBe('alpha beta');
+  });
+
+  it('retains a queued selection replacement until an image paste completes', async () => {
+    const editor = makeEditor();
+    editor.setText('alpha beta');
+    let resolvePaste!: (handled: boolean) => void;
+    editor.onPasteImage = () =>
+      new Promise<boolean>((resolve) => {
+        resolvePaste = resolve;
+      });
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    const result = editor.handleSelectionInput('X', { start: 6, end: 11, generation: 1 });
+    expect(result).toEqual({ handled: true, clearSelection: true });
+    expect(editor.getText()).toBe('alpha beta');
+
+    resolvePaste(true);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(editor.getText()).toBe('alpha X');
+    editor.handleInput('\u001F');
+    expect(editor.getText()).toBe('alpha beta');
   });
 });
 

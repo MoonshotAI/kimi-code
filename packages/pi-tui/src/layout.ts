@@ -2,7 +2,14 @@ import type { ScrollView } from "./components/scroll-view.ts";
 import { allocateStackSizes, visibleStackEntries } from "./components/stack.ts";
 import { getLayoutNode } from "./layout-node.ts";
 import { cropKittyImageLine, getKittyImageMetadata, isImageLine } from "./terminal-image.ts";
-import { type Component, CURSOR_MARKER, compositeTuiLine } from "./tui.ts";
+import {
+	renderComponentLines,
+	textRenderLine,
+	type TuiRenderLine,
+	withRenderLineText,
+	withSelectionJoinBarrier,
+} from "./render-line.ts";
+import { type Component, CURSOR_MARKER, compositeTuiRenderLine } from "./tui.ts";
 import {
 	extractAnsiCode,
 	getActiveBackgroundAnsi,
@@ -26,10 +33,11 @@ export interface LayoutBox {
 	clip: LayoutRect;
 	children: LayoutBox[];
 	parent?: LayoutBox;
-	lines?: readonly string[];
+	lines?: readonly TuiRenderLine[];
 	lineOffset?: number;
 	scrollView?: ScrollView;
-	scrollContentLines?: readonly string[];
+	scrollContentLines?: readonly TuiRenderLine[];
+	selectionJoinBarrier?: boolean;
 	layer: number;
 }
 
@@ -37,7 +45,7 @@ export interface LayoutFrame {
 	root: LayoutBox;
 	width: number;
 	height: number;
-	lines: string[];
+	lines: TuiRenderLine[];
 	primaryScrollView?: ScrollView;
 }
 
@@ -52,7 +60,7 @@ export interface ScrollbarGeometry {
 
 interface LayoutContext {
 	viewport: { width: number; height: number };
-	renderCache: Map<Component, Map<number, string[]>>;
+	renderCache: Map<Component, Map<number, TuiRenderLine[]>>;
 	requestRender: () => void;
 	primaryScrollView: ScrollView | undefined;
 }
@@ -65,16 +73,16 @@ function intersect(a: LayoutRect, b: LayoutRect): LayoutRect {
 	return { x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y) };
 }
 
-function renderCached(context: LayoutContext, component: Component, width: number): string[] {
+function renderCached(context: LayoutContext, component: Component, width: number): TuiRenderLine[] {
 	const safeWidth = Math.max(1, Math.floor(width));
 	let widths = context.renderCache.get(component);
 	if (!widths) {
-		widths = new Map<number, string[]>();
+		widths = new Map<number, TuiRenderLine[]>();
 		context.renderCache.set(component, widths);
 	}
 	let lines = widths.get(safeWidth);
 	if (!lines) {
-		lines = component.render(safeWidth);
+		lines = renderComponentLines(component, safeWidth);
 		widths.set(safeWidth, lines);
 	}
 	return lines;
@@ -85,7 +93,14 @@ function measureHeight(context: LayoutContext, component: Component, width: numb
 }
 
 function measureWidth(context: LayoutContext, component: Component, width: number): number {
-	return renderCached(context, component, width).reduce((max, line) => Math.max(max, visibleWidth(line)), 0);
+	const lines = renderCached(context, component, width);
+	let max = 0;
+	for (const key of Object.keys(lines)) {
+		const index = Number(key);
+		if (String(index) !== key || index < 0 || index >= lines.length) continue;
+		max = Math.max(max, visibleWidth(lines[index]!.text));
+	}
+	return max;
 }
 
 function withParent(box: LayoutBox, parent: LayoutBox): LayoutBox {
@@ -119,7 +134,15 @@ function layoutComponent(
 		const allocatedHeight = height === undefined ? lines.length : Math.max(0, Math.floor(height));
 		let lineOffset = 0;
 		if (lines.length > allocatedHeight && allocatedHeight > 0) {
-			const cursorLine = lines.findIndex((line) => line.includes(CURSOR_MARKER));
+			let cursorLine = -1;
+			for (const key of Object.keys(lines)) {
+				const index = Number(key);
+				if (String(index) !== key || index < 0 || index >= lines.length) continue;
+				if (lines[index]!.text.includes(CURSOR_MARKER)) {
+					cursorLine = index;
+					break;
+				}
+			}
 			if (cursorLine >= allocatedHeight) lineOffset = cursorLine - allocatedHeight + 1;
 		}
 		return {
@@ -214,6 +237,7 @@ function layoutComponent(
 		rect,
 		clip: intersect(clip, rect),
 		children: [],
+		...(entries.length > 1 ? { selectionJoinBarrier: true } : {}),
 		layer: 0,
 	};
 	let childX = x;
@@ -306,7 +330,7 @@ export function getScrollbarGeometry(box: LayoutBox, includeHiddenAuto = false):
 	};
 }
 
-function paintScrollbar(box: LayoutBox, screen: string[], totalWidth: number): void {
+function paintScrollbar(box: LayoutBox, screen: TuiRenderLine[], totalWidth: number): void {
 	const geometry = getScrollbarGeometry(box);
 	if (!geometry || !box.scrollView) return;
 
@@ -317,17 +341,20 @@ function paintScrollbar(box: LayoutBox, screen: string[], totalWidth: number): v
 		const replacement = isThumb
 			? box.scrollView.scrollbarThumbStyle(box.scrollView.isScrollbarActive ? "█" : "┃")
 			: box.scrollView.scrollbarTrackStyle("│");
-		screen[row] = replaceScrollbarCell(
-			screen[row] ?? "",
-			geometry.column,
-			totalWidth,
-			replacement,
-			box.scrollView.scrollbar !== "always",
+		const line = screen[row] ?? textRenderLine("");
+		screen[row] = withRenderLineText(
+			line,
+			replaceScrollbarCell(line.text, geometry.column, totalWidth, replacement, box.scrollView.scrollbar !== "always"),
 		);
 	}
 }
 
-function paintBox(box: LayoutBox, screen: string[], totalWidth: number): void {
+function paintBox(
+	box: LayoutBox,
+	screen: TuiRenderLine[],
+	totalWidth: number,
+	selectionJoinBarrier = false,
+): void {
 	if (box.lines) {
 		const offset = box.lineOffset ?? 0;
 		const firstRow = Math.max(box.rect.y, box.clip.y, 0);
@@ -335,37 +362,42 @@ function paintBox(box: LayoutBox, screen: string[], totalWidth: number): void {
 		for (let row = firstRow; row < lastRow; row++) {
 			const sourceLine = box.lines[offset + row - box.rect.y];
 			if (sourceLine === undefined) continue;
-			let line = sourceLine.replace(OSC133_ZONE_PREFIX, "");
+			let line = sourceLine.text.replace(OSC133_ZONE_PREFIX, "");
 			const imageMetadata = getKittyImageMetadata(line);
 			if (imageMetadata) {
 				const clipBottom = Math.min(screen.length, box.clip.y + box.clip.height);
 				const visibleRows = Math.min(imageMetadata.rows, clipBottom - row);
 				if (visibleRows < imageMetadata.rows) line = cropKittyImageLine(line, 0, visibleRows);
 			}
-			// Fast path: a full-width box painting onto an untouched row can use the
-			// source line reference directly. Compositing here would rebuild the row
-			// string through ANSI/grapheme segmentation every frame; padding is
-			// unnecessary because rows are written with erase-line and the final
-			// width clamp still truncates over-wide lines.
-			if (box.rect.x === 0 && box.rect.width >= totalWidth && (isImageLine(line) || !screen[row])) {
-				screen[row] = line;
+			const renderLine = withRenderLineText(sourceLine, line);
+			const columnLine = selectionJoinBarrier ? withSelectionJoinBarrier(renderLine) : renderLine;
+			if (box.rect.x === 0 && box.rect.width >= totalWidth && (isImageLine(line) || !screen[row]?.text)) {
+				screen[row] = columnLine;
 			} else {
-				screen[row] = compositeTuiLine(screen[row] ?? "", line, box.rect.x, box.rect.width, totalWidth);
+				screen[row] = compositeTuiRenderLine(
+					screen[row] ?? textRenderLine(""),
+					columnLine,
+					box.rect.x,
+					box.rect.width,
+					totalWidth,
+				);
 			}
 		}
 	}
-	for (const child of box.children) paintBox(child, screen, totalWidth);
+	for (const child of box.children) {
+		paintBox(child, screen, totalWidth, selectionJoinBarrier || box.selectionJoinBarrier === true);
+	}
 
 	if (box.scrollView && box.scrollContentLines && box.scrollView.scrollTop > 0 && box.rect.height > 0) {
 		for (let imageRow = box.scrollView.scrollTop - 1; imageRow >= 0; imageRow--) {
-			const imageLine = box.scrollContentLines[imageRow] ?? "";
+			const imageLine = box.scrollContentLines[imageRow]?.text ?? "";
 			const metadata = getKittyImageMetadata(imageLine);
 			if (metadata) {
 				const hiddenRows = box.scrollView.scrollTop - imageRow;
 				if (hiddenRows < metadata.rows) {
 					const visibleRows = Math.min(box.rect.height, metadata.rows - hiddenRows);
 					const cropped = cropKittyImageLine(imageLine, hiddenRows, visibleRows);
-					if (box.rect.x === 0 && box.rect.width >= totalWidth) screen[box.rect.y] = cropped;
+					if (box.rect.x === 0 && box.rect.width >= totalWidth) screen[box.rect.y] = textRenderLine(cropped);
 				}
 				break;
 			}
@@ -396,7 +428,7 @@ export function renderLayoutFrame(
 		width: safeWidth,
 		height: safeHeight,
 	});
-	const lines = Array.from({ length: safeHeight }, () => "");
+	const lines = Array.from({ length: safeHeight }, () => textRenderLine(""));
 	paintBox(rootBox, lines, safeWidth);
 	return {
 		root: rootBox,

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { applyCopyOnSelectChoice, applyTuiModeChoice } from '#/tui/commands/config';
+import { applySelectionCopyModeChoice, applyTuiModeChoice } from '#/tui/commands/config';
 
 const mocks = vi.hoisted(() => ({
   saveTuiConfig: vi.fn(),
@@ -144,10 +144,10 @@ describe('tui mode preference commands', () => {
     mocks.saveTuiConfig.mockClear();
     const host = makeHost(undefined, 'fullscreen');
 
-    await applyCopyOnSelectChoice(host as never, false);
+    await applySelectionCopyModeChoice(host as never, 'off');
 
     expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ copyOnSelect: false, tuiMode: undefined }),
+      expect.objectContaining({ selectionCopyMode: 'off', tuiMode: undefined }),
     );
   });
 

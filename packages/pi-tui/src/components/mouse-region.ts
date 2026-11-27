@@ -1,3 +1,4 @@
+import { RENDER_LINES, renderComponentLines, renderLineTexts, type TuiRenderLine } from "../render-line.ts";
 import {
 	type Component,
 	dispatchMouseEvent,
@@ -19,7 +20,11 @@ export class MouseRegion implements Component {
 	}
 
 	render(width: number): string[] {
-		return this.child.render(width);
+		return renderLineTexts(this[RENDER_LINES](width));
+	}
+
+	[RENDER_LINES](width: number): TuiRenderLine[] {
+		return renderComponentLines(this.child, width);
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | TuiMouseEventResult | undefined {

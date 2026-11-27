@@ -30,6 +30,10 @@ export class StickyUserMessageComponent implements Component {
 
   invalidate(): void {}
 
+  selectionExclusions() {
+    return [{ start: 0, end: USER_MESSAGE_BULLET.length }];
+  }
+
   render(width: number): string[] {
     const safeWidth = Math.max(0, width);
     if (this.judgment === null || safeWidth <= 0) return [];

@@ -1,7 +1,17 @@
 import { fuzzyFilter } from "../fuzzy.ts";
 import { getKeybindings } from "../keybindings.ts";
+import {
+	prefixRenderLine,
+	RENDER_LINES,
+	renderComponentLines,
+	renderLineTexts,
+	textRenderLine,
+	type TuiRenderLine,
+	withRenderLineText,
+	wrapRenderLine,
+} from "../render-line.ts";
 import type { Component, TuiMouseEvent, TuiMouseEventResult } from "../tui.ts";
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { truncateToWidth, visibleWidth } from "../utils.ts";
 import { Input } from "./input.ts";
 
 export interface SettingItem {
@@ -94,16 +104,16 @@ export class SettingsList implements Component {
 	}
 
 	render(width: number): string[] {
-		// If submenu is active, render it instead
-		if (this.submenuComponent) {
-			return this.submenuComponent.render(width);
-		}
+		return renderLineTexts(this[RENDER_LINES](width));
+	}
 
+	[RENDER_LINES](width: number): TuiRenderLine[] {
+		if (this.submenuComponent) return renderComponentLines(this.submenuComponent, width);
 		return this.renderMainList(width);
 	}
 
-	private renderMainList(width: number): string[] {
-		const lines: string[] = [];
+	private renderMainList(width: number): TuiRenderLine[] {
+		const lines: Array<string | TuiRenderLine> = [];
 
 		if (this.searchEnabled && this.searchInput) {
 			lines.push(...this.searchInput.render(width));
@@ -115,14 +125,14 @@ export class SettingsList implements Component {
 			if (this.searchEnabled) {
 				this.addHintLine(lines, width);
 			}
-			return lines;
+			return lines.map((line) => (typeof line === "string" ? textRenderLine(line) : line));
 		}
 
 		const displayItems = this.getDisplayItems();
 		if (displayItems.length === 0) {
 			lines.push(truncateToWidth(this.theme.hint("  No matching settings"), width));
 			this.addHintLine(lines, width);
-			return lines;
+			return lines.map((line) => (typeof line === "string" ? textRenderLine(line) : line));
 		}
 
 		// Calculate visible range with scrolling
@@ -164,16 +174,17 @@ export class SettingsList implements Component {
 		const selectedItem = displayItems[this.selectedIndex];
 		if (selectedItem?.description) {
 			lines.push("");
-			const wrappedDesc = wrapTextWithAnsi(selectedItem.description, width - 4);
+			const wrappedDesc = wrapRenderLine(textRenderLine(selectedItem.description), width - 4);
 			for (const line of wrappedDesc) {
-				lines.push(this.theme.description(`  ${line}`));
+				const prefixed = prefixRenderLine(line, "  ");
+				lines.push(withRenderLineText(prefixed, this.theme.description(prefixed.text)));
 			}
 		}
 
 		// Add hint
 		this.addHintLine(lines, width);
 
-		return lines;
+		return lines.map((line) => (typeof line === "string" ? textRenderLine(line) : line));
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
@@ -312,7 +323,7 @@ export class SettingsList implements Component {
 		this.selectedIndex = 0;
 	}
 
-	private addHintLine(lines: string[], width: number): void {
+	private addHintLine(lines: Array<string | TuiRenderLine>, width: number): void {
 		lines.push("");
 		lines.push(
 			truncateToWidth(

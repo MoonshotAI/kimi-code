@@ -1,6 +1,10 @@
 import {
   ANIMATION_FRAME_INTERVAL_MS,
   AnimationFrameScheduler,
+  RENDER_LINES,
+  renderComponentLines,
+  renderLineTexts,
+  textRenderLine,
   visibleWidth,
   type Component,
   type TuiMouseDispatchResult,
@@ -16,7 +20,14 @@ import { SkillActivationComponent } from '#/tui/components/messages/skill-activa
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { TranscriptContainer } from '#/tui/components/messages/transcript-container';
-import { TranscriptGroupComponent } from '#/tui/components/messages/transcript-group';
+import { TranscriptGroupComponent, TranscriptRowComponent } from '#/tui/components/messages/transcript-group';
+import {
+  flattenTranscriptRow,
+  isTranscriptRowRenderable,
+  TranscriptRowLayout,
+  type TranscriptRowParts,
+  type TranscriptRowRenderable,
+} from '#/tui/components/messages/transcript-row-layout';
 import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import type { TranscriptPresentationOptions } from '#/tui/config';
 import { DETACH_HINT_TEXT, FOREGROUND_BASH_HINT_DELAY_MS } from '#/tui/constant/rendering';
@@ -257,6 +268,52 @@ describe('TranscriptGroupComponent', () => {
     });
     expect(plain(container.render(80))).not.toContain('Used Read');
     expect(memberRender).not.toHaveBeenCalled();
+  });
+
+  it('keeps group decorations visible but outside fullscreen selection content', () => {
+    const { container } = makeContainer();
+    const thinking = thought();
+    container.addChild(thinking);
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.addChild(tool('Bash', { command: 'pnpm test' }));
+    container.setHost(host(4));
+    container.toggleGroup(thinking);
+    container.render(80);
+    const group = container.getRenderedLayout()?.children
+      .map((entry) => entry.component)
+      .find((component) => component instanceof TranscriptGroupComponent);
+    if (!(group instanceof TranscriptGroupComponent)) throw new Error('expected a transcript group');
+
+    const legacy = renderComponentLines(group, 80);
+    const parts = group.renderTranscriptRow(80);
+    const fullscreen = flattenTranscriptRow(parts, 80);
+    expect(renderLineTexts(fullscreen)).toEqual(renderLineTexts(legacy));
+    expect(legacy.every((line) => line.selectionRegion === undefined)).toBe(true);
+
+    const branch = parts.gutterLines.findIndex((line) => plain([line.text]).includes('├'));
+    expect(branch).toBeGreaterThanOrEqual(0);
+    expect(plain([parts.gutterLines[branch]!.text])).toBe('├ ');
+    expect(plain([parts.contentLines[branch]!.text])).toBe('Thought for 3s');
+    expect(parts.gutterWidths?.[branch]).toBe(2);
+    expect(fullscreen[branch]?.selectionRegion).toEqual({
+      content: parts.contentLines[branch],
+      column: 2,
+      width: 78,
+    });
+
+    const showLess = parts.contentLines.findIndex((line) => plain([line.text]) === 'Show less');
+    expect(showLess).toBeGreaterThanOrEqual(0);
+    expect(plain([parts.gutterLines[showLess]!.text])).toBe('└ ');
+    expect(plain([fullscreen[showLess]!.selectionRegion!.content.text])).toBe('Show less');
+    expect(fullscreen[0]).toMatchObject({
+      text: '',
+      selectionRegion: { content: { text: '' }, column: 2, width: 78 },
+    });
+
+    const regular = renderComponentLines(group, 80);
+    expect(regular.map((line) => ({ text: line.text, exclusions: line.selectionExclusions }))).toEqual(
+      legacy.map((line) => ({ text: line.text, exclusions: line.selectionExclusions })),
+    );
   });
 
   it('keeps regular thinking previews unchanged by grouping preferences', () => {
@@ -942,7 +999,22 @@ describe('TranscriptGroupComponent', () => {
     vi.advanceTimersByTime(1_000);
     const timed = container.render(100);
     expect(onlyGroup(container, 100).tail).toBe('  └ Reading a.ts; running sleep 5 · 2s');
-    expect(timed.join('\n')).toContain(currentTheme.dim('  └ Reading a.ts; running sleep 5 · 2s'));
+    expect(timed.join('\n')).toContain(`  ${currentTheme.dim('└ Reading a.ts; running sleep 5 · 2s')}`);
+    const component = container.getRenderedLayout()?.children
+      .map((entry) => entry.component)
+      .find((entry) => entry instanceof TranscriptGroupComponent);
+    if (!(component instanceof TranscriptGroupComponent)) throw new Error('expected a transcript group');
+    const parts = component.renderTranscriptRow(100);
+    const tailIndex = parts.contentLines.length - 1;
+    expect(plain([parts.gutterLines[tailIndex]!.text])).toBe('  └ ');
+    expect(parts.gutterWidths?.[tailIndex]).toBe(visibleWidth(parts.gutterLines[tailIndex]!.text));
+    expect(parts.gutterWidths?.[tailIndex]).toBe(4);
+    expect(flattenTranscriptRow(parts, 100)[tailIndex]?.selectionRegion).toEqual({
+      content: parts.contentLines[tailIndex],
+      column: 4,
+      width: 96,
+    });
+    expect(plain([parts.contentLines[tailIndex]!.text])).toBe('Reading a.ts; running sleep 5 · 2s');
     expect(onlyGroup(container, 30).tail).toBe('  └ Reading a.ts; runni… · 2s');
 
     settle(timeline, read);
@@ -1612,7 +1684,7 @@ describe('TranscriptRowComponent', () => {
     const opened = container.render(80);
     const body = opened.slice(closed.length);
     expect(opened.slice(0, closed.length)).toEqual(closed);
-    expect(body).toEqual(edit.renderRowDetail(80));
+    expect(body).toEqual(renderLineTexts(edit.renderRowDetail(80)));
     expect(plain(body)).toContain('two');
     expect(edit.render(80).slice(2)).toEqual(expect.arrayContaining(body));
 
@@ -1624,9 +1696,56 @@ describe('TranscriptRowComponent', () => {
     const expanded = container.render(80);
     const row = expanded.indexOf(closed[3] ?? 'the row');
     expect(row).toBeGreaterThan(3);
-    expect(expanded.slice(row + 1)).toEqual(edit.renderRowDetail(80));
+    expect(expanded.slice(row + 1)).toEqual(renderLineTexts(edit.renderRowDetail(80)));
     container.toggleToolOutputExpansion();
     expect(container.render(80)).toEqual(closed);
+  });
+
+  it('does not exclude body text columns from an expanded row detail', () => {
+    const { container } = makeContainer(options({ toolCallDensity: 'balanced' }));
+    const edit = tool('Edit', { path: '/work/a.ts', old_string: 'one', new_string: 'two' });
+    container.addChild(edit);
+    click(container, 1);
+    container.render(80);
+    const row = container.getRenderedLayout()?.children
+      .map((entry) => entry.component)
+      .find((component) => component instanceof TranscriptRowComponent);
+    expect(row).toBeInstanceOf(TranscriptRowComponent);
+    const detail = edit.renderRowDetail(80)[0]!;
+    const line = renderComponentLines(row!, 80).find((candidate) => candidate.text === detail.text);
+    expect(line).toBeDefined();
+    expect(line!.selectionExclusions).toEqual(detail.selectionExclusions);
+  });
+
+  it('prefers pure detail content in fullscreen and keeps legacy detail rendering for regular rows', () => {
+    const { container } = makeContainer(options({ toolCallDensity: 'balanced' }));
+    const edit = tool('Edit', { path: '/work/a.ts', old_string: 'one', new_string: 'two' });
+    container.addChild(edit);
+    click(container, 1);
+    const row = container.getRenderedLayout()?.children
+      .map((entry) => entry.component)
+      .find((component) => component instanceof TranscriptRowComponent);
+    if (!(row instanceof TranscriptRowComponent)) throw new Error('expected a transcript row');
+    const pureDetail = [textRenderLine('pure body')];
+    const renderTranscriptRowDetail = vi.fn(() => pureDetail);
+    Object.assign(edit, { renderTranscriptRowDetail });
+    const legacyDetail = vi.spyOn(edit, 'renderRowDetail');
+    legacyDetail.mockClear();
+
+    const regular = renderComponentLines(row, 80);
+    expect(legacyDetail).toHaveBeenCalled();
+    expect(renderTranscriptRowDetail).not.toHaveBeenCalled();
+    expect(renderLineTexts(regular)).not.toContain('pure body');
+
+    const parts = row.renderTranscriptRow(80);
+    expect(renderTranscriptRowDetail).toHaveBeenCalledWith(78);
+    expect(parts.contentLines.at(-1)).toBe(pureDetail[0]);
+    expect(parts.gutterWidths?.at(-1)).toBe(2);
+    expect(flattenTranscriptRow(parts, 80).at(-1)?.selectionRegion).toEqual({
+      content: pureDetail[0],
+      column: 2,
+      width: 78,
+    });
   });
 
   it('opens a command that fits onto the exact row it showed closed', () => {
@@ -1641,7 +1760,7 @@ describe('TranscriptRowComponent', () => {
 
     expect(plain(closed).split('\n')).toEqual(['', '● Bash npm test']);
     expect(opened.slice(0, closed.length)).toEqual(closed);
-    expect(opened.slice(closed.length)).toEqual(bash.renderRowDetail(80));
+    expect(opened.slice(closed.length)).toEqual(renderLineTexts(bash.renderRowDetail(80)));
   });
 
   it.each([
@@ -1669,7 +1788,21 @@ describe('TranscriptRowComponent', () => {
     click(container, 1, 0, width);
     const opened = container.render(width);
     expect(plain(opened.slice(1, 1 + wrapped.length)).split('\n')).toEqual(wrapped);
-    expect(opened.slice(1 + wrapped.length)).toEqual(bash.renderRowDetail(width));
+    expect(opened.slice(1 + wrapped.length)).toEqual(renderLineTexts(bash.renderRowDetail(width)));
+    const component = container.getRenderedLayout()?.children
+      .map((entry) => entry.component)
+      .find((entry) => entry instanceof TranscriptRowComponent);
+    if (!(component instanceof TranscriptRowComponent)) throw new Error('expected a transcript row');
+    const parts = component.renderTranscriptRow(width);
+    const flattened = flattenTranscriptRow(parts, width);
+    expect(renderLineTexts(flattened)).toEqual(opened);
+    expect(plain([parts.gutterLines[2]!.text])).toBe('       ');
+    expect(plain([parts.contentLines[2]!.text])).toBe(wrapped[1]!.trimStart());
+    expect(flattened[2]?.selectionRegion).toEqual({
+      content: parts.contentLines[2],
+      column: 7,
+      width: width - 7,
+    });
 
     click(container, 1, 0, width);
     expect(container.render(width)).toEqual(closed);
@@ -1819,7 +1952,7 @@ describe('TranscriptRowComponent', () => {
       const authorized = authenticating();
       const running = authorized.container.render(80);
       expect(plain(running.slice(0, 4)).split('\n')).toEqual([...above, '● linear: authenticate']);
-      expect(running.slice(4)).toEqual(authorized.call.renderRowDetail(80));
+      expect(running.slice(4)).toEqual(renderLineTexts(authorized.call.renderRowDetail(80)));
       expect(plain(running)).toContain('https://example.test/oauth/authorize');
       const link = plain(running).split('\n').findIndex((line) => line.includes('https://example.test/oauth/authorize'));
       expect(click(authorized.container, 3)).toBeUndefined();
@@ -1831,7 +1964,7 @@ describe('TranscriptRowComponent', () => {
       settle(failed.timeline, failed.call, 'OAuth flow for MCP server "linear" did not complete: Timed out', true);
       const reason = failed.container.render(80);
       expect(plain(reason.slice(0, 4)).split('\n')).toEqual([...above, '✗ linear: authenticate · failed']);
-      expect(reason.slice(4)).toEqual(failed.call.renderRowDetail(80));
+      expect(reason.slice(4)).toEqual(renderLineTexts(failed.call.renderRowDetail(80)));
       expect(plain(reason)).toContain('did not complete: Timed out');
       click(failed.container, 3);
       expect(failed.call.isExpanded()).toBe(true);
@@ -2240,5 +2373,175 @@ describe('TranscriptContainer interaction', () => {
     expect(layout?.children[0]?.component).toBe(boundary);
     expect(layout?.children.some((entry) => entry.component instanceof TranscriptGroupComponent)).toBe(true);
     expect(layout?.children.some((entry) => entry.component instanceof ToolCallComponent)).toBe(false);
+  });
+});
+
+
+describe('TranscriptRowLayout', () => {
+  it('combines uneven gutter and content lines without mutating their metadata', () => {
+    const softWrap = [{ logicalLineId: 7, start: 0, end: 4 }];
+    const content = [
+      {
+        text: '\u001B]133;A\u0007body',
+        softWrap,
+        selectionExclusions: [{ start: 1, end: 2 }],
+      },
+      textRenderLine('next'),
+    ];
+    const parts: TranscriptRowParts = {
+      gutterWidth: 3,
+      gutterLines: [textRenderLine('● '), textRenderLine('│ '), textRenderLine('└ ')],
+      contentLines: content,
+    };
+
+    const flattened = flattenTranscriptRow(parts, 10);
+
+    expect(renderLineTexts(flattened)).toEqual([
+      '\u001B]133;A\u0007●  body',
+      '│  next',
+      '└  ',
+    ]);
+    expect(flattened.map((line) => line.selectionRegion)).toEqual([
+      { content: content[0], column: 3, width: 7 },
+      { content: content[1], column: 3, width: 7 },
+      { content: { text: '' }, column: 3, width: 7 },
+    ]);
+    expect(flattened[0]?.softWrap).toEqual([{ logicalLineId: 7, start: 3, end: 7 }]);
+    expect(flattened[0]?.selectionExclusions).toEqual([{ start: 4, end: 5 }]);
+    expect(flattened[0]?.selectionRegion?.content.softWrap).toBe(softWrap);
+    expect(softWrap).toEqual([{ logicalLineId: 7, start: 0, end: 4 }]);
+    expect(content[0]?.selectionExclusions).toEqual([{ start: 1, end: 2 }]);
+  });
+
+  it('uses per-line gutter widths for rendering, selection geometry, and cache invalidation', () => {
+    const contentLines = [textRenderLine('title'), textRenderLine('wrapped'), textRenderLine('detail')];
+    let parts: TranscriptRowParts = {
+      gutterWidth: 2,
+      gutterWidths: [2, 5, 0],
+      gutterLines: [textRenderLine('● '), textRenderLine('│    '), textRenderLine('')],
+      contentLines,
+    };
+    const child: Component & TranscriptRowRenderable = {
+      render: () => [],
+      renderTranscriptRow: () => parts,
+      invalidate: vi.fn(),
+    };
+    const layout = new TranscriptRowLayout(child);
+
+    const first = renderComponentLines(layout, 12);
+    expect(renderLineTexts(first)).toEqual(['● title', '│    wrapped', 'detail']);
+    expect(first.map((line) => line.selectionRegion)).toEqual([
+      { content: contentLines[0], column: 2, width: 10 },
+      { content: contentLines[1], column: 5, width: 7 },
+      { content: contentLines[2], column: 0, width: 12 },
+    ]);
+    expect(renderComponentLines(layout, 12)).toBe(first);
+
+    parts = { ...parts, gutterWidths: [3, 5, 0] };
+    const resized = renderComponentLines(layout, 12);
+    expect(resized).not.toBe(first);
+    expect(resized[0]?.selectionRegion).toEqual({ content: contentLines[0], column: 3, width: 9 });
+  });
+
+  it.each([
+    { width: 2, texts: ['x', '├y'], columns: [0, 1], widths: [2, 1] },
+    { width: 4, texts: ['x', '├─┐y'], columns: [0, 3], widths: [4, 1] },
+    { width: 5, texts: ['x', '├─┐ y'], columns: [0, 4], widths: [5, 1] },
+    { width: 1, texts: ['x', 'y'], columns: [0, 0], widths: [1, 1] },
+    { width: 0, texts: ['', ''], columns: [0, 0], widths: [0, 0] },
+    { width: -2, texts: ['', ''], columns: [0, 0], widths: [0, 0] },
+  ])('reserves a content column and clips overwide gutters at width $width', ({ width, texts, columns, widths }) => {
+    const contentLines = [textRenderLine('x'), textRenderLine('y')];
+    const flattened = flattenTranscriptRow({
+      gutterWidth: 4,
+      gutterWidths: [0],
+      gutterLines: [textRenderLine(''), textRenderLine('├─┐')],
+      contentLines,
+    }, width);
+
+    expect(renderLineTexts(flattened)).toEqual(texts);
+    expect(flattened.map((line) => line.selectionRegion)).toEqual(contentLines.map((content, index) => ({
+      content,
+      column: columns[index],
+      width: widths[index],
+    })));
+  });
+
+  it('keeps fallback exclusions, invalidation, mouse handling, and stable snapshots', () => {
+    const contentLines = [textRenderLine('body')];
+    const handleMouse = vi.fn(() => ({ handled: true }));
+    const child: Component = {
+      render: () => ['body'],
+      [RENDER_LINES]: () => contentLines,
+      selectionExclusions: () => [{ start: 0, end: 1 }],
+      invalidate: vi.fn(),
+      handleMouse,
+    };
+    const layout = new TranscriptRowLayout(child);
+
+    expect(isTranscriptRowRenderable(child)).toBe(false);
+    const first = renderComponentLines(layout, 10);
+    const second = renderComponentLines(layout, 10);
+    expect(second).toBe(first);
+    expect(first[0]?.selectionRegion?.content.text).toBe('body');
+    expect(first[0]?.selectionRegion?.column).toBe(0);
+    expect(first[0]?.selectionRegion?.width).toBe(10);
+    expect(first[0]?.selectionExclusions).toEqual([{ start: 0, end: 1 }]);
+
+    const event: TuiMouseEvent = {
+      type: 'click',
+      button: 'left',
+      x: 0,
+      y: 0,
+      screenX: 0,
+      screenY: 0,
+      width: 10,
+      height: 1,
+      shift: false,
+      alt: false,
+      ctrl: false,
+      clickCount: 1,
+    };
+    expect(layout.handleMouse(event)).toEqual({ handled: true });
+    expect(handleMouse).toHaveBeenCalledWith(event);
+    layout.invalidate();
+    expect(child.invalidate).toHaveBeenCalledOnce();
+  });
+
+  it('uses row rendering only in fullscreen and forwards gutter-only clicks', () => {
+    const parts: TranscriptRowParts = {
+      gutterWidth: 2,
+      gutterLines: [textRenderLine('● '), textRenderLine('  ')],
+      contentLines: [textRenderLine('body')],
+    };
+    const renderTranscriptRow = vi.fn(() => parts);
+    const handleMouse = vi.fn(() => ({ handled: true }));
+    const child: Component & TranscriptRowRenderable = {
+      render: vi.fn(() => ['legacy']),
+      renderTranscriptRow,
+      invalidate: vi.fn(),
+      handleMouse,
+    };
+    const { container } = makeContainer(options({ fullscreen: false }));
+    container.addChild(child);
+
+    expect(isTranscriptRowRenderable(child)).toBe(true);
+    expect(container.render(20)).toEqual(['legacy']);
+    expect(renderComponentLines(container, 20)[0]?.selectionRegion).toBeUndefined();
+    expect(renderTranscriptRow).not.toHaveBeenCalled();
+
+    container.setPresentationOptions(options());
+    const fullscreen = renderComponentLines(container, 20);
+    expect(renderLineTexts(fullscreen)).toEqual(['● body', '  ']);
+    expect(fullscreen.map((line) => line.selectionRegion)).toEqual([
+      { content: parts.contentLines[0], column: 2, width: 18 },
+      { content: { text: '' }, column: 2, width: 18 },
+    ]);
+    expect(click(container, 1, 0, 20)).toMatchObject({ handled: true });
+    expect(handleMouse).toHaveBeenCalledOnce();
+
+    container.setPresentationOptions(options({ fullscreen: false }));
+    expect(container.render(20)).toEqual(['legacy']);
+    expect(renderComponentLines(container, 20)[0]?.selectionRegion).toBeUndefined();
   });
 });

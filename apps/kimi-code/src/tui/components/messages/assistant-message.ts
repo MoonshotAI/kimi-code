@@ -1,6 +1,21 @@
-import { Container, truncateToWidth, visibleWidth, type Component, type TuiMouseDispatchResult, type TuiMouseEvent } from '@moonshot-ai/pi-tui';
+import {
+  Container,
+  prefixRenderLine,
+  RENDER_LINES,
+  renderComponentLines,
+  renderLineTexts,
+  textRenderLine,
+  truncateRenderLine,
+  type TuiRenderLine,
+  visibleWidth,
+  withRenderLineText,
+  type Component,
+  type TuiMouseDispatchResult,
+  type TuiMouseEvent,
+} from '@moonshot-ai/pi-tui';
 
 import { Markdown } from '#/tui/components/markdown/markdown';
+import type { TranscriptRowParts } from '#/tui/components/messages/transcript-row-layout';
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
@@ -22,7 +37,8 @@ export class AssistantMessageComponent implements Component {
   private showBullet: boolean;
   private projectionVersion = 0;
 
-  private renderCache: { width: number; lines: string[] } | undefined;
+  private renderCache: { width: number; lines: TuiRenderLine[] } | undefined;
+  private transcriptRowCache: { width: number; parts: TranscriptRowParts } | undefined;
 
   constructor(showBullet: boolean = true) {
     this.showBullet = showBullet;
@@ -31,6 +47,7 @@ export class AssistantMessageComponent implements Component {
 
   private markRenderDirty(): void {
     this.renderCache = undefined;
+    this.transcriptRowCache = undefined;
   }
 
   setShowBullet(show: boolean): void {
@@ -112,6 +129,49 @@ export class AssistantMessageComponent implements Component {
     }
   }
 
+  renderTranscriptRow(width: number): TranscriptRowParts {
+    const prefixWidth = visibleWidth(this.showBullet ? STATUS_BULLET : MESSAGE_INDENT);
+    if (this.lastText.trim().length === 0) {
+      return { gutterWidth: prefixWidth, gutterLines: [], contentLines: [] };
+    }
+
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) {
+      const lines = [textRenderLine('')];
+      return { gutterWidth: 0, gutterLines: lines, contentLines: lines };
+    }
+    if (isRenderCacheEnabled() && this.transcriptRowCache?.width === safeWidth) {
+      return this.transcriptRowCache.parts;
+    }
+
+    const bodyLines = renderComponentLines(
+      this.contentContainer,
+      Math.max(1, safeWidth - prefixWidth),
+    );
+    const contentLines = [textRenderLine(''), ...bodyLines];
+    const marked = markOsc133Zone(contentLines.map((line) => line.text));
+    const markedContent = contentLines.map((line, index) =>
+      withRenderLineText(line, marked[index]!)
+    );
+    const gutterLines = markedContent.map((_, index) => {
+      if (index === 0) return textRenderLine('');
+      return textRenderLine(
+        index === 1 && this.showBullet
+          ? currentTheme.fg('text', STATUS_BULLET)
+          : MESSAGE_INDENT,
+      );
+    });
+    const parts = { gutterWidth: prefixWidth, gutterLines, contentLines: markedContent };
+    if (isRenderCacheEnabled()) {
+      this.transcriptRowCache = { width: safeWidth, parts };
+    }
+    return parts;
+  }
+
+  selectionExclusions() {
+    return [{ start: 0, end: visibleWidth(this.showBullet ? STATUS_BULLET : MESSAGE_INDENT) }];
+  }
+
   handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
     if (this.lastText.trim().length === 0) return undefined;
 
@@ -134,10 +194,14 @@ export class AssistantMessageComponent implements Component {
   }
 
   render(width: number): string[] {
+    return renderLineTexts(this[RENDER_LINES](width));
+  }
+
+  [RENDER_LINES](width: number): TuiRenderLine[] {
     if (this.lastText.trim().length === 0) return [];
 
     const safeWidth = Math.max(0, width);
-    if (safeWidth <= 0) return [''];
+    if (safeWidth <= 0) return [textRenderLine('')];
 
     if (
       isRenderCacheEnabled() &&
@@ -149,15 +213,16 @@ export class AssistantMessageComponent implements Component {
 
     const prefix = this.showBullet ? STATUS_BULLET : MESSAGE_INDENT;
     const contentWidth = Math.max(1, safeWidth - visibleWidth(prefix));
-    const contentLines = this.contentContainer.render(contentWidth);
+    const contentLines = renderComponentLines(this.contentContainer, contentWidth);
 
-    const lines: string[] = [''];
+    const lines: TuiRenderLine[] = [textRenderLine('')];
     for (let i = 0; i < contentLines.length; i++) {
       const p =
         i === 0 && this.showBullet ? currentTheme.fg('text', STATUS_BULLET) : MESSAGE_INDENT;
-      lines.push(p + contentLines[i]);
+      lines.push(truncateRenderLine(prefixRenderLine(contentLines[i]!, p), safeWidth, '…'));
     }
-    const rendered = markOsc133Zone(lines.map((line) => truncateToWidth(line, safeWidth, '…')));
+    const marked = markOsc133Zone(lines.map((line) => line.text));
+    const rendered = lines.map((line, index) => withRenderLineText(line, marked[index]!));
     if (isRenderCacheEnabled()) {
       this.renderCache = { width: safeWidth, lines: rendered };
     }
