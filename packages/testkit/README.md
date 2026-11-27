@@ -55,6 +55,16 @@ Define `test` in the test file itself with `base.extend(...)`. The repository's 
 
 The `model` fixture calls `model.verify()` after the test and prints a request summary on failure. The `kap` fixture runs verification before shutdown so an unreleased hold stays visible. It then stops the server and removes the temporary home. A fixture that owns another driver of the model, such as the engine harness's `testkitAgentFixtures()`, calls `verifyModelOnce(model)` before tearing that driver down; the `model` fixture then skips its own verification.
 
+With `verifyInvariants: true`, the `kap` fixture also calls `verifyKapInvariants(kap)` after a test that passed, then verifies the model again so a request sent while the sessions settle is checked too. It looks at every session the test created with `kap.createSession()` or `kap.fork()` or saw on a WebSocket, and fails the test when:
+
+- the session is not idle, without a pending interaction and with an empty prompt queue, by the deadline (`TIMEOUTS.wait` for the whole check, `timeoutMs` to change it); background work counts;
+- once it is idle, a turn or item of its main agent, of an agent a client subscribed to, or of a subagent a tool call refers to in `agent_refs` is still `running`;
+- a client's frames for an agent it subscribed to, including one whose stream ended when that agent finished, fold into other turns than REST returns; after a paged snapshot (`has_more`), the turns before that page are left out unless they started after it, as after an undo;
+- a client's latest `session` frame disagrees with REST on `activity`, `pending_interaction`, `last_turn_outcome` or `archived`; a frame without `pending_interaction`, like an `archived` frame, counts as `none`;
+- a client got a `session` frame saying nothing is pending while an `interaction` frame it was sent was still pending; that ends once the client stops receiving the session, because it unsubscribed or the last subagent it subscribed to ended, and on an `archived` or `deleted` frame.
+
+Sessions and agents REST no longer knows (HTTP 404 or a `404xx` code), such as a deleted session or a closed side agent, are skipped. `tests/scenarios` turns this on for every scenario. Call `verifyKapInvariants(kap)` yourself when you start KAP with `startKap()`. A test that calls the `kap` fixture function directly passes its test context with the model: `fixtures.kap({ ...context, model }, run)`.
+
 The network guard allows local TCP connections. It checks both numeric ports and port strings accepted by Node, and passes Unix socket paths and Windows named pipes through to Node. For IPv4, use a valid address in the loopback range (`127.0.0.0/8`). When guards overlap, their `allowHosts` lists combine. Uninstalling one guard removes its list.
 
 Failed KAP tests also print summaries of the most recent 32 WebSocket frames and 32 server log entries. Pass the server package’s `createServerLogger` to collect info-level logs in memory for that test. The scenario suite does this by default. Frames show their type, IDs and error code. Logs show their level, message and request ID. The fixture respects an explicit `serverOptions.logger` or `serverOptions.logLevel` and reports when the diagnostic log stream is unavailable.

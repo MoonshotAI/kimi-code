@@ -24,5 +24,6 @@ export function scenarioFixtures(options: ScenarioOptions = {}): KapFixtureDefin
     config: { defaultPermissionMode: 'yolo', ...options.config },
     env: options.env,
     mcpServers: options.mcpServers,
+    verifyInvariants: true,
   });
 }

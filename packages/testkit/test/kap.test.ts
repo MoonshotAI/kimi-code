@@ -1,4 +1,5 @@
 import { writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 
@@ -8,8 +9,10 @@ import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { WaitTimeoutError } from '#/errors';
 import { createTestHome, type TestHome } from '#/fixtures/home';
 import { FIXED_TIME } from '#/fixtures/normalize';
-import { isConversationFrame, turnsFromFrames, type KapFrame } from '#/kap/frames';
+import { KapClient } from '#/kap/client';
+import { isConversationFrame, turnsFromFrames, type KapFrame, type KapTurn } from '#/kap/frames';
 import { startKap, type KapRunningServer } from '#/kap/harness';
+import { verifyKapInvariants } from '#/kap/invariants';
 import { KapProcess } from '#/kap/process';
 import { dropFrames, duplicateFrames, insertUnknownFrame, KapRecorder, mutateKapRecording, readKapRecording, replayKapRecording, UNKNOWN_FRAME_TYPE, type KapRecording } from '#/kap/recording';
 import { KapEnvelopeError, KapRest } from '#/kap/rest';
@@ -309,6 +312,266 @@ describe('KapHarness', () => {
     expect(process.env['HOME']).toBe(second.home.home);
     await second.close();
     expect(process.env['HOME']).toBe(before);
+  });
+});
+
+describe('verifyKapInvariants', () => {
+  interface StubKap {
+    readonly session: Readonly<Record<string, unknown>>;
+    readonly turns: readonly KapTurn[];
+    readonly agents?: Readonly<Record<string, readonly KapTurn[]>>;
+    readonly snapshot?: Readonly<Record<string, unknown>>;
+    readonly frames?: readonly Readonly<Record<string, unknown>>[];
+    readonly afterUnsubscribe?: readonly Readonly<Record<string, unknown>>[];
+    readonly queued?: readonly unknown[];
+    readonly deleted?: boolean;
+    readonly broken?: boolean;
+    readonly notFoundStatus?: number;
+  }
+
+  const idle = { id: 's1', activity: 'idle', pending_interaction: 'none', last_turn_outcome: 'completed', archived: false };
+  const header = { turn_id: 't1', ordinal: 0, kind: 'agent', status: 'ended', outcome: 'completed' };
+  const reply = { item_id: 'a1', type: 'assistant_message', status: 'ended', outcome: 'completed', text: 'hi' };
+  const answered: KapTurn = { ...header, items: [reply] };
+  const live = (frame: Readonly<Record<string, unknown>>) => ({ session_id: 's1', agent_id: 'main', ...frame });
+  const answeringFrames = [
+    live({ type: 'turn.started', turn: { ...header, status: 'running', outcome: undefined } }),
+    live({ type: 'item.ended', turn_id: 't1', item: reply }),
+    live({ type: 'turn.ended', turn: header }),
+  ];
+  const closers: (() => Promise<void>)[] = [];
+
+  afterEach(async () => {
+    await Promise.all(closers.splice(0).map((close) => close()));
+  });
+
+  function send(peer: ServerSocket, frames: readonly Readonly<Record<string, unknown>>[]): void {
+    for (const frame of frames) peer.send(JSON.stringify(frame));
+  }
+
+  async function stubKap(stub: StubKap, options: { readonly subscribe?: boolean; readonly agentIds?: readonly string[] } = {}): Promise<KapClient> {
+    const server = createServer((request, response) => {
+      const path = new URL(request.url ?? '/', 'http://kap.test').pathname;
+      const routes: Readonly<Record<string, unknown>> = {
+        '/api/v1/sessions': stub.session,
+        '/api/v1/sessions/s1': stub.session,
+        '/api/v1/sessions/s1/prompts': { active: null, queued: stub.queued ?? [] },
+        '/api/v1/sessions/s1/agents/main/turns': { turns: stub.turns, has_more: false },
+        ...Object.fromEntries(Object.entries(stub.agents ?? {}).map(([agentId, turns]) => [`/api/v1/sessions/s1/agents/${agentId}/turns`, { turns, has_more: false }])),
+      };
+      const creating = path === '/api/v1/sessions';
+      const found = creating || stub.deleted !== true ? routes[path] : undefined;
+      const status = stub.broken === true && !creating ? 500 : found === undefined ? 404 : 200;
+      response.writeHead(status === 404 ? (stub.notFoundStatus ?? 404) : status, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(status === 200 ? { code: 0, data: found } : { code: status === 500 ? 50001 : 40401, msg: status === 500 ? 'internal error' : 'not found' }));
+    });
+    const sockets = new WebSocketServer({ server });
+    sockets.on('connection', (peer) => {
+      peer.on('message', (data) => {
+        const bytes = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
+        const command = JSON.parse(bytes.toString('utf8')) as Readonly<Record<string, unknown>>;
+        peer.send(JSON.stringify({ type: 'response', request_id: command['request_id'], code: 0 }));
+        if (command['type'] === 'unsubscribe') {
+          send(peer, stub.afterUnsubscribe ?? []);
+          return;
+        }
+        const agentIds = command['agent_ids'] as readonly string[];
+        const snapshots = agentIds.map((agentId) => live({ type: 'turns', agent_id: agentId, turns: [], has_more: false, ...(agentId === 'main' ? stub.snapshot : {}) }));
+        send(peer, [...snapshots, ...(stub.frames ?? [])]);
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const client = new KapClient({ origin: () => `http://127.0.0.1:${(server.address() as AddressInfo).port}`, token: () => 'tok' });
+    closers.push(async () => {
+      await Promise.all(client.connectedSockets.map((socket) => socket.close()));
+      for (const peer of sockets.clients) peer.terminate();
+      await new Promise<void>((resolve) => sockets.close(() => resolve()));
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+    await client.createSession();
+    if (options.subscribe === false) return client;
+    const socket = await client.connect();
+    const agentIds = options.agentIds ?? ['main'];
+    await socket.subscribe('s1', { agentIds });
+    await socket.waitFor(() => socket.frames.length === 1 + agentIds.length + (stub.frames ?? []).length);
+    return client;
+  }
+
+  it('passes when REST, the folded frames and the latest session frame agree', async () => {
+    const client = await stubKap({
+      session: idle,
+      turns: [answered],
+      frames: [
+        ...answeringFrames,
+        { type: 'interaction', session_id: 's1', interaction_id: 'i1', status: 'pending' },
+        { type: 'session', change: 'updated', session: { ...idle, activity: 'turn', pending_interaction: 'approval' } },
+        { type: 'interaction', session_id: 's1', interaction_id: 'i1', status: 'ended' },
+        { type: 'session', change: 'updated', session: idle },
+      ],
+    });
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('reports a session that is still busy and leaves its turns alone', async () => {
+    const client = await stubKap({ session: { ...idle, activity: 'background' }, turns: [{ ...header, status: 'running', items: [] }], queued: [{}] }, { subscribe: false });
+    await expect(verifyKapInvariants(client, { timeoutMs: 50 })).rejects.toMatchObject({
+      name: 'KapInvariantError',
+      problems: [expect.stringMatching(/^session s1 is still busy when the test ends \(activity background, pending interaction none, no running prompt, 1 queued prompt\(s\)\)/)],
+    });
+  });
+
+  it('reports why it could not read a session instead of calling it busy', async () => {
+    const client = await stubKap({ session: idle, turns: [], broken: true }, { subscribe: false });
+    await expect(verifyKapInvariants(client, { timeoutMs: 50 })).rejects.toMatchObject({
+      problems: [expect.stringMatching(/^could not read the state of session s1: KAP GET \/api\/v1\/sessions\/s1(\/prompts)? failed with HTTP 500 and code 50001/)],
+    });
+  });
+
+  it('reports a turn and an item still running after the session went idle', async () => {
+    const client = await stubKap({ session: idle, turns: [{ ...header, status: 'running', items: [{ ...reply, status: 'running' }] }] }, { subscribe: false });
+    await expect(verifyKapInvariants(client)).rejects.toMatchObject({
+      problems: [
+        'turn t1 of agent main in session s1 is still running after the session went idle',
+        'assistant_message item a1 in turn t1 of agent main in session s1 is still running after the session went idle',
+      ],
+    });
+  });
+
+  it('follows the agent references of tool calls to the turns of subagents', async () => {
+    const delegation = { item_id: 'c1', type: 'tool_call', status: 'ended', outcome: 'completed', name: 'Agent', agent_refs: [{ agent_id: 'child', role: 'child' }] };
+    const client = await stubKap(
+      { session: idle, turns: [{ ...header, items: [delegation] }], agents: { child: [{ ...header, turn_id: 'c-t1', status: 'running', items: [] }] } },
+      { subscribe: false },
+    );
+    await expect(verifyKapInvariants(client)).rejects.toMatchObject({
+      problems: ['turn c-t1 of agent child in session s1 is still running after the session went idle'],
+    });
+  });
+
+  it('reports a subscribed client whose frames fold into other turns than REST returns', async () => {
+    const client = await stubKap({ session: idle, turns: [answered], frames: [answeringFrames[0]!, answeringFrames[2]!] });
+    await expect(verifyKapInvariants(client, { timeoutMs: 50 })).rejects.toMatchObject({
+      problems: ['client #1 subscribed to agent main of session s1 folds its frames into turns that differ from REST: turn t1: the client has 0 item(s), REST has 1'],
+    });
+  });
+
+  it('compares a client that got a paged snapshot only with the turns from that page on', async () => {
+    const earlier: KapTurn = { ...answered, turn_id: 't0', ordinal: 0 };
+    const paged: KapTurn = { ...answered, ordinal: 1 };
+    const client = await stubKap({ session: idle, turns: [earlier, paged], snapshot: { turns: [paged], has_more: true } });
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('compares the stream of a subagent that ended with what REST returns for it', async () => {
+    const child = (frame: Readonly<Record<string, unknown>>) => ({ ...live(frame), agent_id: 'child' });
+    const childTurn: KapTurn = { ...answered, turn_id: 'c1' };
+    const ended = child({ type: 'agent', status: 'ended' });
+    const streamed = [child({ type: 'turn.started', turn: { ...header, turn_id: 'c1', status: 'running', outcome: undefined } }), child({ type: 'turn.ended', turn: { ...header, turn_id: 'c1' } })];
+    const complete = await stubKap(
+      { session: idle, turns: [], agents: { child: [childTurn] }, frames: [streamed[0]!, child({ type: 'item.ended', turn_id: 'c1', item: reply }), streamed[1]!, ended] },
+      { agentIds: ['main', 'child'] },
+    );
+    await expect(verifyKapInvariants(complete)).resolves.toBeUndefined();
+    const missingReply = await stubKap({ session: idle, turns: [], agents: { child: [childTurn] }, frames: [...streamed, ended] }, { agentIds: ['main', 'child'] });
+    await expect(verifyKapInvariants(missingReply, { timeoutMs: 50 })).rejects.toMatchObject({
+      problems: ['client #1 subscribed to agent child of session s1 folds its frames into turns that differ from REST: turn c1: the client has 0 item(s), REST has 1'],
+    });
+  });
+
+  it('compares turns that started after a paged snapshot even when an undo gave them lower ordinals', async () => {
+    const at = (second: number) => `2026-01-01T00:00:0${second}.000Z`;
+    const paged: KapTurn = { ...answered, turn_id: 't50', ordinal: 50, started_at: at(0) };
+    const kept: KapTurn = { ...answered, turn_id: 't10', ordinal: 10, started_at: at(0) };
+    const resent = { ...header, turn_id: 't11', ordinal: 11, started_at: at(2) };
+    const client = await stubKap({
+      session: idle,
+      turns: [kept, { ...resent, items: [reply] }],
+      snapshot: { turns: [paged], has_more: true, event_created_at: at(1) },
+      frames: [
+        live({ type: 'turns.removed', turn_ids: ['t50'] }),
+        live({ type: 'turn.started', turn: { ...resent, status: 'running', outcome: undefined } }),
+        live({ type: 'item.ended', turn_id: 't11', item: reply }),
+        live({ type: 'turn.ended', turn: resent }),
+      ],
+    });
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('reports a latest session frame that drops a field REST still has', async () => {
+    const archived = { ...idle, archived: true };
+    const { last_turn_outcome: _outcome, pending_interaction: _pending, ...withoutOutcome } = archived;
+    const client = await stubKap({ session: archived, turns: [answered], frames: [...answeringFrames, { type: 'session', change: 'archived', session: withoutOutcome }] });
+    await expect(verifyKapInvariants(client, { timeoutMs: 50 })).rejects.toMatchObject({
+      problems: [
+        `client #1's latest session frame for s1 says ${JSON.stringify({ activity: 'idle', pending_interaction: 'none', archived: true })}, but REST says ${JSON.stringify({ activity: 'idle', pending_interaction: 'none', last_turn_outcome: 'completed', archived: true })}`,
+      ],
+    });
+  });
+
+  it('reads a session frame without a pending interaction as none, as archived frames send it', async () => {
+    const archived = { ...idle, archived: true };
+    const { pending_interaction: _pending, ...archivedFrame } = archived;
+    const client = await stubKap({ session: archived, turns: [answered], frames: [...answeringFrames, { type: 'session', change: 'archived', session: archivedFrame }] });
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('reports a session frame that says nothing is pending while an interaction the client was sent is still open', async () => {
+    const client = await stubKap({
+      session: idle,
+      turns: [answered],
+      frames: [
+        ...answeringFrames,
+        { type: 'interaction', session_id: 's1', interaction_id: 'i1', status: 'pending' },
+        { type: 'session', change: 'updated', session: { ...idle, activity: 'turn' } },
+        { type: 'interaction', session_id: 's1', interaction_id: 'i1', status: 'ended' },
+        { type: 'session', change: 'updated', session: idle },
+      ],
+    });
+    await expect(verifyKapInvariants(client)).rejects.toMatchObject({
+      problems: [expect.stringMatching(/^client #1 received session frame #6 for s1 saying nothing is pending while interaction i1 was still pending/)],
+    });
+  });
+
+  it('forgets the interactions of a session the client unsubscribed from', async () => {
+    const client = await stubKap({
+      session: idle,
+      turns: [answered],
+      frames: [...answeringFrames, { type: 'interaction', session_id: 's1', interaction_id: 'i1', status: 'pending' }],
+      afterUnsubscribe: [{ type: 'session', change: 'updated', session: idle }],
+    });
+    const [socket] = client.connectedSockets;
+    await socket!.command({ type: 'unsubscribe', session_id: 's1', agent_ids: ['main'] });
+    await socket!.waitFor((frame) => frame.type === 'session');
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('forgets the interactions of a session once the last subagent the client subscribed to ends', async () => {
+    const child = (frame: Readonly<Record<string, unknown>>) => ({ ...live(frame), agent_id: 'child' });
+    const client = await stubKap(
+      {
+        session: idle,
+        turns: [],
+        agents: { child: [] },
+        frames: [
+          { type: 'interaction', session_id: 's1', interaction_id: 'i1', status: 'pending' },
+          child({ type: 'agent', status: 'ended' }),
+          { type: 'session', change: 'updated', session: idle },
+        ],
+      },
+      { agentIds: ['child'] },
+    );
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('skips an agent that REST no longer knows, as a closed side agent answers with code 40401', async () => {
+    const delegation = { item_id: 'c1', type: 'tool_call', status: 'ended', outcome: 'completed', name: 'Agent', agent_refs: [{ agent_id: 'closed', role: 'child' }] };
+    const client = await stubKap({ session: idle, turns: [{ ...header, items: [delegation] }], notFoundStatus: 200 }, { subscribe: false });
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
+  });
+
+  it('skips a session that no longer exists', async () => {
+    const client = await stubKap({ session: idle, turns: [], deleted: true }, { subscribe: false });
+    await expect(verifyKapInvariants(client)).resolves.toBeUndefined();
   });
 });
 
