@@ -43,6 +43,27 @@ function resolveServerOrigin(): string {
 }
 
 const INJECTED_ORIGIN_KEY = 'kimi-desktop-server-origin';
+const EMBEDDED_SERVER_KEY = 'kimi-desktop-embedded-server';
+
+export const EMBEDDED_UI_PREFERENCES_KEY = 'desktop-embedded';
+
+export function uiPreferencesServerKey(): string {
+  return connectedToEmbeddedServer() ? EMBEDDED_UI_PREFERENCES_KEY : resolveServerOrigin();
+}
+
+function connectedToEmbeddedServer(): boolean {
+  if (typeof window === 'undefined') return false;
+  const params = new URLSearchParams(window.location.search);
+  const embedded = params.get('kimi_embedded') === '1';
+  try {
+    if (!params.has('kimi_origin')) return window.sessionStorage.getItem(EMBEDDED_SERVER_KEY) === '1';
+    if (embedded) window.sessionStorage.setItem(EMBEDDED_SERVER_KEY, '1');
+    else window.sessionStorage.removeItem(EMBEDDED_SERVER_KEY);
+    return embedded;
+  } catch {
+    return embedded;
+  }
+}
 
 function injectedServerOrigin(): string | undefined {
   if (typeof window === 'undefined') return undefined;

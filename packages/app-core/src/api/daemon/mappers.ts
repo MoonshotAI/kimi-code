@@ -636,6 +636,14 @@ export function toAppEvent(wire: WireEvent): AppEvent {
         hosts: Array.isArray(w.hosts) ? w.hosts.map((host: WireHost) => toAppHost(host)) : [],
       };
 
+    case 'ui_preferences': {
+      const event = wire as { readonly revision?: unknown; readonly changed?: unknown };
+      if (typeof event.revision !== 'number' || typeof event.changed !== 'object' || event.changed === null) {
+        return { type: 'unknown', raw: wire };
+      }
+      return { type: 'uiPreferencesChanged', revision: event.revision, changed: event.changed as Record<string, unknown> };
+    }
+
     default:
       return { type: 'unknown', raw: wire };
   }

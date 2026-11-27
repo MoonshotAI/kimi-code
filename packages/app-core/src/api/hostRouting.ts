@@ -154,6 +154,9 @@ const ROUTES = {
   getUserInfo: 'local',
   getOAuthRegion: 'local',
   getClientConfig: 'local',
+  getUiPreferences: 'local',
+  patchUiPreferences: 'local',
+  importUiPreferences: 'local',
 } as const satisfies Record<keyof KimiWebApi, Route>;
 
 const IMMEDIATE_CUSTOM: ReadonlySet<string> = new Set([
