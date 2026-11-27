@@ -12,6 +12,11 @@ export interface FrameWaitOptions {
   readonly after?: number;
 }
 
+export interface KapUnsubscription {
+  readonly frame: number;
+  readonly sessionId: string;
+}
+
 export interface SubscribeOptions extends FrameWaitOptions {
   readonly agentIds?: readonly string[];
   readonly waitForSnapshot?: boolean;
@@ -33,6 +38,7 @@ export class KapSocket {
   private readonly listeners = new Set<() => void>();
   private readonly readyAgents = new Map<string, Set<string>>();
   private readonly unsubscribes = new Map<string, Readonly<Record<string, unknown>>>();
+  private readonly left: KapUnsubscription[] = [];
   private closeInfo: { readonly code: number; readonly reason: string } | undefined;
   private lastError: Error | undefined;
   private readonly closed: Promise<void>;
@@ -152,6 +158,14 @@ export class KapSocket {
     return turnsFromFrames(this.conversation(sessionId, agentId));
   }
 
+  subscribedAgents(sessionId: string): readonly string[] {
+    return [...(this.readyAgents.get(sessionId) ?? [])];
+  }
+
+  get unsubscriptions(): readonly KapUnsubscription[] {
+    return this.left;
+  }
+
   async close(): Promise<void> {
     if (this.closeInfo === undefined) this.socket.close();
     await this.closed;
@@ -203,6 +217,7 @@ export class KapSocket {
     } else {
       this.readyAgents.delete(sessionId);
     }
+    if ((this.readyAgents.get(sessionId)?.size ?? 0) === 0) this.left.push({ frame: this.received.length - 1, sessionId });
   }
 
   private notify(): void {
