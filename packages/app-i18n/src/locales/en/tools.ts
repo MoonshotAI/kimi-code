@@ -801,7 +801,6 @@ export default {
     failedClause: ' ({count} failed)',
     liveDonePrefix: '',
     busy: 'Working…',
-    autoReviewing: 'Auto Review in progress…',
     doing: {
       read: 'Reading {subject}',
       bash: 'Running a command',

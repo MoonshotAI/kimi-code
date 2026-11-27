@@ -4,12 +4,11 @@ import { useI18n } from 'vue-i18n';
 import { Button, Icon, IconButton, Tooltip } from '@moonshot-ai/app-ui';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import type { SessionAdminStatusFilter } from '@moonshot-ai/app-client/client';
-import type { SessionAdminBatchDirection } from '@moonshot-ai/app-components';
-import { FilterSelect } from '@moonshot-ai/app-components';
-import { MultiSelectMenu } from '@moonshot-ai/app-components';
-import { SessionAdminTable } from '@moonshot-ai/app-components';
-import { SessionAdminPagination } from '@moonshot-ai/app-components';
+import type { SessionAdminBatchDirection, SessionAdminStatusFilter } from '@moonshot-ai/app-client/client';
+import FilterSelect from './FilterSelect.vue';
+import MultiSelectMenu from './MultiSelectMenu.vue';
+import SessionAdminTable from './SessionAdminTable.vue';
+import SessionAdminPagination from './SessionAdminPagination.vue';
 
 const { t } = useI18n();
 const client = useKimiWebClient();

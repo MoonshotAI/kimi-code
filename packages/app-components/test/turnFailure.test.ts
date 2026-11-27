@@ -182,11 +182,11 @@ describe('ChatPane compaction checkpoint card', () => {
     expect(divider?.querySelector('.cd-line')).toBeNull();
     const card = host.querySelector<HTMLButtonElement>('.compact-divider--compacted button.cd-card.cd-btn');
     expect(card).not.toBeNull();
-    expect(card?.querySelector('.cd-title')?.textContent).toBe('上下文已压缩');
-    expect(card?.querySelector('.cd-tokens')?.textContent).toBe('93.2k → 81k tokens');
-    expect(card?.querySelector('.cd-saved')?.textContent).toBe('-12.2k');
+    expect(card?.querySelector('.cd-body > .cd-title')?.textContent).toBe('上下文已压缩');
+    expect(card?.querySelector('.cd-body > .cd-metrics > .cd-tokens')?.textContent).toBe('93.2k → 81k tokens');
+    expect(card?.querySelector('.cd-body > .cd-metrics > .cd-saved')?.textContent).toBe('-12.2k');
     expect(card?.querySelector('.cd-view')).toBeNull();
-    expect(card?.querySelector('.cd-chevron')).not.toBeNull();
+    expect(card?.querySelector(':scope > .cd-chevron')).not.toBeNull();
     expect(card?.getAttribute('aria-expanded')).toBe('false');
     expect(card?.classList.contains('cd-open')).toBe(false);
 

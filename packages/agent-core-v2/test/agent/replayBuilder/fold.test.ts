@@ -5,7 +5,7 @@ import type { AgentReplayRecord } from '#/agent/replayBuilder/types';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { WireRecord } from '#/wire/record';
 import { fromCoreMessage } from '#human/message';
-import { fromLlmMessage } from '#/llm-adapter/contract/message';
+import { fromLlmMessage } from '#/wire/message';
 
 const METADATA: WireRecord = {
   type: 'metadata',
@@ -471,6 +471,47 @@ describe('foldWireRecords', () => {
       appendMessage(userMessage('same', { kind: 'user' }), 3),
     ]);
     expect(messageRecords(ordered.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([undefined, 7]);
+
+    const repeated: WireRecord[] = [
+      { type: 'turn.prompt', turnId: 2, input: [{ type: 'text', text: 'C' }], origin: { kind: 'user' }, time: 1 },
+      appendMessage(userMessage('C', { kind: 'user' }), 2),
+      appendMessage(userMessage('X', { kind: 'user' }), 3),
+      { type: 'turn.steer', turnId: 2, input: [{ type: 'text', text: 'X' }], origin: { kind: 'user' }, time: 4 },
+      appendMessage(userMessage('X', { kind: 'user' }), 5),
+      { type: 'turn.steer', turnId: 2, input: [{ type: 'text', text: 'X' }], origin: { kind: 'user' }, time: 6 },
+      { type: 'turn.ended', turnId: 2, reason: 'completed', time: 7 },
+    ];
+    const full = fold(repeated);
+    const windowed = foldWireRecords(
+      [METADATA, repeated[2]!, repeated[4]!],
+      undefined,
+      [METADATA, ...repeated],
+    );
+    expect(messageRecords(full.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([2, 3, 4]);
+    expect(messageRecords(windowed.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([3, 4]);
+  });
+
+  it('pairs notify and originless prompts without letting injections claim their inputs', () => {
+    for (const [inputOrigin, messageOrigin] of [
+      [{ kind: 'system_trigger', name: 'goal_continuation' }, { kind: 'system_trigger', name: 'goal_continuation' }],
+      [{ kind: 'task', taskId: 'task-1', status: 'completed', notificationId: 'notice-1' },
+        { kind: 'task', taskId: 'task-1', status: 'completed', notificationId: 'notice-1' }],
+      [undefined, { kind: 'user' }],
+      [{ kind: 'user' }, undefined],
+      [undefined, undefined],
+    ] as const) {
+      const folded = fold([
+        { type: 'turn.prompt', turnId: 7, trigger: 'notify', input: [{ type: 'text', text: 'next' }], origin: inputOrigin },
+        appendMessage(userMessage('reminder', { kind: 'injection', variant: 'date_change' })),
+        appendMessage(userMessage('next', messageOrigin)),
+      ]);
+      expect(messageRecords(folded.replay).map((record) => record.turnId)).toEqual([undefined, 7]);
+    }
+    const linked = fold([
+      { type: 'turn.prompt', turnId: 8, promptId: 'linked', input: [{ type: 'text', text: 'original' }], origin: { kind: 'user' } },
+      appendMessage({ ...userMessage('transformed', { kind: 'injection', variant: 'date_change' }), id: 'linked' }),
+    ]);
+    expect(messageRecords(linked.replay).map((record) => record.turnId)).toEqual([8]);
   });
 
   it('validates reader compatibility and migrates older protocol journals before folding', () => {
@@ -532,5 +573,195 @@ describe('foldWireRecords', () => {
     const [remaining] = messages;
     if (remaining?.type !== 'message') throw new Error('expected message record');
     expect(remaining.message.content[0]).toMatchObject({ text: 'before' });
+  });
+});
+
+describe('foldWireRecords turn endings', () => {
+  const refusal = {
+    code: 'provider.api_error',
+    message: 'The example service refused this request.',
+    retryable: false,
+  };
+
+  function turnEnded(
+    turnId: number,
+    reason: string,
+    time: number,
+    extra: Record<string, unknown> = {},
+  ): WireRecord {
+    return { type: 'turn.ended', agentId: 'main', turnId, reason, durationMs: 5, ...extra, time };
+  }
+
+  function outline(replay: readonly AgentReplayRecord[]): string[] {
+    return replay.map((record) => {
+      if (record.type === 'turn_ended') return `ended ${record.turnId} ${record.reason}`;
+      if (record.type !== 'message') return record.type;
+      const { message } = record;
+      if (message.role === 'tool') return `tool ${message.toolCallId}`;
+      if (message.role === 'user') {
+        const [part] = message.content;
+        return `user ${part?.type === 'text' ? part.text : ''}`;
+      }
+      return message.role;
+    });
+  }
+
+  function answeredStep(uuid: string, time: number): WireRecord[] {
+    return [
+      loopEvent({ type: 'step.begin', uuid }, time),
+      loopEvent({ type: 'content.part', stepUuid: uuid, part: { type: 'text', text: 'answer' } }, time),
+      loopEvent({ type: 'step.end', uuid }, time),
+    ];
+  }
+
+  it('records how each turn ended right after its messages, with the error of a failed turn', () => {
+    const folded = fold([
+      appendMessage(userMessage('first', { kind: 'user' }), 1),
+      ...answeredStep('s1', 2),
+      turnEnded(0, 'completed', 3, { stopReason: 'end_turn' }),
+      appendMessage(userMessage('second', { kind: 'user' }), 4),
+      turnEnded(1, 'failed', 5, { error: refusal }),
+      appendMessage(userMessage('third', { kind: 'user' }), 6),
+      ...answeredStep('s3', 7),
+      turnEnded(2, 'cancelled', 8),
+      appendMessage(userMessage('fourth', { kind: 'user' }), 9),
+      turnEnded(3, 'blocked', 10),
+    ]);
+
+    expect(outline(folded.replay)).toEqual([
+      'user first',
+      'assistant',
+      'ended 0 completed',
+      'user second',
+      'ended 1 failed',
+      'user third',
+      'assistant',
+      'ended 2 cancelled',
+      'user fourth',
+      'ended 3 blocked',
+    ]);
+    expect(folded.replay.filter((record) => record.type === 'turn_ended')).toEqual([
+      { type: 'turn_ended', turnId: 0, reason: 'completed', time: 3 },
+      { type: 'turn_ended', turnId: 1, reason: 'failed', error: refusal, time: 5 },
+      { type: 'turn_ended', turnId: 2, reason: 'cancelled', time: 8 },
+      { type: 'turn_ended', turnId: 3, reason: 'blocked', time: 10 },
+    ]);
+  });
+
+  it('keeps the end of a turn after the result of a tool call the turn left open', () => {
+    const toolCall = (time: number) =>
+      loopEvent({ type: 'tool.call', stepUuid: 's1', toolCallId: 'tc1', name: 'Shell', args: {} }, time);
+
+    const lateResult = fold([
+      appendMessage(userMessage('run it', { kind: 'user' }), 1),
+      loopEvent({ type: 'step.begin', uuid: 's1' }, 2),
+      toolCall(3),
+      turnEnded(0, 'cancelled', 4),
+      loopEvent({ type: 'tool.result', toolCallId: 'tc1', result: { output: 'stopped late' } }, 5),
+    ]);
+    expect(outline(lateResult.replay)).toEqual(['user run it', 'assistant', 'tool tc1', 'ended 0 cancelled']);
+    expect(lateResult.replay.at(-1)).toMatchObject({ type: 'turn_ended', time: 4 });
+    const result = lateResult.replay[2];
+    if (result?.type !== 'message') throw new Error('expected the tool result');
+    expect(result.message.content[0]).toMatchObject({ text: 'stopped late' });
+
+    const nextTurn = fold([
+      appendMessage(userMessage('run it', { kind: 'user' }), 1),
+      loopEvent({ type: 'step.begin', uuid: 's1' }, 2),
+      toolCall(3),
+      turnEnded(0, 'cancelled', 4),
+      appendMessage(userMessage('next', { kind: 'user' }), 5),
+      loopEvent({ type: 'step.begin', uuid: 's2' }, 6),
+    ]);
+    expect(outline(nextTurn.replay)).toEqual([
+      'user run it',
+      'assistant',
+      'tool tc1',
+      'ended 0 cancelled',
+      'user next',
+      'assistant',
+    ]);
+    expect(nextTurn.replay[3]).toMatchObject({ type: 'turn_ended', time: 4 });
+
+    const endOfJournal = fold([
+      appendMessage(userMessage('run it', { kind: 'user' }), 1),
+      loopEvent({ type: 'step.begin', uuid: 's1' }, 2),
+      toolCall(3),
+      turnEnded(0, 'cancelled', 4),
+    ]);
+    expect(outline(endOfJournal.replay)).toEqual(['user run it', 'assistant', 'tool tc1', 'ended 0 cancelled']);
+    expect(endOfJournal.replay.at(-1)).toMatchObject({ type: 'turn_ended', time: 4 });
+  });
+
+  it('drops the end of a turn the user undid and keeps the ends of earlier turns', () => {
+    const folded = fold([
+      appendMessage(userMessage('first', { kind: 'user' }), 1),
+      ...answeredStep('s1', 2),
+      turnEnded(0, 'failed', 3, { error: refusal }),
+      appendMessage(userMessage('second', { kind: 'user' }), 4),
+      ...answeredStep('s2', 5),
+      turnEnded(1, 'cancelled', 6),
+      { type: 'context.undo', count: 1, time: 7 },
+    ]);
+    expect(outline(folded.replay)).toEqual(['user first', 'assistant', 'ended 0 failed']);
+  });
+
+  it('still finishes a compaction that ends after the turn it ran in', () => {
+    const cancelled = fold([
+      appendMessage(userMessage('long task', { kind: 'user' }), 1),
+      { type: 'full_compaction.begin', time: 2 },
+      turnEnded(0, 'failed', 3, { error: refusal }),
+      { type: 'full_compaction.cancel', time: 4 },
+    ]);
+    expect(cancelled.replay.slice(1)).toEqual([
+      { type: 'compaction', instruction: undefined, time: 2, result: 'cancelled' },
+      { type: 'turn_ended', turnId: 0, reason: 'failed', error: refusal, time: 3 },
+    ]);
+
+    const applied = fold([
+      appendMessage(userMessage('long task', { kind: 'user' }), 1),
+      { type: 'full_compaction.begin', time: 2 },
+      turnEnded(0, 'cancelled', 3),
+      {
+        type: 'context.apply_compaction',
+        summary: 'summary text',
+        contextSummary: 'summary text',
+        compactedCount: 1,
+        tokensBefore: 100,
+        tokensAfter: 20,
+        keptUserMessageCount: 1,
+        time: 4,
+      },
+    ]);
+    expect(applied.replay[1]).toMatchObject({ type: 'compaction', result: { summary: 'summary text' } });
+    expect(outline(applied.replay)).toEqual(['user long task', 'compaction', 'ended 0 cancelled']);
+  });
+
+  it('skips turn endings it cannot read and drops an error it cannot read', () => {
+    const folded = fold([
+      { type: 'turn.ended', agentId: 'main', reason: 'failed', error: refusal, time: 1 },
+      turnEnded(1, 'paused', 2),
+      turnEnded(2, 'failed', 3, { error: 'The example service refused this request.' }),
+      turnEnded(3, 'failed', 4, { error: { message: 'no code' } }),
+      turnEnded(4, 'failed', 5, {
+        error: { code: 'provider.filtered', message: 'blocked', details: { finishReason: 'filtered' } },
+      }),
+    ]);
+    expect(folded.replay).toEqual([
+      { type: 'turn_ended', turnId: 2, reason: 'failed', time: 3 },
+      { type: 'turn_ended', turnId: 3, reason: 'failed', time: 4 },
+      {
+        type: 'turn_ended',
+        turnId: 4,
+        reason: 'failed',
+        error: {
+          code: 'provider.filtered',
+          message: 'blocked',
+          details: { finishReason: 'filtered' },
+          retryable: false,
+        },
+        time: 5,
+      },
+    ]);
   });
 });

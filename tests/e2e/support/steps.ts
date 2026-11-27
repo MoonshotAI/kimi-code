@@ -40,16 +40,43 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   expectAbsent: (text) => `检查回复里没有${quote(text)}`,
   continue: () => '用户点「继续」，让失败的回合接着做',
   restart: () => '用户关掉产品再打开，回到原来的会话',
+  restartDuringTurn: () => '用户在回合进行中关掉产品，再打开，回到原来的会话',
+  undo: () => '用户撤销最近一条消息',
+  recallPrevious: () => '用户在输入框里按上键，调回上一条提示',
+  submit: (text) => `用户把输入框里的${quote(text)}发出去`,
+  expectComposer: (text) => (text === '' ? '检查输入框是空的' : `检查输入框里是${quote(text)}`),
   newSession: () => '用户新建一个会话',
   compact: () => '用户手动压缩上下文（/compact）',
   resize: (size) => (size === 'narrow' ? '用户把窗口拉窄' : '用户把窗口拉回原来的大小'),
   expectTranscript: (text) => `检查整段对话里有${quote(text)}`,
   exit: () => '用户退出，回到原来的 shell',
   expectTerminalRestored: () => '检查终端回到了正常的输入模式',
+  openSession: (title) => `用户回到之前标题为${quote(title)}的会话`,
+  reload: () => '用户重新加载会话（/reload）',
+  init: () => '用户用 /init 生成 AGENTS.md',
+  useSkill: (name) => `用户使用技能${quote(name)}`,
+  switchModel: (name) => `用户把模型换成${quote(name)}`,
+  setThinkingEffort: (effort) => `用户把思考强度调成${quote(effort)}`,
+  addDir: (path) => `用户用 /add-dir 把${quote(path)}加进本会话的工作区`,
+  setBrowserControl: (state) => (state === 'off' ? '用户在设置里关掉「让 agent 控制内置浏览器」' : '用户在设置里打开「让 agent 控制内置浏览器」'),
+  setPlanMode: (state) => (state === 'on' ? '用户打开计划模式' : '用户关掉计划模式'),
+  btw: (question, reply) => `用户用 /btw 问旁路问题${quote(question)}，看到旁路回答${quote(reply)}后回到主对话`,
 };
 
 export const DISK_TITLES = {
   write: (path: string, content: string): string => `用户在磁盘上把${quote(path)}写成${quote(content.replaceAll('\n', String.raw`\n`))}`,
   file: (path: string, content: string): string => `检查磁盘：${quote(path)}的内容是${quote(content.replaceAll('\n', String.raw`\n`))}`,
   missing: (path: string): string => `检查磁盘：${quote(path)}不存在`,
+};
+
+export const CLOCK_TITLE = (time: string): string => `本机的时间变成${quote(time)}`;
+
+export const CONFIG_TITLE = '用户编辑配置文件';
+export const GIT_TITLE = (args: readonly string[]): string => `用户在终端里运行${quote(['git', ...args].join(' '))}`;
+
+export const MCP_TITLES = {
+  addTool: (server: string, tool: string): string => `MCP 服务${quote(server)}新增工具${quote(tool)}，等产品重新读取工具清单`,
+  updateTool: (server: string, tool: string): string => `MCP 服务${quote(server)}修改工具${quote(tool)}，等产品重新读取工具清单`,
+  removeTool: (server: string, tool: string): string => `MCP 服务${quote(server)}删除工具${quote(tool)}，等产品重新读取工具清单`,
+  disconnect: (server: string): string => `MCP 服务${quote(server)}断开所有连接，等产品重新连上并读取工具清单`,
 };

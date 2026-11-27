@@ -108,7 +108,6 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`models`](#models) | `table` | — | Model alias table |
 | [`thinking`](#thinking) | `table` | — | Default parameters for Thinking mode |
 | [`loop_control`](#loop-control) | `table` | — | Agent loop control parameters |
-| [`auto_review`](#auto-review) | `table` | — | Experimental LLM review in Ask When Needed and Never Ask modes |
 | [`task`](#task) | `table` | — | Background task and Tower agent runtime parameters; `background` is the legacy section name |
 | [`tools`](#tools) | `table` | — | Global tool switch |
 | [`image`](#image) | `table` | — | Image compression parameters |
@@ -326,28 +325,6 @@ Configuration errors fail loudly instead of falling back silently. Session creat
 
 Retries only apply to transient failures: connection errors, timeouts, HTTP 429 rate limits, and 5xx server errors. A 429 caused by an exhausted quota or insufficient account balance is not retried and fails immediately, since it cannot succeed until the account is recharged.
 
-## `auto_review`
-
-`auto_review` configures the Beta LLM reviewer for `Bash` and MCP tool calls in Ask When Needed and Never Ask modes. It is disabled by default. Enable **Auto Review** (or **Enable all Beta features**) in `/lab` or Settings > Lab, or set `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` or `[experimental] auto_review = true`.
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `model` | `string` | `[secondary_model]` default model, or main model | Model alias used for independent review requests |
-| `effort` | `string` | — | Thinking effort for review requests; must be an effort the review model supports, or a configuration error is reported |
-| `timeout_ms` | `integer` | `30000` | Review deadline in milliseconds, from `1000` to `120000` |
-
-Only `Bash` and MCP tool calls that Always Ask mode would ask you to approve are reviewed; other built-in tools such as `Edit` and `Write` skip review and keep the current permission mode's static result. Among `Bash` and MCP calls, those that a more specific rule already approves — statically read-only `Bash` commands, your `allow` rules, and calls approved for this session — skip review. In Ask When Needed mode, your explicit `ask` rules are not delegated to the reviewer and still prompt you directly; in Never Ask mode, where prompts are suppressed, calls matching those `ask` rules are still sent to the reviewer. Dangerous commands are still reviewed in both modes (including `kimi -p`) even when an `allow` rule or a session approval matches them, because Always Ask mode would ask about them. A reviewer `allow` lets the call run. A `deny` or a review failure asks for your approval in Ask When Needed mode; in Never Ask mode the tool returns an error without running and the main agent can continue.
-
-The reviewer receives the current working directory, the current AGENTS.md snapshot (loaded on first review and refreshed when workspace instructions change), the user and parent instructions still in context after compaction (each user instruction carries up to the last 2,000 characters of the agent reply it answers), compaction summaries (used only to retain explicit boundaries, never to grant authorization), completed prior tool calls (including whether you approved them), and the pending tool's complete arguments and target Git working-tree status (probed only within the workspace and approved additional directories). Tool output text and media are not sent. A request that exceeds the model window fails that review. If retained authorization instructions or the working directory change during review, the result is not used to execute the action.
-
-Review requests do not follow the main loop's current thinking effort. When `effort` is set, reviews use it. When `effort` is unset and the review borrows the `[secondary_model]` default model, it also borrows that section's `default_effort`. Neither of these is affected by `[thinking].enabled = false`. Otherwise, `[thinking].enabled = false` turns review thinking off unless the model cannot disable it; with thinking on, resolution continues with the review model entry's `default_effort`, then the global `[thinking].effort`, then the model's default. Higher efforts take longer; lower `effort` or raise `timeout_ms` if reviews time out.
-
-```toml
-[auto_review]
-model = "kimi-code/kimi-for-coding-highspeed"
-timeout_ms = 30000
-```
-
 ## `token_counting`
 
 `token_counting` selects which context token count is reported externally, the value behind the context-size display. Internal logic (automatic compaction triggers, budgets, and overflow backoff) always uses both provider-reported usage and estimates, regardless of this setting.
@@ -403,14 +380,15 @@ In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `startup_timeout_ms` | `integer` | `30000` (30 seconds) | Global default connection (startup + tool discovery) timeout in milliseconds for all MCP servers; a per-server `startupTimeoutMs` in `mcp.json` wins |
+| `startup_wait_ms` | `integer` | `2000` (2 seconds) | How long session initialization waits in milliseconds for initial MCP discovery before starting with the tools already available; pending servers keep connecting in the background without being terminated. `0` skips the wait; accepts `0` to `2147483647` |
 | `tool_timeout_ms` | `integer` | `60000` (60 seconds) | Global default single tool-call timeout in milliseconds for all MCP servers; a per-server `toolTimeoutMs` in `mcp.json` wins |
-| `default_deferred` | `boolean` | `false` | Global default for [loading tools on demand](../customization/mcp.md#loading-tools-on-demand): when `true`, every MCP server's tools load on demand unless the server opts out; a per-server `deferred` field in `mcp.json` wins |
-| `reconnect_initial_delay_ms` | `integer` | `5000` (5 seconds) | Initial delay in milliseconds before the first automatic reconnect attempt for a workspace-level MCP server that failed to connect or dropped unexpectedly; the delay doubles after each failed attempt |
-| `reconnect_max_delay_ms` | `integer` | `300000` (5 minutes) | Cap in milliseconds for the automatic reconnect backoff delay of workspace-level MCP servers |
+| `default_deferred` | `boolean` | `true` | Global default for [loading tools on demand](../customization/mcp.md#loading-tools-on-demand): every MCP server's tools load on demand unless the server sets `deferred: false` in `mcp.json`, which always wins |
+| `reconnect_initial_delay_ms` | `integer` | `5000` (5 seconds) | Initial delay in milliseconds before the first automatic reconnect attempt for an MCP server that is retrying a connection; the delay doubles after each failed attempt |
+| `reconnect_max_delay_ms` | `integer` | `300000` (5 minutes) | Cap in milliseconds for the automatic reconnect backoff delay of MCP servers |
 
-`startup_timeout_ms` and `tool_timeout_ms` can be overridden by the `KIMI_MCP_STARTUP_TIMEOUT_MS` and `KIMI_MCP_TOOL_TIMEOUT_MS` environment variables respectively, which take higher priority than `config.toml`. See [MCP](../customization/mcp.md) for the full MCP server configuration.
+`startup_timeout_ms`, `startup_wait_ms`, and `tool_timeout_ms` can be overridden by the `KIMI_MCP_STARTUP_TIMEOUT_MS`, `KIMI_MCP_STARTUP_WAIT_MS`, and `KIMI_MCP_TOOL_TIMEOUT_MS` environment variables respectively, which take higher priority than `config.toml`. See [MCP](../customization/mcp.md) for the full MCP server configuration.
 
-`reconnect_initial_delay_ms` and `reconnect_max_delay_ms` can likewise be overridden by the `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` and `KIMI_MCP_RECONNECT_MAX_DELAY_MS` environment variables. Automatic reconnect applies only to workspace-level MCP servers and stops for permanent failures (unknown command, invalid configuration, rejected static credentials); see [MCP](../customization/mcp.md).
+`reconnect_initial_delay_ms` and `reconnect_max_delay_ms` can likewise be overridden by the `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` and `KIMI_MCP_RECONNECT_MAX_DELAY_MS` environment variables. Automatic reconnect applies to HTTP/SSE startup failures and to unexpected drops of established connections; stdio servers that fail their initial startup stay `failed` until manually reconnected. See [MCP](../customization/mcp.md).
 
 ## `identity`
 

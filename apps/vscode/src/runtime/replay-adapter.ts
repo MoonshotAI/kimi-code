@@ -219,6 +219,7 @@ function replayAgentToWebviewEvents(
       case "permission_updated":
       case "approval_result":
       case "goal_updated":
+      case "turn_ended":
         break;
     }
   }
@@ -432,6 +433,7 @@ function renderSubagentInvocation(
       case "permission_updated":
       case "approval_result":
       case "goal_updated":
+      case "turn_ended":
         break;
     }
   }

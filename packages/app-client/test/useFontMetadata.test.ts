@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const fixture = vi.hoisted(() => ({ faces: new Map<string, { blob: () => Promise<Blob> }>() }));
-vi.mock('@moonshot-ai/app-core', () => ({ getLocalFontFace: (family: string) => fixture.faces.get(family) }));
+vi.mock('@moonshot-ai/app-core/composables', () => ({ getLocalFontFace: (family: string) => fixture.faces.get(family) }));
 vi.mock('@moonshot-ai/app-core/lib', () => ({ readFontMetadata: async () => ({ names: [{ id: 1, language: 'en', text: 'Read' }] }) }));
 
 describe('font metadata queue', () => {

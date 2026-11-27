@@ -4,7 +4,7 @@ import type {
   EnvironmentDisclosureSnapshot,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { LlmModelSpec, ThinkingEffort } from '@moonshot-ai/core/llm/request';
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ModelCapability } from '#/provider-catalog/capability';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 
 import { createDecorator } from "#/_base/di/instantiation";

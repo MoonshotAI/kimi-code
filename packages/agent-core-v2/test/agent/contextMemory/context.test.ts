@@ -2,7 +2,7 @@ import type { Message, ToolCall } from '@moonshot-ai/core/llm/message';
 import { appendContext } from './stubs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import { estimateTokens, estimateTokensForMessages } from '#/session/tokenCounting/tokens';
 import { buildImageCompressionCaption } from '#/agent/media/image-compress';
 import {
   buildContextCompactionShape,

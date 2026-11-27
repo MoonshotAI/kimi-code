@@ -277,7 +277,7 @@ vi.mock('../../../src/main/app/ui-state', () => ({
 }));
 vi.mock('../../../src/main/diagnostics/track', () => ({ trackDesktopEvent: mocks.trackDesktopEvent, trySendDesktopEvent: vi.fn() }));
 vi.mock('../../../src/main/browser/browser-view', () => ({ attachBrowserWindow: mocks.attachBrowserWindow, isBrowserOccluded: () => mocks.browserOccluded }));
-vi.mock('../../../src/main/shell/menu', () => ({ setTerminalMenuFocus: vi.fn(), getTerminalMenuFocus: vi.fn(() => false) }));
+vi.mock('../../../src/main/shell/terminal-menu-focus', () => ({ setTerminalMenuFocus: vi.fn(), getTerminalMenuFocus: vi.fn(() => false) }));
 vi.mock('../../../src/main/browser/browser-overlay', () => ({
   attachBrowserOverlayWindow: mocks.attachBrowserOverlayWindow,
 }));
@@ -615,7 +615,7 @@ describe('window lifecycle telemetry', () => {
   it.each(['did-fail-load', 'did-fail-provisional-load', 'did-finish-load'])(
     'keeps startup actions queued until the renderer subscribes, even after %s',
     async (event) => {
-      const { showMainWindow, sendLaunchAction, selectSessionInRenderer, markRendererUiMounted } = await import('../../../src/main/window/main-window');
+      const { showMainWindow, sendLaunchAction, sendMenuActionWhenReady, selectSessionInRenderer, markRendererUiMounted } = await import('../../../src/main/window/main-window');
       showMainWindow();
       const contents = (lastWindow() as unknown as { webContents: StartupContents }).webContents;
       const startupUrl = 'data:text/html,startup';
@@ -626,6 +626,7 @@ describe('window lifecycle telemetry', () => {
       sendLaunchAction({ action: 'new-chat' });
       sendLaunchAction({ action: 'open-session', sessionId: 'linked-session' });
       selectSessionInRenderer('tray-session');
+      sendMenuActionWhenReady('open-update-dialog');
 
       contents.emit('did-start-navigation', { url: appUrl, isMainFrame: true, isSameDocument: false });
       contents.getURL = () => appUrl;
@@ -635,6 +636,7 @@ describe('window lifecycle telemetry', () => {
 
       expect(contents.send).not.toHaveBeenCalledWith(IPC.launchAction, expect.anything());
       expect(contents.send).not.toHaveBeenCalledWith(IPC.traySelectSession, expect.anything());
+      expect(contents.send).not.toHaveBeenCalledWith(IPC.menuAction, expect.anything());
 
       markRendererUiMounted(appUrl);
       markRendererUiMounted(appUrl);
@@ -643,6 +645,7 @@ describe('window lifecycle telemetry', () => {
         [IPC.launchAction, project],
         [IPC.launchAction, { action: 'new-chat' }],
         [IPC.launchAction, { action: 'open-session', sessionId: 'linked-session' }],
+        [IPC.menuAction, 'open-update-dialog'],
       ]);
     },
   );

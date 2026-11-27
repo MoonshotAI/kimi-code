@@ -1,5 +1,14 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.6.3
+
+### Patch Changes
+
+- [#5516](https://github.com/MoonshotAI/kimi-code/pull/5516) [`0a9c794`](https://github.com/MoonshotAI/kimi-code/commit/0a9c794c0dadf383b9f19955280be8d6c7e26421) Thanks [@sailist](https://github.com/sailist)! - Emit native tool unload messages only for dynamic tools whose schemas were declared by earlier system messages in the same request and have not been unloaded since, without rewriting persisted history.
+
+- Updated dependencies [[`4849d86`](https://github.com/MoonshotAI/kimi-code/commit/4849d86dcf1adddacef67b3fd539a0f22c44c246)]:
+  - @moonshot-ai/core@0.2.1
+
 ## 0.6.2
 
 ### Patch Changes

@@ -3,7 +3,7 @@ import fs, { appendFile, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } 
 import { tmpdir } from 'node:os';
 import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
-import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
+import { performance } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 
 import type {
@@ -258,6 +258,27 @@ function recordingLog(): { log: ILogService; warnings: string[] } {
   } as unknown as ILogService;
   return { log, warnings };
 }
+
+function watchMainThreadIndexCore(): {
+  callCounts: () => Record<string, number>;
+  restore: () => void;
+} {
+  const spies = {
+    ensureOpen: vi.spyOn(SearchIndexCore.prototype, 'ensureOpen'),
+    sync: vi.spyOn(SearchIndexCore.prototype, 'sync'),
+    reindex: vi.spyOn(SearchIndexCore.prototype, 'reindex'),
+    search: vi.spyOn(SearchIndexCore.prototype, 'search'),
+  };
+  return {
+    callCounts: () =>
+      Object.fromEntries(Object.entries(spies).map(([name, spy]) => [name, spy.mock.calls.length])),
+    restore: () => {
+      for (const spy of Object.values(spies)) spy.mockRestore();
+    },
+  };
+}
+
+const NO_MAIN_THREAD_CORE_CALLS = { ensureOpen: 0, sync: 0, reindex: 0, search: 0 };
 
 describe('GlobalSearchService', () => {
   let home: string | undefined;
@@ -2553,7 +2574,7 @@ describe('search worker host (stage 4)', () => {
     expect((host as unknown as { worker: unknown }).worker).toBeNull();
   });
 
-  it('keeps the main thread responsive while the worker opens and syncs a corpus', { timeout: 30_000 }, async () => {
+  it('opens and syncs a corpus in the worker without running the index core on the main thread', { timeout: 30_000 }, async () => {
     const summaries: SessionSummary[] = [];
     for (let i = 0; i < 120; i++) {
       const s = summary(`probe-${i}`, `probe 会话 ${i}`, T1 + i);
@@ -2565,38 +2586,23 @@ describe('search worker host (stage 4)', () => {
       await writeWire(home!, s.id, 'main', lines);
     }
 
-    const eld = monitorEventLoopDelay({ resolution: 5 });
-    let probing = true;
-    let ticks = 0;
-    const probe = (async () => {
-      while (probing) {
-        await new Promise((resolve) => setImmediate(resolve));
-        ticks++;
-      }
-    })();
-    eld.enable();
+    const mainThreadCore = watchMainThreadIndexCore();
+    try {
+      const service = track(makeService(home!, staticIndex(summaries)));
+      const early = await service.search({ query: '检索词' });
+      expect(early.indexState.state).toBe('building');
+      await settleSync(service);
 
-    const service = track(makeService(home!, staticIndex(summaries)));
-    const early = await service.search({ query: '检索词' });
-    expect(early.indexState.state).toBe('building');
-    await settleSync(service);
-
-    probing = false;
-    await probe;
-    eld.disable();
-    const p99Ms = eld.percentile(99) / 1e6;
-    const maxMs = eld.max / 1e6;
-    console.log('[stage-4 worker probe]', JSON.stringify({ p99Ms, maxMs, ticks }));
-    expect(ticks).toBeGreaterThan(0);
-    expect(p99Ms).toBeLessThan(20);
-    expect(maxMs).toBeLessThan(100);
-
-    const page = await service.search({ query: '检索词' });
-    expect(page.items.length).toBeGreaterThan(0);
-    expect(page.indexState.state).toBe('ready');
+      const page = await service.search({ query: '检索词' });
+      expect(page.items.length).toBeGreaterThan(0);
+      expect(page.indexState.state).toBe('ready');
+      expect(mainThreadCore.callCounts()).toEqual(NO_MAIN_THREAD_CORE_CALLS);
+    } finally {
+      mainThreadCore.restore();
+    }
   });
 
-  it('keeps the main thread responsive while the worker rebuilds and swaps the generation (reindex)', { timeout: 30_000 }, async () => {
+  it('rebuilds and swaps the generation in the worker without running the index core on the main thread (reindex)', { timeout: 30_000 }, async () => {
     const summaries: SessionSummary[] = [];
     for (let i = 0; i < 120; i++) {
       const s = summary(`reindex-${i}`, `reindex 会话 ${i}`, T1 + i);
@@ -2608,36 +2614,21 @@ describe('search worker host (stage 4)', () => {
       await writeWire(home!, s.id, 'main', lines);
     }
 
-    const service = track(makeService(home!, staticIndex(summaries)));
-    await service.reindex();
-    expect((await service.search({ query: '检索词' })).indexState.state).toBe('ready');
+    const mainThreadCore = watchMainThreadIndexCore();
+    try {
+      const service = track(makeService(home!, staticIndex(summaries)));
+      await service.reindex();
+      expect((await service.search({ query: '检索词' })).indexState.state).toBe('ready');
 
-    const eld = monitorEventLoopDelay({ resolution: 5 });
-    const stop = { done: false };
-    let ticks = 0;
-    const probe = (async () => {
-      while (!stop.done) {
-        await new Promise((resolve) => setImmediate(resolve));
-        ticks++;
-      }
-    })();
-    eld.enable();
+      await service.reindex();
 
-    await service.reindex();
-
-    stop.done = true;
-    await probe;
-    eld.disable();
-    const p99Ms = eld.percentile(99) / 1e6;
-    const maxMs = eld.max / 1e6;
-    console.log('[stage-4 reindex probe]', JSON.stringify({ p99Ms, maxMs, ticks }));
-    expect(ticks).toBeGreaterThan(0);
-    expect(p99Ms).toBeLessThan(20);
-    expect(maxMs).toBeLessThan(100);
-
-    const page = await service.search({ query: '检索词' });
-    expect(page.items.length).toBeGreaterThan(0);
-    expect(page.indexState.state).toBe('ready');
+      const page = await service.search({ query: '检索词' });
+      expect(page.items.length).toBeGreaterThan(0);
+      expect(page.indexState.state).toBe('ready');
+      expect(mainThreadCore.callCounts()).toEqual(NO_MAIN_THREAD_CORE_CALLS);
+    } finally {
+      mainThreadCore.restore();
+    }
   });
 });
 

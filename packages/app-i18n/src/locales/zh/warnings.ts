@@ -13,6 +13,7 @@ export default {
     filtered: '响应被提供方过滤',
     api: '模型接口返回错误',
     contextOverflow: '上下文超出模型限制',
+    compactionFailed: '上下文压缩失败',
   },
   details: {
     cause: '底层原因',

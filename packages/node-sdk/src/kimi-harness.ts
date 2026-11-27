@@ -66,8 +66,6 @@ import type {
   CreateWorktreeOptions,
   InspectWorktreeRemovalInput,
   RemoveWorktreeInput,
-  RunSetupScriptInput,
-  RunSetupScriptOptions,
   WorkLocation,
   WorktreeListing,
   WorktreeRemovalCheck,
@@ -399,13 +397,6 @@ export class KimiHarness {
 
   async createWorktree(input: CreateWorktreeInput, options?: CreateWorktreeOptions): Promise<CreatedWorktree> {
     return this.rpc.createWorktree(input, options);
-  }
-
-  async runWorktreeSetupScript(
-    input: RunSetupScriptInput,
-    options?: RunSetupScriptOptions,
-  ): Promise<{ readonly exitCode: number }> {
-    return this.rpc.runWorktreeSetupScript(input, options);
   }
 
   async inspectWorktreeRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck> {

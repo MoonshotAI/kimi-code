@@ -9,7 +9,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { toCoreMessage } from '#human/message';
-import { toLlmMessage, type Message as LegacyMessage } from '#/llm-adapter/contract/message';
+import { toLlmMessage, type Message as LegacyMessage } from '#/wire/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -1307,6 +1307,96 @@ describe('WireService tree projection', () => {
       'context.undo',
       'context.undone',
     ]);
+  });
+
+  function oneTurnJournal(): WireRecord[] {
+    return [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      turnPrompt('first', 'p1', 0),
+      { type: 'context.append_message', message: userPrompt('first', 'p1'), time: 1 },
+      {
+        type: 'context.append_message',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+        time: 2,
+      },
+    ];
+  }
+
+  function wireWritingMidRead(
+    records: WireRecord[],
+    key: string,
+    write: (wire: IWireService) => void,
+  ): IWireService {
+    let written = false;
+    const log = recordingWireLog(records);
+    log.read = function <R>(): AsyncIterable<R> {
+      const snapshot = [...records];
+      return (async function* () {
+        for (const [index, record] of snapshot.entries()) {
+          yield record as R;
+          if (index === 1 && !written) {
+            written = true;
+            write(wire);
+          }
+        }
+      })();
+    };
+    const wire = wireOverLog(log, key);
+    return wire;
+  }
+
+  it.each([
+    { kind: 'written at once', write: (wire: IWireService) => wire.appendRecord({ type: 'wire.test.concurrent', time: 9 }) },
+    {
+      kind: 'still being dehydrated',
+      write: (wire: IWireService) => wire.appendRecord({ type: 'wire.test.concurrent', time: 9 }, async (record) => record),
+    },
+  ])('places the undo records after a record $kind in the middle of the undo read', async ({ write }) => {
+    const records = oneTurnJournal();
+    const wire = wireWritingMidRead(records, 'mid-read', write);
+
+    const switched = await wire.switchBranch({ turns: 1 });
+
+    expect(records.map((record) => record.type)).toEqual([
+      'metadata',
+      'turn.prompt',
+      'context.append_message',
+      'context.append_message',
+      'wire.test.concurrent',
+      'agent.switched',
+      'context.undo',
+      'context.undone',
+    ]);
+    expect(switched).toMatchObject({ edgeLine: 6, forkLine: 1 });
+    expect(records[5]).toMatchObject({ type: 'agent.switched', legacyUndoLine: 7 });
+    expect(wire.lineCount()).toBe(8);
+  });
+
+  it('keeps the undo when another record is written right after the undo records', async () => {
+    const records = oneTurnJournal();
+    const log = recordingWireLog(records);
+    let written = false;
+    log.flushLog = async () => {
+      if (written || records.at(-1)?.type !== 'context.undone') return;
+      written = true;
+      wire.appendRecord({ type: 'wire.test.after', time: 9 });
+    };
+    const wire = wireOverLog(log, 'after-triple');
+
+    const switched = await wire.switchBranch({ turns: 1 });
+
+    expect(switched).toMatchObject({ edgeLine: 5, forkLine: 1 });
+    expect(records.map((record) => record.type)).toEqual([
+      'metadata',
+      'turn.prompt',
+      'context.append_message',
+      'context.append_message',
+      'agent.switched',
+      'context.undo',
+      'context.undone',
+      'wire.test.after',
+    ]);
+    expect(wire.lineCount()).toBe(8);
   });
 });
 

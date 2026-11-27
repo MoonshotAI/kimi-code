@@ -8,7 +8,7 @@ kimi acp
 
 启动后命令不会打印任何 banner，立刻等待 ACP 客户端在 stdin 上发出 `initialize` 请求。日志会写到标准错误（以及 `~/.kimi-code/logs/` 下的诊断日志），所以 ACP 通道本身保持干净。
 
-后台任务完成后，如果 Kimi 发起回合汇报结果，`kimi acp` 会通过 `session/update` 把回复和工具调用发送给 IDE，即使上一次 `session/prompt` 已经结束。这时提交新消息会收到 `turn.agent_busy`，可以等结果汇报结束后重发。
+Kimi 自己发起回合时（汇报已完成的后台任务、`Stop` hook 拦截后续跑、执行定时任务），`kimi acp` 会通过 `session/update` 把回复和工具调用发送给 IDE，即使上一次 `session/prompt` 已经结束。这时提交新消息会收到 `turn.agent_busy`，可以等这个回合结束后重发。
 
 ::: tip 谁会调用它？
 你通常不需要手动跑 `kimi acp`——这个命令是给 IDE 的子进程入口准备的。IDE 端的配置见[在 IDE 中使用](../guides/ides.md)。
@@ -76,7 +76,7 @@ kimi acp
 | `session/request_permission` | 是 | 工具审批和提问共用此通道。Bash 审批包含完整命令和工作目录。已解析的绝对文件路径通过 `toolCall.locations` 提供 |
 | `fs/read_text_file` | 是 | 客户端声明 `fsCapabilities` 时，引擎的文件读取路由到客户端 |
 | `fs/write_text_file` | 是 | 引擎的文件写入路由到客户端 |
-| `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | 是 | 客户端声明 `clientCapabilities.terminal` 时，shell 执行通过 reverse-RPC 交给客户端 |
+| `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | 是 | 客户端声明 `clientCapabilities.terminal` 时，shell 执行通过 reverse-RPC 交给客户端；否则命令在本机运行，运行中已打印的内容以 `tool_call_update` 的文字内容发给客户端 |
 | `elicitation/create` | 是 | 客户端声明 `elicitation.form` 时，ask-user 问题走原生表单；RPC 失败回退 `session/request_permission` |
 | `elicitation/complete` | 否 | |
 

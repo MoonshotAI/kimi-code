@@ -53,7 +53,6 @@ const settingsChangedPropertiesSchema = z.discriminatedUnion('key', [
   z.object({ key: z.literal('session-mentions'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
   z.object({ key: z.literal('context-inspector'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
   z.object({ key: z.literal('beta-features'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
-  z.object({ key: z.literal('auto-review'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
   z.object({ key: z.literal('notify-user'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
   z.object({ key: z.literal('prompt-prediction'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),
   z.object({ key: z.literal('tower'), value: z.enum(['on', 'off']), ...settingsSourcePanel }),

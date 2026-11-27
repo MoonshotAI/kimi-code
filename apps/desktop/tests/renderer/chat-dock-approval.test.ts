@@ -30,8 +30,8 @@ vi.mock('@moonshot-ai/app-client/composables', async (importOriginal) => {
   };
 });
 
-vi.mock('@moonshot-ai/app-core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@moonshot-ai/app-core')>();
+vi.mock('@moonshot-ai/app-core/composables', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@moonshot-ai/app-core/composables')>();
   return { ...actual, useAppearance: () => ({ fontScale: ref('medium') }) };
 });
 

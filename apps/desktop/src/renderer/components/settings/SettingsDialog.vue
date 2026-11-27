@@ -8,7 +8,7 @@ import { useDialogFocus } from '@moonshot-ai/app-components';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import { BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, GlobalAgentsMdSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
-import type { FontTarget } from '@moonshot-ai/app-core';
+import type { FontTarget } from '@moonshot-ai/app-core/composables';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import type { ShortcutActionId } from '../../../shared/action-ids';
 import { usePlugins } from '@moonshot-ai/app-client/composables';
@@ -32,7 +32,7 @@ import { track } from '../../lib/track';
 import DockIconPicker from './DockIconPicker.vue';
 import BrowserSettingsTab from '../browser/BrowserSettingsTab.vue';
 import { copyTextToClipboard, hasDesktopBridge, isLinuxDesktop, isMacosDesktop, isRcLocation, prefersNativeTitleBar, providerDisplayName } from '@moonshot-ai/app-core/lib';
-import { useContextInspector, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
+import { useContextInspector, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core/composables';
 import { configStore, hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { useActivityRunFolding, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client';
 import { useVibrancy } from '../../composables/useVibrancy';
@@ -111,17 +111,6 @@ const promptPredictionLocked = computed(
   () => promptPredictionLockedByEnv.value || betaMasterEnabled.value,
 );
 
-const autoReviewFeature = computed(() => findExperimentalFeature('auto_review'));
-const autoReviewEnabled = computed(
-  () =>
-    autoReviewFeature.value?.enabled ??
-    (betaMasterEnabled.value || configStore().experimentalFlags['auto_review'] === true),
-);
-const autoReviewLockedByEnv = computed(() => autoReviewFeature.value?.source === 'env');
-const autoReviewLocked = computed(
-  () => autoReviewLockedByEnv.value || betaMasterEnabled.value,
-);
-
 const notifyUserFeature = computed(
   () => findExperimentalFeature('notify_user_app') ?? findExperimentalFeature('notify_user'),
 );
@@ -173,12 +162,6 @@ async function onContextInspectorChange(on: boolean): Promise<void> {
 async function onPromptPredictionChange(on: boolean): Promise<void> {
   if (await configStore().setPromptPredictionEnabled(on)) {
     track('settings_changed', { key: 'prompt-prediction', value: on ? 'on' : 'off', source_panel: 'settings' });
-  }
-}
-
-async function onAutoReviewChange(on: boolean): Promise<void> {
-  if (await configStore().setExperimentalFlag('auto_review', on)) {
-    track('settings_changed', { key: 'auto-review', value: on ? 'on' : 'off', source_panel: 'settings' });
   }
 }
 
@@ -436,12 +419,6 @@ const PRIVACY_POLICY_URL = 'https://www.kimi.com/user/agreement/userPrivacy?vers
 function openAgreement(url: string): void {
   window.open(url, '_blank', 'noopener');
 }
-const permissionModes = ['manual', 'yolo', 'auto'] as const;
-const permissionLabelKey: Record<(typeof permissionModes)[number], string> = {
-  manual: 'status.permissionManual',
-  auto: 'status.permissionAuto',
-  yolo: 'status.permissionYolo',
-};
 
 const dialogRef = ref<HTMLElement | null>(null);
 useDialogFocus(dialogRef);
@@ -576,7 +553,7 @@ async function onCheckUpdate(): Promise<void> {
   checkingUpdate.value = true;
   checkResult.value = null;
   try {
-    checkResult.value = await updateTracker.check();
+    checkResult.value = await updateTracker.checkAndOpen();
   } finally {
     checkingUpdate.value = false;
   }
@@ -590,7 +567,7 @@ const checkResultText = computed(() => {
       if (updateTracker.status.value.state === 'downloaded') {
         return t('settings.updateCheckDownloaded', { version: result.version ?? '' });
       }
-      if (updateTracker.autoDownload.value) {
+      if (updateTracker.status.value.state === 'downloading' || updateTracker.autoDownload.value) {
         return t('settings.updateCheckAvailableAuto', { version: result.version ?? '' });
       }
       return t('settings.updateCheckAvailable', { version: result.version ?? '' });
@@ -641,21 +618,6 @@ const modelGroups = computed<Array<{ provider: string; options: ModelOption[] }>
     .map(([provider, options]) => ({ provider, options }));
 });
 
-const defaultModelSelectOptions = computed(() => {
-  const options: Array<{ value: string; label: string; group?: string; disabled?: boolean }> = modelGroups.value.flatMap((group) =>
-    group.options.map((model) => ({ value: model.id, label: model.label, group: providerDisplayName(group.provider, t) })),
-  );
-  if (!props.config?.defaultModel) {
-    options.unshift({ value: '', label: t('settings.noDefaultModel'), group: '', disabled: true });
-  }
-  return options;
-});
-
-const defaultPermissionMode = computed(() => {
-  const mode = props.config?.defaultPermissionMode;
-  return mode === 'auto' || mode === 'yolo' || mode === 'manual' ? mode : 'manual';
-});
-
 function extractConfigModelProvider(raw: unknown): string | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const source = raw as Record<string, unknown>;
@@ -671,20 +633,6 @@ function formatConfigModelLabel(id: string, raw: unknown, provider?: string): st
   if (model && resolvedProvider) return `${id} (${providerDisplayName(resolvedProvider, t)}/${model})`;
   if (model) return `${id} (${model})`;
   return id;
-}
-
-function configBool(value: boolean | undefined): boolean {
-  return value === true;
-}
-
-function setDefaultModel(value: string): void {
-  if (!value || value === props.config?.defaultModel) return;
-  emit('updateConfig', { defaultModel: value });
-}
-
-function setDefaultPermissionMode(mode: 'manual' | 'auto' | 'yolo'): void {
-  if (mode === defaultPermissionMode.value) return;
-  emit('updateConfig', { defaultPermissionMode: mode });
 }
 
 const secondaryModel = computed(
@@ -718,11 +666,6 @@ async function setSecondaryModel(value: { model: string | null; effort?: string 
   emit('updateConfig', {
     secondaryModel: buildSecondaryModelPatch(props.config?.secondaryModel, { ...value, model }),
   });
-}
-
-function toggleConfigBoolean(key: 'defaultPlanMode'): void {
-  const current = props.config?.[key];
-  emit('updateConfig', { [key]: !configBool(current) } as Partial<AppConfig>);
 }
 
 const defaultModelInfo = computed(() =>
@@ -1213,34 +1156,6 @@ defineExpose({ confirmDiscard });
             <template v-if="config">
               <div class="row">
                 <span class="rlabel">
-                  {{ t('settings.defaultModel') }}
-                  <span class="hint">{{ t('settings.defaultModelHint') }}</span>
-                </span>
-                <div v-if="modelGroups.length > 0" class="select-wrap">
-                  <Select
-                    :model-value="config.defaultModel ?? ''"
-                    :options="defaultModelSelectOptions"
-                    :aria-label="t('settings.defaultModel')"
-                    @update:model-value="setDefaultModel"
-                  />
-                </div>
-                <span v-else class="rvalue mono">{{ config.defaultModel ?? t('settings.noDefaultModel') }}</span>
-              </div>
-
-              <div class="row">
-                <span class="rlabel">
-                  {{ t('settings.defaultPermission') }}
-                  <span class="hint">{{ t('settings.defaultPermissionHint') }}</span>
-                </span>
-                <SegmentedControl
-                  :model-value="defaultPermissionMode"
-                  :options="permissionModes.map((m) => ({ value: m, label: t(permissionLabelKey[m]) }))"
-                  @update:model-value="setDefaultPermissionMode($event as 'manual' | 'auto' | 'yolo')"
-                />
-              </div>
-
-              <div class="row">
-                <span class="rlabel">
                   {{ t('settings.defaultThinking') }}
                   <span class="hint">{{ t('settings.defaultThinkingHint') }}</span>
                 </span>
@@ -1260,18 +1175,6 @@ defineExpose({ confirmDiscard });
                   @update:model-value="setDefaultThinkingSegment"
                 />
                 <span v-else class="rvalue mono">{{ effortLabel(defaultThinkingSegments[0] ?? 'on') }}</span>
-              </div>
-
-              <div class="row">
-                <span class="rlabel">
-                  {{ t('settings.defaultPlanMode') }}
-                  <span class="hint">{{ t('settings.defaultPlanModeHint') }}</span>
-                </span>
-                <Switch
-                  :model-value="configBool(config.defaultPlanMode)"
-                  :label="t('settings.defaultPlanMode')"
-                  @update:model-value="toggleConfigBoolean('defaultPlanMode')"
-                />
               </div>
             </template>
 
@@ -1599,24 +1502,6 @@ defineExpose({ confirmDiscard });
                 :disabled="promptPredictionLocked"
                 :label="t('settings.lab.promptPrediction')"
                 @update:model-value="onPromptPredictionChange"
-              />
-            </div>
-            <div class="row">
-              <span class="rlabel">
-                {{ t('settings.lab.autoReview') }}
-                <span class="hint">{{ t('settings.lab.autoReviewHint') }}</span>
-                <span v-if="autoReviewLockedByEnv && autoReviewFeature" class="hint">
-                  {{ t('settings.lab.lockedByEnv', { env: autoReviewFeature.env }) }}
-                </span>
-                <span v-else-if="betaMasterEnabled" class="hint">
-                  {{ t('settings.lab.lockedByBetaMaster') }}
-                </span>
-              </span>
-              <Switch
-                :model-value="autoReviewEnabled"
-                :disabled="autoReviewLocked"
-                :label="t('settings.lab.autoReview')"
-                @update:model-value="onAutoReviewChange"
               />
             </div>
             </div>

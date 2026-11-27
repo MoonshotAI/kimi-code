@@ -1,13 +1,14 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { RequestError, type NewSessionResponse, type RequestPermissionRequest } from '@agentclientprotocol/sdk';
-import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
+import { getLiveSessionById, IAgentLifecycleService, IEventBus, type Interaction } from '@moonshot-ai/agent-core-v2';
 import { ToolUpdated } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { call, createFakeModel, exitPlanMode, say, write, type FakeModel } from '@moonshot-ai/testkit/model';
+import { askUserQuestion, call, createFakeModel, exitPlanMode, say, write, type FakeModel } from '@moonshot-ai/testkit/model';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { AcpInteractionBridge } from '../src/interaction-bridge';
 import { AcpSession, mapPromptLaunchError } from '../src/session';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { writeFakeModelConfig, type FakeModelConfigOptions } from './_helpers/fakeModelConfig';
@@ -95,6 +96,33 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(usageUpdate?.size).toBe(262144);
     expect(usageUpdate?.used).toBeGreaterThan(0);
     expect(usageUpdate?.cost).toBeUndefined();
+  }, 30_000);
+
+  it('replays a file tool card at the session directory, even when the editor loads the session from another one', async () => {
+    const c = await boot();
+    const project = join(homeDir!, 'project');
+    const elsewhere = join(homeDir!, 'elsewhere');
+    await mkdir(project);
+    await mkdir(elsewhere);
+    await writeFile(join(project, 'notes.txt'), 'hello\n');
+    model!.script(call('Read', { path: 'notes.txt' }, { id: 'call_read' }), say('read it'));
+
+    const created = (await c.send('session/new', { cwd: project, mcpServers: [] })) as { sessionId: string };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+    await c.send('session/prompt', { sessionId: created.sessionId, prompt: [{ type: 'text', text: 'read the notes' }] });
+
+    const beforeLoad = c.sessionUpdates().length;
+    await c.send('session/load', { sessionId: created.sessionId, cwd: elsewhere, mcpServers: [] });
+    type ToolCallWire = { sessionUpdate?: string; toolCallId?: string; locations?: Array<{ path: string }> };
+    const replayed = c
+      .sessionUpdates()
+      .slice(beforeLoad)
+      .map((m) => (m.params as { update?: ToolCallWire }).update)
+      .find((u) => u?.sessionUpdate === 'tool_call' && u.toolCallId?.endsWith(':call_read'));
+    const located = replayed?.locations?.[0]?.path;
+
+    expect(located).toBeDefined();
+    expect(await realpath(located!)).toBe(await realpath(join(project, 'notes.txt')));
   }, 30_000);
 
   it.each([
@@ -199,6 +227,31 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       .find((u) => u?.sessionUpdate === 'tool_call_update' && u?.status === 'completed');
     expect(terminal).toBeDefined();
     expect(model!.requests()[1]?.rawBody).toContain('hello_from_bash');
+  }, 30_000);
+
+  it('keeps a command card on the editor terminal, without repeating its output as text, when the editor offers terminals', async () => {
+    const c = await boot({ terminal: true });
+    model!.script(call('Bash', { command: 'printf terminal_probe' }, { id: 'call_term' }), say('ran it'));
+    c.onRequest('session/request_permission', () => ({
+      outcome: { outcome: 'selected', optionId: 'approve_once' },
+    }));
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as { sessionId: string };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+
+    const result = (await c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'run it' }],
+    })) as { stopReason: string };
+    expect(result.stopReason).toBe('end_turn');
+    expect(model!.requests()[1]?.rawBody).toContain('delta_stream');
+
+    type ToolCallWire = { sessionUpdate?: string; toolCallId?: string; content?: Array<{ type: string }> };
+    const cardUpdates = c
+      .sessionUpdates()
+      .map((m) => (m.params as { update?: ToolCallWire }).update)
+      .filter((u) => u?.sessionUpdate === 'tool_call_update' && u.toolCallId?.endsWith(':call_term'));
+    expect(cardUpdates.at(-1)?.content).toEqual([{ type: 'terminal', terminalId: 'term-1' }]);
+    expect(JSON.stringify(cardUpdates)).not.toContain('delta_stream');
   }, 30_000);
 
   it('bridges AskUserQuestion through elicitation/create for form-capable clients', async () => {
@@ -584,6 +637,218 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     ).toBe(true);
     expect(updates.some((u) => u?.title === 'raw-stdout-bytes')).toBe(false);
   }, 30_000);
+
+  it('shows what a running command has printed when the editor offers no terminal', async () => {
+    const c = await boot();
+    model!.script(call('Bash', { command: "printf 'rea%s\\n' dy; sleep 30" }, { id: 'call_slow' }));
+    c.onRequest('session/request_permission', () => ({
+      outcome: { outcome: 'selected', optionId: 'approve_once' },
+    }));
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as { sessionId: string };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+    const promptPromise = c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'run the slow command' }],
+    });
+
+    type ToolCallWire = {
+      sessionUpdate?: string;
+      toolCallId?: string;
+      status?: string;
+      content?: Array<{ type: string; content?: { type: string; text?: string } }>;
+    };
+    const cardUpdates = () =>
+      c
+        .sessionUpdates()
+        .map((m) => (m.params as { update?: ToolCallWire }).update)
+        .filter((u) => u?.sessionUpdate === 'tool_call_update' && u.toolCallId?.endsWith(':call_slow'))
+        .map((u) => ({ status: u?.status, text: (u?.content ?? []).map((part) => part.content?.text ?? '').join('') }));
+    await vi.waitFor(() => {
+      expect(cardUpdates().map((u) => u.text)).toContain('ready\n');
+    }, 10_000);
+    expect(cardUpdates().map((u) => u.status)).not.toEqual(expect.arrayContaining(['completed']));
+    expect(cardUpdates().map((u) => u.status)).not.toEqual(expect.arrayContaining(['failed']));
+
+    c.notify('session/cancel', { sessionId: created.sessionId });
+    const result = (await promptPromise) as { stopReason: string };
+    expect(result.stopReason).toBe('cancelled');
+    expect(cardUpdates().at(-1)?.status).toBe('failed');
+    expect(cardUpdates().at(-1)?.text).toContain('ready');
+  }, 30_000);
+
+  describe('when the editor learns the turn id only after the model has called a tool', () => {
+    type ReactToPending = (pending: readonly Interaction[], release: () => void) => void;
+
+    const releaseOnceAnInteractionIsPending: ReactToPending = (pending, release) => {
+      if (pending.length > 0) release();
+    };
+
+    function holdLaunch(react: ReactToPending, land: (launched: unknown) => unknown = (launched) => launched): () => void {
+      let releaseLaunch!: () => void;
+      const launchHeld = new Promise<void>((resolve) => {
+        releaseLaunch = resolve;
+      });
+      const sessions = AcpSession.prototype as unknown as {
+        driveLaunch(this: AcpSession, launch: Promise<unknown>): Promise<unknown>;
+      };
+      const driveLaunch = sessions.driveLaunch;
+      const heldLaunch = vi.spyOn(sessions, 'driveLaunch').mockImplementation(function (this: AcpSession, launch) {
+        return driveLaunch.call(
+          this,
+          launch.then(async (launched) => {
+            await launchHeld;
+            return land(launched);
+          }),
+        );
+      });
+      const bridges = AcpInteractionBridge.prototype as unknown as {
+        onPendingChanged(this: AcpInteractionBridge, pending: readonly Interaction[]): void;
+      };
+      const onPendingChanged = bridges.onPendingChanged;
+      const watchedBridge = vi.spyOn(bridges, 'onPendingChanged').mockImplementation(function (this: AcpInteractionBridge, pending) {
+        onPendingChanged.call(this, pending);
+        react(pending, releaseLaunch);
+      });
+      return () => {
+        heldLaunch.mockRestore();
+        watchedBridge.mockRestore();
+      };
+    }
+
+    type WireToolCall = { sessionUpdate?: string; toolCallId?: string; rawInput?: { questions?: unknown[] } };
+    type WirePermission = { toolCall?: { toolCallId?: string } };
+
+    function permissionRequestIndex(c: TestClient): number {
+      return c.received.findIndex((m) => m.method === 'session/request_permission');
+    }
+
+    function announcedIndex(c: TestClient, toolCallId: string | undefined, matches: (update: WireToolCall) => boolean): number {
+      return c.received.findIndex((m) => {
+        if (m.method !== 'session/update') return false;
+        const update = (m.params as { update?: WireToolCall }).update;
+        return update !== undefined && update.toolCallId === toolCallId && matches(update);
+      });
+    }
+
+    async function prompt(c: TestClient, text: string): Promise<string> {
+      const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as { sessionId: string };
+      await c.waitForSessionUpdate('available_commands_update', 10_000);
+      const result = (await c.send('session/prompt', {
+        sessionId: created.sessionId,
+        prompt: [{ type: 'text', text }],
+      })) as { stopReason: string };
+      return result.stopReason;
+    }
+
+    it('announces every question of the tool call before asking the editor the first one', async () => {
+      const restore = holdLaunch(releaseOnceAnInteractionIsPending);
+      try {
+        const c = await boot();
+        model!.script(askUserQuestion({
+          questions: [
+            { question: 'Which database should we use?', header: 'Database', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multi_select: false },
+            { question: 'Which cache should we use?', header: 'Cache', options: [{ label: 'Redis' }, { label: 'None' }], multi_select: false },
+          ],
+        }, { id: 'call_q' }));
+        model!.script(say('noted'));
+        c.onRequest('session/request_permission', () => ({ outcome: { outcome: 'selected', optionId: 'q0_opt_1' } }));
+
+        expect(await prompt(c, 'Help me set up storage.')).toBe('end_turn');
+
+        const asked = permissionRequestIndex(c);
+        expect(asked).toBeGreaterThanOrEqual(0);
+        const toolCallId = (c.received[asked]!.params as WirePermission).toolCall?.toolCallId;
+        expect(toolCallId).toMatch(/:call_q$/);
+        const announced = announcedIndex(c, toolCallId, (update) => update.rawInput?.questions?.length === 2);
+        expect(announced).toBeGreaterThanOrEqual(0);
+        expect(announced).toBeLessThan(asked);
+      } finally {
+        restore();
+      }
+    }, 30_000);
+
+    it('shows the tool call to the editor before asking it to approve the call', async () => {
+      const restore = holdLaunch(releaseOnceAnInteractionIsPending);
+      try {
+        const c = await boot();
+        model!.script(write({ path: 'late-turn.txt', content: 'written after approval\n' }, { id: 'call_w' }));
+        model!.script(say('done'));
+        c.onRequest('session/request_permission', () => ({ outcome: { outcome: 'selected', optionId: 'approve_once' } }));
+
+        expect(await prompt(c, 'Write the file.')).toBe('end_turn');
+
+        const asked = permissionRequestIndex(c);
+        expect(asked).toBeGreaterThanOrEqual(0);
+        const toolCallId = (c.received[asked]!.params as WirePermission).toolCall?.toolCallId;
+        expect(toolCallId).toMatch(/:call_w$/);
+        const announced = announcedIndex(c, toolCallId, (update) => update.sessionUpdate === 'tool_call');
+        expect(announced).toBeGreaterThanOrEqual(0);
+        expect(announced).toBeLessThan(asked);
+        expect(await readFile(join(homeDir!, 'late-turn.txt'), 'utf8')).toBe('written after approval\n');
+      } finally {
+        restore();
+      }
+    }, 30_000);
+
+    it('still asks the editor to approve the call when the prompt fails before the editor learns the turn id', async () => {
+      const restore = holdLaunch(releaseOnceAnInteractionIsPending, () => {
+        throw new Error('the prompt launch was lost');
+      });
+      try {
+        const c = await boot();
+        model!.script(write({ path: 'lost-launch.txt', content: 'written after approval\n' }, { id: 'call_w' }));
+        model!.script(say('done'));
+        c.onRequest('session/request_permission', () => ({ outcome: { outcome: 'selected', optionId: 'approve_once' } }));
+
+        await expect(prompt(c, 'Write the file.')).rejects.toThrow('session prompt failed');
+
+        await vi.waitFor(() => {
+          expect(model!.requests()).toHaveLength(2);
+        }, 10_000);
+        const asked = permissionRequestIndex(c);
+        expect(asked).toBeGreaterThanOrEqual(0);
+        expect((c.received[asked]!.params as WirePermission).toolCall?.toolCallId).toMatch(/:call_w$/);
+        expect(await readFile(join(homeDir!, 'lost-launch.txt'), 'utf8')).toBe('written after approval\n');
+      } finally {
+        restore();
+      }
+    }, 30_000);
+
+    it('does not ask the editor about a call the user stopped before the editor learned the turn id', async () => {
+      let stopTurn = (): void => undefined;
+      let stopped = false;
+      const restore = holdLaunch((pending, release) => {
+        if (pending.length > 0) {
+          stopped = true;
+          stopTurn();
+          return;
+        }
+        if (stopped) release();
+      });
+      try {
+        const c = await boot();
+        model!.script(write({ path: 'stopped.txt', content: 'never written\n' }, { id: 'call_w' }));
+        c.onRequest('session/request_permission', () => ({ outcome: { outcome: 'cancelled' } }));
+        const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as { sessionId: string };
+        await c.waitForSessionUpdate('available_commands_update', 10_000);
+        stopTurn = () => {
+          c.notify('session/cancel', { sessionId: created.sessionId });
+        };
+
+        const result = (await c.send('session/prompt', {
+          sessionId: created.sessionId,
+          prompt: [{ type: 'text', text: 'Write the file.' }],
+        })) as { stopReason: string };
+
+        expect(stopped).toBe(true);
+        expect(result.stopReason).toBe('cancelled');
+        expect(c.received.filter((m) => m.method === 'session/request_permission')).toEqual([]);
+        await expect(readFile(join(homeDir!, 'stopped.txt'), 'utf8')).rejects.toThrow();
+      } finally {
+        restore();
+      }
+    }, 30_000);
+  });
 });
 
 describe('mapPromptLaunchError', () => {

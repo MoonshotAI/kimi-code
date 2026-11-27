@@ -40,7 +40,7 @@ import { browserEn, browserZh } from '@moonshot-ai/app-i18n/browser';
 import { effectiveContextMenuLocale, installBrowserContextMenu } from '../shell/context-menu';
 import { BROWSER_ANNOTATION_WORLD, browserAnnotationContextTargetScript, browserAnnotationContextTrackingScript } from './browser-annotation-script';
 import { BROWSER_LINK_CLICK_QUERY_TIMEOUT_MS, browserLinkClickedScript, browserLinkClickTrackingScript } from './browser-link-click-script';
-import { isBrowserOverlayView, observeBrowserOverlayOutsidePointer, refreshBrowserAnnotationOverlay } from './browser-overlay';
+import { isBrowserOverlayView, observeBrowserOverlayOutsidePointer, requestBrowserAnnotationOverlayRefresh } from './browser-overlay-state';
 import { IPC } from '../ipc/ipc-channels';
 import { isRestorableBrowserUrl, type BrowserPagePersistence } from './browser-session-store';
 import { browserDebuggerGeneration, browserFocusEmulationEnabled, setBrowserFocusEmulation, isBrowserInputActive, ensureBrowserDebugger, releaseBrowserDebugger, setBrowserMouseTouchEmulation } from './browser-debugger';
@@ -1932,7 +1932,7 @@ export function setBrowserBounds(browserId: BrowserId, bounds: BrowserBounds): v
   entry.hasVisibleBounds = bounds.width > 0 && bounds.height > 0;
   if (entry.hasVisibleBounds) entry.bounds = bounds;
   applyViewGeometry(entry, resized);
-  refreshBrowserAnnotationOverlay();
+  requestBrowserAnnotationOverlayRefresh();
 }
 
 export function setBrowserVisible(browserId: BrowserId, visible: boolean): void {

@@ -380,6 +380,25 @@ describe('CustomEditor slash argument hint', () => {
     expect(plain).toContain('[list] | <path>');
   });
 
+  it('preserves hardware cursor marker, fake cursor, and exact line width with an argument hint', () => {
+    const editor = makeEditor();
+    editor.focused = true;
+    editor.setArgumentHints(new Map([['find', '[query]']]));
+
+    for (const input of ['/find', '/find ']) {
+      editor.setText(input);
+      const rendered = editor.render(60);
+      const contentLine = rendered[1] ?? '';
+
+      expect(rendered.every((line) => visibleWidth(line) === 60)).toBe(true);
+      expect(contentLine).toContain(CURSOR_MARKER);
+      expect(contentLine).toContain(`${FAKE_CURSOR_START} ${FAKE_CURSOR_END}`);
+      const markerIdx = contentLine.indexOf(CURSOR_MARKER);
+      expect(visibleWidth(contentLine.slice(0, markerIdx))).toBe(4 + input.length);
+      expect(contentLine.indexOf(FAKE_CURSOR_END)).toBeLessThan(contentLine.indexOf('[query]'));
+    }
+  });
+
   it('hides the hint once an argument is typed', () => {
     const editor = makeEditor();
     editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));

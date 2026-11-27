@@ -2,7 +2,6 @@ import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 
 export const WorktreeErrors = {
   codes: {
-    WORKTREE_DISABLED: 'worktree.disabled',
     WORKTREE_NOT_GIT_REPO: 'worktree.not_git_repo',
     WORKTREE_NO_COMMITS: 'worktree.no_commits',
     WORKTREE_BASE_NOT_FOUND: 'worktree.base_not_found',

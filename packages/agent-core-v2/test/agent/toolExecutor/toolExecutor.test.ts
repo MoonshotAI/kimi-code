@@ -92,18 +92,12 @@ import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IEventBus } from '#/app/event/eventBus';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { LLMRequestTrace } from '#/agent/loop/requestObservation';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
-import type { PermissionPolicyResolution } from '#/agent/permissionPolicy/types';
-import type { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { registerLogServices, stubLog } from '../../_base/log/stubs';
-import { stubPermissionModeService } from '../permissionMode/stubs';
-import { stubPermissionPolicyService } from '../permissionPolicy/stubs';
-import { stubPermissionRulesService } from '../permissionRules/stubs';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
@@ -176,46 +170,6 @@ afterEach(() => {
 });
 
 describe('AgentToolExecutorService', () => {
-  it('starts every deferred permission review in a batch before waiting for the first decision', async () => {
-    let inFlight = 0;
-    let maxInFlight = 0;
-    const release = deferred<{ readonly policyName: string; readonly result: { readonly kind: 'deny'; readonly message: string } }>();
-    const gate = disposables.add(new AgentPermissionGate(
-      stubPermissionModeService(() => 'auto'),
-      stubPermissionRulesService(() => []),
-      stubPermissionPolicyService(() => ({ policyName: 'auto-mode-approve', result: { kind: 'approve' } })),
-      {
-        resolvePermissionResolution: async (res: PermissionPolicyResolution) =>
-          res.kind === 'deny' ? { veto: { output: res.message, isError: true } } : undefined,
-      } as unknown as IAgentToolApprovalService,
-      noopTelemetryService,
-      executor,
-    ));
-    disposables.add(gate.registerReviewer(async () => {
-      inFlight += 1;
-      maxInFlight = Math.max(maxInFlight, inFlight);
-      try {
-        return await release.promise;
-      } finally {
-        inFlight -= 1;
-      }
-    }));
-    const tool = new TestTool('Bash');
-    registry.register(tool);
-
-    const pending = execute([
-      toolCall('call_a', 'Bash', { command: 'rm -rf dist-a' }),
-      toolCall('call_b', 'Bash', { command: 'rm -rf dist-b' }),
-    ]);
-    await vi.waitFor(() => {
-      expect(maxInFlight).toBe(2);
-    });
-    release.resolve({ policyName: 'auto-review', result: { kind: 'deny', message: 'not executed' } });
-
-    await expect(pending).resolves.toHaveLength(2);
-    expect(tool.calls).toHaveLength(0);
-  });
-
   it('resolves by interface and routes a successful tool call through execute', async () => {
     vi.useFakeTimers();
     try {

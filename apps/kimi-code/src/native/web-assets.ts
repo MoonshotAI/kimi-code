@@ -24,7 +24,7 @@ export interface WebAssetFile {
 export interface WebAssetManifest {
   readonly version: typeof WEB_ASSET_MANIFEST_VERSION;
   readonly target: string;
-  readonly root: 'dist-web';
+  readonly root: 'web-dist';
   readonly files: readonly WebAssetFile[];
 }
 
@@ -133,7 +133,7 @@ export function getEmbeddedWebAssetManifest(
   if (manifest.target !== target) {
     throw new Error(`Web asset manifest target mismatch: ${manifest.target} !== ${target}`);
   }
-  if (manifest.root !== 'dist-web') {
+  if (manifest.root !== 'web-dist') {
     throw new Error(`Unsupported web asset root: ${manifest.root}`);
   }
   return manifest as WebAssetManifest;

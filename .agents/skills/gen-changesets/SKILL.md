@@ -22,7 +22,7 @@ Product changesets are user-facing changelog entries (they feed release notes, u
 ## 1. Whether To Write
 
 - **Changed a product's code and users can perceive it** → write for that product (see section 2 for desktop vs. `kimi web`).
-- **Changed a library's source code** → always write for that library, even for internal refactors; the library's own changelog is the honest record of what changed. Test-only and docs-only changes are exempt. **Never write a library changeset for `packages/app-*`** — they are private UI layers bundled into the apps, not published libraries.
+- **Changed a library's source code** → always write for that library, even for internal refactors; the library's own changelog is the honest record of what changed. Test-only and docs-only changes are exempt. The test infrastructure packages `@moonshot-ai/testkit` (`packages/testkit`), `@moonshot-ai/e2e` (`tests/e2e`) and `@moonshot-ai/scenarios` (`tests/scenarios`) count as test-only, source included: no product or library depends on them at runtime, so their changes need no changeset. **Never write a library changeset for `packages/app-*`** — they are private UI layers bundled into the apps, not published libraries.
 - **Changed public KAP (HTTP API) behavior that external callers can perceive** → write for the owning package (for example `kap-server`); hidden first-party endpoints (`hide: true`) are exempt.
 - **A library change flows into a product and is user-perceivable there** → also write for the product, as a separate file with a user-facing sentence.
   - Changed `kap-server`'s session-list behavior → a `kap-server` entry; desktop embeds kap-server and users feel the change → a `kimi-code-app` entry too.
@@ -47,7 +47,7 @@ Desktop and `kimi web` share `apps/desktop/src/renderer` and `packages/app-*`, *
 
 Add a `@moonshot-ai/kimi-code` entry **only when the change specifically targets `kimi web`**, and name `kimi web` in the sentence:
 
-- `kimi web` CLI flags, daemon lifecycle, token/host handling, or serving `dist-web`.
+- `kimi web` CLI flags, daemon lifecycle, token/host handling, or serving `web-dist`.
 - Browser-only behavior: `!isDesktop` branches, web-only routes, browser APIs, CSP, or insecure/non-loopback browser contexts.
 - If the change fixes both a web-specific path and desktop, write both entries; otherwise write only `@moonshot-ai/kimi-code`.
 

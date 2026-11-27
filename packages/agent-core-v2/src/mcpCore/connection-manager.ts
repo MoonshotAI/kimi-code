@@ -234,7 +234,7 @@ export class McpConnectionManager implements McpConnectionView {
   }
 
   private resolveDeferred(config: McpServerConfig): boolean {
-    return config.deferred ?? this.options.resolveDefaults?.().defaultDeferred ?? false;
+    return config.deferred ?? this.options.resolveDefaults?.().defaultDeferred ?? true;
   }
 
   resolved(
@@ -626,7 +626,7 @@ export class McpConnectionManager implements McpConnectionView {
           if (event.client !== undefined) this.closeForLifecycle(entry, event.client);
           return undefined;
         }
-        const target = this.failureTarget(classifyStartupFailure(event.error));
+        const target = this.failureTarget(entry, classifyStartupFailure(event.error));
         if (target === 'needsAuth') return { target, error: needsAuthHint(entry.name) };
         return { target, error: formatStartupError(event.error, event.client) };
       }
@@ -676,9 +676,10 @@ export class McpConnectionManager implements McpConnectionView {
     }
   }
 
-  private failureTarget(kind: McpFailureKind): 'failed' | 'needsAuth' | 'retryWaiting' {
+  private failureTarget(entry: InternalEntry, kind: McpFailureKind): 'failed' | 'needsAuth' | 'retryWaiting' {
     if (kind === 'config' || kind === 'protocol' || kind === 'auth-static') return 'failed';
     if (kind === 'auth-oauth' && this.oauthService !== undefined) return 'needsAuth';
+    if (entry.config.transport === 'stdio' && entry.failureStreak === 0) return 'failed';
     return this.retryOrFailed();
   }
 

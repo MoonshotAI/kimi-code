@@ -161,6 +161,93 @@ describe('runHook process runner', () => {
 
     expect(result.stdout?.trim()).toBe('Write');
   });
+
+  it('extracts hookSpecificOutput.additionalContext from structured output', async () => {
+    const result = await runHook(
+      hostProcess,
+      nodeCommand(
+        'process.stdout.write(JSON.stringify({ hookSpecificOutput: { additionalContext: "project uses pnpm" } }));',
+      ),
+      {},
+      { timeout: 5 },
+    );
+
+    expect(result.action).toBe('allow');
+    expect(result.additionalContext).toBe('project uses pnpm');
+  });
+
+  it('extracts updatedInput and flags a non-object updatedInput as invalid', async () => {
+    const valid = await runHook(
+      hostProcess,
+      nodeCommand(
+        'process.stdout.write(JSON.stringify({ hookSpecificOutput: { updatedInput: { command: "ls" } } }));',
+      ),
+      { tool_name: 'Bash' },
+      { timeout: 5 },
+    );
+    expect(valid.updatedInput).toEqual({ command: 'ls' });
+    expect(valid.invalidUpdatedInput).toBeUndefined();
+
+    const invalid = await runHook(
+      hostProcess,
+      nodeCommand(
+        'process.stdout.write(JSON.stringify({ hookSpecificOutput: { updatedInput: "rm -rf" } }));',
+      ),
+      { tool_name: 'Bash' },
+      { timeout: 5 },
+    );
+    expect(invalid.updatedInput).toBeUndefined();
+    expect(invalid.invalidUpdatedInput).toContain('updatedInput');
+  });
+
+  it('extracts updatedToolOutput and flags malformed replacements as invalid', async () => {
+    const text = await runHook(
+      hostProcess,
+      nodeCommand(
+        'process.stdout.write(JSON.stringify({ hookSpecificOutput: { updatedToolOutput: "replaced" } }));',
+      ),
+      { tool_name: 'Bash' },
+      { timeout: 5 },
+    );
+    expect(text.updatedToolOutput).toBe('replaced');
+    expect(text.invalidUpdatedToolOutput).toBeUndefined();
+
+    const parts = await runHook(
+      hostProcess,
+      nodeCommand(
+        'process.stdout.write(JSON.stringify({ hookSpecificOutput: { updatedToolOutput: [{ type: "text", text: "part" }] } }));',
+      ),
+      { tool_name: 'Bash' },
+      { timeout: 5 },
+    );
+    expect(parts.updatedToolOutput).toEqual([{ type: 'text', text: 'part' }]);
+
+    const invalid = await runHook(
+      hostProcess,
+      nodeCommand(
+        'process.stdout.write(JSON.stringify({ hookSpecificOutput: { updatedToolOutput: 42 } }));',
+      ),
+      { tool_name: 'Bash' },
+      { timeout: 5 },
+    );
+    expect(invalid.updatedToolOutput).toBeUndefined();
+    expect(invalid.invalidUpdatedToolOutput).toContain('updatedToolOutput');
+  });
+
+  it('drops mutations and additionalContext when the hook denies the call', async () => {
+    const result = await runHook(
+      hostProcess,
+      nodeCommand(
+        'process.stdout.write(JSON.stringify({ hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: "no", additionalContext: "ctx", updatedInput: { command: "ls" } } }));',
+      ),
+      { tool_name: 'Bash' },
+      { timeout: 5 },
+    );
+
+    expect(result.action).toBe('block');
+    expect(result.additionalContext).toBeUndefined();
+    expect(result.updatedInput).toBeUndefined();
+  });
 });
 
 describe('buildHookSpawnOptions (Windows console-window regression)', () => {

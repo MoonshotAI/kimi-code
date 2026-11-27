@@ -108,7 +108,6 @@ timeout = 5
 | [`models`](#models) | `table` | — | 模型别名表 |
 | [`thinking`](#thinking) | `table` | — | Thinking 模式默认参数 |
 | [`loop_control`](#loop-control) | `table` | — | Agent 循环控制参数 |
-| [`auto_review`](#auto-review) | `table` | — | "Ask When Needed" 和 "Never Ask" 模式下的实验性 LLM 复核 |
 | [`task`](#task) | `table` | — | 后台任务与 Tower Agent 运行参数；`background` 为 legacy 配置节名称 |
 | [`tools`](#tools) | `table` | — | 全局工具开关 |
 | [`image`](#image) | `table` | — | 图片压缩参数 |
@@ -325,28 +324,6 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 
 重试仅针对瞬时故障：连接错误、超时、HTTP 429 限流和 5xx 服务端错误。账户额度耗尽或余额不足导致的 429 不会重试，会立即失败：在充值之前重试不可能成功。
 
-## `auto_review`
-
-`auto_review` 配置 "Ask When Needed" 和 "Never Ask" 模式下对 `Bash` 和 MCP 工具调用的 Beta 阶段 LLM 复核，默认关闭。可在 `/lab` 或设置 > 实验室中开启 **Auto Review** / **自动复核**（或**开启全部 Beta 功能**），也可设置 `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` 或 `[experimental] auto_review = true` 开启。
-
-| 字段 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `model` | `string` | `[secondary_model]` 默认模型，未配置时为主模型 | 独立复核请求使用的模型别名 |
-| `effort` | `string` | — | 复核请求的 Thinking 档位，必须是复核模型支持的档位，否则报配置错误 |
-| `timeout_ms` | `integer` | `30000` | 复核截止时间（毫秒），范围 `1000` 到 `120000` |
-
-只复核 `Bash` 和 MCP 工具调用中、"Always Ask" 模式下会请你审批的调用；`Edit`、`Write` 等其他内置工具不参与复核，沿用当前权限模式的静态结果。`Bash` 和 MCP 调用中，已被更具体的规则放行的调用——静态可确认只读的 `Bash` 命令、你配置的 `allow` 规则、本会话已批准过的调用——不复核。在 "Ask When Needed" 模式下，你显式配置的 `ask` 规则不交给复核模型处理，仍会直接请你确认；在不弹窗的 "Never Ask" 模式下，命中这类 `ask` 规则的调用仍会交给复核模型审查。识别出的危险命令在两种模式下（包括 `kimi -p`）即使命中 `allow` 规则或本会话已批准，也仍会复核，因为 "Always Ask" 模式会就它们请你审批。复核结果为 `allow` 时直接执行；为 `deny` 或复核失败时，"Ask When Needed" 模式转人工审批，"Never Ask" 模式不执行工具并返回错误，主 Agent 可继续处理。
-
-复核模型会收到当前工作目录、当前的 AGENTS.md 快照（首次复核时读取，工作区指令变化时刷新）、压缩后仍在上下文里的用户和父级指令（每条用户指令附带它所回复的上一条 Agent 回复，最多取末尾 2000 个字符）、压缩摘要（仅用于保留显式边界，不作为放行授权）、已完成的历史工具调用（含用户人工批准标记），以及待审工具的完整参数与目标目录的 Git 工作树状态（仅探测工作区和已批准附加目录内的路径）。工具输出文本和媒体不会发送。请求超出模型窗口时，这次复核失败。复核期间若保留的授权指令或工作目录发生变化，不会使用旧结果执行动作。
-
-复核请求的 Thinking 档位不沿用主循环当前的档位。设置了 `effort` 时按它请求；未设置 `effort` 而复核借用了 `[secondary_model]` 的默认模型时，连同该节的 `default_effort` 一起沿用。这两种档位都不受 `[thinking].enabled = false` 影响。都没有时，`[thinking].enabled = false` 关闭复核的 thinking（模型不能关闭时除外）；开启 thinking 时依次取复核模型条目的 `default_effort`、全局 `[thinking].effort`、模型默认档。档位越高复核越慢，频繁超时时可调低 `effort` 或调大 `timeout_ms`。
-
-```toml
-[auto_review]
-model = "kimi-code/kimi-for-coding-highspeed"
-timeout_ms = 30000
-```
-
 ## `token_counting`
 
 `token_counting` 决定对外上报的上下文 token 计数，即上下文大小显示所基于的值。内部逻辑（自动压缩触发、预算、超限退避）始终同时使用供应商实测与估算，不受本配置影响。
@@ -402,14 +379,15 @@ timeout_ms = 30000
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `startup_timeout_ms` | `integer` | `30000`（30 秒） | 所有 MCP server 的全局默认连接（启动 + 工具发现）超时（毫秒）；`mcp.json` 的 `startupTimeoutMs` 优先于本节 |
+| `startup_wait_ms` | `integer` | `2000`（2 秒） | 会话初始化时等待首轮 MCP 工具发现的时间上限（毫秒），到点即带着已就绪的工具开始对话，未就绪的 server 继续在后台连接且不会被终止；`0` 表示不等待，取值范围为 `0` 到 `2147483647` |
 | `tool_timeout_ms` | `integer` | `60000`（60 秒） | 所有 MCP server 的全局默认单次工具调用超时（毫秒）；`mcp.json` 的 `toolTimeoutMs` 优先于本节 |
-| `default_deferred` | `boolean` | `false` | [按需加载工具](../customization/mcp.md#按需加载工具)的全局默认：设为 `true` 时所有 MCP server 的工具按需加载，除非 server 自行排除；`mcp.json` 中单个 server 的 `deferred` 字段优先于本节 |
-| `reconnect_initial_delay_ms` | `integer` | `5000`（5 秒） | workspace 级 MCP server 首次连接失败或意外断连后，首次自动重连前的等待时间（毫秒）；每次失败后再翻倍 |
-| `reconnect_max_delay_ms` | `integer` | `300000`（5 分钟） | workspace 级 MCP server 自动重连退避等待的上限（毫秒） |
+| `default_deferred` | `boolean` | `true` | [按需加载工具](../customization/mcp.md#按需加载工具)的全局默认：默认所有 MCP server 的工具按需加载，除非 server 在 `mcp.json` 中显式设置 `deferred: false`；server 字段始终优先于本节 |
+| `reconnect_initial_delay_ms` | `integer` | `5000`（5 秒） | MCP server 进入自动重连时，首次重试前的等待时间（毫秒）；每次失败后再翻倍 |
+| `reconnect_max_delay_ms` | `integer` | `300000`（5 分钟） | MCP server 自动重连退避等待的上限（毫秒） |
 
-`startup_timeout_ms` 和 `tool_timeout_ms` 可分别被环境变量 `KIMI_MCP_STARTUP_TIMEOUT_MS` 和 `KIMI_MCP_TOOL_TIMEOUT_MS` 覆盖，优先级高于配置文件。MCP server 的完整配置方式见 [MCP](../customization/mcp.md)。
+`startup_timeout_ms`、`startup_wait_ms` 和 `tool_timeout_ms` 可分别被环境变量 `KIMI_MCP_STARTUP_TIMEOUT_MS`、`KIMI_MCP_STARTUP_WAIT_MS` 和 `KIMI_MCP_TOOL_TIMEOUT_MS` 覆盖，优先级高于配置文件。MCP server 的完整配置方式见 [MCP](../customization/mcp.md)。
 
-`reconnect_initial_delay_ms` 和 `reconnect_max_delay_ms` 同样可分别被环境变量 `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` 和 `KIMI_MCP_RECONNECT_MAX_DELAY_MS` 覆盖。自动重连只作用于 workspace 级 MCP server，遇到无法自行恢复的失败（命令不存在、配置非法、server 拒绝静态凭据）会停止重试；详见 [MCP](../customization/mcp.md)。
+`reconnect_initial_delay_ms` 和 `reconnect_max_delay_ms` 同样可分别被环境变量 `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` 和 `KIMI_MCP_RECONNECT_MAX_DELAY_MS` 覆盖。自动重连作用于 HTTP/SSE server 启动失败以及已建立连接后的意外断连；stdio server 首次启动失败会保持 `failed`，需手动重连。详见 [MCP](../customization/mcp.md)。
 
 ## `identity`
 

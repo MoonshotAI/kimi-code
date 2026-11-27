@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 64 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 60 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/project/projectDirs/projectDirsService.ts
@@ -53,12 +53,9 @@
 //     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
-//     autoReview.ancestry                             src/features/autoReview/autoReviewEvents.ts
-//     autoReview.approvedToolCallIds                  src/features/autoReview/autoReviewEvents.ts
 //     changeNotifier.snapshot                         src/agent/changeNotifier/changeNotifierOps.ts
 //     contextProjector.lastRepairSignature            src/agent/loop/requestObservation.ts
 //     environmentBinding                              src/agent/environmentBinding/environmentBindingOps.ts
-//     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
 //     fileHistory                                     src/features/fileHistory/fileHistoryOps.ts
 //     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
 //     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
@@ -94,7 +91,6 @@
 //     profile.emittedToolPatternWarnings              src/agent/profile/profileService.ts
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
 //     swarm                                           src/features/swarm/swarmOps.ts
-//     swarmReminderDelivered                          src/features/swarm/swarmOps.ts
 //     task                                            src/agent/task/taskOps.ts
 //     toolDedupe.activeStep                           src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.activeTurnId                         src/agent/toolDedupe/toolDedupeService.ts
@@ -1212,28 +1208,6 @@ export interface AgentStateSnapshot {
     readonly parameters: Record<string, unknown>;
     readonly disclosure?: 'inline' | 'deferred';
   }>;
-  // src/features/autoReview/autoReviewEvents.ts
-  // replayable · durable — folds: AutoReviewAncestryRecorded
-  'autoReview.ancestry': /* AutoReviewAncestry — packages/agent-core-v2/src/features/autoReview/autoReviewEvents.ts */ {
-    readonly authorization: readonly /* ReviewText — packages/agent-core-v2/src/features/autoReview/context.ts */ {
-      readonly role: 'human-instruction' | 'direct-parent-instruction' | 'constraint' | 'fact';
-      readonly replyTo?: string;
-      readonly content: readonly /* TextPart — packages/core/src/llm/message.ts */ {
-        type: 'text';
-        text: string;
-        contentType?: string;
-        meta?: /* ContentPartMeta — packages/core/src/llm/message.ts */ {
-          readonly kind?: string;
-          [key: string]: unknown;
-        };
-      }[];
-    }[];
-    readonly approvedToolCallIds: readonly string[];
-  } | undefined;
-  // replayable · durable · undoable — folds: ContextClear, PermissionRecordApprovalResult
-  'autoReview.approvedToolCallIds': readonly string[];
-  // src/features/externalHooks/agent/agentExternalHooksService.ts
-  'externalHooks.stopHookContinuationUsed': boolean;
   // src/features/fileHistory/fileHistoryOps.ts
   // replayable · durable — folds: FileHistoryCheckpointed, FileHistoryTracked
   'fileHistory': /* FileHistoryState — packages/agent-core-v2/src/features/fileHistory/fileHistory.ts */ {
@@ -1264,8 +1238,6 @@ export interface AgentStateSnapshot {
   // src/features/swarm/swarmOps.ts
   // replayable · durable — folds: SwarmModeEnter, SwarmModeExit
   'swarm': 'manual' | 'task' | 'tool' | null;
-  // replayable · durable — folds: SwarmModeEnter, SwarmModeExit, ContextAppendMessage, ContextSpliced
-  'swarmReminderDelivered': boolean;
   // src/features/tower/towerOps.ts
   // replayable · durable — folds: TowerModeEnter, TowerModeExit
   'tower': boolean;

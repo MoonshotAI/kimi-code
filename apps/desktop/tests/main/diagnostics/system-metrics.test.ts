@@ -9,7 +9,7 @@ const { appMock, browserWindowMock, windowMock, trackMock, logMock } = vi.hoiste
 }));
 
 vi.mock('electron', () => ({ app: appMock, BrowserWindow: browserWindowMock }));
-vi.mock('../../../src/main/window/main-window', () => ({ getMainWindow: windowMock.getMainWindow }));
+vi.mock('../../../src/main/window/window-registry', () => ({ getMainWindow: windowMock.getMainWindow }));
 vi.mock('../../../src/main/diagnostics/track', () => ({ trackDesktopEvent: trackMock.trackDesktopEvent, trySendDesktopEvent: vi.fn() }));
 vi.mock('../../../src/main/diagnostics/log', () => ({ log: logMock }));
 

@@ -78,7 +78,8 @@ import {
   type ConversationTurn,
   type ConversationTurnHeader,
 } from '@moonshot-ai/app-core/conversation';
-import { useAppearance, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
+import { useAppearance, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core/composables';
+import type { AppNoticeDetail } from '@moonshot-ai/app-core/contracts';
 import { shouldNotifyCompletion } from '../composables/useNotification';
 import { notificationsStore } from '../stores/notifications';
 import { promptAttachmentToTurnAttachment } from './attachmentsToContent';
@@ -149,7 +150,6 @@ import type {
   AppConfig,
   AppGoal,
   AppMessage,
-  AppNoticeDetail,
   AppModel,
   AppProvider,
   AppQuestionRequest,
@@ -202,7 +202,7 @@ import type {
 
 const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 
-export type { ColorScheme, FontScale } from '@moonshot-ai/app-core';
+export type { ColorScheme, FontScale } from '@moonshot-ai/app-core/composables';
 
 safeRemove(STORAGE_KEYS.codeFont);
 safeRemove(STORAGE_KEYS.accent);
@@ -524,6 +524,8 @@ function forgetSession(sessionId: string): void {
   promptStore().clearOptimisticMessages(sessionId);
   delete rawState.sessionStatusSettledBySession[sessionId];
   notifiedInteractionIdsBySession.delete(sessionId);
+  failedCompactionSettled.delete(sessionId);
+  failedCompactionErrorDue.delete(sessionId);
   promptStore().forgetLocalTurnState(sessionId);
   promptStore().clearQueued(sessionId);
   promptStore().clearInFlight(sessionId);
@@ -832,8 +834,14 @@ function mainCompacting(sessionId: string): boolean {
 }
 
 function observeMainCompaction(sessionId: string): void {
-  if (mainCompacting(sessionId)) promptStore().noteCompactionStarted(sessionId);
+  if (!mainCompacting(sessionId)) return;
+  failedCompactionSettled.delete(sessionId);
+  failedCompactionErrorDue.delete(sessionId);
+  promptStore().noteCompactionStarted(sessionId);
 }
+
+const failedCompactionSettled = new Set<string>();
+const failedCompactionErrorDue = new Set<string>();
 
 const latestCompactionKeyByEntry = new WeakMap<ConversationEntry, string | undefined>();
 
@@ -841,9 +849,13 @@ function settleMainCompaction(entry: ConversationEntry, initial: boolean): void 
   const latest = latestCompactionOf(entry.view.turns);
   const seen = latestCompactionKeyByEntry.get(entry);
   latestCompactionKeyByEntry.set(entry, latest?.key);
-  if (!initial && latest !== undefined && latest.key !== seen) {
+  if (initial || latest === undefined || latest.key === seen) return;
+  if (latest.item.error === undefined) {
     settleCompaction(entry.sessionId, 'completed', latest.item.trigger);
+    return;
   }
+  failedCompactionSettled.add(entry.sessionId);
+  settleCompaction(entry.sessionId, 'cancelled', latest.item.trigger);
 }
 
 function settleCompaction(
@@ -1958,12 +1970,20 @@ function onMainNotice(sessionId: string, notice: ConversationNotice): void {
     });
     return;
   }
-  if (notice.code === 'compaction.cancelled') settleCompaction(sessionId, 'cancelled', undefined);
+  if (notice.code === 'compaction.cancelled') {
+    if (failedCompactionSettled.delete(sessionId)) {
+      failedCompactionErrorDue.add(sessionId);
+      return;
+    }
+    settleCompaction(sessionId, 'cancelled', undefined);
+  }
   warningsStore().markSessionWarningShown(sessionId, `${notice.code ?? ''} ${notice.title}`);
   if (notice.level === 'error') {
-    if (isModelTurnErrorNotice(notice)) return;
+    const compactionFailure = failedCompactionErrorDue.delete(sessionId);
+    if (!compactionFailure && isModelTurnErrorNotice(notice)) return;
     if (sessionId === rawState.activeSessionId) return;
-    warningsStore().pushWarning(buildAgentErrorNotice(notice, t));
+    const toast = buildAgentErrorNotice(notice, t);
+    warningsStore().pushWarning(compactionFailure ? { ...toast, title: t('warnings.agentError.compactionFailed') } : toast);
     return;
   }
   warningsStore().pushWarning({ severity: notice.level, title: t('warnings.noteLabel'), message: notice.title });

@@ -145,14 +145,12 @@ describe('/api/v1/meta experimental_flags', () => {
     const initialIds = (initialBody.data.experimental_features ?? []).map((f) => f.id);
     expect(initialIds).toContain('context_inspector');
     expect(initialIds).toContain('prompt_prediction');
-    expect(initialIds).toContain('auto_review');
     expect(initialIds).toContain('notify_user_app');
     expect(initialIds).toContain('session_mentions');
     expect(initialIds).toContain('sidebar_multi_tab');
     expect(initialIds).toContain('tower');
     expect(initialIds).not.toContain('notify_user');
     expect(initialIds).not.toContain('wait_for');
-    expect(initialIds).not.toContain('worktree');
 
     const enableBetaRes = await authedFetch(server as RunningServer, base, '/api/v1/config', {
       method: 'POST',
@@ -171,9 +169,6 @@ describe('/api/v1/meta experimental_flags', () => {
     const promptPredictionFeature = betaBody.data.experimental_features?.find(
       (f) => f.id === 'prompt_prediction',
     );
-    const autoReviewFeature = betaBody.data.experimental_features?.find(
-      (f) => f.id === 'auto_review',
-    );
     const notifyAppFeature = betaBody.data.experimental_features?.find(
       (f) => f.id === 'notify_user_app',
     );
@@ -185,13 +180,6 @@ describe('/api/v1/meta experimental_flags', () => {
       active: true,
       source: 'beta-config',
       config_value: false,
-    });
-    expect(autoReviewFeature).toMatchObject({
-      stage: 'beta',
-      effect_timing: 'immediate',
-      enabled: true,
-      active: true,
-      source: 'beta-config',
     });
     expect(notifyAppFeature).toMatchObject({
       stage: 'experimental',

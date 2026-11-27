@@ -84,7 +84,7 @@ import {
 } from '../utils/model-switch';
 import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { showUsage } from './info';
-import { isExperimentalFlagEnabled, setExperimentalFeatures } from './experimental-flags';
+import { setExperimentalFeatures } from './experimental-flags';
 import type { SlashCommandHost } from './dispatch';
 
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
@@ -841,7 +841,6 @@ export async function applyExperimentalFeatureChanges(
   }
 
   try {
-    const worktreeWasEnabled = isExperimentalFlagEnabled('worktree');
     await host.harness.setConfig({ experimental });
     const features = await host.harness.getExperimentalFeatures();
     setExperimentalFeatures(features);
@@ -869,13 +868,6 @@ export async function applyExperimentalFeatureChanges(
       );
     } else {
       host.showStatus('Experimental features updated.', 'success');
-    }
-
-    if (
-      isExperimentalFlagEnabled('worktree') !== worktreeWasEnabled ||
-      changes.some((change) => change.id === 'worktree')
-    ) {
-      await host.refreshWorkLocation();
     }
 
     const noticedIds = new Set<string>();

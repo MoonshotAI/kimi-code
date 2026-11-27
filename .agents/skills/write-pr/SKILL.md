@@ -179,7 +179,7 @@ interface SessionEvents {
 
 ## UI/UX 变化的视觉证据
 
-用户看到的东西变了，就让 reviewer 直接看到改动前后的样子，不要只用文字描述。涉及范围：TUI（`apps/kimi-code/src/tui`、`packages/pi-tui`）、`apps/vis/web`、`apps/vscode/webview-ui`、`dist-web` 同步，以及用户可见的文本输出（print 模式输出、报错文案、命令行帮助）。
+用户看到的东西变了，就让 reviewer 直接看到改动前后的样子，不要只用文字描述。涉及范围：TUI（`apps/kimi-code/src/tui`、`packages/pi-tui`）、`apps/vis/web`、`apps/vscode/webview-ui`、`web-dist` 同步，以及用户可见的文本输出（print 模式输出、报错文案、命令行帮助）。
 
 选能说清变化的最低成本形式：
 

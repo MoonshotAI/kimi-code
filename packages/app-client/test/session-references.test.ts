@@ -8,7 +8,7 @@ vi.stubGlobal('localStorage', {
   clear: () => memStorage.clear(),
 });
 
-import { useSessionMentions } from '@moonshot-ai/app-core';
+import { useSessionMentions } from '@moonshot-ai/app-core/composables';
 import type { AppSession, KimiWebApi } from '@moonshot-ai/app-core/api';
 import { serializeMention } from '@moonshot-ai/app-composer/model';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';

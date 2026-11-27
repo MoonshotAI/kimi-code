@@ -99,8 +99,6 @@ import type {
   CreateWorktreeOptions,
   InspectWorktreeRemovalInput,
   RemoveWorktreeInput,
-  RunSetupScriptInput,
-  RunSetupScriptOptions,
   WorkLocation,
   WorktreeListing,
   WorktreeRemovalCheck,
@@ -504,16 +502,6 @@ export abstract class SDKRpcClientBase {
     _input: CreateWorktreeInput,
     _options?: CreateWorktreeOptions,
   ): Promise<CreatedWorktree> {
-    throw new KimiError(
-      ErrorCodes.NOT_IMPLEMENTED,
-      'Worktree operations are not implemented for this engine',
-    );
-  }
-
-  async runWorktreeSetupScript(
-    _input: RunSetupScriptInput,
-    _options?: RunSetupScriptOptions,
-  ): Promise<{ readonly exitCode: number }> {
     throw new KimiError(
       ErrorCodes.NOT_IMPLEMENTED,
       'Worktree operations are not implemented for this engine',

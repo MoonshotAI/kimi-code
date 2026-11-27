@@ -26,7 +26,7 @@ async function flush(): Promise<void> {
 }
 
 describe('SettingsDialog Lab two-tier layout', () => {
-  it('renders Beta (context_inspector, prompt_prediction, auto_review) and Experimental (notify_user_app, session_mentions, sidebar_multi_tab, tower)', async () => {
+  it('renders Beta (context_inspector, prompt_prediction) and Experimental (notify_user_app, session_mentions, sidebar_multi_tab, tower)', async () => {
     vi.stubGlobal('kimiDesktop', undefined);
     const setConfig = vi.fn().mockResolvedValue({ providers: {} });
     const getMeta = vi.fn().mockResolvedValue(null);
@@ -34,7 +34,7 @@ describe('SettingsDialog Lab two-tier layout', () => {
     const { IconResolverKey } = await import('@moonshot-ai/app-ui');
     const { KimiI18nKey } = await import('@moonshot-ai/app-i18n');
     const { setKimiClientDeps } = await import('@moonshot-ai/app-client/client');
-    const { useContextInspector, useSidebarTabs } = await import('@moonshot-ai/app-core');
+    const { useContextInspector, useSidebarTabs } = await import('@moonshot-ai/app-core/composables');
     const { clientPinia, configStore } = await import('@moonshot-ai/app-client/stores');
     const { default: i18n } = await import('../../src/renderer/i18n');
     const { default: SettingsDialog } = await import(
@@ -73,17 +73,6 @@ describe('SettingsDialog Lab two-tier layout', () => {
         title: 'Prompt prediction',
         description: 'Next prompt placeholder',
         env: 'KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION',
-        stage: 'beta',
-        effectTiming: 'immediate',
-        enabled: false,
-        active: false,
-        source: 'default',
-      },
-      {
-        id: 'auto_review',
-        title: 'Auto Review',
-        description: 'LLM tool call review',
-        env: 'KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW',
         stage: 'beta',
         effectTiming: 'immediate',
         enabled: false,
@@ -140,7 +129,6 @@ describe('SettingsDialog Lab two-tier layout', () => {
     configStore().experimentalFlags = {
       context_inspector: false,
       prompt_prediction: false,
-      auto_review: false,
       notify_user_app: false,
       session_mentions: false,
       sidebar_multi_tab: false,
@@ -194,9 +182,6 @@ describe('SettingsDialog Lab two-tier layout', () => {
     const promptPredictionSwitch = document.querySelector<HTMLButtonElement>(
       'button[role="switch"][aria-label="提示词预测"]',
     )!;
-    const autoReviewSwitch = document.querySelector<HTMLButtonElement>(
-      'button[role="switch"][aria-label="自动复核"]',
-    )!;
     const notifySwitch = document.querySelector<HTMLButtonElement>(
       'button[role="switch"][aria-label="进展更新"]',
     )!;
@@ -212,7 +197,6 @@ describe('SettingsDialog Lab two-tier layout', () => {
 
     expect(contextSwitch.getAttribute('aria-checked')).toBe('false');
     expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('false');
-    expect(autoReviewSwitch.getAttribute('aria-checked')).toBe('false');
     expect(notifySwitch.getAttribute('aria-checked')).toBe('false');
     expect(sessionMentionsSwitch.getAttribute('aria-checked')).toBe('false');
     expect(sidebarTabsSwitch.getAttribute('aria-checked')).toBe('false');
@@ -226,8 +210,6 @@ describe('SettingsDialog Lab two-tier layout', () => {
     expect(contextSwitch.disabled).toBe(true);
     expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('true');
     expect(promptPredictionSwitch.disabled).toBe(true);
-    expect(autoReviewSwitch.getAttribute('aria-checked')).toBe('true');
-    expect(autoReviewSwitch.disabled).toBe(true);
     expect(notifySwitch.getAttribute('aria-checked')).toBe('false');
     expect(notifySwitch.disabled).toBe(false);
     expect(sessionMentionsSwitch.getAttribute('aria-checked')).toBe('false');
@@ -243,19 +225,12 @@ describe('SettingsDialog Lab two-tier layout', () => {
     expect(contextSwitch.disabled).toBe(false);
     expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('false');
     expect(promptPredictionSwitch.disabled).toBe(false);
-    expect(autoReviewSwitch.getAttribute('aria-checked')).toBe('false');
-    expect(autoReviewSwitch.disabled).toBe(false);
 
     contextSwitch.click();
     await flush();
     expect(setConfig).toHaveBeenCalledWith({ experimental: { context_inspector: true } });
     expect(contextSwitch.getAttribute('aria-checked')).toBe('true');
     expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
-
-    autoReviewSwitch.click();
-    await flush();
-    expect(setConfig).toHaveBeenCalledWith({ experimental: { auto_review: true } });
-    expect(autoReviewSwitch.getAttribute('aria-checked')).toBe('true');
 
     notifySwitch.click();
     await flush();

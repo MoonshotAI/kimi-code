@@ -12,6 +12,7 @@ import {
   readNetworkViolations,
   TIMEOUTS,
   until,
+  WaitTimeoutError,
 } from '@moonshot-ai/testkit/fixtures';
 import { FAKE_PROVIDER_DEFAULTS } from '@moonshot-ai/testkit/model';
 import type { IPty } from 'node-pty';
@@ -30,8 +31,10 @@ import {
   type Diagnostic,
   type Frame,
   type PermissionMode,
+  type PlanModeState,
   type ReopenState,
   type SurfaceDriver,
+  StartupFailure,
   type SurfaceLaunch,
   type ToolExpectation,
   type ToolStatus,
@@ -59,11 +62,17 @@ const MODIFY_OTHER_KEYS = /\x1b\[>4(?:;(\d*))?m/g;
 const KITTY_DISAMBIGUATE = 1;
 const KITTY_EVENT_TYPES = 2;
 const KITTY_EMULATED_FLAGS = 7;
-const KITTY_LEGACY_RELEASES: Readonly<Record<string, string>> = { '\x1b[A': '\x1b[1;1:3A', '\x1b[B': '\x1b[1;1:3B' };
+const KITTY_LEGACY_RELEASES: Readonly<Record<string, string>> = {
+  '\x1b[A': '\x1b[1;1:3A',
+  '\x1b[B': '\x1b[1;1:3B',
+  '\x1b[C': '\x1b[1;1:3C',
+  '\x1b[D': '\x1b[1;1:3D',
+};
 const KITTY_SEQUENCE_LONGEST = 16;
 const KITTY_KEYS: Readonly<Record<string, { readonly code: number; readonly modifiers: number }>> = {
   '\x1b': { code: 27, modifiers: 1 },
   '\x03': { code: 99, modifiers: 5 },
+  '\x04': { code: 100, modifiers: 5 },
   '\x0f': { code: 111, modifiers: 5 },
   '\x11': { code: 113, modifiers: 5 },
   '\x13': { code: 115, modifiers: 5 },
@@ -77,8 +86,11 @@ const KEYS = {
   enter: '\r',
   escape: '\x1b',
   interrupt: '\x03',
+  quit: '\x04',
   up: '\x1b[A',
   down: '\x1b[B',
+  right: '\x1b[C',
+  left: '\x1b[D',
   approveOnce: '1',
   approveForSession: '2',
   reject: '3',
@@ -98,6 +110,9 @@ const APPROVAL_HINT = '↵ confirm';
 const APPROVAL_RULE = /^─+$/;
 const EDITOR_TOP = /^╭─+╮$/;
 const EDITOR_PROMPT = '│ >';
+const EDITOR_BOTTOM = /^╰─+╯$/;
+const UNDO_PICKER = 'Enter select · Esc cancel';
+const UNDO_FAILED = 'Failed to undo:';
 const ACTIVITY = /^[\u{1F311}-\u{1F318}\u2800-\u28FF]/u;
 const READ_GROUP = /^Read(?:ing)? \d+ files?…?(?: · .*)?$/;
 const TOOL_CARD =
@@ -135,6 +150,7 @@ const QUESTION_OPTION = /^(?:→ )?\[(\d+)\] (.*)$/;
 const QUESTION_FOCUSED = 'esc cancel';
 const QUESTION_SEVERAL_CHOICES = '↵ toggle';
 const QUESTION_TYPING = 'type answer';
+const QUIT_AGAIN = 'Press Ctrl+D again to exit';
 const QUESTION_REVIEW = 'Ready to submit your answers?';
 const QUESTION_SUBMIT = '→ [1] Submit';
 const QUESTION_SCROLLS = /^showing \d+-\d+ of \d+$/;
@@ -147,6 +163,49 @@ const COMPACT_COMMAND = '/compact';
 const COMPACTION_DONE = 'Compaction complete';
 const COMPACTION_CANCELLED = 'Compaction cancelled';
 const NEW_SESSION_NOTICE = 'Started a new session (';
+const SESSIONS_COMMAND = '/sessions';
+const SESSION_PICKER_TITLE = /^Sessions(?: {2}\(type to search\))?$/;
+const SESSION_PICKER_CANCEL = 'Esc cancel';
+const SESSION_POINTER = '❯ ';
+const SESSION_CURRENT = '← current';
+const SESSION_TITLE_END = '  ';
+const SESSION_RESUMED = 'Resumed session (';
+const SESSION_RESUME_FAILURES = ['Failed to resume session', 'Failed to replay session history', 'Cannot switch sessions'] as const;
+const RELOAD_COMMAND = '/reload';
+const SESSION_RELOADED = 'Session reloaded.';
+const INIT_COMMAND = '/init';
+const INIT_RUN = 'Initialize AGENTS.md';
+const SKILL_COMMAND = '/skill:';
+const COMMAND_FAILED = 'Error: ';
+const MODEL_COMMAND = '/model';
+const MODEL_PICKER = 'Select a model';
+const MODEL_PICKER_ROW = /^(?:❯ )?(.+?) {2,}(.+?)( ← current)?$/;
+const PICKER_CURSOR = '❯ ';
+const MODEL_SWITCHED = 'Switched to ';
+const EFFORT_COMMAND = '/effort';
+const EFFORT_PICKER = 'Select thinking effort';
+const EFFORT_ACTIVE = /\[ [^\]]+ \]/;
+const EFFORT_SEGMENT = /\[ ([^\]]+?) \]|(\S+)/g;
+const EFFORT_SET = 'Thinking set to ';
+const SWITCH_NOTICES = [MODEL_SWITCHED, EFFORT_SET, 'Already using ', 'Saved ', 'Error: '] as const;
+const ADD_DIR_COMMAND = '/add-dir';
+const ADD_DIR_TITLE = 'Add directory to workspace: ';
+const ADD_DIR_FOR_SESSION = `${USER_MARK} Yes, for this session`;
+const ADD_DIR_ADDED = 'Added workspace directory:';
+const ADD_DIR_SESSION_ONLY = 'For this session only';
+const COMMAND_ERROR = 'Error: ';
+const PLAN_COMMAND = '/plan';
+const PLAN_SET: Readonly<Record<PlanModeState, string>> = { on: 'Plan mode: ON', off: 'Plan mode: OFF' };
+const PLAN_ALREADY = 'Plan mode is already ';
+const PLAN_NOTICES = ['Plan mode: ', PLAN_ALREADY, 'Error: Failed to set plan mode'] as const;
+const BTW_COMMAND = '/btw';
+const BTW_TITLE = '╭ BTW ─ ';
+const BTW_BORDER = '│';
+const BTW_QUESTION = 'Q: ';
+const BTW_WAITING = 'Waiting for answer…';
+const BTW_START_FAILED = 'Error: Failed to start /btw';
+const BTW_FAILURE =
+  /^(?:\[[\w.:-]+\] |Interrupted by user$|Provider safety policy blocked the response\.$|Prompt hook blocked the request\.$|BTW turn ended with reason: |Failed to send \/btw prompt: )/;
 
 interface Screen {
   readonly text: string;
@@ -157,6 +216,13 @@ interface Screen {
   readonly status: readonly string[];
   readonly panel: readonly string[];
   readonly startedSession: string | undefined;
+}
+
+interface SessionCard {
+  readonly title: string;
+  readonly id: string;
+  readonly selected: boolean;
+  readonly current: boolean;
 }
 
 interface ApprovalPanel {
@@ -192,6 +258,17 @@ interface PermissionPicker {
   readonly current: string | undefined;
 }
 
+interface ModelPicker {
+  readonly names: readonly string[];
+  readonly cursor: string | undefined;
+  readonly current: string | undefined;
+}
+
+interface EffortPicker {
+  readonly efforts: readonly string[];
+  readonly active: string;
+}
+
 interface Block {
   readonly mark: (typeof TRANSCRIPT_MARKS)[number];
   readonly head: string;
@@ -214,6 +291,12 @@ interface QueuedMessage {
 }
 
 type Settled<T> = { readonly found: T } | { readonly over: Screen };
+
+function namesSessionModel(line: string): boolean {
+  return line.includes(FAKE_PROVIDER_DEFAULTS.modelName) || line.trimStart().startsWith(`${FAKE_PROVIDER_DEFAULTS.alias}  `);
+}
+
+type SideOutcome = { readonly opened: false } | { readonly opened: true; readonly shown: string; readonly answered: boolean };
 
 function quote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
@@ -251,11 +334,92 @@ function screenOf(rows: readonly string[], viewport: readonly string[]): Screen 
   }
   if (editor < 0) return { ...frame, input: 'none', transcript: rows, status: [], panel: [] };
   const gap = lines.findLastIndex((line, index) => index < editor && line === '');
-  return { ...frame, input: 'editor', transcript: rows.slice(0, gap + 1), status: lines.slice(gap + 1, editor), panel: [] };
+  const belowGap = rows.slice(gap + 1, editor);
+  const transcriptReachesEditor = belowGap.some(startsEntry) && !belowGap.some((row) => ACTIVITY.test(row.trim()));
+  const statusStart = transcriptReachesEditor ? editor : gap + 1;
+  return { ...frame, input: 'editor', transcript: rows.slice(0, statusStart), status: lines.slice(statusStart, editor), panel: [] };
+}
+
+function composerText(screen: Screen): string | undefined {
+  const lines = screen.viewport.map((row) => row.trim());
+  const top = lines.findLastIndex((line, index) => EDITOR_TOP.test(line) && lines[index + 1]?.startsWith(EDITOR_PROMPT) === true);
+  const bottom = lines.findIndex((line, index) => index > top && EDITOR_BOTTOM.test(line));
+  if (top < 0 || bottom < 0) return undefined;
+  return lines
+    .slice(top + 1, bottom)
+    .map((line, index) =>
+      line
+        .replace(/^│/, '')
+        .replace(/│$/, '')
+        .replace(index === 0 ? /^ > ?/ : /^ {1,3}/, '')
+        .trimEnd(),
+    )
+    .join('\n')
+    .trimEnd();
+}
+
+function showsAddDirChoice(screen: Screen, path: string): boolean {
+  const lines = screen.viewport.map((row) => row.trim());
+  const title = lines.lastIndexOf(`${ADD_DIR_TITLE}${path}`);
+  return title >= 0 && lines.slice(title + 1).includes(ADD_DIR_FOR_SESSION);
+}
+
+function commandNotes(screen: Screen): readonly string[] {
+  return [...screen.transcript, ...screen.status].map((row) => row.trim());
+}
+
+function commandNoteCount(screen: Screen, prefix: string): number {
+  return commandNotes(screen).filter((row) => row.startsWith(prefix)).length;
+}
+
+function addedDirectory(screen: Screen): readonly string[] {
+  const rows = commandNotes(screen);
+  const at = rows.lastIndexOf(ADD_DIR_ADDED);
+  return at < 0 ? [] : rows.slice(at + 1, at + 3);
 }
 
 function compactionNotices(screen: Screen, notice: string): number {
   return screen.transcript.filter((row) => row.includes(notice)).length;
+}
+
+function sessionCards(screen: Screen): readonly SessionCard[] | undefined {
+  const rows = screen.viewport.map((row) => row.trim());
+  const title = rows.findLastIndex((row) => SESSION_PICKER_TITLE.test(row));
+  const hint = rows.findIndex((row, index) => index > title && row.includes(SESSION_PICKER_CANCEL));
+  const end = rows.findIndex((row, index) => index > hint && APPROVAL_RULE.test(row));
+  if (title < 0 || hint < 0 || end < 0) return undefined;
+  const groups: string[][] = [[]];
+  for (const row of rows.slice(hint + 1, end)) {
+    if (row === '') groups.push([]);
+    else groups.at(-1)?.push(row);
+  }
+  return groups.flatMap(([header, meta]) => {
+    const id = meta?.split(/\s+/)[0];
+    if (header === undefined || id === undefined) return [];
+    const selected = header.startsWith(SESSION_POINTER);
+    const shown = selected ? header.slice(SESSION_POINTER.length) : header;
+    const cut = shown.indexOf(SESSION_TITLE_END);
+    return [{ title: cut < 0 ? shown : shown.slice(0, cut), id, selected, current: header.includes(`${SESSION_TITLE_END}${SESSION_CURRENT}`) }];
+  });
+}
+
+function resumedSession(screen: Screen, id: string): boolean {
+  return screen.text.split('\n').some((row) => row.trim().startsWith(`${SESSION_RESUMED}${id})`));
+}
+
+function resumeFailures(screen: Screen): number {
+  return screen.text.split('\n').filter((row) => SESSION_RESUME_FAILURES.some((failure) => row.includes(failure))).length;
+}
+
+function rowsShowing(screen: Screen, text: string, whole: boolean): number {
+  return screen.text.split('\n').filter((row) => (whole ? row.trim() === text : row.includes(text))).length;
+}
+
+function commandFailures(screen: Screen): number {
+  return screen.text.split('\n').filter((row) => {
+    const line = row.trimStart();
+    return line.startsWith(COMMAND_FAILED) && !line.startsWith(TURN_FAILED);
+  }).length;
 }
 
 function drawnWidth(screen: Screen): number | undefined {
@@ -445,6 +609,82 @@ function permissionSet(screen: Screen, name: string): number {
   return screen.transcript.filter((row) => row.trim() === `${PERMISSION_SET}${name}`).length;
 }
 
+function pickerRegion(screen: Screen, title: (line: string) => boolean): string[] | undefined {
+  const lines = screen.viewport.map((row) => row.trim());
+  const start = lines.findLastIndex(title);
+  const end = lines.findIndex((line, index) => index > start && APPROVAL_RULE.test(line));
+  return start < 0 || end < 0 ? undefined : lines.slice(start + 1, end);
+}
+
+function groupsOf(lines: readonly string[]): string[][] {
+  const groups: string[][] = [[]];
+  for (const line of lines) {
+    if (line === '') groups.push([]);
+    else groups.at(-1)?.push(line);
+  }
+  return groups.filter((group) => group.length > 0);
+}
+
+function modelPicker(screen: Screen): ModelPicker | undefined {
+  const region = pickerRegion(screen, (line) => line.startsWith(MODEL_PICKER));
+  const rows = groupsOf(region ?? []).find((group) => group.some((line) => line.startsWith(PICKER_CURSOR)));
+  if (rows === undefined) return undefined;
+  const items = rows.map((line) => ({ cursor: line.startsWith(PICKER_CURSOR), match: MODEL_PICKER_ROW.exec(line) }));
+  const names = items.flatMap(({ match }) => (match?.[1] === undefined ? [] : [match[1]]));
+  if (names.length !== rows.length) return undefined;
+  return {
+    names,
+    cursor: names[items.findIndex((item) => item.cursor)],
+    current: names[items.findIndex((item) => item.match?.[3] !== undefined)],
+  };
+}
+
+function effortPicker(screen: Screen): EffortPicker | undefined {
+  const row = pickerRegion(screen, (line) => line === EFFORT_PICKER)?.find((line) => EFFORT_ACTIVE.test(line));
+  if (row === undefined) return undefined;
+  const segments = [...row.matchAll(EFFORT_SEGMENT)].map((match) => ({ effort: (match[1] ?? match[2] ?? '').toLowerCase(), active: match[1] !== undefined }));
+  const active = segments.find((segment) => segment.active)?.effort;
+  return active === undefined ? undefined : { efforts: segments.map((segment) => segment.effort), active };
+}
+
+function switchNotices(screen: Screen): string[] {
+  return [...screen.transcript, ...screen.status].map((row) => row.trim()).filter((row) => SWITCH_NOTICES.some((prefix) => row.startsWith(prefix)));
+}
+
+function rowsReading(screen: Screen, line: string): number {
+  return screen.transcript.filter((row) => row.trim() === line).length;
+}
+
+function planNotices(screen: Screen): number {
+  return screen.transcript.filter((row) => PLAN_NOTICES.some((prefix) => row.trimStart().startsWith(prefix))).length;
+}
+
+function sidePanel(screen: Screen): readonly string[] | undefined {
+  const rows = screen.viewport.map((row) => row.trim());
+  const top = rows.findLastIndex((row) => row.startsWith(BTW_TITLE));
+  if (top < 0) return undefined;
+  const body: string[] = [];
+  for (const row of rows.slice(top + 1)) {
+    if (!row.startsWith(BTW_BORDER)) break;
+    body.push(row.slice(BTW_BORDER.length, row.endsWith(BTW_BORDER) ? -BTW_BORDER.length : undefined).trim());
+  }
+  return body;
+}
+
+function sideAnswer(body: readonly string[], question: string): string | undefined {
+  const shown = squash(body.join(''));
+  const asked = squash(`${BTW_QUESTION}${question}`);
+  const at = shown.lastIndexOf(asked);
+  if (at < 0) return undefined;
+  const answer = shown.slice(at + asked.length);
+  return answer === '' || answer.startsWith(squash(BTW_WAITING)) ? undefined : answer;
+}
+
+function sideFailure(body: readonly string[]): string | undefined {
+  const asked = body.findLastIndex((row) => row.startsWith(BTW_QUESTION));
+  return asked < 0 ? undefined : body.slice(asked + 1).find((row) => BTW_FAILURE.test(row));
+}
+
 function rejectionNote(screen: Screen): string {
   const rows = screen.transcript.map((row) => row.trim());
   const start = rows.findLastIndex((row) => row.startsWith(REJECTED));
@@ -576,6 +816,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private received = 0;
   private readonly kitty: boolean;
   private keyboardFlags = 0;
+  private recalled: string | undefined;
   private readonly keyboardStack: number[] = [];
   private keyboardTail = '';
   private modifyOtherKeys = false;
@@ -635,8 +876,8 @@ class TuiDriver implements SurfaceDriver<'tui'> {
       );
       this.write(KEYS.enter);
     }
-    await this.wait('the TUI to show its editor and the configured model', (screen) =>
-      screen.input === 'editor' && screen.viewport.some((line) => line.includes(FAKE_PROVIDER_DEFAULTS.modelName)) ? true : undefined,
+    await this.wait('the TUI to show its editor and the session model', (screen) =>
+      screen.input === 'editor' && screen.viewport.some(namesSessionModel) ? true : undefined,
     );
     this.assertKeyboard();
     const { lastPrompt } = this;
@@ -694,6 +935,121 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     this.turn = undefined;
   }
 
+  async openSession(title: string): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) throw this.failure('openSession() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.assertEmptyInput('openSession()', before);
+    this.write(paste(SESSIONS_COMMAND));
+    this.write(KEYS.enter);
+    let cards = await this.wait('the session picker to list the sessions', (screen) => sessionCards(screen));
+    const target = cards.find((card) => card.title === title);
+    if (target === undefined || target.current) {
+      const listed = cards.length === 0 ? '(no sessions)' : cards.map((card) => `${card.title}${card.current ? ` ${SESSION_CURRENT}` : ''}`).join('\n');
+      const problem =
+        target === undefined
+          ? `openSession() found no session titled ${JSON.stringify(title)} in the session picker. It lists:\n${listed}`
+          : `openSession() found that the session titled ${JSON.stringify(title)} is the session already open; go back to another session.`;
+      this.write(KEYS.escape);
+      await this.wait('the session picker to close', (screen) => (screen.input === 'editor' ? true : undefined));
+      throw this.failure(problem, await this.read());
+    }
+    for (let moves = 0; cards.find((card) => card.selected)?.id !== target.id; moves += 1) {
+      const from = cards.findIndex((card) => card.selected);
+      const to = cards.findIndex((card) => card.id === target.id);
+      if (from < 0 || moves > cards.length) throw this.failure(`openSession() could not move the session picker's selection to ${JSON.stringify(title)}.`, await this.read());
+      const left = cards[from]?.id;
+      this.write(to > from ? KEYS.down : KEYS.up);
+      cards = await this.wait(`the session picker to move its selection toward ${JSON.stringify(title)}`, (screen) => {
+        const now = sessionCards(screen);
+        return now !== undefined && now.some((card) => card.selected && card.id !== left) ? now : undefined;
+      });
+    }
+    const failed = resumeFailures(await this.read());
+    this.write(KEYS.enter);
+    const outcome = await this.wait(`the terminal UI to resume session ${target.id} and show ${JSON.stringify(title)} in its conversation`, (screen) => {
+      if (resumeFailures(screen) > failed) return 'failed' as const;
+      return screen.input === 'editor' && resumedSession(screen, target.id) && userMessages(screen, title) > 0 ? ('resumed' as const) : undefined;
+    });
+    if (outcome === 'failed') throw this.failure(`openSession() picked ${JSON.stringify(title)}, but the terminal UI could not resume it.`, await this.read());
+    this.turn = undefined;
+    this.queued = [];
+    this.recalled = undefined;
+  }
+
+  async reload(): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) {
+      throw this.failure('reload() needs an idle product: the terminal UI refuses /reload while a turn runs, a message is queued or an approval is pending.', before);
+    }
+    this.assertEmptyInput('reload()', before);
+    if (!blocksOf(before).some((block) => block.mark === USER_MARK)) {
+      throw this.failure('reload() reloads the conversation on screen, but it shows no message yet; send one first.', before);
+    }
+    const reloaded = rowsShowing(before, SESSION_RELOADED, true);
+    const failures = commandFailures(before);
+    this.queued = [];
+    this.turn = undefined;
+    this.write(paste(RELOAD_COMMAND));
+    this.write(KEYS.enter);
+    const outcome = await this.wait('the CLI to report the session reloaded', (screen) => {
+      if (commandFailures(screen) > failures) return 'failed' as const;
+      return rowsShowing(screen, SESSION_RELOADED, true) > reloaded && this.turnOver(screen) ? ('reloaded' as const) : undefined;
+    });
+    if (outcome === 'failed') throw this.failure('reload() saw the CLI fail to reload the session.', await this.read());
+  }
+
+  async init(): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) throw this.failure('init() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.assertEmptyInput('init()', before);
+    const runs = rowsShowing(before, INIT_RUN, false);
+    const failures = commandFailures(before);
+    this.turn = { stopped: statusLines(before, TURN_STOPPED), failed: statusLines(before, TURN_FAILED) };
+    this.queued = [];
+    this.recalled = undefined;
+    this.write(paste(INIT_COMMAND));
+    this.write(KEYS.enter);
+    const outcome = await this.wait(`the CLI to start the subagent that runs ${JSON.stringify(INIT_RUN)}`, (screen) => {
+      if (commandFailures(screen) > failures) return 'failed' as const;
+      return rowsShowing(screen, INIT_RUN, false) > runs ? ('started' as const) : undefined;
+    });
+    if (outcome === 'failed') throw this.failure('init() saw the CLI fail to run /init.', await this.read());
+  }
+
+  async useSkill(name: string): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('useSkill() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
+    }
+    this.assertEmptyInput('useSkill()', screen);
+    const command = `${SKILL_COMMAND}${name}`;
+    this.write(paste(command));
+    await this.enter(command, screen);
+  }
+
+  async addDir(path: string): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) throw this.failure('addDir() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.assertEmptyInput('addDir()', before);
+    const added = commandNoteCount(before, ADD_DIR_ADDED);
+    const refused = commandNoteCount(before, COMMAND_ERROR);
+    this.write(paste(`${ADD_DIR_COMMAND} ${path}`));
+    this.write(KEYS.enter);
+    await this.wait(`the CLI to ask whether to add ${JSON.stringify(path)}, with "Yes, for this session" selected`, (screen) => (showsAddDirChoice(screen, path) ? true : undefined));
+    this.write(KEYS.enter);
+    const outcome = await this.wait(`the CLI to report ${JSON.stringify(path)} as added`, (screen) => {
+      if (screen.input !== 'editor') return undefined;
+      if (commandNoteCount(screen, COMMAND_ERROR) > refused) return 'refused' as const;
+      return commandNoteCount(screen, ADD_DIR_ADDED) > added ? ('added' as const) : undefined;
+    });
+    const screen = await this.read();
+    if (outcome === 'refused') throw this.failure(`addDir() saw the CLI refuse to add ${JSON.stringify(path)}.`, screen);
+    const reported = addedDirectory(screen);
+    if (reported[0] !== path || reported[1] !== ADD_DIR_SESSION_ONLY) {
+      throw this.failure(`addDir() expected the CLI to report ${JSON.stringify(path)} added for this session only, but it reported ${JSON.stringify(reported)}.`, screen);
+    }
+  }
+
   async resize(size: WindowSize): Promise<void> {
     const from = TERMINAL_SIZES[this.size];
     const to = TERMINAL_SIZES[size];
@@ -742,6 +1098,10 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     if (off.length > 0) {
       throw new Error(`The shell got the terminal back with ${off.join(' and ')} off after the CLI exited.\nModes: ${modes.join(' ')}\n${await this.describe()}`);
     }
+    await this.terminal.flush();
+    if (this.terminal.isAlternateScreen()) {
+      throw new Error(`The shell got the terminal back on the alternate screen after the CLI exited, so the user's scrollback is hidden.\n${await this.describe()}`);
+    }
   }
 
   async send(text: string): Promise<void> {
@@ -749,19 +1109,99 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     if (!this.turnOver(screen)) {
       throw this.failure('send() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
     }
+    this.assertEmptyInput('send()', screen);
+    this.write(paste(text));
+    await this.enter(text, screen);
+  }
+
+  async submit(text: string): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('submit() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
+    }
+    const held = composerText(screen);
+    if (held !== text) throw this.failure(`submit() expected the input box to hold ${JSON.stringify(text)}, but it holds ${JSON.stringify(held)}.`, screen);
+    await this.enter(text, screen);
+  }
+
+  async expectComposer(text: string): Promise<void> {
+    let held: string | undefined;
+    const settled = await this.settle(`the input box to hold ${JSON.stringify(text)}`, (current) => {
+      held = composerText(current);
+      return held === text ? true : undefined;
+    });
+    if ('over' in settled) throw this.failure(`expectComposer() expected the input box to hold ${JSON.stringify(text)}, but it holds ${JSON.stringify(held)}.`, settled.over);
+  }
+
+  async recallPrevious(): Promise<void> {
+    const screen = await this.read();
+    const before = composerText(screen);
+    if (before === undefined) throw this.failure('recallPrevious() needs the input box on screen.', screen);
+    if (before !== '' && before !== this.recalled) {
+      throw this.failure(
+        `recallPrevious() needs an empty input box, or one holding the prompt it recalled last; it holds ${JSON.stringify(before)}, and the up key there moves the cursor instead of walking the history.`,
+        screen,
+      );
+    }
+    this.write(KEYS.up);
+    try {
+      this.recalled = await until(
+        'an earlier prompt to appear in the input box',
+        async () => {
+          const now = composerText(await this.read());
+          return now !== undefined && now !== '' && now !== before ? now : undefined;
+        },
+        { timeoutMs: TIMEOUTS.wait },
+      );
+    } catch (cause) {
+      if (!(cause instanceof WaitTimeoutError)) throw cause;
+      throw this.failure('recallPrevious() found no earlier prompt: the input box did not change.', await this.read());
+    }
+  }
+
+  async undo(): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('undo() needs an idle product: the terminal UI refuses /undo while a turn runs, a message is queued or an approval is pending.', screen);
+    }
+    this.assertEmptyInput('undo()', screen);
+    const latest = blocksOf(screen).findLast((block) => block.mark === USER_MARK);
+    if (latest === undefined) throw this.failure('undo() found no user message to withdraw.', screen);
+    const shown = userMessages(screen, latest.text);
+    this.write(paste('/undo'));
+    this.write(KEYS.enter);
+    await this.wait('the terminal UI to list the prompts it can undo', (current) => (current.text.includes(UNDO_PICKER) ? true : undefined));
+    this.write(KEYS.enter);
+    const outcome = await this.wait(`the user message ${JSON.stringify(latest.head)} to leave the transcript and come back to the input box`, (current) => {
+      if (current.text.includes(UNDO_FAILED)) return 'failed' as const;
+      return !current.text.includes(UNDO_PICKER) && userMessages(current, latest.text) < shown && (composerText(current) ?? '') !== '' ? ('undone' as const) : undefined;
+    });
+    if (outcome === 'failed') throw this.failure('undo() picked the latest prompt, but the terminal UI could not undo it.', await this.read());
+    this.recalled = undefined;
+  }
+
+  private async enter(text: string, screen: Screen): Promise<void> {
     const shown = userMessages(screen, text);
     this.turn = { stopped: statusLines(screen, TURN_STOPPED), failed: statusLines(screen, TURN_FAILED) };
     this.queued = [];
-    this.write(paste(text));
+    this.recalled = undefined;
     this.write(KEYS.enter);
     await this.wait(`the user message ${JSON.stringify(text)} to appear in the transcript`, (current) =>
       userMessages(current, text) > shown ? true : undefined,
     );
   }
 
+  private assertEmptyInput(verb: string, screen: Screen): void {
+    const held = composerText(screen);
+    if (held !== undefined && held !== '') {
+      throw this.failure(`${verb} needs an empty input box, but it holds ${JSON.stringify(held)}; send it with submit() first.`, screen);
+    }
+  }
+
   async queue(text: string): Promise<void> {
     const screen = await this.read();
     this.assertTurnRunning('queue()', screen);
+    this.assertEmptyInput('queue()', screen);
     if (queuedMessages(screen).includes(text)) {
       throw this.failure(`queue() found ${JSON.stringify(text)} already in the queue; queue each message once.`, screen);
     }
@@ -784,6 +1224,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   async steer(text: string): Promise<void> {
     const screen = await this.read();
     this.assertTurnRunning('steer()', screen);
+    this.assertEmptyInput('steer()', screen);
     if (queuedMessages(screen).length > 0) {
       throw this.failure(
         'steer() needs an empty queue: with messages queued, Ctrl+S on the terminal UI steers the whole queue into the turn along with this message, while Desktop and Web steer only this one. Let the queue run first.',
@@ -909,6 +1350,114 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     }
   }
 
+  async switchModel(name: string): Promise<void> {
+    const screen = await this.idleScreen('switchModel()');
+    const notices = switchNotices(screen).length;
+    this.write(paste(MODEL_COMMAND));
+    this.write(KEYS.enter);
+    let picker = await this.wait('the model picker to open', (current) => modelPicker(current));
+    if (picker.current === name || !picker.names.includes(name)) {
+      this.write(KEYS.escape);
+      await this.wait('the model picker to close', (current) => (current.input === 'editor' && modelPicker(current) === undefined ? true : undefined));
+      const problem = picker.current === name ? 'that is already the model' : `the picker offers only ${picker.names.map((offered) => JSON.stringify(offered)).join(', ')}`;
+      throw this.failure(`switchModel() asked for ${JSON.stringify(name)}, but ${problem}.`, await this.read());
+    }
+    while (picker.cursor !== name) {
+      const from = picker.cursor;
+      this.write(picker.names.indexOf(name) > picker.names.indexOf(from ?? '') ? KEYS.down : KEYS.up);
+      picker = await this.wait('the model picker to move its cursor', (current) => {
+        const moved = modelPicker(current);
+        return moved !== undefined && moved.cursor !== from ? moved : undefined;
+      });
+    }
+    this.write(KEYS.enter);
+    const notice = await this.switchNotice('the transcript to record the model switch', notices);
+    if (!notice.startsWith(`${MODEL_SWITCHED}${name} with thinking `)) {
+      throw this.failure(`switchModel() chose ${JSON.stringify(name)}, but the transcript recorded ${JSON.stringify(notice)}.`, await this.read());
+    }
+  }
+
+  async setThinkingEffort(effort: string): Promise<void> {
+    const screen = await this.idleScreen('setThinkingEffort()');
+    const notices = switchNotices(screen).length;
+    this.write(paste(EFFORT_COMMAND));
+    this.write(KEYS.enter);
+    let picker = await this.wait('the thinking effort picker to open', (current) => effortPicker(current));
+    if (picker.active === effort || !picker.efforts.includes(effort)) {
+      this.write(KEYS.escape);
+      await this.wait('the thinking effort picker to close', (current) => (current.input === 'editor' && effortPicker(current) === undefined ? true : undefined));
+      const problem = picker.active === effort ? 'that is already the thinking effort' : `the model offers only ${picker.efforts.map((offered) => JSON.stringify(offered)).join(', ')}`;
+      throw this.failure(`setThinkingEffort() asked for ${JSON.stringify(effort)}, but ${problem}.`, await this.read());
+    }
+    while (picker.active !== effort) {
+      const from = picker.active;
+      this.write(picker.efforts.indexOf(effort) > picker.efforts.indexOf(from) ? KEYS.right : KEYS.left);
+      picker = await this.wait('the thinking effort picker to move its selection', (current) => {
+        const moved = effortPicker(current);
+        return moved !== undefined && moved.active !== from ? moved : undefined;
+      });
+    }
+    this.write(KEYS.enter);
+    const notice = await this.switchNotice('the transcript to record the thinking effort', notices);
+    if (!notice.startsWith(`${EFFORT_SET}${effort}.`)) {
+      throw this.failure(`setThinkingEffort() chose ${JSON.stringify(effort)}, but the transcript recorded ${JSON.stringify(notice)}.`, await this.read());
+    }
+  }
+
+  async setPlanMode(state: PlanModeState): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('setPlanMode() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
+    }
+    this.assertEmptyInput('setPlanMode()', screen);
+    const notices = planNotices(screen);
+    const set = rowsReading(screen, PLAN_SET[state]);
+    const already = rowsReading(screen, `${PLAN_ALREADY}${state}`);
+    this.write(paste(`${PLAN_COMMAND} ${state}`));
+    this.write(KEYS.enter);
+    const answered = await this.wait('the transcript to record the plan mode', (current) =>
+      current.input === 'editor' && planNotices(current) > notices ? current : undefined,
+    );
+    if (rowsReading(answered, PLAN_SET[state]) > set) return;
+    if (rowsReading(answered, `${PLAN_ALREADY}${state}`) > already) {
+      throw this.failure(`setPlanMode() asked to turn plan mode ${state}, but plan mode is already ${state}.`, answered);
+    }
+    throw this.failure(`setPlanMode() asked to turn plan mode ${state}, but the transcript did not record "${PLAN_SET[state]}".`, answered);
+  }
+
+  async btw(question: string, reply: string): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('btw() needs an idle product, but a turn is running, a message is queued or an approval is pending.', screen);
+    }
+    this.assertEmptyInput('btw()', screen);
+    const failedStarts = statusLines(screen, BTW_START_FAILED);
+    this.write(paste(`${BTW_COMMAND} ${question}`));
+    this.write(KEYS.enter);
+    let outcome: SideOutcome;
+    try {
+      outcome = await this.wait<SideOutcome>(`the side panel to show ${JSON.stringify(reply)} or a failure after ${JSON.stringify(question)}`, (current) => {
+        if (statusLines(current, BTW_START_FAILED) > failedStarts) return { opened: false };
+        const body = sidePanel(current);
+        const answer = body === undefined ? undefined : sideAnswer(body, question);
+        if (body === undefined || answer === undefined) return undefined;
+        const answered = answer.includes(squash(reply));
+        return answered || sideFailure(body) !== undefined ? { opened: true, shown: body.join('\n').trimEnd(), answered } : undefined;
+      });
+    } catch (error) {
+      if (sidePanel(await this.read()) !== undefined) await this.closeSidePanel();
+      throw error;
+    }
+    if (!outcome.opened) throw this.failure('btw() typed /btw, but the terminal UI could not start the side question.', await this.read());
+    await this.closeSidePanel();
+    if (!outcome.answered) {
+      throw this.failure(
+        `btw() asked ${JSON.stringify(question)}, but the side answer ended without ${JSON.stringify(reply)}. The side panel showed:\n${outcome.shown}`,
+        await this.read(),
+      );
+    }
+  }
+
   async stop(): Promise<void> {
     const screen = await this.read();
     if (showsQuestion(screen)) {
@@ -1008,6 +1557,21 @@ class TuiDriver implements SurfaceDriver<'tui'> {
 
   async close(): Promise<void> {
     if (!this.left) await this.leave('The scenario');
+  }
+
+  async quitDuringTurn(): Promise<void> {
+    if (this.exitCode() !== undefined) throw new Error(`The CLI exited before the user quit it.\n${await this.describe()}`);
+    const screen = await this.read();
+    if (showsQuestion(screen) || showsApproval(screen)) {
+      throw this.failure(
+        'restartDuringTurn() cannot quit the terminal UI while an approval or a question is pending: Ctrl+D there answers it instead of arming the exit, and /exit waits for an idle product. Answer it first.',
+        screen,
+      );
+    }
+    this.write(KEYS.quit);
+    await until('the terminal UI to ask for Ctrl+D again', async () => ((await this.read()).text.includes(QUIT_AGAIN) ? true : undefined), { timeoutMs: TIMEOUTS.wait });
+    this.write(KEYS.quit);
+    await this.waitForExit('Ctrl+D was pressed twice');
   }
 
   private async leave(who: string): Promise<void> {
@@ -1131,6 +1695,26 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const recorded = collectedAnswers(screen, answer);
     this.write(KEYS.enter);
     await this.wait(`the transcript to record the answer ${JSON.stringify(answer)}`, (current) => (collectedAnswers(current, answer) > recorded ? true : undefined));
+  }
+
+  private async idleScreen(verb: string): Promise<Screen> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) throw this.failure(`${verb} needs an idle product, but a turn is running, a message is queued or an approval is pending.`, screen);
+    return screen;
+  }
+
+  private async closeSidePanel(): Promise<void> {
+    this.write(KEYS.escape);
+    await this.wait('the side panel to close and the input box to come back', (current) =>
+      sidePanel(current) === undefined && current.input === 'editor' ? true : undefined,
+    );
+  }
+
+  private switchNotice(label: string, before: number): Promise<string> {
+    return this.wait(label, (current) => {
+      const notices = switchNotices(current);
+      return current.input === 'editor' && notices.length > before ? notices.at(-1) : undefined;
+    });
   }
 
   private assertTurnRunning(verb: string, screen: Screen): void {
@@ -1334,8 +1918,9 @@ export async function startTui({ home, reopen, variant, workspaceTrust }: Surfac
   try {
     await driver.ready(reopen === undefined ? workspaceTrust : undefined);
   } catch (error) {
+    const diagnostics = await driver.diagnostics();
     await driver.kill();
-    throw error;
+    throw new StartupFailure(error, diagnostics);
   }
   return driver;
 }

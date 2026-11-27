@@ -10,7 +10,7 @@ import { HOST_API_LEVEL, startServer, type RunningServer } from '../src';
 import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
-const HOST_CONTRACT = { apiLevel: 1, digest: 'd614994ac98f32d1b2a6219d61172eb26b1c2de70bcc2c487c3572498a3ffa58' };
+const HOST_CONTRACT = { apiLevel: 1, digest: 'a0cbe1f3bfc04be66739944d357d58781a42ce3a45252d1bbb1fec286ca1d6e5' };
 
 const DEBUG_ROUTES = [
   'GET /api/v1/debug/channels',
@@ -77,7 +77,7 @@ describe('KAP API surface', () => {
     return surface;
   };
 
-  it('[L0:kap.api-contract] publishes the reviewed REST and WebSocket contracts', async () => {
+  it('publishes the reviewed REST and WebSocket contracts', async () => {
     const { openapi, asyncapi } = started();
     await expectContractGolden(
       { openapi: schemaFile('openapi.json'), asyncapi: schemaFile('asyncapi.json'), summary: schemaFile('contract.txt') },

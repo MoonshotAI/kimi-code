@@ -21,6 +21,9 @@ function makeHost(additionalDirs: readonly string[] = []) {
       streamingPhase: 'idle',
       isCompacting: false,
     },
+    ui: {
+      mode: 'regular' as const,
+    },
   };
   let mountedPanel: MountedPanel | null = null;
   const session = {

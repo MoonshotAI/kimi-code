@@ -22,7 +22,7 @@ import {
   type ReadMediaFileInput,
 } from '#/agent/tools/read-media-file/read-media-file';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
-import type { VideoUploader } from '#/llm-adapter/model/media';
+import type { VideoUploader } from '#/provider-catalog/model/media';
 import {
   MAX_IMAGE_DECODE_BYTES,
   setConfiguredReadImageByteBudget,
@@ -35,7 +35,6 @@ import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
 import type { IFileService } from '#/app/file/fileService';
 import type { IBlobStore } from '#/persistence/interface/blobStore';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
@@ -49,11 +48,12 @@ import {
 } from '#/tool/toolContract';
 import { EventBusService } from '#/app/event/eventBusService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
-import type { Model } from '#/llm-adapter/model/catalog';
+import type { Model } from '#/provider-catalog/model/catalog';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { WorkspaceConfig } from '#/tool/path-access';
 import { sniffImageDimensions } from '#/agent/media/file-type';
 import { stubAgentContext } from '../../agentContext/stubs';
+import { ProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
 
@@ -805,8 +805,7 @@ describe('ReadMediaFileTool', () => {
     );
     const resolved = await resolver.resolve(
       [{ role: 'tool', toolCallId: 'call_media', content: outputParts(result) }],
-      model,
-      new ProtocolAdapterRegistry().request(model).with({ endpoint: { files } }),
+      new ProviderCatalogService().createRequester(model).with({ endpoint: { files } }).request({ content: { messages: [] } }),
     );
 
     expect(upload).toHaveBeenCalledOnce();

@@ -1,21 +1,27 @@
 import { getMaxListeners } from 'node:events';
+import { Readable } from 'node:stream';
 
-import { type ToolCall } from '@moonshot-ai/core/llm/message';
+import { createUserMessage, type ToolCall } from '@moonshot-ai/core/llm/message';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
+import type { LlmOutcome, LlmRunEvent } from '@moonshot-ai/core/llm/response';
+import { contentsOf } from '@moonshot-ai/core/llm/requester';
+import type { Loop } from '@moonshot-ai/core/loop/index';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
+import type { LlmPolicy } from '@moonshot-ai/core/llm/policy/policy';
+import type { LlmRecovery, LlmRecoveryRecord } from '@moonshot-ai/core/llm/policy/recovery';
 import { call, held, reply, say, think, thinkSigned } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { Event } from '#/_base/event';
-import type { LoopRequester } from '#/agent/loop/requesterContract';
-import type { AgentLoopRequestObserver } from '#/agent/loop/requestObservation';
+import type { AgentLoopRequestObserver, AgentRequestObservation } from '#/agent/loop/requestObservation';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
-import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { IAgentScopeContext, agentContextOf } from '#/agent/scopeContext/scopeContext';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import {
   IAgentLifecycleService,
@@ -38,18 +44,23 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { abortedToolOutput, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import { IConfigService } from '#/app/config/config';
+import { IFileService } from '#/app/file/fileService';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import type { ProviderConfig } from '#/provider-catalog/provider/provider';
 
 import {
   agentService,
   appService,
+  configServices,
   createTestAgent,
   InMemoryWireRecordPersistence,
   permissionModeServices,
   createMockProvider,
-  createMockProviderRequester,
   providerHttpError,
   sessionService,
+  telemetryServices,
   testkitAgentFixtures,
   wireRecordPersistenceServices,
   type TestAgentContext,
@@ -59,6 +70,7 @@ import {
 import { stubPluginService } from '../../app/plugin/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { submitPromptTurn } from './stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
@@ -145,6 +157,749 @@ describe('Agent loop', () => {
       messages:
         user: text "Hello"
     `);
+  });
+
+  it('freezes request config for the turn and refreshes model, thinking, and params on the next turn', async () => {
+    const requests: LlmRequest[] = [];
+    const telemetryRecords: TelemetryRecord[] = [];
+    const endedTurns: TurnEnded[] = [];
+    const pngBytes = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const usageByCall = [
+      { inputOther: 100, output: 10, inputCacheRead: 10_000, inputCacheCreation: 0 },
+      { inputOther: 150, output: 20, inputCacheRead: 1_000, inputCacheCreation: 0 },
+      { inputOther: 300, output: 30, inputCacheRead: 10_000, inputCacheCreation: 0 },
+    ] as const;
+    const overrides = { temperature: 0.2, topP: 0.7 };
+    let localLoop!: IAgentLoopService;
+    let localConfig!: IConfigService;
+    const generate = createMockProvider(async (request) => {
+      requests.push(request);
+      if (requests.length === 1) {
+        await localLoop.setModel('second-model');
+        localLoop.setThinking('high');
+        await localConfig.set('modelOverrides', { temperature: 0.9, topP: 0.4 });
+        return {
+          parts: [
+            { type: 'text', text: 'working' },
+            { type: 'function', id: 'call-work', name: 'Work', arguments: '{}' },
+          ],
+          usage: usageByCall[0],
+        };
+      }
+      if (
+        request.content.usedTokens === 456 &&
+        request.content.messages.length === (requests[2]?.content.messages.length ?? 0) + 1
+      ) {
+        return providerHttpError(503, 'recover comparison');
+      }
+      if (
+        request.content.usedTokens === 457 &&
+        !request.content.messages.some((message) => message.content.some((part) =>
+          part.type === 'text' && part.text === 'recovered-message'
+        ))
+      ) {
+        return providerHttpError(503, 'recover comparison');
+      }
+      if (request.content.messages.some((message) => message.content.some((part) =>
+        part.type === 'text' && part.text === 'operation-error'
+      ))) {
+        throw new Error('operation comparison failure');
+      }
+      return {
+        ...(requests.length > 3 ? { id: 'comparison', requestId: 'comparison' } : {}),
+        parts: [{ type: 'text', text: 'done' }],
+        usage: usageByCall[requests.length - 1],
+      };
+    });
+    const firstProvider: ProviderConfig & { readonly type: string } = {
+      type: 'kimi',
+      apiKey: 'test-key',
+      baseUrl: 'https://first.example.test/v1',
+      customHeaders: { 'X-Custom': 'first' },
+    };
+    const secondProvider: ProviderConfig & { readonly type: string } = {
+      type: 'openai',
+      apiKey: 'test-key',
+      baseUrl: 'https://second.example.test/v1',
+      customHeaders: { 'X-Custom': 'second' },
+    };
+    const local = createTestAgent(
+      { autoConfigure: false, generate },
+      configServices(() => ({
+        defaultModel: 'first-model',
+        providers: { kimi: firstProvider, other: secondProvider },
+        models: {
+          'first-model': {
+            provider: 'kimi',
+            model: 'first-wire-model',
+            maxContextSize: 128_000,
+            maxOutputSize: 4_096,
+            capabilities: ['thinking', 'tool_use', 'image_in'],
+            supportEfforts: ['low', 'high'],
+            defaultEffort: 'low',
+          },
+          'second-model': {
+            provider: 'other',
+            model: 'second-wire-model',
+            maxContextSize: 256_000,
+            maxOutputSize: 8_192,
+            capabilities: ['thinking', 'tool_use'],
+            supportEfforts: ['low', 'high'],
+            defaultEffort: 'low',
+          },
+        },
+        modelOverrides: overrides,
+        loopControl: { maxAttemptsPerStep: 2 },
+      })),
+      appService(IFileService, {
+        _serviceBrand: undefined,
+        get: async () => ({
+          meta: {
+            id: 'f_pixel',
+            name: 'pixel.png',
+            media_type: 'image/png',
+            size: pngBytes.length,
+            created_at: '2026-01-01T00:00:00.000Z',
+          },
+          stream: () => Readable.from(pngBytes),
+        }),
+      } as unknown as IFileService),
+      sessionService(ISessionMediaStore, {
+        _serviceBrand: undefined,
+        open: async () => undefined,
+        resolveDisplayPath: async () => undefined,
+        materialize: async () => undefined,
+      } as unknown as ISessionMediaStore),
+      telemetryServices(recordingTelemetry(telemetryRecords)),
+      permissionModeServices('yolo'),
+    );
+    try {
+      await local.restorePersisted();
+      local.get(IEventBus).subscribe(TurnEnded, (event) => {
+        endedTurns.push(event);
+      });
+      localLoop = local.get(IAgentLoopService);
+      localConfig = local.get(IConfigService);
+      await localLoop.setModel('first-model');
+      localLoop.update({
+        activeToolNames: ['Work'],
+        systemPrompt: 'turn-system',
+        thinkingLevel: 'low',
+      });
+      local.get(IAgentToolRegistryService).register({
+        name: 'Work',
+        description: 'Run one step.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        resolveExecution: () => ({
+          approvalRule: 'Work',
+          execute: async () => ({ output: 'work-result' }),
+        }),
+      });
+      const internals = localLoop as unknown as {
+        readonly loop?: Loop;
+        readonly requesterExecution: { readonly recoveries: { clear(): void } };
+        readonly observer: AgentLoopRequestObserver;
+      };
+      const coreLoop = internals.loop;
+      if (coreLoop === undefined) throw new Error('Loop is not started');
+      const setRequester = vi.spyOn(coreLoop, 'setRequester');
+
+      await local.rpc.prompt({
+        input: [
+          { type: 'text', text: 'first turn' },
+          { type: 'image_url', imageUrl: { url: 'kimi-file://f_pixel', name: 'pixel.png' } },
+        ],
+      });
+      await local.untilTurnEnd();
+      expect(setRequester).toHaveBeenCalledTimes(3);
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'second turn' }] });
+      await local.untilTurnEnd();
+
+      expect(requests).toHaveLength(3);
+      expect(requests.map((request) => ({
+        name: request.model.spec.name,
+        maxOutputTokens: request.model.maxOutputTokens,
+        sampling: request.model.sampling,
+        thinkingEffort: request.model.thinking?.effort,
+        baseUrl: request.endpoint?.baseUrl,
+        customHeader: request.endpoint?.headers?.['X-Custom'],
+      }))).toEqual([
+        {
+          name: 'first-wire-model',
+          maxOutputTokens: 4_096,
+          sampling: { temperature: 0.2, topP: 0.7 },
+          thinkingEffort: 'low',
+          baseUrl: 'https://first.example.test/v1',
+          customHeader: 'first',
+        },
+        {
+          name: 'first-wire-model',
+          maxOutputTokens: 4_096,
+          sampling: { temperature: 0.2, topP: 0.7 },
+          thinkingEffort: 'low',
+          baseUrl: 'https://first.example.test/v1',
+          customHeader: 'first',
+        },
+        {
+          name: 'second-wire-model',
+          maxOutputTokens: 8_192,
+          sampling: { temperature: 0.9, topP: 0.4 },
+          thinkingEffort: 'high',
+          baseUrl: 'https://second.example.test/v1',
+          customHeader: 'second',
+        },
+      ]);
+      expect(requests.map((request) => request.protocol.recoveryKey)).toEqual([
+        JSON.stringify(['openai', 'kimi', 'openai', false, false]),
+        JSON.stringify(['openai', 'kimi', 'openai', false, false]),
+        JSON.stringify(['openai', 'openai', 'openai', false, false]),
+      ]);
+      const firstMetadata = requests[0]?.endpoint?.headers?.['X-Msh-Client-Metadata'];
+      const secondMetadata = requests[1]?.endpoint?.headers?.['X-Msh-Client-Metadata'];
+      expect(JSON.parse(firstMetadata!)).toMatchObject({
+        agent_role: 'main',
+        turn_trigger: 'user',
+        step_reason: 'turn_start',
+      });
+      expect(JSON.parse(secondMetadata!)).toMatchObject({ step_reason: 'tool_results' });
+      expect(requests[2]?.endpoint?.headers?.['X-Msh-Client-Metadata']).toBeUndefined();
+      const firstPromptImages = (request: LlmRequest | undefined) =>
+        request?.content.messages[0]?.content.filter((part) => part.type === 'image_url') ?? [];
+      expect(firstPromptImages(requests[0])).toHaveLength(1);
+      expect(firstPromptImages(requests[1])).toHaveLength(1);
+      expect(firstPromptImages(requests[2])).toHaveLength(0);
+      expect(endedTurns[0]?.modelSteps?.map(({ model, step }) => ({ model, step }))).toEqual([
+        { model: 'first-wire-model', step: 1 },
+        { model: 'first-wire-model', step: 2 },
+      ]);
+      expect(endedTurns[1]?.modelSteps?.map(({ model, step }) => ({ model, step }))).toEqual([
+        { model: 'second-wire-model', step: 1 },
+      ]);
+      const usage = local.get(ISessionUsageService).status(local.get(IAgentScopeContext).agentContext);
+      expect(usage.byModel).toMatchObject({
+        'first-model': { inputOther: 250, output: 30 },
+        'second-model': { inputOther: 300, output: 30 },
+      });
+      const cacheBreaks = telemetryRecords.filter((record) => record.event === 'cache_break_detected');
+      expect(cacheBreaks[0]?.properties).toMatchObject({
+        turn_id: 0,
+        step_no: 2,
+        prev_model: 'first-model',
+        curr_model: 'first-model',
+        prev_effort: 'low',
+        curr_effort: 'low',
+      });
+      const resolvers = requests[0]?.policy?.resolvers;
+      const resolved = typeof resolvers === 'function' ? resolvers() : resolvers;
+      expect(resolved?.slice(0, 4).map((resolver) => resolver.id)).toEqual([
+        'tool-select',
+        'agent-media-tools',
+        'structure',
+        'agent-media',
+      ]);
+
+      localLoop.update({ activeToolNames: [], systemPrompt: 'loop-default-system' });
+      const raw = coreLoop.baseRequester;
+      if (raw === undefined || !('with' in raw)) throw new Error('Expected a full raw requester');
+      const observations: AgentRequestObservation[] = [];
+      const startObservation = internals.observer.start.bind(internals.observer);
+      vi.spyOn(internals.observer, 'start').mockImplementation((request) => {
+        const observation = startObservation(request);
+        observations.push(observation);
+        return observation;
+      });
+      const observedAttempts: [LlmRequest, readonly LlmRecoveryRecord[]][] = [];
+      const attemptOrder: string[] = [];
+      const recordAttempt = internals.observer.recordAttempt.bind(internals.observer);
+      vi.spyOn(internals.observer, 'recordAttempt').mockImplementation((observation, request, appliedRecoveries) => {
+        attemptOrder.push('observer');
+        observedAttempts.push([request, appliedRecoveries]);
+        recordAttempt(observation, request, appliedRecoveries);
+      });
+      expect(contentsOf(coreLoop.requester)).toEqual({});
+      expect(coreLoop.requester.request({
+        content: { messages: [createUserMessage('preview')] },
+        profile: { systemPrompt: 'preview-system', tools: [] },
+      }).profile?.systemPrompt).toBe('preview-system');
+
+      const events: LlmRunEvent[][] = [[], []];
+      const outcomes: LlmOutcome[] = [];
+      const loopResolver = { id: 'loop-policy', resolve: async (request: LlmRequest) => request };
+      const restResolver = { id: 'rest-policy', resolve: async (request: LlmRequest) => request };
+      const derivedRetryable = () => false;
+      const restRetryable = () => false;
+      const loopRecovery: LlmRecovery = {
+        propose: ({ error, appliedRecoveries }) => {
+          if (!error.message.includes('recover comparison') || appliedRecoveries.some((recovery) => recovery.strategy === 'loop-policy')) {
+            return undefined;
+          }
+          return {
+            strategy: 'loop-policy',
+            action: 'append-message',
+            rewrite: (request) => ({
+              ...request,
+              content: {
+                ...request.content,
+                messages: [...request.content.messages, createUserMessage('recovered-message')],
+              },
+            }),
+          };
+        },
+      };
+      const derivedPolicy: LlmPolicy = {
+        retry: { maxAttemptsPerStep: 3 },
+        recoveries: [loopRecovery],
+        resolvers: [loopResolver],
+        retryables: [derivedRetryable],
+      };
+      const restPolicy: LlmPolicy = {
+        retry: { infiniteRetry: false },
+        resolvers: [restResolver],
+        retryables: [restRetryable],
+      };
+      const derivedMessages = [
+        ...requests[2]!.content.messages,
+        createUserMessage('derived-message'),
+      ];
+      const derivedTools = [...(requests[2]?.profile?.tools ?? [])];
+      const turnAttributes = { kind: 'turn_comparison', turnId: 90, step: 1 } as const;
+      const derived = coreLoop.requester.with({
+        model: { sampling: { temperature: 0.5 } },
+        content: { messages: derivedMessages, usedTokens: 456 },
+        profile: { systemPrompt: 'turn-system', tools: derivedTools },
+        policy: derivedPolicy,
+        attributes: turnAttributes,
+      });
+      expect(contentsOf(derived).model?.sampling).toMatchObject({ temperature: 0.5 });
+      const derivedRest = { policy: restPolicy };
+      expect(derived.request({}).profile?.systemPrompt).toBe('turn-system');
+      const preview = derived.request({ ...derivedRest, profile: { systemPrompt: 'rest-system' } });
+      expect(preview.content).toMatchObject({ messages: derivedMessages, usedTokens: 456 });
+      expect(preview.profile).toEqual({ systemPrompt: 'rest-system', tools: derivedTools });
+
+      const directRest = {
+        model: { sampling: { temperature: 0.5 } },
+        content: { messages: derivedMessages, usedTokens: 456 },
+        profile: { systemPrompt: 'turn-system', tools: derivedTools },
+        attributes: turnAttributes,
+        policy: {
+          retry: { ...derivedPolicy.retry, ...restPolicy.retry },
+          recoveries: [loopRecovery],
+          resolvers: [loopResolver, restResolver],
+          retryables: [derivedRetryable, restRetryable],
+        },
+      };
+      const callerAttempts: [LlmRequest, readonly LlmRecoveryRecord[]][][] = [[], []];
+      const callerRecoverySnapshots: (readonly LlmRecoveryRecord[])[][] = [[], []];
+      const runs = [
+        () => coreLoop.requester.generate(directRest, {
+          signal: new AbortController().signal,
+          onAttempt: (request, { appliedRecoveries }) => {
+            attemptOrder.push('caller');
+            callerAttempts[0]?.push([request, appliedRecoveries]);
+            callerRecoverySnapshots[0]?.push([...appliedRecoveries]);
+          },
+          onEvent: (event) => events[0]?.push(event),
+        }),
+        () => derived.generate(derivedRest, {
+          signal: new AbortController().signal,
+          onAttempt: (request, { appliedRecoveries }) => {
+            attemptOrder.push('caller');
+            callerAttempts[1]?.push([request, appliedRecoveries]);
+            callerRecoverySnapshots[1]?.push([...appliedRecoveries]);
+          },
+          onEvent: (event) => events[1]?.push(event),
+        }),
+      ];
+      for (const run of runs) {
+        internals.requesterExecution.recoveries.clear();
+        outcomes.push(await run());
+      }
+
+      const outcomeValue = (outcome: LlmOutcome) => {
+        const { timing: _timing, ...value } = outcome;
+        return value;
+      };
+      expect(outcomeValue(outcomes[1]!)).toEqual(outcomeValue(outcomes[0]!));
+      const eventValues = events.map((list) => list.map((event) => {
+        if (event.type === 'llm.delta.timing') return { type: event.type };
+        return event.type === 'llm.ended'
+          ? { ...event, outcome: outcomeValue(event.outcome) }
+          : event;
+      }));
+      expect(eventValues[1]).toEqual(eventValues[0]);
+      expect(attemptOrder).toEqual([
+        'observer', 'caller', 'observer', 'caller',
+        'observer', 'caller', 'observer', 'caller',
+      ]);
+      expect(callerRecoverySnapshots).toEqual([
+        [[], [{ strategy: 'loop-policy', action: 'append-message' }]],
+        [[], [{ strategy: 'loop-policy', action: 'append-message' }]],
+      ]);
+      for (const [index, [request, appliedRecoveries]] of callerAttempts.flat().entries()) {
+        expect(observedAttempts[index]?.[0]).toBe(request);
+        expect(observedAttempts[index]?.[1]).toBe(appliedRecoveries);
+        expect(requests[index + 3]).toBe(request);
+      }
+      expect(requests).toHaveLength(7);
+      expect(requests[3]?.content).toMatchObject({ messages: derivedMessages, usedTokens: 456 });
+      expect(requests[3]?.profile).toEqual({ systemPrompt: 'turn-system', tools: derivedTools });
+      expect(requests[4]?.content).toMatchObject({
+        messages: [...derivedMessages, createUserMessage('recovered-message')],
+        usedTokens: 456,
+      });
+      expect(requests[5]?.protocol).toMatchObject(requests[3]!.protocol);
+      expect(requests[6]?.protocol).toMatchObject(requests[4]!.protocol);
+      const endpointValues = requests.slice(3).map((request) => ({
+        baseUrl: request.endpoint?.baseUrl,
+        defaultBaseUrl: request.endpoint?.defaultBaseUrl,
+        headers: request.endpoint?.headers,
+        files: request.endpoint?.files,
+        hasCredentials: request.endpoint?.credentials !== undefined,
+        hasClientFactory: request.endpoint?.clientFactory !== undefined,
+        hasFetch: request.endpoint?.fetch !== undefined,
+      }));
+      expect(endpointValues[2]).toEqual(endpointValues[0]);
+      expect(endpointValues[3]).toEqual(endpointValues[1]);
+      expect(requests[5]?.model).toMatchObject(requests[3]!.model);
+      expect(requests[6]?.model).toMatchObject(requests[4]!.model);
+      expect(requests[5]?.content).toMatchObject(requests[3]!.content);
+      expect(requests[6]?.content).toMatchObject(requests[4]!.content);
+      expect(requests[5]?.profile).toEqual(requests[3]!.profile);
+      expect(requests[6]?.profile).toEqual(requests[4]!.profile);
+      const resolverIds = requests.slice(3).map((request) => {
+        const resolvers = request.policy?.resolvers;
+        return (typeof resolvers === 'function' ? resolvers() : resolvers)?.map((resolver) => resolver.id);
+      });
+      expect(resolverIds).toEqual(Array.from({ length: 4 }, () => [
+        'tool-select', 'agent-media-tools', 'structure', 'agent-media', 'agent-request-metadata', 'loop-policy', 'rest-policy',
+      ]));
+      for (const request of requests.slice(3)) {
+        const recoveries = request.policy?.recoveries;
+        const resolvedRecoveries = typeof recoveries === 'function' ? recoveries() : recoveries;
+        expect(resolvedRecoveries).toHaveLength(4);
+        expect(resolvedRecoveries?.[3]).toBe(loopRecovery);
+        const retryables = request.policy?.retryables;
+        expect(typeof retryables === 'function' ? retryables() : retryables).toEqual([
+          derivedRetryable,
+          restRetryable,
+        ]);
+        expect(request.policy?.retry).toEqual({ maxAttemptsPerStep: 3, infiniteRetry: false });
+      }
+      const observed = observations.map((observation) => ({
+        source: observation.source,
+        context: {
+          model: observation.context.model,
+          modelAlias: observation.context.modelAlias,
+          thinkingEffort: observation.context.thinkingEffort,
+          systemPrompt: observation.context.systemPrompt,
+          tools: observation.context.tools,
+          messages: observation.context.messages,
+          contextRevision: observation.context.contextRevision,
+          source: observation.context.source,
+          logFields: observation.context.logFields,
+        },
+        recorded: observation.recorded,
+        media: observation.media,
+      }));
+      expect(observed).toHaveLength(2);
+      expect(observed[1]).toEqual(observed[0]);
+      expect(observed[0]?.source).toEqual({ type: 'operation', turnId: 90, requestKind: 'turn_comparison' });
+
+      generate.expectCacheBreak('operation comparison replaces system prompt', { at: 'header' });
+      const operationRequestStart = requests.length;
+      const operationSource = {
+        type: 'operation',
+        turnId: 90,
+        requestKind: 'operation_comparison',
+      } as const;
+      const registryRequest = vi.spyOn(local.get(IProviderCatalogService), 'createRequester');
+      expect(registryRequest).toHaveBeenCalledTimes(0);
+      expect(localLoop.requester).toBe(coreLoop.requester);
+      const operationPart = {
+        model: { maxOutputTokens: localLoop.resolveMaxOutputTokens(512) },
+        attributes: { kind: 'operation_comparison', turnId: 90, promptCacheProbe: 'compaction' } as const,
+        policy: { retry: { maxAttemptsPerStep: 1 } },
+      };
+      const operation = coreLoop.requester.with(operationPart);
+      expect(registryRequest).toHaveBeenCalledTimes(0);
+      expect(contentsOf(operation).model?.maxOutputTokens).toBe(512);
+      const operationMessages = [createUserMessage('operation-derived')];
+      const operationDerived = operation.with({
+        content: { messages: operationMessages, usedTokens: 457 },
+        profile: { systemPrompt: 'operation-system', tools: derivedTools },
+        policy: derivedPolicy,
+      });
+      expect(contentsOf(operation).content).toBeUndefined();
+      expect(contentsOf(operationDerived).content).toMatchObject({
+        messages: operationMessages,
+        usedTokens: 457,
+      });
+      const operationPreview = operationDerived.request(derivedRest);
+      expect(operationPreview.content).toMatchObject({ messages: operationMessages, usedTokens: 457 });
+      expect(operationPreview.profile).toEqual({ systemPrompt: 'operation-system', tools: derivedTools });
+      expect(operationPreview.model.maxOutputTokens).toBe(512);
+      expect(operationPreview.protocol.recoveryKey).toBe(requests[2]?.protocol.recoveryKey);
+      expect(operationPreview.endpoint?.baseUrl).toBe('https://second.example.test/v1');
+      const liveResolver = { id: 'live-loop-policy', resolve: async (request: LlmRequest) => request };
+      const liveRecovery: LlmRecovery = { propose: () => undefined };
+      const liveRetryable = () => false;
+      const removeLiveResolver = coreLoop.policy.addResolver(liveResolver);
+      const removeLiveRecovery = coreLoop.policy.addRecovery(liveRecovery);
+      const removeLiveRetryable = coreLoop.policy.addRetryable(liveRetryable);
+
+      attemptOrder.length = 0;
+      observedAttempts.length = 0;
+      const operationObservationStart = observations.length;
+      const operationEvents: LlmRunEvent[][] = [[], []];
+      const operationOutcomes: LlmOutcome[] = [];
+      const operationAttempts: [LlmRequest, readonly LlmRecoveryRecord[]][][] = [[], []];
+      const operationRecoverySnapshots: (readonly LlmRecoveryRecord[])[][] = [[], []];
+      const operationUsage: unknown[][] = [[], []];
+      const operationDirectRest = {
+        ...operationPart,
+        content: { messages: operationMessages, usedTokens: 457 },
+        profile: { systemPrompt: 'operation-system', tools: derivedTools },
+        policy: {
+          retry: { ...derivedPolicy.retry, ...restPolicy.retry },
+          recoveries: [loopRecovery],
+          resolvers: [loopResolver, restResolver],
+          retryables: [derivedRetryable, restRetryable],
+        },
+      };
+      const operationRuns = [
+        async () => {
+          const before = local.allEvents.length;
+          const outcome = await coreLoop.requester.generate(operationDirectRest, {
+            signal: new AbortController().signal,
+            onAttempt: (request, { appliedRecoveries }) => {
+              attemptOrder.push('caller');
+              operationAttempts[0]?.push([request, appliedRecoveries]);
+              operationRecoverySnapshots[0]?.push([...appliedRecoveries]);
+            },
+            onEvent: (event) => operationEvents[0]?.push(event),
+          });
+          operationUsage[0] = local.allEvents.slice(before).flatMap((event) => {
+            if (event.type !== '[wire]' || event.event !== 'usage.record') return [];
+            const args = event.args as { model: unknown; usage: unknown; usageScope: unknown };
+            return [{ model: args.model, usage: args.usage, usageScope: args.usageScope }];
+          });
+          return outcome;
+        },
+        async () => {
+          const before = local.allEvents.length;
+          const outcome = await operationDerived.generate(derivedRest, {
+            signal: new AbortController().signal,
+            onAttempt: (request, { appliedRecoveries }) => {
+              attemptOrder.push('caller');
+              operationAttempts[1]?.push([request, appliedRecoveries]);
+              operationRecoverySnapshots[1]?.push([...appliedRecoveries]);
+            },
+            onEvent: (event) => operationEvents[1]?.push(event),
+          });
+          operationUsage[1] = local.allEvents.slice(before).flatMap((event) => {
+            if (event.type !== '[wire]' || event.event !== 'usage.record') return [];
+            const args = event.args as { model: unknown; usage: unknown; usageScope: unknown };
+            return [{ model: args.model, usage: args.usage, usageScope: args.usageScope }];
+          });
+          return outcome;
+        },
+      ];
+      for (const run of operationRuns) {
+        internals.requesterExecution.recoveries.clear();
+        operationOutcomes.push(await run());
+      }
+      expect(registryRequest).toHaveBeenCalledTimes(0);
+      registryRequest.mockRestore();
+      expect(outcomeValue(operationOutcomes[1]!)).toEqual(outcomeValue(operationOutcomes[0]!));
+      const operationEventValues = operationEvents.map((list) => list.map((event) => {
+        if (event.type === 'llm.delta.timing') return { type: event.type };
+        return event.type === 'llm.ended'
+          ? { ...event, outcome: outcomeValue(event.outcome) }
+          : event;
+      }));
+      expect(operationEventValues[1]).toEqual(operationEventValues[0]);
+      expect(operationOutcomes.map((outcome) => outcome.requestId)).toEqual(['comparison', 'comparison']);
+      expect(operationUsage[1]).toEqual(operationUsage[0]);
+      expect(operationUsage[0]).toEqual([
+        expect.objectContaining({ usageScope: 'session' }),
+      ]);
+      expect(attemptOrder).toEqual([
+        'observer', 'caller', 'observer', 'caller',
+        'observer', 'caller', 'observer', 'caller',
+      ]);
+      for (const [index, [request, appliedRecoveries]] of operationAttempts.flat().entries()) {
+        expect(observedAttempts[index]?.[0]).toBe(request);
+        expect(observedAttempts[index]?.[1]).toBe(appliedRecoveries);
+        expect(requests[index + operationRequestStart]).toBe(request);
+      }
+      expect(operationRecoverySnapshots).toEqual([
+        [[], [{ strategy: 'loop-policy', action: 'append-message' }]],
+        [[], [{ strategy: 'loop-policy', action: 'append-message' }]],
+      ]);
+      expect(requests).toHaveLength(operationRequestStart + 4);
+      for (const offset of [0, 1]) {
+        const legacyRequest = requests[operationRequestStart + offset]!;
+        const currentRequest = requests[operationRequestStart + offset + 2]!;
+        expect(currentRequest.protocol.recoveryKey).toBe(legacyRequest.protocol.recoveryKey);
+        const protocolOptions = (request: LlmRequest) => Object.fromEntries(
+          Object.entries(request.protocol.options ?? {}).filter(([, value]) => typeof value !== 'function'),
+        );
+        expect(protocolOptions(currentRequest)).toEqual(protocolOptions(legacyRequest));
+        const endpointValue = (request: LlmRequest) => ({
+          baseUrl: request.endpoint?.baseUrl,
+          defaultBaseUrl: request.endpoint?.defaultBaseUrl,
+          headers: request.endpoint?.headers,
+          files: request.endpoint?.files,
+          hasCredentials: request.endpoint?.credentials !== undefined,
+          hasClientFactory: request.endpoint?.clientFactory !== undefined,
+          hasFetch: request.endpoint?.fetch !== undefined,
+        });
+        expect(endpointValue(currentRequest)).toEqual(endpointValue(legacyRequest));
+        expect(currentRequest.model).toMatchObject(legacyRequest.model);
+        expect(currentRequest.content).toMatchObject(legacyRequest.content);
+        expect(currentRequest.profile).toEqual(legacyRequest.profile);
+        expect(currentRequest.model.maxOutputTokens).toBe(512);
+      }
+      expect(requests[operationRequestStart]?.content).toMatchObject({
+        messages: operationMessages,
+        usedTokens: 457,
+      });
+      expect(requests[operationRequestStart + 1]?.content).toMatchObject({
+        messages: [...operationMessages, createUserMessage('recovered-message')],
+        usedTokens: 457,
+      });
+      const operationResolverIds = requests.slice(operationRequestStart, operationRequestStart + 4).map((request) => {
+        const resolvers = request.policy?.resolvers;
+        return (typeof resolvers === 'function' ? resolvers() : resolvers)?.map((resolver) => resolver.id);
+      });
+      expect(operationResolverIds).toEqual(Array.from({ length: 4 }, () => [
+        'tool-select', 'agent-media-tools', 'structure', 'agent-media', 'agent-request-metadata',
+        'live-loop-policy', 'loop-policy', 'rest-policy',
+      ]));
+      for (const request of requests.slice(operationRequestStart, operationRequestStart + 4)) {
+        const recoveries = request.policy?.recoveries;
+        const resolvedRecoveries = typeof recoveries === 'function' ? recoveries() : recoveries;
+        expect(resolvedRecoveries?.[3]).toBe(liveRecovery);
+        expect(resolvedRecoveries?.[4]).toBe(loopRecovery);
+        const retryables = request.policy?.retryables;
+        expect(typeof retryables === 'function' ? retryables() : retryables).toEqual([
+          liveRetryable,
+          derivedRetryable,
+          restRetryable,
+        ]);
+      }
+      const operationObserved = observations.slice(operationObservationStart, operationObservationStart + 2).map((observation) => ({
+        source: observation.source,
+        context: {
+          model: observation.context.model,
+          modelAlias: observation.context.modelAlias,
+          thinkingEffort: observation.context.thinkingEffort,
+          systemPrompt: observation.context.systemPrompt,
+          tools: observation.context.tools,
+          messages: observation.context.messages,
+          contextRevision: observation.context.contextRevision,
+          promptCacheProbe: observation.context.promptCacheProbe,
+          source: observation.context.source,
+          logFields: observation.context.logFields,
+        },
+        recorded: observation.recorded,
+        media: observation.media,
+      }));
+      expect(operationObserved[1]).toEqual(operationObserved[0]);
+      expect(operationObserved[0]?.context).toMatchObject({
+        promptCacheProbe: 'compaction',
+        source: operationSource,
+      });
+      removeLiveResolver();
+      removeLiveRecovery();
+      removeLiveRetryable();
+
+      const currentDefault = coreLoop.requester.with({
+        attributes: { kind: 'operation_default' },
+        policy: { retry: { maxAttemptsPerStep: 1 } },
+      });
+      const defaultRest = {
+        content: { messages: [createUserMessage('default-operation')] },
+        profile: {},
+      };
+      generate.expectCacheBreak('default operation restores loop system prompt', { at: 'header' });
+      const defaultOutcomes = [
+        await coreLoop.requester.generate({ ...defaultRest, attributes: { kind: 'operation_default' }, policy: { retry: { maxAttemptsPerStep: 1 } } }, { signal: new AbortController().signal }),
+        await currentDefault.generate(defaultRest, { signal: new AbortController().signal }),
+      ];
+      expect(defaultOutcomes.map((outcome) => outcome.type)).toEqual(['done', 'done']);
+      const defaultRequests = requests.slice(operationRequestStart + 4);
+      expect(defaultRequests).toHaveLength(2);
+      expect(defaultRequests[1]?.profile).toEqual(defaultRequests[0]?.profile);
+      expect(defaultRequests[1]?.content).toEqual(defaultRequests[0]?.content);
+      expect(defaultRequests[0]?.policy?.retry).toEqual({ maxAttemptsPerStep: 1, infiniteRetry: false });
+      expect(defaultRequests[1]?.policy?.retry).toEqual({ maxAttemptsPerStep: 1, infiniteRetry: false });
+
+      const currentError = coreLoop.requester.with({
+        attributes: { kind: 'operation_error' },
+        policy: { retry: { maxAttemptsPerStep: 1 } },
+      });
+      const errorRest = { content: { messages: [createUserMessage('operation-error')] } };
+      const errorOutcomes = [
+        await coreLoop.requester.generate({ ...errorRest, attributes: { kind: 'operation_error' }, policy: { retry: { maxAttemptsPerStep: 1 } } }, { signal: new AbortController().signal }),
+        await currentError.generate(errorRest, { signal: new AbortController().signal }),
+      ];
+      const errorValue = (outcome: LlmOutcome) => outcome.type === 'failed'
+        ? { type: outcome.type, error: outcome.error, requestId: outcome.requestId }
+        : outcome;
+      expect(errorOutcomes.map(errorValue)).toEqual([
+        { type: 'failed', error: expect.objectContaining({ message: 'operation comparison failure' }) },
+        { type: 'failed', error: expect.objectContaining({ message: 'operation comparison failure' }) },
+      ]);
+      expect(errorValue(errorOutcomes[1]!)).toEqual(errorValue(errorOutcomes[0]!));
+      expect(requests).toHaveLength(operationRequestStart + 8);
+
+      const cancelReason = new Error('cancel operation comparison');
+      const cancelControllers = [new AbortController(), new AbortController()];
+      const currentCancelled = coreLoop.requester.with({
+        attributes: { kind: 'operation_default' },
+        policy: { retry: { maxAttemptsPerStep: 1 } },
+      });
+      cancelControllers.forEach((controller) => controller.abort(cancelReason));
+      const cancelledOutcomes = [
+        await coreLoop.requester.generate({ ...defaultRest, attributes: { kind: 'operation_default' }, policy: { retry: { maxAttemptsPerStep: 1 } } }, { signal: cancelControllers[0]!.signal }),
+        await currentCancelled.generate(defaultRest, { signal: cancelControllers[1]!.signal }),
+      ];
+      expect(cancelledOutcomes).toEqual([
+        { type: 'aborted', message: null, usage: undefined },
+        { type: 'aborted', message: null, usage: undefined },
+      ]);
+      expect(cancelledOutcomes[1]).toEqual(cancelledOutcomes[0]);
+      expect(requests).toHaveLength(operationRequestStart + 8);
+      const settledRequestCount = requests.length;
+
+      const frozenBase = coreLoop.baseRequester;
+      await local.get(IConfigService).replace('providers', { kimi: firstProvider });
+      local.get(IProviderCatalogService).resync();
+      expect(coreLoop.baseRequester).not.toBe(frozenBase);
+      expect(coreLoop.baseRequester).toHaveProperty('with');
+      const invalidProviderMessage = 'Provider "other" referenced by model "second-model" is not configured.';
+      expect(() => coreLoop.requester.request({})).toThrow(invalidProviderMessage);
+      await expect(coreLoop.requester.generate({}, { signal: new AbortController().signal })).rejects.toMatchObject({
+        message: expect.stringContaining(invalidProviderMessage),
+      });
+
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'must fail explicitly' }] });
+      await local.untilTurnEnd();
+      const failure = await localLoop.settled();
+      expect(failure?.type).toBe('failed');
+      if (failure?.type !== 'failed') throw new Error('Expected the next turn to fail');
+      expect(failure.error).toMatchObject({
+        message: expect.stringContaining(invalidProviderMessage),
+      });
+      expect(requests).toHaveLength(settledRequestCount);
+    } finally {
+      await local.dispose();
+    }
   });
 
   it('persists a turn.ended wire record with the end reason and duration', async () => {
@@ -498,12 +1253,15 @@ describe('Agent loop', () => {
       providerHttpError(429, 'retry', { retryAfterMs: 1 }),
       providerHttpError(400, 'text content blocks must be non-empty'),
     ]) {
+      const records: TelemetryRecord[] = [];
       const local = createTestAgent({
         initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } },
+        telemetry: recordingTelemetry(records),
       });
       try {
         local.mockNextProviderResponse({
           parts: [{ type: 'text', text: 'partial before retry' }],
+          requestId: 'req-failed-attempt',
           ...failure,
         });
         local.mockNextResponse({ type: 'text', text: 'completed after retry' });
@@ -519,6 +1277,15 @@ describe('Agent loop', () => {
         );
         expect(JSON.stringify(local.contextData().history)).not.toContain('partial before retry');
         expect(JSON.stringify(local.contextData().history)).toContain('completed after retry');
+        const ended = local.allEvents.find(
+          (event) => event.type === '[rpc]' && event.event === 'turn.ended',
+        )?.args as TurnEnded | undefined;
+        expect(ended).toMatchObject({ reason: 'completed', requestId: undefined });
+        const record = (await local.persistedWireRecords()).find((entry) => entry.type === 'turn.ended');
+        expect(record).not.toHaveProperty('requestId');
+        const endedTelemetry = records.find((entry) => entry.event === 'turn_ended');
+        expect(endedTelemetry?.properties).toMatchObject({ turn_id: 0, reason: 'completed' });
+        expect(endedTelemetry?.properties).not.toHaveProperty('request_id');
       } finally {
         await local.dispose();
       }
@@ -547,6 +1314,7 @@ describe('Agent loop', () => {
   });
 
   testWithProvider('cancels a prompt while its turn is starting and runs the next queued prompt', async ({ agent, model }) => {
+    await agent.restorePersisted();
     const agentLoop = agent.get(IAgentLoopService);
     const entered = deferred();
     const release = deferred();
@@ -657,10 +1425,10 @@ describe('Agent loop', () => {
       }),
     };
 
+    const registryRequest = vi.spyOn(ctx.get(IProviderCatalogService), 'createRequester');
     profile.update({ activeToolNames: ['Lookup'] });
     ctx.get(IAgentToolRegistryService).register(lookupTool);
     const reasons = trackStepReasons(ctx);
-    const registryRequest = vi.spyOn(ctx.get(IProtocolAdapterRegistry), 'request');
 
     ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
     await ctx.rpc.prompt({
@@ -960,7 +1728,6 @@ describe('Agent loop', () => {
       await local.dispose();
     }
   });
-
 
   it('preserves tool call extras (Gemini thought_signature) through to context', async () => {
     const sigCall: ToolCall = {
@@ -2752,7 +3519,6 @@ describe('interruption reminder', () => {
               text: 'The user manually interrupted "Work" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user\'s next instruction.',
             }],
             isError: true,
-            durationMs: expect.any(Number),
           },
         }),
       ]);
@@ -2893,25 +3659,17 @@ describe('aborted step tool execution', () => {
     }
   });
 
-  it('settles a message-less notification without creating an LLM request', async () => {
-    const requester: LoopRequester = {
-      coreRequester: () => createMockProviderRequester(async () => {
-        throw new Error('request must not run');
-      }),
-      prepareOperation: async () => createMockProviderRequester(async () => {
-        throw new Error('request must not run');
-      }),
-    };
-    const ctx = createTestAgent();
-    await replaceLoopRequester(ctx, requester);
-    try {
-      const loopService = ctx.get(IAgentLoopService);
-      const handle = loopService.notify();
-      await loopService.settled();
-      expect(handle.dropped).toBe(false);
-    } finally {
-      await ctx.dispose();
-    }
+  testWithProvider('consumes a message-less notification and settles its wake-up turn', async ({ agent, model }) => {
+    let consumed = false;
+    const loopService = agent.get(IAgentLoopService);
+    await agent.restorePersisted();
+    await loopService.initializeHistory([]);
+    model.script(say('continued'));
+    const handle = loopService.notify({ onConsume: () => { consumed = true; } });
+    await loopService.settled();
+    expect(handle.dropped).toBe(false);
+    expect(consumed).toBe(true);
+    expect(model.requests()).toHaveLength(1);
   });
 });
 
@@ -2921,12 +3679,6 @@ function submitTurn(loop: IAgentLoopService, text: string): { readonly turn: Tur
     content: [{ type: 'text', text }],
     attributes: { origin: { kind: 'user' } },
   });
-}
-
-async function replaceLoopRequester(ctx: TestAgentContext, requester: LoopRequester): Promise<void> {
-  const loop = ctx.get(IAgentLoopService) as { requester: LoopRequester } & IAgentLoopService;
-  loop.requester = requester;
-  await loop.initializeHistory([]);
 }
 
 function parkedLifecycleStub(): IAgentLifecycleService {

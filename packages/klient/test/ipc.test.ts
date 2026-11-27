@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { defineKlientConformance } from './helpers/conformance.js';
 import { createKlient, serveKlientIpc, type KlientIpcHost } from '../src/transports/ipc/index.js';
+import { IpcChannel } from '../src/transports/ipc/channel.js';
 import { makeEngine, type TestEngine } from './helpers/engine.js';
 
 defineKlientConformance('ipc', async () => {
@@ -14,11 +15,15 @@ defineKlientConformance('ipc', async () => {
   const socketPath = join(homeDir, 'klient.sock');
   const host = await serveKlientIpc({ scope: app, socketPath });
   const klient = createKlient({ socketPath });
+  const raw = new IpcChannel({ socketPath });
   return {
     klient,
     app,
+    call: raw.call.bind(raw),
+    stream: raw.stream.bind(raw),
     cleanup: async () => {
       await klient.close();
+      await raw.close();
       await host.close();
       app.dispose();
       await rm(homeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
