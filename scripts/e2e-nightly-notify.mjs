@@ -23,7 +23,10 @@ const CONCLUSIONS = { failure: '失败', cancelled: '被取消', timed_out: '超
 const CASE_STATUSES = { failed: '', timedOut: '（超时）', interrupted: '（被中断）' };
 
 const VERDICTS = ['每次都复现', '时有时无', '复跑都通过', '没有复跑'];
-const WINDOWS_LABEL = /windows/i;
+const PLATFORMS_NOT_ON_PUSH = [
+  ['Windows', /windows/i],
+  ['macOS', /macos/i],
+];
 const PULL_REQUEST = /^(.*?)\s*\(#(\d+)\)$/;
 
 function settled(conclusion) {
@@ -165,13 +168,14 @@ function runLink(base) {
 function candidateSection(run, candidates) {
   const title = '上次全绿以来的提交';
   if (candidates.error !== undefined) return { elements: [heading(title), plain([`没能读到候选提交：${shortened(candidates.error)}`])] };
-  const { windows, base } = candidates;
-  if (base === undefined) return { elements: [heading(title), plain([`main 上找不到更早的全绿${windows ? '每晚运行' : '运行'}，列不出候选提交`])] };
+  const { notOnPush, base } = candidates;
+  if (base === undefined) return { elements: [heading(title), plain([`main 上找不到更早的全绿${notOnPush.length > 0 ? '每晚运行' : '运行'}，列不出候选提交`])] };
   if (candidates.status === 'identical') return { elements: [heading(title), lark(`上次全绿的${runLink(base)}测的就是这个提交，之后没有新提交。`)] };
   if (candidates.status === 'behind' || candidates.status === 'diverged') return { elements: [heading(title), lark(`上次全绿的${runLink(base)}不在这个提交之前，列不出候选提交。`)] };
   const lines = candidates.commits.slice(0, MOST_COMMITS).map(commitLine);
   if (candidates.total > lines.length) lines.push(`……另有 ${candidates.total - lines.length} 个提交，完整的列表点「查看这些提交」`);
-  const since = `从上次全绿的${runLink(base)}算起${windows ? '。有 Windows 作业没通过，合并后运行不跑 Windows，所以只看每晚运行' : ''}`;
+  const platforms = notOnPush.join('、');
+  const since = `从上次全绿的${runLink(base)}算起${notOnPush.length > 0 ? `。有 ${platforms} 作业没通过，合并后运行不跑 ${platforms}，所以只看每晚运行` : ''}`;
   return {
     elements: [heading(`${title}（${candidates.total} 个）`), lark(since), plain(lines)],
     compare: `${run.repository.html_url}/compare/${base.sha}...${run.head_sha}`,
@@ -275,17 +279,18 @@ export function unknownOutcomeCard({ runUrl, reason, triage, rehearsal = false }
   return { config: { wide_screen_mode: true }, header: { template: 'orange', title: { tag: 'plain_text', content: `${rehearsal ? REHEARSAL : ''}每晚 E2E：没能读到结果` } }, elements };
 }
 
-function failedOnWindows(jobs) {
-  return jobs.some(job => job.status === 'completed' && !settled(job.conclusion) && (job.labels ?? []).some(label => WINDOWS_LABEL.test(label)));
+function failedPlatformsNotOnPush(jobs) {
+  const failed = jobs.filter(job => job.status === 'completed' && !settled(job.conclusion));
+  return PLATFORMS_NOT_ON_PUSH.filter(([, label]) => failed.some(job => (job.labels ?? []).some(name => label.test(name)))).map(([platform]) => platform);
 }
 
 async function candidatesFor(github, run, jobs) {
-  const windows = failedOnWindows(jobs);
+  const notOnPush = failedPlatformsNotOnPush(jobs);
   try {
-    const base = await github.lastPassingRun({ workflow: run.workflow_id, events: windows ? ['schedule'] : ['push', 'schedule'], currentRunId: run.id, createdBefore: run.created_at });
-    return base === undefined ? { windows } : { windows, base, ...(await github.commitsBetween(base.sha, run.head_sha)) };
+    const base = await github.lastPassingRun({ workflow: run.workflow_id, events: notOnPush.length > 0 ? ['schedule'] : ['push', 'schedule'], currentRunId: run.id, createdBefore: run.created_at });
+    return base === undefined ? { notOnPush } : { notOnPush, base, ...(await github.commitsBetween(base.sha, run.head_sha)) };
   } catch (error) {
-    return { windows, error: error.message };
+    return { notOnPush, error: error.message };
   }
 }
 
