@@ -2,10 +2,10 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
+import { isDarkVscodeTheme } from "@/lib/theme";
 
 function syncTheme() {
-  const isDark = document.body.classList.contains("vscode-dark");
-  document.documentElement.classList.toggle("dark", isDark);
+  document.documentElement.classList.toggle("dark", isDarkVscodeTheme(document.body));
 }
 
 syncTheme();
@@ -13,7 +13,7 @@ syncTheme();
 const observer = new MutationObserver(syncTheme);
 observer.observe(document.body, {
   attributes: true,
-  attributeFilter: ["class"],
+  attributeFilter: ["class", "data-vscode-theme-kind"],
 });
 
 const container = document.getElementById("root");
