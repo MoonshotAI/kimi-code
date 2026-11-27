@@ -1,3 +1,5 @@
+import { stripVTControlCharacters } from 'node:util';
+
 const REDACTED_PATH = '<REDACTED: user-file-path>';
 
 const LABELED_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
@@ -76,7 +78,7 @@ function redactAbsolutePath(match: string, windowsPath: boolean): string {
 
 function cleanTelemetryLine(line: string): string {
   if (line.length > MAX_TELEMETRY_LINE_LENGTH) return OVERSIZED_LINE;
-  let out = line;
+  let out = stripVTControlCharacters(line);
   for (const [pattern, label] of LABELED_PATTERNS) {
     out = out.replace(pattern, label);
   }

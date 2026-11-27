@@ -5,6 +5,10 @@ import { cleanTelemetryProperties, cleanTelemetryString } from '#/app/telemetry/
 const REDACTED = '<REDACTED: user-file-path>';
 
 describe('cleanTelemetryString (absolute path redaction)', () => {
+  it('redacts an ANSI-colored home path', () => {
+    expect(cleanTelemetryString('\x1b[31m/home/alice/secret.txt\x1b[0m')).toBe(REDACTED);
+  });
+
   it.each([
     '\t',
     '\n',
