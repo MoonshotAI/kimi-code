@@ -22,6 +22,9 @@ const chip = computed(() =>
 );
 
 const { t } = useI18n();
+const emptyText = computed(() =>
+  status.value === 'running' ? t('tools.output.waiting') : t('tools.output.empty'),
+);
 const canExpand = computed(
   () => hasOutput.value || argFields.value.length > 0 || (Boolean(summaryFull.value) && summaryFull.value !== summary.value),
 );
@@ -46,7 +49,7 @@ const { open } = useToolCardExpansion(props, canExpand);
         <div v-if="summaryFull && summaryFull !== summary" class="gt-args">{{ summaryFull }}</div>
         <OutputPanel
           :lines="tool.output"
-          :empty-text="status === 'running' ? t('tools.output.waiting') : t('tools.output.empty')"
+          :empty-text="emptyText"
         />
       </ToolPanel>
     </template>
