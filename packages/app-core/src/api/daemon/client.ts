@@ -174,6 +174,7 @@ import type {
   WireBatchSessionResponse,
   WireWorkspace,
   WireLogoutResult,
+  WireMediaSignature,
   WireSessionRatingResult,
 } from './wire';
 import { DaemonEventSocket } from './ws';
@@ -1542,6 +1543,15 @@ export class DaemonKimiWebApi implements KimiWebApi {
       this.opts.origin,
       `/sessions/${encodeURIComponent(sessionId)}/fs/${encodedPath}:download${query}`,
     );
+  }
+
+  async getSessionMediaSignature(
+    sessionId: string,
+  ): Promise<{ signature: string; expiresAt: number }> {
+    const data = await this.http.get<WireMediaSignature>(
+      `/sessions/${encodeURIComponent(sessionId)}/media-signature`,
+    );
+    return { signature: data.signature, expiresAt: Date.parse(data.expires_at) };
   }
 
   async downloadSessionFile(

@@ -4,7 +4,7 @@ Served by the running Kimi Code local server at `GET /api/v1/kap.md` (KAP `1.0.0
 
 ## 1. Local connection & schema discovery
 
-All `/api/v1/*`, `/openapi.json`, and `/asyncapi.json` endpoints require `Authorization: Bearer <token>` (`GET /api/v1/healthz` is unauthenticated).
+All `/api/v1/*`, `/openapi.json`, and `/asyncapi.json` endpoints require `Authorization: Bearer <token>` (`GET /api/v1/healthz` is unauthenticated). The single exception is `GET /api/v1/sessions/{session_id}/fs/{path}:download`, which also accepts a short-lived `signature` query parameter so a browser media element can stream the file with `Range` requests without setting headers. Obtain one with `GET /api/v1/sessions/{session_id}/media-signature` (bearer-authenticated); signatures live for 30 minutes and are rotated at most every minute, and both the current and previous signature stay valid until they expire.
 
 1. **Attach to a running Desktop app or `kimi web` server first** (so new or updated sessions appear live in the user's open Kimi Code window without manual refresh):
    - Read `KIMI_HOME="${KIMI_CODE_HOME:-$HOME/.kimi-code}"` and `TOKEN="$(tr -d '[:space:]' < "$KIMI_HOME/server.token")"`.
@@ -167,5 +167,6 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 | `GET /api/v1/sessions/{session_id}/skills` & `POST .../skills/{name}:activate` | `baseline` | List or invoke session skills |
 | `GET /api/v1/sessions/{session_id}/file-history/changes` & `/content` | `baseline` | Inspect per-turn file diffs and snapshots |
 | `POST /api/v1/files` & `GET` / `DELETE /api/v1/files/{file_id}` | `file_upload` | Upload, download, or delete prompt attachments |
+| `GET /api/v1/sessions/{session_id}/media-signature` | `baseline` | Issue a short-lived media signature (`{ signature, expires_at }`) for unauthenticated `fs/{path}:download` range reads |
 | `POST /api/v1/search` | `baseline` | Full-text search across persisted session messages (`query`, `page_token?`) |
 | `POST /api/v1/shutdown` | `baseline` | Gracefully stop a loopback server |

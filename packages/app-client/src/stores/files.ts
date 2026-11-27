@@ -451,6 +451,16 @@ export const useFilesStore = defineStore('kimi.files', () => {
     return getKimiWebApi().getFileDownloadUrl(sid, path, { allowExternalSymlinks: true });
   }
 
+  async function getSignedFileDownloadUrl(path: string): Promise<string | null> {
+    const sid = sessionsStore().activeSessionId;
+    if (!sid) return null;
+    const api = getKimiWebApi();
+    const { signature } = await api.getSessionMediaSignature(sid);
+    const url = api.getFileDownloadUrl(sid, path, { allowExternalSymlinks: true });
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}signature=${encodeURIComponent(signature)}`;
+  }
+
   async function openWorkspaceFile(path: string, line?: number): Promise<boolean> {
     const sid = sessionsStore().activeSessionId;
     if (!sid) return false;
@@ -608,6 +618,7 @@ export const useFilesStore = defineStore('kimi.files', () => {
     readHostFileContent,
     readWorkspaceFileBlob,
     getFileDownloadUrl,
+    getSignedFileDownloadUrl,
     openWorkspaceFile,
     revealWorkspaceFile,
     resolveImageUrl,

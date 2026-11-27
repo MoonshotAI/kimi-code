@@ -10,6 +10,7 @@ import { ulid } from 'ulid';
 import { okEnvelope } from '../envelope';
 import type { MetaFeature } from '../protocol/rest-meta';
 import type { ConversationService } from '../services/conversation/conversationService';
+import type { MediaSignatureService } from '../services/mediaSignature/mediaSignatureService';
 import { registerAuthRoute } from './auth';
 import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
@@ -23,6 +24,7 @@ import { registerInteractionsRoutes } from './interactions';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
 import { registerMetaRoute } from './meta';
 import { registerMcpRoutes } from './mcp';
+import { registerMediaSignatureRoutes } from './mediaSignature';
 import { registerModelCatalogRoutes } from './modelCatalog';
 import { registerOAuthRoutes } from './oauth';
 import { registerPluginsRoutes } from './plugins';
@@ -72,6 +74,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly hostBridges: HostBridgeManager;
   readonly conversations: ConversationService;
   readonly sessionRating: SessionRatingHost;
+  readonly mediaSignatures: MediaSignatureService;
   readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
   readonly managedHost?: boolean;
@@ -198,6 +201,11 @@ export async function registerApiV1Routes(
       registerSessionMediaRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionMediaRoutes>[0],
         core,
+      );
+      registerMediaSignatureRoutes(
+        apiV1 as unknown as Parameters<typeof registerMediaSignatureRoutes>[0],
+        core,
+        opts.mediaSignatures,
       );
       registerFsRoutes(apiV1 as unknown as Parameters<typeof registerFsRoutes>[0], core);
       registerToolsRoutes(apiV1 as unknown as Parameters<typeof registerToolsRoutes>[0], core);

@@ -7,6 +7,7 @@ function makeClient(overrides: Partial<FilePreviewClient>): FilePreviewClient {
   return {
     status: ref({ cwd: '/ws/a' }),
     getFileDownloadUrl: () => null,
+    getSignedFileDownloadUrl: vi.fn(),
     readHostFileContent: vi.fn(),
     readFileContent: vi.fn(),
     readWorkspaceFileBlob: vi.fn(),
@@ -91,6 +92,30 @@ describe('useFilePreview streamed media', () => {
     expect(preview.previewMediaUrl.value).toBe('blob:mock-image');
     expect(preview.previewError.value).toBeNull();
     vi.unstubAllGlobals();
+  });
+
+  it('resolves a signed URL for videos instead of downloading the whole file', async () => {
+    const signedUrl = '/api/v1/sessions/s1/fs/media/clip.mp4:download?allow_external_symlinks=true&signature=sig';
+    const getSignedFileDownloadUrl = vi.fn().mockResolvedValue(signedUrl);
+    const client = makeClient({ getSignedFileDownloadUrl });
+    const preview = useFilePreview({ client, t });
+    await preview.openFilePreview({ path: 'media/clip.mp4' });
+    expect(getSignedFileDownloadUrl).toHaveBeenCalledWith('media/clip.mp4');
+    expect(client.readWorkspaceFileBlob).not.toHaveBeenCalled();
+    expect(client.readFileContent).not.toHaveBeenCalled();
+    expect(preview.previewFile.value).toMatchObject({
+      path: 'media/clip.mp4',
+      mime: 'video/mp4',
+      isBinary: true,
+    });
+    expect(preview.previewMediaUrl.value).toBe(signedUrl);
+  });
+
+  it('reports a load failure when no signed URL can be resolved for a video', async () => {
+    const client = makeClient({ getSignedFileDownloadUrl: vi.fn().mockResolvedValue(null) });
+    const preview = useFilePreview({ client, t });
+    await preview.openFilePreview({ path: 'media/clip.mp4' });
+    expect(preview.previewError.value).toBe('filePreview.errors.loadFailed');
   });
 
   it('streams PDFs through a blob object URL', async () => {

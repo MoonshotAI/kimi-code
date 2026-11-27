@@ -8,6 +8,7 @@ import { FILE_PREVIEW_MAX_BYTES, type FileData, type FilePreviewRequest } from '
 export interface FilePreviewClient {
   status: Ref<{ cwd: string }>;
   getFileDownloadUrl(path: string): string | null;
+  getSignedFileDownloadUrl(path: string): Promise<string | null>;
   readHostFileContent(path: string): Promise<FileData>;
   readFileContent(path: string): Promise<FileData | null>;
   readWorkspaceFileBlob(path: string, opts?: { prefixBytes?: number }): Promise<Blob | null>;
@@ -45,6 +46,11 @@ const MEDIA_PREVIEW_MIME: Readonly<Record<string, string>> = {
   '.ico': 'image/x-icon',
   '.avif': 'image/avif',
   '.pdf': 'application/pdf',
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/x-m4v',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.ogv': 'video/ogg',
 };
 
 function mediaMimeForPath(path: string): string | undefined {
@@ -94,14 +100,25 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
   const previewMediaUrl = ref<string | null>(null);
   let previewObjectUrl: string | null = null;
 
-  function setMediaBlob(blob: Blob | null): void {
+  function revokeMediaUrl(): void {
     if (previewObjectUrl !== null) {
       URL.revokeObjectURL(previewObjectUrl);
       previewObjectUrl = null;
     }
-    if (blob !== null && typeof URL.createObjectURL === 'function') {
-      previewObjectUrl = URL.createObjectURL(blob);
+  }
+
+  function setMediaUrl(url: string | null): void {
+    revokeMediaUrl();
+    previewMediaUrl.value = url;
+  }
+
+  function setMediaBlob(blob: Blob | null): void {
+    revokeMediaUrl();
+    if (blob === null || typeof URL.createObjectURL !== 'function') {
+      previewMediaUrl.value = null;
+      return;
     }
+    previewObjectUrl = URL.createObjectURL(blob);
     previewMediaUrl.value = previewObjectUrl;
   }
 
@@ -270,7 +287,9 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
 
     const mediaMime = mediaMimeForPath(normalized.path);
     if (mediaMime !== undefined) {
-      await openStreamedMediaPreview(normalized.path, mediaMime, requestSeq, preserve);
+      await (mediaMime.startsWith('video/')
+        ? openSignedMediaPreview(normalized.path, mediaMime, requestSeq, preserve)
+        : openStreamedMediaPreview(normalized.path, mediaMime, requestSeq, preserve));
       return;
     }
 
@@ -318,7 +337,7 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
       const blob = await client.readWorkspaceFileBlob(toClientPath(path));
       if (requestSeq !== previewRequestSeq) return;
       if (blob) {
-        setMediaBlob(blob);
+        setMediaBlob(blob.slice(0, blob.size, mime));
         previewFile.value = {
           path,
           content: '',
@@ -331,6 +350,43 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
       } else if (!preserve) {
         previewError.value = t('filePreview.errors.loadFailed');
       }
+    } catch (err) {
+      if (requestSeq !== previewRequestSeq) return;
+      if (!preserve) {
+        previewError.value = isNotFoundError(err)
+          ? workspaceNotFoundMessage(path)
+          : t('filePreview.errors.loadFailed');
+      }
+    } finally {
+      if (requestSeq === previewRequestSeq) {
+        settleLoadingState(preserve);
+      }
+    }
+  }
+
+  async function openSignedMediaPreview(
+    path: string,
+    mime: string,
+    requestSeq: number,
+    preserve: boolean,
+  ): Promise<void> {
+    try {
+      const url = await client.getSignedFileDownloadUrl(toClientPath(path));
+      if (requestSeq !== previewRequestSeq) return;
+      if (url === null) {
+        if (!preserve) previewError.value = t('filePreview.errors.loadFailed');
+        return;
+      }
+      setMediaUrl(url);
+      previewFile.value = {
+        path,
+        content: '',
+        encoding: 'base64',
+        mime,
+        isBinary: true,
+        size: 0,
+      };
+      previewLoadedSeq.value += 1;
     } catch (err) {
       if (requestSeq !== previewRequestSeq) return;
       if (!preserve) {

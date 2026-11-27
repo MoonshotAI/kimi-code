@@ -81,7 +81,7 @@ function handleMarkdownOpenFile(target: { path: string; line?: number }): void {
 
 const rootRef = ref<HTMLElement | null>(null);
 
-type ContentKind = 'markdown' | 'json' | 'html' | 'pdf' | 'csv' | 'image' | 'text' | 'binary';
+type ContentKind = 'markdown' | 'json' | 'html' | 'pdf' | 'csv' | 'image' | 'video' | 'text' | 'binary';
 
 const contentKind = computed<ContentKind>(() => {
   const f = props.file;
@@ -96,6 +96,7 @@ const contentKind = computed<ContentKind>(() => {
   if (mime === 'application/pdf' || lowerPath.endsWith('.pdf')) return 'pdf';
   if (mime === 'text/csv' || lang === 'csv' || lowerPath.endsWith('.csv')) return 'csv';
   if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
   if (f.isBinary) return 'binary';
   if (mime.startsWith('text/') || lang !== '') return 'text';
   return 'binary';
@@ -230,6 +231,14 @@ const imageSrc = computed<string | null>(() => {
   if (f.mime === 'image/svg+xml' && f.encoding !== 'base64') {
     return `data:${f.mime};charset=utf-8,${encodeURIComponent(f.content)}`;
   }
+  return null;
+});
+
+const videoSrc = computed<string | null>(() => {
+  const f = props.file;
+  if (!f || contentKind.value !== 'video') return null;
+  if (props.mediaUrl) return props.mediaUrl;
+  if (f.encoding === 'base64' && f.content !== '') return `data:${f.mime};base64,${f.content}`;
   return null;
 });
 
@@ -621,6 +630,17 @@ function menuDownload(): void {
           </div>
         </div>
 
+        <!-- Body: Video -->
+        <div v-else-if="contentKind === 'video'" class="fp-body fp-video-wrap" data-panel-content>
+          <video v-if="videoSrc" class="fp-video" :src="videoSrc" :title="file.path" controls playsinline></video>
+          <div v-else class="fp-binary-card">
+            <span class="fp-binary-icon">
+              <Icon name="file-off" size="lg" />
+            </span>
+            <span class="fp-binary-label">{{ t('filePreview.videoNoPreview', { mime: file.mime || t('filePreview.unknownType'), size: formatSize(file.size) }) }}</span>
+          </div>
+        </div>
+
         <!-- Body: Text/Code (with line numbers) -->
         <div v-else-if="contentKind === 'text'" class="fp-body fp-code" data-panel-content>
           <HighlightedCode :code="lines" :path="highlightPath" :line-numbers="lineNumberList" :framed="false" :line-class="lineClass" :wrap="codeWrap" />
@@ -820,6 +840,22 @@ function menuDownload(): void {
 .fp-image.actual {
   max-width: none;
   max-height: none;
+}
+
+.fp-video-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--panel2);
+}
+
+.fp-video {
+  max-width: 100%;
+  max-height: 100%;
+  border: var(--p-hairline) solid var(--color-line);
+  border-radius: 4px;
+  background: var(--color-well);
 }
 
 .fp-binary-wrap {

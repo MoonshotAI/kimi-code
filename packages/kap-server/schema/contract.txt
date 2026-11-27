@@ -1189,6 +1189,7 @@ GET /api/v1/sessions/{session_id}/file-history/content: operation
 GET /api/v1/sessions/{session_id}/fs/{*} param path:*: string
 GET /api/v1/sessions/{session_id}/fs/{*} param path:session_id: string
 GET /api/v1/sessions/{session_id}/fs/{*} param query:allow_external_symlinks: enum "false"|"true" optional
+GET /api/v1/sessions/{session_id}/fs/{*} param query:signature: string minLength=1 optional
 GET /api/v1/sessions/{session_id}/fs/{*} response 200: string format binary
 GET /api/v1/sessions/{session_id}/fs/{*} response 206: string format binary
 GET /api/v1/sessions/{session_id}/fs/{*} response 304: any
@@ -1251,6 +1252,19 @@ GET /api/v1/sessions/{session_id}/interactions response 200<code=0>: object clos
 GET /api/v1/sessions/{session_id}/interactions response 200<code=40001>: shape d4845858
 GET /api/v1/sessions/{session_id}/interactions response 200<code=40401>: shape 2bda561c
 GET /api/v1/sessions/{session_id}/interactions: operation
+GET /api/v1/sessions/{session_id}/media-signature param path:session_id: string minLength=1
+GET /api/v1/sessions/{session_id}/media-signature response 200: oneOf
+GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>.code: enum 0
+GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>.data.expires_at: any
+GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>.data.signature: string
+GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>.data: object closed
+GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>.details: any optional
+GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>.msg: string
+GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>.request_id: string
+GET /api/v1/sessions/{session_id}/media-signature response 200<code=0>: object closed
+GET /api/v1/sessions/{session_id}/media-signature response 200<code=40401>: shape 2bda561c
+GET /api/v1/sessions/{session_id}/media-signature response 200<code=40930>: shape 9d70335c
+GET /api/v1/sessions/{session_id}/media-signature: operation
 GET /api/v1/sessions/{session_id}/media/{file_id} param path:file_id: string minLength=1
 GET /api/v1/sessions/{session_id}/media/{file_id} param path:session_id: string minLength=1
 GET /api/v1/sessions/{session_id}/media/{file_id} response 200: string format binary
