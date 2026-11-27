@@ -8,14 +8,13 @@ import {
   IAgentLoopService,
   IAgentScopeContext,
   IEventBus,
-  IModelCatalog,
-  IModelService,
   ISessionTokenCountingService,
   ISessionUsageService,
   MAIN_AGENT_ID,
   makeAgentScopeContext,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 import { readStatusModelContext, SessionEventWiring, type SessionEventSink } from '#/v2/session-wiring';
 
@@ -287,8 +286,8 @@ describe('SessionEventWiring status snapshot fold', () => {
       },
     });
     main.set(ISessionUsageService, { status: () => USAGE });
-    main.set(IModelService, { getDefaultModel: () => 'fallback' });
-    main.set(IModelCatalog, {
+    main.set(IProviderCatalogService, {
+      getDefaultModelId: () => 'fallback',
       get: () => ({ spec: { maxInputSize: 64_000, maxContextSize: 128_000 } }),
     });
     const { sink, events } = collectingSink();

@@ -1,7 +1,7 @@
 import type { ResolvedEndpoint } from '#/llm/endpoint';
 import type { MediaKind, Message, ToolDescription } from '#/llm/message';
 import type { LlmPolicy } from '#/llm/policy/policy';
-import type { Protocol } from '#/llm/protocol/protocol';
+import type { Protocol, ProtocolName } from '#/llm/protocol/protocol';
 
 export interface ModelCapability {
   readonly image_in?: boolean;
@@ -137,6 +137,7 @@ export function modelKey(model: LlmModelSpec, endpoint: LlmEndpoint | undefined)
 
 export interface LlmProtocolBinding<TOptions = any> {
   readonly base: Protocol<TOptions>;
+  readonly name?: ProtocolName;
   readonly options?: TOptions;
   readonly stream?: boolean;
   readonly recoveryKey?: string;
@@ -152,6 +153,16 @@ export interface LlmRequestContent {
   readonly usedTokens?: number;
 }
 
+export interface LlmRequestAttributes {
+  readonly kind?: 'loop' | 'compaction' | 'prediction' | (string & {});
+  readonly turnId?: number;
+  readonly step?: number;
+  readonly modelAlias?: string;
+  readonly providerType?: string;
+  readonly logFields?: Readonly<Record<string, unknown>>;
+  readonly promptCacheProbe?: 'compaction';
+}
+
 export interface LlmRequest {
   readonly protocol: LlmProtocolBinding;
   readonly endpoint?: LlmEndpoint;
@@ -159,4 +170,5 @@ export interface LlmRequest {
   readonly profile?: LlmRequestProfile;
   readonly content: LlmRequestContent;
   readonly policy?: LlmPolicy;
+  readonly attributes?: LlmRequestAttributes;
 }

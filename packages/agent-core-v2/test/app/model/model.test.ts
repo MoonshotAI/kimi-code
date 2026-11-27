@@ -10,9 +10,8 @@ import {
   modelsFromToml,
   modelsToToml,
 } from '#/app/kosongConfig/configSection';
-import { type ModelRecord } from '#/llm-adapter/model/model';
-import { effectiveModelConfig } from '#/llm-adapter/model/model-auth';
-
+import { type ModelRecord } from '#/provider-catalog/model/model';
+import { effectiveModelConfig } from '#/provider-catalog/model/model-auth';
 
 describe('effectiveModelConfig', () => {
   it('clamps the input cap to the effective total window without mutating the source', () => {
@@ -501,7 +500,7 @@ describe('kimiModelEnvOverlay', () => {
     expect(kimiModelEnvOverlay.strip?.('modelOverrides', { temperature: 0.3 }, {})).toBeUndefined();
   });
 
-  it('self-registers into ConfigRegistry without ModelService instantiation', () => {
+  it('self-registers into ConfigRegistry without ProviderCatalogService instantiation', () => {
     const freshRegistry = new ConfigRegistry();
     expect(freshRegistry.listEffectiveOverlays()).toContain(kimiModelEnvOverlay);
   });

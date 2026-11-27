@@ -63,7 +63,7 @@ import '#/app/kosongConfig/envOverlay';
 import { IOAuthService } from '#/app/auth/auth';
 import { IAuthLegacyService } from '#/app/authLegacy/authLegacy';
 import { AuthLegacyService } from '#/app/authLegacy/authLegacyService';
-import { type ThinkingConfig } from '#/llm-adapter/model/thinking';
+import { type ThinkingConfig } from '#/provider-catalog/model/thinking';
 import {
   BASH_TASK_TIMEOUT_S_ENV,
   KEEP_ALIVE_ON_EXIT_ENV,

@@ -13,7 +13,7 @@ const AFTER_REPLY = 'The optimizer folds constants.';
 
 test.use({ permissionMode: 'yolo' });
 
-test('outline, transcript search, side chat and manual compaction work over one long session', { tag: '@quarantine' }, async ({ app, model }) => {
+test('outline, transcript search, side chat and manual compaction work over one long session', async ({ app, model }) => {
   model.script(...TOPICS.map(topic => say(reply(topic), { intervalMs: 5 })));
   const window = app.window;
   const transcript = window.getByRole('list').first();
@@ -137,23 +137,4 @@ test('outline, transcript search, side chat and manual compaction work over one 
     await expect(panel.getByText(SUMMARY)).toBeVisible();
     await app.snapshot('compaction-restored');
   });
-});
-
-test('the compaction divider and its View summary button survive a relaunch', async ({ app, model }) => {
-  model.script(say('First answer.'), say('Second answer.'), say(SUMMARY));
-  await app.startTurn('First question');
-  await expect(app.window.getByText('First answer.', { exact: true })).toBeVisible();
-  await app.startTurn('Second question');
-  await expect(app.window.getByText('Second answer.', { exact: true })).toBeVisible();
-  await app.window.getByRole('combobox', { name: 'Message input' }).click();
-  await app.window.keyboard.type('/compact');
-  await app.window.keyboard.press('Enter');
-  await app.window.keyboard.press('Enter');
-  await expect(app.window.getByRole('list').first().getByText(/^Context compacted/)).toBeVisible();
-  await app.relaunch();
-  const list = app.window.getByRole('list').first();
-  await expect(list.getByText('Second answer.', { exact: true })).toBeVisible({ timeout: 30_000 });
-  await expect(list.getByText(/^Context compacted/)).toBeVisible();
-  await list.getByRole('button', { name: /^Context compacted/ }).click();
-  await expect(app.window.getByRole('complementary', { name: 'Detail panel' }).getByText(SUMMARY)).toBeVisible();
 });

@@ -7,7 +7,7 @@ import { createControlledPromise } from '@antfu/utils';
 import { expect, vi } from 'vitest';
 
 import { toDisposable } from '#/_base/di/lifecycle';
-import type { IInstantiationService } from '#/_base/di/instantiation';
+import { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { drainSessionMetadataWrites } from '#/session/sessionMetadata/sessionMetadataService';
@@ -94,7 +94,7 @@ interface SetThinkingPayload { readonly level: string }
 interface StopTaskPayload { readonly taskId: string; readonly reason?: string }
 interface UndoHistoryPayload { readonly count: number }
 interface UnregisterToolPayload { readonly name: string }
-import { type UsageStatus } from '#/agent/usage/usage';
+import { type AgentLLMRequestSource, type UsageStatus } from '#/agent/usage/usage';
 import { type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/features/skill/skill';
 import { IAgentSkillService } from '#/features/skill/skillService';
 import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
@@ -111,8 +111,6 @@ import type { StateKey } from '#/state/state';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { EVENT2_REGISTRY, event2FromRecord } from '#/app/event/event2';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
-import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { summarizeSkill, type SkillCatalog } from '#/features/skill/catalog/types';
 import { type ModelCapability, type ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import {
@@ -124,7 +122,6 @@ import {
   type ToolDescription as KosongTool,
 } from '@moonshot-ai/core/llm/message';
 import { type TokenUsage } from '@moonshot-ai/core/llm/usage';
-import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
 import { IAgentTodoService } from '#/features/todo/todoService';
@@ -212,23 +209,19 @@ import { WireService } from '#/wire/wireService';
 import { TurnPrompt } from '#/agent/loop/turnOps';
 import { UsageRecord } from '#/agent/usage/usageOps';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
-import { IModelService, type ModelsSection } from '#/llm-adapter/model/model';
+import { type ModelsSection } from '#/provider-catalog/model/model';
 import {
   DEFAULT_MODEL_SECTION,
   DEFAULT_PROVIDER_SECTION,
   MODELS_SECTION,
   PROVIDERS_SECTION,
 } from '#/app/kosongConfig/configSection';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import { ModelCatalog } from '#/llm-adapter/model/catalog-service';
-import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
-import { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
-import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
+import { type Model } from '#/provider-catalog/model/catalog';
+import { IModelOAuthTokens } from '#/provider-catalog/model/model-oauth';
 import {
-  IProviderService,
   type ProviderConfig,
   type ProvidersSection,
-} from '#/llm-adapter/provider/provider';
+} from '#/provider-catalog/provider/provider';
 import type { ApprovalRequest, ApprovalResponse } from '#/agent/interaction/approval';
 import type { QuestionRequest, QuestionResult } from '#/agent/interaction/question';
 import {
@@ -247,6 +240,7 @@ import { stubAgentIdentity } from '../app/agentIdentity/stubs';
 import { stubClientIdentity } from '../app/bootstrap/stubs';
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
+
 import {
   createScriptedGenerate,
   createMockProvider,
@@ -265,6 +259,7 @@ import {
   type EventSnapshotEntry,
   type WireSnapshotEntry,
 } from './snapshots';
+import { IProviderCatalogService, ProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const TEST_HOME_DIR = '/nonexistent';
 
@@ -278,6 +273,8 @@ const MOCK_PROVIDER = {
 interface TestModelProviderOptions {
   readonly promptCacheKey?: string;
   readonly kimiRequestHeaders?: Record<string, string>;
+  readonly generate?: MockProvider;
+  readonly modelResolver?: Pick<IProviderCatalogService, 'get'> & Partial<IProviderCatalogService>;
 }
 
 function mutedDateChangeEnvironment(): EnvironmentDisclosureSnapshot {
@@ -450,7 +447,7 @@ interface ResumeStateSnapshot {
   readonly config: {
     readonly cwd: string;
     readonly activeToolNames: readonly string[] | undefined;
-    readonly provider: ReturnType<IProviderService['get']>;
+    readonly provider: ReturnType<IProviderCatalogService['getProviderConfig']>;
     readonly profileName: string | undefined;
     readonly thinkingLevel: string;
     readonly systemPrompt: string;
@@ -486,6 +483,7 @@ export interface TestAgentOptions {
   readonly generate?: MockProvider | undefined;
   readonly scriptedModelChecks?: MockProviderOptions;
   readonly model?: TestModelEndpoint;
+  readonly providerCatalog?: TestModelProviderOptions | undefined;
   readonly telemetry?: ITelemetryService | undefined;
   readonly persistence?: WireRecordPersistence | undefined;
   readonly hookEngine?:
@@ -689,18 +687,15 @@ export function additionalDirServices(additionalDirs: readonly string[]): TestAg
 }
 
 export function modelProviderServices(
-  modelResolver: IModelCatalog,
-): TestAgentServiceOverride {
-  return appService(IModelCatalog, modelResolver);
+  modelResolver: Pick<IProviderCatalogService, 'get'> & Partial<IProviderCatalogService>,
+): TestAgentOptions {
+  return { providerCatalog: { modelResolver } };
 }
 
 export function modelProviderOptionServices(
   options: TestModelProviderOptions,
-): TestAgentServiceOverride {
-  return appService(
-    IModelCatalog,
-    new SyncDescriptor(ConfigBackedModelCatalog, [options]),
-  );
+): TestAgentOptions {
+  return { providerCatalog: options };
 }
 
 export function configServices(readConfig: () => KimiConfig): TestAgentServiceOverride {
@@ -721,8 +716,8 @@ export function logServices(logger: Logger): TestAgentServiceOverride {
   ];
 }
 
-export function llmGenerateServices(requester: MockProvider): TestAgentServiceOverride {
-  return appService(IProtocolAdapterRegistry, createGenerateBackedGateway(requester));
+export function llmGenerateServices(requester: MockProvider): TestAgentOptions {
+  return { generate: requester };
 }
 
 export function telemetryServices(telemetry: ITelemetryService): TestAgentServiceOverride {
@@ -906,6 +901,10 @@ function mergeTestAgentOptions(base: TestAgentOptions, next: TestAgentOptions): 
       ...base.initialConfig,
       ...next.initialConfig,
     },
+    providerCatalog:
+      next.providerCatalog === undefined
+        ? base.providerCatalog
+        : { ...base.providerCatalog, ...next.providerCatalog },
   };
 }
 
@@ -1098,26 +1097,21 @@ class PersistenceAppendLogStore implements IAppendLogStore {
   }
 }
 
-class ConfigBackedModelCatalog extends ModelCatalog {
+class ConfigBackedProviderCatalog extends ProviderCatalogService {
   constructor(
     private readonly options: TestModelProviderOptions = {},
     @IConfigService private readonly config: IConfigService,
-    @IProviderCatalogRuntime runtime: IProviderCatalogRuntime,
-    @IProviderService private readonly providerRegistry: IProviderService,
-    @IModelService private readonly modelRegistry: IModelService,
-    @IModelOAuthTokens oauthTokens: IModelOAuthTokens,
-    @IProtocolAdapterRegistry protocolRegistry: IProtocolAdapterRegistry,
-    @IHostRequestHeaders hostRequestHeaders: IHostRequestHeaders,
+    @IInstantiationService instantiation?: IInstantiationService,
   ) {
-    super(runtime, providerRegistry, modelRegistry, oauthTokens, protocolRegistry, hostRequestHeaders);
+    super(instantiation);
   }
 
   private syncRegistriesFromConfig(): void {
-    this.providerRegistry.loadAll(
+    this.loadProviderConfigs(
       this.config.get<ProvidersSection>(PROVIDERS_SECTION) ?? {},
       this.config.get<string>(DEFAULT_PROVIDER_SECTION),
     );
-    this.modelRegistry.loadAll(
+    this.loadModelRecords(
       this.config.get<ModelsSection>(MODELS_SECTION) ?? {},
       this.config.get<string>(DEFAULT_MODEL_SECTION),
     );
@@ -1125,7 +1119,7 @@ class ConfigBackedModelCatalog extends ModelCatalog {
 
   override get(id: string): Model {
     this.syncRegistriesFromConfig();
-    const model = super.get(id);
+    const model = this.options.modelResolver?.get(id) ?? super.get(id);
     const cacheKey = this.options.promptCacheKey;
     return cacheKey === undefined ? model : Object.assign(model, { promptCacheKey: cacheKey });
   }
@@ -1133,6 +1127,20 @@ class ConfigBackedModelCatalog extends ModelCatalog {
   override findByName(name: string): readonly string[] {
     this.syncRegistriesFromConfig();
     return super.findByName(name);
+  }
+
+  override createRequester(
+    ...args: Parameters<ProviderCatalogService['createRequester']>
+  ): ReturnType<ProviderCatalogService['createRequester']> {
+    const [model, params, execution] = args;
+    const cacheKey = (model as Model & { readonly promptCacheKey?: string }).promptCacheKey;
+    const initialized = super.createRequester(model, {
+      ...params,
+      model: { ...params?.model, cacheKey: params?.model?.cacheKey ?? cacheKey },
+    }, execution);
+    return this.options.generate === undefined
+      ? initialized
+      : withMockProvider(initialized, this.options.generate);
   }
 }
 
@@ -1239,12 +1247,7 @@ export class AgentTestContext {
             } satisfies ILogOptions,
           );
           reg.defineInstance(
-            IProtocolAdapterRegistry,
-            createGenerateBackedGateway(
-              options.generate ?? (options.model === undefined ? this.scriptedGenerate.provider : fetchBackedProvider(options.model.fetch)),
-            ),
-          );
-          reg.defineInstance(
+
             IModelOAuthTokens,
             {
               _serviceBrand: undefined,
@@ -1258,8 +1261,11 @@ export class AgentTestContext {
             } satisfies IModelOAuthTokens,
           );
           reg.defineDescriptor(
-            IModelCatalog,
-            new SyncDescriptor(ConfigBackedModelCatalog, [{}]),
+            IProviderCatalogService,
+            new SyncDescriptor(ConfigBackedProviderCatalog, [{
+              ...options.providerCatalog,
+              generate: options.generate ?? (options.model === undefined ? this.scriptedGenerate.provider : fetchBackedProvider(options.model.fetch)),
+            }]),
           );
           reg.defineDescriptor(IGoalDeadlineScheduler, new SyncDescriptor(GoalDeadlineSchedulerService));
           if (options.telemetry !== undefined) {
@@ -1303,14 +1309,14 @@ export class AgentTestContext {
 
     const initialConfig = this.root.accessor.get(IConfigService);
     this.root.accessor
-      .get(IProviderService)
-      .loadAll(
+      .get(IProviderCatalogService)
+      .loadProviderConfigs(
         initialConfig.get<ProvidersSection>(PROVIDERS_SECTION) ?? {},
         initialConfig.get<string>(DEFAULT_PROVIDER_SECTION),
       );
     this.root.accessor
-      .get(IModelService)
-      .loadAll(
+      .get(IProviderCatalogService)
+      .loadModelRecords(
         initialConfig.get<ModelsSection>(MODELS_SECTION) ?? {},
         initialConfig.get<string>(DEFAULT_MODEL_SECTION),
       );
@@ -1526,14 +1532,6 @@ export class AgentTestContext {
       await start();
       this.runtimeStarted = true;
     };
-    const requester = loop.requester;
-    (loop as { requester: IAgentLoopService['requester'] }).requester = {
-      coreRequester: (requesterOptions) => requester.coreRequester(requesterOptions),
-      prepareOperation: async (operationOptions, signal) => {
-        await this.restorePersisted();
-        return requester.prepareOperation(operationOptions, signal);
-      },
-    };
     adoptAgent!();
     this.installInteractionBridge();
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
@@ -1592,8 +1590,8 @@ export class AgentTestContext {
     return this.agent.accessor.get(id);
   }
 
-  get modelResolver(): IModelCatalog {
-    return this.session.accessor.get(IModelCatalog);
+  get modelResolver(): IProviderCatalogService {
+    return this.session.accessor.get(IProviderCatalogService);
   }
 
   get context(): IAgentLoopService {
@@ -1879,14 +1877,14 @@ export class AgentTestContext {
     preserveProfile = false,
   ): void {
     this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);
-    (this.get(IModelCatalog) as Partial<ModelCatalog>).notifyConfigChanged?.();
+    (this.get(IProviderCatalogService) as Partial<ProviderCatalogService>).notifyConfigChanged?.();
     if (preserveProfile) return;
     const profile = this.get(IAgentLoopService);
     profile.update({ modelAlias: provider.model });
   }
 
   notifyModelConfigChanged(): void {
-    (this.get(IModelCatalog) as Partial<ModelCatalog>).notifyConfigChanged?.();
+    (this.get(IProviderCatalogService) as Partial<ProviderCatalogService>).notifyConfigChanged?.();
   }
 
   contextData(): { readonly history: readonly ContextMessage[]; readonly tokenCount: number } {
@@ -2718,12 +2716,12 @@ function configStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot['config
   const data = profile.data();
   let model: Model | undefined;
   try {
-    model = data.modelAlias === undefined ? undefined : ctx.get(IModelCatalog).get(data.modelAlias);
+    model = data.modelAlias === undefined ? undefined : ctx.get(IProviderCatalogService).get(data.modelAlias);
   } catch {
     model = undefined;
   }
   const providerConfig =
-    model === undefined ? undefined : ctx.get(IProviderService).get(model.providerName);
+    model === undefined ? undefined : ctx.get(IProviderCatalogService).getProviderConfig(model.providerName);
   return {
     cwd: ctx.get(ISessionContext).cwd,
     activeToolNames: data.activeToolNames,
@@ -3007,28 +3005,6 @@ function createLogService(logger: Logger | undefined, bindings: LogContext = {})
         { ...bindings, ...childBindings },
       ),
     flush: () => Promise.resolve(),
-  };
-}
-
-function createGenerateBackedGateway(requester: MockProvider): IProtocolAdapterRegistry {
-  const real = new ProtocolAdapterRegistry();
-  return {
-    _serviceBrand: undefined,
-    supportedProtocols: () => real.supportedProtocols(),
-    resolveAdapterIdentity: (protocol, providerType) =>
-      real.resolveAdapterIdentity(protocol, providerType),
-    resolveProviderBaseId: (protocol, providerType) =>
-      real.resolveProviderBaseId(protocol, providerType),
-    resolveCapability: (protocol, modelName, providerType) =>
-      real.resolveCapability(protocol, modelName, providerType),
-    request: (model, params, execution) => {
-      const cacheKey = (model as Model & { readonly promptCacheKey?: string }).promptCacheKey;
-      const initialized = real.request(model, {
-        ...params,
-        model: { ...params?.model, cacheKey: params?.model?.cacheKey ?? cacheKey },
-      }, execution);
-      return withMockProvider(initialized, requester);
-    },
   };
 }
 

@@ -1,6 +1,6 @@
 import { CoreErrors } from '#/_base/errors/codes';
 import { BugIndicatingError, Error2 } from '#/_base/errors/errors';
-import type { ModelRecord } from '#/llm-adapter/model/model';
+import type { ModelRecord } from '#/provider-catalog/model/model';
 
 import { BUILT_IN_MODELS_DEV_JSON } from './builtInModelsDev';
 import { ModelsDevImportErrors } from './errors';

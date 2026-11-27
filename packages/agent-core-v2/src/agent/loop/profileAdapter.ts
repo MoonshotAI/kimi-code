@@ -4,7 +4,7 @@ import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
 import type { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ModelCapability } from '#/provider-catalog/capability';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
@@ -43,6 +43,7 @@ export class AgentLoopProfileAdapter implements EffectiveProfileReader {
     private readonly catalog: ISessionAgentProfileCatalog,
     private readonly telemetry: ITelemetryService,
     private readonly systemPromptChanged: (value: string) => void,
+    private readonly requesterInvalidated: () => void,
   ) {}
 
   snapshot(): ProfileBindingSnapshot {
@@ -124,6 +125,7 @@ export class AgentLoopProfileAdapter implements EffectiveProfileReader {
     const dispatched = this.dispatcher.dispatch(event);
     this.state = { profile: reduceLoopProfileBind(this.state.profile, event), bound: true };
     this.systemPromptChanged(this.getSystemPrompt());
+    this.requesterInvalidated();
     this.profile.afterConfigDispatch({
       modelAlias: profile.modelAlias,
       profileName: profile.profileName,
@@ -174,6 +176,7 @@ export class AgentLoopProfileAdapter implements EffectiveProfileReader {
       };
     }
     this.systemPromptChanged(this.getSystemPrompt());
+    this.requesterInvalidated();
     if (plan.config !== undefined) {
       const { activeToolNames: _activeToolNames, ...configChanged } = changed;
       this.profile.afterConfigDispatch(configChanged, this.snapshot());
@@ -225,6 +228,7 @@ export class AgentLoopProfileAdapter implements EffectiveProfileReader {
 
   restore(snapshot: LoopJournalSnapshot): void {
     this.state = { profile: snapshot.profile, bound: snapshot.profileBound };
+    this.requesterInvalidated();
   }
 
   async afterRestore(): Promise<void> {

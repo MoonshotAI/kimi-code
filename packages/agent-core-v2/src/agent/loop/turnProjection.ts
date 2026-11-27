@@ -20,7 +20,6 @@ import type { ILogService } from '#/_base/log/log';
 import type { IAgentStateService } from '#/agent/state/agentState';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { legacyToolDurationMs } from '#/tool/executor';
 import type { AgentLoopService, LoopInterruptReason } from './loopService';
 import type { AgentPromptProjection, ActivePrompt, PendingTurn } from './promptProjection';
 import {
@@ -32,7 +31,7 @@ import {
   type StepStoppingEvent,
   type TurnTrigger,
 } from '@moonshot-ai/core/loop/index';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import { apiRequestId, type LLMRequestTrace } from '#/agent/loop/requestObservation';
 import type { FinishReason, LlmTiming } from '@moonshot-ai/core/llm/response';
 import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import { emptyUsage, type TokenUsage } from '@moonshot-ai/core/llm/usage';
@@ -158,7 +157,7 @@ export interface TurnProjectionOptions {
 export class AgentTurnProjection {
   private active: ActiveTurn | undefined;
   private lastResultValue: TurnResult | undefined;
-  private activeRequestTrace: LLMRequestTrace | undefined;
+  private activeRequestId: string | undefined;
   private turnWatch: { timer: NodeJS.Timeout; signature: string; since: number; lastWarnAt: number } | undefined;
   private readonly promptOnlyTurnIds = new Set<number>();
   private readonly publishedPromptTurns = new Set<number>();
@@ -177,11 +176,7 @@ export class AgentTurnProjection {
   }
 
   get requestTrace(): LLMRequestTrace | undefined {
-    return this.activeRequestTrace;
-  }
-
-  set requestTrace(trace: LLMRequestTrace | undefined) {
-    this.activeRequestTrace = trace;
+    return this.activeRequestId === undefined ? undefined : { requestId: this.activeRequestId };
   }
 
   thinkingEffort: ThinkingEffort | undefined;
@@ -207,7 +202,7 @@ export class AgentTurnProjection {
 
   private turnRequestId(promptOnly: boolean, cancelled: boolean, completed: boolean): string | undefined {
     if (promptOnly || cancelled) return undefined;
-    return completed ? this.lastRequestId : (this.activeRequestTrace?.requestId ?? this.lastRequestId);
+    return completed ? this.lastRequestId : (this.activeRequestId ?? this.lastRequestId);
   }
 
   history(source: readonly Message[]): readonly ContextMessage[] {
@@ -274,16 +269,8 @@ export class AgentTurnProjection {
             activeToolCalls: (loop?.state.calls ?? []).map((call) => ({ toolCallId: call.toolCall.id, name: call.toolCall.name })),
             since: active.startedAt,
           },
-      activeRequestId: this.activeRequestTrace?.requestId,
+      activeRequestId: this.activeRequestId,
     };
-  }
-
-  recordOutcome(outcome: { readonly timing?: LlmTiming }, source: { readonly type: string; readonly turnId?: number; readonly step?: number }): void {
-    if (source.type !== 'turn') return;
-    const active = this.active;
-    const step = active?.current;
-    if (active?.id !== source.turnId || step === undefined || step.number !== source.step) return;
-    step.timing = outcome.timing;
   }
 
   stepStarting(event: StepStartingEvent): StepStartingDecision | Promise<StepStartingDecision | undefined> | undefined {
@@ -293,7 +280,7 @@ export class AgentTurnProjection {
     turn.gatedSteps = event.step;
     if (!this.promptOnlyTurnIds.has(turn.id)) turn.steps = Math.max(turn.steps, event.step);
     turn.retry = undefined;
-    this.activeRequestTrace = undefined;
+    this.activeRequestId = undefined;
     this.options.telemetry.setContext({ request_id: undefined });
     const step = turn.current ?? createStepState(event.step, turn.controller.signal);
     turn.current = step;
@@ -435,7 +422,7 @@ export class AgentTurnProjection {
             output: result?.output ?? toolMessage.content,
             isError: event.outcome.type === 'succeeded' ? result?.isError : true,
             note: result?.note,
-            durationMs: event.detached || snapshot === undefined ? undefined : legacyToolDurationMs(snapshot),
+            durationMs: event.detached ? undefined : prepared?.durationMs,
             stopTurn: stop?.stopTurn,
             stopTurnReason: stop?.stopTurnReason,
           },
@@ -529,7 +516,9 @@ export class AgentTurnProjection {
       }
       case 'llm.requested': {
         const turn = this.active;
-        if (turn === undefined || (turn.retry === undefined && turn.current !== undefined)) return;
+        if (turn === undefined) return;
+        this.activeRequestId = undefined;
+        if (turn.retry === undefined && turn.current !== undefined) return;
         const stepNumber = turn.current?.number ?? turn.gatedSteps;
         const step = createStepState(stepNumber, turn.controller.signal, turn.stepIds.get(stepNumber));
         turn.current = step;
@@ -583,6 +572,18 @@ export class AgentTurnProjection {
           default:
             return;
         }
+      }
+      case 'llm.delta.request_id': {
+        this.activeRequestId = event.requestId;
+        return;
+      }
+      case 'llm.ended': {
+        const outcome = event.outcome;
+        const errorRequestId = outcome.type === 'failed' ? apiRequestId(outcome.error) : undefined;
+        this.activeRequestId = outcome.requestId ?? errorRequestId ?? this.activeRequestId;
+        const step = this.active?.current;
+        if (step !== undefined && outcome.type === 'done') step.timing = outcome.timing;
+        return;
       }
       case 'llm.delta.usage': {
         const step = this.active?.current;
@@ -666,7 +667,7 @@ export class AgentTurnProjection {
         step.providerFinishReason = attributes?.finish?.finishReason ?? step.providerFinishReason;
         step.rawFinishReason = attributes?.finish?.rawFinishReason ?? step.rawFinishReason;
         step.messageId = attributes?.messageId ?? step.messageId;
-        const requestId = this.activeRequestTrace?.requestId;
+        const requestId = this.activeRequestId;
         this.lastRequestId = requestId;
         turn.replyModel = attributes?.model === undefined ? undefined : { requestId, model: attributes.model };
         const toolCalls = step.entry.toolCalls;
@@ -965,7 +966,7 @@ export class AgentTurnProjection {
     };
     this.options.telemetry.track2('turn_ended', ended);
     this.options.telemetry.setContext({ turn_id: undefined, request_id: undefined, thinking_effort: undefined });
-    this.activeRequestTrace = undefined;
+    this.activeRequestId = undefined;
     this.lastRequestId = undefined;
     await turnEnded;
     await this.options.dispatcher.flush();

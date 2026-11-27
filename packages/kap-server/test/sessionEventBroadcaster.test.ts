@@ -24,8 +24,6 @@ import {
   IAgentTodoService,
   IEventBus,
   IEventService,
-  IModelCatalog,
-  IModelService,
   IConfigService,
   ISessionActivityView,
   ISessionMetadata,
@@ -70,6 +68,7 @@ import {
   SessionEventBroadcaster,
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
 import { USAGE_FRAME_INTERVAL_MS } from '../src/transport/ws/v1/sessionAgentFeed';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 type FakeBusEvent = { type: string };
 
@@ -2319,8 +2318,10 @@ describe('SessionEventBroadcaster', () => {
           },
         }),
       });
-      main.set(IModelService, { getDefaultModel: () => 'k3' });
-      main.set(IModelCatalog, { get: () => ({ spec: { maxInputSize: 800 } }) });
+      main.set(IProviderCatalogService, {
+        getDefaultModelId: () => 'k3',
+        get: () => ({ spec: { maxInputSize: 800 } }),
+      });
       sessions.set('s1', lc);
       bc = makeBroadcasterForAgents();
 

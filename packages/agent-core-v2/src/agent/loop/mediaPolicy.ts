@@ -1,10 +1,7 @@
 import { createMediaDegradeRecovery } from '@moonshot-ai/core/llm/builtin/policy/media-degrade';
 import type { Message, ToolMessage, UserMessage } from '@moonshot-ai/core/llm/message';
-import type { LlmRecovery } from '@moonshot-ai/core/llm/policy/recovery';
-import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
+import type { PolicyRegistry } from '@moonshot-ai/core/llm/policy/registry';
 import type { LlmErrorMessage } from '@moonshot-ai/core/llm/response';
-import type { Model } from '#/llm-adapter/model/catalog';
-import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { buildMediaPathTag, matchMediaPathTags, type MediaPathTag } from '#/agent/media/mediaRef';
 import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
@@ -26,7 +23,7 @@ function omittedReadMediaResult(tag: MediaPathTag): UserMessage {
   };
 }
 
-export function hideReadMediaFile(messages: readonly Message[]): readonly Message[] {
+function hideReadMediaFile(messages: readonly Message[]): readonly Message[] {
   const readMediaCallIds = new Set<string>();
   for (const message of messages) {
     if (message.role !== 'assistant') continue;
@@ -41,41 +38,44 @@ export function hideReadMediaFile(messages: readonly Message[]): readonly Messag
     const tag = mediaTagOf(message);
     if (tag !== undefined) mediaTags.set(message.toolCallId, tag);
   }
-  const out: Message[] = [];
-  for (const message of messages) {
+  return messages.flatMap((message): Message | Message[] => {
     if (message.role === 'tool') {
-      if (!readMediaCallIds.has(message.toolCallId)) {
-        out.push(message);
-        continue;
-      }
+      if (!readMediaCallIds.has(message.toolCallId)) return message;
       const tag = mediaTags.get(message.toolCallId);
-      if (tag !== undefined) out.push(omittedReadMediaResult(tag));
-      continue;
+      return tag === undefined ? [] : omittedReadMediaResult(tag);
     }
-    if (message.role !== 'assistant') {
-      out.push(message);
-      continue;
-    }
+    if (message.role !== 'assistant') return message;
     const toolCalls = message.toolCalls.filter((call) => call.name !== READ_MEDIA_FILE_TOOL_NAME);
-    if (toolCalls.length === message.toolCalls.length) {
-      out.push(message);
-      continue;
-    }
-    if (toolCalls.length > 0 || message.content.length > 0) out.push({ ...message, toolCalls });
-  }
-  return out;
+    if (toolCalls.length === message.toolCalls.length) return message;
+    if (toolCalls.length > 0 || message.content.length > 0) return { ...message, toolCalls };
+    return [];
+  });
 }
 
-export interface AgentMediaPolicy {
-  readonly toolResolver: LlmResolver;
-  readonly resolver: LlmResolver;
-  readonly recovery: LlmRecovery;
+export function registerAgentMediaTools(policy: PolicyRegistry): () => void {
+  return policy.addResolver({
+    id: 'agent-media-tools',
+    recoveryRequest: 'resolved',
+    resolve: async (current) => {
+      const capability = current.model.spec.capability;
+      if (capability?.image_in === true || capability?.video_in === true) {
+        return current;
+      }
+      const messages = hideReadMediaFile(current.content.messages);
+      return {
+        ...current,
+        profile:
+          current.profile === undefined
+            ? undefined
+            : {
+                ...current.profile,
+                tools: current.profile.tools?.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME),
+              },
+        content: { ...current.content, messages },
+      };
+    },
+  });
 }
-
-export type AgentMediaPolicyFactory = (
-  model: Model,
-  request: InitializedLlmRequester,
-) => AgentMediaPolicy;
 
 const MEDIA_UPLOAD_FAILED = 'media-upload-failed';
 
@@ -92,59 +92,44 @@ function isUploadedMediaRequestError(error: LlmErrorMessage, rawError: unknown):
   return (nested?.type ?? type) === 'invalid_request_error';
 }
 
-export function createAgentMediaPolicy(
+export function registerAgentMediaPolicy(
+  policy: PolicyRegistry,
   service: IAgentMediaResolverService,
-  model: Model,
-  request: InitializedLlmRequester,
-): AgentMediaPolicy {
-  let checkedUploads = false;
+): () => void {
   const degradeRecovery = createMediaDegradeRecovery();
-  return {
-    toolResolver: {
-      id: 'agent-media-tools',
-      recoveryRequest: 'resolved',
-      resolve: async (current) => {
-        if (model.spec.capability?.image_in === true || model.spec.capability?.video_in === true) {
-          return current;
+  const checkedUploadRuns = new WeakSet<AbortSignal>();
+  const removeResolver = policy.addResolver({
+    id: 'agent-media',
+    resolve: async (current, control) => {
+      const messages = await service.resolve(
+        current.content.messages,
+        current,
+        control.signal,
+      );
+      return messages === current.content.messages
+        ? current
+        : { ...current, content: { ...current.content, messages } };
+    },
+  });
+  const removeRecovery = policy.addRecovery({
+    propose: async (ctx) => {
+      const alreadyChecked = ctx.signal !== undefined && checkedUploadRuns.has(ctx.signal);
+      if (
+        !alreadyChecked &&
+        !ctx.appliedRecoveries.some(({ strategy }) => strategy === MEDIA_UPLOAD_FAILED) &&
+        ctx.resolvedRequest !== undefined &&
+        isUploadedMediaRequestError(ctx.error, ctx.rawError)
+      ) {
+        if (ctx.signal !== undefined) checkedUploadRuns.add(ctx.signal);
+        if (await service.recoverFailedUploads(ctx.resolvedRequest.content.messages, ctx.resolvedRequest, ctx.signal)) {
+          return { strategy: MEDIA_UPLOAD_FAILED, action: 'retry' };
         }
-        const messages = hideReadMediaFile(current.content.messages);
-        return {
-          ...current,
-          profile:
-            current.profile === undefined
-              ? undefined
-              : {
-                  ...current.profile,
-                  tools: current.profile.tools?.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME),
-                },
-          content: { ...current.content, messages },
-        };
-      },
+      }
+      return degradeRecovery.propose(ctx);
     },
-    resolver: {
-      id: 'agent-media',
-      resolve: async (current, control) => {
-        const messages = await service.resolve(current.content.messages, model, request, control.signal);
-        return messages === current.content.messages
-          ? current
-          : { ...current, content: { ...current.content, messages } };
-      },
-    },
-    recovery: {
-      propose: async (ctx) => {
-        if (
-          !checkedUploads &&
-          !ctx.appliedRecoveries.some(({ strategy }) => strategy === MEDIA_UPLOAD_FAILED) &&
-          ctx.resolvedRequest !== undefined &&
-          isUploadedMediaRequestError(ctx.error, ctx.rawError)
-        ) {
-          checkedUploads = true;
-          if (await service.recoverFailedUploads(ctx.resolvedRequest.content.messages, request, ctx.signal)) {
-            return { strategy: MEDIA_UPLOAD_FAILED, action: 'retry' };
-          }
-        }
-        return degradeRecovery.propose(ctx);
-      },
-    },
+  });
+  return () => {
+    removeResolver();
+    removeRecovery();
   };
 }

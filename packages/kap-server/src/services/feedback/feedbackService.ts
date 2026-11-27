@@ -6,10 +6,10 @@ import { pipeline } from 'node:stream/promises';
 import {
   IBootstrapService,
   IOAuthService,
-  IProviderService,
   MAIN_AGENT_ID,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 import { uploadArchive } from '@moonshot-ai/agent-core-v2/app/auth/feedback/upload';
 import {
   fetchCompleteFeedbackUpload,
@@ -56,7 +56,7 @@ export async function requireFeedbackToken(core: Scope, oauthRef?: ManagedKimiOA
 }
 
 export async function openFeedbackGateway(core: Scope): Promise<FeedbackGateway> {
-  const provider = core.accessor.get(IProviderService).get(KIMI_CODE_PROVIDER_NAME);
+  const provider = core.accessor.get(IProviderCatalogService).getProviderConfig(KIMI_CODE_PROVIDER_NAME);
   const auth = resolveKimiCodeRuntimeAuth({
     configuredBaseUrl: provider?.baseUrl,
     configuredOAuthRef: provider?.oauth,

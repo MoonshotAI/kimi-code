@@ -8,9 +8,6 @@ import {
   IAgentPlanService,
   IAgentSwarmService,
   IAgentTowerService,
-  IModelCatalog,
-  IModelService,
-  IProviderService,
   resumeSessionById,
   towerEnterFailureMessage,
   type BindAgentInput,
@@ -22,6 +19,7 @@ import type { SessionAgentConfigPartial } from '@moonshot-ai/agent-core-v2/app/s
 
 import { ErrorCode } from '../protocol/error-codes';
 import { ensureMainAgent } from '../transport/mainAgent';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 export const agentConfigErrors = {
   [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: {},
@@ -57,12 +55,12 @@ export async function creationMainAgentBinding(
 }
 
 async function bindableDefaultModel(core: Scope): Promise<string | undefined> {
-  const models = core.accessor.get(IModelService);
-  await Promise.all([models.ready, core.accessor.get(IProviderService).ready]);
-  const model = models.getDefaultModel();
+  const models = core.accessor.get(IProviderCatalogService);
+  await models.ready;
+  const model = models.getDefaultModelId();
   if (model === undefined || model === '') return undefined;
   try {
-    core.accessor.get(IModelCatalog).get(model);
+    models.get(model);
     return model;
   } catch {
     return undefined;

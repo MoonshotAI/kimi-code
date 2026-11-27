@@ -7,6 +7,8 @@ export default {
   groupAccount: '账号',
   sheetLabel: '面板',
   closeSheet: '关闭',
+  back: '返回',
+  clearSearch: '清空搜索',
   permManualSub: '仅自动读取，其余操作逐一向你确认',
   permAutoSub: '所有操作和判断自动完成；只有计划模式下的计划仍会等你审阅',
   permYoloSub: '自动完成常规修改和命令；高危操作、提问和计划仍会问你',

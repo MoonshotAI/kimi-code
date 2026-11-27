@@ -32,8 +32,6 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IEventBus,
-  IModelCatalog,
-  IModelService,
   interactions,
   isMissingConfiguredModelError,
   ISessionTokenCountingService,
@@ -46,6 +44,7 @@ import {
   type Interaction,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 import type {
   ApprovalRequest,
@@ -321,9 +320,8 @@ export function readStatusModelContext(agent: IAgentScopeHandle): {
   }
   let maxContextTokens = modelSpec?.maxInputSize ?? modelSpec?.maxContextSize ?? 0;
   if (maxContextTokens === 0) {
-    const models = agent.accessor.get(IModelService) as IModelService | undefined;
-    const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
-    const defaultModel = models?.getDefaultModel();
+    const catalog = agent.accessor.get(IProviderCatalogService) as IProviderCatalogService | undefined;
+    const defaultModel = catalog?.getDefaultModelId();
     if (defaultModel !== undefined && defaultModel.length > 0 && catalog !== undefined) {
       try {
         const model = catalog.get(defaultModel);

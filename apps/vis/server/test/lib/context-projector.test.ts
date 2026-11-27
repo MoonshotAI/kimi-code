@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/tokens';
+import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/session/tokenCounting/tokens';
 import { buildCompactionContinuationText } from '@moonshot-ai/agent-core-v2/agent/contextMemory/compactionHandoff';
 import { buildSessionFixture } from '../fixtures/build';
 import { projectContext } from '../../src/lib/context-projector';
