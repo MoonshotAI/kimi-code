@@ -2,7 +2,8 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, test as base, vi } from 'vitest';
+import { say } from '@moonshot-ai/testkit/model';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -24,7 +25,10 @@ import {
   hooksToToml,
 } from '#/features/externalHooks/configSection';
 import { IAgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooks';
-import { AgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooksService';
+import {
+  AgentExternalHooksService,
+  HookResult,
+} from '#/features/externalHooks/agent/agentExternalHooksService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import {
   IAgentScopeContext,
@@ -80,7 +84,7 @@ import {
 } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
-import { createTestAgent } from '../../harness';
+import { createTestAgent, testkitAgentFixtures, type TestkitAgentFixtures } from '../../harness';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
@@ -1488,6 +1492,7 @@ describe('IExternalHooksRunnerService integration', () => {
         promptMessage: { role: 'user', content: submittedContent, origin: { kind: 'user' } },
         isSteer: false,
         hookParts: [],
+        signal: new AbortController().signal,
         block: false,
       });
 
@@ -1802,6 +1807,7 @@ describe('IExternalHooksRunnerService integration', () => {
         promptMessage: { role: 'user', content: [{ type: 'text', text: 'hi' }] },
         isSteer: false,
         hookParts: [],
+        signal: new AbortController().signal,
         block: false,
       });
       await loop.hooks.onDidFinishStep.run(makeAfterStep(new AbortController().signal));
@@ -1834,5 +1840,83 @@ describe('IExternalHooksRunnerService integration', () => {
       ix?.dispose();
       disposables.dispose();
     }
+  });
+});
+
+describe('UserPromptSubmit hook during a cancelled turn start', () => {
+  const promptSubmitHook = vi.fn<IExternalHooksRunnerService['trigger']>(async () => []);
+  const test = base.extend<TestkitAgentFixtures>(
+    testkitAgentFixtures({
+      hookEngine: {
+        trigger: (event, args) =>
+          event === 'UserPromptSubmit' ? promptSubmitHook(event, args) : Promise.resolve([]),
+        triggerBlock: async () => undefined,
+        fireAndForgetTrigger: async () => [],
+      },
+    }),
+  );
+
+  test('aborts the hook and drops the block it returns after the whole turn is cancelled', async ({
+    agent,
+    model,
+  }) => {
+    model.script(say('first answer'), say('second answer'));
+    const loop = agent.get(IAgentLoopService);
+    const hookResults: HookResult[] = [];
+    agent.get(IEventBus).subscribe(HookResult, (event) => hookResults.push(event));
+
+    let markHookEntered!: () => void;
+    const hookEntered = new Promise<void>((resolve) => {
+      markHookEntered = resolve;
+    });
+    let finishHook!: () => void;
+    const hookFinished = new Promise<void>((resolve) => {
+      finishHook = resolve;
+    });
+    let hookAbortedOnReturn: boolean | undefined;
+    promptSubmitHook.mockImplementationOnce(async (_event, args) => {
+      markHookEntered();
+      await hookFinished;
+      hookAbortedOnReturn = args?.signal?.aborted;
+      return [{ action: 'block', message: 'blocked by policy' }];
+    });
+    let markHookChainSettled!: () => void;
+    const hookChainSettled = new Promise<void>((resolve) => {
+      markHookChainSettled = resolve;
+    });
+    loop.hooks.onBeforeSubmitPrompt.register(
+      'test-observe-external-hooks',
+      async (_ctx, next) => {
+        try {
+          await next();
+        } finally {
+          markHookChainSettled();
+        }
+      },
+      { before: 'externalHooks' },
+    );
+
+    const firstLaunch = agent.rpc.prompt({ promptId: 'first', input: [{ type: 'text', text: 'first' }] });
+    await hookEntered;
+    expect(loop.cancel()).toBe(true);
+    finishHook();
+    await hookChainSettled;
+
+    await agent.rpc.prompt({ promptId: 'second', input: [{ type: 'text', text: 'second' }] });
+    await expect(firstLaunch).resolves.toEqual({ turn_id: expect.any(Number) });
+    await expect(loop.promptHandle('second')!.completion).resolves.toMatchObject({ state: 'completed' });
+    await loop.settled();
+
+    expect(promptSubmitHook).toHaveBeenCalledTimes(3);
+    expect(hookResults).toEqual([]);
+    expect(loop.history().filter((entry) => entry.origin?.kind === 'hook_result')).toEqual([]);
+    const requests = model.requests('main');
+    const promptTexts = requests.map((request) =>
+      request.texts('user').filter((text) => !text.includes('<system-reminder>')),
+    );
+    expect(promptTexts).toEqual([['first'], ['first', 'second']]);
+    const requestTexts = requests.flatMap((request) => request.view.messages.map((message) => message.text));
+    expect(requestTexts.join('\n')).not.toContain('blocked by policy');
+    expect(hookAbortedOnReturn).toBe(true);
   });
 });

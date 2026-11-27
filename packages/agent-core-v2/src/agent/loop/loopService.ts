@@ -1097,7 +1097,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       id: pending.entry.attributes?.promptId,
       origin: pending.entry.attributes?.origin as PromptOrigin | undefined,
     };
-    const ctx: PromptSubmitContext = { promptMessage, isSteer: false, hookParts: [], block: false };
+    const ctx: PromptSubmitContext = { promptMessage, isSteer: false, hookParts: [], signal, block: false };
     try {
       await this.hooks.onBeforeSubmitPrompt.run(ctx);
       if (ctx.block) return { type: 'blocked' as const, cause: { by: 'prompt', reason: 'blocked' } };
