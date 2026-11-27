@@ -181,7 +181,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 5;
-              hash = "sha256-NJ2AG6AYYAdtxTrshOxEQ3qaxAmHRkX44vkwWSeOHAI=";
+              hash = "sha256-il3ytNAPoCFqHrw/2wToEKVR53ghdPXT07fIhY9LAZk=";
             };
 
             nativeBuildInputs = [
@@ -219,7 +219,7 @@
                     "// runVerifyStep skipped in nix sandbox (sigtool lacks -dv)"
               ''}
               # The SEA blob step (scripts/native/02-sea-blob.mjs) embeds the
-              # Kimi web assets from apps/kimi-code/dist-web. The bundle is not
+              # Kimi web assets from apps/kimi-code/web-dist. The bundle is not
               # committed — build it from the desktop renderer's web variant,
               # then verify it is in place before producing the native
               # executable.

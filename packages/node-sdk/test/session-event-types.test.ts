@@ -112,14 +112,13 @@ describe('Event public types', () => {
         case 'turn.step.completed':
         case 'turn.step.retrying':
         case 'turn.step.interrupted':
+        case 'turn.step.stream_reset':
         case 'assistant.delta':
         case 'hook.result':
         case 'thinking.delta':
         case 'tool.call.delta':
         case 'tool.call.started':
         case 'tool.updated':
-        case 'auto_review.started':
-        case 'auto_review.decision':
         case 'shell.output':
         case 'shell.started':
         case 'shell.completed':

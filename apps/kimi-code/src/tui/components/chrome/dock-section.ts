@@ -17,17 +17,21 @@ export interface DockLayout {
 
 export type DockPart = 'head' | 'body' | 'foot';
 
-class OverflowScrollView extends ScrollView {
+export interface OverflowScrollViewOptions {
+  readonly follow?: 'none' | 'end';
+  readonly onScroll?: (scrollTop: number) => void;
+}
+
+export class OverflowScrollView extends ScrollView {
   private overflowChanged = false;
   private lastContentHeight = 0;
 
-  constructor(
-    component: Component,
-    private readonly onWheel?: () => void,
-  ) {
+  constructor(component: Component, options: OverflowScrollViewOptions = {}) {
     super(component, {
+      follow: options.follow,
       overscroll: 'contain',
       scrollbar: 'always',
+      onScroll: options.onScroll,
     });
   }
 
@@ -51,16 +55,9 @@ class OverflowScrollView extends ScrollView {
     this.overflowChanged = false;
     return true;
   }
-
-  override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
-    if (event.type !== 'wheel') return undefined;
-    this.scrollBy(event.wheelDelta ?? 0);
-    this.onWheel?.();
-    return { handled: true, target: mouseTarget(this, event) };
-  }
 }
 
-function mouseTarget(component: Component, event: TuiMouseEvent): TuiMouseDispatchResult['target'] {
+export function mouseTarget(component: Component, event: TuiMouseEvent): TuiMouseDispatchResult['target'] {
   return {
     component,
     originX: event.screenX - event.x,
@@ -93,8 +90,10 @@ export abstract class DockSection extends VStack {
       this.addChild(view('foot'));
       return;
     }
-    this.bodyScroll = new OverflowScrollView(padded(view('body')), () => {
-      this.onBodyScrolled();
+    this.bodyScroll = new OverflowScrollView(padded(view('body')), {
+      onScroll: () => {
+        this.onBodyScrolled();
+      },
     });
     this.addChild(padded(view('head')), { shrink: 0 });
     this.addChild(this.bodyScroll, { shrink: 1, minSize: 0, maxSize: layout.maxBodyRows });

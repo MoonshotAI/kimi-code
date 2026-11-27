@@ -3,6 +3,7 @@
   "compilerOptions": {
     "allowJs": true,
     "experimentalDecorators": true,
+    "lib": ["ES2024"],
     "paths": {
       "@/*": ["./src/*"]
     }

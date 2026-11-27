@@ -13,7 +13,7 @@ const FLAKY = 'Check the rollback status';
 const FLAKY_REPLY = 'The rollback finished cleanly.';
 const FAILURE_TITLE = 'Model request failed — this turn was interrupted';
 
-test('failed, stopped and dropped turns render their markers, resume with Continue, and keep them after a relaunch', { tag: '@quarantine' }, async ({ app, model }) => {
+test('failed, stopped and dropped turns render their markers, resume with Continue, and keep them after a relaunch', async ({ app, model }) => {
   const transcript = () => app.window.getByRole('list').first();
   const interrupt = () => app.window.getByRole('button', { name: 'Interrupt', exact: true });
   const failure = () => app.window.getByRole('alert').filter({ hasText: FAILURE_TITLE });

@@ -11,7 +11,6 @@ import {
   IConfigService,
   IEventBus,
   IEventDispatcher,
-  IModelCatalog,
   IOAuthService,
   IOAuthToolkit,
   ISessionManager,
@@ -56,6 +55,7 @@ import {
   DEFAULT_SURVEY_POPUP_PAYLOAD,
   type SurveyPopupPayload,
 } from '#/session-rating/common/survey-popup-config';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 export const SESSION_RATING_PREVIEW_ENV = 'KIMI_CODE_SESSION_RATING_PREVIEW';
 
@@ -338,7 +338,7 @@ function resumedAgentSeeds(
 
 function modelRouteOf(agent: IAgentScopeHandle, alias: string): RatingEnvironment['model'] {
   try {
-    const model = agent.accessor.get(IModelCatalog).get(alias);
+    const model = agent.accessor.get(IProviderCatalogService).get(alias);
     return { modelId: model.spec.name, baseUrl: model.endpoint.baseUrl };
   } catch {
     return { modelId: undefined, baseUrl: undefined };

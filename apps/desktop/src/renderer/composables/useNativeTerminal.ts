@@ -1,5 +1,6 @@
 import {
   normalizeTerminalSshTarget,
+  type NativeTerminalBridge,
   type NativeTerminalSshTarget,
   type TerminalActivity,
 } from '../../shared/terminal-activity';
@@ -9,7 +10,7 @@ import { reorderedPanelTabs } from '@moonshot-ai/app-client/lib';
 import { hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { markTerminalInstanceMoving } from './terminalInstances';
 
-export type { NativeTerminalSshTarget };
+export type { NativeTerminalBridge, NativeTerminalSshTarget };
 
 export interface NativeTerminalTab {
   id: string;
@@ -19,21 +20,6 @@ export interface NativeTerminalTab {
   ssh?: NativeTerminalSshTarget;
   status: 'running' | 'exited';
   exitCode: number | null;
-}
-
-export interface NativeTerminalBridge {
-  inspectNativeTerminals?: (ids: string[]) => Promise<TerminalActivity[]>;
-  createNativeTerminal: (opts?: {
-    cwd?: string;
-    cols?: number;
-    rows?: number;
-    ssh?: NativeTerminalSshTarget;
-  }) => Promise<{ id: string; shell: string; cwd: string }>;
-  nativeTerminalInput: (id: string, data: string) => void;
-  nativeTerminalResize: (id: string, cols: number, rows: number) => void;
-  closeNativeTerminal: (id: string) => void;
-  onNativeTerminalOutput: (cb: (id: string, data: string) => void) => () => void;
-  onNativeTerminalExit: (cb: (id: string, exitCode: number | null) => void) => () => void;
 }
 
 export function canUseNativeTerminal(bridge: NativeTerminalBridge | undefined): boolean {

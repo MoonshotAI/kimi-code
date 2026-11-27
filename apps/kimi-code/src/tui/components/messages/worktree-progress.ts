@@ -3,7 +3,7 @@ import { truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from 
 import { WORKTREE_LISTED_FILES, WORKTREE_SHORT_SHA_LENGTH } from '#/constant/worktree';
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { FAILURE_MARK, STATUS_BULLET, SUCCESS_MARK } from '#/tui/constant/symbols';
-import { WORKTREE_ERROR_OUTPUT_LINES, WORKTREE_SETUP_OUTPUT_LINES } from '#/tui/constant/worktree';
+import { WORKTREE_ERROR_OUTPUT_LINES } from '#/tui/constant/worktree';
 import { currentTheme } from '#/tui/theme';
 import { SpinnerTicker } from '#/tui/utils/spinner-ticker';
 import { abbreviateHome } from '#/utils/paths';
@@ -24,15 +24,7 @@ export type WorktreeProgressRow =
       readonly status: WorktreeStepStatus;
       readonly copiedFiles: readonly string[];
       readonly output?: readonly string[];
-    }
-  | {
-      readonly step: 'setup';
-      readonly status: WorktreeStepStatus;
-      readonly script: string;
-      readonly output: readonly string[];
-      readonly exitCode?: number;
-    }
-  | { readonly step: 'remove'; readonly status: WorktreeStepStatus; readonly path: string; readonly output?: readonly string[] };
+    };
 
 export type WorktreeProgress =
   | { readonly phase: 'creating' | 'stopped'; readonly name?: string; readonly rows: readonly WorktreeProgressRow[] }
@@ -109,14 +101,6 @@ export class WorktreeProgressComponent implements Component {
           ? currentTheme.fg('success', SUCCESS_MARK)
           : currentTheme.fg('error', FAILURE_MARK);
     const rowLines = wrapped(`${MESSAGE_INDENT}${mark}`, rowLabel(row), width);
-    if (row.step === 'setup') {
-      return [
-        ...rowLines,
-        ...row.output.slice(-WORKTREE_SETUP_OUTPUT_LINES).map((line) =>
-          truncateToWidth(currentTheme.fg('textMuted', `${MESSAGE_INDENT}  │ ${line}`), width, '…'),
-        ),
-      ];
-    }
     const output = row.status === 'failed' ? (row.output ?? []).slice(-WORKTREE_ERROR_OUTPUT_LINES) : [];
     return [
       ...rowLines,
@@ -148,17 +132,6 @@ function rowLabel(row: WorktreeProgressRow): string {
       const listed = row.copiedFiles.slice(0, WORKTREE_LISTED_FILES).join(', ');
       const more = count > WORKTREE_LISTED_FILES ? ` +${String(count - WORKTREE_LISTED_FILES)} more` : '';
       return text(`Copied ${String(count)} ${count === 1 ? 'file' : 'files'} from ${INCLUDE_FILE}`) + detail(`${listed}${more}`);
-    }
-    case 'setup': {
-      if (row.status === 'running') return text(`Running ${row.script}`);
-      if (row.status === 'done') return text(`Ran ${row.script}`);
-      return text(
-        row.exitCode === undefined ? 'Setup script was interrupted' : `Setup script exited with code ${String(row.exitCode)}`,
-      );
-    }
-    case 'remove': {
-      const path = abbreviateHome(row.path);
-      return text(row.status === 'running' ? `Deleting ${path}` : row.status === 'done' ? `Deleted ${path}` : `Couldn't delete ${path}`);
     }
   }
 }

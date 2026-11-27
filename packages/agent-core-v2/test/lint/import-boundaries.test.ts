@@ -4,7 +4,7 @@ import { SRC_ROOT, checkSource } from '../../scripts/check-import-boundaries.mjs
 
 const at = (domain: string, file: string): string => `${SRC_ROOT}/${domain}/${file}`;
 const atHuman = (sub: string, file: string): string => `${SRC_ROOT}/human/${sub}/${file}`;
-const atAdapter = (sub: string, file: string): string => `${SRC_ROOT}/llm-adapter/${sub}/${file}`;
+const atAdapter = (sub: string, file: string): string => `${SRC_ROOT}/provider-catalog/${sub}/${file}`;
 
 const KOSONG_IMPORT = ['#', 'kosong', 'contract', 'message'].join('/');
 const KOSONG_SELF_IMPORT = ['@moonshot-ai/agent-core-v2', 'kosong', 'contract', 'message'].join('/');
@@ -28,9 +28,9 @@ describe('check-import-boundaries', () => {
     expect(violations[0]?.message).toMatch(/kosong kernel is deleted/);
   });
 
-  it('flags human importing llm-adapter', () => {
+  it('flags human importing provider-catalog', () => {
     const violations = checkSource(
-      `import { Foo } from '#/llm-adapter/contract/message';`,
+      `import { Foo } from '#/wire/message';`,
       atHuman('llm', 'message.ts'),
     );
     expect(violations).toHaveLength(1);
@@ -48,7 +48,7 @@ describe('check-import-boundaries', () => {
 
   it('flags human escaping into v2 via a relative path', () => {
     const violations = checkSource(
-      `import { Foo } from '../../llm-adapter/contract/message';`,
+      `import { Foo } from '../../wire/message';`,
       atHuman('llm', 'message.ts'),
     );
     expect(violations).toHaveLength(1);
@@ -77,7 +77,7 @@ describe('check-import-boundaries', () => {
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/only llm-adapter, agent\/loop and session\/agentLifecycle may import the human implementation/);
+    expect(violations[0]?.message).toMatch(/only provider-catalog, agent\/loop and session\/agentLifecycle may import the human implementation/);
   });
 
   it('allows a non-adapter v2 file importing human vocabulary', () => {
@@ -88,7 +88,7 @@ describe('check-import-boundaries', () => {
     expect(violations).toHaveLength(0);
   });
 
-  it('allows llm-adapter to import the human implementation', () => {
+  it('allows provider-catalog to import the human implementation', () => {
     const violations = checkSource(
       `import { kimiRequesters } from '@moonshot-ai/core/llm/builtin/provider/kimi/index';`,
       atAdapter('protocol', 'protocolAdapterRegistry.ts'),
@@ -96,13 +96,13 @@ describe('check-import-boundaries', () => {
     expect(violations).toHaveLength(0);
   });
 
-  it('flags a package-self human implementation import outside llm-adapter', () => {
+  it('flags a package-self human implementation import outside provider-catalog', () => {
     const violations = checkSource(
       `import { kimiRequesters } from '@moonshot-ai/agent-core-v2/human/llm/builtin/provider/kimi/index';`,
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/only llm-adapter, agent\/loop and session\/agentLifecycle may import the human implementation/);
+    expect(violations[0]?.message).toMatch(/only provider-catalog, agent\/loop and session\/agentLifecycle may import the human implementation/);
   });
 
   it('allows a built-in provider importing a protocol lower module', () => {
@@ -138,7 +138,7 @@ describe('check-import-boundaries', () => {
     expect(violations).toHaveLength(0);
   });
 
-  it('flags llm-adapter importing a protocol lower module', () => {
+  it('flags provider-catalog importing a protocol lower module', () => {
     const violations = checkSource(
       `import { convertOpenAIError } from '#/llm/builtin/protocol/openai/lower';`,
       atAdapter('protocol', 'protocolAdapterRegistry.ts'),

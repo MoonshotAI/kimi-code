@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -21,11 +21,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { Error2 } from '#/_base/errors/errors';
+import { currentProcessLiveness } from '#/_base/utils/processLiveness';
 import { encodeWorkDirKey, toAbsoluteDir } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEnvironmentService } from '#/app/environment/environment';
 import { ILogService } from '#/_base/log/log';
-import { IFlagService } from '#/app/flag/flag';
 import { locateCheckout } from '#/app/git/workTree';
 import { IProjectService } from '#/app/project/project';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
@@ -45,8 +45,6 @@ import type { Environment } from '#/environment/environment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-
-import { stubFlag } from '../flag/stubs';
 
 const isWindows = process.platform === 'win32';
 
@@ -141,14 +139,11 @@ describe('WorktreeService', () => {
   let home: string;
   let repo: string;
   let realRepo: string;
-  let flagEnabled: boolean;
   let disposables: DisposableStore;
   let service: IWorktreeService;
   let presence: ISessionPresence;
   let indexed: SessionSummary[];
   let peekImplicitError: Error | undefined;
-  let hostShellPath: string | undefined;
-  let shellPathBridge: { toShellPath: (p: string) => string; fromShellPath: (p: string) => string } | undefined;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'worktree-service-'));
@@ -157,21 +152,12 @@ describe('WorktreeService', () => {
     initRepo(repo);
     commitFile(repo, 'README.md', 'hello\n');
     realRepo = realpathSync(repo);
-    flagEnabled = true;
     indexed = [];
     peekImplicitError = undefined;
-    hostShellPath = undefined;
-    shellPathBridge = undefined;
 
     disposables = new DisposableStore();
     const processService = new HostProcessService();
     const environment = {
-      get host() {
-        return hostShellPath === undefined ? undefined : { shellPath: hostShellPath };
-      },
-      get shellPathBridge() {
-        return shellPathBridge;
-      },
       process: processService,
     } as unknown as Environment;
     const lease = { environment, track: <T>(resource: T): T => resource, dispose: () => {} };
@@ -199,7 +185,6 @@ describe('WorktreeService', () => {
         reg.definePartialInstance(ISessionIndex, { listRecent: async () => ({ items: indexed }) });
         reg.definePartialInstance(ILogService, { warn: () => {} });
         reg.define(ISessionPresence, SessionPresenceService);
-        reg.defineInstance(IFlagService, stubFlag((id) => id === 'worktree' && flagEnabled));
         reg.define(IWorktreeService, WorktreeService);
       },
     });
@@ -241,7 +226,6 @@ describe('WorktreeService', () => {
       expect(created.cwd).toBe(path);
       expect(created.cwdFallback).toBe(false);
       expect(created.sourceDirty).toBe(false);
-      expect(created.setupScript).toBeUndefined();
       expect(git(path, 'rev-parse', 'HEAD')).toBe(head);
       expect(() => git(path, 'symbolic-ref', '-q', 'HEAD')).toThrow();
       expect(branches(repo)).toEqual(['main']);
@@ -328,13 +312,6 @@ describe('WorktreeService', () => {
       expect(error.code).toBe('worktree.invalid_name');
       expect(error.details?.['reason']).toBe('slash');
       expect(existsSync(join(home, 'worktrees'))).toBe(false);
-    });
-
-    it('is refused while the flag is off', async () => {
-      flagEnabled = false;
-      const error = await failure(create({ name: 'off' }));
-      expect(error.code).toBe('worktree.disabled');
-      expect(error.message).toContain('KIMI_CODE_EXPERIMENTAL_WORKTREE');
     });
 
     describe('refuses sources without a usable repository', () => {
@@ -513,23 +490,23 @@ describe('WorktreeService', () => {
       expect(existsSync(join(created.worktree.path, 'new.txt'))).toBe(false);
     });
 
-    it('prefers the setup script checked out in the new worktree without running it', async () => {
-      commitFile(repo, '.kimi-code/worktree-setup.sh', 'touch ran\n');
+    it('does not execute .kimi-code/worktree-setup.sh while still copying .worktreeinclude files', async () => {
+      commitFile(repo, '.gitignore', '.env\n');
+      commitFile(repo, '.kimi-code/worktree-setup.sh', 'touch ran-committed\n');
+      writeFileSync(join(repo, '.worktreeinclude'), '.env\n');
+      writeFileSync(join(repo, '.env'), 'SECRET=1\n');
 
-      const created = await create({ name: 'scripted-committed' });
+      const fromCommitted = await create({ name: 'ignores-committed-script' });
+      expect(fromCommitted.copiedFiles).toEqual(['.env']);
+      expect(readFileSync(join(fromCommitted.worktree.path, '.env'), 'utf8')).toBe('SECRET=1\n');
+      expect(existsSync(join(fromCommitted.worktree.path, 'ran-committed'))).toBe(false);
 
-      expect(created.setupScript).toBe(join(created.worktree.path, '.kimi-code', 'worktree-setup.sh'));
-      expect(existsSync(join(created.worktree.path, 'ran'))).toBe(false);
-    });
-
-    it('falls back to the source checkout setup script when the new worktree does not have one', async () => {
-      mkdirSync(join(repo, '.kimi-code'));
-      writeFileSync(join(repo, '.kimi-code', 'worktree-setup.sh'), 'touch ran\n');
-
-      const created = await create({ name: 'scripted' });
-
-      expect(created.setupScript).toBe(join(realRepo, '.kimi-code', 'worktree-setup.sh'));
-      expect(existsSync(join(created.worktree.path, 'ran'))).toBe(false);
+      const beforeScript = git(repo, 'rev-parse', 'HEAD~1');
+      writeFileSync(join(repo, '.kimi-code', 'worktree-setup.sh'), 'touch ran-uncommitted\n');
+      const fromUncommitted = await create({ name: 'ignores-uncommitted-script', base: beforeScript });
+      expect(fromUncommitted.copiedFiles).toEqual(['.env']);
+      expect(readFileSync(join(fromUncommitted.worktree.path, '.env'), 'utf8')).toBe('SECRET=1\n');
+      expect(existsSync(join(fromUncommitted.worktree.path, 'ran-uncommitted'))).toBe(false);
     });
 
     it('creates the requested branch', async () => {
@@ -842,19 +819,12 @@ describe('WorktreeService', () => {
       });
     });
 
-    it('omits worktree metadata outside Kimi worktrees or while the flag is off', async () => {
-      const created = await create({ name: 'flagged' });
+    it('omits worktree metadata outside Kimi worktrees', async () => {
       const plain = join(root, 'plain');
       mkdirSync(plain);
 
       expect(await service.locate(repo)).toEqual({ cwd: repo, projectRoot: realRepo, isGitRepo: true });
       expect(await service.locate(plain)).toEqual({ cwd: plain, projectRoot: plain, isGitRepo: false });
-      flagEnabled = false;
-      expect(await service.locate(created.worktree.path)).toEqual({
-        cwd: created.worktree.path,
-        projectRoot: realRepo,
-        isGitRepo: true,
-      });
     });
 
     it('propagates project catalog lookup failures instead of falling back to cwd', async () => {
@@ -989,15 +959,6 @@ describe('WorktreeService', () => {
 
       await service.remove(removal(wt, { discard: { uncommittedFiles: expectedCount, uniqueCommits: 0 } }));
       expect(existsSync(wt)).toBe(false);
-    });
-
-    it('refuses removal while the worktree flag is off', async () => {
-      const created = await create({ name: 'flag-off-remove' });
-      flagEnabled = false;
-
-      const error = await failure(service.remove(removal(created.worktree.path)));
-      expect(error.code).toBe('worktree.disabled');
-      expect(existsSync(created.worktree.path)).toBe(true);
     });
 
     it('rejects non-finite or negative discard thresholds instead of bypassing removal guards', async () => {
@@ -1254,140 +1215,6 @@ describe('WorktreeService', () => {
     });
   });
 
-  describe('runSetupScript', () => {
-    function writeScript(body: string): void {
-      mkdirSync(join(repo, '.kimi-code'), { recursive: true });
-      writeFileSync(join(repo, '.kimi-code', 'worktree-setup.sh'), body);
-    }
-
-    it.skipIf(isWindows)('runs in the worktree root with both directories in the environment', async () => {
-      writeScript('echo "source=$KIMI_CODE_WORKTREE_SOURCE_DIR"\necho "dir=$KIMI_CODE_WORKTREE_DIR"\necho "pwd=$(pwd -P)"\necho oops >&2\nexit 3\n');
-      const created = await create({ name: 'setup' });
-      let output = '';
-
-      const result = await service.runSetupScript(
-        { worktreePath: created.worktree.path, sourceRoot: created.sourceRoot },
-        { onOutput: (text) => (output += text) },
-      );
-
-      expect(result.exitCode).toBe(3);
-      expect(output).toContain(`source=${realRepo}\n`);
-      expect(output).toContain(`dir=${created.worktree.path}\n`);
-      expect(output).toContain(`pwd=${created.worktree.path}\n`);
-      expect(output).toContain('oops\n');
-    });
-
-    it.skipIf(isWindows)('runs the setup script from the new worktree when checked out there', async () => {
-      const initial = git(repo, 'rev-parse', 'HEAD');
-      commitFile(repo, '.kimi-code/worktree-setup.sh', 'echo "variant=committed"\necho "self=$0"\n');
-      writeScript('echo "variant=local-uncommitted"\necho "self=$0"\n');
-
-      const fromHead = await create({ name: 'from-head' });
-      let headOutput = '';
-      const headResult = await service.runSetupScript(
-        { worktreePath: fromHead.worktree.path, sourceRoot: fromHead.sourceRoot },
-        { onOutput: (text) => (headOutput += text) },
-      );
-
-      expect(headResult.exitCode).toBe(0);
-      expect(headOutput).toContain('variant=committed\n');
-      expect(headOutput).toContain(`self=${join(fromHead.worktree.path, '.kimi-code', 'worktree-setup.sh')}\n`);
-
-      const fromOlder = await create({ name: 'from-older', base: initial });
-      let olderOutput = '';
-      const olderResult = await service.runSetupScript(
-        { worktreePath: fromOlder.worktree.path, sourceRoot: fromOlder.sourceRoot },
-        { onOutput: (text) => (olderOutput += text) },
-      );
-
-      expect(olderResult.exitCode).toBe(0);
-      expect(olderOutput).toContain('variant=local-uncommitted\n');
-      expect(olderOutput).toContain(`self=${join(realRepo, '.kimi-code', 'worktree-setup.sh')}\n`);
-    });
-
-    it.skipIf(isWindows)('uses the local environment shellPath and shellPathBridge when available', async () => {
-      commitFile(repo, '.kimi-code/worktree-setup.sh', 'echo "unused"\n');
-      const fakeShell = join(root, 'fake-bash.sh');
-      writeFileSync(fakeShell, '#!/bin/sh\necho "runner=host-shell"\necho "arg=$1"\n');
-      chmodSync(fakeShell, 0o755);
-      hostShellPath = fakeShell;
-      shellPathBridge = {
-        toShellPath: (nativePath) => `/bridged${nativePath}`,
-        fromShellPath: (shellPath) => shellPath,
-      };
-
-      const created = await create({ name: 'host-shell' });
-      let output = '';
-      const result = await service.runSetupScript(
-        { worktreePath: created.worktree.path, sourceRoot: created.sourceRoot },
-        { onOutput: (text) => (output += text) },
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(output).toContain('runner=host-shell\n');
-      expect(output).toContain(`arg=/bridged${join(created.worktree.path, '.kimi-code', 'worktree-setup.sh')}\n`);
-    });
-
-    it.skipIf(isWindows)('returns once the script exits even if a background child holds its output', async () => {
-      writeScript('sleep 5 &\necho done\n');
-      const created = await create({ name: 'background-setup' });
-      const started = Date.now();
-
-      const result = await service.runSetupScript({ worktreePath: created.worktree.path, sourceRoot: created.sourceRoot });
-
-      expect(result.exitCode).toBe(0);
-      expect(Date.now() - started).toBeLessThan(4_000);
-    });
-
-    it.skipIf(isWindows)('kills the script on cancel', async () => {
-      writeScript('echo started\nsleep 30\n');
-      const created = await create({ name: 'slow-setup' });
-      const controller = new AbortController();
-      const started = Date.now();
-
-      const error = await failure(
-        service.runSetupScript(
-          { worktreePath: created.worktree.path, sourceRoot: created.sourceRoot },
-          {
-            signal: controller.signal,
-            onOutput: () => {
-              controller.abort();
-            },
-          },
-        ),
-      );
-
-      expect(error.code).toBe('worktree.cancelled');
-      expect(Date.now() - started).toBeLessThan(10_000);
-    });
-
-    it('refuses runSetupScript while the worktree flag is off', async () => {
-      writeScript('echo ran\n');
-      const created = await create({ name: 'flag-off-setup' });
-      flagEnabled = false;
-
-      const error = await failure(
-        service.runSetupScript({ worktreePath: created.worktree.path, sourceRoot: created.sourceRoot }),
-      );
-      expect(error.code).toBe('worktree.disabled');
-    });
-
-    it.skipIf(isWindows)('keeps draining output when onOutput throws', async () => {
-      writeScript('head -c 200000 /dev/zero | tr "\\0" "a"\n');
-      const created = await create({ name: 'noisy-callback' });
-
-      const result = await service.runSetupScript(
-        { worktreePath: created.worktree.path, sourceRoot: created.sourceRoot },
-        {
-          onOutput: () => {
-            throw new Error('listener failed');
-          },
-        },
-      );
-      expect(result.exitCode).toBe(0);
-    });
-  });
-
   it('keeps every created worktree under the per-repository directory', async () => {
     await create({ name: 'one' });
     await create({ name: 'two' });
@@ -1448,6 +1275,39 @@ describe('WorktreeService', () => {
       expect(existsSync(created.worktree.path)).toBe(false);
     });
 
+    it('counts a session whose marker pid was reused as closed', async () => {
+      const created = await create({ name: 'reused-pid' });
+      const markers = join(indexSession('reused-pid', created.worktree.path), SESSION_PRESENCE_DIR);
+      const reused = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        stdio: 'ignore',
+      });
+      try {
+        await new Promise<void>((resolve) => reused.once('spawn', () => resolve()));
+        mkdirSync(markers, { recursive: true });
+        writeFileSync(
+          join(markers, `${reused.pid}-stale.json`),
+          JSON.stringify({
+            version: 1,
+            pid: reused.pid,
+            hostname: hostname(),
+            startedAt: Date.now() - 60_000,
+            liveness: 'kimi-code-live-0-00000000000000000000000000000000',
+          }),
+        );
+
+        expect(
+          await service.inspectRemoval({
+            repoRoot: realRepo,
+            path: created.worktree.path,
+            deleteBranch: false,
+          }),
+        ).toMatchObject({ openSessionIds: [], closedSessionCount: 1 });
+        expect(readdirSync(markers)).toEqual([]);
+      } finally {
+        reused.kill('SIGKILL');
+      }
+    });
+
     it('counts a session opened in this process as open even when its marker cannot be written', async () => {
       const created = await create({ name: 'unmarked' });
       const sessionDir = indexSession('unmarked', created.worktree.path);
@@ -1471,11 +1331,18 @@ describe('WorktreeService', () => {
 
       const written = readdirSync(markers);
       expect(written).toHaveLength(2);
-      expect(JSON.parse(readFileSync(join(markers, written[0]!), 'utf8'))).toMatchObject({
+      const parsedMarker = JSON.parse(readFileSync(join(markers, written[0]!), 'utf8')) as {
+        version: number;
+        pid: number;
+        hostname: string;
+        liveness?: string;
+      };
+      expect(parsedMarker).toMatchObject({
         version: 1,
         pid: process.pid,
         hostname: hostname(),
       });
+      expect(parsedMarker.liveness).toBe(currentProcessLiveness());
       first.dispose();
       expect(readdirSync(markers)).toHaveLength(1);
       second.dispose();
@@ -1501,17 +1368,15 @@ describe('WorktreeService', () => {
       own.dispose();
     });
 
-    it('persists presence markers even when the worktree flag is off so another flag-enabled client sees the open session', async () => {
-      const created = await create({ name: 'flag-off-open' });
+    it('persists presence markers on disk so inspectRemoval and remove see the open session', async () => {
+      const created = await create({ name: 'open-marker' });
       const wt = created.worktree.path;
       const sessionDir = indexSession('early', wt);
       const markers = join(sessionDir, SESSION_PRESENCE_DIR);
 
-      flagEnabled = false;
       const open = presence.markOpen(sessionDir);
       expect(readdirSync(markers)).toHaveLength(1);
 
-      flagEnabled = true;
       expect(await service.inspectRemoval({ repoRoot: realRepo, path: wt, deleteBranch: false })).toMatchObject({
         openSessionIds: ['early'],
         closedSessionCount: 0,
@@ -1551,7 +1416,6 @@ describe('WorktreeService', () => {
           reg.definePartialInstance(ISessionIndex, { listRecent: async () => ({ items: [] }) });
           reg.definePartialInstance(ILogService, { warn: () => {} });
           reg.define(ISessionPresence, SessionPresenceService);
-          reg.defineInstance(IFlagService, stubFlag(true));
           reg.define(IWorktreeService, WorktreeService);
         },
       });

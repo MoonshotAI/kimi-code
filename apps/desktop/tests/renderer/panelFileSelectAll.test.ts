@@ -2,10 +2,11 @@
 import { computed, createApp, h, nextTick, ref, type App, type ComponentPublicInstance } from 'vue';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import { useSidebarTabs } from '@moonshot-ai/app-core';
+import { useSidebarTabs } from '@moonshot-ai/app-core/composables';
 import { ModelDisplayKey, noopProductTracker, setProductTracker, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import { FilePreview } from '@moonshot-ai/app-components';
+import { AgentPanel, DiffView, FilePreview } from '@moonshot-ai/app-components';
+import { saveDiffViewMode } from '@moonshot-ai/app-core/lib';
 import type { FileData } from '@moonshot-ai/app-core/client/types';
 import ConversationPane from '../../src/renderer/components/chat/ConversationPane.vue';
 import appSource from '../../src/renderer/App.vue?raw';
@@ -354,6 +355,97 @@ describe('right panel select-all scope across panel states', () => {
     expect(text).toContain('SIDE_CHAT_REPLY_SENTINEL');
     expect(text).not.toContain('SIDE_COMPOSER_PLACEHOLDER_SENTINEL');
     expect(text).not.toContain('PANEL_TAB_SENTINEL');
+  });
+
+  it('scopes select-all to the changed-file list in Diff list state', async () => {
+    saveDiffViewMode('list');
+    mountWorkspace(() => h(DiffView, {
+      mode: 'list',
+      changes: [{ path: 'src/diff-list-sentinel.ts', status: 'modified' }],
+      gitInfo: { branch: 'header-branch-sentinel', ahead: 0, behind: 0 },
+    }));
+    await nextTick();
+
+    pointerDown(host.querySelector('.ch-list .fpath')!);
+    pressSelectAll(document.body);
+    await nextTick();
+
+    const text = window.getSelection()!.toString();
+    expect(text).toContain('diff-list-sentinel.ts');
+    expect(text).not.toContain('header-branch-sentinel');
+    expect(text).not.toContain('PANEL_TAB_SENTINEL');
+    expect(text).not.toContain('CHAT_TRANSCRIPT_SENTINEL');
+  });
+
+  it('scopes select-all to the changed-file tree in Diff tree state', async () => {
+    saveDiffViewMode('tree');
+    mountWorkspace(() => h(DiffView, {
+      mode: 'list',
+      changes: [{ path: 'src/diff-tree-sentinel.ts', status: 'added' }],
+      gitInfo: { branch: 'header-branch-sentinel', ahead: 0, behind: 0 },
+    }));
+    await nextTick();
+
+    pointerDown(host.querySelector('.ch-tree .tree-file .tree-name')!);
+    pressSelectAll(document.body);
+    await nextTick();
+
+    const text = window.getSelection()!.toString();
+    expect(text).toContain('diff-tree-sentinel.ts');
+    expect(text).not.toContain('header-branch-sentinel');
+    expect(text).not.toContain('PANEL_TAB_SENTINEL');
+    expect(text).not.toContain('CHAT_TRANSCRIPT_SENTINEL');
+  });
+
+  it('scopes select-all to the empty state in Diff clean state', async () => {
+    saveDiffViewMode('list');
+    mountWorkspace(() => h(DiffView, {
+      mode: 'list',
+      changes: [],
+      gitInfo: { branch: 'header-branch-sentinel', ahead: 0, behind: 0 },
+    }));
+    await nextTick();
+
+    pointerDown(host.querySelector('.changes-pane > .empty-state')!);
+    pressSelectAll(document.body);
+    await nextTick();
+
+    const text = window.getSelection()!.toString();
+    expect(text).not.toContain('header-branch-sentinel');
+    expect(text).not.toContain('PANEL_TAB_SENTINEL');
+    expect(text).not.toContain('CHAT_TRANSCRIPT_SENTINEL');
+  });
+
+  it('scopes select-all to command and output in Bash sub-agent panels', async () => {
+    mountWorkspace(() => h(AgentPanel, {
+      member: {
+        id: 'bash-1',
+        name: 'Bash helper',
+        kind: 'bash',
+        phase: 'completed',
+        status: 'completed',
+        prompt: 'echo BASH_COMMAND_SENTINEL',
+        outputLines: ['BASH_OUTPUT_SENTINEL'],
+      },
+      turns: [],
+      running: false,
+      loading: false,
+      loadError: false,
+      hasMore: false,
+      loadingMore: false,
+      loadMoreError: false,
+    }));
+    await nextTick();
+
+    pointerDown(host.querySelector('.bp-output-inner')!);
+    pressSelectAll(document.body);
+    await nextTick();
+
+    const text = window.getSelection()!.toString();
+    expect(text).toContain('BASH_COMMAND_SENTINEL');
+    expect(text).toContain('BASH_OUTPUT_SENTINEL');
+    expect(text).not.toContain('PANEL_TAB_SENTINEL');
+    expect(text).not.toContain('CHAT_TRANSCRIPT_SENTINEL');
   });
 
   it('falls back to selecting the panel for tabs without a marked content region', async () => {

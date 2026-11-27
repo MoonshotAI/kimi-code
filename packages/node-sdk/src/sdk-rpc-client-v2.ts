@@ -97,15 +97,12 @@
  *   and auth-status shapes are field-identical between the engines.
  * - `listMcpServers` / `getMcpStartupMetrics` / `reconnectMcpServer` /
  *   `addSessionMcpServer` →
- *   the seeded `ISessionMcpHandle.connectionManager` through the session
- *   scope (no klient facade exists) — one shared manager per workspace
- *   `Program`; the v2 `McpServerEntry` is field-identical with v1's
- *   `McpServerInfo`.
+ *   the session scope's `SessionMcpService` (no klient facade exists);
+ *   the v2 `McpServerEntry` is field-identical with v1's `McpServerInfo`.
  *   `reconnectMcpServer` with an explicit config and `addSessionMcpServer`
- *   ride the manager's upserting `connect`; both reject sessions whose
- *   handle is a merged ephemeral-server view (no `connect` on it), and an
- *   unpersisted add is visible to sibling sessions of the workspace (the v2
- *   manager has no session-local `caller` scope).
+ *   ride `SessionMcpService.upsertServer` on a session-owned runtime
+ *   source; both reject sessions created with ephemeral `caller` servers,
+ *   and an unpersisted upsert stays scoped to its own session.
  * - `onEvent` / `receiveEvent` → the base class registries, fed by a
  *   per-live-session wiring (`src/v2/session-wiring.ts`) that subscribes
  *   every live agent's `IEventBus` and translates each `DomainEvent` back
@@ -144,7 +141,6 @@ import { IEventDispatcher } from '@moonshot-ai/agent-core-v2/state/eventDispatch
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
 import { agentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/handler';
 import type { PromptPredictionCancelReason } from '@moonshot-ai/agent-core-v2/features/promptPrediction/promptPrediction';
-import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import { ITowerRateLimitService } from '@moonshot-ai/agent-core-v2/features/tower/towerRateLimit';
 import { readTowerStatusSummary } from '@moonshot-ai/agent-core-v2/features/tower/tools/status/statusReader';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
@@ -196,8 +192,6 @@ import {
   IHostFileSystem,
   IMcpManagementService,
   IMcpOAuthService,
-  IModelService,
-  IProviderService,
   ISessionBtwService,
   ISessionContext,
   ISessionWorkdir,
@@ -207,6 +201,7 @@ import {
   ISessionInitService,
   ISessionManager,
   ISessionMcpHandle,
+  SessionMcpService,
   ISessionMetadata,
   ISessionSkillCatalog,
   IAgentTodoService,
@@ -397,12 +392,11 @@ import type {
   CreateWorktreeOptions,
   InspectWorktreeRemovalInput,
   RemoveWorktreeInput,
-  RunSetupScriptInput,
-  RunSetupScriptOptions,
   WorkLocation,
   WorktreeListing,
   WorktreeRemovalCheck,
 } from '#/worktree';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 export interface SDKRpcClientV2Options {
   readonly homeDir?: string;
@@ -487,11 +481,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   private readonly printSteerStates = new Map<string, { deadline?: number; turns: number }>();
   /**
-   * The model/provider registries (`IModelService` / `IProviderService`)
-   * share the config service's ready trap: their `get`/`list` reads are
-   * synchronous over state that only exists after hydration, and every
-   * agent-side model operation (profile bind, `setModel`, capability reads)
-   * flows through them. Agent-interaction overrides await this before
+   * The provider catalog shares the config service's ready trap: its record
+   * reads are synchronous over state that only exists after hydration, and
+   * every agent-side model operation (profile bind, `setModel`, capability
+   * reads) flows through it. Agent-interaction overrides await this before
    * touching a profile.
    */
   private readonly modelReady: Promise<void>;
@@ -570,8 +563,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     this.installEngineTelemetry(options.telemetry);
     this.modelReady = Promise.all([
       this.configReady,
-      app.accessor.get(IModelService).ready,
-      app.accessor.get(IProviderService).ready,
+      app.accessor.get(IProviderCatalogService).ready,
     ]).then(() => undefined);
     this.appSubscriptions.push(
       this.app.accessor.get(IEventService).subscribe((event) => {
@@ -872,14 +864,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const cwd = normalizeRequiredWorkDir('createWorktree', input.cwd);
     await this.configReady;
     return withKimiErrors(this.engineAccessor.get(IWorktreeService).create({ ...input, cwd }, options));
-  }
-
-  override async runWorktreeSetupScript(
-    input: RunSetupScriptInput,
-    options?: RunSetupScriptOptions,
-  ): Promise<{ readonly exitCode: number }> {
-    await this.configReady;
-    return withKimiErrors(this.engineAccessor.get(IWorktreeService).runSetupScript(input, options));
   }
 
   override async inspectWorktreeRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck> {
@@ -3157,10 +3141,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the session scope (the seeded `ISessionMcpHandle.connectionManager`
-   * — the workspace instance's one shared manager). This is a live snapshot:
-   * create/resume no longer waits for MCP startup, so entries may still be
-   * pending. The v2 `McpServerEntry` is field-identical with v1's
+   * Through the session scope's `SessionMcpService` view. This is a live
+   * snapshot: create/resume no longer waits for MCP startup, so entries may
+   * still be pending. The v2 `McpServerEntry` is field-identical with v1's
    * `McpServerInfo` (the cast bridges the two packages' type declarations).
    */
   override async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {
@@ -3171,8 +3154,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * Working-directory MCP view (the connection set a session started there
    * would use), so `/mcp` is inspectable on a v2 session-less startup before
-   * any session exists. Awaits `ready` so a fresh set's initial connect
-   * settles before the list is read.
+   * any session exists. Holds a project-scope activation while reading so a
+   * fresh set's winning servers connect, and releases it before returning.
    * Same `McpServerEntry`-as-`McpServerInfo` cast as listMcpServers.
    */
   override async listWorkspaceMcpServers(
@@ -3182,10 +3165,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.withWorkdir('listWorkspaceMcpServers', workDir, async ({ instance, workdir }) => {
       const pinned = options?.environmentId === 'local' ? options.environmentCwd : undefined;
       const mcp = await instance.program.acquireMcp(pinned ?? workdir.dirs.primary);
+      let release: (() => Promise<void>) | undefined;
       try {
-        await mcp.service.ready;
+        release = await mcp.service.acquire();
         return mcp.service.connectionManager().list() as readonly McpServerInfo[];
       } finally {
+        await release?.();
         mcp.dispose();
       }
     });
@@ -3198,13 +3183,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Same direct `reconnect` as v1's session RPC — the v2 manager raises the
+   * Same direct `reconnect` as v1's session RPC — the v2 view raises the
    * same `mcp.server_not_found` / `mcp.server_disabled` errors, and the tool
    * re-registration rides on the status listeners in both engines. The
-   * "name + full config" channel rides the manager's upserting `connect`
-   * (validated exactly like v1's session RPC), which only exists on a plain
-   * manager — a session created with ephemeral MCP servers holds a merged
-   * view instead and rejects loudly.
+   * "name + full config" channel upserts into the session's runtime source
+   * (validated exactly like v1's session RPC); a session created with
+   * ephemeral `caller` MCP servers rejects loudly.
    */
   override async reconnectMcpServer(input: ReconnectMcpServerRpcInput): Promise<void> {
     const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpHandle);
@@ -3212,8 +3196,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       await mcp.connectionManager.reconnect(input.name);
       return;
     }
-    const manager = mcp.connectionManager;
-    if (!(manager instanceof McpConnectionManager)) {
+    if (!(mcp instanceof SessionMcpService) || mcp.listSources().some((source) => source.id === 'caller')) {
       throw new KimiError(
         ErrorCodes.NOT_IMPLEMENTED,
         'reconnectMcpServer with an explicit config is not supported for v2 sessions with ephemeral MCP servers',
@@ -3226,17 +3209,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         `MCP server is disabled: ${input.name}`,
       );
     }
-    await manager.connect(input.name, replacement);
+    await mcp.upsertServer(input.name, replacement);
   }
 
   /**
-   * v1's `addSessionMcpServer` over the session scope's connection manager:
-   * validate, optionally persist to the user-level file, then upsert through
-   * `connect`. Two accepted gaps against v1: the v2 entry carries no
-   * `source`/`config` tags (the manager does not track origins), and the one
-   * shared manager per checkout of a project makes an unpersisted add visible
-   * to sibling sessions of the same checkout. The same merged-view limitation
-   * as {@link reconnectMcpServer} applies.
+   * v1's `addSessionMcpServer` over `SessionMcpService`: validate, optionally
+   * persist to the user-level file, then upsert into the session's runtime
+   * source. The v2 entry carries no `source`/`config` tags (the view does not
+   * track origins). The same ephemeral-`caller` limitation as
+   * {@link reconnectMcpServer} applies.
    */
   override async addSessionMcpServer(input: {
     readonly sessionId: string;
@@ -3245,8 +3226,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }): Promise<McpServerInfo> {
     const session = this.requireLiveSession(input.sessionId);
     const mcp = session.accessor.get(ISessionMcpHandle);
-    const manager = mcp.connectionManager;
-    if (!(manager instanceof McpConnectionManager)) {
+    if (!(mcp instanceof SessionMcpService) || mcp.listSources().some((source) => source.id === 'caller')) {
       throw new KimiError(
         ErrorCodes.NOT_IMPLEMENTED,
         'addSessionMcpServer is not supported for v2 sessions with ephemeral MCP servers',
@@ -3261,8 +3241,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         await this.mcpManagement((management) => management.addServer(target, { cwd }));
       });
     }
-    await manager.connect(target.name, mcpConfigWithoutName(target));
-    const entry = manager.get(target.name);
+    await mcp.upsertServer(target.name, mcpConfigWithoutName(target));
+    const entry = mcp.connectionManager.get(target.name);
     if (entry === undefined) {
       throw new KimiError(
         ErrorCodes.MCP_SERVER_NOT_FOUND,

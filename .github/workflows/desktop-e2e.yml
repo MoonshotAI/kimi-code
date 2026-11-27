@@ -4,19 +4,13 @@ name: Desktop E2E
 # and the result job reports them under one check name. It is not a required
 # check. Automatic triggers are temporarily disabled while the E2E suite is
 # replaced; workflow_dispatch remains available. The organization runs at most
-# five macOS jobs at once: four shards plus the L0 smoke gate fill them exactly.
+# five macOS jobs at once, and the journeys take at most four of them.
 # When the automatic triggers below are restored, pull requests run the journeys
 # only when they change them or carry the desktop-e2e label, main runs all of
 # them on every push and every night, and a failure there opens or updates one
-# tracking issue. The protected first turn also runs in the L0 smoke gate on
-# every pull request when that gate is enabled.
+# tracking issue.
 on:
   workflow_dispatch:
-    inputs:
-      quarantine:
-        description: Also run the journeys tagged @quarantine
-        type: boolean
-        default: false
   # schedule:
   #   - cron: '43 18 * * *'
   # push:
@@ -155,38 +149,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          sparse-checkout: apps/desktop/scripts/ci
+          sparse-checkout: |
+            apps/desktop/scripts/ci
+            scripts
       - name: Open, update or close the tracking issue
         env:
           GH_TOKEN: ${{ github.token }}
           RESULT: ${{ needs.result.result }}
         run: node apps/desktop/scripts/ci/report-main-journeys.mjs --result "$RESULT"
-
-  quarantine:
-    name: Quarantined desktop journeys (informational)
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.quarantine)
-    runs-on: macos-15
-    timeout-minutes: 60
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Run the quarantined journeys without retries
-        shell: bash
-        run: |
-          set -o pipefail
-          pnpm --filter kimi-code-app run e2e:headless --quarantine --retries=0 2>&1 | tee "$RUNNER_TEMP/desktop-quarantine.log"
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: desktop-quarantine
-          path: |
-            ${{ runner.temp }}/desktop-quarantine.log
-            apps/desktop/test-results/e2e/
-            apps/desktop/playwright-report/
-          retention-days: 14

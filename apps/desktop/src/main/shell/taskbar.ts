@@ -2,7 +2,7 @@
 import { nativeImage } from 'electron';
 import type { BaseWindow, NativeImage } from 'electron';
 
-import { getMainWindow } from '../window/main-window';
+import { getMainWindow } from '../window/window-registry';
 
 const BADGE_RGB = { r: 0xe5, g: 0x48, b: 0x4d };
 

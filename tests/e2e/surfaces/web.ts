@@ -4,7 +4,7 @@ import { basename, join } from 'node:path';
 import { kimiCliCommand, repoPath, TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
 import { chromium, test, type BrowserContext, type Page } from '@playwright/test';
 
-import type { Diagnostic, ReopenState, SurfaceDriver, SurfaceLaunch, WindowSize } from '../support/verbs';
+import { StartupFailure, type Diagnostic, type ReopenState, type SurfaceDriver, type SurfaceLaunch, type WindowSize } from '../support/verbs';
 import { productEnv } from './environment';
 import { offlineStubs } from './offline';
 import { OFFLINE_NAMES, PageDriver, reasonOf, WELCOME_DIALOG } from './page-driver';
@@ -78,17 +78,10 @@ class WebDriver extends PageDriver {
 
   async startupFailure(error: unknown): Promise<Error> {
     const page = await this.readPage();
-    await this.saveTrace();
+    const diagnostics = await this.diagnostics();
+    const state = this.describe();
     await this.kill();
-    return new Error(
-      [
-        `The Web interface did not become ready: ${reasonOf(error)}`,
-        page,
-        this.describe(),
-        ...(existsSync(this.trace) ? [`A trace of the start-up is at ${this.trace}`] : []),
-      ].join('\n'),
-      { cause: error },
-    );
+    return new StartupFailure(error, diagnostics, [`The Web interface did not become ready: ${reasonOf(error)}`, page, state].join('\n'));
   }
 
   async close(): Promise<void> {
@@ -181,7 +174,7 @@ class WebDriver extends PageDriver {
 }
 
 export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'web'>> {
-  const assets = repoPath('apps', 'kimi-code', 'dist-web', 'index.html');
+  const assets = repoPath('apps', 'kimi-code', 'web-dist', 'index.html');
   if (!existsSync(assets)) throw new Error(`${assets} does not exist; build the web assets first with "pnpm sync:web".`);
   const ownPorts = workerWebPorts(test.info().parallelIndex);
   const server = await TerminalProcess.start({
@@ -224,8 +217,9 @@ export async function startWeb({ home, reopen }: SurfaceLaunch): Promise<Surface
     return driver;
   } catch (error) {
     if (driver !== undefined) throw await driver.startupFailure(error);
+    const state = server.describe();
     await context?.close().catch(() => undefined);
     if (!server.exited) await server.forceKill();
-    throw error;
+    throw new StartupFailure(error, [{ name: 'web-server', body: state }], `${reasonOf(error)}\n${state}`);
   }
 }

@@ -1,7 +1,6 @@
 import type { BackgroundTaskInfo, KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 
-import { isExperimentalFlagEnabled } from '#/tui/commands/experimental-flags';
 import {
   createLeaveWorktreePrompt,
   type LeaveWorktreeChoice,
@@ -70,9 +69,7 @@ export class WorktreeExitController {
   }
 
   async exit(): Promise<void> {
-    const worktree = isExperimentalFlagEnabled('worktree')
-      ? sessionWorktree(this.host.state.appState)
-      : undefined;
+    const worktree = sessionWorktree(this.host.state.appState);
     if (worktree === undefined) return this.host.stop();
     if (this.leaving) return;
     this.leaving = true;

@@ -11,10 +11,9 @@ import type {
   ToolCallTurnRepeatEvent,
 } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { LLMRequestTrace } from '#/agent/loop/requestObservation';
 import { parseBooleanEnv } from '#/_base/utils/env';
-import { legacyDidExecuteContext, type LegacyAfterContext } from '#/agent/toolExecutor/legacyHooks';
-import { toLegacyToolReturn, type ToolResult } from '#/tool/executor';
+import { legacyDidExecuteContext, legacyResultToToolResult } from '#/agent/toolExecutor/legacyHooks';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -441,29 +440,6 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
 
     return finalResult;
   }
-}
-
-function legacyResultToToolResult(context: LegacyAfterContext, result: ToolDedupeResult): ToolResult {
-  const converted = toLegacyToolReturn(result, context.call.name);
-  if (converted.outcome === 'failed') {
-    return {
-      ...context.result,
-      content: converted.content,
-      outcome: context.result.outcome.type === 'failed'
-        ? context.result.outcome
-        : {
-            type: 'failed',
-            error: {
-              outcome: 'failed',
-              type: 'error',
-              phase: 'after-execute',
-              reason: converted.reason,
-              data: converted.data,
-            },
-          },
-    };
-  }
-  return { ...context.result, content: converted.content, outcome: { type: 'success' } };
 }
 
 export const __testing = {

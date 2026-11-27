@@ -148,6 +148,11 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     base: readonly Tool[] | undefined,
     disclosure = this.enabled(),
   ): readonly Tool[] {
+    // Non-negotiable product decision: top-level tools come only from shaping the frozen loop
+    // baseline, never from the live registry. Tools outside the baseline (late-connected MCP
+    // servers or mid-session list_changed additions) are announced in reminders only: models
+    // with dynamically_loaded_tools load them via select_tools; other models cannot call them
+    // in this session. Appending them would invalidate the provider prompt cache prefix.
     const tools = base ?? [];
     let shaped: Tool[] | undefined;
     for (let index = 0; index < tools.length; index += 1) {
@@ -659,12 +664,15 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
         continue;
       }
       const removed = lifecycle.removed.filter((name) => declaredDynamicTools.delete(name));
-      if (removed.length === lifecycle.removed.length) {
+      const text = lifecycle.added.some((name) => lifecycle.removed.includes(name))
+        ? wrapSystemReminder(renderLoadableToolsAnnouncement(lifecycle.added, lifecycle.removed))
+        : part.text;
+      if (removed.length === lifecycle.removed.length && text === part.text) {
         content?.push(part);
         continue;
       }
       if (content === undefined) content = message.content.slice(0, i);
-      content.push({ ...part, meta: { ...lifecycle, removed } });
+      content.push({ ...part, text, meta: { ...lifecycle, removed } });
     }
     return content === undefined ? message : { ...message, content };
   }

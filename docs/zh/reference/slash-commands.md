@@ -30,7 +30,7 @@
 | --- | --- | --- | --- |
 | `/new` | `/clear` | 在当前环境开启全新会话，丢弃当前对话 | 否 |
 | `/sessions` | `/resume` | 浏览历史会话并切换/恢复 | 否 |
-| `/worktree` | — | 管理当前 Git 仓库的 [worktree](../guides/worktrees.md)（实验功能） | 否 |
+| `/worktree` | — | 管理当前 Git 仓库的 [worktree](../guides/worktrees.md) | 否 |
 | `/tasks` | `/task` | 浏览后台任务和正在运行的前台 subagent。选中任务后按 `Enter` 查看输出。 | 是 |
 | `/fork` | — | 基于当前会话 fork 一份新会话，保留完整对话历史；fork 后仍停留在当前会话 | 否 |
 | `/title [<text>]` | `/rename` | 不带参数时显示当前会话标题；带参数时设置为新标题（最长 200 字符） | 是 |
@@ -43,6 +43,7 @@
 | `/export-debug-zip` | — | 将当前会话导出为调试用 ZIP 压缩包（与 [`kimi export`](./kimi-command.md#kimi-export) 行为一致） | 否 |
 | `/import-sessions` | — | 将最近 15 天或 30 天的 Claude Code 和 Codex 会话导入为普通会话（与 [`kimi import-sessions`](./kimi-command.md#kimi-import-sessions) 行为一致） | 否 |
 | `/copy` | — | 将最后一条 AI 回复复制到剪贴板 | 否 |
+| `/find [<query>]` | — | 在全屏模式下搜索当前对话内容 | 是 |
 | `/add-dir [<path>]` | — | 为当前会话添加额外的工作目录。不带路径（或传入 `list`）运行时列出已配置的目录。添加时可选择是否将目录记入工作区注册表（持久保留） | 否 |
 | `/web` | — | 在 web UI 中打开当前会话：选择一个运行中的实例进行连接，或在 TUI 退出后新开一个前台服务器。参见 [`kimi web`](./kimi-command.md#kimi-web) | 是 |
 | `/desktop` | `/install-desktop` | 在浏览器中打开 Kimi Code 桌面端页面（地址随当前区域而定：`https://www.kimi.com/code` 或 `https://www.kimi.ai/code`）。参见 [`kimi install-desktop`](./kimi-command.md#kimi-install-desktop) | 是 |

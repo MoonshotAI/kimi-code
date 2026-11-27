@@ -21,9 +21,6 @@ selfTest('compact', {
   },
   negative: {
     'fails at once when the model service refuses to summarize': {
-      onlyOn: ['tui', 'acp'],
-      reason:
-        'Product gap, left out until the owner decides: Desktop and Web show nothing when a manual compaction fails, so the driver can only wait out its time limit there.',
       run: async ({ product, model }) => {
         model.script(say('The first answer.'));
         model.lane('compaction').script(httpError(400, { message: 'The example service refused to summarize.' }));

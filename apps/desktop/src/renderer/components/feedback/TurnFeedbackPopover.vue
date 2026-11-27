@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useIsDark } from '@moonshot-ai/app-core';
+import { useIsDark } from '@moonshot-ai/app-core/composables';
 import { Button, Checkbox, IconButton, Menu, Pill, Skeleton, Textarea } from '@moonshot-ai/app-ui';
 import { DesktopFeedbackKey, FEEDBACK_DESCRIPTION_LIMIT, type FeedbackForm, type TurnFeedbackTarget } from '../../composables/useDesktopFeedback';
 import FeedbackGuideLink from './FeedbackGuideLink.vue';

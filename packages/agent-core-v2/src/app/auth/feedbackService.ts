@@ -25,14 +25,14 @@ import {
   ISessionExportService,
   type ExportSessionPreview,
 } from '#/app/sessionExport/sessionExport';
-import { IModelService, type ModelRecord } from '#/llm-adapter/model/model';
+import { type ModelRecord } from '#/provider-catalog/model/model';
 import {
   nonEmpty,
   resolveActiveModelProvider,
   resolveModelAuthMaterial,
-} from '#/llm-adapter/model/model-auth';
-import type { ResolvedModelAuthMaterial } from '#/llm-adapter/model/model.types';
-import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
+} from '#/provider-catalog/model/model-auth';
+import type { ResolvedModelAuthMaterial } from '#/provider-catalog/model/model.types';
+import { type ProviderConfig } from '#/provider-catalog/provider/provider';
 
 import {
   IFeedbackService,
@@ -49,6 +49,7 @@ import {
   type FeedbackCodebaseScanResult,
 } from './feedback/codebase/index';
 import { uploadArchive, type FeedbackUploadUrlApi } from './feedback/upload';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export const CODEBASE_ARCHIVE_FILENAME = 'repo.zip';
 export const SESSION_ARCHIVE_FILENAME = 'session.zip';
@@ -70,8 +71,7 @@ export class FeedbackService implements IFeedbackService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IProviderService private readonly providers: IProviderService,
-    @IModelService private readonly models: IModelService,
+    @IProviderCatalogService private readonly providerCatalog: IProviderCatalogService,
     @IConfigService private readonly config: IConfigService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IBootstrapService private readonly bootstrap?: IBootstrapService,
@@ -326,8 +326,8 @@ export class FeedbackService implements IFeedbackService {
     | undefined {
     const resolved = resolveActiveModelProvider(
       modelAlias,
-      this.models,
-      this.providers,
+      this.providerCatalog,
+      this.providerCatalog,
       this.config,
     );
     const feedbackUrl = nonEmpty(resolved?.provider.feedbackUrl);
@@ -394,7 +394,7 @@ export class FeedbackService implements IFeedbackService {
   }
 
   private async managedTarget(refresh: boolean): Promise<FeedbackTarget> {
-    const provider = this.providers.get(KIMI_CODE_PROVIDER_NAME);
+    const provider = this.providerCatalog.getProviderConfig(KIMI_CODE_PROVIDER_NAME);
     const auth = resolveKimiCodeRuntimeAuth({
       configuredBaseUrl: provider?.baseUrl,
       configuredOAuthRef: provider?.oauth,

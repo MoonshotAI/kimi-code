@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ICONS } from '@moonshot-ai/app-client/icons';
+import { ICONS } from '@moonshot-ai/app-ui/icons';
 import { iconSvg } from '../../src/shared/icons';
 import { mentionIconSvg, fileMentionIconSvg } from '../../src/features/mention/icons';
 

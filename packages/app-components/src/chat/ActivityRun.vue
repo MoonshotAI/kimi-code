@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref, watch } from 'vue';
 import { Icon, Tooltip } from '@moonshot-ai/app-ui';
-import { HistoryStateKey } from '@moonshot-ai/app-core/contracts';
+import { HistoryStateKey, PinScrollKey } from '@moonshot-ai/app-core/contracts';
 import BlockList from './BlockList.vue';
 import { useHistoryState } from './historyState';
-import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
-import { useActivityRunFolding, useAutoReviewHint } from '@moonshot-ai/app-client/composables';
+import { useActivityRunFolding } from '@moonshot-ai/app-client/composables';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ToolCall from './ToolCall.vue';
 import RequestDebugRow from './RequestDebugRow.vue';
@@ -15,11 +14,10 @@ import BrowserRetryRun from './tool-calls/browser/BrowserRetryRun.vue';
 import { BrowserToolContextKey } from './tool-calls/browserToolContext';
 import { browserToolFailed } from './tool-calls/browserToolPresentation';
 import { foldBrowserRetries, type ActivityRunItem } from './tool-calls/browserRetries';
-import { formatDuration, toolStackKey } from '@moonshot-ai/app-components';
-import type { ActivityItem } from '@moonshot-ai/app-components';
+import { formatDuration } from '@moonshot-ai/app-core/lib';
+import { toolStackKey, type ActivityItem } from '../chatTurnRendering';
 import type { OpenMediaRequest } from '@moonshot-ai/app-core/client/types';
-import { summarizeActivity, summarizeLive } from '@moonshot-ai/app-components';
-import type { SummaryClause, SummaryTone } from '@moonshot-ai/app-components';
+import { summarizeActivity, summarizeLive, type SummaryClause, type SummaryTone } from '../lib/activitySummary';
 import type { ToolCall as ToolCallData } from '@moonshot-ai/app-core/client/types';
 
 const props = withDefaults(
@@ -158,11 +156,7 @@ function toggle(): void {
 
 const browserSummary = computed(() => ({ contextOf, recovered: folded.value.recovered }));
 
-const reviewHint = useAutoReviewHint(() => {
-  const item = currentItem.value;
-  return item?.kind === 'tool' && item.tool.autoReviewing === true;
-});
-const live = computed(() => summarizeLive(props.items, currentItem.value, browserSummary.value, reviewHint.value));
+const live = computed(() => summarizeLive(props.items, currentItem.value, browserSummary.value));
 const settled = computed(() => summarizeActivity(props.items, { durationMs: settledDurationMs.value, browser: browserSummary.value }));
 
 const elapsedLabel = computed(() => {

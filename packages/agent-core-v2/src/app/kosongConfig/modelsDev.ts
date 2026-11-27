@@ -1,7 +1,7 @@
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { ProviderType } from '#/llm-adapter/provider/provider';
+import type { ModelCapability } from '#/provider-catalog/capability';
+import type { ProviderType } from '#/provider-catalog/provider/provider';
 
-import { wireHasProtocolThinkingDisable } from '#/llm-adapter/model/thinking';
+import { wireHasProtocolThinkingDisable } from '#/provider-catalog/model/thinking';
 
 export interface ModelsDevModelEntry {
   readonly id?: string;

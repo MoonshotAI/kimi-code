@@ -19,9 +19,12 @@ import { makeEngine } from './helpers/engine.js';
 defineKlientConformance('memory', async () => {
   const { homeDir, app } = await makeEngine();
   const klient = createKlient({ scope: app });
+  const dispatcher = createMemoryDispatcher(app);
   return {
     klient,
     app,
+    call: dispatcher.call,
+    stream: dispatcher.stream,
     cleanup: async () => {
       await klient.close();
       app.dispose();
@@ -39,6 +42,10 @@ describe('memory dispatcher specifics', () => {
       code: 40001,
     });
     await expect(dispatcher.call({}, 'sessionIndex', 'noSuchMethod', [])).rejects.toMatchObject({
+      name: 'RPCError',
+      code: 40001,
+    });
+    await expect(dispatcher.call({}, 'modelService', 'listModels', [])).rejects.toMatchObject({
       name: 'RPCError',
       code: 40001,
     });

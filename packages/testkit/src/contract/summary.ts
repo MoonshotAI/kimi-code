@@ -42,7 +42,7 @@ interface Walk {
 }
 
 export function summarizeContract(openapi: unknown, asyncapi: unknown): ContractSummary {
-  const roots = [...openApiRoots(asRecord(openapi)), ...asyncApiRoots(asRecord(asyncapi))];
+  const roots = [...openApiRoots(inlineSchemaRefs(asRecord(openapi))), ...asyncApiRoots(asRecord(asyncapi))];
   const shapeUses = new Map<string, number>();
   for (const root of roots) countShapes(root.schema, shapeUses);
   const walk: Walk = { fields: new Map(), lines: [], shapeUses, shapes: new Map() };
@@ -237,10 +237,35 @@ export function canonical(value: unknown, memberNames = false): string {
 }
 
 export function contractDigest(openapi: unknown, asyncapi: unknown): string {
-  const rest = asRecord(openapi);
+  const rest = inlineSchemaRefs(asRecord(openapi));
   const ws = asRecord(asyncapi);
   const contract = { paths: rest['paths'], components: rest['components'], operations: ws['operations'], messages: ws['components'] };
   return createHash('sha256').update(canonical(contract)).digest('hex');
+}
+
+const SCHEMA_REF_PREFIX = '#/components/schemas/';
+
+export function inlineSchemaRefs(document: Schema): Schema {
+  const components = asRecord(document['components']);
+  const schemas = asRecord(components['schemas']);
+  if (Object.keys(schemas).length === 0) return document;
+  const inlined = new Set<string>();
+  const inline = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(inline);
+    if (typeof value !== 'object' || value === null) return value;
+    const reference = (value as Schema)['$ref'];
+    if (typeof reference === 'string' && reference.startsWith(SCHEMA_REF_PREFIX)) {
+      const name = reference.slice(SCHEMA_REF_PREFIX.length);
+      if (schemas[name] !== undefined) {
+        inlined.add(name);
+        return inline(schemas[name]);
+      }
+    }
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, inline(item)]));
+  };
+  const paths = inline(document['paths']);
+  const rest = Object.fromEntries(Object.entries(schemas).filter(([name]) => !inlined.has(name)));
+  return { ...document, paths, components: { ...components, schemas: rest } };
 }
 
 function asRecord(value: unknown): Schema {

@@ -1,19 +1,19 @@
 import { createDecorator } from "#/_base/di/instantiation";
-import type { IDisposable } from '#/_base/di/lifecycle';
-import type { PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
-import type { PermissionData } from '#/agent/permissionPolicy/types';
-import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-
-export type PermissionGateReviewer = (
-  context: ResolvedToolExecutionHookContext,
-  evaluation: PermissionPolicyEvaluation,
-) => PermissionPolicyEvaluation | undefined | Promise<PermissionPolicyEvaluation | undefined>;
+import type {
+  PermissionData
+} from '#/agent/permissionPolicy/types';
+import type {
+  BeforeExecuteDecision,
+  ResolvedToolExecutionHookContext,
+} from '#/agent/toolExecutor/toolHooks';
 
 export interface IAgentPermissionGate {
   readonly _serviceBrand: undefined;
 
   data(): PermissionData;
-  registerReviewer(reviewer: PermissionGateReviewer): IDisposable;
+  authorize(
+    context: ResolvedToolExecutionHookContext,
+  ): Promise<BeforeExecuteDecision | undefined>;
 }
 
 export const IAgentPermissionGate =

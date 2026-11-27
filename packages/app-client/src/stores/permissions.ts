@@ -42,9 +42,6 @@ export const usePermissionsStore = defineStore('kimi.permissions', () => {
   const daemonDefaultAt = ref(0);
   const daemonDefaultSeen = ref(false);
   const runStartedAt = Date.now();
-  const settingsDefaultWriteStamps = ref<
-    Array<{ id: number; stamp: number; mode: PermissionMode }>
-  >([]);
   const sessionTeardownGen = ref<Record<string, number>>({});
   const sessionTeardownGenOrder: string[] = [];
   const SESSION_TEARDOWN_GEN_CAP = 200;
@@ -59,31 +56,6 @@ export const usePermissionsStore = defineStore('kimi.permissions', () => {
     const remaining = (submitPrepInFlightBySid.get(sid) ?? 1) - 1;
     if (remaining <= 0) submitPrepInFlightBySid.delete(sid);
     else submitPrepInFlightBySid.set(sid, remaining);
-  }
-  let settingsDefaultWriteSeq = 0;
-  function noteDaemonDefaultWriteInitiated(mode: PermissionMode): number {
-    const id = ++settingsDefaultWriteSeq;
-    settingsDefaultWriteStamps.value = [
-      ...settingsDefaultWriteStamps.value,
-      { id, stamp: Date.now(), mode },
-    ];
-    return id;
-  }
-  function consumeDaemonDefaultWriteStamp(id: number): void {
-    const idx = settingsDefaultWriteStamps.value.findIndex((e) => e.id === id);
-    if (idx === -1) return;
-    const entry = settingsDefaultWriteStamps.value[idx];
-    if (entry !== undefined && stickyAt.value < entry.stamp) {
-      stickyAt.value = 0;
-      saveStickyPermissionAt(0);
-    }
-    settingsDefaultWriteStamps.value = settingsDefaultWriteStamps.value.filter((_, i) => i !== idx);
-  }
-
-  function clearDaemonDefaultWriteInitiated(id: number): void {
-    settingsDefaultWriteStamps.value = settingsDefaultWriteStamps.value.filter(
-      (entry) => entry.id !== id,
-    );
   }
   const draftPick = ref<PermissionMode | undefined>(undefined);
   const observedDaemonDefault = ref<PermissionMode | null | undefined>(
@@ -191,16 +163,6 @@ export const usePermissionsStore = defineStore('kimi.permissions', () => {
     savePermissionBySession(modes.value);
   }
 
-  function reconcileDaemonDefaultWriteStamps(current: PermissionMode | undefined): void {
-    for (const entry of settingsDefaultWriteStamps.value) {
-      if (entry.mode === current && stickyAt.value < entry.stamp) {
-        stickyAt.value = 0;
-        saveStickyPermissionAt(0);
-      }
-    }
-    settingsDefaultWriteStamps.value = [];
-  }
-
   function pruneSessions(liveSids: ReadonlySet<string>): void {
     const known = new Set<string>([
       ...Object.keys(explicit.value),
@@ -272,18 +234,9 @@ export const usePermissionsStore = defineStore('kimi.permissions', () => {
         saveStickyPermissionAt(0);
       }
     } else if (mode !== daemonDefault.value) {
-      const stampIdx = settingsDefaultWriteStamps.value.findIndex((entry) => entry.mode === mode);
-      const writeStamp = stampIdx === -1 ? undefined : settingsDefaultWriteStamps.value[stampIdx]?.stamp;
-      daemonDefaultAt.value = writeStamp ?? Date.now();
-      if (writeStamp === undefined || stickyAt.value < writeStamp) {
-        stickyAt.value = 0;
-        saveStickyPermissionAt(0);
-      }
-      if (stampIdx !== -1) {
-        settingsDefaultWriteStamps.value = settingsDefaultWriteStamps.value.filter(
-          (_, i) => i !== stampIdx,
-        );
-      }
+      daemonDefaultAt.value = Date.now();
+      stickyAt.value = 0;
+      saveStickyPermissionAt(0);
     }
     daemonDefaultSeen.value = true;
     daemonDefault.value = mode;
@@ -300,8 +253,6 @@ export const usePermissionsStore = defineStore('kimi.permissions', () => {
     daemonDefault.value = undefined;
     daemonDefaultAt.value = 0;
     daemonDefaultSeen.value = false;
-    settingsDefaultWriteStamps.value = [];
-    settingsDefaultWriteSeq = 0;
     stickySeq.value = 0;
     draftPick.value = undefined;
     sessionTeardownGen.value = {};
@@ -334,12 +285,8 @@ export const usePermissionsStore = defineStore('kimi.permissions', () => {
     explicitSeqFor,
     settleExplicit,
     foldDaemonMode,
-    noteDaemonDefaultWriteInitiated,
-    clearDaemonDefaultWriteInitiated,
-    consumeDaemonDefaultWriteStamp,
     clearSession,
     pruneSessions,
-    reconcileDaemonDefaultWriteStamps,
     sessionTeardownGenFor,
     noteSubmitPrepStart,
     noteSubmitPrepEnd,

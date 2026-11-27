@@ -1,4 +1,4 @@
-import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/session/tokenCounting/tokens';
 import { isSkillActivationPart } from '@moonshot-ai/core/llm/origin';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';

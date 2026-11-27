@@ -27,14 +27,31 @@ const NO_REASON_OVER_ACP = 'ACP permission options carry only an option id, so a
 const ONE_PROMPT_AT_A_TIME_OVER_ACP =
   'ACP has no way to send a message while a turn runs: a second session/prompt is refused (-32600, another turn is already in progress).';
 const NO_FREE_TEXT_OVER_ACP = "ACP's permission request carries only option ids, so an editor cannot send a free-text answer.";
+const INPUT_IN_THE_EDITOR = "An editor writes prompts in its own input and keeps its own prompt history; the agent behind ACP never sees the user's input.";
+const NO_UNDO_OVER_ACP = 'ACP has no request to withdraw a message from the conversation.';
 const NO_WINDOW_TO_RESIZE = {
   acp: 'An editor shows the conversation in its own window; the agent behind ACP has no window to resize.',
   desktop: "The Desktop window cannot be made narrower than 900 pixels, so a user cannot give it a phone width, and Playwright can only resize it by running code in Electron's main process.",
 };
+const NO_RELOAD_OVER_ACP =
+  'ACP has no request to reload a session, and kimi acp does not publish /reload among its commands, so an editor that sends it gets "Unknown ACP command".';
+const ONLY_THE_TERMINAL_UI_INITS = {
+  acp: 'kimi acp does not publish /init among its commands, so an editor that sends it gets "Unknown ACP command".',
+  desktop: 'The Desktop slash menu has no /init, and KAP has no request that generates AGENTS.md.',
+  web: 'The Web slash menu has no /init, and KAP has no request that generates AGENTS.md.',
+};
+const NO_SIDE_QUESTION_OVER_ACP =
+  'ACP has no side question: an editor can only send /btw as a prompt, and the agent answers it with "Unknown ACP command: /btw" without asking the model.';
 const NO_CONTINUE = {
   tui: 'The terminal UI has no way to continue a failed turn; a user sends another message instead.',
   acp: 'ACP has no request to continue a failed turn.',
 };
+const NO_ADD_DIR = {
+  acp: 'ACP has no request that adds a directory to a running session; the agent reads additionalDirectories only from session/new.',
+  desktop: 'Desktop has no /add-dir: it adds a directory to the whole project in the project dialog, through the system folder picker that Playwright cannot drive.',
+  web: 'The web UI has no /add-dir: it adds a directory to the whole project in the project dialog, which changes every session of the project rather than this one.',
+};
+const ONLY_DESKTOP_HAS_A_BROWSER = 'Only the Desktop app has a built-in browser that agents control, and only its settings have a Browser page that turns that control off.';
 
 export const VERBS = {
   send: { on: SURFACES, checksInterface: false },
@@ -58,6 +75,10 @@ export const VERBS = {
   continue: { on: ['desktop', 'web'], absentBecause: NO_CONTINUE, checksInterface: false },
   restart: { on: SURFACES, checksInterface: false, bySession: true },
   restartDuringTurn: { on: SURFACES, checksInterface: false, bySession: true },
+  undo: { on: ['tui', 'desktop', 'web'], absentBecause: NO_UNDO_OVER_ACP, checksInterface: false },
+  recallPrevious: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: false },
+  submit: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: false },
+  expectComposer: { on: ['tui', 'desktop', 'web'], absentBecause: INPUT_IN_THE_EDITOR, checksInterface: true },
   newSession: { on: SURFACES, checksInterface: false },
   compact: { on: SURFACES, checksInterface: false },
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
@@ -71,6 +92,16 @@ export const VERBS = {
     },
     checksInterface: true,
   },
+  openSession: { on: SURFACES, checksInterface: false },
+  reload: { on: ['tui', 'desktop', 'web'], absentBecause: NO_RELOAD_OVER_ACP, checksInterface: false },
+  init: { on: ['tui'], absentBecause: ONLY_THE_TERMINAL_UI_INITS, checksInterface: false },
+  useSkill: { on: SURFACES, checksInterface: false },
+  switchModel: { on: SURFACES, checksInterface: false },
+  setThinkingEffort: { on: SURFACES, checksInterface: false },
+  addDir: { on: ['tui'], absentBecause: NO_ADD_DIR, checksInterface: false },
+  setBrowserControl: { on: ['desktop'], absentBecause: ONLY_DESKTOP_HAS_A_BROWSER, checksInterface: false },
+  setPlanMode: { on: SURFACES, checksInterface: false },
+  btw: { on: ['tui', 'desktop', 'web'], absentBecause: NO_SIDE_QUESTION_OVER_ACP, checksInterface: false },
 } as const satisfies Readonly<Record<string, VerbSpec>>;
 
 export type Verb = keyof typeof VERBS;
@@ -180,6 +211,9 @@ export type PermissionMode = 'manual' | 'yolo' | 'auto';
 
 export type WindowSize = 'normal' | 'narrow';
 
+export type BrowserControl = 'on' | 'off';
+export type PlanModeState = 'on' | 'off';
+
 export const PERMISSION_MODE_NAMES: Readonly<Record<PermissionMode, string>> = {
   manual: 'Always Ask',
   yolo: 'Ask When Needed',
@@ -208,12 +242,26 @@ interface VerbSignatures {
   continue(): Promise<void>;
   restart(): Promise<void>;
   restartDuringTurn(): Promise<void>;
+  undo(): Promise<void>;
+  recallPrevious(): Promise<void>;
+  submit(text: string): Promise<void>;
+  expectComposer(text: string): Promise<void>;
   newSession(): Promise<void>;
   compact(): Promise<void>;
   resize(size: WindowSize): Promise<void>;
   expectTranscript(text: string): Promise<void>;
   exit(): Promise<void>;
   expectTerminalRestored(): Promise<void>;
+  openSession(title: string): Promise<void>;
+  reload(): Promise<void>;
+  init(): Promise<void>;
+  useSkill(name: string): Promise<void>;
+  switchModel(name: string): Promise<void>;
+  setThinkingEffort(effort: string): Promise<void>;
+  addDir(path: string): Promise<void>;
+  setBrowserControl(state: BrowserControl): Promise<void>;
+  setPlanMode(state: PlanModeState): Promise<void>;
+  btw(question: string, reply: string): Promise<void>;
 }
 
 export type Actions = { readonly [Name in Verb]: VerbSignatures[Name] };
@@ -223,6 +271,15 @@ export type ProductOn<S extends Surface> = { readonly [Name in Verb as [S] exten
 export type Product = ProductOn<Surface>;
 
 export type Diagnostic = { readonly name: string; readonly body: string } | { readonly name: string; readonly path: string };
+
+export class StartupFailure extends Error {
+  readonly diagnostics: readonly Diagnostic[];
+
+  constructor(cause: unknown, diagnostics: readonly Diagnostic[], message = cause instanceof Error ? cause.message : String(cause)) {
+    super(message, { cause });
+    this.diagnostics = diagnostics;
+  }
+}
 
 export type Frame = { readonly kind: 'image'; readonly png: Buffer } | { readonly kind: 'text'; readonly text: string };
 
@@ -255,10 +312,16 @@ export type DriverActionsOn<S extends Surface> = Omit<ProductOn<S>, SessionVerb>
 
 export type SurfaceDriver<S extends Surface> = DriverActionsOn<S> & SurfaceControls;
 
+export interface EditorMcpServer {
+  readonly name: string;
+  readonly url: string;
+}
+
 export interface SurfaceLaunch {
   readonly home: TestHome;
   readonly model: FakeModel;
   readonly workspaceTrust?: 'trust' | 'exit';
   readonly reopen?: Reopen;
   readonly variant?: Variant;
+  readonly editorMcpServers?: readonly EditorMcpServer[];
 }

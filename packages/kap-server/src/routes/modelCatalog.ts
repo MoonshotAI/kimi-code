@@ -1,7 +1,6 @@
 import {
   IConfigService,
   IKosongConfigService,
-  IModelCatalog,
   IOAuthService,
   IProviderDiscoveryService,
   IModelsDevImportService,
@@ -14,7 +13,7 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { reconcileProviderCredentialUpdate } from '@moonshot-ai/kimi-code-oauth/provider-credential';
-import { setDefaultModelResponseSchema } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { setDefaultModelResponseSchema } from '@moonshot-ai/agent-core-v2/provider-catalog/model/catalog';
 import { refreshProviderModelsResponseSchema } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import {
   DEFAULT_MODEL_SECTION,
@@ -45,6 +44,7 @@ import {
 import { enqueueProviderWrite } from '../services/providerWrites';
 import { type ActionTable, runAction } from './action-dispatch';
 import { parseActionSuffix } from './action-suffix';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 interface ModelCatalogRouteHost {
   get(
@@ -106,9 +106,9 @@ const catalogIdParamSchema = z.object({
   catalog_id: z.string().min(1),
 });
 
-async function loadCatalog(core: Scope): Promise<IModelCatalog> {
+async function loadCatalog(core: Scope): Promise<IProviderCatalogService> {
   await core.accessor.get(IConfigService).ready;
-  return core.accessor.get(IModelCatalog);
+  return core.accessor.get(IProviderCatalogService);
 }
 
 async function loadConfig(core: Scope): Promise<IConfigService> {
@@ -291,7 +291,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           );
         }
 
-        const created = await core.accessor.get(IModelCatalog).getProvider(id);
+        const created = await core.accessor.get(IProviderCatalogService).getProvider(id);
         (reply as unknown as StatusReply).code(201).send(okEnvelope(created, req.id));
       });
     },
@@ -463,7 +463,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           }
         }
 
-        const saved = await core.accessor.get(IModelCatalog).getProvider(newId);
+        const saved = await core.accessor.get(IProviderCatalogService).getProvider(newId);
         reply.send(okEnvelope({ provider: saved }, req.id));
       });
     },

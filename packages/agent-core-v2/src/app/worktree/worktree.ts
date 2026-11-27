@@ -1,7 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-export const WORKTREE_FLAG_ID = 'worktree';
-
 export type WorktreeCheckoutKind = 'main' | 'managed' | 'linked';
 
 export interface WorktreeCheckout {
@@ -61,17 +59,6 @@ export interface CreatedWorktree {
   readonly cwdFallback: boolean;
   readonly copiedFiles: readonly string[];
   readonly sourceDirty: boolean;
-  readonly setupScript: string | undefined;
-}
-
-export interface RunSetupScriptInput {
-  readonly worktreePath: string;
-  readonly sourceRoot: string;
-}
-
-export interface RunSetupScriptOptions {
-  readonly signal?: AbortSignal;
-  readonly onOutput?: (text: string) => void;
 }
 
 export interface InspectWorktreeRemovalInput {
@@ -117,10 +104,6 @@ export interface IWorktreeService {
   worktreesDir(repoRoot: string): string;
   list(cwd: string): Promise<WorktreeListing>;
   create(input: CreateWorktreeInput, options?: CreateWorktreeOptions): Promise<CreatedWorktree>;
-  runSetupScript(
-    input: RunSetupScriptInput,
-    options?: RunSetupScriptOptions,
-  ): Promise<{ readonly exitCode: number }>;
   inspectRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck>;
   remove(input: RemoveWorktreeInput): Promise<void>;
 }

@@ -8,7 +8,7 @@ Update this section after every sync. Do not reuse the previous range.
 
 - **Repo:** `https://github.com/earendil-works/pi.git`
 - **Subtree:** `packages/tui`
-- **Commit:** `b882d08f34f8a245c8d3ea8b057759e1b8b2054c` (2026-11-25; v1.6.1 plus upstream main through this commit)
+- **Commit:** `cf419553da817fefd2f86f170ff3e93eff0bfd28` (2026-11-26; v1.6.1 plus upstream main through this commit)
 - **This commit is an upstream marker.** It may not exist in this repo's object database.
 
 ## Reconstruct the fork
@@ -246,3 +246,33 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** `requestAnimationFrame` and `cancelAnimationFrame` on the TUI work like the browser's. A request runs once; every callback of a frame gets the same timestamp on the `performance.now()` clock; frames are never replayed after a late wake. By default they land on a fixed `ANIMATION_FRAME_INTERVAL_MS` grid. `setAnimationFrameRate` on `TuiBase` takes a whole number of frames per second from 1 to `MAX_ANIMATION_FRAME_RATE` and throws `RangeError` on anything else; after it, the next frame comes one new interval after the last frame. One unref'd timer serves all requests and exists only while a request is pending. A throwing callback does not stop the other callbacks or later frames, and the first error is rethrown in a microtask. `stop()` pauses frames and keeps the requests; `start()` resumes on the next frame. An optional constructor clock lets tests drive frames by hand. Without one, each scheduler keeps the global timers and `performance.now` it found when it was created, so a running frame chain never moves onto fake timers that a later test installs. With no requests, behavior matches upstream.
 
 **Why not in the app:** Pausing and resuming must follow the renderer's own `stop()` and `start()`, which hosts such as the external editor call directly. One clock in the renderer also lets every animated component share one timer and one frame time. The host sets the frame rate there for the same reason: the timer and the grid belong to the renderer, and no component sees the others' requests.
+
+### alt-screen-search-bindings-and-open-search — keep
+
+**Decision:** Default alternate-screen search keybindings in `TUI_KEYBINDINGS` use `["ctrl+f", "ctrl+shift+f"]` for `tui.altScreen.search`, `["up", "shift+enter", "ctrl+shift+g"]` for `tui.altScreen.searchPrevious`, and `["down", "enter", "ctrl+g"]` for `tui.altScreen.searchNext`. `TuiAltScreen.openSearch(query?)` idempotently opens or refocuses transcript search (when the active layout has a searchable scroll view) and optionally prefills a single-line sanitized query with the cursor at the end via `Input.setCursor(position)` (paired with `Input.getCursor()`). When primary search navigation keys are `up`/`down`, `AltScreenSearchComponent` renders semantic `↑ Previous` and `↓ Next` labels (with narrow fallback `↑ ↓`), and whitespace-only queries do not show `No matches`. The `tui.altScreen.search` binding requires a searchable scroll view so full-screen layout takeovers without a `ScrollView` keep their own `Ctrl+F` handling. While transcript search is active, non-wheel mouse focus transfers to a component outside the search overlay close active search before moving focus, whereas wheel events, clicking search controls, and drag-selecting transcript text keep search open; when search is inactive, wheel focus requests keep upstream semantics.
+
+**Why not in the app:** Default keybindings live in `TUI_KEYBINDINGS` shared by all `pi-tui` components; search overlay lifecycle, `ActiveSearch` state, viewport key dispatch, mouse focus dispatch, search label formatting, and `Input` cursor positioning are private to `TuiAltScreen`, `AltScreenSearchComponent`, and `Input`.
+
+### kitty-caps-lock-modified-letter-normalization — keep
+
+**Decision:** When Kitty CSI-u input reports an uppercase Latin letter (`A`–`Z`) with Caps Lock and any non-lock modifier (`ctrl`, `alt`, `super`, or `shift`) active, key matching and `parseKey` normalize the letter identity to lowercase so modified letter bindings match while plain Caps Lock uppercase text input stays unaffected.
+
+**Why not in the app:** `KeybindingsManager`, `TuiAltScreen`, and all `pi-tui` components dispatch keybindings directly through `keys.ts` before any app component input handler runs.
+
+### box-layout-and-borders — keep
+
+**Decision:** `Box` is a layout-participating `Container` configured via `BoxOptions` (`border`, `borderStyle`, `borderColor`, `title`, `padding`), defaulting to zero padding and no border. In fullscreen layout frames it insets its child clip rectangle inside its border and padding, allocates its inner height to a single child (such as `ScrollView`) or stacks multiple children vertically, renders its frame even when empty, and paints borders outside the child clip so scrollbars and text selection stay inside the frame.
+
+**Why not in the app:** `LAYOUT_NODE` is internal to `pi-tui`; an app-level wrapper around `ScrollView` collapses it into a leaf component without viewport clipping, scrollbar geometry, wheel routing, or offscreen text selection.
+
+### scroll-view-on-scroll-and-overscroll-contain — keep
+
+**Decision:** `ScrollViewOptions.onScroll` notifies callers whenever `scrollTop` changes (via `scrollTo`, `scrollBy`, `scrollToStart`, `scrollToEnd`, or layout clamping), and `TuiAltScreen.routeWheel` zeroes remaining wheel delta when stopping at a `ScrollView` with `overscroll: "contain"` so wheel overscroll does not leak to `primaryScrollView`.
+
+**Why not in the app:** Wheel routing to `primaryScrollView` and scrollbar-drag `scrollTo` happen inside `TuiAltScreen` and `ScrollView`; intercepting `handleMouse` in the app bypassed viewport-only render caching and missed scrollbar drags.
+
+### component-click-horizontal-cell-tolerance — keep
+
+**Decision:** Component-handled pointer gestures synthesize `click` (and preserve consecutive `clickCount`) when the pointer stays on the pressed row and within at most 1 horizontal column (`|dx| <= 1`, `dy === 0`) between `press` and `release`, dispatching `click` at the pressed coordinates.
+
+**Why not in the app:** `TuiAltScreen.handleMouseEvent` suppresses `click` synthesis before calling component mouse handlers whenever `mousePressMoved` flips.

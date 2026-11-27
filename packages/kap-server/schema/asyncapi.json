@@ -333,33 +333,6 @@
                     "action": {
                       "type": "string"
                     },
-                    "approval_detail": {
-                      "properties": {
-                        "outcome": {
-                          "enum": [
-                            "denied",
-                            "failed"
-                          ],
-                          "type": "string"
-                        },
-                        "reason": {
-                          "type": "string"
-                        },
-                        "risk": {
-                          "enum": [
-                            "low",
-                            "medium",
-                            "high"
-                          ],
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "outcome",
-                        "reason"
-                      ],
-                      "type": "object"
-                    },
                     "expires_at": {
                       "type": "string"
                     },
@@ -1224,9 +1197,6 @@
                       },
                       "type": "array"
                     },
-                    "auto_review": {
-                      "type": "boolean"
-                    },
                     "created_at": {
                       "type": "string"
                     },
@@ -1670,6 +1640,35 @@
                       },
                       "type": "object"
                     },
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        },
+                        "status_code": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "type": "object"
+                    },
                     "instruction": {
                       "type": "string"
                     },
@@ -2043,9 +2042,6 @@
                     "type": "object"
                   },
                   "type": "array"
-                },
-                "auto_review": {
-                  "type": "boolean"
                 },
                 "created_at": {
                   "type": "string"
@@ -4592,9 +4588,6 @@
                               },
                               "type": "array"
                             },
-                            "auto_review": {
-                              "type": "boolean"
-                            },
                             "created_at": {
                               "type": "string"
                             },
@@ -5036,6 +5029,35 @@
                                   "type": "object"
                                 }
                               },
+                              "type": "object"
+                            },
+                            "error": {
+                              "properties": {
+                                "code": {
+                                  "type": "string"
+                                },
+                                "message": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "request_id": {
+                                  "type": "string"
+                                },
+                                "retryable": {
+                                  "type": "boolean"
+                                },
+                                "status_code": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "message"
+                              ],
                               "type": "object"
                             },
                             "instruction": {

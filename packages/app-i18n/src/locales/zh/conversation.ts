@@ -29,6 +29,8 @@ export default {
   compactedPlain: '上下文已压缩',
   compactedAuto: '已自动压缩上下文',
   compactedTokens: '{before} → {after} tokens',
+  compactionFailed: '上下文压缩失败',
+  compactionFailedAuto: '自动压缩上下文失败',
   undo: '撤销',
   undoTooltip: '撤回消息',
   undoConfirm: '撤销后，这条消息及之后的会话内容会从上下文中移除，这条消息的原文会放回输入框；已修改的文件和代码不受影响。',

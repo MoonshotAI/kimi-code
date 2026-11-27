@@ -6,7 +6,7 @@ import { Icon, IconButton, Spinner } from '@moonshot-ai/app-ui';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
 import { ResolveAgentModelKey, ResolveAgentTaskIdKey, ResolveAgentTaskStateKey, ResolveDetachableTaskKey } from '@moonshot-ai/app-client/contracts';
-import { toolLabel } from '@moonshot-ai/app-components';
+import { toolLabel } from '../../lib/toolMeta';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 

@@ -91,7 +91,6 @@ export interface ToolCall {
   name: string;
   arg: string;
   status: ToolStatus;
-  autoReviewing?: boolean;
   agentId?: string;
   startedAt?: string;
   timing?: string;
@@ -150,7 +149,7 @@ export interface DiffViewLine {
   newNo?: number;
 }
 
-export type ApprovalBlock = (
+export type ApprovalBlock =
   | { kind: 'diff'; path: string; diff: DiffViewLine[] }
   | { kind: 'shell'; command: string; cwd?: string; danger?: string }
   | { kind: 'file'; path: string; content: string; language?: string }
@@ -166,14 +165,14 @@ export type ApprovalBlock = (
       options?: { label: string; description?: string }[];
     }
   | { kind: 'browser'; input: Record<string, unknown> }
-  | { kind: 'generic'; summary: string }
-) & {
-  review?: {
-    outcome: 'denied' | 'failed';
-    risk?: 'low' | 'medium' | 'high';
-    reason: string;
-  };
-};
+  | { kind: 'generic'; summary: string };
+
+export interface TurnCompactionError {
+  code: string;
+  message: string;
+  statusCode?: number;
+  requestId?: string;
+}
 
 export type TurnRole = 'user' | 'assistant' | 'compaction' | 'cron' | 'goal';
 
@@ -256,7 +255,7 @@ export interface ChatTurn {
   daemonTurnState?: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   attachments?: TurnAttachment[];
   inlineAttachments?: TurnAttachment[];
-  compaction?: { trigger?: 'manual' | 'auto'; tokensBefore?: number; tokensAfter?: number };
+  compaction?: { trigger?: 'manual' | 'auto'; tokensBefore?: number; tokensAfter?: number; error?: TurnCompactionError };
   createdAt?: string;
   endedAt?: string;
   durationMs?: number;

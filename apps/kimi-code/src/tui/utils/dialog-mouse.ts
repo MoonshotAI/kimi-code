@@ -13,6 +13,12 @@ export interface MouseRowRegion {
   readonly index: number;
 }
 
+export interface MouseColRegion {
+  readonly start: number;
+  readonly end: number;
+  readonly index: number;
+}
+
 export function focusOnUnfocusedMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
   if (event.type === 'press') return { handled: true };
   if (event.type === 'click') return { handled: true, focus: true };
@@ -21,6 +27,10 @@ export function focusOnUnfocusedMouse(event: TuiMouseEvent): TuiMouseEventResult
 
 export function rowIndexAt(regions: readonly MouseRowRegion[], y: number): number | undefined {
   return regions.find((region) => y >= region.start && y < region.end)?.index;
+}
+
+export function colIndexAt(regions: readonly MouseColRegion[], x: number): number | undefined {
+  return regions.find((region) => x >= region.start && x < region.end)?.index;
 }
 
 export function handleSelectableListMouse(input: {
@@ -44,6 +54,34 @@ export function handleSelectableListMouse(input: {
   if (event.type === 'click' && !isSettlingClick(shownAt)) {
     select(index);
     activate(index);
+  }
+  return { handled: true };
+}
+
+export function handleSegmentedMouse(input: {
+  readonly event: TuiMouseEvent;
+  readonly focused: boolean;
+  readonly shownAt: number;
+  readonly row: number;
+  readonly regions: readonly MouseColRegion[];
+  readonly select: (index: number) => boolean;
+  readonly activate: (index: number, event: TuiMouseEvent) => void;
+  readonly selectOnHover?: boolean;
+}): TuiMouseEventResult | undefined {
+  const { event, focused, shownAt, row, regions, select, activate, selectOnHover = false } = input;
+  if (!focused) return focusOnUnfocusedMouse(event);
+  if (event.y !== row) return undefined;
+  const index = colIndexAt(regions, event.x);
+  if (event.type === 'move') {
+    if (!selectOnHover || index === undefined) return undefined;
+    return { handled: true, render: select(index) };
+  }
+  if (event.button !== 'left' || index === undefined) return undefined;
+  if (event.type === 'press') return { handled: true };
+  if (event.type === 'click' && !isSettlingClick(shownAt)) {
+    select(index);
+    activate(index, event);
+    return { handled: true, render: true };
   }
   return { handled: true };
 }

@@ -60,18 +60,17 @@ import { BannerProvider } from './banner/banner-provider';
 import { resolveBannerAudienceContext, type BannerAudienceContext } from './banner/audience';
 import { readBannerDisplayState, writeBannerDisplayState } from './banner/state';
 import {
-  BUILTIN_SLASH_COMMANDS,
   buildPluginSlashCommands,
   buildSkillSlashCommands,
+  getVisibleBuiltInSlashCommands,
   goalObjectiveLengthWarning,
   isExperimentalFlagEnabled,
   setExperimentalFeatures,
-  sortSlashCommands,
   type KimiSlashCommand,
   type SkillListSession,
 } from './commands';
 import * as slashCommands from './commands/dispatch';
-import { resolveUserInput, skillVariantPathsForInput } from './commands/resolve';
+import { resolveHostUserInput, skillVariantPathsForInput } from './commands/resolve';
 import { applyTranscriptPresentation, runQueuedModelSwitch } from './commands/config';
 import { promptSshPassword } from './commands/prompts';
 import { CacheHintController } from './controllers/cache-hint-controller';
@@ -133,6 +132,7 @@ import {
   type TuiMode,
 } from './config';
 import {
+  ERROR_STATUS_PREFIX,
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
   MAX_AUTO_TITLE_ATTEMPTS,
@@ -150,6 +150,10 @@ import { BtwPanelController } from './controllers/btw-panel';
 import { ClipboardImageHintController } from './controllers/clipboard-image-hint';
 import { EditorKeyboardController } from './controllers/editor-keyboard';
 import { ModelMigrationController } from './controllers/model-migration';
+import {
+  hasResumableTranscriptContent,
+  ProgramResumeController,
+} from './controllers/program-resume';
 import { ProgramStatusController } from './controllers/program-status';
 import { PromptPredictionController } from './controllers/prompt-prediction';
 import { SessionEventHandler } from './controllers/session-event-handler';
@@ -289,6 +293,7 @@ export interface KimiTUIStartupInput {
   readonly migrationPlan?: MigrationPlan | null;
   readonly migrateOnly?: boolean;
   readonly telemetryDisabled?: boolean;
+  readonly programResumeToken?: string;
 }
 
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
@@ -464,6 +469,7 @@ export class KimiTUI {
   >();
   readonly streamingUI: StreamingUIController;
   readonly programStatus: ProgramStatusController;
+  readonly programResume: ProgramResumeController;
   readonly authFlow: AuthFlowController;
   readonly btwPanelController: BtwPanelController;
   readonly sessionEventHandler: SessionEventHandler;
@@ -560,6 +566,9 @@ export class KimiTUI {
     this.startupNotice = startupInput.startupNotice;
     this.state = createTUIState(tuiOptions);
     this.programStatus = new ProgramStatusController(this.state, this.state.terminal);
+    this.programResume = new ProgramResumeController(this.state, this.state.terminal, {
+      token: startupInput.programResumeToken,
+    });
     this.state.footer.setExpandHintProvider(() => this.toolOutputExpandHint());
     this.state.footer.setGitBinding((state) => this.footerGitBinding(state));
     this.state.transcriptContainer.setHost({
@@ -631,9 +640,7 @@ export class KimiTUI {
   }
 
   private getSlashCommands(): readonly KimiSlashCommand[] {
-    const builtins = sortSlashCommands(BUILTIN_SLASH_COMMANDS).filter((command) =>
-      isExperimentalFlagEnabled(command.experimentalFlag),
-    );
+    const builtins = getVisibleBuiltInSlashCommands(this.state.ui.mode);
     return [...builtins, ...this.skillCommands, ...this.pluginCommands];
   }
 
@@ -823,6 +830,7 @@ export class KimiTUI {
   async start(): Promise<void> {
     startupTrace('tui:start');
     this.registerSignalHandlers();
+    const releaseResume = this.programResume.hold();
     let trustPromptStartedLoop = false;
     try {
       startupTrace('trustPrompt:begin');
@@ -837,6 +845,7 @@ export class KimiTUI {
           if (this.migrateOnly) {
             const failed = migrationResult.decision === 'now' && migrationResult.migrated === false;
             this.disposeTerminalTracking();
+            this.programResume.clearForExit();
             this.state.ui.stop();
             await this.onExit?.(failed ? 1 : 0);
             return;
@@ -895,12 +904,15 @@ export class KimiTUI {
         throw error;
       }
     } catch (error) {
+      this.programResume.preserveForSignal();
       if (trustPromptStartedLoop) {
         this.disposeTerminalTracking();
         this.state.ui.stop();
       }
       this.unregisterSignalHandlers();
       throw error;
+    } finally {
+      releaseResume();
     }
   }
 
@@ -1136,11 +1148,7 @@ export class KimiTUI {
       this.showStatus(missingWorkdirNotice(this.startupResume.target.workDir), 'warning');
     }
     this.startupResume = undefined;
-    const resumeState = this.session?.getResumeState();
-    this.surveyController.seedFromResumedAgents(resumeState?.sessionMetadata.agents ?? {});
-    if (resumeState?.warning !== undefined) {
-      this.showStatus(`Warning: ${resumeState.warning}`, 'warning');
-    }
+    this.applyResumedSessionState(this.session);
     if (this.session !== undefined) {
       this.sessionEventHandler.startSubscription();
       void this.refreshEnvironmentSlot(this.session);
@@ -1345,6 +1353,7 @@ export class KimiTUI {
   async stop(exitCode?: number): Promise<void> {
     if (this.isShuttingDown) return;
     this.isShuttingDown = true;
+    this.programResume.clearForExit();
     this.unregisterSignalHandlers();
     this.aborted = true;
     const removeForceExitListener = this.state.ui.addInputListener((data) => {
@@ -1424,6 +1433,7 @@ export class KimiTUI {
 
   private forceExitDuringShutdown(): void {
     this.state.footer.setTransientHint(null);
+    this.programResume.clearForExit({ force: true });
     try {
       this.stopUiForExit();
     } catch {
@@ -1446,6 +1456,7 @@ export class KimiTUI {
 
     for (const signal of signals) {
       const handler = (): void => {
+        this.programResume.preserveForSignal();
         if (signal === 'SIGHUP') {
           this.emergencyTerminalExit();
           return;
@@ -1462,6 +1473,18 @@ export class KimiTUI {
       process.prependListener(signal, handler);
       this.signalCleanupHandlers.push(() => {
         process.off(signal, handler);
+      });
+    }
+
+    if (process.platform !== 'win32') {
+      const sigcontHandler = (): void => {
+        if (!this.state.externalEditorRunning && !this.isShuttingDown) {
+          this.programResume.republish();
+        }
+      };
+      process.prependListener('SIGCONT', sigcontHandler);
+      this.signalCleanupHandlers.push(() => {
+        process.off('SIGCONT', sigcontHandler);
       });
     }
 
@@ -2043,16 +2066,7 @@ export class KimiTUI {
   private async persistInputHistory(text: string): Promise<void> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
-    const activations = text.startsWith('!') ? [] : resolveUserInput({
-      input: trimmed,
-      skillCommandMap: this.skillCommandMap,
-      pluginCommandMap: this.pluginCommandMap,
-      isStreaming: this.state.appState.streamingPhase !== 'idle',
-      isCompacting: this.state.appState.isCompacting,
-      skillVariantPathForCommand: (commandName, start) =>
-        this.skillVariantPathForCommand(commandName, start),
-      defaultSkillPathForCommand: (commandName) => this.defaultSkillPathForCommand(commandName),
-    }).activations;
+    const activations = text.startsWith('!') ? [] : resolveHostUserInput(this, trimmed).activations;
     const entry: InputHistoryEntry = {
       content: trimmed,
       inlineSkillActivations: activations.length === 0 ? undefined : activations,
@@ -3118,7 +3132,7 @@ export class KimiTUI {
     });
   }
 
-  private removeTranscriptEntries(entries: readonly TranscriptEntry[]): void {
+  removeTranscriptEntries(entries: readonly TranscriptEntry[]): void {
     const doomed = new Set(entries);
     const componentsToRemove = this.state.transcriptContainer.children.filter((child) => {
       const entry = getTranscriptComponentEntry(child);
@@ -3130,6 +3144,7 @@ export class KimiTUI {
     }
     this.state.transcriptEntries = this.state.transcriptEntries.filter((e) => !doomed.has(e));
     this.state.ui.requestRender();
+    this.programResume.refresh();
   }
 
   setStartupReady(): void {
@@ -3150,10 +3165,13 @@ export class KimiTUI {
   pushTranscriptEntry(entry: TranscriptEntry): void {
     this.state.transcriptEntries.push(entry);
     this.trimTranscriptWindow();
+    this.programResume.refresh();
   }
 
   setExternalEditorRunning(running: boolean): void {
+    const wasRunning = this.state.externalEditorRunning;
     this.state.externalEditorRunning = running;
+    if (wasRunning && !running) this.programResume.republish();
     if (!running) this.modelMigration.retry();
   }
 
@@ -3186,7 +3204,7 @@ export class KimiTUI {
   }
 
   hasSessionContent(): boolean {
-    return this.state.transcriptEntries.length > 0;
+    return hasResumableTranscriptContent(this.state.transcriptEntries);
   }
 
   setExitOpenUrl(url: string): void {
@@ -3215,6 +3233,9 @@ export class KimiTUI {
       !sameStringArrays(this.state.appState.additionalDirs, patch.additionalDirs ?? []);
     const busyChanged = 'streamingPhase' in patch || 'isCompacting' in patch;
     Object.assign(this.state.appState, patch);
+    if ('sessionId' in patch || 'workDir' in patch || 'isReplaying' in patch) {
+      this.programResume.refresh();
+    }
     if ('planMode' in patch) this.updateEditorBorderHighlight();
     this.state.footer.setState(this.state.appState);
     this.updateActivityPane();
@@ -3226,12 +3247,6 @@ export class KimiTUI {
     if (additionalDirsChanged) this.setupAutocomplete();
     this.modelMigration.retry();
     this.state.ui.requestRender();
-  }
-
-  async refreshWorkLocation(): Promise<void> {
-    const { workDir } = this.state.appState;
-    const location = await this.harness.resolveWorkLocation(workDir);
-    await this.applyWorkLocation(location);
   }
 
   async applyWorkLocation(
@@ -3286,22 +3301,24 @@ export class KimiTUI {
     }
   }
 
-  async startSessionAt(location: WorkLocation): Promise<boolean> {
-    await this.waitForSessionAssembly();
-    const previous = this.currentWorkLocation();
-    const replaced = this.session;
-    if (replaced === undefined && !sameDir(previous.cwd, location.cwd)) {
-      this.resolveStartupPathsForLocationChange(previous.cwd);
-    }
-    if (!(await this.applyWorkLocationOrRollback(location, { environmentId: 'local' }))) return false;
-    if (replaced === undefined) return true;
-    await this.createNewSession({ environmentId: 'local' });
-    if (this.session !== replaced) return true;
-    await this.applyWorkLocation(previous, {
-      resolveEnvironment: await isDirectoryAsync(previous.cwd),
-      environmentId: 'local',
-    }).catch(() => {});
-    return false;
+  startSessionAt(location: WorkLocation): Promise<boolean> {
+    return this.programResume.runHeld(async () => {
+      await this.waitForSessionAssembly();
+      const previous = this.currentWorkLocation();
+      const replaced = this.session;
+      if (replaced === undefined && !sameDir(previous.cwd, location.cwd)) {
+        this.resolveStartupPathsForLocationChange(previous.cwd);
+      }
+      if (!(await this.applyWorkLocationOrRollback(location, { environmentId: 'local' }))) return false;
+      if (replaced === undefined) return true;
+      await this.createNewSession({ environmentId: 'local' });
+      if (this.session !== replaced) return true;
+      await this.applyWorkLocation(previous, {
+        resolveEnvironment: await isDirectoryAsync(previous.cwd),
+        environmentId: 'local',
+      }).catch(() => {});
+      return false;
+    });
   }
 
   patchLivePane(patch: Partial<LivePaneState>): void {
@@ -3468,6 +3485,7 @@ export class KimiTUI {
   }
 
   private async lazyCreateSession(): Promise<Session | undefined> {
+    const releaseResume = this.programResume.hold();
     const environmentId = this.creationEnvironment?.environmentId ?? this.options.startup.environment;
     const progress = environmentId !== undefined && environmentId !== 'local'
       ? this.showProgressSpinner(`Connecting to ${environmentId}…`)
@@ -3507,6 +3525,7 @@ export class KimiTUI {
       return session;
     } finally {
       progress?.stop({ ok: ready, label: ready ? 'Session ready.' : 'Session setup failed.' });
+      releaseResume();
     }
   }
 
@@ -3687,12 +3706,9 @@ export class KimiTUI {
           };
     const page = await this.harness.listSessionsPage(query);
     if (requestToken !== this.sessionPickerScopeRequestToken) return undefined;
-    const locations =
-      scope !== 'cwd' || isExperimentalFlagEnabled('worktree')
-        ? await sessionLocationTags(this.harness, page.items, {
-            isCancelled: () => requestToken !== this.sessionPickerScopeRequestToken,
-          })
-        : undefined;
+    const locations = await sessionLocationTags(this.harness, page.items, {
+      isCancelled: () => requestToken !== this.sessionPickerScopeRequestToken,
+    });
     if (requestToken !== this.sessionPickerScopeRequestToken) return undefined;
     return {
       nextCursor: page.nextCursor,
@@ -3844,134 +3860,140 @@ export class KimiTUI {
     }
   }
 
-  private async resumeSession(targetSessionId: string, plan?: ResumePlan): Promise<boolean> {
-    await this.waitForSessionAssembly();
-    if (targetSessionId === this.state.appState.sessionId) {
-      this.showStatus('Already on this session.');
-      return true;
-    }
-    if (this.state.appState.streamingPhase !== 'idle') {
-      this.showError('Cannot switch sessions while streaming — press Esc or Ctrl-C first.');
-      return false;
-    }
-    if (this.state.appState.isReplaying) {
-      this.showError('Cannot switch sessions while history is replaying.');
-      return false;
-    }
-
-    let session: Session;
-    try {
-      this.showStatus(`Resuming session ${targetSessionId}…`);
-      session = await this.harness.resumeSession({
-        id: targetSessionId,
-        replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
-      });
-      if (plan?.kind === 'switch') {
-        if (
-          !(await this.applyWorkLocationOrRollback(plan.location, {
-            resolveEnvironment: false,
-          }))
-        ) {
-          await Promise.resolve(session.close?.()).catch(() => {});
-          return false;
-        }
-        await this.switchToSession(session, switchedNotice(plan.location.cwd));
-        if (plan.missing) {
-          this.showStatus(missingWorkdirNotice(plan.location.cwd), 'warning');
-        }
+  private resumeSession(targetSessionId: string, plan?: ResumePlan): Promise<boolean> {
+    return this.programResume.runHeld(async () => {
+      await this.waitForSessionAssembly();
+      if (targetSessionId === this.state.appState.sessionId) {
+        this.showStatus('Already on this session.');
         return true;
       }
-      await this.switchToSession(session, `Resumed session (${session.id}).`);
-      if (plan?.kind === 'here' && plan.missing) {
-        this.showStatus(missingWorkdirNotice(this.state.appState.workDir), 'warning');
+      if (this.state.appState.streamingPhase !== 'idle') {
+        this.showError('Cannot switch sessions while streaming — press Esc or Ctrl-C first.');
+        return false;
       }
-    } catch (error) {
-      log.error('failed to resume session', {
-        sessionId: targetSessionId,
-        error,
-        details:
-          isKimiError(error) && error.code === ErrorCodes.WIRE_VERSION_TOO_LOW
-            ? error.details
-            : undefined,
-      });
-      const msg = formatErrorMessage(error);
-      this.showError(`Failed to resume session ${targetSessionId}: ${msg}`);
-      return false;
-    }
-    return true;
+      if (this.state.appState.isReplaying) {
+        this.showError('Cannot switch sessions while history is replaying.');
+        return false;
+      }
+
+      let session: Session;
+      try {
+        this.showStatus(`Resuming session ${targetSessionId}…`);
+        session = await this.harness.resumeSession({
+          id: targetSessionId,
+          replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
+        });
+        if (plan?.kind === 'switch') {
+          if (
+            !(await this.applyWorkLocationOrRollback(plan.location, {
+              resolveEnvironment: false,
+            }))
+          ) {
+            await Promise.resolve(session.close?.()).catch(() => {});
+            return false;
+          }
+          await this.switchToSession(session, switchedNotice(plan.location.cwd));
+          if (plan.missing) {
+            this.showStatus(missingWorkdirNotice(plan.location.cwd), 'warning');
+          }
+          return true;
+        }
+        await this.switchToSession(session, `Resumed session (${session.id}).`);
+        if (plan?.kind === 'here' && plan.missing) {
+          this.showStatus(missingWorkdirNotice(this.state.appState.workDir), 'warning');
+        }
+      } catch (error) {
+        log.error('failed to resume session', {
+          sessionId: targetSessionId,
+          error,
+          details:
+            isKimiError(error) && error.code === ErrorCodes.WIRE_VERSION_TOO_LOW
+              ? error.details
+              : undefined,
+        });
+        const msg = formatErrorMessage(error);
+        this.showError(`Failed to resume session ${targetSessionId}: ${msg}`);
+        return false;
+      }
+      return true;
+    });
   }
 
-  async switchToSession(session: Session, statusMessage: string): Promise<void> {
-    this.resetSessionRuntime();
-    await this.setSession(session);
-    await this.syncRuntimeState(session);
-    this.updateTerminalTitle();
-    try {
-      await this.refreshSkillCommands(this.session);
-      await this.refreshPluginCommands(this.session);
-    } catch {}
-    this.clearTranscriptAndRedraw();
-    try {
-      await this.sessionReplay.hydrateFromReplay(session);
-    } catch (error) {
-      const msg = formatErrorMessage(error);
-      this.showError(`Failed to replay session history: ${msg}`);
-    } finally {
-      this.sessionEventHandler.startSubscription();
-      void this.refreshEnvironmentSlot(session);
-    }
-    const resumeState = session.getResumeState();
-    this.surveyController.seedFromResumedAgents(resumeState?.sessionMetadata.agents ?? {});
-    if (resumeState?.warning !== undefined) {
-      this.showStatus(`Warning: ${resumeState.warning}`, 'warning');
-    }
-    this.showStatus(statusMessage);
-    void this.showSessionWarnings(session);
-    void this.cacheHint.maybeShowOnResume();
+  switchToSession(session: Session, statusMessage: string): Promise<void> {
+    return this.programResume.runHeld(async () => {
+      this.resetSessionRuntime();
+      await this.setSession(session);
+      await this.syncRuntimeState(session);
+      this.updateTerminalTitle();
+      try {
+        await this.refreshSkillCommands(this.session);
+        await this.refreshPluginCommands(this.session);
+      } catch {}
+      this.clearTranscriptAndRedraw();
+      try {
+        await this.sessionReplay.hydrateFromReplay(session);
+      } catch (error) {
+        const msg = formatErrorMessage(error);
+        this.showError(`Failed to replay session history: ${msg}`);
+      } finally {
+        this.sessionEventHandler.startSubscription();
+        void this.refreshEnvironmentSlot(session);
+      }
+      this.applyResumedSessionState(session);
+      this.showStatus(statusMessage);
+      void this.showSessionWarnings(session);
+      void this.cacheHint.maybeShowOnResume();
+    });
   }
 
-  async reloadCurrentSessionView(
+  reloadCurrentSessionView(
     session: Session,
     statusMessage: string,
     options?: { readonly replayHistory?: boolean },
   ): Promise<void> {
-    this.sessionEventUnsubscribe?.();
-    this.sessionEventUnsubscribe = undefined;
-    this.clearReverseRpcPanels();
-    session.setApprovalHandler(undefined);
-    session.setQuestionHandler(undefined);
-    this.approvalController.cancelAll('reloading session');
-    this.questionController.cancelAll('reloading session');
+    return this.programResume.runHeld(async () => {
+      this.sessionEventUnsubscribe?.();
+      this.sessionEventUnsubscribe = undefined;
+      this.clearReverseRpcPanels();
+      session.setApprovalHandler(undefined);
+      session.setQuestionHandler(undefined);
+      this.approvalController.cancelAll('reloading session');
+      this.questionController.cancelAll('reloading session');
 
-    this.resetSessionRuntime({ keepQueuedMessages: true });
-    this.session = session;
-    this.surveyController.seedUserTurnCount(
-      session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount,
-    );
-    this.harness.setTelemetryContext({ sessionId: session.id });
-    this.registerSessionHandlers(session);
-    await this.syncRuntimeState(session);
-    this.updateTerminalTitle();
-    try {
-      await this.refreshSkillCommands(session);
-      await this.refreshPluginCommands(session);
-    } catch {}
-    if (options?.replayHistory === true) {
-      this.clearTranscriptView();
+      this.resetSessionRuntime({ keepQueuedMessages: true });
+      this.session = session;
+      this.surveyController.seedUserTurnCount(
+        session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount,
+      );
+      this.harness.setTelemetryContext({ sessionId: session.id });
+      this.registerSessionHandlers(session);
+      await this.syncRuntimeState(session);
+      this.updateTerminalTitle();
       try {
-        await this.sessionReplay.hydrateFromReplay(session);
-      } catch (error) {
-        this.showError(`Failed to replay session history: ${formatErrorMessage(error)}`);
+        await this.refreshSkillCommands(session);
+        await this.refreshPluginCommands(session);
+      } catch {}
+      if (options?.replayHistory === true) {
+        this.clearTranscriptView();
+        try {
+          await this.sessionReplay.hydrateFromReplay(session);
+        } catch (error) {
+          this.showError(`Failed to replay session history: ${formatErrorMessage(error)}`);
+        }
       }
-    }
-    this.sessionEventHandler.startSubscription();
-    const resumeState = session.getResumeState();
+      this.sessionEventHandler.startSubscription();
+      this.applyResumedSessionState(session);
+      this.showStatus(statusMessage);
+      void this.showSessionWarnings(session);
+    });
+  }
+
+  private applyResumedSessionState(session: Session | undefined): void {
+    const resumeState = session?.getResumeState();
     this.surveyController.seedFromResumedAgents(resumeState?.sessionMetadata.agents ?? {});
     if (resumeState?.warning !== undefined) {
       this.showStatus(`Warning: ${resumeState.warning}`, 'warning');
     }
-    this.showStatus(statusMessage);
-    void this.showSessionWarnings(session);
   }
 
   async createNewSession(inherited?: {
@@ -4017,6 +4039,7 @@ export class KimiTUI {
     readonly environmentId: string;
     readonly environmentCwd?: string;
   }): Promise<void> {
+    const releaseResume = this.programResume.hold();
     const progress = this.showProgressSpinner('Starting a new session…');
     let ready = false;
     try {
@@ -4060,6 +4083,7 @@ export class KimiTUI {
       ready = true;
     } finally {
       progress.stop({ ok: ready, label: ready ? 'New session ready.' : 'New session setup failed.' });
+      releaseResume();
     }
   }
 
@@ -4181,6 +4205,12 @@ export class KimiTUI {
     if (component || trimmed || merged) {
       this.state.ui.requestRender();
     }
+    this.programResume.refresh();
+  }
+
+  replaceTranscriptEntries(entries: readonly TranscriptEntry[]): void {
+    this.state.transcriptEntries.splice(0, this.state.transcriptEntries.length, ...entries);
+    this.programResume.refresh();
   }
 
   moveTranscriptEntryToEnd(entry: TranscriptEntry): boolean {
@@ -4277,6 +4307,7 @@ export class KimiTUI {
     this.sessionEventHandler.notifications.clear();
     this.renderWelcome();
     this.state.ui.requestRender();
+    this.programResume.refresh();
   }
 
   private isFoldSegmentBoundaryComponent(child: Component): boolean {
@@ -4535,7 +4566,7 @@ export class KimiTUI {
   }
 
   showError(message: string): void {
-    this.showStatus(`Error: ${message}`, 'error');
+    this.showStatus(`${ERROR_STATUS_PREFIX}${message}`, 'error');
   }
 
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle {
@@ -5190,6 +5221,7 @@ export class KimiTUI {
         shortcuts: keyboardShortcuts(
           resolveFollowUpBehavior(this.state.appState.followUpBehavior),
           isKittyProtocolActive(),
+          this.state.ui.mode,
         ),
         onClose: () => {
           this.hideHelpPanel();
@@ -5327,43 +5359,45 @@ export class KimiTUI {
     }
   }
 
-  private async deleteCurrentSessionFromPicker(session: SessionRow): Promise<void> {
-    let inherited: { readonly environmentId: string; readonly environmentCwd?: string } | undefined;
-    let inheritError: unknown;
-    try {
-      inherited = await this.environmentForNewSession();
-    } catch (error) {
-      inheritError = error;
-    }
-    const startReplacement = async (): Promise<void> => {
-      this.setAppState({ sessionId: '' });
-      this.clearTranscriptAndRedraw();
-      if (inheritError !== undefined) {
-        this.showError(`Failed to start a new session: ${formatErrorMessage(inheritError)}`);
+  private deleteCurrentSessionFromPicker(session: SessionRow): Promise<void> {
+    return this.programResume.runHeld(async () => {
+      let inherited: { readonly environmentId: string; readonly environmentCwd?: string } | undefined;
+      let inheritError: unknown;
+      try {
+        inherited = await this.environmentForNewSession();
+      } catch (error) {
+        inheritError = error;
+      }
+      const startReplacement = async (): Promise<void> => {
+        this.setAppState({ sessionId: '' });
+        this.clearTranscriptAndRedraw();
+        if (inheritError !== undefined) {
+          this.showError(`Failed to start a new session: ${formatErrorMessage(inheritError)}`);
+          return;
+        }
+        await this.createNewSession(inherited);
+      };
+      try {
+        await this.closeSession('deleting session');
+        await this.harness.deleteSession(session.id);
+      } catch (error) {
+        const message = `Failed to delete session ${session.id}: ${formatErrorMessage(error)}`;
+        try {
+          const resumed = await this.harness.resumeSession({
+            id: session.id,
+            replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
+          });
+          await this.switchToSession(resumed, `Resumed session (${resumed.id}).`);
+        } catch {
+          await startReplacement();
+        }
+        this.showError(message);
+        this.hideSessionPicker();
         return;
       }
-      await this.createNewSession(inherited);
-    };
-    try {
-      await this.closeSession('deleting session');
-      await this.harness.deleteSession(session.id);
-    } catch (error) {
-      const message = `Failed to delete session ${session.id}: ${formatErrorMessage(error)}`;
-      try {
-        const resumed = await this.harness.resumeSession({
-          id: session.id,
-          replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
-        });
-        await this.switchToSession(resumed, `Resumed session (${resumed.id}).`);
-      } catch {
-        await startReplacement();
-      }
-      this.showError(message);
+      await startReplacement();
       this.hideSessionPicker();
-      return;
-    }
-    await startReplacement();
-    this.hideSessionPicker();
+    });
   }
 
   openUndoSelector(): void {

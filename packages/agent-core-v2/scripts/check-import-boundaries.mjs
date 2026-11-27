@@ -7,7 +7,7 @@ const PKG_ROOT = resolve(import.meta.dirname, '..');
 export const SRC_ROOT = join(PKG_ROOT, 'src');
 const TEST_ROOT = join(PKG_ROOT, 'test');
 const HUMAN_ROOT = join(SRC_ROOT, 'human');
-const ADAPTER_ROOT = join(SRC_ROOT, 'llm-adapter');
+const ADAPTER_ROOT = join(SRC_ROOT, 'provider-catalog');
 const LOOP_ADAPTER_ROOT = join(SRC_ROOT, 'agent/loop');
 const SESSION_LIFECYCLE_ADAPTER_ROOT = join(SRC_ROOT, 'session/agentLifecycle');
 const REMOTE_SERVER_ROOT = join(SRC_ROOT, 'remote/server');
@@ -98,7 +98,7 @@ const HUMAN_VOCABULARY = new Set([
 ]);
 
 const V2_ONLY_FIRST_SEGMENTS = new Set([
-  'llm-adapter',
+  'provider-catalog',
   'app',
   'project',
   'features',
@@ -176,7 +176,7 @@ export function checkSource(source, absFile) {
       violations.push({
         file: absFile,
         line,
-        message: `the kosong kernel is deleted (${specifier}) — request/provider code lives in #human/llm, the v2 compatibility boundary is #/llm-adapter`,
+        message: `the kosong kernel is deleted (${specifier}) — request/provider code lives in #human/llm, the v2 compatibility boundary is #/provider-catalog`,
       });
       continue;
     }
@@ -223,7 +223,7 @@ export function checkSource(source, absFile) {
           violations.push({
             file: absFile,
             line,
-            message: `human must not import outside its kernel ('${specifier}') — human is the pure LLM/agent kernel: it never imports llm-adapter or v2 domains`,
+            message: `human must not import outside its kernel ('${specifier}') — human is the pure LLM/agent kernel: it never imports provider-catalog or v2 domains`,
           });
           continue;
         }
@@ -232,7 +232,7 @@ export function checkSource(source, absFile) {
         violations.push({
           file: absFile,
           line,
-          message: `human must not import outside its kernel ('${specifier}') — human is the pure LLM/agent kernel: it never imports llm-adapter or v2 domains`,
+          message: `human must not import outside its kernel ('${specifier}') — human is the pure LLM/agent kernel: it never imports provider-catalog or v2 domains`,
         });
       }
       continue;
@@ -243,7 +243,7 @@ export function checkSource(source, absFile) {
       violations.push({
         file: absFile,
         line,
-        message: `only llm-adapter, agent/loop and session/agentLifecycle may import the human implementation ('${specifier}') — v2 code outside those adapter layers is limited to the vocabulary modules (${[...HUMAN_VOCABULARY].join(', ')})`,
+        message: `only provider-catalog, agent/loop and session/agentLifecycle may import the human implementation ('${specifier}') — v2 code outside those adapter layers is limited to the vocabulary modules (${[...HUMAN_VOCABULARY].join(', ')})`,
       });
     }
   }

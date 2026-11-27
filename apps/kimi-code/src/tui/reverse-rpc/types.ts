@@ -5,12 +5,6 @@ export interface BriefDisplayBlock {
   text: string;
 }
 
-export interface ReviewDisplayBlock {
-  type: 'review';
-  title: string;
-  detail: string;
-}
-
 export interface DiffDisplayBlock {
   type: 'diff';
   path: string;
@@ -83,7 +77,6 @@ export interface BackgroundTaskDisplayBlock {
 
 export type DisplayBlock =
   | BriefDisplayBlock
-  | ReviewDisplayBlock
   | DiffDisplayBlock
   | ShellDisplayBlock
   | FileOpDisplayBlock

@@ -56,7 +56,6 @@ export const TRANSCRIPT_TAIL_MIN_NAME_COLUMNS = 12;
 export const TRANSCRIPT_TAIL_TIMER_COLUMNS = ' · 99s'.length;
 export const TRANSCRIPT_TAIL_THINKING_THROTTLE_MS = 150;
 export const FOREGROUND_BASH_HINT_DELAY_MS = 10_000;
-export const AUTO_REVIEW_HINT_DELAY_MS = 3_000;
 export const DETACH_HINT_TEXT = 'Press Ctrl+B to run in background';
 
 export const MOON_SPINNER_FRAMES = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'];

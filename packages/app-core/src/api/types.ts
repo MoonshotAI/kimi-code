@@ -1,5 +1,6 @@
 
 import type { ToolMedia } from '../client/types';
+import type { AppNoticeCopyLink, AppNoticeDetail, AppNoticePosition } from '../contracts';
 import type { ConversationFrame, ConversationTurnsPage } from '../conversation/types';
 import type { RcDeviceList } from '../lib/rcDevicesApi';
 
@@ -20,19 +21,6 @@ export interface PageRequest {
 }
 
 export type AppNoticeSeverity = 'info' | 'success' | 'warning' | 'error';
-
-export type AppNoticePosition = 'top-center' | 'top-right' | 'bottom-center' | 'bottom-right';
-
-export interface AppNoticeDetail {
-  label: string;
-  value: string;
-}
-
-export interface AppNoticeCopyLink {
-  label: string;
-  copiedLabel: string;
-  url: string;
-}
 
 export interface AppNotice {
   severity: AppNoticeSeverity;
@@ -348,12 +336,6 @@ export interface ApprovalResponse {
   selectedLabel?: string;
 }
 
-export interface ApprovalReviewDetail {
-  outcome: 'denied' | 'failed';
-  risk?: 'low' | 'medium' | 'high';
-  reason: string;
-}
-
 export interface AppApprovalRequest {
   approvalId: string;
   sessionId: string;
@@ -363,7 +345,6 @@ export interface AppApprovalRequest {
   toolName: string;
   action: string;
   display: unknown;
-  approvalDetail?: ApprovalReviewDetail;
 }
 
 export interface QuestionOption {

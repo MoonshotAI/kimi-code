@@ -1,4 +1,4 @@
-import { overlayScrollbarThumb } from '@moonshot-ai/app-client/composables';
+import { overlayScrollbarThumb } from '@moonshot-ai/app-ui';
 
 const SCROLLBAR_IDLE_FALLBACK_MS = 500;
 const MARKDOWN_CONTAINERS = '.code-block-container, .diff-wrap, .table-node-wrapper, .node-content > pre[data-markstream-pre]';

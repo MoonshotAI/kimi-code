@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { TIMEOUTS } from '@moonshot-ai/testkit/fixtures';
 import type { BrowserContext, Page } from '@playwright/test';
 
-import type { ApprovalExpectation, ApproveOptions, Diagnostic, Frame, PermissionMode, ReopenState, SurfaceDriver, ToolExpectation } from '../support/verbs';
+import type { ApprovalExpectation, ApproveOptions, Diagnostic, Frame, PermissionMode, PlanModeState, ReopenState, SurfaceDriver, ToolExpectation } from '../support/verbs';
 import { RendererSurface, type MenuPage } from './renderer';
 
 export const WELCOME_DIALOG = 'Welcome to Kimi Code';
@@ -113,6 +113,14 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().setPermissionMode(mode);
   }
 
+  switchModel(name: string): Promise<void> {
+    return this.window().switchModel(name);
+  }
+
+  setThinkingEffort(effort: string): Promise<void> {
+    return this.window().setThinkingEffort(effort);
+  }
+
   stop(): Promise<void> {
     return this.window().stop();
   }
@@ -145,6 +153,22 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().expectTranscript(text);
   }
 
+  undo(): Promise<void> {
+    return this.window().undo();
+  }
+
+  recallPrevious(): Promise<void> {
+    return this.window().recallPrevious();
+  }
+
+  submit(text: string): Promise<void> {
+    return this.window().submit(text);
+  }
+
+  expectComposer(text: string): Promise<void> {
+    return this.window().expectComposer(text);
+  }
+
   newSession(): Promise<void> {
     return this.window().newSession();
   }
@@ -153,12 +177,36 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().compact();
   }
 
+  openSession(title: string): Promise<void> {
+    return this.window().openSession(title);
+  }
+
+  reload(): Promise<void> {
+    return this.window().reload();
+  }
+
+  useSkill(name: string): Promise<void> {
+    return this.window().useSkill(name);
+  }
+
+  setPlanMode(state: PlanModeState): Promise<void> {
+    return this.window().setPlanMode(state);
+  }
+
+  btw(question: string, reply: string): Promise<void> {
+    return this.window().btw(question, reply);
+  }
+
   idle(): Promise<boolean> {
     return this.window().idle();
   }
 
   protected resizeWindow(viewport: { readonly width: number; readonly height: number }): Promise<void> {
     return this.window().resize(viewport);
+  }
+
+  protected switchBrowserControl(enabled: boolean): Promise<void> {
+    return this.window().setBrowserControl(enabled);
   }
 
   protected async awaitResumed(lastPrompt: string | undefined): Promise<void> {

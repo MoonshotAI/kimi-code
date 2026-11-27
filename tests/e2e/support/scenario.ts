@@ -5,23 +5,35 @@ import { fileURLToPath } from 'node:url';
 
 import {
   contentDigest,
+  createGitRepository,
   createTestHome,
   directoryChanges,
+  mergeKimiConfig,
   snapshotDirectory,
+  startFakeMcpHttpServer,
   writeKimiConfig,
+  writeMcpConfig,
   type DirectorySnapshot,
+  type FakeMcpHttpServer,
+  type FakeMcpTool,
+  type KimiConfig,
+  type McpRemoteServerEntry,
+  runGit,
   type TestHome,
+  until,
 } from '@moonshot-ai/testkit/fixtures';
-import { fakeModelConfig, startFakeModel, type FakeModel } from '@moonshot-ai/testkit/model';
+import { fakeModelConfig, startFakeModel, type FakeModel, type FakeProviderOptions } from '@moonshot-ai/testkit/model';
 import { expect, test as base, type TestInfo } from '@playwright/test';
 
 import { startAcp } from '../surfaces/acp';
 import { startDesktop } from '../surfaces/desktop';
+import { clockFileOf } from '../surfaces/environment';
 import { startTui } from '../surfaces/tui';
 import { startWeb } from '../surfaces/web';
-import { DISK_TITLES, STEP_TITLES } from './steps';
+import { CLOCK_TITLE, CONFIG_TITLE, DISK_TITLES, GIT_TITLE, MCP_TITLES, STEP_TITLES } from './steps';
 import {
   absenceReason,
+  StartupFailure,
   SURFACES,
   unavailableReason,
   VARIANTS,
@@ -38,6 +50,7 @@ import {
   type ProductOn,
   type Surface,
   type SurfaceDriver,
+  type EditorMcpServer,
   type SurfaceLaunch,
   type SurfacesOf,
   type ToolExpectation,
@@ -51,8 +64,33 @@ export interface SurfaceOptions {
   variant: Variant | undefined;
 }
 
+export type ScenarioProvider = Pick<FakeProviderOptions, 'type' | 'capabilities' | 'maxContextSize'>;
+
+export interface ScenarioMcpServer {
+  readonly tools: readonly FakeMcpTool[];
+  readonly startupDelayMs?: number;
+  readonly deferred?: boolean;
+  readonly from?: 'config' | 'editor';
+}
+
+export interface McpServerHandle {
+  addTool(tool: FakeMcpTool): Promise<void>;
+  updateTool(name: string, change: Partial<Omit<FakeMcpTool, 'name'>>): Promise<void>;
+  removeTool(name: string): Promise<void>;
+  disconnect(): Promise<void>;
+}
+
+export interface ScenarioGit {
+  readonly branches?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+}
+
 export interface ScenarioOptions {
   readonly workspace?: Readonly<Record<string, string>>;
+  readonly git?: ScenarioGit;
+  readonly clock?: string;
+  readonly provider?: ScenarioProvider;
+  readonly config?: KimiConfig;
+  readonly mcp?: Readonly<Record<string, ScenarioMcpServer>>;
   readonly workspaceTrust?: SurfaceLaunch['workspaceTrust'];
   readonly except?: Readonly<Partial<Record<Surface, string>>>;
   readonly onlyOn?: readonly Surface[];
@@ -66,12 +104,16 @@ export interface Workspace {
   write(path: string, content: string): Promise<void>;
   expectFile(path: string, content: string): Promise<void>;
   expectMissing(path: string): Promise<void>;
+  git(args: readonly string[]): Promise<void>;
 }
 
 export interface ScenarioContext<S extends Surface> {
   readonly product: ProductOn<S>;
   readonly model: FakeModel;
   readonly workspace: Workspace;
+  readonly mcp: (name: string) => McpServerHandle;
+  readonly clock: (time: string) => Promise<void>;
+  readonly configure: (edit: (config: KimiConfig) => KimiConfig) => Promise<void>;
 }
 
 export type ScenarioBody<S extends Surface> = (context: ScenarioContext<S>) => Promise<void>;
@@ -80,6 +122,9 @@ interface RunningContext {
   readonly product: Actions;
   readonly model: FakeModel;
   readonly workspace: Workspace;
+  readonly mcp: (name: string) => McpServerHandle;
+  readonly clock: (time: string) => Promise<void>;
+  readonly configure: (edit: (config: KimiConfig) => KimiConfig) => Promise<void>;
 }
 
 type RunningBody = (context: RunningContext) => Promise<void>;
@@ -157,7 +202,7 @@ async function readIfPresent(path: string): Promise<string | undefined> {
   }
 }
 
-function promptCheck(verb: 'send' | 'queue' | 'steer'): (text: string) => void {
+function promptCheck(verb: 'send' | 'queue' | 'steer' | 'openSession' | 'btw'): (text: string) => void {
   return (text) => {
     if (!/^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u.test(text) || text !== text.trim()) {
       throw new Error(`${verb}() takes one line of printable text without surrounding spaces, got ${JSON.stringify(text)}`);
@@ -198,12 +243,24 @@ function assertToolExpectation(expectation: ToolExpectation): void {
   }
 }
 
-function lineCheck(verb: 'expectError' | 'expectAbsent' | 'rejectWithFeedback' | 'answer' | 'answerOther'): (text: string) => void {
+function lineCheck(verb: 'expectError' | 'expectAbsent' | 'rejectWithFeedback' | 'answer' | 'answerOther' | 'switchModel' | 'btw'): (text: string) => void {
   return (text) => {
     if (!/^[ -~]+$/.test(text) || text !== text.trim()) {
       throw new Error(`${verb}() takes one line of printable ASCII without surrounding spaces, got ${JSON.stringify(text)}`);
     }
   };
+}
+
+function assertSkillName(name: string): void {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+    throw new Error(`useSkill() takes the name of a skill in lowercase letters, digits and dashes, like "release-notes", got ${JSON.stringify(name)}`);
+  }
+}
+
+function assertEffort(effort: string): void {
+  if (!/^[a-z]+$/.test(effort)) {
+    throw new Error(`setThinkingEffort() takes the effort as the configuration names it, one lowercase word like "high", got ${JSON.stringify(effort)}`);
+  }
 }
 
 function assertApprovalExpectation({ name, target }: ApprovalExpectation): void {
@@ -212,6 +269,15 @@ function assertApprovalExpectation({ name, target }: ApprovalExpectation): void 
   }
   if (name !== 'Bash' && workspaceKey(target) !== target) {
     throw new Error(`expectApproval() takes the file as a normalized path relative to the workspace, like "notes/a.txt", got ${JSON.stringify(target)}`);
+  }
+}
+
+function assertWorkspaceDirectory(path: string): void {
+  if (!/^[!-~]+$/.test(path) || workspaceKey(path) !== path) {
+    throw new Error(`addDir() takes a directory as a normalized path relative to the workspace, without spaces, like "docs", got ${JSON.stringify(path)}`);
+  }
+  if ('list'.startsWith(path.toLowerCase())) {
+    throw new Error(`addDir() cannot add ${JSON.stringify(path)}: the CLI completes it to the list subcommand of /add-dir, which only shows the directories.`);
   }
 }
 
@@ -226,11 +292,30 @@ const PRECHECKS: { readonly [V in Verb]?: (...args: Parameters<Actions[V]>) => v
   expectApproval: assertApprovalExpectation,
   expectError: lineCheck('expectError'),
   expectAbsent: lineCheck('expectAbsent'),
+  openSession: promptCheck('openSession'),
+  useSkill: assertSkillName,
+  switchModel: lineCheck('switchModel'),
+  setThinkingEffort: assertEffort,
+  addDir: assertWorkspaceDirectory,
+  btw: (question, reply) => {
+    promptCheck('btw')(question);
+    lineCheck('btw')(reply);
+  },
 };
 
 
+function timeOf(time: string): string {
+  if (Number.isNaN(Date.parse(time))) throw new Error(`A clock time must be an ISO-8601 time like 2030-01-01T12:00:00Z, got ${JSON.stringify(time)}`);
+  return time;
+}
+
 function problemOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+interface Conversation {
+  title?: string;
+  lastPrompt?: string;
 }
 
 interface RunningProduct {
@@ -245,15 +330,19 @@ class ScenarioSession {
   private readonly declared = new Map<string, string | undefined>();
   private home: TestHome | undefined;
   private model: FakeModel | undefined;
+  private readonly mcpServers = new Map<string, FakeMcpHttpServer>();
+  private readonly editorMcpServers: EditorMcpServer[] = [];
   private driver: SurfaceDriver<Surface> | undefined;
   private baseline: DirectorySnapshot | undefined;
+  private gitWorkspace = false;
   private interfaceChecks = 0;
   private frames: FramePolicy = 'on-failure';
   private testInfo: TestInfo | undefined;
   private steps = 0;
   private failedStep: string | undefined;
   private launches = 1;
-  private lastPrompt: string | undefined;
+  private conversation: Conversation = {};
+  private readonly conversations: Conversation[] = [this.conversation];
   private workspaceTrust: SurfaceLaunch['workspaceTrust'];
   private readonly earlierDiagnostics: Diagnostic[] = [];
   private readonly performed = new Set<Verb>();
@@ -273,16 +362,81 @@ class ScenarioSession {
     this.home = home;
     assertOutsideGitWorkTree(home.workspace);
     await seedWorkspace(home.workspace, options.workspace ?? {});
+    if (options.git !== undefined) await createGitRepository(home.workspace, { branches: options.git.branches });
+    this.gitWorkspace = options.git !== undefined;
     const model = await startFakeModel();
     this.model = model;
-    await writeKimiConfig(home.dataDir, fakeModelConfig(model));
+    let config = mergeKimiConfig(fakeModelConfig(model, options.provider), options.config ?? {});
+    await writeKimiConfig(home.dataDir, config);
+    await this.startMcpServers(home, options.mcp);
+    if (options.clock !== undefined) await writeFile(clockFileOf(home), timeOf(options.clock));
     const startupStep = this.workspaceTrust === undefined ? '启动产品，等到可以输入' : '启动产品，处理工作区信任提示';
     await base.step(startupStep, async () => {
-      this.driver = await startSurface(this.surface, { home, model, workspaceTrust: this.workspaceTrust, ...this.variantLaunch() });
-      this.baseline = await snapshotDirectory(home.workspace);
+      this.driver = await this.launch({ home, model, workspaceTrust: this.workspaceTrust, ...this.launchOptions() });
+      this.baseline = await this.workTreeSnapshot(home.workspace);
       if (frames === 'every-step') await this.show('00 启动完成');
     });
-    return { product: this.userActions(), model, workspace: this.workspace(home.workspace) };
+    return {
+      product: this.userActions(),
+      model,
+      workspace: this.workspace(home.workspace),
+      mcp: (name) => this.mcpServer(name),
+      clock: (time) =>
+        base.step(CLOCK_TITLE(time), async () => {
+          if (options.clock === undefined) throw new Error('clock() moves the clock of the machine; give the scenario a starting time with the clock option.');
+          await writeFile(clockFileOf(home), timeOf(time));
+        }),
+      configure: (edit) =>
+        base.step(CONFIG_TITLE, async () => {
+          config = edit(config);
+          await writeKimiConfig(home.dataDir, config);
+        }),
+    };
+  }
+
+  private async startMcpServers(home: TestHome, servers: ScenarioOptions['mcp']): Promise<void> {
+    if (servers === undefined) return;
+    const entries: Record<string, McpRemoteServerEntry> = {};
+    for (const [name, { tools, startupDelayMs, deferred, from }] of Object.entries(servers)) {
+      const server = await startFakeMcpHttpServer(startupDelayMs === undefined ? { name, tools } : { name, tools, initializeDelayMs: startupDelayMs });
+      this.mcpServers.set(name, server);
+      if (from === 'editor') this.editorMcpServers.push({ name, url: server.url });
+      else entries[name] = deferred === undefined ? { transport: 'http', url: server.url } : { transport: 'http', url: server.url, deferred };
+    }
+    if (Object.keys(entries).length > 0) await writeMcpConfig(join(home.dataDir, 'mcp.json'), entries);
+  }
+
+  private mcpServer(name: string): McpServerHandle {
+    const server = this.mcpServers.get(name);
+    if (server === undefined) {
+      const declared = [...this.mcpServers.keys()];
+      throw new Error(
+        `The scenario declares no MCP server named ${JSON.stringify(name)}; declare it in the mcp option. Declared: ${declared.length === 0 ? 'none' : declared.join(', ')}.`,
+      );
+    }
+    const relisted = (title: string, change: () => void): Promise<void> =>
+      base.step(title, async () => {
+        const before = server.requests.length;
+        change();
+        await until(`MCP server ${JSON.stringify(name)} to answer the product's next tools/list`, () =>
+          server.answered.some((request) => server.requests.indexOf(request) >= before && request.rpcMethods.includes('tools/list')),
+        );
+      });
+    return {
+      addTool: (tool) => relisted(MCP_TITLES.addTool(name, tool.name), () => server.addTool(tool)),
+      updateTool: (tool, change) => relisted(MCP_TITLES.updateTool(name, tool), () => server.updateTool(tool, change)),
+      removeTool: (tool) => relisted(MCP_TITLES.removeTool(name, tool), () => server.removeTool(tool)),
+      disconnect: () =>
+        base.step(MCP_TITLES.disconnect(name), async () => {
+          const before = server.requests.length;
+          await server.disconnect();
+          await until(`the product to connect to MCP server ${JSON.stringify(name)} again and list its tools`, () => {
+            const since = server.answered.filter((request) => server.requests.indexOf(request) >= before);
+            const initialized = since.findIndex((request) => request.rpcMethods.includes('initialize'));
+            return initialized !== -1 && since.slice(initialized).some((request) => request.rpcMethods.includes('tools/list'));
+          });
+        }),
+    };
   }
 
   async finish(testInfo: TestInfo): Promise<void> {
@@ -299,6 +453,7 @@ class ScenarioSession {
     } finally {
       await this.driver?.kill();
       await model?.close();
+      for (const server of this.mcpServers.values()) await server.close();
       if (clean) await home.remove();
       else testInfo.annotations.push({ type: 'test home', description: home.root });
     }
@@ -349,12 +504,38 @@ class ScenarioSession {
     const method: unknown = Reflect.get(driver, verb);
     if (typeof method !== 'function') throw new Error(`The ${this.surface} driver does not implement ${verb}().`);
     await Reflect.apply(method, driver, args);
-    if (verb === 'send' || verb === 'queue' || verb === 'steer') this.lastPrompt = String(args[0]);
-    if (verb === 'newSession') this.lastPrompt = undefined;
+    if (verb === 'send' || verb === 'queue' || verb === 'steer' || verb === 'submit') {
+      const prompt = String(args[0]);
+      this.conversation.title ??= prompt;
+      this.conversation.lastPrompt = prompt;
+    }
+    if (verb === 'undo') this.conversation.lastPrompt = undefined;
+    if (verb === 'newSession') {
+      this.conversation = {};
+      this.conversations.push(this.conversation);
+    }
+    if (verb === 'openSession') {
+      const title = String(args[0]);
+      this.conversation = this.conversations.find((conversation) => conversation.title === title) ?? { title };
+    }
   }
 
-  private variantLaunch(): { readonly variant?: Variant } {
-    return this.variant === undefined ? {} : { variant: this.variant };
+  private async launch(launch: SurfaceLaunch): Promise<SurfaceDriver<Surface>> {
+    try {
+      return await startSurface(this.surface, launch);
+    } catch (error) {
+      if (error instanceof StartupFailure) {
+        for (const diagnostic of error.diagnostics) this.earlierDiagnostics.push({ ...diagnostic, name: `launch-${this.launches}-${diagnostic.name}` });
+      }
+      throw error;
+    }
+  }
+
+  private launchOptions(): Pick<SurfaceLaunch, 'variant' | 'editorMcpServers'> {
+    return {
+      ...(this.variant === undefined ? {} : { variant: this.variant }),
+      ...(this.editorMcpServers.length === 0 ? {} : { editorMcpServers: this.editorMcpServers }),
+    };
   }
 
   private async restart(): Promise<void> {
@@ -389,12 +570,12 @@ class ScenarioSession {
     this.driver = undefined;
     if (problems.length > 0) throw new Error(`The product did not shut down cleanly before ${verb}():\n\n${problems.join('\n\n')}`);
     this.launches += 1;
-    this.driver = await startSurface(this.surface, {
+    this.driver = await this.launch({
       home,
       model,
       workspaceTrust: this.workspaceTrust,
-      reopen: { launch: this.launches, lastPrompt: this.lastPrompt, state },
-      ...this.variantLaunch(),
+      reopen: { launch: this.launches, lastPrompt: this.conversation.lastPrompt, state },
+      ...this.launchOptions(),
     });
   }
 
@@ -457,7 +638,19 @@ class ScenarioSession {
           this.declared.set(key, undefined);
           expect(await readIfPresent(join(root, key)), `workspace file ${key} should not exist`).toBeUndefined();
         }),
+      git: (args) =>
+        base.step(GIT_TITLE(args), async () => {
+          if (!this.gitWorkspace) throw new Error('workspace.git() runs git in the workspace like the user in a terminal; make the workspace a repository with the git option.');
+          const before = await this.workTreeSnapshot(root);
+          await runGit(root, args);
+          const after = await this.workTreeSnapshot(root);
+          for (const { path } of directoryChanges(before, after)) this.declared.set(path, Object.hasOwn(after, path) ? after[path] : undefined);
+        }),
     };
+  }
+
+  private workTreeSnapshot(root: string): Promise<DirectorySnapshot> {
+    return snapshotDirectory(root, { skip: this.gitWorkspace ? ['.git'] : [] });
   }
 
   private async closingProblems(): Promise<string[]> {
@@ -479,7 +672,14 @@ class ScenarioSession {
     } catch (error) {
       problems.push(`The fake model reported problems:\n${problemOf(error)}`);
     }
-    const changes = directoryChanges(this.expectedWorkspace(baseline), await snapshotDirectory(home.workspace));
+    const keys = [...new Set(model.promptCache().filter((entry) => entry.role === 'main' && !entry.rejected).map((entry) => entry.cacheKey))];
+    if (keys.length > this.conversations.length) {
+      problems.push(
+        `The product sent main requests under ${keys.length} prompt cache keys (${keys.map((key) => JSON.stringify(key ?? null)).join(', ')}), but the scenario used ${this.conversations.length} session(s). ` +
+          'A provider reuses a cached prefix only under the same key, so every request of a session must keep its key, also after a restart.',
+      );
+    }
+    const changes = directoryChanges(this.expectedWorkspace(baseline), await this.workTreeSnapshot(home.workspace));
     if (changes.length > 0) {
       problems.push(
         [
@@ -506,6 +706,10 @@ class ScenarioSession {
     if (model !== undefined) {
       const requests = model.requests().map(({ index, lane, state }) => ({ index, lane, state }));
       await testInfo.attach('model-requests', { body: JSON.stringify({ requests, problems: model.problems() }, null, 2), contentType: 'application/json' });
+      await testInfo.attach('prompt-cache', {
+        body: JSON.stringify({ problems: model.promptCacheProblems(), entries: model.promptCache() }, null, 2),
+        contentType: 'application/json',
+      });
     }
     for (const diagnostic of this.earlierDiagnostics) {
       if ('path' in diagnostic) await testInfo.attach(diagnostic.name, { path: diagnostic.path });
@@ -540,6 +744,13 @@ const test = base.extend<SurfaceOptions & { session: ScenarioSession }>({
 });
 
 function assertScenarioOptions(title: string, options: ScenarioOptions): void {
+  const fromEditor = Object.entries(options.mcp ?? {}).filter(([, server]) => server.from === 'editor');
+  if (fromEditor.length > 0 && (options.onlyOn?.length !== 1 || options.onlyOn[0] !== 'acp')) {
+    throw new Error(`Scenario "${title}" lets the editor pass MCP server(s) ${fromEditor.map(([name]) => name).join(', ')}, which only an ACP editor does; limit the scenario to ACP.`);
+  }
+  if (fromEditor.some(([, server]) => server.deferred !== undefined)) {
+    throw new Error(`Scenario "${title}" sets deferred on an MCP server the editor passes; an ACP editor cannot mark a server as deferred.`);
+  }
   if (options.workspaceTrust !== undefined && (options.onlyOn?.length !== 1 || options.onlyOn[0] !== 'tui')) {
     throw new Error(`Scenario "${title}" sets workspaceTrust without limiting the scenario to TUI.`);
   }

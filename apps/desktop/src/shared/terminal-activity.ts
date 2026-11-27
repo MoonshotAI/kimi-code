@@ -23,6 +23,16 @@ export interface NativeTerminalCreateOptions {
   ssh?: NativeTerminalSshTarget;
 }
 
+export interface NativeTerminalBridge {
+  inspectNativeTerminals?: (ids: string[]) => Promise<TerminalActivity[]>;
+  createNativeTerminal: (opts?: NativeTerminalCreateOptions) => Promise<{ id: string; shell: string; cwd: string }>;
+  nativeTerminalInput: (id: string, data: string) => void;
+  nativeTerminalResize: (id: string, cols: number, rows: number) => void;
+  closeNativeTerminal: (id: string) => void;
+  onNativeTerminalOutput: (cb: (id: string, data: string) => void) => () => void;
+  onNativeTerminalExit: (cb: (id: string, exitCode: number | null) => void) => () => void;
+}
+
 export function normalizeTerminalSshTarget(value: unknown): NativeTerminalSshTarget | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const raw = value as Record<string, unknown>;

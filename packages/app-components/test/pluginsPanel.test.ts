@@ -3,7 +3,7 @@ import { computed, createApp, h, nextTick, reactive, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
+import { getIcon, type IconName } from '@moonshot-ai/app-ui/icons';
 import type {
   AppPluginMarketplaceEntry,
   AppPluginOrigin,

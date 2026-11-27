@@ -4,7 +4,7 @@ import type { LoopHooks } from '@moonshot-ai/core/loop/contract/hook';
 import { ToolExecutor } from '#/tool/executor';
 import type { Message, UserMessage } from '@moonshot-ai/core/llm/message';
 import { contextFromHistoryEntry, historyFromContext } from '#/agent/loop/history';
-import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
+import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/provider-catalog/capability';
 
 export function submitPromptTurn(
   loop: IAgentLoopService,
@@ -135,6 +135,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const stub: StubLoop = {
     _serviceBrand: undefined, hooks, launches, cancels, startTurn, batchStartingHooks,
     requester: {} as IAgentLoopService['requester'],
+    resolveMaxOutputTokens: () => undefined,
     registerToolBatchStarting(hook) {
       batchStartingHooks.push(hook);
       return toDisposable(() => {

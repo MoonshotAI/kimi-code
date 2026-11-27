@@ -9,7 +9,7 @@ import {
   resolveKimiCodeOAuthRef,
   resolveKimiTokenStorageName,
 } from '@moonshot-ai/kimi-code-oauth';
-import { createGitRepository, createGitWorktree, fakeMcpServer, type GitWorktreeLayout } from '@moonshot-ai/testkit/fixtures';
+import { createGitRepository, createGitWorktree, fakeMcpServer, slashPathOf, type GitWorktreeLayout } from '@moonshot-ai/testkit/fixtures';
 import { createFakeModel, say } from '@moonshot-ai/testkit/model';
 import { createKimiServices } from '@moonshot-ai/testkit/services';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -628,7 +628,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       });
       const session = await harness.createSession({ workDir, environmentId: 'fake-box', model: 'stub' });
       const meta = JSON.parse(await readFile(join(await findSessionDir(homeDir, session.id), 'state.json'), 'utf-8'));
-      expect(meta).toMatchObject({ environmentId: 'fake-box', environmentCwd: remoteDir, cwd: workDir });
+      expect(meta).toMatchObject({ environmentId: 'fake-box', environmentCwd: remoteDir, cwd: slashPathOf(workDir) });
       await client.engineAccessor.get(ISessionManager).close(session.id);
       const fake = client.engineAccessor.get(IEnvironmentService).current('fake-box') as FakeEnvironment;
       fake.setStatus('disconnected');
@@ -671,13 +671,13 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       await rm(workDir, { recursive: true });
 
       const resumed = await harness.resumeSession({ id: created.id });
-      expect(resumed.workDir).toBe(workDir);
+      expect(resumed.workDir).toBe(slashPathOf(workDir));
       const fork = await harness.forkSession({ id: created.id });
-      expect(fork.workDir).toBe(workDir);
+      expect(fork.workDir).toBe(slashPathOf(workDir));
       await harness.renameSession({ id: created.id, title: 'Renamed' });
       expect(
         (await harness.listSessions()).map((item) => [item.id, item.workDir]).toSorted(),
-      ).toEqual([[created.id, workDir], [fork.id, workDir]].toSorted());
+      ).toEqual([[created.id, slashPathOf(workDir)], [fork.id, slashPathOf(workDir)]].toSorted());
     } finally {
       await harness.close();
     }
@@ -706,9 +706,9 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
 
     const reopened = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
     try {
-      expect((await reopened.resumeSession({ id: created.id })).workDir).toBe(worktree);
+      expect((await reopened.resumeSession({ id: created.id })).workDir).toBe(slashPathOf(worktree));
       const workspaces = (reopened['rpc'] as SDKRpcClientV2).engineAccessor.get(IProjectService);
-      expect((await workspaces.list()).map(({ id, root }) => ({ id, root }))).toEqual([{ id: projectId, root: main }]);
+      expect((await workspaces.list()).map(({ id, root }) => ({ id, root }))).toEqual([{ id: projectId, root: slashPathOf(main) }]);
     } finally {
       await reopened.close();
     }
@@ -760,10 +760,10 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       await session.close();
       await harness.resumeSession({ id: session.id });
       expect(await read(session.id, reference)).toEqual(bytes);
-      expect(getLiveSessionById(client.engineAccessor, session.id)!.accessor.get(ISessionContext).cwd).toBe(workDir);
+      expect(getLiveSessionById(client.engineAccessor, session.id)!.accessor.get(ISessionContext).cwd).toBe(slashPathOf(workDir));
       await fork.close();
       const restoredFork = await harness.resumeSession({ id: fork.id });
-      expect(getLiveSessionById(client.engineAccessor, restoredFork.id)!.accessor.get(ISessionContext).cwd).toBe(workDir);
+      expect(getLiveSessionById(client.engineAccessor, restoredFork.id)!.accessor.get(ISessionContext).cwd).toBe(slashPathOf(workDir));
     } finally {
       await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
     }
@@ -2033,7 +2033,7 @@ key = "${titleOAuthRef.key}"
       const manager = client.engineAccessor.get(IProjectInstanceManager);
       const acquireSpy = vi.spyOn(manager, 'acquire');
       try {
-        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
+        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([slashPathOf(extraDir)]);
         expect(harness.sessions.size).toBe(0);
         expect(acquireSpy).toHaveBeenCalledTimes(1);
         const lease = await acquireSpy.mock.results[0]!.value;
@@ -2057,7 +2057,7 @@ key = "${titleOAuthRef.key}"
         await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([]);
         const project = await workspaces.resolveImplicit(workDir);
         await workspaces.update(project.id, { additionalDirs: [extraDir] });
-        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
+        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([slashPathOf(extraDir)]);
         expect(harness.sessions.size).toBe(0);
       } finally {
         await harness.close();
@@ -2098,7 +2098,7 @@ key = "${titleOAuthRef.key}"
         await workspaces.update(project.id, { additionalDirs: [extraDir] });
         await rm(workDir, { recursive: true });
 
-        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
+        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([slashPathOf(extraDir)]);
       } finally {
         await harness.close();
       }
@@ -2873,8 +2873,8 @@ key = "${titleOAuthRef.key}"
         await mkdir(dirname(localToml));
         await writeFile(localToml, '[workspace\n', 'utf-8');
 
-        expect((await harness.reloadSession({ id: sessions.get(intact)! })).workDir).toBe(intact);
-        await expect(harness.reloadSession({ id: sessions.get(broken)! })).rejects.toThrow(`Invalid TOML in ${localToml}`);
+        expect((await harness.reloadSession({ id: sessions.get(intact)! })).workDir).toBe(slashPathOf(intact));
+        await expect(harness.reloadSession({ id: sessions.get(broken)! })).rejects.toThrow(`Invalid TOML in ${slashPathOf(localToml)}`);
 
         await rm(localToml);
       }
@@ -2893,10 +2893,10 @@ key = "${titleOAuthRef.key}"
     const startInMain = () => harness.createSession({ workDir: main });
     try {
       await expect(startInMain()).rejects.toThrow('workspace.additional_dir must exist and be a directory');
-      expect(await harness.getWorkspaceTrustInfo(worktree)).toMatchObject({ trusted: false, projectRoot: main });
+      expect(await harness.getWorkspaceTrustInfo(worktree)).toMatchObject({ trusted: false, projectRoot: slashPathOf(main) });
       expect(await harness.listWorkspaceSkills(worktree)).not.toEqual([]);
       expect(await harness.getWorkspaceAdditionalDirs(worktree)).toEqual([]);
-      expect((await harness.createSession({ workDir: worktree })).workDir).toBe(worktree);
+      expect((await harness.createSession({ workDir: worktree })).workDir).toBe(slashPathOf(worktree));
       await expect(startInMain()).rejects.toThrow('workspace.additional_dir must exist and be a directory');
     } finally {
       await harness.close();
@@ -3100,7 +3100,7 @@ key = "${titleOAuthRef.key}"
 describe('SDKRpcClientV2 explicit MCP upserts', () => {
   const unreachable = { transport: 'http', url: 'http://127.0.0.1:1/mcp' } as const;
 
-  it('lands an explicit reconnect and an unpersisted add in the servers the sessions of the directory share', async () => {
+  it('lands an explicit reconnect and an unpersisted add in the session without leaking into sibling sessions or the project view', async () => {
     vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -3127,8 +3127,14 @@ describe('SDKRpcClientV2 explicit MCP upserts', () => {
         ['added', 'http'],
         ['project', 'http'],
       ]);
+
+      await client.createSession({ id: 'ses_mcp_sibling', workDir });
+      const sibling = await client.listMcpServers({ sessionId: 'ses_mcp_sibling' });
+      expect(sibling.map((entry) => [entry.name, entry.transport, entry.status])).toEqual([
+        ['project', 'stdio', 'disabled'],
+      ]);
       const workspace = await client.listWorkspaceMcpServers(workDir);
-      expect(workspace.map((entry) => entry.name).toSorted()).toEqual(['added', 'project']);
+      expect(workspace.map((entry) => [entry.name, entry.status])).toEqual([['project', 'disabled']]);
     } finally {
       await client.close();
       vi.unstubAllEnvs();
@@ -3644,9 +3650,9 @@ describe('SDKRpcClientV2 workspace trust', () => {
       await harness.trustWorkspace(home);
       await harness.createSession({ workDir: repository });
 
-      expect(await harness.getWorkspaceAdditionalDirs(repository)).toEqual([home]);
+      expect(await harness.getWorkspaceAdditionalDirs(repository)).toEqual([slashPathOf(home)]);
       expect((await harness.getWorkspaceTrustInfo(home)).trusted).toBe(true);
-      expect(await harness.getWorkspaceTrustInfo(repository)).toMatchObject({ trusted: false, projectRoot: repository });
+      expect(await harness.getWorkspaceTrustInfo(repository)).toMatchObject({ trusted: false, projectRoot: slashPathOf(repository) });
     } finally {
       await harness.close();
     }
@@ -3669,7 +3675,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
       await harness.trustWorkspace(elsewhere);
 
       for (const dir of [worktree, subdir]) {
-        expect(await harness.getWorkspaceTrustInfo(dir)).toMatchObject({ trusted: false, projectRoot: dir });
+        expect(await harness.getWorkspaceTrustInfo(dir)).toMatchObject({ trusted: false, projectRoot: slashPathOf(dir) });
       }
     } finally {
       await harness.close();
@@ -3810,9 +3816,9 @@ describe('SDKRpcClientV2 workspace trust', () => {
 
       const added = await session.addAdditionalDir(sessionOnly, { persist: false });
 
-      expect(added.additionalDirs).toEqual([sessionOnly]);
-      expect(await harness.getWorkspaceAdditionalDirs(main)).toEqual([sessionOnly]);
-      expect(await harness.getWorkspaceAdditionalDirs(`${main}/`)).toEqual([sessionOnly]);
+      expect(added.additionalDirs).toEqual([slashPathOf(sessionOnly)]);
+      expect(await harness.getWorkspaceAdditionalDirs(main)).toEqual([slashPathOf(sessionOnly)]);
+      expect(await harness.getWorkspaceAdditionalDirs(`${main}/`)).toEqual([slashPathOf(sessionOnly)]);
       expect(await harness.getWorkspaceAdditionalDirs(worktree)).toEqual([]);
     } finally {
       await harness.close();
@@ -3831,11 +3837,11 @@ describe('SDKRpcClientV2 workspace trust', () => {
         .accessor.get(ISessionWorkspaceContext);
 
       const added = await session.addAdditionalDir(sessionOnly, { persist: false });
-      expect(workspace.additionalDirs).toContain(sessionOnly);
+      expect(workspace.additionalDirs).toContain(slashPathOf(sessionOnly));
       expect(added.additionalDirs).toEqual(workspace.additionalDirs);
 
       const kept = await session.addAdditionalDir(remembered, { persist: true });
-      expect(workspace.additionalDirs).toEqual(expect.arrayContaining([sessionOnly, remembered]));
+      expect(workspace.additionalDirs).toEqual(expect.arrayContaining([slashPathOf(sessionOnly), slashPathOf(remembered)]));
       expect(kept.additionalDirs).toEqual(workspace.additionalDirs);
     } finally {
       await harness.close();
@@ -3855,13 +3861,13 @@ describe('SDKRpcClientV2 workspace trust', () => {
 
       const added = await session.addAdditionalDir(main, { persist: true });
 
-      expect(added).toMatchObject({ persisted: false, additionalDirs: [main] });
-      expect(workspace.additionalDirs).toEqual([main]);
-      expect(session.summary?.additionalDirs).toEqual([main]);
+      expect(added).toMatchObject({ persisted: false, additionalDirs: [slashPathOf(main)] });
+      expect(workspace.additionalDirs).toEqual([slashPathOf(main)]);
+      expect(session.summary?.additionalDirs).toEqual([slashPathOf(main)]);
       const catalog = JSON.parse(await readFile(join(homeDir, 'projects.json'), 'utf-8')) as {
         projects: Record<string, { root: string; additional_dirs?: string[] }>;
       };
-      expect(Object.values(catalog.projects).map((project) => [project.root, project.additional_dirs ?? []])).toEqual([[main, []]]);
+      expect(Object.values(catalog.projects).map((project) => [project.root, project.additional_dirs ?? []])).toEqual([[slashPathOf(main), []]]);
     } finally {
       await harness.close();
     }
@@ -3898,11 +3904,11 @@ describe('SDKRpcClientV2 workspace trust', () => {
 
       const projectId = encodeWorkDirKey(main);
       expect([inWorktree, inSubdir, inMain]).toEqual([
-        { projectId, projectRoot: main, workDir: worktree, environmentCwd: worktree },
-        { projectId, projectRoot: main, workDir: subdir, environmentCwd: subdir },
-        { projectId, projectRoot: main, workDir: main },
+        { projectId, projectRoot: slashPathOf(main), workDir: slashPathOf(worktree), environmentCwd: slashPathOf(worktree) },
+        { projectId, projectRoot: slashPathOf(main), workDir: slashPathOf(subdir), environmentCwd: slashPathOf(subdir) },
+        { projectId, projectRoot: slashPathOf(main), workDir: slashPathOf(main) },
       ]);
-      expect(JSON.parse(registered)).toMatchObject({ projects: { [projectId]: { root: main } } });
+      expect(JSON.parse(registered)).toMatchObject({ projects: { [projectId]: { root: slashPathOf(main) } } });
       expect(await catalog()).toBe(registered);
       const session = await harness.createSession({ workDir: worktree });
       expect(await readdir(join(homeDir, 'sessions', projectId))).toEqual([session.id]);
@@ -3921,9 +3927,9 @@ describe('SDKRpcClientV2 workspace trust', () => {
         const exported = async () =>
           (await harness.exportSession({ id: session.id, outputPath: join(homeDir, 'export.zip'), version: '0.0.0' })).manifest.workspaceDir;
 
-        expect(await exported()).toBe(workDir);
+        expect(await exported()).toBe(slashPathOf(workDir));
         await session.close();
-        expect(await exported()).toBe(workDir);
+        expect(await exported()).toBe(slashPathOf(workDir));
       }
     } finally {
       await harness.close();
@@ -3938,7 +3944,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
       await harness.trustWorkspace(workDir);
       expect(await harness.getWorkspaceTrustInfo(workDir)).toEqual({
         trusted: true,
-        projectRoot: workDir,
+        projectRoot: slashPathOf(workDir),
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
         additionalDirSources: [],
@@ -4476,6 +4482,85 @@ describe('foldAgentWireReplay', () => {
       expect(folded.warning).toContain('lines 3, 4');
       expect(folded.error).toBeUndefined();
     }
+  });
+
+  it('replays how each turn ended, whole or limited to the latest turns', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
+    tempDirs.push(dir);
+    const wirePath = join(dir, 'wire.jsonl');
+    const refusal = {
+      code: 'provider.api_error',
+      message: 'The example service refused this request.',
+      retryable: false,
+    };
+    const user = (text: string, time: number) => ({
+      type: 'context.append_message',
+      message: { role: 'user', content: [{ type: 'text', text }], origin: { kind: 'user' } },
+      time,
+    });
+    const records = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      user('Check the build.', 2),
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1' }, time: 3 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'content.part', stepUuid: 's1', part: { type: 'text', text: 'The build passed.' } },
+        time: 4,
+      },
+      { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's1' }, time: 5 },
+      { type: 'turn.ended', agentId: 'main', turnId: 0, reason: 'completed', durationMs: 3, time: 6 },
+      user('Summarise the deployment status.', 7),
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'failed', error: refusal, durationMs: 1, time: 8 },
+    ];
+    await writeFile(wirePath, records.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf-8');
+
+    const full = await foldAgentWireReplay(wirePath);
+    expect(full.replay.filter((record) => record.type === 'turn_ended')).toEqual([
+      { type: 'turn_ended', turnId: 0, reason: 'completed', time: 6 },
+      { type: 'turn_ended', turnId: 1, reason: 'failed', error: refusal, time: 8 },
+    ]);
+
+    const latest = await foldAgentWireReplay(wirePath, 1);
+    expect(latest.replay).toEqual(limitAgentReplayByTurns(full.replay, 1));
+    expect(latest.replay.map((record) => record.type)).toEqual(['message', 'turn_ended']);
+    expect(latest.replay.at(-1)).toEqual({
+      type: 'turn_ended',
+      turnId: 1,
+      reason: 'failed',
+      error: refusal,
+      time: 8,
+    });
+
+    const openToolPath = join(dir, 'open-tool-wire.jsonl');
+    const openTool = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      user('Run the migration.', 2),
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1' }, time: 3 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'tool.call', stepUuid: 's1', toolCallId: 'tc1', name: 'Bash', args: {} },
+        time: 4,
+      },
+      { type: 'turn.ended', agentId: 'main', turnId: 0, reason: 'cancelled', durationMs: 2, time: 5 },
+      user('Try again.', 6),
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's2' }, time: 7 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'content.part', stepUuid: 's2', part: { type: 'text', text: 'Done.' } },
+        time: 8,
+      },
+      { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's2' }, time: 9 },
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed', durationMs: 3, time: 10 },
+    ];
+    await writeFile(openToolPath, openTool.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf-8');
+    const openToolFull = await foldAgentWireReplay(openToolPath);
+    expect(openToolFull.replay.filter((record) => record.type === 'turn_ended')).toEqual([
+      { type: 'turn_ended', turnId: 0, reason: 'cancelled', time: 5 },
+      { type: 'turn_ended', turnId: 1, reason: 'completed', time: 10 },
+    ]);
+    const openToolLatest = await foldAgentWireReplay(openToolPath, 1);
+    expect(openToolLatest.replay).toEqual(limitAgentReplayByTurns(openToolFull.replay, 1));
+    expect(openToolLatest.replay.map((record) => record.type)).toEqual(['message', 'message', 'turn_ended']);
   });
 });
 
@@ -5256,7 +5341,6 @@ describe('KimiHarness worktrees', () => {
   }
 
   async function makeWorktreeHarness(): Promise<{ harness: KimiHarness; homeDir: string; repo: string }> {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '1');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-home-'));
     const repoDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-repo-'));
     tempDirs.push(homeDir, repoDir);
@@ -5294,12 +5378,12 @@ describe('KimiHarness worktrees', () => {
 
       const created = await harness.createWorktree({ cwd: source, name: 'feat-a' }, { onEvent: (event) => events.push(event) });
       const root = created.worktree.path;
-      const worktree = { root, name: 'feat-a', repoRoot: repo };
-      expect(created.cwd).toBe(join(root, 'packages', 'app'));
+      const worktree = { root, name: 'feat-a', repoRoot: slashPathOf(repo) };
+      expect(created.cwd).toBe(slashPathOf(join(root, 'packages', 'app')));
       expect(events.some((event) => event.type === 'planned' && event.name === 'feat-a')).toBe(true);
 
       const session = await harness.createSession({ workDir: created.cwd });
-      expect(session.summary?.projectWorkDir).toBe(repo);
+      expect(session.summary?.projectWorkDir).toBe(slashPathOf(repo));
       expect((await harness.listSessions({ workDir: created.cwd })).map((item) => item.id)).toEqual([session.id]);
       expect((await harness.listSessions({ workDir: created.cwd, limit: 0 })).map((item) => item.id)).toEqual([
         session.id,
@@ -5310,8 +5394,8 @@ describe('KimiHarness worktrees', () => {
       ).rejects.toMatchObject({ code: ErrorCodes.REQUEST_INVALID });
 
       expect(await harness.resolveWorkLocation(repo)).toStrictEqual({
-        cwd: repo,
-        projectRoot: repo,
+        cwd: slashPathOf(repo),
+        projectRoot: slashPathOf(repo),
         isGitRepo: true,
       });
 
@@ -5320,14 +5404,14 @@ describe('KimiHarness worktrees', () => {
       await git(repo, 'worktree', 'add', '-q', '--detach', linked);
       const linkedRoot = await realpath(linked);
       expect(await harness.resolveWorkLocation(linkedRoot)).toStrictEqual({
-        cwd: linkedRoot,
-        projectRoot: repo,
+        cwd: slashPathOf(linkedRoot),
+        projectRoot: slashPathOf(repo),
         isGitRepo: true,
       });
 
       expect(await harness.resolveWorkLocation(created.cwd)).toStrictEqual({
         cwd: created.cwd,
-        projectRoot: repo,
+        projectRoot: slashPathOf(repo),
         isGitRepo: true,
         worktree,
       });
@@ -5335,16 +5419,9 @@ describe('KimiHarness worktrees', () => {
       const spelledThroughHome = join(homeDir, relative(await realpath(homeDir), created.cwd));
       expect(await harness.resolveWorkLocation(spelledThroughHome)).toStrictEqual({
         cwd: created.cwd,
-        projectRoot: repo,
+        projectRoot: slashPathOf(repo),
         isGitRepo: true,
         worktree,
-      });
-
-      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '0');
-      expect(await harness.resolveWorkLocation(created.cwd)).toStrictEqual({
-        cwd: created.cwd,
-        projectRoot: repo,
-        isGitRepo: true,
       });
     } finally {
       await harness.close();
@@ -5387,11 +5464,6 @@ describe('KimiHarness worktrees', () => {
       code: ErrorCodes.NOT_IMPLEMENTED,
     });
     await expect(
-      SDKRpcClientBase.prototype.runWorktreeSetupScript({ worktreePath: '/tmp/wt', sourceRoot: '/tmp/repo' }),
-    ).rejects.toMatchObject({
-      code: ErrorCodes.NOT_IMPLEMENTED,
-    });
-    await expect(
       SDKRpcClientBase.prototype.inspectWorktreeRemoval({ repoRoot: '/tmp/repo', path: '/tmp/wt', deleteBranch: false }),
     ).rejects.toMatchObject({
       code: ErrorCodes.NOT_IMPLEMENTED,
@@ -5411,15 +5483,15 @@ describe('KimiHarness worktrees', () => {
       const head = (await git(repo, 'rev-parse', 'HEAD')).trim();
       const worktrees = [{ path, name: 'feat-a', head, branch: undefined, missing: false, managed: true }];
       expect(await harness.listWorktrees(repo)).toEqual({
-        repoRoot: repo,
-        currentCheckoutRoot: repo,
+        repoRoot: slashPathOf(repo),
+        currentCheckoutRoot: slashPathOf(repo),
         bare: false,
         repoBranch: 'main',
         repoHead: head,
         worktrees,
       });
       expect(await harness.listWorktrees(path)).toEqual({
-        repoRoot: repo,
+        repoRoot: slashPathOf(repo),
         currentCheckoutRoot: path,
         bare: false,
         repoBranch: 'main',
@@ -5441,8 +5513,8 @@ describe('KimiHarness worktrees', () => {
 
       await harness.removeWorktree({ ...target, discard: { uncommittedFiles: 1, uniqueCommits: 0 } });
       expect(await harness.listWorktrees(repo)).toEqual({
-        repoRoot: repo,
-        currentCheckoutRoot: repo,
+        repoRoot: slashPathOf(repo),
+        currentCheckoutRoot: slashPathOf(repo),
         bare: false,
         repoBranch: 'main',
         repoHead: head,
@@ -5454,9 +5526,7 @@ describe('KimiHarness worktrees', () => {
     }
   });
 
-  it('awaits config before checking the worktree flag in removeWorktree', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '');
+  it('creates and removes a worktree when [experimental] worktree = true remains in config.toml', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-cfg-home-'));
     const repo = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-cfg-repo-'));
     tempDirs.push(homeDir, repo);

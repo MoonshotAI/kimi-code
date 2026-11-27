@@ -133,6 +133,13 @@ describe('foldAnnouncedToolNames', () => {
 });
 
 describe('renderLoadableToolsAnnouncement', () => {
+  it('announces same-name replacements as removal followed by a loadable addition', () => {
+    const replacement = renderLoadableToolsAnnouncement(['a'], ['a']);
+    expect(replacement.indexOf('<tools_removed>')).toBeLessThan(replacement.indexOf('<tools_added>'));
+    expect(replacement).toContain('A name added again is loadable with its updated definition.');
+    expect([...foldAnnouncedToolNames([announcement(['a'], ['a'])])]).toEqual(['a']);
+  });
+
   it('states the empty current set without announcing placeholder tool names', () => {
     const empty = renderLoadableToolsAnnouncement([], [], false);
     expect(empty).toContain('No tools are currently available for dynamic loading in this session.');

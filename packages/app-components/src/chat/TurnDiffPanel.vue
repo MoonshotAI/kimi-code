@@ -2,9 +2,8 @@
 import { computed, inject, ref, shallowRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Icon, IconButton, PanelHeader, Spinner } from '@moonshot-ai/app-ui';
-import type { TurnFileChange } from '@moonshot-ai/app-components';
 import { MAX_TURN_DIFF_CHARS } from '@moonshot-ai/app-core/client';
-import type { DiffViewLine } from '@moonshot-ai/app-core/client/types';
+import type { DiffViewLine, TurnFileChange } from '@moonshot-ai/app-core/client/types';
 import type { TurnDiffResult } from './turnDiff.worker';
 import { logWarn } from '@moonshot-ai/app-core/lib';
 import { FetchTurnFileContentKey } from '@moonshot-ai/app-client/contracts';

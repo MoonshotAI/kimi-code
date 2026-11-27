@@ -47,6 +47,9 @@ const HookSpecificOutputSchema = z.preprocess(
       message: OptionalStringSchema,
       permissionDecision: z.unknown().optional(),
       permissionDecisionReason: z.unknown().optional(),
+      additionalContext: OptionalStringSchema,
+      updatedInput: z.unknown().optional(),
+      updatedToolOutput: z.unknown().optional(),
     })
     .optional(),
 );
@@ -169,12 +172,27 @@ function resultFromExitCode(exitCode: number, stdout: string, stderr: string): H
     stderr,
     exitCode,
     structuredOutput: structured?.structuredOutput,
+    additionalContext: structured?.additionalContext,
+    updatedInput: structured?.updatedInput,
+    invalidUpdatedInput: structured?.invalidUpdatedInput,
+    updatedToolOutput: structured?.updatedToolOutput,
+    invalidUpdatedToolOutput: structured?.invalidUpdatedToolOutput,
   });
 }
 
-function structuredOutput(
-  stdout: string,
-): { action?: 'block'; reason?: string; message?: string; structuredOutput: true } | undefined {
+interface StructuredHookOutput {
+  readonly action?: 'block';
+  readonly reason?: string;
+  readonly message?: string;
+  readonly structuredOutput: true;
+  readonly additionalContext?: string;
+  readonly updatedInput?: Record<string, unknown>;
+  readonly invalidUpdatedInput?: string;
+  readonly updatedToolOutput?: string | readonly unknown[];
+  readonly invalidUpdatedToolOutput?: string;
+}
+
+function structuredOutput(stdout: string): StructuredHookOutput | undefined {
   const text = stdout.trim();
   if (text.length === 0) return undefined;
 
@@ -184,9 +202,13 @@ function structuredOutput(
     if (!output.success) return undefined;
 
     const { message, hookSpecificOutput } = output.data;
-    const result = {
+    const additionalContext = nonEmpty(hookSpecificOutput?.additionalContext);
+    const mutation = extractMutation(hookSpecificOutput);
+    const result: StructuredHookOutput = {
       message: message ?? hookSpecificOutput?.message,
       structuredOutput: true as const,
+      additionalContext,
+      ...mutation,
     };
     if (hookSpecificOutput?.permissionDecision !== 'deny') {
       return result;
@@ -205,26 +227,39 @@ function structuredOutput(
   }
 }
 
-function allowResult(input: {
-  readonly message?: string;
-  readonly stdout?: string;
-  readonly stderr?: string;
-  readonly exitCode?: number;
-  readonly timedOut?: boolean;
-  readonly errored?: boolean;
-  readonly structuredOutput?: boolean;
-  readonly error?: string;
-}): HookResult {
+function extractMutation(
+  output: { updatedInput?: unknown; updatedToolOutput?: unknown } | undefined,
+): Pick<
+  StructuredHookOutput,
+  'updatedInput' | 'invalidUpdatedInput' | 'updatedToolOutput' | 'invalidUpdatedToolOutput'
+> {
+  if (output === undefined) return {};
+  let updatedInput: Record<string, unknown> | undefined;
+  let invalidUpdatedInput: string | undefined;
+  let updatedToolOutput: string | readonly unknown[] | undefined;
+  let invalidUpdatedToolOutput: string | undefined;
+  if (output.updatedInput !== undefined) {
+    if (isRecord(output.updatedInput)) updatedInput = output.updatedInput;
+    else invalidUpdatedInput = 'updatedInput must be an object';
+  }
+  if (output.updatedToolOutput !== undefined) {
+    if (typeof output.updatedToolOutput === 'string' || Array.isArray(output.updatedToolOutput)) {
+      updatedToolOutput = output.updatedToolOutput as string | readonly unknown[];
+    } else {
+      invalidUpdatedToolOutput = 'updatedToolOutput must be a string or an array of content parts';
+    }
+  }
+  return { updatedInput, invalidUpdatedInput, updatedToolOutput, invalidUpdatedToolOutput };
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+  return value === undefined || value.trim().length === 0 ? undefined : value;
+}
+
+function allowResult(input: Omit<HookResult, 'action'>): HookResult {
   return {
     action: 'allow',
-    message: input.message,
-    stdout: input.stdout,
-    stderr: input.stderr,
-    exitCode: input.exitCode,
-    timedOut: input.timedOut,
-    errored: input.errored,
-    structuredOutput: input.structuredOutput,
-    error: input.error,
+    ...input,
   };
 }
 

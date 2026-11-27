@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import { existsSync, realpathSync } from 'node:fs';
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
 import { join, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -21,13 +21,13 @@ import { CLI_BUILD_ENV, KIMI_SERVICE_URL, kimiCliBuild, kimiCliCommand, kimiCliE
 import { kimiConfigToml, mergeKimiConfig } from '#/fixtures/config';
 import { expectGolden, jsonDifferences, REFRESH_ENV, stableJson } from '#/fixtures/golden';
 import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, UNIT_TEST_SWITCHES } from '#/fixtures/env';
-import { bashPathOf, createGitWorktree } from '#/fixtures/git';
+import { bashPathOf, createGitRepository, createGitWorktree, runGit } from '#/fixtures/git';
 import { createTestHome, osHomeEnv, type TestHome } from '#/fixtures/home';
 import { fakeMcpServer, readMcpCalls, readMcpStarts, writeMcpConfig, type McpServerEntry } from '#/fixtures/mcp';
 import { startFakeMcpHttpServer } from '#/fixtures/mcp-http';
 import { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
 import { installNetworkGuard, isLoopback, tcpTargetOf } from '#/fixtures/network';
-import { createNormalizer, FIXED_TIME, normalize } from '#/fixtures/normalize';
+import { createNormalizer, FIXED_TIME, normalize, slashPathOf } from '#/fixtures/normalize';
 import { killProcessTree, readNetworkViolations, TestProcess, type StartTestProcessOptions } from '#/fixtures/process';
 import { repoPath } from '#/fixtures/repo';
 import { contentDigest, directoryChanges, snapshotDirectory } from '#/fixtures/snapshot';
@@ -55,6 +55,18 @@ describe('bashPathOf', () => {
   });
 });
 
+describe('slashPathOf', () => {
+  it('spells a Windows path with forward slashes, the form the engine reports host paths in', () => {
+    expect(slashPathOf('C:\\Users\\me\\app')).toBe('C:/Users/me/app');
+    expect(slashPathOf('\\\\server\\share\\app')).toBe('//server/share/app');
+  });
+
+  it('keeps a path that already uses forward slashes as it is', () => {
+    expect(slashPathOf('/tmp/app')).toBe('/tmp/app');
+    expect(slashPathOf('D:/work/app')).toBe('D:/work/app');
+  });
+});
+
 describe('createGitWorktree', () => {
   it('commits the given files in the main checkout and checks them out in a linked worktree', async () => {
     const home = await createTestHome('git-worktree');
@@ -69,6 +81,25 @@ describe('createGitWorktree', () => {
       expect(await readFile(join(layout.worktree, 'src', 'tracked.txt'), 'utf8')).toBe('one\n');
       expect(await readFile(join(layout.worktree, '.git'), 'utf8')).toMatch(/^gitdir: .*worktrees[\\/]app-fix\s*$/);
       expect(existsSync(join(layout.main, '.git', 'HEAD'))).toBe(true);
+    } finally {
+      await home.remove();
+    }
+  });
+});
+
+describe('createGitRepository', () => {
+  it('commits each branch on top of main and leaves main checked out, so runGit can switch to a branch like a user', async () => {
+    const home = await createTestHome('git-branches');
+    try {
+      const dir = join(home.workspace, 'app');
+      await createGitRepository(dir, { files: { 'notes.txt': 'alpha\n' }, branches: { feature: { 'notes.txt': 'beta\n' } } });
+
+      expect((await runGit(dir, ['symbolic-ref', '--short', 'HEAD'])).trim()).toBe('main');
+      expect((await runGit(dir, ['config', '--local', '--get', 'core.autocrlf'])).trim()).toBe('false');
+      expect(await readFile(join(dir, 'notes.txt'), 'utf8')).toBe('alpha\n');
+      await runGit(dir, ['checkout', '-q', 'feature']);
+      expect(await readFile(join(dir, 'notes.txt'), 'utf8')).toBe('beta\n');
+      expect((await runGit(dir, ['status', '--porcelain'])).trim()).toBe('');
     } finally {
       await home.remove();
     }
@@ -456,6 +487,20 @@ describe('snapshotDirectory', () => {
     }
   });
 
+  it('leaves a skipped top-level directory unread, so files that git creates and removes there cannot break the snapshot', async () => {
+    const home = await createTestHome('testkit-snapshot');
+    const git = join(home.workspace, '.git');
+    try {
+      await mkdir(join(git, 'objects'), { recursive: true });
+      await Promise.all([writeFile(join(home.workspace, 'notes.txt'), 'kept\n'), writeFile(join(git, 'index.lock'), 'held\n')]);
+      await chmod(git, 0o000);
+      expect(await snapshotDirectory(home.workspace, { skip: ['.git'] })).toEqual({ 'notes.txt': contentDigest('kept\n') });
+    } finally {
+      await chmod(git, 0o755);
+      await home.remove();
+    }
+  });
+
   it('tells a rewritten file with the same bytes from a changed one', async () => {
     const home = await createTestHome('testkit-snapshot');
     try {
@@ -725,6 +770,10 @@ describe('fake MCP server', () => {
       const path = await writeMcpConfig(join(home.dataDir, 'mcp.json'), { docs: entry });
       expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ mcpServers: { docs: { command: process.execPath, args: [...entry.args] } } });
       expect(await readMcpCalls(join(home.root, 'never-written.jsonl'))).toEqual([]);
+      await writeMcpConfig(path, { docs: entry, wiki: { transport: 'http', url: 'http://127.0.0.1:9/mcp', deferred: true } });
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+        mcpServers: { docs: { command: process.execPath, args: [...entry.args] }, wiki: { transport: 'http', url: 'http://127.0.0.1:9/mcp', deferred: true } },
+      });
     } finally {
       await home.remove();
     }
@@ -816,13 +865,32 @@ describe('fake MCP server', () => {
 
       server.addTool({ name: 'added', description: 'Initial description' });
       await until('both clients hear about the added tool', () => announced.every((count) => count === 1));
+      const listed = server.answered.filter((request) => request.rpcMethods.includes('tools/list')).length;
       expect((await clients[0]!.listTools()).tools.map((tool) => tool.name)).toEqual(['echo', 'added']);
+      expect(server.answered.filter((request) => request.rpcMethods.includes('tools/list'))).toHaveLength(listed + 1);
+      expect(server.answered.every((request) => server.requests.includes(request))).toBe(true);
       server.updateTool('added', { description: 'Updated description' });
       await until('both clients hear about the updated tool', () => announced.every((count) => count === 2));
       expect((await clients[0]!.listTools()).tools.find((tool) => tool.name === 'added')?.description).toBe('Updated description');
       server.removeTool('added');
       await until('both clients hear about the removed tool', () => announced.every((count) => count === 3));
       expect((await clients[1]!.listTools()).tools.map((tool) => tool.name)).toEqual(['echo']);
+      expect(server.requests.filter((request) => request.rpcMethods.includes('initialize'))).toHaveLength(2);
+    } finally {
+      await Promise.all(clients.map((client) => client.close()));
+      await server.close();
+    }
+  });
+
+  it('drops every MCP session on disconnect, so a client has to initialize again', async () => {
+    const server = await startFakeMcpHttpServer({ tools: [{ name: 'ping' }] });
+    const clients: Client[] = [];
+    try {
+      clients.push(await connectHttp(server.url));
+      await server.disconnect();
+      await expect(clients[0]!.listTools()).rejects.toMatchObject({ code: 404 });
+      clients.push(await connectHttp(server.url));
+      expect((await clients[1]!.listTools()).tools.map((tool) => tool.name)).toEqual(['ping']);
       expect(server.requests.filter((request) => request.rpcMethods.includes('initialize'))).toHaveLength(2);
     } finally {
       await Promise.all(clients.map((client) => client.close()));
