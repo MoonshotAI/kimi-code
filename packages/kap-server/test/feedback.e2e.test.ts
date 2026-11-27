@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { closeSessionById, IOAuthService, ISessionExportService, MAIN_AGENT_ID, sessionDirOf } from '@moonshot-ai/agent-core-v2';
+import { closeSessionById, IOAuthService, ISessionExportService, ITelemetryService, MAIN_AGENT_ID, sessionDirOf } from '@moonshot-ai/agent-core-v2';
 import { fetchSubmitFeedback, FileTokenStorage, OAuthUnauthorizedError, resolveKimiCodeOAuthRef, resolveKimiTokenStorageName } from '@moonshot-ai/kimi-code-oauth';
 import { installNetworkGuard } from '@moonshot-ai/testkit/fixtures';
 import { agent, createFakeModel, held, say, type ReplyStep } from '@moonshot-ai/testkit/model';
@@ -74,6 +74,8 @@ describe('desktop feedback', () => {
     const upload = uploads().find((candidate) => candidate.id === id);
     return upload?.bytes === undefined ? undefined : { method: upload.method, bytes: Buffer.from(upload.bytes) };
   };
+  const uploadEvents: Array<{ context: Record<string, unknown>; properties: Record<string, unknown> }> = [];
+  const lastUploadEvent = () => uploadEvents.at(-1);
   const model = createFakeModel();
   const managed = model.route('managed', req => req.path.startsWith('/managed/'));
 
@@ -139,9 +141,17 @@ default_model = "alternate"
       logLevel: 'silent',
       seeds: [[IOAuthService, oauth]],
     });
+    server.core.accessor.get(ITelemetryService).addAppender({
+      track: (record) => {
+        if (record.event === 'feedback_attachment_upload') {
+          uploadEvents.push({ context: { ...record.context }, properties: { ...record.properties } });
+        }
+      },
+    });
   });
 
   afterEach(() => {
+    uploadEvents.length = 0;
     model.verify();
     kimi.verify();
   });
@@ -225,13 +235,30 @@ default_model = "alternate"
     });
     expect(storedPart(result.data.upload_id)).toEqual({ method: 'PUT', bytes: Buffer.from('chosen image') });
     expect(completed().at(-1)).toEqual({ upload_id: result.data.upload_id, parts: [{ part_number: 1, etag: `"testkit-etag-${String(result.data.upload_id)}"` }] });
+    expect(lastUploadEvent()?.properties).toMatchObject({
+      emitter: 'server', attachment_kind: 'media', stage: 'complete', outcome: 'succeeded',
+      feedback_id: data.feedback_id, upload_id: result.data.upload_id,
+      size_bytes: Buffer.byteLength('chosen image'), size_bucket: '<1mb', part_count: 1,
+    });
     const invalid = new FormData();
     invalid.append('file', new Blob(['unexpected file type'], { type: 'text/plain' }), 'text.txt');
     expect((await request('POST', path, invalid)).code).toBe(ErrorCode.VALIDATION_FAILED);
+    expect(lastUploadEvent()?.properties).toMatchObject({
+      emitter: 'server', attachment_kind: 'media', stage: 'export', outcome: 'failed',
+      error_class: 'validation_failed', error_code: String(ErrorCode.VALIDATION_FAILED),
+    });
     const oversized = new FormData();
     oversized.append('file', new Blob([new Uint8Array(10 * 1024 * 1024 + 1)], { type: 'image/png' }), 'image.png');
     expect((await request('POST', path, oversized)).code).toBe(ErrorCode.FILE_TOO_LARGE);
+    expect(lastUploadEvent()?.properties).toMatchObject({
+      emitter: 'server', attachment_kind: 'media', stage: 'export', outcome: 'failed',
+      error_class: 'file_too_large', error_code: String(ErrorCode.FILE_TOO_LARGE),
+    });
     expect((await request('POST', '/feedback/999/attachments?kind=media', form)).code).toBe(ErrorCode.FEEDBACK_REJECTED);
+    expect(lastUploadEvent()?.properties).toMatchObject({
+      emitter: 'server', attachment_kind: 'media', stage: 'presign', outcome: 'failed',
+      feedback_id: 999, error_class: 'feedback_rejected', error_code: String(ErrorCode.FEEDBACK_REJECTED), http_status: 409,
+    });
   });
 
   it('uses the signed POST method for a feedback attachment', async () => {
@@ -357,6 +384,13 @@ default_model = "alternate"
       expect(archive?.includes(Buffer.from(forbidden))).toBe(false);
     }
     expect(completed().at(-1)).toMatchObject({ upload_id: attached.data.upload_id });
+    expect(lastUploadEvent()).toMatchObject({
+      context: { session_id: session.id },
+      properties: {
+        emitter: 'server', attachment_kind: 'session', host_kind: 'ssh', stage: 'complete', outcome: 'succeeded',
+        feedback_id: feedback.feedback_id, upload_id: attached.data.upload_id, size_bucket: '<1mb', part_count: 1,
+      },
+    });
 
     const previousUploads = uploads().length;
     const missing = await request('POST', path, { session_id: 'missing-session', host_id: 'example' });
@@ -364,6 +398,13 @@ default_model = "alternate"
     expect(forward).toHaveBeenCalledTimes(4);
     expect(uploads().length).toBe(previousUploads);
     expect(remoteKimi.requests()).toEqual([]);
+    expect(lastUploadEvent()).toMatchObject({
+      context: { session_id: 'missing-session' },
+      properties: {
+        emitter: 'server', attachment_kind: 'session', host_kind: 'ssh', stage: 'export', outcome: 'failed',
+        error_class: 'session_not_found', error_code: String(ErrorCode.SESSION_NOT_FOUND),
+      },
+    });
   });
 
   it('cancels the remote archive export when the feedback client disconnects', async context => {
@@ -397,6 +438,56 @@ default_model = "alternate"
     await stopped;
     expect(uploads().length).toBe(previousUploads);
     expect(remoteKimi.requests()).toEqual([]);
+    await vi.waitFor(() => expect(lastUploadEvent()).toMatchObject({
+      context: { session_id: 'example-session' },
+      properties: {
+        emitter: 'server', attachment_kind: 'session', host_kind: 'ssh', stage: 'export', outcome: 'aborted',
+        feedback_id: data.feedback_id, error_class: 'aborted',
+      },
+    }));
+  });
+
+  it('records export and storage failure stages without leaking file paths or response bodies', async ({ onTestFinished }) => {
+    const { data: session } = await request<{ id: string }>('POST', '/sessions', { metadata: { cwd: home } });
+    const { data: feedback } = await request<{ feedback_id: number }>('POST', '/feedback', {
+      kind: 'global', source: 'sidebar', category: 'bug', content: 'Upload failure telemetry', upload_session: true,
+    });
+    const path = `/feedback/${feedback.feedback_id}/attachments/session`;
+    const exportService = server.core.accessor.get(ISessionExportService);
+    const exportSpy = vi.spyOn(exportService, 'export').mockRejectedValueOnce(
+      Object.assign(new Error('Locked /Users/alice/private/session.zip'), { code: 'EBUSY' }),
+    );
+    onTestFinished(() => exportSpy.mockRestore());
+    const locked = await request('POST', path, { session_id: session.id });
+    expect(locked.code).toBe(ErrorCode.INTERNAL_ERROR);
+    expect(lastUploadEvent()).toMatchObject({
+      context: { session_id: session.id },
+      properties: {
+        emitter: 'server', attachment_kind: 'session', host_kind: 'local', stage: 'export', outcome: 'failed',
+        feedback_id: feedback.feedback_id, error_class: 'fs', error_code: 'EBUSY',
+      },
+    });
+
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes('/storage/')) {
+        return Promise.resolve(new Response('Private XML /Users/alice/private', { status: 403 }));
+      }
+      return realFetch(input, init);
+    });
+    onTestFinished(() => { vi.unstubAllGlobals(); });
+    const denied = await request('POST', path, { session_id: session.id });
+    expect(denied.code).toBe(ErrorCode.INTERNAL_ERROR);
+    expect(lastUploadEvent()).toMatchObject({
+      context: { session_id: session.id },
+      properties: {
+        emitter: 'server', attachment_kind: 'session', host_kind: 'local', stage: 'upload', outcome: 'failed',
+        feedback_id: feedback.feedback_id, error_class: 'http', http_status: 403, part_count: 1, size_bucket: '<1mb',
+      },
+    });
+    expect(JSON.stringify(uploadEvents)).not.toContain('/Users/alice');
+    expect(JSON.stringify(uploadEvents)).not.toContain('Private XML');
   });
 
   it('rates the selected historical turn, updates that rating, and uploads a session without diagnostics', async () => {
@@ -461,8 +552,19 @@ default_model = "alternate"
     const rejected = await request('POST', '/feedback/999/attachments/session', { session_id: session.id });
     expect(rejected.code).toBe(ErrorCode.FEEDBACK_REJECTED);
     expect(storedPartCount()).toBe(previousParts);
+    expect(lastUploadEvent()?.properties).toMatchObject({
+      emitter: 'server', attachment_kind: 'session', host_kind: 'local', stage: 'presign', outcome: 'failed',
+      feedback_id: 999, error_class: 'feedback_rejected', http_status: 409, size_bucket: '<1mb',
+    });
     const attached = await request<{ upload_id: number }>('POST', `${path}/attachments/session`, { session_id: session.id });
     expect(attached.code, JSON.stringify(attached)).toBe(0);
+    expect(lastUploadEvent()).toMatchObject({
+      context: { session_id: session.id },
+      properties: {
+        emitter: 'server', attachment_kind: 'session', host_kind: 'local', stage: 'complete', outcome: 'succeeded',
+        feedback_id: result.data.feedback_id, upload_id: attached.data.upload_id, size_bucket: '<1mb', part_count: 1,
+      },
+    });
     expect(uploadRequest(attached.data.upload_id)).toMatchObject({ feedback_id: result.data.feedback_id, file_name: 'session.zip' });
     const archive = storedPart(attached.data.upload_id)?.bytes;
     expect(archive?.includes(Buffer.from('manifest.json'))).toBe(true);

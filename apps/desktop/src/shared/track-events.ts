@@ -433,6 +433,43 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
       edited: z.boolean(),
     }),
   }),
+  z.object({
+    event: z.literal('feedback_submit_result'),
+    properties: z.object({
+      kind: z.enum(['global', 'turn_details']),
+      outcome: z.enum(['succeeded', 'failed', 'aborted']),
+      duration_ms: clampedPerfMsSchema,
+      upload_session: z.boolean(),
+      upload_logs: optionalBooleanSchema,
+      media_count: clampedCountSchema.optional().catch(undefined),
+      feedback_id: z.number().int().positive().optional().catch(undefined),
+      session_id: shortStringSchema.optional().catch(undefined),
+      host_kind: z.enum(['local', 'ssh', 'none']).optional().catch(undefined),
+      error_class: optionalCappedStringSchema,
+      error_code: optionalCappedStringSchema,
+      http_status: z.number().int().min(100).max(599).optional().catch(undefined),
+    }),
+  }),
+  z.object({
+    event: z.literal('feedback_attachment_upload'),
+    properties: z.object({
+      emitter: z.literal('client'),
+      attachment_kind: z.enum(['session', 'diagnostics', 'media']),
+      stage: z.enum(['validation', 'authorize', 'collect', 'upload']),
+      outcome: z.enum(['succeeded', 'failed', 'aborted', 'skipped', 'validation_rejected']),
+      duration_ms: clampedPerfMsSchema,
+      feedback_id: z.number().int().positive().optional().catch(undefined),
+      upload_id: z.number().int().positive().optional().catch(undefined),
+      attempt: z.enum(['initial', 'retry']),
+      session_id: shortStringSchema.optional().catch(undefined),
+      host_kind: z.enum(['local', 'ssh']).optional().catch(undefined),
+      media_kind: z.enum(['image', 'video']).optional().catch(undefined),
+      size_bytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional().catch(undefined),
+      error_class: optionalCappedStringSchema,
+      error_code: optionalCappedStringSchema,
+      http_status: z.number().int().min(100).max(599).optional().catch(undefined),
+    }),
+  }),
 ]);
 
 export type RendererTrackEvent = z.infer<typeof rendererTrackEventSchema>;

@@ -202,7 +202,7 @@ async function uploadOnePart(
   } catch (error) {
     stream.destroy();
     if (timeout.signal.aborted) {
-      throw new Error(`Failed to upload part ${part.partNumber}: upload timed out.`, { cause: error });
+      throw new UploadPartTimeoutError(part.partNumber, { cause: error });
     }
     throw error;
   } finally {
@@ -210,7 +210,7 @@ async function uploadOnePart(
   }
 }
 
-class UploadPartHttpError extends Error {
+export class UploadPartHttpError extends Error {
   constructor(
     readonly partNumber: number,
     readonly status: number,
@@ -219,6 +219,12 @@ class UploadPartHttpError extends Error {
     super(
       `Failed to upload part ${partNumber}: HTTP ${String(status)}${responseBody.length > 0 ? ` ${responseBody}` : ''}`,
     );
+  }
+}
+
+export class UploadPartTimeoutError extends Error {
+  constructor(readonly partNumber: number, options?: ErrorOptions) {
+    super(`Failed to upload part ${partNumber}: upload timed out.`, options);
   }
 }
 

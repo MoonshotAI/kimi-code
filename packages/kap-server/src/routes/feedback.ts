@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import { ErrorCodes, IFileService, ISessionExportService, isError2, type Scope } from '@moonshot-ai/agent-core-v2';
+import { ErrorCodes, type FeedbackAttachmentUploadEvent, IFileService, ISessionExportService, ITelemetryService, isError2, type Scope } from '@moonshot-ai/agent-core-v2';
 import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 import type { FastifyReply, FastifyRequest, RouteHandlerMethod } from 'fastify';
 
@@ -25,7 +25,14 @@ import {
   updateFeedbackSchema,
 } from '../protocol/rest-feedback';
 import type { ConversationService } from '../services/conversation/conversationService';
-import { FeedbackError, openFeedbackGateway, readFeedbackFile, requireFeedbackToken } from '../services/feedback/feedbackService';
+import {
+  classifyFeedbackUploadError,
+  FeedbackError,
+  feedbackSizeBucket,
+  openFeedbackGateway,
+  readFeedbackFile,
+  requireFeedbackToken,
+} from '../services/feedback/feedbackService';
 import { FEEDBACK_ARCHIVE_LIMIT, fetchRemoteFeedbackArchive } from '../services/feedback/sessionArchive';
 import type { HostBridgeManager } from '../services/hosts/hostBridgeManager';
 
@@ -105,23 +112,24 @@ export function registerFeedbackRoutes(
     description: 'Upload one user-selected media file or an authorized desktop diagnostics archive',
     tags: ['feedback'],
   }, async (req, reply) => {
-    await withFeedback(req, reply, async () => {
-      const gateway = await openFeedbackGateway(core);
-      return withAttachment(reply as FastifyReply, async (scratch, signal) => {
+    const kind = req.query.kind;
+    await withFeedback(req, reply, () =>
+      uploadWithTelemetry(core, reply as FastifyReply, { feedbackId: req.params.feedback_id, kind }, async (scratch, signal) => {
         const path = join(scratch, 'attachment');
-        const filename = await receiveFile(req as FastifyRequest, req.query.kind, path, signal);
-        const file = await readFeedbackFile(filename, path, signal);
-        return { upload_id: await gateway.upload(req.params.feedback_id, file, signal) };
-      });
-    });
+        const filename = await receiveFile(req as FastifyRequest, kind, path, signal);
+        return { filename, path };
+      }),
+    );
   });
   app.post(attachFile.path, attachFile.options, attachFile.handler as RouteHandlerMethod);
 
-  async function exportSession(sessionId: string, outputPath: string, signal: AbortSignal): Promise<void> {
+  async function exportSession(sessionId: string, outputPath: string, signal: AbortSignal, onSize?: (size: number) => void): Promise<void> {
     await core.accessor.get(ISessionExportService).export({
       sessionId, outputPath, includeGlobalLog: false, includeDesktopLog: false, version: options.hostIdentity.version,
     }, { signal });
-    if ((await stat(outputPath)).size > FEEDBACK_ARCHIVE_LIMIT) throw fileTooLarge();
+    const { size } = await stat(outputPath);
+    onSize?.(size);
+    if (size > FEEDBACK_ARCHIVE_LIMIT) throw fileTooLarge();
   }
 
   const sessionErrors = { ...feedbackErrors, [ErrorCode.SESSION_NOT_FOUND]: {}, [ErrorCode.FILE_TOO_LARGE]: {} };
@@ -163,23 +171,83 @@ export function registerFeedbackRoutes(
     description: 'Export and upload an authorized session without global diagnostics',
     tags: ['feedback'],
   }, async (req, reply) => {
-    await withFeedback(req, reply, async () => {
-      const gateway = await openFeedbackGateway(core);
-      return withAttachment(reply as FastifyReply, async (scratch, signal) => {
+    const { session_id: sessionId, host_id: hostId } = req.body;
+    await withFeedback(req, reply, () =>
+      uploadWithTelemetry(core, reply as FastifyReply, {
+        feedbackId: req.params.feedback_id,
+        kind: 'session',
+        sessionId,
+        hostKind: hostId === undefined ? 'local' : 'ssh',
+      }, async (scratch, signal, onSize) => {
         const filename = 'session.zip';
         const path = join(scratch, filename);
-        if (req.body.host_id === undefined) {
-          await exportSession(req.body.session_id, path, signal);
+        if (hostId === undefined) {
+          await exportSession(sessionId, path, signal, onSize);
         } else {
-          const host = await options.hostBridges.connect(req.body.host_id);
-          await fetchRemoteFeedbackArchive(host, req.body.session_id, path, signal);
+          const host = await options.hostBridges.connect(hostId);
+          await fetchRemoteFeedbackArchive(host, sessionId, path, signal);
+          onSize((await stat(path)).size);
         }
-        const file = await readFeedbackFile(filename, path, signal);
-        return { upload_id: await gateway.upload(req.params.feedback_id, file, signal) };
-      });
-    });
+        return { filename, path };
+      }),
+    );
   });
   app.post(attachSession.path, attachSession.options, attachSession.handler as RouteHandlerMethod);
+}
+
+interface AttachmentUploadTrace {
+  stage: 'export' | 'presign' | 'upload' | 'complete';
+  sizeBytes?: number;
+  partCount?: number;
+  aborted: boolean;
+}
+
+async function uploadWithTelemetry(
+  core: Scope,
+  reply: FastifyReply,
+  meta: {
+    feedbackId: number;
+    kind: 'session' | 'diagnostics' | 'media';
+    sessionId?: string;
+    hostKind?: 'local' | 'ssh';
+  },
+  produce: (scratch: string, signal: AbortSignal, onSize: (size: number) => void) => Promise<{ filename: string; path: string }>,
+): Promise<{ upload_id: number }> {
+  const startedAt = Date.now();
+  const rootTelemetry = core.accessor.get(ITelemetryService);
+  const telemetry = meta.sessionId === undefined ? rootTelemetry : rootTelemetry.withContext({ session_id: meta.sessionId });
+  const trace: AttachmentUploadTrace = { stage: 'export', aborted: false };
+  const properties = () => ({
+    emitter: 'server' as const,
+    attachment_kind: meta.kind,
+    stage: trace.stage,
+    duration_ms: Date.now() - startedAt,
+    feedback_id: meta.feedbackId,
+    ...(meta.hostKind === undefined ? {} : { host_kind: meta.hostKind }),
+    ...(trace.sizeBytes === undefined ? {} : { size_bytes: trace.sizeBytes, size_bucket: feedbackSizeBucket(trace.sizeBytes) }),
+    ...(trace.partCount === undefined ? {} : { part_count: trace.partCount }),
+  });
+  try {
+    const gateway = await openFeedbackGateway(core);
+    return await withAttachment(reply, async (scratch, signal) => {
+      signal.addEventListener('abort', () => { trace.aborted = true; }, { once: true });
+      const { filename, path } = await produce(scratch, signal, (size) => { trace.sizeBytes = size; });
+      const file = await readFeedbackFile(filename, path, signal);
+      trace.sizeBytes = file.size;
+      const uploadId = await gateway.upload(meta.feedbackId, file, signal, (stage, partCount) => {
+        trace.stage = stage;
+        if (partCount !== undefined) trace.partCount = partCount;
+      });
+      const succeeded: FeedbackAttachmentUploadEvent = { ...properties(), outcome: 'succeeded', upload_id: uploadId };
+      telemetry.track2('feedback_attachment_upload', succeeded);
+      return { upload_id: uploadId };
+    });
+  } catch (error) {
+    const outcome = trace.aborted ? ('aborted' as const) : ('failed' as const);
+    const failed: FeedbackAttachmentUploadEvent = { ...properties(), outcome, ...classifyFeedbackUploadError(error) };
+    telemetry.track2('feedback_attachment_upload', failed);
+    throw error;
+  }
 }
 
 async function withFeedback(
