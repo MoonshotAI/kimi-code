@@ -64,11 +64,12 @@ export class UiPreferencesStore {
     return this.write(clientId, (document) => applyUiPreferenceOps(document, ops));
   }
 
-  import(
+  async import(
     values: Readonly<Record<string, unknown>>,
     clientId?: string,
   ): Promise<{ revision: number; imported: readonly string[]; skipped: readonly string[] }> {
-    return this.write(clientId, (document) => importUiPreferences(document, values));
+    const { revision, imported, skipped } = await this.write(clientId, (document) => importUiPreferences(document, values));
+    return { revision, imported, skipped };
   }
 
   private write<T extends { document: UiPreferencesDocument; changed: UiPreferencesChanges }>(
