@@ -1,6 +1,6 @@
 import { createApp, h, ref } from 'vue';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import { getIcon } from '@moonshot-ai/app-client/icons';
+import { getIcon } from '@moonshot-ai/app-ui/icons';
 import { createPinia } from 'pinia';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { pendingPromptTurn } from '@moonshot-ai/app-core/client';

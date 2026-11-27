@@ -51,6 +51,16 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   expectTranscript: (text) => `检查整段对话里有${quote(text)}`,
   exit: () => '用户退出，回到原来的 shell',
   expectTerminalRestored: () => '检查终端回到了正常的输入模式',
+  openSession: (title) => `用户回到之前标题为${quote(title)}的会话`,
+  reload: () => '用户重新加载会话（/reload）',
+  init: () => '用户用 /init 生成 AGENTS.md',
+  useSkill: (name) => `用户使用技能${quote(name)}`,
+  switchModel: (name) => `用户把模型换成${quote(name)}`,
+  setThinkingEffort: (effort) => `用户把思考强度调成${quote(effort)}`,
+  addDir: (path) => `用户用 /add-dir 把${quote(path)}加进本会话的工作区`,
+  setBrowserControl: (state) => (state === 'off' ? '用户在设置里关掉「让 agent 控制内置浏览器」' : '用户在设置里打开「让 agent 控制内置浏览器」'),
+  setPlanMode: (state) => (state === 'on' ? '用户打开计划模式' : '用户关掉计划模式'),
+  btw: (question, reply) => `用户用 /btw 问旁路问题${quote(question)}，看到旁路回答${quote(reply)}后回到主对话`,
 };
 
 export const DISK_TITLES = {
@@ -60,6 +70,8 @@ export const DISK_TITLES = {
 };
 
 export const CLOCK_TITLE = (time: string): string => `本机的时间变成${quote(time)}`;
+
+export const GIT_TITLE = (args: readonly string[]): string => `用户在终端里运行${quote(['git', ...args].join(' '))}`;
 
 export const MCP_TITLES = {
   addTool: (server: string, tool: string): string => `MCP 服务${quote(server)}新增工具${quote(tool)}，等产品重新读取工具清单`,

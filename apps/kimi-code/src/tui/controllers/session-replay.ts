@@ -1,27 +1,37 @@
-import type {
-  AgentReplayRecord,
-  BackgroundTaskInfo,
-  ContextMessage,
-  GoalChange,
-  PermissionMode,
-  ResumedAgentState,
-  Session,
-  ToolCall,
-  ToolInputDisplay,
+import {
+  ErrorCodes,
+  type AgentReplayRecord,
+  type BackgroundTaskInfo,
+  type ContextMessage,
+  type GoalChange,
+  type PermissionMode,
+  type ResumedAgentState,
+  type Session,
+  type ToolCall,
+  type ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { isAgentSwarmRejection } from '../components/messages/agent-swarm-progress';
 import { ToolCallComponent } from '../components/messages/tool-call';
 import { ShellRunComponent } from '../components/messages/shell-run';
 import { ReplayTurnBoundaryComponent } from '../components/messages/user-message';
-import { currentTheme } from '../theme';
+import { errorReportHintLine } from '../constant/feedback';
+import {
+  ERROR_STATUS_PREFIX,
+  OAUTH_LOGIN_REQUIRED_CODE,
+  OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
+  PROMPT_HOOK_BLOCKED_TURN_STOPPED_NOTICE,
+  PROVIDER_FILTERED_TURN_STOPPED_NOTICE,
+  TURN_INTERRUPTED_BY_USER_NOTICE,
+} from '../constant/kimi-tui';
+import { currentTheme, type ColorToken } from '../theme';
 import type {
   AppState,
   BackgroundAgentMetadata,
   ToolResultBlockData,
   TranscriptEntry,
 } from '../types';
-import { formatErrorMessage } from '../utils/event-payload';
+import { formatErrorMessage, formatErrorPayload } from '../utils/event-payload';
 import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
 import { modelDisplayName } from '../components/dialogs/model-selector';
@@ -62,6 +72,7 @@ import type { TUIState } from '../tui-state';
 
 type GoalReplayRecord = Extract<AgentReplayRecord, { type: 'goal_updated' }>;
 type CompactionReplayRecord = Extract<AgentReplayRecord, { type: 'compaction' }>;
+type TurnEndedReplayRecord = Extract<AgentReplayRecord, { type: 'turn_ended' }>;
 type GoalReplayLifecycleChange = GoalChange & { readonly kind: 'lifecycle' };
 
 export interface SessionReplayHost {
@@ -266,7 +277,41 @@ export class SessionReplayRenderer {
         return;
       case 'config_updated':
         return;
+      case 'turn_ended':
+        this.renderTurnEnded(context, record);
+        return;
     }
+  }
+
+  private renderTurnEnded(
+    context: ReplayRenderContext,
+    { reason, error }: TurnEndedReplayRecord,
+  ): void {
+    this.flushAssistant(context);
+    const show = (content: string, color?: ColorToken): void => {
+      this.host.appendTranscriptEntry({
+        ...replayEntry(context, 'status', content, 'plain'),
+        color,
+      });
+    };
+    if (reason === 'cancelled') {
+      show(TURN_INTERRUPTED_BY_USER_NOTICE, 'error');
+      return;
+    }
+    if (reason === 'blocked') {
+      show(PROMPT_HOOK_BLOCKED_TURN_STOPPED_NOTICE, 'error');
+      return;
+    }
+    if (reason !== 'failed' || error === undefined) return;
+    if (error.code === ErrorCodes.PROVIDER_FILTERED) {
+      show(PROVIDER_FILTERED_TURN_STOPPED_NOTICE, 'error');
+    }
+    if (error.code === OAUTH_LOGIN_REQUIRED_CODE) {
+      show(`${ERROR_STATUS_PREFIX}${OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE}`, 'error');
+      return;
+    }
+    show(`${ERROR_STATUS_PREFIX}${formatErrorPayload(error)}`, 'error');
+    show(errorReportHintLine());
   }
 
   private renderMessage(context: ReplayRenderContext, message: ContextMessage): void {

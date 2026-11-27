@@ -3,7 +3,7 @@ import { createApp, h, nextTick, ref, type App } from 'vue';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey, NumberInput } from '@moonshot-ai/app-ui';
-import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
+import { getIcon, type IconName } from '@moonshot-ai/app-ui/icons';
 
 let app: App | null = null;
 let host: HTMLDivElement | null = null;

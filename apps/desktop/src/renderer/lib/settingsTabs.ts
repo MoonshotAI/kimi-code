@@ -1,4 +1,4 @@
-import type { IconName } from '@moonshot-ai/app-client/icons';
+import type { IconName } from '@moonshot-ai/app-ui/icons';
 
 export type SettingsTab =
   | 'general'

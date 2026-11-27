@@ -2,7 +2,7 @@ import { app, clipboard, dialog, ipcMain, shell } from 'electron';
 import type { OpenDialogOptions, SaveDialogOptions, WebContents } from 'electron';
 import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { getMainWindow, sendToRenderer } from '../../window/main-window';
+import { getMainWindow, sendToRenderer } from '../../window/window-registry';
 import { listAvailableOpenInApps, openInApp } from '../../system/open-in';
 import { getTerminalManager, initTerminalManager, type NativeTerminalCreateOptions } from '../../terminal/manager';
 import { normalizeTerminalSshTarget } from '../../../shared/terminal-activity';

@@ -1,7 +1,7 @@
 import { dialog } from 'electron';
 
 import { launchChannel, setUncaughtErrorNotice } from '../diagnostics/log';
-import { getMainWindow } from '../window/main-window';
+import { getMainWindow } from '../window/window-registry';
 
 export function installUncaughtErrorNotice(): void {
   if (launchChannel() === 'stable') return;

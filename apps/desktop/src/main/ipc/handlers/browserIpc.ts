@@ -18,7 +18,7 @@ import { localFileAddressUrl, resolveLocalHtmlFileUrl } from '../../browser/brow
 import { createLocalPagesPolicy } from '../../browser/local-pages-policy';
 import { asBrowserAnnotationPickRequest } from '../../../shared/browser-annotation';
 import { collectBrowserAnnotationAssets, completeBrowserAnnotationCapture, cancelBrowserAnnotationPick, hideBrowserAnnotation, pickBrowserAnnotation, readBrowserAnnotationAsset, showBrowserAnnotation } from '../../browser/browser-annotations';
-import { getMainWindow, sendToRenderer } from '../../window/main-window';
+import { getMainWindow, sendToRenderer } from '../../window/window-registry';
 import { getTerminalManager } from '../../terminal/manager';
 import { effectiveContextMenuLocale } from '../../shell/context-menu';
 import { browserEn, browserZh } from '@moonshot-ai/app-i18n/browser';

@@ -4477,6 +4477,85 @@ describe('foldAgentWireReplay', () => {
       expect(folded.error).toBeUndefined();
     }
   });
+
+  it('replays how each turn ended, whole or limited to the latest turns', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
+    tempDirs.push(dir);
+    const wirePath = join(dir, 'wire.jsonl');
+    const refusal = {
+      code: 'provider.api_error',
+      message: 'The example service refused this request.',
+      retryable: false,
+    };
+    const user = (text: string, time: number) => ({
+      type: 'context.append_message',
+      message: { role: 'user', content: [{ type: 'text', text }], origin: { kind: 'user' } },
+      time,
+    });
+    const records = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      user('Check the build.', 2),
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1' }, time: 3 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'content.part', stepUuid: 's1', part: { type: 'text', text: 'The build passed.' } },
+        time: 4,
+      },
+      { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's1' }, time: 5 },
+      { type: 'turn.ended', agentId: 'main', turnId: 0, reason: 'completed', durationMs: 3, time: 6 },
+      user('Summarise the deployment status.', 7),
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'failed', error: refusal, durationMs: 1, time: 8 },
+    ];
+    await writeFile(wirePath, records.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf-8');
+
+    const full = await foldAgentWireReplay(wirePath);
+    expect(full.replay.filter((record) => record.type === 'turn_ended')).toEqual([
+      { type: 'turn_ended', turnId: 0, reason: 'completed', time: 6 },
+      { type: 'turn_ended', turnId: 1, reason: 'failed', error: refusal, time: 8 },
+    ]);
+
+    const latest = await foldAgentWireReplay(wirePath, 1);
+    expect(latest.replay).toEqual(limitAgentReplayByTurns(full.replay, 1));
+    expect(latest.replay.map((record) => record.type)).toEqual(['message', 'turn_ended']);
+    expect(latest.replay.at(-1)).toEqual({
+      type: 'turn_ended',
+      turnId: 1,
+      reason: 'failed',
+      error: refusal,
+      time: 8,
+    });
+
+    const openToolPath = join(dir, 'open-tool-wire.jsonl');
+    const openTool = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      user('Run the migration.', 2),
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1' }, time: 3 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'tool.call', stepUuid: 's1', toolCallId: 'tc1', name: 'Bash', args: {} },
+        time: 4,
+      },
+      { type: 'turn.ended', agentId: 'main', turnId: 0, reason: 'cancelled', durationMs: 2, time: 5 },
+      user('Try again.', 6),
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's2' }, time: 7 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'content.part', stepUuid: 's2', part: { type: 'text', text: 'Done.' } },
+        time: 8,
+      },
+      { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's2' }, time: 9 },
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed', durationMs: 3, time: 10 },
+    ];
+    await writeFile(openToolPath, openTool.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf-8');
+    const openToolFull = await foldAgentWireReplay(openToolPath);
+    expect(openToolFull.replay.filter((record) => record.type === 'turn_ended')).toEqual([
+      { type: 'turn_ended', turnId: 0, reason: 'cancelled', time: 5 },
+      { type: 'turn_ended', turnId: 1, reason: 'completed', time: 10 },
+    ]);
+    const openToolLatest = await foldAgentWireReplay(openToolPath, 1);
+    expect(openToolLatest.replay).toEqual(limitAgentReplayByTurns(openToolFull.replay, 1));
+    expect(openToolLatest.replay.map((record) => record.type)).toEqual(['message', 'message', 'turn_ended']);
+  });
 });
 
 describe('foldAgentWireReplay turn limiting', () => {

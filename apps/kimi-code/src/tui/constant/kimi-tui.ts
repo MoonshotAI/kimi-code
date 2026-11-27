@@ -9,6 +9,12 @@ export const CTRL_C_HINT = 'Press Ctrl+C again to exit';
 export const SHUTTING_DOWN_HINT = 'Shutting down… (running shutdown hooks)';
 export const MAIN_AGENT_ID = 'main';
 export const OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE = 'OAuth login expired. Send /login to login.';
+export const ERROR_STATUS_PREFIX = 'Error: ';
+export const TURN_INTERRUPTED_BY_USER_NOTICE = 'Interrupted by user';
+export const PROVIDER_FILTERED_TURN_STOPPED_NOTICE =
+  'Turn stopped: provider safety policy blocked the response.';
+export const PROMPT_HOOK_BLOCKED_TURN_STOPPED_NOTICE =
+  'Turn stopped: prompt hook blocked the request.';
 export const TUI_MODE_RESTART_NOTICE = 'TUI mode takes effect after restarting Kimi Code.';
 export const SESSIONLESS_STARTUP_NOTICE =
   'No session yet — one will be created on your first message.';

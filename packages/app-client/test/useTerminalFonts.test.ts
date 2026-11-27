@@ -5,7 +5,7 @@ vi.mock('vue', () => ({
   onMounted: (fn: () => void) => lifecycle.mounted.push(fn),
   onUnmounted: (fn: () => void) => lifecycle.unmounted.push(fn),
 }));
-vi.mock('@moonshot-ai/app-core', () => ({ useFontPrefs: vi.fn() }));
+vi.mock('@moonshot-ai/app-core/composables', () => ({ useFontPrefs: vi.fn() }));
 import { useTerminalFonts } from '../src/composables/useTerminalFonts';
 
 afterEach(() => {
