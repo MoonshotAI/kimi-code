@@ -105,6 +105,7 @@ vi.mock('../../../src/main/browser/browser-view', () => ({
 
 import {
   attachBrowserAutomationWindow,
+  browserTakeoverRefusal,
   collectBrowserDialogReminder,
   forgetSessionBrowserDialogs,
   handleBrowserUiResponse,
@@ -968,6 +969,51 @@ describe('manual browser takeover', () => {
     host.setTurnId('turn-2');
     const result = await runBrowserAutomation({ protocol: BROWSER_AUTOMATION_PROTOCOL, operation: 'browser.create_tab' }, undefined, 'session-1');
     expect(result.ok).toBe(true);
+    browserControlOwnership.reset();
+  });
+
+  it('answers a new operation with the takeover result before it runs, only while the user holds that control', async () => {
+    browserControlOwnership.reset();
+    const host = createHost();
+    attachBrowserAutomationWindow(host as never);
+    const request = { protocol: BROWSER_AUTOMATION_PROTOCOL, operation: 'browser.get_state' as const };
+    expect(await browserTakeoverRefusal(request, 'session-1')).toBeUndefined();
+    expect(host.webContents.send).not.toHaveBeenCalled();
+
+    browserControlOwnership.sync([{ browserId: 'browser-1', sessionId: 'session-1', turnId: 'turn-1', status: 'running' }]);
+    browserControlOwnership.takeOver('browser-1');
+    const refused = await browserTakeoverRefusal(request, 'session-1');
+    expect(refused?.error?.code).toBe('BROWSER_USER_TAKEOVER');
+    expect(refused).toEqual(await runBrowserAutomation(request, undefined, 'session-1'));
+
+    host.setTurnId('turn-2');
+    expect(await browserTakeoverRefusal(request, 'session-1')).toBeUndefined();
+    expect((await runBrowserAutomation(request, undefined, 'session-1')).ok).toBe(true);
+
+    const worker = { agentId: 'worker', generation: 1, turnId: 3 };
+    browserControlOwnership.sync([{ browserId: 'browser-2', sessionId: 'session-2', turnId: '3', status: 'running', controller: { run: worker } }]);
+    browserControlOwnership.takeOver('browser-2');
+    host.webContents.send.mockClear();
+    expect((await browserTakeoverRefusal(request, 'session-2', worker))?.error?.code).toBe('BROWSER_USER_TAKEOVER');
+    expect(host.webContents.send).not.toHaveBeenCalled();
+    expect(await browserTakeoverRefusal(request, 'session-2', { ...worker, turnId: 4 })).toBeUndefined();
+    expect(await browserTakeoverRefusal(request, 'session-2')).toBeUndefined();
+
+    const revoked = { agentId: 'reviewer', generation: 1, turnId: 3 };
+    browserControlOwnership.revoke('session-2', revoked);
+    expect(browserControlOwnership.isBlocked('session-2', revoked)).toBe(true);
+    expect(await browserTakeoverRefusal(request, 'session-2', revoked)).toBeUndefined();
+    browserControlOwnership.reset();
+  });
+
+  it('leaves the decision to the operation when the renderer cannot confirm the current turn', async () => {
+    browserControlOwnership.reset();
+    const host = createHost();
+    attachBrowserAutomationWindow(host as never);
+    browserControlOwnership.sync([{ browserId: 'browser-1', sessionId: 'session-1', turnId: 'turn-1', status: 'running' }]);
+    browserControlOwnership.takeOver('browser-1');
+    host.failStateRequests(0, 1);
+    expect(await browserTakeoverRefusal({ protocol: BROWSER_AUTOMATION_PROTOCOL, operation: 'browser.get_state' }, 'session-1')).toBeUndefined();
     browserControlOwnership.reset();
   });
 

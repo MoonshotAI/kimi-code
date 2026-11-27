@@ -13,7 +13,7 @@ import {
   asBrowserRunRequest,
   BROWSER_OPERATIONS,
 } from '../../shared/browser-automation';
-import { isAgentLocalFileAddress, runBrowserAutomation } from './browser-automation';
+import { browserTakeoverRefusal, isAgentLocalFileAddress, runBrowserAutomation } from './browser-automation';
 import type { BrowserOperationErrorCode, BrowserOperationResultEvent } from '../diagnostics/telemetry-events';
 import { trySendDesktopEvent } from '../diagnostics/track';
 import { BROWSER_RUN_TOOL_SCHEMA } from './browser-tool-schema';
@@ -163,6 +163,42 @@ function browserOperationOf(args: unknown): BrowserOperationResultEvent['operati
   return BROWSER_OPERATIONS.find(item => item === operation) ?? 'unknown';
 }
 
+function trackBrowserOperation(
+  operation: BrowserOperationResultEvent['operation'],
+  errorCode: BrowserOperationErrorCode | undefined,
+  startedAt: number,
+  caller: BrowserOperationResultEvent['caller'],
+  sessionId: string | undefined,
+): void {
+  try {
+    trySendDesktopEvent('browser_operation_result', {
+      operation,
+      ok: errorCode === undefined,
+      ...(errorCode === undefined ? {} : { error_code: errorCode }),
+      duration_ms: Date.now() - startedAt,
+      caller,
+      ...(sessionId === undefined ? {} : { session_id: sessionId }),
+    });
+  } catch {}
+}
+
+export async function refuseBrowserCallAfterTakeover(
+  sessionId: string,
+  access: DesktopBrowserAccess,
+  args: unknown,
+  run?: BrowserSubagentRun,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  if (!access.allows(sessionId)) return undefined;
+  const input = asBrowserRunRequest(args, { isLocalFileAddress: isAgentLocalFileAddress });
+  if (input === null) return undefined;
+  const startedAt = Date.now();
+  const result = await browserTakeoverRefusal(input, sessionId, run, signal);
+  if (result === undefined) return undefined;
+  trackBrowserOperation(result.operation, result.error?.code ?? 'INTERNAL_ERROR', startedAt, run === undefined ? 'main' : 'subagent', sessionId);
+  return formatBrowserToolResult(result);
+}
+
 function createProtocolServer(sessionId: string | undefined, access: DesktopBrowserAccess): Server {
   const protocolServer = new Server(
     { name: 'desktop_browser', version: '1.0.0' },
@@ -235,16 +271,7 @@ function createProtocolServer(sessionId: string | undefined, access: DesktopBrow
       }
       return { content, isError: !result.ok };
     } finally {
-      try {
-        trySendDesktopEvent('browser_operation_result', {
-          operation,
-          ok: errorCode === undefined,
-          ...(errorCode === undefined ? {} : { error_code: errorCode }),
-          duration_ms: Date.now() - startedAt,
-          caller,
-          ...(sessionId === undefined ? {} : { session_id: sessionId }),
-        });
-      } catch {}
+      trackBrowserOperation(operation, errorCode, startedAt, caller, sessionId);
     }
   });
   return protocolServer;
