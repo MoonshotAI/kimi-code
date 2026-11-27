@@ -6,6 +6,7 @@ import type { SessionCreatedSource } from '../../../shared/track-events';
 import {
   copyTextToClipboard,
   loadMobileSwitcherViewMode,
+  nativePath,
   saveMobileSwitcherViewMode,
   type SidebarViewMode,
 } from '@moonshot-ai/app-core/lib';
@@ -203,7 +204,7 @@ function toggleWsMenu(id: string): void {
   menuFor.value = null;
 }
 function onCopyWsPath(ws: WorkspaceView): void {
-  void copyTextToClipboard(ws.root);
+  void copyTextToClipboard(nativePath(ws.root));
   wsMenuFor.value = null;
 }
 function onDeleteWorkspace(ws: WorkspaceView): void {
@@ -250,7 +251,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
           <Icon v-else class="mgh-folder" name="folder" size="sm" />
 
           <span class="mgh-name">{{ g.workspace.name }}</span>
-          <Tooltip :text="g.workspace.root">
+          <Tooltip :text="nativePath(g.workspace.root)">
             <span class="mgh-path">{{ g.workspace.shortPath }}</span>
           </Tooltip>
 

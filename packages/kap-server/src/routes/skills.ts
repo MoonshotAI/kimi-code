@@ -373,9 +373,9 @@ async function listWorkspaceSkillsForRoots(
       ? Promise.resolve([])
       : projectRootsForDirs([workDir, ...additionalDirs], rootOptions),
     useExplicitDirs
-      ? configuredRoots(explicitDirs, workDir, bootstrap.osHomeDir, 'user')
+      ? configuredRoots(explicitDirs, [workDir], bootstrap.osHomeDir, 'user')
       : Promise.resolve([]),
-    configuredRoots(extraSkillDirs, workDir, bootstrap.osHomeDir, 'extra'),
+    configuredRoots(extraSkillDirs, [workDir, ...additionalDirs], bootstrap.osHomeDir, 'extra'),
     plugins.pluginSkillRoots(),
   ]);
   const [user, project, explicit, extra, plugin] = await Promise.all([

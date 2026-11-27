@@ -57,7 +57,7 @@ export function isLocalHtmlContextCurrent(origin: LocalHtmlContext, current: Loc
 export function localHtmlPathTarget(path: string, cwd: string): string | null {
   if (!HTML_PATH.test(path) || path.startsWith('~')) return null;
   if (/^[\\/](?![\\/])/.test(path)) {
-    const drive = /^([a-zA-Z]:)[\\/]/.exec(cwd)?.[1] ?? /^(\\\\[^\\/]+\\[^\\/]+)(?=[\\/]|$)/.exec(cwd)?.[1];
+    const drive = /^([a-zA-Z]:)[\\/]/.exec(cwd)?.[1] ?? /^((?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+)(?=[\\/]|$)/.exec(cwd)?.[1];
     if (drive !== undefined) return `${drive}${path}`;
     if (path.startsWith('/')) return path;
   } else if (ABSOLUTE_PATH.test(path)) {

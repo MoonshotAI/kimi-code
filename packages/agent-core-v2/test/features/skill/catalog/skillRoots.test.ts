@@ -149,7 +149,7 @@ describe('skillRoots', () => {
       await mkdir(absDir, { recursive: true });
       await mkdir(join(root, 'relative'), { recursive: true });
 
-      const roots = await configuredRoots(['~', '~/notes', absDir, 'relative'], root, homeDir, 'extra');
+      const roots = await configuredRoots(['~', '~/notes', absDir, 'relative'], [root], homeDir, 'extra');
       const paths = roots.map((root) => root.path);
 
       expect(roots.every((root) => root.source === 'extra')).toBe(true);
@@ -157,6 +157,24 @@ describe('skillRoots', () => {
       expect(paths).toContain(await realpath(join(homeDir, 'notes')));
       expect(paths).toContain(await realpath(absDir));
       expect(paths).toContain(await realpath(join(root, 'relative')));
+    });
+
+    it('resolves relative paths against every work dir and absolute paths once, primary first', async () => {
+      const homeDir = join(root, 'home');
+      const absDir = join(root, 'abs');
+      const primary = join(root, 'primary');
+      const secondary = join(root, 'secondary');
+      for (const dir of [homeDir, absDir, join(primary, 'team'), join(secondary, 'team')]) {
+        await mkdir(dir, { recursive: true });
+      }
+
+      const roots = await configuredRoots(['team', absDir], [primary, secondary, primary], homeDir, 'extra');
+
+      expect(roots.map((entry) => entry.path)).toEqual([
+        await realpath(join(primary, 'team')),
+        await realpath(absDir),
+        await realpath(join(secondary, 'team')),
+      ]);
     });
   });
 });

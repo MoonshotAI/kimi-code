@@ -96,13 +96,15 @@ The Kimi-specific user Skill directory moves with `KIMI_CODE_HOME`, so isolated 
 - `.kimi-code/skills/`
 - `.agents/skills/`
 
-For a workspace with multiple configured source directories, Kimi Code CLI discovers project-level Skills for every source directory using the project-root rules above and merges them into one Skill catalog. Same-name Skills remain available as separate variants. An unqualified Skill name still resolves to the primary directory first, then to additional directories in workspace order; menus show the final path segment of each source directory so you can select a specific variant. Skills without a workspace directory show a global source label, while built-in Skills show a built-in label at the right edge. In slash completion, ordinary commands appear first, followed by all Skills under a single "Skills" heading. Skill changes in any source directory automatically reload the catalog. Session-only additional directories are excluded; remember a directory in the workspace to include its Skills.
+For a workspace with multiple configured source directories, Kimi Code CLI discovers project-level Skills for every source directory using the project-root rules above and merges them into one Skill catalog. A source directory inside a Git repository also resolves to that repository's root, so the subdirectory's own `.kimi-code/skills/` or `.agents/skills/` is not read. Same-name Skills remain available as separate variants. An unqualified Skill name still resolves to the primary directory first, then to additional directories in workspace order; menus show the final path segment of each source directory so you can select a specific variant. Skills without a workspace directory show a global source label, while built-in Skills show a built-in label at the right edge. In slash completion, ordinary commands appear first, followed by all Skills under a single "Skills" heading. Skill changes in any source directory automatically reload the catalog. Session-only additional directories are excluded; remember a directory in the workspace to include its Skills.
 
 **Extra directories**: Declared via `extra_skill_dirs` at the top level of `config.toml`:
 
 ```toml
 extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
 ```
+
+Paths starting with `~` or `~/` and absolute paths point to a single directory; relative paths resolve against the project root. In a workspace with multiple source directories, a relative path is resolved against the project root of the primary directory, the working directory, and each source directory, and the primary directory wins same-name Skills.
 
 **Built-in Skills** are distributed with the CLI and have the lowest priority. They provide out-of-the-box workflows for common tasks: configuring MCP servers, customizing the TUI theme, and editing config files. See [Built-in skill commands](../reference/slash-commands.md#built-in-skill-commands) for the full list. Those describing Kimi Code itself can be turned off with the top-level [`builtin_product_skills`](../configuration/config-files.md#top-level-fields) field.
 

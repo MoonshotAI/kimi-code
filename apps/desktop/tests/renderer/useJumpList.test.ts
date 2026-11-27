@@ -103,6 +103,17 @@ describe('useJumpList', () => {
     expect(setJumpList.mock.calls[0]![0]).toHaveLength(9);
   });
 
+  it('pushes Windows roots in native form so the jump list arguments stay the same whichever separators the server reports', () => {
+    const setJumpList = vi.fn();
+    vi.stubGlobal('window', { kimiDesktop: { setJumpList } });
+    useJumpList(client(true, ['C:/Users/me/app', 'C:\\Users\\me\\notes', '/home/me/app']), () => {});
+    expect(setJumpList.mock.calls[0]![0]).toEqual([
+      { name: 'w0', root: 'C:\\Users\\me\\app' },
+      { name: 'w1', root: 'C:\\Users\\me\\notes' },
+      { name: 'w2', root: '/home/me/app' },
+    ]);
+  });
+
   it('holds the first push until the client initializes', () => {
     const setJumpList = vi.fn();
     vi.stubGlobal('window', { kimiDesktop: { setJumpList } });

@@ -10487,6 +10487,64 @@ capabilities = ["image_in", "video_in"]
     expect(harness.track).toHaveBeenCalledWith('init_complete', undefined);
   });
 
+  it('clears busy state after /init completes, though no main turn reports how it ended (v2 engine)', async () => {
+    let resolveInit: (() => void) | undefined;
+    const session = makeSession({
+      init: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveInit = resolve;
+          }),
+      ),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.loopLifecycleEvents = true;
+
+    driver.handleUserInput('/init');
+
+    await vi.waitFor(() => {
+      expect(session.init).toHaveBeenCalledTimes(1);
+    });
+    expect(driver.state.livePane.mode).toBe('waiting');
+
+    resolveInit?.();
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    expect(driver.state.livePane.mode).toBe('idle');
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('sends a message typed while /init runs once /init completes (v2 engine)', async () => {
+    let resolveInit: (() => void) | undefined;
+    const session = makeSession({
+      init: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveInit = resolve;
+          }),
+      ),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.loopLifecycleEvents = true;
+
+    driver.handleUserInput('/init');
+    await vi.waitFor(() => {
+      expect(session.init).toHaveBeenCalledTimes(1);
+    });
+    driver.handleUserInput('What does AGENTS.md say?');
+    expect(driver.state.queuedMessages.map((item) => item.text)).toEqual(['What does AGENTS.md say?']);
+    expect(session.prompt).not.toHaveBeenCalled();
+
+    resolveInit?.();
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledTimes(1);
+    });
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
   it('starts /btw through a forked side agent without changing the main busy state', async () => {
     const session = makeSession();
     const { driver, harness } = await makeDriver(session);

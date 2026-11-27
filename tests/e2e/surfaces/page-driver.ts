@@ -181,10 +181,6 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().expectStopped();
   }
 
-  setDefaultPermissionMode(mode: PermissionMode): Promise<void> {
-    return this.window().setDefaultPermissionMode(mode);
-  }
-
   recallPrevious(): Promise<void> {
     return this.window().recallPrevious();
   }
