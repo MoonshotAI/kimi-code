@@ -50,6 +50,7 @@ const TO_BACKGROUND = 'To background';
 const SESSION_ID = 'data-session-id';
 const SESSION_TITLE = '.t';
 const UNREAD_MARK = 'session-unread';
+const SESSION_BUSY = 'Loading';
 const PROJECT_ID = 'data-ws-id';
 const REMOVE_PROJECT = 'Remove project';
 const NEW_PROJECT = 'New Project';
@@ -876,7 +877,7 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
       const now = await marks();
       const reading = JSON.stringify(now);
       if (wanted(now)) return now;
-      const settled = reading === previous && (await this.idle());
+      const settled = reading === previous && (await this.idle()) && (await row.getByRole('status', { name: SESSION_BUSY, exact: true }).count()) === 0;
       previous = reading;
       return settled ? now : undefined;
     });

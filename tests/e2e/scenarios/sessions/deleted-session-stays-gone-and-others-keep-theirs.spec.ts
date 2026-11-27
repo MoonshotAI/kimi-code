@@ -15,6 +15,7 @@ scenario('deletes one session without touching the others, and the deleted one s
   await product.newSession();
   await product.send('Gamma question');
   await product.expectReply('Gamma reply.');
+  await product.waitIdle();
 
   await product.openSession('Alpha question');
   await product.deleteSession('Beta question');

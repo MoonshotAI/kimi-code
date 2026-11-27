@@ -13,6 +13,7 @@ scenario(
     await product.newSession();
     await product.send('Beta question');
     await product.expectReply('Beta reply.');
+    await product.waitIdle();
 
     await product.openSession('Alpha question');
     await product.archiveSession('Beta question');

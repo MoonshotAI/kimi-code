@@ -17,6 +17,7 @@ scenario('keeps a forked session and its source apart: each continues from the s
 
   await product.send('Book the hotel.');
   await product.expectReply('The hotel is booked.');
+  await product.waitIdle();
   await product.openSession('Plan the trip.');
   await product.send('Book the train.');
   await product.expectReply('The train is booked.');
