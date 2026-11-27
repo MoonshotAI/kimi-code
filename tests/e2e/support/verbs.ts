@@ -29,10 +29,6 @@ const ONE_PROMPT_AT_A_TIME_OVER_ACP =
 const NO_FREE_TEXT_OVER_ACP = "ACP's permission request carries only option ids, so an editor cannot send a free-text answer.";
 const INPUT_IN_THE_EDITOR = "An editor writes prompts in its own input and keeps its own prompt history; the agent behind ACP never sees the user's input.";
 const NO_UNDO_OVER_ACP = 'ACP has no request to withdraw a message from the conversation.';
-const NO_DEFAULT_MODE_SETTING = {
-  tui: "The terminal UI's permission setting, under /permission and /settings alike, changes only the current session; the default for new sessions lives in config.toml.",
-  acp: 'ACP has no settings: an editor sets the mode of each session with session/set_mode.',
-};
 const NO_STOP_MARK_OVER_ACP =
   "ACP has no message that marks a turn as stopped: an editor learns it from the cancelled stop reason, which stop() already checks, and a session/load replay carries no trace of it.";
 const NO_WINDOW_TO_RESIZE = {
@@ -96,7 +92,6 @@ export const VERBS = {
   answerOther: { on: ['tui', 'desktop', 'web'], absentBecause: NO_FREE_TEXT_OVER_ACP, checksInterface: false },
   dismissQuestion: { on: SURFACES, checksInterface: false },
   setPermissionMode: { on: SURFACES, checksInterface: false },
-  setDefaultPermissionMode: { on: ['desktop', 'web'], absentBecause: NO_DEFAULT_MODE_SETTING, checksInterface: false },
   stop: { on: SURFACES, checksInterface: false },
   expectStopped: { on: ['tui', 'desktop', 'web'], absentBecause: NO_STOP_MARK_OVER_ACP, checksInterface: true },
   waitIdle: { on: SURFACES, checksInterface: false },
@@ -351,7 +346,6 @@ interface VerbSignatures {
   answerOther(text: string): Promise<void>;
   dismissQuestion(): Promise<void>;
   setPermissionMode(mode: PermissionMode): Promise<void>;
-  setDefaultPermissionMode(mode: PermissionMode): Promise<void>;
   stop(): Promise<void>;
   expectStopped(): Promise<void>;
   waitIdle(): Promise<void>;
