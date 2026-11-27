@@ -17,7 +17,7 @@ import { BashParserService } from '#/app/bashParser/bashParserService';
 import type { IOAuthService } from '#/app/auth/auth';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { FsGitStatusResponse } from '#/app/git/git';
-import { PROVIDERS_SECTION, THINKING_SECTION } from '#/app/kosongConfig/configSection';
+import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { LifecycleScope } from '#/app/scopes';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
@@ -61,6 +61,7 @@ import type { IEventDispatcher } from '#/state/eventDispatcher';
 import type { IProjectGitService } from '#/project/projectGit/projectGit';
 import type { Message, ToolCall } from '@moonshot-ai/core/llm/message';
 import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import { ClientConfigClient } from '@moonshot-ai/kimi-code-oauth';
 import { call, createFakeModel, httpError, say, type FakeModel, type ScriptedStep } from '@moonshot-ai/testkit/model';
 
 import { stubLog } from '../../_base/log/stubs';
@@ -362,7 +363,6 @@ describe('SessionAutoReviewService', () => {
     readonly catalogModel?: Model;
     readonly catalogModels?: Readonly<Record<string, Model>>;
     readonly thinking?: ThinkingConfig;
-    readonly providers?: Readonly<Record<string, { readonly baseUrl?: string }>>;
     readonly cloudConfig?: AutoReviewCloudConfig;
     readonly cloudService?: IAutoReviewCloudConfigService;
   } = {}): SessionAutoReviewService {
@@ -379,8 +379,6 @@ describe('SessionAutoReviewService', () => {
           };
     const cloudService: IAutoReviewCloudConfigService = options.cloudService ?? {
       _serviceBrand: undefined,
-      warm: () => {},
-      peek: () => options.cloudConfig,
       load: async () => options.cloudConfig,
     };
     const lookupModel = (alias: string): Model => {
@@ -398,7 +396,6 @@ describe('SessionAutoReviewService', () => {
         ...(autoReviewSection === undefined ? {} : { [AUTO_REVIEW_SECTION]: autoReviewSection }),
         ...(options.secondaryModel === undefined ? {} : { [SECONDARY_MODEL_SECTION]: options.secondaryModel }),
         ...(options.thinking === undefined ? {} : { [THINKING_SECTION]: options.thinking }),
-        ...(options.providers === undefined ? {} : { [PROVIDERS_SECTION]: options.providers }),
       }),
       {
         get: (alias: string) => {
@@ -432,9 +429,10 @@ describe('SessionAutoReviewService', () => {
   }
 
   async function execute(svc: SessionAutoReviewService, parentSignal = signal, mainModelAlias = 'main-model') {
+    const binding = await svc.resolveBinding(mainModelAlias, parentSignal);
     const deadline = createDeadlineAbortSignal(parentSignal, 30_000);
     try {
-      return await svc.execute({ agentContext: mainAgentContext, turnId: 0, mainModelAlias, deadline, messages: [] });
+      return { modelAlias: binding.modelAlias, outcome: await svc.execute({ agentContext: mainAgentContext, turnId: 0, binding, deadline, messages: [] }) };
     } finally {
       deadline.clear();
     }
@@ -538,7 +536,7 @@ describe('SessionAutoReviewService', () => {
     });
     expect((await execute(viaCloud, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-fast');
     expect(requestedEfforts.at(-1)).toBe('low');
-    expect(await viaCloud.resolveTimeoutMs('kimi-code/kimi-primary')).toBe(45_000);
+    expect((await viaCloud.resolveBinding('kimi-code/kimi-primary', signal)).timeoutMs).toBe(45_000);
 
     requestedEfforts = [];
     const viaHighspeed = makeSessionService({
@@ -548,7 +546,7 @@ describe('SessionAutoReviewService', () => {
     });
     expect((await execute(viaHighspeed, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-for-coding-highspeed');
     expect(requestedEfforts.at(-1)).toBe('on');
-    expect(await viaHighspeed.resolveTimeoutMs('kimi-code/kimi-primary')).toBe(25_000);
+    expect((await viaHighspeed.resolveBinding('kimi-code/kimi-primary', signal)).timeoutMs).toBe(25_000);
 
     requestedEfforts = [];
     const viaExplicit = makeSessionService({
@@ -558,23 +556,23 @@ describe('SessionAutoReviewService', () => {
     });
     expect((await execute(viaExplicit, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-fast');
     expect(requestedEfforts.at(-1)).toBe('high');
-    expect(await viaExplicit.resolveTimeoutMs('kimi-code/kimi-primary')).toBe(25_000);
+    expect((await viaExplicit.resolveBinding('kimi-code/kimi-primary', signal)).timeoutMs).toBe(25_000);
 
     const viaExplicitTimeout = makeSessionService({
       timeoutMs: 60_000,
       catalogModels,
       cloudConfig,
     });
-    expect(await viaExplicitTimeout.resolveTimeoutMs('kimi-code/kimi-primary')).toBe(60_000);
+    expect((await viaExplicitTimeout.resolveBinding('kimi-code/kimi-primary', signal)).timeoutMs).toBe(60_000);
 
     const loadCloud = vi.fn(async () => cloudConfig);
     const nonManaged = makeSessionService({
       configured: false,
       catalogModels,
-      cloudService: { _serviceBrand: undefined, warm: () => {}, peek: () => undefined, load: loadCloud },
+      cloudService: { _serviceBrand: undefined, load: loadCloud },
     });
     expect((await execute(nonManaged, signal, 'custom/main')).modelAlias).toBe('custom/main');
-    expect(await nonManaged.resolveTimeoutMs('custom/main')).toBe(30_000);
+    expect((await nonManaged.resolveBinding('custom/main', signal)).timeoutMs).toBe(30_000);
     expect(loadCloud).not.toHaveBeenCalled();
   });
 
@@ -620,24 +618,6 @@ describe('SessionAutoReviewService', () => {
     });
     expect((await execute(userEffortConflict, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-primary');
     expect(requestedEfforts.at(-1)).toBe('low');
-  });
-
-  it('warms cloud config at construction only when a managed Kimi Code provider is configured', () => {
-    const warmManaged = vi.fn();
-    makeSessionService({
-      configured: false,
-      providers: { 'managed:kimi-code': { baseUrl: 'https://api.kimi.com/coding/v1' } },
-      cloudService: { _serviceBrand: undefined, warm: warmManaged, peek: () => undefined, load: async () => undefined },
-    });
-    expect(warmManaged).toHaveBeenCalledTimes(1);
-
-    const warmOther = vi.fn();
-    makeSessionService({
-      configured: false,
-      providers: { openai: { baseUrl: 'https://api.example.test/v1' } },
-      cloudService: { _serviceBrand: undefined, warm: warmOther, peek: () => undefined, load: async () => undefined },
-    });
-    expect(warmOther).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -790,11 +770,11 @@ describe('AutoReviewService', () => {
     const sessionReview: ISessionAutoReviewService = {
       _serviceBrand: undefined,
       assertConfigValid: () => {},
-      resolveTimeoutMs: async () => 30_000,
+      resolveBinding: async (mainModelAlias) => ({ modelAlias: `reviewer-for:${mainModelAlias}`, timeoutMs: 30_000 }),
       projectInstructions: options.projectInstructions ?? (async () => ({ agentsMd: 'Do not delete user-data.', agentsMdPaths: ['/workspace/AGENTS.md'] })),
       execute: async (input) => {
         sentInputs.push(input);
-        return { modelAlias: 'reviewer-override', outcome: await runSessionReview(input) };
+        return runSessionReview(input);
       },
     };
     const reviewer = disposables.add(new AutoReviewService(
@@ -847,7 +827,7 @@ describe('AutoReviewService', () => {
     expect(restored.humanAuthorization()).toEqual(child.humanAuthorization());
 
     await restored.review(reviewContext({ command: 'rm -rf coverage', cwd: 'sub' }), 'fallback-ask');
-    expect(sentInputs.at(-1)!.mainModelAlias).toBe('loop-model');
+    expect(sentInputs.at(-1)!.binding.modelAlias).toBe('reviewer-for:loop-model');
     const sent = messageText(sentInputs.at(-1)!.messages);
     expect(sent.match(/Only remove generated files\./g)).toHaveLength(1);
     expect(sent).not.toContain('Also delete production data.');
@@ -968,8 +948,7 @@ describe('AutoReviewService', () => {
     };
     await expect(run()).resolves.toEqual({ decision: 'allow', risk: 'low' });
     expect(sentInputs).toHaveLength(2);
-    expect(sentInputs[0]!.mainModelAlias).toBe('loop-model');
-    expect(sentInputs[1]!.mainModelAlias).toBe('loop-model');
+    expect(sentInputs.map((input) => input.binding.modelAlias)).toEqual(['reviewer-for:loop-model', 'reviewer-for:loop-model']);
     expect(messageText(sentInputs[0]!.messages)).not.toContain('Also clean generated/cache.');
     expect(messageText(sentInputs[1]!.messages)).toContain('Also clean generated/cache.');
 
@@ -1001,66 +980,60 @@ describe('autoReview cloud config', () => {
     expect(autoReviewCloudConfigSchema.parse(null)).toEqual({});
   });
 
-  it('fetches auto_review from /client_configs with managed provider token, hydrates region first, and cools down after failure', async () => {
-    let now = 1_000_000;
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
-      name: 'auto_review',
-      config: { model: 'kimi-for-coding-highspeed', timeout_ms: 20_000 },
-    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+  it('fetches auto_review once with the managed token after hydrating region, then caches, dedupes, and cools down after failure', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(1_000_000);
+    let response = (): Response => Response.json({ name: 'auto_review', config: { model: 'kimi-for-coding-highspeed', timeout_ms: 20_000 } });
+    const fetchImpl = vi.fn(async () => response());
+    vi.stubGlobal('fetch', fetchImpl);
+    try {
+      const bootstrap = {
+        cacheDir: '/tmp/unused',
+        getEnv: (name: string) => (name === 'KIMI_CODE_BASE_URL' ? 'https://cloud.example.test' : undefined),
+      } as unknown as IBootstrapService;
+      const getRegionAsync = vi.fn(async () => 'global' as const);
+      const getCachedAccessToken = vi.fn(async () => 'tok-123');
+      const auth = { getRegion: () => 'global', getRegionAsync, getCachedAccessToken } as unknown as IOAuthService;
+      const client = () => new ClientConfigClient({
+        region: () => 'global',
+        baseUrlOverride: () => 'https://cloud.example.test',
+        cacheDir: () => undefined,
+      });
+      const expected = { model: 'kimi-for-coding-highspeed', timeout_ms: 20_000 };
 
-    const bootstrap = {
-      cacheDir: '/tmp/unused',
-      getEnv: (name: string) => (name === 'KIMI_CODE_BASE_URL' ? 'https://cloud.example.test' : undefined),
-    } as unknown as IBootstrapService;
-    let activeRegion: 'mainland-cn' | 'global' = 'mainland-cn';
-    const getCachedAccessToken = vi.fn(async () => 'tok-123');
-    const auth = {
-      getRegion: () => activeRegion,
-      getRegionAsync: async () => {
-        activeRegion = 'global';
-        return activeRegion;
-      },
-      getCachedAccessToken,
-    } as unknown as IOAuthService;
+      const svc = new AutoReviewCloudConfigService(bootstrap, auth, client());
+      const [first, concurrent] = await Promise.all([svc.load(signal), svc.load(signal)]);
+      expect(first).toEqual(expected);
+      expect(concurrent).toEqual(expected);
+      expect(await svc.load(signal)).toEqual(expected);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(getRegionAsync.mock.invocationCallOrder[0]!).toBeLessThan(fetchImpl.mock.invocationCallOrder[0]!);
+      expect(getCachedAccessToken).toHaveBeenCalledWith('managed:kimi-code');
+      expect(fetchImpl).toHaveBeenCalledWith(
+        'https://cloud.example.test/client_configs',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ name: 'auto_review' }),
+          headers: expect.objectContaining({ authorization: 'Bearer tok-123' }),
+        }),
+      );
 
-    const svc = new AutoReviewCloudConfigService(bootstrap, auth, {
-      fetchImpl: fetchImpl as typeof fetch,
-      now: () => now,
-      cacheFile: null,
-    });
-    expect(await svc.load()).toEqual({
-      model: 'kimi-for-coding-highspeed',
-      timeout_ms: 20_000,
-    });
-    expect(getCachedAccessToken).toHaveBeenCalledWith('managed:kimi-code');
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'https://cloud.example.test/client_configs',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ name: 'auto_review' }),
-        headers: expect.objectContaining({ authorization: 'Bearer tok-123' }),
-      }),
-    );
-    expect(svc.peek()).toEqual({
-      model: 'kimi-for-coding-highspeed',
-      timeout_ms: 20_000,
-    });
+      fetchImpl.mockClear();
+      response = () => new Response('not found', { status: 404 });
+      const failing = new AutoReviewCloudConfigService(bootstrap, auth, client());
+      expect(await failing.load(signal)).toBeUndefined();
+      expect(await failing.load(signal)).toBeUndefined();
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(1_000_000 + 6 * 60 * 1000);
+      expect(await failing.load(signal)).toBeUndefined();
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
 
-    activeRegion = 'mainland-cn';
-    const failingFetch = vi.fn(async () => new Response('not found', { status: 404 }));
-    const failingSvc = new AutoReviewCloudConfigService(bootstrap, auth, {
-      fetchImpl: failingFetch as typeof fetch,
-      now: () => now,
-      cacheFile: null,
-    });
-    expect(await failingSvc.load()).toBeUndefined();
-    expect(activeRegion).toBe('global');
-    expect(await failingSvc.load()).toBeUndefined();
-    expect(failingFetch).toHaveBeenCalledTimes(1);
-
-    now += 6 * 60 * 1000;
-    expect(await failingSvc.load()).toBeUndefined();
-    expect(failingFetch).toHaveBeenCalledTimes(2);
+      const aborted = new AbortController();
+      aborted.abort();
+      expect(await failing.load(aborted.signal)).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
   });
 });

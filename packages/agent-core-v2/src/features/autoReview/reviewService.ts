@@ -158,23 +158,21 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     let modelAlias = '';
     let outcome: AutoReviewOutcome;
     try {
-      const mainModelAlias = this.loop.resolveModelContext().modelAlias;
-      modelAlias = mainModelAlias;
-      const timeoutMs = await this.sessionReview.resolveTimeoutMs(mainModelAlias, context.signal);
+      modelAlias = this.loop.resolveModelContext().modelAlias;
+      const binding = await this.sessionReview.resolveBinding(modelAlias, context.signal);
       context.signal.throwIfAborted();
-      deadline = createDeadlineAbortSignal(context.signal, timeoutMs);
+      modelAlias = binding.modelAlias;
+      deadline = createDeadlineAbortSignal(context.signal, binding.timeoutMs);
       for (let run = 1; ; run += 1) {
         const snapshot = await this.takeSnapshot(context, deadline.signal);
-        const result = await this.sessionReview.execute({
+        outcome = await this.sessionReview.execute({
           agentContext: this.scopeContext.agentContext,
           turnId: context.turnId,
-          mainModelAlias,
+          binding,
           deadline,
           messages: snapshot.messages,
         });
         context.signal.throwIfAborted();
-        modelAlias = result.modelAlias;
-        outcome = result.outcome;
         if (outcome.decision === 'failed') break;
         const history = this.loop.history();
         const changed = this.workspace.workDir !== snapshot.cwd

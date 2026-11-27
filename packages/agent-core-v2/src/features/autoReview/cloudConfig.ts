@@ -1,23 +1,17 @@
 import { join } from 'node:path';
 
-import {
-  ClientConfigClient,
-  KIMI_CODE_PROVIDER_NAME,
-  type ClientConfigFetchOptions,
-  type KimiRegion,
-} from '@moonshot-ai/kimi-code-oauth';
+import { ClientConfigClient, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
+import { abortable } from '#/_base/utils/abort';
 import { IOAuthService } from '#/app/auth/auth';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 
 export const AUTO_REVIEW_CLIENT_CONFIG_NAME = 'auto_review';
 export const DEFAULT_AUTO_REVIEW_TIMEOUT_MS = 30000;
 
-const MIN_TIMEOUT_MS = 1000;
-const MAX_TIMEOUT_MS = 120000;
 const CLOUD_FETCH_TIMEOUT_MS = 2000;
 const CLOUD_FAILURE_COOLDOWN_MS = 5 * 60 * 1000;
 
@@ -25,7 +19,7 @@ export const autoReviewCloudConfigSchema = z
   .object({
     model: z.string().trim().min(1).optional().catch(undefined),
     effort: z.string().trim().min(1).optional().catch(undefined),
-    timeout_ms: z.number().int().min(MIN_TIMEOUT_MS).max(MAX_TIMEOUT_MS).optional().catch(undefined),
+    timeout_ms: z.number().int().min(1000).max(120000).optional().catch(undefined),
   })
   .catch({});
 
@@ -33,141 +27,48 @@ export type AutoReviewCloudConfig = z.infer<typeof autoReviewCloudConfigSchema>;
 
 export interface IAutoReviewCloudConfigService {
   readonly _serviceBrand: undefined;
-  warm(): void;
-  peek(): AutoReviewCloudConfig | undefined;
-  load(signal?: AbortSignal): Promise<AutoReviewCloudConfig | undefined>;
+  load(signal: AbortSignal): Promise<AutoReviewCloudConfig | undefined>;
 }
 
 export const IAutoReviewCloudConfigService = createDecorator<IAutoReviewCloudConfigService>(
   'autoReviewCloudConfigService',
 );
 
-export interface AutoReviewCloudConfigServiceOptions {
-  readonly client?: ClientConfigClient;
-  readonly fetchImpl?: typeof fetch;
-  readonly now?: () => number;
-  readonly cacheFile?: string | null;
-}
-
-export class AutoReviewCloudConfigService
-  extends Service
-  implements IAutoReviewCloudConfigService
-{
+export class AutoReviewCloudConfigService extends Service implements IAutoReviewCloudConfigService {
   declare readonly _serviceBrand: undefined;
-  private readonly client: ClientConfigClient;
-  private readonly now: () => number;
-  private readonly fetchImpl?: typeof fetch;
-  private readonly cacheFile?: string | null;
-  private inFlight:
-    | { readonly region: KimiRegion; readonly promise: Promise<AutoReviewCloudConfig | undefined> }
-    | undefined;
-  private readonly failedAt = new Map<KimiRegion, number>();
+  private pending: Promise<AutoReviewCloudConfig | undefined> | undefined;
+  private failedAt: number | undefined;
 
   constructor(
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IBootstrapService bootstrap: IBootstrapService,
     @IOAuthService private readonly auth: IOAuthService,
-    options: AutoReviewCloudConfigServiceOptions = {},
+    private readonly client: ClientConfigClient = new ClientConfigClient({
+      region: () => auth.getRegion(),
+      baseUrlOverride: () => bootstrap.getEnv('KIMI_CODE_BASE_URL'),
+      cacheDir: () => join(bootstrap.cacheDir, 'client-configs'),
+    }),
   ) {
     super();
-    this.now = options.now ?? Date.now;
-    this.fetchImpl = options.fetchImpl;
-    this.cacheFile = options.cacheFile;
-    this.client =
-      options.client ??
-      new ClientConfigClient({
-        region: () => this.auth.getRegion(),
-        baseUrlOverride: () => this.bootstrap.getEnv('KIMI_CODE_BASE_URL'),
-        cacheDir: () => join(this.bootstrap.cacheDir, 'client-configs'),
-      });
   }
 
-  warm(): void {
-    void this.load().catch(() => undefined);
-  }
-
-  peek(): AutoReviewCloudConfig | undefined {
-    return this.client.peek(AUTO_REVIEW_CLIENT_CONFIG_NAME, autoReviewCloudConfigSchema, this.now());
-  }
-
-  async load(signal?: AbortSignal): Promise<AutoReviewCloudConfig | undefined> {
-    if (signal?.aborted) return undefined;
-    try {
-      const regionPromise = this.auth.getRegionAsync();
-      if (signal === undefined) {
-        await regionPromise;
-      } else {
-        await awaitWithAbort(regionPromise, signal);
-      }
-    } catch {}
-    if (signal?.aborted) return undefined;
-    const cached = this.peek();
-    if (cached !== undefined) return cached;
-    const region = this.client.region();
-    const lastFailure = this.failedAt.get(region);
-    if (lastFailure !== undefined && this.now() - lastFailure < CLOUD_FAILURE_COOLDOWN_MS) {
-      return undefined;
-    }
-    const request = this.fetchOrJoin(region);
-    if (signal === undefined) return request;
-    return awaitWithAbort(request, signal);
-  }
-
-  private fetchOrJoin(region: KimiRegion): Promise<AutoReviewCloudConfig | undefined> {
-    if (this.inFlight?.region === region) return this.inFlight.promise;
-    const promise = this.fetchForRegion(region).finally(() => {
-      if (this.inFlight?.promise === promise) this.inFlight = undefined;
+  load(signal: AbortSignal): Promise<AutoReviewCloudConfig | undefined> {
+    this.pending ??= this.fetch().finally(() => {
+      this.pending = undefined;
     });
-    this.inFlight = { region, promise };
-    return promise;
+    return abortable(this.pending, signal).catch(() => undefined);
   }
 
-  private async fetchForRegion(region: KimiRegion): Promise<AutoReviewCloudConfig | undefined> {
-    let accessToken: string | undefined;
-    try {
-      accessToken = await this.auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME);
-    } catch {
-      accessToken = undefined;
-    }
-    const options: ClientConfigFetchOptions = {
+  private async fetch(): Promise<AutoReviewCloudConfig | undefined> {
+    await this.auth.getRegionAsync().catch(() => undefined);
+    const cached = this.client.peek(AUTO_REVIEW_CLIENT_CONFIG_NAME, autoReviewCloudConfigSchema);
+    if (cached !== undefined) return cached;
+    if (this.failedAt !== undefined && Date.now() - this.failedAt < CLOUD_FAILURE_COOLDOWN_MS) return undefined;
+    const accessToken = await this.auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME).catch(() => undefined);
+    const config = await this.client.get(AUTO_REVIEW_CLIENT_CONFIG_NAME, autoReviewCloudConfigSchema, {
       accessToken,
-      now: this.now(),
       timeoutMs: CLOUD_FETCH_TIMEOUT_MS,
-      ...(this.fetchImpl === undefined ? {} : { fetchImpl: this.fetchImpl }),
-      ...(this.cacheFile === undefined ? {} : { cacheFile: this.cacheFile }),
-    };
-    const result = await this.client.get(
-      AUTO_REVIEW_CLIENT_CONFIG_NAME,
-      autoReviewCloudConfigSchema,
-      options,
-    );
-    const resolvedRegion = this.client.region();
-    if (result === undefined) {
-      this.failedAt.set(region, this.now());
-      this.failedAt.set(resolvedRegion, this.now());
-    } else {
-      this.failedAt.delete(region);
-      this.failedAt.delete(resolvedRegion);
-    }
-    return result;
+    });
+    this.failedAt = config === undefined ? Date.now() : undefined;
+    return config;
   }
-}
-
-function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
-  if (signal.aborted) return Promise.resolve(undefined);
-  return new Promise((resolve) => {
-    const onAbort = () => {
-      resolve(undefined);
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-    void promise.then(
-      (value) => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(value);
-      },
-      () => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(undefined);
-      },
-    );
-  });
 }

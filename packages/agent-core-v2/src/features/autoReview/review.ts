@@ -16,25 +16,26 @@ export interface ProjectInstructions {
   readonly agentsMdPaths?: readonly string[];
 }
 
+export interface ReviewBinding {
+  readonly modelAlias: string;
+  readonly effort?: string;
+  readonly timeoutMs: number;
+}
+
 export interface SessionReviewInput {
   readonly agentContext: AgentContext;
   readonly turnId: number;
-  readonly mainModelAlias: string;
+  readonly binding: ReviewBinding;
   readonly deadline: DeadlineAbortSignal;
   readonly messages: readonly Message[];
-}
-
-export interface SessionReviewRun {
-  readonly modelAlias: string;
-  readonly outcome: AutoReviewOutcome;
 }
 
 export interface ISessionAutoReviewService {
   readonly _serviceBrand: undefined;
   assertConfigValid(): void;
-  resolveTimeoutMs(mainModelAlias: string, signal?: AbortSignal): Promise<number>;
+  resolveBinding(mainModelAlias: string, signal: AbortSignal): Promise<ReviewBinding>;
   projectInstructions(): Promise<ProjectInstructions>;
-  execute(input: SessionReviewInput): Promise<SessionReviewRun>;
+  execute(input: SessionReviewInput): Promise<AutoReviewOutcome>;
 }
 
 export interface IAutoReviewService {

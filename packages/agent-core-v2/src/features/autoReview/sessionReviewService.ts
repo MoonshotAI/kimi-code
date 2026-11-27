@@ -11,7 +11,7 @@ import { type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { sleepForRetry } from '#/_base/utils/retry';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
-import { PROVIDERS_SECTION, THINKING_SECTION } from '#/app/kosongConfig/configSection';
+import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { Error2, ErrorCodes } from '#/errors';
 import { llmMessageFromError } from '#/provider-catalog/errors';
 import type { Model } from '#/provider-catalog/model/catalog';
@@ -22,7 +22,6 @@ import {
   requiresStrictThinkingValidation,
   type ThinkingConfig,
 } from '#/provider-catalog/model/thinking';
-import type { ProvidersSection } from '#/provider-catalog/provider/provider';
 import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -48,6 +47,7 @@ import REVIEW_POLICY from './auto-review-policy.md?raw';
 import {
   DEFAULT_AUTO_REVIEW_TIMEOUT_MS,
   IAutoReviewCloudConfigService,
+  type AutoReviewCloudConfig,
 } from './cloudConfig';
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
 import { AUTO_REVIEW_FLAG_ID } from './flag';
@@ -55,8 +55,8 @@ import {
   ISessionAutoReviewService,
   type AutoReviewOutcome,
   type ProjectInstructions,
+  type ReviewBinding,
   type SessionReviewInput,
-  type SessionReviewRun,
 } from './review';
 
 const AUTO_REVIEW_REQUEST_KIND = 'auto_review';
@@ -98,11 +98,6 @@ const RESPONSE_FORMAT = {
   },
 } as const;
 
-interface ReviewBinding {
-  readonly modelAlias: string;
-  readonly effort?: string;
-}
-
 type AttemptResult =
   | AutoReviewOutcome
   | { readonly decision: 'retry'; readonly reason: string; readonly retryAfterMs?: number };
@@ -129,9 +124,6 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     }));
     if (this.flags.enabled(AUTO_REVIEW_FLAG_ID)) {
       this.assertConfigValid();
-      if (this.hasManagedKimiProvider()) {
-        this.cloudConfig.warm();
-      }
     }
   }
 
@@ -148,22 +140,21 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     return this.cachedInstructions;
   }
 
-  async resolveTimeoutMs(mainModelAlias: string, signal?: AbortSignal): Promise<number> {
-    const configured = this.configService.get<AutoReviewConfig | undefined>(AUTO_REVIEW_SECTION)?.timeoutMs;
-    if (configured !== undefined) return configured;
+  async resolveBinding(mainModelAlias: string, signal: AbortSignal): Promise<ReviewBinding> {
+    const config = this.configService.get<AutoReviewConfig | undefined>(AUTO_REVIEW_SECTION);
     const mainModel = this.tryGetModel(mainModelAlias);
-    if (mainModel !== undefined && isManagedKimiModel(mainModel)) {
-      const cloud = this.cloudConfig.peek() ?? (await this.cloudConfig.load(signal));
-      if (cloud?.timeout_ms !== undefined) return cloud.timeout_ms;
-    }
-    return DEFAULT_AUTO_REVIEW_TIMEOUT_MS;
-  }
-
-  async execute(input: SessionReviewInput): Promise<SessionReviewRun> {
-    const binding = await this.bindingFor(input.mainModelAlias, input.deadline.signal);
-    this.assertReviewModelValid(binding.modelAlias);
-    const outcome = await this.runWithDeadline(input, binding);
-    return { modelAlias: binding.modelAlias, outcome };
+    const needsCloud = config?.model === undefined || config.timeoutMs === undefined;
+    const cloud = mainModel !== undefined && isManagedKimiModel(mainModel) && needsCloud
+      ? await this.cloudConfig.load(signal)
+      : undefined;
+    const { modelAlias, effort } = config?.model !== undefined
+      ? { modelAlias: config.model, effort: config.effort }
+      : (cloud === undefined || mainModel === undefined
+          ? undefined
+          : this.cloudModelBinding(cloud, mainModelAlias, mainModel, config?.effort))
+        ?? { modelAlias: mainModelAlias, effort: config?.effort };
+    this.assertReviewModelValid(modelAlias);
+    return { modelAlias, effort, timeoutMs: config?.timeoutMs ?? cloud?.timeout_ms ?? DEFAULT_AUTO_REVIEW_TIMEOUT_MS };
   }
 
   assertConfigValid(): void {
@@ -171,44 +162,18 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     if (configured !== undefined) this.assertReviewModelValid(configured);
   }
 
-  private async bindingFor(
+  private cloudModelBinding(
+    cloud: AutoReviewCloudConfig,
     mainModelAlias: string,
-    signal: AbortSignal,
-  ): Promise<ReviewBinding> {
-    const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
-    if (config?.model !== undefined) return { modelAlias: config.model, effort: config.effort };
-    const mainModel = this.tryGetModel(mainModelAlias);
-    if (mainModel !== undefined && isManagedKimiModel(mainModel)) {
-      const cloud = this.cloudConfig.peek() ?? (await this.cloudConfig.load(signal));
-      if (cloud !== undefined) {
-        if (cloud.model !== undefined) {
-          const resolved = this.resolveManagedModelAlias(cloud.model, mainModel);
-          if (
-            resolved !== undefined &&
-            (config?.effort === undefined || safeCloudEffort(resolved.model, config.effort) !== undefined)
-          ) {
-            return {
-              modelAlias: resolved.alias,
-              effort: config?.effort ?? safeCloudEffort(resolved.model, cloud.effort),
-            };
-          }
-          return { modelAlias: mainModelAlias, effort: config?.effort };
-        }
-        return {
-          modelAlias: mainModelAlias,
-          effort: config?.effort ?? safeCloudEffort(mainModel, cloud.effort),
-        };
-      }
-    }
-    return { modelAlias: mainModelAlias, effort: config?.effort };
-  }
-
-  private hasManagedKimiProvider(): boolean {
-    const providers = this.configService.get<ProvidersSection | undefined>(PROVIDERS_SECTION);
-    if (providers === undefined) return false;
-    return Object.entries(providers).some(
-      ([id, provider]) => isManagedKimiCode(id) || isManagedKimiCodeBaseUrl(provider.baseUrl),
-    );
+    mainModel: Model,
+    localEffort: string | undefined,
+  ): { readonly modelAlias: string; readonly effort?: string } | undefined {
+    const target = cloud.model === undefined
+      ? { alias: mainModelAlias, model: mainModel }
+      : this.resolveManagedModelAlias(cloud.model, mainModel);
+    if (target === undefined) return undefined;
+    if (localEffort === undefined) return { modelAlias: target.alias, effort: safeCloudEffort(target.model, cloud.effort) };
+    return safeCloudEffort(target.model, localEffort) === undefined ? undefined : { modelAlias: target.alias, effort: localEffort };
   }
 
   private tryGetModel(alias: string): Model | undefined {
@@ -264,11 +229,8 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     );
   }
 
-  private async runWithDeadline(
-    input: SessionReviewInput,
-    binding: ReviewBinding,
-  ): Promise<AutoReviewOutcome> {
-    const { deadline } = input;
+  async execute(input: SessionReviewInput): Promise<AutoReviewOutcome> {
+    const { deadline, binding } = input;
     let acquired = false;
     try {
       await this.acquireSlot(deadline.signal);

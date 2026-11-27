@@ -23,7 +23,6 @@ export interface ClientConfigFetchOptions {
   readonly fetchImpl?: typeof fetch;
   readonly now?: number;
   readonly timeoutMs?: number;
-  readonly signal?: AbortSignal;
   readonly cacheFile?: string | null;
 }
 
@@ -98,11 +97,6 @@ export class ClientConfigClient {
     if (options.accessToken !== undefined) {
       headers['authorization'] = `Bearer ${options.accessToken}`;
     }
-    const timeoutSignal = AbortSignal.timeout(options.timeoutMs ?? FETCH_TIMEOUT_MS);
-    const signal =
-      options.signal === undefined
-        ? timeoutSignal
-        : AbortSignal.any([options.signal, timeoutSignal]);
     try {
       const response = await fetchFn(
         `${this.baseUrl()}${options.path ?? CLIENT_CONFIGS_PATH}`,
@@ -110,7 +104,7 @@ export class ClientConfigClient {
           method: 'POST',
           headers,
           body: JSON.stringify({ name }),
-          signal,
+          signal: AbortSignal.timeout(options.timeoutMs ?? FETCH_TIMEOUT_MS),
         },
       );
       if (!response.ok) return undefined;
