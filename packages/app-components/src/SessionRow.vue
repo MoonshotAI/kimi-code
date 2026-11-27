@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import './lib/anchored-menu.css';
 import type { Session } from '@moonshot-ai/app-core/client/types';
 import { copyTextToClipboard, sessionLink, sessionLinksSupported } from '@moonshot-ai/app-core/lib';
 import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, StatusDot, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
@@ -1036,5 +1037,3 @@ function openPullRequest(): void {
 }
 .sessions .se .rename-input { border-radius: var(--radius-sm); font-family: var(--font-ui); }
 </style>
-
-<style src="./lib/anchored-menu.css"></style>

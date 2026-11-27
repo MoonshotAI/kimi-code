@@ -4,9 +4,17 @@ import { computed, inject, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
-import { formatZonedDateTime, humanizeCronSchedule, parseCronCreateResult, parseCronDeleteResult, parseCronListResult, type CronJobFields } from '@moonshot-ai/app-core/lib';
-import { normalizeToolName, toolIconName, toolLabel, toolSummary } from '@moonshot-ai/app-components';
-import { parseArgRecord, str } from '@moonshot-ai/app-components';
+import {
+  formatZonedDateTime,
+  humanizeCronSchedule,
+  normalizeToolName,
+  parseCronCreateResult,
+  parseCronDeleteResult,
+  parseCronListResult,
+  type CronJobFields,
+} from '@moonshot-ai/app-core/lib';
+import { toolIconName, toolLabel, toolSummary } from '../../lib/toolMeta';
+import { parseArgRecord, str } from './toolArgs';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import OutputPanel from './OutputPanel.vue';

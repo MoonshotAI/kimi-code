@@ -5,13 +5,12 @@ import { Button, Checkbox, Icon, IconButton, Spinner } from '@moonshot-ai/app-ui
 import { basename } from '@moonshot-ai/app-core/lib';
 import type { AppSession } from '@moonshot-ai/app-core/api';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client';
-import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { formatAdminTime, formatAdminTimeCompact } from '@moonshot-ai/app-components';
+import { useKimiWebClient, type SessionAdminBatchDirection } from '@moonshot-ai/app-client/client';
+import { formatAdminTime, formatAdminTimeCompact } from './formatAdminTime';
 import SessionAdminMenu, {
   type SessionAdminMenuAction,
   type SessionAdminMenuMode,
 } from './SessionAdminMenu.vue';
-import type { SessionAdminBatchDirection } from '@moonshot-ai/app-components';
 
 const props = defineProps<{
   items: AppSession[];
