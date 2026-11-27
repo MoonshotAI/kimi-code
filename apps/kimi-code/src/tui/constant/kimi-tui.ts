@@ -25,6 +25,7 @@ export const MAX_AUTO_TITLE_ATTEMPTS = 3;
 export const DOUBLE_ESC_WINDOW_MS = 600;
 
 export const SESSION_LIST_PAGE_SIZE = 50;
+export const UNDO_LIMIT_STATUS_TURN_ID = 'undo-limit-status';
 
 export function isManagedUsageProvider(
   providerKey: string | undefined,
