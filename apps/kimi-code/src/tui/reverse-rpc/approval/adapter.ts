@@ -1,9 +1,4 @@
-import {
-  formatApprovalReviewTitle,
-  type ApprovalRequest,
-  type ApprovalResponse,
-  type ToolInputDisplay,
-} from '@moonshot-ai/kimi-code-sdk';
+import type { ApprovalRequest, ApprovalResponse, ToolInputDisplay } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ApprovalPanelResponse } from '#/tui/components/dialogs/approval-panel';
 import { goalStartOptions } from '#/tui/components/dialogs/goal-start-permission-prompt';
@@ -29,16 +24,7 @@ export function adaptApprovalRequest(event: ApprovalRequest): ApprovalPanelData 
     tool_name: event.toolName,
     action: event.action,
     description: resolved.description,
-    display: event.approvalDetail === undefined
-      ? resolved.blocks
-      : [
-          {
-            type: 'review',
-            title: formatApprovalReviewTitle(event.approvalDetail),
-            detail: event.approvalDetail.reason,
-          },
-          ...resolved.blocks,
-        ],
+    display: resolved.blocks,
     choices: adaptChoices(event.toolName, event.display),
   };
 }

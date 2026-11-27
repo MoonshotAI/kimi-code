@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./style.css": "./src/style.css"
+    "./icons": "./src/icons/icons.ts",
+    "./style.css": "./src/style.css",
+    "./package.json": "./package.json"
   },
   "dependencies": {
     "@moonshot-ai/app-core": "workspace:^",
@@ -15,7 +17,10 @@
     "vue": "^3.5.35"
   },
   "devDependencies": {
+    "@moonshot-ai/vite-preset": "workspace:*",
     "typescript": "6.0.2",
+    "unplugin-icons": "^23.0.0",
+    "vitest": "4.1.4",
     "vue": "^3.5.35",
     "vue-tsc": "~3.2.0"
   }

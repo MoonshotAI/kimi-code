@@ -3,7 +3,7 @@ import { createApp, h, ref, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import HighlightedCode from '../src/HighlightedCode.vue';
 
-vi.mock('@moonshot-ai/app-core', () => ({
+vi.mock('@moonshot-ai/app-core/composables', () => ({
   useIsDark: () => ref(false),
 }));
 

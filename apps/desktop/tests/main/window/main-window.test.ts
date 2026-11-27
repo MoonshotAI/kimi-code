@@ -277,7 +277,7 @@ vi.mock('../../../src/main/app/ui-state', () => ({
 }));
 vi.mock('../../../src/main/diagnostics/track', () => ({ trackDesktopEvent: mocks.trackDesktopEvent, trySendDesktopEvent: vi.fn() }));
 vi.mock('../../../src/main/browser/browser-view', () => ({ attachBrowserWindow: mocks.attachBrowserWindow, isBrowserOccluded: () => mocks.browserOccluded }));
-vi.mock('../../../src/main/shell/menu', () => ({ setTerminalMenuFocus: vi.fn(), getTerminalMenuFocus: vi.fn(() => false) }));
+vi.mock('../../../src/main/shell/terminal-menu-focus', () => ({ setTerminalMenuFocus: vi.fn(), getTerminalMenuFocus: vi.fn(() => false) }));
 vi.mock('../../../src/main/browser/browser-overlay', () => ({
   attachBrowserOverlayWindow: mocks.attachBrowserOverlayWindow,
 }));

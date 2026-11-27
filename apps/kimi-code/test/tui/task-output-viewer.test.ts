@@ -1,9 +1,12 @@
-import type { Terminal } from '@moonshot-ai/pi-tui';
+import { TuiAltScreen, type Terminal } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import type { BackgroundTaskInfo } from '@moonshot-ai/kimi-code-sdk';
+import chalk from 'chalk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TaskOutputViewer } from '@/tui/components/dialogs/task-output-viewer';
-import { darkColors } from '@/tui/theme/colors';
+import { currentTheme } from '@/tui/theme';
+import { darkColors, lightColors } from '@/tui/theme/colors';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
 function strip(text: string): string {
@@ -271,5 +274,136 @@ describe('TaskOutputViewer — live tail via setProps', () => {
     });
     const after = strip(viewer.render(120).join('\n'));
     expect(after).toBe(before);
+  });
+
+  it('supports fullscreen mouse wheel scrolling, borderless text copy, and footer cancel click', async () => {
+    let now = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    let copied = '';
+    const onClose = vi.fn();
+    const vt = new VirtualTerminal(90, 12);
+    const ui = new TuiAltScreen(vt, undefined, undefined, {
+      copySelection: async (text) => {
+        copied = text;
+        return true;
+      },
+    });
+    const viewer = new TaskOutputViewer(
+      {
+        taskId: 'bash-aaaaaaaa',
+        info: info(),
+        output: makeOutput(35),
+        onClose,
+        requestRender: () => {
+          ui.requestRender();
+        },
+      },
+      vt,
+    );
+    ui.setLayoutRoot(viewer);
+    ui.start();
+    ui.setFocus(viewer);
+    await vt.waitForRender();
+    try {
+      now += 500;
+      vt.sendInput('\u001B[<65;10;5M');
+      vt.sendInput('\u001B[<65;10;5M');
+      await vt.waitForRender();
+      const screen = vt.getViewport().map(strip);
+      expect(screen.join('\n')).toContain('line-003');
+      expect(screen.at(-1)).toContain('3-10 / 35');
+
+      vt.sendInput('\u001B[<0;3;3M');
+      vt.sendInput('\u001B[<32;15;4M');
+      vt.sendInput('\u001B[<0;15;4m');
+      await vt.waitForRender();
+      expect(copied).not.toContain('│');
+      expect(copied).toContain('line-003');
+
+      const cancelCol = screen.at(-1)!.indexOf('cancel') + 2;
+      vt.sendInput(`\u001B[<0;${String(cancelCol)};12M`);
+      vt.sendInput(`\u001B[<0;${String(cancelCol)};12m`);
+      await vt.waitForRender();
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      ui.stop();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('pins fullscreen ScrollView to bottom across rapid setProps updates while respecting scroll-up', async () => {
+    const vt = new VirtualTerminal(90, 12);
+    const ui = new TuiAltScreen(vt);
+    const viewer = new TaskOutputViewer(
+      {
+        taskId: 'bash-aaaaaaaa',
+        info: info(),
+        output: makeOutput(3),
+        onClose: () => {},
+        requestRender: () => {
+          ui.requestRender();
+        },
+      },
+      vt,
+    );
+    ui.setLayoutRoot(viewer);
+    ui.start();
+    ui.setFocus(viewer);
+    await vt.waitForRender();
+    try {
+      viewer.setProps({
+        taskId: 'bash-aaaaaaaa',
+        info: info(),
+        output: makeOutput(18),
+        onClose: () => {},
+      });
+      viewer.setProps({
+        taskId: 'bash-aaaaaaaa',
+        info: info(),
+        output: makeOutput(30),
+        onClose: () => {},
+      });
+      ui.requestRender();
+      await vt.waitForRender();
+      const tailScreen = vt.getViewport().map(strip);
+      expect(tailScreen.join('\n')).toContain('line-030');
+      expect(tailScreen.at(-1)).toContain('23-30 / 30 (100%)');
+
+      vt.sendInput('\u001B[<64;10;5M');
+      vt.sendInput('\u001B[<64;10;5M');
+      await vt.waitForRender();
+      const scrolledUp = vt.getViewport().map(strip).join('\n');
+      expect(scrolledUp).not.toContain('line-030');
+
+      viewer.setProps({
+        taskId: 'bash-aaaaaaaa',
+        info: info(),
+        output: makeOutput(45),
+        onClose: () => {},
+      });
+      ui.requestRender();
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).not.toContain('line-045');
+    } finally {
+      ui.stop();
+    }
+  });
+
+  it('refreshes body line ANSI colors when currentTheme.palette switches', () => {
+    const prevLevel = chalk.level;
+    const prevPalette = currentTheme.palette;
+    chalk.level = 3;
+    try {
+      currentTheme.setPalette(darkColors);
+      const viewer = makeViewer({ output: 'theme-check-line', rows: 12 });
+      const darkOut = viewer.render(80).join('\n');
+      currentTheme.setPalette(lightColors);
+      const lightOut = viewer.render(80).join('\n');
+      expect(lightOut).not.toBe(darkOut);
+      expect(strip(lightOut)).toContain('theme-check-line');
+    } finally {
+      currentTheme.setPalette(prevPalette);
+      chalk.level = prevLevel;
+    }
   });
 });

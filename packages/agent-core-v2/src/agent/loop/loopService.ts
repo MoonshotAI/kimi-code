@@ -9,6 +9,7 @@ import { defineState } from '#/state/state';
 import { abortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { parseBooleanEnv } from '#/_base/utils/env';
+import { timeoutOutcome } from '#/_base/utils/promise';
 import { AgentLoopRequestObserver } from './requestObservation';
 import { registerAgentMediaPolicy, registerAgentMediaTools } from './mediaPolicy';
 import type { RequestConfigSnapshot } from './requesterContract';
@@ -33,6 +34,7 @@ import { IAgentTaskOutputService, taskNotificationId } from '#/agent/task/taskOu
 import { restoreTaskCompletions } from '#/agent/task/completionRestore';
 import { completionMessage as coreCompletionMessage, type ToolCompletionInput } from '@moonshot-ai/core/loop/tool/outcome';
 import { IConfigService } from '#/app/config/config';
+import { DEFAULT_MCP_STARTUP_WAIT_MS, MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
 import {
   createUserMessage,
   type ContentPart,
@@ -571,7 +573,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.profileAdapter.restore(snapshot);
       let tools: readonly Tool[];
       if (initialTools === undefined) {
-        await this.instantiation.invokeFunction((accessor) => accessor.get(ISessionMcpHandle).ready);
+        const waitMs =
+          this.config.get<McpSection | undefined>(MCP_SECTION)?.startupWaitMs ?? DEFAULT_MCP_STARTUP_WAIT_MS;
+        if (waitMs > 0) {
+          const ready = this.instantiation.invokeFunction((accessor) => accessor.get(ISessionMcpHandle).ready);
+          const deadline = timeoutOutcome(waitMs, undefined);
+          try {
+            await Promise.race([ready, deadline]);
+          } finally {
+            deadline.clear();
+          }
+        }
+        // Non-negotiable product decision: a new loop freezes its top-level tool baseline once,
+        // after waiting at most startup_wait_ms for initial MCP discovery. Tools of servers that
+        // are still connecting at the deadline stay out of the baseline (without cancelling the
+        // connection); they are only announced later and are never appended to top-level tools.
         tools = this.toolSelect.initialTools();
       } else {
         tools = [...initialTools];

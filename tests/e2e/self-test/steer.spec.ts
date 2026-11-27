@@ -1,10 +1,11 @@
-import { bash, held, say, think } from '@moonshot-ai/testkit/model';
+import { bash, held, say, think, type ReplyStep } from '@moonshot-ai/testkit/model';
 
 import { expect, selfTest } from '../support/scenario';
 
 const PROMPT = 'Draft the release notes.';
 const STEERED = 'Use the release profile.';
 const MARKER = "printf 'x\\n' > marker.txt";
+const GATED = "printf 'rea%s\\n' dy; while [ ! -f gate.txt ]; do sleep 0.1; done; printf 'buil%s\\n' t";
 
 selfTest('steer', {
   positive: {
@@ -32,6 +33,33 @@ selfTest('steer', {
         expect(requests.map((request) => request.state)).toEqual(['aborted', 'finished']);
         expect(requests[1]?.userTextsSinceReply.at(-1)).toBe(STEERED);
         await product.expectReply('Drafting them with the release profile.');
+      },
+    },
+    'shows the steered message while a command runs and delivers it after the command result': {
+      run: async ({ product, model, workspace }) => {
+        const answer = (): ReplyStep => held('answering', say('Built with the release profile.'), 0);
+        model.script(
+          bash(GATED),
+          (request) => {
+            if (request.userTextsSinceReply.includes(STEERED)) return answer();
+            model.script(answer());
+            return say('Finished the build first.');
+          },
+        );
+        await product.send('Run the slow build.');
+        await product.approve();
+        await product.expectTool({ name: 'Bash', target: GATED, status: 'running', output: 'ready' });
+        await product.steer(STEERED);
+        expect(model.requests('main')).toHaveLength(1);
+        await workspace.write('gate.txt', '');
+        const answered = await model.hold('answering').reached();
+        expect(answered.userTextsSinceReply.at(-1)).toBe(STEERED);
+        expect(answered.texts('tool').join('\n')).toMatch(/(^|\n)built(\n|$)/);
+        model.hold('answering').release();
+        await product.waitIdle();
+        const requests = model.requests('main');
+        expect(requests.map((request) => request.state)).toEqual(requests.map(() => 'finished'));
+        await product.expectReply('Built with the release profile.');
       },
     },
   },

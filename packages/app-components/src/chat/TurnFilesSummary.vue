@@ -4,7 +4,7 @@ import { computed, inject } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Card, Icon, Skeleton } from '@moonshot-ai/app-ui';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import type { TurnFileChange } from '@moonshot-ai/app-components';
+import type { TurnFileChange } from '@moonshot-ai/app-core/client/types';
 import { basename } from '@moonshot-ai/app-core/lib';
 import { pathRelativeTo } from '@moonshot-ai/app-core/lib';
 

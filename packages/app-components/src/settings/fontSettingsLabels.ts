@@ -1,5 +1,5 @@
 import { useI18n } from 'vue-i18n';
-import { fontFamilyKind, type FontTarget, type LocalFontsState } from '@moonshot-ai/app-core';
+import { fontFamilyKind, type FontTarget, type LocalFontsState } from '@moonshot-ai/app-core/composables';
 import { fontMetadataText, getBundledFont } from '@moonshot-ai/app-core/lib';
 import { useFontMetadata } from '@moonshot-ai/app-client/composables';
 

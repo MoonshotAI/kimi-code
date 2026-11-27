@@ -11,7 +11,8 @@ import { collectDiagnosticsSnapshot } from './collector';
 import { CRASH_DUMPS_DIR, INCIDENTS_DIR, MAIN_LOG_FILE, diagnosticRoots, log, logsDir, systemVersion, tildify } from './log';
 import { DIAGNOSTICS_RETENTION_MS, listCrashDumps, rotatedLogIndex } from './log-retention';
 import type { TrayLocale } from '../shell/tray';
-import { getMainWindow, showMainWindow } from '../window/main-window';
+import { getMainWindow } from '../window/window-registry';
+import { showMainWindow } from '../window/main-window';
 import type { FeedbackDiagnosticsArchive } from '../../shared/feedback-diagnostics';
 
 const CORE_LOG_PATTERN = /^kimi-code\.log(\.\d+)?$/;

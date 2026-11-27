@@ -26,7 +26,16 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { loadAgentsMdForRoots, splitAgentsMdFiles, type LoadedAgentsMd } from '#/agent/profile/context';
+import {
+  extractAgentsMdPathsFromSystemPrompt,
+  loadAgentsMdForRoots,
+  splitAgentsMdFiles,
+  type LoadedAgentsMd,
+} from '#/agent/profile/context';
+import {
+  globalAgentsMdPaths,
+  isGlobalAgentsMdPath,
+} from '#/agent/workdirMove/workdirMoveReminder';
 import { isToolActiveComposed } from '#/agent/toolPolicy/evaluate';
 import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
@@ -386,6 +395,29 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
   seedBeliefs(seed: BeliefsSeed): Promise<void> {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return Promise.resolve();
     return this.enqueueWorkspaceDirsNotification(() => this.seedBeliefsNow(seed));
+  }
+
+  async syncAgentsMdSnapshot(loaded: LoadedAgentsMd): Promise<void> {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    const globals = globalAgentsMdPaths(this.localEnvironment.homeDir, this.bootstrap.homeDir);
+    const profileData = this.profile.data();
+    const promptPaths =
+      profileData.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(profileData.systemPrompt);
+    const previousFiles =
+      this.snapshot.agentsMdFiles ??
+      hashAgentsMdContents(splitAgentsMdFiles(profileData.systemPrompt, promptPaths));
+    const agentsMdFiles: Record<string, string> = {};
+    for (const [path, fileHash] of Object.entries(previousFiles)) {
+      if (isGlobalAgentsMdPath(path, globals)) {
+        agentsMdFiles[path] = fileHash;
+      }
+    }
+    for (const [path, content] of loaded.files) {
+      if (!isGlobalAgentsMdPath(path, globals)) {
+        agentsMdFiles[path] = hashText(content);
+      }
+    }
+    await this.recordSnapshot({ agentsMdHash: undefined, agentsMdFiles });
   }
 
   private async seedBeliefsNow(seed: BeliefsSeed): Promise<void> {

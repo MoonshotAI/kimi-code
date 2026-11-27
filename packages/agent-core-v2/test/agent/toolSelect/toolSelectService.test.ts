@@ -741,6 +741,34 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
     expect(filtered.profile?.tools?.map((tool) => tool.name)).toEqual(['Unchanged']);
   });
 
+  it('keeps out-of-baseline MCP tools out of the loop baseline request and explicit tool overrides', async () => {
+    const h = createHarness();
+    registerBuiltin(h, new EchoTool('Base'));
+    registerMcp(h, new StubMcpTool('mcp__docs__search'), 'inline');
+    const baseline = h.contextMemory.baselineTools();
+    registerMcp(h, new StubMcpTool('mcp__docs__lookup'));
+    registerMcp(h, new StubMcpTool('mcp__late__deferred'));
+    disposables.add(h.registry.register(new StubMcpTool('mcp__late__inline'), { source: 'mcp', disclosure: 'inline' }));
+    registerBuiltin(h, new EchoTool('LateBuiltin'));
+    await h.sut.prepareForRequest();
+
+    const capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
+    const loopRequest = await resolveWith(h, {
+      messages: [userMessage('go')],
+      tools: [...baseline],
+      capabilities,
+    });
+    expect(loopRequest.profile?.tools?.map((tool) => tool.name)).toEqual(['Base', 'mcp__docs__search']);
+    expect(loopRequest.profile?.tools?.every((tool) => tool.deferred === undefined)).toBe(true);
+
+    const explicit = await resolveWith(h, {
+      messages: [userMessage('go')],
+      tools: [{ name: 'explicit', description: 'explicit tool', parameters: {} }],
+      capabilities,
+    });
+    expect(explicit.profile?.tools?.map((tool) => tool.name)).toEqual(['explicit']);
+  });
+
   it('shapeTools returns the identical array when dynamically_loaded_tools is absent', () => {
     const h = createHarness();
     registerBuiltin(h, new EchoTool());

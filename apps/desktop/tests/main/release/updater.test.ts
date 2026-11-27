@@ -12,18 +12,23 @@ vi.mock('electron', () => ({
   net: { fetch: netFetchMock },
 }));
 vi.mock('electron-updater', () => ({ autoUpdater: {} }));
-vi.mock('../../../src/main/window/main-window', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
+vi.mock('../../../src/main/window/window-registry', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
 vi.mock('../../../src/main/diagnostics/track', () => ({ trackDesktopEvent: trackMock, trySendDesktopEvent: vi.fn() }));
 
 import { fetchReleaseNotes, startAutoUpdater, updateChannelFromVersion, UPDATE_CHECK_TIMED_OUT, type ReleaseNotes, type RestartDecision, type UpdateController, type UpdateStatus } from '../../../src/main/release/updater';
 import { log } from '../../../src/main/diagnostics/log';
 import { setServerRegionSource } from '../../../src/main/server/region';
-import { markQuitting } from '../../../src/main/window/main-window';
+import { markQuitting } from '../../../src/main/window/window-registry';
 import { isUpdateRolloutEligible, UNCOVERED_ROLLOUT_DELAY_SECONDS, rolloutBucket, rolloutDelayForBucket, type UpdateRolloutInfo } from '../../../src/main/release/update-rollout';
 
 const confirmRestartMock = vi.fn<() => Promise<RestartDecision>>();
 const prepareSessionContinueMock = vi.fn<(sessionIds: readonly string[]) => void>();
-const restartDeps = { confirmRestart: confirmRestartMock, prepareSessionContinue: prepareSessionContinueMock };
+const beforeRestartMock = vi.fn<() => Promise<void>>();
+const restartDeps = {
+  confirmRestart: confirmRestartMock,
+  prepareSessionContinue: prepareSessionContinueMock,
+  beforeRestart: beforeRestartMock,
+};
 const markQuittingMock = vi.mocked(markQuitting);
 
 async function flush(): Promise<void> {
@@ -67,6 +72,7 @@ beforeEach(() => {
   trackMock.mockClear();
   confirmRestartMock.mockReset().mockResolvedValue({ proceed: true, continueSessionIds: [] });
   prepareSessionContinueMock.mockReset();
+  beforeRestartMock.mockReset().mockResolvedValue(undefined);
   markQuittingMock.mockClear();
 });
 
@@ -253,17 +259,93 @@ describe('startAutoUpdater', () => {
     await controller.install();
     expect(confirmRestartMock).toHaveBeenCalledOnce();
     expect(prepareSessionContinueMock).toHaveBeenCalledExactlyOnceWith([]);
+    expect(beforeRestartMock).toHaveBeenCalledOnce();
     expect(markQuittingMock).toHaveBeenCalledOnce();
     expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
     expect(confirmRestartMock.mock.invocationCallOrder[0]).toBeLessThan(
       prepareSessionContinueMock.mock.invocationCallOrder[0]!,
     );
     expect(prepareSessionContinueMock.mock.invocationCallOrder[0]).toBeLessThan(
+      beforeRestartMock.mock.invocationCallOrder[0]!,
+    );
+    expect(beforeRestartMock.mock.invocationCallOrder[0]).toBeLessThan(
       markQuittingMock.mock.invocationCallOrder[0]!,
     );
     expect(markQuittingMock.mock.invocationCallOrder[0]).toBeLessThan(
       updater.quitAndInstall.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it('waits for pre-restart cleanup before calling quitAndInstall', async () => {
+    const { updater, controller } = setup();
+    updater.emit('update-downloaded', { version: '1.2.3' });
+    let finishCleanup!: () => void;
+    beforeRestartMock.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishCleanup = resolve;
+      }),
+    );
+
+    const installing = controller.install();
+    await flush();
+
+    expect(beforeRestartMock).toHaveBeenCalledOnce();
+    expect(markQuittingMock).not.toHaveBeenCalled();
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+
+    finishCleanup();
+    await installing;
+
+    expect(markQuittingMock).toHaveBeenCalledOnce();
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
+  });
+
+  it('still installs when pre-restart cleanup fails', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const { updater, controller } = setup();
+    updater.emit('update-downloaded', { version: '1.2.3' });
+    beforeRestartMock.mockRejectedValue(new Error('server stuck'));
+
+    await controller.install();
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('server stuck'));
+    expect(markQuittingMock).toHaveBeenCalledOnce();
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
+    warn.mockRestore();
+  });
+
+  it('still installs when pre-restart cleanup times out', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const unhandledRejection = vi.fn();
+    process.on('unhandledRejection', unhandledRejection);
+    const { updater, controller } = setup();
+    updater.emit('update-downloaded', { version: '1.2.3' });
+    let rejectLate!: (error: Error) => void;
+    beforeRestartMock.mockReturnValue(
+      new Promise<void>((_resolve, reject) => {
+        rejectLate = reject;
+      }),
+    );
+
+    try {
+      const installing = controller.install();
+      await flush();
+      expect(updater.quitAndInstall).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await installing;
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('timed out'));
+      expect(markQuittingMock).toHaveBeenCalledOnce();
+      expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
+
+      rejectLate(new Error('late cleanup failure'));
+      await flush();
+      expect(unhandledRejection).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandledRejection);
+      warn.mockRestore();
+    }
   });
 
   it('records the sessions chosen in the restart prompt before installing', async () => {
@@ -318,6 +400,7 @@ describe('startAutoUpdater', () => {
 
     expect(controller.getStatus().state).toBe('downloaded');
     expect(prepareSessionContinueMock).not.toHaveBeenCalled();
+    expect(beforeRestartMock).not.toHaveBeenCalled();
     expect(markQuittingMock).not.toHaveBeenCalled();
     expect(updater.quitAndInstall).not.toHaveBeenCalled();
 

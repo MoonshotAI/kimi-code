@@ -7,14 +7,10 @@ const specsWithPrefix = (...prefixes: string[]) =>
   specFiles.filter(file => prefixes.some(prefix => file.startsWith(prefix)));
 
 const journeySpecs = ['**/desktop/e2e/*.spec.ts', '**/desktop/test/e2e/**/*.spec.ts'];
-const sessionApiGateSpecs = ['approval-permission-modes.spec.ts'];
 const approvalsStateSpecs = [
   'approval-plan-review.spec.ts',
-  'approval-batch-and-questions.spec.ts',
-  'approval-decisions.spec.ts',
   'agents-tasks-todos.spec.ts',
   'agents-goal.spec.ts',
-  'composer-drafts-models.spec.ts',
   'lifecycle-connection.spec.ts',
 ];
 const turnEngineGateSpecs = ['lifecycle-model-errors.spec.ts'];
@@ -28,7 +24,6 @@ const turnsTranscriptSpecs = [
 ];
 
 const tieredSpecs = [
-  ...sessionApiGateSpecs,
   ...approvalsStateSpecs,
   ...turnEngineGateSpecs,
   ...turnsTranscriptSpecs,
@@ -52,8 +47,7 @@ export default defineConfig({
     ? [['list'], ['html', { outputFolder: fileURLToPath(new URL('../playwright-report', import.meta.url)), open: 'never' }]]
     : [['list']],
   projects: [
-    { name: 'gate-session-api', testMatch: sessionApiGateSpecs, retries: 1 },
-    { name: 'approvals-state', testMatch: approvalsStateSpecs, dependencies: ['gate-session-api'] },
+    { name: 'approvals-state', testMatch: approvalsStateSpecs },
     { name: 'gate-turn-engine', testMatch: turnEngineGateSpecs, retries: 1 },
     { name: 'turns-transcript', testMatch: turnsTranscriptSpecs },
     { name: 'app-shell', testDir: '..', testMatch: journeySpecs, testIgnore: tieredSpecs.map(file => `**/desktop/e2e/${file}`) },

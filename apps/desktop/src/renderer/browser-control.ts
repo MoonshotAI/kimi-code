@@ -1,7 +1,7 @@
 import { createApp } from 'vue';
 import { useAppearance, useFontPrefs } from '@moonshot-ai/app-core';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
+import { getIcon, type IconName } from '@moonshot-ai/app-ui/icons';
 import BrowserControlSurface from './components/browser/BrowserControlSurface.vue';
 import './style.css';
 

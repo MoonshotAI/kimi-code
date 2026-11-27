@@ -1785,8 +1785,11 @@ describe("TuiAltScreen", () => {
 		const imageId = 11271;
 		const imageLine = encodeKitty("AAAA", { columns: 2, rows: 3, imageId, moveCursor: false });
 		registerKittyImageMetadata({ imageId, columns: 2, rows: 3, widthPx: 100, heightPx: 100 });
-		const box = new Box(1, 0, (text: string) => `\x1b[44m${text}\x1b[49m`);
-		box.addChild({ render: () => [imageLine, "", ""], invalidate: () => {} });
+		const box = new Box({ padding: { left: 1, right: 1 } });
+		box.addChild({
+			render: () => [`\x1b[44m${imageLine}\x1b[49m`, "", ""],
+			invalidate: () => {},
+		});
 		tui.addChild({ render: () => ["before"], invalidate: () => {} });
 		tui.addChild(box);
 		tui.addChild({ render: () => ["after", "end"], invalidate: () => {} });
@@ -3092,6 +3095,130 @@ describe("TuiAltScreen", () => {
 		terminal.sendInput(`\x1b[<64;3;${wheelStripRow + 1}M`);
 		await terminal.waitForRender();
 		assert.strictEqual(tui.getFocusedComponent(), wheelFocusRegion);
+		tui.stop();
+	});
+
+	it("contains wheel overscroll inside a ScrollView with overscroll contain without scrolling primary", async () => {
+		const terminal = new VirtualTerminal(20, 6);
+		const tui = new TuiAltScreen(terminal);
+		const primary = new ScrollView(new Text("p1\np2\np3\np4\np5\np6\np7\np8", 0, 0), {
+			follow: "end",
+			primary: true,
+		});
+		const dockScroll = new ScrollView(new Text("d1\nd2\nd3\nd4", 0, 0), {
+			overscroll: "contain",
+		});
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: primary, basis: 0, grow: 1, shrink: 1 },
+				{ component: dockScroll, basis: 2, shrink: 0 },
+			]),
+		);
+		tui.start();
+		await terminal.waitForRender();
+		assert.strictEqual(primary.scrollTop, 4);
+		assert.strictEqual(dockScroll.scrollTop, 0);
+
+		terminal.sendInput("\x1b[<64;2;5M");
+		terminal.sendInput("\x1b[<64;2;5M");
+		await terminal.waitForRender();
+		assert.strictEqual(primary.scrollTop, 4);
+		assert.strictEqual(dockScroll.scrollTop, 0);
+		tui.stop();
+	});
+
+	it("synthesizes click with 1-column horizontal tolerance while rejecting wider horizontal or vertical drift", async () => {
+		const terminal = new VirtualTerminal(20, 3);
+		const tui = new TuiAltScreen(terminal);
+		const clicks: Array<{ x: number; y: number; count: number }> = [];
+		tui.addChild({
+			render: () => ["[ Confirm ]", "second row"],
+			invalidate: () => {},
+			handleMouse: (event) => {
+				if (event.type === "press") return { handled: true };
+				if (event.type === "click") {
+					clicks.push({ x: event.x, y: event.y, count: event.clickCount ?? 1 });
+					return { handled: true };
+				}
+				return undefined;
+			},
+		});
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;4;1M");
+		terminal.sendInput("\x1b[<0;5;1m");
+		terminal.sendInput("\x1b[<0;5;1M");
+		terminal.sendInput("\x1b[<0;4;1m");
+		terminal.sendInput("\x1b[<0;11;1M");
+		terminal.sendInput("\x1b[<0;12;1m");
+		terminal.sendInput("\x1b[<0;4;1M");
+		terminal.sendInput("\x1b[<0;6;1m");
+		terminal.sendInput("\x1b[<0;4;1M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(clicks, [
+			{ x: 3, y: 0, count: 1 },
+			{ x: 4, y: 0, count: 2 },
+			{ x: 10, y: 0, count: 1 },
+		]);
+		tui.stop();
+	});
+
+	it("copies only inner ScrollView text without Box side borders when drag-selecting inside a Box or its padding, and routes wheel on Box frame", async () => {
+		let copied = "";
+		const terminal = new VirtualTerminal(16, 6);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied = text;
+				return true;
+			},
+		});
+		const primary = new ScrollView(new Text("p1\np2\np3\np4\np5\np6", 0, 0), {
+			primary: true,
+		});
+		const scrollView = new ScrollView(new Text("alpha\nbeta\ngamma\ndelta", 0, 0), {
+			overscroll: "contain",
+		});
+		const box = new Box({ border: true, padding: { left: 1 } });
+		box.addChild(scrollView);
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: primary, basis: 2, shrink: 0 },
+				{ component: box, basis: 4, shrink: 0 },
+			]),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;2;4M");
+		terminal.sendInput("\x1b[<32;7;5M");
+		terminal.sendInput("\x1b[<0;7;5m");
+		await terminal.waitForRender();
+		assert.strictEqual(copied, "alpha\nbeta");
+
+		terminal.sendInput("\x1b[<65;2;4M");
+		terminal.sendInput("\x1b[<65;1;3M");
+		terminal.sendInput("\x1b[<65;1;3M");
+		await terminal.waitForRender();
+		assert.strictEqual(scrollView.scrollTop, 2);
+		assert.strictEqual(primary.scrollTop, 0);
+
+		const narrow = new VirtualTerminal(4, 2);
+		const narrowTui = new TuiAltScreen(narrow);
+		const squeezedBox = new Box({ border: { left: true }, padding: { left: 1 } });
+		squeezedBox.addChild(new Text("Z", 0, 0));
+		narrowTui.setLayoutRoot(
+			new HStack([
+				{ component: squeezedBox, basis: 1, shrink: 0 },
+				{ component: new Text("OK", 0, 0), basis: 3, shrink: 0 },
+			]),
+		);
+		narrowTui.start();
+		await narrow.waitForRender();
+		assert.strictEqual(narrow.getViewport()[0]?.replace(/\x1b\[[0-9;]*m/g, "").trimEnd(), "│OK");
+		narrowTui.stop();
 		tui.stop();
 	});
 });

@@ -1,4 +1,5 @@
-import type { Terminal } from '@moonshot-ai/pi-tui';
+import { TuiAltScreen, type Terminal } from '@moonshot-ai/pi-tui';
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import type { BackgroundTaskInfo, BackgroundTaskStatus, Event } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -877,5 +878,218 @@ describe('TasksBrowserController — opening an agent task', () => {
     expect(browser.tailOutput).toContain('── step 0 ──');
     expect(browser.tailOutput).toContain('✓ Used Grep (foo) · 2 matches across 2 files');
     controller.close();
+  });
+
+  it('supports fullscreen mouse hover, single-click selection, double-click output open, border wheel, borderless preview copy, and action-bar clicks', async () => {
+    const chalk = (await import('chalk')).default;
+    const prevChalkLevel = chalk.level;
+    chalk.level = 3;
+    let now = 70_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    let copied = '';
+    const onSelect = vi.fn();
+    const onOpenOutput = vi.fn();
+    const onToggleFilter = vi.fn();
+    const onStopConfirmed = vi.fn();
+    const onCancel = vi.fn();
+    const vt = new VirtualTerminal(100, 18);
+    const ui = new TuiAltScreen(vt, undefined, undefined, {
+      copySelection: async (text) => {
+        copied = text;
+        return true;
+      },
+    });
+    const tasks = [
+      task({ taskId: 'bash-aaaaaaaa', status: 'running', description: 'first server' }),
+      task({ taskId: 'bash-bbbbbbbb', status: 'running', description: 'second worker' }),
+    ];
+    const app = new TasksBrowserApp(
+      makeProps({
+        tasks,
+        selectedTaskId: 'bash-aaaaaaaa',
+        tailOutput: Array.from({ length: 16 }, (_, i) => `tail-line-${String(i + 1)}`).join('\n'),
+        onSelect,
+        onOpenOutput,
+        onToggleFilter,
+        onStopConfirmed,
+        onCancel,
+        requestRender: () => {
+          ui.requestRender();
+        },
+      }),
+      vt,
+    );
+    ui.setLayoutRoot(app);
+    ui.start();
+    ui.setFocus(app);
+    await vt.waitForRender();
+    try {
+      now += 500;
+      let screen = vt.getViewport().map(strip);
+      const firstRow = screen.findIndex((line) => line.includes('bash-aaaaaaaa'));
+      const secondRow = screen.findIndex((line) => line.includes('bash-bbbbbbbb'));
+      expect(firstRow).toBeGreaterThan(0);
+      expect(secondRow).toBeGreaterThan(0);
+
+      vt.sendInput(`\u001B[<0;8;${String(firstRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;8;${String(firstRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(onOpenOutput).not.toHaveBeenCalled();
+
+      vt.sendInput(`\u001B[<35;8;${String(secondRow + 1)}M`);
+      await vt.waitForRender();
+      expect(app.render(100)[secondRow]).toContain('\u001B[4m');
+      expect(onSelect).not.toHaveBeenCalled();
+
+      vt.sendInput('\u001B[<35;70;12M');
+      await vt.waitForRender();
+      expect(app.render(100)[secondRow]).not.toContain('\u001B[4m');
+
+      now += 1000;
+      vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith('bash-bbbbbbbb');
+      expect(onOpenOutput).not.toHaveBeenCalled();
+
+      now += 1000;
+      vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onOpenOutput).not.toHaveBeenCalled();
+
+      now += 100;
+      vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;8;${String(secondRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onOpenOutput).toHaveBeenCalledExactlyOnceWith('bash-bbbbbbbb');
+
+      screen = vt.getViewport().map(strip);
+      const previewBorderRow = screen.findIndex((line) => line.includes('Preview Output'));
+      expect(previewBorderRow).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<64;70;${String(previewBorderRow + 1)}M`);
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).not.toContain('tail-line-16');
+      vt.sendInput(`\u001B[<65;70;${String(previewBorderRow + 1)}M`);
+      await vt.waitForRender();
+
+      screen = vt.getViewport().map(strip);
+      const previewRow = screen.findIndex((line) => line.includes('tail-line-16'));
+      expect(previewRow).toBeGreaterThan(0);
+      const previewCol = screen[previewRow]!.indexOf('tail-line-16') + 1;
+      vt.sendInput(`\u001B[<0;${String(previewCol)};${String(previewRow + 1)}M`);
+      vt.sendInput(`\u001B[<32;${String(previewCol + 12)};${String(previewRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(previewCol + 12)};${String(previewRow + 1)}m`);
+      await vt.waitForRender();
+      expect(copied).not.toContain('│');
+      expect(copied).toContain('tail-line-16');
+
+      const filterCol = screen[0]!.indexOf('filter=ALL') + 2;
+      vt.sendInput(`\u001B[<35;${String(filterCol)};1M`);
+      await vt.waitForRender();
+      expect(app.render(100)[0]).toContain('\u001B[4m');
+
+      vt.sendInput(`\u001B[<0;${String(filterCol)};1M`);
+      vt.sendInput(`\u001B[<0;${String(filterCol)};1m`);
+      await vt.waitForRender();
+      expect(onToggleFilter).toHaveBeenCalledTimes(1);
+
+      const footerRow = screen.length - 1;
+      const stopCol = screen[footerRow]!.indexOf('S stop') + 2;
+      vt.sendInput(`\u001B[<0;${String(stopCol)};${String(footerRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(stopCol)};${String(footerRow + 1)}m`);
+      await vt.waitForRender();
+
+      screen = vt.getViewport().map(strip);
+      expect(screen[footerRow]).toContain('Y confirm');
+      const confirmCol = screen[footerRow]!.indexOf('Y confirm') + 2;
+      vt.sendInput(`\u001B[<0;${String(confirmCol)};${String(footerRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(confirmCol)};${String(footerRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onStopConfirmed).toHaveBeenCalledExactlyOnceWith('bash-bbbbbbbb');
+
+      screen = vt.getViewport().map(strip);
+      const cancelCol = screen[footerRow]!.indexOf('cancel') + 2;
+      vt.sendInput(`\u001B[<0;${String(cancelCol)};${String(footerRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;${String(cancelCol)};${String(footerRow + 1)}m`);
+      await vt.waitForRender();
+      expect(onCancel).toHaveBeenCalledTimes(1);
+    } finally {
+      ui.stop();
+      vi.restoreAllMocks();
+      chalk.level = prevChalkLevel;
+    }
+  });
+
+  it('resets preview scroll on keyboard selection and keeps selected task visible when refresh reorders it', async () => {
+    const vt = new VirtualTerminal(100, 12);
+    const ui = new TuiAltScreen(vt);
+    const initialTasks = Array.from({ length: 10 }, (_, i) =>
+      task({
+        taskId: `bash-${String(i + 1).padStart(8, '0')}`,
+        status: 'running',
+        startedAt: i + 1,
+      }),
+    );
+    const tail = Array.from({ length: 15 }, (_, i) => `preview-row-${String(i + 1)}`).join('\n');
+    let currentSelectedId = initialTasks[0]!.taskId;
+    const app = new TasksBrowserApp(
+      makeProps({
+        tasks: initialTasks,
+        selectedTaskId: currentSelectedId,
+        tailOutput: tail,
+        onSelect: (taskId) => {
+          currentSelectedId = taskId;
+          app.setProps(
+            makeProps({
+              tasks: initialTasks,
+              selectedTaskId: currentSelectedId,
+              tailOutput: tail,
+            }),
+          );
+        },
+        requestRender: () => {
+          ui.requestRender();
+        },
+      }),
+      vt,
+    );
+    ui.setLayoutRoot(app);
+    ui.start();
+    ui.setFocus(app);
+    await vt.waitForRender();
+    try {
+      let screen = vt.getViewport().map(strip);
+      const previewRow = screen.findIndex((line) => line.includes('preview-row-15'));
+      expect(previewRow).toBeGreaterThan(0);
+      vt.sendInput(`\u001B[<64;70;${String(previewRow + 1)}M`);
+      vt.sendInput(`\u001B[<64;70;${String(previewRow + 1)}M`);
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).not.toContain('preview-row-15');
+
+      vt.sendInput('j');
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).toContain('preview-row-15');
+
+      const reordered = initialTasks.map((item) =>
+        item.taskId === currentSelectedId
+          ? { ...item, status: 'completed' as const, exitCode: 0, endedAt: 99 }
+          : item,
+      );
+      app.setProps(
+        makeProps({
+          tasks: reordered,
+          selectedTaskId: currentSelectedId,
+          tailOutput: tail,
+        }),
+      );
+      ui.requestRender();
+      await vt.waitForRender();
+      screen = vt.getViewport().map(strip);
+      expect(screen.join('\n')).toContain(`❯ ${currentSelectedId}`);
+    } finally {
+      ui.stop();
+    }
   });
 });

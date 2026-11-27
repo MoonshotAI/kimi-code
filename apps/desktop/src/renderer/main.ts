@@ -10,14 +10,14 @@ import { createKimiToast } from '@moonshot-ai/app-client/client';
 import { AppToasts } from '@moonshot-ai/app-components';
 import { clientPinia } from '@moonshot-ai/app-client/stores';
 import { initVibrancy } from './composables/useVibrancy';
-import { useFontPrefs } from '@moonshot-ai/app-core';
+import { useFontPrefs } from '@moonshot-ai/app-core/composables';
 import { isDesktop, hasCustomTitleBar, isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
 import { destroyPanelSessionSnapshot, panelDraftContextKey, forkPanelBrowserTabs } from '@moonshot-ai/app-client/composables';
 import { getNativeBrowserBridge } from './lib/nativeBrowser';
 import { copyBrowserReceipts, deleteBrowserReceipts } from './lib/browserReceipts';
 import { createBrowserId } from '../shared/browser';
 import { clonedBrowserTabPayload } from './lib/browserTabClone';
-import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
+import { getIcon, type IconName } from '@moonshot-ai/app-ui/icons';
 import {
   configureTrace,
   installClientErrorCapture,

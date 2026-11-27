@@ -1,6 +1,11 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Ref, type WatchSource } from 'vue';
-import { dragOverlayScrollbarThumb, overlayScrollbarThumb, type OverlayScrollbarThumb } from '@moonshot-ai/app-client/composables';
-import { ensurePointerTracking, isSyntheticPointerMove } from '@moonshot-ai/app-ui';
+import {
+  dragOverlayScrollbarThumb,
+  ensurePointerTracking,
+  isSyntheticPointerMove,
+  overlayScrollbarThumb,
+  type OverlayScrollbarThumb,
+} from '@moonshot-ai/app-ui';
 
 function cssNumber(el: HTMLElement, name: string, fallback: number): number {
   return parseFloat(getComputedStyle(el).getPropertyValue(name)) || fallback;

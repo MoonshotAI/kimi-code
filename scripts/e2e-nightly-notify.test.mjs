@@ -7,17 +7,28 @@ import { test } from 'node:test';
 import { failureCard, githubClient, jobReport, notify, readResults, send, signature, triageUser, unknownOutcomeCard } from './e2e-nightly-notify.mjs';
 
 const run = {
+  id: 42,
+  workflow_id: 427,
   head_branch: 'main',
   head_sha: 'd5263af02c0ffee0123456789abcdef012345678',
   event: 'schedule',
   html_url: 'https://github.com/example/repo/actions/runs/42',
+  created_at: '2026-11-26T20:07:29Z',
   run_started_at: '2026-11-26T20:07:31Z',
   run_attempt: 2,
+  repository: { html_url: 'https://github.com/example/repo' },
 };
 
-function job(name, conclusion, steps = []) {
-  return { name, status: 'completed', conclusion, steps: steps.map(([stepName, stepConclusion]) => ({ name: stepName, conclusion: stepConclusion })) };
+function job(name, conclusion, steps = [], labels = ['ubuntu-latest']) {
+  return { name, status: 'completed', conclusion, labels, steps: steps.map(([stepName, stepConclusion]) => ({ name: stepName, conclusion: stepConclusion })) };
 }
+
+const noHistory = {
+  lastPassingRun: async () => undefined,
+  commitsBetween: async () => {
+    throw new Error('no base run, so no commits to compare');
+  },
+};
 
 const notifyJob = { name: 'Notify Feishu about nightly failures', status: 'in_progress', conclusion: null, steps: [] };
 
@@ -93,10 +104,10 @@ await test('groups failed cases by platform, project and shard, and marks cases 
     '**没通过的用例（3 条）**',
     [
       'Linux · Web（第 2/2 片）',
-      '· runs a shell command once after approval：expect(received).toBe(expected)',
-      '· answers a question（被中断）',
+      '· [没有复跑] runs a shell command once after approval：expect(received).toBe(expected)',
+      '· [没有复跑] answers a question（被中断）',
       'Windows · TUI',
-      '· keeps the draft after a restart（超时）：Test timeout of 30000ms exceeded.',
+      '· [没有复跑] keeps the draft after a restart（超时）：Test timeout of 30000ms exceeded.',
     ].join('\n'),
   ]);
 });
@@ -106,7 +117,7 @@ await test('keeps the card small: lists at most fifteen cases, counts the rest, 
   const card = failureCard({ run, jobs: [job('Desktop (optional, 1/2)', 'failure'), notifyJob], results: [results('linux', { current: 1, total: 2 }, many)] });
   const lines = texts(card)[4].split('\n');
   assert.equal(lines.length, 1 + 15 + 1);
-  assert.equal(lines[1], `· case 01：${'x'.repeat(120)}…`);
+  assert.equal(lines[1], `· [没有复跑] case 01：${'x'.repeat(120)}…`);
   assert.equal(lines.at(-1), '……另有 3 条没列出，完整的结果在运行页的摘要里');
   assert.equal(texts(card)[3], '**没通过的用例（18 条）**');
 });
@@ -238,6 +249,9 @@ await test('posts only when something failed, reading the jobs of the run\'s lat
   const missing = join(tmpdir(), 'e2e-nightly-notify-missing-folder');
   const asked = [];
   const green = {
+    lastPassingRun: async () => {
+      throw new Error('a passing run needs no candidate commits');
+    },
     run: async () => run,
     jobs: async (runId, attempt) => {
       asked.push([runId, attempt]);
@@ -247,7 +261,7 @@ await test('posts only when something failed, reading the jobs of the run\'s lat
   assert.equal(await notify({ runId: '42', resultsDir: missing, github: green, post }), 'passed');
   assert.equal(posted.length, 0);
   assert.deepEqual(asked, [['42', 2]]);
-  const red = { run: async () => run, jobs: async () => [job('Build (optional)', 'failure'), notifyJob] };
+  const red = { ...noHistory, run: async () => run, jobs: async () => [job('Build (optional)', 'failure'), notifyJob] };
   assert.equal(await notify({ runId: '42', resultsDir: missing, triage: 'triage-bot', github: red, post }), 'posted');
   assert.equal(posted.length, 1);
   assert.equal(posted[0].header.title.content, '每晚 E2E 没通过 · 2026-11-27');
@@ -271,7 +285,7 @@ await test('still posts a card, then fails, when it cannot read the run from Git
 
 await test('marks a test card about an earlier run so nobody takes it for tonight\'s failure', async () => {
   const posted = [];
-  const red = { run: async () => ({ ...run, event: 'push' }), jobs: async () => [job('Desktop (optional, 2/2)', 'failure'), notifyJob] };
+  const red = { ...noHistory, run: async () => ({ ...run, event: 'push' }), jobs: async () => [job('Desktop (optional, 2/2)', 'failure'), notifyJob] };
   const missing = join(tmpdir(), 'e2e-nightly-notify-missing-folder');
   await notify({ runId: '42', resultsDir: missing, triage: 'triage-bot', rehearsal: true, github: red, post: async card => posted.push(card) });
   assert.equal(posted[0].header.title.content, '【测试】每晚 E2E 没通过 · 2026-11-27');
@@ -283,7 +297,7 @@ await test('marks a test card about an earlier run so nobody takes it for tonigh
 
 await test('still lists the failed jobs, and says the cases are missing, when downloading the results failed', async () => {
   const posted = [];
-  const red = { run: async () => run, jobs: async () => [job('Web (optional, 1/2)', 'failure', [['Run the scenarios', 'failure']]), notifyJob] };
+  const red = { ...noHistory, run: async () => run, jobs: async () => [job('Web (optional, 1/2)', 'failure', [['Run the scenarios', 'failure']]), notifyJob] };
   const missing = join(tmpdir(), 'e2e-nightly-notify-missing-folder');
   assert.equal(await notify({ runId: '42', resultsDir: missing, resultsDownloadFailed: true, github: red, post: async card => posted.push(card) }), 'posted');
   assert.deepEqual(texts(posted[0]).slice(1, 5), [
@@ -291,5 +305,198 @@ await test('still lists the failed jobs, and says the cases are missing, when do
     '· Web (optional, 1/2)：失败，在「Run the scenarios」这一步',
     '**用例以外的错误**',
     '结果文件没读全，有些用例没有列出\n· 下载 e2e-results-* artifact 失败',
+  ]);
+});
+
+function rerunResults(platform, failures, policy = { repeats: 5, most: 3 }) {
+  return { ...results(platform, null, failures), ...(policy === undefined ? {} : { rerun: policy }) };
+}
+
+function rerunOf(failed, passed, unfinished = 0, error) {
+  return { failed, passed, unfinished, ...(error === undefined ? {} : { error }) };
+}
+
+await test('tags each failed case with how often its reruns on the same commit reproduced it, and sums the reruns up first', () => {
+  const card = failureCard({
+    run,
+    jobs: [job('ACP (optional)', 'failure'), job('Windows acp (optional)', 'failure', [], ['windows-latest']), notifyJob],
+    results: [
+      rerunResults('linux', [
+        { ...failure('ACP', 'fails every time', 'failed', 'x'), rerun: rerunOf(5, 0) },
+        { ...failure('ACP', 'fails now and then', 'timedOut', 'y'), rerun: rerunOf(2, 3) },
+        { ...failure('ACP', 'passes on every rerun', 'failed', ''), rerun: rerunOf(0, 5) },
+        failure('ACP', 'comes after the first three', 'failed', 'z'),
+      ]),
+      rerunResults('win32', [
+        { ...failure('ACP', 'ran out of time', 'failed', ''), rerun: rerunOf(1, 1, 3) },
+        { ...failure('ACP', 'never finished a rerun', 'failed', ''), rerun: rerunOf(0, 0, 5) },
+        { ...failure('ACP', 'could not be rerun', 'failed', ''), rerun: rerunOf(0, 0, 5, 'Playwright did not select the case') },
+      ]),
+      results('darwin', null, [failure('ACP', 'from a job that did not rerun', 'failed', '')]),
+    ],
+  });
+  assert.equal(texts(card)[3], '**没通过的用例（8 条）**');
+  assert.deepEqual(texts(card)[4].split('\n'), [
+    '同一提交上复跑的结果（只用来判断能不能稳定复现，作业照样算失败）：每次都复现 1 条，时有时无 2 条，复跑都通过 1 条，没有复跑 4 条',
+    'Linux · ACP',
+    '· [复现 5/5] fails every time：x',
+    '· [复现 2/5] fails now and then（超时）：y',
+    '· [复现 0/5] passes on every rerun',
+    '· [没有复跑：一个作业只复跑前 3 条] comes after the first three：z',
+    'macOS · ACP',
+    '· [没有复跑] from a job that did not rerun',
+    'Windows · ACP',
+    '· [复现 1/2，另 3 次没跑完] ran out of time',
+    '· [复跑没跑完] never finished a rerun',
+    '· [复跑出错] could not be rerun',
+  ]);
+});
+
+function commit(index, subject = `fix: change number ${index} (#${5600 + index})`) {
+  return { sha: `${String(index).padStart(2, '0')}${'c'.repeat(38)}`, subject };
+}
+
+const base = { sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678', url: 'https://github.com/example/repo/actions/runs/40', event: 'push' };
+
+function sectionOf(card) {
+  const start = texts(card).findIndex(text => text.startsWith('**上次全绿以来的提交'));
+  return texts(card).slice(start, texts(card).indexOf('hr'));
+}
+
+await test('lists the commits since the last run on main that passed, with their pull request numbers, and links to the whole range', () => {
+  const commits = [commit(1), commit(2, 'chore: pushed straight to main'), commit(3, `feat: ${'y'.repeat(200)} (#5700)`), ...Array.from({ length: 22 }, (_, index) => commit(index + 4))];
+  const card = failureCard({ run, jobs: [job('TUI (optional)', 'failure'), notifyJob], results: [], candidates: { notOnPush: [], base, status: 'ahead', total: 25, commits } });
+  const [title, since, list] = sectionOf(card);
+  assert.equal(title, '**上次全绿以来的提交（25 个）**');
+  assert.equal(since, '从上次全绿的[合并后运行 · a1b2c3d4e](https://github.com/example/repo/actions/runs/40)算起');
+  const lines = list.split('\n');
+  assert.equal(lines.length, 21);
+  assert.deepEqual(lines.slice(0, 4), ['· #5601 fix: change number 1', `· 02ccccccc chore: pushed straight to main`, `· #5700 feat: ${'y'.repeat(114)}…`, '· #5604 fix: change number 4']);
+  assert.equal(lines.at(-2), '· #5620 fix: change number 20');
+  assert.equal(lines.at(-1), '……另有 5 个提交，完整的列表点「查看这些提交」');
+  assert.deepEqual(card.elements.find(element => element.tag === 'action').actions.map(action => [action.text.content, action.url]), [
+    ['查看这次运行', run.html_url],
+    ['查看这些提交', `https://github.com/example/repo/compare/${base.sha}...${run.head_sha}`],
+  ]);
+});
+
+await test('says when the range starts at the last nightly run because a job failed on a platform pushes to main do not run, and lists a short range whole', () => {
+  for (const { notOnPush, jobs, reason } of [
+    { notOnPush: ['Windows'], jobs: [job('Windows tui (optional)', 'failure', [], ['windows-latest'])], reason: '有 Windows 作业没通过，合并后运行不跑 Windows' },
+    { notOnPush: ['macOS'], jobs: [job('macOS desktop (optional)', 'failure', [], ['macos-15'])], reason: '有 macOS 作业没通过，合并后运行不跑 macOS' },
+    {
+      notOnPush: ['Windows', 'macOS'],
+      jobs: [job('Windows tui (optional)', 'failure', [], ['windows-latest']), job('macOS desktop (optional)', 'failure', [], ['macos-15'])],
+      reason: '有 Windows、macOS 作业没通过，合并后运行不跑 Windows、macOS',
+    },
+  ]) {
+    const card = failureCard({
+      run,
+      jobs: [...jobs, notifyJob],
+      results: [],
+      candidates: { notOnPush, base: { ...base, event: 'schedule' }, status: 'ahead', total: 2, commits: [commit(1), commit(2)] },
+    });
+    assert.deepEqual(sectionOf(card), [
+      '**上次全绿以来的提交（2 个）**',
+      `从上次全绿的[定时运行 · a1b2c3d4e](https://github.com/example/repo/actions/runs/40)算起。${reason}，所以只看每晚运行`,
+      '· #5601 fix: change number 1\n· #5602 fix: change number 2',
+    ]);
+  }
+});
+
+await test('says so instead of listing commits when there is no range to show', () => {
+  const jobs = [job('TUI (optional)', 'failure'), notifyJob];
+  const section = candidates => sectionOf(failureCard({ run, jobs, results: [], candidates }));
+  assert.deepEqual(section({ notOnPush: [], base, status: 'identical', total: 0, commits: [] }), [
+    '**上次全绿以来的提交**',
+    '上次全绿的[合并后运行 · a1b2c3d4e](https://github.com/example/repo/actions/runs/40)测的就是这个提交，之后没有新提交。',
+  ]);
+  for (const status of ['behind', 'diverged']) {
+    assert.deepEqual(section({ notOnPush: [], base, status, total: 3, commits: [] }), [
+      '**上次全绿以来的提交**',
+      '上次全绿的[合并后运行 · a1b2c3d4e](https://github.com/example/repo/actions/runs/40)不在这个提交之前，列不出候选提交。',
+    ]);
+  }
+  assert.deepEqual(section({ notOnPush: [] }), ['**上次全绿以来的提交**', 'main 上找不到更早的全绿运行，列不出候选提交']);
+  assert.deepEqual(section({ notOnPush: ['Windows'] }), ['**上次全绿以来的提交**', 'main 上找不到更早的全绿每晚运行，列不出候选提交']);
+  assert.deepEqual(section({ notOnPush: ['macOS'] }), ['**上次全绿以来的提交**', 'main 上找不到更早的全绿每晚运行，列不出候选提交']);
+  assert.deepEqual(section({ notOnPush: [], error: 'GET repos/example/repo/compare/a...b failed with HTTP 404: Not Found' }), [
+    '**上次全绿以来的提交**',
+    '没能读到候选提交：GET repos/example/repo/compare/a...b failed with HTTP 404: Not Found',
+  ]);
+  const card = failureCard({ run, jobs, results: [], candidates: { notOnPush: [], base, status: 'identical', total: 0, commits: [] } });
+  assert.equal(card.elements.find(element => element.tag === 'action').actions.length, 1);
+});
+
+await test('asks for the last passing push or nightly run before this one, or only nightly runs when a Windows or macOS job failed, names those platforms, and lists the commits since', async () => {
+  const fromPush = '从上次全绿的[合并后运行 · a1b2c3d4e](https://github.com/example/repo/actions/runs/40)算起';
+  const fromNightly = platforms => `从上次全绿的[定时运行 · a1b2c3d4e](https://github.com/example/repo/actions/runs/40)算起。有 ${platforms} 作业没通过，合并后运行不跑 ${platforms}，所以只看每晚运行`;
+  for (const { jobs, events, since } of [
+    {
+      jobs: [job('Desktop (optional, 1/2)', 'failure'), job('Windows web (optional, 1/2)', 'success', [], ['windows-latest']), job('macOS web (optional, 1/2)', 'success', [], ['macos-15'])],
+      events: ['push', 'schedule'],
+      since: fromPush,
+    },
+    { jobs: [job('Desktop (optional, 1/2)', 'success'), job('Windows web (optional, 1/2)', 'cancelled', [], ['windows-latest'])], events: ['schedule'], since: fromNightly('Windows') },
+    { jobs: [job('Desktop (optional, 1/2)', 'success'), job('macOS desktop (optional)', 'failure', [], ['macos-15'])], events: ['schedule'], since: fromNightly('macOS') },
+    {
+      jobs: [job('macOS desktop (optional)', 'failure', [], ['macos-15']), job('Windows tui (optional)', 'failure', [], ['windows-latest'])],
+      events: ['schedule'],
+      since: fromNightly('Windows、macOS'),
+    },
+    { jobs: [job('Desktop (optional, 1/2)', 'failure'), job('macOS tui (optional)', 'skipped', [], ['macos-15'])], events: ['push', 'schedule'], since: fromPush },
+  ]) {
+    const asked = [];
+    const posted = [];
+    const github = {
+      run: async () => run,
+      jobs: async () => [...jobs, notifyJob],
+      lastPassingRun: async options => {
+        asked.push(['last-pass', options]);
+        return { ...base, event: options.events.length === 1 ? 'schedule' : 'push' };
+      },
+      commitsBetween: async (from, to) => {
+        asked.push(['commits', from, to]);
+        return { status: 'ahead', total: 1, commits: [commit(1)] };
+      },
+    };
+    assert.equal(await notify({ runId: '42', resultsDir: join(tmpdir(), 'e2e-nightly-notify-missing-folder'), github, post: async card => posted.push(card) }), 'posted');
+    assert.deepEqual(asked, [
+      ['last-pass', { workflow: 427, events, currentRunId: 42, createdBefore: '2026-11-26T20:07:29Z' }],
+      ['commits', base.sha, run.head_sha],
+    ]);
+    assert.deepEqual(sectionOf(posted[0]).slice(0, 2), ['**上次全绿以来的提交（1 个）**', since]);
+  }
+});
+
+await test('still posts the failures when the candidate commits cannot be read, and says why', async () => {
+  const posted = [];
+  const github = {
+    run: async () => run,
+    jobs: async () => [job('ACP (optional)', 'failure'), notifyJob],
+    lastPassingRun: async () => {
+      throw new Error('GET repos/example/repo/actions/workflows/427/runs failed with HTTP 502: Bad Gateway');
+    },
+  };
+  assert.equal(await notify({ runId: '42', resultsDir: join(tmpdir(), 'e2e-nightly-notify-missing-folder'), github, post: async card => posted.push(card) }), 'posted');
+  assert.equal(posted[0].header.title.content, '每晚 E2E 没通过 · 2026-11-27');
+  assert.deepEqual(sectionOf(posted[0]), ['**上次全绿以来的提交**', '没能读到候选提交：GET repos/example/repo/actions/workflows/427/runs failed with HTTP 502: Bad Gateway']);
+});
+
+await test('reads the last passing run and the commits since it through the same GitHub client', async () => {
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(url);
+    const body = url.includes('/compare/')
+      ? { status: 'ahead', total_commits: 1, commits: [{ sha: 'c1', commit: { message: 'fix: one (#1)\n\nbody' } }] }
+      : { workflow_runs: [{ id: 41, event: 'schedule', head_sha: 'aaa', html_url: 'run-41' }] };
+    return new Response(JSON.stringify(body), { status: 200 });
+  };
+  const github = githubClient({ token: 'YOUR_TOKEN', repo: 'example/repo', apiUrl: 'https://api.example.test', fetchImpl });
+  assert.deepEqual(await github.lastPassingRun({ workflow: 427, events: ['schedule'], currentRunId: 42, createdBefore: '2026-11-26T20:07:29Z' }), { sha: 'aaa', url: 'run-41', event: 'schedule' });
+  assert.deepEqual(await github.commitsBetween('aaa', 'bbb'), { status: 'ahead', total: 1, commits: [{ sha: 'c1', subject: 'fix: one (#1)' }] });
+  assert.deepEqual(calls, [
+    `https://api.example.test/repos/example/repo/actions/workflows/427/runs?branch=main&status=success&per_page=20&event=schedule&created=${encodeURIComponent('<2026-11-26T20:07:29Z')}`,
+    'https://api.example.test/repos/example/repo/compare/aaa...bbb',
   ]);
 });

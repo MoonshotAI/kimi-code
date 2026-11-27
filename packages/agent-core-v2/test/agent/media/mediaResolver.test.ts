@@ -170,6 +170,9 @@ function stubEnvironmentBinding(environmentId = LOCAL_ENVIRONMENT_ID): IAgentEnv
     bind: () => {
       throw new Error('unused');
     },
+    rebindLocalWorkDir: async () => {
+      throw new Error('unused');
+    },
   };
 }
 

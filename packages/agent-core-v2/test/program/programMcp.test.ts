@@ -20,6 +20,8 @@ import { ProgramMcp, type ProgramMcpLease } from '#/program/programMcp';
 import type { IProjectContext } from '#/project/projectContext/projectContext';
 import type { IProjectDirs } from '#/project/projectDirs/projectDirs';
 import type { ProjectTrustChange } from '#/project/projectTrust/projectTrust';
+import { SessionMcpService } from '#/session/mcp/sessionMcpService';
+import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 
 import { stubLog } from '../_base/log/stubs';
 import { deferredAgentIdentityStub, stubAgentIdentity } from '../app/agentIdentity/stubs';
@@ -43,18 +45,22 @@ describe('ProgramMcp', () => {
   let oauth: McpOAuthService;
   let mcp: ProgramMcp;
   let spawn: MockInstance<HostProcessService['spawn']>;
+  let sessions: SessionMcpService[];
+  let environmentServices: IEnvironmentService;
 
   beforeEach(() => {
     vi.stubEnv('KIMI_CODE_WATCH', 'false');
     homeDir = tempDir('kimi-program-mcp-home-');
     primary = tempDir('kimi-program-mcp-primary-');
     trusted = true;
+    sessions = [];
     oauth = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     mcp = createMcp();
     spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
   });
 
   afterEach(async () => {
+    await Promise.all(sessions.map((session) => session.disposeAsync()));
     await mcp.dispose();
     await oauth.dispose();
     vi.restoreAllMocks();
@@ -72,13 +78,14 @@ describe('ProgramMcp', () => {
       { process: new HostProcessService() },
     );
     const lease = { environment, track: <T,>(resource: T): T => resource, dispose: () => {} };
+    environmentServices = {
+      _serviceBrand: undefined,
+      inspect: () => environment,
+      acquire: () => lease,
+      acquireWhenReady: async () => lease,
+    } as unknown as IEnvironmentService;
     return new ProgramMcp(
-      {
-        _serviceBrand: undefined,
-        inspect: () => environment,
-        acquire: () => lease,
-        acquireWhenReady: async () => lease,
-      } as unknown as IEnvironmentService,
+      environmentServices,
       { workspaceId: 'workspace' } as IProjectContext,
       {
         bootstrap: { homeDir },
@@ -123,8 +130,29 @@ describe('ProgramMcp', () => {
   }
 
   async function connected(lease: ProgramMcpLease): Promise<McpConnectionView> {
-    await lease.service.ready;
-    const view = lease.service.connectionManager();
+    const sessionId = `session-${sessions.length}`;
+    const session = new SessionMcpService(
+      makeSessionContext({ sessionId, workspaceId: 'workspace', sessionDir: primary, sessionScope: 'ws', cwd: primary }),
+      {},
+      lease.service.sources(),
+      [],
+      { ready: Promise.resolve(), get: () => undefined } as never,
+      oauth,
+      environmentServices,
+      stubAgentIdentity(),
+      stubLog(),
+    );
+    sessions.push(session);
+    const disposeLease = lease.dispose;
+    let released = false;
+    lease.dispose = () => {
+      if (released) return;
+      released = true;
+      void session.disposeAsync();
+      disposeLease();
+    };
+    await session.ready;
+    const view = session.connectionManager;
     expect(view.list().filter((entry) => entry.status !== 'connected')).toEqual([]);
     return view;
   }

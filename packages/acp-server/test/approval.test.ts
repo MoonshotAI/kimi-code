@@ -203,20 +203,6 @@ describe('buildPermissionToolCallUpdate', () => {
       content: { type: 'text', text: 'Requesting approval to run `echo hi`' },
     });
   });
-
-  it('includes Auto Review denial details in the approval prompt', () => {
-    const update = buildPermissionToolCallUpdate({
-      ...makeRequest(commandDisplay, 1),
-      approvalDetail: { outcome: 'denied', risk: 'high', reason: 'Exposes credentials.' },
-    });
-    expect(update.content?.at(-1)).toMatchObject({
-      type: 'content',
-      content: {
-        type: 'text',
-        text: "Auto Review didn't approve · high risk: Exposes credentials.\n\nRequesting approval to run `echo hi`",
-      },
-    });
-  });
 });
 
 describe('attachSelectedLabel', () => {
