@@ -22,8 +22,13 @@ function measure(sources) {
     readText: (file) => sources[file],
     resolveTarget: (specifier, fromFile) => {
       if (!specifier.startsWith('.')) {
-        const match = /^(@moonshot-ai\/(app-[a-z0-9]+))(\/[^'"]*)?$/.exec(specifier);
-        return match ? { targetPkg: match[2] } : undefined;
+        const match = /^@moonshot-ai\/(app-[a-z0-9]+)(\/[^'"]*)?$/.exec(specifier);
+        if (!match) return undefined;
+        const targetPkg = match[1];
+        const subpath = match[2]?.slice(1) ?? '';
+        const base = subpath === '' ? `packages/${targetPkg}/src` : `packages/${targetPkg}/src/${subpath}`;
+        const targetFile = [`${base}.ts`, `${base}/index.ts`].find((candidate) => candidate in sources);
+        return { targetFile, targetPkg };
       }
       const fromDir = fromFile.split('/').slice(0, -1);
       const parts = [...fromDir, ...specifier.split('/')];
@@ -99,14 +104,13 @@ await test('extractImports accepts Vue generic script attributes with > inside q
   assert.deepEqual(extractImports(CHAT_PANE, vue), [{ specifier: './helper', typeOnly: false }]);
 });
 
-await test('packageOfFile recognizes app-i18n and enforces its upward and self-import boundaries', () => {
+await test('packageOfFile recognizes app-i18n and enforces its upward boundary while allowing self-imports', () => {
   const file = 'packages/app-i18n/src/createKimiI18n.ts';
   assert.equal(packageOfFile(file), 'app-i18n');
   const counts = measure({
     [file]: 'import { sessionsStore } from "@moonshot-ai/app-client/stores";\nimport { zh } from "@moonshot-ai/app-i18n";',
   });
   assert.deepEqual(counts, {
-    'self-package-import': { [file]: 1 },
     'upward-package-import': { [file]: 1 },
   });
 });
@@ -144,12 +148,13 @@ await test('extractImports reads every Vue script block and ignores template tex
   ]);
 });
 
-await test('self-package imports count while relative sibling imports do not', () => {
+await test('self-package imports and intra-package barrel cycles are allowed', () => {
   const counts = measure({
-    [CHAT_PANE]: '<script setup lang="ts">import { turnBlocks } from "@moonshot-ai/app-components";\nimport { helper } from "./helper";</script>',
+    [CHAT_PANE]: '<script setup lang="ts">import { helper } from "@moonshot-ai/app-components";</script>',
+    'packages/app-components/src/index.ts': 'export { helper } from "./chat/helper";\nexport { default as ChatPane } from "./chat/ChatPane.vue";',
     'packages/app-components/src/chat/helper.ts': 'export const helper = 1;',
   });
-  assert.deepEqual(counts, { 'self-package-import': { [CHAT_PANE]: 1 } });
+  assert.deepEqual(counts, {});
 });
 
 await test('lower-level packages and main/shared processes cannot import upper-level packages', () => {
@@ -180,17 +185,12 @@ await test('stores cannot import each other, while stores/index.ts, stores/pinia
   assert.deepEqual(counts, { 'store-cross-import': { [SESSIONS_STORE]: 1 } });
 });
 
-await test('a store importing the stores barrel still forms a runtime cycle with that barrel', () => {
+await test('a store importing the stores barrel is allowed as an intra-package cycle', () => {
   const counts = measure({
     [SESSIONS_STORE]: 'import "../stores/index";',
     'packages/app-client/src/stores/index.ts': 'export { useSessionsStore } from "./sessions";',
   });
-  assert.deepEqual(counts, {
-    'runtime-cycle': {
-      [SESSIONS_STORE]: 2,
-      'packages/app-client/src/stores/index.ts': 2,
-    },
-  });
+  assert.deepEqual(counts, {});
 });
 
 await test('non-browser Vue components count every direct API call and IPC access site', () => {
@@ -217,30 +217,38 @@ await test('non-browser Vue components count every direct API call and IPC acces
   });
 });
 
-await test('runtime cycles record cycle size per member and ignore type-only back edges', () => {
-  const cyclic = measure({
+await test('runtime cycles only count cross-package cycles and ignore type-only back edges', () => {
+  const intraPackage = measure({
     'apps/desktop/src/main/a.ts': 'import { b } from "./b"; export const a = () => b();',
     'apps/desktop/src/main/b.ts': 'import { c } from "./c"; export const b = () => c();',
     'apps/desktop/src/main/c.ts': 'import { a } from "./a"; export const c = () => a();',
   });
+  assert.deepEqual(intraPackage, {});
+
+  const cyclic = measure({
+    'packages/app-core/src/lib/a.ts': 'import { b } from "@moonshot-ai/app-client/client"; export const a = () => b();',
+    'packages/app-client/src/client/index.ts': 'export { b } from "./b";',
+    'packages/app-client/src/client/b.ts': 'import { ChatPane } from "@moonshot-ai/app-components"; export const b = () => ChatPane;',
+    'packages/app-components/src/index.ts': 'export { a as ChatPane } from "@moonshot-ai/app-core/lib/a";',
+  });
   assert.deepEqual(cyclic, {
     'runtime-cycle': {
-      'apps/desktop/src/main/a.ts': 3,
-      'apps/desktop/src/main/b.ts': 3,
-      'apps/desktop/src/main/c.ts': 3,
+      'packages/app-core/src/lib/a.ts': 4,
+      'packages/app-client/src/client/index.ts': 4,
+      'packages/app-client/src/client/b.ts': 4,
+      'packages/app-components/src/index.ts': 4,
     },
   });
 
   const typeOnly = measure({
-    'apps/desktop/src/main/a.ts': 'import { b } from "./b"; export const a = () => b();',
-    'apps/desktop/src/main/b.ts': 'import { c } from "./c"; export const b = () => c();',
-    'apps/desktop/src/main/c.ts': 'import type { a } from "./a"; export const c = () => 1;',
+    'packages/app-core/src/lib/a.ts': 'import { b } from "@moonshot-ai/app-client/client"; export const a = () => b();',
+    'packages/app-client/src/client/index.ts': 'import type { a } from "@moonshot-ai/app-core/lib/a"; export const b = () => 1;',
   });
   assert.deepEqual(typeOnly, {});
 
   const typeStar = measure({
-    'apps/desktop/src/main/a.ts': 'import { b } from "./b"; export const a = () => b();',
-    'apps/desktop/src/main/b.ts': 'export type * from "./a"; export const b = () => 1;',
+    'packages/app-core/src/lib/a.ts': 'import { b } from "@moonshot-ai/app-client/client"; export const a = () => b();',
+    'packages/app-client/src/client/index.ts': 'export type * from "@moonshot-ai/app-core/lib/a"; export const b = () => 1;',
   });
   assert.deepEqual(typeStar, {});
 });

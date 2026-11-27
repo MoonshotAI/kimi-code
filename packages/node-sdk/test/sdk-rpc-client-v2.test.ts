@@ -3100,7 +3100,7 @@ key = "${titleOAuthRef.key}"
 describe('SDKRpcClientV2 explicit MCP upserts', () => {
   const unreachable = { transport: 'http', url: 'http://127.0.0.1:1/mcp' } as const;
 
-  it('lands an explicit reconnect and an unpersisted add in the servers the sessions of the directory share', async () => {
+  it('lands an explicit reconnect and an unpersisted add in the session without leaking into sibling sessions or the project view', async () => {
     vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -3127,8 +3127,14 @@ describe('SDKRpcClientV2 explicit MCP upserts', () => {
         ['added', 'http'],
         ['project', 'http'],
       ]);
+
+      await client.createSession({ id: 'ses_mcp_sibling', workDir });
+      const sibling = await client.listMcpServers({ sessionId: 'ses_mcp_sibling' });
+      expect(sibling.map((entry) => [entry.name, entry.transport, entry.status])).toEqual([
+        ['project', 'stdio', 'disabled'],
+      ]);
       const workspace = await client.listWorkspaceMcpServers(workDir);
-      expect(workspace.map((entry) => entry.name).toSorted()).toEqual(['added', 'project']);
+      expect(workspace.map((entry) => [entry.name, entry.status])).toEqual([['project', 'disabled']]);
     } finally {
       await client.close();
       vi.unstubAllEnvs();

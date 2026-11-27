@@ -25,7 +25,9 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 - **用户级**：`~/.kimi-code/mcp.json`（或 `$KIMI_CODE_HOME/mcp.json`），跨项目共享
 - **项目级**：项目根目录下的 `.kimi-code/mcp.json`，只对当前仓库生效。在 Git 仓库的子目录里启动时，读的也是仓库根目录下的这个文件，每个 worktree 读它自己的
 
-同名条目以项目级为准，覆盖用户级。
+同名条目以项目级为准，覆盖用户级。不含 `transport` 的项目级条目只能设置 `enabled`、`deferred`、`enabledTools` 或 `disabledTools`，用于在不重复填写连接配置的情况下调整或禁用用户级的同名 server；例如写入 `{ "enabled": false }` 即可在当前项目中禁用该 server。这类局部条目如果带有 `command`、`url`、`env`、`headers` 等连接或凭证字段，会被判定为非法配置并报错。
+
+被禁用的 server，以及被更高优先级同名条目覆盖的低优先级 server，都不会拉起子进程或建立连接。同一项目下的多个会话会共享底层 MCP 连接，直到最后一个仍在使用该连接的会话退出时才真正关闭。
 
 在 TUI 中运行 `/mcp-config` 可以交互式地新增、编辑或删除 server，无需手动编辑 JSON 文件。运行 `/mcp` 可查看当前所有 server 的连接状态。
 

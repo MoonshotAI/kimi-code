@@ -25,7 +25,9 @@ MCP server configuration is written in `mcp.json`, at two levels:
 - **User level**: `~/.kimi-code/mcp.json` (or `$KIMI_CODE_HOME/mcp.json`), shared across projects
 - **Project level**: `.kimi-code/mcp.json` at the project root, effective only for the current repository. In a subdirectory of a Git repository this is the file at the repository root, and each worktree uses its own
 
-Entries with the same name: the project-level entry takes precedence and overrides the user-level entry.
+Entries with the same name: the project-level entry takes precedence and overrides the user-level entry. A project-level entry without `transport` may set only `enabled`, `deferred`, `enabledTools`, or `disabledTools` to adjust or disable a same-named user-level server without repeating its connection settings; for example, `{ "enabled": false }` disables that server for the current project. Including any connection or credential field (such as `command`, `url`, `env`, or `headers`) in such a partial entry is rejected as invalid configuration.
+
+Disabled servers and lower-priority servers shadowed by a same-named higher-priority entry never start a process or connect. Sessions in the same project share underlying MCP connections, and a shared connection closes only after the last session using it exits.
 
 Run `/mcp-config` in the TUI to interactively add, edit, or delete servers without manually editing the JSON file. Run `/mcp` to view the connection status of all current servers.
 

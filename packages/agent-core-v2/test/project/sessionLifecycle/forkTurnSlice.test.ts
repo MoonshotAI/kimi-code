@@ -32,6 +32,107 @@ describe('sliceMainRecordsAtTurn', () => {
     expect(slice.records).toContainEqual(record);
   });
 
+  it('derives a fork last prompt from a user-slash skill record when display text is empty', () => {
+    const appended: WireRecord = {
+      type: 'context.append_message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: '<skill-loaded>expanded instructions</skill-loaded>' }],
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-1',
+          skillName: 'review',
+          skillArgs: '--deep',
+          trigger: 'user-slash',
+          clientMetadata: [{ display_text: '' }],
+        },
+      },
+      time: 2,
+    };
+    const prompted: WireRecord = {
+      type: 'turn.prompt',
+      turnId: 1,
+      input: [{ type: 'text', text: '<skill-loaded>expanded instructions</skill-loaded>' }],
+      origin: {
+        kind: 'skill_activation',
+        activationId: 'act-2',
+        skillName: 'security',
+        trigger: 'user-slash',
+      },
+      time: 3,
+    };
+
+    expect(
+      sliceMainRecordsAtTurn([appended, userTurnRecord('tail', 4)], 'example-source', 0).lastPrompt,
+    ).toBe('/review --deep');
+    expect(
+      sliceMainRecordsAtTurn(
+        [
+          prompted,
+          { type: 'turn.ended', turnId: 1, reason: 'completed', time: 3.5 },
+          userTurnRecord('tail', 4),
+        ],
+        'example-source',
+        1,
+      ).lastPrompt,
+    ).toBe('/security');
+  });
+
+  it('keeps non-empty display text for a user-slash skill fork record', () => {
+    const record: WireRecord = {
+      type: 'context.append_message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: '<skill-loaded>expanded instructions</skill-loaded>' }],
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-1',
+          skillName: 'review',
+          skillArgs: '--deep',
+          trigger: 'user-slash',
+          clientMetadata: [{ display_text: 'Review the Save button' }],
+        },
+      },
+      time: 2,
+    };
+
+    expect(
+      sliceMainRecordsAtTurn([record, userTurnRecord('tail', 3)], 'example-source', 0).lastPrompt,
+    ).toBe('Review the Save button');
+  });
+
+  it('falls back to bundled skill labels when a forked bundled prompt has no usable text', () => {
+    const record: WireRecord = {
+      type: 'turn.prompt',
+      turnId: 0,
+      input: [
+        { type: 'text', text: 'User activated the skill "review".' },
+        { type: 'text', text: 'User activated the skill "security".' },
+        { type: 'text', text: '   ' },
+      ],
+      origin: {
+        kind: 'user',
+        skillActivations: [
+          { activationId: 'act-1', skillName: 'review', skillArgs: 'src' },
+          { activationId: 'act-2', skillName: 'security' },
+        ],
+      },
+      time: 2,
+    };
+
+    expect(
+      sliceMainRecordsAtTurn(
+        [
+          record,
+          { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2.5 },
+          userTurnRecord('tail', 3),
+        ],
+        'example-source',
+        0,
+      ).lastPrompt,
+    ).toBe('/review src /security');
+  });
+
   it('keeps completed records before queued input and an active turn in a truncated fork slice', () => {
     const records: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.5', created_at: 1 },

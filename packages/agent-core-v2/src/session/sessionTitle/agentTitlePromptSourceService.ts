@@ -9,6 +9,10 @@ import {
   promptMetadataTextFromText,
 } from '#/agent/prompt/promptMetadataText';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
+import {
+  promptMetadataTextFromSkill,
+  skillCommandLabel,
+} from '#/features/skill/prompt';
 
 import {
   IAgentTitlePromptSource,
@@ -32,7 +36,7 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
     const seenMessageIds = new Set<string>();
 
     const add = (message: ContextMessage): void => {
-      if (result.length >= limit || !isNaturalLanguagePrompt(message)) return;
+      if (result.length >= limit || !isUserTitlePrompt(message)) return;
       if (message.id !== undefined) {
         if (seenMessageIds.has(message.id)) return;
         seenMessageIds.add(message.id);
@@ -47,12 +51,12 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
 
   async firstTurnExcerpt(): Promise<TitleTurnExcerpt> {
     const all = this.combinedMessages();
-    const firstUserIndex = all.findIndex(isNaturalLanguagePrompt);
+    const firstUserIndex = all.findIndex(isUserTitlePrompt);
     if (firstUserIndex < 0) return {};
     const user = promptMetadataTextFromUserMessage(all[firstUserIndex]!);
     const span: ContextMessage[] = [];
     for (const message of all.slice(firstUserIndex + 1)) {
-      if (isNaturalLanguagePrompt(message)) break;
+      if (isUserTitlePrompt(message)) break;
       span.push(message);
     }
     return { user, assistant: finalAssistantText(span) };
@@ -64,7 +68,7 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
     const userIndexes: number[] = [];
     for (let index = 0; index < all.length; index++) {
       const message = all[index]!;
-      if (!isNaturalLanguagePrompt(message)) continue;
+      if (!isUserTitlePrompt(message)) continue;
       if (message.id !== undefined) {
         if (seenMessageIds.has(message.id)) continue;
         seenMessageIds.add(message.id);
@@ -103,20 +107,32 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
   }
 }
 
-function isNaturalLanguagePrompt(message: ContextMessage): boolean {
+function isUserTitlePrompt(message: ContextMessage): boolean {
   if (message.role !== 'user') return false;
   const origin = message.origin;
-  return origin === undefined || origin.kind === 'user';
+  if (origin === undefined || origin.kind === 'user') return true;
+  return origin.kind === 'skill_activation' && origin.trigger === 'user-slash';
 }
 
 function promptMetadataTextFromUserMessage(message: ContextMessage): string | undefined {
-  const bundled =
-    message.origin?.kind === 'user' ? (message.origin.skillActivations ?? []) : [];
-  return promptMetadataTextFromContentParts(
+  const origin = message.origin;
+  if (origin?.kind === 'skill_activation') {
+    return promptMetadataTextFromSkill({
+      name: origin.skillName,
+      args: origin.skillArgs,
+      clientMetadata: origin.clientMetadata,
+    });
+  }
+  const bundled = origin?.kind === 'user' ? (origin.skillActivations ?? []) : [];
+  const text = promptMetadataTextFromContentParts(
     annotateBundledSkillParts(message.content, bundled).filter(
       (part) => !isSkillActivationPart(part) && !isUserPromptSubmitHookPart(part),
     ),
-    message.origin?.kind === 'user' ? message.origin.clientMetadata : undefined,
+    origin?.kind === 'user' ? origin.clientMetadata : undefined,
+  );
+  if (text !== undefined || bundled.length === 0) return text;
+  return promptMetadataTextFromText(
+    bundled.map((skill) => skillCommandLabel(skill.skillName, skill.skillArgs)).join(' '),
   );
 }
 
