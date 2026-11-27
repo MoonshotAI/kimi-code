@@ -379,4 +379,46 @@ describe('worktree session move & KV prefix cache', () => {
       await harness.close();
     }
   });
+
+  it('preserves global AGENTS.md changes across move and syncs workDir on stale reload in another client', async () => {
+    const { harness: harnessA, homeDir, repo } = await makeRepoHarness('Repo instructions v1.\n');
+    const globalAgentsMd = join(homeDir, 'AGENTS.md');
+    await writeFile(globalAgentsMd, 'Global instructions v1.\n');
+    const harnessB = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    await configureFakeProvider(harnessB);
+    try {
+      replies().script(say('Turn 1 in client A.'), say('Turn 2 in client B after move.'));
+      const sessionA = await harnessA.createSession({ id: 'ses_wt_global_stale', workDir: repo });
+      const turn1 = waitForEvent(sessionA, (event) => event.type === 'turn.ended');
+      await sessionA.prompt('Hello from A.');
+      await turn1;
+
+      const sessionB = await harnessB.resumeSession({ id: sessionA.id });
+      let workDirDuringStaleHandler: string | undefined;
+      sessionB.setStaleReloadHandler(async () => {
+        workDirDuringStaleHandler = sessionB.workDir;
+      });
+
+      await writeFile(globalAgentsMd, 'Global instructions v2 changed right before move.\n');
+      const wt = await harnessA.createWorktree({ cwd: repo, name: 'wt-stale-sync' });
+      await sessionA.moveSession(wt.cwd);
+      await sessionA.close();
+
+      const turn2 = waitForEvent(sessionB, (event) => event.type === 'turn.ended');
+      await sessionB.prompt('Continue from B.');
+      await turn2;
+
+      expect(workDirDuringStaleHandler).toBe(wt.cwd);
+      expect(sessionB.workDir).toBe(wt.cwd);
+
+      const postMoveTexts = model.requests('main').at(-1)!.texts('user').join('\n');
+      expect(postMoveTexts).toContain(
+        `The current working directory has moved from \`${slashPathOf(repo)}\` to \`${wt.cwd}\`.`,
+      );
+      expect(postMoveTexts).toContain(slashPathOf(globalAgentsMd));
+    } finally {
+      await harnessA.close();
+      await harnessB.close();
+    }
+  });
 });

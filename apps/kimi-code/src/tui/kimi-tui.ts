@@ -2589,9 +2589,31 @@ export class KimiTUI {
     const pending = this.state.transcriptEntries.filter((entry) =>
       this.pendingPromptEntries.has(entry),
     );
+    if (
+      this.environmentIdOf(this.state.appState.environment) === 'local' &&
+      !sameDir(session.workDir, this.state.appState.workDir)
+    ) {
+      const exists = await isDirectoryAsync(session.workDir);
+      const fallback: WorkLocation = {
+        cwd: session.workDir,
+        projectRoot: this.state.appState.projectRoot ?? session.workDir,
+        isGitRepo: this.state.appState.isGitRepo ?? false,
+      };
+      const location = exists
+        ? ((await this.harness.resolveWorkLocation(session.workDir).catch(() => undefined)) ??
+          fallback)
+        : fallback;
+      if (this.session === session) {
+        await this.applyWorkLocation(location, {
+          resolveEnvironment: exists,
+          environmentId: 'local',
+        });
+      }
+    }
     await this.reloadCurrentSessionView(session, 'Loaded updates from another client.', {
       replayHistory: true,
     });
+    this.syncAdditionalDirs(session);
     for (const entry of pending) this.appendTranscriptEntry(entry);
     this.track('session_stale_reload');
   }
@@ -3330,7 +3352,7 @@ export class KimiTUI {
     );
   }
 
-  precheckMoveSession(): void {
+  async precheckMoveSession(): Promise<void> {
     const { isReplaying, streamingPhase, isCompacting } = this.state.appState;
     if (isReplaying) {
       throw new Error('Cannot move the session while history is replaying.');
@@ -3348,6 +3370,12 @@ export class KimiTUI {
         );
       }
     }
+    const active = this.session;
+    if (active !== undefined && !active.isClosed && (await active.getCronTasks()).tasks.length > 0) {
+      throw new Error(
+        'Cannot move the session while scheduled tasks are active. Cancel them first or choose Start new.',
+      );
+    }
   }
 
   moveSessionTo(location: WorkLocation): Promise<boolean> {
@@ -3357,7 +3385,7 @@ export class KimiTUI {
       if (active === undefined || active.isClosed) {
         return this.startSessionAt(location);
       }
-      this.precheckMoveSession();
+      await this.precheckMoveSession();
       const moved = await this.harness.moveSession({
         id: active.id,
         workDir: location.cwd,

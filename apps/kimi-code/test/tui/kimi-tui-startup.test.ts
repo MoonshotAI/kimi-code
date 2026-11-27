@@ -157,6 +157,7 @@ function makeStartupInput(
 function makeSession(overrides: Record<string, unknown> = {}) {
   return {
     id: 'ses-1',
+    workDir: '/tmp/proj-a',
     model: 'k2',
     summary: { title: 'Session title' },
     getStatus: vi.fn(async () => ({
@@ -176,6 +177,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     setPermission: vi.fn(async () => {}),
     setPlanMode: vi.fn(async () => {}),
     getGoal: vi.fn(async () => ({ goal: null })),
+    getCronTasks: vi.fn(async () => ({ tasks: [] })),
     onEvent: vi.fn(() => () => {}),
     getResumeState: vi.fn(() => null),
     listSkills: vi.fn(async () => []),
@@ -514,6 +516,20 @@ describe('KimiTUI startup', () => {
       model: 'k2',
       permissionMode: 'yolo',
     });
+  });
+
+  it('rejects precheckMoveSession before creating a worktree when scheduled cron tasks exist', async () => {
+    const session = makeSession({
+      getCronTasks: vi.fn(async () => ({
+        tasks: [{ id: 'cron-1', cron: '*/15 * * * *', prompt: 'Check CI', recurring: true, createdAt: 1, nextFireAt: 2 }],
+      })),
+    });
+    const driver = makeDriver(makeHarness(session), makeStartupInput());
+    await driver.setSession(session);
+
+    await expect(
+      (driver as unknown as { precheckMoveSession(): Promise<void> }).precheckMoveSession(),
+    ).rejects.toThrow('Cannot move the session while scheduled tasks are active.');
   });
 
   it('mounts the docked fullscreen layout when tui_mode is fullscreen', async () => {

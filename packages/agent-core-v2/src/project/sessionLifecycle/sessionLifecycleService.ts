@@ -518,6 +518,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             environmentCwd: input.nextEnv?.cwd,
           });
         }
+        const mainHandle = newAgents.handleOf(MAIN_AGENT_ID);
+        if (mainHandle !== undefined) {
+          await mainHandle.accessor.get(IAgentChangeNotifierService).notifyAgentsMdChanges();
+          mainHandle.accessor.get(IAgentLoopService).flushReminders();
+        }
       }
       await this._onDidCreateSession.fireAsync(
         { sessionId: input.sessionId, handle: newHandle, source: 'reclaimed' },

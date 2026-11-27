@@ -97,6 +97,7 @@ export class Session {
 
   private readonly rpc: SDKRpcClientBase;
   private readonly onClose?: (() => void | Promise<void>) | undefined;
+  private staleReloadHandler: StaleReloadHandler | undefined;
   private closed = false;
 
   constructor(options: SessionOptions) {
@@ -173,14 +174,12 @@ export class Session {
    */
   setStaleReloadHandler(handler: StaleReloadHandler | undefined): void {
     this.ensureOpen();
-    if (handler === undefined) {
-      this.rpc.setStaleReloadHandler(this.id, undefined);
-      return;
-    }
+    this.staleReloadHandler = handler;
     this.rpc.setStaleReloadHandler(this.id, async (summary) => {
+      this._workDir = summary.workDir;
       this.summary = summary;
       this.resumeState = resumeStateFromSummary(summary);
-      await handler();
+      await this.staleReloadHandler?.();
     });
   }
 

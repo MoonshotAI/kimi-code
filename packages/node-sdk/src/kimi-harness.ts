@@ -216,6 +216,7 @@ export class KimiHarness {
         }
       },
     });
+    session.setStaleReloadHandler(undefined);
     this.activeSessions.set(session.id, session);
     return session;
   }

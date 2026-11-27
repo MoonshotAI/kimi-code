@@ -23,6 +23,10 @@ function canonicalPathKey(rawPath: string): string {
   return normalized.replace(WINDOWS_DRIVE_PREFIX, (drive) => drive.toLowerCase());
 }
 
+export function isGlobalAgentsMdPath(rawPath: string, globalPaths: ReadonlySet<string>): boolean {
+  return globalPaths.has(canonicalPathKey(rawPath));
+}
+
 function resolveProjectAgentsMdPath(
   rawPath: string,
   checkoutRootKey: string,
