@@ -77,6 +77,7 @@ export class EffortSelectorComponent implements Component, Focusable {
       shownAt: this.shownAt,
       row: this.segmentRow,
       regions: this.segmentRegions,
+      selectOnHover: true,
       select: (index) => {
         const changed = this.activeIndex !== index;
         this.activeIndex = index;

@@ -30,8 +30,6 @@ export function track(event: string, payload?: Record<string, unknown>): void {
   activeProductTracker.track(event, payload);
 }
 
-export const PinScrollKey: InjectionKey<(el: HTMLElement, ms?: number) => void> = Symbol('pinScroll');
-
 export const ResolveAgentTaskIdKey: InjectionKey<(toolCallId: string) => string | undefined> =
   Symbol('resolveAgentTaskId');
 

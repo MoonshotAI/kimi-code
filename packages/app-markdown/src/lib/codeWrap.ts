@@ -1,5 +1,5 @@
 
-import { iconSvg } from '@moonshot-ai/app-client/icons';
+import { iconSvg } from '@moonshot-ai/app-ui/icons';
 import { CODE_TIP_ATTR } from './codeTooltip';
 
 export const CODE_WRAP_CLASS = 'md-code-wrap';

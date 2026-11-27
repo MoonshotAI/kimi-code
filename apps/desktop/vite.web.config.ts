@@ -9,7 +9,7 @@ const webPort = Number(process.env.WEB_PORT) || 5175;
 const serverTarget = process.env.KIMI_SERVER_URL || 'http://127.0.0.1:58627';
 
 const iconsDir = fileURLToPath(
-  new URL('./src/icons/kimi', import.meta.resolve('@moonshot-ai/app-client/package.json')),
+  new URL('./src/icons/kimi', import.meta.resolve('@moonshot-ai/app-ui/package.json')),
 );
 
 function rcDevicesStubPlugin(): Plugin {

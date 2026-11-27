@@ -42,7 +42,7 @@ $KIMI_CODE_HOME  (default: ~/.kimi-code)
 │       └── <key>-<suffix>.json
 ├── sessions/               # Session data (see below)
 │   └── <workDirKey>/<sessionId>/
-├── worktrees/              # Kimi-managed Git worktrees (experimental)
+├── worktrees/              # Kimi-managed Git worktrees
 │   └── <repoKey>/<name>/
 ├── locks/
 │   └── sessions/           # Cross-process occupancy locks while a client writes a session

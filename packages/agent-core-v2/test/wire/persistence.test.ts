@@ -416,6 +416,33 @@ describe('WireService migration rewrite', () => {
     });
   });
 
+  it('does not report external modification when an own record lands while restore chains are read', async () => {
+    const { dir, log, storage } = await createFileAppendLogHarness();
+    const svc = createAgentWireHarness(log, storage);
+    await svc.seal();
+    await svc.flush();
+    await svc.readRestoreChains();
+
+    const originalReadStream = storage.readStream.bind(storage);
+    storage.readStream = async function* (scope, key, range) {
+      yield* originalReadStream(scope, key, range);
+      svc.appendRecord({
+        type: 'mcp.server_failed',
+        agentId: 'main',
+        serverName: 'slow-server',
+        transport: 'http',
+        error: 'MCP server slow-server is not enabled',
+      });
+      await svc.flush();
+    };
+
+    const chains = await svc.readRestoreChains();
+
+    expect(svc.externallyModified()).toBe(false);
+    expect(chains.journal.at(-1)).toMatchObject({ type: 'metadata' });
+    expect(await readLines(join(dir, SCOPE, KEY))).toHaveLength(2);
+  });
+
   it('completes a deferred migration before appending', async () => {
     const storage = new InMemoryStorageService();
     const log = await seedLegacyLog(storage);

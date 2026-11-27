@@ -857,7 +857,6 @@ export async function applyExperimentalFeatureChanges(
     } else {
       host.showStatus('Experimental features updated.', 'success');
     }
-    if (changes.some((change) => change.id === 'worktree')) await host.refreshWorkLocation();
     if (
       host.session !== undefined &&
       changes.some((change) => change.id === 'notify_user' && change.enabled)

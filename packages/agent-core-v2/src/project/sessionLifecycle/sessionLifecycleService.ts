@@ -17,6 +17,7 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { AsyncEmitter, Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { drainLogCloses } from '#/_base/log/logService';
+import { parseBooleanEnv } from '#/_base/utils/env';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
 import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
 import { FILE_HISTORY_BLOB_PREFIX } from '#/features/fileHistory/fileHistoryService';
@@ -28,6 +29,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { readUserPermissionRules } from '#/agent/permissionRules/configSection';
 import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
 import { IAgentPlanService } from '#/features/plan/plan';
+import { IAgentSwarmService, SWARM_MODE_ENV } from '#/features/swarm/agent/swarm';
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -62,6 +64,7 @@ import {
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
+import { SyncDescriptor } from '#/_base/di/descriptors';
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import {
@@ -72,7 +75,8 @@ import {
 } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
-import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { sessionDisabledMcpSourcesSeed, sessionMcpSourcesSeed } from '#/session/mcp/mcpSource';
+import { ISessionMcpService, SessionMcpService } from '#/session/mcp/sessionMcpService';
 import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
@@ -255,13 +259,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
               environmentCwd: environment?.cwd,
             })
           : undefined;
-      if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
-        const planAgent = main ?? (await ensureMainAgent(handle));
-        const planHandle = agents.handleOf(planAgent.agentId);
-        if (planHandle === undefined) {
+      const defaultPlanMode = this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true;
+      const defaultSwarmMode = parseBooleanEnv(this.bootstrap.getEnv(SWARM_MODE_ENV)) === true;
+      if (defaultPlanMode || defaultSwarmMode) {
+        const mainAgent = main ?? (await ensureMainAgent(handle));
+        const mainHandle = agents.handleOf(mainAgent.agentId);
+        if (mainHandle === undefined) {
           throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
         }
-        await planHandle.accessor.get(IAgentPlanService).enter();
+        if (defaultPlanMode) await mainHandle.accessor.get(IAgentPlanService).enter();
+        if (defaultSwarmMode) mainHandle.accessor.get(IAgentSwarmService).enter('manual');
       }
       await opts.prepare?.(handle);
       await this.appendSessionIndexEntry(sessionId, workDir);
@@ -330,7 +337,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             }),
             [ISessionSkillCatalogData, workdir.skills.sessionData()],
             [ISessionInstructionsProvider, workdir.instructions.sessionProvider()],
-            [ISessionMcpHandle, workdir.mcp.sessionHandle()],
+            [ISessionMcpService, new SyncDescriptor(SessionMcpService)],
+            ...sessionMcpSourcesSeed(workdir.mcp.sources()),
+            ...sessionDisabledMcpSourcesSeed(opts.disabledMcpSources ?? []),
             [ISessionProjectInfo, dirs.sessionInfo()],
             [ISessionWorkdir, {
               _serviceBrand: undefined,
@@ -342,6 +351,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
           ],
           configureContainer: (container) => {
+            container.invokeFunction((accessor) => {
+              accessor.get(ISessionMcpService);
+            });
             container.anchorKernelEntry(
               () => telemetryBinding.dispose(),
               'telemetry:session-context',
@@ -533,6 +545,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       workDir,
       additionalDirs: opts?.additionalDirs,
       mcpServers: opts?.mcpServers,
+      disabledMcpSources: opts?.disabledMcpSources,
     }, environment, await this.openWorkdir(environment, workDir, environment?.environmentId !== LOCAL_ENVIRONMENT_ID));
     try {
       const agents = handle.accessor.get(IAgentLifecycleService);

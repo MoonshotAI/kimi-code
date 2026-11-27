@@ -230,10 +230,10 @@ describe('built-in slash command registry', () => {
     expect((command as KimiSlashCommand).experimentalFlag).toBe('tower');
   });
 
-  it('gates worktree behind the worktree experiment and keeps it idle-only', () => {
+  it('registers worktree without an experimental flag and keeps it idle-only', () => {
     const command = findBuiltInSlashCommand('worktree');
     expect(command).toBeDefined();
-    expect((command as KimiSlashCommand).experimentalFlag).toBe('worktree');
+    expect((command as KimiSlashCommand).experimentalFlag).toBeUndefined();
     expect(resolveSlashCommandAvailability(command!, '')).toBe('idle-only');
   });
 

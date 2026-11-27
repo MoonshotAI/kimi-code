@@ -2,7 +2,8 @@
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, Menu, MenuItem } from '@moonshot-ai/app-ui';
-import { useAnchoredMenu } from '@moonshot-ai/app-components';
+import '../lib/anchored-menu.css';
+import { useAnchoredMenu } from '../composables/useAnchoredMenu';
 
 export type SessionAdminMenuMode = 'single' | 'rowActions' | 'multi';
 
@@ -83,5 +84,3 @@ defineExpose({ openAt, toggleAnchored, close });
     </Menu>
   </Transition>
 </template>
-
-<style src="../lib/anchored-menu.css"></style>

@@ -467,6 +467,8 @@ export * from '#/session/agentLifecycle/getOrRestoreAgent';
 export * from '#/session/agentLifecycle/forked';
 export * from '#/session/agentLifecycle/mainAgent';
 export * from '#/session/mcp/sessionMcpHandle';
+export * from '#/session/mcp/mcpSource';
+export * from '#/session/mcp/sessionMcpService';
 import '#/app/mcpConfig/configSection';
 export {
   MCP_SECTION,
@@ -548,7 +550,6 @@ export * from '#/app/projectSessions/projectSessions';
 import '#/app/projectSessions/projectSessionsService';
 import '#/app/git/gitService';
 export * from '#/app/worktree/worktree';
-export * from '#/app/worktree/flag';
 import '#/app/worktree/worktreeService';
 export * from '#/app/sessionPresence/sessionPresence';
 import '#/app/sessionPresence/sessionPresenceService';
@@ -695,6 +696,7 @@ export * from '#/agent/mcp/mcpService';
 export * from '#/agent/mcp/mcpDiscoveryOps';
 export * from '#/agent/mcp/mcpFailureOps';
 export * from '#/mcpCore/config-schema';
+export * from '#/mcpCore/config-override';
 export * from '#/agent/media/mediaTools';
 export * from '#/agent/media/mediaToolsRegistrar';
 export * from '#/agent/media/registerMediaTools';

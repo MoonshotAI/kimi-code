@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAutoReviewHint } from '@moonshot-ai/app-client/composables';
-import { computerUseArgFields, toolChip, toolGlyph } from '@moonshot-ai/app-components';
+import { computerUseArgFields, toolChip, toolGlyph } from '../../lib/toolMeta';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import OutputPanel from './OutputPanel.vue';

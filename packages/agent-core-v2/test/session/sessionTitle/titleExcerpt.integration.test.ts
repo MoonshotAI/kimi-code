@@ -91,4 +91,66 @@ describe('title excerpts over the real context memory', () => {
     });
     await expect(source.firstUserPrompts(5)).resolves.toEqual(['检查这次改动的正确性']);
   });
+
+  it('excerpts a user-slash skill opener without the expanded skill instructions', async () => {
+    const context = ctx.get(IAgentLoopService);
+    appendContext(context,
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'User activated the skill "review".\n\n<skill-loaded>hidden instructions</skill-loaded>',
+          },
+        ],
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-1',
+          skillName: 'review',
+          skillArgs: '--deep',
+          trigger: 'user-slash',
+        },
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Deep review complete.' }],
+        toolCalls: [],
+      },
+    );
+
+    const source = ctx.get(IAgentTitlePromptSource);
+    await expect(source.firstTurnExcerpt()).resolves.toEqual({
+      user: '/review --deep',
+      assistant: 'Deep review complete.',
+    });
+    await expect(source.firstUserPrompts(5)).resolves.toEqual(['/review --deep']);
+    await expect(source.digestExcerpt()).resolves.toEqual({
+      turns: [{ user: '/review --deep', assistant: 'Deep review complete.' }],
+    });
+  });
+
+  it('falls back to bundled skill names when a bundled prompt has only skill blocks', async () => {
+    const context = ctx.get(IAgentLoopService);
+    appendContext(context,{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'User activated the skill "review". Follow the loaded skill instructions.' },
+        { type: 'text', text: 'User activated the skill "security". Follow the loaded skill instructions.' },
+      ],
+      origin: {
+        kind: 'user',
+        skillActivations: [
+          { activationId: 'act-1', skillName: 'review' },
+          { activationId: 'act-2', skillName: 'security' },
+        ],
+      },
+    });
+
+    const source = ctx.get(IAgentTitlePromptSource);
+    await expect(source.firstUserPrompts(5)).resolves.toEqual(['/review /security']);
+    await expect(source.firstTurnExcerpt()).resolves.toEqual({
+      user: '/review /security',
+      assistant: undefined,
+    });
+  });
 });

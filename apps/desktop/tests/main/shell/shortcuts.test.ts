@@ -37,10 +37,12 @@ vi.mock('../../../src/main/shell/menu', () => ({
   },
 }));
 
-vi.mock('../../../src/main/window/main-window', () => ({
+vi.mock('../../../src/main/window/window-registry', () => ({
   getMainWindow,
-  isRendererReady,
   sendToRenderer,
+}));
+vi.mock('../../../src/main/window/main-window', () => ({
+  isRendererReady,
   showMainWindow,
 }));
 

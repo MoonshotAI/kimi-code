@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { FONT_FOLLOWS, useFontPrefs, type FontTarget } from '@moonshot-ai/app-core';
+import { FONT_FOLLOWS, useFontPrefs, type FontTarget } from '@moonshot-ai/app-core/composables';
 import { Icon } from '@moonshot-ai/app-ui';
 import { FONT_HINT_KEYS, FONT_TITLE_KEYS, useFontFamilyLabel } from './fontSettingsLabels';
 

@@ -50,7 +50,7 @@ const mocks = vi.hoisted(() => {
     },
     KimiHarness: vi.fn(),
     createKimiHarness: vi.fn(),
-    maybeRelaunch: vi.fn(async () => false),
+    maybeRelaunch: vi.fn(async (_deps?: { readonly env: NodeJS.ProcessEnv }) => false),
     runUpdateDownloadCommand: vi.fn(async () => 0),
   };
 });
@@ -280,22 +280,6 @@ describe('main entry command handling', () => {
     });
     expect(runPrompt).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
     expect(runShell).not.toHaveBeenCalled();
-  });
-
-  it('prints an option error raised after startup checks and exits 1', async () => {
-    const { OptionConflictError } = await vi.importActual<typeof OptionsModule>('../../src/cli/options.js');
-    const opts: CLIOptions = { ...defaultOpts(), worktree: 'fix-login' };
-    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'shell' });
-    mocks.runUpdatePreflight.mockResolvedValue('continue');
-    mocks.runShell.mockRejectedValueOnce(new OptionConflictError('-w/--worktree is experimental.'));
-    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-
-    try {
-      expect(await runHandleMainCommand(opts)).toBe(1);
-      expect(stderr).toHaveBeenCalledWith('error: -w/--worktree is experimental.\n');
-    } finally {
-      stderr.mockRestore();
-    }
   });
 
   it('does not force-exit from the reusable handler in print mode', async () => {
@@ -529,5 +513,103 @@ describe('main entry command handling', () => {
         operation: 'run prompt',
       }),
     ).toBe('error: failed to run prompt: Provider not set\n');
+  });
+
+  it('keeps OSC7577_TOKEN for staged swap, strips it in bootstrap, and forwards it only to the interactive main shell', async () => {
+    const previousToken = process.env['OSC7577_TOKEN'];
+    process.env['OSC7577_TOKEN'] = 'osc-main-token';
+    const opts = defaultOpts();
+    let swapToken: string | undefined;
+    let preflightToken: string | undefined = 'unobserved';
+    let shellToken: string | undefined = 'unobserved';
+
+    mocks.maybeRelaunch.mockImplementationOnce(async (deps) => {
+      swapToken = deps?.env['OSC7577_TOKEN'];
+      return false;
+    });
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'shell' });
+    mocks.runUpdatePreflight.mockImplementation(async () => {
+      preflightToken = process.env['OSC7577_TOKEN'];
+      return 'continue';
+    });
+    mocks.runShell.mockImplementation(async () => {
+      shellToken = process.env['OSC7577_TOKEN'];
+    });
+
+    try {
+      main();
+      const programArgs = await waitForProgramArgs();
+      expect(swapToken).toBe('osc-main-token');
+      expect(process.env['OSC7577_TOKEN']).toBeUndefined();
+
+      const mainAction = programArgs[1] as (options: CLIOptions) => void;
+      mainAction(opts);
+      await waitForAssertion(() => {
+        expect(mocks.runShell).toHaveBeenCalledTimes(1);
+      });
+      expect(preflightToken).toBeUndefined();
+      expect(shellToken).toBeUndefined();
+      expect(mocks.runShell).toHaveBeenCalledWith(opts, '0.0.1-alpha.2', {
+        programResumeToken: 'osc-main-token',
+      });
+
+      const migrateAction = programArgs[2] as (options: {
+        run?: boolean;
+        configOnly?: boolean;
+      }) => void;
+      migrateAction({ run: false, configOnly: false });
+      await waitForAssertion(() => {
+        expect(mocks.runShell).toHaveBeenCalledTimes(2);
+      });
+      expect(mocks.runShell).toHaveBeenNthCalledWith(
+        2,
+        expect.any(Object),
+        '0.0.1-alpha.2',
+        { migrateOnly: true },
+      );
+    } finally {
+      if (previousToken === undefined) {
+        delete process.env['OSC7577_TOKEN'];
+      } else {
+        process.env['OSC7577_TOKEN'] = previousToken;
+      }
+    }
+  });
+
+  it('strips OSC7577_TOKEN before update preflight and runPrompt in print mode', async () => {
+    const previousToken = process.env['OSC7577_TOKEN'];
+    process.env['OSC7577_TOKEN'] = 'osc-print-token';
+    const opts: CLIOptions = { ...defaultOpts(), prompt: 'explain the repo' };
+    let preflightToken: string | undefined = 'unobserved';
+    let promptToken: string | undefined = 'unobserved';
+
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'print' });
+    mocks.runUpdatePreflight.mockImplementation(async () => {
+      preflightToken = process.env['OSC7577_TOKEN'];
+      return 'continue';
+    });
+    mocks.runPrompt.mockImplementation(async () => {
+      promptToken = process.env['OSC7577_TOKEN'];
+    });
+    mocks.finalizeHeadlessRun.mockResolvedValue(void 0);
+
+    try {
+      main();
+      const programArgs = await waitForProgramArgs();
+      const mainAction = programArgs[1] as (options: CLIOptions) => void;
+      mainAction(opts);
+
+      await waitForAssertion(() => {
+        expect(mocks.runPrompt).toHaveBeenCalledTimes(1);
+      });
+      expect(preflightToken).toBeUndefined();
+      expect(promptToken).toBeUndefined();
+    } finally {
+      if (previousToken === undefined) {
+        delete process.env['OSC7577_TOKEN'];
+      } else {
+        process.env['OSC7577_TOKEN'] = previousToken;
+      }
+    }
   });
 });

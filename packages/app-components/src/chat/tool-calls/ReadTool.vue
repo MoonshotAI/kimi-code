@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { Icon, Tooltip } from '@moonshot-ai/app-ui';
 import { basename } from '@moonshot-ai/app-core/lib';
 import { parseReadOutput } from '@moonshot-ai/app-core/lib';
-import { argFilePath, num } from '@moonshot-ai/app-components';
+import { argFilePath, num } from './toolArgs';
 import ToolDisclosure from './ToolDisclosure.vue';
 import ToolPanel from './ToolPanel.vue';
 import HighlightedCode from '../../HighlightedCode.vue';

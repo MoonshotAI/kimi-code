@@ -675,7 +675,7 @@ describe('Program local generation and remote workdirs', () => {
       expect(local.dirs.additionalDirs).toEqual([join(fixture.localRoot, 'localextra')]);
       const mcp = await fixture.program.acquireMcp();
       await mcp.service.ready;
-      expect(mcp.service.connectionManager().list().map((entry) => entry.name).toSorted()).toEqual(['local-project-server', 'user-server']);
+      expect([...new Set(mcp.service.sources().flatMap((source) => Object.keys(source.entries())))].toSorted()).toEqual(['local-project-server', 'user-server']);
       mcp.dispose();
       expect(fixture.profileRegistrations.filter((entry) => entry.sourceId === 'workspace')).toEqual([
         { sourceId: 'workspace', profiles: ['local-agent'] },
@@ -842,7 +842,7 @@ describe('Program local generation and remote workdirs', () => {
       const inWorktree = await input.acquireMcp(worktree);
       await Promise.all([following.service.ready, inWorktree.service.ready]);
 
-      const servers = (lease: ProgramMcpLease) => lease.service.connectionManager().list().map((entry) => entry.name).toSorted();
+      const servers = (lease: ProgramMcpLease) => [...new Set(lease.service.sources().flatMap((source) => Object.keys(source.entries())))].toSorted();
       expect(servers(inWorktree)).toEqual(['user-server', 'worktree-server']);
       expect(servers(following)).toEqual(['local-project-server', 'user-server']);
       await expect(fixture.program.effectiveMcpWorkDir(worktree)).resolves.toBe(await realpath(worktree));

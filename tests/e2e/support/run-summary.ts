@@ -64,6 +64,7 @@ interface Outcome {
 
 interface FailedCase {
   readonly project: string;
+  readonly projectName: string;
   readonly file: string;
   readonly title: string;
   readonly status: TestStatus;
@@ -110,6 +111,8 @@ const FRAME_PLACES: Readonly<Record<Surface, string>> = {
   desktop: '每一步之后的截图在「Screenshots」里',
   web: '每一步之后的截图在「Screenshots」里',
 };
+
+const ARTIFACT_PLATFORMS: Readonly<Partial<Record<NodeJS.Platform, string>>> = { win32: 'windows-', darwin: 'macos-' };
 
 const TRACE_ATTACHMENTS: Readonly<Record<Surface, string | undefined>> = {
   tui: undefined,
@@ -163,7 +166,7 @@ function failed(outcome: Outcome): boolean {
 }
 
 function viewingHints(name: string, surface: Surface | undefined, shard: Shard | null): string[] {
-  const platform = process.platform === 'win32' ? 'windows-' : '';
+  const platform = ARTIFACT_PLATFORMS[process.platform] ?? '';
   const report = `e2e-${platform}${surface ?? name}-report${shard === null ? '' : `-${shard.current}`}`;
   const hints = [
     `看画面：下载本次运行的 artifact \`${report}\`，解压后双击 \`index.html\`，点进场景。${surface === undefined ? '每一步之后的画面在用例的附件里' : FRAME_PLACES[surface]}，按步骤编号排列。`,
@@ -192,6 +195,14 @@ function section(name: string, view: ProjectView, outcomes: readonly Outcome[], 
   const brokenSelfTests = selfTests.filter(failed);
   if (brokenSelfTests.length > 0) {
     lines.push('', '没通过的自测：', ...brokenSelfTests.map((outcome) => `- \`${outcome.title}\`：${cell(outcome.note)}`));
+  }
+  const unitTests = outcomes.filter((outcome) => !scenarios.includes(outcome) && !selfTests.includes(outcome));
+  if (unitTests.length > 0) {
+    lines.push('', `驱动单测：共 ${unitTests.length} 条，通过 ${unitTests.filter((outcome) => outcome.status === 'passed').length} 条，没通过 ${unitTests.filter(failed).length} 条。`);
+  }
+  const brokenUnitTests = unitTests.filter(failed);
+  if (brokenUnitTests.length > 0) {
+    lines.push('', '没通过的驱动单测：', ...brokenUnitTests.map((outcome) => `- \`${outcome.file}\` \`${outcome.title}\`：${cell(outcome.note)}`));
   }
   lines.push('', ...viewingHints(name, view.surface, shard), '');
   return lines;
@@ -241,7 +252,7 @@ export default class RunSummary {
       errors: this.errors,
       failures: outcomes
         .filter(failed)
-        .map((outcome) => ({ project: view(outcome.surface).title, file: outcome.file, title: outcome.title, status: outcome.status, note: outcome.note })),
+        .map((outcome) => ({ project: view(outcome.surface).title, projectName: outcome.surface, file: outcome.file, title: outcome.title, status: outcome.status, note: outcome.note })),
     };
     return `${JSON.stringify(file, null, 2)}\n`;
   }

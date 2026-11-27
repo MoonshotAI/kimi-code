@@ -10,7 +10,7 @@ import {
   type ToolChipInput,
 } from '@moonshot-ai/app-core/lib';
 import { t } from '@moonshot-ai/app-client/client';
-import { iconSvg, type IconName } from '@moonshot-ai/app-client/icons';
+import { iconSvg, type IconName } from '@moonshot-ai/app-ui/icons';
 
 export { normalizeToolName };
 export type { ToolArgField, ToolChipInput };

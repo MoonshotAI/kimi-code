@@ -151,7 +151,7 @@ await test('reads and writes through the REST API with the token', async () => {
   const client = githubClient({ token: 'YOUR_TOKEN', repo: 'o/r', apiUrl: 'https://api.example.test', fetchImpl });
   assert.equal((await client.findOpenIssue(TITLE)).number, 3);
   assert.deepEqual(await client.failedShardLogs('9', '2'), ['raw log of shard 1']);
-  assert.deepEqual(await client.lastPassingRun('9'), { sha: 'aaa', url: 'run-7' });
+  assert.deepEqual(await client.lastPassingRun('9'), { sha: 'aaa', url: 'run-7', event: 'schedule' });
   assert.deepEqual(await client.commitsBetween('aaa', 'bbb'), [{ sha: 'c1', subject: 'fix: one' }]);
   assert.equal(await client.openIssue(TITLE, 'body'), 5);
   await client.comment(5, 'hello');
