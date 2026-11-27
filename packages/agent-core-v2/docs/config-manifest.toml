@@ -8,8 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (33 sections · 2 overlay(s))
-#   autoReview               src/features/autoReview/configSection.ts
+# Index (32 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
@@ -44,17 +43,6 @@
 #   workspace                src/project/projectTrust/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
-
-# ##########################################################################
-# autoReview (config.toml: auto_review)
-#   owner: src/features/autoReview/configSection.ts
-#   scope: core
-# ##########################################################################
-
-[auto_review]
-# model: string
-# effort: string
-# timeout_ms: integer (default: 30000)
 
 # ##########################################################################
 # background

@@ -4,7 +4,6 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
-import { adaptApprovalRequest } from '#/tui/reverse-rpc/approval/adapter';
 import { currentTheme } from '#/tui/theme';
 import type {
   DiffDisplayBlock,
@@ -121,65 +120,6 @@ describe('ApprovalPanelComponent', () => {
     expect(out).toContain('Dangerous: recursive delete');
     expect(out).not.toContain('potentially destructive');
     expect(out).not.toContain('⚠');
-  });
-
-  it.each([
-    {
-      detail: { outcome: 'denied', risk: 'medium', reason: 'Creating remote resources was not explicitly authorized.' },
-      title: "Auto Review didn't approve · medium risk",
-    },
-    {
-      detail: { outcome: 'failed', reason: 'Review timed out.' },
-      title: "Auto Review couldn't finish",
-    },
-  ] as const)('renders $title above the pending command', ({ detail, title }) => {
-    const data = adaptApprovalRequest({
-      toolCallId: 'tool_review',
-      toolName: 'Bash',
-      action: 'run',
-      display: { kind: 'command', command: 'terraform apply' },
-      approvalDetail: detail,
-    });
-    const rendered = mount(new ApprovalPanelComponent({ data }, () => {})).render(100).join('\n');
-    const out = strip(rendered);
-    expect(out).toContain(title);
-    expect(out).toContain(detail.reason);
-    expect(out.indexOf(title)).toBeLessThan(out.indexOf('terraform apply'));
-    const titleLine = rendered.split('\n').find((line) => strip(line).includes(title));
-    expect(titleLine).toContain(currentTheme.fg('warning', title));
-  });
-
-  it('strips terminal escape sequences from Auto Review denial reasons', () => {
-    const data = adaptApprovalRequest({
-      toolCallId: 'tool_osc',
-      toolName: 'Bash',
-      action: 'run',
-      display: { kind: 'command', command: 'echo hi' },
-      approvalDetail: { outcome: 'denied', risk: 'low', reason: 'Blocked \u001B]52;c;Ymxh\u0007 clipboard \u001B[31mwrite' },
-    });
-    const rendered = mount(new ApprovalPanelComponent({ data }, () => {})).render(100).join('\n');
-    expect(rendered).not.toContain('52;c;');
-    expect(rendered).not.toContain('\u0007');
-    expect(strip(rendered)).toContain('Blocked  clipboard write');
-  });
-
-  it('keeps generic MCP description visible below an Auto Review failure banner', () => {
-    const data = adaptApprovalRequest({
-      toolCallId: 'tool_mcp_review',
-      toolName: 'mcp__slack__post_message',
-      action: 'Approve mcp__slack__post_message',
-      display: {
-        kind: 'generic',
-        summary: 'Post message to #releases',
-        detail: { channel: '#releases' },
-      },
-      approvalDetail: { outcome: 'failed', reason: 'Review timed out.' },
-    });
-    const out = strip(mount(new ApprovalPanelComponent({ data }, () => {})).render(100).join('\n'));
-    expect(out).toContain("Auto Review couldn't finish");
-    expect(out).toContain('Review timed out.');
-    expect(out).toContain('Post message to #releases');
-    expect(out.indexOf('Review timed out.')).toBeLessThan(out.indexOf('Post message to #releases'));
   });
 
   it('wraps a long single-line shell command instead of truncating it', () => {

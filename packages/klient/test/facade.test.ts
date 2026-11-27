@@ -111,25 +111,6 @@ describe('facade routing', () => {
     ]);
   });
 
-  it('lists pending approvals denied by Auto Review at low risk', async () => {
-    const channel = new FakeChannel();
-    const klient = createKlientFromChannel(channel);
-    const approval = {
-      id: 'approval-low-risk',
-      toolName: 'Bash',
-      action: 'Run command',
-      display: { kind: 'command', command: 'echo hello' },
-      approvalDetail: {
-        outcome: 'denied',
-        risk: 'low',
-        reason: 'User boundary forbids this action.',
-      },
-    };
-    channel.results.set('sessionApprovalService.listPending', [approval]);
-
-    await expect(klient.session('s1').approvals.list()).resolves.toEqual([approval]);
-  });
-
   it('forwards the login region option through the wire contract', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);

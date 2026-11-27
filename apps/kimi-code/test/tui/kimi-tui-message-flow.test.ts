@@ -10234,62 +10234,6 @@ capabilities = ["image_in", "video_in"]
     }
   });
 
-  describe('Auto Review progress on the tool card', () => {
-    async function startReview() {
-      const { driver } = await makeDriver();
-      driver.streamingUI.setTurnId('1');
-      driver.streamingUI.setStep(1);
-      const emit = (event: object): void => {
-        driver.sessionEventHandler.handleEvent(
-          { agentId: 'main', sessionId: 'ses-1', turnId: 1, toolCallId: 'call_bash', ...event } as Event,
-          vi.fn(),
-        );
-      };
-      vi.useFakeTimers();
-      emit({ type: 'tool.call.delta', name: 'Bash', argumentsPart: '{"command":"echo hi"}' });
-      emit({ type: 'auto_review.started', toolName: 'Bash' });
-      return {
-        reviewing: () => stripSgr(renderTranscript(driver)).includes('Reviewing'),
-        decide: () => {
-          emit({
-            type: 'auto_review.decision',
-            toolName: 'Bash',
-            triggerPolicy: 'fallback-ask',
-            model: 'review-model',
-            decision: 'allow',
-            risk: 'low',
-            durationMs: 1,
-          });
-          emit({ type: 'tool.call.started', name: 'Bash', args: { command: 'echo hi' } });
-        },
-      };
-    }
-
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
-    it('appears once a review lasts 3 seconds and clears when the decision arrives', async () => {
-      const review = await startReview();
-      await vi.advanceTimersByTimeAsync(2_999);
-      expect(review.reviewing()).toBe(false);
-
-      await vi.advanceTimersByTimeAsync(1);
-      expect(review.reviewing()).toBe(true);
-
-      review.decide();
-      expect(review.reviewing()).toBe(false);
-    });
-
-    it('never appears for a review decided within 3 seconds', async () => {
-      const review = await startReview();
-      await vi.advanceTimersByTimeAsync(2_000);
-      review.decide();
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(review.reviewing()).toBe(false);
-    });
-  });
-
   it('cancels manual compaction from the editor', async () => {
     const { driver, session } = await makeDriver();
     driver.sessionEventHandler.handleEvent(
