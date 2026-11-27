@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -55,7 +56,16 @@ export interface RemoteControlLock {
   release(): Promise<void>;
 }
 
+interface HeldRemoteControlLock {
+  readonly lockPath: string;
+  readonly nonce: string;
+}
+
 const MAX_ACQUIRE_ATTEMPTS = 3;
+
+const heldLocks = new Set<HeldRemoteControlLock>();
+
+let exitListener: (() => void) | undefined;
 
 export async function acquireRemoteControlLock(
   homeDir: string,
@@ -81,7 +91,15 @@ export async function acquireRemoteControlLock(
       } finally {
         await handle.close();
       }
-      return { release: () => releaseRemoteControlLock(lockPath, info.nonce) };
+      const held: HeldRemoteControlLock = { lockPath, nonce: info.nonce };
+      heldLocks.add(held);
+      watchExit();
+      return {
+        release: async () => {
+          await releaseRemoteControlLock(lockPath, info.nonce);
+          forgetHeldLock(held);
+        },
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || attempt >= MAX_ACQUIRE_ATTEMPTS) {
         throw error;
@@ -116,7 +134,56 @@ export async function releaseRemoteControlLockHeldBy(
   const info = await readRemoteControlLock(lockPath);
   if (info === undefined || info.pid !== pid) return false;
   await removeFile(lockPath);
+  if (pid === process.pid) forgetHeldLocksAt(lockPath);
   return true;
+}
+
+function watchExit(): void {
+  if (exitListener !== undefined) return;
+  exitListener = releaseHeldLocksOnExit;
+  process.on('exit', exitListener);
+}
+
+function unwatchExit(): void {
+  if (exitListener === undefined) return;
+  process.off('exit', exitListener);
+  exitListener = undefined;
+}
+
+function forgetHeldLock(held: HeldRemoteControlLock): void {
+  heldLocks.delete(held);
+  if (heldLocks.size === 0) unwatchExit();
+}
+
+function forgetHeldLocksAt(lockPath: string): void {
+  for (const held of heldLocks) {
+    if (held.lockPath === lockPath) heldLocks.delete(held);
+  }
+  if (heldLocks.size === 0) unwatchExit();
+}
+
+function releaseHeldLocksOnExit(): void {
+  for (const held of heldLocks) {
+    releaseRemoteControlLockSync(held.lockPath, held.nonce);
+  }
+  heldLocks.clear();
+  unwatchExit();
+}
+
+function releaseRemoteControlLockSync(lockPath: string, nonce: string): void {
+  let raw: string;
+  try {
+    raw = readFileSync(lockPath, 'utf8');
+  } catch {
+    return;
+  }
+  const info = decodeLock(raw);
+  if (info === undefined || info.nonce !== nonce) return;
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    return;
+  }
 }
 
 async function releaseRemoteControlLock(lockPath: string, nonce: string): Promise<void> {
