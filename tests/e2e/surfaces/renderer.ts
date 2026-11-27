@@ -65,6 +65,10 @@ const MENU_BUTTON = 'button[aria-haspopup="menu"]';
 const THINKING_ROW = 'Thinking';
 const THINKING_ON = 'Thinking';
 const MODEL_SUFFIX = ' · ';
+const SETTINGS = 'Settings';
+const CLOSE_SETTINGS = 'Close (Esc)';
+const BROWSER_SETTINGS = 'Browser';
+const AGENT_BROWSER_CONTROL = 'Let agents control the built-in browser';
 
 export type MenuPage = () => Promise<Page>;
 
@@ -599,6 +603,30 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
       (await this.userMessages(1, title).count()) > 0 && (await this.idle()) ? true : undefined,
     );
     this.recalled = undefined;
+  }
+
+  async setBrowserControl(enabled: boolean): Promise<void> {
+    const wanted = enabled ? 'on' : 'off';
+    if (!(await this.idle())) {
+      throw new Error(`setBrowserControl() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    await this.press('setBrowserControl()', `the ${SETTINGS} button`, this.page.getByRole('button', { name: SETTINGS, exact: true }).first());
+    const settings = this.page.getByRole('dialog', { name: SETTINGS, exact: true });
+    await this.press('setBrowserControl()', `the ${BROWSER_SETTINGS} tab`, settings.getByRole('tab', { name: BROWSER_SETTINGS, exact: true }));
+    const control = settings.getByRole('switch', { name: AGENT_BROWSER_CONTROL, exact: true });
+    const shown = async (): Promise<boolean | undefined> => {
+      const checked = await control.getAttribute('aria-checked', { timeout: TIMEOUTS.wait }).catch(() => null);
+      return checked === 'true' ? true : checked === 'false' ? false : undefined;
+    };
+    const current = await this.wait(`the ${JSON.stringify(AGENT_BROWSER_CONTROL)} switch to show its state`, shown);
+    const already = current === enabled;
+    if (!already) {
+      await this.press('setBrowserControl()', `the ${JSON.stringify(AGENT_BROWSER_CONTROL)} switch`, control);
+      await this.wait(`the ${JSON.stringify(AGENT_BROWSER_CONTROL)} switch to turn ${wanted}`, async () => ((await shown()) === enabled ? true : undefined));
+    }
+    await this.press('setBrowserControl()', `the ${JSON.stringify(CLOSE_SETTINGS)} button`, settings.getByRole('button', { name: CLOSE_SETTINGS, exact: true }));
+    await this.wait('the settings to close and the message input to come back', async () => (!(await settings.isVisible()) && (await this.composer().isVisible()) ? true : undefined));
+    if (already) throw new Error(`setBrowserControl() asked to turn agent control of the built-in browser ${wanted}, but it is already ${wanted}.\n${await this.describe()}`);
   }
 
   async resize(viewport: { readonly width: number; readonly height: number }): Promise<void> {

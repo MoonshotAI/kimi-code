@@ -44,6 +44,12 @@ const NO_CONTINUE = {
   tui: 'The terminal UI has no way to continue a failed turn; a user sends another message instead.',
   acp: 'ACP has no request to continue a failed turn.',
 };
+const NO_ADD_DIR = {
+  acp: 'ACP has no request that adds a directory to a running session; the agent reads additionalDirectories only from session/new.',
+  desktop: 'Desktop has no /add-dir: it adds a directory to the whole project in the project dialog, through the system folder picker that Playwright cannot drive.',
+  web: 'The web UI has no /add-dir: it adds a directory to the whole project in the project dialog, which changes every session of the project rather than this one.',
+};
+const ONLY_DESKTOP_HAS_A_BROWSER = 'Only the Desktop app has a built-in browser that agents control, and only its settings have a Browser page that turns that control off.';
 
 export const VERBS = {
   send: { on: SURFACES, checksInterface: false },
@@ -90,6 +96,8 @@ export const VERBS = {
   useSkill: { on: SURFACES, checksInterface: false },
   switchModel: { on: SURFACES, checksInterface: false },
   setThinkingEffort: { on: SURFACES, checksInterface: false },
+  addDir: { on: ['tui'], absentBecause: NO_ADD_DIR, checksInterface: false },
+  setBrowserControl: { on: ['desktop'], absentBecause: ONLY_DESKTOP_HAS_A_BROWSER, checksInterface: false },
 } as const satisfies Readonly<Record<string, VerbSpec>>;
 
 export type Verb = keyof typeof VERBS;
@@ -199,6 +207,8 @@ export type PermissionMode = 'manual' | 'yolo' | 'auto';
 
 export type WindowSize = 'normal' | 'narrow';
 
+export type BrowserControl = 'on' | 'off';
+
 export const PERMISSION_MODE_NAMES: Readonly<Record<PermissionMode, string>> = {
   manual: 'Always Ask',
   yolo: 'Ask When Needed',
@@ -243,6 +253,8 @@ interface VerbSignatures {
   useSkill(name: string): Promise<void>;
   switchModel(name: string): Promise<void>;
   setThinkingEffort(effort: string): Promise<void>;
+  addDir(path: string): Promise<void>;
+  setBrowserControl(state: BrowserControl): Promise<void>;
 }
 
 export type Actions = { readonly [Name in Verb]: VerbSignatures[Name] };

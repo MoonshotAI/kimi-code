@@ -269,6 +269,15 @@ function assertApprovalExpectation({ name, target }: ApprovalExpectation): void 
   }
 }
 
+function assertWorkspaceDirectory(path: string): void {
+  if (!/^[!-~]+$/.test(path) || workspaceKey(path) !== path) {
+    throw new Error(`addDir() takes a directory as a normalized path relative to the workspace, without spaces, like "docs", got ${JSON.stringify(path)}`);
+  }
+  if ('list'.startsWith(path.toLowerCase())) {
+    throw new Error(`addDir() cannot add ${JSON.stringify(path)}: the CLI completes it to the list subcommand of /add-dir, which only shows the directories.`);
+  }
+}
+
 const PRECHECKS: { readonly [V in Verb]?: (...args: Parameters<Actions[V]>) => void } = {
   send: promptCheck('send'),
   queue: promptCheck('queue'),
@@ -284,6 +293,7 @@ const PRECHECKS: { readonly [V in Verb]?: (...args: Parameters<Actions[V]>) => v
   useSkill: assertSkillName,
   switchModel: lineCheck('switchModel'),
   setThinkingEffort: assertEffort,
+  addDir: assertWorkspaceDirectory,
 };
 
 

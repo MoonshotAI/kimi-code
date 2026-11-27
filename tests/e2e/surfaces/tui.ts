@@ -187,6 +187,12 @@ const EFFORT_ACTIVE = /\[ [^\]]+ \]/;
 const EFFORT_SEGMENT = /\[ ([^\]]+?) \]|(\S+)/g;
 const EFFORT_SET = 'Thinking set to ';
 const SWITCH_NOTICES = [MODEL_SWITCHED, EFFORT_SET, 'Already using ', 'Saved ', 'Error: '] as const;
+const ADD_DIR_COMMAND = '/add-dir';
+const ADD_DIR_TITLE = 'Add directory to workspace: ';
+const ADD_DIR_FOR_SESSION = `${USER_MARK} Yes, for this session`;
+const ADD_DIR_ADDED = 'Added workspace directory:';
+const ADD_DIR_SESSION_ONLY = 'For this session only';
+const COMMAND_ERROR = 'Error: ';
 
 interface Screen {
   readonly text: string;
@@ -328,6 +334,26 @@ function composerText(screen: Screen): string | undefined {
     )
     .join('\n')
     .trimEnd();
+}
+
+function showsAddDirChoice(screen: Screen, path: string): boolean {
+  const lines = screen.viewport.map((row) => row.trim());
+  const title = lines.lastIndexOf(`${ADD_DIR_TITLE}${path}`);
+  return title >= 0 && lines.slice(title + 1).includes(ADD_DIR_FOR_SESSION);
+}
+
+function commandNotes(screen: Screen): readonly string[] {
+  return [...screen.transcript, ...screen.status].map((row) => row.trim());
+}
+
+function commandNoteCount(screen: Screen, prefix: string): number {
+  return commandNotes(screen).filter((row) => row.startsWith(prefix)).length;
+}
+
+function addedDirectory(screen: Screen): readonly string[] {
+  const rows = commandNotes(screen);
+  const at = rows.lastIndexOf(ADD_DIR_ADDED);
+  return at < 0 ? [] : rows.slice(at + 1, at + 3);
 }
 
 function compactionNotices(screen: Screen, notice: string): number {
@@ -943,6 +969,29 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     const command = `${SKILL_COMMAND}${name}`;
     this.write(paste(command));
     await this.enter(command, screen);
+  }
+
+  async addDir(path: string): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) throw this.failure('addDir() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.assertEmptyInput('addDir()', before);
+    const added = commandNoteCount(before, ADD_DIR_ADDED);
+    const refused = commandNoteCount(before, COMMAND_ERROR);
+    this.write(paste(`${ADD_DIR_COMMAND} ${path}`));
+    this.write(KEYS.enter);
+    await this.wait(`the CLI to ask whether to add ${JSON.stringify(path)}, with "Yes, for this session" selected`, (screen) => (showsAddDirChoice(screen, path) ? true : undefined));
+    this.write(KEYS.enter);
+    const outcome = await this.wait(`the CLI to report ${JSON.stringify(path)} as added`, (screen) => {
+      if (screen.input !== 'editor') return undefined;
+      if (commandNoteCount(screen, COMMAND_ERROR) > refused) return 'refused' as const;
+      return commandNoteCount(screen, ADD_DIR_ADDED) > added ? ('added' as const) : undefined;
+    });
+    const screen = await this.read();
+    if (outcome === 'refused') throw this.failure(`addDir() saw the CLI refuse to add ${JSON.stringify(path)}.`, screen);
+    const reported = addedDirectory(screen);
+    if (reported[0] !== path || reported[1] !== ADD_DIR_SESSION_ONLY) {
+      throw this.failure(`addDir() expected the CLI to report ${JSON.stringify(path)} added for this session only, but it reported ${JSON.stringify(reported)}.`, screen);
+    }
   }
 
   async resize(size: WindowSize): Promise<void> {

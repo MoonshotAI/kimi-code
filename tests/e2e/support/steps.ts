@@ -57,6 +57,8 @@ export const STEP_TITLES: { readonly [Name in Verb]: (...args: Parameters<Action
   useSkill: (name) => `用户使用技能${quote(name)}`,
   switchModel: (name) => `用户把模型换成${quote(name)}`,
   setThinkingEffort: (effort) => `用户把思考强度调成${quote(effort)}`,
+  addDir: (path) => `用户用 /add-dir 把${quote(path)}加进本会话的工作区`,
+  setBrowserControl: (state) => (state === 'off' ? '用户在设置里关掉「让 agent 控制内置浏览器」' : '用户在设置里打开「让 agent 控制内置浏览器」'),
 };
 
 export const DISK_TITLES = {

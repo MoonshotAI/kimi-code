@@ -127,12 +127,16 @@ entries:
       - kind: kap
         test: tests/scenarios/prompt-cache.test.ts
         case: turning tower mode on
-    gap: Goal mode runs in the main conversation; starting a goal only adds a goal reminder to the next request, and the goal turns continue the same history. Needs a test that starts a goal between two turns.
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: keeps the goal turn on the same prompt cache prefix
 
   - id: B7
     operation: Add a workspace directory with /add-dir between two turns
     promise: keeps
-    gap: The system prompt keeps the directories the session started with, and the next request tells the model the added directory in a reminder. Needs an add-dir action.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/adding-a-workspace-directory-keeps-the-prefix.spec.ts
 
   - id: B8
     operation: Run /reload without changing the configuration
@@ -144,7 +148,10 @@ entries:
   - id: B9
     operation: Turn an experimental feature on or off with /experiments in the middle of a session
     promise: keeps
-    gap: Applying the change reloads the session, which keeps the system prompt and the tool list it started with and tells the model about changed tools in reminders. Needs a test that changes a feature and reloads the session.
+    coverage:
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: turning an experimental feature off and reloading the session
 
   - id: C1
     operation: An MCP server adds a tool in the middle of a session
@@ -180,7 +187,9 @@ entries:
   - id: C5
     operation: Turn the Desktop built-in browser control off and on again
     promise: keeps
-    gap: Desktop sends mcp__desktop_browser__run by default. Turning the control off keeps it in the tool list and tells the model in a reminder that the browser is off; turning it on again tells the model it is back. Needs a Desktop action that uses the Browser settings page.
+    coverage:
+      - kind: explicit
+        test: tests/e2e/scenarios/cache/turning-the-browser-control-off-and-on-keeps-the-prefix.spec.ts
 
   - id: C6
     operation: An ACP editor passes MCP servers in session/new or session/load
@@ -192,7 +201,11 @@ entries:
   - id: C7
     operation: Enable a plugin with /plugins in the middle of a session
     promise: keeps
-    gap: The session keeps the system prompt and the tools it started with, and the next request tells the model in reminders that the plugin was enabled and that the skill listing changed. Needs a test that enables a plugin between two turns.
+    coverage:
+      - kind: kap
+        test: tests/scenarios/prompt-cache.test.ts
+        case: enabling a plugin
+    gap: An E2E scenario needs a way to install a plugin into the scenario's home and a plugins action.
 
   - id: D1
     operation: Approve, approve for the session, reject or reject with feedback, then continue

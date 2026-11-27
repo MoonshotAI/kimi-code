@@ -197,6 +197,10 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().resize(viewport);
   }
 
+  protected switchBrowserControl(enabled: boolean): Promise<void> {
+    return this.window().setBrowserControl(enabled);
+  }
+
   protected async awaitResumed(lastPrompt: string | undefined): Promise<void> {
     if (lastPrompt !== undefined) await this.window().awaitMessage(lastPrompt);
     if (this.page !== undefined && (await this.page.getByRole('dialog', { name: WELCOME_DIALOG }).isVisible())) {
