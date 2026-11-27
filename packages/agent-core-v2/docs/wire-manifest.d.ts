@@ -37,7 +37,7 @@
 //   cron.add                           (none)                                                     src/features/cron/cronOps.ts
 //   cron.cursor                        (none)                                                     src/features/cron/cronOps.ts
 //   cron.delete                        (none)                                                     src/features/cron/cronOps.ts
-//   environment.set_binding            environmentBinding                                         src/agent/environmentBinding/environmentBindingOps.ts
+//   environment.set_binding            environmentBinding, workdirMove                            src/agent/environmentBinding/environmentBindingOps.ts
 //   file_history.checkpoint            fileHistory                                                src/features/fileHistory/fileHistoryOps.ts
 //   file_history.tracked               fileHistory                                                src/features/fileHistory/fileHistoryOps.ts
 //   forked                             (none)                                                     src/session/agentLifecycle/forked.ts
@@ -237,7 +237,7 @@ interface CronDeletePayload {
 }
 
 /**
- * states: environmentBinding
+ * states: environmentBinding, workdirMove
  * owner: src/agent/environmentBinding/environmentBindingOps.ts
  */
 interface EnvironmentSetBindingPayload {
@@ -245,6 +245,8 @@ interface EnvironmentSetBindingPayload {
   agentId: string;
   environmentId: string;
   cwd?: string;
+  originCwd?: string | null;
+  pendingBaseline?: object | null;
 }
 
 /**

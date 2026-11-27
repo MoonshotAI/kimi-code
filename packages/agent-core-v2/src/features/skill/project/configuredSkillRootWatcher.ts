@@ -14,7 +14,7 @@ const WATCH_DEBOUNCE_MS = 200;
 
 interface ConfiguredSkillRootWatchOptions {
   readonly dirs: readonly string[];
-  readonly cwd: string;
+  readonly workDirs: readonly string[];
   readonly osHomeDir: string;
   readonly source: 'explicit' | 'extra';
   readonly fs: IHostFileSystem;
@@ -37,7 +37,7 @@ export class ConfiguredSkillRootWatcher extends Disposable {
 
   private async watchSkillRoots(dirs: readonly string[]): Promise<void> {
     if (!isWatchEnabled()) return;
-    const candidates = await configuredRootCandidates(dirs, this.options.cwd, this.options.osHomeDir, this.options.fs);
+    const candidates = await configuredRootCandidates(dirs, this.options.workDirs, this.options.osHomeDir, this.options.fs);
     await this.updateWatches(candidates);
   }
 

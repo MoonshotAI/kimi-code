@@ -801,6 +801,9 @@ describe('ReadMediaFileTool', () => {
         bind: () => {
           throw new Error('unused');
         },
+        rebindLocalWorkDir: async () => {
+          throw new Error('unused');
+        },
       } as IAgentEnvironmentBindingService,
     );
     const resolved = await resolver.resolve(

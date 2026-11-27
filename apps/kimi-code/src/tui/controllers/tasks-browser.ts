@@ -101,6 +101,9 @@ export class TasksBrowserController {
         tailLoading: selectedTaskId !== undefined,
         flashMessage: undefined,
         availableModels: state.appState.availableModels,
+        requestRender: () => {
+          state.ui.requestRender();
+        },
         ...this.buildCallbacks(),
       },
       state.terminal,
@@ -220,9 +223,7 @@ export class TasksBrowserController {
       taskId: viewer.taskId,
       info,
       output,
-      onClose: () => {
-        this.closeOutputViewer();
-      },
+      ...this.viewerCallbacks(),
     });
     state.ui.requestRender();
   }
@@ -289,6 +290,9 @@ export class TasksBrowserController {
       tailLoading: browser.tailLoading,
       flashMessage: browser.flashMessage,
       availableModels: this.host.state.appState.availableModels,
+      requestRender: () => {
+        this.host.state.ui.requestRender();
+      },
       ...this.buildCallbacks(),
     });
     this.host.state.ui.requestRender();
@@ -410,30 +414,17 @@ export class TasksBrowserController {
         taskId,
         info,
         output,
-        onClose: () => {
-          this.closeOutputViewer();
-        },
+        ...this.viewerCallbacks(),
       },
       state.terminal,
     );
-
-    const takeover = beginScreenTakeover(state.ui, viewer);
-    state.ui.setFocus(viewer);
-    state.ui.requestRender(true);
-
-    const pollTimer = setInterval(() => {
-      void this.refreshOutputViewer();
-    }, 1000);
-
-    browser.viewer = {
+    this.mountViewer(browser, {
       kind: 'output',
       component: viewer,
-      takeover,
       taskId,
       output,
       refreshId: 0,
-      pollTimer,
-    };
+    });
   }
 
   private openAgentActivityViewer(
@@ -441,22 +432,43 @@ export class TasksBrowserController {
     info: AgentBackgroundTaskInfo,
     record: SubagentActivityRecord | undefined,
   ): void {
-    const { state } = this.host;
-
     const viewer = new AgentActivityViewer(
       {
         taskId: info.taskId,
         info,
         record,
-        onClose: () => {
-          this.closeOutputViewer();
-        },
+        ...this.viewerCallbacks(),
       },
-      state.terminal,
+      this.host.state.terminal,
     );
+    this.mountViewer(browser, {
+      kind: 'agent',
+      component: viewer,
+      taskId: info.taskId,
+      record,
+    });
+  }
 
-    const takeover = beginScreenTakeover(state.ui, viewer);
-    state.ui.setFocus(viewer);
+  private mountViewer(
+    browser: TasksBrowserState,
+    entry:
+      | {
+          kind: 'agent';
+          component: AgentActivityViewer;
+          taskId: string;
+          record?: SubagentActivityRecord;
+        }
+      | {
+          kind: 'output';
+          component: TaskOutputViewer;
+          taskId: string;
+          output: string;
+          refreshId: number;
+        },
+  ): void {
+    const { state } = this.host;
+    const takeover = beginScreenTakeover(state.ui, entry.component);
+    state.ui.setFocus(entry.component);
     state.ui.requestRender(true);
 
     const pollTimer = setInterval(() => {
@@ -464,12 +476,20 @@ export class TasksBrowserController {
     }, 1000);
 
     browser.viewer = {
-      kind: 'agent',
-      component: viewer,
+      ...entry,
       takeover,
-      taskId: info.taskId,
-      record,
       pollTimer,
+    };
+  }
+
+  private viewerCallbacks(): { onClose: () => void; requestRender: () => void } {
+    return {
+      onClose: () => {
+        this.closeOutputViewer();
+      },
+      requestRender: () => {
+        this.host.state.ui.requestRender();
+      },
     };
   }
 
@@ -483,9 +503,7 @@ export class TasksBrowserController {
       taskId: viewer.taskId,
       info,
       record: viewer.record,
-      onClose: () => {
-        this.closeOutputViewer();
-      },
+      ...this.viewerCallbacks(),
     });
     this.host.state.ui.requestRender();
   }

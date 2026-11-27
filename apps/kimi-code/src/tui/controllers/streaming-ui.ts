@@ -524,6 +524,14 @@ export class StreamingUIController {
   }
 
   finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
+    this.finalizeRequest(sendQueued, this.host.state.appState.loopLifecycleEvents === true);
+  }
+
+  finalizeTurnlessRequest(sendQueued: (item: QueuedMessage) => void): void {
+    this.finalizeRequest(sendQueued, false);
+  }
+
+  private finalizeRequest(sendQueued: (item: QueuedMessage) => void, awaitLoopEnd: boolean): void {
     this.timeline.turnEnded();
     const { state } = this.host;
     if (state.appState.streamingPhase === 'idle') {
@@ -534,12 +542,12 @@ export class StreamingUIController {
     const completedTurnKey =
       this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
     this.lastCompletedTurnKey = completedTurnKey;
-    this.finalizeLiveTextBuffers(state.appState.loopLifecycleEvents === true ? 'waiting' : 'idle');
+    this.finalizeLiveTextBuffers(awaitLoopEnd ? 'waiting' : 'idle');
     this.host.mergeCompletedTurnAssistants();
     this.resetToolCallState();
     this._currentTurnId = undefined;
 
-    if (state.appState.loopLifecycleEvents === true) {
+    if (awaitLoopEnd) {
       this.host.setAppState({ streamingPhase: 'waiting' });
       return;
     }

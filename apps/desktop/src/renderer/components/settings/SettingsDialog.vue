@@ -24,9 +24,11 @@ import {
   effortLabel,
   logWarn,
   modelThinkingAvailability,
+  nativePath,
   segmentsFor,
   thinkingLevelFromConfig,
   thinkingLevelToConfig,
+  workspaceRootKey,
 } from '@moonshot-ai/app-core/lib';
 import { track } from '../../lib/track';
 import DockIconPicker from './DockIconPicker.vue';
@@ -693,8 +695,8 @@ watch(
 function archiveWorkspaceOf(session: AppSession): { id: string; label: string; path?: string } {
   const id = workspacesStore().workspaceIdForSession(session);
   const workspace = workspacesStore().workspaces.find((w) => w.id === id);
-  if (workspace === undefined) return { id: session.cwd, label: session.cwd };
-  const shortPath = workspacesStore().workspaceById.get(id)?.shortPath ?? workspace.root;
+  if (workspace === undefined) return { id: workspaceRootKey(session.cwd), label: nativePath(session.cwd) };
+  const shortPath = workspacesStore().workspaceById.get(id)?.shortPath ?? nativePath(workspace.root);
   return { id, label: workspace.name, path: hostsStore().workspacePathLabel({ shortPath, hostId: workspace.hostId }, t) };
 }
 

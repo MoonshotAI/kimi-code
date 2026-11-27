@@ -363,6 +363,16 @@ entries:
       - kind: explicit
         test: tests/e2e/scenarios/cache/init-keeps-the-prefix.spec.ts
 
+  - id: E7
+    operation: Move the session into a new git worktree between two turns
+    promise: keeps
+    coverage:
+      - kind: engine
+        test: packages/agent-core-v2/test/agent/workdirMove/workdirMove.test.ts
+      - kind: engine
+        test: packages/node-sdk/test/worktree-session-move.test.ts
+    gap: Needs a workspace.git setup and a worktree action on TUI.
+
   - id: F1
     operation: Two clients follow the same session
     promise: keeps

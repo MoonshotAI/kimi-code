@@ -28,6 +28,7 @@ import {
   SessionPickerComponent,
   type SessionRow,
 } from '#/tui/components/dialogs/session-picker';
+import { WorktreeFormComponent } from '#/tui/components/dialogs/worktree-form';
 import { WorktreePanelComponent } from '#/tui/components/dialogs/worktree-panel';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { BannerComponent } from '#/tui/components/chrome/banner';
@@ -156,6 +157,7 @@ function makeStartupInput(
 function makeSession(overrides: Record<string, unknown> = {}) {
   return {
     id: 'ses-1',
+    workDir: '/tmp/proj-a',
     model: 'k2',
     summary: { title: 'Session title' },
     getStatus: vi.fn(async () => ({
@@ -175,6 +177,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     setPermission: vi.fn(async () => {}),
     setPlanMode: vi.fn(async () => {}),
     getGoal: vi.fn(async () => ({ goal: null })),
+    getCronTasks: vi.fn(async () => ({ tasks: [] })),
     onEvent: vi.fn(() => () => {}),
     getResumeState: vi.fn(() => null),
     listSkills: vi.fn(async () => []),
@@ -262,6 +265,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       }) => session,
     ),
     resumeSession: vi.fn(async () => session),
+    moveSession: vi.fn(async (_input: { id: string; workDir: string }) => session),
     listSessions: vi.fn(async () => []),
     close: vi.fn(async () => {}),
     track: vi.fn(),
@@ -512,6 +516,20 @@ describe('KimiTUI startup', () => {
       model: 'k2',
       permissionMode: 'yolo',
     });
+  });
+
+  it('rejects precheckMoveSession before creating a worktree when scheduled cron tasks exist', async () => {
+    const session = makeSession({
+      getCronTasks: vi.fn(async () => ({
+        tasks: [{ id: 'cron-1', cron: '*/15 * * * *', prompt: 'Check CI', recurring: true, createdAt: 1, nextFireAt: 2 }],
+      })),
+    });
+    const driver = makeDriver(makeHarness(session), makeStartupInput());
+    await driver.setSession(session);
+
+    await expect(
+      (driver as unknown as { precheckMoveSession(): Promise<void> }).precheckMoveSession(),
+    ).rejects.toThrow('Cannot move the session while scheduled tasks are active.');
   });
 
   it('mounts the docked fullscreen layout when tui_mode is fullscreen', async () => {
@@ -2945,9 +2963,13 @@ describe('KimiTUI startup', () => {
       contextTokens: 10, maxContextTokens: 100, contextUsage: 0.1,
     })) });
     const harness = makeHarness(session, {
-      listSessions: vi.fn(async () => [{
-        id: session.id, title: 'Picked', workDir: '/tmp/proj-a', updatedAt: Date.now(),
-      }]),
+      listSessions: vi.fn(async () => {
+        await flushMigrationCheck();
+        await flushMigrationCheck();
+        return [{
+          id: session.id, title: 'Picked', workDir: '/tmp/proj-a', updatedAt: Date.now(),
+        }];
+      }),
     });
     const driver = makeDriver(harness, makeStartupInput({ session: '' }));
     installMigrationModels(driver);
@@ -5001,6 +5023,129 @@ describe('KimiTUI work location', () => {
           .map((command) => command.name);
 
       expect(commands(await startAt(project, makeHarness()))).toContain('worktree');
+    });
+
+    it('moves an active session with content into a newly created worktree without clearing transcript, or starts fresh on Start new', async () => {
+      const project = tempDir('kimi-location-project-');
+      const newWt = tempDir('kimi-location-created-wt-');
+      const session = makeSession({ id: 'ses-1' });
+      const { harness } = worktreeHarness(project, newWt, session);
+      const createWorktree = vi.fn(async () => ({
+        worktree: {
+          path: newWt,
+          name: 'feat-move',
+          head: 'abc1234567890',
+          branch: undefined,
+          missing: false,
+          managed: true,
+        },
+        repoRoot: project,
+        sourceRoot: project,
+        cwd: newWt,
+        cwdFallback: false,
+        copiedFiles: [],
+        sourceDirty: true,
+      }));
+      Object.assign(harness, { createWorktree });
+      harness.moveSession.mockImplementation(async ({ workDir }: { id: string; workDir: string }) => {
+        Object.assign(session, { workDir });
+        return session;
+      });
+
+      const driver = await startAt(project, harness);
+      await driver.ensureSession();
+
+      const emptyPanel = await openPanel(driver);
+      emptyPanel.handleInput('\u000E');
+      const emptyForm = slot(driver, WorktreeFormComponent);
+      expect(emptyForm).toBeDefined();
+      expect(stripVTControlCharacters(emptyForm!.render(90).join('\n'))).not.toContain('Session');
+      emptyForm!.handleInput('\u001B');
+      slot(driver, WorktreePanelComponent)?.handleInput('\u001B');
+
+      driver.state.transcriptEntries.push({
+        id: 'u1',
+        kind: 'user',
+        renderMode: 'plain',
+        content: 'keep this context',
+      });
+      const marker: Component = {
+        render: () => ['keep-transcript-marker'],
+        invalidate: () => {},
+      };
+      driver.state.transcriptContainer.addChild(marker);
+
+      (
+        driver as unknown as {
+          backgroundTasks: Map<string, { status: 'running' | 'completed' }>;
+        }
+      ).backgroundTasks.set('bg-1', { status: 'running' });
+
+      const busyPanel = await openPanel(driver);
+      busyPanel.handleInput('\u000E');
+      const busyForm = slot(driver, WorktreeFormComponent)!;
+      expect(stripVTControlCharacters(busyForm.render(90).join('\n'))).toContain('[ Move current ]');
+      busyForm.handleInput(ENTER);
+      await vi.waitFor(() => {
+        expect(stripVTControlCharacters(busyForm.render(120).join('\n'))).toContain(
+          'Cannot move the session while background tasks are running.',
+        );
+      });
+      expect(createWorktree).not.toHaveBeenCalled();
+
+      (
+        driver as unknown as {
+          backgroundTasks: Map<string, { status: 'running' | 'completed' }>;
+        }
+      ).backgroundTasks.clear();
+
+      busyForm.handleInput(ENTER);
+      await vi.waitFor(() => {
+        expect(transcriptText(driver)).toContain('✓ Moved session to worktree feat-move');
+      });
+      expect(harness.moveSession).toHaveBeenCalledWith({ id: 'ses-1', workDir: newWt });
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+      expect(driver.state.transcriptContainer.children).toContain(marker);
+      expect(driver.state.appState).toMatchObject({
+        sessionId: 'ses-1',
+        workDir: newWt,
+        projectRoot: project,
+        worktree: { root: newWt, name: 'feat-move', repoRoot: project },
+      });
+      const footerLine = stripVTControlCharacters(driver.state.footer.render(200)[0] ?? '');
+      expect(footerLine).toContain('worktree feat-move');
+
+      const newWt2 = tempDir('kimi-location-created-wt2-');
+      createWorktree.mockResolvedValueOnce({
+        worktree: {
+          path: newWt2,
+          name: 'feat-fresh',
+          head: 'def4567890123',
+          branch: undefined,
+          missing: false,
+          managed: true,
+        },
+        repoRoot: project,
+        sourceRoot: project,
+        cwd: newWt2,
+        cwdFallback: false,
+        copiedFiles: [],
+        sourceDirty: false,
+      });
+      const panel2 = await openPanel(driver);
+      panel2.handleInput('\u000E');
+      const form2 = slot(driver, WorktreeFormComponent)!;
+      form2.handleInput('\t');
+      form2.handleInput('\t');
+      form2.handleInput('\u001B[C');
+      form2.handleInput(ENTER);
+
+      await vi.waitFor(() => {
+        expect(transcriptText(driver)).toContain('✓ Entered worktree feat-fresh');
+      });
+      expect(harness.createSession).toHaveBeenCalledTimes(2);
+      expect(driver.state.appState.sessionId).toBe('ses-2');
+      expect(driver.state.appState.workDir).toBe(newWt2);
     });
 
     it('starts a fresh session in the chosen checkout and omits source for bare repos', async () => {

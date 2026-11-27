@@ -1,5 +1,6 @@
 import {
   ScrollView,
+  truncateToWidth,
   VStack,
   type Component,
   type TuiMouseDispatchResult,
@@ -8,11 +9,13 @@ import {
 } from '@moonshot-ai/pi-tui';
 
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
+import { currentTheme } from '#/tui/theme';
 
 import { GutterContainer } from './gutter-container';
 
 export interface DockLayout {
   readonly maxBodyRows: number;
+  readonly follow?: 'none' | 'end';
 }
 
 export type DockPart = 'head' | 'body' | 'foot';
@@ -20,11 +23,13 @@ export type DockPart = 'head' | 'body' | 'foot';
 export interface OverflowScrollViewOptions {
   readonly follow?: 'none' | 'end';
   readonly onScroll?: (scrollTop: number) => void;
+  readonly onLayout?: () => void;
 }
 
 export class OverflowScrollView extends ScrollView {
   private overflowChanged = false;
   private lastContentHeight = 0;
+  private readonly onLayout: (() => void) | undefined;
 
   constructor(component: Component, options: OverflowScrollViewOptions = {}) {
     super(component, {
@@ -33,6 +38,7 @@ export class OverflowScrollView extends ScrollView {
       scrollbar: 'always',
       onScroll: options.onScroll,
     });
+    this.onLayout = options.onLayout;
   }
 
   get measuredContentHeight(): number {
@@ -47,6 +53,7 @@ export class OverflowScrollView extends ScrollView {
     const overflowed = this.canScroll;
     this.lastContentHeight = Math.max(0, Math.floor(contentHeight));
     super.updateLayout(contentHeight, viewportHeight, requestRender);
+    this.onLayout?.();
     if (this.canScroll !== overflowed) this.overflowChanged = true;
   }
 
@@ -67,23 +74,44 @@ export function mouseTarget(component: Component, event: TuiMouseEvent): TuiMous
   };
 }
 
+export function createInteractiveChildView(
+  owner: Component,
+  render: (width: number) => string[],
+  handleMouse: (event: TuiMouseEvent) => TuiMouseEventResult | undefined,
+): Component {
+  const component: Component = {
+    render,
+    invalidate: () => {},
+    handleMouse: (event) => {
+      const result = handleMouse(event);
+      if (result?.focus !== true) return result;
+      return { ...result, handled: true, focusTarget: owner, target: mouseTarget(component, event) };
+    },
+  };
+  return component;
+}
+
 export abstract class DockSection extends VStack {
   private readonly bodyScroll: OverflowScrollView | undefined;
+  private pendingEnsureRange: { readonly start: number; readonly end: number } | undefined;
 
   constructor(readonly layout?: DockLayout) {
     super();
-    const view = (part: DockPart): Component => {
-      const component: Component = {
-        render: (width) => this.renderPart(part, width),
-        invalidate: () => {},
-        handleMouse: (event) => {
+    const view = (part: DockPart): Component =>
+      createInteractiveChildView(
+        this,
+        (width) => this.renderPart(part, width),
+        (event) => {
           const result = this.handlePartMouse(part, event);
-          if (result?.focus !== true) return result;
-          return { ...result, handled: true, focusTarget: this, target: mouseTarget(component, event) };
+          if (result !== undefined) return result;
+          if (part !== 'body' && this.bodyScroll !== undefined && event.type === 'wheel') {
+            const delta = event.wheelDelta ?? 0;
+            const moved = delta !== 0 && this.scrollBody(delta);
+            return { handled: true, render: moved };
+          }
+          return undefined;
         },
-      };
-      return component;
-    };
+      );
     if (layout === undefined) {
       this.addChild(view('head'));
       this.addChild(view('body'));
@@ -91,8 +119,15 @@ export abstract class DockSection extends VStack {
       return;
     }
     this.bodyScroll = new OverflowScrollView(padded(view('body')), {
+      follow: layout.follow,
       onScroll: () => {
         this.onBodyScrolled();
+      },
+      onLayout: () => {
+        const range = this.pendingEnsureRange;
+        if (range === undefined) return;
+        this.pendingEnsureRange = undefined;
+        this.scrollRangeIntoView(range.start, range.end);
       },
     });
     this.addChild(padded(view('head')), { shrink: 0 });
@@ -102,10 +137,17 @@ export abstract class DockSection extends VStack {
 
   scrollBody(lines: number): boolean {
     if (this.bodyScroll === undefined) return false;
+    this.pendingEnsureRange = undefined;
     return this.bodyScroll.scrollBy(lines) !== lines;
   }
 
   protected ensureBodyVisible(startRow: number, endRow: number): void {
+    if (this.bodyScroll === undefined) return;
+    this.pendingEnsureRange = { start: startRow, end: endRow };
+    this.scrollRangeIntoView(startRow, endRow);
+  }
+
+  private scrollRangeIntoView(startRow: number, endRow: number): void {
     const scroll = this.bodyScroll;
     if (scroll === undefined) return;
     const viewport = scroll.viewportHeight;
@@ -132,6 +174,7 @@ export abstract class DockSection extends VStack {
   }
 
   scrollBodyToTop(): void {
+    this.pendingEnsureRange = undefined;
     this.bodyScroll?.scrollToStart();
   }
 
@@ -152,4 +195,13 @@ function padded(component: Component): GutterContainer {
   const gutter = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   gutter.addChild(component);
   return gutter;
+}
+
+export function finishDialogLines(
+  lines: readonly string[],
+  width: number,
+  focused: boolean,
+): string[] {
+  const rendered = lines.map((line) => truncateToWidth(line, width));
+  return focused ? rendered : rendered.map((line) => currentTheme.fade(line));
 }

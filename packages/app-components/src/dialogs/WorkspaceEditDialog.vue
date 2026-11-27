@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppHost } from '@moonshot-ai/app-core/api';
-import { basename, hostDisplayName, hostDisplayState, isHostBlocked } from '@moonshot-ai/app-core/lib';
+import { basename, hostDisplayName, hostDisplayState, isHostBlocked, nativePath, workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { Badge, Banner, Button, Dialog, Field, Icon, IconButton, Input, Select, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { hostsStore } from '@moonshot-ai/app-client/stores';
 
@@ -137,9 +137,18 @@ function prefillNameFromDirs(): void {
   name.value = first === undefined ? '' : basename(first);
 }
 
+function distinctDirs(candidates: readonly string[], known: readonly string[] = []): string[] {
+  const seen = new Set(known.map(workspaceRootKey));
+  return candidates.filter((dir) => {
+    const key = workspaceRootKey(dir);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function appendDirs(added: readonly string[]): void {
-  const existing = new Set(dirs.value);
-  dirs.value = [...dirs.value, ...added.filter((dir) => !existing.has(dir))];
+  dirs.value = [...dirs.value, ...distinctDirs(added, dirs.value)];
   prefillNameFromDirs();
 }
 
@@ -174,8 +183,7 @@ async function importDirs(): Promise<void> {
       importHint.value = 'failed';
       return;
     }
-    const existing = new Set(dirs.value);
-    const fresh = result.filter((path) => !existing.has(path));
+    const fresh = distinctDirs(result, dirs.value);
     if (fresh.length === 0) {
       importHint.value = 'empty';
       return;
@@ -214,12 +222,13 @@ const canSubmit = computed(
 
 function submit(): void {
   if (!canSubmit.value) return;
-  const deduped = [...new Set(dirs.value)];
+  const deduped = distinctDirs(dirs.value);
+  const kept = new Set(deduped.map(workspaceRootKey));
   emit('submit', {
     name: name.value.trim(),
     dirs: deduped,
     hostId: hostId.value,
-    projectConfigDirs: projectConfigDirs.value.filter((path) => deduped.includes(path)),
+    projectConfigDirs: projectConfigDirs.value.filter((path) => kept.has(workspaceRootKey(path))),
   });
 }
 
@@ -325,12 +334,12 @@ function onNameKeydown(e: KeyboardEvent): void {
             <Icon class="we-dir-icon" name="folder-closed" size="md" />
             <div class="we-dir-copy">
               <div class="we-dir-heading">
-                <Tooltip :text="dir">
+                <Tooltip :text="nativePath(dir)">
                   <span
                     class="we-dir-name"
                     :class="{ 'we-dir-name--with-host': hostName }"
                     tabindex="0"
-                    :aria-label="dir"
+                    :aria-label="nativePath(dir)"
                   >{{ basename(dir) }}</span>
                 </Tooltip>
                 <span v-if="hostName" class="we-dir-host" :title="hostName">{{ hostName }}</span>

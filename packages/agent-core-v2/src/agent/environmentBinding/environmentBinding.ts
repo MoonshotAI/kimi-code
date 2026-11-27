@@ -2,11 +2,20 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import type { Event } from '#/_base/event';
 import type { EnvironmentBinding } from '#/environment/environment';
 
+import type { WorkdirMoveBaseline } from './environmentBindingOps';
+
+export interface LocalWorkDirRebindInput {
+  readonly cwd?: string;
+  readonly originCwd?: string | null;
+  readonly pendingBaseline?: WorkdirMoveBaseline | null;
+}
+
 export interface IAgentEnvironmentBindingService {
   readonly _serviceBrand: undefined;
   readonly current: EnvironmentBinding;
   readonly onDidChange: Event<EnvironmentBinding>;
   bind(environmentId: string, cwd?: string): EnvironmentBinding;
+  rebindLocalWorkDir(input: LocalWorkDirRebindInput): Promise<EnvironmentBinding>;
 }
 
 export const IAgentEnvironmentBindingService: ServiceIdentifier<IAgentEnvironmentBindingService> = createDecorator<IAgentEnvironmentBindingService>('agentEnvironmentBindingService');

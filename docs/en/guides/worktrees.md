@@ -4,7 +4,7 @@ A Git worktree (an extra, independent checkout linked to the same Git repository
 
 ## Managing worktrees in the TUI with `/worktree`
 
-Run `/worktree` in a local Git repository to list, create, switch into, and delete worktrees for the current repository.
+Run `/worktree` in a local Git repository to list, create, switch into, and delete worktrees for the current repository. When your current session already has an ongoing conversation, creating a new worktree lets you move that session into the new worktree or start a fresh session, while uncommitted file changes remain in the original checkout.
 
 ## Starting in a worktree from the CLI with `kimi -w`
 

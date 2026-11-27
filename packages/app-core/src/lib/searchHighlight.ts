@@ -15,6 +15,10 @@ export function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+export function pathSearchKey(value: string): string {
+  return value.replaceAll('\\', '/').toLowerCase();
+}
+
 export function snippet(text: string, query: string, radius = 40): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   if (flat.length === 0) return '';
@@ -39,6 +43,7 @@ export function highlightHtml(text: string, query: string): string {
   const escaped = escapeHtml(text);
   const q = query.trim();
   if (q.length === 0) return escaped;
-  const re = new RegExp(escapeRegExp(escapeHtml(q)), 'gi');
+  const source = escapeRegExp(escapeHtml(q)).replaceAll('\\\\', '/').replaceAll('/', '[\\\\/]');
+  const re = new RegExp(source, 'gi');
   return escaped.replace(re, (m) => `<mark>${m}</mark>`);
 }
