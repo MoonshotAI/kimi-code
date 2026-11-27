@@ -1126,6 +1126,86 @@ describe('retireModels', () => {
     }
   });
 
+  it('forgets a redirect once its old name is configured again', async () => {
+    const documents = memoryDocuments();
+    const { host, config, discovery } = await createHost({ models: configured('second/model') }, stubOAuthService(), documents);
+    try {
+      await discovery.retireModels([{ from: 'first/model', to: 'second/model' }]);
+      await config.replace('models', configured('first/model', 'second/model'));
+      await config.replace('models', configured('second/model'));
+      expect(discovery.retiredModelReplacement('first/model')).toBeUndefined();
+      await vi.waitFor(async () => expect(await documents.get('model-redirects', 'retired')).toEqual({}));
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('keeps a redirect whose old name is still configured while the rename is being written', async () => {
+    const { host, config, discovery } = await createHost({ models: configured('first/model') });
+    try {
+      await discovery.retireModels([{ from: 'first/model', to: 'second/model' }]);
+      await config.replace('models', configured('first/model', 'other/model'));
+      await config.replace('models', configured('second/model'));
+      expect(discovery.retiredModelReplacement('first/model')).toBe('second/model');
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('drops a saved redirect whose old name was configured again before the next start', async () => {
+    const documents = memoryDocuments();
+    await documents.set('model-redirects', 'retired', { 'first/model': 'second/model' });
+    const { host, config, discovery } = await createHost(
+      { models: configured('first/model', 'second/model') },
+      stubOAuthService(),
+      documents,
+    );
+    try {
+      await discovery.ready;
+      expect(await documents.get('model-redirects', 'retired')).toEqual({});
+      await config.replace('models', configured('second/model'));
+      expect(discovery.retiredModelReplacement('first/model')).toBeUndefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('saves redirects recorded at the same time in the order they were recorded', async () => {
+    const documents = memoryDocuments();
+    let releaseFirstWrite = (): void => {};
+    const firstWriteHeld = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    let writes = 0;
+    const slowFirstWrite: IAtomicDocumentStore = {
+      ...documents,
+      set: async <T>(scope: string, key: string, value: T) => {
+        writes += 1;
+        if (writes === 1) await firstWriteHeld;
+        await documents.set(scope, key, value);
+      },
+    };
+    const { host, discovery } = await createHost(
+      { models: configured('third/model', 'fourth/model') },
+      stubOAuthService(),
+      slowFirstWrite,
+    );
+    try {
+      const first = discovery.retireModels([{ from: 'first/model', to: 'third/model' }]);
+      await vi.waitFor(() => expect(writes).toBe(1));
+      const second = discovery.retireModels([{ from: 'second/model', to: 'fourth/model' }]);
+      await vi.waitFor(() => expect(discovery.retiredModelReplacement('second/model')).toBe('fourth/model'));
+      releaseFirstWrite();
+      await Promise.all([first, second]);
+      expect(await documents.get('model-redirects', 'retired')).toEqual({
+        'first/model': 'third/model',
+        'second/model': 'fourth/model',
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('still reports the redirect when it cannot be saved', async () => {
     const documents = memoryDocuments();
     const failing: IAtomicDocumentStore = { ...documents, set: () => Promise.reject(new Error('disk full')) };

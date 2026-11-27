@@ -61,6 +61,8 @@ export class ProviderDiscoveryService extends Disposable implements IProviderDis
 
   private refreshChain: Promise<unknown> = Promise.resolve();
   private readonly retiredModels = new Map<string, string>();
+  private retiredModelsSaved: Promise<void> = Promise.resolve();
+  private configuredAliases: ReadonlySet<string>;
   readonly ready: Promise<void>;
 
   constructor(
@@ -73,6 +75,12 @@ export class ProviderDiscoveryService extends Disposable implements IProviderDis
     @ILogService private readonly log: ILogService,
   ) {
     super();
+    this.configuredAliases = this.modelAliases();
+    this._register(
+      this.config.onDidSectionChange(({ domain }) => {
+        if (domain === MODELS_SECTION) this.forgetReusedAliases();
+      }),
+    );
     this.ready = this.loadRetiredModels();
   }
 
@@ -106,23 +114,54 @@ export class ProviderDiscoveryService extends Disposable implements IProviderDis
       this.retiredModels.delete(to);
       this.retiredModels.set(from, to);
     }
-    try {
-      await this.docs.set(RETIRED_MODELS_SCOPE, RETIRED_MODELS_KEY, Object.fromEntries(this.retiredModels));
-    } catch (error) {
-      this.log.warn('failed to persist retired model redirects', { error: String(error) });
-    }
+    await this.saveRetiredModels();
     for (const event of retired) this._onDidRetireModel.fire(event);
   }
 
   private async loadRetiredModels(): Promise<void> {
+    let stored: Readonly<Record<string, unknown>> | undefined;
     try {
-      const stored = await this.docs.get<Readonly<Record<string, unknown>>>(RETIRED_MODELS_SCOPE, RETIRED_MODELS_KEY);
-      for (const [from, to] of Object.entries(stored ?? {})) {
-        if (typeof to === 'string' && !this.retiredModels.has(from)) this.retiredModels.set(from, to);
-      }
+      stored = await this.docs.get<Readonly<Record<string, unknown>>>(RETIRED_MODELS_SCOPE, RETIRED_MODELS_KEY);
     } catch (error) {
       this.log.warn('failed to read retired model redirects', { error: String(error) });
+      return;
     }
+    const configured = this.modelAliases();
+    let dropped = false;
+    for (const [from, to] of Object.entries(stored ?? {})) {
+      if (typeof to !== 'string' || this.retiredModels.has(from)) continue;
+      if (configured.has(from)) dropped = true;
+      else this.retiredModels.set(from, to);
+    }
+    if (dropped) await this.saveRetiredModels();
+  }
+
+  private forgetReusedAliases(): void {
+    const previous = this.configuredAliases;
+    const configured = this.modelAliases();
+    this.configuredAliases = configured;
+    let forgotten = false;
+    for (const alias of this.retiredModels.keys()) {
+      if (previous.has(alias) || !configured.has(alias)) continue;
+      this.retiredModels.delete(alias);
+      forgotten = true;
+    }
+    if (forgotten) void this.saveRetiredModels();
+  }
+
+  private saveRetiredModels(): Promise<void> {
+    this.retiredModelsSaved = this.retiredModelsSaved.then(async () => {
+      try {
+        await this.docs.set(RETIRED_MODELS_SCOPE, RETIRED_MODELS_KEY, Object.fromEntries(this.retiredModels));
+      } catch (error) {
+        this.log.warn('failed to persist retired model redirects', { error: String(error) });
+      }
+    });
+    return this.retiredModelsSaved;
+  }
+
+  private modelAliases(): ReadonlySet<string> {
+    return new Set(Object.keys(this.config.get<Readonly<Record<string, ModelRecord>>>(MODELS_SECTION) ?? {}));
   }
 
   private async doRefreshProviderModels(
