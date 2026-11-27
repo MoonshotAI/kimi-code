@@ -169,10 +169,25 @@ describe('SettingsDialog Lab two-tier layout', () => {
 
     const bodyText = document.body.textContent ?? '';
     expect(bodyText).toContain('Beta 功能');
+    expect(bodyText).toContain('功能已基本定型，正在做正式发布前的打磨');
     expect(bodyText).toContain('实验性功能');
+    expect(bodyText).toContain('仍在早期探索阶段，体验和形态可能随时调整');
     expect(bodyText).not.toContain('抢先体验');
     expect(bodyText).not.toContain('先锋探索');
     expect(bodyText).toContain('重启 Kimi Code 后生效');
+
+    const labPanel = [...document.querySelectorAll<HTMLElement>('section.panel')].find(
+      (el) => el.style.display !== 'none',
+    )!;
+    const labSections = labPanel.querySelectorAll('section.sec');
+    expect(labSections).toHaveLength(2);
+    expect(
+      labSections[0]!.querySelector('.lab-sec-head button[role="switch"][aria-label="开启全部 Beta 功能"]'),
+    ).not.toBeNull();
+    expect(
+      labSections[0]!.querySelector('.settings-group button[role="switch"][aria-label="开启全部 Beta 功能"]'),
+    ).toBeNull();
+    expect(labSections[0]!.querySelectorAll('.settings-group .row')).toHaveLength(2);
 
     const betaMasterSwitch = document.querySelector<HTMLButtonElement>(
       'button[role="switch"][aria-label="开启全部 Beta 功能"]',

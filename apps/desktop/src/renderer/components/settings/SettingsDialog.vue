@@ -46,7 +46,7 @@ import type { AppConfig, AppModel, ManagedQuotaResult, ManagedUserInfo, Thinking
 import PlanUsageCard from './PlanUsageCard.vue';
 import { SecondaryModelPicker } from '@moonshot-ai/app-components';
 import { PlanUpgradeCard } from '@moonshot-ai/app-components';
-import { Avatar, Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/app-ui';
+import { Avatar, Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch, Tooltip } from '@moonshot-ai/app-ui';
 import type { BrowserSettingsSection } from '../../../shared/browser-data';
 import {
   visibleSettingsTabs,
@@ -1446,23 +1446,27 @@ defineExpose({ confirmDiscard });
 
         <section v-show="activeTab === 'lab'" class="panel">
           <section class="sec">
-            <h3 class="sec-title">{{ t('settings.lab.betaGroup') }}</h3>
-            <div class="settings-group">
-            <div v-if="betaMasterState !== null" class="row">
-              <span class="rlabel">
-                {{ t('settings.lab.enableAllBeta') }}
-                <span class="hint">{{ t('settings.lab.enableAllBetaHint') }}</span>
-                <span v-if="betaMasterLockedByEnv" class="hint">
-                  {{ t('settings.lab.lockedByEnv', { env: betaMasterState.env }) }}
-                </span>
-              </span>
-              <Switch
-                :model-value="betaMasterEnabled"
-                :disabled="betaMasterLockedByEnv"
-                :label="t('settings.lab.enableAllBeta')"
-                @update:model-value="onBetaMasterChange"
-              />
+            <div class="sec-head lab-sec-head">
+              <div class="lab-sec-heading">
+                <h3 class="sec-title">{{ t('settings.lab.betaGroup') }}</h3>
+                <span class="lab-sec-desc">{{ t('settings.lab.betaGroupHint') }}</span>
+              </div>
+              <Tooltip
+                v-if="betaMasterState !== null"
+                :text="betaMasterLockedByEnv ? t('settings.lab.lockedByEnv', { env: betaMasterState.env }) : null"
+              >
+                <div class="lab-beta-toggle">
+                  <span class="lab-beta-toggle-label">{{ t('settings.lab.enableAll') }}</span>
+                  <Switch
+                    :model-value="betaMasterEnabled"
+                    :disabled="betaMasterLockedByEnv"
+                    :label="t('settings.lab.enableAllBeta')"
+                    @update:model-value="onBetaMasterChange"
+                  />
+                </div>
+              </Tooltip>
             </div>
+            <div class="settings-group">
             <div class="row">
               <span class="rlabel">
                 {{ t('settings.lab.contextInspector') }}
@@ -1503,7 +1507,12 @@ defineExpose({ confirmDiscard });
           </section>
 
           <section class="sec">
-            <h3 class="sec-title">{{ t('settings.lab.experimentalGroup') }}</h3>
+            <div class="sec-head lab-sec-head">
+              <div class="lab-sec-heading">
+                <h3 class="sec-title">{{ t('settings.lab.experimentalGroup') }}</h3>
+                <span class="lab-sec-desc">{{ t('settings.lab.experimentalGroupHint') }}</span>
+              </div>
+            </div>
             <div class="settings-group">
             <div class="row">
               <span class="rlabel">
@@ -1766,6 +1775,38 @@ defineExpose({ confirmDiscard });
 
 .notification-settings { user-select: none; }
 .sec-head .sec-title { margin-bottom: 0; }
+.lab-sec-head {
+  align-items: center;
+  min-height: 24px;
+}
+.lab-sec-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-2);
+  row-gap: var(--space-05);
+  min-width: 0;
+}
+.lab-sec-desc {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-faint);
+}
+.lab-beta-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  padding-right: var(--space-4);
+}
+.lab-beta-toggle-label {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
 
 
 
@@ -1883,6 +1924,7 @@ defineExpose({ confirmDiscard });
     flex-direction: column;
   }
   .settings-group { margin-inline: 0; }
+  .lab-beta-toggle { padding-right: 0; }
   .select-wrap {
     width: 100%;
     max-width: none;

@@ -84,9 +84,9 @@ describe('ExperimentsSelectorComponent', () => {
 
     expect(out).toContain(' Lab  (type to search)');
     expect(out).toContain(' ↑↓ navigate · Space toggle · Enter apply · Esc cancel');
-    expect(out).toContain(' Beta');
+    expect(out).toContain(' Beta  Mostly finalized, being polished for release');
     expect(out).toContain('  ❯ Enable all Beta features  disabled');
-    expect(out).toContain(' Experimental');
+    expect(out).toContain(' Experimental  In early exploration, behavior and design may change');
     expect(out).toContain('    Tower mode  enabled');
     expect(out).toContain('    id tower · config · KIMI_CODE_EXPERIMENTAL_TOWER · restart required');
     expect(out).not.toContain('NotifyUser tool');

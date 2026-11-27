@@ -79,9 +79,11 @@ export default {
   },
   lab: {
     betaGroup: 'Beta 功能',
+    betaGroupHint: '功能已基本定型，正在做正式发布前的打磨',
     experimentalGroup: '实验性功能',
+    experimentalGroupHint: '仍在早期探索阶段，体验和形态可能随时调整',
+    enableAll: '开启全部',
     enableAllBeta: '开启全部 Beta 功能',
-    enableAllBetaHint: '功能已基本定型，正在做正式发布前的打磨',
     lockedByEnv: '由环境变量 {env} 控制',
     lockedByBetaMaster: '已随「开启全部 Beta 功能」开启',
     notifyUser: '进展更新',

@@ -78,7 +78,7 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
         id: BETA_MASTER_CONFIG_KEY,
         title: 'Enable all Beta features',
         description:
-          'Try upcoming features being polished before release.',
+          'Turn on all Beta features at once without overwriting individual settings.',
         group: 'beta',
         state: this.betaState,
       },
@@ -160,7 +160,14 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
         if (currentGroup !== undefined) lines.push('');
         currentGroup = item.group;
         const heading = item.group === 'beta' ? ' Beta' : ' Experimental';
-        lines.push(currentTheme.boldFg('textStrong', heading));
+        const groupHint =
+          item.group === 'beta'
+            ? '  Mostly finalized, being polished for release'
+            : '  In early exploration, behavior and design may change';
+        lines.push(
+          currentTheme.boldFg('textStrong', heading) +
+            currentTheme.fg('textMuted', groupHint),
+        );
       }
       const selected = i === view.selectedIndex;
       lines.push(...this.renderItem(item, selected, width));
