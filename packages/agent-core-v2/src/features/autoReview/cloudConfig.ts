@@ -21,20 +21,16 @@ const MAX_TIMEOUT_MS = 120000;
 const CLOUD_FETCH_TIMEOUT_MS = 2000;
 const CLOUD_FAILURE_COOLDOWN_MS = 5 * 60 * 1000;
 
-export interface AutoReviewCloudRule {
+export interface AutoReviewCloudConfig {
   readonly model?: string;
   readonly effort?: string;
   readonly timeoutMs?: number;
 }
 
-export interface AutoReviewCloudConfig extends AutoReviewCloudRule {
-  readonly modelOverrides: Readonly<Record<string, AutoReviewCloudRule>>;
-}
-
 const nonEmptyStringSchema = z.string().trim().min(1);
 const timeoutMsSchema = z.number().int().min(MIN_TIMEOUT_MS).max(MAX_TIMEOUT_MS);
 
-function parseRule(raw: unknown): AutoReviewCloudRule {
+export const autoReviewCloudConfigSchema = z.unknown().transform((raw): AutoReviewCloudConfig => {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
   const record = raw as Record<string, unknown>;
   const model = nonEmptyStringSchema.safeParse(record['model']);
@@ -45,55 +41,7 @@ function parseRule(raw: unknown): AutoReviewCloudRule {
     ...(effort.success ? { effort: effort.data } : {}),
     ...(timeoutMs.success ? { timeoutMs: timeoutMs.data } : {}),
   };
-}
-
-function parseModelOverrides(raw: unknown): Readonly<Record<string, AutoReviewCloudRule>> {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
-  const overrides: Record<string, AutoReviewCloudRule> = {};
-  for (const [modelId, entry] of Object.entries(raw)) {
-    const trimmedId = modelId.trim();
-    if (trimmedId.length === 0) continue;
-    const rule = parseRule(entry);
-    if (rule.model !== undefined || rule.effort !== undefined || rule.timeoutMs !== undefined) {
-      overrides[trimmedId] = rule;
-    }
-  }
-  return overrides;
-}
-
-export const autoReviewCloudConfigSchema = z.unknown().transform((raw): AutoReviewCloudConfig => {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    return { modelOverrides: {} };
-  }
-  const record = raw as Record<string, unknown>;
-  return {
-    ...parseRule(record),
-    modelOverrides: parseModelOverrides(record['model_overrides'] ?? record['modelOverrides']),
-  };
 });
-
-export function resolveAutoReviewCloudRule(
-  config: AutoReviewCloudConfig | undefined,
-  mainModelId: string | undefined,
-): AutoReviewCloudRule | undefined {
-  if (config === undefined) return undefined;
-  const override =
-    mainModelId !== undefined && Object.hasOwn(config.modelOverrides, mainModelId)
-      ? config.modelOverrides[mainModelId]
-      : undefined;
-  if (override === undefined) {
-    return config.model !== undefined || config.effort !== undefined || config.timeoutMs !== undefined
-      ? { model: config.model, effort: config.effort, timeoutMs: config.timeoutMs }
-      : undefined;
-  }
-  const model = override.model ?? config.model;
-  const switchedModel = override.model !== undefined && override.model !== config.model;
-  const effort = override.effort ?? (switchedModel ? undefined : config.effort);
-  const timeoutMs = override.timeoutMs ?? config.timeoutMs;
-  return model !== undefined || effort !== undefined || timeoutMs !== undefined
-    ? { model, effort, timeoutMs }
-    : undefined;
-}
 
 export interface IAutoReviewCloudConfigService {
   readonly _serviceBrand: undefined;

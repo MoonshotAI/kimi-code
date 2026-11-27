@@ -48,7 +48,6 @@ import REVIEW_POLICY from './auto-review-policy.md?raw';
 import {
   DEFAULT_AUTO_REVIEW_TIMEOUT_MS,
   IAutoReviewCloudConfigService,
-  resolveAutoReviewCloudRule,
 } from './cloudConfig';
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
 import { AUTO_REVIEW_FLAG_ID } from './flag';
@@ -160,8 +159,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     const mainModel = this.tryGetModel(mainModelAlias);
     if (mainModel !== undefined && isManagedKimiModel(mainModel)) {
       const cloud = this.cloudConfig.peek() ?? (await this.cloudConfig.load(signal));
-      const rule = resolveAutoReviewCloudRule(cloud, mainModel.spec.name);
-      if (rule?.timeoutMs !== undefined) return rule.timeoutMs;
+      if (cloud?.timeoutMs !== undefined) return cloud.timeoutMs;
     }
     return DEFAULT_AUTO_REVIEW_TIMEOUT_MS;
   }
@@ -187,24 +185,23 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     const mainModel = this.tryGetModel(mainModelAlias);
     if (mainModel !== undefined && isManagedKimiModel(mainModel)) {
       const cloud = this.cloudConfig.peek() ?? (await this.cloudConfig.load(signal));
-      const rule = resolveAutoReviewCloudRule(cloud, mainModel.spec.name);
-      if (rule !== undefined) {
-        if (rule.model !== undefined) {
-          const resolved = this.resolveManagedModelAlias(rule.model, mainModel);
+      if (cloud !== undefined) {
+        if (cloud.model !== undefined) {
+          const resolved = this.resolveManagedModelAlias(cloud.model, mainModel);
           if (
             resolved !== undefined &&
             (config?.effort === undefined || safeCloudEffort(resolved.model, config.effort) !== undefined)
           ) {
             return {
               modelAlias: resolved.alias,
-              effort: config?.effort ?? safeCloudEffort(resolved.model, rule.effort),
+              effort: config?.effort ?? safeCloudEffort(resolved.model, cloud.effort),
             };
           }
           return { modelAlias: mainModelAlias, effort: config?.effort };
         }
         return {
           modelAlias: mainModelAlias,
-          effort: config?.effort ?? safeCloudEffort(mainModel, rule.effort),
+          effort: config?.effort ?? safeCloudEffort(mainModel, cloud.effort),
         };
       }
     }

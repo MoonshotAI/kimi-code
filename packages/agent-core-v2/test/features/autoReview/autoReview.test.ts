@@ -29,7 +29,6 @@ import {
 import {
   AutoReviewCloudConfigService,
   autoReviewCloudConfigSchema,
-  resolveAutoReviewCloudRule,
   type AutoReviewCloudConfig,
   type IAutoReviewCloudConfigService,
 } from '#/features/autoReview/cloudConfig';
@@ -531,36 +530,33 @@ describe('SessionAutoReviewService', () => {
       model: 'kimi-fast',
       effort: 'low',
       timeoutMs: 45_000,
-      modelOverrides: {
-        'kimi-primary': { model: 'kimi-for-coding-highspeed', timeoutMs: 25_000 },
-      },
     };
 
-    const viaOverride = makeSessionService({
+    const viaCloud = makeSessionService({
       configured: false,
-      secondaryModel: { defaultModel: 'kimi-code/kimi-fast', defaultEffort: 'max' },
+      secondaryModel: { defaultModel: 'kimi-code/kimi-for-coding-highspeed', defaultEffort: 'max' },
       catalogModels,
       cloudConfig,
     });
-    expect((await execute(viaOverride, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-for-coding-highspeed');
-    expect(requestedEfforts.at(-1)).toBe('on');
-    expect(await viaOverride.resolveTimeoutMs('kimi-code/kimi-primary')).toBe(25_000);
+    expect((await execute(viaCloud, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-fast');
+    expect(requestedEfforts.at(-1)).toBe('low');
+    expect(await viaCloud.resolveTimeoutMs('kimi-code/kimi-primary')).toBe(45_000);
 
     requestedEfforts = [];
-    const viaCloudDefault = makeSessionService({
+    const viaHighspeed = makeSessionService({
       configured: false,
-      catalogModels: { ...catalogModels, 'kimi-code/kimi-alt': managedModel('kimi-alt', { alwaysThinking: true, supportEfforts: ['low', 'high', 'max'], defaultEffort: 'high' }) },
-      cloudConfig,
+      catalogModels,
+      cloudConfig: { model: 'kimi-for-coding-highspeed', timeoutMs: 25_000 },
     });
-    expect((await execute(viaCloudDefault, signal, 'kimi-code/kimi-alt')).modelAlias).toBe('kimi-code/kimi-fast');
-    expect(requestedEfforts.at(-1)).toBe('low');
-    expect(await viaCloudDefault.resolveTimeoutMs('kimi-code/kimi-alt')).toBe(45_000);
+    expect((await execute(viaHighspeed, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-for-coding-highspeed');
+    expect(requestedEfforts.at(-1)).toBe('on');
+    expect(await viaHighspeed.resolveTimeoutMs('kimi-code/kimi-primary')).toBe(25_000);
 
     requestedEfforts = [];
     const viaExplicit = makeSessionService({
       model: 'kimi-code/kimi-fast',
       catalogModels,
-      cloudConfig,
+      cloudConfig: { model: 'kimi-for-coding-highspeed', timeoutMs: 25_000 },
     });
     expect((await execute(viaExplicit, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-fast');
     expect(requestedEfforts.at(-1)).toBe('high');
@@ -595,7 +591,7 @@ describe('SessionAutoReviewService', () => {
     const missingModelSvc = makeSessionService({
       configured: false,
       catalogModels,
-      cloudConfig: { model: 'not-in-plan', effort: 'low', modelOverrides: {} },
+      cloudConfig: { model: 'not-in-plan', effort: 'low' },
     });
     expect((await execute(missingModelSvc, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-primary');
     expect(requestedEfforts.at(-1)).toBe('high');
@@ -604,7 +600,7 @@ describe('SessionAutoReviewService', () => {
     const badEffortSvc = makeSessionService({
       configured: false,
       catalogModels,
-      cloudConfig: { model: 'kimi-primary', effort: 'xhigh', modelOverrides: {} },
+      cloudConfig: { model: 'kimi-primary', effort: 'xhigh' },
     });
     expect((await execute(badEffortSvc, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-primary');
     expect(requestedEfforts.at(-1)).toBe('high');
@@ -613,7 +609,7 @@ describe('SessionAutoReviewService', () => {
     const offOnAlwaysThinking = makeSessionService({
       configured: false,
       catalogModels,
-      cloudConfig: { model: 'kimi-primary', effort: 'off', modelOverrides: {} },
+      cloudConfig: { model: 'kimi-primary', effort: 'off' },
     });
     expect((await execute(offOnAlwaysThinking, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-primary');
     expect(requestedEfforts.at(-1)).toBe('high');
@@ -622,7 +618,7 @@ describe('SessionAutoReviewService', () => {
     const userEffortConflict = makeSessionService({
       effort: 'low',
       catalogModels,
-      cloudConfig: { model: 'kimi-narrow', modelOverrides: {} },
+      cloudConfig: { model: 'kimi-narrow' },
     });
     expect((await execute(userEffortConflict, signal, 'kimi-code/kimi-primary')).modelAlias).toBe('kimi-code/kimi-primary');
     expect(requestedEfforts.at(-1)).toBe('low');
@@ -1027,42 +1023,20 @@ describe('AutoReviewService', () => {
 });
 
 describe('autoReview cloud config', () => {
-  it('parses fields defensively and resolves model_overrides without leaking base effort across models', () => {
+  it('parses fields defensively and stays idempotent across cache round-trips', () => {
     const parsed = autoReviewCloudConfigSchema.parse({
       model: 'kimi-fast',
       effort: 'low',
       timeout_ms: 45_000,
-      model_overrides: {
-        'kimi-primary': { model: 'kimi-for-coding-highspeed', timeout_ms: 25_000 },
-        'kimi-alt': { effort: 'high' },
-        invalid: { timeout_ms: 500, model: '' },
-      },
     });
     expect(parsed).toEqual({
       model: 'kimi-fast',
       effort: 'low',
       timeoutMs: 45_000,
-      modelOverrides: {
-        'kimi-primary': { model: 'kimi-for-coding-highspeed', timeoutMs: 25_000 },
-        'kimi-alt': { effort: 'high' },
-      },
     });
     expect(autoReviewCloudConfigSchema.parse(parsed)).toEqual(parsed);
-    expect(resolveAutoReviewCloudRule(parsed, 'kimi-primary')).toEqual({
-      model: 'kimi-for-coding-highspeed',
-      effort: undefined,
-      timeoutMs: 25_000,
-    });
-    expect(resolveAutoReviewCloudRule(parsed, 'kimi-alt')).toEqual({
-      model: 'kimi-fast',
-      effort: 'high',
-      timeoutMs: 45_000,
-    });
-    expect(resolveAutoReviewCloudRule(parsed, 'other')).toEqual({
-      model: 'kimi-fast',
-      effort: 'low',
-      timeoutMs: 45_000,
-    });
+    expect(autoReviewCloudConfigSchema.parse({ model: '', effort: '  ', timeout_ms: 500 })).toEqual({});
+    expect(autoReviewCloudConfigSchema.parse(null)).toEqual({});
   });
 
   it('fetches auto_review from /client_configs with managed provider token, hydrates region first, and cools down after failure', async () => {
@@ -1095,7 +1069,6 @@ describe('autoReview cloud config', () => {
     expect(await svc.load()).toEqual({
       model: 'kimi-for-coding-highspeed',
       timeoutMs: 20_000,
-      modelOverrides: {},
     });
     expect(getCachedAccessToken).toHaveBeenCalledWith('managed:kimi-code');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -1110,7 +1083,6 @@ describe('autoReview cloud config', () => {
     expect(svc.peek()).toEqual({
       model: 'kimi-for-coding-highspeed',
       timeoutMs: 20_000,
-      modelOverrides: {},
     });
 
     activeRegion = 'mainland-cn';
