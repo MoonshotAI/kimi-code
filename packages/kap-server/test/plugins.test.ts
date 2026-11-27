@@ -541,7 +541,7 @@ describe('server-v2 /api/v1 plugins', () => {
     const types: string[] = [];
     try {
       await new Promise<void>((resolve, reject) => {
-        ws.once('message', () => resolve());
+        ws.once('open', () => resolve());
         ws.once('error', reject);
       });
       ws.on('message', (data: Buffer) => {
