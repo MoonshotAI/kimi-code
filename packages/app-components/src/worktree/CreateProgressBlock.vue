@@ -158,6 +158,7 @@ function toggle(): void {
   list-style: none;
 }
 .wcb-step {
+  --wcb-line: calc(var(--text-base) * var(--leading-normal));
   position: relative;
   display: grid;
   grid-template-columns: 15px minmax(0, 1fr);
@@ -171,8 +172,8 @@ function toggle(): void {
 .wcb-step.connected::after {
   content: '';
   position: absolute;
-  top: 21px;
-  bottom: 2px;
+  top: var(--wcb-line);
+  bottom: var(--space-05);
   left: 7px;
   width: 1px;
   background: var(--color-line);
@@ -184,7 +185,7 @@ function toggle(): void {
   align-items: center;
   justify-content: center;
   width: 15px;
-  height: 21px;
+  height: var(--wcb-line);
 }
 .wcb-step.is-done .wcb-glyph {
   color: var(--color-success);
@@ -205,7 +206,7 @@ function toggle(): void {
 .wcb-label {
   min-width: 0;
   font-size: var(--text-base);
-  line-height: 21px;
+  line-height: var(--wcb-line);
   overflow-wrap: anywhere;
 }
 .wcb-command,
@@ -219,6 +220,6 @@ function toggle(): void {
   color: var(--color-text-muted);
 }
 .wcb-output {
-  margin-top: 7px;
+  margin-top: var(--space-2);
 }
 </style>

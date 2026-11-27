@@ -11,7 +11,7 @@ defineProps<{ text: string }>();
   margin: 0;
 }
 .worktree-output {
-  --worktree-output-line: 18px;
+  --worktree-output-line: calc(var(--text-xs) * var(--leading-normal));
   box-sizing: border-box;
   min-width: 0;
   max-height: calc(5 * var(--worktree-output-line) + 2 * var(--space-2));

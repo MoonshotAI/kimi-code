@@ -145,7 +145,7 @@ function onSelect(): void {
   color: var(--color-text);
 }
 .manage-row__meta {
-  margin-top: 2px;
+  margin-top: var(--space-05);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

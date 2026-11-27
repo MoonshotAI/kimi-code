@@ -34,7 +34,7 @@
 .ah {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
   padding: var(--space-4) var(--space-4) 0;
   flex-wrap: nowrap;
   transition: padding-bottom 220ms cubic-bezier(0.2, 0, 0, 1);

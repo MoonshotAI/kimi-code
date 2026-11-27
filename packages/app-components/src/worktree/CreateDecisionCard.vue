@@ -104,7 +104,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true));
 <style scoped src="../lib/dock-card.css"></style>
 <style scoped>
 .wcc {
-  margin: var(--space-2) var(--dock-inline-right, 16px) var(--space-2) var(--dock-inline-left, 16px);
+  margin: var(--space-2) var(--dock-inline-right, var(--space-4)) var(--space-2) var(--dock-inline-left, var(--space-4));
   font-family: var(--font-ui);
 }
 .wcc-spin::before {
@@ -124,7 +124,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true));
   margin-top: 0;
 }
 .wcc-files {
-  max-height: 160px;
+  max-height: calc(var(--space-8) * 5);
   margin: var(--space-2) 0 0;
   padding: var(--space-2) var(--space-3);
   overflow: auto;

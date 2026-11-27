@@ -54,7 +54,7 @@ watch(
 <style scoped>
 .manage-delete-list {
   --manage-delete-row: 28px;
-  margin: 0 0 0 calc(16px + var(--space-2));
+  margin: 0 0 0 calc(var(--p-ic-md) + var(--space-2));
   padding: var(--space-1) 0;
   list-style: none;
   border-radius: var(--radius-lg);
