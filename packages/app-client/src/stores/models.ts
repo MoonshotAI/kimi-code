@@ -46,6 +46,7 @@ export const useModelsStore = defineStore('kimi.models', () => {
   const activeDefaultModel = computed(() =>
     activeHostId.value === undefined ? defaultModel.value : defaultModelByHost.value[activeHostId.value] ?? null,
   );
+  const activeProviders = computed(() => (activeHostId.value === undefined ? providers.value : []));
 
   const catalogProviders = ref<AppCatalogProvider[]>([]);
   const catalogState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -267,6 +268,7 @@ export const useModelsStore = defineStore('kimi.models', () => {
     activeHostId,
     activeModels,
     activeDefaultModel,
+    activeProviders,
     setActiveHost,
     loadHostCatalog,
     setHostDefaultModel,

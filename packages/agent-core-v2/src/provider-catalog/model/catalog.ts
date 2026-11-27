@@ -48,6 +48,7 @@ export type ProviderCatalogStatus = z.infer<typeof providerCatalogStatusSchema>;
 
 export const providerCatalogItemSchema = z.object({
   id: z.string().min(1),
+  display_name: z.string().min(1).optional(),
   type: z.string().min(1),
   base_url: z.string().min(1).optional(),
   default_model: z.string().min(1).optional(),
@@ -130,6 +131,7 @@ export function toProtocolProvider(
     provider.defaultModel ?? globalDefaultForProvider(models, globalDefaultModel, providerId);
   return {
     id: providerId,
+    display_name: provider.displayName === '' ? undefined : provider.displayName,
     type: provider.type ?? 'openai',
     base_url: provider.baseUrl,
     default_model: defaultModel,

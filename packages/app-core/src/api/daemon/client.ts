@@ -1795,7 +1795,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
         return wire;
       }),
     };
-    if (input.newId !== undefined) body.new_id = input.newId;
+    if (input.displayName !== undefined) body.display_name = input.displayName;
     if (input.apiKey !== undefined) body.api_key = input.apiKey;
     if (input.baseUrl !== undefined) body.base_url = input.baseUrl;
     if (input.defaultModel !== undefined) body.default_model = input.defaultModel;

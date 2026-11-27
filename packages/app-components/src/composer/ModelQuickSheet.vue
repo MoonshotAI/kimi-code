@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import type { AppModel } from '@moonshot-ai/app-core/api';
 import type { QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
 import { commitLevel, effectiveThinkingLevel, effortLabel, modelThinkingAvailability, providerDisplayName, segmentsFor } from '@moonshot-ai/app-core/lib';
+import { modelsStore } from '@moonshot-ai/app-client/stores';
 import { MOBILE_RECENT_MODELS_MENU_LIMIT, modelCapabilityItems, searchModelsForMenu } from '@moonshot-ai/app-client/lib';
 import { Icon, openDialogCount, useImeComposition } from '@moonshot-ai/app-ui';
 import BottomSheet from '../dialogs/BottomSheet.vue';
@@ -34,6 +35,7 @@ const emit = defineEmits<
 >();
 
 const { t } = useI18n();
+const providerCatalog = modelsStore();
 const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
 
 const sheetRef = ref<InstanceType<typeof BottomSheet>>();
@@ -83,7 +85,7 @@ const thinkingDescription = computed(
 );
 
 const searchResults = computed(() =>
-  searchModelsForMenu(menu.value.models, query.value, (provider) => providerDisplayName(provider, t)).slice(0, SEARCH_MENU_MAX_ITEMS),
+  searchModelsForMenu(menu.value.models, query.value, (provider) => providerDisplayName(provider, t, providerCatalog.activeProviders)).slice(0, SEARCH_MENU_MAX_ITEMS),
 );
 
 const detailCapabilities = computed(() => (detailModel.value ? modelCapabilityItems(detailModel.value) : []));
@@ -544,7 +546,7 @@ onUnmounted(() => {
                     @click="onModelRowClick(model, false)"
                   >
                     <span class="mqs-name">{{ model.displayName ?? model.model }}</span>
-                    <span class="mqs-provider">{{ providerDisplayName(model.provider, t) }}</span>
+                    <span class="mqs-provider">{{ providerDisplayName(model.provider, t, providerCatalog.activeProviders) }}</span>
                     <Icon v-if="model.id === menu.currentModelId" name="check" size="md" class="mqs-check" />
                   </button>
                 </div>
@@ -686,7 +688,7 @@ onUnmounted(() => {
 
       <template v-else-if="page === 'detail' && detailModel">
         <div class="mqs-fixed">
-          <div class="mqs-detail-subtitle">{{ providerDisplayName(detailModel.provider, t) }}</div>
+          <div class="mqs-detail-subtitle">{{ providerDisplayName(detailModel.provider, t, providerCatalog.activeProviders) }}</div>
           <ul v-if="detailCapabilities.length > 0" class="mqs-caps">
             <li v-for="item in detailCapabilities" :key="item.kind" class="mqs-cap">
               <Icon name="check-check" size="md" class="mqs-cap-icon" />

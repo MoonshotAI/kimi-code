@@ -187,6 +187,16 @@ describe('hosts store', () => {
     expect(hostsStore().displayName('gone')).toBeUndefined();
   });
 
+  it('names providers for the local host only, so a remote host never borrows a local provider name', () => {
+    const models = modelsStore();
+    models.setProviders([{ id: 'openai', displayName: 'My Gateway', type: 'openai', hasApiKey: true, status: 'connected' }]);
+    expect(models.activeProviders.map((provider) => provider.displayName)).toEqual(['My Gateway']);
+    models.setActiveHost('ready');
+    expect(models.activeProviders).toEqual([]);
+    models.setActiveHost(undefined);
+    expect(models.activeProviders.map((provider) => provider.id)).toEqual(['openai']);
+  });
+
   it('reports host lifecycle transitions and notifies registered hooks', async () => {
     const store = hostsStore();
     const onHostsChanged = vi.fn();

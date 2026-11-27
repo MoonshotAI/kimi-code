@@ -159,6 +159,7 @@ export interface ModelConfig {
   id: string;
   name: string;
   provider: string;
+  provider_name?: string;
   capabilities: string[];
   adaptive_thinking?: boolean;
   support_efforts?: string[];

@@ -640,6 +640,7 @@ export interface AppModel {
 
 export interface AppProvider {
   id: string;
+  displayName?: string;
   type: string;
   baseUrl?: string;
   defaultModel?: string;
@@ -687,7 +688,7 @@ export interface DeleteProviderResult {
 }
 
 export interface UpdateProviderInput {
-  newId?: string;
+  displayName?: string;
   type: string;
   apiKey?: string;
   baseUrl?: string;

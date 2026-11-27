@@ -226,7 +226,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         [ErrorCode.PROVIDER_ALREADY_EXISTS]: {},
       },
       description:
-        'Create a provider manually (type + credentials + model list). Credentials are either `api_key` (stored inline) or `api_key_env` (name of an environment variable to read the key from); they are mutually exclusive — submitting both fails validation. When no global default_model is configured (fresh setup), it is seeded with the new provider default (or first) model; an existing default is never modified.',
+        'Create a provider manually (type + credentials + model list). `id` is the provider key in config.toml and never changes afterwards; `display_name` is an optional name shown in clients instead of the key. Credentials are either `api_key` (stored inline) or `api_key_env` (name of an environment variable to read the key from); they are mutually exclusive — submitting both fails validation. When no global default_model is configured (fresh setup), it is seeded with the new provider default (or first) model; an existing default is never modified.',
       tags: ['providers'],
       operationId: 'createProvider',
     },
@@ -247,6 +247,9 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         }
 
         const provider: ProviderConfig = { type: req.body.type };
+        if (req.body.display_name !== undefined && req.body.display_name !== '') {
+          provider.displayName = req.body.display_name;
+        }
         const credential = reconcileProviderCredentialUpdate(
           {},
           { apiKey: req.body.api_key, apiKeyEnv: req.body.api_key_env },
@@ -316,7 +319,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         [ErrorCode.PROVIDER_ALREADY_EXISTS]: {},
       },
       description:
-        'Replace a provider in one save (type + base_url + model list), optionally renaming it via `new_id` (the providers key and default_provider migrate; model alias keys never change, so sessions, default_model and other pointers that name them keep working). `api_key` is tri-state: omitted keeps the stored key, "" clears it, any other value replaces it. `api_key_env` (name of an environment variable to read the key from instead of storing it) is likewise tri-state and mutually exclusive with `api_key` — setting one clears the other, submitting both fails validation. The provider\'s models are rebuilt from `models`: a model already configured keeps its alias key, a new one gets `<provider>/<model>`, aliases no longer listed disappear from config.toml, and other providers\' aliases are untouched. Apart from default_provider on a rename, the global default pointers are never modified. Answers 200 with `{provider}`. OAuth-managed providers are rejected: log out via /oauth/logout instead.',
+        'Replace a provider in one save (type + base_url + model list). `display_name` is tri-state: omitted keeps the stored name, "" clears it so clients show the key, any other value replaces it; renaming a provider in a client changes only this name. `new_id` still renames the provider key itself (the providers key and default_provider migrate; model alias keys never change, so sessions, default_model and other pointers that name them keep working). `api_key` is tri-state: omitted keeps the stored key, "" clears it, any other value replaces it. `api_key_env` (name of an environment variable to read the key from instead of storing it) is likewise tri-state and mutually exclusive with `api_key` — setting one clears the other, submitting both fails validation. The provider\'s models are rebuilt from `models`: a model already configured keeps its alias key, a new one gets `<provider>/<model>`, aliases no longer listed disappear from config.toml, and other providers\' aliases are untouched. Apart from default_provider on a rename, the global default pointers are never modified. Answers 200 with `{provider}`. OAuth-managed providers are rejected: log out via /oauth/logout instead.',
       tags: ['providers'],
       operationId: 'replaceProvider',
     },
@@ -372,6 +375,9 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         provider.apiKey = credential.apiKey;
         provider.apiKeyEnv = credential.apiKeyEnv;
         provider.baseUrl = req.body.base_url;
+        if (req.body.display_name !== undefined) {
+          provider.displayName = req.body.display_name === '' ? undefined : req.body.display_name;
+        }
 
         const models = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
         const ownedByModel = new Map(

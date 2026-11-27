@@ -15,6 +15,7 @@ import {
   providerDisplayName,
   type ModelSelection,
   type ModelSelectorOptions,
+  type ProviderNames,
 } from './model-selector';
 
 const ALL_TAB_ID = 'all';
@@ -22,6 +23,7 @@ const ALL_TAB_LABEL = 'All';
 
 export interface TabbedModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;
+  readonly providers?: ProviderNames;
   readonly currentValue: string;
   readonly selectedValue?: string;
   readonly currentThinkingEffort: string;
@@ -136,7 +138,7 @@ function buildTabs(opts: TabbedModelSelectorOptions): readonly ModelTab[] {
     }
     tabs.push({
       id: providerId,
-      label: providerDisplayName(providerId),
+      label: providerDisplayName(providerId, opts.providers),
       selector: makeSelector(opts, subset),
     });
   }
@@ -151,6 +153,7 @@ function makeSelector(
   const selectedValue = subset[candidate] !== undefined ? candidate : undefined;
   const inner: ModelSelectorOptions = {
     models: subset,
+    providers: opts.providers,
     currentValue: opts.currentValue,
     ...(selectedValue !== undefined ? { selectedValue } : {}),
     currentThinkingEffort: opts.currentThinkingEffort,

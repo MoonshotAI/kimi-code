@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import type { AppHost, AppHostConnectFailure, AppHostDefinition, AppSshConfigHost, AppSshConfigHosts } from '@moonshot-ai/app-core/api';
 import { hostDisplayName, hostDisplayState, providerDisplayName } from '@moonshot-ai/app-core/lib';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
-import { hostDefinition, hostsStore, type HostAccount, type HostProviderCopy } from '@moonshot-ai/app-client/stores';
+import { hostDefinition, hostsStore, type HostAccount, type HostProviderCopy, modelsStore } from '@moonshot-ai/app-client/stores';
 import { Banner, Button, Field, Icon, IconButton, Input, isImeKeyEvent, Menu, MenuItem, SegmentedControl, StatusDot, Switch, Tooltip } from '@moonshot-ai/app-ui';
 import { useAnchoredMenu } from '../composables/useAnchoredMenu';
 import { useHostFailureText } from '../composables/useHostFailureText';
@@ -18,6 +18,7 @@ const props = defineProps<{
 }>();
 
 const { locale, t } = useI18n();
+const providerCatalog = modelsStore();
 const store = hostsStore();
 const { confirm } = useConfirmDialog();
 const failureText = useHostFailureText();
@@ -155,7 +156,7 @@ function noticeText(row: AppHost): string {
   if (notice === 'copying') return t('settings.hosts.copyingStatus');
   const copy = copyFeedback(row);
   if (copy?.status !== 'done') return '';
-  const names = copy.result.providers.map((id) => providerDisplayName(id, t));
+  const names = copy.result.providers.map((id) => providerDisplayName(id, t, providerCatalog.providers));
   return names.length === 0
     ? t('settings.hosts.localNone')
     : t('settings.hosts.localCopied', { names: new Intl.ListFormat(locale.value, { type: 'conjunction' }).format(names) });

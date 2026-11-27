@@ -454,6 +454,7 @@ export async function showModelPicker(host: SlashCommandHost, selectedValue: str
   host.mountEditorReplacement(
     new TabbedModelSelectorComponent({
       models,
+      providers: host.state.appState.availableProviders,
       currentValue: host.state.appState.model,
       selectedValue,
       currentThinkingEffort: host.state.appState.thinkingEffort,
@@ -684,6 +685,7 @@ function showSecondaryModelPicker(
   host.mountEditorReplacement(
     new TabbedModelSelectorComponent({
       models,
+      providers: host.state.appState.availableProviders,
       currentValue,
       selectedValue,
       currentThinkingEffort: 'off',

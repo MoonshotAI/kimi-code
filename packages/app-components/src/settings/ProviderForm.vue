@@ -85,10 +85,19 @@ const presetName = computed(() =>
 
 const form = reactive<ProviderFormState>({
   id: '',
+  displayName: '',
   type: 'openai',
   apiKey: '',
   baseUrl: '',
   models: [emptyModelRow()],
+});
+
+const nameField = computed({
+  get: () => (props.mode === 'edit' ? form.displayName : form.id),
+  set: (value: string) => {
+    if (props.mode === 'edit') form.displayName = value;
+    else form.id = value;
+  },
 });
 
 const contentTouched = ref(false);
@@ -104,6 +113,7 @@ function fill(): void {
     const override = kimiCodingProviderFor(p.catalogId);
     const entry = catalogEntry.value;
     form.id = presetProviderId(p, entry);
+    form.displayName = '';
     form.type = override?.type ?? entry?.wireType ?? 'openai';
     form.baseUrl = override?.baseUrl ?? entry?.baseUrl ?? '';
     form.apiKey = '';
@@ -113,6 +123,7 @@ function fill(): void {
   } else if (props.mode === 'edit' && props.provider !== undefined) {
     const p = props.provider;
     form.id = p.id;
+    form.displayName = p.displayName ?? p.id;
     form.type = p.type;
     form.apiKey = '';
     form.baseUrl = p.baseUrl ?? '';
@@ -120,6 +131,7 @@ function fill(): void {
     form.models = rows.length > 0 ? rows : [emptyModelRow()];
   } else {
     form.id = '';
+    form.displayName = '';
     form.type = 'openai';
     form.apiKey = '';
     form.baseUrl = '';
@@ -291,6 +303,7 @@ async function submit(): Promise<void> {
   const invalid = validateProviderForm(form, {
     requireApiKey: props.mode !== 'edit',
     requireBaseUrl: true,
+    renaming: props.mode === 'edit',
   });
   if (invalid !== null) return showError(t(`providers.error.${invalid}`));
 
@@ -384,14 +397,14 @@ const persistedModelCount = computed(() => {
         <Icon name="arrow-left" size="sm" />
       </IconButton>
       <ProviderBrandIcon :id="props.provider.id" :base-url="props.provider.baseUrl" size="sm" />
-      <span class="pf-brand-name">{{ providerDisplayName(props.provider.id, t) }}</span>
+      <span class="pf-brand-name">{{ providerDisplayName(props.provider.id, t, [props.provider]) }}</span>
       <Badge variant="neutral" size="sm">{{ props.provider.type }}</Badge>
     </div>
 
     <div class="pf-field">
       <label class="pf-label">{{ t('providers.fieldId') }}<span class="req"> *</span></label>
       <Input
-        v-model="form.id"
+        v-model="nameField"
         size="sm"
         placeholder="my-openai"
         :disabled="managed"

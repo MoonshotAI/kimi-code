@@ -88,7 +88,7 @@ import { useMentionMenu, type MentionEntry } from '@moonshot-ai/app-client/compo
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, usePasteImageAutoMention } from '@moonshot-ai/app-client/composables';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { effortSwitchStore, hostsStore, sessionsStore } from '@moonshot-ai/app-client/stores';
+import { effortSwitchStore, hostsStore, sessionsStore, modelsStore } from '@moonshot-ai/app-client/stores';
 import {
   createComposerEditor,
   discardStashedEditorState,
@@ -183,6 +183,7 @@ const isSideChat = computed(() => props.variant === 'side-chat');
 const composerStatusNote = computed(() => props.sessionSubmitBlockedReason ?? props.statusNote);
 
 const { t, locale } = useI18n();
+const providerCatalog = modelsStore();
 const panelApi = inject(panelApiKey, undefined);
 const client = useKimiWebClient();
 
@@ -3037,7 +3038,7 @@ const menuThinkingLevel = computed(() =>
 );
 
 const menuProviders = computed(() =>
-  orderedModelProviders(models.value ?? []).map((id) => ({ id, label: providerDisplayName(id, t) })),
+  orderedModelProviders(models.value ?? []).map((id) => ({ id, label: providerDisplayName(id, t, providerCatalog.activeProviders) })),
 );
 
 function prepareModelMenu(targetSid?: string): void {
@@ -3080,7 +3081,7 @@ const quickModelMenuPayload = computed<QuickModelMenuPayload>(() => ({
   providerModels: providerModelsSnapshot.value,
   providers: menuProviders.value,
   activeProvider: menuProvider.value,
-  activeProviderLabel: providerDisplayName(menuProvider.value, t),
+  activeProviderLabel: providerDisplayName(menuProvider.value, t, providerCatalog.activeProviders),
   ...(menuModel.value?.id === undefined ? {} : { currentModelId: menuModel.value.id }),
   ...(menuThinkingLevel.value === undefined ? {} : { currentEffort: menuThinkingLevel.value }),
   effortDescriptions: menuEffortDescriptions.value,

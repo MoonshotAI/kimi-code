@@ -384,6 +384,7 @@ merge_all_available_skills = true
 
 # one [providers."<name>"] table per entry:
 # [providers."<name>"]
+  # display_name: string
   # model_source: "static" | "discover" | "oauth-catalog"
   # base_url: string
   # search_url: string

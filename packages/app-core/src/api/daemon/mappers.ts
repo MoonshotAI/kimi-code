@@ -673,6 +673,7 @@ export function toAppModel(wire: WireModel): AppModel {
 export function toAppProvider(wire: WireProvider): AppProvider {
   return {
     id: wire.id,
+    displayName: wire.display_name,
     type: wire.type,
     baseUrl: wire.base_url,
     defaultModel: wire.default_model,

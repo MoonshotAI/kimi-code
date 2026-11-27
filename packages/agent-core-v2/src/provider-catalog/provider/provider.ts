@@ -9,6 +9,7 @@ export interface OAuthRef {
 export type ModelSource = 'static' | 'discover' | 'oauth-catalog';
 
 export interface ProviderConfig {
+  displayName?: string;
   modelSource?: ModelSource;
 
   baseUrl?: string;

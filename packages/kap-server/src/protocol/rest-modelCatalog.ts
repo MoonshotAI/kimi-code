@@ -79,6 +79,7 @@ export const providerIdSchema = z
 export const createProviderRequestSchema = z
   .object({
     id: providerIdSchema,
+    display_name: z.string().trim().optional(),
     type: providerWireTypeSchema,
     api_key: z.string().optional(),
     api_key_env: z.string().optional(),
@@ -107,6 +108,7 @@ export type CreateProviderResponse = z.infer<typeof createProviderResponseSchema
 export const replaceProviderRequestSchema = z
   .object({
     new_id: providerIdSchema.optional(),
+    display_name: z.string().trim().optional(),
     type: providerWireTypeSchema,
     api_key: z.string().optional(),
     api_key_env: z.string().optional(),

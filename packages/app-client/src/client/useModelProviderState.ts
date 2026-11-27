@@ -430,7 +430,7 @@ export function useModelProviderState(
       pushOperationFailure(operation, reason, {
         title: t('warnings.providerRefreshFailedTitle'),
         message: t('warnings.providerRefreshFailedMessage', {
-          provider: providerDisplayName(provider, t),
+          provider: providerDisplayName(provider, t, store.providers),
           reason,
         }),
       });

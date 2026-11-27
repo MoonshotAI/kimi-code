@@ -319,11 +319,13 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     );
   }
 
-  const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
+  const stateConfig = await host.harness.getConfig();
+  const stateModels = stateConfig.models ?? {};
   const selector = new TabbedModelSelectorComponent({
     models: stateModels,
+    providers: stateConfig.providers,
     currentValue: host.state.appState.model,
-    selectedValue: Object.keys(stateModels).find((a) => a.startsWith(`${providerId}/`)),
+    selectedValue: Object.entries(stateModels).find(([, model]) => model.provider === providerId)?.[0],
     currentThinkingEffort: host.state.appState.thinkingEffort,
     initialTabId: providerId,
     onSelect: ({ alias, thinking }) => {
@@ -417,15 +419,17 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     );
   }
 
-  const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
-  const firstNewAlias = Object.keys(stateModels).find((a) =>
-    addedProviderIds.some((pid) => a.startsWith(`${pid}/`)),
-  );
+  const stateConfig = await host.harness.getConfig();
+  const stateModels = stateConfig.models ?? {};
+  const firstNewAlias = Object.entries(stateModels).find(([, model]) =>
+    addedProviderIds.includes(model.provider),
+  )?.[0];
   const firstNewProvider = firstNewAlias
     ? stateModels[firstNewAlias]?.provider
     : addedProviderIds[0];
   const selector = new TabbedModelSelectorComponent({
     models: stateModels,
+    providers: stateConfig.providers,
     currentValue: host.state.appState.model,
     selectedValue: firstNewAlias,
     currentThinkingEffort: host.state.appState.thinkingEffort,

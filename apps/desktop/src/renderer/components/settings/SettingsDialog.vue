@@ -33,7 +33,7 @@ import DockIconPicker from './DockIconPicker.vue';
 import BrowserSettingsTab from '../browser/BrowserSettingsTab.vue';
 import { copyTextToClipboard, hasDesktopBridge, isLinuxDesktop, isMacosDesktop, isRcLocation, prefersNativeTitleBar, providerDisplayName } from '@moonshot-ai/app-core/lib';
 import { useContextInspector, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core/composables';
-import { configStore, hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { configStore, hostsStore, workspacesStore, modelsStore } from '@moonshot-ai/app-client/stores';
 import { useActivityRunFolding, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client';
 import { useVibrancy } from '../../composables/useVibrancy';
 import { usePreventSystemSleep } from '../../composables/usePreventSystemSleep';
@@ -59,6 +59,7 @@ import { createRuntimeEnvironmentVersionTrigger, runtimeEnvironmentBridge } from
 import type { RuntimeEnvironmentOverrides } from '../../../shared/runtime-environment';
 
 const { t } = useI18n();
+const providerCatalog = modelsStore();
 
 const { vibrancy, setVibrancy } = useVibrancy();
 const { preventSleepState, lidSleepStopped, setPreventSystemSleep, setPreventLidSleep } = usePreventSystemSleep();
@@ -542,7 +543,7 @@ function formatConfigModelLabel(id: string, raw: unknown, provider?: string): st
   const source = raw as Record<string, unknown>;
   const model = typeof source['model'] === 'string' ? source['model'] : undefined;
   const resolvedProvider = provider ?? extractConfigModelProvider(raw);
-  if (model && resolvedProvider) return `${id} (${providerDisplayName(resolvedProvider, t)}/${model})`;
+  if (model && resolvedProvider) return `${id} (${providerDisplayName(resolvedProvider, t, providerCatalog.providers)}/${model})`;
   if (model) return `${id} (${model})`;
   return id;
 }

@@ -153,6 +153,14 @@ describe("Webview model metadata", () => {
     ]);
   });
 
+  it("labels a provider group with the provider display name when one is set", () => {
+    const groups = groupModelsByProvider([
+      { id: "proxy/shared", name: "Shared", provider: "company-proxy", provider_name: "Company Gateway", capabilities: [] },
+    ]);
+
+    expect(groups.map((group) => group.label)).toEqual(["Company Gateway"]);
+  });
+
   it("offers a thinking toggle when a model declares adaptive thinking", () => {
     expect(getModelThinkingMode({
       id: "anthropic/claude",
