@@ -800,7 +800,6 @@ export default {
     failedClause: '（{count} 失败）',
     liveDonePrefix: '已',
     busy: '正在执行…',
-    autoReviewing: '正在自动复核…',
     doing: {
       read: '正在读取 {subject}',
       bash: '正在运行命令',

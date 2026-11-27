@@ -193,7 +193,6 @@ export const toolCallItemSchema = z.object({
   ...itemFields,
   name: z.string(),
   stage: toolStageSchema.optional(),
-  auto_review: z.boolean().optional(),
   input: z.unknown().optional(),
   input_text: z.string().optional(),
   display: z.unknown().optional(),

@@ -1,13 +1,10 @@
 import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2';
-import type { ApprovalReviewDetail } from '@moonshot-ai/agent-core-v2/agent/interaction/approval';
 import type { QuestionRequest as CoreQuestionRequest } from '@moonshot-ai/agent-core-v2/agent/interaction/question';
 
-export {
-  formatApprovalReviewTitle,
-  type ApprovalDecision,
-  type ApprovalResponse,
-  type ApprovalReviewDetail,
+export type {
+  ApprovalDecision,
+  ApprovalResponse,
 } from '@moonshot-ai/agent-core-v2/agent/interaction/approval';
 export type {
   QuestionAnswerMethod,
@@ -27,7 +24,6 @@ export interface ApprovalRequest {
   readonly toolName: string;
   readonly action: string;
   readonly display: ToolInputDisplay;
-  readonly approvalDetail?: ApprovalReviewDetail;
 }
 
 export interface QuestionRequest extends CoreQuestionRequest {

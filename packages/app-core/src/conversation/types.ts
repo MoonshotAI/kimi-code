@@ -161,7 +161,6 @@ export interface ToolCallItem extends ConversationItemBase {
   readonly type: 'tool_call';
   readonly name: string;
   readonly stage?: 'input' | 'awaiting_approval' | 'executing';
-  readonly auto_review?: boolean;
   readonly input?: unknown;
   readonly input_text?: string;
   readonly fields?: Readonly<Record<string, unknown>>;

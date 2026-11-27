@@ -41,7 +41,6 @@ export interface GitStatusOptions {
   pathFilter?: ReadonlySet<string>;
   scopeToCwd?: boolean;
   includePullRequest?: boolean;
-  includeStats?: boolean;
 }
 
 export const fsGitStatusResponseSchema = z.object({
